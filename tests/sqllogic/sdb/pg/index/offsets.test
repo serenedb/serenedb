@@ -47,7 +47,7 @@ VACUUM (UPDATE_INDEXES) offsets_test2;
 query
 SELECT id, OFFSETS(body) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 id	bo
@@ -58,7 +58,7 @@ id	bo
 query
 SELECT id, OFFSETS(offsets_test_idx.body) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 id	bo
@@ -70,7 +70,7 @@ id	bo
 query
 EXPLAIN SELECT id, OFFSETS(offsets_test_idx.body) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 QUERY PLAN
@@ -84,10 +84,10 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│    Table: offsets_test    │
+│           Index:          │
+│      offsets_test_idx     │
 │                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -107,7 +107,7 @@ QUERY PLAN
 query
 SELECT id, OFFSETS(title) AS to_, OFFSETS(body) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(title, 'hello') AND PHRASE(body, 'fox')
+WHERE title @@ ts_phrase('hello') AND body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 id	to_	bo
@@ -118,7 +118,7 @@ id	to_	bo
 query
 SELECT id, OFFSETS(body, 0) AS bo
 FROM offsets_test_idx
-WHERE TERM_EQ(body, 'fox')
+WHERE body @@ 'fox'
 ORDER BY id;
 ----
 id	bo
@@ -130,7 +130,7 @@ id	bo
 query
 SELECT id, OFFSETS(body) AS bo
 FROM offsets_test_idx
-WHERE TERM_IN(body, 'fox', 'quick')
+WHERE body @@ ('fox'::TSQUERY || 'quick'::TSQUERY)
 ORDER BY id;
 ----
 id	bo
@@ -143,7 +143,7 @@ id	bo
 query
 SELECT id, OFFSETS(body) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox') AND PHRASE(body, 'quick')
+WHERE body @@ ts_phrase('fox') AND body @@ ts_phrase('quick')
 ORDER BY id;
 ----
 id	bo
@@ -152,7 +152,7 @@ id	bo
 query
 SELECT id, OFFSETS(title) AS to_
 FROM offsets_test_idx
-WHERE PHRASE(title, 'hello') OR PHRASE(title, 'world')
+WHERE title @@ ts_phrase('hello') OR title @@ ts_phrase('world')
 ORDER BY id;
 ----
 id	to_
@@ -163,7 +163,7 @@ id	to_
 query
 SELECT id, OFFSETS(body) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY OFFSETS(body), id;
 ----
 id	bo
@@ -174,7 +174,7 @@ id	bo
 query
 SELECT id, OFFSETS(body) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY bo, id;
 ----
 id	bo
@@ -185,7 +185,7 @@ id	bo
 query
 SELECT id, OFFSETS(body, 3) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 id	bo
@@ -196,7 +196,7 @@ id	bo
 query
 SELECT id, OFFSETS(body, 1) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 id	bo
@@ -207,7 +207,7 @@ id	bo
 query
 SELECT id, length(OFFSETS(body, 0)) AS num_offsets
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox') AND id = 4;
+WHERE body @@ ts_phrase('fox') AND id = 4;
 ----
 id	num_offsets
 4	24
@@ -215,7 +215,7 @@ id	num_offsets
 query
 SELECT id, OFFSETS(body, 2) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY OFFSETS(body, 2), id;
 ----
 id	bo
@@ -227,7 +227,7 @@ query
 SELECT id, b_offs FROM (
 SELECT id, OFFSETS(body, 2) AS b_offs
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ) sub ORDER BY id;
 ----
 id	b_offs
@@ -239,7 +239,7 @@ id	b_offs
 query
 SELECT id, OFFSETS(wordcount) AS wo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 id	wo
@@ -254,11 +254,11 @@ id	wo
 query
 SELECT id, OFFSETS(title) AS title_offs, OFFSETS(body) AS body_offs
 FROM offsets_test_idx
-WHERE PHRASE(title, 'hello') AND PHRASE(body, 'fox')
+WHERE title @@ ts_phrase('hello') AND body @@ ts_phrase('fox')
 UNION ALL
 SELECT id, NULL::bigint[], OFFSETS(body)
 FROM offsets_test_idx
-WHERE PHRASE(body, 'quick')
+WHERE body @@ ts_phrase('quick')
 ORDER BY id, title_offs NULLS LAST;
 ----
 id	title_offs	body_offs
@@ -274,11 +274,11 @@ id	title_offs	body_offs
 query
 SELECT id, NULL::bigint[] AS title_offs, OFFSETS(body) AS body_offs
 FROM offsets_test_idx
-WHERE PHRASE(body, 'quick')
+WHERE body @@ ts_phrase('quick')
 UNION ALL
 SELECT id, OFFSETS(title), OFFSETS(body)
 FROM offsets_test_idx
-WHERE PHRASE(title, 'hello') AND PHRASE(body, 'fox')
+WHERE title @@ ts_phrase('hello') AND body @@ ts_phrase('fox')
 ORDER BY id, title_offs NULLS FIRST;
 ----
 id	title_offs	body_offs
@@ -293,11 +293,11 @@ id	title_offs	body_offs
 query
 SELECT id, 2 AS lim, OFFSETS(body, 2) AS body_offs
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 UNION ALL
 SELECT id, 4, OFFSETS(body, 4)
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id, lim;
 ----
 id	lim	body_offs
@@ -312,11 +312,11 @@ id	lim	body_offs
 query
 EXPLAIN SELECT id, 2 AS lim, OFFSETS(body, 2) AS body_offs
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 UNION ALL
 SELECT id, 4, OFFSETS(body, 4)
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id, lim;
 ----
 QUERY PLAN
@@ -363,10 +363,10 @@ QUERY PLAN
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   │
-│    Table: offsets_test    ││    Table: offsets_test    │
+│           Index:          ││           Index:          │
+│      offsets_test_idx     ││      offsets_test_idx     │
 │                           ││                           │
-│       Materializer:       ││       Materializer:       │
-│    rocksdb (point Get)    ││    rocksdb (point Get)    │
+│      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           │
 │          Filter:          ││          Filter:          │
 │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
@@ -387,7 +387,7 @@ query
 SELECT offsets_test_idx.id, OFFSETS(offsets_test_idx.body) AS bo
 FROM offsets_test_idx
 JOIN offsets_test2_idx ON offsets_test_idx.id = offsets_test2_idx.id
-WHERE PHRASE(offsets_test_idx.body, 'fox') AND PHRASE(offsets_test2_idx.body, 'fox')
+WHERE offsets_test_idx.body @@ ts_phrase('fox') AND offsets_test2_idx.body @@ ts_phrase('fox')
 ORDER BY offsets_test_idx.id;
 ----
 id	bo
@@ -398,7 +398,7 @@ query
 SELECT offsets_test_idx.id, OFFSETS(offsets_test2_idx.body) AS bo
 FROM offsets_test_idx
 JOIN offsets_test2_idx ON offsets_test_idx.id = offsets_test2_idx.id
-WHERE PHRASE(offsets_test_idx.body, 'fox') AND PHRASE(offsets_test2_idx.body, 'fox')
+WHERE offsets_test_idx.body @@ ts_phrase('fox') AND offsets_test2_idx.body @@ ts_phrase('fox')
 ORDER BY offsets_test_idx.id;
 ----
 id	bo
@@ -406,33 +406,33 @@ id	bo
 
 
 query error
-SELECT OFFSETS() FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS() FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 
 
 query error
-SELECT OFFSETS(body, 5, 'extra') FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS(body, 5, 'extra') FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 
 
 query error
-SELECT OFFSETS('literal') FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS('literal') FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
 db error: ERROR: OFFSETS() first argument must be a column reference
 
 
 query error
-SELECT OFFSETS(body, 'five') FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS(body, 'five') FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
 db error: ERROR: OFFSETS() second argument must be an integer literal
 
 
 query error
-SELECT OFFSETS(body, id) FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS(body, id) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
 db error: ERROR: OFFSETS() second argument must be an integer literal
 
 
 query error
-SELECT OFFSETS(body, -1) FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS(body, -1) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
 db error: ERROR: OFFSETS() limit must be greater than zero or 0 for no limit
 
@@ -440,20 +440,20 @@ db error: ERROR: OFFSETS() limit must be greater than zero or 0 for no limit
 query error
 SELECT OFFSETS(body, 3) AS bo3, OFFSETS(body, 5) AS bo5
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox');
+WHERE body @@ ts_phrase('fox');
 ----
 db error: ERROR: OFFSETS() called multiple times for field 'body' with different limits
 
 
 query error
-SELECT OFFSETS(nonexistent) FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS(nonexistent) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
 db error: ERROR: Referenced column "nonexistent" not found in FROM clause!
 Candidate bindings: "body"
 
 
 query error
-SELECT OFFSETS(id) FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS(id) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
 db error: ERROR: OFFSETS(): column 'id' not found in index
 
@@ -479,7 +479,7 @@ SELECT id, SUBSTRING(body, GREATEST(1, bo[1] - 3), bo[2] - bo[1] + 8) AS context
 FROM (
   SELECT id, body, OFFSETS(body, 1) AS bo
   FROM offsets_test_idx
-  WHERE PHRASE(body, 'fox')
+  WHERE body @@ ts_phrase('fox')
 ) sub
 ORDER BY id;
 ----
@@ -487,6 +487,252 @@ id	context	bo
 1	ick fox jum	{6,9}
 2	fox runs fa	{0,3}
 4	fox fox fox	{0,3}
+
+
+# OFFSETS combined with top-K scoring (ORDER BY BM25 + LIMIT). This path was
+# previously rejected by an SDB_ASSERT in the score_top_k branch; it now goes
+# through WriteTopkOffsets, which walks the pagination slice in (segment,
+# doc) order via WalkSegmentsSorted and writes byte ranges at each row's
+# score-rank slot.
+
+# Basic top-K + OFFSETS: ranks docs by BM25 over 'fox' and emits per-doc
+# match offsets. Tie-break by id for determinism.
+query
+SELECT id, OFFSETS(body) AS bo
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
+----
+id	bo
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+1	{6,9}
+2	{0,3}
+
+
+# Top-K + OFFSETS, has_real=false (no real columns selected -- the output
+# is purely virtual: only OFFSETS and ranking). Exercises the WriteTopkOffsets
+# path without the Materialize step.
+query
+SELECT OFFSETS(body) AS bo
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC LIMIT 3;
+----
+bo
+{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+{6,9}
+{0,3}
+
+
+# Top-K + OFFSETS with LIMIT 1 -- smallest pagination slice.
+query
+SELECT id, OFFSETS(body) AS bo
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 1;
+----
+id	bo
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+
+
+# Top-K + multi-field OFFSETS. Both title and body have offset-enabled
+# dicts; each row gets two ListVector entries.
+query
+SELECT id, OFFSETS(title) AS t, OFFSETS(body) AS bo
+FROM offsets_test_idx
+WHERE title @@ ts_phrase('hello') AND body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 5;
+----
+id	t	bo
+1	{0,5}	{6,9}
+2	{0,5}	{0,3}
+
+
+# Top-K + OFFSETS with `OFFSETS(col, N)` cap. The N applies per row's
+# byte-range list, not to the top-K K.
+query
+SELECT id, OFFSETS(body, 3) AS bo
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
+----
+id	bo
+4	{0,3,4,7,8,11}
+1	{6,9}
+2	{0,3}
+
+
+# Top-K + OFFSETS over an aggregation -- count(*) of the top-K result set.
+# The wrapper subquery materialises the top-K + OFFSETS rows; count counts
+# them. Verifies the subquery delivers the right number of rows.
+query
+SELECT count(*) FROM (
+  SELECT OFFSETS(body) FROM offsets_test_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY BM25(offsets_test_idx.tableoid) DESC LIMIT 2
+) sub;
+----
+count
+2
+
+
+# Top-K + OFFSETS where K exceeds the number of matches. Engine returns all
+# matches (no padding/truncation).
+query
+SELECT id, OFFSETS(body) AS bo
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 100;
+----
+id	bo
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+1	{6,9}
+2	{0,3}
+
+
+# Top-K + OFFSETS with a BM25-in-expression in SELECT (and bare BM25 in
+# ORDER BY). DuckDB inserts an intermediate projection above TopN to
+# materialise the ORDER BY value, which used to misalign OFFSETS()'s
+# column ref against the GET.
+query
+SELECT id, OFFSETS(body) AS bo, BM25(offsets_test_idx.tableoid) > 0 AS pos
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
+----
+id	bo	pos
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}	t
+1	{6,9}	t
+2	{0,3}	t
+
+
+# Same intermediate-projection shape with BM25 wrapped in a cast.
+query
+SELECT id, OFFSETS(body) AS bo,
+       round(BM25(offsets_test_idx.tableoid)::numeric, 2) AS s
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
+----
+id	bo	s
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}	0.76
+1	{6,9}	0.53
+2	{0,3}	0.53
+
+
+# Plan check: secondary ORDER BY (id ASC) keeps the TopN node, producing
+# the PROJECTION -> TOP_N -> PROJECTION -> IRESEARCH_SCAN shape. The
+# inner projection forwards the offsets virtual column up to the outer.
+query
+EXPLAIN SELECT id, OFFSETS(body) AS bo,
+              BM25(offsets_test_idx.tableoid) > 0 AS pos
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│             #1            │
+│             #2            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│                           │
+│         Order By:         │
+│          #3 DESC          │
+│  offsets_test_idx.id ASC  │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│             bo            │
+│            pos            │
+│             #1            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      offsets_test_idx     │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│       Offsets: body       │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│ sdb_inverted_index_offsets│
+│             $2            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+# Plan check: ORDER BY BM25 DESC alone -- top-K pull-up drops the TopN,
+# leaving a single PROJECTION above the scan even with BM25-in-expression.
+query
+EXPLAIN SELECT id, OFFSETS(body) AS bo,
+              BM25(offsets_test_idx.tableoid) > 0 AS pos
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│             bo            │
+│            pos            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      offsets_test_idx     │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│          TopK: 3          │
+│       Offsets: body       │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│ sdb_inverted_index_offsets│
+│             $2            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
 
 
 statement ok

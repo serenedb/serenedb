@@ -37,7 +37,6 @@ static_assert(sizeof(ObjectId) == sizeof(ObjectId::BaseType));
 
 namespace id {  // system IDs
 
-inline constexpr ObjectId kGenerateNew{};
 inline constexpr ObjectId kInvalid{};
 inline constexpr ObjectId kRootUser{1000000};
 

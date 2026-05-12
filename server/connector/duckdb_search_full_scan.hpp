@@ -20,23 +20,20 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/index/iterators.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <memory>
-#include <string>
-#include <utility>
 #include <vector>
 
 #include "connector/duckdb_scan_base.hpp"
+#include "connector/index_source.h"
 #include "connector/offsets_collector.hpp"
-
-namespace irs {
-
-struct PayAttr;
-}
+#include "connector/search_pk_lookup.h"
 
 namespace sdb::connector {
 
@@ -44,26 +41,43 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   // IResearch streaming state
   size_t search_segment_idx = 0;
   irs::DocIterator::ptr search_doc;
-  irs::DocIterator::ptr search_pk_iter;
-  const irs::PayAttr* search_pk_value = nullptr;
+  SegmentPkIterator search_segment_pk;
 
-  // Scorer state
+  // Prepared filter query. Built once in SearchFullScanInitGlobal with
+  // `scorer_obj` (or nullptr) -- the only prepare site for SearchScan.
+  irs::Filter::Query::ptr query;
+
+  // Scorer state. `scorer_obj` is non-null iff the plan attached BM25 /
+  // TFIDF / DFI / LM-* via the projection or ORDER BY rewrite.
   std::unique_ptr<irs::Scorer> scorer_obj;
-  irs::Filter::Query::ptr scored_query;
   irs::ColumnArgsFetcher score_fetcher;
   irs::ScoreFunction score_function;
 
-  // Top-K precomputed results (score_top_k path only)
-  std::vector<std::pair<float, std::string>> topk_hits;  // (score, pk) DESC
+  // Reused per call; default-constructed to std::monostate and switched to
+  // the matching alternative on first use via index_source->CreatePkBatch().
+  // Streaming and top-K paths are mutually exclusive and share this slot.
+  PrimaryKeyBatch pk_batch;
+
+  // Top-K state -- score_top_k path only.
+  // `hits` is sized to BlockSize(K) at top-K execute; the collector writes
+  // `(score, doc, segment_idx)` directly into it. We extract scores into
+  // `topk_scores` for the contiguous memcpy fast path on the score output
+  // column; `hits` itself is kept around for OFFSETS dispatch (the seg/doc
+  // walk uses ScoreDoc.segment_idx + .doc directly).
+  std::vector<irs::ScoreDoc> hits;
+  std::vector<float> topk_scores;
   size_t topk_offset = 0;
   bool topk_executed = false;
 
-  // Offsets state (populated only when bind_data carries OFFSETS requests).
-  // offsets_output_idx[i] is the DataChunk slot for SearchScan.offsets[i];
-  // offsets_field_state[i] holds per-segment sub-filter state rebuilt on
-  // every segment transition (position iterators are cached inside).
+  // Reusable scratch for LookupSegmentsValues / WalkSegmentsSorted -- avoids
+  // per-call heap alloc. Single-threaded usage (top-K execute then pagination
+  // are serialised).
+  std::vector<uint32_t> lookup_scratch;
+
+  // Populated only when SearchScan requests OFFSETS columns.
   std::vector<duckdb::idx_t> offsets_output_idx;
   std::vector<PerFieldState> offsets_field_state;
+  std::vector<std::vector<int64_t>> offsets_doc_scratch;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(

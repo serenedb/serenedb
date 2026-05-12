@@ -1,0 +1,796 @@
+# Basic TRUNCATE
+statement ok
+CREATE TABLE pudge (id INTEGER PRIMARY KEY, kostya TEXT);
+
+statement count 3
+INSERT INTO pudge VALUES (1, 'clickclack'), (2, 'deadinside'), (3, 'gul');
+
+query
+SELECT * FROM pudge ORDER BY id;
+----
+id	kostya
+1	clickclack
+2	deadinside
+3	gul
+
+statement ok
+TRUNCATE pudge;
+
+query
+SELECT * FROM pudge ORDER BY id;
+----
+id	kostya
+
+# Table still exists and accepts inserts after truncate
+statement count 2
+INSERT INTO pudge VALUES (10, 'makak'), (20, 'noscope');
+
+query
+SELECT * FROM pudge ORDER BY id;
+----
+id	kostya
+10	makak
+20	noscope
+
+statement ok
+DROP TABLE pudge;
+
+
+# TRUNCATE TABLE syntax (TABLE keyword is optional)
+statement ok
+CREATE TABLE makak (id INTEGER PRIMARY KEY, lmao TEXT);
+
+statement count 1
+INSERT INTO makak VALUES (1, 'kek');
+
+statement ok
+TRUNCATE TABLE makak;
+
+query
+SELECT * FROM makak;
+----
+id	lmao
+
+statement ok
+DROP TABLE makak;
+
+
+# TRUNCATE non-existent table
+statement error
+TRUNCATE does_not_exist;
+----
+db error: ERROR: Table with name does_not_exist does not exist!
+Did you mean "pg_stat_user_indexes"?
+
+
+# TRUNCATE a view (should fail)
+statement ok
+CREATE TABLE vedernikoff_base (id INTEGER PRIMARY KEY, val TEXT);
+
+statement ok
+CREATE VIEW vedernikoff_view AS SELECT * FROM vedernikoff_base;
+
+statement error
+TRUNCATE vedernikoff_view;
+----
+db error: ERROR: Can only delete from base table
+
+
+# TRUNCATE with schema-qualified name
+statement ok
+CREATE TABLE public.gayazov (id INTEGER PRIMARY KEY, iq TEXT);
+
+statement count 1
+INSERT INTO public.gayazov VALUES (1, '1337');
+
+statement ok
+TRUNCATE public.gayazov;
+
+query
+SELECT * FROM public.gayazov;
+----
+id	iq
+
+statement ok
+DROP TABLE public.gayazov;
+
+
+# TRUNCATE preserves table structure across multiple truncates
+statement ok
+CREATE TABLE kostya_iq (id INTEGER PRIMARY KEY, name TEXT, iq INTEGER);
+
+statement count 3
+INSERT INTO kostya_iq VALUES (1, 'babsky', 420), (2, 'vedernikoff', 69), (3, 'mironov', 1);
+
+statement ok
+TRUNCATE kostya_iq;
+
+statement count 2
+INSERT INTO kostya_iq VALUES (4, 'androed', 99999), (5, 'arelav', 4000);
+
+statement ok
+TRUNCATE kostya_iq;
+
+query
+SELECT * FROM kostya_iq ORDER BY id;
+----
+id	name	iq
+
+statement count 1
+INSERT INTO kostya_iq VALUES (100, 'pavel', 1000000);
+
+query
+SELECT * FROM kostya_iq ORDER BY id;
+----
+id	name	iq
+100	pavel	1000000
+
+statement ok
+DROP TABLE kostya_iq;
+
+
+# TRUNCATE large table (10000 rows)
+statement ok
+CREATE TABLE babsky (id INTEGER PRIMARY KEY, weight INTEGER, vibe TEXT);
+
+statement count 10000
+INSERT INTO babsky
+SELECT x, x % 100, 'pudge_' || (x % 50)::text FROM generate_series(1, 10000) AS t(x);
+
+query
+SELECT count(*) FROM babsky;
+----
+count
+10000
+
+statement ok
+TRUNCATE babsky;
+
+query
+SELECT count(*) FROM babsky;
+----
+count
+0
+
+statement count 5000
+INSERT INTO babsky
+SELECT x, x % 10, 'kostya_' || (x % 5)::text FROM generate_series(1, 5000) AS t(x);
+
+query
+SELECT count(*) FROM babsky;
+----
+count
+5000
+
+statement ok
+DROP TABLE babsky;
+
+
+# TRUNCATE with secondary index
+statement ok
+CREATE TABLE deadinside (id INTEGER PRIMARY KEY, tag TEXT);
+
+statement count 3
+INSERT INTO deadinside VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+statement ok
+CREATE INDEX deadinside_tag_idx ON deadinside (tag);
+
+query
+SELECT id, tag FROM deadinside WHERE tag = 'b';
+----
+id	tag
+2	b
+
+statement ok
+TRUNCATE deadinside;
+
+query
+SELECT count(*) FROM deadinside;
+----
+count
+0
+
+# Index must not still resolve old rows
+query
+SELECT id, tag FROM deadinside WHERE tag = 'b';
+----
+id	tag
+
+statement count 2
+INSERT INTO deadinside VALUES (10, 'b'), (20, 'c');
+
+query
+SELECT id, tag FROM deadinside WHERE tag = 'b';
+----
+id	tag
+10	b
+
+statement ok
+DROP INDEX deadinside_tag_idx;
+
+statement ok
+DROP TABLE deadinside;
+
+
+# TRUNCATE with BOTH secondary and inverted indexes over 10000 rows.
+# Uses babsky/vedernikoff/kornaukhov themed quotes so phrase matches over
+# the inverted index and equality lookups over the secondary index can both
+# be sanity-checked before and after the truncate.
+statement ok
+CREATE TABLE vedernikoff (id INTEGER PRIMARY KEY, team TEXT, quote TEXT);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+# Secondary index: equality on team
+statement ok
+CREATE INDEX vedernikoff_team_idx ON vedernikoff (team);
+
+# Inverted index: phrase search on quote
+statement ok
+CREATE INDEX vedernikoff_quote_idx ON vedernikoff USING inverted(id, team, quote test_english);
+
+# 10000 rows; team cycles through 4 buckets, quote cycles through 5 sentences.
+# Each sentence mentions vedernikoff so a phrase('vedernikoff') match hits
+# every row. babsky-only phrases hit exactly 1/5 of the data.
+statement count 10000
+INSERT INTO vedernikoff
+SELECT
+  x,
+  (ARRAY['babsky','kornaukhov','vedernikoff','mironov'])[1 + x % 4],
+  (ARRAY[
+    'babsky want to hire vedernikoff',
+    'kornaukhov reviews vedernikoff code',
+    'mironov mentors vedernikoff on duckdb',
+    'vedernikoff ships truncate today',
+    'vedernikoff and babsky pair on rocksdb'
+  ])[1 + x % 5]
+FROM generate_series(1, 10000) AS t(x);
+
+statement ok
+VACUUM (UPDATE_INDEXES) vedernikoff;
+
+# Sanity-check both indexes before TRUNCATE.
+query
+SELECT count(*) FROM vedernikoff;
+----
+count
+10000
+
+# secondary index path (equality on team)
+query
+SELECT count(*) FROM vedernikoff WHERE team = 'babsky';
+----
+count
+2500
+
+# inverted index path: every quote mentions vedernikoff
+query
+SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'vedernikoff');
+----
+count
+10000
+
+# inverted index path: only one of the 5 sentences mentions babsky+vedernikoff
+query
+SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'babsky want to hire vedernikoff');
+----
+count
+2000
+
+statement ok
+TRUNCATE vedernikoff;
+
+# Base table is empty.
+query
+SELECT count(*) FROM vedernikoff;
+----
+count
+0
+
+# Secondary index must not surface any old rows.
+query
+SELECT count(*) FROM vedernikoff WHERE team = 'babsky';
+----
+count
+0
+
+# Inverted index must not surface any old rows.
+query
+SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'vedernikoff');
+----
+count
+0
+
+query
+SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'babsky want to hire vedernikoff');
+----
+count
+0
+
+# Re-insert a smaller batch and confirm both indexes resolve fresh data.
+statement count 500
+INSERT INTO vedernikoff
+SELECT
+  x + 100000,
+  (ARRAY['babsky','kornaukhov','vedernikoff','mironov'])[1 + x % 4],
+  (ARRAY[
+    'babsky want to hire vedernikoff',
+    'vedernikoff ships truncate today'
+  ])[1 + x % 2]
+FROM generate_series(1, 500) AS t(x);
+
+statement ok
+VACUUM (UPDATE_INDEXES) vedernikoff;
+
+query
+SELECT count(*) FROM vedernikoff WHERE team = 'babsky';
+----
+count
+125
+
+query
+SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'vedernikoff');
+----
+count
+500
+
+query
+SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'babsky want to hire vedernikoff');
+----
+count
+250
+
+statement ok
+DROP INDEX vedernikoff_quote_idx;
+
+statement ok
+DROP INDEX vedernikoff_team_idx;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY test_english;
+
+statement ok
+DROP TABLE vedernikoff;
+
+
+# PostgreSQL TRUNCATE syntax compatibility:
+#   TRUNCATE [ TABLE ] [ ONLY ] name [ * ] [, ...]
+#       [ RESTART IDENTITY | CONTINUE IDENTITY ] [ CASCADE | RESTRICT ]
+# https://www.postgresql.org/docs/current/sql-truncate.html
+#
+# We don't have inheritance (so ONLY / * are no-ops), don't enforce FKs (so
+# CASCADE / RESTRICT are no-ops), and don't have OWNED-BY identity sequences
+# (so RESTART / CONTINUE IDENTITY are no-ops). Every form below should parse
+# AND empty the named tables.
+
+statement ok
+CREATE TABLE babsky(id INT PRIMARY KEY, v TEXT);
+
+statement ok
+CREATE TABLE gayazov(id INT PRIMARY KEY, v TEXT);
+
+statement ok
+CREATE TABLE kornaukhov(id INT PRIMARY KEY, v TEXT);
+
+statement ok
+INSERT INTO babsky VALUES (1, 'a'), (2, 'b');
+
+statement ok
+INSERT INTO gayazov VALUES (1, 'c'), (2, 'd');
+
+statement ok
+INSERT INTO kornaukhov VALUES (1, 'e'), (2, 'f');
+
+# bare
+statement ok
+TRUNCATE babsky;
+
+query
+SELECT count(*) FROM babsky;
+----
+count
+0
+
+statement ok
+INSERT INTO babsky VALUES (1, 'a'), (2, 'b');
+
+# TABLE keyword
+statement ok
+TRUNCATE TABLE babsky;
+
+query
+SELECT count(*) FROM babsky;
+----
+count
+0
+
+statement ok
+INSERT INTO babsky VALUES (1, 'a'), (2, 'b');
+
+# ONLY (no inheritance, but parser must accept)
+statement ok
+TRUNCATE ONLY babsky;
+
+query
+SELECT count(*) FROM babsky;
+----
+count
+0
+
+statement ok
+INSERT INTO babsky VALUES (1, 'a'), (2, 'b');
+
+# trailing * (no inheritance, but parser must accept)
+statement ok
+TRUNCATE babsky *;
+
+query
+SELECT count(*) FROM babsky;
+----
+count
+0
+
+statement ok
+INSERT INTO babsky VALUES (1, 'a'), (2, 'b');
+
+# multi-table -- pg-wire-extended can't Prepare a MultiStatement, so all
+# multi-table TRUNCATE forms (and the SELECTs that verify their effect)
+# are skipped under that engine.
+skipif pg-wire-extended
+statement ok
+TRUNCATE babsky, gayazov;
+
+skipif pg-wire-extended
+query
+SELECT (SELECT count(*) FROM babsky) AS a, (SELECT count(*) FROM gayazov) AS b;
+----
+a	b
+0	0
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO babsky VALUES (1, 'a');
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO gayazov VALUES (1, 'c');
+
+# multi-table with TABLE keyword
+skipif pg-wire-extended
+statement ok
+TRUNCATE TABLE babsky, gayazov;
+
+skipif pg-wire-extended
+query
+SELECT (SELECT count(*) FROM babsky) AS a, (SELECT count(*) FROM gayazov) AS b;
+----
+a	b
+0	0
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO babsky VALUES (1, 'a');
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO gayazov VALUES (1, 'c');
+
+# multi-table with per-relation ONLY
+skipif pg-wire-extended
+statement ok
+TRUNCATE ONLY babsky, ONLY gayazov;
+
+skipif pg-wire-extended
+query
+SELECT (SELECT count(*) FROM babsky) AS a, (SELECT count(*) FROM gayazov) AS b;
+----
+a	b
+0	0
+
+statement ok
+TRUNCATE babsky;
+
+statement ok
+INSERT INTO babsky VALUES (1, 'a'), (2, 'b');
+
+# CASCADE
+statement ok
+TRUNCATE babsky CASCADE;
+
+query
+SELECT count(*) FROM babsky;
+----
+count
+0
+
+statement ok
+INSERT INTO babsky VALUES (1, 'a'), (2, 'b');
+
+# RESTRICT
+statement ok
+TRUNCATE babsky RESTRICT;
+
+query
+SELECT count(*) FROM babsky;
+----
+count
+0
+
+statement ok
+INSERT INTO babsky VALUES (1, 'a'), (2, 'b');
+
+# RESTART IDENTITY
+statement ok
+TRUNCATE babsky RESTART IDENTITY;
+
+query
+SELECT count(*) FROM babsky;
+----
+count
+0
+
+statement ok
+INSERT INTO babsky VALUES (1, 'a'), (2, 'b');
+
+# CONTINUE IDENTITY
+statement ok
+TRUNCATE babsky CONTINUE IDENTITY;
+
+query
+SELECT count(*) FROM babsky;
+----
+count
+0
+
+# Reset gayazov/kornaukhov so the kitchen sink starts with all three holding rows.
+skipif pg-wire-extended
+statement ok
+TRUNCATE gayazov, kornaukhov;
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO babsky VALUES (1, 'a'), (2, 'b');
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO gayazov VALUES (1, 'c'), (2, 'd');
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO kornaukhov VALUES (1, 'e'), (2, 'f');
+
+# kitchen sink: TABLE + ONLY + * + multi-table + RESTART IDENTITY + CASCADE
+skipif pg-wire-extended
+statement ok
+TRUNCATE TABLE ONLY babsky, gayazov *, kornaukhov RESTART IDENTITY CASCADE;
+
+skipif pg-wire-extended
+query
+SELECT
+  (SELECT count(*) FROM babsky) AS a,
+  (SELECT count(*) FROM gayazov) AS b,
+  (SELECT count(*) FROM kornaukhov) AS c;
+----
+a	b	c
+0	0	0
+
+statement ok
+DROP TABLE babsky;
+
+statement ok
+DROP TABLE gayazov;
+
+statement ok
+DROP TABLE kornaukhov;
+
+
+# ----------------------------------------------------------------------------
+# TRUNCATE inside explicit BEGIN/COMMIT and BEGIN/ROLLBACK transactions.
+# Since TRUNCATE lowers to per-row DELETE through the standard txn path, the
+# usual MVCC rules apply: TRUNCATE inside BEGIN sees rows the same txn just
+# inserted, COMMIT atomically applies the empty state, ROLLBACK undoes the
+# truncate AND any inserts that came with it.
+# ----------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE mironov(id INT PRIMARY KEY, v TEXT);
+
+statement ok
+INSERT INTO mironov VALUES (1, 'pre-tx alpha'), (2, 'pre-tx bravo');
+
+# 1) TRUNCATE inside BEGIN; COMMIT -- final state is empty.
+statement ok
+BEGIN;
+
+statement ok
+TRUNCATE mironov;
+
+# Inside the txn, the row count is 0.
+query
+SELECT count(*) FROM mironov;
+----
+count
+0
+
+statement ok
+COMMIT;
+
+# After commit, still empty.
+query
+SELECT count(*) FROM mironov;
+----
+count
+0
+
+# 2) TRUNCATE inside BEGIN; ROLLBACK -- pre-tx state restored.
+statement ok
+INSERT INTO mironov VALUES (10, 'pre-rollback'), (20, 'pre-rollback');
+
+statement ok
+BEGIN;
+
+statement ok
+TRUNCATE mironov;
+
+query
+SELECT count(*) FROM mironov;
+----
+count
+0
+
+statement ok
+ROLLBACK;
+
+# Both rows from before BEGIN must be back.
+query
+SELECT id FROM mironov ORDER BY id;
+----
+id
+10
+20
+
+# 3) TRUNCATE-then-INSERT inside the same txn -- only the post-truncate row
+#    survives at COMMIT. Verifies that TRUNCATE doesn't disturb writes that
+#    follow it inside the same transaction.
+statement ok
+BEGIN;
+
+statement ok
+TRUNCATE mironov;
+
+statement ok
+INSERT INTO mironov VALUES (100, 'post-truncate alpha');
+
+query
+SELECT id, v FROM mironov ORDER BY id;
+----
+id	v
+100	post-truncate alpha
+
+statement ok
+COMMIT;
+
+query
+SELECT id, v FROM mironov ORDER BY id;
+----
+id	v
+100	post-truncate alpha
+
+# 4) INSERT-then-TRUNCATE inside the same txn -- TRUNCATE sees the
+#    txn-local row and removes it; final state empty.
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO mironov VALUES (200, 'tx-local before truncate');
+
+statement ok
+TRUNCATE mironov;
+
+query
+SELECT count(*) FROM mironov;
+----
+count
+0
+
+statement ok
+COMMIT;
+
+query
+SELECT count(*) FROM mironov;
+----
+count
+0
+
+# 5) Multi-table TRUNCATE inside BEGIN; ROLLBACK -- both tables restored.
+statement ok
+CREATE TABLE babsky_tx(id INT PRIMARY KEY);
+
+statement ok
+INSERT INTO mironov VALUES (300, 'tx2'), (400, 'tx2');
+
+statement ok
+INSERT INTO babsky_tx VALUES (1), (2);
+
+skipif pg-wire-extended
+statement ok
+BEGIN;
+
+skipif pg-wire-extended
+statement ok
+TRUNCATE mironov, babsky_tx;
+
+skipif pg-wire-extended
+query
+SELECT (SELECT count(*) FROM mironov) AS m, (SELECT count(*) FROM babsky_tx) AS b;
+----
+m	b
+0	0
+
+skipif pg-wire-extended
+statement ok
+ROLLBACK;
+
+skipif pg-wire-extended
+query
+SELECT (SELECT count(*) FROM mironov) AS m, (SELECT count(*) FROM babsky_tx) AS b;
+----
+m	b
+2	2
+
+statement ok
+DROP TABLE mironov;
+
+statement ok
+DROP TABLE babsky_tx;
+
+
+statement ok
+CREATE TABLE explain_t (id INT PRIMARY KEY, v TEXT);
+
+statement count 3
+INSERT INTO explain_t VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+
+query
+EXPLAIN DELETE FROM explain_t;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│         Table: explain_t  │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN TRUNCATE explain_t;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└───────────────────────────┘
+
+
+query
+EXPLAIN TRUNCATE TABLE explain_t;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└───────────────────────────┘

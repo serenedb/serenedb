@@ -38,11 +38,11 @@ class SereneDBPhysicalCTAS : public SereneDBPhysicalSSTInsert {
                        duckdb::idx_t estimated_cardinality);
 
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
-    duckdb::ClientContext& context) const override;
+    duckdb::ClientContext& context) const final;
   duckdb::SinkFinalizeType Finalize(
     duckdb::Pipeline& pipeline, duckdb::Event& event,
     duckdb::ClientContext& context,
-    duckdb::OperatorSinkFinalizeInput& input) const override;
+    duckdb::OperatorSinkFinalizeInput& input) const final;
 
  private:
   duckdb::unique_ptr<duckdb::BoundCreateTableInfo> _info;

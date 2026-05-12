@@ -85,10 +85,10 @@ WITH networth AS (
   ) AS lmao(guy, coins)
   GROUP BY guy
 )
-SELECT (SELECT total_money FROM networth LIMIT 1);
+SELECT (SELECT total_money FROM networth ORDER BY name LIMIT 1);
 ----
 total_money
-150
+200
 
 
 query

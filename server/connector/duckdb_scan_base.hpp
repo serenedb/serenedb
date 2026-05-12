@@ -27,7 +27,6 @@
 #include <string>
 #include <vector>
 
-#include "connector/row_materializer.h"
 #include "rocksdb/iterator.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/snapshot.h"
@@ -36,6 +35,7 @@
 namespace sdb::connector {
 
 struct SereneDBScanBindData;
+class IndexSource;
 
 // Common state inherited by all per-scan global states.
 // Holds the fields shared across every scan strategy: isolation context,
@@ -69,7 +69,16 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   // Rows emitted -- read by the rows_scanned DuckDB callback.
   std::atomic<duckdb::idx_t> produced_rows{0};
 
-  std::unique_ptr<RowMaterializer> materializer;
+  // Cached IndexSource adapter for the table being scanned: holds whatever
+  // bind/session state the per-source materialiser needs (file-backed: a
+  // bound MultiFileBindData + lookup gstate; rocksdb: small projection +
+  // snapshot/txn). Lazy-built via MakeIndexSource on first use; reused
+  // across batches.
+  // shared_ptr (not unique_ptr) so derived-state destructors don't need
+  // IndexSource's complete type -- the deleter is type-erased.
+  std::shared_ptr<IndexSource> index_source;
+
+  duckdb::idx_t MaxThreads() const override { return 1; }
 
   ~CommonScanGlobalState() override;
 };

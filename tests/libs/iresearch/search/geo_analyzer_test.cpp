@@ -22,6 +22,9 @@
 #include <vpack/parser.h>
 #include <vpack/serializer.h>
 
+#include <bit>
+#include <cstring>
+
 #include "basics/down_cast.h"
 #include "geo/geo_json.h"
 #include "iresearch/analysis/geo_analyzer.hpp"
@@ -40,6 +43,44 @@ template<typename Options>
 void ToVPack(vpack::Builder& builder, const Options& opts) {
   vpack::WriteObject(builder, opts);
 }
+
+// Little-endian WKB builder for the resetWKB analyzer tests. Mirrors the
+// builder in tests/libs/iresearch/utils/wkb_parser_test.cpp; kept local so
+// these tests stay self-contained.
+class WkbBuilder {
+ public:
+  WkbBuilder& PutU8(uint8_t v) {
+    _buf.push_back(static_cast<char>(v));
+    return *this;
+  }
+  WkbBuilder& PutU32(uint32_t v) {
+    if (std::endian::native != std::endian::little) {
+      v = std::byteswap(v);
+    }
+    _buf.append(reinterpret_cast<const char*>(&v), sizeof(v));
+    return *this;
+  }
+  WkbBuilder& PutDouble(double v) {
+    uint64_t raw;
+    std::memcpy(&raw, &v, sizeof(v));
+    if (std::endian::native != std::endian::little) {
+      raw = std::byteswap(raw);
+    }
+    _buf.append(reinterpret_cast<const char*>(&raw), sizeof(raw));
+    return *this;
+  }
+  // OGC SFA: lng then lat.
+  WkbBuilder& PutXY(double lng, double lat) {
+    return PutDouble(lng).PutDouble(lat);
+  }
+  WkbBuilder& Header(uint32_t type) { return PutU8(1).PutU32(type); }
+  irs::bytes_view View() const {
+    return {reinterpret_cast<const irs::byte_type*>(_buf.data()), _buf.size()};
+  }
+
+ private:
+  std::string _buf;
+};
 
 }  // namespace
 
@@ -64,64 +105,50 @@ TEST(GeoBench, sizes) {
   auto s2_analyzer =
     GeoJsonAnalyzer::make(irs::slice_to_view<char>(opts_builder.slice()));
 
+  auto store_size = [](irs::analysis::Analyzer& a, vpack::Slice slice) {
+    a.reset(irs::slice_to_view<char>(slice));
+    const auto* store = irs::get<irs::StoreAttr>(a);
+    return store ? store->value.size() : size_t{0};
+  };
+
   auto builder = vpack::Parser::fromJson(R"=([ 6.537, 50.332 ])=");
   vpack_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   s2_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "Point",
       "coordinates": [ 6.537, 50.332 ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "MultiPoint",
         "coordinates": [ [ 6.537, 50.332 ], [ 6.537, 50.376 ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "MultiPoint",
         "coordinates": [ [ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ], [ 6.537, 50.376 ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "LineString",
         "coordinates": [ [ 6.537, 50.332 ], [ 6.537, 50.376 ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "MultiLineString",
@@ -129,24 +156,16 @@ TEST(GeoBench, sizes) {
                          [ [ 6.621, 50.332 ], [ 6.621, 50.376 ] ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "Polygon",
         "coordinates": [ [ [6.1,50.1], [7.5,50.1], [7.5,52.1], [6.1,51.1], [6.1,50.1] ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "MultiPolygon",
@@ -155,70 +174,46 @@ TEST(GeoBench, sizes) {
                          [ [ [6.1,50.1], [6.5,50.1], [6.5,51.1], [6.1,51.1], [6.1,50.1] ] ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "Polygon",
         "coordinates": [ [ [6.1,50.1], [7.5,50.1], [7.5,51.1], [6.1,51.1], [6.1,50.1] ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "LineString",
         "coordinates": [ [ 5.437, 50.332 ], [ 7.537, 50.376 ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "Polygon",
         "coordinates": [ [ [1,1], [4,1], [4,4], [1,4], [1,1] ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "Polygon",
         "coordinates": [ [ [1.1,1.1], [4.1,1.1], [4.1,4.1], [1.1,4.1], [1.1,1.1] ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(
     R"=({"type": "Polygon","coordinates": [[[100.318391,13.535502],[100.318391,14.214848],[101.407575,14.214848],[101.407575,13.535502],[100.318391,13.535502]]]})=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 }
 
 TEST(GeoPointAnalyzerTest, constants) {
@@ -366,7 +361,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromArray) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a.reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -401,7 +396,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromArray) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a.reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -446,7 +441,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObject) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(slice_to_view<char>(json_object->slice())));
+    ASSERT_TRUE(a.reset(json_object->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -483,7 +478,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObject) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(slice_to_view<char>(json_object->slice())));
+    ASSERT_TRUE(a.reset(json_object->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -528,7 +523,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObjectComplexPath) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(slice_to_view<char>(json_object->slice())));
+    ASSERT_TRUE(a.reset(json_object->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -565,7 +560,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObjectComplexPath) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(slice_to_view<char>(json_object->slice())));
+    ASSERT_TRUE(a.reset(json_object->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, true));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -877,7 +872,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeLatLngRect) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
@@ -904,7 +899,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeLatLngRect) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
@@ -929,7 +924,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeLatLngRect) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -957,7 +952,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeLatLngRect) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -982,7 +977,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeLatLngRect) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_FALSE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_FALSE(a->reset(json->toJson()));
     ASSERT_FALSE(a->next());
   }
 }
@@ -1046,7 +1041,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePolygon) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
@@ -1073,7 +1068,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePolygon) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
@@ -1098,7 +1093,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePolygon) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -1126,7 +1121,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePolygon) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -1151,7 +1146,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePolygon) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_FALSE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_FALSE(a->reset(json->toJson()));
     ASSERT_FALSE(a->next());
   }
 }
@@ -1217,7 +1212,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeLineString) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
@@ -1247,7 +1242,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeLineString) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
@@ -1275,7 +1270,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeLineString) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -1303,7 +1298,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeLineString) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -1328,7 +1323,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeLineString) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_FALSE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_FALSE(a->reset(json->toJson()));
     ASSERT_FALSE(a->next());
   }
 }
@@ -1402,7 +1397,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeMultiPolygon) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
@@ -1430,7 +1425,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeMultiPolygon) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -1455,7 +1450,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeMultiPolygon) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_FALSE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_FALSE(a->reset(json->toJson()));
     ASSERT_FALSE(a->next());
   }
 }
@@ -1489,7 +1484,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeMultiPoint) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
@@ -1519,7 +1514,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeMultiPoint) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
@@ -1547,7 +1542,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeMultiPoint) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -1575,7 +1570,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeMultiPoint) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -1600,7 +1595,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeMultiPoint) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_FALSE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_FALSE(a->reset(json->toJson()));
     ASSERT_FALSE(a->next());
   }
 }
@@ -1706,7 +1701,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeMultiPolyLine) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
@@ -1736,7 +1731,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeMultiPolyLine) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
@@ -1764,7 +1759,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeMultiPolyLine) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -1792,7 +1787,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeMultiPolyLine) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -1817,7 +1812,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizeMultiPolyLine) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_FALSE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_FALSE(a->reset(json->toJson()));
     ASSERT_FALSE(a->next());
   }
 }
@@ -1856,7 +1851,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePoint) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -1894,7 +1889,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePoint) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -1930,7 +1925,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePoint) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, true));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -1969,7 +1964,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePoint) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, true));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -2005,7 +2000,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePoint) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -2044,7 +2039,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePoint) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, true));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -2090,7 +2085,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePointGeoJSONArray) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -2128,7 +2123,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePointGeoJSONArray) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -2164,7 +2159,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePointGeoJSONArray) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -2203,7 +2198,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePointGeoJSONArray) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -2239,7 +2234,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePointGeoJSONArray) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -2278,7 +2273,7 @@ TEST(GeoJsonAnalyzerVpackTest, tokenizePointGeoJSONArray) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(*a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a->reset(json->toJson()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -2741,4 +2736,130 @@ TEST(GeoJsonAnalyzerVpackTest, createFromSlice) {
     ASSERT_EQ(nullptr,
               GeoJsonAnalyzer::make(slice_to_view<char>(json->slice())));
   }
+}
+
+// resetWKB path: feed raw WKB bytes (simulates GEOMETRY column ingest where
+// the analyzer parses internally) and verify the analyzer produces the same
+// index terms as the vpack-JSON path would for an equivalent point.
+TEST(GeoJsonAnalyzerShapeTest, tokenizePoint) {
+  GeoJsonAnalyzer::Options opts;
+  opts.type = GeoJsonAnalyzer::Type::Point;
+  opts.coding = GeoJsonAnalyzer::Coding::S2Point;
+  vpack::Builder opts_builder;
+  ToVPack(opts_builder, opts);
+  auto a = GeoJsonAnalyzer::make(slice_to_view<char>(opts_builder.slice()));
+  ASSERT_NE(nullptr, a);
+  auto* geo = dynamic_cast<GeoJsonAnalyzer*>(a.get());
+  ASSERT_NE(nullptr, geo);
+
+  WkbBuilder b;
+  b.Header(1).PutXY(6.5, 50.3);
+
+  auto* term = irs::get<TermAttr>(*a);
+  ASSERT_NE(nullptr, term);
+  ASSERT_TRUE(geo->resetWKB(b.View()));
+  size_t term_count = 0;
+  while (a->next()) {
+    ++term_count;
+  }
+  EXPECT_GT(term_count, 0U);
+
+  // Store attr must carry encoded bytes (S2Point tag stripped for non-Shape).
+  auto* store = irs::get<irs::StoreAttr>(*a);
+  ASSERT_NE(nullptr, store);
+  EXPECT_FALSE(irs::IsNull(store->value));
+}
+
+TEST(GeoJsonAnalyzerShapeTest, tokenizePolygon) {
+  GeoJsonAnalyzer::Options opts;
+  opts.type = GeoJsonAnalyzer::Type::Shape;
+  opts.coding = GeoJsonAnalyzer::Coding::S2Point;
+  vpack::Builder opts_builder;
+  ToVPack(opts_builder, opts);
+  auto a = GeoJsonAnalyzer::make(slice_to_view<char>(opts_builder.slice()));
+  ASSERT_NE(nullptr, a);
+  auto* geo = dynamic_cast<GeoJsonAnalyzer*>(a.get());
+  ASSERT_NE(nullptr, geo);
+
+  // Square polygon (single CCW ring), closed per OGC.
+  WkbBuilder b;
+  b.Header(3)
+    .PutU32(1)  // ring count
+    .PutU32(5)  // vertex count (closed)
+    .PutXY(0.0, 0.0)
+    .PutXY(1.0, 0.0)
+    .PutXY(1.0, 1.0)
+    .PutXY(0.0, 1.0)
+    .PutXY(0.0, 0.0);
+
+  ASSERT_TRUE(geo->resetWKB(b.View()));
+  size_t term_count = 0;
+  while (a->next()) {
+    ++term_count;
+  }
+  EXPECT_GT(term_count, 0U);
+
+  auto* store = irs::get<irs::StoreAttr>(*a);
+  ASSERT_NE(nullptr, store);
+  EXPECT_FALSE(irs::IsNull(store->value));
+}
+
+// Point-only analyzer must reject non-point shapes.
+TEST(GeoJsonAnalyzerShapeTest, rejectsShapeVsTypeMismatch) {
+  GeoJsonAnalyzer::Options opts;
+  opts.type = GeoJsonAnalyzer::Type::Point;
+  opts.coding = GeoJsonAnalyzer::Coding::S2Point;
+  vpack::Builder opts_builder;
+  ToVPack(opts_builder, opts);
+  auto a = GeoJsonAnalyzer::make(slice_to_view<char>(opts_builder.slice()));
+  auto* geo = dynamic_cast<GeoJsonAnalyzer*>(a.get());
+  ASSERT_NE(nullptr, geo);
+
+  WkbBuilder b;
+  b.Header(3)
+    .PutU32(1)
+    .PutU32(5)
+    .PutXY(0.0, 0.0)
+    .PutXY(1.0, 0.0)
+    .PutXY(1.0, 1.0)
+    .PutXY(0.0, 1.0)
+    .PutXY(0.0, 0.0);
+  EXPECT_FALSE(geo->resetWKB(b.View()));
+}
+
+TEST(GeoPointAnalyzerShapeTest, tokenizePoint) {
+  GeoPointAnalyzer::Options opts;
+  GeoPointAnalyzer a{opts};
+
+  WkbBuilder b;
+  b.Header(1).PutXY(6.5, 50.3);
+  ASSERT_TRUE(a.resetWKB(b.View()));
+
+  auto* term = irs::get<TermAttr>(a);
+  ASSERT_NE(nullptr, term);
+  size_t term_count = 0;
+  while (a.next()) {
+    ++term_count;
+  }
+  EXPECT_GT(term_count, 0U);
+
+  auto* store = irs::get<irs::StoreAttr>(a);
+  ASSERT_NE(nullptr, store);
+  EXPECT_FALSE(irs::IsNull(store->value));
+}
+
+TEST(GeoPointAnalyzerShapeTest, rejectsNonPoint) {
+  GeoPointAnalyzer::Options opts;
+  GeoPointAnalyzer a{opts};
+
+  WkbBuilder b;
+  b.Header(3)
+    .PutU32(1)
+    .PutU32(5)
+    .PutXY(0.0, 0.0)
+    .PutXY(1.0, 0.0)
+    .PutXY(1.0, 1.0)
+    .PutXY(0.0, 1.0)
+    .PutXY(0.0, 0.0);
+  EXPECT_FALSE(a.resetWKB(b.View()));
 }

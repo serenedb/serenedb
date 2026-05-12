@@ -1,0 +1,133 @@
+control substitution on
+
+# WAL index recovery: TRUNCATE inside the recovery range.
+#
+# Setup: create an inverted index, vacuum so iresearch has on-disk state,
+# block search commits and write rows that the search side never sees,
+# TRUNCATE the table, write more rows after the truncate, then crash. On
+# restart RunWalRecovery must:
+#   - drop the pre-truncate accumulated row ops (the rows are gone),
+#   - reset the iresearch on-disk state at the truncate seq (so the
+#     vacuum'd seed segments don't survive),
+#   - replay the post-truncate inserts so they end up searchable.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY babsky_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE babsky_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO babsky_t VALUES (1, 'seed alpha bravo'), (2, 'seed charlie delta');
+
+statement ok
+CREATE INDEX babsky_idx ON babsky_t USING inverted(id, body babsky_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) babsky_t;
+
+# Sanity: seed rows searchable before we touch anything.
+query
+SELECT id FROM babsky_idx WHERE body @@ ts_phrase('alpha bravo');
+----
+id
+1
+
+# Block search commits -- rocksdb keeps advancing, iresearch falls behind.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# These rows enter the WAL but iresearch never publishes them.
+statement ok
+INSERT INTO babsky_t VALUES (3, 'pre truncate echo'), (4, 'pre truncate foxtrot');
+
+# TRUNCATE while the search side is still behind. After this, iresearch's
+# on-disk segments still hold rows {1,2} from the seed VACUUM, the WAL holds
+# {3,4} that never reached iresearch, and the catalog still has the index.
+statement ok
+TRUNCATE babsky_t;
+
+# Post-truncate rows -- only these should survive recovery.
+statement ok
+INSERT INTO babsky_t VALUES (10, 'post truncate golf'), (20, 'post truncate hotel');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection babsky_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+# Index is still in the catalog.
+connection babsky_after
+query
+SELECT COUNT(*) FROM pg_class WHERE relname = 'babsky_idx';
+----
+count
+1
+
+# Rocksdb side: only the post-truncate rows.
+connection babsky_after
+query
+SELECT id, body FROM babsky_t ORDER BY id;
+----
+id	body
+10	post truncate golf
+20	post truncate hotel
+
+# Pre-truncate seed terms must NOT be searchable -- on-disk iresearch state
+# was reset at the truncate seq.
+connection babsky_after
+query
+SELECT id FROM babsky_idx WHERE body @@ ts_phrase('alpha bravo');
+----
+id
+
+# Pre-truncate WAL-only terms must also NOT come back -- the recovery
+# accumulator was cleared at the truncate seq.
+connection babsky_after
+query
+SELECT id FROM babsky_idx WHERE body @@ ts_phrase('pre truncate echo');
+----
+id
+
+# Post-truncate rows must be searchable -- WAL replayed them after the
+# truncate boundary.
+connection babsky_after
+query
+SELECT id FROM babsky_idx WHERE body @@ ts_phrase('post truncate golf');
+----
+id
+10
+
+connection babsky_after
+query
+SELECT id FROM babsky_idx WHERE body @@ ts_phrase('post truncate hotel');
+----
+id
+20
+
+connection babsky_after
+statement ok
+DROP INDEX babsky_idx;
+
+connection babsky_after
+statement ok
+DROP TABLE babsky_t;
+
+connection babsky_after
+statement ok
+DROP TEXT SEARCH DICTIONARY babsky_dict;

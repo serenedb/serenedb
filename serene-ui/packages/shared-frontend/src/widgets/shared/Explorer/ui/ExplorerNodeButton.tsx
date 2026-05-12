@@ -56,6 +56,7 @@ export const ExplorerNodeButton = ({
                     className,
                     "group/explorer-node pl-4 flex w-full h-full items-center justify-start border-none text-foreground dark:hover:bg-accent pr-1",
                 )}
+                data-sidebar-primary-action="true"
                 onClick={onClick}>
                 {showArrow && onClick && (
                     <ArrowDownIcon className={!open ? "-rotate-90" : ""} />

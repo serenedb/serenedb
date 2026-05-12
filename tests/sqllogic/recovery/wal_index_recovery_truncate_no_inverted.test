@@ -1,0 +1,67 @@
+control substitution on
+
+# WAL index recovery: TRUNCATE on a table with NO inverted index.
+#
+# wal_recovery.cpp's DeleteRangeCF handler is search-only. A table without an
+# inverted index has no entry in `_table2shards`, so the handler must simply
+# no-op for the truncate's table-id range delete -- not FATAL, not iterate
+# anything. After restart the rocksdb side replays the DeleteRange normally
+# and the table is empty.
+
+statement ok
+CREATE TABLE kornaukhov_t(id INTEGER PRIMARY KEY, tag TEXT);
+
+statement ok
+INSERT INTO kornaukhov_t VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+statement ok
+CREATE INDEX kornaukhov_idx ON kornaukhov_t (tag);
+
+statement ok
+TRUNCATE kornaukhov_t;
+
+statement ok
+INSERT INTO kornaukhov_t VALUES (10, 'x'), (20, 'y');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection kornaukhov_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+connection kornaukhov_after
+query
+SELECT id, tag FROM kornaukhov_t ORDER BY id;
+----
+id	tag
+10	x
+20	y
+
+# Secondary index lookup must not surface the pre-truncate rows.
+connection kornaukhov_after
+query
+SELECT id FROM kornaukhov_t WHERE tag = 'a';
+----
+id
+
+# Secondary index lookup must surface the post-truncate row.
+connection kornaukhov_after
+query
+SELECT id FROM kornaukhov_t WHERE tag = 'x';
+----
+id
+10
+
+connection kornaukhov_after
+statement ok
+DROP INDEX kornaukhov_idx;
+
+connection kornaukhov_after
+statement ok
+DROP TABLE kornaukhov_t;

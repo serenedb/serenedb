@@ -201,6 +201,10 @@ class IndexProgressReporter : public ProgressReporterBase {
   void SetPhase(create_index_progress::Phase phase);
   void ReportBatch(uint64_t delta_rows);
   void SetTuplesTotal(uint64_t rows);
+  // index_relid isn't known when CREATE INDEX starts running -- the catalog
+  // assigns it a moment later. SetIndexRelid lets the reporter publish it
+  // mid-flight without tearing down + rebuilding the entry.
+  void SetIndexRelid(ObjectId index_relid);
 };
 
 }  // namespace sdb::pg

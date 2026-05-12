@@ -1,11 +1,14 @@
 import React, { useEffect, useLayoutEffect, useRef } from "react";
 import { GridviewReact, type GridviewReadyEvent, Orientation } from "dockview";
 import {
+    DEFAULT_HOTKEYS,
     DashboardCardEditor,
     DashboardGrid,
     DashboardsSidebar,
     DashboardsTopbar,
+    useAppHotkey,
     useDockviewLayoutSync,
+    useSidebarFocusController,
 } from "@serene-ui/shared-frontend";
 import { useDashboardPage } from "../model";
 
@@ -13,6 +16,15 @@ const DASHBOARDS_GRID_LAYOUT_STORAGE_KEY = "dashboards:grid-layout";
 const DASHBOARDS_GRID_SIDEBAR_PANEL_ID = "dashboards-sidebar";
 const DASHBOARDS_GRID_MAIN_PANEL_ID = "dashboards-main";
 const DASHBOARDS_GRID_EDITOR_PANEL_ID = "dashboards-editor";
+const DASHBOARDS_SIDEBAR_ROOT_SELECTOR =
+    "[data-dashboards-sidebar-root='true']";
+const DASHBOARDS_MAIN_ROOT_SELECTOR = "[data-dashboards-main-root='true']";
+const DASHBOARDS_EDITOR_ROOT_SELECTOR = "[data-dashboards-editor-root='true']";
+const DASHBOARDS_SIDEBAR_SECTION_IDS = [
+    "favorites",
+    "dashboards",
+    "savedQueries",
+] as const;
 
 const DASHBOARDS_SIDEBAR_DEFAULT_SIZE = 280;
 const DASHBOARDS_SIDEBAR_MIN_SIZE = 200;
@@ -40,13 +52,16 @@ const MainPanel: React.FC = () => {
         closeEditor,
         openEditor,
         refreshAllCharts,
+        setCurrentDashboardId,
         isExplorerOpened,
         toggleExplorer,
     } = useDashboardPage();
     const { isResizing } = React.useContext(DashboardsLayoutContext);
 
     return (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden h-full">
+        <div
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden h-full"
+            data-dashboards-main-root="true">
             <DashboardsTopbar
                 currentDashboard={currentDashboard}
                 isExplorerOpened={isExplorerOpened}
@@ -58,6 +73,7 @@ const MainPanel: React.FC = () => {
                 editedBlock={editedBlock}
                 isPanelResizing={isResizing}
                 manualRefreshToken={chartsRefreshToken}
+                onCreateDashboard={setCurrentDashboardId}
                 onCloseEditor={closeEditor}
                 onEditBlock={openEditor}
             />
@@ -68,11 +84,15 @@ const MainPanel: React.FC = () => {
 const EditorPanel: React.FC = () => {
     const { editedBlock, closeEditor, setEditedBlock } = useDashboardPage();
     return (
-        <DashboardCardEditor
-            editedBlock={editedBlock}
-            onClose={closeEditor}
-            onEditedBlockChange={setEditedBlock}
-        />
+        <div
+            className="h-full w-full min-h-0 min-w-0"
+            data-dashboards-editor-root="true">
+            <DashboardCardEditor
+                editedBlock={editedBlock}
+                onClose={closeEditor}
+                onEditedBlockChange={setEditedBlock}
+            />
+        </div>
     );
 };
 
@@ -167,7 +187,23 @@ export const DashboardsPage = () => {
     const [isResizing, setIsResizing] = React.useState(false);
     const resizeDebounceRef = useRef<number | null>(null);
 
-    const { isEditorOpened, isExplorerOpened } = useDashboardPage();
+    const { isEditorOpened, isExplorerOpened, toggleExplorer } =
+        useDashboardPage();
+    const {
+        focusLastEditor,
+        focusNextSidebarSection,
+        focusPreviousSidebarSection,
+        focusSidebar,
+        isSidebarFocused,
+        restoreSidebarFocusAfterRender,
+    } = useSidebarFocusController({
+        sidebarRootSelector: DASHBOARDS_SIDEBAR_ROOT_SELECTOR,
+        editorRootSelectors: [
+            DASHBOARDS_EDITOR_ROOT_SELECTOR,
+            DASHBOARDS_MAIN_ROOT_SELECTOR,
+        ],
+        sectionOrder: [...DASHBOARDS_SIDEBAR_SECTION_IDS],
+    });
 
     const layoutContextValue = React.useMemo(
         () => ({ isResizing }),
@@ -256,6 +292,67 @@ export const DashboardsPage = () => {
             }
         };
     }, []);
+
+    const handleToggleSidebarFocus = React.useCallback(() => {
+        if (isSidebarFocused()) {
+            toggleExplorer();
+
+            if (typeof window === "undefined") {
+                focusLastEditor();
+                return;
+            }
+
+            window.requestAnimationFrame(() => {
+                focusLastEditor();
+            });
+            return;
+        }
+
+        if (!isExplorerOpened) {
+            toggleExplorer();
+            restoreSidebarFocusAfterRender();
+            return;
+        }
+
+        if (!focusSidebar()) {
+            restoreSidebarFocusAfterRender();
+        }
+    }, [
+        focusLastEditor,
+        focusSidebar,
+        isExplorerOpened,
+        isSidebarFocused,
+        restoreSidebarFocusAfterRender,
+        toggleExplorer,
+    ]);
+
+    const handleFocusDown = React.useCallback(() => {
+        if (isSidebarFocused()) {
+            focusNextSidebarSection();
+        }
+    }, [focusNextSidebarSection, isSidebarFocused]);
+
+    const handleFocusUp = React.useCallback(() => {
+        if (isSidebarFocused()) {
+            focusPreviousSidebarSection();
+        }
+    }, [focusPreviousSidebarSection, isSidebarFocused]);
+
+    useAppHotkey(
+        DEFAULT_HOTKEYS.CONSOLE_TOGGLE_EXPLORER_EDITOR,
+        handleToggleSidebarFocus,
+        [handleToggleSidebarFocus],
+    );
+    useAppHotkey(
+        DEFAULT_HOTKEYS.CONSOLE_FOCUS_WINDOW_DOWN,
+        handleFocusDown,
+        [handleFocusDown],
+    );
+    useAppHotkey(
+        DEFAULT_HOTKEYS.CONSOLE_FOCUS_WINDOW_UP,
+        handleFocusUp,
+        [handleFocusUp],
+    );
 
     useLayoutEffect(() => {
         const event = gridEventRef.current;

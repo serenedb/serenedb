@@ -27,7 +27,8 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/system-compiler.h"
-#include "catalog/identifiers/revision_id.h"
+#include "catalog/object.h"
+#include "catalog/sequence.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/key_utils.hpp"
@@ -86,7 +87,7 @@ void SereneDBPhysicalSSTInsert::SetupSSTState(SSTInsertGlobalState& state,
 
   // Create SST directory
   state.sst_directory = absl::StrCat(engine.path(), "/", kBulkInsertDir, "/",
-                                     RevisionId::create().id());
+                                     catalog::NextId().id());
   std::filesystem::create_directories(state.sst_directory);
 
   // Configure SstFileWriter options
@@ -139,9 +140,17 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
 
   // Create index writers
   auto& conn_ctx = GetSereneDBContext(context);
-  conn_ctx.AddRocksDBWrite();
+  state->table_shard =
+    conn_ctx.EnsureCatalogSnapshot()->GetTableShard(state->table_id);
+  SDB_ASSERT(state->table_shard);
+  state->table_lock = std::unique_lock{state->table_shard->GetTableLock()};
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
     state->table_id, conn_ctx, *_table);
+
+  state->generated_pk_seq =
+    conn_ctx.EnsureCatalogSnapshot()->GetObject<catalog::Sequence>(
+      _table->GetGeneratedPkSeqId());
+  SDB_ASSERT(state->generated_pk_seq || !_table->PKColumns().empty());
 
   return state;
 }
@@ -163,10 +172,19 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
   // Build row keys: [ObjectId][ColumnId(reserved)][PK bytes]
   gstate.row_keys.clear();
   gstate.row_keys.reserve(num_rows);
+
+  std::vector<duckdb::UnifiedVectorFormat> pk_formats;
+  duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
+
+  uint64_t generated_pk_base =
+    gstate.generated_pk_seq
+      ? gstate.generated_pk_seq->ReserveWriteUnsafe(num_rows)
+      : 0;
+
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     duckdb_primary_key::MakeColumnKey(
-      chunk, gstate.pk_columns, row, gstate.table_key, [](auto) {},
-      gstate.row_keys.emplace_back());
+      pk_formats, gstate.pk_columns, row, generated_pk_base + row,
+      gstate.table_key, [](auto) {}, gstate.row_keys.emplace_back());
   }
 
   // Write each column to its SST file

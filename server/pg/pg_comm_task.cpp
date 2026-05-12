@@ -26,7 +26,9 @@
 #include <absl/strings/numbers.h>
 
 #include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/types.hpp>
 #include <duckdb/execution/executor.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -35,9 +37,11 @@
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_data/transaction_info.hpp>
+#include <duckdb/parser/query_node/delete_query_node.hpp>
 #include <duckdb/parser/sql_statement.hpp>
 #include <duckdb/parser/statement/alter_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
+#include <duckdb/parser/statement/delete_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
 #include <duckdb/parser/statement/execute_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
@@ -48,6 +52,7 @@
 #include "basics/assert.h"
 #include "basics/dtoa.h"
 #include "basics/endian.h"
+#include "basics/exceptions.h"
 #include "basics/global_resource_monitor.h"
 #include "basics/logger/logger.h"
 #include "basics/static_strings.h"
@@ -141,6 +146,17 @@ constexpr std::array<char, 47> kTimeoutTermination{PQ_MSG_ERROR_RESPONSE,
 
 // clang-format on
 
+duckdb::LogicalType ResolveExpectedType(const auto& value_map, uint16_t id) {
+  auto type_it = value_map.find(absl::StrCat(id + 1));
+  return (type_it != value_map.end() &&
+          type_it->second->GetValue().type().id() !=
+            duckdb::LogicalTypeId::UNKNOWN &&
+          type_it->second->GetValue().type().id() !=
+            duckdb::LogicalTypeId::INVALID)
+           ? type_it->second->GetValue().type()
+           : duckdb::LogicalTypeId::VARCHAR;
+}
+
 }  // namespace
 
 PgSQLCommTaskBase::PgSQLCommTaskBase(rest::GeneralServer& server,
@@ -224,6 +240,9 @@ void PgSQLCommTaskBase::ProcessNextRoot() noexcept {
 
 void PgSQLCommTaskBase::ProcessWakeup(yaclib::Result<> r) noexcept {
   std::lock_guard lock{_execution_mutex};
+  if (!_current_portal) {
+    return;
+  }
   SDB_ASSERT(!_pop_packet);
   _pop_packet = true;
   SafeCall([&] {
@@ -341,18 +360,11 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       _state = State::Idle;
       _send.Write(ToBuffer(kAuthOk), false);
       _key = _feature.RegisterTask(*this);
-      // clang-format off
-      std::array<char, 13> backend_key_data {
-        PQ_MSG_BACKEND_KEY_DATA, 0x00, 0x00, 0x00, 0x0c, 0x01, 0x02, 0x03, 0x04,
-        0x01, 0x01, 0x01, 0x01};
-      // clang-format on
-      memcpy(backend_key_data.data() + 5, &_key, sizeof(_key));
-      _send.Write(ToBuffer(backend_key_data), false);
 
       connector::SereneDBClientState::Register(*_duckdb_conn->context,
                                                _connection_ctx);
       // PG: the session user is used to resolve "$user" in catalog_search_path.
-      _duckdb_conn->context->session_user = std::string{UserName()};
+      _duckdb_conn->context->session_user = UserName();
       // PG default search_path: "$user", public. The "$user" entry is resolved
       // on each lookup to the current session user; if no schema with that name
       // exists it's silently skipped during resolution.
@@ -370,6 +382,24 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       _connection_ctx->SetSetting(
         "is_superuser", _connection_ctx->isSuperuser() ? "on" : "off", false);
 
+      // Apply all user settings from startup packet
+      for (const auto& user_setting : _client_parameters) {
+        if (user_setting.first == kDatabaseParameter ||
+            user_setting.first == kUserParameter) {
+          // skip non-setting part of startup packet.
+          continue;
+        }
+        auto res = basics::SafeCall([&] -> Result {
+          _connection_ctx->SetSettingChecked(user_setting.first,
+                                             user_setting.second, false);
+          return {};
+        });
+        if (res.fail()) {
+          // As per protocol description  - encountered during client hello
+          // error aborts connection.
+          return SendError(res.errorMessage(), res.errorNumber());
+        }
+      }
       // TODO:
       // ParameterStatus messages will be generated when vars from the list:
       // https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-ASYNC
@@ -396,6 +426,14 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
         // TODO(codeworse): Avoid copy string in GetSetting
         SendParameterStatus(param, *_connection_ctx->Get(param));
       }
+
+      // clang-format off
+      std::array<char, 13> backend_key_data {
+        PQ_MSG_BACKEND_KEY_DATA, 0x00, 0x00, 0x00, 0x0c, 0x01, 0x02, 0x03, 0x04,
+        0x01, 0x01, 0x01, 0x01};
+      // clang-format on
+      memcpy(backend_key_data.data() + 5, &_key, sizeof(_key));
+      _send.Write(ToBuffer(backend_key_data), false);
 
       _send.Write(ToBuffer(kReadyForQuery), true);
       std::move(cleanup).Cancel();
@@ -507,14 +545,11 @@ void PgSQLCommTaskBase::DescribeAnalyzedQuery(
 }
 
 void DescribeParameters(const DuckDBStatement& stmt, message::Buffer& buffer) {
-  // Emit (count, [oid]*num). For each positional parameter, echo the OID
-  // the client sent in the Parse message verbatim when it's non-zero --
-  // that matches PG, which treats a client-supplied OID as an assertion
-  // (e.g. `SELECT $1::int4` with client OID=text reports text here, since
-  // the cast coerces a client-sent text into int4 at Execute). Otherwise
-  // fall back to DuckDB's planner-resolved type, and finally to text.
+  // Emit (count, [oid]*num). Client OIDs from Parse are passed to DuckDB's
+  // binder as type hints, so expected_types reflects them for non-zero slots
+  // (and the binder's inference for OID-0 slots). Fall back to text when the
+  // binder couldn't infer.
   const auto& prepared = *stmt.prepared;
-  const auto expected_types = prepared.GetExpectedParameterTypes();
   const uint16_t num_fields =
     static_cast<uint16_t>(prepared.named_param_map.size());
 
@@ -523,18 +558,8 @@ void DescribeParameters(const DuckDBStatement& stmt, message::Buffer& buffer) {
   prefix_data[0] = PQ_MSG_PARAMETER_DESCRIPTION;
   absl::big_endian::Store16(prefix_data + 5, num_fields);
 
-  for (uint16_t i = 1; i <= num_fields; ++i) {
-    int32_t oid = 0;
-    if (i - 1 < stmt.param_oids.size() && stmt.param_oids[i - 1] != 0) {
-      oid = stmt.param_oids[i - 1];
-    } else if (auto type_it = expected_types.find(absl::StrCat(i));
-               type_it != expected_types.end() &&
-               type_it->second.id() != duckdb::LogicalTypeId::UNKNOWN &&
-               type_it->second.id() != duckdb::LogicalTypeId::INVALID) {
-      oid = Type2Oid(type_it->second);
-    } else {
-      oid = PgTypeOID::kText;
-    }
+  for (uint16_t i = 0; i < num_fields; ++i) {
+    int32_t oid = Type2Oid(ResolveExpectedType(prepared.data->value_map, i));
     absl::big_endian::Store32(buffer.GetContiguousData(4), oid);
   }
 
@@ -556,53 +581,41 @@ void PgSQLCommTaskBase::DescribePortal(const DuckDBPortal& portal) {
 void PgSQLCommTaskBase::DescribeStatement(DuckDBStatement& statement) {
   SDB_ASSERT(statement.prepared);
   DescribeParameters(statement, _send);
-  const auto return_type =
-    statement.prepared->GetStatementProperties().return_type;
-  DescribeAnalyzedQuery(return_type, statement.resolved_types,
-                        statement.resolved_names, {});
-}
+  auto& prepared = *statement.prepared;
+  const auto return_type = prepared.GetStatementProperties().return_type;
+  const auto* types = &prepared.GetTypes();
+  const auto* names = &prepared.GetNames();
 
-void PgSQLCommTaskBase::ResolveStatementTypes(DuckDBStatement& stmt) {
-  SDB_ASSERT(stmt.prepared);
-  auto& prepared = *stmt.prepared;
-  stmt.resolved_types = prepared.GetTypes();
-  stmt.resolved_names = prepared.GetNames();
-
-  if (prepared.GetStatementProperties().return_type !=
-      duckdb::StatementReturnType::QUERY_RESULT) {
-    return;
-  }
-  const auto nparams = prepared.named_param_map.size();
-  if (nparams == 0) {
-    return;
-  }
-  const bool all_resolved =
-    absl::c_none_of(stmt.resolved_types, [](const duckdb::LogicalType& t) {
-      return t.id() == duckdb::LogicalTypeId::UNKNOWN ||
-             t.id() == duckdb::LogicalTypeId::INVALID;
-    });
-  if (all_resolved) {
-    return;
-  }
-
-  duckdb::vector<duckdb::Value> dummy;
-  dummy.reserve(nparams);
-  for (size_t i = 0; i < nparams; ++i) {
-    const auto oid =
-      i < stmt.param_oids.size() ? stmt.param_oids[i] : int32_t{0};
-    auto type = oid != 0 ? Oid2Type(oid) : duckdb::LogicalType::VARCHAR;
-    duckdb::Value v{"1"};
-    if (!v.DefaultTryCastAs(type)) {
-      v = duckdb::Value{type};
+  // For QUERY_RESULT statements with parameters, column types may still be
+  // UNKNOWN/INVALID if the binder couldn't infer them at Parse. Drive a
+  // dummy bind with hint-derived values to coerce concrete types -- this
+  // path only exists for Describe-before-Bind; once Bind happens the portal
+  // carries fully resolved types.
+  duckdb::unique_ptr<duckdb::PendingQueryResult> pending;
+  if (return_type == duckdb::StatementReturnType::QUERY_RESULT &&
+      !prepared.named_param_map.empty() &&
+      absl::c_any_of(*types, [](const duckdb::LogicalType& t) {
+        return t.id() == duckdb::LogicalTypeId::UNKNOWN ||
+               t.id() == duckdb::LogicalTypeId::INVALID;
+      })) {
+    duckdb::vector<duckdb::Value> dummy;
+    dummy.reserve(prepared.named_param_map.size());
+    for (size_t i = 0; i < prepared.named_param_map.size(); ++i) {
+      auto type = ResolveExpectedType(prepared.data->value_map, i);
+      duckdb::Value v{"1"};
+      if (!v.DefaultTryCastAs(type)) {
+        v = duckdb::Value{type};
+      }
+      dummy.emplace_back(std::move(v));
     }
-    dummy.emplace_back(std::move(v));
+    pending = PendingQueryEnsured(prepared, dummy, true);
+    if (!pending->HasError()) {
+      types = &pending->types;
+      names = &pending->names;
+    }
   }
-  auto pending = prepared.PendingQuery(dummy, true);
-  if (pending->HasError()) {
-    return;
-  }
-  stmt.resolved_types = pending->types;
-  stmt.resolved_names = pending->names;
+
+  DescribeAnalyzedQuery(return_type, *types, *names, {});
 }
 
 void PgSQLCommTaskBase::DescribeQuery(std::string_view packet) {
@@ -686,7 +699,6 @@ void PgSQLCommTaskBase::RunSimpleQuery(std::string_view query_string) {
   if (IsCancelled()) {
     return;
   }
-  _connection_ctx->DropCatalogSnapshot();
 
   // Strip trailing null bytes from PG wire protocol
   while (!query_string.empty() && query_string.back() == '\0') {
@@ -746,8 +758,6 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
     return;  // error
   }
 
-  _connection_ctx->DropCatalogSnapshot();
-
   // Advance to next statement if any
   ++stmt.current_stmt_idx;
   while (stmt.current_stmt_idx < stmt.extracted.size()) {
@@ -755,7 +765,7 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
       return;
     }
     auto& next = stmt.extracted[stmt.current_stmt_idx];
-    stmt.prepared = _duckdb_conn->Prepare(next->query);
+    stmt.prepared = _duckdb_conn->Prepare(std::move(next));
     if (stmt.prepared->HasError()) {
       SendError(stmt.prepared->GetErrorObject());
       return;
@@ -858,11 +868,6 @@ std::optional<DuckDBBindInfo> PgSQLCommTaskBase::ParseBindVars(
   uint16_t params = absl::big_endian::Load16(packet.data());
   packet.remove_prefix(sizeof(int16_t));
 
-  // Resolve expected param types from the prepared statement's positional
-  // parameter map ("1", "2", ...). GetTypes() returns output column types,
-  // not parameter types, so it's unusable here.
-  const auto expected_types = stmt.prepared->GetExpectedParameterTypes();
-
   if (input_formats.size() > 1 && input_formats.size() != params) {
     SendError(absl::StrCat("bind message has ", input_formats.size(),
                            " parameter formats but ", params, " parameters"),
@@ -897,23 +902,15 @@ std::optional<DuckDBBindInfo> PgSQLCommTaskBase::ParseBindVars(
         format = input_formats[i];
       }
 
-      // Determine param type: DuckDB's resolved type first (pinned by a
-      // cast or concrete usage), then the OID the client sent in Parse,
-      // then VARCHAR as a last resort.
-      auto type_it = expected_types.find(absl::StrCat(i + 1));
-      duckdb::LogicalType param_type;
-      if (type_it != expected_types.end() &&
-          type_it->second.id() != duckdb::LogicalTypeId::UNKNOWN &&
-          type_it->second.id() != duckdb::LogicalTypeId::INVALID) {
-        param_type = type_it->second;
-      } else if (i < stmt.param_oids.size() && stmt.param_oids[i] != 0) {
-        param_type = Oid2Type(stmt.param_oids[i]);
-      } else {
-        param_type = duckdb::LogicalType::VARCHAR;
-      }
+      // Parameter types are pinned at Parse via the type-hints API.
+      // VARCHAR remains the fallback for
+      // the OID-0 case where the binder genuinely couldn't infer a type.
+      duckdb::LogicalType param_type =
+        ResolveExpectedType(stmt.prepared->data->value_map, i);
 
       std::string_view param{packet.data(), static_cast<size_t>(length)};
-      auto param_value = DeserializeParameter(param_type, format, param);
+      auto param_value = DeserializeParameter(
+        param_type, format, param, *_connection_ctx->EnsureCatalogSnapshot());
       if (!param_value) {
         switch (param_value.error()) {
           case DeserializeError::InvalidRepresentation:
@@ -1047,38 +1044,62 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
   ParamIndex num_params = absl::big_endian::Load16(packet.data());
   packet.remove_prefix(sizeof(int16_t));
 
-  std::vector<int32_t> oids;
+  duckdb::case_insensitive_map_t<duckdb::LogicalType> type_hints;
   if (num_params > 0) {
     if (packet.size() < num_params * sizeof(int32_t)) {
       return SendError("Malformed Parse packet.", ERRCODE_PROTOCOL_VIOLATION);
     }
-    oids.reserve(num_params);
+    auto snapshot = _connection_ctx->EnsureCatalogSnapshot();
     for (ParamIndex i = 0; i < num_params; ++i) {
-      oids.push_back(absl::big_endian::Load32(packet.data()));
+      auto oid = static_cast<int32_t>(absl::big_endian::Load32(packet.data()));
       packet.remove_prefix(sizeof(int32_t));
+      // Client OID 0 means "infer" -- skip so the binder is free to pick a
+      // type from surrounding expression context.
+      if (oid != 0) {
+        type_hints.emplace(absl::StrCat(i + 1), Oid2Type(oid, *snapshot));
+      }
     }
   }
 
-  // Prepare via DuckDB instead of libpg_query + Velox
+  // Prepare via DuckDB instead of libpg_query + Velox. Pass client-supplied
+  // OIDs as type hints so DuckDB's binder pins parameter slot types instead
+  // of unifying them with surrounding column types (which would propagate
+  // aliases like "oid" to a parameter the client declared as int8). After
+  // Prepare, prepared->GetExpectedParameterTypes() is the single source of
+  // truth for parameter types -- we don't need to retain the raw OIDs.
   auto& stmt = (it == _statements.end()) ? _anonymous_statement : it->second;
   stmt.Reset();
-  stmt.prepared = _duckdb_conn->Prepare(std::string{_current_query});
+  stmt.prepared = _duckdb_conn->Prepare(
+    std::string{_current_query}, type_hints.empty() ? nullptr : &type_hints);
   if (stmt.prepared->HasError()) {
     SendError(stmt.prepared->GetErrorObject());
     stmt.prepared.reset();
     return;
   }
   _current_query = stmt.prepared->query;
-  // Retain the client-supplied parameter OIDs; they're used as a fallback
-  // in DescribeParameters / ParseBindVars when DuckDB's planner couldn't
-  // infer a concrete type for a positional parameter (e.g. the AST doesn't
-  // expose a cast that would pin the type).
-  stmt.param_oids = std::move(oids);
-  ResolveStatementTypes(stmt);
 
   it = _statements.end();
   _send.Write(ToBuffer(kParseComplete), true);
   _success_packet = true;
+}
+
+duckdb::unique_ptr<duckdb::PendingQueryResult>
+PgSQLCommTaskBase::PendingQueryEnsured(duckdb::PreparedStatement& prepared,
+                                       duckdb::vector<duckdb::Value>& values,
+                                       bool allow_stream_result) {
+  const auto& props = prepared.GetStatementProperties();
+  const auto db_name = DatabaseName();
+  _connection_ctx->EnsureCatalogSnapshot();
+  if (props.modified_databases.contains(db_name)) {
+    _connection_ctx->EnsureRocksDBTransaction();
+    _connection_ctx->EnsureRocksDBSnapshot();
+  } else if (props.read_databases.contains(db_name)) {
+    if (_connection_ctx->IsExplicitTransaction()) {
+      _connection_ctx->EnsureRocksDBTransaction();
+    }
+    _connection_ctx->EnsureRocksDBSnapshot();
+  }
+  return prepared.PendingQuery(values, allow_stream_result);
 }
 
 void PgSQLCommTaskBase::ExecutePortal(DuckDBPortal& portal) {
@@ -1113,7 +1134,8 @@ auto PgSQLCommTaskBase::BindStatement(DuckDBStatement& stmt,
   portal.bind_info = std::move(bind_info);
 
   auto& prepared = *stmt.prepared;
-  portal.pending = prepared.PendingQuery(portal.bind_info.param_values, true);
+  portal.pending =
+    PendingQueryEnsured(prepared, portal.bind_info.param_values, true);
   if (portal.pending->HasError()) {
     SendError(portal.pending->GetErrorObject());
     portal.pending.reset();
@@ -1213,9 +1235,11 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
   auto& portal = *_current_portal;
   SDB_ASSERT(portal.stmt);
 
-  // If we have a pending query, drive execution
   if (portal.pending) {
-    auto status = portal.pending->ExecuteTask();
+    auto status = portal.pending->ExecuteTask(
+      [weak = weak_from_this(), feature = &_feature] {
+        feature->ScheduleProcessWakeup(weak);
+      });
     switch (status) {
       case duckdb::PendingExecutionResult::RESULT_READY: {
         // Execution complete -- get the streaming result
@@ -1235,12 +1259,7 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
         // More work needed -- continue polling
         return ProcessState::More;
       case duckdb::PendingExecutionResult::BLOCKED:
-        // Blocked -- register callback and return Wait
-        duckdb::Executor::Get(*_duckdb_conn->context)
-          .SetTaskRescheduledCallback(
-            [weak = weak_from_this(), feature = &_feature] {
-              feature->ScheduleProcessWakeup(weak);
-            });
+        // Blocked -- callback was registered by ExecuteTask.
         return ProcessState::Wait;
       case duckdb::PendingExecutionResult::EXECUTION_FINISHED:
         // Same as RESULT_READY -- execution complete
@@ -1363,6 +1382,9 @@ CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared) {
     case StatementType::UPDATE_STATEMENT:
       return make("UPDATE");
     case StatementType::DELETE_STATEMENT:
+      if (unbound->Cast<duckdb::DeleteStatement>().node->is_truncate) {
+        return make("TRUNCATE TABLE");
+      }
       return make("DELETE");
     case StatementType::COPY_STATEMENT:
       return make("COPY");
@@ -1559,6 +1581,10 @@ void PgSQLCommTaskBase::ParseClientParameters(std::string_view data) {
       return;
     }
     const std::string_view name{data.data(), name_end};
+    if (name.empty()) {
+      // psql at least adds \0 as termintaion flag and we get empty name.
+      return;
+    }
     data.remove_prefix(name_end + 1);
 
     const auto value_end = data.find('\0');
@@ -1668,6 +1694,7 @@ void PgSQLCommTaskBase::FinishPacket() noexcept try {
     }
   }
   _current_packet_type = 0;
+  _pop_packet = false;
   SDB_ASSERT(!_queue.empty());
   _queue.pop();
   if (Stopped()) {
@@ -1787,7 +1814,11 @@ void PgSQLCommTask<T>::Start() {
 template<rest::SocketType T>
 void PgSQLCommTask<T>::SendAsync(message::SequenceView data) noexcept {
   if (_send_should_close.load(std::memory_order_acquire)) {
-    Base::Close(this->_close_error);
+    asio_ns::dispatch(
+      this->_protocol->context.io_context,
+      [self = this->shared_from_this(), ec = this->_close_error] {
+        basics::downCast<PgSQLCommTask<T>>(*self).Base::Close(ec);
+      });
     return;
   }
   if (data.Empty()) {

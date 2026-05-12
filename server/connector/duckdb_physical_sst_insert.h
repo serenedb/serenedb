@@ -22,12 +22,19 @@
 
 #include <duckdb.hpp>
 #include <duckdb/execution/physical_operator.hpp>
+#include <shared_mutex>
 
 #include "catalog/table.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "rocksdb/sst_file_writer.h"
+#include "storage_engine/table_shard.h"
 
+namespace sdb::catalog {
+
+class Sequence;
+
+}  // namespace sdb::catalog
 namespace sdb::connector {
 
 struct SSTInsertColumnMeta {
@@ -51,6 +58,8 @@ struct SSTInsertGlobalState : public duckdb::GlobalSinkState {
   rocksdb::DB* db = nullptr;
   rocksdb::ColumnFamilyHandle* cf = nullptr;
 
+  std::shared_ptr<catalog::Sequence> generated_pk_seq;
+
   // Index writers -- created once, reused per Sink() call
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
 
@@ -63,6 +72,9 @@ struct SSTInsertGlobalState : public duckdb::GlobalSinkState {
   bool has_data = false;
   bool finalized = false;
 
+  std::shared_ptr<TableShard> table_shard;
+  std::unique_lock<std::shared_mutex> table_lock;
+
   ~SSTInsertGlobalState() override;
 };
 
@@ -74,12 +86,12 @@ class SereneDBPhysicalSSTInsert : public duckdb::PhysicalOperator {
                             duckdb::idx_t estimated_cardinality);
 
   // Sink interface
-  bool IsSink() const override { return true; }
+  bool IsSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
     duckdb::ClientContext& context) const override;
   duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
                               duckdb::DataChunk& chunk,
-                              duckdb::OperatorSinkInput& input) const override;
+                              duckdb::OperatorSinkInput& input) const final;
   duckdb::SinkFinalizeType Finalize(
     duckdb::Pipeline& pipeline, duckdb::Event& event,
     duckdb::ClientContext& context,
@@ -87,11 +99,11 @@ class SereneDBPhysicalSSTInsert : public duckdb::PhysicalOperator {
 
   // Source interface -- returns insert count
   duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
-    duckdb::ClientContext& context) const override;
+    duckdb::ClientContext& context) const final;
   duckdb::SourceResultType GetDataInternal(
     duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
-    duckdb::OperatorSourceInput& input) const override;
-  bool IsSource() const override { return true; }
+    duckdb::OperatorSourceInput& input) const final;
+  bool IsSource() const final { return true; }
 
  protected:
   // Sets up SST writers on state for the given table. Does NOT create index

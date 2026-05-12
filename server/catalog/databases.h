@@ -22,13 +22,11 @@
 
 #include <duckdb/main/database_manager.hpp>
 
-#include "catalog/database.h"
 #include "utils/exec_context.h"
 
 namespace sdb::catalog {
 
-Result CreateDatabase(const ExecContext& exec,
-                      catalog::DatabaseOptions options);
+Result CreateDatabase(const ExecContext& exec, std::string_view name);
 Result DropDatabase(const ExecContext& exec, std::string_view db_name);
 
 }  // namespace sdb::catalog

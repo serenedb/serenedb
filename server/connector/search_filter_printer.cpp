@@ -24,6 +24,7 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <iresearch/search/geo_filter.h>
 
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
@@ -35,10 +36,12 @@
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/prefix_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
+#include <iresearch/search/regexp_filter.hpp>
 #include <iresearch/search/search_range.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
+#include <iresearch/search/wildcard_ngram_filter.hpp>
 
 #include "catalog/mangling.h"
 
@@ -90,6 +93,58 @@ std::string RangeToString(const SearchRange<T>& range) {
 
 template<typename FT>
 std::string StringifyFilter(const Filter& filter, FT&& ft);
+
+// Renders one phrase-part option variant. Shared between PHRASE and
+// WILDCARD_NGRAM filters which both hold ByPhraseOptions parts.
+struct PhrasePartVisitor : util::Noncopyable {
+  auto operator()(const ByTermOptions& opts) const {
+    absl::StrAppend(out, "Term:", TermToString(opts.term));
+  }
+  auto operator()(const ByTermsOptions& opts) const {
+    absl::StrAppend(out, "Terms:[",
+                    absl::StrJoin(opts.terms, "",
+                                  [](std::string* o, const auto& tb) {
+                                    const auto& [term, boost] = tb;
+                                    absl::StrAppend(o, "['", TermToString(term),
+                                                    "', ", boost, "],");
+                                  }),
+                    "]");
+  }
+  auto operator()(const ByPrefixOptions& opts) const {
+    absl::StrAppend(out, "Prefix:", TermToString(opts.term));
+  }
+  auto operator()(const ByWildcardOptions& opts) const {
+    absl::StrAppend(out, "Wildcard:", TermToString(opts.term));
+  }
+  auto operator()(const ByEditDistanceOptions& opts) const {
+    absl::StrAppend(out, "Levenshtein:", TermToString(opts.term));
+  }
+  auto operator()(const ByRegexpOptions& opts) const {
+    absl::StrAppend(out, "Regexp:", TermToString(opts.pattern));
+  }
+  auto operator()(const ByRangeOptions& opts) const {
+    absl::StrAppend(out, "Range: ");
+    if (opts.range.min_type == BoundType::Unbounded) {
+      absl::StrAppend(out, "*");
+    } else {
+      absl::StrAppend(
+        out, opts.range.min_type == BoundType::Inclusive ? "[" : "(",
+        std::string(reinterpret_cast<const char*>(opts.range.min.data()),
+                    opts.range.min.size()));
+    }
+    absl::StrAppend(out, "..");
+    if (opts.range.max_type == BoundType::Unbounded) {
+      absl::StrAppend(out, "*");
+    } else {
+      absl::StrAppend(
+        out,
+        std::string(reinterpret_cast<const char*>(opts.range.max.data()),
+                    opts.range.max.size()),
+        opts.range.max_type == BoundType::Inclusive ? "]" : ")");
+    }
+  }
+  std::string* out;
+};
 
 template<typename FT>
 void StringifyRange(std::string* out, const ByRange& range, FT&& ft) {
@@ -206,63 +261,99 @@ void StringifyWildcard(std::string* out, const ByWildcard& filter, FT&& ft) {
 }
 
 template<typename FT>
-void StringifyPhrase(std::string* out, const ByPhrase& filter, FT&& ft) {
-  struct PartVisitor : util::Noncopyable {
-    auto operator()(const ByTermOptions& opts) const {
-      absl::StrAppend(out, "Term:", TermToString(opts.term));
-    }
-    auto operator()(const ByTermsOptions& opts) const {
-      absl::StrAppend(out, "Terms:[",
-                      absl::StrJoin(opts.terms, "",
-                                    [](std::string* o, const auto& tb) {
-                                      const auto& [term, boost] = tb;
-                                      absl::StrAppend(o, "['",
-                                                      TermToString(term), "', ",
-                                                      boost, "],");
-                                    }),
-                      "]");
-    }
-    auto operator()(const ByPrefixOptions& opts) const {
-      absl::StrAppend(out, "Prefix:", TermToString(opts.term));
-    }
-    auto operator()(const ByWildcardOptions& opts) const {
-      absl::StrAppend(out, "Wildcard:", TermToString(opts.term));
-    }
-    auto operator()(const ByEditDistanceOptions& opts) const {
-      absl::StrAppend(out, "Levenshtein:", TermToString(opts.term));
-    }
-    auto operator()(const ByRangeOptions& opts) const {
-      absl::StrAppend(out, "Range: ");
-      if (opts.range.min_type == BoundType::Unbounded) {
-        absl::StrAppend(out, "*");
-      } else {
-        absl::StrAppend(
-          out, opts.range.min_type == BoundType::Inclusive ? "[" : "(",
-          std::string(reinterpret_cast<const char*>(opts.range.min.data()),
-                      opts.range.min.size()));
-      }
-      absl::StrAppend(out, "..");
-      if (opts.range.max_type == BoundType::Unbounded) {
-        absl::StrAppend(out, "*");
-      } else {
-        absl::StrAppend(
-          out,
-          std::string(reinterpret_cast<const char*>(opts.range.max.data()),
-                      opts.range.max.size()),
-          opts.range.max_type == BoundType::Inclusive ? "]" : ")");
-      }
-    }
-    std::string* out;
-  };
+void StringifyRegexp(std::string* out, const ByRegexp& filter, FT&& ft) {
+  absl::StrAppend(out, "REGEXP[", ft(filter.field()), ", ",
+                  TermToString(filter.options().pattern), "]");
+}
 
+template<typename FT>
+void StringifyPhrase(std::string* out, const ByPhrase& filter, FT&& ft) {
   std::string parts_str;
   for (const auto& part : filter.options()) {
     std::string part_str;
-    part.part.visit(PartVisitor{.out = &part_str});
+    part.part.visit(PhrasePartVisitor{.out = &part_str});
     absl::StrAppend(&parts_str, part_str, "(", part.offs_max, ", ",
                     part.offs_min, ")", "; ");
   }
   absl::StrAppend(out, "PHRASE[", ft(filter.field()), " = <", parts_str, ">]");
+}
+
+template<typename FT>
+void StringifyWildcardNgram(std::string* out, const ByWildcardNgram& filter,
+                            FT&& ft) {
+  std::string parts_str;
+  for (const auto& phrase : filter.options().parts) {
+    absl::StrAppend(&parts_str, "<");
+    for (const auto& part : phrase) {
+      std::string part_str;
+      part.part.visit(PhrasePartVisitor{.out = &part_str});
+      absl::StrAppend(&parts_str, part_str, "(", part.offs_max, ", ",
+                      part.offs_min, ")", "; ");
+    }
+    absl::StrAppend(&parts_str, ">; ");
+  }
+  absl::StrAppend(out, "WILDCARD_NGRAM[", ft(filter.field()), ", '",
+                  TermToString(filter.options().token),
+                  "', has_pos=", filter.options().has_pos, ", parts=[",
+                  parts_str, "]]");
+}
+
+std::string_view GeoFilterTypeName(GeoFilterType type) {
+  switch (type) {
+    case GeoFilterType::Intersects:
+      return "Intersects";
+    case GeoFilterType::Contains:
+      return "Contains";
+    case GeoFilterType::IsContained:
+      return "IsContained";
+  }
+  return "?";
+}
+
+std::string_view GeoShapeTypeName(sdb::geo::ShapeContainer::Type type) {
+  using T = sdb::geo::ShapeContainer::Type;
+  switch (type) {
+    case T::Empty:
+      return "Empty";
+    case T::S2Point:
+      return "S2Point";
+    case T::S2Polyline:
+      return "S2Polyline";
+    case T::S2Polygon:
+      return "S2Polygon";
+    case T::S2Multipoint:
+      return "S2Multipoint";
+    case T::S2Multipolyline:
+      return "S2Multipolyline";
+  }
+  return "?";
+}
+
+template<typename FT>
+void StringifyGeo(std::string* out, const GeoFilter& filter, FT&& ft) {
+  absl::StrAppend(out, "GEO[", ft(filter.field()),
+                  ", op=", GeoFilterTypeName(filter.options().type),
+                  ", shape=", GeoShapeTypeName(filter.options().shape.type()),
+                  "]");
+}
+
+template<typename FT>
+void StringifyGeoDistance(std::string* out, const GeoDistanceFilter& filter,
+                          FT&& ft) {
+  const auto& range = filter.options().range;
+  absl::StrAppend(out, "GEO_DISTANCE[", ft(filter.field()), ",");
+  if (range.min_type == BoundType::Unbounded) {
+    absl::StrAppend(out, " *");
+  } else {
+    absl::StrAppend(out, range.min_type == BoundType::Inclusive ? " >=" : " >",
+                    range.min);
+  }
+  if (range.max_type != BoundType::Unbounded) {
+    absl::StrAppend(out, ",",
+                    range.max_type == BoundType::Inclusive ? " <=" : " <",
+                    range.max);
+  }
+  absl::StrAppend(out, "]");
 }
 
 template<typename FT>
@@ -299,10 +390,18 @@ std::string StringifyFilter(const Filter& filter, FT&& ft) {
                              static_cast<const ByColumnExistence&>(filter), ft);
   } else if (type == Type<ByWildcard>::id()) {
     StringifyWildcard(&out, static_cast<const ByWildcard&>(filter), ft);
+  } else if (type == Type<ByWildcardNgram>::id()) {
+    StringifyWildcardNgram(&out, static_cast<const ByWildcardNgram&>(filter),
+                           ft);
   } else if (type == Type<Empty>::id()) {
     out = "EMPTY[]";
   } else if (type == Type<ByPhrase>::id()) {
     StringifyPhrase(&out, static_cast<const ByPhrase&>(filter), ft);
+  } else if (type == Type<GeoFilter>::id()) {
+    StringifyGeo(&out, static_cast<const GeoFilter&>(filter), ft);
+  } else if (type == Type<GeoDistanceFilter>::id()) {
+    StringifyGeoDistance(&out, static_cast<const GeoDistanceFilter&>(filter),
+                         ft);
   } else {
     out = absl::StrCat("[Unknown filter ", type().name(), " ]");
   }

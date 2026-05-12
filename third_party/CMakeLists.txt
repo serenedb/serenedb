@@ -431,9 +431,6 @@ set(SNAPPY_INSTALL OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(snappy)
 
-# Create Snappy::snappy alias for velox compatibility
-add_library(Snappy::snappy ALIAS snappy)
-
 ################################################################################
 ## Google S2
 ################################################################################
@@ -666,6 +663,14 @@ set(SIMDJSON_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "simdjson" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(simdjson)
 
+###############################################################################
+## croaring
+################################################################################
+
+set(ENABLE_ROARING_TESTS OFF CACHE BOOL "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "croaring" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(croaring)
+
 ################################################################################
 ### tests only library
 ################################################################################
@@ -679,6 +684,7 @@ add_subdirectory(tests)
 set(FASTFLOAT_INSTALL OFF CACHE BOOL "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "fast_float" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(fast_float)
+
 ################################################################################
 ## double-conversion
 ################################################################################
@@ -723,8 +729,52 @@ target_link_libraries(folly PUBLIC ${OPENSSL_LIBRARIES})
 # libssl.a / libcrypto.a via the pre-seeded cache vars above). Build system does not
 # infer a build-order dependency from a raw path, so wire it explicitly.
 add_dependencies(folly ssl crypto)
-# Velox S3 connector uses folly::Uri
-target_sources(folly PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/folly/folly/Uri.cpp)
+
+################################################################################
+## jansson
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "jansson" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
+set(JANSSON_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(JANSSON_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(JANSSON_WITHOUT_TESTS ON CACHE BOOL "" FORCE)
+set(JANSSON_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(jansson)
+
+################################################################################
+## AVRO
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "avro" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
+set(ZLIB_FOUND ON CACHE BOOL "" FORCE)
+set(SNAPPY_FOUND ON CACHE BOOL "" FORCE)
+set(JANSSON_FOUND ON CACHE BOOL "" FORCE)
+add_subdirectory(avro/lang/c)
+
+################################################################################
+## AWS SDK (monolithic build)
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-auth" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-cal" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-common" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-compression" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-event-stream" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-http" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-io" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-mqtt" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-s3" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-sdkutils" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-checksums" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-sdk-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-crt-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(aws-cmake)
+
+set(AWSSDK_FOUND ON CACHE BOOL "" FORCE)
+set(AWSSDK_LIBRARIES _aws CACHE STRING "" FORCE)
+set(AWSSDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/aws-cmake" CACHE PATH "" FORCE)
 
 ################################################################################
 ## duckdb
@@ -745,28 +795,20 @@ set(ENABLE_UBSAN FALSE CACHE BOOL "" FORCE)
 set(ENABLE_THREAD_SANITIZER FALSE CACHE BOOL "" FORCE)
 set(EXPORT_DLL_SYMBOLS FALSE CACHE BOOL "" FORCE)
 set(DUCKDB_SKIP_INSTALL TRUE CACHE BOOL "" FORCE)
+set(BUILD_EXTENSIONS
+    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg"
+    CACHE STRING
+    ""
+    FORCE
+)
 if(FOLLY_USE_JEMALLOC)
-    set(BUILD_EXTENSIONS
-        "core_functions;jemalloc;parquet;tpch;tpcds;json;httpfs"
-        CACHE STRING
-        ""
-        FORCE
-    )
-else()
-    set(BUILD_EXTENSIONS
-        "core_functions;parquet;tpch;tpcds;json;httpfs"
-        CACHE STRING
-        ""
-        FORCE
-    )
+    set(BUILD_EXTENSIONS "jemalloc;${BUILD_EXTENSIONS}" CACHE STRING "" FORCE)
 endif()
 
-# DON'T CHANGE THIS sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-
-# Override install() to no-op within DuckDB suCMake Errobdirectory
-macro(install)
-endmacro()
-
+sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "duckdb_httpfs" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "duckdb_avro" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(duckdb)
 
 target_include_directories(
@@ -786,8 +828,9 @@ target_link_libraries(
         tpcds_extension
         json_extension
         httpfs_extension
+        avro_extension
+        iceberg_extension
 )
-
 if(FOLLY_USE_JEMALLOC)
     target_link_libraries(duckdb_static PUBLIC jemalloc_extension)
 endif()

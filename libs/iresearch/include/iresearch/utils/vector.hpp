@@ -270,6 +270,21 @@ struct L1Space {
     }
     return s;
   }
+
+  static void Normalize(const byte_type* v, uint16_t d, Out* out) {
+    Out n = Norm(v, d);
+    if (n == Out{}) {
+      for (uint16_t i = 0; i != d; ++i) {
+        out[i] = Out{};
+      }
+      return;
+    }
+    auto inv = Out{1} / static_cast<Out>(n);
+    for (uint16_t i = 0; i != d; ++i) {
+      auto vi = static_cast<Out>(reinterpret_cast<const In*>(v)[i]);
+      out[i] = vi * inv;
+    }
+  }
 };
 
 template<typename In, typename Sqr, typename Out>
@@ -294,6 +309,21 @@ struct L2Space {
       s += static_cast<Out>(lri);
     }
     return s;
+  }
+
+  static void Normalize(const byte_type* v, uint16_t d, Out* out) {
+    Out n = Norm(v, d);
+    if (n == Out{}) {
+      for (uint16_t i = 0; i != d; ++i) {
+        out[i] = Out{};
+      }
+      return;
+    }
+    auto inv = Out{1} / std::sqrt(static_cast<Out>(n));
+    for (uint16_t i = 0; i != d; ++i) {
+      auto vi = static_cast<Out>(reinterpret_cast<const In*>(v)[i]);
+      out[i] = vi * inv;
+    }
   }
 };
 

@@ -29,6 +29,7 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "catalog/user_type.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 #include "pg/system_catalog.h"
@@ -199,6 +200,48 @@ void EmitColumnsForSystemTable(const catalog::VirtualTable& table,
   }
 }
 
+// Emit pg_attribute rows for composite (record) types so that drivers can
+// introspect the field list via the standard `attrelid = $oid` lookup. The
+// synthetic relid we use is the type's own OID (matching what pg_type.typrelid
+// reports).
+void EmitColumnsForCompositeType(const catalog::PgSqlType& type,
+                                 std::vector<PgAttribute>& values) {
+  const auto& info = type.GetInfo();
+  if (info.type.id() != duckdb::LogicalTypeId::STRUCT) {
+    return;
+  }
+  const auto& children = duckdb::StructType::GetChildTypes(info.type);
+  const auto type_oid = type.GetId().id();
+  for (size_t i = 0; i < children.size(); ++i) {
+    auto& child_type = children[i].second;
+    auto type_id = Type2Oid(child_type);
+    auto phys = GetPhysicalInfo(type_id);
+    PgAttribute row{
+      .attrelid = type_oid,
+      .attname = children[i].first,
+      .atttypid = type_id,
+      .attlen = phys.attlen,
+      .attnum = static_cast<int16_t>(i + 1),
+      .atttypmod = -1,
+      .attndims = 0,
+      .attbyval = phys.attbyval,
+      .attalign = phys.attalign,
+      .attstorage = phys.attstorage,
+      .attcompression = PgAttribute::Attcompression::None,
+      .attnotnull = false,
+      .atthasdef = false,
+      .atthasmissing = false,
+      .attidentity = PgAttribute::Attidentity::None,
+      .attgenerated = PgAttribute::Attgenerated::None,
+      .attisdropped = false,
+      .attislocal = true,
+      .attinhcount = 0,
+      .attcollation = GetCollationForType(type_id),
+    };
+    values.push_back(std::move(row));
+  }
+}
+
 }  // namespace
 
 template<>
@@ -211,6 +254,10 @@ catalog::MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
     for (const auto& table :
          catalog->GetTables(GetDatabaseId(), schema->GetName())) {
       EmitColumnsForTable(*table, values);
+    }
+    for (const auto& type :
+         catalog->GetTypes(GetDatabaseId(), schema->GetName())) {
+      EmitColumnsForCompositeType(*type, values);
     }
   }
 

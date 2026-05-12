@@ -1,0 +1,162 @@
+control substitution on
+
+# Vedernikoff Konstantin's iceberg-only ticket queue at clickclack. Vedernikoff
+# does iceberg boring and only iceberg boring; loves SOLID (ironically); has
+# been quietly applying to MOP. SERIAL PK rows survive a crash and the next
+# INSERT must NOT collide with already-persisted ids.
+
+statement ok
+CREATE TABLE kostya_iceberg_only_jira (
+  id SERIAL PRIMARY KEY,
+  task TEXT
+);
+
+
+statement count 5
+INSERT INTO kostya_iceberg_only_jira (task) VALUES
+  ('iceberg_partition_review_v17'),
+  ('iceberg_manifest_audit'),
+  ('iceberg_compaction_research'),
+  ('loves_solid_ironically'),
+  ('updated_resume_for_mop');
+
+
+query
+SELECT id, task FROM kostya_iceberg_only_jira ORDER BY id;
+----
+id	task
+1	iceberg_partition_review_v17
+2	iceberg_manifest_audit
+3	iceberg_compaction_research
+4	loves_solid_ironically
+5	updated_resume_for_mop
+
+
+# Bulk insert via generate_series exercises the per-chunk Reserve fast path.
+statement count 100
+INSERT INTO kostya_iceberg_only_jira (task)
+  SELECT 'iceberg_metadata_review_' || i::TEXT
+  FROM generate_series(1, 100) AS s(i);
+
+
+query
+SELECT count(*), min(id), max(id) FROM kostya_iceberg_only_jira;
+----
+count	min	max
+105	1	105
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# All pre-crash rows survive intact.
+connection after_crash
+query
+SELECT count(*), min(id), max(id) FROM kostya_iceberg_only_jira;
+----
+count	min	max
+105	1	105
+
+
+# Spot-check the named ones.
+connection after_crash
+query
+SELECT id, task FROM kostya_iceberg_only_jira WHERE id <= 5 ORDER BY id;
+----
+id	task
+1	iceberg_partition_review_v17
+2	iceberg_manifest_audit
+3	iceberg_compaction_research
+4	loves_solid_ironically
+5	updated_resume_for_mop
+
+
+# Critical: the next INSERT must produce id >= 106 (no collision with
+# persisted rows). The WAL-as-merge-operator design guarantees the on-disk
+# high-water always covers any base previously handed out.
+connection after_crash
+statement count 1
+INSERT INTO kostya_iceberg_only_jira (task) VALUES ('mop_recruiter_replied');
+
+
+connection after_crash
+query
+SELECT id FROM kostya_iceberg_only_jira
+  WHERE task = 'mop_recruiter_replied';
+----
+id
+106
+
+
+# Multi-row insert post-recovery.
+connection after_crash
+statement count 3
+INSERT INTO kostya_iceberg_only_jira (task) VALUES
+  ('iceberg_specs_skim_again'),
+  ('reread_solid_principles'),
+  ('mop_round2_scheduled');
+
+
+connection after_crash
+query
+SELECT id, task FROM kostya_iceberg_only_jira
+  WHERE id > 105 ORDER BY id;
+----
+id	task
+106	mop_recruiter_replied
+107	iceberg_specs_skim_again
+108	reread_solid_principles
+109	mop_round2_scheduled
+
+
+# A second crash should leave the same property: post-crash inserts continue
+# from where they left off.
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash_2
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash_2
+statement count 1
+INSERT INTO kostya_iceberg_only_jira (task) VALUES ('mop_offer_letter_arrived');
+
+
+connection after_crash_2
+query
+SELECT id FROM kostya_iceberg_only_jira
+  WHERE task = 'mop_offer_letter_arrived';
+----
+id
+110
+
+
+connection after_crash_2
+statement ok
+DROP TABLE kostya_iceberg_only_jira;
+
+
+connection after_crash_2
+statement ok
+DROP SEQUENCE IF EXISTS kostya_iceberg_only_jira_id_seq;

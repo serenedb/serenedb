@@ -72,21 +72,21 @@ VACUUM (UPDATE_INDEXES) idx_bf_t;
 
 connection bf_after_5
 query
-SELECT a, b FROM idx_bf_ok WHERE PHRASE(b, 'pudge');
+SELECT a, b FROM idx_bf_ok WHERE b @@ ts_phrase('pudge');
 ----
 a	b
 1	pudge goes mid
 
 connection bf_after_5
 query
-SELECT a, b FROM idx_bf_ok WHERE PHRASE(b, 'vedernikoff carries');
+SELECT a, b FROM idx_bf_ok WHERE b @@ ts_phrase('vedernikoff carries');
 ----
 a	b
 2	vedernikoff carries team
 
 connection bf_after_5
 query
-SELECT a, b FROM idx_bf_ok WHERE PHRASE(b, 'babsky');
+SELECT a, b FROM idx_bf_ok WHERE b @@ ts_phrase('babsky');
 ----
 a	b
 3	babsky afk again

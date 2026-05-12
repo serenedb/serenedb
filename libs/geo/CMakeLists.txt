@@ -6,6 +6,7 @@ add_library(
     shape_container.cpp
     utils.cpp
     coding.cpp
+    wkb.cpp
 )
 
 target_link_libraries(serene_geo geographiclib-c serene boost_boost s2)

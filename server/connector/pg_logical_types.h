@@ -38,7 +38,7 @@ namespace sdb::pg {
   inline constexpr std::string_view k##Name##Alias = alias_str; \
   inline bool Is##Name(const duckdb::LogicalType& type) {       \
     return type.id() == duckdb::LogicalTypeId::BaseTypeId &&    \
-           type.HasAlias() && type.GetAlias() == alias_str;     \
+           type.GetAlias() == alias_str;                        \
   }
 
 // Factory function (only safe where Velox types.h is NOT included)
@@ -76,11 +76,15 @@ DECLARE_PG_TYPE(CID,            Cid,            "cid",             BIGINT)
 DECLARE_PG_TYPE(XID,            Xid,            "xid",             BIGINT)
 DECLARE_PG_TYPE(XID8,           Xid8,           "xid8",            BIGINT)
 DECLARE_PG_TYPE(NAME,           Name,           "name",            VARCHAR)
+DECLARE_PG_TYPE(CHAR,            Char,           "char",            VARCHAR)
 DECLARE_PG_TYPE(CARDINALNUMBER, CardinalNumber, "cardinal_number", INTEGER)
 DECLARE_PG_TYPE(CHARACTERDATA,  CharacterData,  "character_data",  VARCHAR)
 DECLARE_PG_TYPE(SQLIDENTIFIER,  SqlIdentifier,  "sql_identifier",  VARCHAR)
 DECLARE_PG_TYPE(TIMESTAMP,      TimeStamp,      "time_stamp",      TIMESTAMP_TZ)
 DECLARE_PG_TYPE(YESORNO,        YesOrNo,        "yes_or_no",       VARCHAR)
+DECLARE_PG_TYPE(SERIAL,         Serial,         "serial",          INTEGER)
+DECLARE_PG_TYPE(BIGSERIAL,      Bigserial,      "bigserial",       BIGINT)
+DECLARE_PG_TYPE(SMALLSERIAL,    Smallserial,    "smallserial",     SMALLINT)
 // clang-format on
 
 // 32-bit OID-family types: backed by BIGINT in DuckDB for storage, but travel

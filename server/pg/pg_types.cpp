@@ -25,17 +25,23 @@
 #include <absl/strings/numbers.h>
 #include <absl/time/civil_time.h>
 
+#include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 
 #include "basics/containers/trivial_map.h"
+#include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/user_type.h"
 #include "catalog/virtual_table.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
 #include "pg/parse_array.h"
+#include "pg/parse_record.h"
 #include "pg/serialize.h"
 #include "pg/sql_collector.h"
+#include "pg/sql_exception_macro.h"
 #include "pg/system_catalog.h"
 
 namespace sdb::pg {
@@ -53,7 +59,9 @@ namespace sdb::pg {
 #define SDB_REGTYPE_IN(type_name, oid) Case(type_name, oid)
 
 #define SDB_REGTYPE_WITH_ARRAY_IN(type_name, oid) \
-  Case(type_name, oid).Case(type_name "[]", oid##Array)
+  Case(type_name, oid)                            \
+    .Case(type_name "[]", oid##Array)             \
+    .Case("_" type_name, oid##Array)
 
 #define SDB_OID2TYPE(oid, type_expr) \
   case oid:                          \
@@ -159,15 +167,37 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
       return in_array ? kVarbitArray : kVarbit;
     case UUID:
       return in_array ? kUuidArray : kUuid;
-    case STRUCT:
-    case MAP:
+    case ENUM: {
+      auto ext = type.GetExtensionInfo();
+      SDB_ASSERT(ext);
+      auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
+      SDB_ASSERT(it != ext->properties.end());
+      const ObjectId oid{it->second.GetValue<uint64_t>()};
+      return (in_array ? catalog::PgSqlType::ToArrayOid(oid) : oid).id();
+    }
+    case STRUCT: {
+      auto ext = type.GetExtensionInfo();
+      // null in case of anonymous record types (e.g. SELECT ROW(1, 2))
+      if (ext) {
+        auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
+        if (it != ext->properties.end()) {
+          const ObjectId oid{it->second.GetValue<uint64_t>()};
+          return (in_array ? catalog::PgSqlType::ToArrayOid(oid) : oid).id();
+        }
+      }
       return in_array ? kRecordArray : kRecord;
+    }
+    case MAP:
+      return kRecordArray;
     case VARCHAR: {
       if (type.IsJSONType()) {
         return in_array ? kJsonArray : kJson;
       }
       if (IsName(type)) {
         return in_array ? kNameArray : kName;
+      }
+      if (IsChar(type)) {
+        return in_array ? kCharArray : kChar;
       }
       return in_array ? kTextArray : kText;
     }
@@ -182,7 +212,7 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
   }
 }
 
-duckdb::LogicalType Oid2Type(int32_t oid) {
+duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot) {
   switch (oid) {
     using enum PgTypeOID;
     using duckdb::LogicalType;
@@ -211,6 +241,7 @@ duckdb::LogicalType Oid2Type(int32_t oid) {
     SDB_OID2TYPE(kTimeTz, LogicalType::TIME_TZ)
     SDB_OID2TYPE(kBit, LogicalType::BIT)
     SDB_OID2TYPE(kVarbit, LogicalType::BIT)
+    SDB_OID2TYPE(kVarchar, LogicalType::VARCHAR)
     SDB_OID2TYPE(kRegprocedure, REGPROCEDURE())
     SDB_OID2TYPE(kRegoper, REGOPER())
     SDB_OID2TYPE(kRegoperator, REGOPERATOR())
@@ -222,9 +253,14 @@ duckdb::LogicalType Oid2Type(int32_t oid) {
     SDB_OID2TYPE(kUuid, LogicalType::UUID)
     SDB_OID2TYPE(kRegconfig, REGCONFIG())
     SDB_OID2TYPE(kRegdictionary, REGDICTIONARY())
-    default:
-      SDB_ASSERT(false);
-      return {};
+    default: {
+      if (auto obj = snapshot.GetObject(ObjectId{static_cast<uint64_t>(oid)});
+          obj && obj->GetType() == catalog::ObjectType::PgSqlType) {
+        return basics::downCast<catalog::PgSqlType>(obj)->GetLogicalType();
+      }
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG("cache lookup failed for type ", oid));
+    }
   }
 }
 
@@ -558,7 +594,8 @@ std::unexpected<DeserializeError> MakeInvalid() {
 }
 
 std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
-  const duckdb::LogicalType& type, std::string_view data) {
+  const duckdb::LogicalType& type, std::string_view data,
+  const catalog::Snapshot& snapshot) {
   switch (type.id()) {
     using enum duckdb::LogicalTypeId;
     case BOOLEAN: {
@@ -664,6 +701,12 @@ std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
         return MakeInvalid();
       }
       const auto days = absl::big_endian::Load<int32_t>(data.data());
+      if (days == std::numeric_limits<int32_t>::max()) {
+        return duckdb::Value::DATE(duckdb::date_t::infinity());
+      }
+      if (days == std::numeric_limits<int32_t>::min()) {
+        return duckdb::Value::DATE(duckdb::date_t::ninfinity());
+      }
       return duckdb::Value::DATE(duckdb::date_t(days + kGapDays));
     }
     case UUID: {
@@ -726,7 +769,7 @@ std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
       const auto ndims = absl::big_endian::Load<int32_t>(data.data());
       // flags at +4 (ignored)
       const auto elem_oid = absl::big_endian::Load<int32_t>(data.data() + 8);
-      auto elem_type = Oid2Type(elem_oid);
+      auto elem_type = Oid2Type(elem_oid, snapshot);
       if (ndims == 0) {
         return duckdb::Value::LIST(elem_type, {});
       }
@@ -750,8 +793,8 @@ std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
           if (static_cast<size_t>(len) > data.size() - offset) {
             return MakeInvalid();
           }
-          auto elem =
-            DeserializeBinaryParameter(elem_type, data.substr(offset, len));
+          auto elem = DeserializeBinaryParameter(
+            elem_type, data.substr(offset, len), snapshot);
           if (!elem) {
             return std::unexpected{elem.error()};
           }
@@ -761,6 +804,55 @@ std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
       }
       return duckdb::Value::LIST(elem_type, std::move(values));
     }
+    case ENUM: {
+      // PG enum binary: raw label bytes (matches text format).
+      duckdb::string_t key{data.data(), static_cast<uint32_t>(data.size())};
+      const auto pos = duckdb::EnumType::GetPos(type, key);
+      if (pos < 0) {
+        return MakeInvalid();
+      }
+      return duckdb::Value::ENUM(static_cast<uint64_t>(pos), type);
+    }
+    case STRUCT: {
+      // PG record binary: int32 nfields; for each field
+      // { int32 type_oid, int32 length (-1 = NULL), length bytes }.
+      if (data.size() < 4) {
+        return MakeInvalid();
+      }
+      const auto nfields = absl::big_endian::Load<int32_t>(data.data());
+      const auto& children = duckdb::StructType::GetChildTypes(type);
+      if (nfields < 0 || static_cast<size_t>(nfields) != children.size()) {
+        return MakeInvalid();
+      }
+      size_t offset = 4;
+      duckdb::child_list_t<duckdb::Value> fields;
+      fields.reserve(children.size());
+      for (size_t i = 0; i < children.size(); ++i) {
+        if (offset + 8 > data.size()) {
+          return MakeInvalid();
+        }
+        // field type OID at +0 (ignored; trust caller-declared type)
+        offset += 4;
+        const auto len = absl::big_endian::Load<int32_t>(data.data() + offset);
+        offset += 4;
+        const auto& child_type = children[i].second;
+        if (len == -1) {
+          fields.emplace_back(children[i].first, duckdb::Value{child_type});
+          continue;
+        }
+        if (len < 0 || static_cast<size_t>(len) > data.size() - offset) {
+          return MakeInvalid();
+        }
+        auto field = DeserializeBinaryParameter(
+          child_type, data.substr(offset, len), snapshot);
+        if (!field) {
+          return std::unexpected{field.error()};
+        }
+        fields.emplace_back(children[i].first, std::move(*field));
+        offset += len;
+      }
+      return duckdb::Value::STRUCT(std::move(fields));
+    }
     default:
       SDB_ASSERT(false, "unsupported binary parameter type");
       return MakeInvalid();
@@ -769,7 +861,8 @@ std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
 }
 
 std::expected<duckdb::Value, DeserializeError> DeserializeTextParameter(
-  const duckdb::LogicalType& type, std::string_view data) {
+  const duckdb::LogicalType& type, std::string_view data,
+  const catalog::Snapshot& snapshot) {
   switch (type.id()) {
     using enum duckdb::LogicalTypeId;
     case BOOLEAN: {
@@ -861,8 +954,8 @@ std::expected<duckdb::Value, DeserializeError> DeserializeTextParameter(
       duckdb::dtime_tz_t tz;
       duckdb::idx_t pos = 0;
       bool has_offset = false;
-      if (!duckdb::Time::TryConvertTimeTZ(data.data(), data.size(), pos, tz,
-                                          has_offset)) {
+      if (duckdb::Time::TryConvertTimeTZ(data.data(), data.size(), pos, tz,
+                                         has_offset)) {
         return duckdb::Value::TIMETZ(tz);
       }
     } break;
@@ -890,7 +983,7 @@ std::expected<duckdb::Value, DeserializeError> DeserializeTextParameter(
             values.emplace_back(elem_type);
             return;
           }
-          auto res = DeserializeTextParameter(elem_type, token);
+          auto res = DeserializeTextParameter(elem_type, token, snapshot);
           if (!res) {
             error = res.error();
           } else {
@@ -905,6 +998,53 @@ std::expected<duckdb::Value, DeserializeError> DeserializeTextParameter(
       }
       return duckdb::Value::LIST(elem_type, std::move(values));
     }
+    case ENUM: {
+      duckdb::string_t key{data.data(), static_cast<uint32_t>(data.size())};
+      const auto pos = duckdb::EnumType::GetPos(type, key);
+      if (pos < 0) {
+        return MakeInvalid();
+      }
+      return duckdb::Value::ENUM(static_cast<uint64_t>(pos), type);
+    }
+    case STRUCT: {
+      const auto& children = duckdb::StructType::GetChildTypes(type);
+      duckdb::child_list_t<duckdb::Value> fields;
+      fields.reserve(children.size());
+      std::optional<DeserializeError> error;
+
+      ParsePgTextRecord(
+        data,
+        [&](std::string_view token, bool is_null) {
+          if (error) {
+            return;
+          }
+          if (fields.size() >= children.size()) {
+            error = DeserializeError::InvalidRepresentation;
+            return;
+          }
+          const auto& [child_name, child_type] = children[fields.size()];
+          if (is_null) {
+            fields.emplace_back(child_name, duckdb::Value{child_type});
+            return;
+          }
+          auto field = DeserializeTextParameter(child_type, token, snapshot);
+          if (!field) {
+            error = field.error();
+            return;
+          }
+          fields.emplace_back(child_name, std::move(*field));
+        },
+        [&](std::string_view) {
+          error = DeserializeError::InvalidRepresentation;
+        });
+      if (error) {
+        return std::unexpected{*error};
+      }
+      if (fields.size() != children.size()) {
+        return MakeInvalid();
+      }
+      return duckdb::Value::STRUCT(std::move(fields));
+    }
     default:
       return duckdb::Value{data}.DefaultCastAs(type);
   }
@@ -914,9 +1054,11 @@ std::expected<duckdb::Value, DeserializeError> DeserializeTextParameter(
 }  // namespace
 
 std::expected<duckdb::Value, DeserializeError> DeserializeParameter(
-  const duckdb::LogicalType& type, VarFormat format, std::string_view data) {
-  return format == VarFormat::Text ? DeserializeTextParameter(type, data)
-                                   : DeserializeBinaryParameter(type, data);
+  const duckdb::LogicalType& type, VarFormat format, std::string_view data,
+  const catalog::Snapshot& snapshot) {
+  return format == VarFormat::Text
+           ? DeserializeTextParameter(type, data, snapshot)
+           : DeserializeBinaryParameter(type, data, snapshot);
 }
 
 std::string RegclassOut(const catalog::Snapshot& snapshot, uint64_t oid) {

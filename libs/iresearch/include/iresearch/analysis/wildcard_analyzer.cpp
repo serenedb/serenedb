@@ -139,6 +139,9 @@ Attribute* WildcardAnalyzer::GetMutable(TypeInfo::type_id type) noexcept {
   if (type == Type<OffsAttr>::id()) {
     return nullptr;
   }
+  if (type == Type<StoreAttr>::id()) {
+    return &_store;
+  }
   return _ngram->GetMutable(type);
 }
 
@@ -164,12 +167,8 @@ bool WildcardAnalyzer::reset(std::string_view data) {
   }
   _terms_begin = begin();
   _terms_end = _terms_begin + _terms.size();
+  _store.value = ViewCast<byte_type>(std::string_view{_terms});
   return _terms_begin != _terms_end;
-}
-
-bytes_view WildcardAnalyzer::store(Tokenizer* ctx, vpack::Slice) {
-  auto& impl = sdb::basics::downCast<WildcardAnalyzer>(*ctx);
-  return ViewCast<byte_type>(std::string_view{impl._terms});
 }
 
 bool WildcardAnalyzer::next() {
@@ -196,6 +195,11 @@ bool WildcardAnalyzer::next() {
     _ngram_term->value = term;
   }
   return true;
+}
+
+void WildcardAnalyzer::init() {
+  REGISTER_ANALYZER_VPACK(WildcardAnalyzer, WildcardAnalyzer::make,
+                          WildcardAnalyzer::normalize);
 }
 
 WildcardAnalyzer::WildcardAnalyzer(Options&& options) noexcept

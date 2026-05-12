@@ -26,6 +26,7 @@
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 
 #include "catalog/identifiers/object_id.h"
+#include "catalog/object.h"
 #include "catalog/table.h"
 
 namespace sdb::connector {
@@ -44,35 +45,58 @@ class SereneDBSchemaEntry;
 //   On error:           destructor drops the index (rollback)
 class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
  public:
+  // `relation` is the SereneDB-catalog object the index is built on: either
+  // a `catalog::Table` (native rocksdb) or a `catalog::PgSqlView`
+  // (foreign-source-backed). `view_columns` is the synthesised column list
+  // when `relation` is a view (Tables expose Columns() directly); ignored
+  // for tables.
   SereneDBPhysicalCreateIndex(duckdb::PhysicalPlan& plan,
-                              std::shared_ptr<catalog::Table> table,
+                              std::shared_ptr<catalog::SchemaObject> relation,
+                              std::vector<catalog::Column> view_columns,
                               ObjectId database_id,
                               duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
                               SereneDBSchemaEntry& schema_entry,
                               duckdb::idx_t estimated_cardinality);
 
   // Sink interface
-  bool IsSink() const override { return true; }
+  bool IsSink() const final { return true; }
+  // Parallel Sink for inverted indexes (each thread builds its own segment
+  // via its own iresearch IndexWriter::Transaction). Secondary indexes stay
+  // serial because they share a per-connection RocksDB transaction that
+  // isn't safe to drive from N threads.
+  bool ParallelSink() const final;
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
-    duckdb::ClientContext& context) const override;
+    duckdb::ClientContext& context) const final;
+  duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(
+    duckdb::ExecutionContext& context) const final;
   duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
                               duckdb::DataChunk& chunk,
-                              duckdb::OperatorSinkInput& input) const override;
+                              duckdb::OperatorSinkInput& input) const final;
   duckdb::SinkFinalizeType Finalize(
     duckdb::Pipeline& pipeline, duckdb::Event& event,
     duckdb::ClientContext& context,
-    duckdb::OperatorSinkFinalizeInput& input) const override;
+    duckdb::OperatorSinkFinalizeInput& input) const final;
 
   // Source interface -- returns CREATE INDEX tag
   duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
-    duckdb::ClientContext& context) const override;
+    duckdb::ClientContext& context) const final;
   duckdb::SourceResultType GetDataInternal(
     duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
-    duckdb::OperatorSourceInput& input) const override;
-  bool IsSource() const override { return true; }
+    duckdb::OperatorSourceInput& input) const final;
+  bool IsSource() const final { return true; }
 
  private:
-  std::shared_ptr<catalog::Table> _table;
+  // Returns the columns of the relation. For tables: `Table::Columns()`;
+  // for views: the `_view_columns` list synthesised from the view's bound
+  // output schema.
+  const std::vector<catalog::Column>& Columns() const noexcept;
+
+  // Returns the `_relation` cast to a Table when it is one; nullptr for views.
+  catalog::Table* TableOrNull() const noexcept;
+
+  std::shared_ptr<catalog::SchemaObject> _relation;
+  // Empty when `_relation` is a Table (use Columns()); populated when view.
+  std::vector<catalog::Column> _view_columns;
   ObjectId _database_id;
   duckdb::unique_ptr<duckdb::CreateIndexInfo> _info;
   SereneDBSchemaEntry& _schema_entry;

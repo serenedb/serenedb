@@ -61,18 +61,16 @@ void InitCommonState(CommonScanGlobalState& state,
   // If sdb_read_your_own_writes is false, always use a DB snapshot so reads
   // see only committed data even within an explicit transaction.
   auto& conn_ctx = GetSereneDBContext(context);
-  conn_ctx.AddRocksDBRead();
   const bool is_search_scan = bind_data.scan_source->IsSearchLike();
   if (is_search_scan && conn_ctx.GetReadYourOwnWrites() &&
-      (!context.transaction.IsAutoCommit() || conn_ctx.HasRocksDBWrite())) {
+      conn_ctx.HasRocksDBTransaction()) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,
               "querying an index within a transaction is not supported when "
               "sdb_read_your_own_writes is enabled");
   }
-  if (conn_ctx.GetReadYourOwnWrites() &&
-      (!context.transaction.IsAutoCommit() || conn_ctx.HasRocksDBWrite())) {
-    state.txn = &conn_ctx.EnsureRocksDBTransaction();
-    state.snapshot = state.txn->GetSnapshot();
+  if (conn_ctx.GetReadYourOwnWrites() && conn_ctx.HasRocksDBTransaction()) {
+    state.txn = &conn_ctx.GetRocksDBTransaction();
+    state.snapshot = &conn_ctx.GetRocksDBSnapshot();
   } else {
     state.snapshot = db->GetSnapshot();
   }
@@ -88,16 +86,41 @@ void InitCommonState(CommonScanGlobalState& state,
     } else if (col_id == kColumnIdentifierTableOid) {
       state.scan_tableoid = true;
       state.tableoid_output_idx = state.projected_columns.size();
-      state.tableoid_value =
-        static_cast<int64_t>(bind_data.table->GetId().id());
+      // For view-backed indexes, no underlying SereneDB-table id; surface
+      // the view's id so BM25/TFIDF expressions still bind.
+      state.tableoid_value = static_cast<int64_t>(bind_data.RelationId().id());
+      state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
+      state.projected_types.push_back(duckdb::LogicalType::BIGINT);
+    } else if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY ||
+               col_id == duckdb::COLUMN_IDENTIFIER_ROW_NUMBER) {
+      // DuckDB asks for these placeholder columns when no real data is
+      // needed (e.g. COUNT(*)) -- emit a dummy slot the scan ignores.
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(duckdb::LogicalType::BIGINT);
     } else if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
-      auto real_idx = SereneDBTableEntry::VirtualToPKColumnIndex(col_id);
-      SDB_ASSERT(real_idx != duckdb::DConstants::INVALID_INDEX);
-      SDB_ASSERT(real_idx < bind_data.column_ids.size());
-      state.projected_columns.push_back(real_idx);
-      state.projected_types.push_back(bind_data.column_types[real_idx]);
+      // VirtualToPKColumnIndex returns the index in table->Columns(), which
+      // includes the generated PK. column_ids skips kGeneratedPKId, so map
+      // the catalog index -> column_ids index by catalog::Column::Id.
+      // Only Table-backed binds set virtual PK columns; views surface
+      // tableoid + rowid only.
+      SDB_ASSERT(!bind_data.IsViewBacked(),
+                 "virtual PK columns are not used for view-backed scans");
+      auto cat_idx = SereneDBTableEntry::VirtualToPKColumnIndex(col_id);
+      SDB_ASSERT(cat_idx != duckdb::DConstants::INVALID_INDEX);
+      const auto& tbd = bind_data.As<TableScanBindData>();
+      const auto& catalog_cols = tbd.table->Columns();
+      SDB_ASSERT(cat_idx < catalog_cols.size());
+      const auto catalog_col_id = catalog_cols[cat_idx].id;
+      duckdb::idx_t bind_idx = duckdb::DConstants::INVALID_INDEX;
+      for (duckdb::idx_t i = 0; i < bind_data.column_ids.size(); ++i) {
+        if (bind_data.column_ids[i] == catalog_col_id) {
+          bind_idx = i;
+          break;
+        }
+      }
+      SDB_ASSERT(bind_idx != duckdb::DConstants::INVALID_INDEX);
+      state.projected_columns.push_back(bind_idx);
+      state.projected_types.push_back(bind_data.column_types[bind_idx]);
     } else if (col_id < num_bind_columns) {
       const auto catalog_col_id = bind_data.column_ids[col_id];
       if (catalog_col_id == catalog::Column::kInvertedIndexScoreId) {
@@ -109,13 +132,24 @@ void InitCommonState(CommonScanGlobalState& state,
         state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
         state.projected_types.push_back(catalog::Column::MakeOffsetsType());
       } else {
+        // Real column read. For view-backed indexes the materialisation
+        // path is wired in a follow-up; the projected_columns entry is
+        // recorded here, but the actual projection-time check (and error)
+        // happens in the search-scan operators where we know whether the
+        // optimizer actually swapped the function to one that bypasses
+        // materialisation (e.g. IRESEARCH_COUNT for count(*)).
         state.projected_columns.push_back(col_id);
         state.projected_types.push_back(bind_data.column_types[col_id]);
       }
     }
   }
 
-  state.has_generated_pk = bind_data.table->PKColumns().empty();
+  // View-backed scans use synthetic PKs (file-position rowids) that
+  // behave like generated PKs for the rocksdb-flavoured bookkeeping.
+  state.has_generated_pk =
+    bind_data.IsViewBacked()
+      ? true
+      : bind_data.As<TableScanBindData>().table->PKColumns().empty();
 }
 
 constexpr size_t kScanKeyPrefixSize =
@@ -153,7 +187,11 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> CommonScanInitLocal(
 
 std::vector<std::string> InitPKScanColumns(
   PKScanGlobalState& state, const SereneDBScanBindData& bind_data) {
-  auto table_id = bind_data.table->GetId();
+  // PK-keyed scans only fire on rocksdb-backed binds; view binds route
+  // through the search-scan path well before reaching here.
+  SDB_ASSERT(!bind_data.IsViewBacked(),
+             "InitPKScanColumns: view-backed bind reached PK scan path");
+  auto table_id = bind_data.As<TableScanBindData>().table->GetId();
   std::string table_key = key_utils::PrepareTableKey(table_id);
 
   std::vector<catalog::Column::Id> scan_column_ids;

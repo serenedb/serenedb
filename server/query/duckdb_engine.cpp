@@ -29,6 +29,7 @@
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_storage_extension.h"
 #include "connector/duckdb_tokenizer_function.h"
+#include "connector/duckdb_truncate_function.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/array.h"
 #include "connector/functions/cast.h"
@@ -36,6 +37,7 @@
 #include "connector/functions/json.h"
 #include "connector/functions/math.h"
 #include "connector/functions/search.h"
+#include "connector/functions/sequence.h"
 #include "connector/functions/string.h"
 #include "connector/functions/system.h"
 #include "connector/functions/vector.h"
@@ -175,6 +177,22 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
       sdb::pg::YESORNO(),
       nullptr,
     },
+    // pseudo-types for SERIAL types.
+    {
+      "serial",
+      sdb::pg::SERIAL(),
+      nullptr,
+    },
+    {
+      "bigserial",
+      sdb::pg::BIGSERIAL(),
+      nullptr,
+    },
+    {
+      "smallserial",
+      sdb::pg::SMALLSERIAL(),
+      nullptr,
+    },
   };
   *count = std::size(kExternalTypes);
   return kExternalTypes;
@@ -190,7 +208,6 @@ DuckDBEngine& DuckDBEngine::Instance() {
 void DuckDBEngine::Initialize() {
   SDB_ASSERT(!_db);
   duckdb::DBConfig config;
-  config.SetOptionByName("threads", duckdb::Value::INTEGER(1));
   // PG folds unquoted identifiers to lowercase
   config.SetOptionByName("preserve_identifier_case", duckdb::Value{false});
   config.SetOptionByName("disable_database_invalidation", duckdb::Value{true});
@@ -209,6 +226,8 @@ void DuckDBEngine::Initialize() {
 
   connector::RegisterPgSystemFunctions(*_db->instance);
 
+  connector::RegisterSequenceFunctions(*_db->instance);
+
   connector::RegisterPgInOutFunctions(*_db->instance);
 
   connector::RegisterPgStringFunctions(*_db->instance);
@@ -218,6 +237,8 @@ void DuckDBEngine::Initialize() {
   connector::RegisterPgJsonFunctions(*_db->instance);
 
   connector::RegisterVacuumFunction(*_db->instance);
+
+  connector::RegisterTruncateFunction(*_db->instance);
 
   connector::RegisterSearchFunctions(*_db->instance);
 

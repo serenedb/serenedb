@@ -87,7 +87,7 @@ class BooleanTokenizer final : public BasicTokenizer,
 class StringTokenizer : public analysis::TypedAnalyzer<StringTokenizer>,
                         private util::Noncopyable {
  public:
-  static constexpr std::string_view type_name() noexcept { return "identity"; }
+  static constexpr std::string_view type_name() noexcept { return "keyword"; }
 
   bool next() noexcept final;
 

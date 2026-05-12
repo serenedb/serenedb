@@ -145,15 +145,23 @@ export const ConsoleExecutionHistory = () => {
     } = useConsole();
     const [runningSearch, setRunningSearch] = useState("");
     const [historySearch, setHistorySearch] = useState("");
-    const [openTabs, setOpenTabs] = useState<OpenEditorTab[]>([]);
+    const [openTabs, setOpenTabs] = useState<OpenEditorTab[]>(() =>
+        consoleEditorApi ? collectOpenEditorTabs(consoleEditorApi) : [],
+    );
+    const [hasSyncedOpenTabs, setHasSyncedOpenTabs] = useState(() =>
+        Boolean(consoleEditorApi),
+    );
     const [isFilterPopoverOpen, setIsFilterPopoverOpen] = useState(false);
     const [isClearDialogOpen, setIsClearDialogOpen] = useState(false);
 
     useEffect(() => {
         if (!consoleEditorApi) {
             setOpenTabs([]);
+            setHasSyncedOpenTabs(false);
             return;
         }
+
+        setHasSyncedOpenTabs(false);
 
         const panelDisposables = new Map<string, DockviewIDisposable>();
         const bindPanelSubscriptions = () => {
@@ -189,6 +197,7 @@ export const ConsoleExecutionHistory = () => {
         const syncTabs = () => {
             bindPanelSubscriptions();
             setOpenTabs(collectOpenEditorTabs(consoleEditorApi));
+            setHasSyncedOpenTabs(true);
         };
 
         syncTabs();
@@ -259,6 +268,10 @@ export const ConsoleExecutionHistory = () => {
     );
 
     useEffect(() => {
+        if (!hasSyncedOpenTabs) {
+            return;
+        }
+
         if (executionHistoryPanelFilter === ALL_TABS_FILTER) {
             return;
         }
@@ -270,6 +283,7 @@ export const ConsoleExecutionHistory = () => {
         setExecutionHistoryPanelFilter(ALL_TABS_FILTER);
     }, [
         executionHistoryPanelFilter,
+        hasSyncedOpenTabs,
         openTabById,
         setExecutionHistoryPanelFilter,
     ]);

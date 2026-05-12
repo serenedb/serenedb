@@ -32,16 +32,21 @@
 #include <iresearch/analysis/pattern_tokenizer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
+#include <iresearch/analysis/wildcard_analyzer.hpp>
+#include <iresearch/analysis/wordnet_synonyms_tokenizer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/utils/type_id.hpp>
 #include <variant>
 
 #include "basics/assert.h"
+#include "pg/geo_tokenizer_options.h"
 #include "pg/option_help.h"
 
 namespace sdb::pg::tokenizer_options {
@@ -132,6 +137,16 @@ void CheckNumHashes(int);
 inline constexpr OptionInfo kNumHashes{
   "numhashes", 1, "Number of hash functions to use", CheckNumHashes};
 
+// Wildcard
+
+void CheckNgramSize(int);
+inline constexpr OptionInfo kNgramSize{
+  "ngramsize", 3, "N-gram size for wildcard prefix indexing (minimum 2)",
+  CheckNgramSize};
+
+// Geo options (kGeoMaxCells, kGeoLatitude, kGeoJsonType, ...) live in
+// "pg/geo_tokenizer_options.h", brought in by the include above.
+
 // Segmentation
 
 inline constexpr OptionInfo kBreak{
@@ -189,6 +204,18 @@ inline constexpr OptionInfo kSkip{"skip", 0,
 inline constexpr OptionInfo kBufferSize{
   "buffersize", 1024, "Term buffer size hint (characters per pass)"};
 
+// Synonyms (Solr / WordNet)
+
+inline constexpr OptionInfo kSolrSynonyms{
+  "synonyms", OptionInfo::RequiredTag<std::string_view>{},
+  "Inline Solr-format synonyms file content: one rule per line, comma-"
+  "separated terms; `=>` separates LHS from RHS for one-way mappings"};
+
+inline constexpr OptionInfo kWordnetSynonyms{
+  "synonyms", OptionInfo::RequiredTag<std::string_view>{},
+  "Inline WordNet Prolog database content: one `s(synset,w_num,'word',ss_"
+  "type,sense_number,tag_count).` record per line"};
+
 // Per-tokenizer option arrays
 
 inline constexpr OptionInfo kFeaturesOptions[] = {kNormFeature, kOffsetFeature,
@@ -220,6 +247,8 @@ inline constexpr OptionInfo kCopyFromOptions[] = {kFrom};
 
 inline constexpr OptionInfo kMinHashOptions[] = {kNumHashes};
 
+inline constexpr OptionInfo kWildcardOptions[] = {kNgramSize};
+
 inline constexpr OptionInfo kNormOptions[] = {kLocale, kCase, kAccent};
 
 inline constexpr OptionInfo kSegmentationOptions[] = {kCase, kBreak};
@@ -231,6 +260,10 @@ inline constexpr OptionInfo kPatternOptions[] = {kPattern, kGroup};
 
 inline constexpr OptionInfo kPathHierarchyOptions[] = {
   kPathDelimiter, kPathReplacement, kReverse, kSkip, kBufferSize};
+
+inline constexpr OptionInfo kSolrSynonymsOptions[] = {kSolrSynonyms};
+
+inline constexpr OptionInfo kWordnetSynonymsOptions[] = {kWordnetSynonyms};
 
 // Groups
 
@@ -302,6 +335,11 @@ inline constexpr OptionGroup kMinHashGroup{
   kMinHashOptions,
   {},
 };
+inline constexpr OptionGroup kWildcardGroup{
+  irs::analysis::WildcardAnalyzer::type_name(),
+  kWildcardOptions,
+  {},
+};
 inline constexpr OptionGroup kNormGroup{
   irs::analysis::NormalizingTokenizer::type_name(),
   kNormOptions,
@@ -332,14 +370,35 @@ inline constexpr OptionGroup kUnionGroup{
   {},
   {},
 };
+inline constexpr OptionGroup kKeywordGroup{
+  irs::StringTokenizer::type_name(),
+  {},
+  {},
+};
+inline constexpr OptionGroup kSolrSynonymsGroup{
+  irs::analysis::SolrSynonymsTokenizer::type_name(),
+  kSolrSynonymsOptions,
+  {},
+};
+inline constexpr OptionGroup kWordnetSynonymsGroup{
+  irs::analysis::WordnetSynonymsTokenizer::type_name(),
+  kWordnetSynonymsOptions,
+  {},
+};
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
-  kFeaturesGroup,         kTextGroup,      kNGramGroup,
-  kNearestNeighborsGroup, kStemmingGroup,  kStopwordsGroup,
-  kClassificationGroup,   kCollationGroup, kDelimiterGroup,
-  kMultiDelimiterGroup,   kMinHashGroup,   kNormGroup,
-  kSegmentationGroup,     kPipelineGroup,  kPatternGroup,
-  kPathHierarchyGroup,    kUnionGroup,     kCopyFromGroup,
+  kFeaturesGroup,       kTextGroup,
+  kNGramGroup,          kNearestNeighborsGroup,
+  kStemmingGroup,       kStopwordsGroup,
+  kClassificationGroup, kCollationGroup,
+  kDelimiterGroup,      kMultiDelimiterGroup,
+  kMinHashGroup,        kWildcardGroup,
+  kNormGroup,           kSegmentationGroup,
+  kPipelineGroup,       kPatternGroup,
+  kPathHierarchyGroup,  kUnionGroup,
+  kCopyFromGroup,       kGeoPointGroup,
+  kGeoJsonGroup,        kKeywordGroup,
+  kSolrSynonymsGroup,   kWordnetSynonymsGroup,
 };
 
 }  // namespace sdb::pg::tokenizer_options

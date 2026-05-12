@@ -77,7 +77,7 @@ void WriteBlockIndex(IndexOutput& out, size_t (&bits)[N]) {
   for (auto begin = std::begin(bits), end = std::end(bits); begin != end;
        begin += kDenseBlockIndexWordsPerBlock) {
     // TODO(mbkkt) should use little endian!
-    WriteBE<uint16_t>(popcnt, block);
+    WriteLE<uint16_t>(popcnt, block);
 
     for (uint32_t i = 0; i < kDenseBlockIndexWordsPerBlock; ++i) {
       popcnt += std::popcount(begin[i]);
@@ -122,7 +122,7 @@ void SparseBitmapWriter::do_flush(uint32_t popcnt) {
 
       if constexpr (std::endian::native != std::endian::big) {
         for (auto& v : _bits) {
-          v = absl::big_endian::FromHost(v);
+          v = absl::little_endian::FromHost(v);
         }
       }
 
@@ -181,7 +181,7 @@ struct container_iterator<kBtSparse, TrackPrev> {
           std::memcpy(&doc, self->_ctx.u8data, sizeof(uint16_t));
         }
         ++ctx.u16data;
-        doc = absl::big_endian::ToHost16(doc);
+        doc = absl::little_endian::ToHost16(doc);
       }
 
       if (doc >= target) {
@@ -222,7 +222,7 @@ struct container_iterator<kBtDense, false> {
                                kDenseBlockIndexWordsPerBlock) {
       const size_t index_block = target_block / kDenseBlockIndexBlockSize;
 
-      const auto popcnt = absl::big_endian::Load16(
+      const auto popcnt = absl::little_endian::Load16(
         ctx.index.u8data + index_block * sizeof(uint16_t));
 
       const auto word_idx = index_block * kDenseBlockIndexWordsPerBlock;
@@ -241,7 +241,7 @@ struct container_iterator<kBtDense, false> {
           std::memcpy(&ctx.word, self->_ctx.u8data - sizeof(uint64_t),
                       sizeof(uint64_t));
         }
-        ctx.word = absl::big_endian::ToHost64(ctx.word);
+        ctx.word = absl::little_endian::ToHost64(ctx.word);
       }
       ctx.popcnt = self->_index + popcnt + std::popcount(ctx.word);
       ctx.word_idx = static_cast<int32_t>(word_idx);
@@ -269,7 +269,7 @@ struct container_iterator<kBtDense, false> {
           }
           ctx.popcnt += std::popcount(ctx.word);
         }
-        ctx.word = absl::big_endian::ToHost64(ctx.word);
+        ctx.word = absl::little_endian::ToHost64(ctx.word);
         ctx.word_idx = target_word_idx;
       }
     }
@@ -304,7 +304,7 @@ struct container_iterator<kBtDense, false> {
 
       if (ctx.word) {
         if constexpr (kAtStream != Access) {
-          ctx.word = absl::big_endian::ToHost64(ctx.word);
+          ctx.word = absl::little_endian::ToHost64(ctx.word);
         }
 
         const doc_id_t offset = std::countr_zero(ctx.word);
@@ -379,7 +379,7 @@ struct container_iterator<kBtDense, true> {
           }
           SDB_ASSERT(word_idx);
         }
-        word = absl::big_endian::ToHost64(word);
+        word = absl::little_endian::ToHost64(word);
       }
     }
 

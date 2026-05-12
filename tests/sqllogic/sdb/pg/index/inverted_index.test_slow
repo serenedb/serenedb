@@ -30,22 +30,22 @@ statement ok
 CREATE INDEX clickclack_facts ON clickclack USING inverted(fact test_english);
 
 query
-SELECT * FROM clickclack_facts WHERE PHRASE(fact, 'team member');
+SELECT * FROM clickclack_facts WHERE fact @@ ts_phrase('team member');
 ----
 100000 values hashing to bb6ff2754819408ef9bd04dec00816a6
 
 query
-SELECT * FROM clickclack_facts WHERE PHRASE(fact, 'vedernikoff has');
+SELECT * FROM clickclack_facts WHERE fact @@ ts_phrase('vedernikoff has');
 ----
 50000 values hashing to 094f52e717c8cf7ff4991704ce7b48e5
 
 query
-SELECT * FROM clickclack_facts WHERE PHRASE(fact, 'cutelooked has');
+SELECT * FROM clickclack_facts WHERE fact @@ ts_phrase('cutelooked has');
 ----
 50000 values hashing to 9fd1ddfa1c80ec0842fd691aa0c87e10
 
 query
-SELECT * FROM clickclack_facts WHERE PHRASE(fact, 'has 0 stocks');
+SELECT * FROM clickclack_facts WHERE fact @@ ts_phrase('has 0 stocks');
 ----
 400 values hashing to 281bddebb99a13518781132c8d56e194
 
@@ -78,31 +78,31 @@ statement ok
 CREATE INDEX clickclack_pk_facts ON clickclack_pk USING inverted(fact test_english, detail test_english);
 
 query
-SELECT * FROM clickclack_pk_facts WHERE PHRASE(fact, 'team member') ORDER BY fact;
+SELECT * FROM clickclack_pk_facts WHERE fact @@ ts_phrase('team member') ORDER BY fact;
 ----
 20000 values hashing to c5e18a8a07f65b8031c775e242239353
 
 query
-SELECT * FROM clickclack_pk_facts WHERE PHRASE(fact, 'vedernikoff has') ORDER BY fact;
+SELECT * FROM clickclack_pk_facts WHERE fact @@ ts_phrase('vedernikoff has') ORDER BY fact;
 ----
 10000 values hashing to b74729795b45633d271483956071de12
 
 query
-SELECT * FROM clickclack_pk_facts WHERE PHRASE(fact, 'cutelooked has') ORDER BY fact;
+SELECT * FROM clickclack_pk_facts WHERE fact @@ ts_phrase('cutelooked has') ORDER BY fact;
 ----
 10000 values hashing to 1d8c44c6f3d932d3b08d276682b5124e
 
 query
-SELECT * FROM clickclack_pk_facts WHERE PHRASE(fact, 'has 0 stocks') ORDER BY fact;
+SELECT * FROM clickclack_pk_facts WHERE fact @@ ts_phrase('has 0 stocks') ORDER BY fact;
 ----
 
 query
-SELECT * FROM clickclack_pk_facts WHERE PHRASE(detail, 'vedernikoff row') ORDER BY fact;
+SELECT * FROM clickclack_pk_facts WHERE detail @@ ts_phrase('vedernikoff row') ORDER BY fact;
 ----
 10000 values hashing to b74729795b45633d271483956071de12
 
 query
-SELECT * FROM clickclack_pk_facts WHERE PHRASE(detail, 'cutelooked row') ORDER BY fact;
+SELECT * FROM clickclack_pk_facts WHERE detail @@ ts_phrase('cutelooked row') ORDER BY fact;
 ----
 10000 values hashing to 1d8c44c6f3d932d3b08d276682b5124e
 
@@ -136,38 +136,34 @@ statement count 100000
 COPY csv_idx_src TO '/tmp/${__DATABASE__}_csv_idx_slow.csv';
 
 statement ok
-CREATE TABLE csv_idx_ext(
-  fact TEXT,
-  dept TEXT
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_csv_idx_slow.csv'
-);
+CREATE VIEW csv_idx_ext AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_csv_idx_slow.csv');
 
 statement ok
 CREATE INDEX csv_idx_ext_facts ON csv_idx_ext USING inverted(fact test_english, dept test_english);
 
 query
-SELECT * FROM csv_idx_ext_facts WHERE PHRASE(fact, 'team member');
+SELECT * FROM csv_idx_ext_facts WHERE fact @@ ts_phrase('team member');
 ----
-200000 values hashing to 2ecbf77a0e2fb34462b902702f905b07
+200000 values hashing to dffa5050b3b273e066f091861f35419f
 
 query
-SELECT * FROM csv_idx_ext_facts WHERE PHRASE(fact, 'vedernikoff has');
+SELECT * FROM csv_idx_ext_facts WHERE fact @@ ts_phrase('vedernikoff has');
 ----
-100000 values hashing to 58ede942274bbe032c45ca26ebf2096b
+100000 values hashing to 68ea068f3dc556204bf660fa9bf9f37d
 
 query
-SELECT * FROM csv_idx_ext_facts WHERE PHRASE(fact, 'cutelooked has');
+SELECT * FROM csv_idx_ext_facts WHERE fact @@ ts_phrase('cutelooked has');
 ----
-100000 values hashing to 2d1e385ecd82322da01c76051529a186
+100000 values hashing to cb3f9840fcd2ef13ff17e654eac7c758
 
 query
-SELECT * FROM csv_idx_ext_facts WHERE PHRASE(dept, 'department alpha');
+SELECT * FROM csv_idx_ext_facts WHERE dept @@ ts_phrase('department alpha');
 ----
-66600 values hashing to cd6c3bdbacbfa7d828862dd9c9de13e1
+66600 values hashing to e75efbadfaf23e06fddbfa32ed427ef9
 
 statement ok
-DROP TABLE csv_idx_ext;
+DROP VIEW csv_idx_ext;
 
 statement ok
 DROP TABLE csv_idx_src;
@@ -188,53 +184,49 @@ statement count 10000
 COPY dense_pq_slow_src TO '/tmp/${__DATABASE__}_dense_pq_slow.parquet' (FORMAT PARQUET);
 
 statement ok
-CREATE TABLE dense_pq_slow_ext(
-  fact TEXT,
-  division TEXT
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_dense_pq_slow.parquet'
-);
+CREATE VIEW dense_pq_slow_ext AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_dense_pq_slow.parquet');
 
 statement ok
 CREATE INDEX dense_pq_slow_idx ON dense_pq_slow_ext USING inverted(fact test_english, division test_english);
 
 query
-SELECT * FROM dense_pq_slow_idx WHERE PHRASE(fact, 'every row shares');
+SELECT * FROM dense_pq_slow_idx WHERE fact @@ ts_phrase('every row shares');
 ----
 20000 values hashing to 6d447bce6f45bd07ae971f1e22396944
 
 query
-SELECT * FROM dense_pq_slow_idx WHERE PHRASE(fact, 'phrase plus detail');
+SELECT * FROM dense_pq_slow_idx WHERE fact @@ ts_phrase('phrase plus detail');
 ----
 20000 values hashing to 6d447bce6f45bd07ae971f1e22396944
 
 query
-SELECT fact FROM dense_pq_slow_idx WHERE PHRASE(division, 'division alpha sector');
+SELECT fact FROM dense_pq_slow_idx WHERE division @@ ts_phrase('division alpha sector');
 ----
 3333 values hashing to 78fa6b860292ab70d7a73f07c9271548
 
 query
-SELECT division FROM dense_pq_slow_idx WHERE PHRASE(division, 'division beta sector');
+SELECT division FROM dense_pq_slow_idx WHERE division @@ ts_phrase('division beta sector');
 ----
 3334 values hashing to 8bad37619523a21283df61bb5760c091
 
 query
-SELECT * FROM dense_pq_slow_idx WHERE PHRASE(division, 'division gamma sector');
+SELECT * FROM dense_pq_slow_idx WHERE division @@ ts_phrase('division gamma sector');
 ----
 6666 values hashing to c5dc8a3c2ff269fb163e58ccbe66d227
 
 query
-SELECT * FROM dense_pq_slow_idx WHERE PHRASE(fact, 'every') AND PHRASE(division, 'division alpha sector');
+SELECT * FROM dense_pq_slow_idx WHERE fact @@ ts_phrase('every') AND division @@ ts_phrase('division alpha sector');
 ----
 6666 values hashing to d02fe07290c471e6b19d6ae6bfeea5b3
 
 query
-SELECT * FROM dense_pq_slow_idx WHERE PHRASE(fact, 'every') OR PHRASE(division, 'division alpha sector');
+SELECT * FROM dense_pq_slow_idx WHERE fact @@ ts_phrase('every') OR division @@ ts_phrase('division alpha sector');
 ----
 20000 values hashing to 6d447bce6f45bd07ae971f1e22396944
 
 statement ok
-DROP TABLE dense_pq_slow_ext;
+DROP VIEW dense_pq_slow_ext;
 
 statement ok
 DROP TABLE dense_pq_slow_src;
@@ -254,46 +246,102 @@ statement count 10000
 COPY dense_csv_slow_src TO '/tmp/${__DATABASE__}_dense_csv_slow.csv';
 
 statement ok
-CREATE TABLE dense_csv_slow_ext(
-  content TEXT,
-  region TEXT
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_dense_csv_slow.csv'
-);
+CREATE VIEW dense_csv_slow_ext AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_dense_csv_slow.csv');
 
 statement ok
 CREATE INDEX dense_csv_slow_idx ON dense_csv_slow_ext USING inverted(content test_english, region test_english);
 
 query
-SELECT * FROM dense_csv_slow_idx WHERE PHRASE(content, 'universal text entry');
+SELECT * FROM dense_csv_slow_idx WHERE content @@ ts_phrase('universal text entry');
 ----
-20000 values hashing to bcfeceddfe84a9e4c79ec4993576de2e
+20000 values hashing to 4d8054ee451f9a6ffac536da14010703
 
 query
-SELECT * FROM dense_csv_slow_idx WHERE PHRASE(content, 'in dataset');
+SELECT * FROM dense_csv_slow_idx WHERE content @@ ts_phrase('in dataset');
 ----
-20000 values hashing to bcfeceddfe84a9e4c79ec4993576de2e
+20000 values hashing to 4d8054ee451f9a6ffac536da14010703
 
 query
-SELECT content FROM dense_csv_slow_idx WHERE PHRASE(region, 'region north area');
+SELECT content FROM dense_csv_slow_idx WHERE region @@ ts_phrase('region north area');
 ----
-5000 values hashing to cecbcacf61dcbbce2762453ae3e66bdc
+5000 values hashing to e2cd166d4f5fecc5ae38bbdc8a03c004
 
 query
-SELECT region FROM dense_csv_slow_idx WHERE PHRASE(region, 'region south area');
+SELECT region FROM dense_csv_slow_idx WHERE region @@ ts_phrase('region south area');
 ----
 5000 values hashing to decf3731bad28c53fa29af58865e107b
 
 query
-SELECT * FROM dense_csv_slow_idx WHERE PHRASE(content, 'universal') AND PHRASE(region, 'region north area');
+SELECT * FROM dense_csv_slow_idx WHERE content @@ ts_phrase('universal') AND region @@ ts_phrase('region north area');
 ----
-10000 values hashing to c2f26378778ca656b6e6b9276d5d735b
+10000 values hashing to f795c7eddb5e4c035810211d5ffc3a5d
 
 statement ok
-DROP TABLE dense_csv_slow_ext;
+DROP VIEW dense_csv_slow_ext;
 
 statement ok
 DROP TABLE dense_csv_slow_src;
+
+
+# index backfill from external (json) table with large dataset
+# exercises the JSON offset-seek path (ReadJSONFunctionPkLookup) at scale.
+
+statement count 10000
+CREATE TABLE json_idx_src AS
+SELECT
+  CASE
+    WHEN s.n % 2 = 0 THEN
+      'team member vedernikoff has ' || s.n::text || ' stocks'
+    ELSE
+      'team member cutelooked has ' || s.n::text || ' stocks'
+  END AS fact,
+  CASE
+    WHEN s.n % 3 = 0 THEN 'department alpha'
+    ELSE 'department beta'
+  END AS dept
+FROM generate_series(1, 10000) AS s(n);
+
+statement count 10000
+COPY json_idx_src TO '/tmp/${__DATABASE__}_json_idx_slow.jsonl' (FORMAT json);
+
+statement ok
+CREATE VIEW json_idx_ext AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_json_idx_slow.jsonl');
+
+statement ok
+CREATE INDEX json_idx_ext_facts ON json_idx_ext USING inverted(fact test_english, dept test_english);
+
+query
+SELECT * FROM json_idx_ext_facts WHERE fact @@ ts_phrase('team member');
+----
+20000 values hashing to 8fcf7aa336da10e363eea7acf9f4f3b1
+
+query
+SELECT * FROM json_idx_ext_facts WHERE fact @@ ts_phrase('vedernikoff has');
+----
+10000 values hashing to 47f855c12594ddca09fc89564abb3814
+
+query
+SELECT * FROM json_idx_ext_facts WHERE fact @@ ts_phrase('cutelooked has');
+----
+10000 values hashing to 815290c41155518b4b8d9a888682c5c2
+
+query
+SELECT fact FROM json_idx_ext_facts WHERE dept @@ ts_phrase('department alpha');
+----
+3333 values hashing to e940816b15ca4420dabd32a26194d1df
+
+query
+SELECT * FROM json_idx_ext_facts WHERE fact @@ ts_phrase('vedernikoff') AND dept @@ ts_phrase('department alpha');
+----
+3332 values hashing to f6161bae08ed6f91eef7373d3ed74e51
+
+statement ok
+DROP VIEW json_idx_ext;
+
+statement ok
+DROP TABLE json_idx_src;
 
 
 statement ok
@@ -319,22 +367,22 @@ statement ok
 VACUUM (UPDATE_INDEXES) dense_pk_slow;
 
 query
-SELECT * FROM dense_pk_slow_idx WHERE PHRASE(b, 'every row shares') ORDER BY a;
+SELECT * FROM dense_pk_slow_idx WHERE b @@ ts_phrase('every row shares') ORDER BY a;
 ----
 20000 values hashing to bb15b34d23227f0b20af3e480354a78a
 
 query
-SELECT * FROM dense_pk_slow_idx WHERE PHRASE(b, 'universal phrase') ORDER BY a;
+SELECT * FROM dense_pk_slow_idx WHERE b @@ ts_phrase('universal phrase') ORDER BY a;
 ----
 20000 values hashing to bb15b34d23227f0b20af3e480354a78a
 
 query
-SELECT a, b FROM dense_pk_slow_idx WHERE PHRASE(b, 'number 42') ORDER BY a;
+SELECT a, b FROM dense_pk_slow_idx WHERE b @@ ts_phrase('number 42') ORDER BY a;
 ----
 42	every row shares universal phrase number 42
 
 query
-SELECT a, b FROM dense_pk_slow_idx WHERE PHRASE(b, 'every') ORDER BY a;
+SELECT a, b FROM dense_pk_slow_idx WHERE b @@ ts_phrase('every') ORDER BY a;
 ----
 20000 values hashing to bb15b34d23227f0b20af3e480354a78a
 
@@ -387,7 +435,7 @@ VACUUM (UPDATE_INDEXES) dense_no_pk_slow;
 
 # same hash as for table with PK
 query
-SELECT a, b FROM dense_no_pk_slow_idx WHERE PHRASE(b, 'every') ORDER BY a
+SELECT a, b FROM dense_no_pk_slow_idx WHERE b @@ ts_phrase('every') ORDER BY a
 ----
 20000 values hashing to bb15b34d23227f0b20af3e480354a78a
 
@@ -403,12 +451,12 @@ SELECT a, b FROM dense_no_pk_slow WHERE a < 90 ORDER BY a;
 # and that should be not messed up during reading
 
 query
-SELECT a, BM25(tableoid) FROM dense_no_pk_slow_idx WHERE a < 90 AND PHRASE (c, 'some row shares universal') ORDER BY a;
+SELECT a, BM25(tableoid) FROM dense_no_pk_slow_idx WHERE a < 90 AND c @@ ts_phrase('some row shares universal') ORDER BY a;
 ----
 178 values hashing to 14a5a0609c3123f16b5bf68188c29c7a
 
 query
-SELECT a, BM25(tableoid) FROM dense_no_pk_slow_idx WHERE PHRASE (c, 'some row shares universal') ORDER BY a;
+SELECT a, BM25(tableoid) FROM dense_no_pk_slow_idx WHERE c @@ ts_phrase('some row shares universal') ORDER BY a;
 ----
 10000 values hashing to 6041173fd76ad4943c0b357001d50af4
 

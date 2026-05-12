@@ -96,6 +96,7 @@ class SearchEngine final : public SerenedFeature {
   std::shared_ptr<SearchThreadPools> _thread_pools;
 
   bool _fail_queries_on_out_of_sync{false};
+  bool _skip_wal_recovery{false};
 
   std::vector<std::string> _skip_recovery_items;
 

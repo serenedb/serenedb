@@ -6,8 +6,10 @@
 # auto-restarts on crash via run_serened_loop.sh.
 #
 # Usage (local dev):
-#   ./run_recovery_tests.sh                              # auto-parallel
+#   ./run_recovery_tests.sh                              # auto-parallel, all tests
 #   ./run_recovery_tests.sh --jobs 4                     # 4 workers
+#   ./run_recovery_tests.sh --fast                       # skip .test_slow files
+#   SKIP_SLOW_TESTS=true ./run_recovery_tests.sh         # same as --fast
 #
 # Usage (Docker, new compose):
 #   ./run_recovery_tests.sh --runner /sqllogictest-rs    # auto-parallel in container
@@ -32,6 +34,7 @@ export BACKOFF_DURATION=500ms
 # --- Parse arguments ---
 
 RUNNER_ARGS=()
+FAST=${SKIP_SLOW_TESTS:-false}
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -43,6 +46,10 @@ while [[ $# -gt 0 ]]; do
 		RUNNER_ARGS=(--runner "$2")
 		shift 2
 		;;
+	--fast)
+		FAST=true
+		shift
+		;;
 	*)
 		echo "Unknown option: $1" >&2
 		exit 1
@@ -53,16 +60,20 @@ done
 # --- Discover test files ---
 
 declare -a test_files=()
+declare -a find_args=(recovery/ -type f \( -name "*.test" -o -name "*.test_slow" \))
+if [[ "$FAST" == "true" ]]; then
+	find_args=(recovery/ -type f -name "*.test")
+fi
 while IFS= read -r -d '' file; do
 	test_files+=("${file#./}")
-done < <(find recovery/ -name "*.test" -type f -print0 | sort -z)
+done < <(find "${find_args[@]}" -print0 | sort -z)
 
 if [[ ${#test_files[@]} -eq 0 ]]; then
 	echo "No test files found in recovery/ directory"
 	exit 1
 fi
 
-echo "Found ${#test_files[@]} recovery test(s)"
+echo "Found ${#test_files[@]} recovery test(s) (fast=$FAST)"
 
 # --- Determine mode and parallelism ---
 
@@ -133,6 +144,22 @@ if [[ "$EXTERNAL_MODE" == "false" ]]; then
 	# Not added to DATADIRS: logs are kept after the run for post-mortem.
 	SERENED_LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/serened-logs-XXXXXX")
 fi
+
+# Pre-build sqllogictest once. Without this, each forked worker would invoke
+# `cargo build` against the same target dir; cargo races on its lock files
+# under that load and a worker can exit non-zero even when the cached binary
+# is still functional (which then surfaces as a passing test reported as a
+# failure). Workers honour SDB_SKIP_SQLLOGIC_BUILD and skip cargo entirely.
+SQLLOGIC_RUNNER="${RUNNER_ARGS[1]:-$(realpath "$SCRIPT_DIR/../../third_party/sqllogictest-rs")}"
+SQLLOGIC_TARGET="${CARGO_TARGET_DIR:-$(realpath "$SCRIPT_DIR/../../.cache/cargo-target")}"
+mkdir -p "$SQLLOGIC_TARGET"
+echo "Pre-building sqllogictest..."
+cargo build --manifest-path "$SQLLOGIC_RUNNER/sqllogictest-bin/Cargo.toml" \
+	--target-dir "$SQLLOGIC_TARGET" --release --quiet || {
+	echo "ERROR: failed to pre-build sqllogictest"
+	exit 1
+}
+export SDB_SKIP_SQLLOGIC_BUILD=1
 
 # Start a fresh serened instance (restart loop + empty datadir) and wait for
 # the port to accept connections. Each test gets its own, so one test's crash

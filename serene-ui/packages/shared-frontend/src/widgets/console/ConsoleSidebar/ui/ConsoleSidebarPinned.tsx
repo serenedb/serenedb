@@ -2,6 +2,9 @@ import React from "react";
 import { Explorer } from "../../../shared/Explorer";
 import { useConsoleSidebarPinned } from "../model";
 
+const CONSOLE_PINNED_EXPLORER_STATE_STORAGE_KEY =
+    "console:sidebar:pinned-explorer-state:v1";
+
 export const ConsoleSidebarPinned: React.FC = () => {
     const { pinnedExplorerNodes, isNodePinned, togglePinnedNode } =
         useConsoleSidebarPinned();
@@ -20,6 +23,8 @@ export const ConsoleSidebarPinned: React.FC = () => {
         <Explorer
             initialData={pinnedExplorerNodes}
             isDataFetched={true}
+            sidebarSectionId="pinned"
+            stateStorageKey={CONSOLE_PINNED_EXPLORER_STATE_STORAGE_KEY}
             enablePinning
             isNodePinned={isNodePinned}
             onTogglePinned={togglePinnedNode}

@@ -18,40 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-// Optimizer rule: RocksDB strategy selection.
-//
-// Walks the plan, finds LogicalFilter -> LogicalGet(serenedb_scan) and, for
-// rocksdb-backed predicates (PK or SK), swaps LogicalGet.function and
-// bind_data to a specialised scan function.
-//
-// Strategy selection:
-//
-//   FROM table_name: build candidate set = { PK, SK_1, SK_2, ... } with
-//     each SK's column list from the catalog. Run the PK-filter extractor
-//     on the combined WHERE expression against each candidate's column
-//     list. Pick the candidate whose extraction result is *best*:
-//         Points > Ranges > Full
-//         for equal scan types, lower cost wins:
-//           points: num_points * (num_columns + sk_extra) is lower
-//           ranges: num_columns + sk_extra is lower
-//         PK beats SK on a tie (no extra MultiGet needed).
-//
-//   FROM index_name (secondary index): the candidate set is just that
-//     one SK. Inverted indexes are owned by the iresearch_plan rule, so
-//     they're ignored here.
-//
-// On a match we swap LogicalGet.function to one of
-//   CreatePkPointScanFunction / CreatePkRangeScanFunction /
-//   CreateSkPointScanFunction / CreateSkRangeScanFunction
-// and update bind_data.scan_source with the corresponding variant. The
-// executor stub still falls through to the full-table loop; specialised
-// execution lands in a follow-up Phase 2/4 step.
-//
-// Because the executor stubs don't yet honour the specialised scan sources,
-// the rule keeps the surrounding LogicalFilter intact (i.e. it does not
-// claim the matched predicates). The TODO below is where the claim will
-// land once the executor catches up.
-
 #include "connector/optimizer/rocksdb_plan.h"
 
 #include <duckdb/main/config.hpp>
@@ -74,7 +40,6 @@
 namespace sdb::optimizer {
 namespace {
 
-// One rocksdb-backed access path (PK or one SK).
 struct IndexCandidate {
   enum class Kind { Pk, Sk };
   Kind kind;
@@ -83,10 +48,6 @@ struct IndexCandidate {
   bool sk_unique = false;  // SK-only
 };
 
-// Build a single duckdb::Expression view of the LogicalFilter's
-// expressions. Single expression -> no allocation, return a raw pointer.
-// Multiple expressions -> wrap them in a synthetic AND (children are
-// cloned so the originals remain valid).
 [[nodiscard]] const duckdb::Expression* AsCombinedFilterExpr(
   const duckdb::LogicalFilter& filter,
   duckdb::unique_ptr<duckdb::Expression>& owner) {
@@ -102,12 +63,10 @@ struct IndexCandidate {
   return owner.get();
 }
 
-// Resolve the shard ObjectId for a given secondary index on a table, via
-// the current catalog snapshot. Returns a null ObjectId if not found.
 [[nodiscard]] ObjectId ResolveSkShardId(const catalog::Snapshot& snapshot,
-                                        ObjectId table_id,
+                                        ObjectId relation_id,
                                         ObjectId sk_index_id) {
-  for (auto& shard : snapshot.GetIndexShardsByTable(table_id)) {
+  for (auto& shard : snapshot.GetIndexShardsByRelation(relation_id)) {
     if (shard->GetIndexId() == sk_index_id) {
       return shard->GetId();
     }
@@ -115,31 +74,27 @@ struct IndexCandidate {
   return ObjectId{};
 }
 
-// Build the set of possible indexes for a scan.
 [[nodiscard]] std::vector<IndexCandidate> BuildIndexesCandidates(
   const connector::SereneDBScanBindData& bind_data) {
   std::vector<IndexCandidate> out;
   if (!bind_data.table_entry) {
     return out;
   }
+  const auto& tbd = bind_data.As<connector::TableScanBindData>();
 
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  const auto table_id = bind_data.table->GetId();
+  const auto table_id = tbd.table->GetId();
 
-  if (const auto* idx_entry =
-        dynamic_cast<const connector::SereneDBIndexScanEntry*>(
-          &*bind_data.table_entry)) {
-    // FROM index_name: only the designated index is eligible. Inverted
-    // indexes are handled by the iresearch_plan rule.
-    if (!idx_entry->IsSecondaryIndex()) {
-      return out;
-    }
-    for (auto& index : snapshot->GetIndexesByTable(table_id)) {
+  if (bind_data.entry_kind == connector::ScanEntryKind::SecondaryIndex) {
+    const auto& idx_entry =
+      basics::downCast<const connector::TableSecondaryIndexScanEntry>(
+        *bind_data.table_entry);
+    for (auto& index : snapshot->GetIndexesByRelation(table_id)) {
       if (index->GetType() != catalog::ObjectType::SecondaryIndex) {
         continue;
       }
       auto shard_id = ResolveSkShardId(*snapshot, table_id, index->GetId());
-      if (shard_id != idx_entry->GetSecondaryIndexShardId()) {
+      if (shard_id != idx_entry.GetSecondaryIndexShardId()) {
         continue;
       }
       const auto& sk = basics::downCast<const catalog::SecondaryIndex>(*index);
@@ -152,22 +107,24 @@ struct IndexCandidate {
     }
     return out;
   }
+  if (bind_data.IsInvertedIndexEntry()) {
+    return out;
+  }
 
-  // FROM table_name: PK + all rocksdb-backed secondary indexes.
-  auto pk_cols = bind_data.table->PKColumns();
+  auto pk_cols = tbd.table->PKColumns();
   if (!pk_cols.empty()) {
     out.emplace_back(
       IndexCandidate::Kind::Pk,
       std::vector<catalog::Column::Id>(pk_cols.begin(), pk_cols.end()));
   }
 
-  for (auto& index : snapshot->GetIndexesByTable(table_id)) {
+  for (auto& index : snapshot->GetIndexesByRelation(table_id)) {
     if (index->GetType() != catalog::ObjectType::SecondaryIndex) {
       continue;
     }
     auto shard_id = ResolveSkShardId(*snapshot, table_id, index->GetId());
     if (shard_id == ObjectId{}) {
-      continue;  // Shard may be missing mid-drop; skip.
+      continue;
     }
     const auto& sk = basics::downCast<const catalog::SecondaryIndex>(*index);
     auto cols = sk.GetColumnIds();
@@ -184,15 +141,9 @@ struct PhysicalScanCandidate {
   connector::ExtractAndRewriteResult result;
 };
 
-// Scan-type order: Points > Ranges > Full.
-// For equal scan types:
-//   Points: lower num_points * (num_columns + sk_extra) is better.
-//   Ranges/Full: fewer effective columns (num_columns + sk_extra) is better.
-// Final tiebreaker: PK beats SK (no extra materialization needed).
+// Order: Points > Ranges > Full; lower cost wins on ties; PK beats SK.
 [[nodiscard]] bool StrictlyBetter(const PhysicalScanCandidate& lhs,
                                   const PhysicalScanCandidate& rhs) {
-  // ConstraintKind values are ordered so higher = better: Points > Ranges >
-  // None.
   if (lhs.result.kind != rhs.result.kind) {
     return lhs.result.kind > rhs.result.kind;
   }
@@ -213,16 +164,13 @@ struct PhysicalScanCandidate {
              lhs.index->kind == IndexCandidate::Kind::Sk &&
              rhs.index->kind == IndexCandidate::Kind::Sk) {
     SDB_ASSERT(cols_l == cols_r);
-    // Two SK range scans with equal effective cols: prefer the wider index.
-    // We choose wider index as best effort, it's not generally better.
-    // TODO(mkornaukhov) look at column projections in the remaining filters and
-    // statistics for better choice.
+    // TODO(mkornaukhov): use stats + filter projections; wider index is a
+    // heuristic.
     auto idx_cols_l = lhs.index->column_ids.size();
     auto idx_cols_r = rhs.index->column_ids.size();
     return idx_cols_l > idx_cols_r;
   }
 
-  // Otherwise prefer PK over SK version
   return lhs.index->kind == IndexCandidate::Kind::Pk &&
          rhs.index->kind == IndexCandidate::Kind::Sk;
 }
@@ -231,8 +179,6 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
  public:
   RocksDBPlanOptimizer() { optimize_function = Optimize; }
 
-  // Try to rewrite a LogicalFilter -> LogicalGet(serenedb_scan) into a
-  // PK / SK specialised scan.
   static bool TryOptimize(duckdb::ClientContext& /*context*/,
                           duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     if (plan->type != duckdb::LogicalOperatorType::LOGICAL_FILTER) {
@@ -244,22 +190,17 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
       return false;
     }
     auto& get = filter.children[0]->Cast<duckdb::LogicalGet>();
-    if (!get.bind_data ||
-        !dynamic_cast<connector::SereneDBScanBindData*>(&*get.bind_data)) {
+    if (!connector::IsSereneDBScan(get)) {
       return false;
     }
     auto& bind_data = get.bind_data->Cast<connector::SereneDBScanBindData>();
-    if (!bind_data.table) {
+    if (bind_data.IsViewBacked()) {
       return false;
     }
     if (filter.expressions.empty()) {
       return false;
     }
 
-    // We only consider entries whose scan_source is either the default
-    // FullTableScan (regular table) or a SecondaryIndexScan (FROM
-    // sk_index_name). iresearch-claimed scans, ANN, range-search, and
-    // already-specialised pk/sk scans stay as-is.
     const auto kind = bind_data.scan_source->Kind();
     if (kind != connector::ScanSourceKind::FullTable &&
         kind != connector::ScanSourceKind::SecondaryIndex) {
@@ -271,10 +212,6 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
       return false;
     }
 
-    // Build the resolver's projected column ids: indexed by the filter's
-    // binding.column_index after DuckDB's projection pushdown may have
-    // reordered get.column_ids. get.column_ids[k] gives the physical column
-    // index into bind_data.column_ids, which yields the catalog::Column::Id.
     constexpr auto kInvalidId = std::numeric_limits<catalog::Column::Id>::max();
     std::vector<catalog::Column::Id> projected_column_ids;
     projected_column_ids.reserve(get.GetColumnIds().size());
@@ -290,7 +227,6 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
     }
     connector::ColumnResolver resolver{get.table_index, projected_column_ids};
 
-    // Build the combined filter expression once; each index reads it read-only.
     duckdb::unique_ptr<duckdb::Expression> synthetic;
     const auto* combined = AsCombinedFilterExpr(filter, synthetic);
 

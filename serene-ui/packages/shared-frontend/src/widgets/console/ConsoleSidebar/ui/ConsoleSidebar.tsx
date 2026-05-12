@@ -281,7 +281,10 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = () => {
 
     return (
         <ConsoleSidebarPinnedProvider>
-            <div ref={containerRef} className="flex flex-col h-full w-full">
+            <div
+                ref={containerRef}
+                className="flex flex-col h-full w-full"
+                data-console-sidebar-root="true">
                 <ConsoleSidebarTopbar />
                 <PaneviewReact
                     onReady={onReady}

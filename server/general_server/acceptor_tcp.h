@@ -34,10 +34,10 @@ class AcceptorTcp final : public Acceptor {
     : Acceptor(server, ctx, endpoint), _acceptor(ctx.io_context) {}
 
  public:
-  void open() override;
-  void close() override;
-  void cancel() override;
-  void asyncAccept() override;
+  void open() final;
+  void close() final;
+  void cancel() final;
+  void asyncAccept() final;
 
  private:
   void PerformHandshake(std::shared_ptr<AsioSocket<T>>);

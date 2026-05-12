@@ -34,9 +34,11 @@
 #include "catalog/object.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
+#include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
+#include "catalog/user_type.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb {
@@ -51,7 +53,7 @@ class SnapshotImpl;
 class LocalCatalog final : public LogicalCatalog,
                            public std::enable_shared_from_this<LocalCatalog> {
  public:
-  explicit LocalCatalog(bool skip_background_errors);
+  explicit LocalCatalog();
 
   Result RegisterRole(std::shared_ptr<Role> role) final;
   Result RegisterDatabase(std::shared_ptr<Database> database) final;
@@ -59,10 +61,14 @@ class LocalCatalog final : public LogicalCatalog,
                         std::shared_ptr<Schema> schema) final;
   Result RegisterView(ObjectId schema_id,
                       std::shared_ptr<PgSqlView> view) final;
+  Result RegisterSequence(ObjectId database_id, ObjectId schema_id,
+                          std::shared_ptr<Sequence> sequence) final;
   Result RegisterFunction(ObjectId database_id, ObjectId schema_id,
                           std::shared_ptr<PgSqlFunction> function) final;
   Result RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
                            std::shared_ptr<Tokenizer> tokenizer) final;
+  Result RegisterType(ObjectId database_id, ObjectId schema_id,
+                      std::shared_ptr<PgSqlType> type) final;
   Result RegisterTable(ObjectId database_id, ObjectId schema_id,
                        std::shared_ptr<Table> table) final;
   Result RegisterTableShard(std::shared_ptr<TableShard> shard) final;
@@ -74,6 +80,9 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateRole(std::shared_ptr<Role> role) final;
   Result CreateView(ObjectId database_id, std::string_view schema,
                     std::shared_ptr<PgSqlView> view, bool replace) final;
+  Result CreateSequence(ObjectId database_id, std::string_view schema,
+                        std::shared_ptr<Sequence> sequence,
+                        bool if_not_exists) final;
   Result CreateSchema(ObjectId database_id,
                       std::shared_ptr<Schema> schema) final;
   Result CreateFunction(ObjectId database_id, std::string_view schema,
@@ -85,14 +94,17 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateSecondaryIndex(
     ObjectId database_id, std::string_view schema, std::string_view relation,
     std::string name, std::vector<CreateIndexColumn>&& columns, bool unique,
-    CreateIndexOperationOptions operation_options = {}) final;
-  Result CreateInvertedIndex(
-    ObjectId database_id, std::string_view schema, std::string_view relation,
-    std::string name, std::vector<CreateIndexColumn>&& columns,
-    IndexShardOptions& shard_options,
-    CreateIndexOperationOptions operation_options = {}) final;
+    CreateIndexOperationOptions operation_options) final;
+  Result CreateInvertedIndex(ObjectId database_id, std::string_view schema,
+                             std::string_view relation, std::string name,
+                             std::vector<CreateIndexColumn>&& columns,
+                             IndexShardOptions& shard_options,
+                             CreateIndexOperationOptions operation_options,
+                             std::optional<ScorerOptions> wand_scorer) final;
   Result CreateTokenizer(ObjectId database_id, std::string_view schema,
                          std::shared_ptr<Tokenizer> dict) final;
+  Result CreateType(ObjectId database_id, std::string_view schema,
+                    std::shared_ptr<PgSqlType> type) final;
 
   Result RenameView(ObjectId database_id, std::string_view schema,
                     std::string_view name, std::string_view new_name) final;
@@ -119,6 +131,10 @@ class LocalCatalog final : public LogicalCatalog,
                     bool cascade) final;
   Result DropView(std::string_view database, std::string_view schema,
                   std::string_view name) final;
+  Result DropSequence(std::string_view database, std::string_view schema,
+                      std::string_view name, bool if_exists) final;
+  Result DropType(std::string_view database, std::string_view schema,
+                  std::string_view name) final;
   Result DropFunction(std::string_view database, std::string_view schema,
                       std::string_view name) final;
   Result DropTokenizer(std::string_view database, std::string_view schema,
@@ -133,10 +149,6 @@ class LocalCatalog final : public LogicalCatalog,
 
   std::shared_ptr<const Snapshot> GetCatalogSnapshot() const noexcept final;
 
-  bool GetSkipBackgroundErrors() const noexcept {
-    return _skip_background_errors;
-  }
-
  private:
   Result CreateIndexImpl(std::string_view schema, std::shared_ptr<Index> index,
                          IndexShardOptions& shard_options,
@@ -146,10 +158,13 @@ class LocalCatalog final : public LogicalCatalog,
   Result RenameObjectImpl(ObjectId database_id, std::string_view schema,
                           std::string_view name, std::string_view new_name);
 
+  template<typename T>
+  Result RenameObjectImpl(ObjectId schema_id, std::string_view name,
+                          std::string_view new_name, std::shared_ptr<T> object);
+
   mutable absl::Mutex _mutex;
   std::shared_ptr<const SnapshotImpl> _snapshot;
   RocksDBEngineCatalog* _engine;
-  bool _skip_background_errors;
 };
 
 }  // namespace sdb::catalog

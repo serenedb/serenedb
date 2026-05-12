@@ -17,7 +17,7 @@ COPY packages/shared-core/package*.json ./packages/shared-core/
 COPY packages/shared-backend/package*.json ./packages/shared-backend/
 COPY packages/shared-frontend/package*.json ./packages/shared-frontend/
 
-RUN rm -f package-lock.json && npm install --include=dev
+RUN npm install --include=dev --legacy-peer-deps --no-package-lock
 
 COPY tsconfig.base.json ./
 COPY apps/backend ./apps/backend
@@ -50,5 +50,5 @@ COPY cookbooks ./cookbooks
 COPY --from=builder /usr/src/apps/backend/dist ./backend/dist
 COPY --from=builder /usr/src/apps/web/dist/docker /var/www
 
-EXPOSE 3000 6543
+EXPOSE 6543
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]

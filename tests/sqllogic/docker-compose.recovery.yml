@@ -25,5 +25,6 @@ services:
       - CARGO_HOME=/tmp/cargo
       - CARGO_TARGET_DIR=/cargo-target
       - TMPDIR=/recovery_data
+      - SKIP_SLOW_TESTS
     working_dir: /sqllogic
     command: ./run_recovery_tests.sh --runner /sqllogictest-rs

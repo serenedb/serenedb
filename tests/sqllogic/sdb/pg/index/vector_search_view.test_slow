@@ -1,0 +1,272 @@
+statement ok
+CREATE TABLE vecs (id INT, emb FLOAT[8]);
+
+
+statement ok
+INSERT INTO vecs
+SELECT
+  s AS id,
+  [
+    sin(s * 0.001)::FLOAT,
+    cos(s * 0.001)::FLOAT,
+    sin(s * 0.003)::FLOAT,
+    cos(s * 0.003)::FLOAT,
+    sin(s * 0.007)::FLOAT,
+    cos(s * 0.007)::FLOAT,
+    sin(s * 0.013)::FLOAT,
+    cos(s * 0.013)::FLOAT
+  ]::FLOAT[8] AS emb
+FROM generate_series(1, 50000) AS s;
+
+
+statement ok
+CREATE TABLE correct(id INT);
+
+
+statement ok
+INSERT INTO correct SELECT id FROM vecs ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE TABLE correct_filtered(id INT);
+
+
+statement ok
+INSERT INTO correct_filtered SELECT id FROM vecs WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);
+
+
+statement ok
+CREATE TABLE vecs_text (id INT, body VARCHAR, emb FLOAT[8]);
+
+
+statement ok
+INSERT INTO vecs_text
+SELECT
+  s AS id,
+  CASE s % 4
+    WHEN 0 THEN 'red fox'
+    WHEN 1 THEN 'blue cat'
+    WHEN 2 THEN 'green bird'
+    ELSE 'yellow dog'
+  END AS body,
+  [
+    sin(s * 0.001)::FLOAT,
+    cos(s * 0.001)::FLOAT,
+    sin(s * 0.003)::FLOAT,
+    cos(s * 0.003)::FLOAT,
+    sin(s * 0.007)::FLOAT,
+    cos(s * 0.007)::FLOAT,
+    sin(s * 0.013)::FLOAT,
+    cos(s * 0.013)::FLOAT
+  ]::FLOAT[8] AS emb
+FROM generate_series(1, 50000) AS s;
+
+
+statement ok
+CREATE TABLE correct_text_phrase(id INT);
+
+
+statement ok
+INSERT INTO correct_text_phrase SELECT id FROM vecs_text WHERE body = 'red fox' ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE TABLE correct_text_any(id INT);
+
+
+statement ok
+INSERT INTO correct_text_any SELECT id FROM vecs_text WHERE body IN ('red fox', 'blue cat') ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE TABLE correct_text_starts(id INT);
+
+
+statement ok
+INSERT INTO correct_text_starts SELECT id FROM vecs_text WHERE body = 'green bird' ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE TABLE correct_text_all(id INT);
+
+
+statement ok
+INSERT INTO correct_text_all SELECT id FROM vecs_text WHERE body = 'blue cat' ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE TABLE correct_text_hybrid(id INT);
+
+
+statement ok
+INSERT INTO correct_text_hybrid SELECT id FROM vecs_text WHERE body IN ('red fox', 'blue cat') AND id > 10000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE TABLE correct_text_hybrid2(id INT);
+
+
+statement ok
+INSERT INTO correct_text_hybrid2 SELECT id FROM vecs_text WHERE body = 'red fox' AND id % 2 = 0 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+SET sdb_ef_search TO 512;
+
+
+
+statement ok
+COPY (SELECT id, emb FROM vecs)
+TO '/tmp/${__DATABASE__}_vecs.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE VIEW vecs_pq AS
+SELECT id, emb::FLOAT[8] as emb FROM read_parquet('/tmp/${__DATABASE__}_vecs.parquet');
+
+
+statement ok
+CREATE INDEX vecs_pq_hnsw ON vecs_pq
+USING inverted(emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+
+
+query
+EXPLAIN SELECT id FROM vecs_pq_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│    Index: vecs_pq_hnsw    │
+│      Lookup: parquet      │
+│          TopK: 10         │
+│          Dims: 8          │
+│      Projections: id      │
+│                           │
+│        ~50,000 rows       │
+└───────────────────────────┘
+
+
+query
+WITH
+  result AS (SELECT id FROM vecs_pq_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+statement ok
+SET sdb_ef_search TO 2048;
+
+
+query
+EXPLAIN SELECT id FROM vecs_pq_hnsw WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│    Index: vecs_pq_hnsw    │
+│      Lookup: parquet      │
+│          TopK: 10         │
+│          Dims: 8          │
+│    Filter: (#0 > 25000)   │
+│      Projections: id      │
+│                           │
+│        ~50,000 rows       │
+└───────────────────────────┘
+
+
+query
+WITH
+  result AS (SELECT id FROM vecs_pq_hnsw WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_filtered WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+statement ok
+SET sdb_ef_search TO 512;
+
+
+statement ok
+COPY (SELECT id, body, emb FROM vecs_text)
+TO '/tmp/${__DATABASE__}_vecs_text.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE VIEW vecs_text_pq AS
+SELECT id, body, emb::FLOAT[8] as emb FROM read_parquet('/tmp/${__DATABASE__}_vecs_text.parquet');
+
+
+statement ok
+CREATE INDEX vecs_text_pq_idx ON vecs_text_pq
+USING inverted(id, body en, emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+
+
+statement ok
+SET sdb_ef_search TO 4096;
+
+
+query
+WITH
+  result AS (SELECT id FROM vecs_text_pq_idx WHERE body @@ ts_phrase('red') ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_phrase WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+query
+WITH
+  result AS (SELECT id FROM vecs_text_pq_idx WHERE body @@ ts_any(['red', 'blue']) ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_any WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+query
+WITH
+  result AS (SELECT id FROM vecs_text_pq_idx WHERE body @@ ts_starts_with('gr') ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_starts WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+query
+WITH
+  result AS (SELECT id FROM vecs_text_pq_idx WHERE body @@ ts_all(['blue', 'cat']) ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_all WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+query
+WITH
+  result AS (SELECT id FROM vecs_text_pq_idx WHERE body @@ ts_any(['red', 'blue']) AND id > 10000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_hybrid WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+query
+WITH
+  result AS (SELECT id FROM vecs_text_pq_idx WHERE body @@ ts_starts_with('re') AND id % 2 = 0 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_hybrid2 WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+statement ok
+SET sdb_ef_search TO 512;

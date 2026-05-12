@@ -1,0 +1,91 @@
+control substitution on
+
+# WAL-based inverted index recovery
+#
+# Scenario: data is written to RocksDB after the search index last committed;
+# the search commit task is blocked with `Search::FailOnCommit` so the
+# iresearch payload tick stays behind the rocksdb tick. The server is then
+# crashed. On restart, InitPostRecovery should notice
+# _recovery_tick < engine.recoveryTick() and call RunWalRecovery to replay
+# the delta from the WAL straight into iresearch.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wal_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE wal_rec_t(a INTEGER PRIMARY KEY, b TEXT);
+
+statement ok
+INSERT INTO wal_rec_t VALUES (1, 'alpha bravo charlie');
+
+statement ok
+CREATE INDEX wal_rec_idx ON wal_rec_t USING inverted(a, b wal_dict);
+
+# Seed row must be searchable before we break anything
+statement ok
+VACUUM (UPDATE_INDEXES) wal_rec_t;
+
+query
+SELECT a, b FROM wal_rec_idx WHERE b @@ ts_phrase('alpha bravo');
+----
+a	b
+1	alpha bravo charlie
+
+# Freeze the search commit path: rocksdb will keep advancing, iresearch won't
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# These rows land in the WAL but won't ever reach iresearch in this process
+statement ok
+INSERT INTO wal_rec_t VALUES (2, 'delta echo foxtrot'), (3, 'golf hotel india');
+
+# Crash — uncommitted search state must be rebuilt from WAL on restart
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- server restarts here ---
+
+connection wal_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) wal_rec_t;
+
+# Pre-crash row survives
+connection wal_after
+query
+SELECT a, b FROM wal_rec_idx WHERE b @@ ts_phrase('alpha');
+----
+a	b
+1	alpha bravo charlie
+
+# Rows that were only in WAL are recovered
+connection wal_after
+query
+SELECT a, b FROM wal_rec_idx WHERE b @@ ts_phrase('delta echo');
+----
+a	b
+2	delta echo foxtrot
+
+connection wal_after
+query
+SELECT a, b FROM wal_rec_idx WHERE b @@ ts_phrase('golf hotel');
+----
+a	b
+3	golf hotel india
+
+connection wal_after
+query
+SELECT COUNT(*) FROM wal_rec_t;
+----
+count
+3

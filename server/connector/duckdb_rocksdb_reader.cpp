@@ -34,7 +34,6 @@
 
 namespace sdb::connector {
 
-// Forward declarations -- defined below after anonymous namespace
 void DeserializeListValue(std::string_view value, duckdb::Vector& output,
                           const duckdb::LogicalType& type, duckdb::idx_t idx);
 void DeserializeArrayValue(std::string_view value, duckdb::Vector& output,
@@ -44,8 +43,6 @@ void DeserializeStructValue(std::string_view value, duckdb::Vector& output,
 void DeserializeMapValue(std::string_view value, duckdb::Vector& output,
                          const duckdb::LogicalType& type, duckdb::idx_t idx);
 
-// Iterate a RocksDB column iterator, calling `func(row_idx, value)` for each
-// row. Returns the number of rows iterated.
 template<typename Func>
 static duckdb::idx_t IterateColumn(rocksdb::Iterator& it,
                                    duckdb::idx_t max_rows, Func&& func) {
@@ -221,12 +218,10 @@ static duckdb::idx_t ReadStructColumn(rocksdb::Iterator& it,
                                       duckdb::Vector& output,
                                       const duckdb::LogicalType& type,
                                       duckdb::idx_t max_rows) {
-  auto& validity = duckdb::FlatVector::ValidityMutable(output);
-
   return IterateColumn(it, max_rows,
                        [&](duckdb::idx_t idx, std::string_view value) {
                          if (value.empty()) {
-                           validity.SetInvalid(idx);
+                           duckdb::FlatVector::SetNull(output, idx, true);
                            return;
                          }
                          DeserializeStructValue(value, output, type, idx);
@@ -256,6 +251,11 @@ duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
       return ReadVarcharColumn(it, output, max_rows);
     case duckdb::LogicalTypeId::BLOB:
       return ReadBlobColumn(it, output, max_rows);
+    case duckdb::LogicalTypeId::GEOMETRY:
+      // Stored as raw WKB bytes; same layout as BLOB on disk but no prefix
+      // byte. Reading as blob is identical (AddStringOrBlob copies raw).
+      SDB_ASSERT(type.InternalType() == duckdb::PhysicalType::VARCHAR);
+      return ReadBlobColumn(it, output, max_rows);
     case duckdb::LogicalTypeId::TIMESTAMP:
       return ReadTimestampColumn(it, output, max_rows);
     case duckdb::LogicalTypeId::DATE:
@@ -270,6 +270,17 @@ duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
       return ReadStructColumn(it, output, type, max_rows);
     case duckdb::LogicalTypeId::ARRAY:
       return ReadArrayColumn(it, output, type, max_rows);
+    case duckdb::LogicalTypeId::ENUM:
+      switch (duckdb::EnumType::GetPhysicalType(type)) {
+        case duckdb::PhysicalType::UINT8:
+          return ReadScalarColumn<uint8_t>(it, output, max_rows);
+        case duckdb::PhysicalType::UINT16:
+          return ReadScalarColumn<uint16_t>(it, output, max_rows);
+        case duckdb::PhysicalType::UINT32:
+          return ReadScalarColumn<uint32_t>(it, output, max_rows);
+        default:
+          SDB_THROW(ERROR_NOT_IMPLEMENTED, "Unsupported ENUM physical type");
+      }
     default:
       SDB_THROW(ERROR_NOT_IMPLEMENTED, "Unsupported vector type");
   }
@@ -281,24 +292,18 @@ duckdb::idx_t ReadColumnWithRowId(rocksdb::Iterator& it,
                                   duckdb::Vector& rowid_output,
                                   size_t key_prefix_size,
                                   duckdb::idx_t max_rows) {
-  // We need to read both value AND key for each row in one pass.
-  // Can't use the typed readers (they advance the iterator).
-  // Instead, do a generic loop extracting both.
+  // Generic loop: typed readers advance the iterator independently, so we
+  // can't use them when we need both key and value per row.
   duckdb::idx_t count = 0;
-
   while (it.Valid() && count < max_rows) {
-    // Extract PK bytes from key
     auto key = it.key().ToStringView();
     SDB_ASSERT(key.size() >= key_prefix_size);
     auto pk_bytes = key.substr(key_prefix_size);
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(rowid_output)[count] =
       duckdb::StringVector::AddStringOrBlob(rowid_output, pk_bytes.data(),
                                             pk_bytes.size());
-
-    // Read column value via shared helper
     DeserializeValueIntoDuckDB(it.value().ToStringView(), col_output, type,
                                count);
-
     ++count;
     it.Next();
   }
@@ -374,6 +379,13 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
         duckdb::StringVector::AddStringOrBlob(output, value.data(),
                                               value.size());
     } break;
+    case duckdb::LogicalTypeId::GEOMETRY: {
+      // Stored as raw WKB bytes (see DuckDBColumnSerializer::WriteGeometryRaw).
+      SDB_ASSERT(type.InternalType() == duckdb::PhysicalType::VARCHAR);
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(output)[idx] =
+        duckdb::StringVector::AddStringOrBlob(output, value.data(),
+                                              value.size());
+    } break;
     case duckdb::LogicalTypeId::TIMESTAMP: {
       SDB_ASSERT(value.size() == sizeof(int64_t));
       int64_t v;
@@ -400,6 +412,29 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
     case duckdb::LogicalTypeId::ARRAY: {
       DeserializeArrayValue(value, output, type, idx);
     } break;
+    case duckdb::LogicalTypeId::ENUM: {
+      switch (duckdb::EnumType::GetPhysicalType(type)) {
+        case duckdb::PhysicalType::UINT8: {
+          SDB_ASSERT(value.size() == sizeof(uint8_t));
+          duckdb::FlatVector::GetDataMutable<uint8_t>(output)[idx] =
+            static_cast<uint8_t>(value[0]);
+        } break;
+        case duckdb::PhysicalType::UINT16: {
+          SDB_ASSERT(value.size() == sizeof(uint16_t));
+          uint16_t v;
+          std::memcpy(&v, value.data(), sizeof(v));
+          duckdb::FlatVector::GetDataMutable<uint16_t>(output)[idx] = v;
+        } break;
+        case duckdb::PhysicalType::UINT32: {
+          SDB_ASSERT(value.size() == sizeof(uint32_t));
+          uint32_t v;
+          std::memcpy(&v, value.data(), sizeof(v));
+          duckdb::FlatVector::GetDataMutable<uint32_t>(output)[idx] = v;
+        } break;
+        default:
+          SDB_ASSERT(false, "Unsupported ENUM physical type");
+      }
+    } break;
     default:
       duckdb::FlatVector::GetDataMutable<duckdb::string_t>(output)[idx] =
         duckdb::StringVector::AddString(output, value.data(), value.size());
@@ -409,7 +444,6 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
 
 namespace {
 
-// Deserialize sub-vector elements into a DuckDB child Vector.
 // Port of ArrayColumnDecoder::AddImpl (rocksdb_column_decoder.cpp:129).
 void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
                                   duckdb::Vector& child,
@@ -439,8 +473,14 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
       ptr += bool_bytes;
     } break;
     case duckdb::LogicalTypeId::VARCHAR:
-    case duckdb::LogicalTypeId::BLOB: {
-      // Variable-length: read length array, then string data
+    case duckdb::LogicalTypeId::BLOB:
+    case duckdb::LogicalTypeId::GEOMETRY: {
+      // GEOMETRY rides the same wire format -- raw WKB bytes, no prefix.
+      const bool as_blob_or_geom =
+        child_type.id() == duckdb::LogicalTypeId::BLOB ||
+        child_type.id() == duckdb::LogicalTypeId::GEOMETRY;
+      SDB_ASSERT(child_type.id() != duckdb::LogicalTypeId::GEOMETRY ||
+                 child_type.InternalType() == duckdb::PhysicalType::VARCHAR);
       const uint8_t* lptr = ptr;
       ptr += length_array_size;
       for (uint32_t i = 0; i < elem_count; i++) {
@@ -449,17 +489,32 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
           child_validity.SetInvalid(child_offset + i);
           ptr += len;
         } else {
+          auto* ch = reinterpret_cast<const char*>(ptr);
           duckdb::FlatVector::GetDataMutable<duckdb::string_t>(
             child)[child_offset + i] =
-            duckdb::StringVector::AddString(
-              child, reinterpret_cast<const char*>(ptr), len);
+            as_blob_or_geom
+              ? duckdb::StringVector::AddStringOrBlob(child, ch, len)
+              : duckdb::StringVector::AddString(child, ch, len);
           ptr += len;
         }
       }
     } break;
+    case duckdb::LogicalTypeId::STRUCT: {
+      const uint8_t* lptr = ptr;
+      ptr += length_array_size;
+      for (uint32_t i = 0; i < elem_count; i++) {
+        auto len = irs::vread<uint32_t>(lptr);
+        if (elem_nulls && !(elem_nulls[i / 8] & (1 << (i % 8)))) {
+          duckdb::FlatVector::SetNull(child, child_offset + i, true);
+          ptr += len;
+          continue;
+        }
+        auto sv = std::string_view{reinterpret_cast<const char*>(ptr), len};
+        DeserializeStructValue(sv, child, child_type, child_offset + i);
+        ptr += len;
+      }
+    } break;
     default: {
-      // Fixed-width types -- dispatch by type to get correct
-      // GetDataMutable<T>
       auto copy_fixed = [&]<typename T>(T*) {
         auto* out = duckdb::FlatVector::GetDataMutable<T>(child);
         std::memcpy(&out[child_offset], ptr, elem_count * sizeof(T));
@@ -501,50 +556,45 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
         case duckdb::LogicalTypeId::HUGEINT:
           copy_fixed(static_cast<duckdb::hugeint_t*>(nullptr));
           break;
+        case duckdb::LogicalTypeId::ENUM:
+          switch (duckdb::EnumType::GetPhysicalType(child_type)) {
+            case duckdb::PhysicalType::UINT8:
+              copy_fixed(static_cast<uint8_t*>(nullptr));
+              break;
+            case duckdb::PhysicalType::UINT16:
+              copy_fixed(static_cast<uint16_t*>(nullptr));
+              break;
+            case duckdb::PhysicalType::UINT32:
+              copy_fixed(static_cast<uint32_t*>(nullptr));
+              break;
+            default:
+              SDB_ASSERT(false, "Unsupported ENUM physical type");
+          }
+          break;
         default:
           SDB_ASSERT(false, "Unsupported fixed-width element type in list");
       }
     } break;
     case duckdb::LogicalTypeId::LIST: {
       // Format written by WriteListSubVector (after optional null_bitmap):
-      //   [offsets: elem_count * sizeof(list_entry_t::offset) bytes]
-      //   [sizes:   elem_count * sizeof(list_entry_t::offset) bytes]
+      //   [sizes: elem_count * sizeof(uint32_t) bytes]
       //   [child sub-vector for all list elements combined]
-      // Note: each offset/size slot is sizeof(list_entry_t::offset) = 8
-      // bytes (uint64_t allocation), but the actual value written is a
-      // uint32_t in the first 4 bytes of each slot (see
-      // WriteListSubVector).
-      static constexpr size_t kSlotSize = sizeof(duckdb::list_entry_t::offset);
-
+      // Per-list offsets are recomputed here via running-sum.
       auto& list_child = duckdb::ListVector::GetEntry(child);
       auto& list_child_type = duckdb::ListType::GetChildType(child_type);
       auto current_child_size = duckdb::ListVector::GetListSize(child);
       auto* list_entries = duckdb::ListVector::GetData(child);
 
-      // The offsets/sizes arrays each occupy elem_count * kSlotSize bytes
-      // total, but the uint32 values are packed consecutively in the first
-      // elem_count * sizeof(uint32_t) bytes (the remainder is
-      // uninitialized). Offsets block: [ptr .. ptr + elem_count *
-      // kSlotSize) Sizes block:   [ptr + elem_count * kSlotSize .. ptr + 2
-      // * elem_count
-      // * kSlotSize)
-
-      const auto* sizes_start =
-        reinterpret_cast<const uint32_t*>(ptr + elem_count * kSlotSize);
-      // sizes_start[i] reads at i * sizeof(uint32_t) = consecutive uint32s.
+      const auto* sizes_array = reinterpret_cast<const uint32_t*>(ptr);
       uint32_t total_child_elems = 0;
       for (uint32_t i = 0; i < elem_count; i++) {
-        total_child_elems += sizes_start[i];
+        total_child_elems += sizes_array[i];
       }
       duckdb::ListVector::Reserve(child,
                                   current_child_size + total_child_elems);
       // Re-fetch list_entries after possible resize.
       list_entries = duckdb::ListVector::GetData(child);
 
-      ptr += elem_count * kSlotSize;  // skip entire offsets block
-
-      // Read consecutive uint32_t sizes, then skip the full sizes block.
-      const auto* sizes_array = reinterpret_cast<const uint32_t*>(ptr);
       uint32_t running_offset = current_child_size;
       for (uint32_t i = 0; i < elem_count; i++) {
         auto size = sizes_array[i];
@@ -556,9 +606,8 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
           running_offset += size;
         }
       }
-      ptr += elem_count * kSlotSize;  // skip entire sizes block
+      ptr += elem_count * sizeof(uint32_t);
 
-      // Parse child sub-vector (all elements from all lists combined).
       if (total_child_elems > 0) {
         auto sub_count = irs::vread<uint32_t>(ptr);
         SDB_ASSERT(sub_count == total_child_elems);
@@ -635,17 +684,14 @@ void DeserializeListValue(std::string_view value, duckdb::Vector& output,
   auto& child_type = duckdb::ListType::GetChildType(type);
 
   if (is_constant) {
-    // Constant: single value replicated
     SDB_ASSERT(!have_nulls);
     auto remaining = static_cast<size_t>(end - ptr);
     if (remaining == 0) {
-      // All NULLs
       auto& child_validity = duckdb::FlatVector::ValidityMutable(child);
       for (uint32_t i = 0; i < elem_count; i++) {
         child_validity.SetInvalid(current_size + i);
       }
     } else {
-      // Single value, replicate
       for (uint32_t i = 0; i < elem_count; i++) {
         auto val_sv =
           std::string_view{reinterpret_cast<const char*>(ptr), remaining};
@@ -680,7 +726,6 @@ void DeserializeStructValue(std::string_view value, duckdb::Vector& output,
   auto& children = duckdb::StructVector::GetEntries(output);
   const auto num_children = children.size();
 
-  // Read length_array_size header, then the n-1 per-child lengths.
   auto length_array_size = irs::vread<uint32_t>(ptr);
   const uint8_t* data_start = ptr + length_array_size;
 
@@ -689,7 +734,6 @@ void DeserializeStructValue(std::string_view value, duckdb::Vector& output,
   for (size_t i = 0; i + 1 < num_children; ++i) {
     lengths.push_back(irs::vread<uint32_t>(ptr));
   }
-  // Advance past the length array to the start of child data.
   ptr = data_start;
 
   for (size_t i = 0; i < num_children; ++i) {
@@ -697,7 +741,7 @@ void DeserializeStructValue(std::string_view value, duckdb::Vector& output,
     if (i + 1 < num_children) {
       child_len = lengths[i];
     } else {
-      // Last child: consume all remaining bytes.
+      // Last child's length is implicit (all remaining bytes).
       child_len = static_cast<size_t>(end - ptr);
     }
 
@@ -705,7 +749,7 @@ void DeserializeStructValue(std::string_view value, duckdb::Vector& output,
     auto& child_type = child_types[i].second;
 
     if (child_len == 0) {
-      duckdb::FlatVector::ValidityMutable(child).SetInvalid(idx);
+      duckdb::FlatVector::SetNull(child, idx, true);
     } else {
       auto child_sv =
         std::string_view{reinterpret_cast<const char*>(ptr), child_len};
@@ -733,7 +777,6 @@ void DeserializeMapValue(std::string_view value, duckdb::Vector& output,
 
   auto keys_size = irs::vread<uint32_t>(ptr);
   if (!keys_size) {
-    // Empty MAP
     duckdb::ListVector::GetData(output)[idx] =
       duckdb::list_entry_t{duckdb::ListVector::GetListSize(output), 0};
     return;
@@ -741,8 +784,8 @@ void DeserializeMapValue(std::string_view value, duckdb::Vector& output,
   const uint8_t* keys_start = ptr;
   const uint8_t* keys_end = ptr + keys_size;
 
-  // Peek at elem_count from keys sub-vector to reserve capacity before
-  // writing.
+  // Peek elem_count out of the keys sub-vector header to size the result
+  // before writing -- the actual ptr advance happens inside parse_sub_vector.
   const uint8_t* peek = keys_start;
   auto elem_count = irs::vread<uint32_t>(peek);
   SDB_ASSERT(elem_count > 0);
@@ -759,12 +802,9 @@ void DeserializeMapValue(std::string_view value, duckdb::Vector& output,
   auto& key_type = duckdb::MapType::KeyType(type);
   auto& val_type = duckdb::MapType::ValueType(type);
 
-  // Parse sub-vector header at ptr into flags/have_*/length_array_size.
-  // Fills `child` starting at child_offset. Advances ptr.
   auto parse_sub_vector = [&](const uint8_t* sub_end, duckdb::Vector& child,
                               duckdb::idx_t child_offset,
                               const duckdb::LogicalType& child_type) {
-    // elem_count already consumed via peek; re-consume from actual ptr.
     [[maybe_unused]] auto n = irs::vread<uint32_t>(ptr);
     auto sub_flags = static_cast<ValueFlags>(*ptr++);
     bool is_constant = (sub_flags & ValueFlags::Constant) != ValueFlags::None;
@@ -821,7 +861,6 @@ void DeserializeArrayValue(std::string_view value, duckdb::Vector& output,
 
   auto elem_count = irs::vread<uint32_t>(ptr);
   if (elem_count == 0) {
-    // Zero-element ARRAY: mark child slots invalid
     auto& child_validity = duckdb::FlatVector::ValidityMutable(child);
     for (duckdb::idx_t i = 0; i < array_size; ++i) {
       child_validity.SetInvalid(idx * array_size + i);

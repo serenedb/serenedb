@@ -41,7 +41,6 @@ class ConnectionContext;
 namespace sdb::connector {
 
 // Factory: create DuckDB index writers for all indexes on a table.
-// Mirrors CreateIndexWriters from serenedb_connector.hpp but for DuckDB types.
 //
 // Writers are created once (e.g. in GetGlobalSinkState) and reused for each
 // Sink() call. The WriteKind template selects Insert/Delete/Update writers.

@@ -132,7 +132,7 @@ bool PgVarcharToBlobCast(duckdb::Vector& source, duckdb::Vector& result,
 struct ByteaOutCastData : public duckdb::BoundCastData {
   bool use_escape;
   explicit ByteaOutCastData(bool use_escape) : use_escape(use_escape) {}
-  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const override {
+  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
     return duckdb::make_uniq<ByteaOutCastData>(use_escape);
   }
 };
@@ -151,16 +151,16 @@ bool PgBlobToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
     source, result, count, [&](duckdb::string_t input) -> duckdb::string_t {
       std::string_view value{input.GetData(), input.GetSize()};
       if (use_escape) {
-        const auto required_size = pg::ByteaOutEscapeLength<false>(value);
+        const auto required_size = pg::ByteaOutEscapeLength(value);
         auto target = duckdb::StringVector::EmptyString(result, required_size);
-        pg::ByteaOutEscape<false>(target.GetDataWriteable(), value);
+        pg::ByteaOutEscape(target.GetDataWriteable(), value);
         target.Finalize();
         return target;
       }
       // Hex format: \x prefix + 2 hex chars per byte
       const auto required_size = 2 + 2 * value.size();
       auto target = duckdb::StringVector::EmptyString(result, required_size);
-      pg::ByteaOutHex<false>(target.GetDataWriteable(), value);
+      pg::ByteaOutHex(target.GetDataWriteable(), value);
       target.Finalize();
       return target;
     });
@@ -187,7 +187,7 @@ duckdb::BoundCastInfo PgBlobToVarcharBind(duckdb::BindCastInput& input,
 struct RegCastData : public duckdb::BoundCastData {
   duckdb::ClientContext* ctx;
   explicit RegCastData(duckdb::ClientContext* ctx) : ctx(ctx) {}
-  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const override {
+  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
     return duckdb::make_uniq<RegCastData>(ctx);
   }
 };

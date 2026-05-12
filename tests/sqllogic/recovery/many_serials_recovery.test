@@ -1,0 +1,546 @@
+control substitution on
+
+# Vedernikoff Konstantin's full clickclack iceberg-only ticket system: many
+# SERIAL tables side-by-side, each with its own auto-created Sequence in the
+# catalog. All counters must round-trip independently across a crash. He
+# does iceberg only, "loves" SOLID ironically, has been quietly applying
+# to MOP between standups.
+
+statement ok
+CREATE TABLE iceberg_partition_reviews (
+  id SERIAL PRIMARY KEY,
+  partition_strategy TEXT
+);
+
+
+statement ok
+CREATE TABLE iceberg_manifest_audits (
+  id BIGSERIAL PRIMARY KEY,
+  manifest_path TEXT
+);
+
+
+statement ok
+CREATE TABLE iceberg_compaction_proposals (
+  id SMALLSERIAL PRIMARY KEY,
+  proposal TEXT
+);
+
+
+statement ok
+CREATE TABLE solid_principles_violated (
+  id SERIAL PRIMARY KEY,
+  principle TEXT
+);
+
+
+statement ok
+CREATE TABLE solid_ironic_love_notes (
+  id SERIAL PRIMARY KEY,
+  note TEXT
+);
+
+
+statement ok
+CREATE TABLE mop_recruiter_pings (
+  id BIGSERIAL PRIMARY KEY,
+  recruiter TEXT
+);
+
+
+statement ok
+CREATE TABLE mop_take_home_assignments (
+  id SERIAL PRIMARY KEY,
+  task TEXT
+);
+
+
+statement ok
+CREATE TABLE mop_interview_rounds (
+  id SERIAL PRIMARY KEY,
+  round_topic TEXT
+);
+
+
+statement ok
+CREATE TABLE kostya_resume_revisions (
+  id SERIAL PRIMARY KEY,
+  diff TEXT
+);
+
+
+statement ok
+CREATE TABLE clickclack_iceberg_jira_tickets (
+  id BIGSERIAL PRIMARY KEY,
+  description TEXT
+);
+
+
+# Different counter starting points for each table -- mostly via row counts,
+# plus a couple where we use bulk inserts to push past the first DataChunk.
+
+statement count 3
+INSERT INTO iceberg_partition_reviews (partition_strategy) VALUES
+  ('partition_by_day_v1'),
+  ('partition_by_hour_v2'),
+  ('partition_by_event_year_v17');
+
+
+statement count 7
+INSERT INTO iceberg_manifest_audits (manifest_path) VALUES
+  ('s3://lake/iceberg/m/00001'),
+  ('s3://lake/iceberg/m/00002'),
+  ('s3://lake/iceberg/m/00003'),
+  ('s3://lake/iceberg/m/00004'),
+  ('s3://lake/iceberg/m/00005'),
+  ('s3://lake/iceberg/m/00006'),
+  ('s3://lake/iceberg/m/00007');
+
+
+statement count 2
+INSERT INTO iceberg_compaction_proposals (proposal) VALUES
+  ('compact_small_files_someday'),
+  ('do_not_touch_q4');
+
+
+statement count 5
+INSERT INTO solid_principles_violated (principle) VALUES
+  ('S_single_responsibility'),
+  ('O_open_closed'),
+  ('L_liskov_substitution'),
+  ('I_interface_segregation'),
+  ('D_dependency_inversion');
+
+
+statement count 4
+INSERT INTO solid_ironic_love_notes (note) VALUES
+  ('actually_solid_is_overhyped'),
+  ('inheritance_is_fine'),
+  ('eight_classes_for_one_check'),
+  ('ironic_signal_pattern_obsession');
+
+
+statement count 6
+INSERT INTO mop_recruiter_pings (recruiter) VALUES
+  ('mop_anna_first_outreach'),
+  ('mop_boris_followup'),
+  ('mop_dasha_phone_screen'),
+  ('mop_egor_calendar_invite'),
+  ('mop_fyodor_tech_round_invite'),
+  ('mop_galina_offer_negotiation');
+
+
+statement count 3
+INSERT INTO mop_take_home_assignments (task) VALUES
+  ('design_iceberg_compaction_at_scale'),
+  ('write_a_solid_critique_essay'),
+  ('explain_partition_evolution');
+
+
+statement count 4
+INSERT INTO mop_interview_rounds (round_topic) VALUES
+  ('iceberg_storage_layout_again'),
+  ('manifest_file_internals'),
+  ('partition_evolution_design'),
+  ('iceberg_vs_delta_lake_q3');
+
+
+# Many resume revisions during the application process.
+statement count 25
+INSERT INTO kostya_resume_revisions (diff)
+  SELECT 'add_one_more_iceberg_keyword_v' || i::TEXT
+    FROM generate_series(1, 25) AS s(i);
+
+
+# Bulk insert that pushes past one DataChunk (chunk size 2048).
+statement count 3000
+INSERT INTO clickclack_iceberg_jira_tickets (description)
+  SELECT 'iceberg_audit_review_' || i::TEXT
+    FROM generate_series(1, 3000) AS s(i);
+
+
+# Sanity pre-crash: each table has the right number of rows.
+query
+SELECT count(*) FROM iceberg_partition_reviews;
+----
+count
+3
+
+
+query
+SELECT count(*) FROM iceberg_manifest_audits;
+----
+count
+7
+
+
+query
+SELECT count(*) FROM iceberg_compaction_proposals;
+----
+count
+2
+
+
+query
+SELECT count(*) FROM solid_principles_violated;
+----
+count
+5
+
+
+query
+SELECT count(*) FROM solid_ironic_love_notes;
+----
+count
+4
+
+
+query
+SELECT count(*) FROM mop_recruiter_pings;
+----
+count
+6
+
+
+query
+SELECT count(*) FROM mop_take_home_assignments;
+----
+count
+3
+
+
+query
+SELECT count(*) FROM mop_interview_rounds;
+----
+count
+4
+
+
+query
+SELECT count(*) FROM kostya_resume_revisions;
+----
+count
+25
+
+
+query
+SELECT count(*) FROM clickclack_iceberg_jira_tickets;
+----
+count
+3000
+
+
+# Each table's max id matches its row count (sequences started at 1, no gaps).
+query
+SELECT max(id) FROM iceberg_partition_reviews;
+----
+max
+3
+
+
+query
+SELECT max(id) FROM iceberg_manifest_audits;
+----
+max
+7
+
+
+query
+SELECT max(id) FROM clickclack_iceberg_jira_tickets;
+----
+max
+3000
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# All ten tables come back independently with row counts and max ids
+# preserved.
+connection after_crash
+query
+SELECT count(*), max(id) FROM iceberg_partition_reviews;
+----
+count	max
+3	3
+
+
+connection after_crash
+query
+SELECT count(*), max(id) FROM iceberg_manifest_audits;
+----
+count	max
+7	7
+
+
+connection after_crash
+query
+SELECT count(*), max(id) FROM iceberg_compaction_proposals;
+----
+count	max
+2	2
+
+
+connection after_crash
+query
+SELECT count(*), max(id) FROM solid_principles_violated;
+----
+count	max
+5	5
+
+
+connection after_crash
+query
+SELECT count(*), max(id) FROM solid_ironic_love_notes;
+----
+count	max
+4	4
+
+
+connection after_crash
+query
+SELECT count(*), max(id) FROM mop_recruiter_pings;
+----
+count	max
+6	6
+
+
+connection after_crash
+query
+SELECT count(*), max(id) FROM mop_take_home_assignments;
+----
+count	max
+3	3
+
+
+connection after_crash
+query
+SELECT count(*), max(id) FROM mop_interview_rounds;
+----
+count	max
+4	4
+
+
+connection after_crash
+query
+SELECT count(*), max(id) FROM kostya_resume_revisions;
+----
+count	max
+25	25
+
+
+connection after_crash
+query
+SELECT count(*), max(id) FROM clickclack_iceberg_jira_tickets;
+----
+count	max
+3000	3000
+
+
+# Critical: post-crash inserts must NOT collide with persisted ids. Each
+# table's auto-created Sequence had its counter folded into the persisted
+# Sequences CF via Merge ops; recovery loads them via Sequence::ReadInternal
+# (override _live from disk). Each next id == previous_max + 1.
+
+connection after_crash
+statement count 1
+INSERT INTO iceberg_partition_reviews (partition_strategy)
+  VALUES ('partition_by_random_strategy');
+
+
+connection after_crash
+query
+SELECT id FROM iceberg_partition_reviews
+  WHERE partition_strategy = 'partition_by_random_strategy';
+----
+id
+4
+
+
+connection after_crash
+statement count 1
+INSERT INTO iceberg_manifest_audits (manifest_path)
+  VALUES ('s3://lake/iceberg/m/post_crash_001');
+
+
+connection after_crash
+query
+SELECT id FROM iceberg_manifest_audits
+  WHERE manifest_path = 's3://lake/iceberg/m/post_crash_001';
+----
+id
+8
+
+
+connection after_crash
+statement count 1
+INSERT INTO solid_ironic_love_notes (note)
+  VALUES ('signals_dont_replace_thinking');
+
+
+connection after_crash
+query
+SELECT id FROM solid_ironic_love_notes
+  WHERE note = 'signals_dont_replace_thinking';
+----
+id
+5
+
+
+connection after_crash
+statement count 1
+INSERT INTO mop_interview_rounds (round_topic)
+  VALUES ('final_round_with_cto');
+
+
+connection after_crash
+query
+SELECT id FROM mop_interview_rounds
+  WHERE round_topic = 'final_round_with_cto';
+----
+id
+5
+
+
+connection after_crash
+statement count 1
+INSERT INTO mop_recruiter_pings (recruiter)
+  VALUES ('mop_galina_offer_letter_attached');
+
+
+connection after_crash
+query
+SELECT id FROM mop_recruiter_pings
+  WHERE recruiter = 'mop_galina_offer_letter_attached';
+----
+id
+7
+
+
+# Bulk insert post-recovery on the multi-chunk table.
+connection after_crash
+statement count 2500
+INSERT INTO clickclack_iceberg_jira_tickets (description)
+  SELECT 'iceberg_audit_review_post_crash_' || i::TEXT
+    FROM generate_series(1, 2500) AS s(i);
+
+
+connection after_crash
+query
+SELECT count(*), max(id) FROM clickclack_iceberg_jira_tickets;
+----
+count	max
+5500	5500
+
+
+# Drop everything cleanly.
+connection after_crash
+statement ok
+DROP TABLE iceberg_partition_reviews;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE IF EXISTS iceberg_partition_reviews_id_seq;
+
+
+connection after_crash
+statement ok
+DROP TABLE iceberg_manifest_audits;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE IF EXISTS iceberg_manifest_audits_id_seq;
+
+
+connection after_crash
+statement ok
+DROP TABLE iceberg_compaction_proposals;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE IF EXISTS iceberg_compaction_proposals_id_seq;
+
+
+connection after_crash
+statement ok
+DROP TABLE solid_principles_violated;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE IF EXISTS solid_principles_violated_id_seq;
+
+
+connection after_crash
+statement ok
+DROP TABLE solid_ironic_love_notes;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE IF EXISTS solid_ironic_love_notes_id_seq;
+
+
+connection after_crash
+statement ok
+DROP TABLE mop_recruiter_pings;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE IF EXISTS mop_recruiter_pings_id_seq;
+
+
+connection after_crash
+statement ok
+DROP TABLE mop_take_home_assignments;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE IF EXISTS mop_take_home_assignments_id_seq;
+
+
+connection after_crash
+statement ok
+DROP TABLE mop_interview_rounds;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE IF EXISTS mop_interview_rounds_id_seq;
+
+
+connection after_crash
+statement ok
+DROP TABLE kostya_resume_revisions;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE IF EXISTS kostya_resume_revisions_id_seq;
+
+
+connection after_crash
+statement ok
+DROP TABLE clickclack_iceberg_jira_tickets;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE IF EXISTS clickclack_iceberg_jira_tickets_id_seq;

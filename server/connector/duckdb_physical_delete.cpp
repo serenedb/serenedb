@@ -20,9 +20,13 @@
 
 #include "connector/duckdb_physical_delete.h"
 
+#include <absl/synchronization/mutex.h>
+
 #include <duckdb/common/types/data_chunk.hpp>
+#include <shared_mutex>
 
 #include "basics/assert.h"
+#include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_primary_key.h"
@@ -34,6 +38,7 @@
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
 
@@ -59,6 +64,9 @@ struct SereneDBDeleteGlobalState : public duckdb::GlobalSinkState {
 
   // Reusable buffers
   std::vector<std::string> row_keys;
+
+  std::shared_ptr<TableShard> table_shard;
+  std::shared_lock<std::shared_mutex> table_lock;
 };
 
 struct SereneDBDeleteSourceState : public duckdb::GlobalSourceState {
@@ -88,6 +96,12 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
 
   state->table_id = _table->GetId();
   state->table_key = key_utils::PrepareTableKey(state->table_id);
+
+  auto& conn_ctx = GetSereneDBContext(context);
+  state->table_shard =
+    conn_ctx.EnsureCatalogSnapshot()->GetTableShard(state->table_id);
+  SDB_ASSERT(state->table_shard);
+  state->table_lock = std::shared_lock{state->table_shard->GetTableLock()};
 
   const auto& columns = _table->Columns();
   const auto& pk_col_ids = _table->PKColumns();
@@ -119,9 +133,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     });
   }
 
-  auto& conn_ctx = GetSereneDBContext(context);
-  conn_ctx.AddRocksDBWrite();
-  state->txn = &conn_ctx.EnsureRocksDBTransaction();
+  state->txn = &conn_ctx.GetRocksDBTransaction();
 
   // Build column-ID-to-chunk-position mapping for index writers.
   // The scan output has: [..., pk_cols, indexed_cols, rowid].
@@ -144,7 +156,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     // They're the non-PK indexed columns in sorted order
     std::vector<catalog::Column::Id> non_pk_idx_col_ids;
     auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-    auto indexes = snapshot->GetIndexesByTable(state->table_id);
+    auto indexes = snapshot->GetIndexesByRelation(state->table_id);
     containers::FlatHashSet<size_t> pk_table_indices;
     for (auto pk_id : pk_col_ids) {
       for (size_t i = 0; i < columns.size(); ++i) {
@@ -218,10 +230,13 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
     writer->Init(num_rows, chunk);
   }
 
+  std::vector<duckdb::UnifiedVectorFormat> pk_formats;
+  duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
+
   std::string key_buffer;
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     duckdb_primary_key::MakeColumnKey(
-      chunk, gstate.pk_columns, row, gstate.table_key,
+      pk_formats, gstate.pk_columns, row, gstate.table_key,
       [&](std::string_view row_key) {
         auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
         if (!status.ok()) {

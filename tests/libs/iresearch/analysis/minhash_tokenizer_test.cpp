@@ -158,19 +158,19 @@ TEST(MinHashTokenizerTest, ConstructDefault) {
               "minhash", irs::Type<irs::text_format::Json>::get(), R"({})"));
   ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
                        "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"analyzer":{}})"));
+                       R"({"tokenizer":{}})"));
   ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
                        "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"analyzer":""})"));
+                       R"({"tokenizer":""})"));
   ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
                        "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"analyzer":null})"));
+                       R"({"tokenizer":null})"));
   ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
                        "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"analyzer":[]})"));
+                       R"({"tokenizer":[]})"));
   ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
                        "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"analyzer":42})"));
+                       R"({"tokenizer":42})"));
 }
 
 TEST(MinHashTokenizerTest, ConstructCustom) {
@@ -192,14 +192,14 @@ TEST(MinHashTokenizerTest, ConstructCustom) {
   assert_analyzer(
     irs::analysis::analyzers::Get(
       "minhash", irs::Type<irs::text_format::Json>::get(),
-      R"({ "analyzer":{"type":"segmentation"}, "numHashes": 42 })"),
+      R"({ "tokenizer":{"type":"segmentation"}, "numHashes": 42 })"),
     42);
 }
 
 TEST(MinHashTokenizerTest, NormalizeCustom) {
   std::string out;
   const auto expected_out = vpack::Parser::fromJson(
-    R"({ "analyzer": {
+    R"({ "tokenizer": {
              "type":"segmentation",
              "properties": {"break":"alpha","case":"lower"} },
              "numHashes": 42 })");
@@ -207,46 +207,46 @@ TEST(MinHashTokenizerTest, NormalizeCustom) {
   out.clear();
   ASSERT_TRUE(irs::analysis::analyzers::Normalize(
     out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "analyzer":{"type":"segmentation"}, "numHashes": 42 })"));
+    R"({ "tokenizer":{"type":"segmentation"}, "numHashes": 42 })"));
   ASSERT_EQ(expected_out->slice().toString(), out);
 
   out.clear();
   ASSERT_TRUE(irs::analysis::analyzers::Normalize(
     out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "analyzer":{"type":"segmentation", "properties":{}}, "numHashes": 42 })"));
+    R"({ "tokenizer":{"type":"segmentation", "properties":{}}, "numHashes": 42 })"));
   ASSERT_EQ(expected_out->slice().toString(), out);
 
   out.clear();
   ASSERT_TRUE(irs::analysis::analyzers::Normalize(
     out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "analyzer":{"type":"segmentation", "properties":{"case":"lower"}}, "numHashes": 42 })"));
+    R"({ "tokenizer":{"type":"segmentation", "properties":{"case":"lower"}}, "numHashes": 42 })"));
   ASSERT_EQ(expected_out->slice().toString(), out);
 
   out.clear();
   ASSERT_TRUE(irs::analysis::analyzers::Normalize(
     out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "analyzer":{"type":"segmentation", "properties":{"case":"upper"}}, "numHashes": 42 })"));
+    R"({ "tokenizer":{"type":"segmentation", "properties":{"case":"upper"}}, "numHashes": 42 })"));
   ASSERT_NE(expected_out->slice().toString(), out);
 
   // Failing cases
   ASSERT_FALSE(irs::analysis::analyzers::Normalize(
     out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "analyzer":{"type":"segmentation", "properties":{}, "numHashes": 0 })"));
+    R"({ "tokenizer":{"type":"segmentation", "properties":{}, "numHashes": 0 })"));
   ASSERT_FALSE(irs::analysis::analyzers::Normalize(
     out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "analyzer":{"type":"segmentation", "properties":false, "numHashes": 42 })"));
+    R"({ "tokenizer":{"type":"segmentation", "properties":false, "numHashes": 42 })"));
   ASSERT_FALSE(irs::analysis::analyzers::Normalize(
     out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "analyzer":{"type":"segmentation", "properties":[], "numHashes": 42 })"));
+    R"({ "tokenizer":{"type":"segmentation", "properties":[], "numHashes": 42 })"));
   ASSERT_FALSE(irs::analysis::analyzers::Normalize(
     out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "analyzer":{"type":"segmentation", "properties":false, "numHashes": 42 })"));
+    R"({ "tokenizer":{"type":"segmentation", "properties":false, "numHashes": 42 })"));
   ASSERT_FALSE(irs::analysis::analyzers::Normalize(
     out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "analyzer":{"type":"segmentation", "properties":null, "numHashes": 42 })"));
+    R"({ "tokenizer":{"type":"segmentation", "properties":null, "numHashes": 42 })"));
   ASSERT_FALSE(irs::analysis::analyzers::Normalize(
     out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "analyzer":{"type":"segmentation", "properties":42, "numHashes": 42 })"));
+    R"({ "tokenizer":{"type":"segmentation", "properties":42, "numHashes": 42 })"));
 }
 
 TEST(MinHashTokenizerTest, CheckOptions) {

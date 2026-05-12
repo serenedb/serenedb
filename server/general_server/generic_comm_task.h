@@ -48,7 +48,7 @@ class GenericCommTask : public Base {
   template<bool UseRaw = false>
   void AsyncReadSome();
 
-  bool Stopped() const noexcept override {
+  bool Stopped() const noexcept final {
     return _stopped.load(std::memory_order_acquire);
   }
 

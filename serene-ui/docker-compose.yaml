@@ -11,6 +11,5 @@ services:
             DEFAULT_CONNECTION_STRING: ${DEFAULT_CONNECTION_STRING:-}
             DEFAULT_CONNECTION_NAME: ${DEFAULT_CONNECTION_NAME:-}
         ports:
-            - "3000:3000"
             - "6543:6543"
         restart: unless-stopped

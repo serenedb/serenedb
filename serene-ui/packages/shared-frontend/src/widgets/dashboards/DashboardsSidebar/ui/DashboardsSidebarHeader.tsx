@@ -5,6 +5,8 @@ import {
     DashboardsIcon,
     SavedQueriesIcon,
     cn,
+    focusSidebarRelativeItem,
+    handleSidebarSectionHotkey,
 } from "@serene-ui/shared-frontend";
 import { CreateDashboardButton } from "../../../../features";
 import { ImportSavedQueryButton } from "../../../../features/openSavedQueriesModal/ui/buttons";
@@ -63,7 +65,7 @@ export const DashboardsSidebarHeader = (
     return (
         <div
             className={cn(
-                "flex items-center h-full pl-2 pr-1 hover:bg-accent",
+                "flex items-center h-full pl-2 pr-1 hover:bg-accent focus-within:bg-accent",
                 {
                     "border-t-[0.5px]": !isFirst,
                     "border-b-[0.5px]": isLast && !shouldHideBorder,
@@ -72,7 +74,65 @@ export const DashboardsSidebarHeader = (
             <button
                 type="button"
                 onClick={() => props.api.setExpanded(!expanded)}
-                className="flex flex-1 items-center gap-1.5 min-w-0 h-full text-left">
+                className="flex flex-1 items-center gap-1.5 min-w-0 h-full text-left outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0"
+                data-sidebar-primary-action="true"
+                data-sidebar-focus-id={`dashboards-sidebar-section-${props.params.kind}`}
+                data-sidebar-section-id={props.params.kind}
+                onKeyDown={(event) => {
+                    if (handleSidebarSectionHotkey(event)) {
+                        return;
+                    }
+
+                    if (event.target !== event.currentTarget) {
+                        return;
+                    }
+
+                    const key = event.key.toLowerCase();
+
+                    if (event.key === "ArrowDown" || key === "j") {
+                        event.preventDefault();
+                        focusSidebarRelativeItem(
+                            event.currentTarget,
+                            "next",
+                        );
+                        return;
+                    }
+
+                    if (event.key === "ArrowUp" || key === "k") {
+                        event.preventDefault();
+                        focusSidebarRelativeItem(
+                            event.currentTarget,
+                            "previous",
+                        );
+                        return;
+                    }
+
+                    if (event.key === "Enter") {
+                        event.preventDefault();
+                        props.api.setExpanded(!expanded);
+                        return;
+                    }
+
+                    if (event.key === "ArrowRight" || key === "l") {
+                        event.preventDefault();
+
+                        if (!expanded) {
+                            props.api.setExpanded(true);
+                            return;
+                        }
+
+                        focusSidebarRelativeItem(event.currentTarget, "next");
+                        return;
+                    }
+
+                    if (
+                        (event.key === "ArrowLeft" || key === "h") &&
+                        expanded
+                    ) {
+                        event.preventDefault();
+                        props.api.setExpanded(false);
+                    }
+                }}>
                 <ArrowDownIcon
                     className={cn("mr-1", {
                         "rotate-[-90deg]": !expanded,

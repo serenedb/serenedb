@@ -44,7 +44,6 @@
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/key_generator.h"
 #include "catalog/table.h"
 #include "database/ticks.h"
 #include "general_server/scheduler_feature.h"
@@ -257,7 +256,7 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
 
  public:
   rocksdb::Status PutCF(uint32_t column_family_id, const rocksdb::Slice& key,
-                        const rocksdb::Slice& value) override {
+                        const rocksdb::Slice& value) final {
     ++_entries_scanned;
 
     IncTick();
@@ -274,7 +273,7 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
   void HandleDeleteCf(uint32_t cf_id, const rocksdb::Slice& key) { IncTick(); }
 
   rocksdb::Status DeleteCF(uint32_t column_family_id,
-                           const rocksdb::Slice& key) override {
+                           const rocksdb::Slice& key) final {
     ++_entries_scanned;
 
     HandleDeleteCf(column_family_id, key);
@@ -286,7 +285,7 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
   }
 
   rocksdb::Status SingleDeleteCF(uint32_t column_family_id,
-                                 const rocksdb::Slice& key) override {
+                                 const rocksdb::Slice& key) final {
     ++_entries_scanned;
 
     HandleDeleteCf(column_family_id, key);
@@ -299,7 +298,7 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
 
   rocksdb::Status DeleteRangeCF(uint32_t column_family_id,
                                 const rocksdb::Slice& begin_key,
-                                const rocksdb::Slice& end_key) override {
+                                const rocksdb::Slice& end_key) final {
     ++_entries_scanned;
 
     IncTick();
@@ -312,42 +311,52 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
     return rocksdb::Status();  // make WAL iterator happy
   }
 
-  void LogData(const rocksdb::Slice& blob) override {
+  void LogData(const rocksdb::Slice& blob) final {
     ++_entries_scanned;
     for (auto helper : _engine.recoveryHelpers()) {
       helper->LogData(blob, _current_sequence);
     }
   }
 
-  rocksdb::Status MarkBeginPrepare(bool = false) override {
+  rocksdb::Status MarkBeginPrepare(bool = false) final {
     SDB_ASSERT(false);
     return rocksdb::Status::InvalidArgument(
       "MarkBeginPrepare() handler not defined.");
   }
 
-  rocksdb::Status MarkEndPrepare(const rocksdb::Slice& /*xid*/) override {
+  rocksdb::Status MarkEndPrepare(const rocksdb::Slice& /*xid*/) final {
     SDB_ASSERT(false);
     return rocksdb::Status::InvalidArgument(
       "MarkEndPrepare() handler not defined.");
   }
 
-  rocksdb::Status MarkNoop(bool /*empty_batch*/) override {
+  rocksdb::Status MarkNoop(bool /*empty_batch*/) final {
     return rocksdb::Status::OK();
   }
 
-  rocksdb::Status MarkRollback(const rocksdb::Slice& /*xid*/) override {
+  rocksdb::Status MarkRollback(const rocksdb::Slice& /*xid*/) final {
     SDB_ASSERT(false);
     return rocksdb::Status::InvalidArgument(
       "MarkRollbackPrepare() handler not defined.");
   }
 
-  rocksdb::Status MarkCommit(const rocksdb::Slice& /*xid*/) override {
+  rocksdb::Status MarkCommit(const rocksdb::Slice& /*xid*/) final {
     SDB_ASSERT(false);
     return rocksdb::Status::InvalidArgument(
       "MarkCommit() handler not defined.");
   }
 
-  // MergeCF is not used
+  // The base WriteBatch::Handler::MergeCF errors out for non-default CFs.
+  // The Sequences CF uses UInt64AddOperator merges (atomic counter ticks);
+  // RocksDB itself replays them via the merge operator -- our recovery
+  // helpers don't need to see them.
+  rocksdb::Status MergeCF(uint32_t /*column_family_id*/,
+                          const rocksdb::Slice& /*key*/,
+                          const rocksdb::Slice& /*value*/) final {
+    ++_entries_scanned;
+    IncTick();
+    return rocksdb::Status::OK();
+  }
 };
 
 Result RocksDBRecoveryManager::parseRocksWAL() {

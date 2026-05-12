@@ -8,6 +8,7 @@ target_sources(
         pg_catalog/pg_class.cpp
         pg_catalog/pg_constraint.cpp
         pg_catalog/pg_database.cpp
+        pg_catalog/pg_enum.cpp
         pg_catalog/pg_index.cpp
         pg_catalog/pg_language.cpp
         pg_catalog/pg_namespace.cpp
@@ -28,6 +29,6 @@ target_sources(
         sdb_catalog/sdb_log.cpp
         sql_utils.cpp
         option_help.cpp
-        file_options.cpp
         tokenizer_options.cpp
+        geo_tokenizer_options.cpp
 )

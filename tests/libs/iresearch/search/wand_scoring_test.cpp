@@ -84,7 +84,7 @@ class WandScoringTestCase : public IndexTestBase {
   void WriteSegment(irs::IndexWriter& writer, auto& gens) {
     auto& index = const_cast<tests::index_t&>(this->index());
     for (auto& gen : gens) {
-      index.emplace_back(writer.FeatureInfo());
+      index.emplace_back();
       write_segment(writer, index.back(), gen);
     }
     writer.Commit();
@@ -95,14 +95,6 @@ class WandScoringTestCase : public IndexTestBase {
                                         size_t multiplier = 1) {
     irs::IndexWriterOptions opts;
     opts.reader_options.scorer = &scorer;
-    opts.features = [](irs::IndexFeatures id) {
-      irs::ColumnInfo info{irs::Type<irs::compression::None>::get(), {}, false};
-      if (id == irs::IndexFeatures::Norm) {
-        return std::make_pair(
-          info, irs::FeatureWriterFactory{&irs::Norm::MakeWriter});
-      }
-      return std::make_pair(info, irs::FeatureWriterFactory{});
-    };
     auto writer = open_writer(irs::kOmCreate, opts);
 
     std::vector<tests::JsonDocGenerator> gens;
@@ -125,14 +117,6 @@ class WandScoringTestCase : public IndexTestBase {
                                                size_t multiplier = 1) {
     irs::IndexWriterOptions opts;
     opts.reader_options.scorer = &scorer;
-    opts.features = [](irs::IndexFeatures id) {
-      irs::ColumnInfo info{irs::Type<irs::compression::None>::get(), {}, false};
-      if (id == irs::IndexFeatures::Norm) {
-        return std::make_pair(
-          info, irs::FeatureWriterFactory{&irs::Norm::MakeWriter});
-      }
-      return std::make_pair(info, irs::FeatureWriterFactory{});
-    };
     auto writer = open_writer(irs::kOmCreate, opts);
     auto& index_ref = const_cast<tests::index_t&>(index());
 
@@ -145,7 +129,7 @@ class WandScoringTestCase : public IndexTestBase {
     for (const auto& file : files) {
       for (size_t i = 0; i < multiplier; ++i) {
         tests::JsonDocGenerator gen(resource(file), &WandScoringFieldFactory);
-        index_ref.emplace_back(writer->FeatureInfo());
+        index_ref.emplace_back();
         write_segment(*writer, index_ref.back(), gen);
       }
       writer->Commit();

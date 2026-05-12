@@ -1,0 +1,45 @@
+services:
+  serenedb:
+    image: ${BUILD_IMAGE}
+    privileged: true
+    cgroup: host
+    stop_signal: SIGRTMIN+3
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - "${WORKSPACE}:/workspace:ro"
+      - "${WORKSPACE}/scripts/ci/deb-rta-setup.sh:/deb-rta-setup.sh:ro"
+    environment:
+      - DEB_PACKAGE
+    networks:
+      - rta-network
+    command: /lib/systemd/systemd
+
+  tests:
+    image: ${BUILD_IMAGE}
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    depends_on:
+      - serenedb
+    volumes:
+      - "${WORKSPACE}:/serenedb"
+      - "${WORKSPACE}/logs:/logs"
+      - "${WORKSPACE}/out/drivers-tests:/out"
+    environment:
+      - HOME=/tmp/home
+      - LOG_DIR=/logs
+    networks:
+      - rta-network
+    command: >
+      sh -c '
+        exec /serenedb/tests/drivers/run.sh \
+          --host serenedb \
+          --port 7890 \
+          --junit /out
+      '
+
+networks:
+  rta-network:
+    driver: bridge
+    name: ${COMPOSE_PROJECT_NAME}_rta-network

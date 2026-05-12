@@ -1,0 +1,1170 @@
+control substitution on
+
+# Long crash-recovery chain: 10 rounds, each does ~20 mixed ops on its own
+# id-sandbox (offset by R*100_000) before crashing. After every crash,
+# recovery replays the round's WAL delta. After 10 cycles we verify:
+#   - total row count matches expectation
+#   - index count matches table count
+#   - spot-check tokens from each round are searchable
+#   - tokens that were updated/deleted away are gone
+#
+# Per-round sandbox layout (smaller than huge.test on purpose):
+#   [R*100000+0   .. +20)    block A head — DELETED
+#   [R*100000+20  .. +50)    block A leftover
+#   [R*100000+50  .. +60)    block A updated body (upd1_)
+#   [R*100000+60  .. +200)   block A leftover
+#   [R*100000+200 .. +202)   block B head — DELETED (200, 201)
+#   [R*100000+202 .. +220)   block B leftover
+#   [R*100000+220 .. +230)   block B updated body (upd2_)
+#   [R*100000+230 .. +300)   block B leftover
+#   [R*100000+400)           sgl1 (updated body)
+#   [R*100000+401)           sgl2 (deleted)
+#   [R*100000+402 → +9999]   sgl3 (PK-updated to +9999)
+#   [R*100000+500 .. +520)   block C updated body (upd_block6_)
+#   [R*100000+520 .. +540)   block C leftover
+#   [R*100000+540 .. +550)   block C tail — DELETED
+#   [R*100000+600)           ephemeral (insert + delete)
+#   [R*100000+700)           late singleton (updated body)
+#   [R*100000+800 .. +820)   block D leftover
+#   [R*100000+820 .. +830)   block D tail — DELETED
+#
+# Per-round surviving rows:
+#   block A : 180 (200 - 20 deleted)
+#   block B : 98  (100 - 2 deleted)
+#   sgl1    : 1
+#   sgl3 @ 9999 : 1
+#   block C : 40  (50 - 10 deleted)
+#   late    : 1
+#   block D : 20  (30 - 10 deleted)
+#   total   : 341 rows per sandbox
+#
+# Across 10 rounds: 3410 total rows.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY stress_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE stress_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX stress_idx ON stress_t USING inverted(id, body stress_dict)
+  WITH (commit_interval = 0);
+
+statement ok
+VACUUM (UPDATE_INDEXES) stress_t;
+
+###############################################################################
+# Round 1
+###############################################################################
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R1_' || i FROM range(100000, 100200) AS t(i);
+
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R1_' || i FROM range(100200, 100300) AS t(i);
+
+statement ok
+INSERT INTO stress_t VALUES (100400, 'sgl1_R1');
+
+statement ok
+INSERT INTO stress_t VALUES (100401, 'sgl2_R1'), (100402, 'sgl3_R1');
+
+statement ok
+INSERT INTO stress_t SELECT i, 'block_C_R1_' || i FROM range(100500, 100550) AS t(i);
+
+statement ok
+INSERT INTO stress_t SELECT i, 'block_D_R1_' || i FROM range(100800, 100830) AS t(i);
+
+statement ok
+DELETE FROM stress_t WHERE id >= 100000 AND id < 100020;
+
+statement ok
+DELETE FROM stress_t WHERE id IN (100200, 100201);
+
+statement ok
+DELETE FROM stress_t WHERE id = 100401;
+
+statement ok
+DELETE FROM stress_t WHERE id >= 100540 AND id < 100550;
+
+statement ok
+UPDATE stress_t SET body = 'upd1_R1_' || id WHERE id >= 100050 AND id < 100060;
+
+statement ok
+UPDATE stress_t SET body = 'upd2_R1_' || id WHERE id >= 100220 AND id < 100230;
+
+statement ok
+UPDATE stress_t SET body = 'upd_sgl_R1' WHERE id = 100400;
+
+statement ok
+UPDATE stress_t SET body = 'upd_block6_R1_' || id WHERE id >= 100500 AND id < 100520;
+
+statement ok
+UPDATE stress_t SET id = 109999 WHERE id = 100402;
+
+statement ok
+INSERT INTO stress_t VALUES (100600, 'eph_R1');
+
+statement ok
+DELETE FROM stress_t WHERE id = 100600;
+
+statement ok
+INSERT INTO stress_t VALUES (100700, 'late_R1');
+
+statement ok
+UPDATE stress_t SET body = 'late_R1_changed' WHERE id = 100700;
+
+statement ok
+DELETE FROM stress_t WHERE id >= 100820 AND id < 100830;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+###############################################################################
+# Round 2
+###############################################################################
+
+connection r2
+statement ok retry 60 backoff 1s
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+connection r2
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R2_' || i FROM range(200000, 200200) AS t(i);
+
+connection r2
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R2_' || i FROM range(200200, 200300) AS t(i);
+
+connection r2
+statement ok
+INSERT INTO stress_t VALUES (200400, 'sgl1_R2');
+
+connection r2
+statement ok
+INSERT INTO stress_t VALUES (200401, 'sgl2_R2'), (200402, 'sgl3_R2');
+
+connection r2
+statement ok
+INSERT INTO stress_t SELECT i, 'block_C_R2_' || i FROM range(200500, 200550) AS t(i);
+
+connection r2
+statement ok
+INSERT INTO stress_t SELECT i, 'block_D_R2_' || i FROM range(200800, 200830) AS t(i);
+
+connection r2
+statement ok
+DELETE FROM stress_t WHERE id >= 200000 AND id < 200020;
+
+connection r2
+statement ok
+DELETE FROM stress_t WHERE id IN (200200, 200201);
+
+connection r2
+statement ok
+DELETE FROM stress_t WHERE id = 200401;
+
+connection r2
+statement ok
+DELETE FROM stress_t WHERE id >= 200540 AND id < 200550;
+
+connection r2
+statement ok
+UPDATE stress_t SET body = 'upd1_R2_' || id WHERE id >= 200050 AND id < 200060;
+
+connection r2
+statement ok
+UPDATE stress_t SET body = 'upd2_R2_' || id WHERE id >= 200220 AND id < 200230;
+
+connection r2
+statement ok
+UPDATE stress_t SET body = 'upd_sgl_R2' WHERE id = 200400;
+
+connection r2
+statement ok
+UPDATE stress_t SET body = 'upd_block6_R2_' || id WHERE id >= 200500 AND id < 200520;
+
+connection r2
+statement ok
+UPDATE stress_t SET id = 209999 WHERE id = 200402;
+
+connection r2
+statement ok
+INSERT INTO stress_t VALUES (200600, 'eph_R2');
+
+connection r2
+statement ok
+DELETE FROM stress_t WHERE id = 200600;
+
+connection r2
+statement ok
+INSERT INTO stress_t VALUES (200700, 'late_R2');
+
+connection r2
+statement ok
+UPDATE stress_t SET body = 'late_R2_changed' WHERE id = 200700;
+
+connection r2
+statement ok
+DELETE FROM stress_t WHERE id >= 200820 AND id < 200830;
+
+connection r2
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection r2
+query error connection closed
+SELECT 1;
+
+###############################################################################
+# Round 3
+###############################################################################
+
+connection r3
+statement ok retry 60 backoff 1s
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+connection r3
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R3_' || i FROM range(300000, 300200) AS t(i);
+
+connection r3
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R3_' || i FROM range(300200, 300300) AS t(i);
+
+connection r3
+statement ok
+INSERT INTO stress_t VALUES (300400, 'sgl1_R3');
+
+connection r3
+statement ok
+INSERT INTO stress_t VALUES (300401, 'sgl2_R3'), (300402, 'sgl3_R3');
+
+connection r3
+statement ok
+INSERT INTO stress_t SELECT i, 'block_C_R3_' || i FROM range(300500, 300550) AS t(i);
+
+connection r3
+statement ok
+INSERT INTO stress_t SELECT i, 'block_D_R3_' || i FROM range(300800, 300830) AS t(i);
+
+connection r3
+statement ok
+DELETE FROM stress_t WHERE id >= 300000 AND id < 300020;
+
+connection r3
+statement ok
+DELETE FROM stress_t WHERE id IN (300200, 300201);
+
+connection r3
+statement ok
+DELETE FROM stress_t WHERE id = 300401;
+
+connection r3
+statement ok
+DELETE FROM stress_t WHERE id >= 300540 AND id < 300550;
+
+connection r3
+statement ok
+UPDATE stress_t SET body = 'upd1_R3_' || id WHERE id >= 300050 AND id < 300060;
+
+connection r3
+statement ok
+UPDATE stress_t SET body = 'upd2_R3_' || id WHERE id >= 300220 AND id < 300230;
+
+connection r3
+statement ok
+UPDATE stress_t SET body = 'upd_sgl_R3' WHERE id = 300400;
+
+connection r3
+statement ok
+UPDATE stress_t SET body = 'upd_block6_R3_' || id WHERE id >= 300500 AND id < 300520;
+
+connection r3
+statement ok
+UPDATE stress_t SET id = 309999 WHERE id = 300402;
+
+connection r3
+statement ok
+INSERT INTO stress_t VALUES (300600, 'eph_R3');
+
+connection r3
+statement ok
+DELETE FROM stress_t WHERE id = 300600;
+
+connection r3
+statement ok
+INSERT INTO stress_t VALUES (300700, 'late_R3');
+
+connection r3
+statement ok
+UPDATE stress_t SET body = 'late_R3_changed' WHERE id = 300700;
+
+connection r3
+statement ok
+DELETE FROM stress_t WHERE id >= 300820 AND id < 300830;
+
+connection r3
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection r3
+query error connection closed
+SELECT 1;
+
+###############################################################################
+# Round 4
+###############################################################################
+
+connection r4
+statement ok retry 60 backoff 1s
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+connection r4
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R4_' || i FROM range(400000, 400200) AS t(i);
+
+connection r4
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R4_' || i FROM range(400200, 400300) AS t(i);
+
+connection r4
+statement ok
+INSERT INTO stress_t VALUES (400400, 'sgl1_R4');
+
+connection r4
+statement ok
+INSERT INTO stress_t VALUES (400401, 'sgl2_R4'), (400402, 'sgl3_R4');
+
+connection r4
+statement ok
+INSERT INTO stress_t SELECT i, 'block_C_R4_' || i FROM range(400500, 400550) AS t(i);
+
+connection r4
+statement ok
+INSERT INTO stress_t SELECT i, 'block_D_R4_' || i FROM range(400800, 400830) AS t(i);
+
+connection r4
+statement ok
+DELETE FROM stress_t WHERE id >= 400000 AND id < 400020;
+
+connection r4
+statement ok
+DELETE FROM stress_t WHERE id IN (400200, 400201);
+
+connection r4
+statement ok
+DELETE FROM stress_t WHERE id = 400401;
+
+connection r4
+statement ok
+DELETE FROM stress_t WHERE id >= 400540 AND id < 400550;
+
+connection r4
+statement ok
+UPDATE stress_t SET body = 'upd1_R4_' || id WHERE id >= 400050 AND id < 400060;
+
+connection r4
+statement ok
+UPDATE stress_t SET body = 'upd2_R4_' || id WHERE id >= 400220 AND id < 400230;
+
+connection r4
+statement ok
+UPDATE stress_t SET body = 'upd_sgl_R4' WHERE id = 400400;
+
+connection r4
+statement ok
+UPDATE stress_t SET body = 'upd_block6_R4_' || id WHERE id >= 400500 AND id < 400520;
+
+connection r4
+statement ok
+UPDATE stress_t SET id = 409999 WHERE id = 400402;
+
+connection r4
+statement ok
+INSERT INTO stress_t VALUES (400600, 'eph_R4');
+
+connection r4
+statement ok
+DELETE FROM stress_t WHERE id = 400600;
+
+connection r4
+statement ok
+INSERT INTO stress_t VALUES (400700, 'late_R4');
+
+connection r4
+statement ok
+UPDATE stress_t SET body = 'late_R4_changed' WHERE id = 400700;
+
+connection r4
+statement ok
+DELETE FROM stress_t WHERE id >= 400820 AND id < 400830;
+
+connection r4
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection r4
+query error connection closed
+SELECT 1;
+
+###############################################################################
+# Round 5
+###############################################################################
+
+connection r5
+statement ok retry 60 backoff 1s
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+connection r5
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R5_' || i FROM range(500000, 500200) AS t(i);
+
+connection r5
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R5_' || i FROM range(500200, 500300) AS t(i);
+
+connection r5
+statement ok
+INSERT INTO stress_t VALUES (500400, 'sgl1_R5');
+
+connection r5
+statement ok
+INSERT INTO stress_t VALUES (500401, 'sgl2_R5'), (500402, 'sgl3_R5');
+
+connection r5
+statement ok
+INSERT INTO stress_t SELECT i, 'block_C_R5_' || i FROM range(500500, 500550) AS t(i);
+
+connection r5
+statement ok
+INSERT INTO stress_t SELECT i, 'block_D_R5_' || i FROM range(500800, 500830) AS t(i);
+
+connection r5
+statement ok
+DELETE FROM stress_t WHERE id >= 500000 AND id < 500020;
+
+connection r5
+statement ok
+DELETE FROM stress_t WHERE id IN (500200, 500201);
+
+connection r5
+statement ok
+DELETE FROM stress_t WHERE id = 500401;
+
+connection r5
+statement ok
+DELETE FROM stress_t WHERE id >= 500540 AND id < 500550;
+
+connection r5
+statement ok
+UPDATE stress_t SET body = 'upd1_R5_' || id WHERE id >= 500050 AND id < 500060;
+
+connection r5
+statement ok
+UPDATE stress_t SET body = 'upd2_R5_' || id WHERE id >= 500220 AND id < 500230;
+
+connection r5
+statement ok
+UPDATE stress_t SET body = 'upd_sgl_R5' WHERE id = 500400;
+
+connection r5
+statement ok
+UPDATE stress_t SET body = 'upd_block6_R5_' || id WHERE id >= 500500 AND id < 500520;
+
+connection r5
+statement ok
+UPDATE stress_t SET id = 509999 WHERE id = 500402;
+
+connection r5
+statement ok
+INSERT INTO stress_t VALUES (500600, 'eph_R5');
+
+connection r5
+statement ok
+DELETE FROM stress_t WHERE id = 500600;
+
+connection r5
+statement ok
+INSERT INTO stress_t VALUES (500700, 'late_R5');
+
+connection r5
+statement ok
+UPDATE stress_t SET body = 'late_R5_changed' WHERE id = 500700;
+
+connection r5
+statement ok
+DELETE FROM stress_t WHERE id >= 500820 AND id < 500830;
+
+connection r5
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection r5
+query error connection closed
+SELECT 1;
+
+###############################################################################
+# Round 6
+###############################################################################
+
+connection r6
+statement ok retry 60 backoff 1s
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+connection r6
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R6_' || i FROM range(600000, 600200) AS t(i);
+
+connection r6
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R6_' || i FROM range(600200, 600300) AS t(i);
+
+connection r6
+statement ok
+INSERT INTO stress_t VALUES (600400, 'sgl1_R6');
+
+connection r6
+statement ok
+INSERT INTO stress_t VALUES (600401, 'sgl2_R6'), (600402, 'sgl3_R6');
+
+connection r6
+statement ok
+INSERT INTO stress_t SELECT i, 'block_C_R6_' || i FROM range(600500, 600550) AS t(i);
+
+connection r6
+statement ok
+INSERT INTO stress_t SELECT i, 'block_D_R6_' || i FROM range(600800, 600830) AS t(i);
+
+connection r6
+statement ok
+DELETE FROM stress_t WHERE id >= 600000 AND id < 600020;
+
+connection r6
+statement ok
+DELETE FROM stress_t WHERE id IN (600200, 600201);
+
+connection r6
+statement ok
+DELETE FROM stress_t WHERE id = 600401;
+
+connection r6
+statement ok
+DELETE FROM stress_t WHERE id >= 600540 AND id < 600550;
+
+connection r6
+statement ok
+UPDATE stress_t SET body = 'upd1_R6_' || id WHERE id >= 600050 AND id < 600060;
+
+connection r6
+statement ok
+UPDATE stress_t SET body = 'upd2_R6_' || id WHERE id >= 600220 AND id < 600230;
+
+connection r6
+statement ok
+UPDATE stress_t SET body = 'upd_sgl_R6' WHERE id = 600400;
+
+connection r6
+statement ok
+UPDATE stress_t SET body = 'upd_block6_R6_' || id WHERE id >= 600500 AND id < 600520;
+
+connection r6
+statement ok
+UPDATE stress_t SET id = 609999 WHERE id = 600402;
+
+connection r6
+statement ok
+INSERT INTO stress_t VALUES (600600, 'eph_R6');
+
+connection r6
+statement ok
+DELETE FROM stress_t WHERE id = 600600;
+
+connection r6
+statement ok
+INSERT INTO stress_t VALUES (600700, 'late_R6');
+
+connection r6
+statement ok
+UPDATE stress_t SET body = 'late_R6_changed' WHERE id = 600700;
+
+connection r6
+statement ok
+DELETE FROM stress_t WHERE id >= 600820 AND id < 600830;
+
+connection r6
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection r6
+query error connection closed
+SELECT 1;
+
+###############################################################################
+# Round 7
+###############################################################################
+
+connection r7
+statement ok retry 60 backoff 1s
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+connection r7
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R7_' || i FROM range(700000, 700200) AS t(i);
+
+connection r7
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R7_' || i FROM range(700200, 700300) AS t(i);
+
+connection r7
+statement ok
+INSERT INTO stress_t VALUES (700400, 'sgl1_R7');
+
+connection r7
+statement ok
+INSERT INTO stress_t VALUES (700401, 'sgl2_R7'), (700402, 'sgl3_R7');
+
+connection r7
+statement ok
+INSERT INTO stress_t SELECT i, 'block_C_R7_' || i FROM range(700500, 700550) AS t(i);
+
+connection r7
+statement ok
+INSERT INTO stress_t SELECT i, 'block_D_R7_' || i FROM range(700800, 700830) AS t(i);
+
+connection r7
+statement ok
+DELETE FROM stress_t WHERE id >= 700000 AND id < 700020;
+
+connection r7
+statement ok
+DELETE FROM stress_t WHERE id IN (700200, 700201);
+
+connection r7
+statement ok
+DELETE FROM stress_t WHERE id = 700401;
+
+connection r7
+statement ok
+DELETE FROM stress_t WHERE id >= 700540 AND id < 700550;
+
+connection r7
+statement ok
+UPDATE stress_t SET body = 'upd1_R7_' || id WHERE id >= 700050 AND id < 700060;
+
+connection r7
+statement ok
+UPDATE stress_t SET body = 'upd2_R7_' || id WHERE id >= 700220 AND id < 700230;
+
+connection r7
+statement ok
+UPDATE stress_t SET body = 'upd_sgl_R7' WHERE id = 700400;
+
+connection r7
+statement ok
+UPDATE stress_t SET body = 'upd_block6_R7_' || id WHERE id >= 700500 AND id < 700520;
+
+connection r7
+statement ok
+UPDATE stress_t SET id = 709999 WHERE id = 700402;
+
+connection r7
+statement ok
+INSERT INTO stress_t VALUES (700600, 'eph_R7');
+
+connection r7
+statement ok
+DELETE FROM stress_t WHERE id = 700600;
+
+connection r7
+statement ok
+INSERT INTO stress_t VALUES (700700, 'late_R7');
+
+connection r7
+statement ok
+UPDATE stress_t SET body = 'late_R7_changed' WHERE id = 700700;
+
+connection r7
+statement ok
+DELETE FROM stress_t WHERE id >= 700820 AND id < 700830;
+
+connection r7
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection r7
+query error connection closed
+SELECT 1;
+
+###############################################################################
+# Round 8
+###############################################################################
+
+connection r8
+statement ok retry 60 backoff 1s
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+connection r8
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R8_' || i FROM range(800000, 800200) AS t(i);
+
+connection r8
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R8_' || i FROM range(800200, 800300) AS t(i);
+
+connection r8
+statement ok
+INSERT INTO stress_t VALUES (800400, 'sgl1_R8');
+
+connection r8
+statement ok
+INSERT INTO stress_t VALUES (800401, 'sgl2_R8'), (800402, 'sgl3_R8');
+
+connection r8
+statement ok
+INSERT INTO stress_t SELECT i, 'block_C_R8_' || i FROM range(800500, 800550) AS t(i);
+
+connection r8
+statement ok
+INSERT INTO stress_t SELECT i, 'block_D_R8_' || i FROM range(800800, 800830) AS t(i);
+
+connection r8
+statement ok
+DELETE FROM stress_t WHERE id >= 800000 AND id < 800020;
+
+connection r8
+statement ok
+DELETE FROM stress_t WHERE id IN (800200, 800201);
+
+connection r8
+statement ok
+DELETE FROM stress_t WHERE id = 800401;
+
+connection r8
+statement ok
+DELETE FROM stress_t WHERE id >= 800540 AND id < 800550;
+
+connection r8
+statement ok
+UPDATE stress_t SET body = 'upd1_R8_' || id WHERE id >= 800050 AND id < 800060;
+
+connection r8
+statement ok
+UPDATE stress_t SET body = 'upd2_R8_' || id WHERE id >= 800220 AND id < 800230;
+
+connection r8
+statement ok
+UPDATE stress_t SET body = 'upd_sgl_R8' WHERE id = 800400;
+
+connection r8
+statement ok
+UPDATE stress_t SET body = 'upd_block6_R8_' || id WHERE id >= 800500 AND id < 800520;
+
+connection r8
+statement ok
+UPDATE stress_t SET id = 809999 WHERE id = 800402;
+
+connection r8
+statement ok
+INSERT INTO stress_t VALUES (800600, 'eph_R8');
+
+connection r8
+statement ok
+DELETE FROM stress_t WHERE id = 800600;
+
+connection r8
+statement ok
+INSERT INTO stress_t VALUES (800700, 'late_R8');
+
+connection r8
+statement ok
+UPDATE stress_t SET body = 'late_R8_changed' WHERE id = 800700;
+
+connection r8
+statement ok
+DELETE FROM stress_t WHERE id >= 800820 AND id < 800830;
+
+connection r8
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection r8
+query error connection closed
+SELECT 1;
+
+###############################################################################
+# Round 9
+###############################################################################
+
+connection r9
+statement ok retry 60 backoff 1s
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+connection r9
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R9_' || i FROM range(900000, 900200) AS t(i);
+
+connection r9
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R9_' || i FROM range(900200, 900300) AS t(i);
+
+connection r9
+statement ok
+INSERT INTO stress_t VALUES (900400, 'sgl1_R9');
+
+connection r9
+statement ok
+INSERT INTO stress_t VALUES (900401, 'sgl2_R9'), (900402, 'sgl3_R9');
+
+connection r9
+statement ok
+INSERT INTO stress_t SELECT i, 'block_C_R9_' || i FROM range(900500, 900550) AS t(i);
+
+connection r9
+statement ok
+INSERT INTO stress_t SELECT i, 'block_D_R9_' || i FROM range(900800, 900830) AS t(i);
+
+connection r9
+statement ok
+DELETE FROM stress_t WHERE id >= 900000 AND id < 900020;
+
+connection r9
+statement ok
+DELETE FROM stress_t WHERE id IN (900200, 900201);
+
+connection r9
+statement ok
+DELETE FROM stress_t WHERE id = 900401;
+
+connection r9
+statement ok
+DELETE FROM stress_t WHERE id >= 900540 AND id < 900550;
+
+connection r9
+statement ok
+UPDATE stress_t SET body = 'upd1_R9_' || id WHERE id >= 900050 AND id < 900060;
+
+connection r9
+statement ok
+UPDATE stress_t SET body = 'upd2_R9_' || id WHERE id >= 900220 AND id < 900230;
+
+connection r9
+statement ok
+UPDATE stress_t SET body = 'upd_sgl_R9' WHERE id = 900400;
+
+connection r9
+statement ok
+UPDATE stress_t SET body = 'upd_block6_R9_' || id WHERE id >= 900500 AND id < 900520;
+
+connection r9
+statement ok
+UPDATE stress_t SET id = 909999 WHERE id = 900402;
+
+connection r9
+statement ok
+INSERT INTO stress_t VALUES (900600, 'eph_R9');
+
+connection r9
+statement ok
+DELETE FROM stress_t WHERE id = 900600;
+
+connection r9
+statement ok
+INSERT INTO stress_t VALUES (900700, 'late_R9');
+
+connection r9
+statement ok
+UPDATE stress_t SET body = 'late_R9_changed' WHERE id = 900700;
+
+connection r9
+statement ok
+DELETE FROM stress_t WHERE id >= 900820 AND id < 900830;
+
+connection r9
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection r9
+query error connection closed
+SELECT 1;
+
+###############################################################################
+# Round 10
+###############################################################################
+
+connection r10
+statement ok retry 60 backoff 1s
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+connection r10
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R10_' || i FROM range(1000000, 1000200) AS t(i);
+
+connection r10
+statement ok
+INSERT INTO stress_t SELECT i, 'ins_R10_' || i FROM range(1000200, 1000300) AS t(i);
+
+connection r10
+statement ok
+INSERT INTO stress_t VALUES (1000400, 'sgl1_R10');
+
+connection r10
+statement ok
+INSERT INTO stress_t VALUES (1000401, 'sgl2_R10'), (1000402, 'sgl3_R10');
+
+connection r10
+statement ok
+INSERT INTO stress_t SELECT i, 'block_C_R10_' || i FROM range(1000500, 1000550) AS t(i);
+
+connection r10
+statement ok
+INSERT INTO stress_t SELECT i, 'block_D_R10_' || i FROM range(1000800, 1000830) AS t(i);
+
+connection r10
+statement ok
+DELETE FROM stress_t WHERE id >= 1000000 AND id < 1000020;
+
+connection r10
+statement ok
+DELETE FROM stress_t WHERE id IN (1000200, 1000201);
+
+connection r10
+statement ok
+DELETE FROM stress_t WHERE id = 1000401;
+
+connection r10
+statement ok
+DELETE FROM stress_t WHERE id >= 1000540 AND id < 1000550;
+
+connection r10
+statement ok
+UPDATE stress_t SET body = 'upd1_R10_' || id WHERE id >= 1000050 AND id < 1000060;
+
+connection r10
+statement ok
+UPDATE stress_t SET body = 'upd2_R10_' || id WHERE id >= 1000220 AND id < 1000230;
+
+connection r10
+statement ok
+UPDATE stress_t SET body = 'upd_sgl_R10' WHERE id = 1000400;
+
+connection r10
+statement ok
+UPDATE stress_t SET body = 'upd_block6_R10_' || id WHERE id >= 1000500 AND id < 1000520;
+
+connection r10
+statement ok
+UPDATE stress_t SET id = 1009999 WHERE id = 1000402;
+
+connection r10
+statement ok
+INSERT INTO stress_t VALUES (1000600, 'eph_R10');
+
+connection r10
+statement ok
+DELETE FROM stress_t WHERE id = 1000600;
+
+connection r10
+statement ok
+INSERT INTO stress_t VALUES (1000700, 'late_R10');
+
+connection r10
+statement ok
+UPDATE stress_t SET body = 'late_R10_changed' WHERE id = 1000700;
+
+connection r10
+statement ok
+DELETE FROM stress_t WHERE id >= 1000820 AND id < 1000830;
+
+connection r10
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection r10
+query error connection closed
+SELECT 1;
+
+###############################################################################
+# Final verification
+###############################################################################
+
+connection final
+statement ok retry 60 backoff 1s
+VACUUM (UPDATE_INDEXES) stress_t;
+
+# Per-sandbox surviving rows: 341.  10 sandboxes → 3410.
+connection final
+query
+SELECT COUNT(*) FROM stress_t;
+----
+count
+3410
+
+connection final
+query
+SELECT COUNT(*) FROM stress_idx;
+----
+count
+3410
+
+# === Spot-checks per round ===
+
+# Round 1
+connection final
+query
+SELECT id FROM stress_t WHERE body @@ ts_phrase('ins_R1_100150');
+----
+id
+100150
+
+connection final
+query
+SELECT id FROM stress_t WHERE body @@ ts_phrase('upd1_R1_100055');
+----
+id
+100055
+
+connection final
+query
+SELECT id FROM stress_t WHERE body @@ ts_phrase('upd_sgl_R1');
+----
+id
+100400
+
+connection final
+query
+SELECT id FROM stress_t WHERE body @@ ts_phrase('sgl3_R1');
+----
+id
+109999
+
+connection final
+query
+SELECT id FROM stress_t WHERE body @@ ts_phrase('late_R1_changed');
+----
+id
+100700
+
+# Deleted rows: should not be found
+connection final
+query
+SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('ins_R1_100010');
+----
+count
+0
+
+connection final
+query
+SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('sgl2_R1');
+----
+count
+0
+
+connection final
+query
+SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('eph_R1');
+----
+count
+0
+
+connection final
+query
+SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('block_C_R1_100545');
+----
+count
+0
+
+# Original token replaced by update — must be gone
+connection final
+query
+SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('ins_R1_100055');
+----
+count
+0
+
+# Round 5 (mid-chain spot check)
+connection final
+query
+SELECT id FROM stress_t WHERE body @@ ts_phrase('ins_R5_500150');
+----
+id
+500150
+
+connection final
+query
+SELECT id FROM stress_t WHERE body @@ ts_phrase('upd_block6_R5_500505');
+----
+id
+500505
+
+connection final
+query
+SELECT id FROM stress_t WHERE body @@ ts_phrase('sgl3_R5');
+----
+id
+509999
+
+connection final
+query
+SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('sgl2_R5');
+----
+count
+0
+
+# Round 10 (last round)
+connection final
+query
+SELECT id FROM stress_t WHERE body @@ ts_phrase('ins_R10_1000150');
+----
+id
+1000150
+
+connection final
+query
+SELECT id FROM stress_t WHERE body @@ ts_phrase('late_R10_changed');
+----
+id
+1000700
+
+connection final
+query
+SELECT id FROM stress_t WHERE body @@ ts_phrase('sgl3_R10');
+----
+id
+1009999
+
+connection final
+query
+SELECT id FROM stress_t WHERE body @@ ts_phrase('block_D_R10_1000805');
+----
+id
+1000805
+
+# Eph rows from all 10 rounds — none must exist
+connection final
+query
+SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('eph_R5');
+----
+count
+0
+
+connection final
+query
+SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('eph_R10');
+----
+count
+0

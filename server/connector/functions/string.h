@@ -34,4 +34,8 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db);
 // builder when it translates `LIKE ... ESCAPE` predicates.
 std::string LikeEscapePattern(std::string_view pattern, char escape_char);
 
+// Converts a SQL SIMILAR TO pattern into a POSIX regex.
+// Ported from PG's similar_escape in regexp.c.
+std::string SimilarToEscapePattern(std::string_view pattern, char escape_char);
+
 }  // namespace sdb::connector

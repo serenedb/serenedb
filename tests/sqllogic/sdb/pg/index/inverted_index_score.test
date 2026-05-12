@@ -39,7 +39,7 @@ VACUUM (UPDATE_INDEXES) docs;
 
 # BM25 scores are non-negative; verify they are returned and > 0
 query
-SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	has_score
 1	t
@@ -48,7 +48,7 @@ id	has_score
 
 # TFIDF scores are also > 0
 query
-SELECT id, TFIDF(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+SELECT id, TFIDF(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	has_score
 1	t
@@ -57,7 +57,7 @@ id	has_score
 
 # BM25 with explicit parameters produces non-zero scores
 query
-SELECT id, BM25(docs_idx.tableoid, 1.2, 0.75) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+SELECT id, BM25(docs_idx.tableoid, 1.2, 0.75) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	has_score
 1	t
@@ -66,7 +66,7 @@ id	has_score
 
 # BM25 ordering
 query
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_idx.tableoid) DESC, id;
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC, id;
 ----
 id
 2
@@ -74,7 +74,7 @@ id
 
 
 query
-SELECT id FROM docs_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25(docs_idx.tableoid) DESC, id;
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('lazy') ORDER BY BM25(docs_idx.tableoid) DESC, id;
 ----
 id
 3
@@ -96,7 +96,7 @@ VACUUM (UPDATE_INDEXES) docs;
 
 # Both segments contribute matching documents; all should have score > 0
 query
-SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	has_score
 1	t
@@ -107,7 +107,7 @@ id	has_score
 
 # TFIDF also works across multiple segments
 query
-SELECT id, TFIDF(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+SELECT id, TFIDF(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	has_score
 1	t
@@ -250,7 +250,7 @@ VACUUM (UPDATE_INDEXES) docs;
 
 # More than kScoreBlock (32) docs match 'fox'; all should exist in result
 query
-SELECT COUNT(*) FROM docs_idx WHERE PHRASE(body, 'fox');
+SELECT COUNT(*) FROM docs_idx WHERE body @@ ts_phrase('fox');
 ----
 count
 36
@@ -258,7 +258,7 @@ count
 
 # ORDER BY BM25(docs_idx.tableoid) with >32 results exercises the full-block ScoreBlock path
 query
-SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 3;
 ----
 id	has_score
 1	t
@@ -268,7 +268,7 @@ id	has_score
 
 # BM25(docs_idx.tableoid) can appear multiple times in the same query (SELECT + ORDER BY)
 query
-SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_idx.tableoid) ASC LIMIT 3;
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) ASC LIMIT 3;
 ----
 id	has_score
 1	t
@@ -278,7 +278,7 @@ id	has_score
 
 # BM25(docs_idx.tableoid) in SELECT, WHERE, and ORDER BY simultaneously
 query
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(docs_idx.tableoid) > 0 ORDER BY BM25(docs_idx.tableoid) ASC LIMIT 3;
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND BM25(docs_idx.tableoid) > 0 ORDER BY BM25(docs_idx.tableoid) ASC LIMIT 3;
 ----
 id
 1
@@ -288,7 +288,7 @@ id
 
 # BM25(docs_idx.tableoid) with same explicit params used twice is allowed
 query
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(docs_idx.tableoid, 1.2, 0.75) > 0 ORDER BY BM25(docs_idx.tableoid, 1.2, 0.75) ASC LIMIT 3;
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND BM25(docs_idx.tableoid, 1.2, 0.75) > 0 ORDER BY BM25(docs_idx.tableoid, 1.2, 0.75) ASC LIMIT 3;
 ----
 id
 1
@@ -298,14 +298,14 @@ id
 
 # Error: BM25(docs_idx.tableoid) and BM25(docs_idx.tableoid) with different params conflict
 query error
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_idx.tableoid, 1.2, 0.75) DESC, BM25(docs_idx.tableoid, 1.0, 0.5) DESC LIMIT 3;
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid, 1.2, 0.75) DESC, BM25(docs_idx.tableoid, 1.0, 0.5) DESC LIMIT 3;
 ----
 db error: ERROR: Only one scorer function is allowed per inverted index
-HINT: Use UNION to combine different score functions for same inverted index
+HINT: Use UNION to combine different score functions for the same inverted index
 
 
 query
-SELECT id, BM25(docs_idx.tableoid) FROM docs_idx WHERE PHRASE(body, 'fox') AND TFIDF(docs_idx.tableoid) > 0 LIMIT 3;
+SELECT id, BM25(docs_idx.tableoid) FROM docs_idx WHERE body @@ ts_phrase('fox') AND TFIDF(docs_idx.tableoid) > 0 LIMIT 3;
 ----
 id	bm25
 1	0.019136623
@@ -315,10 +315,10 @@ id	bm25
 
 # UNION ALL: same scorer in each branch — each branch is an independent scoring scope
 query
-(SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3)
+(SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 3)
 UNION ALL
-(SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'lazy') ORDER BY id LIMIT 3)
-ORDER BY id;
+(SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('lazy') ORDER BY id LIMIT 3)
+ORDER BY id, score;
 ----
 id	score
 1	0.019136623
@@ -331,10 +331,10 @@ id	score
 
 # UNION ALL: different scorer types per branch (BM25 vs TFIDF) — each branch is independent
 query
-(SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+(SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 2)
 UNION ALL
-(SELECT id, TFIDF(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
-ORDER BY id;
+(SELECT id, TFIDF(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('lazy') LIMIT 2)
+ORDER BY id, score;
 ----
 id	score
 1	0.019136623
@@ -346,7 +346,7 @@ id	score
 # Subquery: BM25(docs_idx.tableoid) inside subquery, outer references the alias
 query
 SELECT id, score FROM (
-  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3
+  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3
 ) sub ORDER BY id;
 ----
 id	score
@@ -355,7 +355,7 @@ id	score
 12	0.043432634
 
 query
-EXPLAIN SELECT BM25(docs_idx.tableoid) as score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_idx.tableoid) ASC LIMIT 5;
+EXPLAIN SELECT BM25(docs_idx.tableoid) as score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) ASC LIMIT 5;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -372,10 +372,8 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Index: docs_idx      │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -393,7 +391,7 @@ QUERY PLAN
 
 
 query
-EXPLAIN SELECT id, BM25(docs_idx.tableoid) as score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 3;
+EXPLAIN SELECT id, BM25(docs_idx.tableoid) as score FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -406,10 +404,8 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Index: docs_idx      │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -430,7 +426,7 @@ QUERY PLAN
 
 query
 EXPLAIN SELECT id FROM
-(SELECT id, BM25(docs_idx.tableoid) as score FROM docs_idx WHERE PHRASE(body, 'fox'))
+(SELECT id, BM25(docs_idx.tableoid) as score FROM docs_idx WHERE body @@ ts_phrase('fox'))
 ORDER BY score
 ----
 QUERY PLAN
@@ -451,10 +447,8 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Index: docs_idx      │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -474,7 +468,7 @@ QUERY PLAN
 
 query error
 EXPLAIN SELECT * FROM
-(SELECT id FROM docs_idx WHERE PHRASE(body, 'fox'))
+(SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox'))
 ORDER BY BM25(docs_idx.tableoid)
 ----
 db error: ERROR: Referenced table "docs_idx" not found!
@@ -484,9 +478,9 @@ Candidate tables: "unnamed_subquery"
 
 # UNION of two subqueries from same index with outer ORDER BY BM25(docs_idx.tableoid)
 query
-(SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3)
+(SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3)
 UNION ALL
-(SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3)
+(SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('lazy') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3)
 ORDER BY id;
 ----
 id	has_score
@@ -501,7 +495,7 @@ id	has_score
 # CTE: BM25(docs_idx.tableoid) computed in CTE, outer query uses the pre-computed alias
 query
 WITH scored AS (
-  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')
+  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox')
 )
 SELECT id, score > 0 AS has_score FROM scored ORDER BY id LIMIT 3;
 ----
@@ -513,7 +507,7 @@ id	has_score
 
 query
 SELECT id, score > 0 AS has_score FROM (
-  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')
+  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox')
 ) sub ORDER BY id LIMIT 3;
 ----
 id	has_score
@@ -525,7 +519,7 @@ id	has_score
 # BM25(docs_idx.tableoid) in outer query references score column from inner subquery
 query error
 SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM (
-  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')
+  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox')
 ) sub ORDER BY id LIMIT 3;
 ----
 db error: ERROR: Referenced table "docs_idx" not found!
@@ -535,7 +529,7 @@ Candidate tables: "sub"
 
 # EXPLAIN for TFIDF
 query
-EXPLAIN SELECT id, TFIDF(docs_idx.tableoid) FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+EXPLAIN SELECT id, TFIDF(docs_idx.tableoid) FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -548,10 +542,8 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Index: docs_idx      │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -570,7 +562,7 @@ QUERY PLAN
 
 # OR filter: match either 'fox' or 'lazy', score comes from the matched docs
 query
-SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') OR PHRASE(body, 'lazy') ORDER BY id LIMIT 5;
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') OR body @@ ts_phrase('lazy') ORDER BY id LIMIT 5;
 ----
 id	has_score
 1	t
@@ -582,7 +574,7 @@ id	has_score
 
 # AND filter: only docs containing both 'fox' and 'lazy' get scored
 query
-SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') AND PHRASE(body, 'lazy') ORDER BY id;
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') AND body @@ ts_phrase('lazy') ORDER BY id;
 ----
 id	has_score
 1	t
@@ -591,7 +583,7 @@ id	has_score
 
 # Subquery: wrap scored result, filter by score threshold
 query
-SELECT id FROM (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id) sub WHERE score > 0 ORDER BY id LIMIT 3;
+SELECT id FROM (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id) sub WHERE score > 0 ORDER BY id LIMIT 3;
 ----
 id
 1
@@ -601,7 +593,7 @@ id
 
 # COUNT(*) with scoring filter; score > 0 for all matching docs
 query
-SELECT COUNT(*) FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(docs_idx.tableoid) > 0;
+SELECT COUNT(*) FROM docs_idx WHERE body @@ ts_phrase('fox') AND BM25(docs_idx.tableoid) > 0;
 ----
 count
 36
@@ -609,7 +601,7 @@ count
 
 # TFIDF with normalize=true produces non-zero scores
 query
-SELECT id, TFIDF(docs_idx.tableoid, true) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
+SELECT id, TFIDF(docs_idx.tableoid, true) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 3;
 ----
 id	has_score
 1	t
@@ -626,14 +618,14 @@ statement ok
 VACUUM (UPDATE_INDEXES) docs;
 
 query
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND id = 1;
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND id = 1;
 ----
 id
 
 
 # Deleted doc does not contribute to count
 query
-SELECT COUNT(*) FROM docs_idx WHERE PHRASE(body, 'fox');
+SELECT COUNT(*) FROM docs_idx WHERE body @@ ts_phrase('fox');
 ----
 count
 35
@@ -641,7 +633,7 @@ count
 
 # Score ordering still works after deletion
 query
-SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 3;
 ----
 id	has_score
 2	f
@@ -680,7 +672,7 @@ db error: ERROR: No function matches the given name and argument types 'tfidf()'
 
 # Error: BM25(docs_idx.tableoid, 1) — must be 0 or 2 arguments
 query error
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(docs_idx.tableoid, 1.2) > 0;
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND BM25(docs_idx.tableoid, 1.2) > 0;
 ----
 db error: ERROR: No function matches the given name and argument types 'bm25(BIGINT, DECIMAL(2,1))'. You might need to add explicit type casts.
 	Candidate functions:
@@ -690,7 +682,7 @@ db error: ERROR: No function matches the given name and argument types 'bm25(BIG
 
 # Error: BM25(docs_idx.tableoid, k1, b, extra) — too many arguments
 query error
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(docs_idx.tableoid, 1.2, 0.75, 0.1) > 0;
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND BM25(docs_idx.tableoid, 1.2, 0.75, 0.1) > 0;
 ----
 db error: ERROR: No function matches the given name and argument types 'bm25(BIGINT, DECIMAL(2,1), DECIMAL(3,2), DECIMAL(2,1))'. You might need to add explicit type casts.
 	Candidate functions:
@@ -707,7 +699,7 @@ db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 # EXPLAIN for BM25 basic scan
 query
-EXPLAIN SELECT id, BM25(docs_idx.tableoid) FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
+EXPLAIN SELECT id, BM25(docs_idx.tableoid) FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -723,10 +715,8 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Index: docs_idx      │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -745,7 +735,7 @@ QUERY PLAN
 
 # EXPLAIN for BM25 with multiple references (SELECT + WHERE + ORDER BY)
 query error
-EXPLAIN SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(docs2_idx.tableoid) > 0 ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3;
+EXPLAIN SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND BM25(docs2_idx.tableoid) > 0 ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3;
 ----
 db error: ERROR: Referenced table "docs2_idx" not found!
 Candidate tables: "docs_idx"
@@ -754,9 +744,9 @@ Candidate tables: "docs_idx"
 
 # EXPLAIN for UNION ALL with BM25 (same scorer per branch)
 query
-EXPLAIN (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+EXPLAIN (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 2)
 UNION ALL
-(SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+(SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('lazy') LIMIT 2)
 ORDER BY id;
 ----
 QUERY PLAN
@@ -780,10 +770,8 @@ QUERY PLAN
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   │
-│        Table: docs        ││        Table: docs        │
-│                           ││                           │
-│       Materializer:       ││       Materializer:       │
-│    rocksdb (point Get)    ││    rocksdb (point Get)    │
+│      Index: docs_idx      ││      Index: docs_idx      │
+│      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           │
 │          Filter:          ││          Filter:          │
 │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
@@ -802,7 +790,7 @@ QUERY PLAN
 
 query error
 EXPLAIN SELECT id, score, BM25(docs_idx.tableoid) FROM (
-  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3
+  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3
 ) sub ORDER BY id;
 ----
 db error: ERROR: Referenced table "docs_idx" not found!
@@ -813,7 +801,7 @@ Candidate tables: "sub"
 
 query error
 EXPLAIN SELECT id, score, TFIDF(docs_idx.tableoid) FROM (
-  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3
+  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3
 ) sub ORDER BY id;
 ----
 db error: ERROR: Referenced table "docs_idx" not found!
@@ -824,7 +812,7 @@ Candidate tables: "sub"
 
 query
 EXPLAIN WITH scored AS (
-  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')
+  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox')
 )
 SELECT id, score > 0 AS has_score FROM scored ORDER BY id LIMIT 3;
 ----
@@ -850,10 +838,8 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Index: docs_idx      │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -873,7 +859,7 @@ QUERY PLAN
 
 query
 EXPLAIN SELECT id, score > 0 AS has_score FROM (
-  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')
+  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox')
 ) sub ORDER BY id LIMIT 3;
 ----
 QUERY PLAN
@@ -896,10 +882,8 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Index: docs_idx      │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -920,7 +904,7 @@ QUERY PLAN
 
 query error
 EXPLAIN SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM (
-  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')
+  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox')
 ) sub ORDER BY id LIMIT 3;
 ----
 db error: ERROR: Referenced table "docs_idx" not found!
@@ -933,9 +917,10 @@ EXPLAIN SELECT * FROM docs_idx;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_FULLSCAN    │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│      Index: docs_idx      │
+│      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
 │             id            │
@@ -973,7 +958,7 @@ INSERT INTO meta VALUES (2, 'interesting'), (4, 'notable'), (5, 'relevant');
 # Error: JOIN two inverted indexes with BM25(docs_idx.tableoid) outside — ambiguous which index provides the score
 query ??
 SELECT docs_idx.id, BM25(docs_idx.tableoid) FROM docs_idx JOIN docs2_idx ON docs_idx.id = docs2_idx.id
-WHERE PHRASE(docs_idx.body, 'fox') AND PHRASE(docs2_idx.body, 'fox')
+WHERE docs_idx.body @@ ts_phrase('fox') AND docs2_idx.body @@ ts_phrase('fox')
 LIMIT 3;
 ----
 id	bm25
@@ -983,9 +968,9 @@ id	bm25
 # Works: JOIN two inverted indexes, BM25(docs_idx.tableoid) scoped inside each subquery (only one subquery scores)
 query
 SELECT a.id, a.score > 0 AS has_score FROM
-  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')) a
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox')) a
   JOIN
-  (SELECT id FROM docs2_idx WHERE PHRASE(body, 'fox')) b
+  (SELECT id FROM docs2_idx WHERE body @@ ts_phrase('fox')) b
   ON a.id = b.id
 ORDER BY a.id;
 ----
@@ -997,9 +982,9 @@ id	has_score
 # Works: JOIN two inverted indexes, same scorer (BM25) scoped inside each subquery
 query error
 SELECT a.id, a.score > 0 AS has_score, b.score > 0 AS b_has_score FROM
-  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')) a
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox')) a
   JOIN
-  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs2_idx WHERE PHRASE(body, 'fox')) b
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs2_idx WHERE body @@ ts_phrase('fox')) b
   ON a.id = b.id
 ORDER BY a.id;
 ----
@@ -1012,9 +997,9 @@ Candidate tables: "a"
 # Works: JOIN two inverted indexes, different scorers (BM25 vs TFIDF) scoped inside each subquery
 query error
 SELECT a.id, a.score > 0 AS has_score, b.score > 0 AS b_has_score FROM
-  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')) a
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox')) a
   JOIN
-  (SELECT id, TFIDF(docs_idx.tableoid) AS score FROM docs2_idx WHERE PHRASE(body, 'fox')) b
+  (SELECT id, TFIDF(docs_idx.tableoid) AS score FROM docs2_idx WHERE body @@ ts_phrase('fox')) b
   ON a.id = b.id
 ORDER BY a.id;
 ----
@@ -1027,9 +1012,9 @@ Candidate tables: "a"
 
 query
 EXPLAIN SELECT a.id, a.score > 0 AS has_score FROM
-  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')) a
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox')) a
   JOIN
-  (SELECT id FROM docs2_idx WHERE PHRASE(body, 'fox')) b
+  (SELECT id FROM docs2_idx WHERE body @@ ts_phrase('fox')) b
   ON a.id = b.id
 ORDER BY a.id;
 ----
@@ -1060,10 +1045,8 @@ QUERY PLAN
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   │
-│        Table: docs        ││        Table: docs2       │
-│                           ││                           │
-│       Materializer:       ││       Materializer:       │
-│    rocksdb (point Get)    ││    rocksdb (point Get)    │
+│      Index: docs_idx      ││      Index: docs2_idx     │
+│      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           │
 │          Filter:          ││          Filter:          │
 │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
@@ -1084,7 +1067,7 @@ QUERY PLAN
 query
 SELECT docs_idx.id, BM25(docs_idx.tableoid) > 0 AS has_score, meta.tag FROM docs_idx
 JOIN meta ON docs_idx.id = meta.id
-WHERE PHRASE(docs_idx.body, 'fox')
+WHERE docs_idx.body @@ ts_phrase('fox')
 ORDER BY docs_idx.id;
 ----
 id	has_score	tag
@@ -1097,7 +1080,7 @@ id	has_score	tag
 query
 EXPLAIN SELECT docs_idx.id, BM25(docs_idx.tableoid) > 0 AS has_score, meta.tag FROM docs_idx
 JOIN meta ON docs_idx.id = meta.id
-WHERE PHRASE(docs_idx.body, 'fox')
+WHERE docs_idx.body @@ ts_phrase('fox')
 ORDER BY docs_idx.id;
 ----
 QUERY PLAN
@@ -1128,13 +1111,11 @@ QUERY PLAN
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      ││   ROCKSDB_TABLE_FULLSCAN  │
 │    ────────────────────   ││    ────────────────────   │
-│        Table: docs        ││        Table: meta        │
-│                           ││                           │
-│       Materializer:       ││        Projections:       │
-│    rocksdb (point Get)    ││             id            │
-│                           ││            tag            │
-│          Filter:          ││                           │
-│ AND[PHRASE[body(string) = ││                           │
+│      Index: docs_idx      ││        Table: meta        │
+│      Lookup: rocksdb      ││                           │
+│                           ││        Projections:       │
+│          Filter:          ││             id            │
+│ AND[PHRASE[body(string) = ││            tag            │
 │    <Term:fox(0, 0); >]]   ││                           │
 │                           ││                           │
 │           Score:          ││                           │
@@ -1155,7 +1136,7 @@ SELECT docs_idx.id,
        BM25(docs_idx.tableoid) <> BM25(docs2_idx.tableoid) AS differs
 FROM docs_idx
 JOIN docs2_idx ON docs_idx.id = docs2_idx.id
-WHERE PHRASE(docs_idx.body, 'fox') AND PHRASE(docs2_idx.body, 'fox')
+WHERE docs_idx.body @@ ts_phrase('fox') AND docs2_idx.body @@ ts_phrase('fox')
 ORDER BY docs_idx.id;
 ----
 id	left_score	right_score	differs
@@ -1174,15 +1155,15 @@ DROP TABLE meta;
 # Union tree: each branch is itself a UNION (((fox UNION lazy) UNION ALL (fox UNION lazy)))
 query
 (
-  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 2)
   UNION ALL
-  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('lazy') LIMIT 2)
 )
 UNION ALL
 (
-  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 2)
   UNION ALL
-  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('lazy') LIMIT 2)
 )
 ORDER BY id LIMIT 6;
 ----
@@ -1198,15 +1179,15 @@ id	score
 # EXPLAIN for union tree
 query
 EXPLAIN (
-  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 2)
   UNION ALL
-  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('lazy') LIMIT 2)
 )
 UNION ALL
 (
-  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 2)
   UNION ALL
-  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('lazy') LIMIT 2)
 )
 ORDER BY id LIMIT 6;
 ----
@@ -1232,10 +1213,8 @@ QUERY PLAN
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   ││    ────────────────────   ││    ────────────────────   │
-│        Table: docs        ││        Table: docs        ││        Table: docs        ││        Table: docs        │
-│                           ││                           ││                           ││                           │
-│       Materializer:       ││       Materializer:       ││       Materializer:       ││       Materializer:       │
-│    rocksdb (point Get)    ││    rocksdb (point Get)    ││    rocksdb (point Get)    ││    rocksdb (point Get)    │
+│      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      │
+│      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           ││                           ││                           │
 │          Filter:          ││          Filter:          ││          Filter:          ││          Filter:          │
 │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
@@ -1263,15 +1242,15 @@ Candidate bindings: "body"
 
 query
 EXPLAIN (
-  (SELECT id, BM25(docs_idx.tableoid) as score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) as score FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 2)
   UNION ALL
-  (SELECT id, BM25(docs_idx.tableoid) as score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) as score FROM docs_idx WHERE body @@ ts_phrase('lazy') LIMIT 2)
 )
 UNION ALL
 (
-  (SELECT id, BM25(docs_idx.tableoid) as score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) as score FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 2)
   UNION ALL
-  (SELECT id, BM25(docs_idx.tableoid) as score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) as score FROM docs_idx WHERE body @@ ts_phrase('lazy') LIMIT 2)
 )
 ORDER BY score
 LIMIT 6;
@@ -1298,10 +1277,8 @@ QUERY PLAN
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   ││    ────────────────────   ││    ────────────────────   │
-│        Table: docs        ││        Table: docs        ││        Table: docs        ││        Table: docs        │
-│                           ││                           ││                           ││                           │
-│       Materializer:       ││       Materializer:       ││       Materializer:       ││       Materializer:       │
-│    rocksdb (point Get)    ││    rocksdb (point Get)    ││    rocksdb (point Get)    ││    rocksdb (point Get)    │
+│      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      │
+│      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           ││                           ││                           │
 │          Filter:          ││          Filter:          ││          Filter:          ││          Filter:          │
 │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
@@ -1321,15 +1298,15 @@ QUERY PLAN
 
 query error
 EXPLAIN (
-  (SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  (SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 2)
   UNION ALL
-  (SELECT id FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+  (SELECT id FROM docs_idx WHERE body @@ ts_phrase('lazy') LIMIT 2)
 )
 UNION ALL
 (
-  (SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  (SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 2)
   UNION ALL
-  (SELECT id FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+  (SELECT id FROM docs_idx WHERE body @@ ts_phrase('lazy') LIMIT 2)
 )
 ORDER BY BM25(docs_idx.tableoid)
 LIMIT 6;
@@ -1360,7 +1337,7 @@ VACUUM (UPDATE_INDEXES) bigdocs;
 
 # All 1100 docs match 'fox'; count exercises multi-batch materializer path
 query
-SELECT COUNT(*) FROM bigdocs_idx WHERE PHRASE(body, 'fox');
+SELECT COUNT(*) FROM bigdocs_idx WHERE body @@ ts_phrase('fox');
 ----
 count
 1100
@@ -1368,7 +1345,7 @@ count
 
 # BM25 scores valid across >1024 docs (multiple velox batches)
 query
-SELECT COUNT(*) FROM bigdocs_idx WHERE PHRASE(body, 'fox') AND BM25(bigdocs_idx.tableoid) > 0;
+SELECT COUNT(*) FROM bigdocs_idx WHERE body @@ ts_phrase('fox') AND BM25(bigdocs_idx.tableoid) > 0;
 ----
 count
 1100
@@ -1376,7 +1353,7 @@ count
 
 # Ordering across batches is stable
 query
-SELECT id FROM bigdocs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
+SELECT id FROM bigdocs_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 3;
 ----
 id
 1
@@ -1385,7 +1362,7 @@ id
 
 
 query
-SELECT id FROM bigdocs_idx WHERE PHRASE(body, 'fox') ORDER BY id DESC LIMIT 3;
+SELECT id FROM bigdocs_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3;
 ----
 id
 1100
@@ -1432,7 +1409,7 @@ VACUUM (UPDATE_INDEXES) boost_docs;
 
 query
 SELECT id FROM boost_docs_idx
-WHERE BOOST(TERM_EQ(body, 'alpha'), 1000.5) OR TERM_EQ(body, 'beta')
+WHERE body @@ ('alpha'::TSQUERY ^ 1000.5 || 'beta')
 ORDER BY BM25(boost_docs_idx.tableoid) DESC, id;
 ----
 id
@@ -1442,7 +1419,7 @@ id
 
 query
 SELECT id FROM boost_docs_idx
-WHERE TERM_EQ(body, 'alpha') OR BOOST(TERM_EQ(body, 'beta'), 1000.5)
+WHERE body @@ ('alpha' || 'beta'::TSQUERY ^ 1000.5)
 ORDER BY BM25(boost_docs_idx.tableoid) DESC, id;
 ----
 id
@@ -1452,3 +1429,237 @@ id
 
 statement ok
 DROP TABLE boost_docs;
+
+
+# ============================================================================
+# `::boost(K)` on plain SQL conditions outside `@@`. The cast peels the
+# WHERE-coercion (BOOSTED_TSQUERY -> BOOLEAN) plus the user-written
+# boost cast (BOOLEAN -> BOOSTED_TSQUERY) and applies the factor at
+# the leaf-filter level via FilterContext::WithBoost.
+# ============================================================================
+
+statement ok
+CREATE TABLE sql_boost_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_boost_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX sql_boost_idx ON sql_boost_docs USING inverted(id, body sql_boost_en);
+
+
+statement count 1
+INSERT INTO sql_boost_docs VALUES (1, 'alpha');
+
+
+statement count 1
+INSERT INTO sql_boost_docs VALUES (2, 'beta');
+
+
+statement count 1
+INSERT INTO sql_boost_docs VALUES (3, 'gamma');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) sql_boost_docs;
+
+
+# Baseline (no SQL-surface boost): 3-way OR over the body terms; all
+# three rows score identically so they sort by id.
+query
+SELECT id FROM sql_boost_idx
+WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
+ORDER BY BM25(sql_boost_idx.tableoid) DESC, id;
+----
+id
+1
+2
+3
+
+
+# End-to-end BM25 ordering via SQL-surface boost wrapping a TSQUERY
+# match: `(body @@ 'word')::boost(K)`. The boost peel recurses into
+# the @@ expression with WithBoost(K), producing a ByTerm leaf with
+# boost K -- which is scored under the analyzed body column. Boost
+# on the alpha leg lifts id=1 to the top.
+query
+SELECT id FROM sql_boost_idx
+WHERE (body @@ 'alpha')::boost(1000.0) OR (body @@ 'beta')
+ORDER BY BM25(sql_boost_idx.tableoid) DESC, id;
+----
+id
+1
+2
+
+
+# Inverse: boost beta instead -- id=2 ranks first.
+query
+SELECT id FROM sql_boost_idx
+WHERE (body @@ 'alpha') OR (body @@ 'beta')::boost(1000.0)
+ORDER BY BM25(sql_boost_idx.tableoid) DESC, id;
+----
+id
+2
+1
+
+
+# Three-way: each leg with its own SQL-surface boost factor; the
+# largest factor wins regardless of id order.
+query
+SELECT id FROM sql_boost_idx
+WHERE (body @@ 'alpha')::boost(100.0)
+   OR (body @@ 'beta')::boost(1000.0)
+   OR (body @@ 'gamma')::boost(10.0)
+ORDER BY BM25(sql_boost_idx.tableoid) DESC, id;
+----
+id
+2
+1
+3
+
+
+# Boost cast wrapping a compound predicate (AND of @@ + numeric
+# equality): the factor applies to the AND group's score
+# contribution. id=1 satisfies both conjuncts and gets the boost.
+query
+SELECT id FROM sql_boost_idx
+WHERE (body @@ 'alpha' AND id = 1)::boost(1000.0)
+   OR (body @@ 'beta')
+ORDER BY BM25(sql_boost_idx.tableoid) DESC, id;
+----
+id
+1
+2
+
+
+# Bind-time error: SQL-surface boost cast on a predicate the inverted
+# index can't claim (binary comparison with column refs on both
+# sides).
+query error ::boost\(K\) used on a predicate the inverted index could not claim
+SELECT id FROM sql_boost_idx
+WHERE (id > id)::boost(2.0);
+
+
+statement ok
+DROP TABLE sql_boost_docs;
+
+
+# ============================================================================
+# `prefix(col, 'pre')` -- DuckDB's specialised rewrite of `LIKE 'pre%'`
+# (when the literal portion has no SQL wildcards). Claimed via
+# irs::ByPrefix on keyword-analyzed columns; declined for other
+# analyzers (predicate falls back to row-by-row evaluation).
+# ============================================================================
+
+statement ok
+CREATE TABLE prefix_docs (id INTEGER PRIMARY KEY, sku VARCHAR);
+
+
+# Default (identity) analyzer on `sku` -- exact-match semantics for
+# `=`, `IN`, `LIKE` claimers. No BM25 scoring features so we only
+# verify row inclusion for this section; SQL-boost rank semantics
+# are covered separately below using the analyzed-body setup.
+statement ok
+CREATE INDEX prefix_idx ON prefix_docs USING inverted(id, sku);
+
+
+statement count 1
+INSERT INTO prefix_docs VALUES (1, 'alpha-1');
+
+
+statement count 1
+INSERT INTO prefix_docs VALUES (2, 'alpha-2');
+
+
+statement count 1
+INSERT INTO prefix_docs VALUES (3, 'beta-1');
+
+
+statement count 1
+INSERT INTO prefix_docs VALUES (4, 'gamma-1');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) prefix_docs;
+
+
+# Bare `LIKE 'pre%'` -- DuckDB rewrites to prefix(sku, 'alpha-');
+# claimed via ByPrefix.
+query
+SELECT id FROM prefix_idx WHERE sku LIKE 'alpha-%' ORDER BY id;
+----
+id
+1
+2
+
+
+# Identity-analyzed columns don't carry BM25 scoring features in
+# current DDL (no text_dictionary -> StringTokenizer with default
+# features), so we verify only inclusion -- claim correctness is
+# what matters here. Boost-on-filter correctness is verified
+# separately by C++ unit tests (test_Boost_SqlEqualityInOr /
+# test_Boost_SqlPrefixInOr) via filter-equality assertions.
+
+# `LIKE 'pre%'` -- DuckDB rewrites to prefix(sku, 'alpha-'); claimed
+# via ByPrefix.
+query
+SELECT id FROM prefix_idx WHERE sku LIKE 'alpha-%' ORDER BY id;
+----
+id
+1
+2
+
+
+# Trailing `_` keeps the `~~` operator (no prefix() rewrite);
+# claimed via the LIKE branch as ByWildcard.
+query
+SELECT id FROM prefix_idx WHERE sku LIKE 'alpha-_' ORDER BY id;
+----
+id
+1
+2
+
+
+# Non-prefix wildcards (`%-1`): claimed via the LIKE branch.
+query
+SELECT id FROM prefix_idx WHERE sku LIKE '%-1' ORDER BY id;
+----
+id
+1
+3
+4
+
+
+# Equality on keyword-analyzed VARCHAR: ByTerm.
+query
+SELECT id FROM prefix_idx WHERE sku = 'alpha-1' OR sku = 'beta-1' ORDER BY id;
+----
+id
+1
+3
+
+
+# IN on keyword-analyzed VARCHAR: ByTerms.
+query
+SELECT id FROM prefix_idx
+WHERE sku IN ('alpha-1', 'gamma-1', 'beta-1') ORDER BY id;
+----
+id
+1
+3
+4
+
+
+statement ok
+DROP TABLE prefix_docs;

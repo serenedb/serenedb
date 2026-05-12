@@ -1,0 +1,89 @@
+control substitution on
+
+statement ok
+CREATE TYPE diagnosis AS ENUM ('bipolyarka', 'shiza', 'panicataka', 'depression', 'norma');
+
+statement ok
+CREATE TYPE department AS ENUM ('buiniy', 'tikhiy', 'nabludenie');
+
+statement ok
+CREATE TABLE vedernikoff_patients (
+  id INTEGER PRIMARY KEY,
+  name VARCHAR,
+  illness diagnosis,
+  dept department
+);
+
+statement count 3
+INSERT INTO vedernikoff_patients VALUES
+  (1, 'ivansolo2003', 'bipolyarka', 'buiniy'),
+  (2, 'deadinside', 'shiza', 'tikhiy'),
+  (3, 'clickclack', 'panicataka', 'nabludenie');
+
+query
+SELECT * FROM vedernikoff_patients ORDER BY id;
+----
+id	name	illness	dept
+1	ivansolo2003	bipolyarka	buiniy
+2	deadinside	shiza	tikhiy
+3	clickclack	panicataka	nabludenie
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT * FROM vedernikoff_patients ORDER BY id;
+----
+id	name	illness	dept
+1	ivansolo2003	bipolyarka	buiniy
+2	deadinside	shiza	tikhiy
+3	clickclack	panicataka	nabludenie
+
+
+connection after_crash
+statement ok
+CREATE TABLE psycho_check (
+  id INTEGER PRIMARY KEY,
+  dept department
+);
+
+connection after_crash
+statement count 1
+INSERT INTO psycho_check VALUES (1, 'buiniy');
+
+connection after_crash
+query
+SELECT * FROM psycho_check;
+----
+id	dept
+1	buiniy
+
+
+connection after_crash
+statement ok
+DROP TABLE psycho_check;
+
+connection after_crash
+statement ok
+DROP TABLE vedernikoff_patients;
+
+connection after_crash
+statement ok
+DROP TYPE diagnosis;
+
+connection after_crash
+statement ok
+DROP TYPE department;

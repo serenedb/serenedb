@@ -43,7 +43,7 @@ class HttpCommTask final : public GeneralCommTask<T> {
  public:
   HttpCommTask(GeneralServer& server, ConnectionInfo,
                std::shared_ptr<AsioSocket<T>> so);
-  ~HttpCommTask() override;
+  ~HttpCommTask() final;
 
   void Start() final;
 

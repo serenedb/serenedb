@@ -220,7 +220,7 @@ Result ValidateInvertedIndexColumns(
   for (const auto& c : indexed_columns) {
     SDB_ASSERT(c.catalog_column);
     const auto kind = c.catalog_column->type.id();
-    if (!c.json_path.empty()) {
+    if (!c.serialized_json_expr.empty()) {
       // JSON-path entries target a JSON column (stored as VARCHAR). The
       // whitelist below applies to whole-column entries; path entries
       // get their own type-dispatch at write time per leaf JSON value.
@@ -425,7 +425,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   for (const auto& c : columns) {
     auto& index_col = inverted_columns[c.catalog_column->id];
 
-    if (!c.json_path.empty()) {
+    if (!c.serialized_json_expr.empty()) {
       if (c.opclass_options.has_value()) {
         return std::unexpected<Result>{
           std::in_place, ERROR_BAD_PARAMETER,
@@ -433,7 +433,9 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
           "column '",
           c.name, "')"};
       }
-      JsonPathInfo path_info{.path = c.json_path};
+      JsonPathInfo path_info{
+        .serialized_bound_expression = c.serialized_json_expr,
+      };
       if (!c.opclass.empty()) {
         auto dict = resolve_dict(c.name, c.opclass);
         if (!dict) {

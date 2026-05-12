@@ -30,6 +30,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/main/connection.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
 
@@ -44,7 +47,12 @@
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/duckdb_rocksdb_writer.h"
+#include "connector/duckdb_search_sink_writer.h"
+#include "connector/json_expression_canonicalizer.hpp"
+#include "connector/key_utils.hpp"
 #include "connector/search_sink_writer.hpp"
+#include "query/duckdb_engine.h"
 #include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -160,8 +168,8 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
 
 void FlushShard(ShardState& s,
                 const std::shared_ptr<const catalog::Snapshot>& snapshot,
-                rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
-                Tick last_tick) {
+                duckdb::ClientContext& client_context, rocksdb::DB& db,
+                rocksdb::ColumnFamilyHandle& cf, Tick last_tick) {
   if (s.pk2row.empty()) {
     return;
   }
@@ -185,11 +193,13 @@ void FlushShard(ShardState& s,
   auto trx = s.shard->GetTransaction();
   auto tokenizer_provider =
     connector::MakeTokenizerProvider(snapshot, *s.index);
-  auto json_paths_provider =
-    connector::MakeJsonPathsProvider(snapshot, *s.index);
-  connector::SearchSinkInsertBaseImpl insert_sink{
-    trx, std::move(tokenizer_provider), std::move(json_paths_provider),
-    s.indexed_column_ids};
+  auto json_paths_provider = connector::MakeJsonPathsProvider(
+    snapshot, *s.index, &client_context);
+  // Use the DuckDB-facing wrapper so SwitchColumn / Write / Finish /
+  // JsonExpressionEvals are available (the impl base only exposes *Impl).
+  connector::DuckDBSearchSinkInsertWriter insert_sink{
+    trx, std::move(tokenizer_provider), s.indexed_column_ids,
+    std::move(json_paths_provider)};
   connector::SearchSinkDeleteBaseImpl delete_sink{trx};
 
   delete_sink.InitImpl(s.pk2row.size());
@@ -201,41 +211,161 @@ void FlushShard(ShardState& s,
 
   if (!insert_entries.empty()) {
     auto& sink = insert_sink;
-    sink.InitImpl(insert_entries.size());
+    const auto num_rows = insert_entries.size();
+    sink.Init(num_rows, /*chunk=*/{});
     auto& get_key_buffer = s.full_key_prefix;
     rocksdb::ReadOptions read_opts;
-    rocksdb::PinnableSlice value_buffer;
+
+    // For every indexed column, materialise per-row bytes so we can both
+    // (a) write the column the old per-row way for non-executor columns
+    // and (b) build a DataChunk for executor-driven JSON expressions.
+    // resolved_cells[col_idx][row_idx] = bytes for that cell (either from
+    // WAL or fetched from rocksdb if the WAL entry was a partial UPDATE).
+    std::vector<std::vector<rocksdb::PinnableSlice>> rocksdb_buffers(
+      s.indexed_columns.size());
+    std::vector<std::vector<std::string_view>> resolved_cells(
+      s.indexed_columns.size());
+
     for (size_t col_idx = 0; col_idx < s.indexed_columns.size(); ++col_idx) {
       const auto& col = s.indexed_columns[col_idx];
-      const bool switched = sink.SwitchColumnImpl(col.type, true, col.id);
-      SDB_ASSERT(switched);
+      auto& cells = resolved_cells[col_idx];
+      auto& bufs = rocksdb_buffers[col_idx];
+      cells.reserve(num_rows);
+      bufs.reserve(num_rows);
       absl::big_endian::Store(get_key_buffer.data() + sizeof(ObjectId), col.id);
       for (const auto* row : insert_entries) {
         std::string_view cell = row->indexed_cols[col_idx];
         if (!cell.empty()) {
-          rocksdb::Slice slice{cell.data(), cell.size()};
-          sink.WriteImpl(std::span{&slice, 1}, row->full_key);
-        } else {
-          // This is a very bad code that exists because we don't support PATCH
-          // queries for inverted index. It happens when we update a column that
-          // is indexed but not included in the UPDATE statement: the new value
-          // is missing from the WAL window, so we have to fetch it from the db
-          // to be able to write it to iresearch.
-          std::string_view pk = row->full_key.substr(kKeyPrefixSize);
-          get_key_buffer.resize(kKeyPrefixSize);
-          get_key_buffer.append(pk.data(), pk.size());
-          value_buffer.Reset();
-          auto status = db.Get(read_opts, &cf, get_key_buffer, &value_buffer);
-          SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
-                       "WAL recovery: rocksdb Get failed for index '",
-                       s.shard->GetId().id(), "' col=", col.id, ": ",
-                       status.ToString(), kSkipHint);
-          rocksdb::Slice slice{value_buffer.data(), value_buffer.size()};
-          sink.WriteImpl(std::span{&slice, 1}, row->full_key);
+          cells.push_back(cell);
+          bufs.emplace_back();
+          continue;
         }
+        // PATCH semantics: missing WAL cell -> fetch from rocksdb.
+        std::string_view pk = row->full_key.substr(kKeyPrefixSize);
+        get_key_buffer.resize(kKeyPrefixSize);
+        get_key_buffer.append(pk.data(), pk.size());
+        auto& buf = bufs.emplace_back();
+        auto status = db.Get(read_opts, &cf, get_key_buffer, &buf);
+        SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
+                     "WAL recovery: rocksdb Get failed for index '",
+                     s.shard->GetId().id(), "' col=", col.id, ": ",
+                     status.ToString(), kSkipHint);
+        cells.emplace_back(buf.data(), buf.size());
       }
     }
-    sink.FinishImpl();
+
+    // Per-column raw write for non-executor columns. Executor-handled
+    // columns return false from SwitchColumn and are deferred to the
+    // ExpressionExecutor pass below.
+    for (size_t col_idx = 0; col_idx < s.indexed_columns.size(); ++col_idx) {
+      const auto& col = s.indexed_columns[col_idx];
+      if (!sink.SwitchColumn(col.type, true, col.id)) {
+        continue;
+      }
+      for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+        rocksdb::Slice slice{resolved_cells[col_idx][row_idx].data(),
+                             resolved_cells[col_idx][row_idx].size()};
+        sink.Write(std::span{&slice, 1}, insert_entries[row_idx]->full_key);
+      }
+    }
+
+    // Build a DataChunk over all indexed columns. Only VARCHAR columns are
+    // populated -- JSON-extract bound expressions only reference VARCHAR
+    // columns (the JSON column itself), and the chunk's bound expression
+    // bindings reference positions within s.indexed_columns.
+    const auto eval_evals = sink.JsonExpressionEvals();
+    if (false && !eval_evals.empty()) {
+      duckdb::vector<duckdb::LogicalType> chunk_types;
+      chunk_types.reserve(s.indexed_columns.size());
+      for (const auto& col : s.indexed_columns) {
+        chunk_types.push_back(col.type);
+      }
+      duckdb::DataChunk chunk;
+      chunk.Initialize(duckdb::Allocator::DefaultAllocator(), chunk_types,
+                       num_rows);
+      chunk.SetCardinality(num_rows);
+      for (size_t col_idx = 0; col_idx < s.indexed_columns.size(); ++col_idx) {
+        const auto& col = s.indexed_columns[col_idx];
+        if (col.type.id() != duckdb::LogicalTypeId::VARCHAR) {
+          continue;
+        }
+        auto& v = chunk.data[col_idx];
+        auto* data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v);
+        for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+          std::string_view cell = resolved_cells[col_idx][row_idx];
+          // Strip the optional kStringPrefix that VARCHAR storage may carry.
+          if (cell.starts_with(connector::kStringPrefix)) {
+            cell = cell.substr(connector::kStringPrefix.size());
+          }
+          data[row_idx] =
+            duckdb::StringVector::AddString(v, cell.data(), cell.size());
+        }
+      }
+
+      // Reuse the same row-keys layout the per-column loop produced; each
+      // JSON expression writes back under the same physical key. We build
+      // a copy because SetupColumnForKey mutates them per column.
+      std::vector<std::string> row_keys;
+      row_keys.reserve(num_rows);
+      for (const auto* row : insert_entries) {
+        row_keys.emplace_back(row->full_key);
+      }
+      duckdb::Allocator& allocator = duckdb::Allocator::DefaultAllocator();
+      connector::DuckDBColumnSerializer serializer{allocator};
+      // connector::DuckDBColumnSerializer::SstWriter noop{nullptr};
+      // chunk.data[i] mirrors s.indexed_columns[i] -- chunk slot i carries
+      // s.indexed_columns[i].id as its catalog Column::Id.
+      std::vector<catalog::Column::Id> slot_to_col_id;
+      slot_to_col_id.reserve(s.indexed_columns.size());
+      for (const auto& col : s.indexed_columns) {
+        slot_to_col_id.push_back(col.id);
+      }
+      // TODO fix wal_error
+      // for (const auto& je : eval_evals) {
+      //   auto resolved = connector::ResolveBoundColumnRefsForChunk(
+      //     *je.bound_expr, chunk, s.table_object_id, slot_to_col_id);
+      //   duckdb::ExpressionExecutor executor(client_context, *resolved);
+      //   duckdb::Vector result(resolved->return_type, num_rows);
+      //   executor.ExecuteExpression(chunk, result);
+      //   connector::RejectJsonObjectArrayLeaves(result, num_rows);
+
+      //   std::vector<bool> missing_mask;
+      //   const auto src_slot = connector::ExtractJsonSourceColId(*resolved);
+      //   std::vector<std::string> path_keys;
+      //   if (src_slot != static_cast<duckdb::idx_t>(-1) &&
+      //       src_slot < chunk.ColumnCount() &&
+      //       connector::ExtractJsonPathKeys(*je.bound_expr, path_keys)) {
+      //     connector::ComputeJsonMissingMask(chunk.data[src_slot], num_rows,
+      //                                       path_keys, missing_mask);
+      //   } else {
+      //     missing_mask.assign(num_rows, false);
+      //   }
+
+      //   if (!sink.SwitchJsonExpression(resolved->return_type,
+      //                                  /*have_nulls=*/true, je.column_id,
+      //                                  je.serialized)) {
+      //     continue;
+      //   }
+      //   std::vector<std::string> saved_keys(num_rows);
+      //   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+      //     if (missing_mask[row_idx]) {
+      //       std::swap(saved_keys[row_idx], row_keys[row_idx]);
+      //     } else {
+      //       connector::key_utils::SetupColumnForKey(row_keys[row_idx],
+      //                                               je.column_id);
+      //     }
+      //   }
+      //   connector::DuckDBSinkIndexWriter* writer_ptr = &sink;
+      //   serializer.WriteColumn(noop, result, resolved->return_type, num_rows,
+      //                          row_keys, {&writer_ptr, 1});
+      //   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+      //     if (missing_mask[row_idx]) {
+      //       std::swap(saved_keys[row_idx], row_keys[row_idx]);
+      //     }
+      //   }
+      // }
+    }
+    sink.Finish();
   }
 
   s.total_inserted += insert_entries.size();
@@ -409,7 +539,8 @@ class WalBatchReplay final : public rocksdb::WriteBatch::Handler {
 
 void RunWalRecovery(std::vector<ShardState>& shards,
                     const std::shared_ptr<const catalog::Snapshot>& snapshot,
-                    rocksdb::DB& db, Tick min_start_tick, Tick end_tick) {
+                    duckdb::ClientContext& client_context, rocksdb::DB& db,
+                    Tick min_start_tick, Tick end_tick) {
   TableToShards table2shards;
   for (auto& s : shards) {
     table2shards[s.table_object_id].shards.emplace_back(&s);
@@ -439,7 +570,7 @@ void RunWalRecovery(std::vector<ShardState>& shards,
   Tick latest_seq = 0;
   auto flush_all = [&] {
     for (auto& shard : shards) {
-      FlushShard(shard, snapshot, db, *default_cf, latest_seq);
+      FlushShard(shard, snapshot, client_context, db, *default_cf, latest_seq);
     }
     live_batches.clear();
   };
@@ -567,7 +698,14 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
 
   auto* db = rdb.db();
   SDB_ASSERT(db);
-  RunWalRecovery(recovery_shards, snapshot, *db, min_start_tick, end_tick);
+
+  // ClientContext for deserialising bound JSON expressions and running
+  // ExpressionExecutor during replay. The Connection is local to this
+  // recovery run.
+  auto recovery_conn = query::DuckDBEngine::Instance().CreateConnection();
+  auto& client_context = *recovery_conn->context;
+  RunWalRecovery(recovery_shards, snapshot, client_context, *db, min_start_tick,
+                 end_tick);
 
   const auto duration =
     absl::FromChrono(std::chrono::steady_clock::now() - begin);

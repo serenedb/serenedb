@@ -25,16 +25,21 @@
 
 #include <atomic>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/execution/column_binding_resolver.hpp>
 #include <duckdb/execution/execution_context.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/expression/lambda_expression.hpp>
+#include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <iostream>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_map.h"
 #include "basics/debugging.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
@@ -51,6 +56,7 @@
 #include "connector/duckdb_search_sink_writer.h"
 #include "connector/duckdb_secondary_sink_writer.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/json_expression_canonicalizer.hpp"
 #include "connector/json_extract_names.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
@@ -64,18 +70,16 @@
 namespace sdb::connector {
 namespace {
 
-// TODO(mkornaukhov) do not build path manually, see #597
-bool TryLiftJsonPath(const duckdb::ParsedExpression& e, std::string& col_name,
-                     std::vector<std::string>& out_path) {
-  out_path.clear();
+bool TryLiftJsonPath(const duckdb::ParsedExpression& parsed_expr,
+                     std::string& col_name) {
   // Reject when outtermost extraction does not return string
-  if (e.GetExpressionClass() != duckdb::ExpressionClass::FUNCTION ||
+  if (parsed_expr.GetExpressionClass() != duckdb::ExpressionClass::FUNCTION ||
       !IsJsonExtractString(
-        e.Cast<duckdb::FunctionExpression>().function_name)) {
+        parsed_expr.Cast<duckdb::FunctionExpression>().function_name)) {
     return false;
   }
 
-  const duckdb::ParsedExpression* cur = &e;
+  const duckdb::ParsedExpression* cur = &parsed_expr;
   while (cur->GetExpressionType() != duckdb::ExpressionType::COLUMN_REF) {
     const duckdb::ParsedExpression* key = nullptr;
     const duckdb::ParsedExpression* next_lhs = nullptr;
@@ -107,16 +111,13 @@ bool TryLiftJsonPath(const duckdb::ParsedExpression& e, std::string& col_name,
       return false;
     }
     const auto& key_const = key->Cast<duckdb::ConstantExpression>();
-    if (key_const.value.IsNull() ||
-        !AppendJsonPathKey(key_const.value, out_path)) {
+    if (key_const.value.IsNull()) {
       return false;
     }
     cur = next_lhs;
   }
 
   col_name = cur->Cast<duckdb::ColumnRefExpression>().GetColumnName();
-  // We collected leaf-to-root; flip to root-to-leaf for downstream code.
-  absl::c_reverse(out_path);
   return true;
 }
 
@@ -192,6 +193,18 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   // CommitWait) -> Finalizing (Finalize after CommitWait, before tombstone).
   std::unique_ptr<pg::IndexProgressReporter> progress;
 
+  // JSON-extract expressions evaluated per chunk via ExpressionExecutor and
+  // written to the index as virtual columns. `normalised_expr` leaves carry
+  // catalog identities (TableIndex(table_id), ProjectionIndex(Column::Id)),
+  // resolved against each input chunk in Sink via
+  // `ResolveBoundColumnRefsForChunk` before ExpressionExecutor runs.
+  struct JsonIndexedExpression {
+    duckdb::unique_ptr<duckdb::Expression> normalised_expr;
+    catalog::Column::Id column_id;
+  };
+
+  std::vector<JsonIndexedExpression> json_indexed_expressions;
+
   ~CreateIndexGlobalState() {
     search_trx.reset();
     if (created && !finalized) {
@@ -230,6 +243,7 @@ SereneDBPhysicalCreateIndex::SereneDBPhysicalCreateIndex(
   duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::SchemaObject> relation,
   std::vector<catalog::Column> view_columns, ObjectId database_id,
   duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
   SereneDBSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              {duckdb::LogicalType::BIGINT},
@@ -238,6 +252,7 @@ SereneDBPhysicalCreateIndex::SereneDBPhysicalCreateIndex(
     _view_columns(std::move(view_columns)),
     _database_id(database_id),
     _info(std::move(info)),
+    _bound_expressions(std::move(bound_expressions)),
     _schema_entry(schema_entry) {}
 
 catalog::Table* SereneDBPhysicalCreateIndex::TableOrNull() const noexcept {
@@ -335,24 +350,45 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       continue;
     }
 
-    // Try to lift a JSON-path expression of the form
-    // `col -> 'k1' -> 'k2' ...` or `json_extract(col, 'k')` chains.
+    SDB_ASSERT(i < _bound_expressions.size() && _bound_expressions[i],
+               "bound expression missing for indexed JSON path");
+    auto& bound_expr = _bound_expressions[i];
+
+    // Build the col-index -> Column::Id map from the relation's columns in
+    // declaration order. The IndexBinder bound this expression against a
+    // bind_context derived from the same source (see
+    // duckdb_catalog.cpp:1033-1044), so column_index in the bound leaves
+    // lines up with `columns[i]`.
+    std::vector<catalog::Column::Id> col_index_to_id;
+    col_index_to_id.reserve(columns.size());
+    for (const auto& c : columns) {
+      col_index_to_id.push_back(c.id);
+    }
+    auto normalised = NormalizeBoundExpression(*bound_expr, _relation->GetId(),
+                                               col_index_to_id);
+    std::string serialized = SerializeBoundExpression(*normalised);
+
     std::string col_name;
-    std::vector<std::string> json_path;
-    if (!TryLiftJsonPath(*expr, col_name, json_path) || json_path.empty()) {
+    if (!TryLiftJsonPath(*expr, col_name)) {
       throw duckdb::CatalogException(
         "Expression-based index columns are not supported");
     }
+
     const auto* cat_col = resolve_column(col_name);
     if (!cat_col) {
       throw duckdb::CatalogException("column \"%s\" not found in table",
                                      col_name);
     }
+
+    state->json_indexed_expressions.push_back({
+      .normalised_expr = std::move(normalised),
+      .column_id = cat_col->id,
+    });
     idx_columns.emplace_back(catalog::CreateIndexColumn{
       .catalog_column = cat_col,
       .name = cat_col->name,
       .opclass = std::move(opclass),
-      .json_path = std::move(json_path),
+      .serialized_json_expr = std::move(serialized),
       .opclass_options = std::move(opclass_options),
     });
   }
@@ -518,7 +554,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     // Parallel-Sink build context: each CreateIndexLocalState pulls a
     // fresh transaction off the shard and builds its own writer using
     // providers resolved against the snapshot and InvertedIndex stored
-    // on gstate.
+    // on gstate. JSON-path bound expressions are deserialised on the
+    // local-state side via MakeJsonPathsProvider; the ClientContext from
+    // the local context is threaded in there.
     state->snapshot_for_providers = snapshot;
     state->index_for_providers = index;
   }
@@ -558,8 +596,8 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
 
   auto tokenizer_provider =
     MakeTokenizerProvider(gstate.snapshot_for_providers, inverted_index);
-  auto json_paths_provider =
-    MakeJsonPathsProvider(gstate.snapshot_for_providers, inverted_index);
+  auto json_paths_provider = MakeJsonPathsProvider(
+    gstate.snapshot_for_providers, inverted_index, &context.client);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx, std::move(tokenizer_provider),
     gstate.index_for_providers->GetColumnIds(), std::move(json_paths_provider));
@@ -697,6 +735,40 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
                             {&writer_ptr, 1});
   }
 
+  // Evaluate every indexed JSON expression against the chunk and write the
+  // result as a virtual column. `normalised_expr` carries catalog identities
+  // (TableIndex(table_id), ProjectionIndex(Column::Id)); resolve to chunk
+  // slots before feeding to ExpressionExecutor.
+  std::vector<catalog::Column::Id> slot_to_col_id(chunk.ColumnCount(),
+                                                  catalog::Column::Id{});
+  for (const auto& col : gstate.columns) {
+    if (col.input_col_idx < slot_to_col_id.size()) {
+      slot_to_col_id[col.input_col_idx] = col.id;
+    }
+  }
+  for (const auto& je : gstate.json_indexed_expressions) {
+    SDB_ASSERT(je.normalised_expr);
+    auto resolved = ResolveBoundColumnRefsForChunk(
+      *je.normalised_expr, chunk, gstate.table_id, slot_to_col_id);
+    duckdb::ExpressionExecutor executor(context.client, *resolved);
+    duckdb::Vector result(resolved->return_type, num_rows);
+    executor.ExecuteExpression(chunk, result);
+    RejectJsonObjectArrayLeaves(result, num_rows);
+
+    if (!writer->SwitchJsonExpression(
+          resolved->return_type,
+          /*have_nulls=*/true, je.column_id,
+          SerializeBoundExpression(*je.normalised_expr))) {
+      continue;
+    }
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      key_utils::SetupColumnForKey(row_keys[row], je.column_id);
+    }
+    DuckDBSinkIndexWriter* writer_ptr = writer;
+    serializer->WriteColumn(noop, result, resolved->return_type, num_rows,
+                            row_keys, {&writer_ptr, 1});
+  }
+
   writer->Finish();
   gstate.backfill_count_atomic.fetch_add(num_rows, std::memory_order_relaxed);
   if (gstate.progress) {
@@ -820,9 +892,13 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     relation = table_entry.GetSereneDBTable();
   }
 
+  // unbound_expressions is a Copy() taken BEFORE ColumnBindingResolver
+  // mutates op.expressions into positional references; it preserves the
+  // original BoundFunctionExpression / BoundColumnRefExpression structure.
   auto& create_index = input.planner.Make<SereneDBPhysicalCreateIndex>(
     std::move(relation), std::move(view_columns), database_id,
-    std::move(op.info), schema_entry, op.estimated_cardinality);
+    std::move(op.info), std::move(op.unbound_expressions), schema_entry,
+    op.estimated_cardinality);
   create_index.children.push_back(input.table_scan);
   return create_index;
 }

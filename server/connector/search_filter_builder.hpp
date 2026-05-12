@@ -48,7 +48,9 @@ struct SearchColumnInfo {
   catalog::Column::Id column_id{};
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
-  std::vector<std::string> json_path;
+  // Canonical form of the JSON-extract expression, empty for bare columns.
+  // This is the on-disk identity used to build iresearch field names.
+  std::string serialized_expr;
 };
 
 // Resolves a DuckDB bound column reference (by table_index + column_index,
@@ -60,11 +62,17 @@ struct SearchColumnInfo {
 using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::BoundColumnRefExpression&) const>;
 
-// Resolves a JSON path (e.g. {"host"}) on an already-known base column to
-// a SearchColumnInfo carrying the per-path analyzer. Returns nullopt if no
+// Resolves a JSON path on an already-known base column to a SearchColumnInfo
+// carrying the per-path analyzer. The implementation is responsible for
+// normalising `path_expr` (via `NormalizeBoundExpression`) and serialising
+// it to bytes that match what CREATE INDEX persisted in the catalog -- it
+// has the binding context (`SearchColumnContext` in the optimizer) needed
+// to do so. `out_serialized` receives those normalised bytes so the caller
+// can use them as the iresearch field-name suffix. Returns nullopt if no
 // indexed path matches.
 using JsonPathGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
-  const duckdb::BoundColumnRefExpression&, std::span<const std::string>) const>;
+  const duckdb::BoundColumnRefExpression&, const duckdb::Expression& path_expr,
+  std::string& out_serialized) const>;
 
 // Encodes column_id as an 8-byte big-endian binary string into
 // field_name. Before being used as an iresearch field name, the result

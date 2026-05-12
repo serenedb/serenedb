@@ -48,6 +48,17 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
   bool SwitchColumn(const duckdb::LogicalType& type, bool have_nulls,
                     catalog::Column::Id column_id) final;
 
+  bool SwitchJsonExpression(const duckdb::LogicalType& return_type,
+                            bool have_nulls, catalog::Column::Id column_id,
+                            std::string_view serialized_expr) final {
+    return SwitchJsonExpressionImpl(return_type, have_nulls, column_id,
+                                    serialized_expr);
+  }
+
+  std::span<const JsonExpressionEval> JsonExpressionEvals() const final {
+    return JsonExpressionEvalsImpl();
+  }
+
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {
     WriteImpl(cell_slices, full_key);
@@ -96,6 +107,17 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
 
   bool SwitchColumn(const duckdb::LogicalType& type, bool have_nulls,
                     catalog::Column::Id column_id) final;
+
+  bool SwitchJsonExpression(const duckdb::LogicalType& return_type,
+                            bool have_nulls, catalog::Column::Id column_id,
+                            std::string_view canonical_expression) final {
+    return SwitchJsonExpressionImpl(return_type, have_nulls, column_id,
+                                    canonical_expression);
+  }
+
+  std::span<const JsonExpressionEval> JsonExpressionEvals() const final {
+    return JsonExpressionEvalsImpl();
+  }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {

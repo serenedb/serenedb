@@ -50,13 +50,12 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // (foreign-source-backed). `view_columns` is the synthesised column list
   // when `relation` is a view (Tables expose Columns() directly); ignored
   // for tables.
-  SereneDBPhysicalCreateIndex(duckdb::PhysicalPlan& plan,
-                              std::shared_ptr<catalog::SchemaObject> relation,
-                              std::vector<catalog::Column> view_columns,
-                              ObjectId database_id,
-                              duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
-                              SereneDBSchemaEntry& schema_entry,
-                              duckdb::idx_t estimated_cardinality);
+  SereneDBPhysicalCreateIndex(
+    duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::SchemaObject> relation,
+    std::vector<catalog::Column> view_columns, ObjectId database_id,
+    duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
+    std::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
+    SereneDBSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality);
 
   // Sink interface
   bool IsSink() const final { return true; }
@@ -99,6 +98,13 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   std::vector<catalog::Column> _view_columns;
   ObjectId _database_id;
   duckdb::unique_ptr<duckdb::CreateIndexInfo> _info;
+  // Bound counterparts of `_info->parsed_expressions`, in the same order.
+  // Sourced from `LogicalCreateIndex::unbound_expressions` -- a Copy() taken
+  // before ColumnBindingResolver rewrote the originals into positional refs,
+  // so they are still bound but reference base-table columns by name.
+  // Owned here for the operator's lifetime; Sink hands raw pointers into the
+  // global state.
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> _bound_expressions;
   SereneDBSchemaEntry& _schema_entry;
 };
 

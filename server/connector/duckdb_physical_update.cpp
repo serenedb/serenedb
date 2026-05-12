@@ -24,6 +24,7 @@
 
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <shared_mutex>
 
 #include "basics/assert.h"
@@ -36,6 +37,7 @@
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/json_expression_canonicalizer.hpp"
 #include "connector/key_utils.hpp"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -674,6 +676,74 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
         gstate.serializer.WriteColumn(noop_writer, chunk.data[col.chunk_idx],
                                       col.duckdb_type, num_rows,
                                       gstate.row_keys, gstate.active_writers);
+      }
+    }
+  }
+
+  // Evaluate per-writer JSON expressions on the new chunk and write them
+  // under the new row keys. PK-update path stores them under
+  // gstate.new_row_keys; normal-update path stores them under
+  // gstate.row_keys -- pick whichever was populated for this chunk.
+  auto& json_keys = gstate.update_pk ? gstate.new_row_keys : gstate.row_keys;
+  if (!json_keys.empty()) {
+    // Build slot -> Column::Id from update_columns (front of the chunk) +
+    // non-update virtual columns at their assigned chunk_idx.
+    std::vector<catalog::Column::Id> slot_to_col_id(chunk.ColumnCount(),
+                                                    catalog::Column::Id{});
+    for (duckdb::idx_t i = 0; i < gstate.update_columns.size(); ++i) {
+      if (i < slot_to_col_id.size()) {
+        slot_to_col_id[i] = gstate.update_columns[i].id;
+      }
+    }
+    for (const auto& col : gstate.non_update_idx_cols) {
+      if (col.chunk_idx < slot_to_col_id.size()) {
+        slot_to_col_id[col.chunk_idx] = col.id;
+      }
+    }
+    for (auto& writer : gstate.index_writers) {
+      auto evals = writer->JsonExpressionEvals();
+      for (const auto& je : evals) {
+        auto resolved = ResolveBoundColumnRefsForChunk(
+          *je.bound_expr, chunk, gstate.table_id, slot_to_col_id);
+        duckdb::ExpressionExecutor executor(context.client, *resolved);
+        duckdb::Vector result(resolved->return_type, num_rows);
+        executor.ExecuteExpression(chunk, result);
+        RejectJsonObjectArrayLeaves(result, num_rows);
+        std::vector<bool> missing_mask;
+        // const auto src_slot = ExtractJsonSourceColId(*resolved);
+        // std::vector<std::string> path_keys;
+        // if (src_slot != static_cast<duckdb::idx_t>(-1) &&
+        //     src_slot < chunk.ColumnCount() &&
+        //     ExtractJsonPathKeys(*je.bound_expr, path_keys)) {
+        //   ComputeJsonMissingMask(chunk.data[src_slot], num_rows, path_keys,
+        //                          missing_mask);
+        // } else {
+        missing_mask.assign(num_rows, false);
+        // }
+        if (!writer->SwitchJsonExpression(resolved->return_type,
+                                          /*have_nulls=*/true, je.column_id,
+                                          je.serialized)) {
+          continue;
+        }
+        std::vector<std::string> saved_keys(num_rows);
+        for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+          if (missing_mask[row]) {
+            std::swap(saved_keys[row], json_keys[row]);
+          } else if (!json_keys[row].empty()) {
+            key_utils::SetupColumnForKey(json_keys[row], je.column_id);
+          }
+        }
+        DuckDBSinkIndexWriter* writer_ptr = writer.get();
+        // Index-only write: see duckdb_physical_insert.cpp for the rationale.
+        DuckDBColumnSerializer::SstWriter noop_writer{nullptr};
+        gstate.serializer.WriteColumn(noop_writer, result,
+                                      resolved->return_type, num_rows,
+                                      json_keys, {&writer_ptr, 1});
+        for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+          if (missing_mask[row]) {
+            std::swap(saved_keys[row], json_keys[row]);
+          }
+        }
       }
     }
   }

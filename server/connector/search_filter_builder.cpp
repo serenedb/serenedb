@@ -63,6 +63,7 @@
 #include "basics/errors.h"
 #include "basics/string_utils.h"
 #include "catalog/mangling.h"
+#include "connector/json_expression_canonicalizer.hpp"
 #include "connector/json_extract_names.hpp"
 #include "connector/search_field_name.hpp"
 #include "functions/search.h"
@@ -1113,6 +1114,7 @@ void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
   // up-front by UnwrapTSQueryCast.
   const auto* left_info = FindColumnInfoForExpr(ctx, UnwrapTSQueryCast(lhs));
   const auto* right_info = FindColumnInfoForExpr(ctx, UnwrapTSQueryCast(rhs));
+
   if (left_info && right_info) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1247,7 +1249,7 @@ const SearchColumnInfo* FindColumnRefInfo(
   // The cache key is the un-mangled iresearch field name. For a bare column
   // reference that is just [BE col_id] with no suffix.
   std::string cache_key;
-  MakeColumnFieldName(info->column_id, {}, cache_key);
+  MakeColumnFieldName(info->column_id, std::string_view{}, cache_key);
 
   auto cache_it = ctx.column_cache.find(cache_key);
   if (cache_it != ctx.column_cache.end()) {
@@ -1285,33 +1287,31 @@ bool IsNumericTypeId(duckdb::LogicalTypeId id) {
 }
 
 const duckdb::BoundColumnRefExpression* TryGetJsonColumnRef(
-  const duckdb::Expression& expr, std::vector<std::string>& out_path) {
-  out_path.clear();
-  // Reject when outermost extraction does not return string.
+  const duckdb::Expression& expr) {
+  // Outermost step must be a JSON-extract function -- otherwise this is not
+  // a JSON-path expression at all (e.g. `ts_like(...)` on the @@ RHS) and
+  // serialising it would pollute the catalog lookup with junk bytes.
   if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION ||
-      !IsJsonExtractString(
+      !IsJsonExtract(
         expr.Cast<duckdb::BoundFunctionExpression>().function.name)) {
     return nullptr;
   }
-
-  // Walk the chain: every node must be some JSON-extract
-  // until we reach a column ref.
   const duckdb::Expression* cur = &expr;
   while (cur->expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
-    // TODO(mkornaukhov) first must be extracting string,
-    // all the others should be extracing json
-    if (!IsJsonExtract(f.function.name) || f.children.size() != 2) {
-      return nullptr;
-    }
-    const auto* key_val = TryGetConstant(*f.children[1]);
-    if (!key_val || key_val->IsNull() ||
-        !AppendJsonPathKey(*key_val, out_path)) {
+    if (!IsJsonExtract(f.function.name) || f.children.empty()) {
+      // A non-JSON function in the chain disqualifies the expression.
       return nullptr;
     }
     cur = f.children[0].get();
   }
-  absl::c_reverse(out_path);
+
+  // Build the structural canonical (chunk-layout-AND-binder-state-
+  // independent) so this matches what CREATE INDEX stored in the catalog
+  // regardless of how the SELECT-side binder shaped its bound expression.
+  if (!IsValidJsonExpr(expr)) {
+    return nullptr;
+  }
   return TryGetColumnRef(*cur);
 }
 
@@ -1343,15 +1343,23 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   }
 
   const auto unwrapped = UnwrapFieldCast(expr);
-  auto& path = ctx.json_path;
-  const auto* col_ref = TryGetJsonColumnRef(*unwrapped.expr, path);
+  // Find the leaf BoundColumnRef -- json_path_getter needs it to map back
+  // to a base catalog column. The structural walk doesn't compute path
+  // bytes anymore; the lambda does that itself via NormalizeBoundExpression
+  // since it has the (table_id, col_index_to_id) context.
+  const auto* col_ref = TryGetJsonColumnRef(*unwrapped.expr);
   if (!col_ref) {
     return nullptr;
   }
-  auto info = (*ctx.json_path_getter)(*col_ref, path);
+  std::string path;
+  auto info = (*ctx.json_path_getter)(*col_ref, *unwrapped.expr, path);
   if (!info) {
     return nullptr;
   }
+  // `path` carries the normalised serialised bytes the writer / catalog
+  // also use -- so the iresearch field name built from it matches what
+  // CREATE INDEX wrote.
+  info->serialized_expr = std::move(path);
 
   // Cast overrides leaf type. Normalise numerics to DOUBLE -- writer side
   // tokenises every JSON number through NumericTokenizer.reset(double).
@@ -1367,7 +1375,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   // iresearch field share an entry: INTEGER and BIGINT both -> Numeric.
   auto& cache_key = ctx.cache_key;
   cache_key.clear();
-  MakeColumnFieldName(info->column_id, info->json_path, cache_key);
+  MakeColumnFieldName(info->column_id, info->serialized_expr, cache_key);
   if (auto r = MangleForType(info->logical_type.id(), cache_key); !r.ok()) {
     return nullptr;
   }
@@ -1381,11 +1389,11 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
 }
 
 void MakeFieldName(const SearchColumnInfo& column, std::string& field_name) {
-  MakeColumnFieldName(column.column_id, column.json_path, field_name);
+  MakeColumnFieldName(column.column_id, column.serialized_expr, field_name);
 }
 
 void MakeFieldName(catalog::Column::Id column_id, std::string& field_name) {
-  MakeColumnFieldName(column_id, {}, field_name);
+  MakeColumnFieldName(column_id, std::string_view{}, field_name);
 }
 
 Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name) {
@@ -1747,7 +1755,7 @@ Result MakeSearchFilter(
   const JsonPathGetter& json_path_getter) {
   irs::StringTokenizer identity;
   containers::NodeHashMap<std::string, SearchColumnInfo> column_cache;
-  std::vector<std::string> json_path_scratch;
+  std::string json_path_scratch;
   std::string cache_key_scratch;
 
   FilterContext ctx{
@@ -1755,7 +1763,7 @@ Result MakeSearchFilter(
     .column_getter = column_getter,
     .json_path_getter = json_path_getter ? &json_path_getter : nullptr,
     .column_cache = column_cache,
-    .json_path = json_path_scratch,
+    .serialized_path = json_path_scratch,
     .cache_key = cache_key_scratch,
     .identity = identity,
     .tokenizer = identity,

@@ -7,6 +7,7 @@ add_library(
     search_remove_filter.cpp
     duckdb_storage_extension.cpp
     rocksdb_filter.cpp
+    json_expression_canonicalizer.cpp
     search_filter_builder.cpp
     geo_filter_builder.cpp
     ts_anyall.cpp

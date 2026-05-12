@@ -38,6 +38,7 @@
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/expression_binder/index_binder.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_create_table.hpp>
@@ -1065,10 +1066,15 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     create_index_info->names = get.names;
     create_index_info->schema = resolved_table->schema.name;
     create_index_info->catalog = resolved_table->catalog.GetName();
-    for (size_t i = 0; i < rel_columns.size(); ++i) {
-      expressions.push_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-        rel_columns[i].second,
-        duckdb::ColumnBinding(get.table_index, duckdb::ProjectionIndex(i))));
+    // Bind each user-supplied parsed expression so the resulting tree carries
+    // BoundFunctionExpression / BoundConstantExpression nodes (necessary for
+    // ExpressionExecutor at backfill time to evaluate JSON-extract chains).
+    // The outer `binder` already bound the FROM clause via Bind(*table_ref) in
+    // bind_create.cpp:706, so its bind_context resolves column refs by name.
+    duckdb::IndexBinder index_binder(binder, binder.context, resolved_table,
+                                     create_index_info.get());
+    for (auto& parsed : create_index_info->expressions) {
+      expressions.push_back(index_binder.Bind(parsed));
     }
   } else {
     create_index_info->names.assign_range(rel_columns | std::views::keys);

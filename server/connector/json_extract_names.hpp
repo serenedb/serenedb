@@ -30,24 +30,38 @@
 namespace sdb::connector {
 
 // Recognises the names of every registered JSON-extract scalar function in
-// this codebase (operator forms `->` / `->>`, plus the spelled-out aliases
-// kept for PG and DuckDB compatibility -- see server/connector/functions/
-// json.cpp). The two predicates partition the set by leaf return type:
-//   * IsJsonExtractString  -> leaf is VARCHAR (`->>`, json_extract_field_text,
-//                                              json_extract_index_text)
-//   * IsJsonExtractJson    -> leaf is JSON    (`->` , json_extract,
-//                                              json_extract_field,
-//                                              json_extract_index)
-// They are disjoint; together they cover every name we accept.
+// this codebase (operator forms `->` / `->>` / `#>` / `#>>`, plus the
+// spelled-out aliases kept for PG and DuckDB compatibility -- see
+// server/connector/functions/json.cpp). The two predicates partition the
+// set by leaf return type:
+//   * IsJsonExtractString  -> leaf is VARCHAR (text)
+//   * IsJsonExtractJson    -> leaf is JSON
+//
+// Operator -> bound function-name mapping:
+//   col -> 'k'              -> "->"                      (json out)
+//   col ->> 'k'             -> "->>" / json_extract_string (text out)
+//   col #> ARRAY['a','b']   -> "pg_json_extract_path"      (json out)
+//   col #>> ARRAY['a','b']  -> "pg_json_extract_path_text" (text out)
+//
+// Single-key `*_field` / `*_index` variants take VARCHAR / BIGINT keys.
+// Path variants `*_path` / `pg_*_path` take VARIADIC text or text[].
 
 inline bool IsJsonExtractString(std::string_view name) noexcept {
-  return name == "->>" || name == "json_extract_field_text" ||
-         name == "json_extract_index_text";
+  return name == "->>" || name == "#>>" ||     //
+         name == "json_extract_field_text" ||  //
+         name == "json_extract_index_text" ||  //
+         name == "json_extract_path_text" ||   //
+         name == "json_extract_string" ||      // DuckDB ->> alias
+         name == "pg_json_extract_path_text";  // backs #>>
 }
 
 inline bool IsJsonExtractJson(std::string_view name) noexcept {
-  return name == "->" || name == "json_extract" ||
-         name == "json_extract_field" || name == "json_extract_index";
+  return name == "->" || name == "#>" ||  //
+         name == "json_extract" ||        //
+         name == "json_extract_field" ||  //
+         name == "json_extract_index" ||  //
+         name == "json_extract_path" ||   //
+         name == "pg_json_extract_path";  // backs #>
 }
 
 inline bool IsJsonExtract(std::string_view name) noexcept {

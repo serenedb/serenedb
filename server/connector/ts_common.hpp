@@ -53,7 +53,7 @@ struct FilterContext {
   // the iresearch field name. NodeHashMap so refs survive insertions.
   containers::NodeHashMap<std::string, SearchColumnInfo>& column_cache;
   // Scratch buffers reused across FindColumnInfoForExpr calls.
-  std::vector<std::string>& json_path;
+  std::string& serialized_path;
   std::string& cache_key;
   irs::analysis::Analyzer& identity;
   irs::analysis::Analyzer& tokenizer;
@@ -67,7 +67,7 @@ struct FilterContext {
       .column_getter = column_getter,
       .json_path_getter = json_path_getter,
       .column_cache = column_cache,
-      .json_path = json_path,
+      .serialized_path = serialized_path,
       .cache_key = cache_key,
       .identity = identity,
       .tokenizer = tokenizer,
@@ -83,7 +83,7 @@ struct FilterContext {
       .column_getter = column_getter,
       .json_path_getter = json_path_getter,
       .column_cache = column_cache,
-      .json_path = json_path,
+      .serialized_path = serialized_path,
       .cache_key = cache_key,
       .identity = identity,
       .tokenizer = tokenizer,

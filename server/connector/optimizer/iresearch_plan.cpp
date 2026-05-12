@@ -57,6 +57,7 @@
 #include "connector/duckdb_table_function.h"
 #include "connector/functions/search.h"
 #include "connector/functions/vector.h"
+#include "connector/json_expression_canonicalizer.hpp"
 #include "connector/optimizer/flatten_projection_ids.h"
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_filter_printer.hpp"
@@ -323,10 +324,13 @@ struct SearchColumnContext {
   std::function<catalog::ColumnTokenizer(catalog::Column::Id)>
     tokenizer_provider;
   // Optional JSON-path tokenizer lookup: returns the per-path tokenizer
-  // resolved against the catalog, or nullopt if the column is not
-  // indexed at `path`.
-  std::function<std::optional<catalog::ColumnTokenizer>(
-    catalog::Column::Id, std::span<const std::string>)>
+  // resolved against the catalog, or nullopt if the column is not indexed
+  // at `serialized_expr`. The serialized form is the same normalised-bytes
+  // representation CREATE INDEX persisted in the catalog -- callers
+  // produce it via `connector::SerializeBoundExpression` on a
+  // `connector::NormalizeBoundExpression`-normalised tree.
+  std::function<std::optional<catalog::ColumnTokenizer>(catalog::Column::Id,
+                                                        const std::string&)>
     json_path_tokenizer_provider;
 };
 
@@ -358,9 +362,11 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
   };
 }
 
-connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx) {
-  return [&ctx](const duckdb::BoundColumnRefExpression& ref,
-                std::span<const std::string> path)
+connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx,
+                                             ObjectId table_id) {
+  return [&ctx, table_id](const duckdb::BoundColumnRefExpression& ref,
+                          const duckdb::Expression& path_expr,
+                          std::string& out_serialized)
            -> std::optional<connector::SearchColumnInfo> {
     if (ref.binding.table_index != ctx.table_index) {
       return std::nullopt;
@@ -375,7 +381,17 @@ connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx) {
     if (!ctx.json_path_tokenizer_provider) {
       return std::nullopt;
     }
-    auto tokenizer = ctx.json_path_tokenizer_provider(col_id, path);
+    // Normalise + serialise the SELECT-side bound expression. Bytes
+    // produced here match what CREATE INDEX persisted (catalog stores
+    // bytes from the same `NormalizeBoundExpression` pipeline). The
+    // table_id pinned into BoundColumnRef leaves is the base relation's
+    // ObjectId; the col_index -> Column::Id mapping comes from the
+    // LogicalGet's projection slot list (`ctx.projected_column_ids`).
+    auto normalised = connector::NormalizeBoundExpression(
+      path_expr, table_id, ctx.projected_column_ids);
+    out_serialized = connector::SerializeBoundExpression(*normalised);
+    auto tokenizer =
+      ctx.json_path_tokenizer_provider(col_id, out_serialized);
     if (!tokenizer) {
       return std::nullopt;
     }
@@ -387,7 +403,6 @@ connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx) {
     // queries hit the right pre-emitted per-type field.
     info.logical_type = duckdb::LogicalType::VARCHAR;
     info.tokenizer = *std::move(tokenizer);
-    info.json_path.assign(path.begin(), path.end());
     return info;
   };
 }
@@ -401,7 +416,8 @@ void InitSearchColumnContextForGet(
   const duckdb::LogicalGet& get,
   const connector::SereneDBScanBindData& bind_data,
   const ResolvedIresearch& resolved,
-  std::shared_ptr<const catalog::Snapshot> snapshot) {
+  std::shared_ptr<const catalog::Snapshot> snapshot,
+  duckdb::ClientContext& client_context) {
   constexpr auto kInvalidId = std::numeric_limits<catalog::Column::Id>::max();
   projected_ids_storage.clear();
   projected_ids_storage.reserve(get.GetColumnIds().size());
@@ -427,10 +443,11 @@ void InitSearchColumnContextForGet(
   ctx.tokenizer_provider = [index_ptr, snapshot](catalog::Column::Id col_id) {
     return index_ptr->GetColumnTokenizer(snapshot, col_id);
   };
-  ctx.json_path_tokenizer_provider = [index_ptr, snapshot](
+  ctx.json_path_tokenizer_provider = [index_ptr, snapshot, &client_context](
                                        catalog::Column::Id col_id,
-                                       std::span<const std::string> path) {
-    return index_ptr->GetJsonPathTokenizer(snapshot, col_id, path);
+                                       const std::string& serialized_expr) {
+    return index_ptr->GetJsonPathTokenizer(snapshot, col_id, serialized_expr,
+                                           client_context);
   };
 }
 
@@ -595,9 +612,10 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   SearchColumnContext sctx;
   std::vector<catalog::Column::Id> proj_ids_storage;
   InitSearchColumnContextForGet(sctx, proj_ids_storage, get, bind_data,
-                                *resolved, snapshot);
+                                *resolved, snapshot, options.client_context);
   auto getter = MakeColumnGetter(sctx);
-  auto json_getter = MakeJsonPathGetter(sctx);
+  auto json_getter =
+    MakeJsonPathGetter(sctx, resolved->index->GetRelationId());
 
   auto proxy = std::make_unique<irs::ProxyFilter>();
   auto [and_root, cache] =
@@ -822,9 +840,10 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   SearchColumnContext sctx;
   std::vector<catalog::Column::Id> proj_ids_storage;
   InitSearchColumnContextForGet(sctx, proj_ids_storage, get, bind_data,
-                                *resolved, snapshot);
+                                *resolved, snapshot, options.client_context);
   auto getter = MakeColumnGetter(sctx);
-  auto json_getter = MakeJsonPathGetter(sctx);
+  auto json_getter =
+    MakeJsonPathGetter(sctx, resolved->index->GetRelationId());
 
   auto proxy = std::make_unique<irs::ProxyFilter>();
   auto [and_root, cache] =
@@ -917,9 +936,10 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   SearchColumnContext ctx;
   std::vector<catalog::Column::Id> projected_ids;
   InitSearchColumnContextForGet(ctx, projected_ids, get, bind_data, *resolved,
-                                snapshot);
+                                snapshot, options.client_context);
   auto getter = MakeColumnGetter(ctx);
-  auto json_getter = MakeJsonPathGetter(ctx);
+  auto json_getter =
+    MakeJsonPathGetter(ctx, resolved->index->GetRelationId());
 
   // Try each expression individually -- non-iresearch predicates stay on the
   // LogicalFilter.

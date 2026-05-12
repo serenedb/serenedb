@@ -33,6 +33,11 @@
 #include "catalog/tokenizer.h"
 #include "storage_engine/index_shard.h"
 
+namespace duckdb {
+
+class ClientContext;
+
+}  // namespace duckdb
 namespace sdb::catalog {
 
 struct HNSWColumnConfig {
@@ -42,9 +47,16 @@ struct HNSWColumnConfig {
   irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
 };
 
-// One configured JSON path inside a JSON-typed column of an inverted index.
 struct JsonPathInfo {
-  std::vector<std::string> path;
+  // Binder-state-independent identifier for this JSON path. Built from the
+  // expression's *structure* (sequence of `->`/`->>` ops + key constants),
+  // not from its serialised bytes -- so CREATE INDEX, INSERT, and SELECT
+  // always produce identical strings for equivalent inputs.
+  // std::string path_canonical;
+  // Binary serialised bound expression, used by INSERT/UPDATE/WAL recovery
+  // to reconstruct an Expression for ExpressionExecutor at evaluation time.
+  // Not used for matching (binder state would leak in).
+  std::string serialized_bound_expression;
   ObjectId text_dictionary = ObjectId::none();
   search::Features features;
 };
@@ -95,9 +107,13 @@ class InvertedIndex final : public Index {
     const std::shared_ptr<const Snapshot>& snapshot,
     catalog::Column::Id columnd_id) const;
 
+  // `context` is required: matching a JSON-path entry deserialises its
+  // stored bound expression, and DuckDB's BinaryDeserializer looks the
+  // referenced scalar functions up via `ClientContext` in the live catalog.
   std::optional<ColumnTokenizer> GetJsonPathTokenizer(
     const std::shared_ptr<const Snapshot>& snapshot,
-    catalog::Column::Id column_id, std::span<const std::string> path) const;
+    catalog::Column::Id column_id, const std::string& serialized_expr,
+    duckdb::ClientContext& context) const;
 
   std::optional<irs::HNSWInfo> GetColumnHNSWInfo(
     catalog::Column::Id column_id) const;

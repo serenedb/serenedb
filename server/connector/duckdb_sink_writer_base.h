@@ -24,6 +24,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 
 #include "catalog/table_options.h"
+#include "connector/json_expression_canonicalizer.hpp"
 #include "rocksdb/slice.h"
 
 namespace sdb::connector {
@@ -45,6 +46,24 @@ class DuckDBSinkIndexWriter {
                             catalog::Column::Id column_id) {
     SDB_ASSERT(false, "SwitchColumn call not implemented");
     return false;
+  }
+
+  // Switch to a JSON-extract expression. The base writer only matters for the
+  // search-index path; secondary indexes ignore JSON expressions entirely.
+  virtual bool SwitchJsonExpression(const duckdb::LogicalType& return_type,
+                                    bool have_nulls,
+                                    catalog::Column::Id column_id,
+                                    std::string_view canonical_expression) {
+    return false;
+  }
+
+  // Per-row writer's view of configured JSON-extract expressions. The
+  // caller drives evaluation: it pulls this list, runs ExpressionExecutor
+  // against the chunk, and feeds the result through SwitchJsonExpression +
+  // serializer->WriteColumn. See JsonExpressionEval in
+  // json_expression_canonicalizer.hpp.
+  virtual std::span<const JsonExpressionEval> JsonExpressionEvals() const {
+    return {};
   }
 
   // Writes a value of cell in column switched to by previous call to

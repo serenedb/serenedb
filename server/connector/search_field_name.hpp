@@ -38,6 +38,28 @@ namespace sdb::connector {
 //
 // Caller is expected to apply the appropriate `search::mangling::Mangle*` on
 // the result before using it as an iresearch field name.
+// Overload for an already-canonicalised single-segment suffix (most callers
+// after the JSON-expression redesign).
+// TODO(mkornaukhov) make faster
+inline void MakeColumnFieldName(catalog::Column::Id column_id,
+                                std::string_view suffix, std::string& out) {
+  basics::StrResize(out, sizeof(column_id));
+  absl::big_endian::Store(out.data(), column_id);
+  if (suffix.empty()) {
+    return;
+  }
+  out.push_back('/');
+  for (char c : suffix) {
+    if (c == '~') {
+      out.append("~0");
+    } else if (c == '/') {
+      out.append("~1");
+    } else {
+      out.push_back(c);
+    }
+  }
+}
+
 inline void MakeColumnFieldName(catalog::Column::Id column_id,
                                 std::span<const std::string> path,
                                 std::string& out) {

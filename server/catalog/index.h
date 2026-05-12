@@ -47,7 +47,8 @@ struct CreateIndexColumn {
   const catalog::Column* catalog_column{nullptr};
   std::string_view name;
   std::string opclass;
-  std::vector<std::string> json_path;
+  // non empty -> indexing json expression
+  std::string serialized_json_expr;
   // nullopt = no parentheses in source SQL; an (empty or non-empty) map means
   // parens were present, distinguishing `col opclass` from `col opclass ()`.
   std::optional<duckdb::case_insensitive_map_t<duckdb::Value>> opclass_options;

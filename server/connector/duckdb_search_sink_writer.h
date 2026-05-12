@@ -47,8 +47,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
     InitImpl(batch_size);
   }
 
-  bool SwitchColumn(const duckdb::LogicalType& type, bool have_nulls,
-                    catalog::Column::Id column_id) final;
+  bool SwitchColumn(const ColumnDescriptor& col) final;
 
   bool SwitchJsonExpression(const duckdb::LogicalType& return_type,
                             bool have_nulls, catalog::Column::Id column_id,
@@ -109,8 +108,7 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
     SearchSinkDeleteBaseImpl::InitImpl(batch_size);
   }
 
-  bool SwitchColumn(const duckdb::LogicalType& type, bool have_nulls,
-                    catalog::Column::Id column_id) final;
+  bool SwitchColumn(const ColumnDescriptor& col) final;
 
   bool SwitchJsonExpression(const duckdb::LogicalType& return_type,
                             bool have_nulls, catalog::Column::Id column_id,

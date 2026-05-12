@@ -123,8 +123,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   void WriteImpl(std::span<const rocksdb::Slice> cell_slices,
                  std::string_view full_key);
 
-  bool SwitchColumnImpl(const duckdb::LogicalType& type, bool have_nulls,
-                        catalog::Column::Id column_id);
+  bool SwitchColumnImpl(const ColumnDescriptor& col);
   // Like SwitchColumnImpl, but the field-name suffix is the canonical form
   // of a user JSON-extract expression (column_id is the base JSON column).
   // The Vector subsequently passed to Write*() must be the result of

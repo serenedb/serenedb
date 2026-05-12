@@ -41,6 +41,11 @@ class ColumnFamilyHandle;
 class SstFileWriter;
 
 }  // namespace rocksdb
+namespace sdb::query {
+
+class Transaction;
+
+}  // namespace sdb::query
 namespace sdb::connector {
 
 // Big-endian sorted PK encoding.
@@ -49,34 +54,69 @@ void AppendPKValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
 
 class DuckDBColumnSerializer {
  public:
-  struct TxnWriter {
-    rocksdb::Transaction* txn;
-    rocksdb::ColumnFamilyHandle* cf;
+  // Writes column cells into a rocksdb transaction. IndexOnly columns
+  // bypass main storage and emit a WAL marker instead so the value can be
+  // recovered into the inverted index on restart.
+  class TxnWriter {
+   public:
+    TxnWriter(query::Transaction& sdb_txn,
+              rocksdb::ColumnFamilyHandle* cf) noexcept;
 
-    void Write(const std::vector<rocksdb::Slice>& slices,
-               std::string_view key) const;
-    void WriteNull(std::string_view key) const;
+    void SwitchColumn(const ColumnDescriptor& col) noexcept { _cur_col = col; }
+
+    void Write(const std::vector<rocksdb::Slice>& slices, std::string_view key);
+    void WriteNull(std::string_view key);
+
+    // Per-row delete marker. Only meaningful when an inverted index covers
+    // exclusively IndexOnly columns and would otherwise miss the row delete.
+    void EmitRowDelete(std::string_view key);
+
+   private:
+    bool IsIndexOnly() const noexcept {
+      return _cur_col.store_mode == catalog::ColumnStoreMode::kIndexOnly;
+    }
+
+    query::Transaction* _sdb_txn;
+    rocksdb::Transaction* _txn;
+    rocksdb::ColumnFamilyHandle* _cf;
+    ColumnDescriptor _cur_col{};
   };
 
-  struct SstWriter {
-    rocksdb::SstFileWriter* writer;
+  // Writes column cells into an SST file. IndexOnly columns are skipped
+  // silently -- bulk ingest has no marker channel; durability of the value
+  // depends on the inverted index's own commit.
+  class SstWriter {
+   public:
+    explicit SstWriter(rocksdb::SstFileWriter* writer) noexcept
+      : _writer{writer} {}
 
-    void Write(const std::vector<rocksdb::Slice>& slices,
-               std::string_view key) const;
-    void WriteNull(std::string_view key) const;
+    void SwitchColumn(const ColumnDescriptor& col) noexcept { _cur_col = col; }
+
+    void Write(const std::vector<rocksdb::Slice>& slices, std::string_view key);
+    void WriteNull(std::string_view key);
+
+   private:
+    bool IsIndexOnly() const noexcept {
+      return _cur_col.store_mode == catalog::ColumnStoreMode::kIndexOnly;
+    }
+
+    rocksdb::SstFileWriter* _writer;
+    ColumnDescriptor _cur_col{};
   };
 
   explicit DuckDBColumnSerializer(duckdb::Allocator& allocator);
 
-  // Empty row_keys[i] = skip row i.
-  // `writer` may be nullptr to skip the primary RocksDB write entirely and
-  // drive only the `index_writers`; useful for JSON-eval feeds whose source
-  // column was already persisted.
+  // Empty row_keys[i] = skip row i. `col` describes the catalog column being
+  // serialized; the writer's `SwitchColumn(col)` is invoked here so per-row
+  // helpers can branch on column-level attributes (IndexOnly, etc.). `writer`
+  // may be nullptr to skip the primary RocksDB write entirely and drive only
+  // the `index_writers` -- used for JSON-eval feeds whose source column was
+  // already persisted.
   template<typename Writer>
   void WriteColumn(Writer* writer, const duckdb::Vector& vec,
-                   const duckdb::LogicalType& type, duckdb::idx_t num_rows,
-                   std::vector<std::string>& row_keys,
-                   std::span<DuckDBSinkIndexWriter*> index_writers);
+                   duckdb::idx_t num_rows, std::vector<std::string>& row_keys,
+                   std::span<DuckDBSinkIndexWriter*> index_writers,
+                   ColumnDescriptor col);
 
   size_t WriteSubVector(const duckdb::RecursiveUnifiedVectorFormat& rdata,
                         duckdb::idx_t offset, duckdb::idx_t count,

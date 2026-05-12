@@ -41,6 +41,11 @@
 namespace sdb::catalog {
 
 // NOLINTBEGIN
+enum class ColumnStoreMode : uint8_t {
+  kNormal = 0,
+  kIndexOnly = 1,
+};
+
 struct Column {
   enum GeneratedType : uint8_t {
     kNone = 0,
@@ -51,6 +56,10 @@ struct Column {
 
   bool IsGenerated() const noexcept {
     return generated_type != GeneratedType::kNone;
+  }
+
+  bool IsIndexOnly() const noexcept {
+    return store_mode == ColumnStoreMode::kIndexOnly;
   }
 
   using Id = uint64_t;
@@ -85,6 +94,7 @@ struct Column {
   // else expr = default value expression (if any)
   std::shared_ptr<ColumnExpr> expr;
   GeneratedType generated_type = GeneratedType::kNone;
+  ColumnStoreMode store_mode = ColumnStoreMode::kNormal;
 };
 
 struct CheckConstraint {

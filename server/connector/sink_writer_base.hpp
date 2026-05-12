@@ -25,6 +25,17 @@
 
 namespace sdb::connector {
 
+// Per-column descriptor passed to writers when switching to a new column.
+// Carries both catalog-level attributes (id, store_mode) and per-call runtime
+// facts (type, have_nulls) so SwitchColumn() takes a single argument and
+// future additions don't churn signatures or call sites.
+struct ColumnDescriptor {
+  catalog::Column::Id id;
+  catalog::ColumnStoreMode store_mode;
+  duckdb::LogicalType type;
+  bool have_nulls;
+};
+
 // Base implementation of column centric index writers
 class ColumnSinkWriterImplBase {
  public:

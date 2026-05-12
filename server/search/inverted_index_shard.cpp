@@ -480,6 +480,7 @@ InvertedIndexShard::ResultWithTime InvertedIndexShard::CommitUnsafe(
     // intentionally mark the commit as failed
     result.reset(ERROR_DEBUG);
   }
+  SDB_IF_FAILURE("Search::CrashAfterCommit") { SDB_IMMEDIATE_ABORT(); }
 
   if (bool ok = result.ok(); !ok && _num_failed_commits != nullptr) {
     _num_failed_commits->fetch_add(1, std::memory_order_relaxed);

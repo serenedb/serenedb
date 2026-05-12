@@ -18,18 +18,23 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_search_sink_writer.h"
+#pragma once
 
-#include "basics/assert.h"
+#include <cstdint>
 
-namespace sdb::connector {
+namespace sdb::wal_log_data {
 
-bool DuckDBSearchSinkInsertWriter::SwitchColumn(const ColumnDescriptor& col) {
-  return SwitchColumnImpl(col);
-}
+// Single-byte magics that appear as the first byte of a rocksdb PutLogData
+// blob. New consumers MUST add their code here so the next reader can audit
+// collisions at a glance.
+//
+// Value 0xFF is reserved as an "extended" marker: when we exhaust the
+// single-byte space (255 codes), 0xFF will mean the actual code lives in the
+// next byte, opening another 255 codes. Don't use it for a real magic.
 
-bool DuckDBSearchSinkUpdateWriter::SwitchColumn(const ColumnDescriptor& col) {
-  return SwitchColumnImpl(col);
-}
+inline constexpr uint8_t kIndexOnlyCp = 0x01;  // see indexonly_marker.h
+inline constexpr uint8_t kIndexOnlyRd = 0x02;  // see indexonly_marker.h
 
-}  // namespace sdb::connector
+inline constexpr uint8_t kExtended = 0xFF;
+
+}  // namespace sdb::wal_log_data

@@ -42,6 +42,7 @@ using namespace std::string_view_literals;
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/key_utils.hpp"
 #include "duckdb_vector_builder.hpp"
+#include "query/transaction.h"
 
 namespace sdb::connector {
 
@@ -51,6 +52,10 @@ constexpr ObjectId kSerializerTableId{654321};
 
 class DuckDBColumnSerializerTest : public ::testing::Test {
  public:
+  // In-memory DuckDB exists only to supply a ClientContext; no SQL is
+  // executed through it.
+  DuckDBColumnSerializerTest() : _duckdb{nullptr}, _conn{_duckdb} {}
+
   void SetUp() final {
     rocksdb::Options opts;
     opts.OptimizeForSmallDb();
@@ -118,7 +123,7 @@ class DuckDBColumnSerializerTest : public ::testing::Test {
   // Write `vec` as column `col_id` using an existing transaction.
   // Stamps col_id into copies of row_keys (original keys are preserved so
   // they can be reused for subsequent columns).
-  void WriteColumn(rocksdb::Transaction* txn,
+  void WriteColumn(query::Transaction& sdb_txn,
                    const std::vector<std::string>& base_row_keys,
                    catalog::Column::Id col_id, const duckdb::Vector& vec,
                    const duckdb::LogicalType& type, duckdb::idx_t num_rows) {
@@ -127,8 +132,11 @@ class DuckDBColumnSerializerTest : public ::testing::Test {
       key_utils::SetupColumnForKey(key, col_id);
     }
     DuckDBColumnSerializer serializer{duckdb::Allocator::DefaultAllocator()};
-    DuckDBColumnSerializer::TxnWriter writer{txn, _cf_handles.front()};
-    serializer.WriteColumn(writer, vec, type, num_rows, col_keys, {});
+    DuckDBColumnSerializer::TxnWriter writer{sdb_txn, _cf_handles.front()};
+    serializer.WriteColumn(
+      writer, vec, num_rows, col_keys, {},
+      ColumnDescriptor{col_id, catalog::ColumnStoreMode::kNormal, type,
+                       /*have_nulls=*/false});
   }
 
   // Read back `num_rows` rows of column `col_id` into a fresh Vector.
@@ -162,9 +170,12 @@ class DuckDBColumnSerializerTest : public ::testing::Test {
     std::unique_ptr<rocksdb::Transaction> txn(
       _db->BeginTransaction(wo, txn_opts, nullptr));
     ASSERT_NE(txn, nullptr);
+    query::Transaction sdb_txn{*_conn.context, std::move(txn)};
 
-    WriteColumn(txn.get(), row_keys, col_id, vec, type, num_rows);
-    ASSERT_TRUE(txn->Commit().ok());
+    WriteColumn(sdb_txn, row_keys, col_id, vec, type, num_rows);
+    // Bypass the full sdb commit -- only the rocksdb write matters here.
+    ASSERT_TRUE(sdb_txn.GetRocksDBTransaction().Commit().ok());
+    sdb_txn.Destroy();
 
     auto output = ReadColumn(type, num_rows, col_id);
 
@@ -185,6 +196,8 @@ class DuckDBColumnSerializerTest : public ::testing::Test {
   std::string _path;
   rocksdb::TransactionDB* _db{nullptr};
   std::vector<rocksdb::ColumnFamilyHandle*> _cf_handles;
+  duckdb::DuckDB _duckdb;
+  duckdb::Connection _conn;
   std::string _table_key;
   duckdb::DataChunk _pk_chunk;
 };
@@ -995,14 +1008,16 @@ TEST_F(DuckDBColumnSerializerTest, MulticolumnScalar) {
   std::unique_ptr<rocksdb::Transaction> txn(
     _db->BeginTransaction(wo, txn_opts, nullptr));
   ASSERT_NE(txn, nullptr);
+  query::Transaction sdb_txn{*_conn.context, std::move(txn)};
 
-  WriteColumn(txn.get(), row_keys, 0, int_vec, duckdb::LogicalType::INTEGER,
+  WriteColumn(sdb_txn, row_keys, 0, int_vec, duckdb::LogicalType::INTEGER,
               kRows);
-  WriteColumn(txn.get(), row_keys, 1, bool_vec, duckdb::LogicalType::BOOLEAN,
+  WriteColumn(sdb_txn, row_keys, 1, bool_vec, duckdb::LogicalType::BOOLEAN,
               kRows);
-  WriteColumn(txn.get(), row_keys, 2, varchar_vec, duckdb::LogicalType::VARCHAR,
+  WriteColumn(sdb_txn, row_keys, 2, varchar_vec, duckdb::LogicalType::VARCHAR,
               kRows);
-  ASSERT_TRUE(txn->Commit().ok());
+  ASSERT_TRUE(sdb_txn.GetRocksDBTransaction().Commit().ok());
+  sdb_txn.Destroy();
 
   // Verify each column independently
   auto int_out = ReadColumn(duckdb::LogicalType::INTEGER, kRows, 0);

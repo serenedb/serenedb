@@ -33,6 +33,8 @@
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
@@ -138,6 +140,33 @@ void InitCommonState(CommonScanGlobalState& state,
         // happens in the search-scan operators where we know whether the
         // optimizer actually swapped the function to one that bypasses
         // materialisation (e.g. IRESEARCH_COUNT for count(*)).
+        //
+        // An IndexOnly column reaching the materialisation path means one
+        // of: (1) a query asks for its value -- reject, no main-storage
+        // source exists; (2) CREATE INDEX backfill -- mark finished so
+        // pre-existing rows are skipped honestly (future INSERTs will
+        // index normally).
+        if (!bind_data.IsViewBacked()) {
+          const auto& tbd = bind_data.As<TableScanBindData>();
+          for (const auto& col : tbd.table->Columns()) {
+            if (col.id != catalog_col_id ||
+                col.store_mode != catalog::ColumnStoreMode::kIndexOnly) {
+              continue;
+            }
+            if (bind_data.is_create_index) {
+              state.finished = true;
+            } else {
+              THROW_SQL_ERROR(
+                ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                ERR_MSG(
+                  "column \"", col.name,
+                  "\" has sdb_indexonly storage and cannot be read directly;"
+                  " it is only accessible through an inverted-index search"
+                  " predicate"));
+            }
+            break;
+          }
+        }
         state.projected_columns.push_back(col_id);
         state.projected_types.push_back(bind_data.column_types[col_id]);
       }

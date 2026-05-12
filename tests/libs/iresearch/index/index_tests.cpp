@@ -14904,10 +14904,6 @@ TEST_P(ANNSearchTest, hnsw_deserialised_once_across_two_readers) {
   auto graph1 = hr1->GraphIfLoaded();
   ASSERT_NE(graph1, nullptr);
 
-  // Soft-delete one doc: bumps live_docs_count on the segment, leaves
-  // the .cs file byte-identical. Forces DirectoryReaderImpl::Open to
-  // rebuild SegmentReaderImpl on reopen, which is the only path that
-  // runs UpdateHNSWGraphsFrom in production.
   {
     auto filter = std::make_unique<irs::ByTerm>();
     *filter->mutable_field() = std::string{kNameField};

@@ -209,7 +209,7 @@ class ColumnReader final {
    private:
     void ScanImpl(const ColumnReader& reader, uint64_t row_pos,
                   duckdb::idx_t count, duckdb::Vector& out,
-                  duckdb::idx_t out_offset);
+                  duckdb::idx_t out_offset, bool may_use_entire);
 
     const ColumnReader* _reader;
     bool _validity;

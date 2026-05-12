@@ -47,32 +47,57 @@ Additional build presets are defined in `CMakePresets.json`:
 ### Launch
 
 ```bash
-./build/bin/serened ./build_dir --server.endpoint='pgsql+tcp://0.0.0.0:7890'
+./build/bin/serened ./build_data --server.endpoint='pgsql+tcp://0.0.0.0:7890'
 ```
 
 Connect via psql: `psql -h localhost -p 7890 -U postgres`
 
 ### Test
 
-#### SQL logic tests
+The test tree is split by what runs the test and what it covers:
 
-Requires a running SereneDB instance and Rust/Cargo installed.
+- `tests/sqllogic/any/...` -- sqllogic against any engine (PG and SereneDB); use for behaviour we expect from both.
+- `tests/sqllogic/sdb/...` -- sqllogic against SereneDB only (SereneDB-specific syntax / extensions).
+- `tests/sqllogic/pg/...` -- sqllogic against Postgres only (used to validate the spec).
+- `tests/sqllogic/recovery/...` -- sqllogic with crash injection (`SET sdb_faults = '...'`) plus a restart; each test runs against a fresh serened + datadir.
+- `tests/server/<area>/...`, `tests/libs/<lib>/...` -- gtest unit tests; use for isolated C++ logic where a sqllogic test would be awkward (library classes / pure functions / hard-to-reproduce bugs).
+- `tests/bench/micro/...` -- microbenchmarks for performance claims.
+
+When a change needs a test:
+
+- Bug fix: always, unless you can argue the bug is uncoverable. Crash / recovery bugs go under `tests/sqllogic/recovery/`.
+- New feature / behaviour change: sqllogic test in the right subtree above. Add a unit test too if there's isolated C++ logic worth pinning.
+- CMake-only changes: rely on CI.
+- Doc-only changes live in a separate repo and don't apply here.
 
 ```bash
-# Run all tests
+# All sqllogic tests
 ./tests/sqllogic/run.sh --single-port 7890 --debug true
 
-# Run specific tests
+# Specific tests
 ./tests/sqllogic/run.sh --single-port 7890 --test 'tests/sqllogic/any/pg/simple/*.test' --debug true
+
+# Recovery tests (auto-restarts serened on injected crashes; needs build/bin/serened)
+./tests/sqllogic/run_recovery_tests.sh --runner ../../third_party/sqllogictest-rs
 ```
 
-#### C++ unit tests
+C++ unit tests:
 
 ```bash
 ./build/bin/iresearch-tests "--gtest_filter=*PhraseFilterTestCase*"
 ./build/bin/serenedb-tests_basics "--gtest_filter=*VPackLoadInspectorTest*"
 ./build/bin/serenedb-tests_connector "--gtest_filter=*DataSourceWithSearchTest*"
 ```
+
+## Branching, commits, PRs
+
+- **Branch from `main`**, one focused change per PR.
+- **Branch name:** `<author>/<topic>` (e.g. `mbkkt/fix-view-indexes-recovery`). Topic is free-form.
+- **Conventional commit prefix** in the PR title: `feat:`, `fix:`, `perf:` (most common), or one of `refactor:`, `chore:`, `docs:`, `test:`, `ci:`, `build:`, `style:`, `misc:`. Don't invent new ones -- if none fit, ask.
+- **Squash-merge:** the PR title is the final commit subject and the PR description is the body. Branch-internal commit messages are discarded, so they can be anything.
+  - Exception: if your branch has exactly one commit and you let GitHub open the PR for you, GitHub will pre-fill the PR title and description from that commit -- so in that case keep the commit message PR-ready.
+- **Pre-commit hooks** run as a PR check. You don't have to install them locally; if you want to check before pushing, run `pre-commit run --all-files`.
+- **CI must pass** and one maintainer must approve before merge.
 
 ## VSCode Setup
 
@@ -198,7 +223,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Scop
 - Trailing comma required for multi-line initializer lists
 - Forbidden: `Type var{};` and `Type var = {};` -- just omit for default construction
 - Prefer `auto` with factory functions: `auto x = MakeFoo()`
-- `const` optional for variables, strongly recommended for methods/references/pointees
+- `const` strongly recommended on methods, references, and pointees; on variables it's the author's call
 - Prefer `emplace`-like functions
 - Prefer `const auto*` over plain `auto` for pointers
 
@@ -225,12 +250,23 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 ### Comments
 
-- No license headers in code
-- No decorative comments (`/*****/`, `///////////`)
-- Simple `//` comments
-- No doxygen for now
-- Comments only to explain non-obvious logic/algorithms
-- Prefer descriptive assert messages over comments
+- Every file needs a license header; pre-commit adds/checks it, so don't write one by hand. (The license block is the *only* place the banner style is allowed.)
+- Elsewhere, plain `//` comments only. No doxygen, no decorative separators of any flavour -- `// ---`, `/*** ... ***/`, `////////`, `//===`, etc. They're noise in normal code and especially bad as section dividers.
+- Comment only what the code can't say itself: a hidden constraint, an
+  invariant, a workaround for a specific bug, or the *why* behind a
+  non-obvious shape. A function or struct can earn a one-line intro
+  stating its role. Don't describe *what* the body does -- the body
+  already does.
+- Don't justify changes in the source. "We used to do X, we now do Y
+  because..." belongs in the PR description / commit message. The source
+  is read by someone who has never seen the prior version, so describe
+  the current contract positively, not relative to what it replaced.
+- Asserts are contracts; the expression is the documentation. Skip the
+  message when it would just translate the expression into English
+  (`SDB_ASSERT(i < n)` is enough). Add one only when the failure scenario
+  isn't visible in the expression: a domain rule, an unusual comparison
+  shape (e.g. `"running sum overflow"` for `a + b >= a`), or a design
+  constraint the comparison enforces.
 
 ### Error Handling
 
@@ -275,7 +311,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - `absl::btree_*` over `std::set`/`std::map` when appropriate
 - `std::span<const T>` over `std::initializer_list<T>` in parameters
 - `magic_enum` for enum names
-- `absl::c_any_of` etc. over `std::any_of(begin, end)`; `std::ranges` as fallback
+- `absl::c_any_of` (etc.) over `std::any_of(begin, end)`. Fall back to `std::ranges` when no `absl::c_*` exists (e.g. `std::ranges::sort(range, {}, proj)`).
 - Prefer imperative loops over ranges pipelines
 - String operations: `absl::StrCat`, `absl::Substitute`, `absl::StrJoin`, `absl::StrSplit`
 - No `fmt`/`printf` unless necessary; use `absl::SPrintf` or `std::format` (Velox code)
@@ -298,6 +334,22 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Other functions: only mark `noexcept` when truly noexcept or required for correctness
 - Don't add `noexcept` speculatively -- it's a contract that's hard to remove later
 
+### Idioms
+
+- Treat raw pointers, smart pointers, and `std::optional` uniformly via
+  contextual `bool` and `operator*`. Applies everywhere a `bool` is
+  expected -- `if` / ternary / `SDB_ASSERT` / `&&` / `||` / `return`, not
+  just `if`:
+  - `if (p)` / `if (!p)`, not `if (p != nullptr)`.
+  - `if (opt)`, not `if (opt.has_value())`.
+  - `*p` / `*opt`, not `opt.value()` (`.value()` adds a redundant throw
+    once you've verified the optional is engaged).
+- Don't add an explicit `std::string{...}` conversion until the code
+  fails to compile without it (e.g. `set.contains(sv)`, not
+  `set.contains(std::string{sv})`).
+- Don't add includes speculatively -- only when clangd or the compiler
+  asks for them.
+
 ### Memory and Ownership
 
 - `unique_ptr` by default for owned resources
@@ -315,16 +367,23 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Prefer contiguous memory (vectors, arrays) over node-based containers (lists, maps)
 - Measure before optimizing -- don't guess
 - Binary size matters: excessive inlining/templates hurt icache and build times
-- Use microbenchmarks in `tests/bench/micro/` to validate performance claims. Uses Google Benchmark (`benchmark` library). Add new benchmarks with `add_bench(name)` in `tests/bench/micro/CMakeLists.txt`, build with `ninja serenedb-bench-micro`, run individual benchmarks from `build/bin/serenedb-bench-micro-*`
-- Use the `bench` cmake preset for production-like performance numbers
+- Validate performance claims with microbenchmarks under `tests/bench/micro/` (Google Benchmark). Register one with `add_bench(<name>)` in that directory's `CMakeLists.txt`, build with `ninja serenedb-bench-micro`, run from `build/bin/serenedb-bench-micro-<name>`.
+- Use the `bench` cmake preset for production-like numbers.
+- A microbench fits when the change is a few well-scoped functions. When the
+  change is broader (a whole query path, an end-to-end pipeline, anything that
+  doesn't sit neatly inside one fixture), drive a small standalone repro script
+  through `perf stat` / `perf record` instead -- it locates the hot spot
+  without forcing the change into a microbench shape that doesn't fit.
 
 ### Testing
 
-- Framework: Google Test (gtest)
-- `TEST()` for standalone tests, `TEST_F()` for tests sharing a fixture, `TEST_P()` for parameterized tests
-- Async tests: use `yaclib::WaitGroup` for synchronization
-- Test files mirror source structure: `server/foo/bar.cpp` -> `tests/server/foo/bar_test.cpp`
-- Test names should describe behavior, not implementation
+- gtest framework: `TEST()` for standalone, `TEST_F()` for shared fixtures, `TEST_P()` for parameterized.
+- Async tests use `yaclib::WaitGroup` for synchronization.
+- Test files mirror source structure: `server/foo/bar.cpp` -> `tests/server/foo/bar_test.cpp`.
+- Test names describe behavior, not implementation.
+- Prefer an explicit `SDB_ASSERT` contract over a comment about an invariant; reach for `SDB_ENSURE` / `SDB_VERIFY` only when the guarantee is genuinely hard to follow locally.
+
+(For when each test type applies and where new tests go, see the top-level **Test** section.)
 
 ### Third-Party Dependencies
 
@@ -345,14 +404,6 @@ git checkout <your-branch>
 ```
 
 This configures the submodule to fetch all branches (persists for your local clone) and lets you work with it like a normal repo -- `git push`, `git pull`, `git branch`, etc. will all work as expected.
-
-### PR Workflow
-
-- Branch from `main`, keep PRs focused on a single change
-- CI must pass before merge
-- At least one maintainer approval required
-- PRs are squash-merged -- the PR title becomes the commit message, so write it as a [conventional commit](https://www.conventionalcommits.org/) (e.g. `feat: add vector index support`, `fix: handle null in aggregation`)
-- PR description is included in the commit body -- use it for context, not the title
 
 ---
 

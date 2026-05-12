@@ -27,6 +27,7 @@
 #include <absl/strings/str_cat.h>
 
 #include "basics/shared.hpp"
+#include "iresearch/columnstore/hnsw.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 
@@ -257,15 +258,18 @@ std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
       *reader = std::move(tmp);
       reuse_candidates.erase(it);
     } else {
-      auto fresh = SegmentReaderImpl::Open(dir, meta, opts);
-      if (fresh && it != reuse_candidates.end() &&
-          it->second != kInvalidCandidate) {
+      SegmentReaderOptions seg_options;
+      if (it != reuse_candidates.end() && it->second != kInvalidCandidate) {
         const auto& predecessor = (*cached)[it->second];
         if (predecessor) {
-          fresh->UpdateHNSWGraphsFrom(*predecessor.GetImpl());
+          for (const auto& hr : predecessor.GetImpl()->HNSWReaders()) {
+            seg_options.preloaded_hnsw_graphs.emplace(hr->Id(), hr->Graph());
+          }
         }
         reuse_candidates.erase(it);
       }
+      auto fresh =
+        SegmentReaderImpl::Open(dir, meta, opts, std::move(seg_options));
       *reader = SegmentReader{std::move(fresh)};
     }
 

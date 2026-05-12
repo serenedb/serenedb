@@ -18,6 +18,9 @@
 
 #pragma once
 
+#include <absl/container/flat_hash_map.h>
+#include <faiss/impl/HNSW.h>
+
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <memory>
@@ -103,8 +106,12 @@ class Writer final {
 // Opens `<segment>.cs` and exposes per-column access.
 class Reader final {
  public:
+  using PreloadedGraphs =
+    absl::flat_hash_map<field_id, std::shared_ptr<const faiss::HNSW>>;
+
   Reader(const Directory& dir, std::string_view segment_name,
-         duckdb::DatabaseInstance& db);
+         duckdb::DatabaseInstance& db,
+         const PreloadedGraphs& preloaded_graphs = {});
   ~Reader();
 
   Reader(const Reader&) = delete;

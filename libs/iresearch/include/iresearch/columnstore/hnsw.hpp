@@ -72,7 +72,8 @@ class HNSWReader final {
  public:
   HNSWReader(field_id id, std::string name, HNSWInfo info,
              const ColumnReader& vector_column, const IndexInput& in_source,
-             uint64_t graph_offset, uint64_t graph_byte_size);
+             uint64_t graph_offset, uint64_t graph_byte_size,
+             std::shared_ptr<const faiss::HNSW> preloaded = nullptr);
   ~HNSWReader();
 
   HNSWReader(const HNSWReader&) = delete;
@@ -85,21 +86,16 @@ class HNSWReader final {
   void Search(HNSWSearchContext& ctx) const;
   void RangeSearch(HNSWRangeSearchContext& ctx) const;
 
-  std::shared_ptr<const faiss::HNSW> Graph() const;
-  std::shared_ptr<const faiss::HNSW> GraphIfLoaded() const noexcept;
-  void UpdateGraph(std::shared_ptr<const faiss::HNSW> g) const noexcept;
+  const std::shared_ptr<const faiss::HNSW>& Graph() const noexcept {
+    return _hnsw;
+  }
 
  private:
-  const faiss::HNSW& ResolveGraph() const;
-
   field_id _id;
   std::string _name;
   HNSWInfo _info;
   const ColumnReader& _vector_column;
-  const IndexInput* _in_source;
-  uint64_t _graph_offset;
-  uint64_t _graph_byte_size;
-  mutable std::shared_ptr<const faiss::HNSW> _hnsw;
+  std::shared_ptr<const faiss::HNSW> _hnsw;
 };
 
 }  // namespace columnstore

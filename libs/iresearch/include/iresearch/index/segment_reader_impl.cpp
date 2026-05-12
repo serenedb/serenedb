@@ -189,7 +189,7 @@ FileRefs GetRefs(const Directory& dir, const SegmentMeta& meta) {
 
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   const Directory& dir, const SegmentMeta& meta,
-  const IndexReaderOptions& options) {
+  const IndexReaderOptions& options, SegmentReaderOptions seg_options) {
   SDB_ASSERT(meta.codec);
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
@@ -200,7 +200,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
       ReaderState{.dir = &dir, .meta = &meta, .scorer = options.scorer});
   }
   reader->_data = std::make_shared<ColumnData>();
-  reader->_data->Open(dir, meta, options);
+  reader->_data->Open(dir, meta, options, std::move(seg_options));
   return reader;
 }
 
@@ -212,7 +212,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenColumnStore(
   reader->_refs = _refs;
   reader->_field_reader = _field_reader;
   reader->_data = std::make_shared<ColumnData>();
-  reader->_data->Open(dir, meta, options);
+  reader->_data->Open(dir, meta, options, {});
   return reader;
 }
 
@@ -257,20 +257,12 @@ const columnstore::HNSWReader* SegmentReaderImpl::HNSW(field_id field) const {
   return _data->cs_reader->HNSW(field);
 }
 
-void SegmentReaderImpl::UpdateHNSWGraphsFrom(
-  const SegmentReaderImpl& other) const {
-  if (!_data->cs_reader || !other._data->cs_reader) {
-    return;
+std::span<std::unique_ptr<columnstore::HNSWReader>>
+SegmentReaderImpl::HNSWReaders() const {
+  if (!_data || !_data->cs_reader) {
+    return {};
   }
-  for (const auto& reader : _data->cs_reader->HNSWReaders()) {
-    if (!other._data->cs_reader->HasHNSW(reader->Id())) {
-      continue;
-    }
-    const auto* other_reader = other._data->cs_reader->HNSW(reader->Id());
-    if (auto g = other_reader->GraphIfLoaded()) {
-      reader->UpdateGraph(std::move(g));
-    }
-  }
+  return _data->cs_reader->HNSWReaders();
 }
 
 DocIterator::ptr SegmentReaderImpl::docs_iterator() const {
@@ -295,12 +287,13 @@ DocIterator::ptr SegmentReaderImpl::mask(DocIterator::ptr&& it) const {
 
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
                                          const SegmentMeta& meta,
-                                         const IndexReaderOptions& options) {
+                                         const IndexReaderOptions& options,
+                                         SegmentReaderOptions seg_options) {
   if (options.db == nullptr) {
     return;
   }
-  cs_reader =
-    std::make_unique<columnstore::Reader>(dir, meta.name, *options.db);
+  cs_reader = std::make_unique<columnstore::Reader>(
+    dir, meta.name, *options.db, seg_options.preloaded_hnsw_graphs);
 
   for (const auto* nc : cs_reader->NormColumns()) {
     norms_by_id.emplace(nc->Id(), nc);

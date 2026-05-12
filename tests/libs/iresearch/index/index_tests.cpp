@@ -14875,8 +14875,8 @@ TEST_P(ANNSearchTest, hnsw_deserialised_once_across_two_readers) {
   ASSERT_TRUE(writer->Begin());
   writer->Commit();
 
-  // Reader #1: opens the index and forces the HNSW graph to deserialise
-  // via a one-shot Search.
+  // Reader #1: HNSWReader deserializes the graph eagerly on construction,
+  // so the shared_ptr is non-null immediately after opening.
   auto reader1 = irs::DirectoryReader{dir(), codec(), {}};
   ASSERT_EQ(1u, reader1.size());
 
@@ -14889,19 +14889,8 @@ TEST_P(ANNSearchTest, hnsw_deserialised_once_across_two_readers) {
     }
   }
   ASSERT_NE(hr1, nullptr);
-  ASSERT_EQ(hr1->GraphIfLoaded(), nullptr);
 
-  faiss::SearchParametersHNSW params;
-  params.efSearch = 8;
-  std::vector<float> dis(1, 0.f);
-  std::vector<int64_t> docs(1);
-  irs::HNSWSearchInfo info{
-    reinterpret_cast<const irs::byte_type*>(f.query_vectors[0].data()), 1,
-    params};
-  irs::HNSWSearchBuffer buffer{dis.data(), docs.data(), 1};
-  reader1[0].Search(hnsw_id, info, buffer, 0);
-
-  auto graph1 = hr1->GraphIfLoaded();
+  auto graph1 = hr1->Graph();
   ASSERT_NE(graph1, nullptr);
 
   {
@@ -14924,7 +14913,7 @@ TEST_P(ANNSearchTest, hnsw_deserialised_once_across_two_readers) {
 
   const auto* hr2 = reader2[0].HNSW(hnsw_id);
   ASSERT_NE(hr2, nullptr);
-  auto graph2 = hr2->GraphIfLoaded();
+  auto graph2 = hr2->Graph();
   ASSERT_NE(graph2, nullptr);
   EXPECT_EQ(graph2.get(), graph1.get());
 }

@@ -23,7 +23,6 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cmath>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -377,62 +376,31 @@ void HNSWWriter::Serialize(DataOutput& out) { irs::WriteHNSW(out, _hnsw); }
 HNSWReader::HNSWReader(field_id id, std::string name, HNSWInfo info,
                        const ColumnReader& vector_column,
                        const IndexInput& in_source, uint64_t graph_offset,
-                       uint64_t graph_byte_size)
+                       uint64_t graph_byte_size,
+                       std::shared_ptr<const faiss::HNSW> preloaded)
   : _id{id},
     _name{std::move(name)},
     _info{std::move(info)},
-    _vector_column{vector_column},
-    _in_source{&in_source},
-    _graph_offset{graph_offset},
-    _graph_byte_size{graph_byte_size} {
+    _vector_column{vector_column} {
   SDB_ENSURE(vector_column.ArraySize() == static_cast<uint64_t>(_info.d),
              sdb::ERROR_INTERNAL, "columnstore::HNSWReader: ARRAY size ",
              vector_column.ArraySize(), " does not match HNSWInfo.d ", _info.d);
+  if (preloaded) {
+    _hnsw = std::move(preloaded);
+    return;
+  }
+  auto graph = std::make_shared<faiss::HNSW>();
+  auto in = in_source.Reopen();
+  in->Seek(graph_offset);
+  irs::ReadHNSW(*in, *graph);
+  SDB_ASSERT(in->Position() - graph_offset == graph_byte_size);
+  _hnsw = std::move(graph);
 }
 
 HNSWReader::~HNSWReader() = default;
 
-std::shared_ptr<const faiss::HNSW> HNSWReader::GraphIfLoaded() const noexcept {
-  return std::atomic_load_explicit(&_hnsw, std::memory_order_acquire);
-}
-
-void HNSWReader::UpdateGraph(
-  std::shared_ptr<const faiss::HNSW> g) const noexcept {
-  SDB_ASSERT(g);
-  std::shared_ptr<const faiss::HNSW> expected;
-  std::atomic_compare_exchange_strong_explicit(&_hnsw, &expected, std::move(g),
-                                               std::memory_order_release,
-                                               std::memory_order_acquire);
-}
-
-std::shared_ptr<const faiss::HNSW> HNSWReader::Graph() const {
-  ResolveGraph();
-  return std::atomic_load_explicit(&_hnsw, std::memory_order_acquire);
-}
-
-const faiss::HNSW& HNSWReader::ResolveGraph() const {
-  if (auto g = std::atomic_load_explicit(&_hnsw, std::memory_order_acquire)) {
-    return *g;
-  }
-  auto graph = std::make_shared<faiss::HNSW>();
-  {
-    auto in = _in_source->Reopen();
-    in->Seek(_graph_offset);
-    irs::ReadHNSW(*in, *graph);
-    SDB_ASSERT(in->Position() - _graph_offset == _graph_byte_size);
-  }
-  std::shared_ptr<const faiss::HNSW> g{std::move(graph)};
-  std::shared_ptr<const faiss::HNSW> expected;
-  if (!std::atomic_compare_exchange_strong_explicit(
-        &_hnsw, &expected, g, std::memory_order_release,
-        std::memory_order_acquire)) {
-    return *expected;
-  }
-  return *g;
-}
-
 void HNSWReader::Search(HNSWSearchContext& ctx) const {
-  const auto& hnsw = ResolveGraph();
+  const auto& hnsw = *_hnsw;
   const auto* child = _vector_column.Child();
   SDB_ASSERT(child);
   ChunkedVectorCache cache{*child, _vector_column.ArraySize(),
@@ -449,7 +417,7 @@ void HNSWReader::Search(HNSWSearchContext& ctx) const {
 }
 
 void HNSWReader::RangeSearch(HNSWRangeSearchContext& ctx) const {
-  const auto& hnsw = ResolveGraph();
+  const auto& hnsw = *_hnsw;
   const auto* child = _vector_column.Child();
   SDB_ASSERT(child);
   ChunkedVectorCache cache{*child, _vector_column.ArraySize(),

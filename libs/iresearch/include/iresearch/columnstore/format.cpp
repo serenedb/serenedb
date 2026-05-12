@@ -459,7 +459,8 @@ struct Reader::Impl {
 };
 
 Reader::Reader(const Directory& dir, std::string_view segment_name,
-               duckdb::DatabaseInstance& db)
+               duckdb::DatabaseInstance& db,
+               const PreloadedGraphs& preloaded_graphs)
   : _impl{std::make_unique<Impl>()} {
   _impl->db = &db;
   const auto filename = absl::StrCat(segment_name, ".", kFormatExt);
@@ -566,9 +567,14 @@ Reader::Reader(const Directory& dir, std::string_view segment_name,
           // Corrupted footer; HNSW(field_id) returns nullptr.
           return;
         }
+        std::shared_ptr<const faiss::HNSW> preloaded;
+        if (auto pit = preloaded_graphs.find(id);
+            pit != preloaded_graphs.end()) {
+          preloaded = pit->second;
+        }
         auto hr = std::make_unique<HNSWReader>(
           id, std::string{col_reader->Name()}, info, *col_reader, *_impl->in,
-          graph_offset, graph_byte_size);
+          graph_offset, graph_byte_size, std::move(preloaded));
         _impl->hnsw_by_id.emplace(id, _impl->hnsw_readers.size());
         _impl->hnsw_readers.push_back(std::move(hr));
       });

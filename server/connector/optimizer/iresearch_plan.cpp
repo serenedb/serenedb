@@ -317,6 +317,7 @@ bool RewriteFilterColumnRefs(
 
 struct SearchColumnContext {
   duckdb::TableIndex table_index;
+  duckdb::ClientContext* client_context = nullptr;
   std::span<const catalog::Column::Id> projected_column_ids;
   containers::FlatHashMap<catalog::Column::Id, duckdb::LogicalType>
     column_type_by_id;
@@ -388,7 +389,7 @@ connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx,
     // ObjectId; the col_index -> Column::Id mapping comes from the
     // LogicalGet's projection slot list (`ctx.projected_column_ids`).
     auto normalized = connector::NormalizeBoundExpression(
-      path_expr, table_id, ctx.projected_column_ids);
+      path_expr, table_id, ctx.projected_column_ids, *ctx.client_context);
     out_serialized = connector::SerializeBoundExpression(*normalized);
     auto tokenizer = ctx.json_path_tokenizer_provider(col_id, out_serialized);
     if (!tokenizer) {
@@ -431,6 +432,7 @@ void InitSearchColumnContextForGet(
                                       : kInvalidId);
   }
   ctx.table_index = get.table_index;
+  ctx.client_context = &client_context;
   ctx.projected_column_ids = projected_ids_storage;
   bind_data.IterateColumns(
     [&](catalog::Column::Id id, const duckdb::LogicalType& type) {

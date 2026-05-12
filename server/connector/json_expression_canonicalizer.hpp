@@ -75,7 +75,8 @@ duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
 // leaves; the function asserts in debug if a leaf points past the end.
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, ObjectId table_id,
-  std::span<const catalog::Column::Id> col_index_to_id);
+  std::span<const catalog::Column::Id> col_index_to_id,
+  duckdb::ClientContext& context);
 
 // Returns a copy of `expr` whose BoundColumnRefExpression leaves have been
 // rewritten to BoundReferenceExpression(slot, type) so the expression can
@@ -112,22 +113,5 @@ duckdb::Vector EvaluateJsonPathOverChunk(
   const duckdb::Expression& bound_expr, duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id,
   duckdb::ClientContext& context);
-
-// Walks a bound JSON-extract chain (post-`ResolveBoundColumnRefsForChunk`
-// or pre-resolution) and returns the chunk slot of the source JSON column
-// it ultimately references. Returns `idx_t(-1)` if the leaf isn't a
-// reference / column-ref expression.
-duckdb::idx_t ExtractJsonSourceColId(const duckdb::Expression& expr);
-
-// Per-row simdjson navigation of `source_json` along `path_keys`. Sets
-// `out_mask[i] = true` for any row whose path traversal stops short of the
-// leaf (key absent / array index out of range / wrong shape mid-chain).
-// Rows whose path resolves successfully -- including to an explicit JSON
-// null -- get `out_mask[i] = false`. Caller uses this to skip "missing"
-// rows entirely so IS NULL doesn't false-match them.
-void ComputeJsonMissingMask(const duckdb::Vector& source_json,
-                            duckdb::idx_t num_rows,
-                            std::span<const std::string> path_keys,
-                            std::vector<bool>& out_mask);
 
 }  // namespace sdb::connector

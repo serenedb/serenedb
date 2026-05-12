@@ -105,12 +105,60 @@ bool IsValidKey(const duckdb::Value& v) {
   }
 }
 
+// `#>` / `#>>` pass a single text[] argument (LIST of VARCHAR). Each child
+// element must be a non-null primitive key for the chain to be indexable.
+bool IsValidPathList(const duckdb::Value& v) {
+  if (v.type().id() != duckdb::LogicalTypeId::LIST) {
+    return false;
+  }
+  const auto& children = duckdb::ListValue::GetChildren(v);
+  if (children.empty()) {
+    return false;
+  }
+  for (const auto& child : children) {
+    if (child.IsNull() || !IsValidKey(child)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Replace any `BoundCast(BoundConstant)` subtree with a folded
+// `BoundConstant(cast(value))`. IndexBinder (CREATE INDEX) leaves these
+// casts in place where the regular query binder folds them. Folding here
+// produces matching canonical bytes across the two binders.
+// TODO(mkornaukhov) it's better somehow optimize expression in creating index
+// to have identical expression without such a hack.
+duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
+  duckdb::unique_ptr<duckdb::Expression> expr, duckdb::ClientContext& context) {
+  duckdb::ExpressionIterator::EnumerateChildren(
+    *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {
+      child = FoldConstantCasts(std::move(child), context);
+    });
+  if (expr->expression_class == duckdb::ExpressionClass::BOUND_CAST) {
+    auto& cast = expr->Cast<duckdb::BoundCastExpression>();
+    if (cast.child && cast.child->expression_class ==
+                        duckdb::ExpressionClass::BOUND_CONSTANT) {
+      try {
+        auto folded =
+          duckdb::ExpressionExecutor::EvaluateScalar(context, *expr);
+        return duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          std::move(folded));
+      } catch (...) {
+        SDB_ASSERT(false, "Cannot fold constant for inverted index");
+      }
+    }
+  }
+  return expr;
+}
+
 }  // namespace
 
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, ObjectId table_id,
-  std::span<const catalog::Column::Id> col_index_to_id) {
-  auto copy = expr.Copy();
+  std::span<const catalog::Column::Id> col_index_to_id,
+  duckdb::ClientContext& context) {
+  auto copy = FoldConstantCasts(expr.Copy(), context);
   auto visit = [&](auto& self, duckdb::Expression& e) -> void {
     e.SetAlias("");
     e.SetQueryLocation(duckdb::optional_idx());
@@ -136,39 +184,32 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   return copy;
 }
 
-// Walk through any chain of BoundCastExpression wrappers. The binder
-// inserts implicit casts between JSON-extract steps (e.g. when a `->>`
-// returns VARCHAR but the caller wants JSON, or when an integer key
-// constant is widened) and they show up in the bound tree as BOUND_CAST
-// nodes that we want to look through.
-const duckdb::Expression* PeelBoundCasts(const duckdb::Expression* expr) {
-  while (expr->expression_class == duckdb::ExpressionClass::BOUND_CAST) {
-    const auto& c = expr->Cast<duckdb::BoundCastExpression>();
-    if (!c.child) {
-      break;
-    }
-    expr = c.child.get();
-  }
-  return expr;
-}
-
 const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
   const duckdb::Expression& expr) {
-  const duckdb::Expression* cur = PeelBoundCasts(&expr);
+  const duckdb::Expression* cur = &expr;
   while (cur->expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
-    if (!IsJsonExtract(f.function.name) || f.children.size() != 2) {
+    // Accept any json-extract shape: `->` / `->>` (2 children: json, key),
+    // variadic `json_extract_path[_text]` (2+ children: json, key, key...),
+    // and `#>` / `#>>` (2 children: json, text[] list of keys).
+    if (!IsJsonExtract(f.function.name) || f.children.size() < 2) {
       return nullptr;
     }
-    const auto* key_expr = PeelBoundCasts(f.children[1].get());
-    if (key_expr->expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
-      return nullptr;
+    for (size_t i = 1; i < f.children.size(); ++i) {
+      const auto* key_expr = f.children[i].get();
+      if (key_expr->expression_class !=
+          duckdb::ExpressionClass::BOUND_CONSTANT) {
+        return nullptr;
+      }
+      const auto& key_const = key_expr->Cast<duckdb::BoundConstantExpression>();
+      if (key_const.value.IsNull()) {
+        return nullptr;
+      }
+      if (!IsValidKey(key_const.value) && !IsValidPathList(key_const.value)) {
+        return nullptr;
+      }
     }
-    const auto& key_const = key_expr->Cast<duckdb::BoundConstantExpression>();
-    if (key_const.value.IsNull() || !IsValidKey(key_const.value)) {
-      return nullptr;
-    }
-    cur = PeelBoundCasts(f.children[0].get());
+    cur = f.children[0].get();
   }
   if (cur->expression_class != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     return nullptr;
@@ -260,102 +301,6 @@ duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
   auto copy = expr.Copy();
   resolver.Resolve(copy);
   return copy;
-}
-
-duckdb::idx_t ExtractJsonSourceColId(const duckdb::Expression& expr) {
-  const duckdb::Expression* cur = PeelBoundCasts(&expr);
-  while (cur->expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
-    const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
-    if (!IsJsonExtract(f.function.name) || f.children.size() != 2) {
-      return static_cast<duckdb::idx_t>(-1);
-    }
-    cur = PeelBoundCasts(f.children[0].get());
-  }
-  if (cur->expression_class == duckdb::ExpressionClass::BOUND_REF) {
-    return cur->Cast<duckdb::BoundReferenceExpression>().index;
-  }
-  if (cur->expression_class == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-    return cur->Cast<duckdb::BoundColumnRefExpression>()
-      .binding.column_index.GetIndex();
-  }
-  return static_cast<duckdb::idx_t>(-1);
-}
-
-void ComputeJsonMissingMask(const duckdb::Vector& source_json,
-                            duckdb::idx_t num_rows,
-                            std::span<const std::string> path_keys,
-                            std::vector<bool>& out_mask) {
-  out_mask.assign(num_rows, false);
-  if (path_keys.empty()) {
-    return;
-  }
-  duckdb::UnifiedVectorFormat fmt;
-  source_json.ToUnifiedFormat(num_rows, fmt);
-  const auto* data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
-  // Use simdjson::dom -- non-lazy and re-entrant. ondemand's value-state
-  // machine is finicky enough that a navigation into a null-valued field
-  // can leave the iterator in a state where subsequent rows misparse;
-  // DOM avoids that whole class of issues.
-  simdjson::dom::parser parser;
-  for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-    const auto idx = fmt.sel->get_index(i);
-    if (!fmt.validity.RowIsValid(idx)) {
-      out_mask[i] = true;
-      continue;
-    }
-    const auto& s = data[idx];
-    simdjson::dom::element root;
-    if (parser.parse(s.GetData(), s.GetSize()).get(root)) {
-      out_mask[i] = true;
-      continue;
-    }
-    simdjson::dom::element cur = root;
-    bool missing = false;
-    for (const auto& key : path_keys) {
-      if (cur.is_object()) {
-        simdjson::dom::object obj;
-        if (cur.get(obj)) {
-          missing = true;
-          break;
-        }
-        if (obj.at_key(key).get(cur)) {
-          missing = true;
-          break;
-        }
-      } else if (cur.is_array()) {
-        int64_t index;
-        if (!absl::SimpleAtoi(key, &index)) {
-          missing = true;
-          break;
-        }
-        simdjson::dom::array arr;
-        if (cur.get(arr)) {
-          missing = true;
-          break;
-        }
-        const auto size = arr.size();
-        size_t resolved;
-        if (index < 0) {
-          if (static_cast<size_t>(-index) > size) {
-            missing = true;
-            break;
-          }
-          resolved = size + index;
-        } else {
-          resolved = static_cast<size_t>(index);
-        }
-        if (arr.at(resolved).get(cur)) {
-          missing = true;
-          break;
-        }
-      } else {
-        missing = true;
-        break;
-      }
-    }
-    out_mask[i] = missing;
-  }
 }
 
 }  // namespace sdb::connector

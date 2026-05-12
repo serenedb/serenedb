@@ -101,12 +101,28 @@ bool TryLiftJsonPath(const duckdb::ParsedExpression& parsed_expr,
       }
       case duckdb::ExpressionClass::FUNCTION: {
         const auto& f = cur->Cast<duckdb::FunctionExpression>();
-        if (!IsJsonExtract(f.function_name) || f.children.size() != 2) {
+        // Accept any json-extract shape: `->` / `->>` (2 children: json, key),
+        // variadic `json_extract_path[_text]` (2+ children), and `#>` / `#>>`
+        // (2 children with text[] list key).
+        if (!IsJsonExtract(f.function_name) || f.children.size() < 2) {
           return false;
         }
+        for (size_t i = 1; i < f.children.size(); ++i) {
+          if (f.children[i]->GetExpressionType() !=
+              duckdb::ExpressionType::VALUE_CONSTANT) {
+            return false;
+          }
+          const auto& key_const =
+            f.children[i]->Cast<duckdb::ConstantExpression>();
+          if (key_const.value.IsNull()) {
+            return false;
+          }
+        }
         next_lhs = f.children[0].get();
-        key = f.children[1].get();
-        break;
+        // Already validated keys above; skip the legacy single-key check
+        // below by jumping straight to recursion.
+        cur = next_lhs;
+        continue;
       }
       default:
         return false;
@@ -373,7 +389,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       col_index_to_id.push_back(c.id);
     }
     auto normalized = NormalizeBoundExpression(*bound_expr, _relation->GetId(),
-                                               col_index_to_id);
+                                               col_index_to_id, context);
     std::string serialized = SerializeBoundExpression(*normalized);
 
     std::string col_name;

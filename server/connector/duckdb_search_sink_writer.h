@@ -49,11 +49,8 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
 
   bool SwitchColumn(const ColumnDescriptor& col) final;
 
-  bool SwitchJsonExpression(const duckdb::LogicalType& return_type,
-                            bool have_nulls, catalog::Column::Id column_id,
-                            std::string_view serialized_expr) final {
-    return SwitchJsonExpressionImpl(return_type, have_nulls, column_id,
-                                    serialized_expr);
+  bool SwitchJsonExpression(const JsonExprDescriptor& json_desc) final {
+    return SwitchJsonExpressionImpl(json_desc);
   }
 
   std::span<const JsonExpressionEval> JsonExpressionEvals() const final {
@@ -110,11 +107,8 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
 
   bool SwitchColumn(const ColumnDescriptor& col) final;
 
-  bool SwitchJsonExpression(const duckdb::LogicalType& return_type,
-                            bool have_nulls, catalog::Column::Id column_id,
-                            std::string_view canonical_expression) final {
-    return SwitchJsonExpressionImpl(return_type, have_nulls, column_id,
-                                    canonical_expression);
+  bool SwitchJsonExpression(const JsonExprDescriptor& json_desc) final {
+    return SwitchJsonExpressionImpl(json_desc);
   }
 
   std::span<const JsonExpressionEval> JsonExpressionEvals() const final {

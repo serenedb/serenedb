@@ -47,17 +47,6 @@
 
 namespace sdb::connector {
 
-// It looks like a bad idea to serialize parsed expr,
-// but I suppose it's ok for now
-
-std::string SerializeParsedExpression(const duckdb::ParsedExpression& expr) {
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer::Serialize(expr, stream);
-  auto resp = std::string(reinterpret_cast<const char*>(stream.GetData()),
-                          stream.GetPosition());
-  return resp;
-}
-
 std::string SerializeBoundExpression(const duckdb::Expression& expr) {
   // Caller is responsible for `NormalizeBoundExpression`-ing the input when
   // bytes will be compared cross-context (CREATE INDEX vs SELECT). The
@@ -82,7 +71,7 @@ namespace {
 
 // Wraps DuckDB's ColumnBindingResolver so it can resolve a single standalone
 // expression against a fixed chunk layout. Bindings are synthesised as
-// (TableIndex(0), 0..N) so a normalised BoundColumnRefExpression with
+// (TableIndex(0), 0..N) so a normalized BoundColumnRefExpression with
 // `column_index = c` is rewritten to BoundReferenceExpression(slot=c).
 class StandaloneBindingResolver final : public duckdb::ColumnBindingResolver {
  public:
@@ -251,7 +240,7 @@ class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
 duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
   const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id) {
-  // Build bindings that match the leaves' normalised
+  // Build bindings that match the leaves' normalized
   // (TableIndex(table_id.id()), ProjectionIndex(Column::Id)) shape, paired
   // 1:1 with the chunk's column types so the resolver can emit
   // BoundReferenceExpression(slot, chunk_types[slot]).

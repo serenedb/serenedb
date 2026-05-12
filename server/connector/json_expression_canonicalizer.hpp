@@ -24,7 +24,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <duckdb/planner/expression.hpp>
-#include <memory>
 #include <span>
 #include <string>
 
@@ -49,24 +48,15 @@ const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
 
 // Serialise a bound expression to an opaque byte buffer suitable for
 // catalog persistence and cross-context byte-comparison. The caller is
-// responsible for passing a `NormalizeBoundExpression`-normalised tree
+// responsible for passing a `NormalizeBoundExpression`-normalized tree
 // when the bytes will be compared across binding contexts.
 std::string SerializeBoundExpression(const duckdb::Expression& expr);
-
-std::string SerializeParsedExpression(const duckdb::ParsedExpression& expr);
 
 // Reverse of `SerializeBoundExpression`. Requires a ClientContext because
 // DuckDB's Expression::Deserialize resolves catalog references (e.g. scalar
 // functions) against the live database state.
 duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
   std::string_view bytes, duckdb::ClientContext& context);
-
-// Pins every BoundColumnRefExpression in `expr` to TableIndex(0) (column_index
-// untouched). Produces a canonical, chunk-layout-independent form that any
-// consumer can resolve via `ResolveBoundColumnRefsForChunk` against its own
-// DataChunk. Called once at CREATE INDEX time before serialising for catalog
-// persistence; the deserialised form on the read side is already normalised.
-void NormalizeBoundColumnRefs(duckdb::Expression& expr);
 
 // Returns a copy of `expr` whose binder-state noise has been replaced with
 // stable catalog identities so `SerializeBoundExpression` of the result
@@ -93,9 +83,9 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
 //
 // The caller passes:
 //   * `table_id`         -- base relation's ObjectId. Must match the
-//                           `TableIndex` baked into the normalised leaves.
+//                           `TableIndex` baked into the normalized leaves.
 //   * `slot_to_col_id`   -- chunk-slot -> Column::Id map. The resolver
-//                           builds reverse bindings so a normalised leaf
+//                           builds reverse bindings so a normalized leaf
 //                           `BoundColumnRef(TableIndex(table_id),
 //                            ProjectionIndex(col_id))` is replaced with
 //                           `BoundReferenceExpression(slot,

@@ -524,18 +524,26 @@ void DuckDBColumnSerializer::WriteUnifiedColumn(
   }
 }
 
-template<typename Writer>
-void DuckDBColumnSerializer::WriteColumn(
+template<typename Writer, typename Desc>
+void DuckDBColumnSerializer::WriteVector(
   Writer* writer, const duckdb::Vector& vec, duckdb::idx_t num_rows,
   std::vector<std::string>& row_keys,
-  std::span<DuckDBSinkIndexWriter*> index_writers, ColumnDescriptor col) {
-  // Tell the writer which column we're streaming so its Write/WriteNull
-  // can branch (regular Put vs IndexOnly WAL marker vs SST silent skip).
-  // nullptr writer means caller wants only the index_writers driven.
-  if (writer) {
-    writer->SwitchColumn(col);
+  std::span<DuckDBSinkIndexWriter*> index_writers, const Desc& desc) {
+  if constexpr (std::is_same_v<Desc, ColumnDescriptor>) {
+    // Real column: prime the writer's per-column state so Write/WriteNull
+    // can branch (regular Put vs IndexOnly WAL marker vs SST silent skip).
+    if (writer) {
+      writer->SwitchColumn(desc);
+    }
+  } else {
+    static_assert(std::is_same_v<Desc, JsonExprDescriptor>,
+                  "WriteVector descriptor must be ColumnDescriptor or "
+                  "JsonExprDescriptor");
+    SDB_ASSERT(writer == nullptr,
+               "JSON-expr WriteVector requires nullptr rocksdb writer -- the "
+               "source JSON column was already persisted");
   }
-  const auto& type = col.type;
+  const auto& type = desc.type;
   switch (vec.GetVectorType()) {
     case duckdb::VectorType::FLAT_VECTOR:
       break;
@@ -653,14 +661,20 @@ void DuckDBColumnSerializer::WriteColumn(
   }
 }
 
-template void
-DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::TxnWriter>(
+template void DuckDBColumnSerializer::WriteVector<
+  DuckDBColumnSerializer::TxnWriter, ColumnDescriptor>(
   TxnWriter*, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
-  std::span<DuckDBSinkIndexWriter*>, ColumnDescriptor);
-template void
-DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::SstWriter>(
+  std::span<DuckDBSinkIndexWriter*>, const ColumnDescriptor&);
+template void DuckDBColumnSerializer::WriteVector<
+  DuckDBColumnSerializer::SstWriter, ColumnDescriptor>(
   SstWriter*, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
-  std::span<DuckDBSinkIndexWriter*>, ColumnDescriptor);
+  std::span<DuckDBSinkIndexWriter*>, const ColumnDescriptor&);
+// JSON-expr path: writer is always nullptr; TxnWriter type chosen arbitrarily
+// (the Writer template parameter is unused in the JsonExprDescriptor branch).
+template void DuckDBColumnSerializer::WriteVector<
+  DuckDBColumnSerializer::TxnWriter, JsonExprDescriptor>(
+  TxnWriter*, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
+  std::span<DuckDBSinkIndexWriter*>, const JsonExprDescriptor&);
 
 template<typename Writer, typename T>
 void DuckDBColumnSerializer::WriteFlatColumn(

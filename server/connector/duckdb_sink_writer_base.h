@@ -50,10 +50,7 @@ class DuckDBSinkIndexWriter {
 
   // Switch to a JSON-extract expression. The base writer only matters for the
   // search-index path; secondary indexes ignore JSON expressions entirely.
-  virtual bool SwitchJsonExpression(const duckdb::LogicalType& return_type,
-                                    bool have_nulls,
-                                    catalog::Column::Id column_id,
-                                    std::string_view canonical_expression) {
+  virtual bool SwitchJsonExpression(const JsonExprDescriptor& json_desc) {
     return false;
   }
 

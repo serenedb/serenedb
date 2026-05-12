@@ -218,8 +218,11 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col) {
 }
 
 bool SearchSinkInsertBaseImpl::SwitchJsonExpressionImpl(
-  const duckdb::LogicalType& return_type, bool have_nulls,
-  catalog::Column::Id column_id, std::string_view serialized_expr) {
+  const JsonExprDescriptor& json_desc) {
+  const auto column_id = json_desc.column_id;
+  const auto& return_type = json_desc.type;
+  const auto have_nulls = json_desc.have_nulls;
+  const auto serialized_expr = json_desc.serialized_expr;
   if (!IsIndexed(column_id)) {
 #ifdef SDB_DEV
     _current_writer = nullptr;

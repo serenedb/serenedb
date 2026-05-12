@@ -325,22 +325,26 @@ void FlushShard(ShardState& s,
       for (const auto& col : s.indexed_columns) {
         slot_to_col_id.push_back(col.id);
       }
-      for (const auto& je : eval_evals) {
+      for (const auto& json_expr : eval_evals) {
         auto result = connector::EvaluateJsonPathOverChunk(
-          *je.bound_expr, chunk, s.table_object_id, slot_to_col_id,
+          *json_expr.bound_expr, chunk, s.table_object_id, slot_to_col_id,
           client_context);
 
-        const bool switched = sink.SwitchJsonExpression(
-          result.GetType(), /*have_nulls=*/true, je.column_id, je.serialized);
+        const bool switched =
+          sink.SwitchJsonExpression(connector::JsonExprDescriptor{
+            json_expr.column_id, result.GetType(), /*have_nulls=*/true,
+            json_expr.serialized});
         SDB_ASSERT(switched,
                    "Cannot switch to JSON expression during WAL "
                    "recovery");
         connector::DuckDBSinkIndexWriter* writer_ptr = &sink;
-        const connector::ColumnDescriptor je_desc{
-          je.column_id, catalog::ColumnStoreMode{}, result.GetType(),
+        const connector::ColumnDescriptor json_column_desc{
+          json_expr.column_id, catalog::ColumnStoreMode::kNormal,
+          result.GetType(),
           /*have_nulls=*/true};
-        serializer.WriteColumn<connector::DuckDBColumnSerializer::TxnWriter>(
-          nullptr, result, num_rows, row_keys, {&writer_ptr, 1}, je_desc);
+        serializer.WriteVector<connector::DuckDBColumnSerializer::TxnWriter>(
+          nullptr, result, num_rows, row_keys, {&writer_ptr, 1},
+          json_column_desc);
       }
     }
     sink.Finish();

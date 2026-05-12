@@ -197,7 +197,7 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
     }
 
     DuckDBColumnSerializer::SstWriter sst_writer{gstate.writers[col].get()};
-    gstate.serializer->WriteColumn(
+    gstate.serializer->WriteVector(
       &sst_writer, chunk.data[meta.input_col_idx], num_rows, gstate.row_keys,
       {},
       ColumnDescriptor{meta.id, meta.store_mode, meta.duckdb_type,
@@ -227,7 +227,7 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
       key_utils::SetupColumnForKey(gstate.row_keys[row], meta.id);
     }
 
-    gstate.serializer->WriteColumn<DuckDBColumnSerializer::SstWriter>(
+    gstate.serializer->WriteVector<DuckDBColumnSerializer::SstWriter>(
       nullptr, chunk.data[meta.input_col_idx], num_rows, gstate.row_keys,
       gstate.active_writers, desc);
   }

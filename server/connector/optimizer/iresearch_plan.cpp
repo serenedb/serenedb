@@ -387,9 +387,9 @@ connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx,
     // table_id pinned into BoundColumnRef leaves is the base relation's
     // ObjectId; the col_index -> Column::Id mapping comes from the
     // LogicalGet's projection slot list (`ctx.projected_column_ids`).
-    auto normalised = connector::NormalizeBoundExpression(
+    auto normalized = connector::NormalizeBoundExpression(
       path_expr, table_id, ctx.projected_column_ids);
-    out_serialized = connector::SerializeBoundExpression(*normalised);
+    out_serialized = connector::SerializeBoundExpression(*normalized);
     auto tokenizer = ctx.json_path_tokenizer_provider(col_id, out_serialized);
     if (!tokenizer) {
       return std::nullopt;

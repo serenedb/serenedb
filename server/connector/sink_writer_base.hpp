@@ -21,7 +21,6 @@
 #pragma once
 
 #include "catalog/table_options.h"
-#include "rocksdb/slice.h"
 
 namespace sdb::connector {
 
@@ -34,6 +33,17 @@ struct ColumnDescriptor {
   catalog::ColumnStoreMode store_mode;
   duckdb::LogicalType type;
   bool have_nulls;
+};
+
+// Per-JSON-path descriptor passed to writers when switching to a JSON
+// sub-expression. Carries the base JSON column id, the leaf expression's
+// evaluated type, and the canonical serialized bytes used as the iresearch
+// field-name suffix.
+struct JsonExprDescriptor {
+  catalog::Column::Id column_id;
+  duckdb::LogicalType type;
+  bool have_nulls;
+  std::string_view serialized_expr;
 };
 
 // Base implementation of column centric index writers

@@ -203,12 +203,12 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::unique_ptr<pg::IndexProgressReporter> progress;
 
   // JSON-extract expressions evaluated per chunk via ExpressionExecutor and
-  // written to the index as virtual columns. `normalised_expr` leaves carry
+  // written to the index as virtual columns. `normalized_expr` leaves carry
   // catalog identities (TableIndex(table_id), ProjectionIndex(Column::Id)),
   // resolved against each input chunk in Sink via
   // `ResolveBoundColumnRefsForChunk` before ExpressionExecutor runs.
   struct JsonIndexedExpression {
-    duckdb::unique_ptr<duckdb::Expression> normalised_expr;
+    duckdb::unique_ptr<duckdb::Expression> normalized_expr;
     catalog::Column::Id column_id;
   };
 
@@ -372,9 +372,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     for (const auto& c : columns) {
       col_index_to_id.push_back(c.id);
     }
-    auto normalised = NormalizeBoundExpression(*bound_expr, _relation->GetId(),
+    auto normalized = NormalizeBoundExpression(*bound_expr, _relation->GetId(),
                                                col_index_to_id);
-    std::string serialized = SerializeBoundExpression(*normalised);
+    std::string serialized = SerializeBoundExpression(*normalized);
 
     std::string col_name;
     if (!TryLiftJsonPath(*expr, col_name)) {
@@ -389,7 +389,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
 
     state->json_indexed_expressions.push_back({
-      .normalised_expr = std::move(normalised),
+      .normalized_expr = std::move(normalized),
       .column_id = cat_col->id,
     });
     idx_columns.emplace_back(catalog::CreateIndexColumn{
@@ -780,13 +780,13 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
 
     DuckDBSinkIndexWriter* writer_ptr = writer;
-    serializer->WriteColumn<DuckDBColumnSerializer::TxnWriter>(
+    serializer->WriteVector<DuckDBColumnSerializer::TxnWriter>(
       nullptr, chunk.data[col.input_col_idx], num_rows, row_keys,
       {&writer_ptr, 1}, desc);
   }
 
   // Evaluate every indexed JSON expression against the chunk and write the
-  // result as a virtual column. `normalised_expr` carries catalog identities
+  // result as a virtual column. `normalized_expr` carries catalog identities
   // (TableIndex(table_id), ProjectionIndex(Column::Id)); resolve to chunk
   // slots before feeding to ExpressionExecutor.
   std::vector<catalog::Column::Id> slot_to_col_id(chunk.ColumnCount(),
@@ -796,25 +796,27 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       slot_to_col_id[col.input_col_idx] = col.id;
     }
   }
-  for (const auto& je : gstate.json_indexed_expressions) {
-    SDB_ASSERT(je.normalised_expr);
-    auto result =
-      EvaluateJsonPathOverChunk(*je.normalised_expr, chunk, gstate.table_id,
-                                slot_to_col_id, context.client);
+  for (const auto& json_expr : gstate.json_indexed_expressions) {
+    SDB_ASSERT(json_expr.normalized_expr);
+    auto result = EvaluateJsonPathOverChunk(*json_expr.normalized_expr, chunk,
+                                            gstate.table_id, slot_to_col_id,
+                                            context.client);
 
-    const bool switched = writer->SwitchJsonExpression(
-      result.GetType(), /*have_nulls=*/true, je.column_id,
-      SerializeBoundExpression(*je.normalised_expr));
+    // Keep the serialized bytes alive: JsonExprDescriptor::serialized_expr
+    // is a string_view.
+    const auto serialized =
+      SerializeBoundExpression(*json_expr.normalized_expr);
+    const JsonExprDescriptor json_desc{json_expr.column_id, result.GetType(),
+                                       /*have_nulls=*/true, serialized};
+    const bool switched = writer->SwitchJsonExpression(json_desc);
     SDB_ASSERT(switched, "Cannot switch to JSON expression");
 
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      key_utils::SetupColumnForKey(row_keys[row], je.column_id);
+      key_utils::SetupColumnForKey(row_keys[row], json_expr.column_id);
     }
     DuckDBSinkIndexWriter* writer_ptr = writer;
-    const ColumnDescriptor je_desc{je.column_id, catalog::ColumnStoreMode{},
-                                   result.GetType(), /*have_nulls=*/true};
-    serializer->WriteColumn<DuckDBColumnSerializer::TxnWriter>(
-      nullptr, result, num_rows, row_keys, {&writer_ptr, 1}, je_desc);
+    serializer->WriteVector<DuckDBColumnSerializer::TxnWriter>(
+      nullptr, result, num_rows, row_keys, {&writer_ptr, 1}, json_desc);
   }
 
   writer->Finish();

@@ -125,12 +125,11 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
   bool SwitchColumnImpl(const ColumnDescriptor& col);
   // Like SwitchColumnImpl, but the field-name suffix is the canonical form
-  // of a user JSON-extract expression (column_id is the base JSON column).
-  // The Vector subsequently passed to Write*() must be the result of
-  // evaluating that bound expression -- the sink does no JSON parsing.
-  bool SwitchJsonExpressionImpl(const duckdb::LogicalType& return_type,
-                                bool have_nulls, catalog::Column::Id column_id,
-                                std::string_view canonical_expression);
+  // of a user JSON-extract expression (`json_desc.column_id` is the base
+  // JSON column). The Vector subsequently passed to Write*() must be the
+  // result of evaluating that bound expression -- the sink does no JSON
+  // parsing.
+  bool SwitchJsonExpressionImpl(const JsonExprDescriptor& json_desc);
   void FinishImpl();
 
   void AbortImpl() {

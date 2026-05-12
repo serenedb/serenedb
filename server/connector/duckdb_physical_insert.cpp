@@ -262,7 +262,7 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
       }
     }
 
-    gstate.serializer->WriteColumn(&txn_writer, vec, num_rows, gstate.row_keys,
+    gstate.serializer->WriteVector(&txn_writer, vec, num_rows, gstate.row_keys,
                                    gstate.active_writers, desc);
   }
 
@@ -277,22 +277,23 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   }
   for (auto& writer : gstate.index_writers) {
     auto evals = writer->JsonExpressionEvals();
-    for (const auto& je : evals) {
-      auto result = EvaluateJsonPathOverChunk(
-        *je.bound_expr, chunk, gstate.table_id, slot_to_col_id, context.client);
+    for (const auto& json_expr : evals) {
+      auto result =
+        EvaluateJsonPathOverChunk(*json_expr.bound_expr, chunk, gstate.table_id,
+                                  slot_to_col_id, context.client);
 
-      const bool need = writer->SwitchJsonExpression(
-        result.GetType(), /*have_nulls=*/true, je.column_id, je.serialized);
+      const JsonExprDescriptor json_desc{json_expr.column_id, result.GetType(),
+                                         /*have_nulls=*/true,
+                                         json_expr.serialized};
+      const bool need = writer->SwitchJsonExpression(json_desc);
       SDB_ASSERT(need, "Cannot switch to JSON expression");
 
       DuckDBSinkIndexWriter* writer_ptr = writer.get();
       // JSON-eval values feed only the iresearch index; the source JSON
-      // column was already persisted in step above. Writer is nullptr so
-      // the ColumnDescriptor is only used for `type` dispatch in WriteColumn.
-      const ColumnDescriptor je_desc{je.column_id, catalog::ColumnStoreMode{},
-                                     result.GetType(), /*have_nulls=*/true};
-      gstate.serializer->WriteColumn<DuckDBColumnSerializer::TxnWriter>(
-        nullptr, result, num_rows, gstate.row_keys, {&writer_ptr, 1}, je_desc);
+      // column was already persisted in step above.
+      gstate.serializer->WriteVector<DuckDBColumnSerializer::TxnWriter>(
+        nullptr, result, num_rows, gstate.row_keys, {&writer_ptr, 1},
+        json_desc);
     }
   }
 

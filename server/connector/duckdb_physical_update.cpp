@@ -589,7 +589,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
         key_utils::SetupColumnForKey(gstate.new_row_keys[row], col.id);
       }
-      gstate.serializer.WriteColumn(&txn_writer, chunk.data[i], num_rows,
+      gstate.serializer.WriteVector(&txn_writer, chunk.data[i], num_rows,
                                     gstate.new_row_keys, gstate.active_writers,
                                     desc);
     }
@@ -612,7 +612,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
         key_utils::SetupColumnForKey(gstate.new_row_keys[row], col.id);
       }
-      gstate.serializer.WriteColumn<DuckDBColumnSerializer::TxnWriter>(
+      gstate.serializer.WriteVector<DuckDBColumnSerializer::TxnWriter>(
         nullptr, chunk.data[col.chunk_idx], num_rows, gstate.new_row_keys,
         gstate.active_writers, desc);
     }
@@ -677,7 +677,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
         key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
       }
-      gstate.serializer.WriteColumn(&txn_writer, chunk.data[i], num_rows,
+      gstate.serializer.WriteVector(&txn_writer, chunk.data[i], num_rows,
                                     gstate.row_keys, gstate.active_writers,
                                     desc);
     }
@@ -700,7 +700,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
         key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
       }
-      gstate.serializer.WriteColumn<DuckDBColumnSerializer::TxnWriter>(
+      gstate.serializer.WriteVector<DuckDBColumnSerializer::TxnWriter>(
         nullptr, chunk.data[col.chunk_idx], num_rows, gstate.row_keys,
         gstate.active_writers, desc);
     }
@@ -728,25 +728,24 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     }
     for (auto& writer : gstate.index_writers) {
       auto evals = writer->JsonExpressionEvals();
-      for (const auto& je : evals) {
-        auto result =
-          EvaluateJsonPathOverChunk(*je.bound_expr, chunk, gstate.table_id,
-                                    slot_to_col_id, context.client);
+      for (const auto& json_expr : evals) {
+        auto result = EvaluateJsonPathOverChunk(*json_expr.bound_expr, chunk,
+                                                gstate.table_id, slot_to_col_id,
+                                                context.client);
 
-        const bool switched = writer->SwitchJsonExpression(
-          result.GetType(), /*have_nulls=*/true, je.column_id, je.serialized);
+        const JsonExprDescriptor json_desc{
+          json_expr.column_id, result.GetType(),
+          /*have_nulls=*/true, json_expr.serialized};
+        const bool switched = writer->SwitchJsonExpression(json_desc);
         SDB_ASSERT(switched, "Cannot switch to JSON expression");
 
         for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-          key_utils::SetupColumnForKey(json_keys[row], je.column_id);
+          key_utils::SetupColumnForKey(json_keys[row], json_expr.column_id);
         }
         DuckDBSinkIndexWriter* writer_ptr = writer.get();
         // Index-only write: see duckdb_physical_insert.cpp for the rationale.
-        const ColumnDescriptor je_desc{je.column_id, catalog::ColumnStoreMode{},
-                                       result.GetType(),
-                                       /*have_nulls=*/true};
-        gstate.serializer.WriteColumn<DuckDBColumnSerializer::TxnWriter>(
-          nullptr, result, num_rows, json_keys, {&writer_ptr, 1}, je_desc);
+        gstate.serializer.WriteVector<DuckDBColumnSerializer::TxnWriter>(
+          nullptr, result, num_rows, json_keys, {&writer_ptr, 1}, json_desc);
       }
     }
   }

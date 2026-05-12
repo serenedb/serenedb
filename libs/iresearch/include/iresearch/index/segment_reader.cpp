@@ -45,6 +45,10 @@ const columnstore::HNSWReader* SegmentReader::HNSW(field_id field) const {
   return _impl->HNSW(field);
 }
 
+const columnstore::Reader* SegmentReader::CsReader() const {
+  return _impl ? _impl->CsReader() : nullptr;
+}
+
 // FIXME find a better way to mask documents
 DocIterator::ptr SegmentReader::mask(DocIterator::ptr&& it) const {
   return _impl->mask(std::move(it));

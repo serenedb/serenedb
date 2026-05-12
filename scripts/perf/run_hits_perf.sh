@@ -31,14 +31,15 @@ ROOT="$(cd "$(dirname "$0")"/../.. && pwd)"
 #   PARQUET_FILE      : the hits.parquet input (lives in $HOME/data by default).
 #   BUILD_DIR         : the perf build tree containing the release serened.
 #   SERENED_DATA_DIR  : where serened stores its catalog/segments at runtime.
-PARQUET_FILE="${PERF_PARQUET_FILE:-${HOME}/data/hits.parquet}"
+#   NATIVE_DB         : .duckdb file the perf serened ATTACHes; in
+#                       scripts/perf/results/ (gitignored).
 BUILD_DIR="${PERF_BUILD_DIR:-${ROOT}/build_perf}"
-SERENED_DATA_DIR="${PERF_SERENED_DATA_DIR:-${ROOT}/build_perf_data}"
-# Native DuckDB catalog file the perf serened ATTACHes. Fresh each run, lives
-# next to build_perf_data so it shares the same gitignore (/build_*/...).
-NATIVE_DB="${PERF_NATIVE_DB:-${ROOT}/build_perf_native.duckdb}"
-SERENED_BIN="${BUILD_DIR}/bin/serened"
 RESULTS_DIR="${ROOT}/scripts/perf/results"
+PARQUET_DIR="${PERF_PARQUET_DIR:-${HOME}/data}"
+PARQUET_FILE="${PERF_PARQUET_FILE:-${PARQUET_DIR}/hits.parquet}"
+SERENED_DATA_DIR="${PERF_SERENED_DATA_DIR:-${RESULTS_DIR}/hits_perf_data}"
+NATIVE_DB="${PERF_NATIVE_DB:-${RESULTS_DIR}/hits_perf_native.duckdb}"
+SERENED_BIN="${BUILD_DIR}/bin/serened"
 PORT="${PERF_PORT:-6262}"
 LOG="/tmp/${USER}-serened-perf.log"
 
@@ -53,7 +54,7 @@ if [[ ! -x "${SERENED_BIN}" ]]; then
 	exit 1
 fi
 
-mkdir -p "${RESULTS_DIR}"
+mkdir -p "${RESULTS_DIR}" "${PARQUET_DIR}"
 RUN_LOG="${RESULTS_DIR}/run-$(date -u +%Y%m%dT%H%M%SZ).log"
 
 # Per-section last `Time: ...` ms value, populated by run_sql/run_setup. Used

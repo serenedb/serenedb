@@ -27,31 +27,25 @@
 namespace sdb::connector {
 namespace {
 
-const irs::columnstore::ColumnReader* OpenPkColumn(
-  const irs::IndexReader& reader, size_t seg_idx, duckdb::DatabaseInstance& db,
-  std::optional<irs::columnstore::Reader>& out_reader) {
-  out_reader.reset();
-  const auto* dir_reader = dynamic_cast<const irs::DirectoryReader*>(&reader);
-  if (!dir_reader) {
+const irs::columnstore::ColumnReader* PkColumn(const irs::IndexReader& reader,
+                                               size_t seg_idx) {
+  if (seg_idx >= reader.size()) {
     return nullptr;
   }
-  const auto& impl = *dir_reader->GetImpl();
-  const auto& segments = impl.Meta().index_meta.segments;
-  if (seg_idx >= segments.size()) {
+  const auto* cs_reader = reader[seg_idx].CsReader();
+  if (!cs_reader) {
     return nullptr;
   }
-  out_reader.emplace(impl.Dir(), segments[seg_idx].meta.name, db);
-  return out_reader->Column(
+  return cs_reader->Column(
     static_cast<irs::field_id>(catalog::Column::kGeneratedPKId));
 }
 
 }  // namespace
 
 bool SegmentPkSequentialFetcher::Open(const irs::IndexReader& reader,
-                                      size_t seg_idx,
-                                      duckdb::DatabaseInstance& db) {
+                                      size_t seg_idx) {
   Close();
-  _pk_col = OpenPkColumn(reader, seg_idx, db, _reader);
+  _pk_col = PkColumn(reader, seg_idx);
   return _pk_col != nullptr;
 }
 
@@ -82,16 +76,12 @@ void SegmentPkSequentialFetcher::Fetch(
                                                   out, out_start);
 }
 
-void SegmentPkSequentialFetcher::Close() noexcept {
-  _reader.reset();
-  _pk_col = nullptr;
-}
+void SegmentPkSequentialFetcher::Close() noexcept { _pk_col = nullptr; }
 
 bool SegmentPkRandomFetcher::Open(const irs::IndexReader& reader,
-                                  size_t seg_idx,
-                                  duckdb::DatabaseInstance& db) {
+                                  size_t seg_idx) {
   Close();
-  _pk_col = OpenPkColumn(reader, seg_idx, db, _reader);
+  _pk_col = PkColumn(reader, seg_idx);
   return _pk_col != nullptr;
 }
 
@@ -117,7 +107,6 @@ std::string_view SegmentPkRandomFetcher::Fetch(irs::doc_id_t doc_id) {
 }
 
 void SegmentPkRandomFetcher::Close() noexcept {
-  _reader.reset();
   _pk_col = nullptr;
   _seg.reset();
   _fetch_state = duckdb::ColumnFetchState{};

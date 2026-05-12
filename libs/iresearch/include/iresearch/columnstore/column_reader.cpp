@@ -41,6 +41,15 @@ namespace {
 const duckdb::LogicalType kLengthsType{duckdb::LogicalTypeId::UBIGINT};
 const duckdb::LogicalType kValidityType{duckdb::LogicalTypeId::VALIDITY};
 
+bool AnyNonEmptyValidity(const std::vector<duckdb::DataPointer>& pointers) {
+  for (const auto& p : pointers) {
+    if (p.compression_type != duckdb::CompressionType::COMPRESSION_EMPTY) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 ColumnReader::ColumnReader(field_id id, std::string name,
@@ -53,6 +62,7 @@ ColumnReader::ColumnReader(field_id id, std::string name,
     _type{std::move(type)},
     _data_pointers{std::move(data_pointers)},
     _validity_pointers{std::move(validity_pointers)},
+    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
     _in{&in},
     _db{&db} {
   auto build_offsets = [](const std::vector<duckdb::DataPointer>& pointers,
@@ -81,6 +91,7 @@ ColumnReader::ColumnReader(field_id id, std::string name,
     _name{std::move(name)},
     _type{std::move(type)},
     _validity_pointers{std::move(validity_pointers)},
+    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
     _child{std::move(element_child)},
     _array_size{array_size},
     _in{&in},
@@ -110,6 +121,7 @@ ColumnReader::ColumnReader(field_id id, std::string name,
     _type{std::move(type)},
     _data_pointers{std::move(data_pointers)},
     _validity_pointers{std::move(validity_pointers)},
+    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
     _child{std::move(element_child)},
     _in{&in},
     _db{&db} {
@@ -154,6 +166,7 @@ ColumnReader::ColumnReader(
     _name{std::move(name)},
     _type{std::move(type)},
     _validity_pointers{std::move(validity_pointers)},
+    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
     _struct_fields{std::move(struct_children)},
     _in{&in},
     _db{&db} {
@@ -219,7 +232,8 @@ RgWindow ColumnReader::LocateValidity(uint64_t row_pos,
 
 void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,
                                    duckdb::Vector& out,
-                                   duckdb::idx_t out_offset) {
+                                   duckdb::idx_t out_offset,
+                                   bool may_use_entire) {
   while (count > 0) {
     if (row_pos < _window.begin || _window.end <= row_pos) {
       _window = _validity ? _reader->LocateValidity(row_pos, _window)
@@ -229,7 +243,12 @@ void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,
     }
     _cursor.SeekTo(row_pos - _window.begin);
     const auto take = std::min<duckdb::idx_t>(count, _window.end - row_pos);
-    _cursor.Scan(take, out, out_offset);
+    const bool single_shot = (out_offset == 0 && take == count);
+    const auto scan_type =
+      (may_use_entire && single_shot && !_validity && !_reader->HasValidity())
+        ? duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR
+        : duckdb::ScanVectorType::SCAN_FLAT_VECTOR;
+    _cursor.Scan(take, out, out_offset, scan_type);
     row_pos += take;
     count -= take;
     out_offset += take;

@@ -71,6 +71,7 @@ class SegmentReader final : public SubReader {
 
   const columnstore::ColumnReader* Column(field_id field) const final;
   const columnstore::HNSWReader* HNSW(field_id field) const final;
+  const columnstore::Reader* CsReader() const final;
 
   const std::shared_ptr<const SegmentReaderImpl>& GetImpl() const noexcept {
     return _impl;

@@ -38,6 +38,7 @@ namespace columnstore {
 
 class ColumnReader;
 class HNSWReader;
+class Reader;
 
 }  // namespace columnstore
 struct SegmentMeta;
@@ -189,6 +190,8 @@ struct SubReader : public IndexReader, public NormProvider {
   virtual const columnstore::HNSWReader* HNSW(field_id /*field*/) const {
     return nullptr;
   }
+
+  virtual const columnstore::Reader* CsReader() const { return nullptr; }
 };
 
 template<typename Visitor, typename FilterVisitor>

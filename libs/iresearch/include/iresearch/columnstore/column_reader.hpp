@@ -20,6 +20,8 @@
 
 #include <cstdint>
 #include <duckdb/common/types.hpp>
+#include <duckdb/common/types/vector_buffer.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/data_pointer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
@@ -44,6 +46,20 @@ struct RgWindow {
   duckdb::idx_t begin = 0;
   duckdb::idx_t end = 0;
 };
+
+template<typename Rows>
+inline size_t ConsecutiveRunLength(
+  const Rows& rows, size_t i,
+  uint64_t upper_bound = std::numeric_limits<uint64_t>::max()) noexcept {
+  size_t run = 1;
+  while (i + run < rows.size() &&
+         static_cast<uint64_t>(rows[i + run]) ==
+           static_cast<uint64_t>(rows[i + run - 1]) + 1 &&
+         static_cast<uint64_t>(rows[i + run]) < upper_bound) {
+    ++run;
+  }
+  return run;
+}
 
 class ColumnReader final {
  public:
@@ -91,7 +107,7 @@ class ColumnReader final {
   uint64_t RowGroupRowCount(size_t rg) const noexcept {
     return _data_pointers[rg].tuple_count;
   }
-  bool HasValidity() const noexcept { return !_validity_pointers.empty(); }
+  bool HasValidity() const noexcept { return _has_validity; }
 
   RgWindow Locate(uint64_t row_pos, RgWindow hint = {}) const noexcept;
 
@@ -128,12 +144,21 @@ class ColumnReader final {
     }
 
     void Scan(duckdb::idx_t count, duckdb::Vector& out_vec,
-              duckdb::idx_t out_offset) {
-      _seg->Scan(_state, count, out_vec, out_offset,
-                 duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+              duckdb::idx_t out_offset,
+              duckdb::ScanVectorType scan_type =
+                duckdb::ScanVectorType::SCAN_FLAT_VECTOR) {
+      _seg->Scan(_state, count, out_vec, out_offset, scan_type);
       _state.offset_in_column += count;
       _state.internal_index += count;
       _cursor += count;
+      if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR &&
+          _seg->block) {
+        auto& bm = duckdb::BufferManager::GetBufferManager(_seg->db);
+        auto& block = _seg->block;
+        auto handle = bm.Pin(block);
+        out_vec.BufferMutable().AddAuxiliaryData(
+          std::make_unique<duckdb::PinnedBufferHolder>(std::move(handle)));
+      }
     }
 
     uint64_t Position() const noexcept { return _cursor; }
@@ -157,7 +182,7 @@ class ColumnReader final {
     RangeScan& operator=(RangeScan&&) noexcept = default;
 
     void Scan(uint64_t row_pos, duckdb::idx_t count, duckdb::Vector& out,
-              duckdb::idx_t out_offset);
+              duckdb::idx_t out_offset, bool may_use_entire = false);
 
    private:
     const ColumnReader* _reader;
@@ -169,15 +194,19 @@ class ColumnReader final {
   template<typename Rows>
   static void ScanRowsBatched(RangeScan& range, const Rows& rows,
                               duckdb::Vector& out, duckdb::idx_t out_offset) {
-    size_t i = 0;
-    while (i < rows.size()) {
-      size_t run_len = 1;
-      while (i + run_len < rows.size() &&
-             rows[i + run_len] - rows[i + run_len - 1] == 1) {
-        ++run_len;
+    if constexpr (requires { typename Rows::contiguous_range_tag; }) {
+      if (rows.size() != 0) {
+        range.Scan(rows[0], rows.size(), out, out_offset,
+                   /*may_use_entire=*/true);
       }
-      range.Scan(rows[i], run_len, out, out_offset + i);
-      i += run_len;
+      return;
+    } else {
+      size_t i = 0;
+      while (i < rows.size()) {
+        const size_t run_len = ConsecutiveRunLength(rows, i);
+        range.Scan(rows[i], run_len, out, out_offset + i);
+        i += run_len;
+      }
     }
   }
 
@@ -265,6 +294,7 @@ class ColumnReader final {
   std::vector<uint64_t> _data_offsets;      // size = data_pointers + 1
   std::vector<uint64_t> _validity_offsets;  // size = validity_pointers + 1
   uint64_t _row_count = 0;
+  bool _has_validity = false;  // any RG with non-EMPTY validity codec
   std::unique_ptr<ColumnReader> _child;
   uint64_t _array_size = 0;  // 0 for non-ARRAY
   std::vector<std::unique_ptr<ColumnReader>>

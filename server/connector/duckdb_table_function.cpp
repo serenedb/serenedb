@@ -89,8 +89,9 @@ duckdb::unique_ptr<duckdb::NodeStatistics> InvertedIndexCardinality(
   if (bind.scan_source && bind.scan_source->Kind() == ScanSourceKind::Search) {
     const auto& ss = bind.scan_source->Cast<SearchScan>();
     if (ss.snapshot) {
-      return duckdb::make_uniq<duckdb::NodeStatistics>(
-        static_cast<duckdb::idx_t>(ss.snapshot->reader.live_docs_count()));
+      const auto rows =
+        static_cast<duckdb::idx_t>(ss.snapshot->reader.live_docs_count());
+      return duckdb::make_uniq<duckdb::NodeStatistics>(rows, rows);
     }
   }
   auto shard = ResolveInvertedIndexShard(context, bind);
@@ -101,8 +102,9 @@ duckdb::unique_ptr<duckdb::NodeStatistics> InvertedIndexCardinality(
   if (!idx_snapshot || !idx_snapshot->reader) {
     return nullptr;
   }
-  return duckdb::make_uniq<duckdb::NodeStatistics>(
-    static_cast<duckdb::idx_t>(idx_snapshot->reader->live_docs_count()));
+  const auto rows =
+    static_cast<duckdb::idx_t>(idx_snapshot->reader->live_docs_count());
+  return duckdb::make_uniq<duckdb::NodeStatistics>(rows, rows);
 }
 
 }  // namespace
@@ -132,8 +134,8 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TableScanBindData::Cardinality(
     return nullptr;
   }
   auto stats = shard->GetTableStats();
-  return duckdb::make_uniq<duckdb::NodeStatistics>(
-    static_cast<duckdb::idx_t>(stats.num_rows));
+  const auto rows = static_cast<duckdb::idx_t>(stats.num_rows);
+  return duckdb::make_uniq<duckdb::NodeStatistics>(rows, rows);
 }
 
 ObjectId TableScanBindData::RelationId() const { return table->GetId(); }

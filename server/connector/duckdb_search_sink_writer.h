@@ -36,12 +36,12 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
  public:
   DuckDBSearchSinkInsertWriter(
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-    JsonPathTokenizerProvider&& json_path_tokenizer_provider,
-    std::vector<JsonPathBoundEntry>&& json_path_entries,
-    std::span<const catalog::Column::Id> columns)
-    : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider),
+    std::span<const catalog::Column::Id> columns,
+    JsonPathTokenizerProvider&& json_path_tokenizer_provider = {},
+    std::vector<JsonPathBoundEntry>&& json_path_entries = {})
+    : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider), columns,
                                std::move(json_path_tokenizer_provider),
-                               std::move(json_path_entries), columns} {}
+                               std::move(json_path_entries)} {}
 
   void Init(duckdb::idx_t batch_size, const duckdb::DataChunk&) final {
     InitImpl(batch_size);
@@ -92,12 +92,12 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
  public:
   DuckDBSearchSinkUpdateWriter(
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-    JsonPathTokenizerProvider&& json_path_tokenizer_provider,
-    std::vector<JsonPathBoundEntry>&& json_path_entries,
-    std::span<const catalog::Column::Id> columns)
-    : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider),
+    std::span<const catalog::Column::Id> columns,
+    JsonPathTokenizerProvider&& json_path_tokenizer_provider = {},
+    std::vector<JsonPathBoundEntry>&& json_path_entries = {})
+    : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider), columns,
                                std::move(json_path_tokenizer_provider),
-                               std::move(json_path_entries), columns},
+                               std::move(json_path_entries)},
       SearchSinkDeleteBaseImpl{trx} {}
 
   void Init(duckdb::idx_t batch_size, const duckdb::DataChunk&) final {

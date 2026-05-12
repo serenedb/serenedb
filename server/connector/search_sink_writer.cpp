@@ -114,9 +114,9 @@ inline constexpr bool kIsNumericKind =
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
+  std::span<const catalog::Column::Id> columns,
   JsonPathTokenizerProvider&& json_path_tokenizer_provider,
-  std::vector<JsonPathBoundEntry>&& json_path_entries,
-  std::span<const catalog::Column::Id> columns)
+  std::vector<JsonPathBoundEntry>&& json_path_entries)
   : ColumnSinkWriterImplBase{columns},
     _tokenizer_provider{std::move(tokenizer_provider)},
     _json_path_tokenizer_provider{std::move(json_path_tokenizer_provider)},

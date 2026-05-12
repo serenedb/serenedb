@@ -202,8 +202,8 @@ void FlushShard(ShardState& s,
   // Use the DuckDB-facing wrapper so SwitchColumn / Write / Finish /
   // JsonExpressionEvals are available (the impl base only exposes *Impl).
   connector::DuckDBSearchSinkInsertWriter insert_sink{
-    trx, std::move(tokenizer_provider), std::move(json_path_tokenizer_provider),
-    std::move(json_path_entries), s.indexed_column_ids};
+    trx, std::move(tokenizer_provider), s.indexed_column_ids,
+    std::move(json_path_tokenizer_provider), std::move(json_path_entries)};
   connector::SearchSinkDeleteBaseImpl delete_sink{trx};
 
   delete_sink.InitImpl(s.pk2row.size());

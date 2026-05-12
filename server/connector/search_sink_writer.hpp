@@ -114,9 +114,9 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
  public:
   SearchSinkInsertBaseImpl(
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-    JsonPathTokenizerProvider&& json_path_tokenizer_provider,
-    std::vector<JsonPathBoundEntry>&& json_path_entries,
-    std::span<const catalog::Column::Id> columns);
+    std::span<const catalog::Column::Id> columns,
+    JsonPathTokenizerProvider&& json_path_tokenizer_provider = {},
+    std::vector<JsonPathBoundEntry>&& json_path_entries = {});
 
   void InitImpl(size_t batch_size);
 

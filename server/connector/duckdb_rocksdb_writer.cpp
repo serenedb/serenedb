@@ -31,6 +31,9 @@
 #include "basics/string_utils.h"
 #include "connector/common.h"
 #include "connector/indexonly_marker.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 
@@ -501,8 +504,11 @@ void DuckDBColumnSerializer::WriteUnifiedColumn(
           write_scalar(static_cast<const uint32_t*>(nullptr));
           return;
         default:
-          SDB_ASSERT(false,
-                     "Unsupported ENUM physical type in WriteUnifiedColumn");
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+            ERR_MSG(
+              "Unsupported ENUM physical type in WriteUnifiedColumn: ",
+              magic_enum::enum_name(duckdb::EnumType::GetPhysicalType(type))));
       }
       return;
     default:
@@ -653,11 +659,17 @@ void DuckDBColumnSerializer::WriteVector(
                                             index_writers);
           break;
         default:
-          SDB_ASSERT(false, "Unsupported ENUM physical type");
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                          ERR_MSG("Unsupported ENUM physical type: ",
+                                  magic_enum::enum_name(
+                                    duckdb::EnumType::GetPhysicalType(type))));
       }
       break;
     default:
-      SDB_ASSERT(false, "Unsupported column type for RocksDB serialization");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("Unsupported column type for RocksDB serialization: ",
+                magic_enum::enum_name(type.id())));
   }
 }
 

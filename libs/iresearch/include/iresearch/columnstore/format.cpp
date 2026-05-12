@@ -125,6 +125,25 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id, std::string name,
   }
 }
 
+void SerializeHNSWInfo(duckdb::Serializer& obj, const HNSWInfo& info) {
+  obj.WriteProperty<uint64_t>(0, "max_doc", info.max_doc);
+  obj.WriteProperty<int32_t>(1, "d", info.d);
+  obj.WriteProperty<int32_t>(2, "m", info.m);
+  obj.WriteProperty<uint8_t>(3, "metric", static_cast<uint8_t>(info.metric));
+  obj.WriteProperty<int32_t>(4, "ef_construction", info.ef_construction);
+}
+
+HNSWInfo DeserializeHNSWInfo(duckdb::Deserializer& obj) {
+  HNSWInfo info;
+  info.max_doc =
+    static_cast<doc_id_t>(obj.ReadProperty<uint64_t>(0, "max_doc"));
+  info.d = obj.ReadProperty<int32_t>(1, "d");
+  info.m = obj.ReadProperty<int32_t>(2, "m");
+  info.metric = static_cast<HNSWMetric>(obj.ReadProperty<uint8_t>(3, "metric"));
+  info.ef_construction = obj.ReadProperty<int32_t>(4, "ef_construction");
+  return info;
+}
+
 PersistentColumnData DeserializeColumnData(duckdb::Deserializer& obj) {
   PersistentColumnData node;
   node.type = obj.ReadProperty<duckdb::LogicalType>(0, "type");
@@ -414,13 +433,9 @@ std::string Writer::Commit() {
         obj.WriteProperty<uint64_t>(0, "id", e.column_id);
         obj.WriteProperty<uint64_t>(1, "graph_offset", e.graph_offset);
         obj.WriteProperty<uint64_t>(2, "graph_byte_size", e.graph_byte_size);
-        obj.WriteProperty<uint64_t>(3, "max_doc", e.info.max_doc);
-        obj.WriteProperty<int32_t>(4, "d", e.info.d);
-        obj.WriteProperty<int32_t>(5, "m", e.info.m);
-        obj.WriteProperty<uint8_t>(6, "metric",
-                                   static_cast<uint8_t>(e.info.metric));
-        obj.WriteProperty<int32_t>(7, "ef_construction",
-                                   e.info.ef_construction);
+        obj.WriteObject(3, "info", [&](duckdb::Serializer& info_obj) {
+          SerializeHNSWInfo(info_obj, e.info);
+        });
       });
     });
   serializer.End();
@@ -546,13 +561,9 @@ Reader::Reader(const Directory& dir, std::string_view segment_name,
         auto graph_offset = obj.ReadProperty<uint64_t>(1, "graph_offset");
         auto graph_byte_size = obj.ReadProperty<uint64_t>(2, "graph_byte_size");
         HNSWInfo info;
-        info.max_doc =
-          static_cast<doc_id_t>(obj.ReadProperty<uint64_t>(3, "max_doc"));
-        info.d = obj.ReadProperty<int32_t>(4, "d");
-        info.m = obj.ReadProperty<int32_t>(5, "m");
-        info.metric =
-          static_cast<HNSWMetric>(obj.ReadProperty<uint8_t>(6, "metric"));
-        info.ef_construction = obj.ReadProperty<int32_t>(7, "ef_construction");
+        obj.ReadObject(3, "info", [&](duckdb::Deserializer& info_obj) {
+          info = DeserializeHNSWInfo(info_obj);
+        });
 
         const ColumnReader* col_reader = nullptr;
         auto col_it = _impl->by_id.find(id);

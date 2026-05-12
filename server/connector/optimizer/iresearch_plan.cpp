@@ -321,6 +321,7 @@ struct SearchColumnContext {
   std::function<std::optional<catalog::ColumnTokenizer>(
     catalog::Column::Id, std::span<const std::string>)>
     json_path_tokenizer_provider;
+  std::function<bool(catalog::Column::Id)> has_postings_provider;
 };
 
 connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
@@ -337,6 +338,9 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
       return std::nullopt;
     }
     if (!ctx.indexed_column_ids.contains(col_id)) {
+      return std::nullopt;
+    }
+    if (ctx.has_postings_provider && !ctx.has_postings_provider(col_id)) {
       return std::nullopt;
     }
     auto type_it = ctx.column_type_by_id.find(col_id);
@@ -374,10 +378,6 @@ connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx) {
     }
     connector::SearchColumnInfo info;
     info.column_id = col_id;
-    // The default leaf type is VARCHAR (the string-leaf path); the filter
-    // builder may override this when the user wraps the path in an
-    // explicit cast like `(content->>'val')::int`, so numeric/bool/null
-    // queries hit the right pre-emitted per-type field.
     info.logical_type = duckdb::LogicalType::VARCHAR;
     info.tokenizer = *std::move(tokenizer);
     info.json_path.assign(path.begin(), path.end());
@@ -385,9 +385,6 @@ connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx) {
   };
 }
 
-// Builds a SearchColumnContext for a LogicalGet that produces the same
-// column-id space as the bind data; reused by TryAnnTopk / TryAnnRange to
-// drive iresearch text-filter pushdown.
 void InitSearchColumnContextForGet(
   SearchColumnContext& ctx,
   std::vector<catalog::Column::Id>& projected_ids_storage,
@@ -420,6 +417,14 @@ void InitSearchColumnContextForGet(
   ctx.tokenizer_provider = [index_ptr, snapshot](catalog::Column::Id col_id) {
     return index_ptr->GetColumnTokenizer(snapshot, col_id);
   };
+  ctx.has_postings_provider = [index_ptr](catalog::Column::Id col_id) {
+    const auto* info = index_ptr->FindColumnInfo(col_id);
+    if (info == nullptr) {
+      return false;
+    }
+    return !info->store_values || info->text_dictionary.isSet() ||
+           !info->json_paths.empty();
+  };
   ctx.json_path_tokenizer_provider = [index_ptr, snapshot](
                                        catalog::Column::Id col_id,
                                        std::span<const std::string> path) {
@@ -427,19 +432,13 @@ void InitSearchColumnContextForGet(
   };
 }
 
-// Returns a column-name lookup suitable for `irs::ToStringDemangled`.
-// Falls back to "col<id>" for ids not known to the bind data; the
-// fallback string lives in a thread-local so the returned string_view
-// stays valid for the duration of one printer invocation.
 auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data) {
-  return [&bind_data](catalog::Column::Id col_id) -> std::string_view {
-    static thread_local std::string fallback;
+  return [&](catalog::Column::Id col_id) {
     auto name = bind_data.ColumnNameById(col_id);
     if (!name.empty()) {
-      return name;
+      return std::string{name};
     }
-    fallback = absl::StrCat("col", col_id);
-    return fallback;
+    return absl::StrCat("col", col_id);
   };
 }
 

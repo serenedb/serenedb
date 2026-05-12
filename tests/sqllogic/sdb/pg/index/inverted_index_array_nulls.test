@@ -1,0 +1,124 @@
+hash-threshold 100
+
+# Repro: NULL ARRAY values must round-trip through the new cs columnstore.
+#
+# Writer (irs::columnstore::ColumnWriter::FlushNode ARRAY branch) emits a
+# top-level validity payload, but the materializer (MaterializeArrayRange
+# in columnstore_materializer.h) never reads it -- so a row inserted as
+# NULL comes back as a non-null array of default values, and IS NULL
+# returns false on it. These cases pin down the correct behavior.
+
+statement ok
+CREATE TABLE arr_n (
+  pk INTEGER PRIMARY KEY,
+  text_for_search VARCHAR,
+  vec FLOAT[3]
+)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE INDEX arr_n_idx ON arr_n USING inverted(pk, text_for_search en)
+  INCLUDE (vec)
+
+
+statement ok
+INSERT INTO arr_n VALUES (1, 'first',  [1.0, 2.0, 3.0])
+
+
+statement ok
+INSERT INTO arr_n VALUES (2, 'second', NULL)
+
+
+statement ok
+INSERT INTO arr_n VALUES (3, 'third',  [-1.0, 0.0, 1.0])
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) arr_n
+
+
+# Sanity: the ARRAY column is served by the iresearch columnstore (i),
+# so the NULL roundtrip below proves the cs materialiser handles parent
+# validity (the bug this test was written for).
+query
+EXPLAIN SELECT pk, vec FROM arr_n_idx WHERE text_for_search @@ ts_phrase('second');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: arr_n_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[text_for_search│
+│ (string) = <Term:second(0,│
+│           0); >]]         │
+│                           │
+│        Projections:       │
+│           pk (l)          │
+│          vec (i)          │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
+
+# Materialise an explicit NULL row through the index path.
+query
+SELECT pk, vec FROM arr_n_idx WHERE text_for_search @@ ts_phrase('second')
+ORDER BY pk;
+----
+pk	vec
+2	NULL
+
+
+# The NULL row must coexist with non-NULL rows in the same projection.
+query
+SELECT pk, vec FROM arr_n_idx
+WHERE text_for_search @@ ts_phrase('first')
+   OR text_for_search @@ ts_phrase('second')
+   OR text_for_search @@ ts_phrase('third')
+ORDER BY pk;
+----
+pk	vec
+1	{1,2,3}
+2	NULL
+3	{-1,0,1}
+
+
+# IS NULL on an INCLUDE-only column: the conjunct falls through as a
+# residual filter (vec has no inverted-index postings), so DuckDB
+# evaluates it after the index scan materialises vec from the cs.
+query
+SELECT pk FROM arr_n_idx
+WHERE text_for_search @@ ts_phrase('second') AND vec IS NULL
+ORDER BY pk;
+----
+pk
+2
+
+
+# IS NOT NULL excludes the NULL row.
+query
+SELECT pk FROM arr_n_idx
+WHERE (text_for_search @@ ts_phrase('first')
+       OR text_for_search @@ ts_phrase('second')
+       OR text_for_search @@ ts_phrase('third'))
+  AND vec IS NOT NULL
+ORDER BY pk;
+----
+pk
+1
+3

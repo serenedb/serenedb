@@ -24,6 +24,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
@@ -392,7 +393,11 @@ void FlushNode(duckdb::DatabaseInstance& db, duckdb::PartialBlockManager& pbm,
                 /*skip_validity=*/false, forced);
       return;
     }
+    case duckdb::LogicalTypeId::MAP:
     case duckdb::LogicalTypeId::LIST: {
+      // MAP shares LIST's physical layout (PhysicalType::LIST + STRUCT<k,v>
+      // element). ListType::GetChildType / ListVector accessors work for
+      // both, so the on-disk shape is identical.
       if (!skip_validity) {
         CompressColumn(db, pbm, out, validity_type, vec, row_count, row_start,
                        node.validity_pointers,
@@ -400,12 +405,18 @@ void FlushNode(duckdb::DatabaseInstance& db, duckdb::PartialBlockManager& pbm,
       }
       const auto* entries =
         duckdb::FlatVector::GetData<duckdb::list_entry_t>(vec);
+      const auto& parent_validity = duckdb::FlatVector::Validity(vec);
       duckdb::Vector lengths{duckdb::LogicalType::UBIGINT, row_count};
       auto* lp = duckdb::FlatVector::GetDataMutable<uint64_t>(lengths);
       uint64_t total_elems = 0;
       for (duckdb::idx_t i = 0; i < row_count; ++i) {
-        lp[i] = entries[i].length;
-        total_elems += entries[i].length;
+        // Mirror duckdb::ListColumnData::Append: invalid parent rows
+        // contribute zero elements to the child column (their length
+        // slot may carry uninitialised bytes).
+        const uint64_t len =
+          parent_validity.RowIsValid(i) ? entries[i].length : 0;
+        lp[i] = len;
+        total_elems += len;
       }
       const auto lengths_type = duckdb::LogicalType::UBIGINT;
       CompressColumn(db, pbm, out, lengths_type, lengths, row_count, row_start,
@@ -419,6 +430,31 @@ void FlushNode(duckdb::DatabaseInstance& db, duckdb::PartialBlockManager& pbm,
                 static_cast<duckdb::idx_t>(total_elems),
                 /*row_start=*/0, node.child_columns.front(),
                 /*skip_validity=*/false, forced);
+      return;
+    }
+    case duckdb::LogicalTypeId::STRUCT: {
+      // STRUCT has no top-level data of its own -- just parent validity and
+      // per-field children. Matches duckdb::StructColumnData::Append.
+      if (!skip_validity) {
+        CompressColumn(db, pbm, out, validity_type, vec, row_count, row_start,
+                       node.validity_pointers,
+                       duckdb::CompressionType::COMPRESSION_AUTO);
+      }
+      const auto& child_types = duckdb::StructType::GetChildTypes(type);
+      auto& entries = duckdb::StructVector::GetEntries(vec);
+      SDB_ASSERT(entries.size() == child_types.size());
+      if (node.child_columns.size() != child_types.size()) {
+        node.child_columns.clear();
+        node.child_columns.resize(child_types.size());
+        for (size_t i = 0; i < child_types.size(); ++i) {
+          node.child_columns[i].type = child_types[i].second;
+        }
+      }
+      for (size_t i = 0; i < child_types.size(); ++i) {
+        FlushNode(db, pbm, out, child_types[i].second, entries[i], row_count,
+                  row_start, node.child_columns[i],
+                  /*skip_validity=*/false, forced);
+      }
       return;
     }
     default: {

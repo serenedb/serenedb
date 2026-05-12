@@ -135,6 +135,34 @@ ColumnReader::ColumnReader(field_id id, std::string name,
   _rg_element_starts[0] = 0;
 }
 
+ColumnReader::ColumnReader(
+  field_id id, std::string name, duckdb::LogicalType type,
+  std::vector<duckdb::DataPointer> validity_pointers,
+  std::vector<std::unique_ptr<ColumnReader>> struct_children, IndexInput& in,
+  duckdb::DatabaseInstance& db)
+  : _id{id},
+    _name{std::move(name)},
+    _type{std::move(type)},
+    _validity_pointers{std::move(validity_pointers)},
+    _struct_fields{std::move(struct_children)},
+    _in{&in},
+    _db{&db} {
+  SDB_ASSERT(!_struct_fields.empty());
+  for (const auto& f : _struct_fields) {
+    SDB_ASSERT(f);
+  }
+  // Row count is determined by the first field; STRUCT has no own data.
+  _row_count = _struct_fields.front()->RowCount();
+  _data_offsets.push_back(0);  // sentinel only.
+  _validity_offsets.reserve(_validity_pointers.size() + 1);
+  uint64_t vtotal = 0;
+  for (const auto& p : _validity_pointers) {
+    _validity_offsets.push_back(vtotal);
+    vtotal += p.tuple_count;
+  }
+  _validity_offsets.push_back(vtotal);
+}
+
 namespace {
 
 RgWindow LocateInOffsets(uint64_t row_pos, const std::vector<uint64_t>& offsets,
@@ -166,8 +194,9 @@ RgWindow LocateInOffsets(uint64_t row_pos, const std::vector<uint64_t>& offsets,
 }  // namespace
 
 RgWindow ColumnReader::Locate(uint64_t row_pos, RgWindow hint) const noexcept {
-  SDB_ASSERT(_type.id() != duckdb::LogicalTypeId::ARRAY,
-             "Locate has no meaning on ARRAY parents (no top-level data)");
+  SDB_ASSERT(_type.id() != duckdb::LogicalTypeId::ARRAY &&
+               _type.id() != duckdb::LogicalTypeId::STRUCT,
+             "Locate has no meaning on parents with no top-level data");
   SDB_ASSERT(row_pos < _row_count);
   return LocateInOffsets(row_pos, _data_offsets, hint);
 }
@@ -265,7 +294,8 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
 
 duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegment(
   size_t rg) const {
-  if (_type.id() == duckdb::LogicalTypeId::LIST) {
+  if (_type.id() == duckdb::LogicalTypeId::LIST ||
+      _type.id() == duckdb::LogicalTypeId::MAP) {
     return OpenSegmentImpl(_data_pointers[rg], kLengthsType, *_in);
   }
   return OpenSegmentImpl(_data_pointers[rg], _type, *_in);
@@ -277,7 +307,8 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenValiditySegment(
 }
 
 std::span<const uint64_t> ColumnReader::ListOffsets(size_t rg) const {
-  SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::LIST);
+  SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::LIST ||
+             _type.id() == duckdb::LogicalTypeId::MAP);
   SDB_ASSERT(rg < _list_offsets_per_rg.size());
   auto& cache = _list_offsets_per_rg[rg];
   if (!cache.empty()) {
@@ -304,7 +335,8 @@ std::span<const uint64_t> ColumnReader::ListOffsets(size_t rg) const {
 }
 
 uint64_t ColumnReader::RowGroupElementStart(size_t rg) const {
-  SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::LIST);
+  SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::LIST ||
+             _type.id() == duckdb::LogicalTypeId::MAP);
   SDB_ASSERT(rg < _rg_element_starts.size());
   constexpr auto kSentinel = std::numeric_limits<uint64_t>::max();
   if (_rg_element_starts[rg] != kSentinel) {
@@ -331,7 +363,8 @@ void ColumnReader::PointReadCursor::FetchRow(uint64_t row_pos,
                                              duckdb::idx_t out_idx) {
   const auto window = _reader->Locate(row_pos);
   if (window.rg != _cached_rg) {
-    if (_reader->Type().id() == duckdb::LogicalTypeId::LIST) {
+    if (_reader->Type().id() == duckdb::LogicalTypeId::LIST ||
+        _reader->Type().id() == duckdb::LogicalTypeId::MAP) {
       _segment = _reader->OpenSegmentImpl(_reader->_data_pointers[window.rg],
                                           kLengthsType, *_in);
     } else {

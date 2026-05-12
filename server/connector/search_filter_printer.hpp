@@ -41,7 +41,7 @@ std::string ToString(const Filter& f);
 // Falls back to "col=ID" for unknown ids.
 std::string ToStringDemangled(
   const Filter& f,
-  const std::function<std::string_view(sdb::catalog::Column::Id)>& col_name);
+  const std::function<std::string(sdb::catalog::Column::Id)>& col_name);
 
 template<typename Sink>
 void AbslStringify(Sink& sink, const Filter& filter) {

@@ -1,0 +1,382 @@
+hash-threshold 100
+
+# Coverage matrix for how INCLUDEd vs indexed columns interact in one
+# inverted index. Three scenarios:
+#
+#  1. indexed-only column (e.g. `body en`) -- filter pushed down to
+#     iresearch, materialisation falls back to the rocksdb lookup `(l)`.
+#  2. INCLUDE-only column -- no posting list; filters fall through to a
+#     residual FILTER above the index scan, materialisation comes from
+#     the typed columnstore `(i)`.
+#  3. same column declared as both indexed AND INCLUDE -- the
+#     `InvertedIndexColumnInfo` carries `text_dictionary` AND
+#     `store_values=true`, so filters push down to the posting list AND
+#     materialisation comes from the cs (no rocksdb lookup needed for
+#     that column).
+#
+# The HNSW dual-purpose case lives in inverted_index_ann_include.test
+# (the `hnsw` opclass implicitly sets `store_values=true`).
+
+statement ok
+CREATE TABLE m (
+  pk INTEGER PRIMARY KEY,
+  body VARCHAR,         -- text-indexed only
+  tag INTEGER,          -- numeric-indexed only
+  note VARCHAR,         -- INCLUDE-only
+  extra INTEGER,        -- INCLUDE-only
+  dual VARCHAR          -- indexed AND INCLUDE
+)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+# `dual` appears in both the inverted-clause (text-indexed) AND INCLUDE.
+# That single column ends up with text_dictionary set AND
+# store_values=true on its InvertedIndexColumnInfo.
+statement ok
+CREATE INDEX m_idx ON m USING inverted(pk, body en, tag, dual en)
+  INCLUDE (note, extra, dual)
+
+
+statement ok
+INSERT INTO m VALUES (1, 'alpha cat',  100,  'note one',   10, 'red apple')
+
+
+statement ok
+INSERT INTO m VALUES (2, 'beta dog',   200,  NULL,        NULL, NULL)
+
+
+statement ok
+INSERT INTO m VALUES (3, 'gamma cat',  NULL, 'note three', 30, 'green leaf')
+
+
+statement ok
+INSERT INTO m VALUES (4, 'delta',      400,  'note four',  40, 'red leaf')
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) m
+
+
+# ---- 1. INDEXED-only column projection: pushdown filter + rocksdb lookup ----
+# `body` is indexed but not INCLUDE'd -> EXPLAIN shows `Lookup: rocksdb`
+# and the projection comes through bare (no annotation when everything
+# is from one source).
+query
+EXPLAIN SELECT pk, body FROM m_idx WHERE body @@ ts_phrase('alpha');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            body           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│        Index: m_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│   <Term:alpha(0, 0); >]]  │
+│                           │
+│        Projections:       │
+│            body           │
+│             pk            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pk, body FROM m_idx WHERE body @@ ts_phrase('alpha') ORDER BY pk;
+----
+pk	body
+1	alpha cat
+
+
+# `tag` (numeric-indexed only) -- same story.
+query
+EXPLAIN SELECT pk, tag FROM m_idx WHERE tag = 100;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            tag            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│        Index: m_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[Term(tag(numeric)=\\x0 │
+│       \\x80\\x0\\x0d)]       │
+│                           │
+│        Projections:       │
+│            tag            │
+│             pk            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pk, tag FROM m_idx WHERE tag = 100 ORDER BY pk;
+----
+pk	tag
+1	100
+
+
+# ---- 2. INCLUDE-only projection: cs (i), no rocksdb lookup needed ----
+query
+EXPLAIN SELECT note, extra FROM m_idx WHERE body @@ ts_phrase('alpha');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│        Index: m_idx       │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│   <Term:alpha(0, 0); >]]  │
+│                           │
+│        Projections:       │
+│            note           │
+│           extra           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pk, note, extra FROM m_idx WHERE body @@ ts_phrase('cat') ORDER BY pk;
+----
+pk	note	extra
+1	note one	10
+3	note three	30
+
+
+# IS NULL on INCLUDE-only column: residual FILTER above the index scan
+# (no posting list for `note` -- DuckDB evaluates against the cs value).
+query
+EXPLAIN SELECT pk, note FROM m_idx
+WHERE body @@ ts_phrase('cat') AND note IS NULL;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            note           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│       (note IS NULL)      │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│        Index: m_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:cat(0, 0); >]]   │
+│                           │
+│        Projections:       │
+│          note (i)         │
+│           pk (l)          │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pk, note FROM m_idx
+WHERE (body @@ ts_phrase('cat') OR body @@ ts_phrase('dog')
+       OR body @@ ts_phrase('delta')) AND note IS NULL
+ORDER BY pk;
+----
+pk	note
+2	NULL
+
+
+# ---- 3. Mixed projection over all three column kinds ----
+# Per-column annotations:  body/tag/pk -> (l) (rocksdb lookup),
+# note/extra -> (i) (cs), dual -> (i) (cs, since INCLUDE'd too).
+query
+EXPLAIN SELECT pk, body, tag, note, extra, dual FROM m_idx
+WHERE body @@ ts_phrase('alpha');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            body           │
+│            tag            │
+│            note           │
+│           extra           │
+│            dual           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│        Index: m_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│   <Term:alpha(0, 0); >]]  │
+│                           │
+│        Projections:       │
+│          body (l)         │
+│           pk (l)          │
+│          tag (l)          │
+│          note (i)         │
+│         extra (i)         │
+│          dual (i)         │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pk, body, tag, note, extra, dual FROM m_idx
+WHERE body @@ ts_phrase('alpha') ORDER BY pk;
+----
+pk	body	tag	note	extra	dual
+1	alpha cat	100	note one	10	red apple
+
+
+# ---- 4. Dual-purpose column: indexed AND INCLUDEd ----
+# Filter pushes down to the posting list (no residual FILTER above the
+# scan), AND projection comes from cs (`dual (i)`). This combines the
+# two roles into one declaration.
+query
+EXPLAIN SELECT pk, dual FROM m_idx WHERE dual @@ ts_phrase('red');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            dual           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│        Index: m_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[dual(string) = │
+│    <Term:red(0, 0); >]]   │
+│                           │
+│        Projections:       │
+│          dual (i)         │
+│           pk (l)          │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pk, dual FROM m_idx WHERE dual @@ ts_phrase('red') ORDER BY pk;
+----
+pk	dual
+1	red apple
+4	red leaf
+
+
+# IS NULL on dual-purpose: the null-mangled term sits in the posting
+# list (because dual has explicit text indexing). EXPLAIN should show
+# `AND[Term(dual(null)=)]` inside the iresearch filter and NO residual
+# FILTER node.
+query
+EXPLAIN SELECT pk, dual FROM m_idx WHERE dual IS NULL;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            dual           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│        Index: m_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│   AND[Term(dual(null)=)]  │
+│                           │
+│        Projections:       │
+│          dual (i)         │
+│           pk (l)          │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pk, dual FROM m_idx WHERE dual IS NULL ORDER BY pk;
+----
+pk	dual
+2	NULL
+
+
+# ---- 5. Combined filter mixing indexed posting + residual cs filter ----
+# `body @@ phrase` pushes to the posting list, `note IS NOT NULL` runs
+# as a residual against the cs-materialised value.
+query
+SELECT pk, body, note FROM m_idx
+WHERE (body @@ ts_phrase('cat') OR body @@ ts_phrase('dog'))
+  AND note IS NOT NULL
+ORDER BY pk;
+----
+pk	body	note
+1	alpha cat	note one
+3	gamma cat	note three
+
+
+# ---- 6. tag-range filter via inverted, project dual via cs ----
+query
+SELECT pk, tag, dual FROM m_idx WHERE tag >= 200 ORDER BY pk;
+----
+pk	tag	dual
+2	200	NULL
+4	400	red leaf

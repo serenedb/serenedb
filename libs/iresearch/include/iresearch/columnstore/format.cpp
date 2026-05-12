@@ -93,7 +93,11 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id, std::string name,
         std::move(node.validity_pointers), std::move(child), array_size, in,
         db);
     }
+    case duckdb::LogicalTypeId::MAP:
     case duckdb::LogicalTypeId::LIST: {
+      // MAP rides on the LIST path: PhysicalType::LIST with a
+      // STRUCT<key, value> element. ListType::GetChildType returns the
+      // STRUCT, which recurses through the STRUCT case below.
       SDB_ASSERT(node.child_columns.size() == 1);
       auto child =
         MakeColumnReader(field_limits::invalid(), {},
@@ -101,6 +105,17 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id, std::string name,
       return std::make_unique<ColumnReader>(
         id, std::move(name), std::move(node.type), std::move(node.pointers),
         std::move(node.validity_pointers), std::move(child), in, db);
+    }
+    case duckdb::LogicalTypeId::STRUCT: {
+      std::vector<std::unique_ptr<ColumnReader>> fields;
+      fields.reserve(node.child_columns.size());
+      for (auto& cn : node.child_columns) {
+        fields.push_back(
+          MakeColumnReader(field_limits::invalid(), {}, std::move(cn), in, db));
+      }
+      return std::make_unique<ColumnReader>(
+        id, std::move(name), std::move(node.type),
+        std::move(node.validity_pointers), std::move(fields), in, db);
     }
     default: {
       return std::make_unique<ColumnReader>(
@@ -114,13 +129,14 @@ PersistentColumnData DeserializeColumnData(duckdb::Deserializer& obj) {
   PersistentColumnData node;
   node.type = obj.ReadProperty<duckdb::LogicalType>(0, "type");
   // DataPointer::Deserialize reads the LogicalType from the deserializer
-  // context. For LIST the codec data type is UBIGINT (lengths) not the
-  // node's LIST type; primitives use node.type.
+  // context. For LIST/MAP the codec data type is UBIGINT (per-row lengths),
+  // not the node's nested type; for STRUCT there is no own data; primitives
+  // use node.type directly.
   static const duckdb::LogicalType kListLengthsType =
     duckdb::LogicalType::UBIGINT;
-  const auto& data_codec_type = (node.type.id() == duckdb::LogicalTypeId::LIST)
-                                  ? kListLengthsType
-                                  : node.type;
+  const bool is_list_like = node.type.id() == duckdb::LogicalTypeId::LIST ||
+                            node.type.id() == duckdb::LogicalTypeId::MAP;
+  const auto& data_codec_type = is_list_like ? kListLengthsType : node.type;
   obj.Set<const duckdb::LogicalType&>(data_codec_type);
   obj.ReadList(1, "data",
                [&](duckdb::Deserializer::List& plist, duckdb::idx_t /*j*/) {

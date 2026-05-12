@@ -50,8 +50,9 @@ void ColumnstoreMaterializer::SelectByDocIds(
   }
   for (const auto& b : _bound) {
     auto& out_vec = output.data[b.output_slot];
-    if (b.reader->Type().id() == duckdb::LogicalTypeId::LIST &&
-        output_start == 0) {
+    const auto type_id = b.reader->Type().id();
+    if (output_start == 0 && (type_id == duckdb::LogicalTypeId::LIST ||
+                              type_id == duckdb::LogicalTypeId::MAP)) {
       duckdb::ListVector::SetListSize(out_vec, 0);
     }
     MaterializeColumnRange(*b.reader, doc_ids, out_vec, output_start);
@@ -65,12 +66,19 @@ void ColumnstoreMaterializer::Scan(uint64_t start_doc, duckdb::idx_t count,
   }
   for (auto& b : _bound) {
     auto& out_vec = output.data[b.output_slot];
-    if (b.reader->Type().id() == duckdb::LogicalTypeId::LIST) {
-      // LIST doesn't fit the cached-cursor flat-scan path; issue per-row.
-      duckdb::ListVector::SetListSize(out_vec, 0);
-      for (duckdb::idx_t i = 0; i < count; ++i) {
-        cs_internal::MaterializeListRow(*b.reader, start_doc + i, out_vec, i);
+    const auto type_id = b.reader->Type().id();
+    if (type_id == duckdb::LogicalTypeId::LIST ||
+        type_id == duckdb::LogicalTypeId::MAP ||
+        type_id == duckdb::LogicalTypeId::ARRAY ||
+        type_id == duckdb::LogicalTypeId::STRUCT) {
+      // Nested types are walked from scratch each Scan; cached cursors
+      // only help the primitive leaf path.
+      if (type_id == duckdb::LogicalTypeId::LIST ||
+          type_id == duckdb::LogicalTypeId::MAP) {
+        duckdb::ListVector::SetListSize(out_vec, 0);
       }
+      MaterializeColumnRange(
+        *b.reader, cs_internal::IotaRange{start_doc, count}, out_vec, 0);
       continue;
     }
     if (b.reader->RowGroupCount() > 0) {

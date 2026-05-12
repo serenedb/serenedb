@@ -248,7 +248,8 @@ class ColumnReader final {
   uint64_t _row_count = 0;
   std::unique_ptr<ColumnReader> _child;
   uint64_t _array_size = 0;  // 0 for non-ARRAY
-  std::vector<std::unique_ptr<ColumnReader>> _struct_fields;  // empty for non-STRUCT
+  std::vector<std::unique_ptr<ColumnReader>>
+    _struct_fields;  // empty for non-STRUCT
   IndexInput* _in;
   duckdb::DatabaseInstance* _db;
 

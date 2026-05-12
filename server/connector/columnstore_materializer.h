@@ -63,9 +63,7 @@ namespace cs_internal {
 struct IotaRange {
   uint64_t start;
   uint64_t count;
-  constexpr size_t size() const noexcept {
-    return static_cast<size_t>(count);
-  }
+  constexpr size_t size() const noexcept { return static_cast<size_t>(count); }
   constexpr uint64_t operator[](size_t i) const noexcept { return start + i; }
 };
 static_assert(DocIdRange<IotaRange>);

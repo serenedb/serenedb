@@ -1038,6 +1038,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     use_generated_pk_rowid_col = sdb_table->PKColumns().empty();
   }
 
+  containers::FlatHashSet<duckdb::column_t> seen_columns;
   for (auto& expr : create_index_info->parsed_expressions) {
     if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
       auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
@@ -1049,8 +1050,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       // type SELECT "Title" against a lowercase `title` column.
       for (size_t i = 0; i < rel_columns.size(); ++i) {
         if (absl::EqualsIgnoreCase(rel_columns[i].first, col_name)) {
-          create_index_info->column_ids.push_back(i);
-          create_index_info->scan_types.push_back(rel_columns[i].second);
+          const auto col_id = static_cast<duckdb::column_t>(i);
+          if (seen_columns.insert(col_id).second) {
+            create_index_info->column_ids.push_back(col_id);
+            create_index_info->scan_types.push_back(rel_columns[i].second);
+          }
           break;
         }
       }

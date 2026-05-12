@@ -440,15 +440,15 @@ std::string ToString(const Filter& f) {
 
 std::string ToStringDemangled(
   const Filter& f,
-  const std::function<std::string_view(sdb::catalog::Column::Id)>& col_name) {
+  const std::function<std::string(sdb::catalog::Column::Id)>& col_name) {
   return StringifyFilter(f, [&](std::string_view field) -> std::string {
     constexpr size_t kIdSize = sizeof(uint64_t);
     if (field.size() < kIdSize) {
       return TermToString(field);
     }
     const uint64_t col_id = absl::big_endian::Load64(field.data());
-    const std::string_view name = col_name(col_id);
-    return absl::StrCat(name, "(", MangleName(field.substr(kIdSize)), ")");
+    return absl::StrCat(col_name(col_id), "(",
+                        MangleName(field.substr(kIdSize)), ")");
   });
 }
 

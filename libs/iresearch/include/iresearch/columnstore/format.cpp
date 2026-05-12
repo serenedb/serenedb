@@ -110,8 +110,8 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id, std::string name,
       std::vector<std::unique_ptr<ColumnReader>> fields;
       fields.reserve(node.child_columns.size());
       for (auto& cn : node.child_columns) {
-        fields.push_back(MakeColumnReader(field_limits::invalid(), {},
-                                          std::move(cn), in, db));
+        fields.push_back(
+          MakeColumnReader(field_limits::invalid(), {}, std::move(cn), in, db));
       }
       return std::make_unique<ColumnReader>(
         id, std::move(name), std::move(node.type),

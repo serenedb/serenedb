@@ -437,14 +437,12 @@ void AppendVectorSearchSummary(
   duckdb::InsertionOrderPreservingMap<std::string>& out) {
   out.insert("Dims", std::to_string(scan.query_vector.size()));
   if (scan.text_filter_root) {
-    auto col_name = [&bind](catalog::Column::Id col_id) -> std::string_view {
-      static thread_local std::string fallback;
+    auto col_name = [&](catalog::Column::Id col_id) {
       auto name = bind.ColumnNameById(col_id);
       if (!name.empty()) {
-        return name;
+        return std::string{name};
       }
-      fallback = absl::StrCat("col", col_id);
-      return fallback;
+      return absl::StrCat("col", col_id);
     };
     SDB_ASSERT(scan.text_filter_root);
     out.insert("TextFilter",

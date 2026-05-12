@@ -419,7 +419,11 @@ void InitSearchColumnContextForGet(
   };
   ctx.has_postings_provider = [index_ptr](catalog::Column::Id col_id) {
     const auto* info = index_ptr->FindColumnInfo(col_id);
-    return info != nullptr && !info->store_values;
+    if (info == nullptr) {
+      return false;
+    }
+    return !info->store_values || info->text_dictionary.isSet() ||
+           !info->json_paths.empty();
   };
   ctx.json_path_tokenizer_provider = [index_ptr, snapshot](
                                        catalog::Column::Id col_id,

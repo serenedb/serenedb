@@ -64,6 +64,11 @@ class ColumnWriter final {
 
   field_id Id() const noexcept { return _id; }
   const duckdb::LogicalType& Type() const noexcept { return _type; }
+  uint64_t RowGroupSize() const noexcept { return _row_group_size; }
+  bool SkipValidity() const noexcept { return _skip_validity; }
+  duckdb::CompressionType Compression() const noexcept {
+    return _forced_compression;
+  }
 
   // Applies to leaf data only; validity / LIST lengths always run AUTO.
   // Codec/type compatibility is validated at catalog time

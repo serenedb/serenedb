@@ -1510,7 +1510,7 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
   // Synthesize an array-type row for every scalar entry above that declares a
   // non-zero typarray. PG clients (and sqlsmith) resolve column types via
   // pg_attribute.atttypid -> pg_type.oid; without these rows, columns whose
-  // type is an array (text[], oid[], int2[], …) fail to resolve.
+  // type is an array (text[], oid[], int2[], ...) fail to resolve.
   for (const auto& scalar : kSampleData) {
     if (scalar.typarray == 0 ||
         scalar.typcategory == PgType::Typcategory::Array) {

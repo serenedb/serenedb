@@ -79,8 +79,9 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
   }
   connector::GetSereneDBContext(ctx).AddNotice(SQL_ERROR_DATA(
     ERR_CODE(ERRCODE_WARNING),
-    ERR_MSG("parameter \"", kName,
-            "\" is accepted for compatibility but is not enforced by serened")));
+    ERR_MSG(
+      "parameter \"", kName,
+      "\" is accepted for compatibility but is not enforced by serened")));
 }
 
 // PostgreSQL drivers supply client_encoding in many forms (UTF8, UTF-8, utf_8,

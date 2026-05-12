@@ -400,6 +400,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "Aborts any statement that takes more than the specified number of "
         "milliseconds. Accepted for compatibility but not currently enforced.",
         [] { return duckdb::Value{"0"}; },
+        NoOverwrite<"statement_timeout">,
       },
     },
     {

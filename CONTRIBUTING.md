@@ -47,32 +47,57 @@ Additional build presets are defined in `CMakePresets.json`:
 ### Launch
 
 ```bash
-./build/bin/serened ./build_dir --server.endpoint='pgsql+tcp://0.0.0.0:7890'
+./build/bin/serened ./build_data --server.endpoint='pgsql+tcp://0.0.0.0:7890'
 ```
 
 Connect via psql: `psql -h localhost -p 7890 -U postgres`
 
 ### Test
 
-#### SQL logic tests
+The test tree is split by what runs the test and what it covers:
 
-Requires a running SereneDB instance and Rust/Cargo installed.
+- `tests/sqllogic/any/...` -- sqllogic against any engine (PG and SereneDB); use for behaviour we expect from both.
+- `tests/sqllogic/sdb/...` -- sqllogic against SereneDB only (SereneDB-specific syntax / extensions).
+- `tests/sqllogic/pg/...` -- sqllogic against Postgres only (used to validate the spec).
+- `tests/sqllogic/recovery/...` -- sqllogic with crash injection (`SET sdb_faults = '...'`) plus a restart; each test runs against a fresh serened + datadir.
+- `tests/server/<area>/...`, `tests/libs/<lib>/...` -- gtest unit tests; use for isolated C++ logic where a sqllogic test would be awkward (library classes / pure functions / hard-to-reproduce bugs).
+- `tests/bench/micro/...` -- microbenchmarks for performance claims.
+
+When a change needs a test:
+
+- Bug fix: always, unless you can argue the bug is uncoverable. Crash / recovery bugs go under `tests/sqllogic/recovery/`.
+- New feature / behaviour change: sqllogic test in the right subtree above. Add a unit test too if there's isolated C++ logic worth pinning.
+- CMake-only changes: rely on CI.
+- Doc-only changes live in a separate repo and don't apply here.
 
 ```bash
-# Run all tests
+# All sqllogic tests
 ./tests/sqllogic/run.sh --single-port 7890 --debug true
 
-# Run specific tests
+# Specific tests
 ./tests/sqllogic/run.sh --single-port 7890 --test 'tests/sqllogic/any/pg/simple/*.test' --debug true
+
+# Recovery tests (auto-restarts serened on injected crashes; needs build/bin/serened)
+./tests/sqllogic/run_recovery_tests.sh --runner ../../third_party/sqllogictest-rs
 ```
 
-#### C++ unit tests
+C++ unit tests:
 
 ```bash
 ./build/bin/iresearch-tests "--gtest_filter=*PhraseFilterTestCase*"
 ./build/bin/serenedb-tests_basics "--gtest_filter=*VPackLoadInspectorTest*"
 ./build/bin/serenedb-tests_connector "--gtest_filter=*DataSourceWithSearchTest*"
 ```
+
+## Branching, commits, PRs
+
+- **Branch from `main`**, one focused change per PR.
+- **Branch name:** `<author>/<topic>` (e.g. `mbkkt/fix-view-indexes-recovery`). Topic is free-form.
+- **Conventional commit prefix** in the PR title: `feat:`, `fix:`, `perf:` (most common), or one of `refactor:`, `chore:`, `docs:`, `test:`, `ci:`, `build:`, `style:`, `misc:`. Don't invent new ones -- if none fit, ask.
+- **Squash-merge:** the PR title is the final commit subject and the PR description is the body. Branch-internal commit messages are discarded, so they can be anything.
+  - Exception: if your branch has exactly one commit and you let GitHub open the PR for you, GitHub will pre-fill the PR title and description from that commit -- so in that case keep the commit message PR-ready.
+- **Pre-commit hooks** run as a PR check. You don't have to install them locally; if you want to check before pushing, run `pre-commit run --all-files`.
+- **CI must pass** and one maintainer must approve before merge.
 
 ## VSCode Setup
 
@@ -375,14 +400,13 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 ### Testing
 
-- Before claiming something a bug reproduce it with test.
-- Prefer sqllogictests for reproducing bugs, with gtest it's possible to reproduce not bug but bad designed API
-- Prefer to use explicit contract with `SDB_ASSERT` instead of comments, try to avoid `SDB_ENSURE` or `SDB_VERIFY` if code really complciated and it's difficult to understand gurantees.
-- Framework: Google Test (gtest)
-- `TEST()` for standalone tests, `TEST_F()` for tests sharing a fixture, `TEST_P()` for parameterized tests
-- Async tests: use `yaclib::WaitGroup` for synchronization
-- Test files mirror source structure: `server/foo/bar.cpp` -> `tests/server/foo/bar_test.cpp`
-- Test names should describe behavior, not implementation
+- gtest framework: `TEST()` for standalone, `TEST_F()` for shared fixtures, `TEST_P()` for parameterized.
+- Async tests use `yaclib::WaitGroup` for synchronization.
+- Test files mirror source structure: `server/foo/bar.cpp` -> `tests/server/foo/bar_test.cpp`.
+- Test names describe behavior, not implementation.
+- Prefer an explicit `SDB_ASSERT` contract over a comment about an invariant; reach for `SDB_ENSURE` / `SDB_VERIFY` only when the guarantee is genuinely hard to follow locally.
+
+(For when each test type applies and where new tests go, see the top-level **Test** section.)
 
 ### Third-Party Dependencies
 
@@ -403,14 +427,6 @@ git checkout <your-branch>
 ```
 
 This configures the submodule to fetch all branches (persists for your local clone) and lets you work with it like a normal repo -- `git push`, `git pull`, `git branch`, etc. will all work as expected.
-
-### PR Workflow
-
-- Branch from `main`, keep PRs focused on a single change
-- CI must pass before merge
-- At least one maintainer approval required
-- PRs are squash-merged -- the PR title becomes the commit message, so write it as a [conventional commit](https://www.conventionalcommits.org/) (e.g. `feat: add vector index support`, `fix: handle null in aggregation`)
-- PR description is included in the commit body -- use it for context, not the title
 
 ---
 

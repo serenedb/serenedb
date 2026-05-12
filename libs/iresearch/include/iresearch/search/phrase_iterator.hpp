@@ -52,6 +52,14 @@ class PhrasePosition final : public PosAttr, public Frequency {
     std::tie(_start, _end) = this->GetOffsets();
   }
 
+  explicit PhrasePosition(
+    std::vector<typename Frequency::TermPosition>&& pos,
+    PosAttr::value_t max_slop,
+    std::vector<PosAttr::value_t>&& expected_steps) noexcept
+    : Frequency{std::move(pos), max_slop, std::move(expected_steps)} {
+    std::tie(_start, _end) = this->GetOffsets();
+  }
+
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return type == irs::Type<OffsAttr>::id() ? &_offset : nullptr;
   }
@@ -530,160 +538,6 @@ class FixedPhraseFrequency {
   uint32_t _phrase_freq = 0;
 };
 
-// Positional distance for sloppy phrase matching.
-// Forward gap (curr > prev+1): costs (curr - prev - 1).
-// Reversal (curr < prev): costs (prev - curr + 1).
-// Adjacent or same position: costs 0.
-inline PosAttr::value_t ComputeSlopDistance(const PosAttr::value_t* positions,
-                                            size_t count) noexcept {
-  SDB_ASSERT(count >= 2);
-  PosAttr::value_t distance = 0;
-  for (size_t i = 1; i < count; ++i) {
-    auto prev = positions[i - 1];
-    auto curr = positions[i];
-    if (curr > prev + 1) {
-      distance += curr - prev - 1;
-    } else if (curr < prev) {
-      distance += prev - curr + 1;
-    }
-  }
-  return distance;
-}
-
-// Sloppy phrase frequency for fixed phrases (all parts are exact terms).
-// Uses min-window algorithm: holds one current position per term,
-// computes distance, advances the term with smallest position.
-// Supports term reordering. Rejects duplicate positions.
-// Scoring: boost = 1/(1+best_distance).
-template<bool Offs>
-class SlopPhraseFrequency {
- public:
-  using TermPosition = FixedTermPosition<Offs>;
-  using Positions = std::vector<TermPosition>;
-
-  static constexpr bool kHasBoost = true;
-  static constexpr bool kHasFreq = true;
-
-  SlopPhraseFrequency(std::vector<TermPosition>&& pos,
-                      PosAttr::value_t max_slop) noexcept
-    : _pos{std::move(pos)}, _max_slop{max_slop} {
-    SDB_ASSERT(_pos.size() >= 2);
-    SDB_ASSERT(_max_slop > 0);
-  }
-
-  IRS_FORCE_INLINE bool Match() {
-    _phrase_freq = 0;
-    _best_distance = _max_slop + 1;
-    MatchImpl();
-    return _phrase_freq != 0;
-  }
-
-  uint32_t GetFreq() const noexcept { return _phrase_freq; }
-
-  score_t GetBoost() const noexcept {
-    if (_best_distance == 0) {
-      return kNoBoost;
-    }
-    return 1.f / (1.f + static_cast<score_t>(_best_distance));
-  }
-
- private:
-  friend class PhrasePosition<SlopPhraseFrequency>;
-
-  std::pair<const uint32_t*, const uint32_t*> GetOffsets() const noexcept {
-    return {&_start_offset, &_end_offset};
-  }
-
-  uint32_t NextPosition() { return 0; }
-
-  void MatchImpl() {
-    const auto count = _pos.size();
-
-    for (size_t i = 0; i < count; ++i) {
-      if (!_pos[i].first->next()) {
-        return;
-      }
-    }
-
-    while (true) {
-      size_t min_idx = 0;
-      auto min_pos = _pos[0].first->value();
-
-      PosAttr::value_t distance = 0;
-      for (size_t i = 1; i < count; ++i) {
-        auto prev = _pos[i - 1].first->value();
-        auto curr = _pos[i].first->value();
-
-        if (curr > prev + 1) {
-          distance += curr - prev - 1;
-        } else if (curr < prev) {
-          distance += prev - curr + 1;
-        }
-
-        if (curr < min_pos) {
-          min_pos = curr;
-          min_idx = i;
-        }
-      }
-
-      if (distance <= _max_slop) {
-        // verify all positions are distinct - each query slot
-        // must match a different token occurrence
-        bool all_unique = true;
-        for (size_t i = 0; i < count && all_unique; ++i) {
-          for (size_t j = i + 1; j < count; ++j) {
-            if (_pos[i].first->value() == _pos[j].first->value()) {
-              all_unique = false;
-              break;
-            }
-          }
-        }
-        if (all_unique) {
-          ++_phrase_freq;
-          if (distance < _best_distance) {
-            _best_distance = distance;
-            if constexpr (Offs) {
-              // find leftmost/rightmost positions for byte offsets
-              size_t left_idx = 0;
-              size_t right_idx = 0;
-              auto left_pos = _pos[0].first->value();
-              auto right_pos = left_pos;
-              for (size_t k = 1; k < count; ++k) {
-                auto p = _pos[k].first->value();
-                if (p < left_pos) {
-                  left_pos = p;
-                  left_idx = k;
-                }
-                if (p > right_pos) {
-                  right_pos = p;
-                  right_idx = k;
-                }
-              }
-              auto* start_attr = irs::get<OffsAttr>(*_pos[left_idx].first);
-              auto* end_attr = irs::get<OffsAttr>(*_pos[right_idx].first);
-              if (start_attr && end_attr) {
-                _start_offset = start_attr->start;
-                _end_offset = end_attr->end;
-              }
-            }
-          }
-        }
-      }
-
-      if (!_pos[min_idx].first->next()) {
-        return;
-      }
-    }
-  }
-
-  Positions _pos;
-  PosAttr::value_t _max_slop;
-  uint32_t _phrase_freq = 0;
-  PosAttr::value_t _best_distance = 0;
-  uint32_t _start_offset{0};
-  uint32_t _end_offset{0};
-};
-
 // Adapter to use DocIterator with positions for disjunction
 struct VariadicPhraseAdapter : ScoreAdapter {
   VariadicPhraseAdapter() = default;
@@ -715,189 +569,6 @@ template<typename Adapter>
 using VariadicTermPosition =
   std::pair<CompoundDocIterator<Adapter>*, TermInterval>;
 // desired offset in the phrase
-
-// Sloppy phrase frequency for variadic phrases (parts may be
-// wildcard, prefix, levenshtein, range, etc.).
-// Materializes positions from all sub-iterators via visit(),
-// then runs the same min-window algorithm on vectors.
-template<typename Adapter>
-class SlopVariadicPhraseFrequency {
- public:
-  using TermPosition = VariadicTermPosition<Adapter>;
-  using Positions = std::vector<TermPosition>;
-
-  static constexpr bool kHasBoost = true;
-  static constexpr bool kHasFreq = true;
-
-  SlopVariadicPhraseFrequency(std::vector<TermPosition>&& pos,
-                              PosAttr::value_t max_slop) noexcept
-    : _pos{std::move(pos)}, _max_slop{max_slop} {
-    SDB_ASSERT(_pos.size() >= 2);
-    SDB_ASSERT(_max_slop > 0);
-  }
-
-  IRS_FORCE_INLINE bool Match() {
-    _phrase_freq = 0;
-    _best_distance = _max_slop + 1;
-    MatchImpl();
-    return _phrase_freq != 0;
-  }
-
-  uint32_t GetFreq() const noexcept { return _phrase_freq; }
-
-  score_t GetBoost() const noexcept {
-    if (_best_distance == 0) {
-      return kNoBoost;
-    }
-    return 1.f / (1.f + static_cast<score_t>(_best_distance));
-  }
-
- private:
-  friend class PhrasePosition<SlopVariadicPhraseFrequency>;
-
-  static constexpr bool kHasOffsets =
-    std::is_same_v<Adapter, VariadicPhraseOffsetAdapter>;
-
-  // Position with optional byte offsets for highlighting.
-  struct PosEntry {
-    PosAttr::value_t pos;
-    uint32_t start_offs{0};
-    uint32_t end_offs{0};
-
-    bool operator<(const PosEntry& rhs) const noexcept { return pos < rhs.pos; }
-    bool operator==(const PosEntry& rhs) const noexcept {
-      return pos == rhs.pos;
-    }
-  };
-
-  std::pair<const uint32_t*, const uint32_t*> GetOffsets() const noexcept {
-    return {&_start_offset, &_end_offset};
-  }
-
-  uint32_t NextPosition() { return 0; }
-
-  // Collects positions (and offsets when available) from all
-  // sub-iterators in a disjunction into a flat vector.
-  static bool CollectPositions(void* ctx, Adapter& adapter) {
-    SDB_ASSERT(ctx);
-    auto& out = *reinterpret_cast<std::vector<PosEntry>*>(ctx);
-    auto* p = adapter.position;
-    if (!p) {
-      return true;
-    }
-    const OffsAttr* offs = nullptr;
-    if constexpr (kHasOffsets) {
-      offs = adapter.offset;
-    }
-    p->reset();
-    while (p->next()) {
-      auto val = p->value();
-      if (pos_limits::eof(val)) {
-        break;
-      }
-      PosEntry entry{.pos = val};
-      if constexpr (kHasOffsets) {
-        if (offs) {
-          entry.start_offs = offs->start;
-          entry.end_offs = offs->end;
-        }
-      }
-      out.push_back(entry);
-    }
-    return true;
-  }
-
-  void MatchImpl() {
-    const auto count = _pos.size();
-
-    std::vector<std::vector<PosEntry>> slot_positions(count);
-    for (size_t i = 0; i < count; ++i) {
-      _pos[i].first->visit(&slot_positions[i], CollectPositions);
-      absl::c_sort(slot_positions[i]);
-      auto last =
-        std::unique(slot_positions[i].begin(), slot_positions[i].end());
-      slot_positions[i].erase(last, slot_positions[i].end());
-      if (slot_positions[i].empty()) {
-        return;
-      }
-    }
-
-    std::vector<size_t> idx(count, 0);
-    while (true) {
-      size_t min_slot = 0;
-      auto min_pos = slot_positions[0][idx[0]].pos;
-
-      PosAttr::value_t distance = 0;
-      for (size_t i = 1; i < count; ++i) {
-        auto prev = slot_positions[i - 1][idx[i - 1]].pos;
-        auto curr = slot_positions[i][idx[i]].pos;
-
-        if (curr > prev + 1) {
-          distance += curr - prev - 1;
-        } else if (curr < prev) {
-          distance += prev - curr + 1;
-        }
-
-        if (curr < min_pos) {
-          min_pos = curr;
-          min_slot = i;
-        }
-      }
-
-      if (distance <= _max_slop) {
-        bool all_unique = true;
-        for (size_t i = 0; i < count && all_unique; ++i) {
-          for (size_t j = i + 1; j < count; ++j) {
-            if (slot_positions[i][idx[i]].pos ==
-                slot_positions[j][idx[j]].pos) {
-              all_unique = false;
-              break;
-            }
-          }
-        }
-        if (all_unique) {
-          ++_phrase_freq;
-          if (distance < _best_distance) {
-            _best_distance = distance;
-            if constexpr (kHasOffsets) {
-              size_t left_slot = 0;
-              size_t right_slot = 0;
-              auto left_pos = slot_positions[0][idx[0]].pos;
-              auto right_pos = left_pos;
-              for (size_t k = 1; k < count; ++k) {
-                auto p = slot_positions[k][idx[k]].pos;
-                if (p < left_pos) {
-                  left_pos = p;
-                  left_slot = k;
-                }
-                if (p > right_pos) {
-                  right_pos = p;
-                  right_slot = k;
-                }
-              }
-              _start_offset =
-                slot_positions[left_slot][idx[left_slot]].start_offs;
-              _end_offset =
-                slot_positions[right_slot][idx[right_slot]].end_offs;
-            }
-          }
-        }
-      }
-
-      ++idx[min_slot];
-      if (idx[min_slot] >= slot_positions[min_slot].size()) {
-        return;
-      }
-    }
-  }
-
-  Positions _pos;
-  PosAttr::value_t _max_slop;
-  uint32_t _phrase_freq = 0;
-  PosAttr::value_t _best_distance = 0;
-  uint32_t _start_offset{0};
-  uint32_t _end_offset{0};
-};
 
 // Helper for variadic phrase frequency evaluation for cases when
 // only one term may be at a single position in a phrase (e.g. synonyms)
@@ -1319,7 +990,8 @@ class PhraseIterator : public DocIterator {
 
   template<typename Adapters>
   PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
-                 std::vector<TermPosition>&& pos, PosAttr::value_t max_slop)
+                 std::vector<TermPosition>&& pos, PosAttr::value_t max_slop,
+                 std::vector<PosAttr::value_t>&& expected_steps)
     : _approx{ScoreMergeType::Noop, docs_count,
               [](auto itrs) {
                 absl::c_sort(itrs,
@@ -1329,7 +1001,7 @@ class PhraseIterator : public DocIterator {
                              });
                 return std::move(itrs);
               }(std::forward<Adapters>(itrs))},
-      _freq{std::move(pos), max_slop} {
+      _freq{std::move(pos), max_slop, std::move(expected_steps)} {
     _cost = irs::GetMutable<CostAttr>(&_approx);
     if constexpr (Frequency::kHasBoost) {
       _collected_boosts.value = std::allocator<score_t>{}.allocate(kScoreBlock);
@@ -1342,10 +1014,11 @@ class PhraseIterator : public DocIterator {
   template<typename Adapters>
   PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
                  std::vector<TermPosition>&& pos, PosAttr::value_t max_slop,
+                 std::vector<PosAttr::value_t>&& expected_steps,
                  const FieldProperties& field, const byte_type* stats,
                  score_t boost)
     : PhraseIterator{docs_count, std::forward<Adapters>(itrs), std::move(pos),
-                     max_slop} {
+                     max_slop, std::move(expected_steps)} {
     _stats = stats;
     _boost = boost;
     _field = field;

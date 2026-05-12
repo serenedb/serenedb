@@ -22,6 +22,8 @@
 
 #include "phrase_query.hpp"
 
+#include <iresearch/search/slop_phrase_dp.hpp>
+
 #include "iresearch/formats/posting/iterator_doc.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/make_disjunction.hpp"
@@ -33,6 +35,22 @@ namespace {
 // Get index features required for offsets
 constexpr IndexFeatures kRequireOffs =
   FixedPhraseQuery::kRequiredFeatures | IndexFeatures::Offs;
+
+// Compute expected positional offsets between adjacent phrase slots
+// from the cumulative lead_offset values.
+template<typename PositionsT>
+std::vector<PosAttr::value_t> BuildExpectedSteps(const PositionsT& positions) {
+  std::vector<PosAttr::value_t> steps;
+  if (positions.size() < 2) {
+    return steps;
+  }
+  steps.reserve(positions.size() - 1);
+  for (size_t i = 1; i < positions.size(); ++i) {
+    SDB_ASSERT(positions[i].lead_offset >= positions[i - 1].lead_offset);
+    steps.push_back(positions[i].lead_offset - positions[i - 1].lead_offset);
+  }
+  return steps;
+}
 
 // FIXME add proper handling of overlapped case
 template<typename Adapter, bool HasBoost, bool HasFreq, bool HasIntervals>
@@ -97,17 +115,20 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
     sdb::ERROR_BAD_PARAMETER, "slop and intervals are mutually exclusive");
 
   if (this->slop > 0) {
-    using SlopIterator =
-      PhraseIterator<Conjunction<Adapter>, SlopPhraseFrequency<false>>;
+    auto expected_steps = BuildExpectedSteps(this->positions);
     if (!ctx.scorer) {
+      using SlopIterator = PhraseIterator<Conjunction<Adapter>,
+                                          SlopPhraseFrequencyDP<false, false>>;
       return memory::make_managed<SlopIterator>(
         static_cast<doc_id_t>(rdr.docs_count()), std::move(itrs),
-        std::move(positions), this->slop);
+        std::move(positions), this->slop, std::move(expected_steps));
     }
+    using SlopIterator =
+      PhraseIterator<Conjunction<Adapter>, SlopPhraseFrequencyDP<false, true>>;
     return memory::make_managed<SlopIterator>(
       static_cast<doc_id_t>(rdr.docs_count()), std::move(itrs),
-      std::move(positions), this->slop, phrase_state->reader->meta(),
-      stats.c_str(), boost);
+      std::move(positions), this->slop, std::move(expected_steps),
+      phrase_state->reader->meta(), stats.c_str(), boost);
   }
   const bool has_intervals = absl::c_any_of(
     this->positions,
@@ -154,7 +175,7 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
     using Adapter = PostingAdapter<PostingIteratorBase<FixedTermTraits<true>>>;
     using SlopIterator =
       PhraseIterator<Conjunction<Adapter>,
-                     PhrasePosition<SlopPhraseFrequency<true>>>;
+                     PhrasePosition<SlopPhraseFrequencyDP<true, true>>>;
 
     std::vector<Adapter> itrs;
     itrs.reserve(phrase_state->terms.size());
@@ -186,9 +207,10 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
         sdb::basics::downCast<FixedTermPositionImpl<true>>(pos), *position++);
     }
 
+    auto expected_steps = BuildExpectedSteps(this->positions);
     return memory::make_managed<SlopIterator>(
       static_cast<doc_id_t>(segment.docs_count()), std::move(itrs),
-      std::move(positions), this->slop);
+      std::move(positions), this->slop, std::move(expected_steps));
   }
 
   const bool has_intervals = absl::c_any_of(
@@ -352,18 +374,22 @@ DocIterator::ptr VariadicPhraseQuery::execute(
     sdb::ERROR_BAD_PARAMETER, "slop and intervals are mutually exclusive");
 
   if (this->slop > 0) {
-    using SlopIterator =
-      PhraseIterator<Conjunction<ScoreAdapter>,
-                     SlopVariadicPhraseFrequency<VariadicPhraseAdapter>>;
+    auto expected_steps = BuildExpectedSteps(this->positions);
     if (!ctx.scorer) {
+      using SlopIterator = PhraseIterator<
+        Conjunction<ScoreAdapter>,
+        SlopVariadicPhraseFrequencyDP<VariadicPhraseAdapter, false>>;
       return memory::make_managed<SlopIterator>(
         static_cast<doc_id_t>(rdr.docs_count()), std::move(conj_itrs),
-        std::move(positions), this->slop);
+        std::move(positions), this->slop, std::move(expected_steps));
     }
+    using SlopIterator = PhraseIterator<
+      Conjunction<ScoreAdapter>,
+      SlopVariadicPhraseFrequencyDP<VariadicPhraseAdapter, true>>;
     return memory::make_managed<SlopIterator>(
       static_cast<doc_id_t>(rdr.docs_count()), std::move(conj_itrs),
-      std::move(positions), this->slop, phrase_state->reader->meta(),
-      stats.c_str(), boost);
+      std::move(positions), this->slop, std::move(expected_steps),
+      phrase_state->reader->meta(), stats.c_str(), boost);
   }
 
   const bool has_intervals = absl::c_any_of(
@@ -426,9 +452,9 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
   }
 
   if (this->slop > 0) {
-    using SlopIterator =
-      PhraseIterator<Conjunction<ScoreAdapter>,
-                     PhrasePosition<SlopVariadicPhraseFrequency<Adapter>>>;
+    using SlopIterator = PhraseIterator<
+      Conjunction<ScoreAdapter>,
+      PhrasePosition<SlopVariadicPhraseFrequencyDP<Adapter, true>>>;
 
     std::vector<VariadicTermPosition<Adapter>> positions;
     positions.resize(phrase_size);
@@ -476,9 +502,10 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
     }
     SDB_ASSERT(term_state == std::end(phrase_state->terms));
 
+    auto expected_steps = BuildExpectedSteps(this->positions);
     return memory::make_managed<SlopIterator>(
       static_cast<doc_id_t>(segment.docs_count()), std::move(conj_itrs),
-      std::move(positions), this->slop);
+      std::move(positions), this->slop, std::move(expected_steps));
   }
 
   const bool has_intervals = absl::c_any_of(

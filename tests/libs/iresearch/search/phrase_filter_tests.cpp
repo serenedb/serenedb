@@ -31,6 +31,29 @@
 #include "iresearch/search/term_query.hpp"
 #include "tests_shared.hpp"
 
+namespace {
+
+// Positional distance for sloppy phrase matching.
+// Forward gap (curr > prev+1): costs (curr - prev - 1).
+// Reversal (curr < prev): costs (prev - curr + 1).
+// Adjacent or same position: costs 0.
+irs::PosAttr::value_t ComputeSlopDistance(
+  const irs::PosAttr::value_t* positions, size_t count) noexcept {
+  SDB_ASSERT(count >= 2);
+  irs::PosAttr::value_t distance = 0;
+  for (size_t i = 1; i < count; ++i) {
+    auto prev = positions[i - 1];
+    auto curr = positions[i];
+    if (curr > prev + 1) {
+      distance += curr - prev - 1;
+    } else if (curr < prev) {
+      distance += prev - curr + 1;
+    }
+  }
+  return distance;
+}
+
+}  // namespace
 namespace tests {
 
 void AnalyzedJsonFieldFactory(tests::Document& doc, const std::string& name,
@@ -8690,62 +8713,151 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_large_slop) {
   }
 }
 
+TEST_P(PhraseFilterTestCase, sloppy_phrase_explicit_gap) {
+  {
+    tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
+                                &tests::AnalyzedJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // "quick __ moved" -- explicit gap of 1 token between quick and moved
+  // (expected positional step = 2). push_back<T>(offs) yields
+  // offs_min == offs_max == offs + 1, so push_back(moved, 1) means
+  // lead_offset[1] = 2 and expected_steps[0] = 2.
+  //
+  // Per-document analysis (positions 1-based):
+  //   I "quick brown fox moved forward"
+  //     quick=1, moved=4, delta=3, expected=2, cost=|3-2|=1.
+  //   S "quick quilt brown fox moved"
+  //     quick=1, moved=5, delta=4, expected=2, cost=2.
+  //   T "quick brother fox brown moved"
+  //     quick=1, moved=5, delta=4, expected=2, cost=2.
+  //   U "quick brown forward brother moved"
+  //     quick=1, moved=5, delta=4, expected=2, cost=2.
+  //   W "quilt brown forward quick brother moved"
+  //     quick=4, moved=6, delta=2, expected=2, cost=0.
+  //   X "quilt quick brother forward brother moved"
+  //     quick=2, moved=6, delta=4, expected=2, cost=2.
+
+  // slop=0: only W matches (delta == expected exactly).
+  {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+    q.mutable_options()->push_back<irs::ByTermOptions>(/*offs=*/1).term =
+      irs::ViewCast<irs::byte_type>(std::string_view("moved"));
+    q.mutable_options()->set_slop(0);
+
+    auto prepared = q.prepare({.index = rdr});
+    auto sub = rdr.begin();
+    auto column = sub->column("name");
+    ASSERT_NE(nullptr, column);
+    auto values = column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, values);
+    auto* actual_value = irs::get<irs::PayAttr>(*values);
+    ASSERT_NE(nullptr, actual_value);
+
+    auto docs = prepared->execute({.segment = *sub});
+    ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("W", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_FALSE(docs->next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
+  }
+
+  // slop=1: I (cost=1) and W (cost=0).
+  {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+    q.mutable_options()->push_back<irs::ByTermOptions>(/*offs=*/1).term =
+      irs::ViewCast<irs::byte_type>(std::string_view("moved"));
+    q.mutable_options()->set_slop(1);
+
+    auto prepared = q.prepare({.index = rdr});
+    auto sub = rdr.begin();
+    auto column = sub->column("name");
+    auto values = column->iterator(irs::ColumnHint::Normal);
+    auto* actual_value = irs::get<irs::PayAttr>(*values);
+
+    auto docs = prepared->execute({.segment = *sub});
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("I", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("W", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_FALSE(docs->next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
+  }
+}
+
 TEST(SlopDistanceTest, compute_slop_distance) {
   {  // exact adjacent: 0
     irs::PosAttr::value_t p[] = {1, 2};
-    ASSERT_EQ(0, irs::ComputeSlopDistance(p, 2));
+    ASSERT_EQ(0, ComputeSlopDistance(p, 2));
   }
   {  // exact adjacent 3 terms: 0
     irs::PosAttr::value_t p[] = {1, 2, 3};
-    ASSERT_EQ(0, irs::ComputeSlopDistance(p, 3));
+    ASSERT_EQ(0, ComputeSlopDistance(p, 3));
   }
   {  // forward gap 1: 1
     irs::PosAttr::value_t p[] = {1, 3};
-    ASSERT_EQ(1, irs::ComputeSlopDistance(p, 2));
+    ASSERT_EQ(1, ComputeSlopDistance(p, 2));
   }
   {  // forward gap 5: 5
     irs::PosAttr::value_t p[] = {2, 8};
-    ASSERT_EQ(5, irs::ComputeSlopDistance(p, 2));
+    ASSERT_EQ(5, ComputeSlopDistance(p, 2));
   }
   {  // swap adjacent: 2
     irs::PosAttr::value_t p[] = {2, 1};
-    ASSERT_EQ(2, irs::ComputeSlopDistance(p, 2));
+    ASSERT_EQ(2, ComputeSlopDistance(p, 2));
   }
   {  // swap with gap: 4
     irs::PosAttr::value_t p[] = {4, 1};
-    ASSERT_EQ(4, irs::ComputeSlopDistance(p, 2));
+    ASSERT_EQ(4, ComputeSlopDistance(p, 2));
   }
   {  // same position: 0
     irs::PosAttr::value_t p[] = {3, 3};
-    ASSERT_EQ(0, irs::ComputeSlopDistance(p, 2));
+    ASSERT_EQ(0, ComputeSlopDistance(p, 2));
   }
   {  // 3 terms, gap first pair: 1
     irs::PosAttr::value_t p[] = {1, 3, 4};
-    ASSERT_EQ(1, irs::ComputeSlopDistance(p, 3));
+    ASSERT_EQ(1, ComputeSlopDistance(p, 3));
   }
   {  // 3 terms, gap second pair: 1
     irs::PosAttr::value_t p[] = {1, 2, 4};
-    ASSERT_EQ(1, irs::ComputeSlopDistance(p, 3));
+    ASSERT_EQ(1, ComputeSlopDistance(p, 3));
   }
   {  // 3 terms, distributed: 2
     irs::PosAttr::value_t p[] = {1, 3, 5};
-    ASSERT_EQ(2, irs::ComputeSlopDistance(p, 3));
+    ASSERT_EQ(2, ComputeSlopDistance(p, 3));
   }
   {  // 3 terms, full reversal: 4
     irs::PosAttr::value_t p[] = {3, 2, 1};
-    ASSERT_EQ(4, irs::ComputeSlopDistance(p, 3));
+    ASSERT_EQ(4, ComputeSlopDistance(p, 3));
   }
   {  // 3 terms, partial reversal: 3
     irs::PosAttr::value_t p[] = {2, 1, 3};
-    ASSERT_EQ(3, irs::ComputeSlopDistance(p, 3));
+    ASSERT_EQ(3, ComputeSlopDistance(p, 3));
   }
   {  // 4 terms, exact: 0
     irs::PosAttr::value_t p[] = {5, 6, 7, 8};
-    ASSERT_EQ(0, irs::ComputeSlopDistance(p, 4));
+    ASSERT_EQ(0, ComputeSlopDistance(p, 4));
   }
   {  // 4 terms, mixed: 6
     irs::PosAttr::value_t p[] = {1, 4, 3, 6};
-    ASSERT_EQ(6, irs::ComputeSlopDistance(p, 4));
+    ASSERT_EQ(6, ComputeSlopDistance(p, 4));
   }
 }
 
@@ -8812,10 +8924,10 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_scoring) {
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
 
-    // N: freq=7, best_distance=0, boost=1.0
+    // N: freq=8, best_distance=0, boost=1.0
     ASSERT_TRUE(docs->next());
     docs->FetchScoreArgs(0);
-    ASSERT_EQ(7, freq->value[0]);
+    ASSERT_EQ(8, freq->value[0]);
     ASSERT_FLOAT_EQ(1.f, boost_attr->value[0]);
 
     ASSERT_TRUE(docs->next());
@@ -9426,10 +9538,16 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_execute_with_offsets) {
     ASSERT_GT(offs->end, offs->start);
     ASSERT_FALSE(pos->next());
 
-    // N
+    // N: freq=2. Tuples: (6,8) cost=1 leftmost=6, (7,8) cost=0 leftmost=7.
+    // Sorted by leftmost ascending: (6,8) first, (7,8) second.
     ASSERT_TRUE(docs->next());
-    ASSERT_TRUE(pos->next());
-    ASSERT_FALSE(pos->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("N", irs::ToString<std::string_view>(actual_value->value.data()));
+    ASSERT_TRUE(pos->next());  // first match
+    ASSERT_GT(offs->end, offs->start);
+    ASSERT_TRUE(pos->next());  // second match
+    ASSERT_GT(offs->end, offs->start);
+    ASSERT_FALSE(pos->next());  // exhausted
 
     // T
     ASSERT_TRUE(docs->next());
@@ -9506,10 +9624,13 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_variadic_execute_with_offsets) {
     ASSERT_GT(offs->end, offs->start);
     ASSERT_FALSE(pos->next());
 
-    // N
+    // N: freq=2 (tuples (6,8) cost=1, (7,8) cost=0; sorted by leftmost)
     ASSERT_TRUE(docs->next());
-    ASSERT_TRUE(pos->next());
-    ASSERT_FALSE(pos->next());
+    ASSERT_TRUE(pos->next());  // first match
+    ASSERT_GT(offs->end, offs->start);
+    ASSERT_TRUE(pos->next());  // second match
+    ASSERT_GT(offs->end, offs->start);
+    ASSERT_FALSE(pos->next());  // exhausted
 
     // S
     ASSERT_TRUE(docs->next());

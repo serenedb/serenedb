@@ -96,14 +96,16 @@ count
 
 
 # ---------------------------------------------------------------------------
-# Case 4: non-fast-path chain shape (ORDER BY in view body puts an
-# operator above the outermost projection). Pruning's v1 guard returns
-# nullopt -> code falls through to the pre-patch path unchanged.
+# Case 4: ORDER BY in view body produces LogicalOrder above the outermost
+# projection. The order expression references view position `id`, so `id`
+# must survive pruning even though the index only uses `body`. After
+# pruning, the Order's column_index for `id` must be rewritten via
+# view_old_to_new.
 # ---------------------------------------------------------------------------
 
 statement ok
 CREATE VIEW prune_v4 AS
-  SELECT id, body
+  SELECT id, body, unused1, unused2
   FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet')
   ORDER BY id;
 
@@ -115,3 +117,109 @@ SELECT count(*) FROM prune_idx4 WHERE body @@ ts_phrase('pudge');
 ----
 count
 3
+
+
+# ---------------------------------------------------------------------------
+# Case 5: ORDER BY + LIMIT (LogicalTopN above the projection). Same
+# binding-rewrite path as Order alone, plus the LIMIT operator. The order
+# column `unused1` isn't in the index but must survive the prune through
+# phase-1 above-projection collection.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE VIEW prune_v5 AS
+  SELECT id, body, unused1
+  FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet')
+  ORDER BY unused1
+  LIMIT 4;
+
+statement ok
+CREATE INDEX prune_idx5 ON prune_v5 USING inverted(body prune_en);
+
+# The view applies LIMIT 4 over rows ordered by unused1. With ordering
+# a..e on unused1, the kept rows are the first four (unused1 in
+# {alpha,bravo,charlie,delta}) which exclude row 5 ("pudge unique
+# phrase"). So only rows 1 and 3 contain "pudge".
+query
+SELECT count(*) FROM prune_idx5 WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT count(*) FROM prune_idx5 WHERE body @@ ts_phrase('unique phrase');
+----
+count
+0
+
+
+# ---------------------------------------------------------------------------
+# Case 6: secondary index on a view over a regular base table (the
+# RocksDBExplicitPK fast path -- view's surrogate PK is the base table's
+# real PK). Pruning machinery is identical to the parquet/iceberg cases
+# above; this exercises it for non-inverted indexes.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE prune_base (
+  id INTEGER PRIMARY KEY,
+  body TEXT NOT NULL,
+  unused1 TEXT NOT NULL,
+  unused2 INTEGER NOT NULL
+);
+
+statement ok
+INSERT INTO prune_base VALUES
+  (1, 'pudge goes mid', 'alpha', 100),
+  (2, 'anchin reads manga', 'bravo', 200),
+  (3, 'pudge plays again', 'charlie', 300);
+
+statement ok
+CREATE VIEW prune_v6 AS SELECT * FROM prune_base;
+
+# Secondary index over view, narrow keying. Pruning should drop unused1
+# and unused2 from the underlying leaf scan.
+statement ok
+CREATE INDEX prune_idx6 ON prune_v6 (body);
+
+query
+SELECT count(*) FROM prune_v6 WHERE body = 'pudge goes mid';
+----
+count
+1
+
+
+# ---------------------------------------------------------------------------
+# Case 7: composite secondary index on view over a base table. Both
+# columns survive pruning; unused1/unused2 are dropped.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE VIEW prune_v7 AS SELECT * FROM prune_base;
+
+statement ok
+CREATE INDEX prune_idx7 ON prune_v7 (id, body);
+
+query
+SELECT count(*) FROM prune_v7 WHERE id = 3 AND body = 'pudge plays again';
+----
+count
+1
+
+
+# ---------------------------------------------------------------------------
+# Case 8: secondary index on a view over read_parquet (file_row_number
+# PK fast path). Same pruning machinery; different surrogate-PK plumbing.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE VIEW prune_v8 AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
+
+statement ok
+CREATE INDEX prune_idx8 ON prune_v8 (body);
+
+query
+SELECT count(*) FROM prune_v8 WHERE body = 'pudge goes mid';
+----
+count
+1

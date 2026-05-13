@@ -42,6 +42,7 @@ TEST(ngram_token_stream_test, consts) {
 }
 
 namespace {
+
 struct TestToken {
   std::string_view value;
   size_t start;
@@ -71,6 +72,7 @@ void AssertTokenStream(irs::analysis::Analyzer* stream,
   ASSERT_EQ(token_idx, expected_tokens.size());
   ASSERT_FALSE(stream->next());
 }
+
 }  // namespace
 
 TEST(ngram_token_stream_test, construct) {

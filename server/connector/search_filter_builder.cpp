@@ -1244,7 +1244,7 @@ const SearchColumnInfo* FindColumnRefInfo(
   // The cache key is the un-mangled iresearch field name. For a bare column
   // reference that is just [BE col_id] with no suffix.
   std::string cache_key;
-  MakeColumnFieldName(info->column_id, std::string_view{}, cache_key);
+  MakeColumnFieldName(info->column_id, {}, cache_key);
 
   auto cache_it = ctx.column_cache.find(cache_key);
   if (cache_it != ctx.column_cache.end()) {
@@ -1348,7 +1348,7 @@ void MakeFieldName(const SearchColumnInfo& column, std::string& field_name) {
 }
 
 void MakeFieldName(catalog::Column::Id column_id, std::string& field_name) {
-  MakeColumnFieldName(column_id, std::string_view{}, field_name);
+  MakeColumnFieldName(column_id, {}, field_name);
 }
 
 Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name) {

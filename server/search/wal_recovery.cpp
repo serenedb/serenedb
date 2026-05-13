@@ -168,12 +168,12 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
   return true;
 }
 
-// Runs each JSON-extract expression in `evals` against a DataChunk built from
-// `resolved_cells` (VARCHAR columns only) and writes the results back into
+// Runs each expression against a DataChunk built from
+// `resolved_cells` and writes the results back into
 // `sink` under the original row keys.
-void ReplayJsonExpressions(
+void ReplayIndexedExpressions(
   connector::DuckDBSearchSinkInsertWriter& sink,
-  std::span<const connector::IndexedExpression> evals,
+  std::span<const connector::IndexedExpression> indexed_exprs,
   std::span<const ShardState::IndexedColumn> indexed_columns,
   std::span<const std::vector<std::string_view>> resolved_cells,
   std::span<const Row*> insert_entries, ObjectId table_object_id,
@@ -189,8 +189,6 @@ void ReplayJsonExpressions(
   chunk.Initialize(duckdb::Allocator::DefaultAllocator(), chunk_types,
                    num_rows);
   chunk.SetCardinality(num_rows);
-  // JSON-extract bound expressions only reference the JSON (VARCHAR) column;
-  // chunk bindings are positional within `indexed_columns`.
   for (size_t col_idx = 0; col_idx < indexed_columns.size(); ++col_idx) {
     if (indexed_columns[col_idx].type.id() != duckdb::LogicalTypeId::VARCHAR) {
       continue;
@@ -208,8 +206,6 @@ void ReplayJsonExpressions(
     }
   }
 
-  // Copy keys out: SetupColumnForKey mutates them per column, and every JSON
-  // expression reuses the originals.
   std::vector<std::string> row_keys;
   row_keys.reserve(num_rows);
   for (const auto* row : insert_entries) {
@@ -222,21 +218,18 @@ void ReplayJsonExpressions(
   for (const auto& col : indexed_columns) {
     slot_to_col_id.push_back(col.id);
   }
-  for (const auto& json_expr : evals) {
+  for (const auto& indexed_expr : indexed_exprs) {
     auto result = connector::EvaluateExprOverChunk(
-      *json_expr.normalized_expr, chunk, table_object_id, slot_to_col_id,
+      *indexed_expr.normalized_expr, chunk, table_object_id, slot_to_col_id,
       client_context);
-    const bool switched = sink.SwitchExpression(connector::ExpressionDescriptor{
-      json_expr.column_id, result.GetType(),
-      /*have_nulls=*/true, json_expr.serialized});
-    SDB_ASSERT(switched,
-               "Cannot switch to JSON expression during WAL recovery");
+    const connector::ExpressionDescriptor expr_desc{
+      indexed_expr.column_id, result.GetType(),
+      /*have_nulls=*/true, indexed_expr.serialized};
+    const bool switched = sink.SwitchExpression(expr_desc);
+    SDB_ASSERT(switched, "Cannot switch to an expression during WAL recovery");
     connector::DuckDBSinkIndexWriter* writer_ptr = &sink;
-    const connector::ColumnDescriptor json_column_desc{
-      json_expr.column_id, catalog::ColumnStoreMode::kNormal, result.GetType(),
-      /*have_nulls=*/true};
     serializer.WriteVector<connector::DuckDBColumnSerializer::TxnWriter>(
-      nullptr, result, num_rows, row_keys, {&writer_ptr, 1}, json_column_desc);
+      nullptr, result, num_rows, row_keys, {&writer_ptr, 1}, expr_desc);
   }
 }
 
@@ -271,8 +264,7 @@ void FlushShard(ShardState& s,
     connector::MakeExpressionTokenizerProvider(snapshot, *s.index);
   auto indexed_exprs = connector::MakeIndexedExpressions(
     *s.index, s.indexed_column_ids, &client_context);
-  // Use the DuckDB-facing wrapper so SwitchColumn / Write / Finish /
-  // JsonExpressionEvals are available (the impl base only exposes *Impl).
+
   connector::DuckDBSearchSinkInsertWriter insert_sink{
     trx, std::move(tokenizer_provider), s.indexed_column_ids,
     std::move(expr_tokenizer_provider), std::move(indexed_exprs)};
@@ -293,8 +285,8 @@ void FlushShard(ShardState& s,
     rocksdb::ReadOptions read_opts;
 
     // For every indexed column, materialise per-row bytes so we can both
-    // (a) write the column the old per-row way for non-executor columns
-    // and (b) build a DataChunk for executor-driven JSON expressions.
+    // (a) write the column for regular columns
+    // (b) build a DataChunk for executor-driven indexed expressions.
     // resolved_cells[col_idx][row_idx] = bytes for that cell (either from
     // WAL or fetched from rocksdb if the WAL entry was a partial UPDATE).
     std::vector<std::vector<rocksdb::PinnableSlice>> rocksdb_buffers(
@@ -330,9 +322,6 @@ void FlushShard(ShardState& s,
       }
     }
 
-    // Per-column raw write for non-executor columns. Executor-handled
-    // columns return false from SwitchColumn and are deferred to the
-    // ExpressionExecutor pass below.
     for (size_t col_idx = 0; col_idx < s.indexed_columns.size(); ++col_idx) {
       const auto& col = s.indexed_columns[col_idx];
       if (!sink.SwitchColumn(connector::ColumnDescriptor{
@@ -346,9 +335,11 @@ void FlushShard(ShardState& s,
       }
     }
 
-    if (const auto evals = sink.IndexedExpressions(); !evals.empty()) {
-      ReplayJsonExpressions(sink, evals, s.indexed_columns, resolved_cells,
-                            insert_entries, s.table_object_id, client_context);
+    if (const auto indexed_exprs = sink.IndexedExpressions();
+        !indexed_exprs.empty()) {
+      ReplayIndexedExpressions(sink, indexed_exprs, s.indexed_columns,
+                               resolved_cells, insert_entries,
+                               s.table_object_id, client_context);
     }
     sink.Finish();
   }
@@ -734,14 +725,7 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
   auto* db = rdb.db();
   SDB_ASSERT(db);
 
-  // ClientContext for deserialising bound JSON expressions and running
-  // ExpressionExecutor during replay. The Connection is local to this
-  // recovery run.
   auto recovery_conn = query::DuckDBEngine::Instance().CreateConnection();
-
-  // DuckDB transaction is needed for expression deserialization and evaluation.
-  // SereneDB' specific machinery with transaction
-  // is not executed automatically.
   recovery_conn->BeginTransaction();
   auto& client_context = *recovery_conn->context;
   RunWalRecovery(recovery_shards, snapshot, client_context, *db, min_start_tick,

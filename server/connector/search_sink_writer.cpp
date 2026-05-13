@@ -242,10 +242,7 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
 #endif
     return false;
   }
-  // Reuse SetupColumnWriter with the canonical expression as field suffix --
-  // a non-empty suffix routes the VARCHAR/BLOB tokenizer through
-  // `_expr_tokenizer_provider`, picking up the path-specific dictionary
-  // instead of the base column's tokenizer.
+
   switch (return_type.id()) {
     case duckdb::LogicalTypeId::VARCHAR:
       SetupColumnWriter<duckdb::LogicalTypeId::VARCHAR>(column_id, have_nulls,

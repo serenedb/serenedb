@@ -269,10 +269,7 @@ void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
     if (view[first] != '{' && view[first] != '[') {
       continue;
     }
-    // A `{` / `[` prefix means either a real object/array leaf (reject)
-    // or a string leaf that happens to look like JSON (accept). Parse to
-    // tell them apart. A string that *is* valid JSON (e.g. `"{}"`) still
-    // gets mis-rejected -- the post-hoc check can't disambiguate (#597).
+
     simdjson::dom::element doc;
     if (dom_parser.parse(view.data(), view.size()).get(doc) !=
         simdjson::SUCCESS) {

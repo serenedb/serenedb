@@ -99,11 +99,6 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   ObjectId _database_id;
   duckdb::unique_ptr<duckdb::CreateIndexInfo> _info;
   // Bound counterparts of `_info->parsed_expressions`, in the same order.
-  // Sourced from `LogicalCreateIndex::unbound_expressions` -- a Copy() taken
-  // before ColumnBindingResolver rewrote the originals into positional refs,
-  // so they are still bound but reference base-table columns by name.
-  // Owned here for the operator's lifetime; Sink hands raw pointers into the
-  // global state.
   std::vector<duckdb::unique_ptr<duckdb::Expression>> _bound_expressions;
   SereneDBSchemaEntry& _schema_entry;
 };

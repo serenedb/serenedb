@@ -66,7 +66,7 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   std::vector<InsertColumnMeta> columns;  // non-generated-PK columns
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
   std::vector<std::string> pk_col_names;
-  // slot -> Column::Id for `EvaluateJsonPathOverChunk`, built once.
+
   std::vector<catalog::Column::Id> slot_to_col_id;
 
   // RocksDB handles
@@ -272,8 +272,8 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
                                    gstate.active_writers, desc);
   }
 
-  // 4b. Evaluate per-writer JSON expressions and write them as virtual
-  // columns. The slot -> Column::Id map is precomputed on gstate.
+  // 4b. Evaluate per-writer JSON expressions and
+  // write them as virtual columns.
   for (auto& writer : gstate.index_writers) {
     auto evals = writer->IndexedExpressions();
     for (const auto& indexed_expr : evals) {

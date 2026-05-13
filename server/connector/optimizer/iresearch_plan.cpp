@@ -375,12 +375,7 @@ connector::ExpressionGetter MakeJsonPathGetter(SearchColumnContext& ctx,
     if (!ctx.expr_tokenizer_provider) {
       return std::nullopt;
     }
-    // Normalise + serialise the SELECT-side bound expression. Bytes
-    // produced here match what CREATE INDEX persisted (catalog stores
-    // bytes from the same `NormalizeBoundExpression` pipeline). The
-    // table_id pinned into BoundColumnRef leaves is the base relation's
-    // ObjectId; the col_index -> Column::Id mapping comes from the
-    // LogicalGet's projection slot list (`ctx.projected_column_ids`).
+
     auto normalized = connector::NormalizeBoundExpression(
       path_expr, table_id, ctx.projected_column_ids, *ctx.client_context);
     auto serialized = connector::SerializeBoundExpression(*normalized);

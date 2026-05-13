@@ -124,8 +124,6 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
   };
   std::vector<NonUpdateIdxColMeta> non_update_idx_cols;
 
-  // slot -> Column::Id for `EvaluateJsonPathOverChunk`. update_columns sit at
-  // slots 0..N-1; non_update_idx_cols at their assigned chunk_idx.
   std::vector<catalog::Column::Id> slot_to_col_id;
 
   DuckDBWriteConflictResolver conflict_resolver;
@@ -725,9 +723,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
   }
 
   // Evaluate per-writer JSON expressions on the new chunk and write them
-  // under the new row keys. PK-update path stores them under
-  // gstate.new_row_keys; normal-update path stores them under
-  // gstate.row_keys -- pick whichever was populated for this chunk.
+  // under the new row keys.
   auto& json_keys = gstate.update_pk ? gstate.new_row_keys : gstate.row_keys;
   if (!json_keys.empty()) {
     for (auto& writer : gstate.index_writers) {

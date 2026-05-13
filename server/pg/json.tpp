@@ -121,10 +121,6 @@ class JsonParser {
       if (value.type() == simdjson::ondemand::json_type::string) {
         return value.get_string().value();
       }
-      // PG `->>` returns SQL NULL for JSON null leaves -- mirror that here
-      // by returning an empty string_view with `data()==nullptr`, which the
-      // caller (JsonExtractFieldTextFunction et al.) detects via
-      // `str.empty() && !str.data()` and turns into mask.SetInvalid.
       if (value.type() == simdjson::ondemand::json_type::null) {
         return std::string_view{};
       }

@@ -146,7 +146,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
 
   std::vector<IndexedExpression> indexed_expressions;
 
-  // slot -> Column::Id for `EvaluateJsonPathOverChunk`, built once.
   std::vector<catalog::Column::Id> slot_to_col_id;
 
   ~CreateIndexGlobalState() {
@@ -298,10 +297,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
                "bound expression is missing for inverted index expression");
     auto& bound_expr = _bound_expressions[i];
 
-    // Build the col-index -> Column::Id map from the relation's columns in
-    // declaration order. The IndexBinder bound this expression against a
-    // bind_context derived from the same source, so column_index in the bound
-    // leaves lines up with `columns[i]`.
     std::vector<catalog::Column::Id> col_index_to_id;
     col_index_to_id.reserve(columns.size());
     for (const auto& c : columns) {
@@ -739,7 +734,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       {&writer_ptr, 1}, desc);
   }
 
-  // Evaluate each indexed JSON expression and write the result as a virtual
+  // Evaluate each indexed expression and write the result as a virtual
   // column. Slot map and canonical bytes precomputed on gstate.
   for (const auto& indexed_expr : gstate.indexed_expressions) {
     SDB_ASSERT(indexed_expr.normalized_expr);
@@ -884,9 +879,6 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     relation = table_entry.GetSereneDBTable();
   }
 
-  // unbound_expressions is a Copy() taken BEFORE ColumnBindingResolver
-  // mutates op.expressions into positional references; it preserves the
-  // original BoundFunctionExpression / BoundColumnRefExpression structure.
   auto& create_index = input.planner.Make<SereneDBPhysicalCreateIndex>(
     std::move(relation), std::move(view_columns), database_id,
     std::move(op.info), std::move(op.unbound_expressions), schema_entry,

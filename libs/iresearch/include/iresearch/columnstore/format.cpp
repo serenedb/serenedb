@@ -467,6 +467,25 @@ std::string Writer::Commit() {
   return _impl->filename;
 }
 
+PreloadedHnswGraphs Writer::TakeBuiltHnswGraphs() {
+  PreloadedHnswGraphs out;
+  if (!_impl) {
+    return out;
+  }
+  out.reserve(_impl->hnsw_writers.size());
+  for (auto& entry : _impl->hnsw_writers) {
+    if (!entry || !entry->writer) {
+      continue;
+    }
+    auto graph = entry->writer->Graph();
+    if (!graph) {
+      continue;
+    }
+    out.emplace(entry->column_id, std::move(graph));
+  }
+  return out;
+}
+
 void Writer::Rollback() noexcept {
   _impl->out.reset();
   if (!_impl->filename.empty()) {
@@ -487,6 +506,9 @@ struct Reader::Impl {
   sdb::containers::FlatHashMap<field_id, const NormColumnReader*> norm_by_id;
   std::vector<std::unique_ptr<HNSWReader>> hnsw_readers;
   sdb::containers::FlatHashMap<field_id, const HNSWReader*> hnsw_by_id;
+  // Drained by BuildHnswReaders: when a footer entry's id is here, the
+  // shared_ptr is used directly and the on-disk graph bytes are skipped.
+  PreloadedHnswGraphs preloaded;
 };
 
 namespace {
@@ -601,13 +623,22 @@ void Reader::BuildHnswReaders(duckdb::BinaryDeserializer& deserializer) {
         info.metric =
           static_cast<HNSWMetric>(obj.ReadProperty<uint8_t>(6, "metric"));
         info.ef_construction = obj.ReadProperty<int32_t>(7, "ef_construction");
-        // Footer is read from a MemoryReadStream, so seeking the IndexInput
-        // here doesn't disturb the in-flight footer walk.
-        _impl->in->Seek(graph_offset);
-        auto hnsw = std::make_shared<faiss::HNSW>();
-        irs::ReadHNSW(*_impl->in, *hnsw);
-        SDB_ASSERT(_impl->in->Position() - graph_offset == graph_byte_size,
-                   "ReadHNSW must consume exactly graph_byte_size bytes");
+
+        std::shared_ptr<faiss::HNSW> hnsw;
+        if (auto pit = _impl->preloaded.find(id);
+            pit != _impl->preloaded.end()) {
+          hnsw = std::move(pit->second);
+          _impl->preloaded.erase(pit);
+        } else {
+          // Footer is read from a MemoryReadStream, so seeking the
+          // IndexInput here doesn't disturb the in-flight footer walk.
+          _impl->in->Seek(graph_offset);
+          hnsw = std::make_shared<faiss::HNSW>();
+          irs::ReadHNSW(*_impl->in, *hnsw);
+          SDB_ASSERT(_impl->in->Position() - graph_offset == graph_byte_size,
+                     "ReadHNSW must consume exactly graph_byte_size bytes");
+        }
+        (void)graph_byte_size;
 
         auto col_it = _impl->by_id.find(id);
         if (col_it == _impl->by_id.end()) {
@@ -626,9 +657,10 @@ void Reader::BuildHnswReaders(duckdb::BinaryDeserializer& deserializer) {
 }
 
 Reader::Reader(const Directory& dir, std::string_view segment_name,
-               duckdb::DatabaseInstance& db)
+               duckdb::DatabaseInstance& db, PreloadedHnswGraphs preloaded)
   : _impl{std::make_unique<Impl>()} {
   _impl->db = &db;
+  _impl->preloaded = std::move(preloaded);
   const auto filename = absl::StrCat(segment_name, ".", kFormatExt);
   _impl->in = OpenAndCheckHeader(dir, filename);
   if (!_impl->in) {

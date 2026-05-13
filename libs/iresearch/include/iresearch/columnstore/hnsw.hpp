@@ -201,9 +201,11 @@ class HNSWWriter final {
 
   const HNSWInfo& Info() const noexcept { return _info; }
 
+  const std::shared_ptr<faiss::HNSW>& Graph() const noexcept { return _hnsw; }
+
  private:
   HNSWInfo _info;
-  faiss::HNSW _hnsw;
+  std::shared_ptr<faiss::HNSW> _hnsw;
 };
 
 // Reader-side counterpart: loads the faiss::HNSW graph from the .cs

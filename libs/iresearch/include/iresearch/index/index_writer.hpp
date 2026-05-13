@@ -683,6 +683,7 @@ class IndexWriter : private util::Noncopyable {
     // Flushed segment removals
     DocsMask docs_mask;
     DocumentMask document_mask;
+    columnstore::PreloadedHnswGraphs cs_hnsw_graphs;
     bool was_flush = false;
 
    private:

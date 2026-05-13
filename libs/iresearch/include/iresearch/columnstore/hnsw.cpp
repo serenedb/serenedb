@@ -103,8 +103,9 @@ struct ColumnDistance final : public faiss::DistanceComputer {
 
 }  // namespace
 
-HNSWWriter::HNSWWriter(HNSWInfo info) : _info{std::move(info)}, _hnsw{_info.m} {
-  _hnsw.efConstruction = _info.ef_construction;
+HNSWWriter::HNSWWriter(HNSWInfo info)
+  : _info{std::move(info)}, _hnsw{std::make_shared<faiss::HNSW>(_info.m)} {
+  _hnsw->efConstruction = _info.ef_construction;
 }
 
 HNSWWriter::~HNSWWriter() = default;
@@ -118,7 +119,8 @@ void HNSWWriter::Build(const ColumnReader& vector_column) {
   // faiss node N == iresearch doc_id (1-based) for row (N - 1).
   const auto graph_nodes = rows + doc_limits::min();
   faiss::VisitedTable vt{static_cast<int>(graph_nodes)};
-  _hnsw.prepare_level_tab(graph_nodes, false);
+  auto& hnsw = *_hnsw;
+  hnsw.prepare_level_tab(graph_nodes, false);
 
   ChunkedVectorCache cache{*child, array_size};
   ColumnDistance dis{_info, &cache};
@@ -132,15 +134,15 @@ void HNSWWriter::Build(const ColumnReader& vector_column) {
       dis.set_query(base + k * array_size);
       const faiss::idx_t id =
         static_cast<faiss::idx_t>(start + k + doc_limits::min());
-      const int level = _hnsw.levels[id] - 1;
+      const int level = hnsw.levels[id] - 1;
       vt.advance();
-      _hnsw.add_with_locks(dis, level, id, vt, false);
+      hnsw.add_with_locks(dis, level, id, vt, false);
     }
     cache.Unpin();
   }
 }
 
-void HNSWWriter::Serialize(DataOutput& out) { irs::WriteHNSW(out, _hnsw); }
+void HNSWWriter::Serialize(DataOutput& out) { irs::WriteHNSW(out, *_hnsw); }
 
 HNSWReader::HNSWReader(field_id id, std::shared_ptr<faiss::HNSW> hnsw,
                        HNSWInfo info, const ColumnReader& vector_column)

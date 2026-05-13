@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include <faiss/impl/HNSW.h>
+
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <memory>
@@ -25,6 +27,7 @@
 #include <string>
 #include <string_view>
 
+#include "basics/containers/flat_hash_map.h"
 #include "iresearch/types.hpp"
 
 namespace duckdb {
@@ -47,6 +50,12 @@ class NormColumnReader;
 class NormColumnWriter;
 class HNSWReader;
 class HNSWWriter;
+
+// Maps an HNSW-bearing column id to its in-memory faiss graph. Produced
+// by Writer::TakeBuiltHnswGraphs after Commit(); consumed by the Reader
+// constructor to skip re-deserializing graphs we just serialized.
+using PreloadedHnswGraphs =
+  sdb::containers::FlatHashMap<field_id, std::shared_ptr<faiss::HNSW>>;
 
 // One file per segment.
 inline constexpr std::string_view kFormatExt = "cs";
@@ -95,6 +104,8 @@ class Writer final {
   std::string Commit();
   void Rollback() noexcept;
 
+  PreloadedHnswGraphs TakeBuiltHnswGraphs();
+
  private:
   struct Impl;
   std::unique_ptr<Impl> _impl;
@@ -104,7 +115,7 @@ class Writer final {
 class Reader final {
  public:
   Reader(const Directory& dir, std::string_view segment_name,
-         duckdb::DatabaseInstance& db);
+         duckdb::DatabaseInstance& db, PreloadedHnswGraphs preloaded = {});
   ~Reader();
 
   Reader(const Reader&) = delete;

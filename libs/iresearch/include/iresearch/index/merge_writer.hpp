@@ -27,6 +27,7 @@
 
 #include "basics/memory.hpp"
 #include "basics/noncopyable.hpp"
+#include "iresearch/columnstore/format.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -79,6 +80,10 @@ class MergeWriter : public util::Noncopyable {
   // Flush all added readers into a single segment.
   bool Flush(SegmentMeta& segment, const FlushProgress& progress = {});
 
+  columnstore::PreloadedHnswGraphs TakeBuiltHnswGraphs() noexcept {
+    return std::move(_built_hnsw_graphs);
+  }
+
   const ReaderCtx& operator[](size_t i) const noexcept {
     SDB_ASSERT(i < _readers.size());
     return _readers[i];
@@ -89,6 +94,7 @@ class MergeWriter : public util::Noncopyable {
   ManagedVector<ReaderCtx> _readers;
   ScorerPtr _scorer;
   duckdb::DatabaseInstance* _db = nullptr;
+  columnstore::PreloadedHnswGraphs _built_hnsw_graphs;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<MergeWriter>);

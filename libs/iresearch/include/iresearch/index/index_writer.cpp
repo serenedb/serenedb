@@ -943,8 +943,11 @@ void IndexWriter::SegmentContext::Flush() {
   SDB_ASSERT(writer_meta.meta.live_docs_count <= writer_meta.meta.docs_count);
   SDB_ASSERT(writer_meta.meta.docs_count == docs_context.size());
 
+  auto cs_hnsw_graphs = writer->TakeBuiltHnswGraphs();
+
   flushed.emplace_back(std::move(writer_meta), std::move(old2new),
                        std::move(docs_mask), flushed_docs.size());
+  flushed.back().cs_hnsw_graphs = std::move(cs_hnsw_graphs);
   try {
     flushed_docs.insert(flushed_docs.end(), docs_context.begin(),
                         docs_context.end());
@@ -1388,7 +1391,8 @@ ConsolidationResult IndexWriter::Consolidate(
   }
 
   auto pending_reader = SegmentReaderImpl::Open(
-    _dir, consolidation_segment.meta, committed_reader->Options());
+    _dir, consolidation_segment.meta, committed_reader->Options(),
+    merger.TakeBuiltHnswGraphs());
   SDB_ASSERT(pending_reader);
 
   // Commit merge, ensure no concurrent Commit/etc
@@ -1546,7 +1550,8 @@ bool IndexWriter::Import(const IndexReader& reader,
 
   index_utils::FlushIndexSegment(dir, segment);
 
-  auto imported_reader = SegmentReaderImpl::Open(_dir, segment.meta, options);
+  auto imported_reader = SegmentReaderImpl::Open(_dir, segment.meta, options,
+                                                 merger.TakeBuiltHnswGraphs());
   SDB_ASSERT(imported_reader);
 
   auto refs = dir.GetRefs();
@@ -2034,7 +2039,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
             // reuse existing reader with initial meta and docs_mask
             return it->second->UpdateMeta(dir, flushed.meta);
           } else {
-            return SegmentReaderImpl::Open(dir, flushed.meta, reader_options);
+            return SegmentReaderImpl::Open(dir, flushed.meta, reader_options,
+                                           std::move(flushed.cs_hnsw_graphs));
           }
         }();
         SDB_ASSERT(reader);

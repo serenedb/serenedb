@@ -26,6 +26,7 @@
 
 #include <memory>
 
+#include "iresearch/columnstore/format.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/directory_utils.hpp"
@@ -34,7 +35,6 @@
 namespace irs {
 namespace columnstore {
 
-class Reader;
 class NormColumnReader;
 
 }  // namespace columnstore
@@ -54,7 +54,8 @@ class SegmentReaderImpl final : public SubReader {
 
   static std::shared_ptr<const SegmentReaderImpl> Open(
     const Directory& dir, const SegmentMeta& meta,
-    const IndexReaderOptions& options);
+    const IndexReaderOptions& options,
+    columnstore::PreloadedHnswGraphs preloaded_hnsw = {});
 
   std::shared_ptr<const SegmentReaderImpl> ReopenColumnStore(
     const Directory& dir, const SegmentMeta& meta,
@@ -94,7 +95,8 @@ class SegmentReaderImpl final : public SubReader {
     std::unique_ptr<columnstore::Reader> cs_reader;
 
     void Open(const Directory& dir, const SegmentMeta& meta,
-              const IndexReaderOptions& options);
+              const IndexReaderOptions& options,
+              columnstore::PreloadedHnswGraphs preloaded_hnsw = {});
   };
 
   FileRefs _refs;

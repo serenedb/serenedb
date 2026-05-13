@@ -810,6 +810,7 @@ bool MergeWriter::Flush(SegmentMeta& segment,
   }
   if (cs_writer) {
     cs_writer->Commit();
+    _built_hnsw_graphs = cs_writer->TakeBuiltHnswGraphs();
   }
 
   segment.files = track_dir.FlushTracked(segment.byte_size);

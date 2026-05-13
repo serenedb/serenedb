@@ -141,6 +141,7 @@ void SegmentWriter::FlushFields(FlushState& state) {
   // to disk. After Commit the `.cs` is durable and closed.
   if (_columnstore) {
     _columnstore->Commit();
+    _built_hnsw_graphs = _columnstore->TakeBuiltHnswGraphs();
     _columnstore.reset();
   }
 
@@ -186,6 +187,7 @@ void SegmentWriter::reset() noexcept {
     _columnstore->Rollback();
     _columnstore.reset();
   }
+  _built_hnsw_graphs.clear();
 }
 
 void SegmentWriter::reset(const SegmentMeta& meta) {

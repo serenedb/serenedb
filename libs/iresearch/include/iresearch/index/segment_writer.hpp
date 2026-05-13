@@ -151,6 +151,10 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
   columnstore::Writer* Columnstore() noexcept { return _columnstore.get(); }
 
+  columnstore::PreloadedHnswGraphs TakeBuiltHnswGraphs() noexcept {
+    return std::move(_built_hnsw_graphs);
+  }
+
  private:
   bool index(const hashed_string_view& name, doc_id_t doc,
              IndexFeatures index_features, Tokenizer& tokens);
@@ -186,6 +190,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   FieldWriter::ptr _field_writer;
   duckdb::DatabaseInstance* _db = nullptr;
   std::unique_ptr<columnstore::Writer> _columnstore;
+  columnstore::PreloadedHnswGraphs _built_hnsw_graphs;
   doc_id_t _batch_first_doc_id = doc_limits::eof();
   bool _initialized = false;
   bool _valid = true;

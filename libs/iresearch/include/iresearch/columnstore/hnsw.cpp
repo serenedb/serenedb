@@ -14,6 +14,8 @@
 /// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/columnstore/hnsw.hpp"
@@ -32,7 +34,7 @@
 
 #include "basics/assert.h"
 #include "basics/containers/node_hash_map.h"
-#include "basics/containers/s3_fifo.h"
+#include "basics/containers/s3fifo.h"
 #include "basics/exceptions.h"
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -42,20 +44,8 @@
 namespace irs::columnstore {
 namespace {
 
-// Cache granularity. Each chunk holds up to `kChunkSizeFloats` child
-// elements (and at least one ARRAY row when d exceeds it); number of
-// chunks resident is bounded by `kChunkCacheSlots`. Defaults picked
-// from the cross-product sweep in scripts/perf/sweep_hnsw_cross.sh:
-// chunk=8192 / cache=64 minimizes vector_search.test_slow runtime
-// (matches main pre-deferral baseline). Memory ceiling per HNSW
-// writer/reader is `chunk * cache * 4 bytes` ~ 2 MB for typical d.
 constexpr uint64_t kChunkSizeFloats = 4 * STANDARD_VECTOR_SIZE;
 constexpr size_t kChunkCacheSlots = 64;
-// Row-group ColumnSegments kept open. OpenSegmentImpl reads the entire
-// row-group payload from disk into a BufferManager block; reusing the
-// segment across chunk loads landing in the same row group is the
-// dominant speedup on chunk misses (was 16% of build CPU on memmove
-// alone before this cache).
 constexpr size_t kRgCacheSlots = 8;
 
 float ComputeNegativeInnerProduct(const byte_type* l, const byte_type* r,
@@ -89,14 +79,10 @@ class ChunkedVectorCache;
 using PendingHook = boost::intrusive::list_member_hook<
   boost::intrusive::link_mode<boost::intrusive::auto_unlink>>;
 
-struct ChunkSlot : public sdb::containers::s3_fifo::CacheHook {
+struct ChunkSlot : public sdb::containers::S3FIFOCacheHook {
   uint64_t chunk_id = std::numeric_limits<uint64_t>::max();
   duckdb::Vector data;
   const float* base;
-  // Pin count, not a flag: HNSWWriter::Build pins the outer chunk and
-  // ColumnDistance::symmetric_dis can pin a slot already in the outer
-  // pin (when i happens to be a row of the outer chunk). Decrement on
-  // Unpin so the inner Unpin doesn't drop the outer's pin.
   uint8_t pinned = 0;
   PendingHook pending_hook;
 
@@ -111,7 +97,7 @@ struct ChunkSlot : public sdb::containers::s3_fifo::CacheHook {
   ChunkSlot& operator=(ChunkSlot&&) = delete;
 };
 
-struct RgSlot : public sdb::containers::s3_fifo::CacheHook {
+struct RgSlot : public sdb::containers::S3FIFOCacheHook {
   size_t rg = std::numeric_limits<size_t>::max();
   ColumnReader::ScanCursor cursor;
   PendingHook pending_hook;
@@ -163,12 +149,6 @@ class ChunkedVectorCache {
 
   const float* Get(uint64_t row) { return SliceOf(*FindOrLoad(row), row); }
 
-  // Pin/Unpin nest LIFO: HNSWWriter::Build's outer pin must survive
-  // ColumnDistance::symmetric_dis's inner Pin/Unpin, even when both
-  // target the same slot. `slot.pinned` is a counter so the inner
-  // decrement leaves the outer's pin in place; the stack records
-  // which slot each Unpin maps to. Two-deep is enough today (Build
-  // outer + symmetric_dis inner).
   const float* Pin(uint64_t row) {
     auto* slot = FindOrLoad(row);
     SDB_ASSERT(_pin_depth < _pin_stack.size());
@@ -188,16 +168,13 @@ class ChunkedVectorCache {
   RgSlot& GetRgSlot(size_t rg) {
     auto [it, inserted] = _rg_index.try_emplace(rg);
     if (!inserted) {
-      it->second.touch();
+      it->second.Touch();
       return it->second;
     }
     RgSlot& slot = it->second;
     slot.rg = rg;
     slot.cursor = ColumnReader::ScanCursor{_child->OpenSegment(rg)};
     _rgs.Insert(slot);
-    // s3_fifo evicts inside insert(); the evictor parks evicted slots
-    // on `_rg_evicted` because it can't free them itself (cache iterator
-    // would dangle). Erase here, after insert() returns.
     while (!_rg_evicted.empty()) {
       auto& s = _rg_evicted.front();
       _rg_evicted.pop_front();
@@ -215,7 +192,7 @@ class ChunkedVectorCache {
     auto [it, inserted] = _chunk_index.try_emplace(
       chunk_id, static_cast<duckdb::idx_t>(_chunk_rows * _d));
     if (!inserted) {
-      it->second.touch();
+      it->second.Touch();
       return &it->second;
     }
     ChunkSlot& slot = it->second;
@@ -223,9 +200,6 @@ class ChunkedVectorCache {
     slot.pinned = false;
     Load(slot, chunk_id);
     _slots.Insert(slot);
-    // s3_fifo evicts inside insert(); the evictor parks evicted slots
-    // on `_chunk_evicted` because it can't free them itself (cache
-    // iterator would dangle). Erase here, after insert() returns.
     while (!_chunk_evicted.empty()) {
       auto& s = _chunk_evicted.front();
       _chunk_evicted.pop_front();
@@ -273,11 +247,11 @@ class ChunkedVectorCache {
   size_t _pin_depth = 0;
 
   ChunkMap _chunk_index;
-  sdb::containers::s3_fifo::Cache<ChunkSlot, ChunkEvictor> _slots;
+  sdb::containers::S3FIFOCache<ChunkSlot, ChunkEvictor> _slots;
   ChunkPendingList _chunk_evicted;
 
   RgMap _rg_index;
-  sdb::containers::s3_fifo::Cache<RgSlot, RgEvictor> _rgs;
+  sdb::containers::S3FIFOCache<RgSlot, RgEvictor> _rgs;
   RgPendingList _rg_evicted;
   RgWindow _locate_hint;
 };
@@ -295,13 +269,6 @@ inline bool RgEvictor::operator()(RgSlot& slot) const noexcept {
   return true;
 }
 
-// Distance computer over the ARRAY child column. doc_id space is 1-based
-// (faiss::idx_t == iresearch doc_id == row + doc_limits::min()), so the
-// access key is (id - doc_limits::min()). set_query stores the
-// caller-owned query pointer; dis(id) fetches one slice and forwards
-// it to dist(). symmetric_dis(i, j) needs both slices to coexist for
-// the dist() call -- pin the i-side chunk before fetching j so the
-// second cache->Get's eviction can't free `a` out from under us.
 struct ColumnDistance final : public faiss::DistanceComputer {
   ColumnDistance(HNSWInfo info, ChunkedVectorCache* cache) noexcept
     : dim{info.d}, dist{ResolveDistanceFunction(info.metric)}, cache{cache} {}

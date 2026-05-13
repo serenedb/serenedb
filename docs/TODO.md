@@ -33,7 +33,7 @@ transactions/etc.) are out of scope.
   directly without a clone.
 - **`HNSWReader::Search` builds a fresh `ChunkedVectorCache` +
   `ColumnDistance` per call** ([`hnsw.cpp:441-443`](../libs/iresearch/include/iresearch/columnstore/hnsw.cpp)).
-  Each ctor allocates an s3_fifo Cache, two NodeHashMaps, the pin stack,
+  Each ctor allocates an S3FIFOCache, two NodeHashMaps, the pin stack,
   and (lazily) a 2 MB chunk slot region. For per-segment ANN queries
   this is paid per query. Move cache to a thread-local or member so
   warmup amortises across queries.
@@ -111,15 +111,16 @@ test today, some are pure follow-up optimisations / features. All file
 as separate issues.
 
 
-- **`STRUCT` / `MAP` / `UNION` / `VARIANT` INCLUDE columns.** Catalog
-  blocks them today ([`index.cpp:349-360`](../server/catalog/index.cpp))
-  -- good -- but `column_writer.cpp::FlushNode` default would call
-  `CompressColumn` -> `PickCodec` -> "no codec accepted the row group for
-  type STRUCT" if catalog ever stops being the gate. Add an explicit
-  early reject in `Writer::OpenColumn` mirroring the catalog check, and
-  a test confirming the catalog rejection produces a clean SQL error.
-- **`GEOMETRY` INCLUDE columns.** Same status -- catalog rejects, writer
-  doesn't. Mirror check + test.
+- **`UNION` / `VARIANT` / `GEOMETRY` INCLUDE columns.** Catalog rejects
+  them ([`index.cpp:357-374`](../server/catalog/index.cpp)) but the
+  writer would silently mis-shape them if catalog ever stops being the
+  gate: `FlushNode` treats UNION / VARIANT as plain STRUCT (drops the
+  discriminator) and GEOMETRY may shred to nested children DuckDB
+  doesn't expect on read. Add an explicit early reject in
+  `Writer::OpenColumn` mirroring the catalog check, and a test
+  confirming the catalog rejection produces a clean SQL error.
+  (STRUCT, MAP, ARRAY, LIST already supported end-to-end -- see
+  inverted_index_{struct,map,nested,array,list}_include tests.)
 - **Schema evolution between merged segments.** `MergeInto` asserts
   `col->Type() == first_col->Type()` in DEBUG only
   ([`merge.cpp:70`](../libs/iresearch/include/iresearch/columnstore/merge.cpp)).
@@ -446,17 +447,22 @@ this review:
   rules with concrete heuristics (mechanical-translation test for
   comments; failure-mode-only message for asserts).
 - **PartialBlockManager / CapturingCheckpointState ripped out of the
-  writer** in favor of `FlushSegmentFn` callbacks on
-  `ColumnDataCheckpointData` (DuckDB-side patch). Codecs that previously
-  called `checkpoint_data.GetCheckpointState().FlushSegment(...)` now
-  call `checkpoint_data.FlushSegment(...)` directly; iresearch installs
-  callbacks instead of constructing a sham ColumnCheckpointState + PBM.
-  Eliminates the `pbm.ClearBlocks()` workaround.
-- **zstd enabled** via a `CsBlockManager` (BlockManager subclass) plus a
-  `SetBlockManager` hook on `ColumnDataCheckpointData`. zstd's extras
-  (one or more 256 KB pages beyond the main segment, chained via inline
-  block_id pointers) write/read through the .cs IndexOutput/IndexInput
-  directly; block_id IS the file offset so no mapping table is needed.
+  writer** in favor of a new detached ctor on `ColumnDataCheckpointData`
+  that binds `FlushSegmentFn` / `FlushSegmentInternalFn` /
+  `BlockManager` / `OverflowStringWriterFactory` up-front (DuckDB-side
+  patch). Codecs that previously called
+  `checkpoint_data.GetCheckpointState().FlushSegment(...)` now call
+  `checkpoint_data.FlushSegment(...)` directly. Eliminates the sham
+  ColumnCheckpointState + `pbm.ClearBlocks()` workaround.
+- **zstd enabled** via `CsBlockManager` (BlockManager subclass). zstd's
+  extras (one or more 256 KB pages beyond the main segment, chained via
+  inline block_id pointers) write/read through the .cs IndexOutput /
+  IndexInput directly; block_id IS the file offset so no mapping table
+  is needed. `GetBlockManager()` / `GetFreeBlockId()` on
+  `ColumnDataCheckpointData` dispatch: detached path returns the bound
+  override (CsBlockManager); attached path forwards to
+  `PartialBlockManager` so DuckDB's FULL_CHECKPOINT ->
+  `GetFreeBlockIdForCheckpoint` semantics are preserved on native flows.
   See cs_compression_methods.test for the multi-page round-trip case.
 - Build verified with `ninja serened` after each batch of edits.
 
@@ -465,9 +471,13 @@ License headers in new files: out of scope per project convention --
 policing.
 
 Autonomous follow-up pass (this session):
-- Bug: `SDB_ASSERT(p.segment_state == nullptr)` -> `SDB_ENSURE`
-  (`column_reader.cpp:OpenSegmentImpl`); release builds now refuse
-  to silently drop codec state.
+- Note: the earlier `SDB_ENSURE(!p.segment_state)` in
+  `column_reader.cpp:OpenSegmentImpl` has been removed entirely.
+  zstd's serialize_state (the only codec that emits one today) is
+  intentionally dropped at read time -- its on_disk_blocks list is
+  only consulted by `VisitBlockIds` during checkpoint free-list
+  cleanup, a path we don't run. Scan reads inline block_ids via
+  `CsBlockManager`.
 - Bug: `OpenColumn` / `AttachHNSW` cross-call invariants converted from
   `SDB_ASSERT` to `SDB_ENSURE`; mismatched re-attach now surfaces a
   runtime error instead of UB in release.
@@ -477,7 +487,7 @@ Autonomous follow-up pass (this session):
   (norm_reader.cpp:39).
 - Bug: HNSWReader constructor now `SDB_ENSURE`s
   `ArraySize() == info.d` (hnsw.cpp:397).
-- Bug: `s3_fifo::Evict()` falls through to `EvictMain` when
+- Bug: `S3FIFOEvict()` falls through to `EvictMain` when
   `EvictSmall` returns false; HNSW cache under pin pressure no longer
   stalls.
 - Perf: `OpenColumn` / `AttachHNSW` / `OpenNormColumn` dedup is now

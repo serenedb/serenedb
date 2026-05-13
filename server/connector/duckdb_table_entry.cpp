@@ -204,10 +204,6 @@ duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(
     }
   }
 
-  // Tables without a declared PK use the synthetic generated-PK column
-  // for row identity in UPDATE/DELETE plans. PK-bearing tables identify
-  // rows through their PK virtual columns above and don't need an extra
-  // generated PK slot.
   if (pk_col_ids.empty()) {
     result.push_back(kColumnIdentifierGeneratedPk);
   }
@@ -246,21 +242,12 @@ duckdb::virtual_column_map_t SereneDBTableEntry::BuildVirtualColumns(
 
   // COLUMN_IDENTIFIER_EMPTY: the "no data needed" placeholder DuckDB's
   // LogicalGet::GetAnyColumn picks for queries like COUNT(*) that have
-  // no real column dependency. Without this, GetAnyColumn falls through
-  // to column 0 and EXPLAIN ends up showing the first table column as a
-  // bogus projection. Our scan path treats it as a no-op slot
-  // (duckdb_scan_base.cpp).
+  // no real column dependency.
   result.insert({duckdb::COLUMN_IDENTIFIER_EMPTY,
                  duckdb::TableColumn("", duckdb::LogicalType::BOOLEAN)});
 
   // Generated-PK virtual column: only declared on tables without an
-  // explicit PK. The DuckDB UPDATE/DELETE planner uses GetRowIdColumns
-  // to bind row identity; with a real PK the PK virtual columns above
-  // already cover that, and advertising an extra rowid-style slot would
-  // (a) leak into EXPLAIN as an unused projection and (b) let the
-  // optimizer pick it for COUNT(*) over a real column. CREATE INDEX on
-  // a no-PK table also synthesises the catalog kGeneratedPKId column
-  // from this slot's bytes (see duckdb_catalog.cpp `use_generated_pk`).
+  // explicit PK.
   if (pk_col_ids.empty()) {
     result.insert(
       {kColumnIdentifierGeneratedPk,
@@ -306,10 +293,8 @@ duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
 
 duckdb::column_t SereneDBTableEntry::VirtualToPKColumnIndex(
   duckdb::column_t virtual_id) {
-  // Virtual PK column ids live in [VIRTUAL_COLUMN_START,
-  // kColumnIdentifierGeneratedPk): the lower end is the slot for table column
-  // index 0, and everything above is reserved for our named virtuals (generated
-  // PK, tableoid) and DuckDB's COLUMN_IDENTIFIER_* sentinels.
+  // Virtual PK column ids live in
+  // [VIRTUAL_COLUMN_START, kColumnIdentifierGeneratedPk):
   if (virtual_id >= duckdb::VIRTUAL_COLUMN_START &&
       virtual_id < kColumnIdentifierGeneratedPk) {
     return virtual_id - duckdb::VIRTUAL_COLUMN_START;

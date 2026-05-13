@@ -14,6 +14,8 @@
 /// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
@@ -97,28 +99,20 @@ inline std::unique_ptr<MaterializerNodeState> MakeMaterializerNodeState(
       const auto* child = reader.Child();
       SDB_ASSERT(child);
       state->children.push_back(MakeMaterializerNodeState(*child));
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::STRUCT: {
       state->children.reserve(reader.StructFieldCount());
       for (size_t fi = 0; fi < reader.StructFieldCount(); ++fi) {
         state->children.push_back(
           MakeMaterializerNodeState(reader.StructField(fi)));
       }
-      break;
-    }
+    } break;
     default:
       break;
   }
   return state;
 }
 
-// Generic recursive materializer. Mirrors duckdb::ColumnData::ScanCount's
-// per-type recursion: scan parent validity into the output vector first,
-// then dispatch on the structural payload (primitive data / ARRAY child /
-// LIST length+child / STRUCT fields). The state argument keeps cursors
-// alive across batches so the same ColumnSegment objects (and their
-// BufferManager-pinned pages) are reused without re-reading the file.
 template<typename DocIds>
 void MaterializeNode(const irs::columnstore::ColumnReader& reader,
                      MaterializerNodeState& state, const DocIds& doc_ids,
@@ -237,12 +231,8 @@ void MaterializeNode(const irs::columnstore::ColumnReader& reader,
 
 }  // namespace cs_internal
 
-// One instance per (segment, projection set) for INCLUDEd columns flagged
-// store_values=true. Non-INCLUDEd columns fall through to IndexSource.
 class ColumnstoreMaterializer {
  public:
-  // column_ids[i] -> output.data[output_slots[i]]. Columns absent from
-  // this segment's .cs are skipped (caller materializes via IndexSource).
   ColumnstoreMaterializer(const irs::columnstore::Reader& reader,
                           std::span<const irs::field_id> column_ids,
                           std::span<const duckdb::idx_t> output_slots);
@@ -253,8 +243,6 @@ class ColumnstoreMaterializer {
                       duckdb::DataChunk& output,
                       duckdb::idx_t output_start = 0) const;
 
-  // Sequential Scan reuses the open ColumnSegment + ColumnScanState across
-  // calls; mutates per-binding cursors so it's not const.
   void Scan(uint64_t start_doc, duckdb::idx_t count, duckdb::DataChunk& output);
 
  private:

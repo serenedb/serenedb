@@ -59,11 +59,6 @@ const ProgressReportCallback kNoProgress =
     // intentionally do nothing
   };
 
-const ColumnInfoProvider kDefaultColumnInfo = [](std::string_view) {
-  // no compression, no encryption
-  return ColumnInfo{irs::Type<compression::None>::get(), {}, false};
-};
-
 struct FlushedSegmentContext {
   FlushedSegmentContext(std::shared_ptr<const SegmentReaderImpl>&& reader,
                         IndexWriter::SegmentContext& segment,
@@ -1094,11 +1089,9 @@ IndexWriter::IndexWriter(
   ConstructToken, IndexLock::ptr&& lock, IndexFileRefs::ref_t&& lock_file_ref,
   Directory& dir, Format::ptr codec, size_t segment_pool_size,
   const SegmentOptions& segment_limits, const Comparer* comparator,
-  const ColumnInfoProvider& column_info,
   const PayloadProvider& meta_payload_provider,
   std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
-  : _column_info{column_info},
-    _meta_payload_provider{meta_payload_provider},
+  : _meta_payload_provider{meta_payload_provider},
     _comparator{comparator},
     _codec{std::move(codec)},
     _dir{dir},
@@ -1110,7 +1103,6 @@ IndexWriter::IndexWriter(
     _writer{_codec->get_index_meta_writer()},
     _write_lock{std::move(lock)},
     _write_lock_file_ref{std::move(lock_file_ref)} {
-  SDB_ASSERT(column_info);  // ensured by 'make'
   SDB_ASSERT(_codec);
 
   _wand_scorer = _committed_reader->Options().scorer;
@@ -1238,9 +1230,7 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
   auto writer = std::make_shared<IndexWriter>(
     ConstructToken{}, std::move(lock), std::move(lock_ref), dir,
     std::move(codec), options.segment_pool_size, SegmentOptions{options},
-    options.comparator,
-    options.column_info ? options.column_info : kDefaultColumnInfo,
-    options.meta_payload_provider, std::move(reader));
+    options.comparator, options.meta_payload_provider, std::move(reader));
   writer->_db = options.db;
   // Remove non-index files from directory
   directory_utils::RemoveAllUnreferenced(dir);
@@ -1662,7 +1652,6 @@ IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext() try {
 SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
   bool consolidation) const noexcept {
   return {
-    .column_info = _column_info,
     .scorers_features = _wand_features,
     .scorer = _wand_scorer,
     .comparator = _comparator,

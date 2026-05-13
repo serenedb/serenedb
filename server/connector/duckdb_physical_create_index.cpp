@@ -711,12 +711,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
 
     const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
                                 /*have_nulls=*/true};
-    const bool active = writer->SwitchColumn(desc);
-    // WriteFullColumn fires unconditionally so the columnstore side
-    // absorbs the batch even for INCLUDE-only columns (where the
-    // inverted-index per-cell path is disabled via SwitchColumn = false).
-    writer->WriteFullColumn(chunk.data[col.input_col_idx], num_rows);
-    if (!active) {
+    if (!writer->SwitchColumn(desc, chunk.data[col.input_col_idx], num_rows)) {
       continue;
     }
 

@@ -66,7 +66,6 @@ using DocMap = ManagedVector<doc_id_t>;
 using DocMapView = std::span<const doc_id_t>;
 
 struct SegmentWriterOptions {
-  const ColumnInfoProvider& column_info;
   const IndexFeatures scorers_features;
   ScorerPtr scorer = nullptr;
   const Comparer* const comparator{};

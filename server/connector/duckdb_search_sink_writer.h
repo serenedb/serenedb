@@ -55,15 +55,12 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
     InitImpl(batch_size);
   }
 
-  bool SwitchColumn(const ColumnDescriptor& col) final;
+  bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
+                    duckdb::idx_t count) final;
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {
     WriteImpl(cell_slices, full_key);
-  }
-
-  void WriteFullColumn(const duckdb::Vector& vec, duckdb::idx_t count) final {
-    WriteFullColumnImpl(vec, count);
   }
 
   void Finish() final { FinishImpl(); }
@@ -117,15 +114,12 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
     SearchSinkDeleteBaseImpl::InitImpl(batch_size);
   }
 
-  bool SwitchColumn(const ColumnDescriptor& col) final;
+  bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
+                    duckdb::idx_t count) final;
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {
     WriteImpl(cell_slices, full_key);
-  }
-
-  void WriteFullColumn(const duckdb::Vector& vec, duckdb::idx_t count) final {
-    SearchSinkInsertBaseImpl::WriteFullColumnImpl(vec, count);
   }
 
   void Finish() final {

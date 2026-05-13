@@ -14,6 +14,8 @@
 /// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
@@ -209,12 +211,6 @@ class ColumnReader final {
     return *_struct_fields[i];
   }
 
-  // Stateful per-row-group cursor over a LIST/MAP column's cumulative
-  // offsets. Caller advances through monotonically non-decreasing
-  // (rg, in_rg) pairs; on each call, ReadListOffset yields the row's
-  // element span [start, end) as column-global child positions.
-  // The scratch UBIGINT vector is reused across calls so the hot loop
-  // doesn't reallocate per row.
   struct ListOffsetState {
     size_t rg = std::numeric_limits<size_t>::max();
     ScanCursor cursor;
@@ -225,26 +221,16 @@ class ColumnReader final {
   void ReadListOffset(ListOffsetState& state, size_t rg, uint64_t in_rg,
                       uint64_t& start, uint64_t& end) const;
 
-  // Batched form: read `count` consecutive cumulative offsets starting
-  // at row `first_in_rg` in row group `rg`. Writes `count` values into
-  // `out_buf` (must be UBIGINT, capacity >= count); returns the
-  // pre-batch cumulative offset that anchors the run's start.
-  // Callers must NOT mix this with ReadListOffset on the same state.
   uint64_t ReadListOffsets(ListOffsetState& state, size_t rg,
                            uint64_t first_in_rg, duckdb::idx_t count,
                            duckdb::Vector& out_buf) const;
 
-  // Per-cursor point-access for roughly-monotonic per-doc lookups.
-  // Caches the open ColumnSegment + fetch state across calls in the same
-  // row group. Owns a Reopen'd IndexInput so concurrent cursors are safe.
   class PointReadCursor {
    public:
     PointReadCursor(const ColumnReader& reader,
                     std::unique_ptr<IndexInput> in) noexcept
       : _reader{&reader}, _in{std::move(in)} {}
 
-    // Reads row[row_pos] into out[out_idx]. Does not populate validity;
-    // use the Scan path when null bits are needed.
     void FetchRow(uint64_t row_pos, duckdb::Vector& out, duckdb::idx_t out_idx);
 
    private:
@@ -258,16 +244,11 @@ class ColumnReader final {
   PointReadCursor NewPointCursor() const;
 
  private:
-  // Validity side. Independent RG breakdown from data; only RangeScan
-  // uses these (callers go through RangeScan with validity_side=true).
   RgWindow LocateValidity(uint64_t row_pos, RgWindow hint) const noexcept;
   duckdb::unique_ptr<duckdb::ColumnSegment> OpenValiditySegment(
     size_t vrg) const;
   friend class RangeScan;
 
-  // Reads byte_size bytes for the codec from `in`; other state (codec
-  // lookup, BufferManager pin, ColumnSegment build) is independent of the
-  // input source.
   duckdb::unique_ptr<duckdb::ColumnSegment> OpenSegmentImpl(
     const duckdb::DataPointer& p, const duckdb::LogicalType& type,
     IndexInput& in) const;
@@ -276,8 +257,6 @@ class ColumnReader final {
   duckdb::LogicalType _type;
   std::vector<duckdb::DataPointer> _data_pointers;
   std::vector<duckdb::DataPointer> _validity_pointers;
-  // Cumulative row offsets, one trailing sentinel == _row_count. Data and
-  // validity have separate breakdowns: codec segment fragmentation differs.
   std::vector<uint64_t> _data_offsets;      // size = data_pointers + 1
   std::vector<uint64_t> _validity_offsets;  // size = validity_pointers + 1
   uint64_t _row_count = 0;
@@ -289,7 +268,6 @@ class ColumnReader final {
   IndexInput* _in;
   duckdb::DatabaseInstance* _db;
   CsBlockManager* _block_manager;
-
   // Element-start prefix sums across LIST/MAP row groups, derived
   // eagerly from each segment's stats (max stored cumulative offset).
   std::vector<uint64_t> _rg_element_starts;

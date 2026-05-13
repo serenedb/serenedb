@@ -1,0 +1,100 @@
+control substitution on
+
+# WAL recovery for INCLUDE'd columns served by the new columnstore.
+#
+# Mirrors wal_index_recovery.test, but with a STORE'd INCLUDE column whose
+# only durable home is the .cs file. RocksDB carries the indexed-side bytes
+# (used by the inverted-index analyzer) and ALSO the include'd cell bytes,
+# so the recovery driver has everything it needs in RAM; the question is
+# whether it re-drives them into the cs writer's Append path.
+#
+# Pre-crash row -> committed iresearch segment, .cs already durable.
+# Post-crash rows -> only in RocksDB WAL; their cs row positions don't
+# exist in any on-disk .cs file yet and must be rebuilt from WAL on
+# restart.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wal_inc_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE wal_inc_t(pk INTEGER PRIMARY KEY, txt TEXT, v BIGINT);
+
+statement ok
+INSERT INTO wal_inc_t VALUES (1, 'alpha bravo charlie', 100);
+
+statement ok
+CREATE INDEX wal_inc_idx ON wal_inc_t USING inverted(txt wal_inc_dict)
+  INCLUDE (pk, v included);
+
+statement ok
+VACUUM (UPDATE_INDEXES) wal_inc_t;
+
+# Pre-crash row is served from the .cs file.
+query
+SELECT pk, v FROM wal_inc_idx WHERE txt @@ ts_phrase('alpha');
+----
+pk	v
+1	100
+
+# Freeze iresearch commits: subsequent INSERTs land in RocksDB WAL only.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO wal_inc_t VALUES (2, 'delta echo foxtrot', 200),
+                             (3, 'golf hotel india', 300);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# --- server restarts here ---
+
+connection wal_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) wal_inc_t;
+
+# Pre-crash row's INCLUDE'd value still served from cs.
+connection wal_after
+query
+SELECT pk, v FROM wal_inc_idx WHERE txt @@ ts_phrase('alpha');
+----
+pk	v
+1	100
+
+# Post-crash rows: WAL recovery must re-feed the cs writer so the
+# INCLUDE'd `v` column is queryable for the WAL-only docs.
+connection wal_after
+query
+SELECT pk, v FROM wal_inc_idx WHERE txt @@ ts_phrase('delta echo');
+----
+pk	v
+2	200
+
+connection wal_after
+query
+SELECT pk, v FROM wal_inc_idx WHERE txt @@ ts_phrase('golf hotel');
+----
+pk	v
+3	300
+
+# All three rows are visible from the index, ordered.
+connection wal_after
+query
+SELECT pk, v FROM wal_inc_idx ORDER BY pk;
+----
+pk	v
+1	100
+2	200
+3	300

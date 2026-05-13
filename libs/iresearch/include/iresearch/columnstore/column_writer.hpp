@@ -14,6 +14,8 @@
 /// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
@@ -41,14 +43,10 @@ class IndexOutput;
 namespace columnstore {
 
 class CsBlockManager;
-struct FooterColumnEntry;  // defined in format.cpp
+struct FooterColumnEntry;
 
-// Per-column writer. Accepts duckdb::Vector batches; full row group ->
-// compress + emit one DataPointer.
 class ColumnWriter final {
  public:
-  // skip_validity=true emits zero validity DataPointers; reader treats
-  // ValidityGroupCount()==0 as all-valid. PK uses this.
   ColumnWriter(field_id id, duckdb::LogicalType type, uint64_t row_group_size,
                duckdb::DatabaseInstance& db, IndexOutput& out,
                CsBlockManager& block_manager, FooterColumnEntry& entry,
@@ -57,15 +55,9 @@ class ColumnWriter final {
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
 
-  // start_row must be monotonically non-decreasing; gaps become nulls.
-  // Validity bits in `vec` are honored.
   void Append(uint64_t start_row, const duckdb::Vector& vec,
               duckdb::idx_t count);
 
-  // Append `count` rows picked by `sel` out of `vec`. Same monotonic /
-  // gap-padding semantics as the dense overload; lets callers avoid a
-  // throwaway Slice-then-Flatten Vector when they already have a
-  // SelectionVector (consolidate's mask-prune path).
   void Append(uint64_t start_row, const duckdb::Vector& vec,
               const duckdb::SelectionVector& sel, duckdb::idx_t count);
 
@@ -80,19 +72,14 @@ class ColumnWriter final {
     return _forced_compression;
   }
 
-  // Applies to leaf data only; validity / LIST lengths always run AUTO.
-  // Codec/type compatibility is validated at catalog time
-  // (ValidateColumnCompression).
   void SetCompression(duckdb::CompressionType compression) noexcept {
     _forced_compression = compression;
   }
 
-  void Finalize();  // Called by Writer::Commit.
+  void Finalize();
 
  private:
   void FlushRowGroup();
-  // Advances `_filled` to (start_row - _row_group_first_doc), marking the
-  // gap rows null in `_staging`'s validity. Flushes row groups crossed.
   void PadNullsTo(uint64_t start_row);
 
   field_id _id;

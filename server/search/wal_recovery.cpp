@@ -44,6 +44,7 @@
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/duckdb_rocksdb_reader.h"
 #include "connector/indexonly_marker.h"
 #include "connector/search_sink_writer.hpp"
 #include "rest_server/serened_single.h"
@@ -219,35 +220,53 @@ void FlushShard(ShardState& s,
     auto& get_key_buffer = s.full_key_prefix;
     rocksdb::ReadOptions read_opts;
     rocksdb::PinnableSlice value_buffer;
+    auto resolve_cell = [&](const Row& row,
+                            size_t col_idx) -> std::string_view {
+      std::string_view cell = row.indexed_cols[col_idx];
+      if (!cell.empty()) {
+        return cell;
+      }
+      std::string_view pk = row.full_key.substr(kKeyPrefixSize);
+      get_key_buffer.resize(kKeyPrefixSize);
+      get_key_buffer.append(pk.data(), pk.size());
+      value_buffer.Reset();
+      auto status = db.Get(read_opts, &cf, get_key_buffer, &value_buffer);
+      SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
+                   "WAL recovery: rocksdb Get failed for index '",
+                   s.shard->GetId().id(),
+                   "' col=", s.indexed_columns[col_idx].id, ": ",
+                   status.ToString(), kSkipHint);
+      return std::string_view{value_buffer.data(), value_buffer.size()};
+    };
     for (size_t col_idx = 0; col_idx < s.indexed_columns.size(); ++col_idx) {
       const auto& col = s.indexed_columns[col_idx];
-      const bool switched = sink.SwitchColumnImpl(connector::ColumnDescriptor{
-        col.id, col.store_mode, col.type, /*have_nulls=*/true});
-      SDB_ASSERT(switched);
       absl::big_endian::Store(get_key_buffer.data() + sizeof(ObjectId), col.id);
-      for (const auto* row : insert_entries) {
-        std::string_view cell = row->indexed_cols[col_idx];
-        if (!cell.empty()) {
-          rocksdb::Slice slice{cell.data(), cell.size()};
-          sink.WriteImpl(std::span{&slice, 1}, row->full_key);
-        } else {
-          // This is a very bad code that exists because we don't support PATCH
-          // queries for inverted index. It happens when we update a column that
-          // is indexed but not included in the UPDATE statement: the new value
-          // is missing from the WAL window, so we have to fetch it from the db
-          // to be able to write it to iresearch.
-          std::string_view pk = row->full_key.substr(kKeyPrefixSize);
-          get_key_buffer.resize(kKeyPrefixSize);
-          get_key_buffer.append(pk.data(), pk.size());
-          value_buffer.Reset();
-          auto status = db.Get(read_opts, &cf, get_key_buffer, &value_buffer);
-          SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
-                       "WAL recovery: rocksdb Get failed for index '",
-                       s.shard->GetId().id(), "' col=", col.id, ": ",
-                       status.ToString(), kSkipHint);
-          rocksdb::Slice slice{value_buffer.data(), value_buffer.size()};
-          sink.WriteImpl(std::span{&slice, 1}, row->full_key);
+      const connector::ColumnDescriptor desc{col.id, col.store_mode, col.type,
+                                             /*have_nulls=*/true};
+      const auto* info = s.index->FindColumnInfo(col.id);
+      const bool wants_cs = info != nullptr && info->store_values;
+      const bool text_indexed =
+        info != nullptr && info->text_dictionary.isSet();
+      const bool has_json_paths = info != nullptr && !info->json_paths.empty();
+      const bool has_hnsw = info != nullptr && info->hnsw_config.has_value();
+      if (wants_cs && !text_indexed && !has_json_paths && !has_hnsw) {
+        const auto count = static_cast<duckdb::idx_t>(insert_entries.size());
+        duckdb::Vector vec{col.type, count};
+        duckdb::FlatVector::ValidityMutable(vec).SetAllValid(count);
+        for (duckdb::idx_t i = 0; i < count; ++i) {
+          connector::DeserializeValueIntoDuckDB(
+            resolve_cell(*insert_entries[i], col_idx), vec, col.type, i);
         }
+        sink.SwitchColumnImpl(desc, vec, count);
+        continue;
+      }
+      duckdb::Vector unused{col.type, nullptr, 0};
+      const bool switched = sink.SwitchColumnImpl(desc, unused, /*count=*/0);
+      SDB_ASSERT(switched);
+      for (const auto* row : insert_entries) {
+        std::string_view cell = resolve_cell(*row, col_idx);
+        rocksdb::Slice slice{cell.data(), cell.size()};
+        sink.WriteImpl(std::span{&slice, 1}, row->full_key);
       }
     }
     sink.FinishImpl();

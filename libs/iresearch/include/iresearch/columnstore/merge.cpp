@@ -14,6 +14,8 @@
 /// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/columnstore/merge.hpp"
@@ -63,8 +65,6 @@ void MergeInto(std::span<const Reader* const> sources,
                  "schema evolution between merge sources not supported");
       const auto* mask = source_masks[s];
 
-      // skip_validity columns (e.g. PK) have no validity payload on disk;
-      // validity_range stays unused in that case.
       ColumnReader::RangeScan data_range{*col};
       ColumnReader::RangeScan validity_range{*col, /*validity_side=*/true};
       for (size_t rg = 0; rg < col->RowGroupCount(); ++rg) {
@@ -93,8 +93,6 @@ void MergeInto(std::span<const Reader* const> sources,
             duckdb::SelectionVector sel{take};
             duckdb::idx_t kept = 0;
             for (duckdb::idx_t i = 0; i < take; ++i) {
-              // docs_mask uses 1-indexed iresearch doc_ids; row positions
-              // are 0-indexed.
               const auto src_doc = static_cast<doc_id_t>(
                 rg_first_doc + scanned + i + doc_limits::min());
               if (mask->contains(src_doc)) {
@@ -112,9 +110,6 @@ void MergeInto(std::span<const Reader* const> sources,
       }
     }
   }
-
-  // Norms are merged in MergeWriter::WriteFields (it walks the merged
-  // field set and can allocate fresh ids).
 }
 
 }  // namespace irs::columnstore

@@ -35,11 +35,7 @@ struct ColumnDescriptor {
   bool have_nulls;
 };
 
-// Per-JSON-path descriptor passed to writers when switching to a JSON
-// sub-expression. Carries the base JSON column id, the leaf expression's
-// evaluated type, and the canonical serialized bytes used as the iresearch
-// field-name suffix.
-struct JsonExprDescriptor {
+struct ExpressionDescriptor {
   catalog::Column::Id column_id;
   duckdb::LogicalType type;
   bool have_nulls;

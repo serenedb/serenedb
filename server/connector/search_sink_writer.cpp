@@ -129,26 +129,23 @@ std::string_view ExtractRawString(std::span<const rocksdb::Slice> cell_slices) {
 }  // namespace
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
-  irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
+  irs::IndexWriter::Transaction& trx,
+  ColumnTokenizerProvider&& tokenizer_provider,
   std::span<const catalog::Column::Id> columns,
-  JsonPathTokenizerProvider&& json_path_tokenizer_provider,
-  std::vector<JsonPathBoundEntry>&& json_path_entries)
+  ExpressionTokenizerProvider&& subexpr_tokenizer_provider,
+  std::vector<IndexedExpression>&& subexprs)
   : ColumnSinkWriterImplBase{columns},
     _tokenizer_provider{std::move(tokenizer_provider)},
-    _json_path_tokenizer_provider{std::move(json_path_tokenizer_provider)},
+    _subexpr_tokenizer_provider{std::move(subexpr_tokenizer_provider)},
     _trx{trx},
-    _json_exprs_owned{std::move(json_path_entries)} {
+    _indexed_expressions{std::move(subexprs)} {
   _pk_field.PrepareForVerbatimStringValue();
   _pk_field.name = kPkFieldName;
 
-  _json_expr_views.reserve(_json_exprs_owned.size());
-  for (const auto& owned : _json_exprs_owned) {
-    if (!owned.bound_expression) {
-      continue;
-    }
-    _json_expr_views.push_back(
-      {owned.bound_expression.get(), owned.serialized_expr, owned.column_id});
-    _json_columns.insert(owned.column_id);
+  std::erase_if(_indexed_expressions,
+                [](const auto& e) { return !e.normalized_expr; });
+  for (const auto& owned : _indexed_expressions) {
+    _indexed_expressions_columns.insert(owned.column_id);
   }
 }
 
@@ -162,7 +159,7 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col) {
 #endif
     return false;
   }
-  if (_json_columns.contains(column_id)) {
+  if (_indexed_expressions_columns.contains(column_id)) {
 #ifdef SDB_DEV
     _current_writer = nullptr;
 #endif
@@ -233,8 +230,8 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col) {
   return true;
 }
 
-bool SearchSinkInsertBaseImpl::SwitchJsonExpressionImpl(
-  const JsonExprDescriptor& json_desc) {
+bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
+  const ExpressionDescriptor& json_desc) {
   const auto column_id = json_desc.column_id;
   const auto& return_type = json_desc.type;
   const auto have_nulls = json_desc.have_nulls;
@@ -247,14 +244,14 @@ bool SearchSinkInsertBaseImpl::SwitchJsonExpressionImpl(
   }
   // Reuse SetupColumnWriter with the canonical expression as field suffix --
   // a non-empty suffix routes the VARCHAR/BLOB tokenizer through
-  // `_json_path_tokenizer_provider`, picking up the path-specific dictionary
+  // `_expr_tokenizer_provider`, picking up the path-specific dictionary
   // instead of the base column's tokenizer.
   switch (return_type.id()) {
     case duckdb::LogicalTypeId::VARCHAR:
       SetupColumnWriter<duckdb::LogicalTypeId::VARCHAR>(column_id, have_nulls,
                                                         serialized_expr);
       // Also emit numeric/bool variants so cast filters (e.g. ::int) match.
-      SetupJsonAuxTypedFields(column_id, serialized_expr);
+      SetupExprAuxTypedFields(column_id, serialized_expr);
       break;
     case duckdb::LogicalTypeId::BOOLEAN:
       SetupColumnWriter<duckdb::LogicalTypeId::BOOLEAN>(column_id, have_nulls,
@@ -293,7 +290,7 @@ bool SearchSinkInsertBaseImpl::SwitchJsonExpressionImpl(
   return true;
 }
 
-void SearchSinkInsertBaseImpl::SetupJsonAuxTypedFields(
+void SearchSinkInsertBaseImpl::SetupExprAuxTypedFields(
   catalog::Column::Id column_id, std::string_view name_suffix) {
   // Build the numeric-mangled field name and analyzer.
   MakeColumnFieldName(column_id, name_suffix, _aux_numeric_name_buffer);
@@ -310,8 +307,9 @@ void SearchSinkInsertBaseImpl::SetupJsonAuxTypedFields(
   _aux_bool_field.store_attr = nullptr;
 
   // Route each cell to one field by parsing the text: numeric/bool/string.
-  // TODO(mkornaukhov): all values arrive as TEXT today; once typed JSON leaf
-  // extractors land, dispatch by return_type and drop these aux fields.
+  // TODO(mkornaukhov): all values arrive as json text extractors today;
+  // once typed JSON leaf extractors land (or just arbitrary expressions),
+  // dispatch by return_type and drop these aux fields.
   _current_writer = [this, string_writer = std::move(_current_writer)](
                       std::string_view full_key,
                       std::span<const rocksdb::Slice> cell_slices) {
@@ -332,7 +330,7 @@ void SearchSinkInsertBaseImpl::SetupJsonAuxTypedFields(
         _document->template Insert<irs::Action::INDEX>(&_aux_numeric_field);
       if (!ok) {
         SDB_THROW(ERROR_INTERNAL,
-                  "Failed to insert JSON-path numeric variant into "
+                  "Failed to insert expression numeric variant into "
                   "IResearch document");
       }
       return;
@@ -343,7 +341,7 @@ void SearchSinkInsertBaseImpl::SetupJsonAuxTypedFields(
         _document->template Insert<irs::Action::INDEX>(&_aux_bool_field);
       if (!ok) {
         SDB_THROW(ERROR_INTERNAL,
-                  "Failed to insert JSON-path bool variant into "
+                  "Failed to insert expression bool variant into "
                   "IResearch document");
       }
       return;
@@ -408,12 +406,10 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   } else if constexpr (Kind == duckdb::LogicalTypeId::VARCHAR ||
                        Kind == duckdb::LogicalTypeId::BLOB) {
     search::mangling::MangleString(_name_buffer);
-    // A non-empty `name_suffix` indicates a JSON-path field; route through
-    // the per-path provider so the configured dictionary (text_dict /
-    // verbatim_dict) is used instead of the base column's tokenizer.
+    // A non-empty `name_suffix` indicates an expression field
     auto tokenizer = name_suffix.empty()
                        ? _tokenizer_provider(column_id)
-                       : _json_path_tokenizer_provider(column_id, name_suffix);
+                       : _subexpr_tokenizer_provider(column_id, name_suffix);
     _field.PrepareForStringValue(std::move(tokenizer));
     const bool has_store = _field.store_attr != nullptr;
     if (has_store) {
@@ -657,7 +653,7 @@ void SearchSinkInsertBaseImpl::Field::PrepareForVerbatimStringValue() {
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
-  catalog::ColumnTokenizer&& column_analyzer) {
+  catalog::FieldTokenizer&& column_analyzer) {
   index_features = column_analyzer.features;
   SDB_ASSERT(column_analyzer.analyzer);
   analyzer.reset();

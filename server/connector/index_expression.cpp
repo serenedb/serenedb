@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/json_expression_canonicalizer.hpp"
+#include "connector/index_expression.hpp"
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
@@ -43,31 +43,34 @@
 #include <utility>
 #include <vector>
 
-#include "connector/json_extract_names.hpp"
-
 namespace sdb::connector {
-
-std::string SerializeBoundExpression(const duckdb::Expression& expr) {
-  // Caller is responsible for `NormalizeBoundExpression`-ing the input when
-  // bytes will be compared cross-context (CREATE INDEX vs SELECT). The
-  // helper itself is now context-free.
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer::Serialize(expr, stream);
-  return std::string(reinterpret_cast<const char*>(stream.GetData()),
-                     stream.GetPosition());
-}
-
-duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
-  std::string_view bytes, duckdb::ClientContext& context) {
-  duckdb::MemoryStream stream(
-    reinterpret_cast<duckdb::data_ptr_t>(const_cast<char*>(bytes.data())),
-    bytes.size());
-  duckdb::bound_parameter_map_t params;
-  return duckdb::BinaryDeserializer::Deserialize<duckdb::Expression>(
-    stream, context, params);
-}
-
 namespace {
+
+// Recognises the names of every registered JSON-extract scalar function in
+// this codebase (operator forms `->` / `->>` / `#>` / `#>>`, plus the
+// spelled-out aliases kept for PG and DuckDB compatibility -- see
+// server/connector/functions/json.cpp). `IsJsonExtractString` matches the
+// text-out leaves; `IsJsonExtract` matches both text-out and JSON-out.
+bool IsJsonExtractString(std::string_view name) noexcept {
+  return name == "->>" || name == "#>>" ||     //
+         name == "json_extract_field_text" ||  //
+         name == "json_extract_index_text" ||  //
+         name == "json_extract_path_text" ||   //
+         name == "json_extract_string" ||      // DuckDB ->> alias
+         name == "pg_json_extract_path_text";  // backs #>>
+}
+
+bool IsJsonExtract(std::string_view name) noexcept {
+  if (IsJsonExtractString(name)) {
+    return true;
+  }
+  return name == "->" || name == "#>" ||  //
+         name == "json_extract" ||        //
+         name == "json_extract_field" ||  //
+         name == "json_extract_index" ||  //
+         name == "json_extract_path" ||   //
+         name == "pg_json_extract_path";  // backs #>
+}
 
 // ColumnBindingResolver that uses caller-supplied bindings/types instead of
 // building them from a LogicalOperator tree.
@@ -149,6 +152,26 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
 
 }  // namespace
 
+std::string SerializeBoundExpression(const duckdb::Expression& expr) {
+  // Caller is responsible for `NormalizeBoundExpression`-ing the input when
+  // bytes will be compared cross-context (CREATE INDEX vs SELECT). The
+  // helper itself is now context-free.
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer::Serialize(expr, stream);
+  return std::string(reinterpret_cast<const char*>(stream.GetData()),
+                     stream.GetPosition());
+}
+
+duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
+  std::string_view bytes, duckdb::ClientContext& context) {
+  duckdb::MemoryStream stream(
+    reinterpret_cast<duckdb::data_ptr_t>(const_cast<char*>(bytes.data())),
+    bytes.size());
+  duckdb::bound_parameter_map_t params;
+  return duckdb::BinaryDeserializer::Deserialize<duckdb::Expression>(
+    stream, context, params);
+}
+
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, ObjectId table_id,
   std::span<const catalog::Column::Id> col_index_to_id,
@@ -181,6 +204,13 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
 
 const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
   const duckdb::Expression& expr) {
+  // Outermost must be text-returning: we only index JSON paths whose
+  // result is a string scalar. JSON-out ops (`->`, `#>`) are rejected here.
+  if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION ||
+      !IsJsonExtractString(
+        expr.Cast<duckdb::BoundFunctionExpression>().function.name)) {
+    return nullptr;
+  }
   const duckdb::Expression* cur = &expr;
   while (cur->expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
@@ -250,13 +280,14 @@ void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
     }
     if (doc.is_object() || doc.is_array()) {
       throw duckdb::InvalidInputException(
-        "JSON path indexed by an inverted index must point to a primitive "
+        "JSON expression indexed by an inverted index must point to a "
+        "primitive "
         "(string/number/boolean/null) leaf; got an object or array");
     }
   }
 }
 
-duckdb::Vector EvaluateJsonPathOverChunk(
+duckdb::Vector EvaluateExprOverChunk(
   const duckdb::Expression& bound_expr, duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id,
   duckdb::ClientContext& context) {

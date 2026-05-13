@@ -37,8 +37,8 @@
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/index_expression.hpp"
 #include "connector/indexonly_marker.h"
-#include "connector/json_expression_canonicalizer.hpp"
 #include "connector/key_utils.hpp"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -731,20 +731,20 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
   auto& json_keys = gstate.update_pk ? gstate.new_row_keys : gstate.row_keys;
   if (!json_keys.empty()) {
     for (auto& writer : gstate.index_writers) {
-      auto evals = writer->JsonExpressionEvals();
-      for (const auto& json_expr : evals) {
-        auto result = EvaluateJsonPathOverChunk(
-          *json_expr.bound_expr, chunk, gstate.table_id, gstate.slot_to_col_id,
-          context.client);
+      auto indexed_exprs = writer->IndexedExpressions();
+      for (const auto& indexed_expr : indexed_exprs) {
+        auto result = EvaluateExprOverChunk(
+          *indexed_expr.normalized_expr, chunk, gstate.table_id,
+          gstate.slot_to_col_id, context.client);
 
-        const JsonExprDescriptor json_desc{
-          json_expr.column_id, result.GetType(),
-          /*have_nulls=*/true, json_expr.serialized};
-        const bool switched = writer->SwitchJsonExpression(json_desc);
+        const ExpressionDescriptor json_desc{
+          indexed_expr.column_id, result.GetType(),
+          /*have_nulls=*/true, indexed_expr.serialized};
+        const bool switched = writer->SwitchExpression(json_desc);
         SDB_ASSERT(switched, "Cannot switch to JSON expression");
 
         for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-          key_utils::SetupColumnForKey(json_keys[row], json_expr.column_id);
+          key_utils::SetupColumnForKey(json_keys[row], indexed_expr.column_id);
         }
         DuckDBSinkIndexWriter* writer_ptr = writer.get();
         // Index-only write: see duckdb_physical_insert.cpp for the rationale.

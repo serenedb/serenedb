@@ -31,18 +31,18 @@
 
 namespace sdb::connector {
 
-// Per-row writer's view of one configured JSON-extract expression.
-// Owned elsewhere; this is a non-owning bundle the caller pulls per chunk.
-struct JsonExpressionEval {
-  const duckdb::Expression* bound_expr;
-  std::string_view serialized;
+// Bound + canonical-bytes + column id for one configured indexed expression.
+// Owns the expression tree and the serialized bytes.
+struct IndexedExpression {
+  duckdb::unique_ptr<duckdb::Expression> normalized_expr;
+  std::string serialized;
   catalog::Column::Id column_id;
 };
 
-// Walks a JSON-extract chain and validates every step (JSON-extract function
-// with a non-null constant key bottoming out at a BoundColumnRef). Returns
-// the leaf column ref on success, nullptr if the expression isn't a valid
-// JSON path.
+// Walks a JSON-extract chain and validates every step: outermost must be
+// text-returning (`->>`, `#>>`, `json_extract_path_text`), inner ops may be
+// any JSON-extract with constant keys, bottoming out at a
+// BoundColumnRef. Returns the leaf column ref on success, nullptr otherwise.
 const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
   const duckdb::Expression& expr);
 
@@ -109,7 +109,7 @@ void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
 // (via ResolveBoundColumnRefsForChunk), evaluates it with ExpressionExecutor
 // against `chunk`, and rejects object/array leaves. The returned Vector has
 // the resolved expression's return type and cardinality `chunk.size()`.
-duckdb::Vector EvaluateJsonPathOverChunk(
+duckdb::Vector EvaluateExprOverChunk(
   const duckdb::Expression& bound_expr, duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id,
   duckdb::ClientContext& context);

@@ -36,7 +36,7 @@
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_table_entry.h"
-#include "connector/json_expression_canonicalizer.hpp"
+#include "connector/index_expression.hpp"
 #include "connector/key_utils.hpp"
 #include "pg/connection_context.h"
 #include "rocksdb/utilities/transaction_db.h"
@@ -275,21 +275,19 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   // 4b. Evaluate per-writer JSON expressions and write them as virtual
   // columns. The slot -> Column::Id map is precomputed on gstate.
   for (auto& writer : gstate.index_writers) {
-    auto evals = writer->JsonExpressionEvals();
-    for (const auto& json_expr : evals) {
-      auto result =
-        EvaluateJsonPathOverChunk(*json_expr.bound_expr, chunk, gstate.table_id,
-                                  gstate.slot_to_col_id, context.client);
+    auto evals = writer->IndexedExpressions();
+    for (const auto& indexed_expr : evals) {
+      auto result = EvaluateExprOverChunk(
+        *indexed_expr.normalized_expr, chunk, gstate.table_id,
+        gstate.slot_to_col_id, context.client);
 
-      const JsonExprDescriptor json_desc{json_expr.column_id, result.GetType(),
-                                         /*have_nulls=*/true,
-                                         json_expr.serialized};
-      const bool need = writer->SwitchJsonExpression(json_desc);
+      const ExpressionDescriptor json_desc{
+        indexed_expr.column_id, result.GetType(),
+        /*have_nulls=*/true, indexed_expr.serialized};
+      const bool need = writer->SwitchExpression(json_desc);
       SDB_ASSERT(need, "Cannot switch to JSON expression");
 
       DuckDBSinkIndexWriter* writer_ptr = writer.get();
-      // JSON-eval values feed only the iresearch index; the source JSON
-      // column was already persisted in step above.
       gstate.serializer->WriteVector<DuckDBColumnSerializer::TxnWriter>(
         nullptr, result, num_rows, gstate.row_keys, {&writer_ptr, 1},
         json_desc);

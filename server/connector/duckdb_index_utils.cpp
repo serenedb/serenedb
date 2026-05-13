@@ -104,21 +104,21 @@ std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSecondaryWriter(
 
 std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSearchWriter(
   DuckDBWriteKind kind, irs::IndexWriter::Transaction& trx,
-  TokenizerProvider&& tokenizer_provider,
-  JsonPathTokenizerProvider&& json_path_tokenizer_provider,
-  std::vector<JsonPathBoundEntry>&& json_path_entries,
+  ColumnTokenizerProvider&& tokenizer_provider,
+  ExpressionTokenizerProvider&& expr_tokenizer_provider,
+  std::vector<IndexedExpression>&& indexed_exprs,
   std::span<const catalog::Column::Id> columns) {
   switch (kind) {
     case DuckDBWriteKind::Insert:
       return std::make_unique<DuckDBSearchSinkInsertWriter>(
         trx, std::move(tokenizer_provider), columns,
-        std::move(json_path_tokenizer_provider), std::move(json_path_entries));
+        std::move(expr_tokenizer_provider), std::move(indexed_exprs));
     case DuckDBWriteKind::Delete:
       return std::make_unique<DuckDBSearchSinkDeleteWriter>(trx);
     case DuckDBWriteKind::Update:
       return std::make_unique<DuckDBSearchSinkUpdateWriter>(
         trx, std::move(tokenizer_provider), columns,
-        std::move(json_path_tokenizer_provider), std::move(json_path_entries));
+        std::move(expr_tokenizer_provider), std::move(indexed_exprs));
   }
   SDB_ASSERT(false, "Unknown DuckDBWriteKind");
   return nullptr;
@@ -174,16 +174,17 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
       // Inverted/search index
       auto& inverted_index =
         basics::downCast<const catalog::InvertedIndex>(index);
-      auto tokenizer_provider = MakeTokenizerProvider(snapshot, inverted_index);
-      auto json_path_tokenizer_provider =
-        MakeJsonPathTokenizerProvider(snapshot, inverted_index);
-      auto json_path_entries = MakeJsonPathBoundEntries(
+      auto tokenizer_provider =
+        MakeColumnTokenizerProvider(snapshot, inverted_index);
+      auto expr_tokenizer_provider =
+        MakeExpressionTokenizerProvider(snapshot, inverted_index);
+      auto indexed_exprs = MakeIndexedExpressions(
         inverted_index, index.GetColumnIds(), &conn_ctx.GetClientContext());
 
-      writers.push_back(MakeDuckDBSearchWriter(
-        Kind, index_txn, std::move(tokenizer_provider),
-        std::move(json_path_tokenizer_provider), std::move(json_path_entries),
-        index.GetColumnIds()));
+      writers.push_back(
+        MakeDuckDBSearchWriter(Kind, index_txn, std::move(tokenizer_provider),
+                               std::move(expr_tokenizer_provider),
+                               std::move(indexed_exprs), index.GetColumnIds()));
     }
   };
 

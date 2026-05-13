@@ -129,9 +129,9 @@ struct ColumnSpec {
 };
 
 using AnalyzerProvider =
-  std::function<catalog::ColumnTokenizer(catalog::Column::Id)>;
+  std::function<catalog::FieldTokenizer(catalog::Column::Id)>;
 
-catalog::ColumnTokenizer IdentityAnalyzerProvider(catalog::Column::Id) {
+catalog::FieldTokenizer IdentityAnalyzerProvider(catalog::Column::Id) {
   auto make_identity = [] {
     return std::string(vpack::Slice::emptyObjectSlice().startAs<char>(),
                        vpack::Slice::emptyObjectSlice().byteSize());
@@ -145,7 +145,7 @@ catalog::ColumnTokenizer IdentityAnalyzerProvider(catalog::Column::Id) {
 }
 
 template<irs::IndexFeatures Features>
-catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
+catalog::FieldTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
   auto make_segmentation = [] {
     auto builder =
       vpack::Parser::fromJson("{ \"tokenizer\": {\"type\":\"segmentation\"}}");
@@ -159,13 +159,13 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
   return {.analyzer = *std::move(tokenizer), .features = Features};
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer SegmentationAnalyzerProvider(
+[[maybe_unused]] catalog::FieldTokenizer SegmentationAnalyzerProvider(
   catalog::Column::Id id) {
   return SegmentationAnalyzerProviderBase<irs::IndexFeatures::Pos |
                                           irs::IndexFeatures::Freq>(id);
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer NgramAnalyzerProvider(
+[[maybe_unused]] catalog::FieldTokenizer NgramAnalyzerProvider(
   catalog::Column::Id) {
   auto make_ngram = [] {
     auto builder = vpack::Parser::fromJson(
@@ -183,7 +183,7 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
           .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer WildcardAnalyzerProvider(
+[[maybe_unused]] catalog::FieldTokenizer WildcardAnalyzerProvider(
   catalog::Column::Id) {
   auto make_wildcard = [] {
     auto builder = vpack::Parser::fromJson(
@@ -201,7 +201,7 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
           .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer GeoJsonAnalyzerProvider(
+[[maybe_unused]] catalog::FieldTokenizer GeoJsonAnalyzerProvider(
   catalog::Column::Id) {
   auto make_geojson = [] {
     auto builder = vpack::Parser::fromJson(

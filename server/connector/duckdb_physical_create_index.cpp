@@ -38,7 +38,6 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
 #include "basics/debugging.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
@@ -56,8 +55,7 @@
 #include "connector/duckdb_search_sink_writer.h"
 #include "connector/duckdb_secondary_sink_writer.h"
 #include "connector/duckdb_table_entry.h"
-#include "connector/json_expression_canonicalizer.hpp"
-#include "connector/json_extract_names.hpp"
+#include "connector/index_expression.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
 #include "connector/search_sink_writer.hpp"
@@ -65,79 +63,9 @@
 #include "pg/connection_context.h"
 #include "pg/progress_tracker.h"
 #include "search/inverted_index_shard.h"
-#include "storage_engine/secondary_index_shard.h"
 
 namespace sdb::connector {
 namespace {
-
-bool TryLiftJsonPath(const duckdb::ParsedExpression& parsed_expr,
-                     std::string& col_name) {
-  // Reject when the outermost extraction does not return text. Inspecting
-  // the parsed function name because only the parser tree is available
-  // here; surrounding casts are handled by the caller.
-  // TODO(mkornaukhov): accept `->` (JSON-out) leaves so this can be lifted.
-  if (parsed_expr.GetExpressionClass() != duckdb::ExpressionClass::FUNCTION ||
-      !IsJsonExtractString(
-        parsed_expr.Cast<duckdb::FunctionExpression>().function_name)) {
-    return false;
-  }
-
-  const duckdb::ParsedExpression* cur = &parsed_expr;
-  while (cur->GetExpressionType() != duckdb::ExpressionType::COLUMN_REF) {
-    const duckdb::ParsedExpression* key = nullptr;
-    const duckdb::ParsedExpression* next_lhs = nullptr;
-
-    switch (cur->GetExpressionClass()) {
-      case duckdb::ExpressionClass::LAMBDA: {
-        const auto& l = cur->Cast<duckdb::LambdaExpression>();
-        if (!l.lhs || !l.expr) {
-          return false;
-        }
-        next_lhs = l.lhs.get();
-        key = l.expr.get();
-        break;
-      }
-      case duckdb::ExpressionClass::FUNCTION: {
-        const auto& f = cur->Cast<duckdb::FunctionExpression>();
-        // Accept any json-extract shape: `->` / `->>` (2 children: json, key),
-        // variadic `json_extract_path[_text]` (2+ children), and `#>` / `#>>`
-        // (2 children with text[] list key).
-        if (!IsJsonExtract(f.function_name) || f.children.size() < 2) {
-          return false;
-        }
-        for (size_t i = 1; i < f.children.size(); ++i) {
-          if (f.children[i]->GetExpressionType() !=
-              duckdb::ExpressionType::VALUE_CONSTANT) {
-            return false;
-          }
-          const auto& key_const =
-            f.children[i]->Cast<duckdb::ConstantExpression>();
-          if (key_const.value.IsNull()) {
-            return false;
-          }
-        }
-        next_lhs = f.children[0].get();
-        // Already validated keys above; skip the legacy single-key check
-        // below by jumping straight to recursion.
-        cur = next_lhs;
-        continue;
-      }
-      default:
-        return false;
-    }
-
-    if (key->GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
-      return false;
-    }
-    const auto& key_const = key->Cast<duckdb::ConstantExpression>();
-    if (key_const.value.IsNull()) {
-      return false;
-    }
-    cur = next_lhs;
-  }
-  col_name = cur->Cast<duckdb::ColumnRefExpression>().GetColumnName();
-  return true;
-}
 
 struct InsertColumnMeta {
   catalog::Column::Id id;
@@ -216,16 +144,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   // CommitWait) -> Finalizing (Finalize after CommitWait, before tombstone).
   std::unique_ptr<pg::IndexProgressReporter> progress;
 
-  // Indexed JSON-extract expressions. `normalized_expr` has catalog-keyed
-  // BoundColumnRef leaves (resolved to chunk slots in Sink); `serialized_expr`
-  // is the canonical-bytes field-name suffix, cached from GetGlobalSinkState.
-  struct JsonIndexedExpression {
-    duckdb::unique_ptr<duckdb::Expression> normalized_expr;
-    std::string serialized_expr;
-    catalog::Column::Id column_id;
-  };
-
-  std::vector<JsonIndexedExpression> json_indexed_expressions;
+  std::vector<IndexedExpression> indexed_expressions;
 
   // slot -> Column::Id for `EvaluateJsonPathOverChunk`, built once.
   std::vector<catalog::Column::Id> slot_to_col_id;
@@ -376,7 +295,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
 
     SDB_ASSERT(i < _bound_expressions.size() && _bound_expressions[i],
-               "bound expression missing for indexed JSON path");
+               "bound expression is missing for inverted index expression");
     auto& bound_expr = _bound_expressions[i];
 
     // Build the col-index -> Column::Id map from the relation's columns in
@@ -392,28 +311,38 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
                                                col_index_to_id, context);
     std::string serialized = SerializeBoundExpression(*normalized);
 
-    std::string col_name;
-    if (!TryLiftJsonPath(*expr, col_name)) {
+    // TODO(mkornaukhov) support non-JSON expression indexing
+    const auto* leaf = TryGetJsonLeafColumnRef(*normalized);
+    if (!leaf) {
       throw duckdb::CatalogException(
-        "Expression-based index columns are not supported");
+        "Only json text extractor expression are supported");
     }
-
-    const auto* cat_col = resolve_column(col_name);
+    // After NormalizeBoundExpression, the leaf binding encodes the catalog
+    // Column::Id directly in `column_index`.
+    const auto col_id =
+      static_cast<catalog::Column::Id>(leaf->binding.column_index.GetIndex());
+    const catalog::Column* cat_col = nullptr;
+    for (const auto& col : columns) {
+      if (col.id == col_id) {
+        cat_col = &col;
+        break;
+      }
+    }
     if (!cat_col) {
-      throw duckdb::CatalogException("column \"%s\" not found in table",
-                                     col_name);
+      throw duckdb::CatalogException(
+        "indexed expr path does not refer to a known column");
     }
 
-    state->json_indexed_expressions.push_back({
+    state->indexed_expressions.push_back({
       .normalized_expr = std::move(normalized),
-      .serialized_expr = serialized,
+      .serialized = serialized,
       .column_id = cat_col->id,
     });
     idx_columns.emplace_back(catalog::CreateIndexColumn{
       .catalog_column = cat_col,
       .name = cat_col->name,
       .opclass = std::move(opclass),
-      .serialized_json_expr = std::move(serialized),
+      .serialized_expr = std::move(serialized),
       .opclass_options = std::move(opclass_options),
     });
   }
@@ -626,9 +555,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     // Parallel-Sink build context: each CreateIndexLocalState pulls a
     // fresh transaction off the shard and builds its own writer using
     // providers resolved against the snapshot and InvertedIndex stored
-    // on gstate. JSON-path bound expressions are deserialised on the
-    // local-state side via MakeJsonPathBoundEntries; the ClientContext
-    // from the local context is threaded in there.
+    // on gstate.
     state->snapshot_for_providers = snapshot;
     state->index_for_providers = index;
   }
@@ -667,16 +594,16 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
     duckdb::BufferAllocator::Get(context.client));
 
   auto tokenizer_provider =
-    MakeTokenizerProvider(gstate.snapshot_for_providers, inverted_index);
-  auto json_path_tokenizer_provider = MakeJsonPathTokenizerProvider(
+    MakeColumnTokenizerProvider(gstate.snapshot_for_providers, inverted_index);
+  auto expr_tokenizer_provider = MakeExpressionTokenizerProvider(
     gstate.snapshot_for_providers, inverted_index);
-  auto json_path_entries = MakeJsonPathBoundEntries(
+  auto indexed_exprs = MakeIndexedExpressions(
     inverted_index, gstate.index_for_providers->GetColumnIds(),
     &context.client);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx, std::move(tokenizer_provider),
     gstate.index_for_providers->GetColumnIds(),
-    std::move(json_path_tokenizer_provider), std::move(json_path_entries));
+    std::move(expr_tokenizer_provider), std::move(indexed_exprs));
 
   return lstate;
 }
@@ -814,20 +741,20 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
 
   // Evaluate each indexed JSON expression and write the result as a virtual
   // column. Slot map and canonical bytes precomputed on gstate.
-  for (const auto& json_expr : gstate.json_indexed_expressions) {
-    SDB_ASSERT(json_expr.normalized_expr);
-    auto result = EvaluateJsonPathOverChunk(
-      *json_expr.normalized_expr, chunk, gstate.table_id, gstate.slot_to_col_id,
-      context.client);
+  for (const auto& indexed_expr : gstate.indexed_expressions) {
+    SDB_ASSERT(indexed_expr.normalized_expr);
+    auto result = EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk,
+                                        gstate.table_id, gstate.slot_to_col_id,
+                                        context.client);
 
-    const JsonExprDescriptor json_desc{json_expr.column_id, result.GetType(),
-                                       /*have_nulls=*/true,
-                                       json_expr.serialized_expr};
-    const bool switched = writer->SwitchJsonExpression(json_desc);
+    const ExpressionDescriptor json_desc{
+      indexed_expr.column_id, result.GetType(),
+      /*have_nulls=*/true, indexed_expr.serialized};
+    const bool switched = writer->SwitchExpression(json_desc);
     SDB_ASSERT(switched, "Cannot switch to JSON expression");
 
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      key_utils::SetupColumnForKey(row_keys[row], json_expr.column_id);
+      key_utils::SetupColumnForKey(row_keys[row], indexed_expr.column_id);
     }
     DuckDBSinkIndexWriter* writer_ptr = writer;
     serializer->WriteVector<DuckDBColumnSerializer::TxnWriter>(

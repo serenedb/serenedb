@@ -29,7 +29,7 @@
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/inverted_index.h"
 #include "catalog/search_analyzer_impl.h"
-#include "connector/json_expression_canonicalizer.hpp"
+#include "connector/index_expression.hpp"
 #include "primary_key.hpp"
 #include "search/inverted_index_shard.h"
 #include "search_remove_filter.hpp"
@@ -40,26 +40,13 @@ namespace sdb::connector {
 
 class SearchRemoveFilterBase;
 
-using TokenizerProvider =
-  absl::AnyInvocable<catalog::ColumnTokenizer(catalog::Column::Id)>;
+using ColumnTokenizerProvider =
+  absl::AnyInvocable<catalog::FieldTokenizer(catalog::Column::Id)>;
 
-// Keyed tokenizer accessor for JSON-path fields. The writer calls it every
-// time SwitchJsonExpression runs because each call moves the analyzer into
-// `_field`; a single moveable value would not suffice.
-using JsonPathTokenizerProvider = absl::AnyInvocable<catalog::ColumnTokenizer(
+using ExpressionTokenizerProvider = absl::AnyInvocable<catalog::FieldTokenizer(
   catalog::Column::Id, std::string_view)>;
 
-// Bound JSON-path expression + its canonical serialized form, owned by the
-// caller and handed off to the writer. The writer drives ExpressionExecutor
-// against the bound expression and uses the serialized form as the iresearch
-// field-name suffix (matching the SELECT-side filter exactly).
-struct JsonPathBoundEntry {
-  duckdb::unique_ptr<duckdb::Expression> bound_expression;
-  std::string serialized_expr;
-  catalog::Column::Id column_id;
-};
-
-inline TokenizerProvider MakeTokenizerProvider(
+inline ColumnTokenizerProvider MakeColumnTokenizerProvider(
   const std::shared_ptr<const catalog::Snapshot>& snapshot,
   const catalog::InvertedIndex& index) {
   return [snapshot, &index](catalog::Column::Id column_id) {
@@ -67,27 +54,21 @@ inline TokenizerProvider MakeTokenizerProvider(
   };
 }
 
-// Builds the keyed tokenizer accessor for JSON-path fields. Captures the
-// snapshot + index reference so each call resolves the path-specific
-// dictionary lazily by matching the catalog's stored serialized bytes.
-inline JsonPathTokenizerProvider MakeJsonPathTokenizerProvider(
+inline ExpressionTokenizerProvider MakeExpressionTokenizerProvider(
   std::shared_ptr<const catalog::Snapshot> snapshot,
   const catalog::InvertedIndex& index) {
   return [snapshot = std::move(snapshot), &index](
            catalog::Column::Id column_id,
-           std::string_view serialized_expr) -> catalog::ColumnTokenizer {
-    auto tokenizer = index.GetJsonPathTokenizer(snapshot, column_id,
-                                                std::string{serialized_expr});
-    SDB_ASSERT(tokenizer, "JSON-path tokenizer not found for serialized expr");
-    return *std::move(tokenizer);
+           std::string_view serialized_expr) -> catalog::FieldTokenizer {
+    return index.GetExprTokenizer(snapshot, column_id, serialized_expr);
   };
 }
 
-inline std::vector<JsonPathBoundEntry> MakeJsonPathBoundEntries(
+inline std::vector<IndexedExpression> MakeIndexedExpressions(
   const catalog::InvertedIndex& index,
   std::span<const catalog::Column::Id> columns,
   duckdb::ClientContext* client_context) {
-  std::vector<JsonPathBoundEntry> entries;
+  std::vector<IndexedExpression> entries;
   if (!client_context) {
     return entries;
   }
@@ -96,13 +77,12 @@ inline std::vector<JsonPathBoundEntry> MakeJsonPathBoundEntries(
     if (!col) {
       continue;
     }
-    for (const auto& json_subexpr : col->json_paths) {
-      SDB_ASSERT(!json_subexpr.serialized_expr.empty(),
-                 "Any json expr should be serialized in non-empty string");
-      auto bound = DeserializeBoundExpression(json_subexpr.serialized_expr,
-                                              *client_context);
-      entries.push_back(
-        {std::move(bound), json_subexpr.serialized_expr, col_id});
+    for (const auto& expr_info : col->expressions_infos) {
+      SDB_ASSERT(!expr_info.serialized_expr.empty(),
+                 "Any expr should be serialized in non-empty string");
+      auto bound =
+        DeserializeBoundExpression(expr_info.serialized_expr, *client_context);
+      entries.push_back({std::move(bound), expr_info.serialized_expr, col_id});
     }
   }
   return entries;
@@ -111,10 +91,11 @@ inline std::vector<JsonPathBoundEntry> MakeJsonPathBoundEntries(
 class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
  public:
   SearchSinkInsertBaseImpl(
-    irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
+    irs::IndexWriter::Transaction& trx,
+    ColumnTokenizerProvider&& tokenizer_provider,
     std::span<const catalog::Column::Id> columns,
-    JsonPathTokenizerProvider&& json_path_tokenizer_provider = {},
-    std::vector<JsonPathBoundEntry>&& json_path_entries = {});
+    ExpressionTokenizerProvider&& expr_tokenizer_provider = {},
+    std::vector<IndexedExpression>&& indexed_exprs = {});
 
   void InitImpl(size_t batch_size);
 
@@ -122,12 +103,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
                  std::string_view full_key);
 
   bool SwitchColumnImpl(const ColumnDescriptor& col);
-  // Like SwitchColumnImpl, but the field-name suffix is the canonical form
-  // of a user JSON-extract expression (`json_desc.column_id` is the base
-  // JSON column). The Vector subsequently passed to Write*() must be the
-  // result of evaluating that bound expression -- the sink does no JSON
-  // parsing.
-  bool SwitchJsonExpressionImpl(const JsonExprDescriptor& json_desc);
+  bool SwitchExpressionImpl(const ExpressionDescriptor& json_desc);
   void FinishImpl();
 
   void AbortImpl() {
@@ -162,7 +138,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     void PrepareForVectorValue();
 
     void PrepareForVerbatimStringValue();
-    void PrepareForStringValue(catalog::ColumnTokenizer&& column_analyzer);
+    void PrepareForStringValue(catalog::FieldTokenizer&& column_analyzer);
     void SetStringValue(std::string_view value);
 
     void PrepareForNumericValue();
@@ -239,35 +215,20 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
                                  std::span<const rocksdb::Slice> cell_slices,
                                  Field& field);
 
-  // Setup column writer according to type kind.
-  // Builds actual executor to avoid switch/case on each row whenever possible.
-  // `name_suffix`, when non-empty, is appended to the field-name prefix as a
-  // JSON-Pointer-escaped segment (used by the JSON-expression path). A
-  // non-empty suffix also tells the VARCHAR/BLOB path to source the
-  // tokenizer from `_json_path_tokenizer_provider(column_id, name_suffix)`
-  // instead of `_tokenizer_provider(column_id)` -- the per-path dictionary
-  // (text_dict/verbatim_dict) is what gives phrase queries their positions.
   template<duckdb::LogicalTypeId Kind>
   void SetupColumnWriter(catalog::Column::Id column_id, bool have_nulls,
                          std::string_view name_suffix = {});
 
-  // Sets up `_aux_numeric_field` + `_aux_bool_field` for a JSON-path VARCHAR
-  // emission (under the same canonical suffix as `_field`) and wraps
-  // `_current_writer` so each cell is parsed once and dispatched to the
-  // string field plus any numeric/bool variants whose parse succeeds.
-  void SetupJsonAuxTypedFields(catalog::Column::Id column_id,
+  // Sets up `_aux_numeric_field` + `_aux_bool_field` for an indexed expression
+  void SetupExprAuxTypedFields(catalog::Column::Id column_id,
                                std::string_view name_suffix);
 
-  TokenizerProvider _tokenizer_provider;
-  JsonPathTokenizerProvider _json_path_tokenizer_provider;
+  ColumnTokenizerProvider _tokenizer_provider;
+  ExpressionTokenizerProvider _subexpr_tokenizer_provider;
   Field _field;
   Field _pk_field;
   Field _null_field;
-  // Auxiliary fields for JSON-path VARCHAR emissions. The user-visible cast
-  // path (e.g. `(content->>'val')::int = 42`) requires the writer to also
-  // emit numeric/bool variants of each row so the SELECT-side filter can
-  // hit the natural-type-mangled iresearch field. Set up alongside `_field`
-  // when SwitchJsonExpressionImpl runs with a per-path tokenizer.
+  // Auxiliary fields for indexed expression
   Field _aux_numeric_field;
   Field _aux_bool_field;
   std::string _name_buffer;
@@ -280,17 +241,14 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   Writer _current_writer;
   bool _emit_pk{true};
 
-  // Bound JSON-extract expressions handed off at writer construction time.
-  // Owned here; views into them are exposed via JsonExpressionEvals so the
-  // caller can drive ExpressionExecutor against the input chunk.
-  std::vector<JsonPathBoundEntry> _json_exprs_owned;
-  std::vector<JsonExpressionEval> _json_expr_views;
-
-  containers::FlatHashSet<catalog::Column::Id> _json_columns;
+  std::vector<IndexedExpression> _indexed_expressions;
+  // Column IDs that are used in indexed expressions.
+  // For now only exactly once column ID per expression is allowed.
+  containers::FlatHashSet<catalog::Column::Id> _indexed_expressions_columns;
 
  public:
-  std::span<const JsonExpressionEval> JsonExpressionEvalsImpl() const noexcept {
-    return _json_expr_views;
+  std::span<const IndexedExpression> IndexedExpressionImpl() const noexcept {
+    return _indexed_expressions;
   }
 };
 

@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 
+#include "basics/containers/node_hash_set.h"
 #include "catalog/index.h"
 #include "catalog/scorer_options.h"
 #include "catalog/search_analyzer_impl.h"
@@ -41,12 +42,28 @@ struct HNSWColumnConfig {
   irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
 };
 
-struct JsonPathInfo {
-  // Normalized serialized json access expression,
-  // see `NormalizeBoundExpression()`
+struct ColumnExpressionInfo {
+  // Normalized serialized subexpression, see `NormalizeBoundExpression()`
   std::string serialized_expr;
   ObjectId text_dictionary = ObjectId::none();
   search::Features features;
+
+  struct HasherBySerialized {
+    using is_transparent = void;
+
+    size_t operator()(std::string_view sv) const { return absl::HashOf(sv); }
+    size_t operator()(const ColumnExpressionInfo& info) const {
+      return (*this)(info.serialized_expr);
+    }
+
+    bool operator()(const ColumnExpressionInfo& a, std::string_view b) const {
+      return a.serialized_expr == b;
+    }
+    bool operator()(const ColumnExpressionInfo& a,
+                    const ColumnExpressionInfo& b) const {
+      return a.serialized_expr == b.serialized_expr;
+    }
+  };
 };
 
 struct InvertedIndexColumnInfo {
@@ -54,11 +71,16 @@ struct InvertedIndexColumnInfo {
   bool store_values = false;
   search::Features features;
   std::optional<HNSWColumnConfig> hnsw_config;
-  // A single JSON column may have multiple indexed JSON-extract expressions.
-  std::vector<JsonPathInfo> json_paths;
+  // Two restriction for expression indexing:
+  // - one tokenizer per expression
+  // - expresiion should contain exactly one column reference
+  containers::NodeHashSet<ColumnExpressionInfo,
+                          ColumnExpressionInfo::HasherBySerialized,
+                          ColumnExpressionInfo::HasherBySerialized>
+    expressions_infos;
 };
 
-struct ColumnTokenizer {
+struct FieldTokenizer {
   Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
 };
@@ -92,15 +114,13 @@ class InvertedIndex final : public Index {
   const InvertedIndexColumnInfo* FindColumnInfo(
     catalog::Column::Id column_id) const noexcept;
 
-  ColumnTokenizer GetColumnTokenizer(
+  FieldTokenizer GetColumnTokenizer(
     const std::shared_ptr<const Snapshot>& snapshot,
     catalog::Column::Id column_id) const;
 
-  // Resolves a configured JSON-path entry by its normalized serialized
-  // expression and returns the per-path tokenizer.
-  std::optional<ColumnTokenizer> GetJsonPathTokenizer(
+  FieldTokenizer GetExprTokenizer(
     const std::shared_ptr<const Snapshot>& snapshot,
-    catalog::Column::Id column_id, const std::string& serialized_expr) const;
+    catalog::Column::Id column_id, std::string_view serialized_expr) const;
 
   std::optional<irs::HNSWInfo> GetColumnHNSWInfo(
     catalog::Column::Id column_id) const;

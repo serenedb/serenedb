@@ -107,12 +107,10 @@ class DuckDBColumnSerializer {
   explicit DuckDBColumnSerializer(duckdb::Allocator& allocator);
 
   // Empty row_keys[i] = skip row i. `desc` is either a `ColumnDescriptor`
-  // (real catalog column) or a `JsonExprDescriptor` (virtual JSON-expression
-  // output). For ColumnDescriptor the writer's `SwitchColumn(desc)` is
+  // (real catalog column) or a `ExpressionDescriptor`.
+  // For ColumnDescriptor the writer's `SwitchColumn(desc)` is
   // invoked so per-row helpers can branch on column-level attributes
-  // (IndexOnly, etc.). For JsonExprDescriptor `writer` must be nullptr --
-  // the JSON-eval feed's source column was already persisted; only the
-  // `index_writers` are driven, and `desc.type` is used for type dispatch.
+  // (IndexOnly, etc.). For ExpressionDescriptor `writer` must be nullptr.
   template<typename Writer, typename Desc>
   void WriteVector(Writer* writer, const duckdb::Vector& vec,
                    duckdb::idx_t num_rows, std::vector<std::string>& row_keys,

@@ -35,13 +35,14 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkInsertBaseImpl {
  public:
   DuckDBSearchSinkInsertWriter(
-    irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
+    irs::IndexWriter::Transaction& trx,
+    ColumnTokenizerProvider&& tokenizer_provider,
     std::span<const catalog::Column::Id> columns,
-    JsonPathTokenizerProvider&& json_path_tokenizer_provider = {},
-    std::vector<JsonPathBoundEntry>&& json_path_entries = {})
+    ExpressionTokenizerProvider&& expr_tokenizer_provider = {},
+    std::vector<IndexedExpression>&& indexed_exprs = {})
     : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider), columns,
-                               std::move(json_path_tokenizer_provider),
-                               std::move(json_path_entries)} {}
+                               std::move(expr_tokenizer_provider),
+                               std::move(indexed_exprs)} {}
 
   void Init(duckdb::idx_t batch_size, const duckdb::DataChunk&) final {
     InitImpl(batch_size);
@@ -49,12 +50,12 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
 
   bool SwitchColumn(const ColumnDescriptor& col) final;
 
-  bool SwitchJsonExpression(const JsonExprDescriptor& json_desc) final {
-    return SwitchJsonExpressionImpl(json_desc);
+  bool SwitchExpression(const ExpressionDescriptor& json_desc) final {
+    return SwitchExpressionImpl(json_desc);
   }
 
-  std::span<const JsonExpressionEval> JsonExpressionEvals() const final {
-    return JsonExpressionEvalsImpl();
+  std::span<const IndexedExpression> IndexedExpressions() const final {
+    return IndexedExpressionImpl();
   }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
@@ -91,13 +92,14 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkDeleteBaseImpl {
  public:
   DuckDBSearchSinkUpdateWriter(
-    irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
+    irs::IndexWriter::Transaction& trx,
+    ColumnTokenizerProvider&& tokenizer_provider,
     std::span<const catalog::Column::Id> columns,
-    JsonPathTokenizerProvider&& json_path_tokenizer_provider = {},
-    std::vector<JsonPathBoundEntry>&& json_path_entries = {})
+    ExpressionTokenizerProvider&& expr_tokenizer_provider = {},
+    std::vector<IndexedExpression>&& indexed_exprs = {})
     : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider), columns,
-                               std::move(json_path_tokenizer_provider),
-                               std::move(json_path_entries)},
+                               std::move(expr_tokenizer_provider),
+                               std::move(indexed_exprs)},
       SearchSinkDeleteBaseImpl{trx} {}
 
   void Init(duckdb::idx_t batch_size, const duckdb::DataChunk&) final {
@@ -107,12 +109,12 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
 
   bool SwitchColumn(const ColumnDescriptor& col) final;
 
-  bool SwitchJsonExpression(const JsonExprDescriptor& json_desc) final {
-    return SwitchJsonExpressionImpl(json_desc);
+  bool SwitchExpression(const ExpressionDescriptor& json_desc) final {
+    return SwitchExpressionImpl(json_desc);
   }
 
-  std::span<const JsonExpressionEval> JsonExpressionEvals() const final {
-    return JsonExpressionEvalsImpl();
+  std::span<const IndexedExpression> IndexedExpressions() const final {
+    return IndexedExpressionImpl();
   }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,

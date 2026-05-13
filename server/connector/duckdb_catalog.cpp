@@ -1088,11 +1088,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     create_index_info->names = get.names;
     create_index_info->schema = resolved_table->schema.name;
     create_index_info->catalog = resolved_table->catalog.GetName();
-    // Bind each user-supplied parsed expression so the resulting tree carries
-    // BoundFunctionExpression / BoundConstantExpression nodes (necessary for
-    // ExpressionExecutor at backfill time to evaluate JSON-extract chains).
-    // The outer `binder` already bound the FROM clause via Bind(*table_ref) in
-    // bind_create.cpp:706, so its bind_context resolves column refs by name.
+
     duckdb::IndexBinder index_binder(binder, binder.context, resolved_table,
                                      create_index_info.get());
     for (auto& parsed : create_index_info->expressions) {

@@ -24,7 +24,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 
 #include "catalog/table_options.h"
-#include "connector/json_expression_canonicalizer.hpp"
+#include "connector/index_expression.hpp"
 #include "connector/sink_writer_base.hpp"
 #include "rocksdb/slice.h"
 
@@ -48,18 +48,13 @@ class DuckDBSinkIndexWriter {
     return false;
   }
 
-  // Switch to a JSON-extract expression. The base writer only matters for the
-  // search-index path; secondary indexes ignore JSON expressions entirely.
-  virtual bool SwitchJsonExpression(const JsonExprDescriptor& json_desc) {
+  // Switch to an indexed expression.
+  // The base writer only matters for the search-index path.
+  virtual bool SwitchExpression(const ExpressionDescriptor& json_desc) {
     return false;
   }
 
-  // Per-row writer's view of configured JSON-extract expressions. The
-  // caller drives evaluation: it pulls this list, runs ExpressionExecutor
-  // against the chunk, and feeds the result through SwitchJsonExpression +
-  // serializer->WriteColumn. See JsonExpressionEval in
-  // json_expression_canonicalizer.hpp.
-  virtual std::span<const JsonExpressionEval> JsonExpressionEvals() const {
+  virtual std::span<const IndexedExpression> IndexedExpressions() const {
     return {};
   }
 

@@ -215,9 +215,7 @@ Result ValidateInvertedIndexColumns(
   for (const auto& c : indexed_columns) {
     SDB_ASSERT(c.catalog_column);
     const auto kind = c.catalog_column->type.id();
-    if (!c.serialized_json_expr.empty()) {
-      // JSON-path entries target a VARCHAR-stored JSON column; per-leaf
-      // type-dispatch happens at write time.
+    if (!c.serialized_expr.empty()) {
       // TODO(mkornaukhov): accept `->` outermost; see TryLiftJsonPath.
       if (kind != duckdb::LogicalTypeId::VARCHAR) {
         return {ERROR_BAD_PARAMETER, "Column ", c.name,
@@ -328,9 +326,6 @@ Result ValidateGeoTokenizerColumn(std::string_view column_name,
 
 std::vector<Column::Id> ExtractColumnIds(
   std::span<const CreateIndexColumn> columns) {
-  // Multiple CreateIndexColumn entries may share the same catalog column when
-  // several JSON paths are indexed on it -- dedup so the index-level column
-  // list has one entry per physical column.
   std::vector<Column::Id> ids;
   ids.reserve(columns.size());
   containers::FlatHashSet<Column::Id> seen;
@@ -380,8 +375,6 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     return std::unexpected<Result>(std::move(column_validation_res));
   }
 
-  // Resolves a text-dictionary opclass against the current snapshot. The HNSW
-  // opclass is handled inline because it does not feed JSON paths.
   auto resolve_dict =
     [&](std::string_view col_name,
         const std::string& opclass) -> ResultOr<std::shared_ptr<Tokenizer>> {
@@ -420,26 +413,26 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   for (const auto& c : columns) {
     auto& index_col = inverted_columns[c.catalog_column->id];
 
-    if (!c.serialized_json_expr.empty()) {
+    if (!c.serialized_expr.empty()) {
       if (c.opclass_options.has_value()) {
         return std::unexpected<Result>{
           std::in_place, ERROR_BAD_PARAMETER,
-          "JSON-path index entries do not accept opclass options (used on "
+          "inverted index expression do not accept opclass options (used on "
           "column '",
           c.name, "')"};
       }
-      JsonPathInfo path_info{
-        .serialized_expr = c.serialized_json_expr,
+      ColumnExpressionInfo column_expr_info{
+        .serialized_expr = c.serialized_expr,
       };
       if (!c.opclass.empty()) {
         auto dict = resolve_dict(c.name, c.opclass);
         if (!dict) {
           return std::unexpected<Result>{std::move(dict.error())};
         }
-        path_info.text_dictionary = (*dict)->GetId();
-        path_info.features = (*dict)->GetFeatures();
+        column_expr_info.text_dictionary = (*dict)->GetId();
+        column_expr_info.features = (*dict)->GetFeatures();
       }
-      index_col.json_paths.emplace_back(std::move(path_info));
+      index_col.expressions_infos.emplace(std::move(column_expr_info));
       continue;
     }
 

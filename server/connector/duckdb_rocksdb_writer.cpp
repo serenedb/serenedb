@@ -49,6 +49,19 @@ T GetVectorValue(const duckdb::UnifiedVectorFormat& fmt,
     fmt)[fmt.sel->get_index(row_idx)];
 }
 
+std::string MergeSlices(const std::vector<rocksdb::Slice>& slices) {
+  size_t total = 0;
+  for (const auto& s : slices) {
+    total += s.size();
+  }
+  std::string merged;
+  merged.reserve(total);
+  for (const auto& s : slices) {
+    merged.append(s.data(), s.size());
+  }
+  return merged;
+}
+
 }  // namespace
 
 void AppendPKValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
@@ -249,23 +262,6 @@ template size_t DuckDBColumnSerializer::WritePrimitive<duckdb::date_t>(
   const duckdb::date_t&);
 template size_t DuckDBColumnSerializer::WritePrimitive<duckdb::hugeint_t>(
   const duckdb::hugeint_t&);
-
-namespace {
-
-std::string MergeSlices(const std::vector<rocksdb::Slice>& slices) {
-  size_t total = 0;
-  for (const auto& s : slices) {
-    total += s.size();
-  }
-  std::string merged;
-  merged.reserve(total);
-  for (const auto& s : slices) {
-    merged.append(s.data(), s.size());
-  }
-  return merged;
-}
-
-}  // namespace
 
 DuckDBColumnSerializer::TxnWriter::TxnWriter(
   query::Transaction& sdb_txn, rocksdb::ColumnFamilyHandle* cf) noexcept
@@ -542,12 +538,12 @@ void DuckDBColumnSerializer::WriteVector(
       writer->SwitchColumn(desc);
     }
   } else {
-    static_assert(std::is_same_v<Desc, JsonExprDescriptor>,
+    static_assert(std::is_same_v<Desc, ExpressionDescriptor>,
                   "WriteVector descriptor must be ColumnDescriptor or "
-                  "JsonExprDescriptor");
+                  "ExpressionDescriptor");
     SDB_ASSERT(writer == nullptr,
-               "JSON-expr WriteVector requires nullptr rocksdb writer -- the "
-               "source JSON column was already persisted");
+               "Expression WriteVector requires nullptr rocksdb writer -- the "
+               "source column was already persisted");
   }
   const auto& type = desc.type;
   switch (vec.GetVectorType()) {
@@ -681,12 +677,10 @@ template void DuckDBColumnSerializer::WriteVector<
   DuckDBColumnSerializer::SstWriter, ColumnDescriptor>(
   SstWriter*, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
   std::span<DuckDBSinkIndexWriter*>, const ColumnDescriptor&);
-// JSON-expr path: writer is always nullptr; TxnWriter type chosen arbitrarily
-// (the Writer template parameter is unused in the JsonExprDescriptor branch).
 template void DuckDBColumnSerializer::WriteVector<
-  DuckDBColumnSerializer::TxnWriter, JsonExprDescriptor>(
+  DuckDBColumnSerializer::TxnWriter, ExpressionDescriptor>(
   TxnWriter*, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
-  std::span<DuckDBSinkIndexWriter*>, const JsonExprDescriptor&);
+  std::span<DuckDBSinkIndexWriter*>, const ExpressionDescriptor&);
 
 template<typename Writer, typename T>
 void DuckDBColumnSerializer::WriteFlatColumn(

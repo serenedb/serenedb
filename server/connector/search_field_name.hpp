@@ -28,11 +28,6 @@
 
 namespace sdb::connector {
 
-// Builds the iresearch field name for a column, optionally qualified by a
-// JSON-path entry's serialized canonical expression (the byte output of
-// `SerializeBoundExpression`). The suffix is opaque bytes -- both sides
-// produce it through the same canonicaliser, so we copy verbatim.
-//
 // Layout:
 //   [8 bytes BE column_id]      -- fixed-width column identifier
 //   [serialized_expr]           -- omitted when suffix is empty

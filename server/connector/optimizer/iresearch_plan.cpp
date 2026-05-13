@@ -57,7 +57,7 @@
 #include "connector/duckdb_table_function.h"
 #include "connector/functions/search.h"
 #include "connector/functions/vector.h"
-#include "connector/json_expression_canonicalizer.hpp"
+#include "connector/index_expression.hpp"
 #include "connector/optimizer/flatten_projection_ids.h"
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_filter_printer.hpp"
@@ -322,17 +322,11 @@ struct SearchColumnContext {
   containers::FlatHashMap<catalog::Column::Id, duckdb::LogicalType>
     column_type_by_id;
   containers::FlatHashSet<catalog::Column::Id> indexed_column_ids;
-  std::function<catalog::ColumnTokenizer(catalog::Column::Id)>
+  std::function<catalog::FieldTokenizer(catalog::Column::Id)>
     tokenizer_provider;
-  // Optional JSON-path tokenizer lookup: returns the per-path tokenizer
-  // resolved against the catalog, or nullopt if the column is not indexed
-  // at `serialized_expr`. The serialized form is the same normalised-bytes
-  // representation CREATE INDEX persisted in the catalog -- callers
-  // produce it via `connector::SerializeBoundExpression` on a
-  // `connector::NormalizeBoundExpression`-normalised tree.
-  std::function<std::optional<catalog::ColumnTokenizer>(catalog::Column::Id,
-                                                        const std::string&)>
-    json_path_tokenizer_provider;
+  std::function<std::optional<catalog::FieldTokenizer>(catalog::Column::Id,
+                                                       std::string_view)>
+    expr_tokenizer_provider;
 };
 
 connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
@@ -363,11 +357,10 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
   };
 }
 
-connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx,
-                                             ObjectId table_id) {
+connector::ExpressionGetter MakeJsonPathGetter(SearchColumnContext& ctx,
+                                               ObjectId table_id) {
   return [&ctx, table_id](const duckdb::BoundColumnRefExpression& ref,
-                          const duckdb::Expression& path_expr,
-                          std::string& out_serialized)
+                          const duckdb::Expression& path_expr)
            -> std::optional<connector::SearchColumnInfo> {
     if (ref.binding.table_index != ctx.table_index) {
       return std::nullopt;
@@ -379,7 +372,7 @@ connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx,
     if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
       return std::nullopt;
     }
-    if (!ctx.json_path_tokenizer_provider) {
+    if (!ctx.expr_tokenizer_provider) {
       return std::nullopt;
     }
     // Normalise + serialise the SELECT-side bound expression. Bytes
@@ -390,17 +383,14 @@ connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx,
     // LogicalGet's projection slot list (`ctx.projected_column_ids`).
     auto normalized = connector::NormalizeBoundExpression(
       path_expr, table_id, ctx.projected_column_ids, *ctx.client_context);
-    out_serialized = connector::SerializeBoundExpression(*normalized);
-    auto tokenizer = ctx.json_path_tokenizer_provider(col_id, out_serialized);
+    auto serialized = connector::SerializeBoundExpression(*normalized);
+    auto tokenizer = ctx.expr_tokenizer_provider(col_id, serialized);
     if (!tokenizer) {
       return std::nullopt;
     }
     connector::SearchColumnInfo info;
     info.column_id = col_id;
-    // The default leaf type is VARCHAR (the string-leaf path); the filter
-    // builder may override this when the user wraps the path in an
-    // explicit cast like `(content->>'val')::int`, so numeric/bool/null
-    // queries hit the right pre-emitted per-type field.
+    info.serialized_expr = serialized;
     info.logical_type = duckdb::LogicalType::VARCHAR;
     info.tokenizer = *std::move(tokenizer);
     return info;
@@ -444,10 +434,17 @@ void InitSearchColumnContextForGet(
   ctx.tokenizer_provider = [index_ptr, snapshot](catalog::Column::Id col_id) {
     return index_ptr->GetColumnTokenizer(snapshot, col_id);
   };
-  ctx.json_path_tokenizer_provider = [index_ptr, snapshot](
-                                       catalog::Column::Id col_id,
-                                       const std::string& serialized_expr) {
-    return index_ptr->GetJsonPathTokenizer(snapshot, col_id, serialized_expr);
+  ctx.expr_tokenizer_provider = [index_ptr, snapshot](
+                                  catalog::Column::Id col_id,
+                                  std::string_view serialized_expr)
+    -> std::optional<catalog::FieldTokenizer> {
+    // A miss here is normal: the SELECT's path may not be indexed. Pre-check
+    // so we can fall back instead of letting GetExprTokenizer throw.
+    const auto* info = index_ptr->FindColumnInfo(col_id);
+    if (!info || !info->expressions_infos.contains(serialized_expr)) {
+      return std::nullopt;
+    }
+    return index_ptr->GetExprTokenizer(snapshot, col_id, serialized_expr);
   };
 }
 
@@ -472,7 +469,7 @@ auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data) {
 bool TryClaimIresearchConjunct(
   irs::And& and_root, const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
-  const connector::JsonPathGetter& json_getter,
+  const connector::ExpressionGetter& json_getter,
   const connector::SearchFilterOptions& options) {
   const auto before = and_root.size();
   std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&conjunct, 1};

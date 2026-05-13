@@ -49,8 +49,8 @@
 #include "catalog/table_options.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_search_sink_writer.h"
+#include "connector/index_expression.hpp"
 #include "connector/indexonly_marker.h"
-#include "connector/json_expression_canonicalizer.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "query/duckdb_engine.h"
@@ -173,7 +173,7 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
 // `sink` under the original row keys.
 void ReplayJsonExpressions(
   connector::DuckDBSearchSinkInsertWriter& sink,
-  std::span<const connector::JsonExpressionEval> evals,
+  std::span<const connector::IndexedExpression> evals,
   std::span<const ShardState::IndexedColumn> indexed_columns,
   std::span<const std::vector<std::string_view>> resolved_cells,
   std::span<const Row*> insert_entries, ObjectId table_object_id,
@@ -223,12 +223,12 @@ void ReplayJsonExpressions(
     slot_to_col_id.push_back(col.id);
   }
   for (const auto& json_expr : evals) {
-    auto result = connector::EvaluateJsonPathOverChunk(
-      *json_expr.bound_expr, chunk, table_object_id, slot_to_col_id,
+    auto result = connector::EvaluateExprOverChunk(
+      *json_expr.normalized_expr, chunk, table_object_id, slot_to_col_id,
       client_context);
-    const bool switched = sink.SwitchJsonExpression(
-      connector::JsonExprDescriptor{json_expr.column_id, result.GetType(),
-                                    /*have_nulls=*/true, json_expr.serialized});
+    const bool switched = sink.SwitchExpression(connector::ExpressionDescriptor{
+      json_expr.column_id, result.GetType(),
+      /*have_nulls=*/true, json_expr.serialized});
     SDB_ASSERT(switched,
                "Cannot switch to JSON expression during WAL recovery");
     connector::DuckDBSinkIndexWriter* writer_ptr = &sink;
@@ -266,16 +266,16 @@ void FlushShard(ShardState& s,
 
   auto trx = s.shard->GetTransaction();
   auto tokenizer_provider =
-    connector::MakeTokenizerProvider(snapshot, *s.index);
-  auto json_path_tokenizer_provider =
-    connector::MakeJsonPathTokenizerProvider(snapshot, *s.index);
-  auto json_path_entries = connector::MakeJsonPathBoundEntries(
+    connector::MakeColumnTokenizerProvider(snapshot, *s.index);
+  auto expr_tokenizer_provider =
+    connector::MakeExpressionTokenizerProvider(snapshot, *s.index);
+  auto indexed_exprs = connector::MakeIndexedExpressions(
     *s.index, s.indexed_column_ids, &client_context);
   // Use the DuckDB-facing wrapper so SwitchColumn / Write / Finish /
   // JsonExpressionEvals are available (the impl base only exposes *Impl).
   connector::DuckDBSearchSinkInsertWriter insert_sink{
     trx, std::move(tokenizer_provider), s.indexed_column_ids,
-    std::move(json_path_tokenizer_provider), std::move(json_path_entries)};
+    std::move(expr_tokenizer_provider), std::move(indexed_exprs)};
   connector::SearchSinkDeleteBaseImpl delete_sink{trx};
 
   delete_sink.InitImpl(s.pk2row.size());
@@ -346,7 +346,7 @@ void FlushShard(ShardState& s,
       }
     }
 
-    if (const auto evals = sink.JsonExpressionEvals(); !evals.empty()) {
+    if (const auto evals = sink.IndexedExpressions(); !evals.empty()) {
       ReplayJsonExpressions(sink, evals, s.indexed_columns, resolved_cells,
                             insert_entries, s.table_object_id, client_context);
     }

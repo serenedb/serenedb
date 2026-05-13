@@ -11,66 +11,14 @@ transactions/etc.) are out of scope.
 
 ## Bugs (sure)
 
-- **HNSW graphs are not rebuilt on merge.** `columnstore::MergeInto`
-  ([`merge.cpp:38`](../libs/iresearch/include/iresearch/columnstore/merge.cpp))
-  iterates only `Reader::Columns()` (typed columns). The ARRAY column data is
-  transferred, but `cs_writer->AttachHNSW(...)` is never called on the output
-  writer. After consolidation the merged segment's footer slot 102 is empty;
-  `Reader::HNSW(id)` returns nullptr and ANN queries against the merged
-  segment fail or fall back wrongly. Fix: in `MergeInto`, when a source has
-  an HNSW reader for a field, AttachHNSW on the output and let Writer::Commit
-  rebuild the graph from the just-written ARRAY data. Add merge+ANN test.
-
 ## Performance (sure)
-
-- **HNSW build's PersistentColumnData clone via serialize-then-deserialize
-  round-trip** ([`format.cpp:392-413`](../libs/iresearch/include/iresearch/columnstore/format.cpp)).
-  `DataPointer` is move-only, so the code MemoryStream-serializes the whole
-  column entry and deserializes it to get a copy. Cost is one full footer
-  walk per HNSW column at commit time. Add a `PersistentColumnData::Clone()`
-  (DataPointer clone = `stats.Copy()` + re-call `serialize_state(segment)`)
-  or restructure HNSW build to operate on the in-flight writer state
-  directly without a clone.
-- **`HNSWReader::Search` builds a fresh `ChunkedVectorCache` +
-  `ColumnDistance` per call** ([`hnsw.cpp:441-443`](../libs/iresearch/include/iresearch/columnstore/hnsw.cpp)).
-  Each ctor allocates an s3_fifo Cache, two NodeHashMaps, the pin stack,
-  and (lazily) a 2 MB chunk slot region. For per-segment ANN queries
-  this is paid per query. Move cache to a thread-local or member so
-  warmup amortises across queries.
-- **HNSW graphs are eagerly faiss-deserialised at every Reader construction**
-  ([`format.cpp:558-585`](../libs/iresearch/include/iresearch/columnstore/format.cpp)).
-  Queries that never touch HNSW pay this. Make HNSW lazy -- only
-  deserialise on first `HNSW(field_id)` call. This also fixes the
-  MergeWriter-throws-away-HNSW waste (next item).
-- **MergeWriter opens per-source `columnstore::Reader` which eagerly
-  faiss-deserialises every HNSW graph** ([`merge_writer.cpp:754-756`](../libs/iresearch/include/iresearch/index/merge_writer.cpp))
-  and then throws them away -- HNSW is rebuilt from scratch on the merged
-  data. One full HNSW deserialise per source per merge, wasted. Lazy
-  HNSW (above) fixes it; or add a "skip HNSW" Reader flag.
 
 ## Simplifications (sure)
 
-- **`HNSWInfo` footer fields are written/read field-by-field across 8
-  `WriteProperty`/`ReadProperty` calls** ([`format.cpp:474-484,628-638`](../libs/iresearch/include/iresearch/columnstore/format.cpp)).
-  Either give `HNSWInfo` a `Serialize`/`Deserialize` or use a
-  `WriteProperty(0, "info", info)` once with the inspector specialisation.
-  (HNSW item, owned separately.)
 ---
 
 ## Bugs (notsure)
 
-- **`HNSWReader::_hnsw` is `mutable` because `faiss::HNSW::search` isn't
-  const** (`hnsw.hpp:91`). The graph is shared across threads; faiss
-  probably treats search as readonly on the graph nodes (state lives in
-  the per-call `VisitedTable`). Verify by reading the faiss search path,
-  or wrap with a shared_mutex. Otherwise multi-threaded ANN with one
-  reader could race. (HNSW item, owned separately.)
-- **`HNSW _pin_stack` is `std::array<ChunkSlot*, 2>` with hard depth 2**
-  ([`hnsw.cpp:308`](../libs/iresearch/include/iresearch/columnstore/hnsw.cpp)).
-  Asserts at depth 3. Comment says "Build outer + symmetric_dis inner"
-  is enough today -- re-check after any faiss bump. Consider switching
-  to a small_vector with assert-only depth-check. (HNSW item, owned
-  separately.)
 - **`SegmentReaderImpl::UpdateMeta` shares `_data` (incl. `cs_reader`)
   with the predecessor** ([`segment_reader_impl.cpp:218`](../libs/iresearch/include/iresearch/index/segment_reader_impl.cpp)).
   Two SegmentReaderImpl instances read through the same `cs_reader`.
@@ -92,19 +40,10 @@ transactions/etc.) are out of scope.
   re-examine whether the PartialBlockManager should be recreated per RG
   instead, and whether there's a cleaner DuckDB API. May save the
   per-RG bookkeeping cost.
-- **`HNSWReader::Search`'s `ChunkedVectorCache` capacity is 64 slots x 8192
-  floats** -- defaults from a sweep that targeted `vector_search.test_slow`
-  shape. May not be optimal for high-`d` workloads with large `m`. Worth
-  a per-`info.d` heuristic or a config knob.
 - **Both data and validity cursors are kept per binding in
   `ColumnstoreMaterializer`** even for `skip_validity=true` columns
   ([`columnstore_materializer.h:319`](../server/connector/columnstore_materializer.h)).
   Skip validity cursor allocation when `reader.ValidityGroupCount()==0`.
-- **HNSW `prepare_level_tab(rows + doc_limits::min(), false)`**
-  ([`hnsw.cpp:394`](../libs/iresearch/include/iresearch/columnstore/hnsw.cpp))
-  -- faiss allocates a level entry for node 0 which is unused.
-  `doc_limits::min() == 1`, so one wasted level entry per HNSW column.
-  Minor; could remap to 0-based locally.
 
 ## Simplifications (notsure)
 
@@ -257,6 +196,17 @@ as separate issues.
   drifted alongside. Repair as a separate pass; `ninja serened` is
   enough for the columnstore PR's verification. (See user-memory
   `project_iresearch_tests_broken.md`.)
+- **HNSW `ChunkedVectorCache` sizing.** The cache now lives on the HNSW
+  buffer and amortises across queries, so the per-call allocation is
+  gone. Open follow-up: tune the cache capacity -- defaults (64 slots x
+  8192 floats) came from a sweep targeting `vector_search.test_slow` and
+  likely aren't optimal across `d` / `m` workloads. Try a per-`info.d`
+  heuristic or expose a config knob.
+- **HNSW build's PersistentColumnData clone** ([`format.cpp:392-413`](../libs/iresearch/include/iresearch/columnstore/format.cpp)).
+  Currently uses `DataPointer::Clone()` to copy the column entry at HNSW
+  commit time. Goal: drop the clone entirely so there are no extra
+  allocations -- either restructure HNSW build to operate on the in-flight
+  writer state directly, or move ownership so no copy is needed.
 - **Raw non-owning pointers in cs internals** (`ColumnReader::_db,_in`,
   `ColumnWriter::_db,_out,_entry`, `Writer::Impl::dir,db`,
   `NormColumnReader::_column`). Project convention is references for

@@ -373,9 +373,6 @@ std::string Writer::Commit() {
       throw IoError{absl::StrCat("failed to open columnstore for HNSW build: ",
                                  _impl->filename)};
     }
-    // DataPointer is move-only; clone the metadata via a serialize /
-    // deserialize round-trip so the footer write still has the original
-    // pointers to emit. TODO(perf): add a real Clone().
     for (auto& entry : _impl->hnsw_writers) {
       const FooterColumnEntry* col_entry = nullptr;
       for (auto& e : _impl->column_entries) {
@@ -391,26 +388,10 @@ std::string Writer::Commit() {
       if (col_entry->root.child_columns.empty()) {
         continue;
       }
-      duckdb::MemoryStream mem_out;
-      duckdb::BinarySerializer ser{mem_out};
-      ser.Begin();
-      ser.WriteObject(0, "root", [&](duckdb::Serializer& obj) {
-        SerializeColumnData(obj, col_entry->root);
-      });
-      ser.End();
-      MemoryReadStream mem_in{
-        reinterpret_cast<const byte_type*>(mem_out.GetData()),
-        static_cast<uint64_t>(mem_out.GetPosition())};
-      duckdb::BinaryDeserializer deser{mem_in};
-      deser.Set<duckdb::DatabaseInstance&>(*_impl->db);
-      deser.Begin();
-      PersistentColumnData root_clone;
-      deser.ReadObject(0, "root", [&](duckdb::Deserializer& obj) {
-        root_clone = DeserializeColumnData(obj);
-      });
-      deser.End();
-      auto col_reader =
-        MakeColumnReader(col_entry->id, std::move(root_clone), *in, *_impl->db);
+      // TODO(codeworse): replace with some view-based wrapper,
+      // without extra allocations
+      auto col_reader = MakeColumnReader(col_entry->id, Clone(col_entry->root),
+                                         *in, *_impl->db);
       entry->writer->Build(*col_reader);
     }
   }

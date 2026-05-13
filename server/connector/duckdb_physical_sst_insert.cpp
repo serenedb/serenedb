@@ -214,13 +214,7 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
     gstate.active_writers.clear();
     auto& vec = chunk.data[meta.input_col_idx];
     for (auto& writer : gstate.index_writers) {
-      const bool active = writer->SwitchColumn(desc);
-      // Hand the whole typed vector to the columnstore-backed sink so
-      // store_values columns absorb the batch as a Vector (per-cell
-      // Write below still drives the inverted-index posting list).
-      // Default impl is a no-op for writers that don't have a cs side.
-      writer->WriteFullColumn(vec, num_rows);
-      if (active) {
+      if (writer->SwitchColumn(desc, vec, num_rows)) {
         gstate.active_writers.push_back(writer.get());
       }
     }

@@ -14,6 +14,8 @@
 /// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
@@ -197,10 +199,6 @@ class HNSWWriter final {
   HNSWWriter(const HNSWWriter&) = delete;
   HNSWWriter& operator=(const HNSWWriter&) = delete;
 
-  // Build the graph from the typed ARRAY column. Iterates the column in
-  // STANDARD_VECTOR_SIZE-floats chunks; the distance computer reads
-  // neighbor slices through an MRU chunk cache. Must be called before
-  // Serialize().
   void Build(const ColumnReader& vector_column);
 
   void Serialize(DataOutput& out);
@@ -214,10 +212,6 @@ class HNSWWriter final {
   std::shared_ptr<faiss::HNSW> _hnsw;
 };
 
-// Reader-side counterpart: loads the faiss::HNSW graph from the .cs
-// footer side-payload and exposes Search / RangeSearch that fetch
-// vectors on demand from the ARRAY ColumnReader's child via the same
-// MRU chunk cache used during Build. No per-Reader full-segment cache.
 class HNSWReader final {
  public:
   HNSWReader(field_id id, std::shared_ptr<faiss::HNSW> hnsw, HNSWInfo info,

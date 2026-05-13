@@ -55,14 +55,8 @@ void SegmentPkSequentialFetcher::Fetch(
   if (sorted_docs.empty() || !_pk_col) {
     return;
   }
-  // Contract: `sorted_docs` strictly ascending. Both the rg-window math
-  // (`row_n != row_k + run_len`) and the codec Skip target (in_rg_k > cursor)
-  // would mis-derive runs if a duplicate or out-of-order doc slipped in.
   SDB_ASSERT(absl::c_is_sorted(sorted_docs));
 
-  // Translate 1-based iresearch doc_ids to 0-based row positions on the
-  // fly so the shared ScanRowsBatched helper (which speaks row_pos) can
-  // drive. The view is non-owning; only [] is needed.
   struct RowView {
     std::span<const irs::doc_id_t> docs;
     size_t size() const noexcept { return docs.size(); }

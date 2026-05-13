@@ -182,27 +182,4 @@ float ColumnIndexDistance::symmetric_dis(faiss::idx_t i, faiss::idx_t j) {
   return _dist(lhs, rhs, d);
 }
 
-void HNSWIndexWriter::Add(const float* data, doc_id_t doc) {
-  if (doc >= _vt.visited.size()) {
-    size_t prev_size = _vt.visited.size();
-    size_t next_size = doc == 0 ? 1 : _vt.visited.size() * 2;
-    while (next_size <= doc) {
-      next_size *= 2;
-    }
-    _vt.visited.resize(next_size, 0);
-    _hnsw.prepare_level_tab(next_size - prev_size, false);
-  }
-
-  _max_doc = std::max(_max_doc, doc);
-  SDB_ASSERT(_vt.visited.size() >= _max_doc + 1);
-  SDB_ASSERT(_hnsw.levels.size() >= _max_doc + 1);
-
-  faiss::idx_t id = static_cast<faiss::idx_t>(doc);
-  _dis.Update(_update_iterator);
-  _dis.set_query(data);
-  int level = _hnsw.levels[id] - 1;
-  _vt.advance();
-  _hnsw.add_with_locks(_dis, level, id, _vt, false);
-}
-
 }  // namespace irs

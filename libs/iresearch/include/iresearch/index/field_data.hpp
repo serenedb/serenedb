@@ -188,7 +188,7 @@ class FieldsData : util::Noncopyable {
   std::vector<const FieldData*> _sorted_fields;
   byte_block_pool _byte_pool;
   byte_block_pool::inserter _byte_writer;
-  int_block_pool _int_pool;
+  int_block_pool _int_pool;  // FIXME why don't to use std::vector<size_t>?
   int_block_pool::inserter _int_writer;
   IndexFeatures _scorers_features;
   // Optional per-segment columnstore Writer; when non-null,

@@ -14,6 +14,8 @@
 /// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/columnstore/hnsw.hpp"
@@ -35,7 +37,7 @@
 #include "basics/exceptions.h"
 #include "iresearch/formats/column/hnsw_index.hpp"
 #include "basics/containers/node_hash_map.h"
-#include "basics/containers/s3_fifo.h"
+#include "basics/containers/s3fifo.h"
 #include "basics/exceptions.h"
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/store/data_input.hpp"

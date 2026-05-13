@@ -148,9 +148,6 @@ struct IndexWriterOptions : public SegmentOptions {
   // Options for snapshot management
   IndexReaderOptions reader_options;
 
-  // Returns column info the writer should use for columnstore
-  ColumnInfoProvider column_info;
-
   // Provides payload for index_meta created by writer
   PayloadProvider meta_payload_provider;
 
@@ -604,7 +601,6 @@ class IndexWriter : private util::Noncopyable {
               IndexFileRefs::ref_t&& lock_file_ref, Directory& dir,
               Format::ptr codec, size_t segment_pool_size,
               const SegmentOptions& segment_limits, const Comparer* comparator,
-              const ColumnInfoProvider& column_info,
               const PayloadProvider& meta_payload_provider,
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
 
@@ -954,7 +950,6 @@ class IndexWriter : private util::Noncopyable {
   IndexFeatures _wand_features{};  // Set of features required for wand
   ScorerPtr _wand_scorer;
   duckdb::DatabaseInstance* _db = nullptr;
-  ColumnInfoProvider _column_info;
   PayloadProvider _meta_payload_provider;  // provides payload for new segments
   const Comparer* _comparator;
   Format::ptr _codec;

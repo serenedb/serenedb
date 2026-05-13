@@ -14,6 +14,8 @@
 /// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/columnstore/column_reader.hpp"
@@ -89,7 +91,7 @@ ColumnReader::ColumnReader(
       SDB_ASSERT(_struct_fields.empty());
       SDB_ASSERT((_child->RowCount() % _array_size) == 0);
       _row_count = _child->RowCount() / _array_size;
-      _data_offsets.push_back(0);  // sentinel only -- no self data on disk
+      _data_offsets.push_back(0);  // sentinel only
     } break;
     case duckdb::LogicalTypeId::STRUCT: {
       SDB_ASSERT(!_struct_fields.empty());
@@ -113,12 +115,8 @@ ColumnReader::ColumnReader(
       }
       _data_offsets.push_back(total);
       _row_count = total;
-      // Stored offsets are column-global cumulative; each RG's max stat
-      // is the running total at end of that RG. `_rg_element_starts[r]`
-      // is the child element start of row group r; only used as the
-      // seed for ListOffsetState's first row.
       _rg_element_starts.reserve(_data_pointers.size() + 1);
-      _rg_element_starts.push_back(0);
+      _rg_element_starts.push_back(0);  // sentinel
       for (const auto& p : _data_pointers) {
         if (p.tuple_count == 0) {
           _rg_element_starts.push_back(_rg_element_starts.back());
@@ -129,7 +127,6 @@ ColumnReader::ColumnReader(
       }
     } break;
     default: {
-      // Primitive leaf.
       SDB_ASSERT(!_child);
       SDB_ASSERT(_struct_fields.empty());
       uint64_t total = 0;
@@ -149,7 +146,7 @@ namespace {
 RgWindow LocateInOffsets(uint64_t row_pos, const std::vector<uint64_t>& offsets,
                          RgWindow hint) noexcept {
   if (row_pos >= hint.end) {
-    // Forward jump. hint.rg + 1 is the common sequential-forward step.
+    // Forward jump: hint.rg + 1 is the common sequential-forward step.
     const size_t next = hint.rg + 1;
     SDB_ASSERT(next + 1 < offsets.size());
     if (row_pos < offsets[next + 1]) {
@@ -248,8 +245,6 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
     static_cast<duckdb::idx_t>(p.tuple_count), *codec, std::move(stats),
     /*block_id=*/0, /*offset=*/0, byte_size,
     /*segment_state=*/nullptr);
-  // Match the writer-side IndexOutputOverflowWriter so VARCHAR UNCOMPRESSED
-  // overflow lookups read from .cs file offsets rather than DuckDB blocks.
   if (type.InternalType() == duckdb::PhysicalType::VARCHAR) {
     if (auto seg_state = segment->GetSegmentState()) {
       auto& str_state =
@@ -314,8 +309,6 @@ uint64_t ColumnReader::ReadListOffsets(ColumnReader::ListOffsetState& state,
     state.prev_offset = _rg_element_starts[rg];
   }
   SDB_ASSERT(first_in_rg >= state.next_pos);
-  // Advance the cursor to `first_in_rg` one element at a time so the
-  // pre-batch cumulative offset is captured for the run's anchor.
   auto* buf_data = duckdb::FlatVector::GetDataMutable<uint64_t>(state.buf);
   while (state.next_pos < first_in_rg) {
     state.cursor.Scan(1, state.buf, 0);

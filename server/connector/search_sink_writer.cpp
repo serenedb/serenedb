@@ -136,18 +136,15 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   _pk_field.name = kPkFieldName;
 }
 
-bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col) {
+bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col,
+                                                const duckdb::Vector& vec,
+                                                duckdb::idx_t count) {
   const auto column_id = col.id;
   const auto& type = col.type;
   const auto have_nulls = col.have_nulls;
-  // Track the active column for WriteFullColumnImpl.
   _active_column_id = column_id;
   _active_column_type = type;
   _active_columnstore_writer = nullptr;
-  // HNSW columns route through the new cs alongside INCLUDE-shaped columns:
-  // vectors land in an ARRAY<FLOAT,N> ColumnWriter, and we ask the .cs
-  // Writer to attach an HNSWWriter so the faiss graph is co-built and
-  // serialized in the footer (slot 102).
   std::optional<irs::HNSWInfo> hnsw_info;
   if (_hnsw_info_provider) {
     hnsw_info = _hnsw_info_provider(column_id);
@@ -168,32 +165,18 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col) {
           static_cast<irs::field_id>(column_id), type,
           /*row_group_size=*/0, /*skip_validity=*/false, compression);
         if (hnsw_info.has_value()) {
-          // Records the request. The faiss graph is built at Commit
-          // time by reading the column data back through a sibling
-          // IndexInput; per-row Append() does not feed the graph
-          // builder.
           doc_columnstore->AttachHNSW(static_cast<irs::field_id>(column_id),
                                       *hnsw_info);
         }
       }
       _active_columnstore_writer = it->second;
-      // WriteFullColumnImpl reads _document->DocId() to compute start_row
-      // and Append into the columnstore. A previous indexed column's
-      // per-row WriteImpl loop advances _doc_id to batch_start + N, and
-      // some return paths below (the !IsIndexed branch and the `default`
-      // type case for unsupported tokenizable types like USMALLINT) skip
-      // the NextFieldBatch reset that the normal indexed path performs.
-      // Force the reset here so every WriteFullColumnImpl sees the batch's
-      // first doc_id regardless of which path SwitchColumn ends up taking.
       if (_document) {
         _document->NextFieldBatch();
       }
+      const uint64_t start_row = _document->DocId() - irs::doc_limits::min();
+      _active_columnstore_writer->Append(start_row, vec, count);
     }
   }
-  // HNSW: vectors are written through the cs above. The per-cell
-  // path below must still run for HNSW columns because it's where
-  // _emit_pk fires AppendPkToColumnstore -- skipping it for an
-  // HNSW-only-indexed table would leave the synthetic PK column empty.
 
   if (!IsIndexed(column_id)) {
 #ifdef SDB_DEV
@@ -201,16 +184,6 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col) {
 #endif
     return false;
   }
-  // INCLUDE-only column (in the index's column list but with no tokenizer
-  // configured): the columnstore writer has been set up above; skip the
-  // per-row tokenize + posting-list insertion path. Without this every
-  // INCLUDE column runs through SetupColumnWriter -> StringTokenizer (or
-  // NumericTokenizer for ints) which is by far the dominant cost in
-  // create_index for wide tables.
-  // HNSW-only-indexed tables are excluded from the skip: their per-cell
-  // loop is what drives _emit_pk's AppendPkToColumnstore call. Without
-  // it the synthetic PK column never reaches the new cs and PkIterator
-  // returns empty for every doc.
   if (_active_columnstore_writer && !hnsw_info.has_value() &&
       _is_text_indexed_provider && !_is_text_indexed_provider(column_id) &&
       _json_paths_provider && _json_paths_provider(column_id).empty()) {
@@ -219,9 +192,6 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col) {
 #endif
     return false;
   }
-  // JSON path-based indexing: if one or more paths are configured for this
-  // column we emit per-path fields instead of (or in addition to) a plain
-  // text field.
   if (_json_paths_provider) {
     if (auto paths = _json_paths_provider(column_id); !paths.empty()) {
       SetupJsonColumnWriter(column_id, std::move(paths));
@@ -230,9 +200,6 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col) {
       return true;
     }
   }
-  // For now we do not support types that are not default comparable as our
-  // ranges depend on that.
-  // SDB_ASSERT(!type.providesCustomComparison());
   switch (type.id()) {
     case duckdb::LogicalTypeId::SQLNULL:
       SetupColumnWriter<duckdb::LogicalTypeId::SQLNULL>(column_id, false);
@@ -303,26 +270,8 @@ void SearchSinkInsertBaseImpl::WriteImpl(
   _document->NextDocument();
 }
 
-void SearchSinkInsertBaseImpl::WriteFullColumnImpl(const duckdb::Vector& vec,
-                                                   duckdb::idx_t count) {
-  if (!_active_columnstore_writer) {
-    return;
-  }
-  SDB_ASSERT(_document.has_value());
-  // Document::DocId() returns the iresearch doc_id_t for the first row of
-  // the current batch (per-batch NextFieldBatch resets to that id). Convert
-  // to a 0-based row position within the segment for ColumnWriter::Append.
-  const uint64_t start_row = _document->DocId() - irs::doc_limits::min();
-  _active_columnstore_writer->Append(start_row, vec, count);
-}
-
 void SearchSinkInsertBaseImpl::FinishImpl() {
-  // Flush every per-row STORE accumulator (PK, geo, wildcard, ...).
-  // start_row is pinned to the doc_id of the first row of this batch
-  // (captured in InitImpl) so the columnstore row position matches doc_id.
   StoredBytesAccumulatorsFlush();
-  // Per-segment ColumnWriters are owned by SegmentWriter and finalized when
-  // the segment commits; we just drop our pointer cache.
   _columnstore_writers.clear();
   _stored_bytes_accumulators.clear();
   _active_columnstore_writer = nullptr;
@@ -418,12 +367,6 @@ void SearchSinkInsertBaseImpl::StoredBytesAccumulatorsFlush() {
 }
 
 void SearchSinkInsertBaseImpl::AppendPkToColumnstore(std::string_view row_key) {
-  // PK rides on the unified accumulator. Lazily registered the first
-  // time we see a PK in this segment; opted out of validity-side
-  // compression because every doc emits exactly one PK by construction.
-  // SearchSink may run with no DatabaseInstance behind the segment writer
-  // (rare test fixture); Ensure() is a no-op there and Append falls
-  // through silently.
   StoredBytesAccumulatorsEnsure(catalog::Column::kGeneratedPKId, "pk",
                                 duckdb::LogicalType::BLOB,
                                 /*skip_validity=*/true);
@@ -478,23 +421,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     search::mangling::MangleString(_name_buffer);
     _field.PrepareForStringValue(_tokenizer_provider(column_id));
     const bool has_store = _field.store_attr != nullptr;
-    // VARCHAR/BLOB columns whose analyzer publishes StoreAttr land
-    // their per-row bytes in a per-field STORE column. Today's
-    // analyzers covering this:
-    //   - GeoAnalyzer / GeoPointAnalyzer / GeoJsonAnalyzer: vpack-
-    //     encoded shape bytes, parsed on read by GeoIterator.
-    //   - WildcardAnalyzer: varint-prefixed term list (will move to
-    //     LIST<BLOB> when LIST support lands).
-    // Route geo analyzers to the unified accumulator (BLOB column in
-    // new cs, read via PointReadCursor in geo_filter.cpp). Other
-    // analyzers continue through the legacy SegmentWriter::stream
-    // STORE write until their migration follows.
     if (has_store) {
-      // Both GeoAnalyzer (vpack-encoded shape bytes) and WildcardAnalyzer
-      // (varint-prefixed term list) emit a single byte_view per row via
-      // StoreAttr -- a BLOB slot per row matches that one-for-one. Read
-      // sites (geo_filter / wildcard_ngram_filter) consume the bytes
-      // through PointReadCursor and run their existing parsers unchanged.
       StoredBytesAccumulatorsEnsure(column_id, std::to_string(column_id),
                                     duckdb::LogicalType::BLOB,
                                     /*skip_validity=*/false);
@@ -546,16 +473,8 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       _current_writer = MakeIndexWriter(&WriteNumericValue<T>);
     }
   } else if constexpr (Kind == duckdb::LogicalTypeId::ARRAY) {
-    // HNSW vectors are written through the cs in WriteFullColumnImpl;
-    // the per-cell loop is a no-op. _emit_pk's wrap below still drives
-    // AppendPkToColumnstore on the first cell so HNSW-only-indexed
-    // tables get their synthetic PK.
     _current_writer = [](std::string_view, std::span<const rocksdb::Slice>) {};
   } else if constexpr (Kind == duckdb::LogicalTypeId::GEOMETRY) {
-    // GEOMETRY column: WKB bytes arrive in cell_slices and go straight to
-    // the geo analyzer via resetWKB. The analyzer parses internally, which
-    // lets future LatLng-coding work fuse the WKB read with the encoder
-    // write without changing this call site.
     search::mangling::MangleString(_name_buffer);
     _field.PrepareForStringValue(_tokenizer_provider(column_id));
     const bool has_store = _field.store_attr != nullptr;
@@ -563,27 +482,17 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
                          std::span<const rocksdb::Slice> cell_slices,
                          Field& field) -> Field& {
       SDB_ASSERT(!cell_slices.empty());
-      // Raw WKB: last slice (row-prefix serialization may prepend other
-      // slices, so use back()).
       const auto& slice = cell_slices.back();
       const irs::bytes_view wkb{
         reinterpret_cast<const irs::byte_type*>(slice.data()), slice.size()};
       auto& geo =
         basics::downCast<irs::analysis::GeoAnalyzer>(*field.string_analyzer);
-      // Parse failure is treated silently (option A from the port plan): the
-      // analyzer keeps whatever state it had, which at worst means this row
-      // contributes no new terms. Matches the VARCHAR path behavior on bad
-      // input.
-      (void)geo.resetWKB(wkb);
+      // TODO(Dronplane) Should be similar to CSV ignore_errors behavior
+      // Same for VARCHAR
+      std::ignore = geo.resetWKB(wkb);
       return field;
     };
     if (has_store) {
-      // Geo's analyzer-published StoreAttr bytes ride the unified
-      // accumulator -- one BLOB column in new cs per geo field. Read side
-      // (geo_filter.cpp) consumes via PointReadCursor instead of the
-      // legacy column_it / PayAttr iteration. INDEX action runs the
-      // analyzer (which fills StoreAttr); the accumulator captures the
-      // bytes after Insert returns.
       StoredBytesAccumulatorsEnsure(column_id, std::to_string(column_id),
                                     duckdb::LogicalType::BLOB,
                                     /*skip_validity=*/false);
@@ -632,10 +541,6 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
                         std::span<const rocksdb::Slice> cell_slices) {
       auto row_key = key_utils::ExtractRowKey(full_key);
       _pk_field.SetStringValue(row_key);
-      // INDEX-only: the inverted-index side of the PK field is what
-      // search_remove_filter walks (term -> doc_id) to mark deletions.
-      // The legacy STORE side (column data) is gone -- per-doc PK reads
-      // resolve through the new typed columnstore via SegmentPkIterator.
       const bool r = _document->Insert(_pk_field);
       if (!r) {
         SDB_THROW(ERROR_INTERNAL,
@@ -809,7 +714,6 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
                         std::span<const rocksdb::Slice> cell_slices) {
       auto row_key = key_utils::ExtractRowKey(full_key);
       _pk_field.SetStringValue(row_key);
-      // INDEX-only: see the SetupColumnWriter twin above for rationale.
       const bool r = _document->Insert(_pk_field);
       if (!r) {
         SDB_THROW(ERROR_INTERNAL,

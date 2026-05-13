@@ -231,12 +231,6 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     writer->Init(affected_rows, chunk);
   }
 
-  // `sdb_write_conflict_policy = do_nothing` (and only this -- the
-  // ON CONFLICT clause is pre-filtered by DuckDB upstream) leaves the
-  // chunk's value vectors intact while only `affected_rows` rows
-  // get doc ids. WriteFullColumn must see only the surviving rows or
-  // the cs row position decouples from the segment's doc id space.
-  // HandleWriteConflicts marks skipped rows by clearing row_keys[row].
   duckdb::SelectionVector survivor_sel;
   const bool need_filter = (rows_skipped > 0);
   if (need_filter) {
@@ -266,7 +260,6 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
 
     duckdb::Vector cs_vec{vec.GetType(), affected_rows};
     if (need_filter) {
-      // DICTIONARY view; no data copy.
       cs_vec.Slice(vec, survivor_sel, affected_rows);
     }
     duckdb::Vector& cs_input = need_filter ? cs_vec : vec;
@@ -274,13 +267,7 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
 
     gstate.active_writers.clear();
     for (auto& writer : gstate.index_writers) {
-      const bool active = writer->SwitchColumn(desc);
-      // WriteFullColumn fires unconditionally so the columnstore side
-      // absorbs the batch even for INCLUDE-only columns; pass the
-      // filtered view so cs doc positions stay in lockstep with the
-      // surviving rows (skipped ON-CONFLICT rows are filtered out).
-      writer->WriteFullColumn(cs_input, cs_count);
-      if (active) {
+      if (writer->SwitchColumn(desc, cs_input, cs_count)) {
         gstate.active_writers.push_back(writer.get());
       }
     }
@@ -305,8 +292,6 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 
-// --- Finalize ---
-
 duckdb::SinkFinalizeType SereneDBPhysicalInsert::Finalize(
   duckdb::Pipeline& pipeline, duckdb::Event& event,
   duckdb::ClientContext& context,
@@ -318,8 +303,6 @@ duckdb::SinkFinalizeType SereneDBPhysicalInsert::Finalize(
   }
   return duckdb::SinkFinalizeType::READY;
 }
-
-// --- Source (returns insert count) ---
 
 duckdb::unique_ptr<duckdb::GlobalSourceState>
 SereneDBPhysicalInsert::GetGlobalSourceState(

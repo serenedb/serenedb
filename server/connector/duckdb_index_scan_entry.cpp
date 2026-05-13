@@ -150,10 +150,6 @@ duckdb::TableStorageInfo ViewInvertedIndexScanEntry::GetStorageInfo(
 
 duckdb::vector<duckdb::column_t> ViewInvertedIndexScanEntry::GetRowIdColumns()
   const {
-  // Views are conservatively treated as no-PK: their backing source (a
-  // file fast-path or a RocksDB scan) may have no declared key, and the
-  // view layer doesn't surface PK information. Synthetic generated PK
-  // is the only legitimate row-identity slot here.
   return {kColumnIdentifierGeneratedPk};
 }
 
@@ -277,8 +273,6 @@ duckdb::TableStorageInfo ViewSecondaryIndexScanEntry::GetStorageInfo(
 
 duckdb::vector<duckdb::column_t> ViewSecondaryIndexScanEntry::GetRowIdColumns()
   const {
-  // See ViewInvertedIndexScanEntry::GetRowIdColumns -- view source may
-  // have no PK, so use the explicit generated-PK virtual column.
   return {kColumnIdentifierGeneratedPk};
 }
 

@@ -44,8 +44,6 @@ class SegmentPkSequentialFetcher {
 
   explicit operator bool() const noexcept { return _pk_col != nullptr; }
 
-  // Materialise PK bytes for `sorted_docs` (ascending by iresearch doc_id)
-  // into [out_vec[out_start], out_vec[out_start + sorted_docs.size())).
   void Fetch(std::span<const irs::doc_id_t> sorted_docs, duckdb::Vector& out,
              duckdb::idx_t out_start);
 
@@ -61,9 +59,6 @@ class SegmentPkRandomFetcher {
 
   explicit operator bool() const noexcept { return _pk_col != nullptr; }
 
-  // Materialises PK bytes for `doc_id` into the cursor's borrowed slot.
-  // Returns the bytes on success, empty string_view if the doc is past
-  // the segment end.
   std::string_view Fetch(irs::doc_id_t doc_id);
 
   void Close() noexcept;
@@ -76,10 +71,6 @@ class SegmentPkRandomFetcher {
   duckdb::Vector _value_vec{duckdb::LogicalType::BLOB, 1};
 };
 
-// Sorts `hits` by `proj(hit) -> (segment_id, doc_id)` and walks segments
-// in order. `on_segment(seg_id) -> bool` is called once per segment;
-// returning false skips all hits in that segment. `on_doc(orig_idx,
-// seg_id, doc_id)` is called per hit in (segment, doc) ascending order.
 template<typename Hits, typename Proj, typename OnSegment, typename OnDoc>
 void WalkSegmentsSorted(const Hits& hits, Proj&& proj,
                         std::vector<uint32_t>& scratch_idx,
@@ -109,10 +100,6 @@ void WalkSegmentsSorted(const Hits& hits, Proj&& proj,
   }
 }
 
-// Walks `hits` sorted by (segment, doc) and looks up each hit's PK bytes
-// via SegmentPkSequentialFetcher. Per-segment, the whole sorted-doc batch
-// is fetched in one Select-per-row-group pass and then the sink is called
-// with the original hit index + PK bytes for each hit.
 template<typename Hits, typename Proj, typename Sink>
 void LookupSegmentsValues(const Hits& hits, Proj&& proj,
                           const irs::IndexReader& reader,

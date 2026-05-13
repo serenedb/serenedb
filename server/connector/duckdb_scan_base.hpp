@@ -40,9 +40,6 @@ namespace sdb::connector {
 struct SereneDBScanBindData;
 class IndexSource;
 
-// Projected column whose value comes from the iresearch columnstore
-// (catalog `store_values=true` INCLUDE column, or the BLOB-shaped
-// synthetic PK).
 struct ColumnstoreProjection {
   duckdb::idx_t output_slot;
   catalog::Column::Id column_id;
@@ -136,24 +133,9 @@ void InitCommonState(CommonScanGlobalState& state,
                      const SereneDBScanBindData& bind_data,
                      duckdb::TableFunctionInitInput& input);
 
-// Splits `state.projected_columns` into:
-//   - `state.cs_projections` + `cs_field_ids` + `cs_output_slots`:
-//     INCLUDE'd columns (catalog `store_values=true`) and the BLOB-
-//     shaped synthetic PK projection.
-//   - `state.external_projected_columns`: same shape as
-//     `projected_columns` but with cs slots zeroed to INVALID_INDEX,
-//     so `MakeIndexSource` does not redundantly RocksDB-lookup
-//     columns the cs overlay will overwrite.
-//   - `state.has_external_projections`: whether anything is left for
-//     IndexSource to materialize.
-// Must be called after `InitCommonState`. No-op when the scan is not
-// inverted-index-backed.
 void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
                                     const SereneDBScanBindData& bind_data);
 
-// One result row from a score-ordered scan (top-K, ANN, range).
-// doc_pos is the 0-based row position within the segment (= iresearch
-// doc_id - doc_limits::min()).
 struct SegDoc {
   uint32_t segment_idx;
   irs::doc_id_t doc_pos;
@@ -164,15 +146,9 @@ namespace irs {
 
 class IndexReader;
 
-}
+}  // namespace irs
 namespace sdb::connector {
 
-// Materializes `gstate.cs_projections` for a score-ordered slice into
-// `output`. Internally sorts a permutation by (segment, doc) so each
-// segment's row groups are visited once contiguous, then writes the
-// final per-projection slice as a DICTIONARY_VECTOR over the
-// segment-ordered scratch so the on-output values stay score-ordered
-// without a copy.
 void MaterializeIncludeColumnsScoreOrder(
   const CommonScanGlobalState& gstate, const irs::IndexReader& reader,
   std::span<const SegDoc> seg_doc_score_order, duckdb::DataChunk& output);

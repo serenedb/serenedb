@@ -1015,6 +1015,10 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   // projection that BuildCreateIndexProjection computes. Stays null for
   // view-backed indexes (whose projection comes from the view body).
   std::shared_ptr<catalog::Table> sdb_table;
+  // Name of the base table's PK column (if any) -- used to auto-inject a
+  // tokenised indexed column when the user wrote `inverted()` with only
+  // INCLUDE clauses.
+  std::string pk_column_name;
   if (view_backed) {
     auto& view_entry = target.Cast<duckdb::ViewCatalogEntry>();
     auto column_info = view_entry.GetColumnInfo();
@@ -1035,7 +1039,42 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     rel_columns.assign_range(columns | std::views::transform([](const auto& c) {
                                return std::pair{c.name, c.type};
                              }));
-    use_generated_pk_rowid_col = sdb_table->PKColumns().empty();
+    const auto& pk_ids = sdb_table->PKColumns();
+    use_generated_pk_rowid_col = pk_ids.empty();
+    if (!use_generated_pk_rowid_col) {
+      for (const auto& c : columns) {
+        if (c.id == pk_ids.front()) {
+          pk_column_name = c.name;
+          break;
+        }
+      }
+    }
+  }
+
+  // An inverted index needs at least one tokenised column to drive per-row
+  // doc_id allocation in the sink. If the user wrote `inverted()` (or only
+  // INCLUDE columns are present), inject a synthetic indexed column: the
+  // base table's PK when there is one, otherwise the first column of the
+  // relation (which is the standard convention for view-backed indexes
+  // over read_parquet etc.).
+  const bool has_indexed_column =
+    absl::c_any_of(create_index_info->column_opclasses,
+                   [](const auto& c) { return c != "included"; });
+  if (!has_indexed_column && create_index_info->index_type == "inverted") {
+    std::string inject_name = pk_column_name;
+    if (inject_name.empty() && !rel_columns.empty()) {
+      inject_name = rel_columns.front().first;
+    }
+    SDB_ENSURE(!inject_name.empty(), sdb::ERROR_BAD_PARAMETER,
+               "USING inverted() with only INCLUDE columns requires the "
+               "underlying relation to expose at least one column");
+    create_index_info->parsed_expressions.insert(
+      create_index_info->parsed_expressions.begin(),
+      duckdb::make_uniq<duckdb::ColumnRefExpression>(inject_name));
+    create_index_info->column_opclasses.insert(
+      create_index_info->column_opclasses.begin(), std::string{});
+    create_index_info->column_opclass_options.insert(
+      create_index_info->column_opclass_options.begin(), std::nullopt);
   }
 
   containers::FlatHashSet<duckdb::column_t> seen_columns;
@@ -1043,11 +1082,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
       auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
       auto col_name = col_ref.GetColumnName();
-      // Match case-insensitively so quoted CamelCase identifiers from the
-      // CREATE INDEX clause resolve against view-exposed columns that have
-      // already been case-folded by the underlying read_parquet/view
-      // pipeline. Mirrors the resolver used by SELECT, which lets users
-      // type SELECT "Title" against a lowercase `title` column.
       for (size_t i = 0; i < rel_columns.size(); ++i) {
         if (absl::EqualsIgnoreCase(rel_columns[i].first, col_name)) {
           const auto col_id = static_cast<duckdb::column_t>(i);
@@ -1091,10 +1125,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         get.types.push_back(rel_columns[pos].second);
       }
       if (use_generated_pk_rowid_col) {
-        // No-PK table: route the synthetic kGeneratedPKId column through
-        // the explicit kColumnIdentifierGeneratedPk virtual slot so the
-        // EXPLAIN projection list and downstream consumers can tell it
-        // apart from generic DuckDB rowid plumbing.
         get.AddColumnId(kColumnIdentifierGeneratedPk);
         get.types.push_back(duckdb::LogicalType::BIGINT);
       }

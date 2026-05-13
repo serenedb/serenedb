@@ -14,6 +14,8 @@
 /// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/columnstore/merge.hpp"
@@ -68,12 +70,6 @@ void MergeInto(std::span<const Reader* const> sources,
                  "schema evolution between merge sources not supported");
       const auto* mask = source_masks[s];
 
-      // skip_validity columns (e.g. PK) have no validity payload on disk;
-      // validity_range stays unused in that case.
-      // ARRAY parents have no top-level data, so RangeScan on the parent
-      // is invalid (Locate asserts). Run data_range on the element child
-      // and reshape into the parent's ArrayVector; validity still comes
-      // from the parent side.
       const bool is_array = col->Type().id() == duckdb::LogicalTypeId::ARRAY;
       const uint64_t array_size = is_array ? col->ArraySize() : 1;
       ColumnReader::RangeScan data_range{is_array ? *col->Child() : *col};
@@ -110,8 +106,6 @@ void MergeInto(std::span<const Reader* const> sources,
             duckdb::SelectionVector sel{take};
             duckdb::idx_t kept = 0;
             for (duckdb::idx_t i = 0; i < take; ++i) {
-              // docs_mask uses 1-indexed iresearch doc_ids; row positions
-              // are 0-indexed.
               const auto src_doc = static_cast<doc_id_t>(
                 rg_first_doc + scanned + i + doc_limits::min());
               if (mask->contains(src_doc)) {
@@ -129,9 +123,6 @@ void MergeInto(std::span<const Reader* const> sources,
       }
     }
   }
-
-  // Norms are merged in MergeWriter::WriteFields (it walks the merged
-  // field set and can allocate fresh ids).
 }
 
 }  // namespace irs::columnstore

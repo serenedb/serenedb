@@ -29,18 +29,6 @@
 
 namespace irs {
 
-enum class ValueType : uint8_t {
-  Bool = 0,
-  I8,
-  I16,
-  I32,
-  I64,
-  F32,
-  F64,
-  Str,
-  VectorF32,
-};
-
 enum class HNSWMetric : uint8_t {
   L2Sqr = 0,
   NegativeIP,
@@ -63,27 +51,5 @@ struct HNSWInfo {
   // expansion factor at construction time
   int ef_construction = 40;
 };
-
-struct ColumnInfo {
-  // Column compression
-  TypeInfo compression{irs::Type<irs::compression::None>::get()};
-  // Column compression options
-  compression::Options options{};
-
-  // Encrypt column
-  bool encryption = false;
-
-  // Allow iterator accessing previous document
-  // (currently supported by columnstore2 only)
-  bool track_prev_doc = false;
-
-  // Column value type
-  ValueType value_type = ValueType::Str;
-
-  // for vector columns
-  std::optional<HNSWInfo> hnsw_info = std::nullopt;
-};
-
-using ColumnInfoProvider = std::function<ColumnInfo(const std::string_view)>;
 
 }  // namespace irs

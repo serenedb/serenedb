@@ -14,6 +14,8 @@
 /// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
@@ -36,10 +38,6 @@ class IndexInput;
 
 namespace columnstore {
 
-// Per-column read view into the .cs norm payload. Per-row-group spans
-// point at the IndexInput's stable mmap region when available, else at
-// `_owned` heap copies. BM25 hot path: caller pulls RowGroupBytes(rg)
-// once and stride-indexes via the inline ReadNormValue helper.
 class NormColumnReader final {
  public:
   NormColumnReader(field_id id, std::string name,
@@ -70,11 +68,8 @@ class NormColumnReader final {
     return _spans[rg];
   }
 
-  // Locates (rg, in_rg) for an absolute row position.
   std::pair<size_t, uint64_t> Locate(uint64_t row_pos) const noexcept;
 
-  // Convenience -- BM25 callers typically take the raw bytes via
-  // RowGroupBytes() once and stride-index. Get() is the per-doc fallback.
   uint32_t Get(uint64_t row_pos) const noexcept;
 
  private:

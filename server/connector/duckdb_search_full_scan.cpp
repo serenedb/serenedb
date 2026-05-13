@@ -216,10 +216,6 @@ static void WriteVirtualColumns(SearchFullScanGlobalState& gstate,
         data[i] = static_cast<int64_t>(i);
       }
     }
-    // Other INVALID_INDEX slots (COLUMN_IDENTIFIER_EMPTY: BOOLEAN
-    // placeholder for COUNT(*)-style queries that need no real data)
-    // intentionally stay untouched -- the caller never reads them and
-    // writing the wrong type here trips DuckDB's vector-type check.
   }
 }
 
@@ -327,7 +323,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
     .scorer = state->scorer_obj.get(),
   });
 
-  // Split projections into cs-overlay vs RocksDB-served subsets.
+  // Split projections into inverted-cs vs relation-served subsets.
   ClassifyColumnstoreProjections(*state, bind_data);
 
   // Offsets output-slot mapping. InitCommonState walks input.column_ids
@@ -375,7 +371,6 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
     return;
   }
 
-  // Per-batch reset for columnstore-materialized projections.
   if (!gstate.cs_projections.empty()) {
     for (auto& v : gstate.cs_segment_doc_ids) {
       v.clear();
@@ -409,9 +404,7 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
     }
   };
 
-  // -------------------------------------------------------------------------
   // Top-K precomputed path (ORDER BY BM25(...) DESC LIMIT k)
-  // -------------------------------------------------------------------------
   if (search.score_top_k && gstate.scorer_obj) {
     if (!gstate.topk_executed) {
       const size_t k = *search.score_top_k;
@@ -540,16 +533,7 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
     return;
   }
 
-  // -------------------------------------------------------------------------
   // Bulk columnstore scan shortcut.
-  // Match-all filter, no scoring, no offsets, every real projection served
-  // from the columnstore: skip the per-doc DocIterator and materialise each
-  // segment vector-at-a-time via ColumnSegment::Scan. Drops `groupby`,
-  // `count_distinct`, `topk`-without-LIMIT etc. from O(N) iterator advance
-  // to O(N / vector_size) of bulk codec scan, ~50-200x on full-hits.
-  // First-call gate: bail out if any segment carries deletions; the bulk
-  // path doesn't yet stitch a docs_mask selection into the typed Scan.
-  // -------------------------------------------------------------------------
   if (!gstate.bulk_scan_active && has_real && !gstate.scan_score &&
       !search.score_top_k && !search.EmitOffsets() &&
       !gstate.has_external_projections && search.match_all) {
@@ -608,9 +592,7 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
     return;
   }
 
-  // -------------------------------------------------------------------------
   // Streaming path (with optional block-based scoring and/or offsets)
-  // -------------------------------------------------------------------------
   std::vector<duckdb::idx_t> offsets_running_size;
   if (search.EmitOffsets()) {
     if (gstate.offsets_doc_scratch.size() != search.offsets.size()) {
@@ -655,16 +637,6 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
 
   // Templated on `pk_collect` so the per-PK alternative specialises the
   // whole loop. No-op for has_real=false; typed Append inside std::visit.
-  //
-  // The loop is structured per-segment around three phases:
-  //  A. drain doc iterator into `seg_docs`, running per-doc score-arg
-  //     collection inline (FetchScoreArgs requires the iterator to still
-  //     be at the doc).
-  //  B. batch-fetch PK bytes for `seg_docs` via SegmentPkSequentialFetcher
-  //     -- one ColumnSegment::Select dispatch per row group instead of
-  //     one codec call per doc.
-  //  C. iterate `seg_docs` and emit per-doc bookkeeping (pk_collect,
-  //     offsets, INCLUDE column ids).
   duckdb::idx_t collected = 0;
   std::vector<irs::doc_id_t> seg_docs;
   auto run_scan = [&](auto&& pk_collect) {
@@ -752,8 +724,6 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
             gstate.cs_segment_doc_ids.resize(seg_idx + 1);
             gstate.cs_segment_out_positions.resize(seg_idx + 1);
           }
-          // doc_id is 1-indexed in iresearch (doc_limits::min()); columnstore
-          // rows are 0-indexed, so subtract the min to align.
           gstate.cs_segment_doc_ids[seg_idx].push_back(doc_id -
                                                        irs::doc_limits::min());
           gstate.cs_segment_out_positions[seg_idx].push_back(collected);
@@ -782,17 +752,10 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
       },
       gstate.pk_batch);
     if (collected > 0) {
-      // Skip IndexSource entirely when every real projection is an INCLUDE
-      // column -- ViewFile* sources segfault if asked to materialize into a
-      // 0-column scratch (the parquet TF dereferences something assuming a
-      // non-empty target).
       if (gstate.has_external_projections) {
         gstate.index_source->Materialize(context, gstate.pk_batch, 0, collected,
                                          output);
       }
-      // Overlay INCLUDEd columns from iresearch's columnstore. Each
-      // segment's doc_ids occupy a contiguous output range since run_scan
-      // drains a segment before advancing.
       if (!gstate.cs_projections.empty()) {
         for (size_t seg_idx = 0; seg_idx < gstate.cs_segment_doc_ids.size();
              ++seg_idx) {

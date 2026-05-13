@@ -509,26 +509,11 @@ void SearchScan::AppendSummary(
   }
 }
 
-// One projected column resolved against the catalog: bare display name
-// + whether its values come from the iresearch typed columnstore
-// (INCLUDE'd / HNSW vector data, store_values=true) or from the
-// IndexSource lookup fallback (rocksdb / non-INCLUDE'd index columns
-// + base tables).
 struct ProjectionEntry {
   std::string name;
   bool from_index = false;
 };
 
-// Owning display name for a projected column.
-//
-// Resolution order (first match wins):
-//   * regular table column           -> names[col_id]
-//   * virtual PK column              -> the underlying catalog column's
-//     name (resolved via the bind's table when table-backed)
-//   * known DuckDB / serenedb id     -> a canonical readable string
-//     ("row_id" / "row_number" / "empty" / "file_index" /
-//      "file_row_number" / "tableoid" / "generated_pk")
-//   * everything else                -> "col<N>" fallback
 std::string ProjectionDisplayName(const SereneDBScanBindData& bind,
                                   const duckdb::ColumnIndex& column_index,
                                   const duckdb::vector<std::string>& names) {
@@ -566,12 +551,6 @@ std::string ProjectionDisplayName(const SereneDBScanBindData& bind,
   return absl::StrCat("column_", col_id);
 }
 
-// True iff the column is served by the iresearch typed columnstore in
-// this scan: only inverted-index scans have an INCLUDE concept, and
-// within those, a column is "from index" when its catalog entry is
-// store_values=true. Synthetic PK (kGeneratedPKId) lives in the
-// columnstore as a BLOB column and isn't represented in
-// InvertedIndex::columns, so we treat it as from-index here.
 bool ProjectionIsFromIndex(const SereneDBScanBindData& bind,
                            const duckdb::ColumnIndex& column_index) {
   if (!bind.IsInvertedIndexEntry() || !bind.inverted_index) {
@@ -591,14 +570,6 @@ bool ProjectionIsFromIndex(const SereneDBScanBindData& bind,
   return info != nullptr && info->store_values;
 }
 
-// Walk projections in DuckDB's PhysicalTableScan order. Returns an
-// empty vector when projection info isn't available (callers other
-// than PhysicalTableScan that build TableFunctionToStringInput
-// directly), letting the to_string code path fall back to no
-// "Projections" key at all. Known virtual ids (row_id, generated_pk,
-// tableoid, row_number, empty, file_index, file_row_number) are
-// rendered with their canonical names instead of "col<N>" by
-// ProjectionDisplayName.
 std::vector<ProjectionEntry> BuildProjectionEntries(
   const SereneDBScanBindData& bind,
   const duckdb::TableFunctionToStringInput& input) {
@@ -631,10 +602,6 @@ std::vector<ProjectionEntry> BuildProjectionEntries(
   return entries;
 }
 
-// Format the "Projections" value. When `annotate` is true the names
-// carry "(i)" / "(l)" suffixes; otherwise plain names (one per line)
-// matching DuckDB's auto-emit shape so non-mixed scans look identical
-// to today's output.
 std::string FormatProjections(const std::vector<ProjectionEntry>& entries,
                               bool annotate) {
   std::string out;
@@ -643,6 +610,7 @@ std::string FormatProjections(const std::vector<ProjectionEntry>& entries,
       absl::StrAppend(&out, "\n");
     }
     if (annotate) {
+      // TODO(mbkkt) Rename l (lookup) to r (relation).
       absl::StrAppend(&out, e.name, " (", e.from_index ? "i" : "l", ")");
     } else {
       absl::StrAppend(&out, e.name);
@@ -666,9 +634,6 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
     const char* kind = bind.IsViewBacked() ? "View" : "Table";
     result.insert(kind, std::string{bind.RelationName()});
   }
-  // Classify projections up front so we can decide whether to suppress
-  // the "Lookup" line (no lookup-served columns) and whether to
-  // annotate the projections list (mixed sources).
   const auto entries = BuildProjectionEntries(bind, input);
   bool has_index = false;
   bool has_lookup = false;
@@ -679,20 +644,12 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
       has_lookup = true;
     }
   }
-  // Drop "Lookup" only when this is an inverted-index scan we
-  // confidently classified all projections for and none of them go
-  // through the lookup path. Other scan kinds (base table, secondary
-  // index) keep the legacy unconditional emit.
   const bool suppress_lookup =
     bind.IsInvertedIndexEntry() && !entries.empty() && !has_lookup;
   if (!bind.lookup_label.empty() && !suppress_lookup) {
     result.insert("Lookup", bind.lookup_label);
   }
   bind.scan_source->AppendSummary(bind, result);
-  // Pre-emit "Projections" so the patched PhysicalTableScan::ParamsToString
-  // skips its auto-emit. Annotate only when projections mix sources --
-  // bare (i) or bare (l) noise when one source dominates is explicitly
-  // unwanted.
   if (!entries.empty()) {
     const bool annotate = has_index && has_lookup;
     result.insert("Projections", FormatProjections(entries, annotate));

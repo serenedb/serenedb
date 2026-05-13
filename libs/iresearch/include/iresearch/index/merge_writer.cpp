@@ -566,10 +566,12 @@ doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
 const MergeWriter::FlushProgress kProgressNoop = [] { return true; };
 
 // Per-source norm reader handle: which source segment it came from and the
-// columnstore::Reader that exposes its NormColumns.
+// columnstore::Reader that exposes its NormColumns. The cs_reader is
+// non-owning -- it's the cached Reader on SubReader (SegmentReaderImpl), so
+// merge doesn't trigger an extra footer parse per source.
 struct SourceContext {
   const SubReader* reader;
-  std::unique_ptr<columnstore::Reader> cs_reader;
+  const columnstore::Reader* cs_reader;
   const DocMapF* doc_map;
 };
 
@@ -594,7 +596,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
   if (cs_writer != nullptr) {
     cs_by_reader.reserve(sources.size());
     for (const auto& src : sources) {
-      cs_by_reader.emplace(src.reader, src.cs_reader.get());
+      cs_by_reader.emplace(src.reader, src.cs_reader);
     }
   }
 
@@ -740,9 +742,10 @@ bool MergeWriter::Flush(SegmentMeta& segment,
     return false;
   }
 
-  // Open per-source columnstore readers (norms + typed columns) and the
-  // output writer. Skipped when the segment isn't backed by a
-  // DatabaseInstance (no `<seg>.cs` to read or write).
+  // Borrow each source's cached columnstore::Reader from its SubReader so
+  // merge doesn't trigger an extra footer parse per source. Skipped when
+  // the segment isn't backed by a DatabaseInstance (no `<seg>.cs` to read
+  // or write).
   std::vector<SourceContext> sources;
   std::vector<const irs::columnstore::Reader*> source_reader_ptrs;
   std::vector<const DocumentMask*> source_masks;
@@ -752,12 +755,10 @@ bool MergeWriter::Flush(SegmentMeta& segment,
     source_reader_ptrs.reserve(_readers.size());
     source_masks.reserve(_readers.size());
     for (auto& ctx : _readers) {
-      auto cs_reader = std::make_unique<columnstore::Reader>(
-        _dir, ctx.reader->Meta().name, *_db);
-      source_reader_ptrs.push_back(cs_reader.get());
+      const auto* cs_reader = ctx.reader->CsReader();
+      source_reader_ptrs.push_back(cs_reader);
       source_masks.push_back(ctx.reader->docs_mask());
-      sources.push_back(
-        SourceContext{ctx.reader, std::move(cs_reader), &ctx.doc_map});
+      sources.push_back(SourceContext{ctx.reader, cs_reader, &ctx.doc_map});
     }
     cs_writer =
       std::make_unique<columnstore::Writer>(track_dir, segment.name, *_db);

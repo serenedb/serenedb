@@ -20,6 +20,7 @@
 
 #include <cstdint>
 #include <duckdb/common/types.hpp>
+#include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/data_pointer.hpp>
 #include <string>
@@ -59,6 +60,13 @@ class ColumnWriter final {
   // Validity bits in `vec` are honored.
   void Append(uint64_t start_row, duckdb::Vector& vec, duckdb::idx_t count);
 
+  // Append `count` rows picked by `sel` out of `vec`. Same monotonic /
+  // gap-padding semantics as the dense overload; lets callers avoid a
+  // throwaway Slice-then-Flatten Vector when they already have a
+  // SelectionVector (consolidate's mask-prune path).
+  void Append(uint64_t start_row, duckdb::Vector& vec,
+              const duckdb::SelectionVector& sel, duckdb::idx_t count);
+
   void AppendChunk(uint64_t start_row, duckdb::DataChunk& chunk,
                    duckdb::idx_t col_idx = 0);
 
@@ -79,8 +87,12 @@ class ColumnWriter final {
 
   void Finalize();  // Called by Writer::Commit.
 
+
  private:
   void FlushRowGroup();
+  // Advances `_filled` to (start_row - _row_group_first_doc), marking the
+  // gap rows null in `_staging`'s validity. Flushes row groups crossed.
+  void PadNullsTo(uint64_t start_row);
 
   field_id _id;
   std::string _name;

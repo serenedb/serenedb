@@ -104,10 +104,7 @@ void MergeInto(std::span<const Reader* const> sources,
               sel.set_index(kept++, i);
             }
             if (kept > 0) {
-              duckdb::Vector kept_vec{col->Type(), kept};
-              kept_vec.Slice(batch, sel, kept);
-              kept_vec.Flatten(kept);
-              cw.Append(out_doc, kept_vec, kept);
+              cw.Append(out_doc, batch, sel, kept);
               out_doc += kept;
             }
           }

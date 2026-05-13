@@ -20,11 +20,14 @@
 
 #pragma once
 
+#include <duckdb.hpp>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
+#include "catalog/table_options.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "rocksdb/utilities/transaction.h"
 
@@ -84,5 +87,24 @@ CreateDuckDBIndexWriters<DuckDBWriteKind::Update>(
   const ColumnChunkMapping& col_id_to_chunk_pos,
   std::span<const catalog::Column::Id> updated_col_ids,
   const ColumnChunkMapping& old_col_id_to_chunk_pos);
+
+// True iff some inverted index in `indexes` is built exclusively over
+// IndexOnly columns -- such an index has no main-storage cells to feed the
+// normal WAL row-delete replay, so DML must emit per-row marker on deletes.
+bool NeedsRowDeleteMarkers(
+  std::span<const std::shared_ptr<catalog::Index>> indexes,
+  std::span<const catalog::Column> columns);
+
+// Catalog column positions to project for a CREATE INDEX backfill scan:
+// union of index-key columns and PK columns, sorted+deduped (== catalog
+// column order). For tables with a generated PK the caller appends ROW_ID
+// at chunk position equal to projection.size().
+//
+// `index_column_positions` are positions into `columns` (positional, not
+// Column::Id). `pk_column_ids` are Column::Id values, resolved internally.
+std::vector<size_t> BuildCreateIndexProjection(
+  std::span<const catalog::Column> columns,
+  std::span<const catalog::Column::Id> pk_column_ids,
+  std::span<const duckdb::idx_t> index_column_positions);
 
 }  // namespace sdb::connector

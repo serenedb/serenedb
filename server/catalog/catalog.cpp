@@ -237,7 +237,7 @@ class OpenDatabase {
     Root = 0,  // deleted object with parent = id::kInstance
     Database,  // parent is daatabase
     Schema,    // parent is schema
-    Table,     // parent is table
+    Relation,  // parent is relation
   };
 
   OpenDatabase(LogicalCatalog& catalog) : _catalog{catalog} {}
@@ -390,13 +390,21 @@ Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::PgSqlView,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto view = PgSqlView::ReadInternal(
-        slice, {.id = key.GetObjectId(), .database_id = db_id});
+      auto view_id = key.GetObjectId();
+      auto view =
+        PgSqlView::ReadInternal(slice, {.id = view_id, .database_id = db_id});
       if (!view) {
         return ErrorMeta(ERROR_INTERNAL, "view",
                          "Failed to read view definition", slice);
       }
-      return _catalog.RegisterView(schema_id, std::move(view));
+      if (auto r = _catalog.RegisterView(schema_id, std::move(view)); !r.ok()) {
+        return r;
+      }
+      CollectDeletedDefinitions(view_id, DeletedScope::Relation);
+      irs::Finally cleanup = [&] noexcept {
+        ClearDeletedDefinitions(DeletedScope::Relation);
+      };
+      return RegisterIndexes(db_id, schema_id, view_id);
     });
 }
 
@@ -439,7 +447,7 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
     return GetServerEngine().VisitDefinitions(
       table_id, type, [&](DefinitionKey key, vpack::Slice slice) -> Result {
         auto index_id = key.GetObjectId();
-        if (!IsDeleted(index_id, DeletedScope::Table)) {
+        if (!IsDeleted(index_id, DeletedScope::Relation)) {
           return AddIndex(db_id, schema_id, table_id, index_id, type, slice);
         }
 
@@ -466,7 +474,7 @@ Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
     table_id, ObjectType::TableShard,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       ObjectId shard_id = key.GetObjectId();
-      SDB_ASSERT(!IsDeleted(shard_id, DeletedScope::Table));
+      SDB_ASSERT(!IsDeleted(shard_id, DeletedScope::Relation));
       TableStats stats;
       if (auto r = vpack::ReadTupleNothrow(slice, stats); !r.ok()) {
         return r;
@@ -562,9 +570,9 @@ Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
   if (!r.ok()) {
     return r;
   }
-  CollectDeletedDefinitions(table_id, DeletedScope::Table);
+  CollectDeletedDefinitions(table_id, DeletedScope::Relation);
   irs::Finally cleanup = [&] noexcept {
-    ClearDeletedDefinitions(DeletedScope::Table);
+    ClearDeletedDefinitions(DeletedScope::Relation);
   };
   r = RegisterTableShard(table_id);
   if (!r.ok()) {

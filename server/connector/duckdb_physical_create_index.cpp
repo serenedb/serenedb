@@ -45,6 +45,7 @@
 #include "catalog/view.h"
 #include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_schema_entry.h"
@@ -124,19 +125,24 @@ struct InsertColumnMeta {
   catalog::Column::Id id;
   duckdb::LogicalType duckdb_type;
   size_t input_col_idx;
+  catalog::ColumnStoreMode store_mode;
 };
 
+// `chunk_columns` is the chunk-ordered list of columns the scan projects
+// (state->columns). For each indexed column, find its chunk position; the
+// secondary writer's BuildSK reads from chunk.data[input_col_idx].
 std::vector<duckdb_secondary_key::SKColumn> BuildSKColumnsForBackfill(
-  const catalog::Index& index, std::span<const catalog::Column> columns) {
+  const catalog::Index& index,
+  std::span<const InsertColumnMeta> chunk_columns) {
   std::vector<duckdb_secondary_key::SKColumn> result;
   result.reserve(index.GetColumnIds().size());
 
   for (auto col_id : index.GetColumnIds()) {
-    for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == col_id) {
+    for (size_t i = 0; i < chunk_columns.size(); ++i) {
+      if (chunk_columns[i].id == col_id) {
         result.push_back(duckdb_secondary_key::SKColumn{
           .input_col_idx = i,
-          .type = columns[i].type,
+          .type = chunk_columns[i].duckdb_type,
         });
         break;
       }
@@ -431,18 +437,45 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   auto* table_ptr = TableOrNull();
   state->table_id = table_ptr ? table_ptr->GetId() : _relation->GetId();
   state->table_key = key_utils::PrepareTableKey(state->table_id);
-  for (size_t i = 0; i < columns.size(); ++i) {
-    if (columns[i].id == catalog::Column::kGeneratedPKId) {
-      continue;
+  // Populated only on the base-table branch; describes the chunk-order list
+  // of catalog positions the scan projects. Reused below for PK chunk-index
+  // resolution.
+  std::vector<size_t> projection;
+  if (table_ptr) {
+    // Base-table backfill: BindCreateIndex narrowed the scan to index
+    // columns + PK columns. Mirror that projection here so chunk positions
+    // and state->columns agree. input_col_idx is the chunk position, not
+    // the catalog index.
+    projection = BuildCreateIndexProjection(
+      table_ptr->Columns(), table_ptr->PKColumns(), _info->column_ids);
+    state->columns.reserve(projection.size());
+    for (size_t chunk_idx = 0; chunk_idx < projection.size(); ++chunk_idx) {
+      const auto& col = columns[projection[chunk_idx]];
+      state->columns.push_back(InsertColumnMeta{
+        .id = col.id,
+        .duckdb_type = col.type,
+        .input_col_idx = chunk_idx,
+        .store_mode = col.store_mode,
+      });
     }
-    state->columns.push_back(InsertColumnMeta{
-      .id = columns[i].id,
-      .duckdb_type = columns[i].type,
-      .input_col_idx = i,
-    });
+  } else {
+    // View-backed: chunk holds the view body's projection at catalog
+    // positions; trailing positions hold virtual PK columns appended by
+    // BindCreateIndex.
+    for (size_t i = 0; i < columns.size(); ++i) {
+      if (columns[i].id == catalog::Column::kGeneratedPKId) {
+        continue;
+      }
+      state->columns.push_back(InsertColumnMeta{
+        .id = columns[i].id,
+        .duckdb_type = columns[i].type,
+        .input_col_idx = i,
+        .store_mode = columns[i].store_mode,
+      });
+    }
   }
-  state->file_row_number_col_idx = columns.size();
-  state->generated_pk_col_idx = columns.size();
+  state->file_row_number_col_idx = state->columns.size();
+  state->generated_pk_col_idx = state->columns.size();
   if (auto it = _info->options.find("_sdb_view_fast_path_pk");
       !table_ptr && it != _info->options.end()) {
     const auto kind = it->second.GetValue<std::string>();
@@ -455,15 +488,25 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       state->is_external = true;
       if (kind == "file_index_plus_row_number") {
         state->is_glob_external = true;
-        state->file_index_col_idx = columns.size();
-        state->file_row_number_col_idx = columns.size() + 1;
+        state->file_index_col_idx = state->columns.size();
+        state->file_row_number_col_idx = state->columns.size() + 1;
       }
     }
   }
   if (table_ptr) {
-    state->pk_columns = duckdb_primary_key::BuildPKColumns(*table_ptr);
     state->has_generated_pk_col = table_ptr->PKColumns().empty();
     state->is_view_synth_pk = false;
+    // PK chunk positions: each PK column's chunk index is its position in
+    // the projection. BuildCreateIndexProjection guarantees PK columns are
+    // present in the projection when there's an explicit PK.
+    if (!state->has_generated_pk_col) {
+      auto projected =
+        projection |
+        std::views::transform(
+          [&](size_t pos) -> const catalog::Column& { return columns[pos]; });
+      state->pk_columns =
+        duckdb_primary_key::BuildPKColumns(projected, table_ptr->PKColumns());
+    }
   } else if (state->is_view_rocksdb_pk) {
     auto& view = basics::downCast<const catalog::PgSqlView>(*_relation);
     auto fp = ResolveViewFastPath(context, view);
@@ -504,7 +547,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
   if (state->index_type == catalog::ObjectType::SecondaryIndex) {
     auto& sec_index = basics::downCast<const catalog::SecondaryIndex>(*index);
-    auto sk_columns = BuildSKColumnsForBackfill(*index, columns);
+    auto sk_columns = BuildSKColumnsForBackfill(*index, state->columns);
     auto& trx = conn_ctx.GetRocksDBTransaction();
 
     if (sec_index.IsUnique()) {
@@ -683,7 +726,9 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       continue;
     }
 
-    if (!writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true, col.id)) {
+    const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
+                                /*have_nulls=*/true};
+    if (!writer->SwitchColumn(desc)) {
       continue;
     }
 
@@ -692,9 +737,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
 
     DuckDBSinkIndexWriter* writer_ptr = writer;
-    serializer->WriteColumn(noop, chunk.data[col.input_col_idx],
-                            col.duckdb_type, num_rows, row_keys,
-                            {&writer_ptr, 1});
+    serializer->WriteColumn(noop, chunk.data[col.input_col_idx], num_rows,
+                            row_keys, {&writer_ptr, 1}, desc);
   }
 
   writer->Finish();

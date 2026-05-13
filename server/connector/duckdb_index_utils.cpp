@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_index_utils.h"
 
+#include <absl/algorithm/container.h>
+
 #include "basics/assert.h"
 #include "basics/string_utils.h"
 #include "catalog/inverted_index.h"
@@ -223,5 +225,58 @@ CreateDuckDBIndexWriters<DuckDBWriteKind::Update>(
   const ColumnChunkMapping& col_id_to_chunk_pos,
   std::span<const catalog::Column::Id> updated_col_ids,
   const ColumnChunkMapping& old_col_id_to_chunk_pos);
+
+bool NeedsRowDeleteMarkers(
+  std::span<const std::shared_ptr<catalog::Index>> indexes,
+  std::span<const catalog::Column> columns) {
+  for (const auto& index : indexes) {
+    if (index->GetType() != catalog::ObjectType::InvertedIndex) {
+      continue;
+    }
+    bool all_indexonly = true;
+    for (auto col_id : index->GetColumnIds()) {
+      auto it =
+        absl::c_find_if(columns, [&](const auto& c) { return c.id == col_id; });
+      SDB_ASSERT(it != columns.end(),
+                 "inverted index references unknown column id ", col_id);
+      if (it->store_mode != catalog::ColumnStoreMode::kIndexOnly) {
+        all_indexonly = false;
+        break;
+      }
+    }
+    if (all_indexonly) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::vector<size_t> BuildCreateIndexProjection(
+  std::span<const catalog::Column> columns,
+  std::span<const catalog::Column::Id> pk_column_ids,
+  std::span<const duckdb::idx_t> index_column_positions) {
+  // Sort + unique on a small vector is faster than a hash set and avoids
+  // an allocation. Sorted order == catalog order, which keeps the
+  // projection stable across call sites.
+  std::vector<size_t> projection;
+  projection.reserve(index_column_positions.size() + pk_column_ids.size());
+
+  for (auto pos : index_column_positions) {
+    SDB_ASSERT(pos < columns.size());
+    projection.push_back(static_cast<size_t>(pos));
+  }
+  for (auto pk_id : pk_column_ids) {
+    for (size_t i = 0; i < columns.size(); ++i) {
+      if (columns[i].id == pk_id) {
+        projection.push_back(i);
+        break;
+      }
+    }
+  }
+  absl::c_sort(projection);
+  projection.erase(std::unique(projection.begin(), projection.end()),
+                   projection.end());
+  return projection;
+}
 
 }  // namespace sdb::connector

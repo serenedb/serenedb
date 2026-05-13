@@ -56,6 +56,7 @@
 #include "catalog/view.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_entry_cache.h"
+#include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_physical_ctas.h"
 #include "connector/duckdb_physical_delete.h"
 #include "connector/duckdb_physical_insert.h"
@@ -64,6 +65,7 @@
 #include "connector/duckdb_physical_update.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/duckdb_table_function.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -1000,6 +1002,10 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
 
   std::vector<std::pair<std::string, duckdb::LogicalType>> rel_columns;
   bool use_generated_pk_rowid_col = false;
+  // Populated for base-table indexes; used below to drive the narrow
+  // projection that BuildCreateIndexProjection computes. Stays null for
+  // view-backed indexes (whose projection comes from the view body).
+  std::shared_ptr<catalog::Table> sdb_table;
   if (view_backed) {
     auto& view_entry = target.Cast<duckdb::ViewCatalogEntry>();
     auto column_info = view_entry.GetColumnInfo();
@@ -1015,7 +1021,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       }));
   } else {
     auto& sdb_entry = RequireBaseTable(*resolved_table);
-    auto sdb_table = sdb_entry.GetSereneDBTable();
+    sdb_table = sdb_entry.GetSereneDBTable();
     const auto& columns = sdb_table->Columns();
     rel_columns.assign_range(columns | std::views::transform([](const auto& c) {
                                return std::pair{c.name, c.type};
@@ -1048,27 +1054,45 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   };
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
   if (!view_backed) {
+    SDB_ASSERT(sdb_table);
+    // Project only what the backfill actually needs: index columns + PK
+    // columns (or ROW_ID for generated PK). Replaces the previous
+    // "every non-PK column" default which made every CREATE INDEX scan
+    // redundantly read the whole table -- and broke when any of those
+    // columns were sdb_indexonly (no main-storage data to read).
+    auto projection =
+      BuildCreateIndexProjection(sdb_table->Columns(), sdb_table->PKColumns(),
+                                 create_index_info->column_ids);
     auto& get = leaf_get_from_plan(*plan);
     if (get.GetColumnIds().empty()) {
-      for (size_t i = 0; i < rel_columns.size(); ++i) {
-        get.AddColumnId(static_cast<duckdb::column_t>(i));
+      for (auto pos : projection) {
+        get.AddColumnId(static_cast<duckdb::column_t>(pos));
       }
       get.types.clear();
-      for (size_t i = 0; i < rel_columns.size(); ++i) {
-        get.types.push_back(rel_columns[i].second);
+      for (auto pos : projection) {
+        get.types.push_back(rel_columns[pos].second);
       }
       if (use_generated_pk_rowid_col) {
         get.AddColumnId(duckdb::COLUMN_IDENTIFIER_ROW_ID);
         get.types.push_back(duckdb::LogicalType::BIGINT);
       }
     }
+    // Mark the scan as a CREATE INDEX backfill so InitCommonState relaxes
+    // the read-side check on sdb_indexonly columns (the inverted index may
+    // include them as indexed columns, and the backfill is the legitimate
+    // path that consumes their values).
+    SDB_ASSERT(get.bind_data,
+               "base-table LogicalGet missing SereneDB bind_data");
+    get.bind_data->Cast<SereneDBScanBindData>().is_create_index = true;
     create_index_info->names = get.names;
     create_index_info->schema = resolved_table->schema.name;
     create_index_info->catalog = resolved_table->catalog.GetName();
-    for (size_t i = 0; i < rel_columns.size(); ++i) {
+    // expressions[] mirrors the projection: ProjectionIndex must match
+    // position in get.GetColumnIds(), which now follows `projection`.
+    for (size_t pos = 0; pos < projection.size(); ++pos) {
       expressions.push_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-        rel_columns[i].second,
-        duckdb::ColumnBinding(get.table_index, duckdb::ProjectionIndex(i))));
+        rel_columns[projection[pos]].second,
+        duckdb::ColumnBinding(get.table_index, duckdb::ProjectionIndex(pos))));
     }
   } else {
     create_index_info->names.assign_range(rel_columns | std::views::keys);

@@ -1,0 +1,119 @@
+control substitution on
+
+# View-backed inverted index must survive a clean restart: the SQL alias
+# has to be re-bound to the on-disk index data.
+#
+# Without the fix, the in-memory catalog only walks index definitions
+# parented by tables on startup, so view-parented index rows in rocksdb
+# stay orphaned -- `SELECT FROM <idx>` errors out and a follow-up
+# `CREATE INDEX IF NOT EXISTS` builds a duplicate set of segments under
+# the same name because the existing-row check sees nothing.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vi_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE vi_base(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO vi_base VALUES
+  (1, 'pudge goes mid'),
+  (2, 'anchin reads manga'),
+  (3, 'pudge plays again');
+
+statement ok
+CREATE VIEW vi_v AS SELECT * FROM vi_base;
+
+statement ok
+CREATE INDEX vi_idx ON vi_v USING inverted(body vi_dict);
+
+# Sanity: index resolves and returns the expected hit count pre-crash.
+query
+SELECT count(*) FROM vi_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT relname FROM pg_class WHERE relname = 'vi_idx';
+----
+relname
+vi_idx
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+# Wait for the server to come back up.
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM vi_base;
+----
+count
+3
+
+# View body itself persists.
+connection after_crash
+query
+SELECT count(*) FROM vi_v;
+----
+count
+3
+
+# The catalog row for the view-backed index must be re-registered: the
+# index alias has to resolve to the same on-disk segments built before
+# the crash, and `\di`-style introspection has to list it.
+connection after_crash
+query
+SELECT count(*) FROM vi_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+connection after_crash
+query
+SELECT relname FROM pg_class WHERE relname = 'vi_idx';
+----
+relname
+vi_idx
+
+# CREATE INDEX IF NOT EXISTS must be a no-op after restart -- not a
+# silent rebuild that appends another segment set to the same name.
+connection after_crash
+statement ok
+CREATE INDEX IF NOT EXISTS vi_idx ON vi_v USING inverted(body vi_dict);
+
+connection after_crash
+query
+SELECT count(*) FROM vi_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+
+# Cleanup.
+connection after_crash
+statement ok
+DROP INDEX vi_idx;
+
+connection after_crash
+statement ok
+DROP VIEW vi_v;
+
+connection after_crash
+statement ok
+DROP TABLE vi_base;

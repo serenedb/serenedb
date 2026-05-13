@@ -20,10 +20,13 @@
 
 #pragma once
 
+#include <concepts>
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <ranges>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "basics/assert.h"
@@ -40,24 +43,40 @@ struct PKColumn {
   duckdb::LogicalType type;
 };
 
-inline std::vector<PKColumn> BuildPKColumns(const catalog::Table& table) {
-  const auto& columns = table.Columns();
-  const auto& pk_col_ids = table.PKColumns();
+// Build PK column mappings from a chunk-ordered range of catalog columns.
+// Maps each PK column ID to its position in `columns` + DuckDB type.
+//
+// Accepts any random-access range whose elements are catalog::Column (vector,
+// span, or a lazy views::transform of an index list, etc.) so the caller can
+// describe a projected/reordered chunk without materialising a copy.
+template<std::ranges::random_access_range R>
+  requires std::same_as<std::remove_cvref_t<std::ranges::range_reference_t<R>>,
+                        catalog::Column>
+inline std::vector<PKColumn> BuildPKColumns(
+  R&& columns, std::span<const catalog::Column::Id> pk_col_ids) {
   std::vector<PKColumn> result;
   result.reserve(pk_col_ids.size());
-
+  const auto begin = std::ranges::begin(columns);
+  const auto n = std::ranges::size(columns);
   for (auto pk_id : pk_col_ids) {
-    for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == pk_id) {
+    for (size_t i = 0; i < n; ++i) {
+      const catalog::Column& c = begin[i];
+      if (c.id == pk_id) {
         result.push_back(PKColumn{
           .input_col_idx = i,
-          .type = columns[i].type,
+          .type = c.type,
         });
         break;
       }
     }
   }
   return result;
+}
+
+// Convenience: PK columns laid out in catalog order (used by paths whose
+// chunk shape mirrors `table.Columns()`).
+inline std::vector<PKColumn> BuildPKColumns(const catalog::Table& table) {
+  return BuildPKColumns(table.Columns(), table.PKColumns());
 }
 
 inline void PreparePKFormats(

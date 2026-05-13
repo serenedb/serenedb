@@ -24,6 +24,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 
 #include "catalog/table_options.h"
+#include "connector/sink_writer_base.hpp"
 #include "rocksdb/slice.h"
 
 namespace sdb::connector {
@@ -41,8 +42,7 @@ class DuckDBSinkIndexWriter {
   virtual void Abort() = 0;
 
   // returns true if writer is interested in this column
-  virtual bool SwitchColumn(const duckdb::LogicalType& type, bool have_nulls,
-                            catalog::Column::Id column_id) {
+  virtual bool SwitchColumn(const ColumnDescriptor& col) {
     SDB_ASSERT(false, "SwitchColumn call not implemented");
     return false;
   }

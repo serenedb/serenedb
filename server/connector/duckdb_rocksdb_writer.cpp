@@ -30,6 +30,12 @@
 #include "basics/endian.h"
 #include "basics/string_utils.h"
 #include "connector/common.h"
+#include "connector/indexonly_marker.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
+#include "query/transaction.h"
+#include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 
 namespace sdb::connector {
 namespace {
@@ -261,43 +267,72 @@ std::string MergeSlices(const std::vector<rocksdb::Slice>& slices) {
 
 }  // namespace
 
+DuckDBColumnSerializer::TxnWriter::TxnWriter(
+  query::Transaction& sdb_txn, rocksdb::ColumnFamilyHandle* cf) noexcept
+  : _sdb_txn{&sdb_txn}, _txn{&sdb_txn.GetRocksDBTransaction()}, _cf{cf} {}
+
 void DuckDBColumnSerializer::TxnWriter::Write(
-  const std::vector<rocksdb::Slice>& slices, std::string_view key) const {
-  auto merged = MergeSlices(slices);
-  auto status = txn->Put(cf, rocksdb::Slice(key.data(), key.size()),
-                         rocksdb::Slice(merged));
-  if (!status.ok()) {
-    SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
-  }
-}
-
-void DuckDBColumnSerializer::TxnWriter::WriteNull(std::string_view key) const {
-  auto status =
-    txn->Put(cf, rocksdb::Slice(key.data(), key.size()), rocksdb::Slice());
-  if (!status.ok()) {
-    SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
-  }
-}
-
-void DuckDBColumnSerializer::SstWriter::Write(
-  const std::vector<rocksdb::Slice>& slices, std::string_view key) const {
-  if (!writer) {
+  const std::vector<rocksdb::Slice>& slices, std::string_view key) {
+  if (IsIndexOnly()) {
+    // IndexOnly columns skip main storage; replay only knows the Default
+    // CF for marker blobs, so non-Default CF would silently lose the value.
+    SDB_ASSERT(_cf == RocksDBColumnFamilyManager::get(
+                        RocksDBColumnFamilyManager::Family::Default));
+    indexonly_marker::EmitCP(*_sdb_txn, key, slices);
     return;
   }
   auto merged = MergeSlices(slices);
+  auto status = _txn->Put(_cf, rocksdb::Slice(key.data(), key.size()),
+                          rocksdb::Slice(merged));
+  if (!status.ok()) {
+    SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
+  }
+}
+
+void DuckDBColumnSerializer::TxnWriter::WriteNull(std::string_view key) {
+  if (IsIndexOnly()) {
+    // IndexOnly NULL is a marker with empty value bytes; same Default-CF
+    // constraint as Write().
+    SDB_ASSERT(_cf == RocksDBColumnFamilyManager::get(
+                        RocksDBColumnFamilyManager::Family::Default));
+    indexonly_marker::EmitCP(*_sdb_txn, key, {});
+    return;
+  }
   auto status =
-    writer->Put(rocksdb::Slice(key.data(), key.size()), rocksdb::Slice(merged));
+    _txn->Put(_cf, rocksdb::Slice(key.data(), key.size()), rocksdb::Slice());
+  if (!status.ok()) {
+    SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
+  }
+}
+
+void DuckDBColumnSerializer::TxnWriter::EmitRowDelete(std::string_view key) {
+  // Same Default-CF constraint as Write().
+  SDB_ASSERT(_cf == RocksDBColumnFamilyManager::get(
+                      RocksDBColumnFamilyManager::Family::Default));
+  indexonly_marker::EmitRD(*_sdb_txn, key);
+}
+
+void DuckDBColumnSerializer::SstWriter::Write(
+  const std::vector<rocksdb::Slice>& slices, std::string_view key) {
+  if (!_writer || IsIndexOnly()) {
+    // SST has no marker channel; durability of IndexOnly values relies on
+    // the inverted index's own commit.
+    return;
+  }
+  auto merged = MergeSlices(slices);
+  auto status = _writer->Put(rocksdb::Slice(key.data(), key.size()),
+                             rocksdb::Slice(merged));
   if (!status.ok()) {
     SDB_THROW(ERROR_INTERNAL, "SST write failed: ", status.ToString());
   }
 }
 
-void DuckDBColumnSerializer::SstWriter::WriteNull(std::string_view key) const {
-  if (!writer) {
+void DuckDBColumnSerializer::SstWriter::WriteNull(std::string_view key) {
+  if (!_writer || IsIndexOnly()) {
     return;
   }
   auto status =
-    writer->Put(rocksdb::Slice(key.data(), key.size()), rocksdb::Slice());
+    _writer->Put(rocksdb::Slice(key.data(), key.size()), rocksdb::Slice());
   if (!status.ok()) {
     SDB_THROW(ERROR_INTERNAL, "SST write failed: ", status.ToString());
   }
@@ -307,6 +342,8 @@ template<typename Writer>
 void DuckDBColumnSerializer::WriteRowSlices(
   Writer& writer, std::string_view key,
   std::span<DuckDBSinkIndexWriter*> index_writers) {
+  // Writer decides what "Write" means for the current column (regular Put,
+  // IndexOnly WAL marker, or Option-C silent skip on the SST path).
   writer.Write(_row_slices, key);
   for (auto* iw : index_writers) {
     iw->Write(_row_slices, key);
@@ -460,8 +497,11 @@ void DuckDBColumnSerializer::WriteUnifiedColumn(
           write_scalar(static_cast<const uint32_t*>(nullptr));
           return;
         default:
-          SDB_ASSERT(false,
-                     "Unsupported ENUM physical type in WriteUnifiedColumn");
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+            ERR_MSG(
+              "Unsupported ENUM physical type in WriteUnifiedColumn: ",
+              magic_enum::enum_name(duckdb::EnumType::GetPhysicalType(type))));
       }
       return;
     default:
@@ -485,9 +525,13 @@ void DuckDBColumnSerializer::WriteUnifiedColumn(
 
 template<typename Writer>
 void DuckDBColumnSerializer::WriteColumn(
-  Writer& writer, const duckdb::Vector& vec, const duckdb::LogicalType& type,
-  duckdb::idx_t num_rows, std::vector<std::string>& row_keys,
-  std::span<DuckDBSinkIndexWriter*> index_writers) {
+  Writer& writer, const duckdb::Vector& vec, duckdb::idx_t num_rows,
+  std::vector<std::string>& row_keys,
+  std::span<DuckDBSinkIndexWriter*> index_writers, ColumnDescriptor col) {
+  // Tell the writer which column we're streaming so its Write/WriteNull
+  // can branch (regular Put vs IndexOnly WAL marker vs SST silent skip).
+  writer.SwitchColumn(col);
+  const auto& type = col.type;
   switch (vec.GetVectorType()) {
     case duckdb::VectorType::FLAT_VECTOR:
       break;
@@ -595,22 +639,28 @@ void DuckDBColumnSerializer::WriteColumn(
                                             index_writers);
           break;
         default:
-          SDB_ASSERT(false, "Unsupported ENUM physical type");
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                          ERR_MSG("Unsupported ENUM physical type: ",
+                                  magic_enum::enum_name(
+                                    duckdb::EnumType::GetPhysicalType(type))));
       }
       break;
     default:
-      SDB_ASSERT(false, "Unsupported column type for RocksDB serialization");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("Unsupported column type for RocksDB serialization: ",
+                magic_enum::enum_name(type.id())));
   }
 }
 
 template void
 DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::TxnWriter>(
-  TxnWriter&, const duckdb::Vector&, const duckdb::LogicalType&, duckdb::idx_t,
-  std::vector<std::string>&, std::span<DuckDBSinkIndexWriter*>);
+  TxnWriter&, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
+  std::span<DuckDBSinkIndexWriter*>, ColumnDescriptor);
 template void
 DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::SstWriter>(
-  SstWriter&, const duckdb::Vector&, const duckdb::LogicalType&, duckdb::idx_t,
-  std::vector<std::string>&, std::span<DuckDBSinkIndexWriter*>);
+  SstWriter&, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
+  std::span<DuckDBSinkIndexWriter*>, ColumnDescriptor);
 
 template<typename Writer, typename T>
 void DuckDBColumnSerializer::WriteFlatColumn(

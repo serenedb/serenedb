@@ -34,6 +34,10 @@
 #include "basics/debugging.h"
 #include "basics/logger/logger.h"
 #include "basics/static_strings.h"
+#include "connector/duckdb_client_state.h"
+#include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "query/config.h"
 #include "rest/version.h"
 #include "vpack/serializer.h"
@@ -50,30 +54,34 @@ void Readonly(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {
                                       std::string_view{Name}.data()};
 }
 
-// Check for settings that is writable in principle. It is just us who not yet
-// support writing. So be honest here - if client actually does not change
-// anything, we accept it. If change is real - we error out.
+// Settings that are writable in principle but where serened doesn't yet honor
+// the change. Emit a NOTICE so clients that care can see the SET is a no-op
+// on the server side; the value still flows into DuckDB session state so
+// SHOW round-trips what the client set.
 template<vpack::detail::FixedString Name>
 void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
                  duckdb::Value& value) {
   constexpr std::string_view kName{Name};
   duckdb::Value current;
-  if (ctx.TryGetCurrentSetting(std::string{kName}, current)) {
-    bool equal = false;
-    if (current.type().id() == duckdb::LogicalTypeId::VARCHAR &&
-        value.type().id() == duckdb::LogicalTypeId::VARCHAR &&
-        !current.IsNull() && !value.IsNull()) {
-      equal = absl::EqualsIgnoreCase(current.ToString(), value.ToString());
-    } else {
-      equal = duckdb::Value::NotDistinctFrom(current, value);
-    }
-    if (equal) {
-      return;
-    }
+  if (!ctx.TryGetCurrentSetting(std::string{kName}, current)) {
+    return;
   }
-  throw duckdb::InvalidInputException{
-    "parameter \"%s\" cannot be changed from \"%s\" to \"%s\"", kName.data(),
-    current.ToString(), value.ToString()};
+  bool equal = false;
+  if (current.type().id() == duckdb::LogicalTypeId::VARCHAR &&
+      value.type().id() == duckdb::LogicalTypeId::VARCHAR &&
+      !current.IsNull() && !value.IsNull()) {
+    equal = absl::EqualsIgnoreCase(current.ToString(), value.ToString());
+  } else {
+    equal = duckdb::Value::NotDistinctFrom(current, value);
+  }
+  if (equal) {
+    return;
+  }
+  connector::GetSereneDBContext(ctx).AddNotice(SQL_ERROR_DATA(
+    ERR_CODE(ERRCODE_WARNING),
+    ERR_MSG(
+      "parameter \"", kName,
+      "\" is accepted for compatibility but is not enforced by serened")));
 }
 
 // PostgreSQL drivers supply client_encoding in many forms (UTF8, UTF-8, utf_8,
@@ -359,6 +367,15 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "server_version_num",
+      {
+        LogicalTypeId::INTEGER,
+        "Shows the server version as an integer.",
+        [] { return duckdb::Value::INTEGER(180003); },
+        Readonly<"server_version_num">,
+      },
+    },
+    {
       "standard_conforming_strings",
       {
         LogicalTypeId::BOOLEAN,
@@ -374,6 +391,16 @@ constexpr std::pair<std::string_view, VariableDescription>
         "Sets the message levels that are sent to the client.",
         [] { return duckdb::Value{"notice"}; },
         NoOverwrite<"client_min_messages">,
+      },
+    },
+    {
+      "statement_timeout",
+      {
+        LogicalTypeId::VARCHAR,
+        "Aborts any statement that takes more than the specified number of "
+        "milliseconds. Accepted for compatibility but not currently enforced.",
+        [] { return duckdb::Value{"0"}; },
+        NoOverwrite<"statement_timeout">,
       },
     },
     {

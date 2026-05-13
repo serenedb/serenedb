@@ -81,6 +81,7 @@ void SereneDBPhysicalSSTInsert::SetupSSTState(SSTInsertGlobalState& state,
       .id = col.id,
       .duckdb_type = col.type,
       .input_col_idx = input_idx,
+      .store_mode = col.store_mode,
     });
     ++input_idx;
   }
@@ -196,9 +197,10 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
     }
 
     DuckDBColumnSerializer::SstWriter sst_writer{gstate.writers[col].get()};
-    gstate.serializer->WriteColumn(sst_writer, chunk.data[meta.input_col_idx],
-                                   meta.duckdb_type, num_rows, gstate.row_keys,
-                                   {});
+    gstate.serializer->WriteColumn(
+      sst_writer, chunk.data[meta.input_col_idx], num_rows, gstate.row_keys, {},
+      ColumnDescriptor{meta.id, meta.store_mode, meta.duckdb_type,
+                       /*have_nulls=*/true});
   }
 
   // Update indexes via transaction path
@@ -207,10 +209,11 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
   }
 
   for (const auto& meta : gstate.columns) {
+    const ColumnDescriptor desc{meta.id, meta.store_mode, meta.duckdb_type,
+                                /*have_nulls=*/true};
     gstate.active_writers.clear();
     for (auto& writer : gstate.index_writers) {
-      if (writer->SwitchColumn(meta.duckdb_type, /*have_nulls=*/true,
-                               meta.id)) {
+      if (writer->SwitchColumn(desc)) {
         gstate.active_writers.push_back(writer.get());
       }
     }
@@ -225,8 +228,8 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
 
     DuckDBColumnSerializer::SstWriter noop{nullptr};
     gstate.serializer->WriteColumn(noop, chunk.data[meta.input_col_idx],
-                                   meta.duckdb_type, num_rows, gstate.row_keys,
-                                   gstate.active_writers);
+                                   num_rows, gstate.row_keys,
+                                   gstate.active_writers, desc);
   }
 
   for (auto& writer : gstate.index_writers) {

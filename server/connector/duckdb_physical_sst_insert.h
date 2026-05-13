@@ -41,6 +41,7 @@ struct SSTInsertColumnMeta {
   catalog::Column::Id id;
   duckdb::LogicalType duckdb_type;
   size_t input_col_idx;
+  catalog::ColumnStoreMode store_mode;
 };
 
 struct SSTInsertGlobalState : public duckdb::GlobalSinkState {

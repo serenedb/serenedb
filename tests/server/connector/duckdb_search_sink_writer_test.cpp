@@ -129,38 +129,58 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
 
   // First batch: rows 0 and 1
   sink.Init(2, _dummy_chunk);
-  sink.SwitchColumn(duckdb::LogicalType::INTEGER, false, col_id[0]);
+  sink.SwitchColumn(ColumnDescriptor{col_id[0],
+                                     catalog::ColumnStoreMode::kNormal,
+                                     duckdb::LogicalType::INTEGER, false});
   sink.Write({rocksdb::Slice(integer_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(integer_data[1])}, pk[1]);
-  sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, col_id[1]);
+  sink.SwitchColumn(ColumnDescriptor{col_id[1],
+                                     catalog::ColumnStoreMode::kNormal,
+                                     duckdb::LogicalType::VARCHAR, false});
   sink.Write({rocksdb::Slice(string_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(string_data[1])}, pk[1]);
-  sink.SwitchColumn(duckdb::LogicalType::BOOLEAN, false, col_id[2]);
+  sink.SwitchColumn(ColumnDescriptor{col_id[2],
+                                     catalog::ColumnStoreMode::kNormal,
+                                     duckdb::LogicalType::BOOLEAN, false});
   sink.Write({rocksdb::Slice(boolean_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(boolean_data[1])}, pk[1]);
-  sink.SwitchColumn(duckdb::LogicalType::FLOAT, false, col_id[3]);
+  sink.SwitchColumn(ColumnDescriptor{col_id[3],
+                                     catalog::ColumnStoreMode::kNormal,
+                                     duckdb::LogicalType::FLOAT, false});
   sink.Write({rocksdb::Slice(real_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(real_data[1])}, pk[1]);
-  sink.SwitchColumn(duckdb::LogicalType::BIGINT, false, col_id[4]);
+  sink.SwitchColumn(ColumnDescriptor{col_id[4],
+                                     catalog::ColumnStoreMode::kNormal,
+                                     duckdb::LogicalType::BIGINT, false});
   sink.Write({rocksdb::Slice(big_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(big_data[1])}, pk[1]);
   sink.Finish();
 
   // Second batch: rows 2 and 3 - reusing the same sink (tests document reset)
   sink.Init(2, _dummy_chunk);
-  sink.SwitchColumn(duckdb::LogicalType::INTEGER, false, col_id[0]);
+  sink.SwitchColumn(ColumnDescriptor{col_id[0],
+                                     catalog::ColumnStoreMode::kNormal,
+                                     duckdb::LogicalType::INTEGER, false});
   sink.Write({rocksdb::Slice(integer_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(integer_data[3])}, pk[3]);
-  sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, col_id[1]);
+  sink.SwitchColumn(ColumnDescriptor{col_id[1],
+                                     catalog::ColumnStoreMode::kNormal,
+                                     duckdb::LogicalType::VARCHAR, false});
   sink.Write({rocksdb::Slice(string_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(string_data[3])}, pk[3]);
-  sink.SwitchColumn(duckdb::LogicalType::BOOLEAN, false, col_id[2]);
+  sink.SwitchColumn(ColumnDescriptor{col_id[2],
+                                     catalog::ColumnStoreMode::kNormal,
+                                     duckdb::LogicalType::BOOLEAN, false});
   sink.Write({rocksdb::Slice(boolean_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(boolean_data[3])}, pk[3]);
-  sink.SwitchColumn(duckdb::LogicalType::FLOAT, false, col_id[3]);
+  sink.SwitchColumn(ColumnDescriptor{col_id[3],
+                                     catalog::ColumnStoreMode::kNormal,
+                                     duckdb::LogicalType::FLOAT, false});
   sink.Write({rocksdb::Slice(real_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(real_data[3])}, pk[3]);
-  sink.SwitchColumn(duckdb::LogicalType::BIGINT, false, col_id[4]);
+  sink.SwitchColumn(ColumnDescriptor{col_id[4],
+                                     catalog::ColumnStoreMode::kNormal,
+                                     duckdb::LogicalType::BIGINT, false});
   sink.Write({rocksdb::Slice(big_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(big_data[3])}, pk[3]);
   sink.Finish();
@@ -300,12 +320,16 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, col_id};
   sink.Init(4, _dummy_chunk);
 
-  sink.SwitchColumn(duckdb::LogicalType::VARCHAR, true, col_id[0]);
+  sink.SwitchColumn(ColumnDescriptor{col_id[0],
+                                     catalog::ColumnStoreMode::kNormal,
+                                     duckdb::LogicalType::VARCHAR, true});
   sink.Write({rocksdb::Slice(string_data[0])}, pk[0]);
   sink.Write({{}}, pk[1]);  // null
   sink.Write({rocksdb::Slice(string_data[1])}, pk[2]);
   sink.Write({{}}, pk[3]);  // null
-  sink.SwitchColumn(duckdb::LogicalType::SQLNULL, true, col_id[1]);
+  sink.SwitchColumn(ColumnDescriptor{col_id[1],
+                                     catalog::ColumnStoreMode::kNormal,
+                                     duckdb::LogicalType::SQLNULL, true});
   sink.Write({{}}, pk[0]);  // null
   sink.Write({{}}, pk[1]);  // null
   sink.Write({{}}, pk[2]);  // null
@@ -468,7 +492,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
     {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x3pk3", 19},
     {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x4pk4", 19}};
 
-  sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, col_id);
+  sink.SwitchColumn(ColumnDescriptor{col_id, catalog::ColumnStoreMode::kNormal,
+                                     duckdb::LogicalType::VARCHAR, false});
   sink.Write({rocksdb::Slice("\x0", 1), rocksdb::Slice("\x0foo", 4)}, pk[0]);
 
   sink.Finish();
@@ -510,7 +535,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     auto trx = _data_writer->GetBatch();
     DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
     sink.Init(2, _dummy_chunk);
-    sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, 1);
+    sink.SwitchColumn(ColumnDescriptor{1, catalog::ColumnStoreMode::kNormal,
+                                       duckdb::LogicalType::VARCHAR, false});
     sink.Write({rocksdb::Slice("value1", 6)}, kPk);
     // second document to keep segment around
     sink.Write({rocksdb::Slice("value9", 6)}, kPk2);
@@ -531,7 +557,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     auto trx = _data_writer->GetBatch();
     DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
     sink.Init(1, _dummy_chunk);
-    sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, 1);
+    sink.SwitchColumn(ColumnDescriptor{1, catalog::ColumnStoreMode::kNormal,
+                                       duckdb::LogicalType::VARCHAR, false});
     sink.Write({rocksdb::Slice("value2", 6)}, kPk);
     sink.Finish();
     trx.Commit();
@@ -551,7 +578,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     auto trx = _data_writer->GetBatch();
     DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
     sink.Init(1, _dummy_chunk);
-    sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, 1);
+    sink.SwitchColumn(ColumnDescriptor{1, catalog::ColumnStoreMode::kNormal,
+                                       duckdb::LogicalType::VARCHAR, false});
     sink.Write({rocksdb::Slice("value3", 6)}, kPk);
     sink.Finish();
     trx.Commit();
@@ -616,7 +644,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
     auto trx = _data_writer->GetBatch();
     DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
     sink.Init(1, _dummy_chunk);
-    sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, 1);
+    sink.SwitchColumn(ColumnDescriptor{1, catalog::ColumnStoreMode::kNormal,
+                                       duckdb::LogicalType::VARCHAR, false});
     sink.Write({rocksdb::Slice("value1", 6)}, kPk);
     sink.Finish();
     trx.Commit();
@@ -636,7 +665,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
     auto trx = _data_writer->GetBatch();
     DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
     sink.Init(1, _dummy_chunk);
-    sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, 1);
+    sink.SwitchColumn(ColumnDescriptor{1, catalog::ColumnStoreMode::kNormal,
+                                       duckdb::LogicalType::VARCHAR, false});
     sink.Write({rocksdb::Slice("value2", 6)}, kPk);
     sink.Finish();
     trx.Commit();
@@ -656,7 +686,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
     auto trx = _data_writer->GetBatch();
     DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
     sink.Init(1, _dummy_chunk);
-    sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, 1);
+    sink.SwitchColumn(ColumnDescriptor{1, catalog::ColumnStoreMode::kNormal,
+                                       duckdb::LogicalType::VARCHAR, false});
     sink.Write({rocksdb::Slice("value3", 6)}, kPk);
     sink.Finish();
     trx.Commit();
@@ -738,7 +769,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
       auto trx = limited_data_writer->GetBatch();
       DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
       sink.Init(2, _dummy_chunk);
-      sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, 1);
+      sink.SwitchColumn(ColumnDescriptor{1, catalog::ColumnStoreMode::kNormal,
+                                         duckdb::LogicalType::VARCHAR, false});
       sink.Write({rocksdb::Slice("value1", 6)}, kPk);
       sink.Write({rocksdb::Slice("value8", 6)}, kPk3);
       sink.Finish();
@@ -759,7 +791,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
       auto trx = limited_data_writer->GetBatch();
       DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
       sink.Init(2, _dummy_chunk);
-      sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, 1);
+      sink.SwitchColumn(ColumnDescriptor{1, catalog::ColumnStoreMode::kNormal,
+                                         duckdb::LogicalType::VARCHAR, false});
       sink.Write({rocksdb::Slice("value2", 6)}, kPk);
       // we need this doc to keep flushed segment from discarding as empty
       sink.Write({rocksdb::Slice("value22", 7)}, kPk2);
@@ -781,7 +814,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
       auto trx = limited_data_writer->GetBatch();
       DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
       sink.Init(1, _dummy_chunk);
-      sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, 1);
+      sink.SwitchColumn(ColumnDescriptor{1, catalog::ColumnStoreMode::kNormal,
+                                         duckdb::LogicalType::VARCHAR, false});
       sink.Write({rocksdb::Slice("value3", 6)}, kPk);
       sink.Finish();
       trx.Commit();
@@ -852,7 +886,8 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
     auto trx = _data_writer->GetBatch();
     DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
     sink.Init(2, _dummy_chunk);
-    sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, 1);
+    sink.SwitchColumn(ColumnDescriptor{1, catalog::ColumnStoreMode::kNormal,
+                                       duckdb::LogicalType::VARCHAR, false});
     sink.Write({rocksdb::Slice("value1", 6)}, kPk);
     // second document to keep segment around
     sink.Write({rocksdb::Slice("value9", 6)}, kPk2);
@@ -875,7 +910,8 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
     auto trx = _data_writer->GetBatch();
     DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
     sink.Init(1, _dummy_chunk);
-    sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, 1);
+    sink.SwitchColumn(ColumnDescriptor{1, catalog::ColumnStoreMode::kNormal,
+                                       duckdb::LogicalType::VARCHAR, false});
     sink.Write({rocksdb::Slice("value2", 6)}, kPk);
     sink.Finish();
     trx.Commit();
@@ -932,7 +968,8 @@ TEST_F(DuckDBSearchSinkWriterTest, UpdateWithExisting) {
     auto trx = _data_writer->GetBatch();
     DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
     sink.Init(2, _dummy_chunk);
-    sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, 1);
+    sink.SwitchColumn(ColumnDescriptor{1, catalog::ColumnStoreMode::kNormal,
+                                       duckdb::LogicalType::VARCHAR, false});
     sink.Write({rocksdb::Slice("value1", 6)}, kPk1);
     sink.Write({rocksdb::Slice("value2", 6)}, kPk2);
     sink.Finish();
@@ -946,7 +983,8 @@ TEST_F(DuckDBSearchSinkWriterTest, UpdateWithExisting) {
     DuckDBSearchSinkUpdateWriter sink{trx, AnalyzerProvider, {1}};
     sink.Init(1, _dummy_chunk);
     sink.DeleteRow("pk1");
-    sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, 1);
+    sink.SwitchColumn(ColumnDescriptor{1, catalog::ColumnStoreMode::kNormal,
+                                       duckdb::LogicalType::VARCHAR, false});
     sink.Write({rocksdb::Slice("value1_new", 10)}, kPk1);
     sink.Finish();
     ASSERT_TRUE(trx.Commit());
@@ -1042,7 +1080,8 @@ TEST_F(DuckDBSearchSinkWriterTest, JsonPathEmitsPerPathFields) {
   DuckDBSearchSinkInsertWriter sink{
     trx, AnalyzerProvider, {kColId}, paths_provider};
   sink.Init(2, _dummy_chunk);
-  sink.SwitchColumn(duckdb::LogicalType::JSON(), false, kColId);
+  sink.SwitchColumn(ColumnDescriptor{kColId, catalog::ColumnStoreMode::kNormal,
+                                     duckdb::LogicalType::JSON(), false});
   sink.Write({rocksdb::Slice(json1)}, pk1);
   sink.Write({rocksdb::Slice(json2)}, pk2);
   sink.Finish();

@@ -35,7 +35,6 @@
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
-#include <iostream>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
@@ -73,11 +72,10 @@ namespace {
 
 bool TryLiftJsonPath(const duckdb::ParsedExpression& parsed_expr,
                      std::string& col_name) {
-  // Reject when outtermost extraction does not return string
-  // TODO(mkornaukhov) IDK how to deal with that + type casts.
-  // Maybe better just to see that expression type is json. But what to do with
-  // casts?
-
+  // Reject when the outermost extraction does not return text. Inspecting
+  // the parsed function name because only the parser tree is available
+  // here; surrounding casts are handled by the caller.
+  // TODO(mkornaukhov): accept `->` (JSON-out) leaves so this can be lifted.
   if (parsed_expr.GetExpressionClass() != duckdb::ExpressionClass::FUNCTION ||
       !IsJsonExtractString(
         parsed_expr.Cast<duckdb::FunctionExpression>().function_name)) {
@@ -218,17 +216,19 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   // CommitWait) -> Finalizing (Finalize after CommitWait, before tombstone).
   std::unique_ptr<pg::IndexProgressReporter> progress;
 
-  // JSON-extract expressions evaluated per chunk via ExpressionExecutor and
-  // written to the index as virtual columns. `normalized_expr` leaves carry
-  // catalog identities (TableIndex(table_id), ProjectionIndex(Column::Id)),
-  // resolved against each input chunk in Sink via
-  // `ResolveBoundColumnRefsForChunk` before ExpressionExecutor runs.
+  // Indexed JSON-extract expressions. `normalized_expr` has catalog-keyed
+  // BoundColumnRef leaves (resolved to chunk slots in Sink); `serialized_expr`
+  // is the canonical-bytes field-name suffix, cached from GetGlobalSinkState.
   struct JsonIndexedExpression {
     duckdb::unique_ptr<duckdb::Expression> normalized_expr;
+    std::string serialized_expr;
     catalog::Column::Id column_id;
   };
 
   std::vector<JsonIndexedExpression> json_indexed_expressions;
+
+  // slot -> Column::Id for `EvaluateJsonPathOverChunk`, built once.
+  std::vector<catalog::Column::Id> slot_to_col_id;
 
   ~CreateIndexGlobalState() {
     search_trx.reset();
@@ -406,6 +406,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
     state->json_indexed_expressions.push_back({
       .normalized_expr = std::move(normalized),
+      .serialized_expr = serialized,
       .column_id = cat_col->id,
     });
     idx_columns.emplace_back(catalog::CreateIndexColumn{
@@ -526,6 +527,16 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         .input_col_idx = i,
         .store_mode = columns[i].store_mode,
       });
+    }
+  }
+  {
+    size_t max_slot = 0;
+    for (const auto& col : state->columns) {
+      max_slot = std::max(max_slot, col.input_col_idx + 1);
+    }
+    state->slot_to_col_id.assign(max_slot, catalog::Column::Id{});
+    for (const auto& col : state->columns) {
+      state->slot_to_col_id[col.input_col_idx] = col.id;
     }
   }
   state->file_row_number_col_idx = state->columns.size();
@@ -801,29 +812,17 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       {&writer_ptr, 1}, desc);
   }
 
-  // Evaluate every indexed JSON expression against the chunk and write the
-  // result as a virtual column. `normalized_expr` carries catalog identities
-  // (TableIndex(table_id), ProjectionIndex(Column::Id)); resolve to chunk
-  // slots before feeding to ExpressionExecutor.
-  std::vector<catalog::Column::Id> slot_to_col_id(chunk.ColumnCount(),
-                                                  catalog::Column::Id{});
-  for (const auto& col : gstate.columns) {
-    if (col.input_col_idx < slot_to_col_id.size()) {
-      slot_to_col_id[col.input_col_idx] = col.id;
-    }
-  }
+  // Evaluate each indexed JSON expression and write the result as a virtual
+  // column. Slot map and canonical bytes precomputed on gstate.
   for (const auto& json_expr : gstate.json_indexed_expressions) {
     SDB_ASSERT(json_expr.normalized_expr);
-    auto result = EvaluateJsonPathOverChunk(*json_expr.normalized_expr, chunk,
-                                            gstate.table_id, slot_to_col_id,
-                                            context.client);
+    auto result = EvaluateJsonPathOverChunk(
+      *json_expr.normalized_expr, chunk, gstate.table_id, gstate.slot_to_col_id,
+      context.client);
 
-    // Keep the serialized bytes alive: JsonExprDescriptor::serialized_expr
-    // is a string_view.
-    const auto serialized =
-      SerializeBoundExpression(*json_expr.normalized_expr);
     const JsonExprDescriptor json_desc{json_expr.column_id, result.GetType(),
-                                       /*have_nulls=*/true, serialized};
+                                       /*have_nulls=*/true,
+                                       json_expr.serialized_expr};
     const bool switched = writer->SwitchJsonExpression(json_desc);
     SDB_ASSERT(switched, "Cannot switch to JSON expression");
 

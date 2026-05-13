@@ -168,6 +168,78 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
   return true;
 }
 
+// Runs each JSON-extract expression in `evals` against a DataChunk built from
+// `resolved_cells` (VARCHAR columns only) and writes the results back into
+// `sink` under the original row keys.
+void ReplayJsonExpressions(
+  connector::DuckDBSearchSinkInsertWriter& sink,
+  std::span<const connector::JsonExpressionEval> evals,
+  std::span<const ShardState::IndexedColumn> indexed_columns,
+  std::span<const std::vector<std::string_view>> resolved_cells,
+  std::span<const Row*> insert_entries, ObjectId table_object_id,
+  duckdb::ClientContext& client_context) {
+  const auto num_rows = insert_entries.size();
+
+  duckdb::vector<duckdb::LogicalType> chunk_types;
+  chunk_types.reserve(indexed_columns.size());
+  for (const auto& col : indexed_columns) {
+    chunk_types.push_back(col.type);
+  }
+  duckdb::DataChunk chunk;
+  chunk.Initialize(duckdb::Allocator::DefaultAllocator(), chunk_types,
+                   num_rows);
+  chunk.SetCardinality(num_rows);
+  // JSON-extract bound expressions only reference the JSON (VARCHAR) column;
+  // chunk bindings are positional within `indexed_columns`.
+  for (size_t col_idx = 0; col_idx < indexed_columns.size(); ++col_idx) {
+    if (indexed_columns[col_idx].type.id() != duckdb::LogicalTypeId::VARCHAR) {
+      continue;
+    }
+    auto& v = chunk.data[col_idx];
+    auto* data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v);
+    for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+      std::string_view cell = resolved_cells[col_idx][row_idx];
+      // Strip the optional kStringPrefix that VARCHAR storage may carry.
+      if (cell.starts_with(connector::kStringPrefix)) {
+        cell = cell.substr(connector::kStringPrefix.size());
+      }
+      data[row_idx] =
+        duckdb::StringVector::AddString(v, cell.data(), cell.size());
+    }
+  }
+
+  // Copy keys out: SetupColumnForKey mutates them per column, and every JSON
+  // expression reuses the originals.
+  std::vector<std::string> row_keys;
+  row_keys.reserve(num_rows);
+  for (const auto* row : insert_entries) {
+    row_keys.emplace_back(row->full_key);
+  }
+  connector::DuckDBColumnSerializer serializer{
+    duckdb::Allocator::DefaultAllocator()};
+  std::vector<catalog::Column::Id> slot_to_col_id;
+  slot_to_col_id.reserve(indexed_columns.size());
+  for (const auto& col : indexed_columns) {
+    slot_to_col_id.push_back(col.id);
+  }
+  for (const auto& json_expr : evals) {
+    auto result = connector::EvaluateJsonPathOverChunk(
+      *json_expr.bound_expr, chunk, table_object_id, slot_to_col_id,
+      client_context);
+    const bool switched = sink.SwitchJsonExpression(
+      connector::JsonExprDescriptor{json_expr.column_id, result.GetType(),
+                                    /*have_nulls=*/true, json_expr.serialized});
+    SDB_ASSERT(switched,
+               "Cannot switch to JSON expression during WAL recovery");
+    connector::DuckDBSinkIndexWriter* writer_ptr = &sink;
+    const connector::ColumnDescriptor json_column_desc{
+      json_expr.column_id, catalog::ColumnStoreMode::kNormal, result.GetType(),
+      /*have_nulls=*/true};
+    serializer.WriteVector<connector::DuckDBColumnSerializer::TxnWriter>(
+      nullptr, result, num_rows, row_keys, {&writer_ptr, 1}, json_column_desc);
+  }
+}
+
 void FlushShard(ShardState& s,
                 const std::shared_ptr<const catalog::Snapshot>& snapshot,
                 duckdb::ClientContext& client_context, rocksdb::DB& db,
@@ -274,77 +346,9 @@ void FlushShard(ShardState& s,
       }
     }
 
-    // Build a DataChunk over all indexed columns. Only VARCHAR columns are
-    // populated -- JSON-extract bound expressions only reference VARCHAR
-    // columns (the JSON column itself), and the chunk's bound expression
-    // bindings reference positions within s.indexed_columns.
-    const auto eval_evals = sink.JsonExpressionEvals();
-    if (!eval_evals.empty()) {
-      duckdb::vector<duckdb::LogicalType> chunk_types;
-      chunk_types.reserve(s.indexed_columns.size());
-      for (const auto& col : s.indexed_columns) {
-        chunk_types.push_back(col.type);
-      }
-      duckdb::DataChunk chunk;
-      chunk.Initialize(duckdb::Allocator::DefaultAllocator(), chunk_types,
-                       num_rows);
-      chunk.SetCardinality(num_rows);
-      for (size_t col_idx = 0; col_idx < s.indexed_columns.size(); ++col_idx) {
-        const auto& col = s.indexed_columns[col_idx];
-        if (col.type.id() != duckdb::LogicalTypeId::VARCHAR) {
-          continue;
-        }
-        auto& v = chunk.data[col_idx];
-        auto* data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v);
-        for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-          std::string_view cell = resolved_cells[col_idx][row_idx];
-          // Strip the optional kStringPrefix that VARCHAR storage may carry.
-          if (cell.starts_with(connector::kStringPrefix)) {
-            cell = cell.substr(connector::kStringPrefix.size());
-          }
-          data[row_idx] =
-            duckdb::StringVector::AddString(v, cell.data(), cell.size());
-        }
-      }
-
-      // Reuse the same row-keys layout the per-column loop produced; each
-      // JSON expression writes back under the same physical key. We build
-      // a copy because SetupColumnForKey mutates them per column.
-      std::vector<std::string> row_keys;
-      row_keys.reserve(num_rows);
-      for (const auto* row : insert_entries) {
-        row_keys.emplace_back(row->full_key);
-      }
-      duckdb::Allocator& allocator = duckdb::Allocator::DefaultAllocator();
-      connector::DuckDBColumnSerializer serializer{allocator};
-      // chunk.data[i] mirrors s.indexed_columns[i]; build slot -> col id so
-      // ResolveBoundColumnRefsForChunk can rewrite the catalog-keyed
-      // BoundColumnRef bindings to chunk slot positions.
-      std::vector<catalog::Column::Id> slot_to_col_id;
-      slot_to_col_id.reserve(s.indexed_columns.size());
-      for (const auto& col : s.indexed_columns) {
-        slot_to_col_id.push_back(col.id);
-      }
-      for (const auto& json_expr : eval_evals) {
-        auto result = connector::EvaluateJsonPathOverChunk(
-          *json_expr.bound_expr, chunk, s.table_object_id, slot_to_col_id,
-          client_context);
-        const bool switched =
-          sink.SwitchJsonExpression(connector::JsonExprDescriptor{
-            json_expr.column_id, result.GetType(), /*have_nulls=*/true,
-            json_expr.serialized});
-        SDB_ASSERT(switched,
-                   "Cannot switch to JSON expression during WAL "
-                   "recovery");
-        connector::DuckDBSinkIndexWriter* writer_ptr = &sink;
-        const connector::ColumnDescriptor json_column_desc{
-          json_expr.column_id, catalog::ColumnStoreMode::kNormal,
-          result.GetType(),
-          /*have_nulls=*/true};
-        serializer.WriteVector<connector::DuckDBColumnSerializer::TxnWriter>(
-          nullptr, result, num_rows, row_keys, {&writer_ptr, 1},
-          json_column_desc);
-      }
+    if (const auto evals = sink.JsonExpressionEvals(); !evals.empty()) {
+      ReplayJsonExpressions(sink, evals, s.indexed_columns, resolved_cells,
+                            insert_entries, s.table_object_id, client_context);
     }
     sink.Finish();
   }

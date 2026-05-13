@@ -124,6 +124,10 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
   };
   std::vector<NonUpdateIdxColMeta> non_update_idx_cols;
 
+  // slot -> Column::Id for `EvaluateJsonPathOverChunk`. update_columns sit at
+  // slots 0..N-1; non_update_idx_cols at their assigned chunk_idx.
+  std::vector<catalog::Column::Id> slot_to_col_id;
+
   DuckDBWriteConflictResolver conflict_resolver;
 
   std::shared_ptr<TableShard> table_shard;
@@ -428,6 +432,20 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     state->table_id, conn_ctx, *_table, ins_col_mapping, updated_col_ids,
     del_col_mapping);
 
+  {
+    duckdb::idx_t max_slot = state->update_columns.size();
+    for (const auto& col : state->non_update_idx_cols) {
+      max_slot = std::max(max_slot, col.chunk_idx + 1);
+    }
+    state->slot_to_col_id.assign(max_slot, catalog::Column::Id{});
+    for (duckdb::idx_t i = 0; i < state->update_columns.size(); ++i) {
+      state->slot_to_col_id[i] = state->update_columns[i].id;
+    }
+    for (const auto& col : state->non_update_idx_cols) {
+      state->slot_to_col_id[col.chunk_idx] = col.id;
+    }
+  }
+
   return state;
 }
 
@@ -712,26 +730,12 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
   // gstate.row_keys -- pick whichever was populated for this chunk.
   auto& json_keys = gstate.update_pk ? gstate.new_row_keys : gstate.row_keys;
   if (!json_keys.empty()) {
-    // Build slot -> Column::Id from update_columns (front of the chunk) +
-    // non-update virtual columns at their assigned chunk_idx.
-    std::vector<catalog::Column::Id> slot_to_col_id(chunk.ColumnCount(),
-                                                    catalog::Column::Id{});
-    for (duckdb::idx_t i = 0; i < gstate.update_columns.size(); ++i) {
-      if (i < slot_to_col_id.size()) {
-        slot_to_col_id[i] = gstate.update_columns[i].id;
-      }
-    }
-    for (const auto& col : gstate.non_update_idx_cols) {
-      if (col.chunk_idx < slot_to_col_id.size()) {
-        slot_to_col_id[col.chunk_idx] = col.id;
-      }
-    }
     for (auto& writer : gstate.index_writers) {
       auto evals = writer->JsonExpressionEvals();
       for (const auto& json_expr : evals) {
-        auto result = EvaluateJsonPathOverChunk(*json_expr.bound_expr, chunk,
-                                                gstate.table_id, slot_to_col_id,
-                                                context.client);
+        auto result = EvaluateJsonPathOverChunk(
+          *json_expr.bound_expr, chunk, gstate.table_id, gstate.slot_to_col_id,
+          context.client);
 
         const JsonExprDescriptor json_desc{
           json_expr.column_id, result.GetType(),

@@ -54,7 +54,7 @@ struct InvertedIndexColumnInfo {
   bool store_values = false;
   search::Features features;
   std::optional<HNSWColumnConfig> hnsw_config;
-  // There is maybe multiple json expression indexed on single json column
+  // A single JSON column may have multiple indexed JSON-extract expressions.
   std::vector<JsonPathInfo> json_paths;
 };
 
@@ -94,10 +94,10 @@ class InvertedIndex final : public Index {
 
   ColumnTokenizer GetColumnTokenizer(
     const std::shared_ptr<const Snapshot>& snapshot,
-    catalog::Column::Id columnd_id) const;
+    catalog::Column::Id column_id) const;
 
-  // Resolves a configured JSON-path entry by its normalized and
-  // returns the per-path tokenizer.
+  // Resolves a configured JSON-path entry by its normalized serialized
+  // expression and returns the per-path tokenizer.
   std::optional<ColumnTokenizer> GetJsonPathTokenizer(
     const std::shared_ptr<const Snapshot>& snapshot,
     catalog::Column::Id column_id, const std::string& serialized_expr) const;

@@ -50,7 +50,7 @@ ResultOr<ColumnTokenizer> BuildColumnTokenizer(
   if (!dict) {
     return std::unexpected<Result>{std::in_place, ERROR_INTERNAL,
                                    "Dictionary for inverted index does not "
-                                   "exists"};
+                                   "exist"};
   }
   auto tokenizer = dict->GetTokenizer();
   if (!tokenizer) {

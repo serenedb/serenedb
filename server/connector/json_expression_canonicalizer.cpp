@@ -69,29 +69,21 @@ duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
 
 namespace {
 
-// Wraps DuckDB's ColumnBindingResolver so it can resolve a single standalone
-// expression against a fixed chunk layout. Bindings are synthesised as
-// (TableIndex(0), 0..N) so a normalized BoundColumnRefExpression with
-// `column_index = c` is rewritten to BoundReferenceExpression(slot=c).
-class StandaloneBindingResolver final : public duckdb::ColumnBindingResolver {
+// ColumnBindingResolver that uses caller-supplied bindings/types instead of
+// building them from a LogicalOperator tree.
+class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
  public:
-  explicit StandaloneBindingResolver(
-    duckdb::vector<duckdb::LogicalType> column_types) {
-    bindings = duckdb::LogicalOperator::GenerateColumnBindings(
-      duckdb::TableIndex(0), column_types.size());
-    types = std::move(column_types);
+  ChunkBindingResolver(duckdb::vector<duckdb::ColumnBinding> b,
+                       duckdb::vector<duckdb::LogicalType> t) {
+    bindings = std::move(b);
+    types = std::move(t);
   }
-
   void Resolve(duckdb::unique_ptr<duckdb::Expression>& expr) {
     VisitExpression(&expr);
   }
 };
 
-}  // namespace
-namespace {
-
-// Stringify a single JSON-path key (a constant). Mirrors AppendJsonPathKey
-// but writes into a single concatenated string instead of a vector.
+// Primitive key types accepted in a `->` / `->>` / `json_extract_*` chain.
 bool IsValidKey(const duckdb::Value& v) {
   switch (v.type().id()) {
     case duckdb::LogicalTypeId::VARCHAR:
@@ -123,12 +115,11 @@ bool IsValidPathList(const duckdb::Value& v) {
   return true;
 }
 
-// Replace any `BoundCast(BoundConstant)` subtree with a folded
-// `BoundConstant(cast(value))`. IndexBinder (CREATE INDEX) leaves these
-// casts in place where the regular query binder folds them. Folding here
-// produces matching canonical bytes across the two binders.
-// TODO(mkornaukhov) it's better somehow optimize expression in creating index
-// to have identical expression without such a hack.
+// Fold `BoundCast(BoundConstant)` -> `BoundConstant(cast(value))`. The
+// IndexBinder leaves these in place where the query binder folds them;
+// matching the bytes requires us to fold here too.
+// TODO(mkornaukhov): run the regular constant-folding optimizer on the
+// IndexBinder output so this hand-rolled fold can go away.
 duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
   duckdb::unique_ptr<duckdb::Expression> expr, duckdb::ClientContext& context) {
   duckdb::ExpressionIterator::EnumerateChildren(
@@ -144,8 +135,12 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
           duckdb::ExpressionExecutor::EvaluateScalar(context, *expr);
         return duckdb::make_uniq<duckdb::BoundConstantExpression>(
           std::move(folded));
-      } catch (...) {
-        SDB_ASSERT(false, "Cannot fold constant for inverted index");
+      } catch (const std::exception& e) {
+        // Falling back to the un-folded cast would diverge from the
+        // SELECT-side bytes and silently break index matching.
+        SDB_THROW(
+          ERROR_INTERNAL,
+          "Failed to fold constant cast for inverted index: ", e.what());
       }
     }
   }
@@ -227,6 +222,9 @@ void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
   result.ToUnifiedFormat(num_rows, fmt);
   const auto* data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
+  // DOM (eager): ondemand::iterate() is lazy and would mis-classify
+  // `{not json}` as an object on the first character alone.
+  simdjson::dom::parser dom_parser;
   for (duckdb::idx_t i = 0; i < num_rows; ++i) {
     const auto idx = fmt.sel->get_index(i);
     if (!fmt.validity.RowIsValid(idx)) {
@@ -238,7 +236,19 @@ void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
     if (first == std::string_view::npos) {
       continue;
     }
-    if (view[first] == '{' || view[first] == '[') {
+    if (view[first] != '{' && view[first] != '[') {
+      continue;
+    }
+    // A `{` / `[` prefix means either a real object/array leaf (reject)
+    // or a string leaf that happens to look like JSON (accept). Parse to
+    // tell them apart. A string that *is* valid JSON (e.g. `"{}"`) still
+    // gets mis-rejected -- the post-hoc check can't disambiguate (#597).
+    simdjson::dom::element doc;
+    if (dom_parser.parse(view.data(), view.size()).get(doc) !=
+        simdjson::SUCCESS) {
+      continue;
+    }
+    if (doc.is_object() || doc.is_array()) {
       throw duckdb::InvalidInputException(
         "JSON path indexed by an inverted index must point to a primitive "
         "(string/number/boolean/null) leaf; got an object or array");
@@ -259,24 +269,6 @@ duckdb::Vector EvaluateJsonPathOverChunk(
   RejectJsonObjectArrayLeaves(result, num_rows);
   return result;
 }
-
-namespace {
-
-// ColumnBindingResolver that uses caller-supplied bindings/types instead of
-// building them from a LogicalOperator tree.
-class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
- public:
-  ChunkBindingResolver(duckdb::vector<duckdb::ColumnBinding> b,
-                       duckdb::vector<duckdb::LogicalType> t) {
-    bindings = std::move(b);
-    types = std::move(t);
-  }
-  void Resolve(duckdb::unique_ptr<duckdb::Expression>& expr) {
-    VisitExpression(&expr);
-  }
-};
-
-}  // namespace
 
 duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
   const duckdb::Expression& expr, const duckdb::DataChunk& chunk,

@@ -20,7 +20,9 @@
 
 #include "search_sink_writer.hpp"
 
-#include <charconv>
+#include <absl/strings/numbers.h>
+
+#include <cmath>
 #include <duckdb/common/enum_util.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
@@ -109,6 +111,20 @@ inline constexpr bool kIsNumericKind =
   Kind == duckdb::LogicalTypeId::DATE ||
   Kind == duckdb::LogicalTypeId::TIMESTAMP ||
   Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ;
+
+// Strip the kStringPrefix byte (added on the Insert path) when present.
+// Mirrors the slice-shape handling in WriteStringValue.
+std::string_view ExtractRawString(std::span<const rocksdb::Slice> cell_slices) {
+  SDB_ASSERT(!cell_slices.empty() && cell_slices.size() <= 2);
+  const auto& first = cell_slices.front();
+  if (!first.starts_with(kStringPrefix)) {
+    return {first.data(), first.size()};
+  }
+  if (cell_slices.size() == 1) {
+    return {first.data() + 1, first.size() - 1};
+  }
+  return {cell_slices[1].data(), cell_slices[1].size()};
+}
 
 }  // namespace
 
@@ -277,34 +293,6 @@ bool SearchSinkInsertBaseImpl::SwitchJsonExpressionImpl(
   return true;
 }
 
-namespace {
-
-// Strip the kStringPrefix byte (added on the Insert path) when present.
-// Mirrors the slice-shape handling in WriteStringValue.
-std::string_view ExtractRawString(std::span<const rocksdb::Slice> cell_slices) {
-  SDB_ASSERT(!cell_slices.empty() && cell_slices.size() <= 2);
-  const auto& first = cell_slices.front();
-  if (!first.starts_with(kStringPrefix)) {
-    return {first.data(), first.size()};
-  }
-  if (cell_slices.size() == 1) {
-    return {first.data() + 1, first.size() - 1};
-  }
-  return {cell_slices[1].data(), cell_slices[1].size()};
-}
-
-bool TryParseDouble(std::string_view s, double& out) {
-  if (s.empty()) {
-    return false;
-  }
-  const auto* begin = s.data();
-  const auto* end = s.data() + s.size();
-  auto r = std::from_chars(begin, end, out);
-  return r.ec == std::errc{} && r.ptr == end;
-}
-
-}  // namespace
-
 void SearchSinkInsertBaseImpl::SetupJsonAuxTypedFields(
   catalog::Column::Id column_id, std::string_view name_suffix) {
   // Build the numeric-mangled field name and analyzer.
@@ -338,7 +326,7 @@ void SearchSinkInsertBaseImpl::SetupJsonAuxTypedFields(
       return;
     }
     double numeric_val = 0.0;
-    if (TryParseDouble(raw, numeric_val)) {
+    if (absl::SimpleAtod(raw, &numeric_val) && std::isfinite(numeric_val)) {
       _aux_numeric_field.SetNumericValue(numeric_val);
       const bool ok =
         _document->template Insert<irs::Action::INDEX>(&_aux_numeric_field);

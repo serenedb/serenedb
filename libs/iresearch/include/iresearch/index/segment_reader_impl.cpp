@@ -260,14 +260,6 @@ const columnstore::HNSWReader* SegmentReaderImpl::HNSW(field_id field) const {
   return _data->cs_reader->HNSW(field);
 }
 
-std::span<std::unique_ptr<columnstore::HNSWReader>>
-SegmentReaderImpl::HNSWReaders() const {
-  if (!_data || !_data->cs_reader) {
-    return {};
-  }
-  return _data->cs_reader->HNSWReaders();
-}
-
 DocIterator::ptr SegmentReaderImpl::docs_iterator() const {
   if (!_docs_mask) {
     return memory::make_managed<AllIterator>(_info.docs_count);

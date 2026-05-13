@@ -86,11 +86,26 @@ class ColumnReader final {
   const duckdb::LogicalType& Type() const noexcept { return _type; }
 
   uint64_t RowCount() const noexcept { return _row_count; }
-  size_t RowGroupCount() const noexcept { return _data_pointers.size(); }
+  // ARRAY parents own no top-level data, so their row groups are reported
+  // via the validity side -- validity tuple_counts are always in parent
+  // rows by construction, so partitioning stays correct even when the
+  // child column's codec splits segments mid-row.
+  size_t RowGroupCount() const noexcept {
+    if (_type.id() == duckdb::LogicalTypeId::ARRAY) {
+      return _validity_pointers.size();
+    }
+    return _data_pointers.size();
+  }
   uint64_t RowGroupOffset(size_t rg) const noexcept {
+    if (_type.id() == duckdb::LogicalTypeId::ARRAY) {
+      return _validity_offsets[rg];
+    }
     return _data_offsets[rg];
   }
   uint64_t RowGroupRowCount(size_t rg) const noexcept {
+    if (_type.id() == duckdb::LogicalTypeId::ARRAY) {
+      return _validity_pointers[rg].tuple_count;
+    }
     return _data_pointers[rg].tuple_count;
   }
   bool HasValidity() const noexcept { return _has_validity; }

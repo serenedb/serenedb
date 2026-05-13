@@ -212,16 +212,14 @@ class HNSWWriter final {
 // MRU chunk cache used during Build. No per-Reader full-segment cache.
 class HNSWReader final {
  public:
-  HNSWReader(field_id id, std::string name, HNSWInfo info,
-             const ColumnReader& vector_column, const IndexInput& in_source,
-             uint64_t graph_offset, uint64_t graph_byte_size);
+  HNSWReader(field_id id, std::shared_ptr<faiss::HNSW> hnsw, HNSWInfo info,
+             const ColumnReader& vector_column);
   ~HNSWReader();
 
   HNSWReader(const HNSWReader&) = delete;
   HNSWReader& operator=(const HNSWReader&) = delete;
 
   field_id Id() const noexcept { return _id; }
-  std::string_view Name() const noexcept { return _name; }
   const HNSWInfo& Info() const noexcept { return _info; }
 
   void Search(HNSWSearchContext& ctx) const;
@@ -235,7 +233,6 @@ class HNSWReader final {
 
  private:
   field_id _id;
-  std::string _name;
   HNSWInfo _info;
   const ColumnReader& _vector_column;
   std::shared_ptr<const faiss::HNSW> _hnsw;

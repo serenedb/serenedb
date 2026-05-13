@@ -142,23 +142,15 @@ void HNSWWriter::Build(const ColumnReader& vector_column) {
 
 void HNSWWriter::Serialize(DataOutput& out) { irs::WriteHNSW(out, _hnsw); }
 
-HNSWReader::HNSWReader(field_id id, std::string name, HNSWInfo info,
-                       const ColumnReader& vector_column,
-                       const IndexInput& in_source, uint64_t graph_offset,
-                       uint64_t graph_byte_size)
+HNSWReader::HNSWReader(field_id id, std::shared_ptr<faiss::HNSW> hnsw,
+                       HNSWInfo info, const ColumnReader& vector_column)
   : _id{id},
-    _name{std::move(name)},
     _info{std::move(info)},
-    _vector_column{vector_column} {
+    _vector_column{vector_column},
+    _hnsw{std::move(hnsw)} {
   SDB_ENSURE(vector_column.ArraySize() == static_cast<uint64_t>(_info.d),
              sdb::ERROR_INTERNAL, "columnstore::HNSWReader: ARRAY size ",
              vector_column.ArraySize(), " does not match HNSWInfo.d ", _info.d);
-  auto graph = std::make_shared<faiss::HNSW>();
-  auto in = in_source.Reopen();
-  in->Seek(graph_offset);
-  irs::ReadHNSW(*in, *graph);
-  SDB_ASSERT(in->Position() - graph_offset == graph_byte_size);
-  _hnsw = std::move(graph);
 }
 
 HNSWReader::~HNSWReader() = default;

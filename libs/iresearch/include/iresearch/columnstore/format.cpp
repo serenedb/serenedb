@@ -87,12 +87,22 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
   std::vector<std::unique_ptr<ColumnReader>> struct_children;
   uint64_t array_size = 0;
 
+  auto make_empty_child = [](const duckdb::LogicalType& t) {
+    PersistentColumnData c;
+    c.type = t;
+    return c;
+  };
+
   switch (node.type.id()) {
     case duckdb::LogicalTypeId::ARRAY: {
-      SDB_ASSERT(node.child_columns.size() == 1);
+      SDB_ASSERT(node.child_columns.size() <= 1);
       array_size = static_cast<uint64_t>(duckdb::ArrayType::GetSize(node.type));
-      element_child = MakeColumnReader(
-        field_limits::invalid(), std::move(node.child_columns.front()), in, db);
+      PersistentColumnData child =
+        node.child_columns.empty()
+          ? make_empty_child(duckdb::ArrayType::GetChildType(node.type))
+          : std::move(node.child_columns.front());
+      element_child =
+        MakeColumnReader(field_limits::invalid(), std::move(child), in, db);
       node.pointers.clear();  // ARRAY carries no self data on disk.
       break;
     }
@@ -100,16 +110,30 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
     case duckdb::LogicalTypeId::LIST: {
       // MAP rides on the LIST path: PhysicalType::LIST with a
       // STRUCT<key, value> element.
-      SDB_ASSERT(node.child_columns.size() == 1);
-      element_child = MakeColumnReader(
-        field_limits::invalid(), std::move(node.child_columns.front()), in, db);
+      SDB_ASSERT(node.child_columns.size() <= 1);
+      PersistentColumnData child =
+        node.child_columns.empty()
+          ? make_empty_child(duckdb::ListType::GetChildType(node.type))
+          : std::move(node.child_columns.front());
+      element_child =
+        MakeColumnReader(field_limits::invalid(), std::move(child), in, db);
       break;
     }
     case duckdb::LogicalTypeId::STRUCT: {
-      struct_children.reserve(node.child_columns.size());
-      for (auto& cn : node.child_columns) {
-        struct_children.push_back(
-          MakeColumnReader(field_limits::invalid(), std::move(cn), in, db));
+      const auto& child_types = duckdb::StructType::GetChildTypes(node.type);
+      SDB_ASSERT(node.child_columns.empty() ||
+                 node.child_columns.size() == child_types.size());
+      struct_children.reserve(child_types.size());
+      if (node.child_columns.empty()) {
+        for (const auto& ct : child_types) {
+          struct_children.push_back(MakeColumnReader(
+            field_limits::invalid(), make_empty_child(ct.second), in, db));
+        }
+      } else {
+        for (auto& cn : node.child_columns) {
+          struct_children.push_back(
+            MakeColumnReader(field_limits::invalid(), std::move(cn), in, db));
+        }
       }
       node.pointers.clear();
       break;
@@ -364,6 +388,9 @@ std::string Writer::Commit() {
         col_entry,
         "columnstore::Writer::Commit: HNSW entry references missing column id ",
         entry->column_id);
+      if (col_entry->root.child_columns.empty()) {
+        continue;
+      }
       duckdb::MemoryStream mem_out;
       duckdb::BinarySerializer ser{mem_out};
       ser.Begin();
@@ -596,8 +623,8 @@ void Reader::BuildHnswReaders(duckdb::BinaryDeserializer& deserializer) {
         // Footer is read from a MemoryReadStream, so seeking the IndexInput
         // here doesn't disturb the in-flight footer walk.
         _impl->in->Seek(graph_offset);
-        faiss::HNSW hnsw;
-        irs::ReadHNSW(*_impl->in, hnsw);
+        auto hnsw = std::make_shared<faiss::HNSW>();
+        irs::ReadHNSW(*_impl->in, *hnsw);
         SDB_ASSERT(_impl->in->Position() - graph_offset == graph_byte_size,
                    "ReadHNSW must consume exactly graph_byte_size bytes");
 
@@ -609,8 +636,8 @@ void Reader::BuildHnswReaders(duckdb::BinaryDeserializer& deserializer) {
         const auto* col_reader = col_it->second;
         // HNSWReader still carries a name (HNSW owned separately); cs
         // typed columns no longer do, so pass empty.
-        auto hr = std::make_unique<HNSWReader>(
-          id, std::string{}, std::move(hnsw), info, *col_reader);
+        auto hr =
+          std::make_unique<HNSWReader>(id, std::move(hnsw), info, *col_reader);
         _impl->hnsw_readers.push_back(std::move(hr));
         _impl->hnsw_by_id.emplace(id, _impl->hnsw_readers.back().get());
       });

@@ -23,11 +23,13 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
 
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/columnstore/column_writer.hpp"
 #include "iresearch/columnstore/format.hpp"
+#include "iresearch/columnstore/hnsw.hpp"
 
 namespace irs::columnstore {
 
@@ -68,7 +70,13 @@ void MergeInto(std::span<const Reader* const> sources,
 
       // skip_validity columns (e.g. PK) have no validity payload on disk;
       // validity_range stays unused in that case.
-      ColumnReader::RangeScan data_range{*col};
+      // ARRAY parents have no top-level data, so RangeScan on the parent
+      // is invalid (Locate asserts). Run data_range on the element child
+      // and reshape into the parent's ArrayVector; validity still comes
+      // from the parent side.
+      const bool is_array = col->Type().id() == duckdb::LogicalTypeId::ARRAY;
+      const uint64_t array_size = is_array ? col->ArraySize() : 1;
+      ColumnReader::RangeScan data_range{is_array ? *col->Child() : *col};
       ColumnReader::RangeScan validity_range{*col, /*validity_side=*/true};
       for (size_t rg = 0; rg < col->RowGroupCount(); ++rg) {
         const auto rg_count = col->RowGroupRowCount(rg);
@@ -81,7 +89,13 @@ void MergeInto(std::span<const Reader* const> sources,
         while (scanned < rg_count) {
           const auto take =
             std::min<duckdb::idx_t>(rg_count - scanned, STANDARD_VECTOR_SIZE);
-          data_range.Scan(rg_first_doc + scanned, take, batch, 0);
+          if (is_array) {
+            auto& child = duckdb::ArrayVector::GetChildMutable(batch);
+            data_range.Scan((rg_first_doc + scanned) * array_size,
+                            take * array_size, child, 0);
+          } else {
+            data_range.Scan(rg_first_doc + scanned, take, batch, 0);
+          }
           if (col->HasValidity()) {
             validity_range.Scan(rg_first_doc + scanned, take, batch, 0);
           } else {

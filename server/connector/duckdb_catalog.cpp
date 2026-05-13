@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_catalog.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
@@ -42,10 +43,13 @@
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_create_table.hpp>
 #include <duckdb/planner/operator/logical_delete.hpp>
+#include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/planner/operator/logical_merge_into.hpp>
+#include <duckdb/planner/operator/logical_order.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
+#include <duckdb/planner/operator/logical_top_n.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/storage/database_size.hpp>
 #include <ranges>
@@ -501,6 +505,269 @@ duckdb::PhysicalOperator& ResolveDefaultsWithGenerated(
   return pass2;
 }
 
+// --- View-backed CREATE INDEX column pruning ---------------------------
+//
+// On the fast-path view-backed branch, the binder produces a plan that
+// exposes every column the view declares. For a wide view that the index
+// only partially uses, the leaf LogicalGet reads (and the underlying
+// source fetches) columns the backfill never consumes. We prune those
+// columns at two levels:
+//   - the outermost LogicalProjection (the one whose output IS the view's
+//     declared schema): drop expressions for view columns not in the
+//     needed set.
+//   - the leaf LogicalGet: drop leaf positions that no surviving
+//     expression in the chain references.
+// Compacting either level shifts positions, so wrapper bindings on the
+// chain get rewritten in lockstep.
+//
+// v1 only handles the simple chain shape `LogicalProjection -> [filter]*
+// -> LogicalGet`. Other shapes (ORDER BY/LIMIT above the projection,
+// nested projections) fall through unchanged.
+
+constexpr duckdb::idx_t kInvalidNewPos =
+  std::numeric_limits<duckdb::idx_t>::max();
+
+// Visit (mutable) every BoundColumnRefExpression in a single expression.
+template<typename Visit>
+void VisitLeafRefs(duckdb::unique_ptr<duckdb::Expression>& expr,
+                   Visit&& visit) {
+  if (!expr) {
+    return;
+  }
+  duckdb::ExpressionIterator::VisitExpressionMutable<
+    duckdb::BoundColumnRefExpression>(
+    expr, [&](duckdb::BoundColumnRefExpression& ref,
+              duckdb::unique_ptr<duckdb::Expression>&) { visit(ref); });
+}
+
+// Walk each expression of a fast-path wrapper. Restricted to the
+// allowlist (FILTER/ORDER_BY/LIMIT/TOP_N/PROJECTION).
+template<typename Visit>
+void VisitWrapperExpressions(duckdb::LogicalOperator& op, Visit&& visit) {
+  switch (op.type) {
+    case duckdb::LogicalOperatorType::LOGICAL_FILTER:
+    case duckdb::LogicalOperatorType::LOGICAL_PROJECTION:
+      for (auto& e : op.expressions) {
+        visit(e);
+      }
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_ORDER_BY:
+      for (auto& o : op.Cast<duckdb::LogicalOrder>().orders) {
+        visit(o.expression);
+      }
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_TOP_N:
+      for (auto& o : op.Cast<duckdb::LogicalTopN>().orders) {
+        visit(o.expression);
+      }
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_LIMIT:
+      // No column-ref expressions of interest.
+      break;
+    default:
+      SDB_ASSERT(false, "unexpected fast-path wrapper type: ",
+                 static_cast<int>(op.type));
+  }
+}
+
+// Returns the outermost LogicalProjection on the chain starting at
+// `chain_root` and ending strictly above `leaf_get`. Returns nullptr if
+// no projection exists in that span or the chain shape isn't single-child
+// all the way down.
+duckdb::LogicalProjection* FindOutermostViewProjection(
+  duckdb::LogicalOperator& chain_root, duckdb::LogicalGet& leaf_get) {
+  auto* cur = &chain_root;
+  while (cur && cur != &leaf_get) {
+    if (cur->type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION) {
+      return &cur->Cast<duckdb::LogicalProjection>();
+    }
+    if (cur->children.size() != 1) {
+      return nullptr;
+    }
+    cur = cur->children[0].get();
+  }
+  return nullptr;
+}
+
+// True iff a LogicalProjection appears strictly between `outer_proj` and
+// `leaf_get`. v1 rejects nested projections.
+bool HasNestedProjectionBelow(duckdb::LogicalProjection& outer_proj,
+                              duckdb::LogicalGet& leaf_get) {
+  if (outer_proj.children.empty()) {
+    return false;
+  }
+  auto* cur = outer_proj.children[0].get();
+  while (cur && cur != &leaf_get) {
+    if (cur->type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION) {
+      return true;
+    }
+    if (cur->children.size() != 1) {
+      return true;  // unexpected shape
+    }
+    cur = cur->children[0].get();
+  }
+  return false;
+}
+
+// Prune unused view columns from the fast-path view-backed CREATE INDEX
+// chain. Mutates the plan tree: compacts leaf_get's column_ids, removes
+// expressions from the outermost projection, and rewrites leaf-bound
+// column references everywhere they appear in surviving expressions.
+//
+// `index_view_positions`: positions into the view's declared column list
+// that the index keys on.
+// `view_decl_size`: total view-declared column count.
+//
+// Returns the sorted kept view positions on success. Returns nullopt if
+// the chain shape isn't supported in v1 (no projection / nested
+// projections / wrappers above the outermost projection) -- caller keeps
+// all view positions in that case.
+std::optional<std::vector<duckdb::idx_t>> PruneViewFastPathChain(
+  duckdb::LogicalOperator& chain_root, duckdb::LogicalGet& leaf_get,
+  std::span<const duckdb::idx_t> index_view_positions,
+  duckdb::idx_t view_decl_size) {
+  auto* outer_proj = FindOutermostViewProjection(chain_root, leaf_get);
+  if (!outer_proj) {
+    return std::nullopt;
+  }
+  if (&chain_root != outer_proj) {
+    // v1: wrappers above the projection (ORDER BY / LIMIT in the view
+    // body) need their view-position bindings remapped after the prune.
+    // Skip until that's wired.
+    return std::nullopt;
+  }
+  if (HasNestedProjectionBelow(*outer_proj, leaf_get)) {
+    return std::nullopt;
+  }
+  SDB_ASSERT(outer_proj->expressions.size() == view_decl_size,
+             "outermost projection expressions count ",
+             outer_proj->expressions.size(),
+             " does not match view declared schema size ", view_decl_size);
+
+  // 1. Compute the needed view-position set.
+  containers::FlatHashSet<duckdb::idx_t> needed_view;
+  needed_view.reserve(index_view_positions.size());
+  for (auto p : index_view_positions) {
+    SDB_ASSERT(p < view_decl_size, "CREATE INDEX view position ", p,
+               " >= view_decl_size ", view_decl_size);
+    needed_view.insert(p);
+  }
+
+  // 2. Collect leaf refs from kept projection expressions + wrappers
+  // below the projection (FILTER predicates etc.).
+  containers::FlatHashSet<duckdb::idx_t> needed_leaf;
+  auto collect_leaf_refs_in_expr = [&](const duckdb::Expression& expr) {
+    duckdb::ExpressionIterator::VisitExpression<
+      duckdb::BoundColumnRefExpression>(
+      expr, [&](const duckdb::BoundColumnRefExpression& ref) {
+        if (ref.binding.table_index == leaf_get.table_index) {
+          needed_leaf.insert(ref.binding.column_index.GetIndex());
+        }
+      });
+  };
+  for (auto v : needed_view) {
+    SDB_ASSERT(v < outer_proj->expressions.size());
+    collect_leaf_refs_in_expr(*outer_proj->expressions[v]);
+  }
+  if (!outer_proj->children.empty()) {
+    auto* cur = outer_proj->children[0].get();
+    while (cur && cur != &leaf_get) {
+      VisitWrapperExpressions(*cur,
+                              [&](duckdb::unique_ptr<duckdb::Expression>& e) {
+                                if (e) {
+                                  collect_leaf_refs_in_expr(*e);
+                                }
+                              });
+      if (cur->children.size() != 1) {
+        break;
+      }
+      cur = cur->children[0].get();
+    }
+  }
+
+  const auto leaf_orig_size = leaf_get.GetColumnIds().size();
+  std::vector<duckdb::idx_t> kept_leaf;
+  kept_leaf.reserve(needed_leaf.size());
+  for (auto p : needed_leaf) {
+    SDB_ASSERT(p < leaf_orig_size, "wrapper leaf ref ", p,
+               " >= leaf_orig_size ", leaf_orig_size);
+    kept_leaf.push_back(p);
+  }
+  absl::c_sort(kept_leaf);
+
+  std::vector<duckdb::idx_t> kept_view;
+  kept_view.reserve(needed_view.size());
+  for (auto v : needed_view) {
+    kept_view.push_back(v);
+  }
+  absl::c_sort(kept_view);
+
+  // No-op when everything is kept.
+  if (kept_leaf.size() == leaf_orig_size &&
+      kept_view.size() == view_decl_size) {
+    return std::nullopt;
+  }
+
+  // 3. Compact the leaf if needed.
+  if (kept_leaf.size() < leaf_orig_size) {
+    std::vector<duckdb::idx_t> leaf_old_to_new(leaf_orig_size, kInvalidNewPos);
+    const auto orig_ids = leaf_get.GetColumnIds();  // copy
+    duckdb::vector<duckdb::ColumnIndex> new_ids;
+    duckdb::vector<duckdb::LogicalType> new_types;
+    new_ids.reserve(kept_leaf.size());
+    new_types.reserve(kept_leaf.size());
+    for (duckdb::idx_t i = 0; i < kept_leaf.size(); ++i) {
+      new_ids.push_back(orig_ids[kept_leaf[i]]);
+      new_types.push_back(leaf_get.GetColumnType(orig_ids[kept_leaf[i]]));
+      leaf_old_to_new[kept_leaf[i]] = i;
+    }
+    leaf_get.SetColumnIds(std::move(new_ids));
+    leaf_get.types = std::move(new_types);
+
+    auto rewrite = [&](duckdb::unique_ptr<duckdb::Expression>& e) {
+      VisitLeafRefs(e, [&](duckdb::BoundColumnRefExpression& ref) {
+        if (ref.binding.table_index != leaf_get.table_index) {
+          return;
+        }
+        auto old_pos = ref.binding.column_index.GetIndex();
+        SDB_ASSERT(old_pos < leaf_old_to_new.size());
+        auto new_pos = leaf_old_to_new[old_pos];
+        SDB_ASSERT(new_pos != kInvalidNewPos,
+                   "leaf binding rewrite hit a dropped column at old "
+                   "position ",
+                   old_pos);
+        ref.binding.column_index = duckdb::ProjectionIndex{new_pos};
+      });
+    };
+    for (auto v : kept_view) {
+      rewrite(outer_proj->expressions[v]);
+    }
+    if (!outer_proj->children.empty()) {
+      auto* cur = outer_proj->children[0].get();
+      while (cur && cur != &leaf_get) {
+        VisitWrapperExpressions(*cur, rewrite);
+        if (cur->children.size() != 1) {
+          break;
+        }
+        cur = cur->children[0].get();
+      }
+    }
+  }
+
+  // 4. Prune projection expressions to kept view positions.
+  if (kept_view.size() < view_decl_size) {
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> new_exprs;
+    new_exprs.reserve(kept_view.size());
+    for (auto v : kept_view) {
+      new_exprs.push_back(std::move(outer_proj->expressions[v]));
+    }
+    outer_proj->expressions = std::move(new_exprs);
+    outer_proj->ResolveOperatorTypes();
+  }
+
+  return kept_view;
+}
+
 }  // namespace
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
@@ -862,6 +1129,12 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   bool view_backed = false;
   std::optional<ViewFastPath> view_fast_path;
   int64_t pinned_iceberg_snapshot_id = 0;
+  // Set iff PruneViewFastPathChain narrowed the view's exposed schema.
+  // Holds the kept view positions in ascending order; downstream code
+  // (rel_columns / column_ids / scan_types / LogicalCreateIndex input
+  // expressions / SereneDBPhysicalCreateIndex view_columns) operates on
+  // this pruned schema.
+  std::optional<std::vector<duckdb::idx_t>> kept_view_positions;
   if (target.type == duckdb::CatalogType::VIEW_ENTRY) {
     view_backed = true;
     auto is_fast_path_wrapper = [](duckdb::LogicalOperator& op) -> bool {
@@ -905,6 +1178,34 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     if (fp && leaf_get) {
       view_fast_path = std::move(fp);
       auto vcols = BackfillPkVirtualColumns(*view_fast_path);
+
+      // Try to prune unused view columns from the chain before we extend
+      // it with PK virtuals. On success, subsequent code operates on the
+      // narrowed view schema; on no-op, behaviour matches the pre-patch
+      // path exactly.
+      auto& view_entry = target.Cast<duckdb::ViewCatalogEntry>();
+      auto column_info = view_entry.GetColumnInfo();
+      if (column_info) {
+        auto& create_idx_parsed =
+          stmt.info->Cast<duckdb::CreateIndexInfo>().parsed_expressions;
+        std::vector<duckdb::idx_t> index_view_positions;
+        for (auto& expr : create_idx_parsed) {
+          if (expr->GetExpressionType() != duckdb::ExpressionType::COLUMN_REF) {
+            continue;
+          }
+          auto col_name =
+            expr->Cast<duckdb::ColumnRefExpression>().GetColumnName();
+          for (size_t i = 0; i < column_info->names.size(); ++i) {
+            if (column_info->names[i] == col_name) {
+              index_view_positions.push_back(i);
+              break;
+            }
+          }
+        }
+        kept_view_positions = PruneViewFastPathChain(
+          *plan, *leaf_get, index_view_positions, column_info->names.size());
+      }
+
       const auto leaf_orig_size = leaf_get->GetColumnIds().size();
       duckdb::vector<duckdb::LogicalType> pk_types;
       pk_types.reserve(vcols.size());
@@ -1014,11 +1315,21 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                       ERR_MSG("view \"", target.name,
                               "\" must be bound before it can be indexed"));
     }
-    rel_columns.assign_range(
-      std::views::iota(size_t{0}, column_info->names.size()) |
-      std::views::transform([&](size_t i) {
-        return std::pair{column_info->names[i], column_info->types[i]};
-      }));
+    if (kept_view_positions) {
+      // Pruned view schema: only the kept view positions appear in
+      // rel_columns. column_ids resolution below indexes into this
+      // narrowed list, so positions are intrinsically remapped.
+      rel_columns.reserve(kept_view_positions->size());
+      for (auto p : *kept_view_positions) {
+        rel_columns.emplace_back(column_info->names[p], column_info->types[p]);
+      }
+    } else {
+      rel_columns.assign_range(
+        std::views::iota(size_t{0}, column_info->names.size()) |
+        std::views::transform([&](size_t i) {
+          return std::pair{column_info->names[i], column_info->types[i]};
+        }));
+    }
   } else {
     auto& sdb_entry = RequireBaseTable(*resolved_table);
     sdb_table = sdb_entry.GetSereneDBTable();
@@ -1124,6 +1435,19 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         create_index_info->options["_sdb_iceberg_snapshot_id"] =
           duckdb::Value::BIGINT(pinned_iceberg_snapshot_id);
       }
+    }
+    if (kept_view_positions) {
+      // Hand the pruned position list to SereneDBCreateIndexPlan so the
+      // physical operator can build its view_columns over the same
+      // narrowed schema.
+      duckdb::vector<duckdb::Value> kept_values;
+      kept_values.reserve(kept_view_positions->size());
+      for (auto p : *kept_view_positions) {
+        kept_values.emplace_back(duckdb::Value::UBIGINT(p));
+      }
+      create_index_info->options["_sdb_view_kept_positions"] =
+        duckdb::Value::LIST(duckdb::LogicalType::UBIGINT,
+                            std::move(kept_values));
     }
     // column_binding_resolver synthesises (TableIndex(0), i) for
     // LOGICAL_CREATE_INDEX.

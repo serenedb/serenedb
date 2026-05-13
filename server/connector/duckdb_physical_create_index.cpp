@@ -850,12 +850,29 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     }
     auto& view = basics::downCast<catalog::PgSqlView>(*relation);
     const auto& vinfo = view.GetInfo();
-    view_columns.reserve(vinfo.names.size());
-    for (size_t i = 0; i < vinfo.names.size(); ++i) {
+    // BindCreateIndex may have stashed a kept-positions list (column
+    // pruning); when present, synthesise view_columns only for those
+    // positions. The column.id keeps the ORIGINAL view position so
+    // downstream id-based lookups stay stable.
+    std::vector<size_t> view_positions;
+    if (auto it = op.info->options.find("_sdb_view_kept_positions");
+        it != op.info->options.end()) {
+      for (const auto& v : duckdb::ListValue::GetChildren(it->second)) {
+        view_positions.push_back(v.GetValue<uint64_t>());
+      }
+    } else {
+      view_positions.reserve(vinfo.names.size());
+      for (size_t i = 0; i < vinfo.names.size(); ++i) {
+        view_positions.push_back(i);
+      }
+    }
+    view_columns.reserve(view_positions.size());
+    for (auto p : view_positions) {
+      SDB_ASSERT(p < vinfo.names.size());
       view_columns.push_back(catalog::Column{
-        .id = static_cast<catalog::Column::Id>(i),
-        .type = vinfo.types[i],
-        .name = vinfo.names[i],
+        .id = static_cast<catalog::Column::Id>(p),
+        .type = vinfo.types[p],
+        .name = vinfo.names[p],
       });
     }
   } else {

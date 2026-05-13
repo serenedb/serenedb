@@ -1,0 +1,117 @@
+hash-threshold 100
+
+# View-backed CREATE INDEX column pruning: when the view exposes more
+# columns than the index uses, BindCreateIndex's PruneViewFastPathChain
+# narrows the chain so the leaf source only reads what's needed. Every
+# test below verifies end-to-end correctness; the pruning is implicit (a
+# no-op fallback exists for any chain shape v1 doesn't cover).
+
+
+# ---------------------------------------------------------------------------
+# Setup: a wide parquet, used by most cases below.
+# ---------------------------------------------------------------------------
+
+statement count 5
+COPY (SELECT 1 AS id, 'pudge goes mid'     AS body, 'alpha' AS unused1, 100 AS unused2, 'X' AS unused3
+      UNION ALL SELECT 2, 'anchin reads manga',     'bravo', 200, 'Y'
+      UNION ALL SELECT 3, 'pudge plays again',      'charlie', 300, 'Z'
+      UNION ALL SELECT 4, 'manga marathon weekend', 'delta', 400, 'W'
+      UNION ALL SELECT 5, 'pudge unique phrase',    'echo', 500, 'V')
+TO '/tmp/${__DATABASE__}_view_prune.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY prune_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+# ---------------------------------------------------------------------------
+# Case 1: wide view, narrow index. Pruning drops unused1/unused2/unused3.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE VIEW prune_v1 AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
+
+statement ok
+CREATE INDEX prune_idx1 ON prune_v1 USING inverted(body prune_en);
+
+query
+SELECT count(*) FROM prune_idx1 WHERE body @@ ts_phrase('pudge');
+----
+count
+3
+
+query
+SELECT count(*) FROM prune_idx1 WHERE body @@ ts_phrase('unique phrase');
+----
+count
+1
+
+
+# ---------------------------------------------------------------------------
+# Case 2: index covers every view column. Pruning is a no-op; behaviour
+# must match the pre-patch path.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE VIEW prune_v2 AS SELECT id, body FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
+
+statement ok
+CREATE INDEX prune_idx2 ON prune_v2 USING inverted(id, body prune_en);
+
+query
+SELECT count(*) FROM prune_idx2 WHERE body @@ ts_phrase('pudge');
+----
+count
+3
+
+
+# ---------------------------------------------------------------------------
+# Case 3: view's projection has a function on a single leaf column. The
+# kept projection expression's leaf refs must be collected through the
+# function wrapper.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE VIEW prune_v3 AS
+  SELECT id, upper(body) AS body
+  FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
+
+statement ok
+CREATE INDEX prune_idx3 ON prune_v3 USING inverted(body prune_en);
+
+# Search uses uppercase phrase because the view uppercased everything; the
+# inverted index sees the projection output, not the raw leaf value.
+query
+SELECT count(*) FROM prune_idx3 WHERE body @@ ts_phrase('PUDGE');
+----
+count
+3
+
+
+# ---------------------------------------------------------------------------
+# Case 4: non-fast-path chain shape (ORDER BY in view body puts an
+# operator above the outermost projection). Pruning's v1 guard returns
+# nullopt -> code falls through to the pre-patch path unchanged.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE VIEW prune_v4 AS
+  SELECT id, body
+  FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet')
+  ORDER BY id;
+
+statement ok
+CREATE INDEX prune_idx4 ON prune_v4 USING inverted(body prune_en);
+
+query
+SELECT count(*) FROM prune_idx4 WHERE body @@ ts_phrase('pudge');
+----
+count
+3

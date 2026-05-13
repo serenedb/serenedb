@@ -18,8 +18,6 @@
 
 #include "iresearch/columnstore/merge.hpp"
 
-#include <absl/container/flat_hash_map.h>
-
 #include <algorithm>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -30,25 +28,25 @@
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/columnstore/column_writer.hpp"
 #include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/norm_reader.hpp"
-#include "iresearch/columnstore/norm_writer.hpp"
 
 namespace irs::columnstore {
 
 void MergeInto(std::span<const Reader* const> sources,
                std::span<const DocumentMask* const> source_masks,
                Writer& output) {
-  absl::flat_hash_map<field_id, const ColumnReader*> first_seen;
+  const Reader* schema_src = nullptr;
   for (const auto* src : sources) {
-    if (!src) {
-      continue;
-    }
-    for (const auto* col : src->Columns()) {
-      first_seen.try_emplace(col->Id(), col);
+    if (src) {
+      schema_src = src;
+      break;
     }
   }
+  if (!schema_src) {
+    return;
+  }
 
-  for (auto [field_id_v, first_col] : first_seen) {
+  for (const auto& first_col : schema_src->Columns()) {
+    const auto field_id_v = first_col->Id();
     auto& cw =
       output.OpenColumn(field_id_v, first_col->Name(), first_col->Type());
 

@@ -61,10 +61,6 @@ transactions/etc.) are out of scope.
   and (lazily) a 2 MB chunk slot region. For per-segment ANN queries
   this is paid per query. Move cache to a thread-local or member so
   warmup amortises across queries.
-- **`Reader::Columns()` / `NormColumns()` return `std::vector` by value**
-  ([`format.cpp:687,720`](../libs/iresearch/include/iresearch/columnstore/format.cpp)).
-  Every caller iterates once -- return a `std::span<const X*>` over the
-  internal vector.
 - **HNSW graphs are eagerly faiss-deserialised at every Reader construction**
   ([`format.cpp:558-585`](../libs/iresearch/include/iresearch/columnstore/format.cpp)).
   Queries that never touch HNSW pay this. Make HNSW lazy -- only

@@ -21,9 +21,9 @@
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "iresearch/types.hpp"
 
@@ -113,12 +113,11 @@ class Reader final {
   bool HasColumn(field_id id) const noexcept;
   // nullptr if absent.
   const ColumnReader* Column(field_id id) const noexcept;
-  std::vector<const ColumnReader*> Columns() const;
+  std::span<const std::unique_ptr<ColumnReader>> Columns() const noexcept;
 
   // Norm and typed maps are independent; a field_id may appear in both.
   bool HasNormColumn(field_id id) const noexcept;
   const NormColumnReader* NormColumn(field_id id) const noexcept;
-  std::vector<const NormColumnReader*> NormColumns() const;
 
   // HNSW(id) returns nullptr if id is not an HNSW column in this segment.
   bool HasHNSW(field_id id) const noexcept;

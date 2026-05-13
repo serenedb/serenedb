@@ -18,7 +18,6 @@
 
 #include "iresearch/columnstore/format.hpp"
 
-#include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 
 #include <cstring>
@@ -32,6 +31,7 @@
 #include <utility>
 #include <vector>
 
+#include "basics/containers/flat_hash_map.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "iresearch/columnstore/column_reader.hpp"
@@ -225,14 +225,14 @@ struct Writer::Impl {
   duckdb::DatabaseInstance* db;
   IndexOutput::ptr out;
   std::vector<std::unique_ptr<ColumnWriter>> column_writers;
-  absl::flat_hash_map<field_id, size_t> column_by_id;
+  sdb::containers::FlatHashMap<field_id, ColumnWriter*> column_by_id;
   // unique_ptr to keep FooterColumnEntry* handed to ColumnWriter stable
   // across vector emplaces.
   std::vector<std::unique_ptr<FooterColumnEntry>> column_entries;
   std::vector<std::unique_ptr<NormColumnWriter>> norm_writers;
-  absl::flat_hash_map<field_id, size_t> norm_by_id;
+  sdb::containers::FlatHashMap<field_id, NormColumnWriter*> norm_by_id;
   std::vector<std::unique_ptr<HNSWWriterEntry>> hnsw_writers;
-  absl::flat_hash_map<field_id, size_t> hnsw_by_id;
+  sdb::containers::FlatHashMap<field_id, HNSWWriterEntry*> hnsw_by_id;
   bool committed = false;
   field_id next_id = 0;
 };
@@ -267,7 +267,7 @@ ColumnWriter& Writer::OpenColumn(field_id id, std::string_view name,
   // Per-batch SearchSink may re-open the same id; return the existing
   // writer so batches accumulate into one footer entry.
   if (auto it = _impl->column_by_id.find(id); it != _impl->column_by_id.end()) {
-    auto& existing = *_impl->column_writers[it->second];
+    auto& existing = *it->second;
     const auto normalized_row_group_size =
       row_group_size != 0 ? row_group_size : kDefaultRowGroupSize;
     SDB_ASSERT(existing.Type() == type &&
@@ -293,9 +293,9 @@ ColumnWriter& Writer::OpenColumn(field_id id, std::string_view name,
                                            *_impl->out, *entry, skip_validity);
   cw->SetCompression(compression);
   _impl->column_entries.push_back(std::move(entry));
-  _impl->column_by_id.emplace(id, _impl->column_writers.size());
-  _impl->column_writers.push_back(std::move(cw));
-  return *_impl->column_writers.back();
+  auto& back = *_impl->column_writers.emplace_back(std::move(cw));
+  _impl->column_by_id.emplace(id, &back);
+  return back;
 }
 
 HNSWWriter& Writer::AttachHNSW(field_id column_id, HNSWInfo info) {
@@ -303,7 +303,7 @@ HNSWWriter& Writer::AttachHNSW(field_id column_id, HNSWInfo info) {
   // column; return the existing writer.
   if (auto it = _impl->hnsw_by_id.find(column_id);
       it != _impl->hnsw_by_id.end()) {
-    auto& existing = *_impl->hnsw_writers[it->second];
+    auto& existing = *it->second;
     SDB_ASSERT(existing.info.d == info.d &&
                  existing.info.metric == info.metric &&
                  existing.info.m == info.m &&
@@ -320,9 +320,9 @@ HNSWWriter& Writer::AttachHNSW(field_id column_id, HNSWInfo info) {
   entry->column_id = column_id;
   entry->info = info;
   entry->writer = std::make_unique<HNSWWriter>(info);
-  _impl->hnsw_by_id.emplace(column_id, _impl->hnsw_writers.size());
-  _impl->hnsw_writers.push_back(std::move(entry));
-  return *_impl->hnsw_writers.back()->writer;
+  auto& back = *_impl->hnsw_writers.emplace_back(std::move(entry));
+  _impl->hnsw_by_id.emplace(column_id, &back);
+  return *back.writer;
 }
 
 NormColumnWriter& Writer::OpenNormColumn(field_id id, std::string_view name,
@@ -330,14 +330,14 @@ NormColumnWriter& Writer::OpenNormColumn(field_id id, std::string_view name,
   // Same dedup contract as OpenColumn; norm + typed maps are separate
   // in the Reader so the same id may appear in both.
   if (auto it = _impl->norm_by_id.find(id); it != _impl->norm_by_id.end()) {
-    return *_impl->norm_writers[it->second];
+    return *it->second;
   }
   auto cw = std::make_unique<NormColumnWriter>(
     id, std::string{name},
     row_group_size != 0 ? row_group_size : kDefaultRowGroupSize, *_impl->out);
-  _impl->norm_by_id.emplace(id, _impl->norm_writers.size());
-  _impl->norm_writers.push_back(std::move(cw));
-  return *_impl->norm_writers.back();
+  auto& back = *_impl->norm_writers.emplace_back(std::move(cw));
+  _impl->norm_by_id.emplace(id, &back);
+  return back;
 }
 
 std::string Writer::Commit() {
@@ -480,11 +480,11 @@ struct Reader::Impl {
   duckdb::DatabaseInstance* db;
   IndexInput::ptr in;
   std::vector<std::unique_ptr<ColumnReader>> readers;
-  absl::flat_hash_map<field_id, size_t> by_id;
+  sdb::containers::FlatHashMap<field_id, const ColumnReader*> by_id;
   std::vector<std::unique_ptr<NormColumnReader>> norm_readers;
-  absl::flat_hash_map<field_id, size_t> norm_by_id;
+  sdb::containers::FlatHashMap<field_id, const NormColumnReader*> norm_by_id;
   std::vector<std::unique_ptr<HNSWReader>> hnsw_readers;
-  absl::flat_hash_map<field_id, size_t> hnsw_by_id;
+  sdb::containers::FlatHashMap<field_id, const HNSWReader*> hnsw_by_id;
 };
 
 Reader::Reader(const Directory& dir, std::string_view segment_name,
@@ -541,8 +541,8 @@ Reader::Reader(const Directory& dir, std::string_view segment_name,
         });
         auto reader = MakeColumnReader(id, std::move(name), std::move(root),
                                        *_impl->in, db);
-        _impl->by_id.emplace(id, _impl->readers.size());
         _impl->readers.push_back(std::move(reader));
+        _impl->by_id.emplace(id, _impl->readers.back().get());
       });
     });
   deserializer.ReadList(
@@ -568,8 +568,8 @@ Reader::Reader(const Directory& dir, std::string_view segment_name,
           });
         auto nr = std::make_unique<NormColumnReader>(
           id, std::move(name), std::move(pointers), *_impl->in);
-        _impl->norm_by_id.emplace(id, _impl->norm_readers.size());
         _impl->norm_readers.push_back(std::move(nr));
+        _impl->norm_by_id.emplace(id, _impl->norm_readers.back().get());
       });
     });
   deserializer.ReadList(
@@ -595,20 +595,17 @@ Reader::Reader(const Directory& dir, std::string_view segment_name,
         SDB_ASSERT(_impl->in->Position() - graph_offset == graph_byte_size,
                    "ReadHNSW must consume exactly graph_byte_size bytes");
 
-        const ColumnReader* col_reader = nullptr;
         auto col_it = _impl->by_id.find(id);
-        if (col_it != _impl->by_id.end()) {
-          col_reader = _impl->readers[col_it->second].get();
-        }
-        if (!col_reader) {
+        if (col_it == _impl->by_id.end()) {
           // Corrupted footer; HNSW(field_id) returns nullptr.
           return;
         }
+        const auto* col_reader = col_it->second;
         auto hr =
           std::make_unique<HNSWReader>(id, std::string{col_reader->Name()},
                                        std::move(hnsw), info, *col_reader);
-        _impl->hnsw_by_id.emplace(id, _impl->hnsw_readers.size());
         _impl->hnsw_readers.push_back(std::move(hr));
+        _impl->hnsw_by_id.emplace(id, _impl->hnsw_readers.back().get());
       });
     });
   deserializer.End();
@@ -622,19 +619,12 @@ bool Reader::HasColumn(field_id id) const noexcept {
 
 const ColumnReader* Reader::Column(field_id id) const noexcept {
   auto it = _impl->by_id.find(id);
-  if (it == _impl->by_id.end()) {
-    return nullptr;
-  }
-  return _impl->readers[it->second].get();
+  return it == _impl->by_id.end() ? nullptr : it->second;
 }
 
-std::vector<const ColumnReader*> Reader::Columns() const {
-  std::vector<const ColumnReader*> out;
-  out.reserve(_impl->readers.size());
-  for (auto& r : _impl->readers) {
-    out.push_back(r.get());
-  }
-  return out;
+std::span<const std::unique_ptr<ColumnReader>> Reader::Columns()
+  const noexcept {
+  return _impl->readers;
 }
 
 bool Reader::HasNormColumn(field_id id) const noexcept {
@@ -643,10 +633,7 @@ bool Reader::HasNormColumn(field_id id) const noexcept {
 
 const NormColumnReader* Reader::NormColumn(field_id id) const noexcept {
   auto it = _impl->norm_by_id.find(id);
-  if (it == _impl->norm_by_id.end()) {
-    return nullptr;
-  }
-  return _impl->norm_readers[it->second].get();
+  return it == _impl->norm_by_id.end() ? nullptr : it->second;
 }
 
 bool Reader::HasHNSW(field_id id) const noexcept {
@@ -655,19 +642,7 @@ bool Reader::HasHNSW(field_id id) const noexcept {
 
 const HNSWReader* Reader::HNSW(field_id id) const noexcept {
   auto it = _impl->hnsw_by_id.find(id);
-  if (it == _impl->hnsw_by_id.end()) {
-    return nullptr;
-  }
-  return _impl->hnsw_readers[it->second].get();
-}
-
-std::vector<const NormColumnReader*> Reader::NormColumns() const {
-  std::vector<const NormColumnReader*> out;
-  out.reserve(_impl->norm_readers.size());
-  for (auto& r : _impl->norm_readers) {
-    out.push_back(r.get());
-  }
-  return out;
+  return it == _impl->hnsw_by_id.end() ? nullptr : it->second;
 }
 
 }  // namespace irs::columnstore

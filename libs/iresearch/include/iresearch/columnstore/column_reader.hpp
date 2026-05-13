@@ -193,11 +193,11 @@ class ColumnReader final {
 
   template<typename Rows>
   static void ScanRowsBatched(RangeScan& range, const Rows& rows,
-                              duckdb::Vector& out, duckdb::idx_t out_offset) {
+                              duckdb::Vector& out, duckdb::idx_t out_offset,
+                              bool may_use_entire = false) {
     if constexpr (requires { typename Rows::contiguous_range_tag; }) {
       if (rows.size() != 0) {
-        range.Scan(rows[0], rows.size(), out, out_offset,
-                   /*may_use_entire=*/true);
+        range.Scan(rows[0], rows.size(), out, out_offset, may_use_entire);
       }
       return;
     } else {

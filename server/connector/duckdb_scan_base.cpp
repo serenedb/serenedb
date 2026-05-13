@@ -299,8 +299,8 @@ void MaterializeIncludeColumnsScoreOrder(
         static_cast<irs::field_id>(gstate.cs_projections[b].column_id);
       if (const auto* col = cs_reader->Column(fid)) {
         auto state = cs_internal::MakeMaterializerNodeState(*col);
-        MaterializeColumnRange(*col, *state, seg_docs, seg_vecs[b],
-                               static_cast<duckdb::idx_t>(seg_start));
+        cs_internal::MaterializeNode(*col, *state, seg_docs, seg_vecs[b],
+                                     static_cast<duckdb::idx_t>(seg_start));
       }
     }
   }

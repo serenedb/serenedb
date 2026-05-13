@@ -47,7 +47,10 @@
 #include "iresearch/columnstore/internal/persistent_column_data.hpp"
 #include "iresearch/store/data_output.hpp"
 
+namespace irs::columnstore {
+
 ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
+                           uint64_t row_group_size,
                            duckdb::DatabaseInstance& db, IndexOutput& out,
                            CsBlockManager& block_manager,
                            FooterColumnEntry& entry, bool skip_validity)

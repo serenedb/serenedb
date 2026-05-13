@@ -37,7 +37,6 @@
 #include <vector>
 
 #include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/formats/column/hnsw_index.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
 

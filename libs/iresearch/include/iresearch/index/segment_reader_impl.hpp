@@ -97,9 +97,12 @@ class SegmentReaderImpl final : public SubReader {
     void Open(const Directory& dir, const SegmentMeta& meta,
               const IndexReaderOptions& options,
               columnstore::PreloadedHnswGraphs preloaded_hnsw = {});
+  };
+
+  FileRefs _refs;
+  SegmentInfo _info;
   std::shared_ptr<const DocumentMask> _docs_mask;
   FieldReader::ptr _field_reader;
   std::shared_ptr<ColumnData> _data;
 };
-
 }  // namespace irs

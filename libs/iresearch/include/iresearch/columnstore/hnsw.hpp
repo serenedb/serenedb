@@ -26,7 +26,6 @@
 #include <duckdb/common/types/vector.hpp>
 #include <limits>
 #include <memory>
-#include <optional>
 #include <string>
 
 #include "basics/containers/node_hash_map.h"
@@ -109,25 +108,25 @@ class ChunkedVectorCache {
   using ChunkMap = sdb::containers::NodeHashMap<uint64_t, ChunkSlot>;
   using RgMap = sdb::containers::NodeHashMap<size_t, RgSlot>;
 
-  ChunkedVectorCache(const ColumnReader& child, uint64_t array_size,
-                     size_t capacity)
-    : _child{&child},
-      _d{array_size},
-      _chunk_rows{
-        std::max<uint64_t>(kChunkSizeFloats / std::max<uint64_t>(_d, 1), 1)},
-      _slots{{.cache_size = capacity,
-              .small_size = std::max<size_t>(capacity / 10, 1)},
+  ChunkedVectorCache()
+    : _slots{{.cache_size = kChunkCacheSlots,
+              .small_size = std::max<size_t>(kChunkCacheSlots / 10, 1)},
              ChunkEvictor{this}},
       _rgs{{.cache_size = kRgCacheSlots,
             .small_size = std::max<size_t>(kRgCacheSlots / 4, 1)},
            RgEvictor{this}} {}
+
+  ChunkedVectorCache(const ColumnReader& child, uint64_t array_size)
+    : ChunkedVectorCache{} {
+    Rebind(child, array_size);
+  }
 
   ChunkedVectorCache(const ChunkedVectorCache&) = delete;
   ChunkedVectorCache& operator=(const ChunkedVectorCache&) = delete;
   ChunkedVectorCache(ChunkedVectorCache&&) = delete;
   ChunkedVectorCache& operator=(ChunkedVectorCache&&) = delete;
 
-  void Rebind(const ColumnReader& child);
+  void Rebind(const ColumnReader& child, uint64_t array_size);
 
   const float* Get(uint64_t row) { return SliceOf(*FindOrLoad(row), row); }
 
@@ -215,8 +214,7 @@ class HNSWReader final {
  public:
   HNSWReader(field_id id, std::string name, HNSWInfo info,
              const ColumnReader& vector_column, const IndexInput& in_source,
-             uint64_t graph_offset, uint64_t graph_byte_size,
-             std::shared_ptr<const faiss::HNSW> preloaded = nullptr);
+             uint64_t graph_offset, uint64_t graph_byte_size);
   ~HNSWReader();
 
   HNSWReader(const HNSWReader&) = delete;
@@ -229,8 +227,7 @@ class HNSWReader final {
   void Search(HNSWSearchContext& ctx) const;
   void RangeSearch(HNSWRangeSearchContext& ctx) const;
 
-  ChunkedVectorCache& PrepareCache(
-    std::optional<ChunkedVectorCache>& slot) const;
+  ChunkedVectorCache& PrepareCache(ChunkedVectorCache& slot) const;
 
   const std::shared_ptr<const faiss::HNSW>& Graph() const noexcept {
     return _hnsw;

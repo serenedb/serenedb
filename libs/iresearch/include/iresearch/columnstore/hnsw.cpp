@@ -120,7 +120,7 @@ void HNSWWriter::Build(const ColumnReader& vector_column) {
   faiss::VisitedTable vt{static_cast<int>(graph_nodes)};
   _hnsw.prepare_level_tab(graph_nodes, false);
 
-  ChunkedVectorCache cache{*child, array_size, kChunkCacheSlots};
+  ChunkedVectorCache cache{*child, array_size};
   ColumnDistance dis{_info, &cache};
 
   const uint64_t chunk_rows =
@@ -145,8 +145,7 @@ void HNSWWriter::Serialize(DataOutput& out) { irs::WriteHNSW(out, _hnsw); }
 HNSWReader::HNSWReader(field_id id, std::string name, HNSWInfo info,
                        const ColumnReader& vector_column,
                        const IndexInput& in_source, uint64_t graph_offset,
-                       uint64_t graph_byte_size,
-                       std::shared_ptr<const faiss::HNSW> preloaded)
+                       uint64_t graph_byte_size)
   : _id{id},
     _name{std::move(name)},
     _info{std::move(info)},
@@ -154,10 +153,6 @@ HNSWReader::HNSWReader(field_id id, std::string name, HNSWInfo info,
   SDB_ENSURE(vector_column.ArraySize() == static_cast<uint64_t>(_info.d),
              sdb::ERROR_INTERNAL, "columnstore::HNSWReader: ARRAY size ",
              vector_column.ArraySize(), " does not match HNSWInfo.d ", _info.d);
-  if (preloaded) {
-    _hnsw = std::move(preloaded);
-    return;
-  }
   auto graph = std::make_shared<faiss::HNSW>();
   auto in = in_source.Reopen();
   in->Seek(graph_offset);
@@ -193,19 +188,15 @@ void HNSWReader::RangeSearch(HNSWRangeSearchContext& ctx) const {
   hnsw.search(dis, nullptr, res, ctx.vt, &ctx.info.params);
 }
 
-ChunkedVectorCache& HNSWReader::PrepareCache(
-  std::optional<ChunkedVectorCache>& slot) const {
+ChunkedVectorCache& HNSWReader::PrepareCache(ChunkedVectorCache& slot) const {
   const auto* child = _vector_column.Child();
   SDB_ASSERT(child);
-  if (!slot.has_value()) {
-    slot.emplace(*child, _vector_column.ArraySize(), kChunkCacheSlots);
-  } else {
-    slot->Rebind(*child);
-  }
-  return *slot;
+  slot.Rebind(*child, _vector_column.ArraySize());
+  return slot;
 }
 
-void ChunkedVectorCache::Rebind(const ColumnReader& child) {
+void ChunkedVectorCache::Rebind(const ColumnReader& child,
+                                uint64_t array_size) {
   SDB_ASSERT(_pin_depth == 0);
   _slots.Clear();
   _rgs.Clear();
@@ -213,6 +204,9 @@ void ChunkedVectorCache::Rebind(const ColumnReader& child) {
   _rg_index.clear();
   _locate_hint = {};
   _child = &child;
+  _d = array_size;
+  _chunk_rows =
+    std::max<uint64_t>(kChunkSizeFloats / std::max<uint64_t>(_d, 1), 1);
 }
 
 ChunkSlot* ChunkedVectorCache::FindOrLoad(uint64_t row) {

@@ -23,7 +23,6 @@
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
-#include <faiss/impl/HNSW.h>
 
 #include <memory>
 
@@ -40,11 +39,6 @@ class NormColumnReader;
 
 }  // namespace columnstore
 
-struct SegmentReaderOptions {
-  absl::flat_hash_map<field_id, std::shared_ptr<const faiss::HNSW>>
-    preloaded_hnsw_graphs;
-};
-
 class SegmentReaderImpl final : public SubReader {
   struct PrivateTag final {
     explicit PrivateTag() = default;
@@ -60,7 +54,7 @@ class SegmentReaderImpl final : public SubReader {
 
   static std::shared_ptr<const SegmentReaderImpl> Open(
     const Directory& dir, const SegmentMeta& meta,
-    const IndexReaderOptions& options, SegmentReaderOptions seg_options = {});
+    const IndexReaderOptions& options);
 
   std::shared_ptr<const SegmentReaderImpl> ReopenColumnStore(
     const Directory& dir, const SegmentMeta& meta,
@@ -104,8 +98,7 @@ class SegmentReaderImpl final : public SubReader {
       norms_by_id;
 
     void Open(const Directory& dir, const SegmentMeta& meta,
-              const IndexReaderOptions& options,
-              SegmentReaderOptions seg_options);
+              const IndexReaderOptions& options);
   };
 
   FileRefs _refs;

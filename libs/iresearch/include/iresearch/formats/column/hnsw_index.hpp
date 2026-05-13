@@ -26,8 +26,6 @@
 #include <faiss/impl/ResultHandler.h>
 #include <faiss/impl/io.h>
 
-#include <optional>
-
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "iresearch/columnstore/hnsw.hpp"
@@ -139,7 +137,7 @@ class ColumnIndexDistance final : public ColumnDistanceBase {
 
 struct HNSWSearchBaseBuffer {
   faiss::VisitedTable vt{0};
-  std::optional<columnstore::ChunkedVectorCache> cache;
+  columnstore::ChunkedVectorCache cache;
 };
 
 struct HNSWAnnSearchBuffer : HNSWSearchBaseBuffer {

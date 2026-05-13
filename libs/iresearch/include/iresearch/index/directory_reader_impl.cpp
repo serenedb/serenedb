@@ -258,18 +258,10 @@ std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
       *reader = std::move(tmp);
       reuse_candidates.erase(it);
     } else {
-      SegmentReaderOptions seg_options;
       if (it != reuse_candidates.end() && it->second != kInvalidCandidate) {
-        const auto& predecessor = (*cached)[it->second];
-        if (predecessor) {
-          for (const auto& hr : predecessor.GetImpl()->HNSWReaders()) {
-            seg_options.preloaded_hnsw_graphs.emplace(hr->Id(), hr->Graph());
-          }
-        }
         reuse_candidates.erase(it);
       }
-      auto fresh =
-        SegmentReaderImpl::Open(dir, meta, opts, std::move(seg_options));
+      auto fresh = SegmentReaderImpl::Open(dir, meta, opts);
       *reader = SegmentReader{std::move(fresh)};
     }
 

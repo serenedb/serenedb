@@ -25,7 +25,6 @@
 #include <duckdb/storage/data_pointer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
-#include <memory>
 #include <span>
 #include <string>
 #include <utility>
@@ -48,10 +47,6 @@ struct RgWindow {
   duckdb::idx_t end = 0;
 };
 
-// Length of the longest run starting at rows[i] where consecutive
-// elements differ by exactly 1, optionally capped by `upper_bound`
-// (exclusive). Shared by every site that coalesces doc_id batches into
-// contiguous sub-runs before issuing a Scan.
 template<typename Rows>
 inline size_t ConsecutiveRunLength(
   const Rows& rows, size_t i,
@@ -68,40 +63,26 @@ inline size_t ConsecutiveRunLength(
 
 class ColumnReader final {
  public:
-  // Primitive ctor.
-  ColumnReader(field_id id, std::string name, duckdb::LogicalType type,
+  // Unified ctor. Type-shape determines which extra params are honoured:
+  //   primitive  -> data_pointers + validity_pointers; others empty/0.
+  //   ARRAY      -> validity_pointers + element_child + array_size>0;
+  //                 data_pointers empty (no self data on disk).
+  //   LIST/MAP   -> data_pointers (per-row UBIGINT lengths) +
+  //                 validity_pointers + element_child; array_size 0.
+  //   STRUCT     -> validity_pointers + struct_children;
+  //                 data_pointers empty, element_child null.
+  ColumnReader(field_id id, duckdb::LogicalType type,
                std::vector<duckdb::DataPointer> data_pointers,
                std::vector<duckdb::DataPointer> validity_pointers,
-               IndexInput& in, duckdb::DatabaseInstance& db);
-
-  // ARRAY<child, array_size> ctor. row_count is derived from the child.
-  ColumnReader(field_id id, std::string name, duckdb::LogicalType type,
-               std::vector<duckdb::DataPointer> validity_pointers,
-               std::unique_ptr<ColumnReader> element_child, uint64_t array_size,
-               IndexInput& in, duckdb::DatabaseInstance& db);
-
-  // LIST<child> ctor. data_pointers carry per-row UBIGINT lengths; offsets
-  // are recovered as cumulative sums per row group (cached in
-  // _list_offsets_per_rg). Also used for MAP, which DuckDB encodes as
-  // LIST<STRUCT<key,value>> at PhysicalType::LIST.
-  ColumnReader(field_id id, std::string name, duckdb::LogicalType type,
-               std::vector<duckdb::DataPointer> data_pointers,
-               std::vector<duckdb::DataPointer> validity_pointers,
-               std::unique_ptr<ColumnReader> element_child, IndexInput& in,
-               duckdb::DatabaseInstance& db);
-
-  // STRUCT ctor. No top-level data of its own; row count is taken from
-  // child[0]. Each child mirrors duckdb::StructColumnData::sub_columns.
-  ColumnReader(field_id id, std::string name, duckdb::LogicalType type,
-               std::vector<duckdb::DataPointer> validity_pointers,
+               std::unique_ptr<ColumnReader> element_child,
                std::vector<std::unique_ptr<ColumnReader>> struct_children,
-               IndexInput& in, duckdb::DatabaseInstance& db);
+               uint64_t array_size, IndexInput& in,
+               duckdb::DatabaseInstance& db);
 
   ColumnReader(const ColumnReader&) = delete;
   ColumnReader& operator=(const ColumnReader&) = delete;
 
   field_id Id() const noexcept { return _id; }
-  std::string_view Name() const noexcept { return _name; }
   const duckdb::LogicalType& Type() const noexcept { return _type; }
 
   uint64_t RowCount() const noexcept { return _row_count; }
@@ -112,11 +93,6 @@ class ColumnReader final {
   uint64_t RowGroupRowCount(size_t rg) const noexcept {
     return _data_pointers[rg].tuple_count;
   }
-  // True iff at least one row-group has a non-EMPTY validity codec.  An
-  // all-valid column still ships per-RG validity DataPointers (with codec
-  // = COMPRESSION_EMPTY) so the *array* is non-empty; callers care
-  // whether any actual validity bits need to be scanned, so we cache the
-  // real answer at construction.
   bool HasValidity() const noexcept { return _has_validity; }
 
   RgWindow Locate(uint64_t row_pos, RgWindow hint = {}) const noexcept;
@@ -161,14 +137,6 @@ class ColumnReader final {
       _state.offset_in_column += count;
       _state.internal_index += count;
       _cursor += count;
-      // SCAN_ENTIRE_VECTOR lets the codec zero-copy into `out_vec` --
-      // FixedSizeScan does `FlatVector::SetData(result, segment_data, ...)`
-      // pointing the result Vector at the segment's pinned page.  Our
-      // ScanCursor owns the segment and would drop the page the moment
-      // we move to a new row-group, so we pin a second reference to the
-      // BlockHandle and stash it on the result Vector's auxiliary data.
-      // The buffer then stays in memory until the downstream consumer
-      // resets the vector.
       if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR &&
           _seg->block) {
         auto& bm = duckdb::BufferManager::GetBufferManager(_seg->db);
@@ -199,45 +167,26 @@ class ColumnReader final {
     RangeScan(RangeScan&&) noexcept = default;
     RangeScan& operator=(RangeScan&&) noexcept = default;
 
-    // `may_use_entire` lets the caller opt in to SCAN_ENTIRE_VECTOR when
-    // safe (single Scan call into `out`, no validity scan pre-write).
-    // Multi-run scans (random doc_ids) must keep it false: a follow-up
-    // SCAN_FLAT_VECTOR into the same vector would assert.
     void Scan(uint64_t row_pos, duckdb::idx_t count, duckdb::Vector& out,
               duckdb::idx_t out_offset, bool may_use_entire = false);
 
    private:
-    void ScanImpl(const ColumnReader& reader, uint64_t row_pos,
-                  duckdb::idx_t count, duckdb::Vector& out,
-                  duckdb::idx_t out_offset, bool may_use_entire);
-
     const ColumnReader* _reader;
     bool _validity;
     ScanCursor _cursor;
     RgWindow _window;
   };
 
-  // Default form: walk `rows`, coalesce consecutive doc_ids into runs
-  // (one range.Scan per run).
   template<typename Rows>
   static void ScanRowsBatched(RangeScan& range, const Rows& rows,
-                              duckdb::Vector& out, duckdb::idx_t out_offset) {
+                              duckdb::Vector& out, duckdb::idx_t out_offset,
+                              bool may_use_entire = false) {
     if constexpr (requires { typename Rows::contiguous_range_tag; }) {
-      // Caller has already attested the range is fully contiguous --
-      // skip the per-element consecutive-check loop and issue one scan.
-      // Since this is the only Scan call into `out`, SCAN_ENTIRE_VECTOR
-      // is safe (no follow-up FLAT write that would assert on a DICT
-      // result).
       if (rows.size() != 0) {
-        range.Scan(rows[0], rows.size(), out, out_offset,
-                   /*may_use_entire=*/true);
+        range.Scan(rows[0], rows.size(), out, out_offset, may_use_entire);
       }
       return;
     } else {
-      // Random doc_ids: each run is a separate Scan call into the same
-      // output Vector.  Force SCAN_FLAT_VECTOR (default), otherwise the
-      // first run could leave the vector as DICTIONARY and the next
-      // run's FLAT write would assert.
       size_t i = 0;
       while (i < rows.size()) {
         const size_t run_len = ConsecutiveRunLength(rows, i);
@@ -322,7 +271,6 @@ class ColumnReader final {
     IndexInput& in) const;
 
   field_id _id;
-  std::string _name;
   duckdb::LogicalType _type;
   std::vector<duckdb::DataPointer> _data_pointers;
   std::vector<duckdb::DataPointer> _validity_pointers;

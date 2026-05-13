@@ -65,10 +65,9 @@ struct PersistentColumnData {
   uint64_t list_global_running = 0;
 };
 
-// Top-level entry for one column: id + name + recursive metadata root.
+// Top-level entry for one column: id + recursive metadata root.
 struct FooterColumnEntry {
   field_id id;
-  std::string name;
   PersistentColumnData root;
 };
 

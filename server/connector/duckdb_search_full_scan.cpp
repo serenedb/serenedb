@@ -576,9 +576,6 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
         gstate.bulk_scan_materializer_seg = std::numeric_limits<size_t>::max();
         continue;
       }
-      // Reopen the materializer at segment boundary, borrowing the
-      // segment's cached columnstore::Reader (the footer was parsed
-      // once when SegmentReaderImpl opened the segment, not per query).
       if (!gstate.bulk_scan_materializer ||
           gstate.bulk_scan_materializer_seg != gstate.bulk_scan_segment_idx) {
         const auto* cs_reader = segment.CsReader();

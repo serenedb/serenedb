@@ -50,7 +50,8 @@ void ColumnstoreMaterializer::SelectByDocIds(
                               type_id == duckdb::LogicalTypeId::MAP)) {
       duckdb::ListVector::SetListSize(out_vec, 0);
     }
-    MaterializeColumnRange(*b.reader, *b.state, doc_ids, out_vec, output_start);
+    cs_internal::MaterializeNode(*b.reader, *b.state, doc_ids, out_vec,
+                                 output_start);
   }
 }
 
@@ -66,9 +67,9 @@ void ColumnstoreMaterializer::Scan(uint64_t start_doc, duckdb::idx_t count,
         type_id == duckdb::LogicalTypeId::MAP) {
       duckdb::ListVector::SetListSize(out_vec, 0);
     }
-    MaterializeColumnRange(*b.reader, *b.state,
-                           cs_internal::IotaRange{start_doc, count}, out_vec,
-                           0);
+    cs_internal::MaterializeNode(*b.reader, *b.state,
+                                 cs_internal::IotaRange{start_doc, count},
+                                 out_vec, 0, /*may_use_entire=*/true);
   }
 }
 

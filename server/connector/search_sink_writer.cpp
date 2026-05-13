@@ -136,9 +136,10 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   _pk_field.name = kPkFieldName;
 }
 
-bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const duckdb::LogicalType& type,
-                                                bool have_nulls,
-                                                catalog::Column::Id column_id) {
+bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col) {
+  const auto column_id = col.id;
+  const auto& type = col.type;
+  const auto have_nulls = col.have_nulls;
   // Track the active column for WriteFullColumnImpl.
   _active_column_id = column_id;
   _active_column_type = type;
@@ -164,8 +165,7 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const duckdb::LogicalType& type,
                                    ? _compression_provider(column_id)
                                    : duckdb::CompressionType::COMPRESSION_AUTO;
         it->second = &doc_columnstore->OpenColumn(
-          static_cast<irs::field_id>(column_id),
-          /*name=*/std::to_string(column_id), type,
+          static_cast<irs::field_id>(column_id), type,
           /*row_group_size=*/0, /*skip_validity=*/false, compression);
         if (hnsw_info.has_value()) {
           // Records the request. The faiss graph is built at Commit
@@ -313,10 +313,7 @@ void SearchSinkInsertBaseImpl::WriteFullColumnImpl(const duckdb::Vector& vec,
   // the current batch (per-batch NextFieldBatch resets to that id). Convert
   // to a 0-based row position within the segment for ColumnWriter::Append.
   const uint64_t start_row = _document->DocId() - irs::doc_limits::min();
-  // Vector parameter on Append must be non-const because UnifiedVectorFormat
-  // extraction is non-const; cast away const since we only read.
-  _active_columnstore_writer->Append(start_row,
-                                     const_cast<duckdb::Vector&>(vec), count);
+  _active_columnstore_writer->Append(start_row, vec, count);
 }
 
 void SearchSinkInsertBaseImpl::FinishImpl() {
@@ -344,9 +341,9 @@ void SearchSinkInsertBaseImpl::StoredBytesAccumulatorsEnsure(
   if (acc.writer) {
     return;  // Already opened for this segment.
   }
-  acc.writer = &doc_columnstore->OpenColumn(
-    static_cast<irs::field_id>(column_id), std::string{name}, type,
-    /*row_group_size=*/0, skip_validity);
+  acc.writer =
+    &doc_columnstore->OpenColumn(static_cast<irs::field_id>(column_id), type,
+                                 /*row_group_size=*/0, skip_validity);
   acc.type = std::move(type);
   acc.skip_validity = skip_validity;
   // Size the buffer right away based on the current batch shape so an
@@ -846,14 +843,6 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size) {
   }
   _document.emplace(_trx.Insert(false, batch_size));
   _emit_pk = true;
-  // Capture batch start so the unified accumulator (PK, geo, wildcard,
-  // ...) can pin its bulk Append's start_row to this batch's first
-  // doc_id, and so accumulators registered mid-batch come up correctly
-  // sized. Reallocates the per-column buffers -- different Sink chunks
-  // in the same scan_threads-many parallel sink may pass different
-  // batch_size values. BLOB (not VARCHAR) because PK is rocksdb-encoded
-  // bytes; routing through VARCHAR trips DuckDB's UTF-8 validator inside
-  // StringStats during codec analyze.
   StoredBytesAccumulatorsInit(_document->DocId(),
                               static_cast<duckdb::idx_t>(batch_size));
 }

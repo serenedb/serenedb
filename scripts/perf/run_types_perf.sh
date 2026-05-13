@@ -31,7 +31,7 @@ PARQUET_FILE="${PERF_PARQUET_FILE:-${PARQUET_DIR}/types_perf.parquet}"
 SERENED_BIN="${BUILD_DIR}/bin/serened"
 PORT="${PERF_PORT:-6263}"
 LOG="/tmp/${USER}-serened-types-perf.log"
-N="${PERF_ROWS:-1000000}"
+N="${PERF_ROWS:-25000000}"
 
 if [[ ! -x "${SERENED_BIN}" ]]; then
 	echo "missing ${SERENED_BIN} -- build the perf binary first" >&2
@@ -99,27 +99,47 @@ run_setup() {
 	TIMINGS["${label}"]=$(extract_last_time_ms "${out}")
 }
 
-# --- 1. Generate the parquet file ------------------------------------------
-# Done on a transient serened that we throw away afterwards -- only the
-# parquet file survives. This avoids landing the synthetic source data
-# in the perf serened's rocksdb base store.
-rm -rf "${SERENED_DATA_DIR}" ${RESULTS_DIR}/types_genparquet_data
-rm -f "${NATIVE_DB}" "${NATIVE_DB}.wal" "${PARQUET_FILE}"
-
 PQ_SQL_PATH=$(printf '%s' "${PARQUET_FILE}" | sed "s/'/''/g")
+NDB_SQL_PATH=$(printf '%s' "${NATIVE_DB}" | sed "s/'/''/g")
 
-echo "generating ${PARQUET_FILE} (${N} rows) via temporary serened"
-"${SERENED_BIN}" ${RESULTS_DIR}/types_genparquet_data \
-	--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
-	--log.foreground-tty true \
-	>"${LOG}" 2>&1 &
-disown
-for _ in $(seq 1 30); do
-	psql "${PSQL_CONN}" -c 'SELECT 1' >/dev/null 2>&1 && break
-	sleep 0.5
-done
+# Setup is skipped when the prior bench artifacts are already on disk
+# (parquet + native_db + serened data dir all present) -- the data
+# generation step is by far the slowest part of the run, so we cache it
+# and only redo it when the user explicitly asks for it.
+# Force a fresh build with PERF_REGEN=1.
+NEED_REGEN=0
+if [[ "${PERF_REGEN:-0}" == "1" ]]; then
+	echo "PERF_REGEN=1: regenerating parquet + native db + data dir"
+	NEED_REGEN=1
+elif [[ ! -f "${PARQUET_FILE}" ]] || [[ ! -f "${NATIVE_DB}" ]] ||
+	[[ ! -d "${SERENED_DATA_DIR}" ]]; then
+	echo "one or more of {parquet, native db, data dir} missing -- regenerating"
+	NEED_REGEN=1
+else
+	echo "reusing existing parquet (${PARQUET_FILE}), native db, and data dir"
+	echo "  (PERF_REGEN=1 to force a fresh build)"
+fi
 
-run_setup "generate_parquet" "${BUILD_THREADS}" "
+if [[ "${NEED_REGEN}" == "1" ]]; then
+	# --- 1. Generate the parquet file ------------------------------------
+	# Done on a transient serened that we throw away afterwards -- only the
+	# parquet file survives. This avoids landing the synthetic source data
+	# in the perf serened's rocksdb base store.
+	rm -rf "${SERENED_DATA_DIR}" ${RESULTS_DIR}/types_genparquet_data
+	rm -f "${NATIVE_DB}" "${NATIVE_DB}.wal" "${PARQUET_FILE}"
+
+	echo "generating ${PARQUET_FILE} (${N} rows) via temporary serened"
+	"${SERENED_BIN}" ${RESULTS_DIR}/types_genparquet_data \
+		--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
+		--log.foreground-tty true \
+		>"${LOG}" 2>&1 &
+	disown
+	for _ in $(seq 1 30); do
+		psql "${PSQL_CONN}" -c 'SELECT 1' >/dev/null 2>&1 && break
+		sleep 0.5
+	done
+
+	run_setup "generate_parquet" "${BUILD_THREADS}" "
 COPY (
   SELECT i AS pk,
          ((i * 3) % 200 - 100)::TINYINT AS i8,
@@ -131,9 +151,13 @@ COPY (
          'str-' || (i % 1024)::VARCHAR AS s,
          (i % 2 = 0) AS bool_col,
          [(i + 0) % 50, (i + 1) % 50, (i + 2) % 50]::INTEGER[3] AS arr_i32,
+         [(i + 0) % 50 + 0.5, (i + 1) % 50 + 0.5,
+          (i + 2) % 50 + 0.5]::DOUBLE[3] AS arr_f64,
          [(i + 0) % 30, (i + 1) % 30, (i + 2) % 30, (i + 3) % 30] AS lst_i32,
          ROW(i * 2, 'b-' || (i % 100)::VARCHAR)
            ::STRUCT(a INTEGER, b VARCHAR) AS struct_basic,
+         ROW((i * 0.5)::DOUBLE, 'b-' || (i % 100)::VARCHAR)
+           ::STRUCT(a DOUBLE, b VARCHAR) AS struct_f64,
          MAP {'k1': i, 'k2': i * 2, 'k3': i * 3} AS map_i32,
          [ROW('p1', i)::STRUCT(k VARCHAR, v INTEGER),
           ROW('p2', i * 2)::STRUCT(k VARCHAR, v INTEGER)] AS lst_struct,
@@ -145,42 +169,54 @@ COPY (
 ) TO '${PQ_SQL_PATH}' (FORMAT parquet);
 "
 
-killall -9 serened >/dev/null 2>&1 || true
-sleep 1
-PQ_SIZE=$(du -sb "${PARQUET_FILE}" | awk '{print $1}')
-human_pq=$(awk -v b="${PQ_SIZE}" 'BEGIN{split("B KB MB GB",u); i=1; while(b>=1024&&i<4){b/=1024;i++} printf "%.2f %s", b, u[i]}')
-echo "parquet file: ${PARQUET_FILE} (${human_pq})"
+	killall -9 serened >/dev/null 2>&1 || true
+	sleep 1
 
-# --- 2. Fresh serened for the actual benchmark -----------------------------
-rm -rf "${SERENED_DATA_DIR}" ${RESULTS_DIR}/types_genparquet_data
-echo "starting bench serened with data dir ${SERENED_DATA_DIR}"
-start_server
-trap "killall -9 serened >/dev/null 2>&1 || true" EXIT
+	# --- 2. Fresh serened for the actual benchmark -----------------------
+	rm -rf "${SERENED_DATA_DIR}" ${RESULTS_DIR}/types_genparquet_data
+	echo "starting bench serened with data dir ${SERENED_DATA_DIR}"
+	start_server
+	trap "killall -9 serened >/dev/null 2>&1 || true" EXIT
 
-NDB_SQL_PATH=$(printf '%s' "${NATIVE_DB}" | sed "s/'/''/g")
-run_setup "attach_native_db" "${BUILD_THREADS}" "
+	run_setup "attach_native_db" "${BUILD_THREADS}" "
 ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
 SET search_path TO public, native_db.main;
 "
 
-run_sql "create_view" "${BUILD_THREADS}" "
+	run_sql "create_view" "${BUILD_THREADS}" "
 CREATE VIEW bench_view AS SELECT * FROM read_parquet('${PQ_SQL_PATH}');
 "
 
-run_sql "create_native_table" "${BUILD_THREADS}" "
+	run_sql "create_native_table" "${BUILD_THREADS}" "
 CREATE TABLE native_db.main.bench_native AS
 SELECT * FROM read_parquet('${PQ_SQL_PATH}');
 "
 
-run_setup "checkpoint_native_db" "${BUILD_THREADS}" "CHECKPOINT native_db;"
+	run_setup "checkpoint_native_db" "${BUILD_THREADS}" "CHECKPOINT native_db;"
 
-run_sql "create_index" "${BUILD_THREADS}" "
+	run_sql "create_index" "${BUILD_THREADS}" "
 CREATE INDEX bench_idx ON bench_view USING inverted()
 INCLUDE (
   i8, i16, i32, i64, f32, f64, s, bool_col,
-  arr_i32, lst_i32, struct_basic, map_i32, lst_struct, deep
+  arr_i32, arr_f64, lst_i32, struct_basic, struct_f64,
+  map_i32, lst_struct, deep
 );
 "
+else
+	# --- 2b. Reuse the existing data dir / native db ---------------------
+	echo "starting bench serened with data dir ${SERENED_DATA_DIR}"
+	start_server
+	trap "killall -9 serened >/dev/null 2>&1 || true" EXIT
+
+	run_setup "attach_native_db" "${BUILD_THREADS}" "
+ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
+SET search_path TO public, native_db.main;
+"
+fi
+
+PQ_SIZE=$(du -sb "${PARQUET_FILE}" | awk '{print $1}')
+human_pq=$(awk -v b="${PQ_SIZE}" 'BEGIN{split("B KB MB GB",u); i=1; while(b>=1024&&i<4){b/=1024;i++} printf "%.2f %s", b, u[i]}')
+echo "parquet file: ${PARQUET_FILE} (${human_pq})"
 
 # --- 3. Per-type benchmarks ------------------------------------------------
 # Each pair runs the same aggregate against the cs index and the native
@@ -204,9 +240,13 @@ QUERIES=(
 	"f64|SUM(f64)"
 	"varchar|SUM(length(s))"
 	"bool|SUM(CASE WHEN bool_col THEN 1 ELSE 0 END)"
+	"boolCast|SUM(bool_col::INTEGER)"
+	"boolFilt|COUNT(*) FILTER (WHERE bool_col)"
 	"array|SUM(arr_i32[1] + arr_i32[2] + arr_i32[3])"
+	"arrayF|SUM(arr_f64[1] + arr_f64[2] + arr_f64[3])"
 	"list|SUM(list_sum(lst_i32))"
 	"struct|SUM(struct_basic.a) + SUM(length(struct_basic.b))"
+	"structF|SUM(struct_f64.a) + SUM(length(struct_f64.b))"
 	"map|SUM(list_sum(map_values(map_i32)))"
 	"lstStr|SUM(list_sum(list_transform(lst_struct, p -> p.v)))"
 	"deep|SUM(length(deep.name)) + SUM(list_sum(list_transform(deep.vals, p -> p.v)))"
@@ -217,24 +257,21 @@ QUERIES=(
 # - PERF_DROP_CACHES unset (default): "cold" means 1st-touch within the
 #   same session.  Captures per-segment open + per-codec init cost (the
 #   hot pass amortises both); does NOT capture OS-cache fetch cost
-#   because the .cs files are still in page cache from CREATE INDEX.
+#   because the .cs files are still in page cache from CREATE INDEX,
+#   AND DuckDB's BufferManager keeps the native side warm in process
+#   memory across the drop.
 #
-# - PERF_DROP_CACHES=1: true cold.  Before every query we run
-#     sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
-#   while serened keeps running -- drop_caches=3 evicts clean
-#   file-backed pages even when they're mmapped, so serened's next
-#   access page-faults and re-reads from disk.  We deliberately do NOT
-#   restart serened: view-backed `CREATE INDEX IF NOT EXISTS` after
-#   restart appends fresh segments to the existing index name (the
-#   rocksdb catalog row survives but the alias doesn't, and the engine
-#   re-emits .cs blocks), which doubles the indexed data and the SUM
-#   results.  No-restart drop is the only clean option until the
-#   view-backed-index re-bind is fixed upstream.
+# - PERF_DROP_CACHES=1: true cold.  Before each query we kill serened,
+#   drop the OS page cache, restart, and re-attach native_db.  The
+#   restart drops both serened's BlockHandles AND DuckDB's BufferManager
+#   state for the native side, so both sides re-read from disk on the
+#   first query.  The view-backed `bench_idx` alias is reloaded by
+#   serened on startup (fixed in #662) so no CREATE INDEX is needed and
+#   no data duplication occurs.
 #
-#   sudo runs *only* the drop_caches command, not anything else; sudo
-#   credentials are cached once via `sudo -v` at the start so the bench
-#   runs uninterrupted afterwards.  Other files produced by this script
-#   stay owned by the invoking user.
+#   sudo runs *only* the drop_caches command.  Credentials are cached
+#   once via `sudo -v` at the start so the bench runs uninterrupted.
+#   Other files this script produces stay owned by the invoking user.
 
 drop_os_cache_with_sudo() {
 	# Flush dirty pages first so drop_caches=3 can free clean copies
@@ -244,6 +281,26 @@ drop_os_cache_with_sudo() {
 		echo "ERROR: sudo for drop_caches expired; run 'sudo -v' and retry" >&2
 		return 1
 	fi
+}
+
+reattach_native_db() {
+	run_setup "cold_reattach_native_db" "${BUILD_THREADS}" "
+ATTACH IF NOT EXISTS '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
+SET search_path TO public, native_db.main;
+"
+}
+
+cycle_cold() {
+	# Server has to exit so its .cs mmaps release the pages before
+	# drop_caches can free them.
+	killall -9 serened >/dev/null 2>&1 || true
+	for _ in $(seq 1 30); do
+		pgrep -f "${SERENED_BIN}" >/dev/null || break
+		sleep 0.2
+	done
+	drop_os_cache_with_sudo || return 1
+	start_server
+	reattach_native_db
 }
 
 # Mode A: same-session cold + warmup + hot
@@ -256,12 +313,16 @@ run_pass_same_session() {
 	done
 }
 
-# Mode B: drop the OS page cache before each query (no server
-# restart), then run cold + hot.
+# Mode B: restart-and-drop-OS-cache before each query, then cold + hot.
+# Each cycle: kill serened -> drop_caches -> restart -> reattach native.
+# This clears DuckDB BufferManager too so native isn't unfairly warm.
 run_pass_drop_caches() {
 	for q in "${QUERIES[@]}"; do
 		local label="${q%%|*}" expr="${q#*|}"
-		drop_os_cache_with_sudo || return 1
+		cycle_cold || {
+			echo "ERROR: drop_caches cycle failed" >&2
+			return 1
+		}
 		bench_pair_idx "cold" "${label}" "${expr}"
 		bench_pair_idx "hot" "${label}" "${expr}"
 	done
@@ -285,11 +346,11 @@ if [[ "${PERF_DROP_CACHES:-0}" == "1" ]]; then
 	) &
 	SUDO_REFRESH_PID=$!
 	trap "kill ${SUDO_REFRESH_PID} 2>/dev/null; killall -9 serened >/dev/null 2>&1 || true" EXIT
-	echo "================ TRUE-COLD / HOT PASS (drop_caches) ================"
+	echo "================ TRUE-COLD / HOT PASS (restart + drop_caches) ================"
 	run_pass_drop_caches
 else
 	echo "================ COLD / HOT PASS (same-session) ================"
-	echo "rerun with PERF_DROP_CACHES=1 for drop-OS-cache cold timings"
+	echo "rerun with PERF_DROP_CACHES=1 for restart+drop-OS-cache cold timings"
 	run_pass_same_session
 fi
 
@@ -357,8 +418,8 @@ ratio() {
 	printf "%-10s %12s %12s %8s | %12s %12s %8s\n" \
 		"----------" "------------" "------------" "--------" \
 		"------------" "------------" "--------"
-	for q in count i8 i16 i32 i64 f32 f64 varchar bool array list struct map \
-		lstStr deep; do
+	for q in count i8 i16 i32 i64 f32 f64 varchar bool boolCast boolFilt \
+		array arrayF list struct structF map lstStr deep; do
 		ci="${TIMINGS[cold_${q}_indexed]:-}"
 		cn="${TIMINGS[cold_${q}_native]:-}"
 		hi="${TIMINGS[hot_${q}_indexed]:-}"

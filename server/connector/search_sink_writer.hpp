@@ -193,8 +193,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   void WriteImpl(std::span<const rocksdb::Slice> cell_slices,
                  std::string_view full_key);
 
-  bool SwitchColumnImpl(const duckdb::LogicalType& type, bool have_nulls,
-                        catalog::Column::Id column_id);
+  bool SwitchColumnImpl(const ColumnDescriptor& col);
 
   // Routes the entire input column Vector into irs::columnstore::ColumnWriter
   // for the column switched to by the prior SwitchColumnImpl, when the

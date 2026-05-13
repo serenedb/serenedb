@@ -40,6 +40,16 @@ class Transaction : public Config {
  public:
   using Config::Config;
 
+#ifdef SDB_GTEST
+  // Test-only: wrap a pre-built rocksdb::Transaction so unit tests can use
+  // query::Transaction without spinning up the storage engine.
+  Transaction(duckdb::ClientContext& client_ctx,
+              std::unique_ptr<rocksdb::Transaction> rocksdb_txn) noexcept
+    : Config{client_ctx} {
+    _rocksdb_transaction = std::move(rocksdb_txn);
+  }
+#endif
+
 #ifdef SDB_DEV
   virtual ~Transaction() {
     // Search transactions have implicit commit in destructor (historical
@@ -78,6 +88,13 @@ class Transaction : public Config {
   rocksdb::Transaction& GetRocksDBTransaction() const noexcept {
     SDB_ASSERT(_rocksdb_transaction);
     return *_rocksdb_transaction;
+  }
+
+  // Counts PutLogData blobs (marker-only writes) so the commit gate sees
+  // them as work -- rocksdb's own counters ignore PutLogData.
+  void RegisterLogDataMarker() noexcept { ++_num_log_data_markers; }
+  uint64_t GetNumLogDataMarkers() const noexcept {
+    return _num_log_data_markers;
   }
 
   const rocksdb::Snapshot& GetRocksDBSnapshot() const noexcept {
@@ -161,6 +178,7 @@ class Transaction : public Config {
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
+  uint64_t _num_log_data_markers = 0;
 };
 
 }  // namespace sdb::query

@@ -47,32 +47,57 @@ Additional build presets are defined in `CMakePresets.json`:
 ### Launch
 
 ```bash
-./build/bin/serened ./build_dir --server.endpoint='pgsql+tcp://0.0.0.0:7890'
+./build/bin/serened ./build_data --server.endpoint='pgsql+tcp://0.0.0.0:7890'
 ```
 
 Connect via psql: `psql -h localhost -p 7890 -U postgres`
 
 ### Test
 
-#### SQL logic tests
+The test tree is split by what runs the test and what it covers:
 
-Requires a running SereneDB instance and Rust/Cargo installed.
+- `tests/sqllogic/any/...` -- sqllogic against any engine (PG and SereneDB); use for behaviour we expect from both.
+- `tests/sqllogic/sdb/...` -- sqllogic against SereneDB only (SereneDB-specific syntax / extensions).
+- `tests/sqllogic/pg/...` -- sqllogic against Postgres only (used to validate the spec).
+- `tests/sqllogic/recovery/...` -- sqllogic with crash injection (`SET sdb_faults = '...'`) plus a restart; each test runs against a fresh serened + datadir.
+- `tests/server/<area>/...`, `tests/libs/<lib>/...` -- gtest unit tests; use for isolated C++ logic where a sqllogic test would be awkward (library classes / pure functions / hard-to-reproduce bugs).
+- `tests/bench/micro/...` -- microbenchmarks for performance claims.
+
+When a change needs a test:
+
+- Bug fix: always, unless you can argue the bug is uncoverable. Crash / recovery bugs go under `tests/sqllogic/recovery/`.
+- New feature / behaviour change: sqllogic test in the right subtree above. Add a unit test too if there's isolated C++ logic worth pinning.
+- CMake-only changes: rely on CI.
+- Doc-only changes live in a separate repo and don't apply here.
 
 ```bash
-# Run all tests
+# All sqllogic tests
 ./tests/sqllogic/run.sh --single-port 7890 --debug true
 
-# Run specific tests
+# Specific tests
 ./tests/sqllogic/run.sh --single-port 7890 --test 'tests/sqllogic/any/pg/simple/*.test' --debug true
+
+# Recovery tests (auto-restarts serened on injected crashes; needs build/bin/serened)
+./tests/sqllogic/run_recovery_tests.sh --runner ../../third_party/sqllogictest-rs
 ```
 
-#### C++ unit tests
+C++ unit tests:
 
 ```bash
 ./build/bin/iresearch-tests "--gtest_filter=*PhraseFilterTestCase*"
 ./build/bin/serenedb-tests_basics "--gtest_filter=*VPackLoadInspectorTest*"
 ./build/bin/serenedb-tests_connector "--gtest_filter=*DataSourceWithSearchTest*"
 ```
+
+## Branching, commits, PRs
+
+- **Branch from `main`**, one focused change per PR.
+- **Branch name:** `<author>/<topic>` (e.g. `mbkkt/fix-view-indexes-recovery`). Topic is free-form.
+- **Conventional commit prefix** in the PR title: `feat:`, `fix:`, `perf:` (most common), or one of `refactor:`, `chore:`, `docs:`, `test:`, `ci:`, `build:`, `style:`, `misc:`. Don't invent new ones -- if none fit, ask.
+- **Squash-merge:** the PR title is the final commit subject and the PR description is the body. Branch-internal commit messages are discarded, so they can be anything.
+  - Exception: if your branch has exactly one commit and you let GitHub open the PR for you, GitHub will pre-fill the PR title and description from that commit -- so in that case keep the commit message PR-ready.
+- **Pre-commit hooks** run as a PR check. You don't have to install them locally; if you want to check before pushing, run `pre-commit run --all-files`.
+- **CI must pass** and one maintainer must approve before merge.
 
 ## VSCode Setup
 
@@ -198,7 +223,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Scop
 - Trailing comma required for multi-line initializer lists
 - Forbidden: `Type var{};` and `Type var = {};` -- just omit for default construction
 - Prefer `auto` with factory functions: `auto x = MakeFoo()`
-- `const` optional for variables, strongly recommended for methods/references/pointees
+- `const` strongly recommended on methods, references, and pointees; on variables it's the author's call
 - Prefer `emplace`-like functions
 - Prefer `const auto*` over plain `auto` for pointers
 
@@ -225,50 +250,23 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 ### Comments
 
-- No license headers in code
-- No decorative comments (`/*****/`, `///////////`)
-- Simple `//` comments
-- No doxygen for now
-- Write a comment only when it carries information the code itself cannot:
-  a hidden constraint, an invariant, a workaround for a specific bug,
-  a deadline, or the *why* behind a non-obvious shape. If the comment is
-  derivable by reading the next 5-10 lines, drop it -- it adds no
-  information today and becomes a lie the next time someone edits the
-  code. A function or struct may benefit from a one-line intro stating
-  *why it exists* (the role it plays, a constraint that shaped it). A
-  comment describing *what the body does* is dead weight; the body
-  already says it.
-- **Do not justify your changes in the source.** The PR description
-  and commit message are for justification ("we used to do X, we now
-  do Y because..."). The source file is for the *current* code, read
-  by someone who has never seen the prior version. Specifically: when
-  you replace one approach with another, do not leave a comment
-  explaining why the new approach beats the old one. The old one is
-  gone; the strawman reader you're writing to ("someone who would
-  have written the naive version") does not exist as a reader of this
-  file. Examples of comments that should NOT be checked in:
-  - "Pack the row group once and emit a single WriteBytes; avoids
-    row_count separate IndexOutput calls" -- justifies the shape
-    against a deleted prior implementation.
-  - "Walk backward then forward; the old forward scan was O(N^2)" --
-    same.
-  - "Reuse one Vector across batches" -- the field name `pk_vec` and
-    its single assignment site already say "reused". Justification of
-    why reuse is correct (e.g. "Fetch overwrites the first N entries
-    so prior contents don't leak") may earn its keep, but only if
-    that contract isn't visible from the caller's nearby code.
-  Test before keeping: would this comment make sense to someone
-  reading this file fresh tomorrow, with no awareness that the code
-  ever looked different? If no, delete.
+- Every file needs a license header; pre-commit adds/checks it, so don't write one by hand. (The license block is the *only* place the banner style is allowed.)
+- Elsewhere, plain `//` comments only. No doxygen, no decorative separators of any flavour -- `// ---`, `/*** ... ***/`, `////////`, `//===`, etc. They're noise in normal code and especially bad as section dividers.
+- Comment only what the code can't say itself: a hidden constraint, an
+  invariant, a workaround for a specific bug, or the *why* behind a
+  non-obvious shape. A function or struct can earn a one-line intro
+  stating its role. Don't describe *what* the body does -- the body
+  already does.
+- Don't justify changes in the source. "We used to do X, we now do Y
+  because..." belongs in the PR description / commit message. The source
+  is read by someone who has never seen the prior version, so describe
+  the current contract positively, not relative to what it replaced.
 - Asserts are contracts; the expression is the documentation. Skip the
-  message when it would just translate the expression into English --
-  `SDB_ASSERT(i < n, "i out of range")` adds nothing over
-  `SDB_ASSERT(i < n)`. Add a message only when the failure scenario or
-  meaning isn't visible in the expression: a domain rule
-  (`"schema evolution between merge sources not supported"`), an unusual
-  comparison shape (`"norm running sum overflow"` for `a + b >= a`), or
-  a design constraint the comparison enforces. Bare expressions plus
-  function/file/line in the failure trace are usually enough.
+  message when it would just translate the expression into English
+  (`SDB_ASSERT(i < n)` is enough). Add one only when the failure scenario
+  isn't visible in the expression: a domain rule, an unusual comparison
+  shape (e.g. `"running sum overflow"` for `a + b >= a`), or a design
+  constraint the comparison enforces.
 
 ### Error Handling
 
@@ -313,7 +311,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - `absl::btree_*` over `std::set`/`std::map` when appropriate
 - `std::span<const T>` over `std::initializer_list<T>` in parameters
 - `magic_enum` for enum names
-- `absl::c_any_of` etc. over `std::any_of(begin, end)`; `std::ranges` as fallback or in case when there's no `absl::c_*` alternative, e.g. std::ranges::sort(range, {}, proj)
+- `absl::c_any_of` (etc.) over `std::any_of(begin, end)`. Fall back to `std::ranges` when no `absl::c_*` exists (e.g. `std::ranges::sort(range, {}, proj)`).
 - Prefer imperative loops over ranges pipelines
 - String operations: `absl::StrCat`, `absl::Substitute`, `absl::StrJoin`, `absl::StrSplit`
 - No `fmt`/`printf` unless necessary; use `absl::SPrintf` or `std::format` (Velox code)
@@ -336,22 +334,21 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Other functions: only mark `noexcept` when truly noexcept or required for correctness
 - Don't add `noexcept` speculatively -- it's a contract that's hard to remove later
 
-### Style
+### Idioms
 
-- Treat raw pointers, smart pointers, and `std::optional` uniformly via their implicit bool conversion and `operator*`. This is a *strict* rule -- not just for `if` conditions but **everywhere** a boolean is expected: ternaries, function arguments, `SDB_ASSERT` / `SDB_ENSURE` / `SDB_VERIFY` predicates, `&&`/`||` chains, `static_assert`, `return` expressions, etc. Concretely:
-  - `if (p)` / `if (!p)` -- never `if (p != nullptr)` / `if (p == nullptr)`.
-  - `if (opt)` -- never `if (opt.has_value())`.
-  - `*p` / `*opt` -- never `opt.value()`.
-  - `SDB_ENSURE(p, ...)` -- never `SDB_ENSURE(p != nullptr, ...)`.
-  - `return p ? p->foo() : default_value;` -- never `return p != nullptr ? ...`.
-  - Inside complex predicates: `SDB_ENSURE(a && b && c, ...)` where each of `a`/`b`/`c` may be a pointer or optional.
-
-  Motivation:
-  - Smart pointers (`unique_ptr` / `shared_ptr`) define `explicit operator bool` whose only meaning is null-check, so `if (sp)` is the established idiom. Raw pointers behave the same way under contextual conversion to bool; using `!= nullptr` there forces the reader to context-switch between two styles for the same semantic test. Keep them uniform.
-  - `opt.value()` is `*opt` *plus* a runtime null-check that throws `bad_optional_access`. Once you've already confirmed the optional is engaged (or you'd use `if (opt)` first), the extra branch is dead weight; `*opt` is the right tool and matches `*ptr` on the pointer side.
-- Never write explicit conversion `std::string` until code doesn't complies without it, e.g. don't write `.contains(std::string{some_string_view})`
-- Avoid long pointless comments -- they rot fast and confuse the reader once they stop matching the code. Comment WHY, never WHAT. Most code reads fine without comments at all; reach for a comment only when reading the code alone would leave a future maintainer guessing about *why* this shape was chosen. See the Comments section above for the same rule applied to asserts.
-- Never add includes until compiler/clangd ask you.
+- Treat raw pointers, smart pointers, and `std::optional` uniformly via
+  contextual `bool` and `operator*`. Applies everywhere a `bool` is
+  expected -- `if` / ternary / `SDB_ASSERT` / `&&` / `||` / `return`, not
+  just `if`:
+  - `if (p)` / `if (!p)`, not `if (p != nullptr)`.
+  - `if (opt)`, not `if (opt.has_value())`.
+  - `*p` / `*opt`, not `opt.value()` (`.value()` adds a redundant throw
+    once you've verified the optional is engaged).
+- Don't add an explicit `std::string{...}` conversion until the code
+  fails to compile without it (e.g. `set.contains(sv)`, not
+  `set.contains(std::string{sv})`).
+- Don't add includes speculatively -- only when clangd or the compiler
+  asks for them.
 
 ### Memory and Ownership
 
@@ -370,19 +367,23 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Prefer contiguous memory (vectors, arrays) over node-based containers (lists, maps)
 - Measure before optimizing -- don't guess
 - Binary size matters: excessive inlining/templates hurt icache and build times
-- Use microbenchmarks in `tests/bench/micro/` to validate performance claims. Uses Google Benchmark (`benchmark` library). Add new benchmarks with `add_bench(name)` in `tests/bench/micro/CMakeLists.txt`, build with `ninja serenedb-bench-micro`, run individual benchmarks from `build/bin/serenedb-bench-micro-*`
-- Use the `bench` cmake preset for production-like performance numbers
+- Validate performance claims with microbenchmarks under `tests/bench/micro/` (Google Benchmark). Register one with `add_bench(<name>)` in that directory's `CMakeLists.txt`, build with `ninja serenedb-bench-micro`, run from `build/bin/serenedb-bench-micro-<name>`.
+- Use the `bench` cmake preset for production-like numbers.
+- A microbench fits when the change is a few well-scoped functions. When the
+  change is broader (a whole query path, an end-to-end pipeline, anything that
+  doesn't sit neatly inside one fixture), drive a small standalone repro script
+  through `perf stat` / `perf record` instead -- it locates the hot spot
+  without forcing the change into a microbench shape that doesn't fit.
 
 ### Testing
 
-- Before claiming something a bug reproduce it with test.
-- Prefer sqllogictests for reproducing bugs, with gtest it's possible to reproduce not bug but bad designed API
-- Prefer to use explicit contract with `SDB_ASSERT` instead of comments, try to avoid `SDB_ENSURE` or `SDB_VERIFY` if code really complciated and it's difficult to understand gurantees.
-- Framework: Google Test (gtest)
-- `TEST()` for standalone tests, `TEST_F()` for tests sharing a fixture, `TEST_P()` for parameterized tests
-- Async tests: use `yaclib::WaitGroup` for synchronization
-- Test files mirror source structure: `server/foo/bar.cpp` -> `tests/server/foo/bar_test.cpp`
-- Test names should describe behavior, not implementation
+- gtest framework: `TEST()` for standalone, `TEST_F()` for shared fixtures, `TEST_P()` for parameterized.
+- Async tests use `yaclib::WaitGroup` for synchronization.
+- Test files mirror source structure: `server/foo/bar.cpp` -> `tests/server/foo/bar_test.cpp`.
+- Test names describe behavior, not implementation.
+- Prefer an explicit `SDB_ASSERT` contract over a comment about an invariant; reach for `SDB_ENSURE` / `SDB_VERIFY` only when the guarantee is genuinely hard to follow locally.
+
+(For when each test type applies and where new tests go, see the top-level **Test** section.)
 
 ### Third-Party Dependencies
 
@@ -403,14 +404,6 @@ git checkout <your-branch>
 ```
 
 This configures the submodule to fetch all branches (persists for your local clone) and lets you work with it like a normal repo -- `git push`, `git pull`, `git branch`, etc. will all work as expected.
-
-### PR Workflow
-
-- Branch from `main`, keep PRs focused on a single change
-- CI must pass before merge
-- At least one maintainer approval required
-- PRs are squash-merged -- the PR title becomes the commit message, so write it as a [conventional commit](https://www.conventionalcommits.org/) (e.g. `feat: add vector index support`, `fix: handle null in aggregation`)
-- PR description is included in the commit body -- use it for context, not the title
 
 ---
 

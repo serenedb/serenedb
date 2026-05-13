@@ -51,18 +51,14 @@ struct SegmentMeta;
 
 }  // namespace irs
 namespace sdb::connector {
-
-template<typename T>
-concept DocIdRange = requires(const T& t, size_t i) {
-  { t.size() } -> std::convertible_to<size_t>;
-  { t[i] } -> std::convertible_to<uint64_t>;
-};
-
 namespace cs_internal {
 
-// Contiguous integer range [start, start+count) shaped as a DocIdRange.
-// Used to recurse into ARRAY element ranges and LIST per-row element
-// ranges where the doc-id range is purely arithmetic from the parent row.
+// Contiguous integer range [start, start+count). Used to recurse into
+// ARRAY element ranges and LIST per-row element ranges where the doc-id
+// range is purely arithmetic from the parent row. Satisfies the implicit
+// "doc-id range" duck-type (`.size()` + `operator[](size_t) -> uint64_t`)
+// required by MaterializeNode below; the constraint is enforced at
+// instantiation, not via a concept.
 struct IotaRange {
   using contiguous_range_tag = void;
   uint64_t start;
@@ -70,7 +66,6 @@ struct IotaRange {
   constexpr size_t size() const noexcept { return static_cast<size_t>(count); }
   constexpr uint64_t operator[](size_t i) const noexcept { return start + i; }
 };
-static_assert(DocIdRange<IotaRange>);
 
 // Recursive scan state mirrored after duckdb::ColumnScanState's
 // child_states. Lives on the binding and persists across batches so the
@@ -124,10 +119,11 @@ inline std::unique_ptr<MaterializerNodeState> MakeMaterializerNodeState(
 // LIST length+child / STRUCT fields). The state argument keeps cursors
 // alive across batches so the same ColumnSegment objects (and their
 // BufferManager-pinned pages) are reused without re-reading the file.
-template<DocIdRange DocIds>
+template<typename DocIds>
 void MaterializeNode(const irs::columnstore::ColumnReader& reader,
                      MaterializerNodeState& state, const DocIds& doc_ids,
-                     duckdb::Vector& out_vec, duckdb::idx_t output_start) {
+                     duckdb::Vector& out_vec, duckdb::idx_t output_start,
+                     bool may_use_entire = false) {
   if (doc_ids.size() == 0) {
     return;
   }
@@ -158,7 +154,7 @@ void MaterializeNode(const irs::columnstore::ColumnReader& reader,
           static_cast<duckdb::idx_t>((output_start + i) * array_size);
         MaterializeNode(*child, child_state,
                         IotaRange{elem_start, run * array_size}, child_out,
-                        child_out_start);
+                        child_out_start, /*may_use_entire=*/false);
         i += run;
       }
       return;
@@ -206,7 +202,7 @@ void MaterializeNode(const irs::columnstore::ColumnReader& reader,
           duckdb::ListVector::Reserve(out_vec, child_run_start + total_len);
           MaterializeNode(*child, child_state,
                           IotaRange{first_start, total_len}, child_out,
-                          child_run_start);
+                          child_run_start, /*may_use_entire=*/false);
           duckdb::ListVector::SetListSize(out_vec, child_run_start + total_len);
         }
         i += run;
@@ -221,7 +217,7 @@ void MaterializeNode(const irs::columnstore::ColumnReader& reader,
       SDB_ASSERT(entries.size() == reader.StructFieldCount());
       for (size_t fi = 0; fi < entries.size(); ++fi) {
         MaterializeNode(reader.StructField(fi), *state.children[fi], doc_ids,
-                        entries[fi], output_start);
+                        entries[fi], output_start, may_use_entire);
       }
       return;
     }
@@ -233,22 +229,13 @@ void MaterializeNode(const irs::columnstore::ColumnReader& reader,
         state.data_scan.emplace(reader, /*validity_side=*/false);
       }
       ColumnReader::ScanRowsBatched(*state.data_scan, doc_ids, out_vec,
-                                    output_start);
+                                    output_start, may_use_entire);
       return;
     }
   }
 }
 
 }  // namespace cs_internal
-
-// Materialises `doc_ids` from `reader` into out_vec[output_start..].
-template<DocIdRange DocIds>
-void MaterializeColumnRange(const irs::columnstore::ColumnReader& reader,
-                            cs_internal::MaterializerNodeState& state,
-                            const DocIds& doc_ids, duckdb::Vector& out_vec,
-                            duckdb::idx_t output_start) {
-  cs_internal::MaterializeNode(reader, state, doc_ids, out_vec, output_start);
-}
 
 // One instance per (segment, projection set) for INCLUDEd columns flagged
 // store_values=true. Non-INCLUDEd columns fall through to IndexSource.

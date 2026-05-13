@@ -32,6 +32,7 @@
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/indexonly_marker.h"
 #include "connector/key_utils.hpp"
 #include "pg/connection_context.h"
 #include "rocksdb/utilities/transaction_db.h"
@@ -58,6 +59,13 @@ struct SereneDBDeleteGlobalState : public duckdb::GlobalSinkState {
 
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
+  // sdb-side transaction; the IndexOnly writer registers markers on it.
+  query::Transaction* sdb_txn = nullptr;
+
+  // True iff some inverted index on the table is built exclusively over
+  // IndexOnly columns and would not see the row delete through normal
+  // WAL replay. Drives the per-row [RD] marker emission.
+  bool needs_rd_markers = false;
 
   // Index writers
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
@@ -134,6 +142,15 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
   }
 
   state->txn = &conn_ctx.GetRocksDBTransaction();
+  state->sdb_txn = &conn_ctx;
+
+  // Reused by both the marker-need check and the indexed-column setup.
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto indexes = snapshot->GetIndexesByRelation(state->table_id);
+
+  // Decide whether row deletes need [RD] WAL markers; see
+  // NeedsRowDeleteMarkers for the precise rule.
+  state->needs_rd_markers = NeedsRowDeleteMarkers(indexes, columns);
 
   // Build column-ID-to-chunk-position mapping for index writers.
   // The scan output has: [..., pk_cols, indexed_cols, rowid].
@@ -155,8 +172,6 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     // We need to figure out which column IDs correspond to _indexed_col_indices
     // They're the non-PK indexed columns in sorted order
     std::vector<catalog::Column::Id> non_pk_idx_col_ids;
-    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-    auto indexes = snapshot->GetIndexesByRelation(state->table_id);
     containers::FlatHashSet<size_t> pk_table_indices;
     for (auto pk_id : pk_col_ids) {
       for (size_t i = 0; i < columns.size(); ++i) {
@@ -258,6 +273,12 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
       if (!status.ok()) {
         SDB_THROW(ERROR_INTERNAL, "RocksDB delete failed: ", status.ToString());
       }
+    }
+
+    // Row-level marker for indexes that normal WAL replay would miss; see
+    // `needs_rd_markers` in the gstate definition.
+    if (gstate.needs_rd_markers) {
+      indexonly_marker::EmitRD(*gstate.sdb_txn, key_buffer);
     }
   }
 

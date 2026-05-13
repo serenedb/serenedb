@@ -81,6 +81,7 @@ void SereneDBPhysicalSSTInsert::SetupSSTState(SSTInsertGlobalState& state,
       .id = col.id,
       .duckdb_type = col.type,
       .input_col_idx = input_idx,
+      .store_mode = col.store_mode,
     });
     ++input_idx;
   }
@@ -196,9 +197,10 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
     }
 
     DuckDBColumnSerializer::SstWriter sst_writer{gstate.writers[col].get()};
-    gstate.serializer->WriteColumn(sst_writer, chunk.data[meta.input_col_idx],
-                                   meta.duckdb_type, num_rows, gstate.row_keys,
-                                   {});
+    gstate.serializer->WriteColumn(
+      sst_writer, chunk.data[meta.input_col_idx], num_rows, gstate.row_keys, {},
+      ColumnDescriptor{meta.id, meta.store_mode, meta.duckdb_type,
+                       /*have_nulls=*/true});
   }
 
   // Update indexes via transaction path
@@ -207,11 +209,16 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
   }
 
   for (const auto& meta : gstate.columns) {
+    const ColumnDescriptor desc{meta.id, meta.store_mode, meta.duckdb_type,
+                                /*have_nulls=*/true};
     gstate.active_writers.clear();
     auto& vec = chunk.data[meta.input_col_idx];
     for (auto& writer : gstate.index_writers) {
-      const bool active = writer->SwitchColumn(meta.duckdb_type,
-                                               /*have_nulls=*/true, meta.id);
+      const bool active = writer->SwitchColumn(desc);
+      // Hand the whole typed vector to the columnstore-backed sink so
+      // store_values columns absorb the batch as a Vector (per-cell
+      // Write below still drives the inverted-index posting list).
+      // Default impl is a no-op for writers that don't have a cs side.
       writer->WriteFullColumn(vec, num_rows);
       if (active) {
         gstate.active_writers.push_back(writer.get());
@@ -228,8 +235,8 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
 
     DuckDBColumnSerializer::SstWriter noop{nullptr};
     gstate.serializer->WriteColumn(noop, chunk.data[meta.input_col_idx],
-                                   meta.duckdb_type, num_rows, gstate.row_keys,
-                                   gstate.active_writers);
+                                   num_rows, gstate.row_keys,
+                                   gstate.active_writers, desc);
   }
 
   for (auto& writer : gstate.index_writers) {

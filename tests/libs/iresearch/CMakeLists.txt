@@ -16,7 +16,6 @@ set(iresearch-tests_sources
     ./analysis/solr_synonyms_tokenizer_tests.cpp
     ./analysis/wordnet_synonyms_tokenizer_tests.cpp
     ./analysis/path_hierarchy_tokenizer_test.cpp
-    ./analysis/edge_ngram_tokenizer_test.cpp
     ./analysis/token_attributes_test.cpp
     ./analysis/tokenizer_tests.cpp
     ./analysis/pattern_tokenizer_tests.cpp

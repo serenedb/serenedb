@@ -1254,7 +1254,7 @@ VACUUM (UPDATE_INDEXES) t_merge;
 
 
 statement ok
-VACUUM (compact_indexes) t_merge
+VACUUM (compact_indexes) t_merge;
 
 
 query

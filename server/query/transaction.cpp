@@ -107,11 +107,6 @@ Result Transaction::Commit() {
     SDB_IF_FAILURE("crash_before_rocksdb_commit") { SDB_IMMEDIATE_ABORT(); }
     auto status = _rocksdb_transaction->Commit();
     SDB_IF_FAILURE("crash_after_rocksdb_commit") { SDB_IMMEDIATE_ABORT(); }
-#ifdef SDB_FAULT_INJECTION
-    if (_crash_after_rocksdb_commit) {
-      SDB_IMMEDIATE_ABORT();
-    }
-#endif
 
     if (!status.ok()) {
       return {ERROR_INTERNAL,

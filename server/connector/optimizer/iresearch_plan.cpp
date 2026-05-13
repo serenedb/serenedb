@@ -61,6 +61,7 @@
 #include "connector/optimizer/flatten_projection_ids.h"
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_filter_printer.hpp"
+#include "connector/search_sink_writer.hpp"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_shard.h"
@@ -322,11 +323,10 @@ struct SearchColumnContext {
   containers::FlatHashMap<catalog::Column::Id, duckdb::LogicalType>
     column_type_by_id;
   containers::FlatHashSet<catalog::Column::Id> indexed_column_ids;
-  std::function<catalog::FieldTokenizer(catalog::Column::Id)>
-    tokenizer_provider;
-  std::function<std::optional<catalog::FieldTokenizer>(catalog::Column::Id,
-                                                       std::string_view)>
-    expr_tokenizer_provider;
+  containers::FlatHashSet<std::pair<catalog::Column::Id, std::string_view>>
+    indexed_expressions;
+  connector::ColumnTokenizerProvider tokenizer_provider;
+  connector::ExpressionTokenizerProvider expr_tokenizer_provider;
 };
 
 connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
@@ -379,15 +379,14 @@ connector::ExpressionGetter MakeJsonPathGetter(SearchColumnContext& ctx,
     auto normalized = connector::NormalizeBoundExpression(
       path_expr, table_id, ctx.projected_column_ids, *ctx.client_context);
     auto serialized = connector::SerializeBoundExpression(*normalized);
-    auto tokenizer = ctx.expr_tokenizer_provider(col_id, serialized);
-    if (!tokenizer) {
+    if (!ctx.indexed_expressions.contains({col_id, serialized})) {
       return std::nullopt;
     }
     connector::SearchColumnInfo info;
     info.column_id = col_id;
     info.serialized_expr = serialized;
     info.logical_type = duckdb::LogicalType::VARCHAR;
-    info.tokenizer = *std::move(tokenizer);
+    info.tokenizer = ctx.expr_tokenizer_provider(col_id, serialized);
     return info;
   };
 }
@@ -425,22 +424,19 @@ void InitSearchColumnContextForGet(
     });
   auto columns = resolved.index->GetColumnIds();
   ctx.indexed_column_ids.insert(columns.begin(), columns.end());
-  auto index_ptr = resolved.index;
-  ctx.tokenizer_provider = [index_ptr, snapshot](catalog::Column::Id col_id) {
-    return index_ptr->GetColumnTokenizer(snapshot, col_id);
-  };
-  ctx.expr_tokenizer_provider = [index_ptr, snapshot](
-                                  catalog::Column::Id col_id,
-                                  std::string_view serialized_expr)
-    -> std::optional<catalog::FieldTokenizer> {
-    // A miss here is normal: the SELECT's path may not be indexed. Pre-check
-    // so we can fall back instead of letting GetExprTokenizer throw.
-    const auto* info = index_ptr->FindColumnInfo(col_id);
-    if (!info || !info->expressions_infos.contains(serialized_expr)) {
-      return std::nullopt;
+  for (auto col_id : columns) {
+    const auto* info = resolved.index->FindColumnInfo(col_id);
+    if (!info) {
+      continue;
     }
-    return index_ptr->GetExprTokenizer(snapshot, col_id, serialized_expr);
-  };
+    for (const auto& expr_info : info->expressions_infos) {
+      ctx.indexed_expressions.emplace(col_id, expr_info.serialized_expr);
+    }
+  }
+  ctx.tokenizer_provider =
+    connector::MakeColumnTokenizerProvider(snapshot, *resolved.index);
+  ctx.expr_tokenizer_provider =
+    connector::MakeExpressionTokenizerProvider(snapshot, *resolved.index);
 }
 
 // Returns a column-name lookup suitable for `irs::ToStringDemangled`.

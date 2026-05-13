@@ -532,8 +532,9 @@ void DuckDBColumnSerializer::WriteVector(
   std::vector<std::string>& row_keys,
   std::span<DuckDBSinkIndexWriter*> index_writers, const Desc& desc) {
   if constexpr (std::is_same_v<Desc, ColumnDescriptor>) {
-    SDB_ASSERT(writer);
-    writer->SwitchColumn(desc);
+    if (writer) {
+      writer->SwitchColumn(desc);
+    }
   } else {
     static_assert(std::is_same_v<Desc, ExpressionDescriptor>,
                   "WriteVector descriptor must be ColumnDescriptor or "

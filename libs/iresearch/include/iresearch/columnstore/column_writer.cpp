@@ -249,10 +249,11 @@ PickedCodec PickCodec(duckdb::DatabaseInstance& db,
   if (forced != duckdb::CompressionType::COMPRESSION_AUTO) {
     auto fn =
       config.TryGetCompressionFunction(forced, codec_type.InternalType());
-    SDB_ENSURE(fn && fn->init_analyze, sdb::ERROR_BAD_PARAMETER,
-               "columnstore: compression '",
-               duckdb::CompressionTypeToString(forced),
-               "' is not supported for type ", codec_type.ToString());
+    if (!fn || !fn->init_analyze) {
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER, "columnstore: compression '",
+                duckdb::CompressionTypeToString(forced),
+                "' is not supported for type ", codec_type.ToString());
+    }
     candidates.emplace_back(*fn);
   } else {
     candidates = config.GetCompressionFunctions(codec_type.InternalType());
@@ -294,13 +295,16 @@ PickedCodec PickCodec(duckdb::DatabaseInstance& db,
       best = {&candidates[i].get(), std::move(states[i])};
     }
   }
-  SDB_ENSURE(best.function, sdb::ERROR_INTERNAL, "columnstore: ",
-             forced == duckdb::CompressionType::COMPRESSION_AUTO
-               ? "no codec accepted the row group for type "
-               : absl::StrCat("forced compression '",
-                              duckdb::CompressionTypeToString(forced),
-                              "' could not produce a plan for type "),
-             codec_type.ToString());
+  if (!best.function) {
+    if (forced == duckdb::CompressionType::COMPRESSION_AUTO) {
+      SDB_THROW(sdb::ERROR_INTERNAL,
+                "columnstore: no codec accepted the row group for type ",
+                codec_type.ToString());
+    }
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "columnstore: forced compression '",
+              duckdb::CompressionTypeToString(forced),
+              "' could not produce a plan for type ", codec_type.ToString());
+  }
   return best;
 }
 

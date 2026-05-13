@@ -501,17 +501,16 @@ Reader::Reader(const Directory& dir, std::string_view segment_name,
                             kFormatVersion);
 
   const auto file_len = _impl->in->Length();
-  const uint64_t kIrsFooterLen = format_utils::kFooterLen;
   const uint64_t header_len =
     static_cast<uint64_t>(format_utils::HeaderLength(kFormatName));
-  SDB_ENSURE(file_len > header_len + sizeof(uint64_t) + kIrsFooterLen,
-             sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
-             "columnstore: truncated `.cs` file ", filename, " (length ",
-             file_len,
-             " is not large enough to contain header + footer offset + "
-             "iresearch footer)");
+  SDB_ENSURE(
+    file_len > header_len + sizeof(uint64_t) + format_utils::kFooterLen,
+    sdb::ERROR_SERVER_CORRUPTED_DATAFILE, "columnstore: truncated `.cs` file ",
+    filename, " (length ", file_len,
+    " is not large enough to contain header + footer offset + "
+    "iresearch footer)");
   const uint64_t footer_offset_pos =
-    file_len - kIrsFooterLen - sizeof(uint64_t);
+    file_len - format_utils::kFooterLen - sizeof(uint64_t);
   _impl->in->Seek(footer_offset_pos);
   const uint64_t footer_offset = _impl->in->ReadI64();
 

@@ -23,21 +23,14 @@ transactions/etc.) are out of scope.
 
 ## Performance (sure)
 
-- **`ColumnstoreMaterializer` rebuilt per-batch in the streaming path.**
-  [`duckdb_search_full_scan.cpp:932`](../server/connector/duckdb_search_full_scan.cpp).
-  Each batch's segment loop does `ColumnstoreMaterializer mat{dir, meta,
-  db, ...}` which reparses the entire `.cs` footer (one fresh
-  `irs::columnstore::Reader`, full DataPointer deserialization, ColumnReader
-  build per column). For a segment scanned over N batches that's N footer
-  parses. The bulk path correctly caches `bulk_scan_materializer` keyed by
-  `bulk_scan_segment_idx`; the streaming path needs the same. Add a per-seg
-  cache on `gstate` and invalidate on segment boundary.
-- **Top-K materialization rebuilds `irs::columnstore::Reader` per segment**
-  ([`duckdb_search_full_scan.cpp:636`](../server/connector/duckdb_search_full_scan.cpp))
-  even though the segment's `SegmentReaderImpl::ColumnData::cs_reader`
-  already holds an open Reader (see `segment_reader_impl.cpp:285`). Reuse
-  the SubReader's reader instead of opening a sibling. Same fix for the
-  streaming path.
+> **STATS-PROPAGATION NEXT PR.** Cardinality half is **landed** (see
+> Already-applied). Column min/max half remains: surface
+> `DataPointer::statistics` (BaseStatistics per column per RG) through
+> the table function's `statistics_t` callback so DuckDB picks
+> `SumState<long>` for SUM of bounded INT8/16/32. Without this i8/i16/i32
+> and types containing them (array of i32, struct with i32 field) stay
+> at 0.5-0.7x of native in the perf bench.
+
 - **HNSW build's PersistentColumnData clone via serialize-then-deserialize
   round-trip** ([`format.cpp:392-413`](../libs/iresearch/include/iresearch/columnstore/format.cpp)).
   `DataPointer` is move-only, so the code MemoryStream-serializes the whole
@@ -62,15 +55,6 @@ transactions/etc.) are out of scope.
   (`merge.cpp:131-138`). `DocumentMask` is a bitset -- pre-compute
   selection by AND'ing the relevant bitset slice or sweeping the next
   run-of-keepers, then bulk-append.
-- **`MaterializeListRow` allocates a fresh child `RangeScan` per row**
-  ([`columnstore_materializer.h::MaterializeListRow`](../server/connector/columnstore_materializer.h)).
-  ARRAY now reuses one `RangeScan` across consecutive doc_ids in the
-  same RG (RangeScan caches window+cursor across `Scan` calls); LIST
-  still re-opens the child segment per row because each
-  `MaterializeListRow` call constructs its own local range. Thread one
-  `RangeScan` through the LIST per-row loop in `MaterializeColumnRange`
-  / `ColumnstoreMaterializer::Scan` so consecutive list rows in the
-  same child RG share the cursor.
 - **`HNSWReader::Search` builds a fresh `ChunkedVectorCache` +
   `ColumnDistance` per call** ([`hnsw.cpp:441-443`](../libs/iresearch/include/iresearch/columnstore/hnsw.cpp)).
   Each ctor allocates an s3_fifo Cache, two NodeHashMaps, the pin stack,
@@ -81,11 +65,6 @@ transactions/etc.) are out of scope.
   ([`format.cpp:687,720`](../libs/iresearch/include/iresearch/columnstore/format.cpp)).
   Every caller iterates once -- return a `std::span<const X*>` over the
   internal vector.
-- **Codec analyze runs ALL codecs even when one is obviously dominant.**
-  [`PickCodec` `column_writer.cpp:276`](../libs/iresearch/include/iresearch/columnstore/column_writer.cpp).
-  Most non-VARCHAR physical types have a handful of candidates and this is
-  fine, but it's worth confirming DuckDB's checkpointer doesn't pre-prune
-  losers we should also be skipping.
 - **HNSW graphs are eagerly faiss-deserialised at every Reader construction**
   ([`format.cpp:558-585`](../libs/iresearch/include/iresearch/columnstore/format.cpp)).
   Queries that never touch HNSW pay this. Make HNSW lazy -- only
@@ -96,12 +75,6 @@ transactions/etc.) are out of scope.
   and then throws them away -- HNSW is rebuilt from scratch on the merged
   data. One full HNSW deserialise per source per merge, wasted. Lazy
   HNSW (above) fixes it; or add a "skip HNSW" Reader flag.
-- **`OpenPkColumn` opens a fresh `columnstore::Reader` per fetcher per
-  segment** ([`search_pk_lookup.cpp:43`](../server/connector/search_pk_lookup.cpp)).
-  A query with HNSW + then PK batch instantiates both Sequential and
-  Random fetchers -- that's 2N Reader constructions per query (2N footer
-  parses, 2N HNSW deserialises until lazy HNSW lands). Reuse the
-  SegmentReaderImpl's cached cs_reader instead.
 - **`ColumnReader::ListOffsets` cache has no eviction policy / byte
   budget** ([`column_reader.cpp`](../libs/iresearch/include/iresearch/columnstore/column_reader.cpp),
   `_list_offsets_per_rg`). ~960 KB per LIST row group of UBIGINTs at
@@ -130,35 +103,13 @@ transactions/etc.) are out of scope.
   For uniform STANDARD_VECTOR_SIZE batches this is per-batch alloc/free.
   Keep the Vector alive when the size matches; only re-emplace on size
   change.
-- **HNSW graphs are eagerly faiss-deserialised at every Reader
-  construction** ([`format.cpp:558-585`](../libs/iresearch/include/iresearch/columnstore/format.cpp)).
-  Queries that never touch HNSW pay this. Make HNSW lazy -- only
-  deserialise on first `HNSW(field_id)` call. Also fixes the
-  MergeWriter-throws-away-HNSW waste (next item).
-- **MergeWriter opens per-source `columnstore::Reader` which eagerly
-  faiss-deserialises every HNSW graph** ([`merge_writer.cpp:754-756`](../libs/iresearch/include/iresearch/index/merge_writer.cpp)),
-  then throws them away because HNSW is rebuilt from scratch on the
-  merged data. One full HNSW deserialise per source per merge, wasted.
-  Lazy HNSW fixes it; or add a "skip HNSW" Reader flag.
-- **`OpenPkColumn` opens a fresh `columnstore::Reader` per fetcher per
-  segment** ([`search_pk_lookup.cpp:43`](../server/connector/search_pk_lookup.cpp)).
-  A query that uses both Sequential and Random fetchers (HNSW + then PK
-  batch) does 2N Reader constructions per query. Reuse the
-  SegmentReaderImpl's cached cs_reader.
-- **`ColumnReader` LIST offset cache has no eviction policy / byte
-  budget** ([`column_reader.cpp`](../libs/iresearch/include/iresearch/columnstore/column_reader.cpp),
-  `_list_offsets_per_rg`). ~960 KB per LIST row group of UBIGINTs at
-  122880 rows; wide LIST schemas or many open segments balloon. Add a
-  per-reader byte budget and simple eviction.
-- **`SegmentWriter::memory_active` / `memory_reserved` don't include
-  columnstore writer staging** ([`segment_writer.cpp:62-72`](../libs/iresearch/include/iresearch/index/segment_writer.cpp)).
-  Each `ColumnWriter` holds `_staging` sized to row_group_size; many
-  INCLUDE columns is significant. Same for `FieldsData::memory_active`
-  -- doesn't include `NormColumnWriter`'s pending vector (100 norm
-  fields x 122880 x 4B ~ 50 MB unaccounted).
-- **`SegmentReaderImpl::CountMappedMemory` doesn't include columnstore
-  mmap memory** ([`segment_reader_impl.cpp:228`](../libs/iresearch/include/iresearch/index/segment_reader_impl.cpp)).
-  `.cs` is mmap-backed; bytes show in RSS but not in this counter.
+- **MergeWriter::Flush still opens a per-source `columnstore::Reader`**
+  ([`merge_writer.cpp`](../libs/iresearch/include/iresearch/index/merge_writer.cpp)).
+  All other read sites (`ColumnstoreMaterializer`, both PK fetchers,
+  ANN filter) now borrow `SegmentReaderImpl::CsReader()` -- the
+  per-segment cached Reader added by the cross-query reuse pass.
+  Wire merge through the same cache; saves one footer parse per source
+  per merge.
 
 ## Simplifications (sure)
 
@@ -203,13 +154,6 @@ transactions/etc.) are out of scope.
   -- `ColumnWriter::Append` takes non-const Vector to call
   `ToUnifiedFormat`. Make Append accept const + do `ToUnifiedFormat`
   itself to drop the cast.
-- **Per-`DirectoryReader` cs Reader cache** keyed by segment name
-  (with lazy HNSW). Today every read site opens its own Reader:
-  `SegmentReaderImpl::ColumnData::Open`, `SegmentPkSequentialFetcher`,
-  `SegmentPkRandomFetcher`, `ColumnstoreMaterializer`,
-  `MergeWriter::Flush` (per source). Tied to the previous-item gap;
-  needs concurrency + lifetime story.
-
 ---
 
 ## Bugs (notsure)
@@ -374,6 +318,18 @@ transactions/etc.) are out of scope.
 - **DECIMAL / TIMESTAMP_TZ / time-zoned types.** Should work through
   the generic primitive path but no test confirms. Add one round-trip
   test per missing type.
+- **Forced compression: lenient (DuckDB-like) mode not supported yet.**
+  Today `PickCodec` throws `ERROR_BAD_PARAMETER` when the forced codec's
+  analyze rejects the row group. DuckDB's `ForceCompression`
+  ([column_data_checkpointer.cpp:109]) keeps `COMPRESSION_UNCOMPRESSED`
+  available as a fallback so the write still succeeds when the codec
+  doesn't fit the data. Both are useful: strict ("this codec or fail")
+  for users who want a hard guarantee, lenient ("prefer this codec,
+  fall back to uncompressed") matches DuckDB's behavior. Add a
+  per-column option (e.g. `compression_strict` /
+  `compression_with_fallback`) that picks between the two paths in
+  `PickCodec`. Test both modes -- strict still errors, lenient produces
+  uncompressed segments when codec rejects.
 
 ---
 
@@ -559,6 +515,67 @@ Materialization refactor pass (this session):
   `inverted_index`, `inverted_index_score`,
   `inverted_index_compression_option`, and `inverted_index_topk` SQL
   tests.
+
+Perf-bench / cardinality / cross-query-reuse pass (this session):
+- Perf: cs Reader is now cached per segment via
+  `SegmentReaderImpl::CsReader()` (virtual on `SubReader`, override on
+  `SegmentReaderImpl` and `SegmentReader`).  `ColumnstoreMaterializer`
+  borrows it instead of constructing a fresh Reader per query;
+  `SegmentPkSequentialFetcher`, `SegmentPkRandomFetcher`, and the
+  ANN filter (`duckdb_ann_filter.cpp::Reset`) now take just
+  `(reader, seg_idx)` -- dropped the `db` argument since the Reader
+  comes from the cache.  Footer parse (~9-14% of i32 hot CPU) gone.
+- Perf: `SCAN_ENTIRE_VECTOR` opt-in.  `RangeScan::Scan` takes a
+  `may_use_entire` hint; `ScanRowsBatched` passes `true` only on the
+  contiguous-range fast path (single Scan call into the vector).  Random
+  doc-id path stays `SCAN_FLAT_VECTOR` to avoid the assert when a
+  follow-up FLAT write hits a DICT vector.  Net win for varchar (dict_fsst
+  hands back a DICTIONARY_VECTOR instead of materialising 100M
+  string_t).
+- Perf: pin-aux for zero-copy lifetime.  After SCAN_ENTIRE_VECTOR, we
+  pin the segment's BlockHandle via `BufferManager::Pin` and attach it
+  to the result vector through `AddAuxiliaryData(PinnedBufferHolder)`
+  so the buffer survives the next `ScanCursor` rotation -- without it,
+  `FixedSizeScan`'s `FlatVector::SetData(result, segment_data, ...)`
+  use-after-frees once the next RG opens.
+- Bug: `HasValidity()` now skips RGs whose validity codec is
+  `COMPRESSION_EMPTY`.  Computed once in the four ColumnReader
+  constructors via `AnyNonEmptyValidity(_validity_pointers)`.
+  All-valid columns no longer trigger the validity scan, which in turn
+  unblocks `SCAN_ENTIRE_VECTOR` for dict_fsst varchars.
+- Perf: **max cardinality propagation** so DuckDB picks
+  `SumState<long>` over `SumState<hugeint_t>` when the output bound
+  fits int64.  `InvertedIndexCardinality`, `TableScanBindData::Cardinality`,
+  `ViewScanBindData::Cardinality` switched from the 1-arg
+  `NodeStatistics(estimated)` ctor (which leaves
+  `has_max_cardinality=false` and silently kills DuckDB's
+  `SumPropagateStats`) to the 2-arg `NodeStatistics(rows, rows)` --
+  snapshot row counts are exact, not estimates.  Closes the bool gap
+  (CASE-WHEN-of-constants output bound is `[0,1]`, max sum = N rows;
+  fits long).  i8/i16/i32 still go via hugeint because their bound
+  depends on column min/max, not cardinality alone -- column-stats
+  propagation is the next PR (see top of Performance section).
+- Refactor: `ConsecutiveRunLength()` helper in `column_reader.hpp`
+  replaces 3 copies of the
+  `while (rows[i+run]-rows[i+run-1]==1) ++run` loop
+  (`ScanRowsBatched`, `MaterializeNode` ARRAY branch, `MaterializeNode`
+  LIST/MAP branch with an upper-bound predicate).
+- Refactor: `MaterializerNodeState` -- recursive state struct mirrored
+  after `duckdb::ColumnScanState::child_states` -- now lives on
+  `ColumnstoreMaterializer::Binding` so the same `RangeScan` /
+  `ListOffsetState` / pre-allocated child states survive across
+  batches.  Fixes the per-row LIST `RangeScan` allocation that was
+  the previous Performance-section item.
+- Refactor: `ColumnstoreMaterializer` rebuilt-per-batch in streaming &
+  top-K paths is gone -- both paths now reuse the segment's cached
+  `CsReader()` and the per-binding state.
+  ([`duckdb_search_full_scan.cpp`](../server/connector/duckdb_search_full_scan.cpp),
+  [`duckdb_scan_base.cpp`](../server/connector/duckdb_scan_base.cpp))
+- Verified-no-op: "codec analyze runs ALL codecs" matches DuckDB's
+  `ColumnDataCheckpointer::DetectBestCompressionMethod`
+  ([column_data_checkpointer.cpp:166]): same per-RG tournament over
+  `GetCompressionFunctions()`, no mid-flight pruning.  Pre-pruning is
+  at codec-registration time, not per call.
 
 ANN / range-scan include-column materializer pass (this session):
 - Bug fix: ANN + INCLUDE no longer silently routes through RocksDB.

@@ -24,6 +24,9 @@
 #include <algorithm>
 #include <cmath>
 #include <duckdb/common/types.hpp>
+#include <array>
+#include <duckdb/common/types.hpp>
+#include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
@@ -31,6 +34,10 @@
 #include "basics/assert.h"
 #include "basics/exceptions.h"
 #include "iresearch/formats/column/hnsw_index.hpp"
+#include "basics/containers/node_hash_map.h"
+#include "basics/containers/s3_fifo.h"
+#include "basics/exceptions.h"
+#include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/vector.hpp"

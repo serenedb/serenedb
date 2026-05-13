@@ -32,6 +32,7 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <utility>
 
+#include "iresearch/columnstore/internal/cs_block_manager.hpp"
 #include "iresearch/columnstore/internal/overflow_string_io.hpp"
 #include "iresearch/store/data_input.hpp"
 
@@ -58,7 +59,8 @@ ColumnReader::ColumnReader(
   std::vector<duckdb::DataPointer> validity_pointers,
   std::unique_ptr<ColumnReader> element_child,
   std::vector<std::unique_ptr<ColumnReader>> struct_children,
-  uint64_t array_size, IndexInput& in, duckdb::DatabaseInstance& db)
+  uint64_t array_size, IndexInput& in, duckdb::DatabaseInstance& db,
+  CsBlockManager& block_manager)
   : _id{id},
     _type{std::move(type)},
     _data_pointers{std::move(data_pointers)},
@@ -68,7 +70,8 @@ ColumnReader::ColumnReader(
     _array_size{array_size},
     _struct_fields{std::move(struct_children)},
     _in{&in},
-    _db{&db} {
+    _db{&db},
+    _block_manager{&block_manager} {
   // Validity offsets are shaped identically for every type.
   _validity_offsets.reserve(_validity_pointers.size() + 1);
   uint64_t vtotal = 0;
@@ -222,10 +225,9 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
   auto stats = p.statistics.Copy();
   const auto byte_size = static_cast<duckdb::idx_t>(p.block_pointer.offset);
 
-  SDB_ENSURE(!p.segment_state, sdb::ERROR_INTERNAL,
-             "columnstore: codec segment_state is not plumbed through "
-             "OpenSegment (codec ",
-             static_cast<uint8_t>(p.compression_type), ")");
+  // segment_state intentionally dropped: only used by VisitBlockIds at
+  // checkpoint time (we don't checkpoint). Scan resolves inline page
+  // block_ids via segment.block->GetBlockManager() == CsBlockManager.
 
   if (byte_size == 0 || p.block_pointer.block_id ==
                           static_cast<duckdb::block_id_t>(INVALID_BLOCK)) {
@@ -237,8 +239,7 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
   }
 
   auto& bm = duckdb::BufferManager::GetBufferManager(*_db);
-  auto& block_manager = bm.GetTemporaryBlockManager();
-  auto handle = bm.RegisterTransientMemory(byte_size, block_manager);
+  auto handle = bm.RegisterTransientMemory(byte_size, *_block_manager);
   auto buf = bm.Pin(handle);
   const uint64_t file_offset = p.block_pointer.block_id;
   in.ReadBytes(file_offset, reinterpret_cast<byte_type*>(buf.Ptr()), byte_size);

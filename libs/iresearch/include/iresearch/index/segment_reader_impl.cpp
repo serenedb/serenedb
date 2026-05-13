@@ -202,9 +202,6 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   }
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->Open(dir, meta, options, std::move(preloaded_hnsw));
-  return reader;
-}
-
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenColumnStore(
   const Directory& dir, const SegmentMeta& meta,
   const IndexReaderOptions& options) const {

@@ -40,6 +40,7 @@ class IndexOutput;
 
 namespace columnstore {
 
+class CsBlockManager;
 struct FooterColumnEntry;  // defined in format.cpp
 
 // Per-column writer. Accepts duckdb::Vector batches; full row group ->
@@ -50,7 +51,8 @@ class ColumnWriter final {
   // ValidityGroupCount()==0 as all-valid. PK uses this.
   ColumnWriter(field_id id, duckdb::LogicalType type, uint64_t row_group_size,
                duckdb::DatabaseInstance& db, IndexOutput& out,
-               FooterColumnEntry& entry, bool skip_validity = false);
+               CsBlockManager& block_manager, FooterColumnEntry& entry,
+               bool skip_validity = false);
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
@@ -98,6 +100,7 @@ class ColumnWriter final {
   uint64_t _row_group_size;
   duckdb::DatabaseInstance* _db;
   IndexOutput* _out;
+  CsBlockManager* _block_manager;
   FooterColumnEntry* _entry;
   duckdb::Vector _staging;
   uint64_t _filled = 0;

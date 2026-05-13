@@ -83,6 +83,7 @@ set(IResearch_core_sources
     ./columnstore/norm_reader.cpp
     ./columnstore/merge.cpp
     ./columnstore/hnsw.cpp
+    ./columnstore/internal/cs_block_manager.cpp
     ./formats/formats.cpp
     ./formats/format_utils.cpp
     ./formats/posting/skip_list.cpp

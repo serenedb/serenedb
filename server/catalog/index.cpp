@@ -109,17 +109,25 @@ ResultOr<duckdb::CompressionType> ParseCompressionName(
   std::string_view column_name, std::string_view name) {
   std::string n{name};
   absl::AsciiStrToLower(&n);
+  // Excluded on purpose:
+  //   `dictionary` / `fsst` -- storage_version VERSION_NUMBER_UPPER
+  //     disables them upstream (replaced by `dict_fsst`); init_analyze
+  //     returns nullptr at runtime so accepting the name here would
+  //     defer the failure to the async commit path.
+  //   `chimp` / `patas` -- DuckDB throws InternalException at
+  //     init_compression for both ("has been deprecated, can no longer
+  //     be used to compress data"). Same async-error issue as the pair
+  //     above.
+  //   `constant` -- internal-only codec selected by the analyzer when a
+  //     row group is all-equal; CompressionFunction has init_analyze ==
+  //     nullptr, so the validation gate below would reject it anyway.
+  //     Kept out of kMap so the parse error is up front.
   static constexpr std::pair<std::string_view, duckdb::CompressionType> kMap[] =
     {
       {"auto", duckdb::CompressionType::COMPRESSION_AUTO},
       {"uncompressed", duckdb::CompressionType::COMPRESSION_UNCOMPRESSED},
-      {"constant", duckdb::CompressionType::COMPRESSION_CONSTANT},
       {"rle", duckdb::CompressionType::COMPRESSION_RLE},
-      {"dictionary", duckdb::CompressionType::COMPRESSION_DICTIONARY},
       {"bitpacking", duckdb::CompressionType::COMPRESSION_BITPACKING},
-      {"fsst", duckdb::CompressionType::COMPRESSION_FSST},
-      {"chimp", duckdb::CompressionType::COMPRESSION_CHIMP},
-      {"patas", duckdb::CompressionType::COMPRESSION_PATAS},
       {"zstd", duckdb::CompressionType::COMPRESSION_ZSTD},
       {"alp", duckdb::CompressionType::COMPRESSION_ALP},
       {"alprd", duckdb::CompressionType::COMPRESSION_ALPRD},
@@ -137,9 +145,8 @@ ResultOr<duckdb::CompressionType> ParseCompressionName(
                                  column_name,
                                  "': unknown compression '",
                                  name,
-                                 "'. Accepted: auto, uncompressed, constant, "
-                                 "rle, dictionary, bitpacking, fsst, chimp, "
-                                 "patas, zstd, alp, alprd, roaring, "
+                                 "'. Accepted: auto, uncompressed, rle, "
+                                 "bitpacking, zstd, alp, alprd, roaring, "
                                  "dict_fsst"};
 }
 

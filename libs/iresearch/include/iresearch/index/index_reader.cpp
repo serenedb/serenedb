@@ -80,10 +80,6 @@ void SubReader::Search(field_id field, HNSWSearchInfo info,
     info, segment_id, buffer.vt, handler, cache,
   };
   hr->Search(context);
-}
-
-void SubReader::RangeSearch(field_id field, HNSWRangeSearchInfo info,
-                            HNSWRangeSearchBuffer& buffer,
                             uint32_t segment_id) const {
   const auto* hr = HNSW(field);
   if (hr == nullptr) {

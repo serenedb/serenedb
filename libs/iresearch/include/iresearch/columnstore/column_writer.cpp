@@ -30,11 +30,9 @@
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
-#include <duckdb/storage/partial_block_manager.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/append_state.hpp>
-#include <duckdb/storage/table/column_checkpoint_state.hpp>
 #include <duckdb/storage/table/column_data_checkpointer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <limits>
@@ -44,15 +42,14 @@
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "iresearch/columnstore/format.hpp"
+#include "iresearch/columnstore/internal/cs_block_manager.hpp"
 #include "iresearch/columnstore/internal/overflow_string_io.hpp"
 #include "iresearch/columnstore/internal/persistent_column_data.hpp"
 #include "iresearch/store/data_output.hpp"
 
-namespace irs::columnstore {
-
 ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
-                           uint64_t row_group_size,
                            duckdb::DatabaseInstance& db, IndexOutput& out,
+                           CsBlockManager& block_manager,
                            FooterColumnEntry& entry, bool skip_validity)
   : _id{id},
     _type{std::move(type)},
@@ -60,6 +57,7 @@ ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
                                         : kDefaultRowGroupSize},
     _db{&db},
     _out{&out},
+    _block_manager{&block_manager},
     _entry{&entry},
     _staging{_type, _row_group_size,
              duckdb::VectorDataInitialization::UNINITIALIZED},
@@ -163,95 +161,40 @@ void ColumnWriter::Finalize() {
 
 namespace {
 
-class CapturingCheckpointState final : public duckdb::ColumnCheckpointState {
- public:
-  CapturingCheckpointState(duckdb::DatabaseInstance& db,
-                           duckdb::PartialBlockManager& pbm, IndexOutput& out,
-                           uint64_t row_start)
-    : duckdb::ColumnCheckpointState(pbm),
-      _db{db},
-      _out{out},
-      _running_row_start{row_start} {}
-
-  void FlushSegment(duckdb::unique_ptr<duckdb::ColumnSegment> segment,
-                    duckdb::BufferHandle handle,
-                    duckdb::idx_t segment_size) override {
-    // Some codecs (RLE, FSST) Destroy() the handle before this call to
-    // release their pin -- the bytes still live on segment->block, so
-    // re-pin in that case.
-    if (segment_size == 0) {
-      Capture(*segment, segment_size, nullptr);
-      return;
-    }
-    if (handle.IsValid()) {
-      Capture(*segment, segment_size,
-              reinterpret_cast<const byte_type*>(handle.Ptr()));
-      return;
-    }
-    if (!segment->block) {
-      Capture(*segment, segment_size, nullptr);
-      return;
-    }
-    auto& bm = duckdb::BufferManager::GetBufferManager(_db);
-    auto repinned = bm.Pin(segment->block);
-    Capture(*segment, segment_size,
-            reinterpret_cast<const byte_type*>(repinned.Ptr()));
+void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
+                    const byte_type* bytes, IndexOutput& out,
+                    uint64_t& running_row_start,
+                    std::vector<duckdb::DataPointer>& sink) {
+  const auto tuple_count = segment.count.load();
+  if (tuple_count == 0) {
+    return;
   }
 
-  void FlushSegmentInternal(duckdb::unique_ptr<duckdb::ColumnSegment> segment,
-                            duckdb::idx_t segment_size) override {
-    if (segment_size == 0 || !segment->block) {
-      Capture(*segment, segment_size, nullptr);
-      return;
-    }
-    auto& bm = duckdb::BufferManager::GetBufferManager(_db);
-    auto handle = bm.Pin(segment->block);
-    Capture(*segment, segment_size,
-            reinterpret_cast<const byte_type*>(handle.Ptr()));
+  duckdb::DataPointer ptr{segment.stats.statistics.Copy()};
+  ptr.row_start = running_row_start;
+  ptr.tuple_count = tuple_count;
+  const auto& codec = segment.GetCompressionFunction();
+  ptr.compression_type = codec.type;
+
+  if (segment.stats.statistics.IsConstant() || !bytes || segment_size == 0) {
+    ptr.compression_type = duckdb::CompressionType::COMPRESSION_CONSTANT;
+    ptr.block_pointer.block_id = INVALID_BLOCK;
+    ptr.block_pointer.offset = 0;
+  } else {
+    SDB_ASSERT(segment_size <= std::numeric_limits<uint32_t>::max(),
+               "columnstore segment > 4GB; offset field too narrow");
+    const uint64_t file_offset = out.Position();
+    out.WriteBytes(bytes, segment_size);
+    ptr.block_pointer.block_id = static_cast<duckdb::block_id_t>(file_offset);
+    ptr.block_pointer.offset = static_cast<uint32_t>(segment_size);
   }
 
- private:
-  void Capture(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
-               const byte_type* bytes) {
-    const auto tuple_count = segment.count.load();
-    if (tuple_count == 0) {
-      return;
-    }
-
-    duckdb::DataPointer ptr{segment.stats.statistics.Copy()};
-    ptr.row_start = _running_row_start;
-    ptr.tuple_count = tuple_count;
-    const auto& codec = segment.GetCompressionFunction();
-    ptr.compression_type = codec.type;
-
-    if (segment.stats.statistics.IsConstant() || !bytes || segment_size == 0) {
-      // CONSTANT/EMPTY: value encoded in stats, no payload bytes. Mirror
-      // DuckDB's ConvertToPersistent: on-disk codec becomes CONSTANT.
-      ptr.compression_type = duckdb::CompressionType::COMPRESSION_CONSTANT;
-      ptr.block_pointer.block_id = INVALID_BLOCK;
-      ptr.block_pointer.offset = 0;
-    } else {
-      // block_pointer.block_id repurposed as the .cs file byte offset;
-      // block_pointer.offset (uint32_t) carries the segment byte size.
-      SDB_ASSERT(segment_size <= std::numeric_limits<uint32_t>::max(),
-                 "columnstore segment > 4GB; offset field too narrow");
-      const uint64_t file_offset = _out.Position();
-      _out.WriteBytes(bytes, segment_size);
-      ptr.block_pointer.block_id = static_cast<duckdb::block_id_t>(file_offset);
-      ptr.block_pointer.offset = static_cast<uint32_t>(segment_size);
-    }
-
-    if (codec.serialize_state) {
-      ptr.segment_state = codec.serialize_state(segment);
-    }
-    _running_row_start += tuple_count;
-    data_pointers.push_back(std::move(ptr));
+  if (codec.serialize_state) {
+    ptr.segment_state = codec.serialize_state(segment);
   }
-
-  duckdb::DatabaseInstance& _db;
-  IndexOutput& _out;
-  uint64_t _running_row_start;
-};
+  running_row_start += tuple_count;
+  sink.push_back(std::move(ptr));
+}
 
 void CopySlice(duckdb::Vector& dst, duckdb::Vector& src, duckdb::idx_t offset,
                duckdb::idx_t count) {
@@ -264,11 +207,10 @@ struct PickedCodec {
 };
 
 PickedCodec PickCodec(duckdb::DatabaseInstance& db,
+                      CsBlockManager& block_manager,
                       const duckdb::LogicalType& codec_type,
                       duckdb::Vector& staging, duckdb::idx_t row_count,
                       duckdb::CompressionType forced) {
-  auto& bm = duckdb::BufferManager::GetBufferManager(db);
-  auto& block_manager = bm.GetTemporaryBlockManager();
   const auto& config = duckdb::DBConfig::GetConfig(db);
 
   std::vector<duckdb::reference<const duckdb::CompressionFunction>> candidates;
@@ -334,8 +276,8 @@ PickedCodec PickCodec(duckdb::DatabaseInstance& db,
   return best;
 }
 
-void CompressColumn(duckdb::DatabaseInstance& db,
-                    duckdb::PartialBlockManager& pbm, IndexOutput& out,
+void CompressColumn(duckdb::DatabaseInstance& db, IndexOutput& out,
+                    CsBlockManager& block_manager,
                     const duckdb::LogicalType& codec_type,
                     duckdb::Vector& staging, duckdb::idx_t row_count,
                     uint64_t row_start, std::vector<duckdb::DataPointer>& sink,
@@ -357,23 +299,69 @@ void CompressColumn(duckdb::DatabaseInstance& db,
     }
   }
 
-  auto picked = PickCodec(db, codec_type, staging, row_count, forced);
+  auto picked =
+    PickCodec(db, block_manager, codec_type, staging, row_count, forced);
 
-  CapturingCheckpointState state{db, pbm, out, row_start};
-  state.global_stats =
-    duckdb::BaseStatistics::CreateEmpty(codec_type).ToUnique();
+  duckdb::ColumnDataCheckpointData::OverflowStringWriterFactory
+    overflow_writer_factory;
+  if (codec_type.InternalType() == duckdb::PhysicalType::VARCHAR) {
+    overflow_writer_factory = [&out]() {
+      return duckdb::make_uniq<IndexOutputOverflowWriter>(out);
+    };
+  }
+
+  uint64_t running_row_start = row_start;
+  duckdb::ColumnDataCheckpointData::FlushSegmentFn flush_segment_fn =
+    [&](duckdb::unique_ptr<duckdb::ColumnSegment> segment,
+        duckdb::BufferHandle handle, duckdb::idx_t segment_size) {
+      if (segment_size == 0) {
+        CaptureSegment(*segment, segment_size, nullptr, out, running_row_start,
+                       sink);
+        return;
+      }
+      if (handle.IsValid()) {
+        CaptureSegment(*segment, segment_size,
+                       reinterpret_cast<const byte_type*>(handle.Ptr()), out,
+                       running_row_start, sink);
+        return;
+      }
+      if (!segment->block) {
+        CaptureSegment(*segment, segment_size, nullptr, out, running_row_start,
+                       sink);
+        return;
+      }
+      auto& bm = duckdb::BufferManager::GetBufferManager(db);
+      auto repinned = bm.Pin(segment->block);
+      CaptureSegment(*segment, segment_size,
+                     reinterpret_cast<const byte_type*>(repinned.Ptr()), out,
+                     running_row_start, sink);
+    };
+
+  duckdb::ColumnDataCheckpointData::FlushSegmentInternalFn
+    flush_segment_internal_fn =
+      [&](duckdb::unique_ptr<duckdb::ColumnSegment> segment,
+          duckdb::idx_t segment_size) {
+        if (segment_size == 0 || !segment->block) {
+          CaptureSegment(*segment, segment_size, nullptr, out,
+                         running_row_start, sink);
+          return;
+        }
+        auto& bm = duckdb::BufferManager::GetBufferManager(db);
+        auto handle = bm.Pin(segment->block);
+        CaptureSegment(*segment, segment_size,
+                       reinterpret_cast<const byte_type*>(handle.Ptr()), out,
+                       running_row_start, sink);
+      };
 
   duckdb::ColumnDataCheckpointData ckp{
-    state, codec_type, db,
-    /* matches duckdb::DEFAULT_STORAGE_VERSION_INFO */ 64};
-
-  // VARCHAR UNCOMPRESSED spills long strings via OverflowStringWriter.
-  // DuckDB's default writer wants a real .db file; install ours backed by
-  // the .cs IndexOutput. Other VARCHAR codecs ignore this hook.
-  if (codec_type.InternalType() == duckdb::PhysicalType::VARCHAR) {
-    ckp.SetOverflowStringWriterFactory(
-      [&out]() { return duckdb::make_uniq<IndexOutputOverflowWriter>(out); });
-  }
+    codec_type,
+    db,
+    duckdb::VERSION_NUMBER_UPPER,
+    std::move(overflow_writer_factory),
+    std::move(flush_segment_fn),
+    std::move(flush_segment_internal_fn),
+    block_manager,
+  };
 
   auto comp_state =
     picked.function->init_compression(ckp, std::move(picked.state));
@@ -388,14 +376,10 @@ void CompressColumn(duckdb::DatabaseInstance& db,
     consumed += take;
   }
   picked.function->compress_finalize(*comp_state);
-
-  for (auto& dp : state.data_pointers) {
-    sink.push_back(std::move(dp));
-  }
 }
 
-void FlushNode(duckdb::DatabaseInstance& db, duckdb::PartialBlockManager& pbm,
-               IndexOutput& out, const duckdb::LogicalType& type,
+void FlushNode(duckdb::DatabaseInstance& db, IndexOutput& out,
+               CsBlockManager& block_manager, const duckdb::LogicalType& type,
                duckdb::Vector& vec, duckdb::idx_t row_count, uint64_t row_start,
                PersistentColumnData& node, bool skip_validity,
                duckdb::CompressionType forced) {
@@ -406,8 +390,8 @@ void FlushNode(duckdb::DatabaseInstance& db, duckdb::PartialBlockManager& pbm,
   switch (type.id()) {
     case duckdb::LogicalTypeId::ARRAY: {
       if (!skip_validity) {
-        CompressColumn(db, pbm, out, validity_type, vec, row_count, row_start,
-                       node.validity_pointers,
+        CompressColumn(db, out, block_manager, validity_type, vec, row_count,
+                       row_start, node.validity_pointers,
                        duckdb::CompressionType::COMPRESSION_AUTO);
       }
       if (node.child_columns.empty()) {
@@ -417,8 +401,8 @@ void FlushNode(duckdb::DatabaseInstance& db, duckdb::PartialBlockManager& pbm,
       const auto array_size =
         static_cast<duckdb::idx_t>(duckdb::ArrayType::GetSize(type));
       auto& child = duckdb::ArrayVector::GetChildMutable(vec);
-      FlushNode(db, pbm, out, duckdb::ArrayType::GetChildType(type), child,
-                row_count * array_size, row_start * array_size,
+      FlushNode(db, out, block_manager, duckdb::ArrayType::GetChildType(type),
+                child, row_count * array_size, row_start * array_size,
                 node.child_columns.front(),
                 /*skip_validity=*/false, forced);
       return;
@@ -429,8 +413,8 @@ void FlushNode(duckdb::DatabaseInstance& db, duckdb::PartialBlockManager& pbm,
       // element). ListType::GetChildType / ListVector accessors work for
       // both, so the on-disk shape is identical.
       if (!skip_validity) {
-        CompressColumn(db, pbm, out, validity_type, vec, row_count, row_start,
-                       node.validity_pointers,
+        CompressColumn(db, out, block_manager, validity_type, vec, row_count,
+                       row_start, node.validity_pointers,
                        duckdb::CompressionType::COMPRESSION_AUTO);
       }
       // Store column-global cumulative offsets per row (matches
@@ -453,15 +437,16 @@ void FlushNode(duckdb::DatabaseInstance& db, duckdb::PartialBlockManager& pbm,
       const uint64_t total_elems = running - node.list_global_running;
       node.list_global_running = running;
       const auto offsets_type = duckdb::LogicalType::UBIGINT;
-      CompressColumn(db, pbm, out, offsets_type, offsets, row_count, row_start,
-                     node.pointers, duckdb::CompressionType::COMPRESSION_AUTO);
+      CompressColumn(db, out, block_manager, offsets_type, offsets, row_count,
+                     row_start, node.pointers,
+                     duckdb::CompressionType::COMPRESSION_AUTO);
       if (node.child_columns.empty()) {
         node.child_columns.emplace_back();
         node.child_columns.front().type = duckdb::ListType::GetChildType(type);
       }
       auto& child = duckdb::ListVector::GetChildMutable(vec);
-      FlushNode(db, pbm, out, duckdb::ListType::GetChildType(type), child,
-                static_cast<duckdb::idx_t>(total_elems),
+      FlushNode(db, out, block_manager, duckdb::ListType::GetChildType(type),
+                child, static_cast<duckdb::idx_t>(total_elems),
                 /*row_start=*/0, node.child_columns.front(),
                 /*skip_validity=*/false, forced);
       return;
@@ -470,8 +455,8 @@ void FlushNode(duckdb::DatabaseInstance& db, duckdb::PartialBlockManager& pbm,
       // STRUCT has no top-level data of its own -- just parent validity and
       // per-field children. Matches duckdb::StructColumnData::Append.
       if (!skip_validity) {
-        CompressColumn(db, pbm, out, validity_type, vec, row_count, row_start,
-                       node.validity_pointers,
+        CompressColumn(db, out, block_manager, validity_type, vec, row_count,
+                       row_start, node.validity_pointers,
                        duckdb::CompressionType::COMPRESSION_AUTO);
       }
       const auto& child_types = duckdb::StructType::GetChildTypes(type);
@@ -485,18 +470,18 @@ void FlushNode(duckdb::DatabaseInstance& db, duckdb::PartialBlockManager& pbm,
         }
       }
       for (size_t i = 0; i < child_types.size(); ++i) {
-        FlushNode(db, pbm, out, child_types[i].second, entries[i], row_count,
-                  row_start, node.child_columns[i],
+        FlushNode(db, out, block_manager, child_types[i].second, entries[i],
+                  row_count, row_start, node.child_columns[i],
                   /*skip_validity=*/false, forced);
       }
       return;
     }
     default: {
-      CompressColumn(db, pbm, out, type, vec, row_count, row_start,
+      CompressColumn(db, out, block_manager, type, vec, row_count, row_start,
                      node.pointers, forced);
       if (!skip_validity) {
-        CompressColumn(db, pbm, out, validity_type, vec, row_count, row_start,
-                       node.validity_pointers,
+        CompressColumn(db, out, block_manager, validity_type, vec, row_count,
+                       row_start, node.validity_pointers,
                        duckdb::CompressionType::COMPRESSION_AUTO);
       }
       return;
@@ -511,17 +496,9 @@ void ColumnWriter::FlushRowGroup() {
     return;
   }
 
-  auto& bm = duckdb::BufferManager::GetBufferManager(*_db);
-  duckdb::PartialBlockManager pbm{
-    duckdb::QueryContext{}, bm.GetTemporaryBlockManager(),
-    duckdb::PartialBlockType::IN_MEMORY_CHECKPOINT};
-
-  FlushNode(*_db, pbm, *_out, _type, _staging, _filled, _row_group_first_doc,
-            _entry->root, _skip_validity, _forced_compression);
-
-  // Without this the PBM dtor leaves BlockHandles with an inconsistent
-  // memory charge and the BlockHandle dtor asserts.
-  pbm.ClearBlocks();
+  FlushNode(*_db, *_out, *_block_manager, _type, _staging, _filled,
+            _row_group_first_doc, _entry->root, _skip_validity,
+            _forced_compression);
 
   _row_group_first_doc += _filled;
   _filled = 0;

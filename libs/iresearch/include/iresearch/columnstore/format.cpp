@@ -27,6 +27,8 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/storage/block_allocator.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/data_pointer.hpp>
 #include <utility>
 #include <vector>
@@ -37,9 +39,8 @@
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/columnstore/column_writer.hpp"
 #include "iresearch/columnstore/hnsw.hpp"
-#include "iresearch/columnstore/internal/persistent_column_data.hpp"
+#include "iresearch/columnstore/internal/cs_block_manager.hpp"
 #include "iresearch/columnstore/norm_reader.hpp"
-#include "iresearch/columnstore/norm_writer.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -82,27 +83,19 @@ void SerializeColumnData(duckdb::Serializer& obj,
 std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
                                                PersistentColumnData&& node,
                                                IndexInput& in,
-                                               duckdb::DatabaseInstance& db) {
+                                               duckdb::DatabaseInstance& db,
+                                               CsBlockManager& block_manager) {
   std::unique_ptr<ColumnReader> element_child;
   std::vector<std::unique_ptr<ColumnReader>> struct_children;
   uint64_t array_size = 0;
 
-  auto make_empty_child = [](const duckdb::LogicalType& t) {
-    PersistentColumnData c;
-    c.type = t;
-    return c;
-  };
-
   switch (node.type.id()) {
     case duckdb::LogicalTypeId::ARRAY: {
-      SDB_ASSERT(node.child_columns.size() <= 1);
+      SDB_ASSERT(node.child_columns.size() == 1);
       array_size = static_cast<uint64_t>(duckdb::ArrayType::GetSize(node.type));
-      PersistentColumnData child =
-        node.child_columns.empty()
-          ? make_empty_child(duckdb::ArrayType::GetChildType(node.type))
-          : std::move(node.child_columns.front());
-      element_child =
-        MakeColumnReader(field_limits::invalid(), std::move(child), in, db);
+      element_child = MakeColumnReader(field_limits::invalid(),
+                                       std::move(node.child_columns.front()),
+                                       in, db, block_manager);
       node.pointers.clear();  // ARRAY carries no self data on disk.
       break;
     }
@@ -110,30 +103,17 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
     case duckdb::LogicalTypeId::LIST: {
       // MAP rides on the LIST path: PhysicalType::LIST with a
       // STRUCT<key, value> element.
-      SDB_ASSERT(node.child_columns.size() <= 1);
-      PersistentColumnData child =
-        node.child_columns.empty()
-          ? make_empty_child(duckdb::ListType::GetChildType(node.type))
-          : std::move(node.child_columns.front());
-      element_child =
-        MakeColumnReader(field_limits::invalid(), std::move(child), in, db);
+      SDB_ASSERT(node.child_columns.size() == 1);
+      element_child = MakeColumnReader(field_limits::invalid(),
+                                       std::move(node.child_columns.front()),
+                                       in, db, block_manager);
       break;
     }
     case duckdb::LogicalTypeId::STRUCT: {
-      const auto& child_types = duckdb::StructType::GetChildTypes(node.type);
-      SDB_ASSERT(node.child_columns.empty() ||
-                 node.child_columns.size() == child_types.size());
-      struct_children.reserve(child_types.size());
-      if (node.child_columns.empty()) {
-        for (const auto& ct : child_types) {
-          struct_children.push_back(MakeColumnReader(
-            field_limits::invalid(), make_empty_child(ct.second), in, db));
-        }
-      } else {
-        for (auto& cn : node.child_columns) {
-          struct_children.push_back(
-            MakeColumnReader(field_limits::invalid(), std::move(cn), in, db));
-        }
+      struct_children.reserve(node.child_columns.size());
+      for (auto& cn : node.child_columns) {
+        struct_children.push_back(MakeColumnReader(
+          field_limits::invalid(), std::move(cn), in, db, block_manager));
       }
       node.pointers.clear();
       break;
@@ -145,7 +125,7 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
   return std::make_unique<ColumnReader>(
     id, std::move(node.type), std::move(node.pointers),
     std::move(node.validity_pointers), std::move(element_child),
-    std::move(struct_children), array_size, in, db);
+    std::move(struct_children), array_size, in, db, block_manager);
 }
 
 PersistentColumnData DeserializeColumnData(duckdb::Deserializer& obj) {
@@ -244,10 +224,9 @@ struct Writer::Impl {
   std::string filename;
   duckdb::DatabaseInstance* db;
   IndexOutput::ptr out;
+  std::unique_ptr<CsBlockManager> block_manager;
   std::vector<std::unique_ptr<ColumnWriter>> column_writers;
   sdb::containers::FlatHashMap<field_id, ColumnWriter*> column_by_id;
-  // unique_ptr to keep FooterColumnEntry* handed to ColumnWriter stable
-  // across vector emplaces.
   std::vector<std::unique_ptr<FooterColumnEntry>> column_entries;
   std::vector<std::unique_ptr<NormColumnWriter>> norm_writers;
   sdb::containers::FlatHashMap<field_id, NormColumnWriter*> norm_by_id;
@@ -270,6 +249,9 @@ Writer::Writer(Directory& dir, std::string_view segment_name,
       absl::StrCat("failed to create columnstore file: ", _impl->filename)};
   }
   format_utils::WriteHeader(*_impl->out, kFormatName, kFormatVersion);
+  _impl->block_manager = std::make_unique<CsBlockManager>(
+    duckdb::BufferManager::GetBufferManager(db),
+    duckdb::BlockAllocator::Get(db), *_impl->out);
 }
 
 Writer::~Writer() {
@@ -307,7 +289,8 @@ ColumnWriter& Writer::OpenColumn(field_id id, duckdb::LogicalType type,
   entry->id = id;
   entry->root.type = type;
   auto cw = std::make_unique<ColumnWriter>(id, type, row_group_size, *_impl->db,
-                                           *_impl->out, *entry, skip_validity);
+                                           *_impl->out, *_impl->block_manager,
+                                           *entry, skip_validity);
   cw->SetCompression(compression);
   _impl->column_entries.push_back(std::move(entry));
   auto& back = *_impl->column_writers.emplace_back(std::move(cw));
@@ -373,6 +356,12 @@ std::string Writer::Commit() {
       throw IoError{absl::StrCat("failed to open columnstore for HNSW build: ",
                                  _impl->filename)};
     }
+    CsBlockManager hnsw_block_manager{
+      duckdb::BufferManager::GetBufferManager(*_impl->db),
+      duckdb::BlockAllocator::Get(*_impl->db), *in};
+    // DataPointer is move-only; clone the metadata via a serialize /
+    // deserialize round-trip so the footer write still has the original
+    // pointers to emit. TODO(perf): add a real Clone().
     for (auto& entry : _impl->hnsw_writers) {
       const FooterColumnEntry* col_entry = nullptr;
       for (auto& e : _impl->column_entries) {
@@ -385,13 +374,26 @@ std::string Writer::Commit() {
         col_entry,
         "columnstore::Writer::Commit: HNSW entry references missing column id ",
         entry->column_id);
-      if (col_entry->root.child_columns.empty()) {
-        continue;
-      }
-      // TODO(codeworse): replace with some view-based wrapper,
-      // without extra allocations
-      auto col_reader = MakeColumnReader(col_entry->id, Clone(col_entry->root),
-                                         *in, *_impl->db);
+      duckdb::MemoryStream mem_out;
+      duckdb::BinarySerializer ser{mem_out};
+      ser.Begin();
+      ser.WriteObject(0, "root", [&](duckdb::Serializer& obj) {
+        SerializeColumnData(obj, col_entry->root);
+      });
+      ser.End();
+      MemoryReadStream mem_in{
+        reinterpret_cast<const byte_type*>(mem_out.GetData()),
+        static_cast<uint64_t>(mem_out.GetPosition())};
+      duckdb::BinaryDeserializer deser{mem_in};
+      deser.Set<duckdb::DatabaseInstance&>(*_impl->db);
+      deser.Begin();
+      PersistentColumnData root_clone;
+      deser.ReadObject(0, "root", [&](duckdb::Deserializer& obj) {
+        root_clone = DeserializeColumnData(obj);
+      });
+      deser.End();
+      auto col_reader = MakeColumnReader(col_entry->id, std::move(root_clone),
+                                         *in, *_impl->db, hnsw_block_manager);
       entry->writer->Build(*col_reader);
     }
   }
@@ -500,6 +502,7 @@ void Writer::Rollback() noexcept {
 struct Reader::Impl {
   duckdb::DatabaseInstance* db;
   IndexInput::ptr in;
+  std::unique_ptr<CsBlockManager> block_manager;
   std::vector<std::unique_ptr<ColumnReader>> readers;
   sdb::containers::FlatHashMap<field_id, const ColumnReader*> by_id;
   std::vector<std::unique_ptr<NormColumnReader>> norm_readers;
@@ -570,7 +573,8 @@ void Reader::BuildColumnReaders(duckdb::BinaryDeserializer& deserializer,
         obj.ReadObject(1, "root", [&](duckdb::Deserializer& robj) {
           root = DeserializeColumnData(robj);
         });
-        auto reader = MakeColumnReader(id, std::move(root), *_impl->in, db);
+        auto reader = MakeColumnReader(id, std::move(root), *_impl->in, db,
+                                       *_impl->block_manager);
         _impl->readers.push_back(std::move(reader));
         _impl->by_id.emplace(id, _impl->readers.back().get());
       });
@@ -638,7 +642,6 @@ void Reader::BuildHnswReaders(duckdb::BinaryDeserializer& deserializer) {
           SDB_ASSERT(_impl->in->Position() - graph_offset == graph_byte_size,
                      "ReadHNSW must consume exactly graph_byte_size bytes");
         }
-        (void)graph_byte_size;
 
         auto col_it = _impl->by_id.find(id);
         if (col_it == _impl->by_id.end()) {
@@ -666,6 +669,9 @@ Reader::Reader(const Directory& dir, std::string_view segment_name,
   if (!_impl->in) {
     return;  // Segment has no `.cs` file.
   }
+  _impl->block_manager = std::make_unique<CsBlockManager>(
+    duckdb::BufferManager::GetBufferManager(db),
+    duckdb::BlockAllocator::Get(db), *_impl->in);
   std::vector<byte_type> footer_storage;  // unused when ReadView succeeds
   const auto footer_view =
     ReadFooterBytes(*_impl->in, filename, footer_storage);

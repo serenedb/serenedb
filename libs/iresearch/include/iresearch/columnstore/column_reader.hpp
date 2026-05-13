@@ -41,6 +41,8 @@ class DatabaseInstance;
 namespace irs {
 namespace columnstore {
 
+class CsBlockManager;
+
 struct RgWindow {
   size_t rg = std::numeric_limits<size_t>::max();
   duckdb::idx_t begin = 0;
@@ -77,7 +79,7 @@ class ColumnReader final {
                std::unique_ptr<ColumnReader> element_child,
                std::vector<std::unique_ptr<ColumnReader>> struct_children,
                uint64_t array_size, IndexInput& in,
-               duckdb::DatabaseInstance& db);
+               duckdb::DatabaseInstance& db, CsBlockManager& block_manager);
 
   ColumnReader(const ColumnReader&) = delete;
   ColumnReader& operator=(const ColumnReader&) = delete;
@@ -301,6 +303,7 @@ class ColumnReader final {
     _struct_fields;  // empty for non-STRUCT
   IndexInput* _in;
   duckdb::DatabaseInstance* _db;
+  CsBlockManager* _block_manager;
 
   // Element-start prefix sums across LIST/MAP row groups, derived
   // eagerly from each segment's stats (max stored cumulative offset).

@@ -32,14 +32,6 @@ transactions/etc.) are out of scope.
 
 ## Performance (notsure)
 
-- **`PartialBlockManager::ClearBlocks()` is called after every
-  `FlushRowGroup`** to avoid an assert in `BlockHandle` dtor
-  ([`column_writer.cpp:574`](../libs/iresearch/include/iresearch/columnstore/column_writer.cpp)).
-  Comment: "without this PBM's destructor leaves BlockHandles loaded with
-  an inconsistent memory charge". This smells like a misuse pattern --
-  re-examine whether the PartialBlockManager should be recreated per RG
-  instead, and whether there's a cleaner DuckDB API. May save the
-  per-RG bookkeeping cost.
 - **Both data and validity cursors are kept per binding in
   `ColumnstoreMaterializer`** even for `skip_validity=true` columns
   ([`columnstore_materializer.h:319`](../server/connector/columnstore_materializer.h)).
@@ -403,6 +395,19 @@ this review:
 - **`CONTRIBUTING.md`** updated to spell out the comment + assert-message
   rules with concrete heuristics (mechanical-translation test for
   comments; failure-mode-only message for asserts).
+- **PartialBlockManager / CapturingCheckpointState ripped out of the
+  writer** in favor of `FlushSegmentFn` callbacks on
+  `ColumnDataCheckpointData` (DuckDB-side patch). Codecs that previously
+  called `checkpoint_data.GetCheckpointState().FlushSegment(...)` now
+  call `checkpoint_data.FlushSegment(...)` directly; iresearch installs
+  callbacks instead of constructing a sham ColumnCheckpointState + PBM.
+  Eliminates the `pbm.ClearBlocks()` workaround.
+- **zstd enabled** via a `CsBlockManager` (BlockManager subclass) plus a
+  `SetBlockManager` hook on `ColumnDataCheckpointData`. zstd's extras
+  (one or more 256 KB pages beyond the main segment, chained via inline
+  block_id pointers) write/read through the .cs IndexOutput/IndexInput
+  directly; block_id IS the file offset so no mapping table is needed.
+  See cs_compression_methods.test for the multi-page round-trip case.
 - Build verified with `ninja serened` after each batch of edits.
 
 License headers in new files: out of scope per project convention --

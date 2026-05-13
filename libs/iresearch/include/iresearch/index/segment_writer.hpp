@@ -148,9 +148,6 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     }
     return memory::make_managed<PersistedNormReader>(*col);
   }
-
-  columnstore::Writer* Columnstore() noexcept { return _columnstore.get(); }
-
   columnstore::PreloadedHnswGraphs TakeBuiltHnswGraphs() noexcept {
     return std::move(_built_hnsw_graphs);
   }

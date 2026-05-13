@@ -155,11 +155,7 @@ class JsonParser {
       if (value.type() == simdjson::ondemand::json_type::string) {
         return value.get_string().value();
       }
-      // PG `->>` / json_extract_*_text return SQL NULL for JSON null leaves.
-      // Returning a default-constructed string_view (data()==nullptr) lets
-      // the caller's `str.empty() && !str.data()` check trigger
-      // mask.SetInvalid -- which is what the inverted-index writer needs to
-      // emit a null marker (and what IS NULL queries match against).
+      // json_extract_text* cast JSON-null into SQL-null
       if (value.type() == simdjson::ondemand::json_type::null) {
         return std::string_view{};
       }

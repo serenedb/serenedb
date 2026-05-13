@@ -18,22 +18,21 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "iresearch/types.hpp"
 
 namespace duckdb {
 
 class DatabaseInstance;
-}
+class BinaryDeserializer;
 
+}  // namespace duckdb
 namespace irs {
 
 class Directory;
@@ -75,8 +74,7 @@ class Writer final {
 
   // row_group_size = 0 selects kDefaultRowGroupSize. Returned reference
   // is valid until Commit/Rollback/dtor.
-  ColumnWriter& OpenColumn(field_id id, std::string_view name,
-                           duckdb::LogicalType type,
+  ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type,
                            uint64_t row_group_size = 0,
                            bool skip_validity = false,
                            duckdb::CompressionType compression =
@@ -115,21 +113,27 @@ class Reader final {
   bool HasColumn(field_id id) const noexcept;
   // nullptr if absent.
   const ColumnReader* Column(field_id id) const noexcept;
-  std::vector<const ColumnReader*> Columns() const;
+  std::span<const std::unique_ptr<ColumnReader>> Columns() const noexcept;
 
   // Norm and typed maps are independent; a field_id may appear in both.
   bool HasNormColumn(field_id id) const noexcept;
   const NormColumnReader* NormColumn(field_id id) const noexcept;
-  std::vector<const NormColumnReader*> NormColumns() const;
 
   // HNSW(id) returns nullptr if id is not an HNSW column in this segment.
   bool HasHNSW(field_id id) const noexcept;
   const HNSWReader* HNSW(field_id id) const noexcept;
-  std::span<std::unique_ptr<HNSWReader>> HNSWReaders() const;
 
  private:
   struct Impl;
   std::unique_ptr<Impl> _impl;
+
+  // Reader::Reader splits its footer-parse work across these three;
+  // each iterates one of the kFooterSlot* lists and populates the
+  // matching `_impl->*_readers` / `*_by_id` pair.
+  void BuildColumnReaders(duckdb::BinaryDeserializer& deserializer,
+                          duckdb::DatabaseInstance& db);
+  void BuildNormReaders(duckdb::BinaryDeserializer& deserializer);
+  void BuildHnswReaders(duckdb::BinaryDeserializer& deserializer);
 };
 
 }  // namespace columnstore

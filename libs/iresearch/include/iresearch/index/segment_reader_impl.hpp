@@ -86,16 +86,12 @@ class SegmentReaderImpl final : public SubReader {
     return _data ? _data->cs_reader.get() : nullptr;
   }
 
-  std::span<std::unique_ptr<columnstore::HNSWReader>> HNSWReaders() const;
-
  private:
   struct ColumnData {
     // Per-segment columnstore reader. Opened when IndexReaderOptions::db
     // is non-null; norm-bearing fields are looked up directly off it via
     // SegmentReaderImpl::norms(field_id).
     std::unique_ptr<columnstore::Reader> cs_reader;
-    absl::flat_hash_map<field_id, const columnstore::NormColumnReader*>
-      norms_by_id;
 
     void Open(const Directory& dir, const SegmentMeta& meta,
               const IndexReaderOptions& options);

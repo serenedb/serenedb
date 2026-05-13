@@ -27,7 +27,6 @@
 #include <absl/strings/str_cat.h>
 
 #include "basics/shared.hpp"
-#include "iresearch/columnstore/hnsw.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 
@@ -258,11 +257,7 @@ std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
       *reader = std::move(tmp);
       reuse_candidates.erase(it);
     } else {
-      if (it != reuse_candidates.end() && it->second != kInvalidCandidate) {
-        reuse_candidates.erase(it);
-      }
-      auto fresh = SegmentReaderImpl::Open(dir, meta, opts);
-      *reader = SegmentReader{std::move(fresh)};
+      *reader = SegmentReader{SegmentReaderImpl::Open(dir, meta, opts)};
     }
 
     if (!*reader) {

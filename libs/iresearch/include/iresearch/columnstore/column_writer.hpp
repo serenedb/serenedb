@@ -20,6 +20,7 @@
 
 #include <cstdint>
 #include <duckdb/common/types.hpp>
+#include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/data_pointer.hpp>
 #include <string>
@@ -47,19 +48,26 @@ class ColumnWriter final {
  public:
   // skip_validity=true emits zero validity DataPointers; reader treats
   // ValidityGroupCount()==0 as all-valid. PK uses this.
-  ColumnWriter(field_id id, std::string name, duckdb::LogicalType type,
-               uint64_t row_group_size, duckdb::DatabaseInstance& db,
-               IndexOutput& out, FooterColumnEntry& entry,
-               bool skip_validity = false);
+  ColumnWriter(field_id id, duckdb::LogicalType type, uint64_t row_group_size,
+               duckdb::DatabaseInstance& db, IndexOutput& out,
+               FooterColumnEntry& entry, bool skip_validity = false);
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
 
   // start_row must be monotonically non-decreasing; gaps become nulls.
   // Validity bits in `vec` are honored.
-  void Append(uint64_t start_row, duckdb::Vector& vec, duckdb::idx_t count);
+  void Append(uint64_t start_row, const duckdb::Vector& vec,
+              duckdb::idx_t count);
 
-  void AppendChunk(uint64_t start_row, duckdb::DataChunk& chunk,
+  // Append `count` rows picked by `sel` out of `vec`. Same monotonic /
+  // gap-padding semantics as the dense overload; lets callers avoid a
+  // throwaway Slice-then-Flatten Vector when they already have a
+  // SelectionVector (consolidate's mask-prune path).
+  void Append(uint64_t start_row, const duckdb::Vector& vec,
+              const duckdb::SelectionVector& sel, duckdb::idx_t count);
+
+  void AppendChunk(uint64_t start_row, const duckdb::DataChunk& chunk,
                    duckdb::idx_t col_idx = 0);
 
   field_id Id() const noexcept { return _id; }
@@ -81,9 +89,11 @@ class ColumnWriter final {
 
  private:
   void FlushRowGroup();
+  // Advances `_filled` to (start_row - _row_group_first_doc), marking the
+  // gap rows null in `_staging`'s validity. Flushes row groups crossed.
+  void PadNullsTo(uint64_t start_row);
 
   field_id _id;
-  std::string _name;
   duckdb::LogicalType _type;
   uint64_t _row_group_size;
   duckdb::DatabaseInstance* _db;

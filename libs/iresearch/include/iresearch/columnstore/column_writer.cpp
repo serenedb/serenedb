@@ -50,12 +50,11 @@
 
 namespace irs::columnstore {
 
-ColumnWriter::ColumnWriter(field_id id, std::string name,
-                           duckdb::LogicalType type, uint64_t row_group_size,
+ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
+                           uint64_t row_group_size,
                            duckdb::DatabaseInstance& db, IndexOutput& out,
                            FooterColumnEntry& entry, bool skip_validity)
   : _id{id},
-    _name{std::move(name)},
     _type{std::move(type)},
     _row_group_size{row_group_size != 0 ? row_group_size
                                         : kDefaultRowGroupSize},
@@ -63,52 +62,56 @@ ColumnWriter::ColumnWriter(field_id id, std::string name,
     _out{&out},
     _entry{&entry},
     _staging{_type, _row_group_size,
-             duckdb::VectorDataInitialization::ZERO_INITIALIZE},
+             duckdb::VectorDataInitialization::UNINITIALIZED},
     _skip_validity{skip_validity} {}
 
-void ColumnWriter::Append(uint64_t start_row, duckdb::Vector& vec,
+void ColumnWriter::PadNullsTo(uint64_t start_row) {
+  const uint64_t expected = _row_group_first_doc + _filled;
+  SDB_ASSERT(start_row >= expected,
+             "ColumnWriter::Append: start_row must be monotonic");
+  if (start_row == expected) {
+    return;
+  }
+  uint64_t gap = start_row - expected;
+  while (gap > 0) {
+    const uint64_t pad = std::min<uint64_t>(gap, _row_group_size - _filled);
+    auto& validity = duckdb::FlatVector::ValidityMutable(_staging);
+    validity.EnsureWritable();
+    auto* mask = validity.GetData();
+    using V = std::remove_pointer_t<decltype(mask)>;
+    constexpr auto kBitsPerEntry = duckdb::ValidityMask::BITS_PER_VALUE;
+    uint64_t i = _filled;
+    const uint64_t end = _filled + pad;
+    // Partial leading word: clear individual bits up to the next entry
+    // boundary.
+    while (i < end && (i % kBitsPerEntry) != 0) {
+      mask[i / kBitsPerEntry] &= ~(static_cast<V>(1) << (i % kBitsPerEntry));
+      ++i;
+    }
+    // Whole-word zero stores.
+    while (i + kBitsPerEntry <= end) {
+      mask[i / kBitsPerEntry] = 0;
+      i += kBitsPerEntry;
+    }
+    // Trailing partial word.
+    while (i < end) {
+      mask[i / kBitsPerEntry] &= ~(static_cast<V>(1) << (i % kBitsPerEntry));
+      ++i;
+    }
+    _filled += pad;
+    gap -= pad;
+    if (_filled == _row_group_size) {
+      FlushRowGroup();
+    }
+  }
+}
+
+void ColumnWriter::Append(uint64_t start_row, const duckdb::Vector& vec,
                           duckdb::idx_t count) {
   if (count == 0) {
     return;
   }
-
-  const uint64_t expected = _row_group_first_doc + _filled;
-  SDB_ASSERT(start_row >= expected,
-             "ColumnWriter::Append: start_row must be monotonic");
-  if (start_row > expected) {
-    uint64_t gap = start_row - expected;
-    while (gap > 0) {
-      const uint64_t pad = std::min<uint64_t>(gap, _row_group_size - _filled);
-      auto& validity = duckdb::FlatVector::ValidityMutable(_staging);
-      validity.EnsureWritable();
-      auto* mask = validity.GetData();
-      using V = std::remove_pointer_t<decltype(mask)>;
-      constexpr auto kBitsPerEntry = duckdb::ValidityMask::BITS_PER_VALUE;
-      uint64_t i = _filled;
-      const uint64_t end = _filled + pad;
-      // Partial leading word: clear individual bits up to the next entry
-      // boundary.
-      while (i < end && (i % kBitsPerEntry) != 0) {
-        mask[i / kBitsPerEntry] &= ~(static_cast<V>(1) << (i % kBitsPerEntry));
-        ++i;
-      }
-      // Whole-word zero stores.
-      while (i + kBitsPerEntry <= end) {
-        mask[i / kBitsPerEntry] = 0;
-        i += kBitsPerEntry;
-      }
-      // Trailing partial word.
-      while (i < end) {
-        mask[i / kBitsPerEntry] &= ~(static_cast<V>(1) << (i % kBitsPerEntry));
-        ++i;
-      }
-      _filled += pad;
-      gap -= pad;
-      if (_filled == _row_group_size) {
-        FlushRowGroup();
-      }
-    }
-  }
+  PadNullsTo(start_row);
 
   duckdb::idx_t consumed = 0;
   while (consumed < count) {
@@ -124,7 +127,30 @@ void ColumnWriter::Append(uint64_t start_row, duckdb::Vector& vec,
   }
 }
 
-void ColumnWriter::AppendChunk(uint64_t start_row, duckdb::DataChunk& chunk,
+void ColumnWriter::Append(uint64_t start_row, const duckdb::Vector& vec,
+                          const duckdb::SelectionVector& sel,
+                          duckdb::idx_t count) {
+  if (count == 0) {
+    return;
+  }
+  PadNullsTo(start_row);
+
+  duckdb::idx_t consumed = 0;
+  while (consumed < count) {
+    const auto take =
+      std::min<duckdb::idx_t>(count - consumed, _row_group_size - _filled);
+    duckdb::VectorOperations::Copy(vec, _staging, sel, consumed + take,
+                                   consumed, _filled);
+    _filled += take;
+    consumed += take;
+    if (_filled == _row_group_size) {
+      FlushRowGroup();
+    }
+  }
+}
+
+void ColumnWriter::AppendChunk(uint64_t start_row,
+                               const duckdb::DataChunk& chunk,
                                duckdb::idx_t col_idx) {
   Append(start_row, chunk.data[col_idx], chunk.size());
 }
@@ -249,10 +275,11 @@ PickedCodec PickCodec(duckdb::DatabaseInstance& db,
   if (forced != duckdb::CompressionType::COMPRESSION_AUTO) {
     auto fn =
       config.TryGetCompressionFunction(forced, codec_type.InternalType());
-    SDB_ENSURE(fn && fn->init_analyze, sdb::ERROR_BAD_PARAMETER,
-               "columnstore: compression '",
-               duckdb::CompressionTypeToString(forced),
-               "' is not supported for type ", codec_type.ToString());
+    if (!fn || !fn->init_analyze) {
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER, "columnstore: compression '",
+                duckdb::CompressionTypeToString(forced),
+                "' is not supported for type ", codec_type.ToString());
+    }
     candidates.emplace_back(*fn);
   } else {
     candidates = config.GetCompressionFunctions(codec_type.InternalType());
@@ -294,13 +321,16 @@ PickedCodec PickCodec(duckdb::DatabaseInstance& db,
       best = {&candidates[i].get(), std::move(states[i])};
     }
   }
-  SDB_ENSURE(best.function, sdb::ERROR_INTERNAL, "columnstore: ",
-             forced == duckdb::CompressionType::COMPRESSION_AUTO
-               ? "no codec accepted the row group for type "
-               : absl::StrCat("forced compression '",
-                              duckdb::CompressionTypeToString(forced),
-                              "' could not produce a plan for type "),
-             codec_type.ToString());
+  if (!best.function) {
+    if (forced == duckdb::CompressionType::COMPRESSION_AUTO) {
+      SDB_THROW(sdb::ERROR_INTERNAL,
+                "columnstore: no codec accepted the row group for type ",
+                codec_type.ToString());
+    }
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "columnstore: forced compression '",
+              duckdb::CompressionTypeToString(forced),
+              "' could not produce a plan for type ", codec_type.ToString());
+  }
   return best;
 }
 
@@ -495,7 +525,7 @@ void ColumnWriter::FlushRowGroup() {
 
   _row_group_first_doc += _filled;
   _filled = 0;
-  _staging.Initialize(duckdb::VectorDataInitialization::ZERO_INITIALIZE,
+  _staging.Initialize(duckdb::VectorDataInitialization::UNINITIALIZED,
                       _row_group_size);
 }
 

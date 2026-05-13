@@ -235,11 +235,14 @@ uint64_t SegmentReaderImpl::CountMappedMemory() const {
 }
 
 NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
-  auto it = _data->norms_by_id.find(field);
-  if (it == _data->norms_by_id.end()) {
+  if (!_data || !_data->cs_reader) {
     return {};
   }
-  return memory::make_managed<PersistedNormReader>(*it->second);
+  const auto* nc = _data->cs_reader->NormColumn(field);
+  if (!nc) {
+    return {};
+  }
+  return memory::make_managed<PersistedNormReader>(*nc);
 }
 
 const columnstore::ColumnReader* SegmentReaderImpl::Column(
@@ -293,10 +296,6 @@ void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
   }
   cs_reader =
     std::make_unique<columnstore::Reader>(dir, meta.name, *options.db);
-
-  for (const auto* nc : cs_reader->NormColumns()) {
-    norms_by_id.emplace(nc->Id(), nc);
-  }
 }
 
 }  // namespace irs

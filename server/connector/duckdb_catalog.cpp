@@ -1182,6 +1182,12 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   // expressions / SereneDBPhysicalCreateIndex view_columns) operates on
   // this pruned schema.
   std::optional<std::vector<duckdb::idx_t>> kept_view_positions;
+  // PK virtual columns for the resolved fast path. Populated alongside
+  // view_fast_path; reused later when stamping the _sdb_view_fast_path_pk
+  // option onto create_index_info. Optional so a future refactor that
+  // skips the initial population trips an assert at the second use site
+  // instead of silently using an empty vector.
+  std::optional<std::vector<duckdb::column_t>> vcols_opt;
   if (target.type == duckdb::CatalogType::VIEW_ENTRY) {
     view_backed = true;
     auto is_fast_path_wrapper = [](duckdb::LogicalOperator& op) -> bool {
@@ -1224,7 +1230,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     }
     if (fp && leaf_get) {
       view_fast_path = std::move(fp);
-      auto vcols = BackfillPkVirtualColumns(*view_fast_path);
+      vcols_opt = BackfillPkVirtualColumns(*view_fast_path);
+      const auto& vcols = *vcols_opt;
 
       // Try to prune unused view columns from the chain before we extend
       // it with PK virtuals. On success, subsequent code operates on the
@@ -1467,7 +1474,10 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
             duckdb::Value("rocksdb_rowid");
           break;
         default: {
-          const auto vcols = BackfillPkVirtualColumns(*view_fast_path);
+          SDB_ASSERT(vcols_opt.has_value(),
+                     "view_fast_path set but vcols not populated -- the "
+                     "two are produced together in the leaf-rewrite block");
+          const auto& vcols = *vcols_opt;
           if (vcols.size() == 1) {
             create_index_info->options["_sdb_view_fast_path_pk"] =
               duckdb::Value("file_row_number");

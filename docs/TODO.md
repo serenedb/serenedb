@@ -47,13 +47,6 @@ transactions/etc.) are out of scope.
   and then throws them away -- HNSW is rebuilt from scratch on the merged
   data. One full HNSW deserialise per source per merge, wasted. Lazy
   HNSW (above) fixes it; or add a "skip HNSW" Reader flag.
-- **`UPDATE` rewrites cs INCLUDE columns from the entire chunk even when
-  no value changed** ([`duckdb_physical_update.cpp:574-585,668-680`](../server/connector/duckdb_physical_update.cpp)).
-  For 10-row updates with 100 INCLUDE columns this is 1000 codec analyze
-  tournaments per batch. RocksDB partial-column updates only touch
-  changed columns; cs design is full-rewrite. Measure on UPDATE-heavy
-  workloads; possibly route unchanged INCLUDE cols through a verbatim-
-  passthrough.
 - **`StoredBytesAccumulator` Vector reallocated per batch `Init`**
   ([`search_sink_writer.cpp:392-409`](../server/connector/search_sink_writer.cpp)).
   For uniform STANDARD_VECTOR_SIZE batches this is per-batch alloc/free.
@@ -90,11 +83,6 @@ transactions/etc.) are out of scope.
   `ColumnWriter::_db`, `_out`, `_entry`, `Writer::Impl::dir`/`db`,
   `NormColumnReader::_column`. Project convention is references for
   init-once non-nullable pointees.
-- **`std::ranges::sort` at `duckdb_search_full_scan.cpp:586`** -- uses the
-  projection form `std::ranges::sort(perm, {}, proj)`. CONTRIBUTING.md
-  explicitly allows ranges with projection as the fallback, so this is
-  arguably compliant; reconfirm and either keep or convert to
-  `absl::c_sort(perm, cmp_lambda)`.
 - **`MergeWriter::Flush` is one giant function** ([`merge_writer.cpp:683-797`](../libs/iresearch/include/iresearch/index/merge_writer.cpp)).
   Split into per-source-context prep / WriteFields / MergeInto / Commit
   for testability.
@@ -150,11 +138,6 @@ transactions/etc.) are out of scope.
   For directories that defer writes (some S3-style backends), the read
   might miss the write. Today's impls flush on close; document the
   assumption or fsync explicitly.
-- **Bulk-scan condition uses string compare
-  `search.filter_summary == "All"`** ([`duckdb_search_full_scan.cpp:672`](../server/connector/duckdb_search_full_scan.cpp)).
-  Brittle on optimizer-generated summary; if the wording ever changes
-  the bulk path silently disables. Use a typed `search.IsMatchAll()`
-  flag.
 - **`columnstore_materializer.cpp::Scan` LIST path unconditionally
   `SetListSize(out_vec, 0)`** ([`columnstore_materializer.cpp:71`](../server/connector/columnstore_materializer.cpp))
   before per-row appends. If a caller ever issues multiple Scan calls
@@ -190,9 +173,6 @@ transactions/etc.) are out of scope.
   `ColumnstoreMaterializer`** even for `skip_validity=true` columns
   ([`columnstore_materializer.h:319`](../server/connector/columnstore_materializer.h)).
   Skip validity cursor allocation when `reader.ValidityGroupCount()==0`.
-- **`PersistedNormReader::GetBatch` does `upper_bound` on the first call
-  even for batches that all live in one RG.** Cache the last RG span on
-  the reader to short-cut entry. May or may not matter -- measure.
 - **HNSW `prepare_level_tab(rows + doc_limits::min(), false)`**
   ([`hnsw.cpp:394`](../libs/iresearch/include/iresearch/columnstore/hnsw.cpp))
   -- faiss allocates a level entry for node 0 which is unused.
@@ -201,16 +181,6 @@ transactions/etc.) are out of scope.
 
 ## Simplifications (notsure)
 
-- **`PersistentColumnData::child_columns` is a vector but ARRAY/LIST only
-  ever have one child** (STRUCT would have N). For V1, a
-  `std::unique_ptr<PersistentColumnData>` is cleaner; switch to vector
-  once STRUCT lands. Trade-off either way; leaning toward keep-as-vector
-  to avoid future churn.
-- **`field_id` is `uint32_t` but the footer writes it as `uint64_t`**
-  (`format.cpp:431,448,474,579,598,628`). 4 bytes wasted per id x ~few
-  columns x segments -- negligible. Decide once: 32 or 64 in the footer.
-- **`Reader::HasColumn` / `HasNormColumn` / `HasHNSW` are three separate
-  methods.** No callers use them together, so probably keep.
 - **cs column name = `std::to_string(column_id)`** at
   [`search_sink_writer.cpp:166-169`](../server/connector/search_sink_writer.cpp)
   while iresearch field names use BE-encoded bytes (see
@@ -320,6 +290,29 @@ as separate issues.
     doesn't include the `.cs` mmap footprint. Bytes show in RSS but
     not in this counter, throwing off memory-budgeted maintenance
     decisions.
+- **`UPDATE` rewrites cs INCLUDE columns from the entire chunk even
+  when no value changed**
+  ([duckdb_physical_update.cpp:574-585,668-680](../server/connector/duckdb_physical_update.cpp)).
+  For 10-row updates × 100 INCLUDE columns that's 1000 codec analyze
+  tournaments per batch. RocksDB partial-column updates only touch
+  changed columns; cs design is full-rewrite. Measure on UPDATE-heavy
+  workloads first; if it matters, route unchanged INCLUDE cols through
+  a verbatim-passthrough.
+- **`PersistedNormReader::GetBatch` does `upper_bound` on the first
+  call even for batches that all live in one RG.** Cache the last RG
+  span on the reader to short-cut entry. Effect unclear -- needs a
+  bench before deciding whether to land.
+- **Perf + on-disk size benchmark for the new norm columns.** Once
+  the norm-column wiring stabilises (currently still in progress on
+  this branch), run a bench comparing the new norm storage vs the
+  legacy norm path on size and read/write throughput. Pin numbers so
+  the legacy norm deletion is justified.
+- **Fix iresearch gtest tests.** `tests/libs/iresearch/...` (the
+  `iresearch-tests` ninja target) doesn't compile on this branch --
+  `legacy_compat.cpp` has drifted, and other test files have likely
+  drifted alongside. Repair as a separate pass; `ninja serened` is
+  enough for the columnstore PR's verification. (See user-memory
+  `project_iresearch_tests_broken.md`.)
 
 ---
 
@@ -362,6 +355,28 @@ as separate issues.
   serenedb-specific plumbing -- DuckDB upstream has no need for them
   and accepting them would be churn for an external project. Carry
   locally; document divergence at the patch sites only.
+
+- **`std::ranges::sort(perm, {}, proj)`** at
+  [`duckdb_search_full_scan.cpp:586`](../server/connector/duckdb_search_full_scan.cpp).
+  Uses the projection form, which CONTRIBUTING.md explicitly allows as
+  the fallback. Compliant; no rewrite needed.
+
+- **`PersistentColumnData::child_columns` is a vector even though
+  ARRAY/LIST/MAP have at most one child**. STRUCT has N, so the vector
+  shape already covers the general case; switching to
+  `unique_ptr<PersistentColumnData>` for ARRAY/LIST/MAP would force a
+  per-branch type discriminator. Trade-off either way; keep the vector
+  to avoid churn when STRUCT lands.
+
+- **`field_id` is `uint32_t` in memory but the footer writes it as
+  `uint64_t`** (`format.cpp:431,448,474,579,598,628`). 4 bytes wasted
+  per id × few columns × segments -- negligible. Width mismatch is
+  cheap insurance against ever needing to grow the type; leave at 64
+  on disk.
+
+- **`Reader::HasColumn` / `HasNormColumn` / `HasHNSW` are three
+  separate methods.** No caller uses them together; collapsing would
+  force a synthetic enum / type tag. Keep three.
 
 **Rule of thumb being applied here**: choose by *site cost* and
 *diagnostic value*, not by reader-vs-writer category.

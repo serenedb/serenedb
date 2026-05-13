@@ -50,12 +50,11 @@
 
 namespace irs::columnstore {
 
-ColumnWriter::ColumnWriter(field_id id, std::string name,
-                           duckdb::LogicalType type, uint64_t row_group_size,
+ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
+                           uint64_t row_group_size,
                            duckdb::DatabaseInstance& db, IndexOutput& out,
                            FooterColumnEntry& entry, bool skip_validity)
   : _id{id},
-    _name{std::move(name)},
     _type{std::move(type)},
     _row_group_size{row_group_size != 0 ? row_group_size
                                         : kDefaultRowGroupSize},
@@ -107,7 +106,7 @@ void ColumnWriter::PadNullsTo(uint64_t start_row) {
   }
 }
 
-void ColumnWriter::Append(uint64_t start_row, duckdb::Vector& vec,
+void ColumnWriter::Append(uint64_t start_row, const duckdb::Vector& vec,
                           duckdb::idx_t count) {
   if (count == 0) {
     return;
@@ -128,7 +127,7 @@ void ColumnWriter::Append(uint64_t start_row, duckdb::Vector& vec,
   }
 }
 
-void ColumnWriter::Append(uint64_t start_row, duckdb::Vector& vec,
+void ColumnWriter::Append(uint64_t start_row, const duckdb::Vector& vec,
                           const duckdb::SelectionVector& sel,
                           duckdb::idx_t count) {
   if (count == 0) {
@@ -150,7 +149,8 @@ void ColumnWriter::Append(uint64_t start_row, duckdb::Vector& vec,
   }
 }
 
-void ColumnWriter::AppendChunk(uint64_t start_row, duckdb::DataChunk& chunk,
+void ColumnWriter::AppendChunk(uint64_t start_row,
+                               const duckdb::DataChunk& chunk,
                                duckdb::idx_t col_idx) {
   Append(start_row, chunk.data[col_idx], chunk.size());
 }

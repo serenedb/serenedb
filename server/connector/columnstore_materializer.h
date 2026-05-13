@@ -51,18 +51,14 @@ struct SegmentMeta;
 
 }  // namespace irs
 namespace sdb::connector {
-
-template<typename T>
-concept DocIdRange = requires(const T& t, size_t i) {
-  { t.size() } -> std::convertible_to<size_t>;
-  { t[i] } -> std::convertible_to<uint64_t>;
-};
-
 namespace cs_internal {
 
-// Contiguous integer range [start, start+count) shaped as a DocIdRange.
-// Used to recurse into ARRAY element ranges and LIST per-row element
-// ranges where the doc-id range is purely arithmetic from the parent row.
+// Contiguous integer range [start, start+count). Used to recurse into
+// ARRAY element ranges and LIST per-row element ranges where the doc-id
+// range is purely arithmetic from the parent row. Satisfies the implicit
+// "doc-id range" duck-type (`.size()` + `operator[](size_t) -> uint64_t`)
+// required by MaterializeNode below; the constraint is enforced at
+// instantiation, not via a concept.
 struct IotaRange {
   using contiguous_range_tag = void;
   uint64_t start;
@@ -70,7 +66,6 @@ struct IotaRange {
   constexpr size_t size() const noexcept { return static_cast<size_t>(count); }
   constexpr uint64_t operator[](size_t i) const noexcept { return start + i; }
 };
-static_assert(DocIdRange<IotaRange>);
 
 // Recursive scan state mirrored after duckdb::ColumnScanState's
 // child_states. Lives on the binding and persists across batches so the
@@ -124,7 +119,7 @@ inline std::unique_ptr<MaterializerNodeState> MakeMaterializerNodeState(
 // LIST length+child / STRUCT fields). The state argument keeps cursors
 // alive across batches so the same ColumnSegment objects (and their
 // BufferManager-pinned pages) are reused without re-reading the file.
-template<DocIdRange DocIds>
+template<typename DocIds>
 void MaterializeNode(const irs::columnstore::ColumnReader& reader,
                      MaterializerNodeState& state, const DocIds& doc_ids,
                      duckdb::Vector& out_vec, duckdb::idx_t output_start,

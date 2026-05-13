@@ -52,131 +52,24 @@ bool AnyNonEmptyValidity(const std::vector<duckdb::DataPointer>& pointers) {
 
 }  // namespace
 
-ColumnReader::ColumnReader(field_id id, std::string name,
-                           duckdb::LogicalType type,
-                           std::vector<duckdb::DataPointer> data_pointers,
-                           std::vector<duckdb::DataPointer> validity_pointers,
-                           IndexInput& in, duckdb::DatabaseInstance& db)
+ColumnReader::ColumnReader(
+  field_id id, duckdb::LogicalType type,
+  std::vector<duckdb::DataPointer> data_pointers,
+  std::vector<duckdb::DataPointer> validity_pointers,
+  std::unique_ptr<ColumnReader> element_child,
+  std::vector<std::unique_ptr<ColumnReader>> struct_children,
+  uint64_t array_size, IndexInput& in, duckdb::DatabaseInstance& db)
   : _id{id},
-    _name{std::move(name)},
     _type{std::move(type)},
     _data_pointers{std::move(data_pointers)},
-    _validity_pointers{std::move(validity_pointers)},
-    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
-    _in{&in},
-    _db{&db} {
-  auto build_offsets = [](const std::vector<duckdb::DataPointer>& pointers,
-                          std::vector<uint64_t>& out) -> uint64_t {
-    out.reserve(pointers.size() + 1);
-    uint64_t total = 0;
-    for (const auto& p : pointers) {
-      out.push_back(total);
-      total += p.tuple_count;
-    }
-    out.push_back(total);
-    return total;
-  };
-  const uint64_t data_total = build_offsets(_data_pointers, _data_offsets);
-  build_offsets(_validity_pointers, _validity_offsets);
-  _row_count = data_total;
-}
-
-ColumnReader::ColumnReader(field_id id, std::string name,
-                           duckdb::LogicalType type,
-                           std::vector<duckdb::DataPointer> validity_pointers,
-                           std::unique_ptr<ColumnReader> element_child,
-                           uint64_t array_size, IndexInput& in,
-                           duckdb::DatabaseInstance& db)
-  : _id{id},
-    _name{std::move(name)},
-    _type{std::move(type)},
     _validity_pointers{std::move(validity_pointers)},
     _has_validity{AnyNonEmptyValidity(_validity_pointers)},
     _child{std::move(element_child)},
     _array_size{array_size},
-    _in{&in},
-    _db{&db} {
-  SDB_ASSERT(_child);
-  SDB_ASSERT(_array_size > 0);
-  SDB_ASSERT((_child->RowCount() % _array_size) == 0);
-  _row_count = _child->RowCount() / _array_size;
-  _data_offsets.push_back(0);  // ARRAY has no self data; sentinel-only.
-  _validity_offsets.reserve(_validity_pointers.size() + 1);
-  uint64_t total = 0;
-  for (const auto& p : _validity_pointers) {
-    _validity_offsets.push_back(total);
-    total += p.tuple_count;
-  }
-  _validity_offsets.push_back(total);
-}
-
-ColumnReader::ColumnReader(field_id id, std::string name,
-                           duckdb::LogicalType type,
-                           std::vector<duckdb::DataPointer> data_pointers,
-                           std::vector<duckdb::DataPointer> validity_pointers,
-                           std::unique_ptr<ColumnReader> element_child,
-                           IndexInput& in, duckdb::DatabaseInstance& db)
-  : _id{id},
-    _name{std::move(name)},
-    _type{std::move(type)},
-    _data_pointers{std::move(data_pointers)},
-    _validity_pointers{std::move(validity_pointers)},
-    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
-    _child{std::move(element_child)},
-    _in{&in},
-    _db{&db} {
-  SDB_ASSERT(_child);
-  uint64_t total = 0;
-  _data_offsets.reserve(_data_pointers.size() + 1);
-  for (const auto& p : _data_pointers) {
-    _data_offsets.push_back(total);
-    total += p.tuple_count;
-  }
-  _data_offsets.push_back(total);
-  _row_count = total;
-  _validity_offsets.reserve(_validity_pointers.size() + 1);
-  uint64_t vtotal = 0;
-  for (const auto& p : _validity_pointers) {
-    _validity_offsets.push_back(vtotal);
-    vtotal += p.tuple_count;
-  }
-  _validity_offsets.push_back(vtotal);
-  // Stored offsets are column-global cumulative; each RG's max stat is
-  // the running total at end of that RG. `_rg_element_starts[r]` is the
-  // child element start of row group r (== running total at end of RG
-  // r-1); only used as the seed for ListOffsetState's first row.
-  _rg_element_starts.reserve(_data_pointers.size() + 1);
-  _rg_element_starts.push_back(0);
-  for (const auto& p : _data_pointers) {
-    if (p.tuple_count == 0) {
-      _rg_element_starts.push_back(_rg_element_starts.back());
-    } else {
-      _rg_element_starts.push_back(
-        duckdb::NumericStats::Max(p.statistics).GetValue<uint64_t>());
-    }
-  }
-}
-
-ColumnReader::ColumnReader(
-  field_id id, std::string name, duckdb::LogicalType type,
-  std::vector<duckdb::DataPointer> validity_pointers,
-  std::vector<std::unique_ptr<ColumnReader>> struct_children, IndexInput& in,
-  duckdb::DatabaseInstance& db)
-  : _id{id},
-    _name{std::move(name)},
-    _type{std::move(type)},
-    _validity_pointers{std::move(validity_pointers)},
-    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
     _struct_fields{std::move(struct_children)},
     _in{&in},
     _db{&db} {
-  SDB_ASSERT(!_struct_fields.empty());
-  for (const auto& f : _struct_fields) {
-    SDB_ASSERT(f);
-  }
-  // Row count is determined by the first field; STRUCT has no own data.
-  _row_count = _struct_fields.front()->RowCount();
-  _data_offsets.push_back(0);  // sentinel only.
+  // Validity offsets are shaped identically for every type.
   _validity_offsets.reserve(_validity_pointers.size() + 1);
   uint64_t vtotal = 0;
   for (const auto& p : _validity_pointers) {
@@ -184,6 +77,68 @@ ColumnReader::ColumnReader(
     vtotal += p.tuple_count;
   }
   _validity_offsets.push_back(vtotal);
+
+  switch (_type.id()) {
+    case duckdb::LogicalTypeId::ARRAY: {
+      SDB_ASSERT(_child);
+      SDB_ASSERT(_array_size > 0);
+      SDB_ASSERT(_data_pointers.empty());
+      SDB_ASSERT(_struct_fields.empty());
+      SDB_ASSERT((_child->RowCount() % _array_size) == 0);
+      _row_count = _child->RowCount() / _array_size;
+      _data_offsets.push_back(0);  // sentinel only -- no self data on disk
+    } break;
+    case duckdb::LogicalTypeId::STRUCT: {
+      SDB_ASSERT(!_struct_fields.empty());
+      SDB_ASSERT(_data_pointers.empty());
+      SDB_ASSERT(!_child);
+      for (const auto& f : _struct_fields) {
+        SDB_ASSERT(f);
+      }
+      _row_count = _struct_fields.front()->RowCount();
+      _data_offsets.push_back(0);  // sentinel only
+    } break;
+    case duckdb::LogicalTypeId::LIST:
+    case duckdb::LogicalTypeId::MAP: {
+      SDB_ASSERT(_child);
+      SDB_ASSERT(_struct_fields.empty());
+      uint64_t total = 0;
+      _data_offsets.reserve(_data_pointers.size() + 1);
+      for (const auto& p : _data_pointers) {
+        _data_offsets.push_back(total);
+        total += p.tuple_count;
+      }
+      _data_offsets.push_back(total);
+      _row_count = total;
+      // Stored offsets are column-global cumulative; each RG's max stat
+      // is the running total at end of that RG. `_rg_element_starts[r]`
+      // is the child element start of row group r; only used as the
+      // seed for ListOffsetState's first row.
+      _rg_element_starts.reserve(_data_pointers.size() + 1);
+      _rg_element_starts.push_back(0);
+      for (const auto& p : _data_pointers) {
+        if (p.tuple_count == 0) {
+          _rg_element_starts.push_back(_rg_element_starts.back());
+        } else {
+          _rg_element_starts.push_back(
+            duckdb::NumericStats::Max(p.statistics).GetValue<uint64_t>());
+        }
+      }
+    } break;
+    default: {
+      // Primitive leaf.
+      SDB_ASSERT(!_child);
+      SDB_ASSERT(_struct_fields.empty());
+      uint64_t total = 0;
+      _data_offsets.reserve(_data_pointers.size() + 1);
+      for (const auto& p : _data_pointers) {
+        _data_offsets.push_back(total);
+        total += p.tuple_count;
+      }
+      _data_offsets.push_back(total);
+      _row_count = total;
+    } break;
+  }
 }
 
 namespace {

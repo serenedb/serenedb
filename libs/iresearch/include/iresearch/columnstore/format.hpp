@@ -30,8 +30,9 @@
 namespace duckdb {
 
 class DatabaseInstance;
-}
+class BinaryDeserializer;
 
+}  // namespace duckdb
 namespace irs {
 
 class Directory;
@@ -73,8 +74,7 @@ class Writer final {
 
   // row_group_size = 0 selects kDefaultRowGroupSize. Returned reference
   // is valid until Commit/Rollback/dtor.
-  ColumnWriter& OpenColumn(field_id id, std::string_view name,
-                           duckdb::LogicalType type,
+  ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type,
                            uint64_t row_group_size = 0,
                            bool skip_validity = false,
                            duckdb::CompressionType compression =
@@ -126,6 +126,14 @@ class Reader final {
  private:
   struct Impl;
   std::unique_ptr<Impl> _impl;
+
+  // Reader::Reader splits its footer-parse work across these three;
+  // each iterates one of the kFooterSlot* lists and populates the
+  // matching `_impl->*_readers` / `*_by_id` pair.
+  void BuildColumnReaders(duckdb::BinaryDeserializer& deserializer,
+                          duckdb::DatabaseInstance& db);
+  void BuildNormReaders(duckdb::BinaryDeserializer& deserializer);
+  void BuildHnswReaders(duckdb::BinaryDeserializer& deserializer);
 };
 
 }  // namespace columnstore

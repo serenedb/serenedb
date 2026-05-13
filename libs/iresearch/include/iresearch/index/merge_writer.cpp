@@ -665,6 +665,73 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
   return !field_itr.Aborted();
 }
 
+// Compute the merged segment's doc_id mapping (identity for fully-live
+// sources, compacted for sources with deletes), populate the field-meta
+// map, register each source with the field iterator, and set the merged
+// segment's doc counts. Returns false if a base_id overflow happens or
+// per-source ComputeFieldMeta fails.
+bool ComputeDocMappingsAndFieldMeta(
+  ManagedVector<MergeWriter::ReaderCtx>& readers, SegmentMeta& segment,
+  FieldMetaMapT& field_meta_map, CompoundFieldIterator& fields_itr,
+  IndexFeatures& index_features) {
+  doc_id_t base_id = doc_limits::min();
+  for (auto& reader_ctx : readers) {
+    SDB_ASSERT(reader_ctx.reader);
+    auto& reader = *reader_ctx.reader;
+    const auto docs_count = reader.docs_count();
+    if (reader.live_docs_count() == docs_count) {
+      const auto reader_base = base_id - doc_limits::min();
+      SDB_ASSERT(static_cast<uint64_t>(base_id) + docs_count <
+                 std::numeric_limits<doc_id_t>::max());
+      base_id += static_cast<doc_id_t>(docs_count);
+      reader_ctx.doc_map = [reader_base](doc_id_t doc) noexcept {
+        return reader_base + doc;
+      };
+    } else {
+      auto& doc_id_map = reader_ctx.doc_id_map;
+      base_id = ComputeDocIds(doc_id_map, reader, base_id);
+      reader_ctx.doc_map = [&doc_id_map](doc_id_t doc) noexcept {
+        return doc >= doc_id_map.size() ? doc_limits::eof() : doc_id_map[doc];
+      };
+    }
+    if (!doc_limits::valid(base_id)) {
+      return false;
+    }
+    if (!ComputeFieldMeta(field_meta_map, index_features, reader)) {
+      return false;
+    }
+    fields_itr.Add(reader, reader_ctx.doc_map);
+  }
+  segment.docs_count = base_id - doc_limits::min();
+  segment.live_docs_count = segment.docs_count;
+  return true;
+}
+
+// Borrow each source's cached columnstore::Reader from its SubReader and
+// allocate the output cs Writer. Skipped (all outputs left empty / null)
+// when the segment isn't backed by a DatabaseInstance.
+void OpenColumnstoreContexts(
+  duckdb::DatabaseInstance* db, TrackingDirectory& dir,
+  std::string_view segment_name, ManagedVector<MergeWriter::ReaderCtx>& readers,
+  std::vector<SourceContext>& sources,
+  std::vector<const columnstore::Reader*>& source_reader_ptrs,
+  std::vector<const DocumentMask*>& source_masks,
+  std::unique_ptr<columnstore::Writer>& cs_writer) {
+  if (db == nullptr) {
+    return;
+  }
+  sources.reserve(readers.size());
+  source_reader_ptrs.reserve(readers.size());
+  source_masks.reserve(readers.size());
+  for (auto& ctx : readers) {
+    const auto* cs_reader = ctx.reader->CsReader();
+    source_reader_ptrs.push_back(cs_reader);
+    source_masks.push_back(ctx.reader->docs_mask());
+    sources.push_back(SourceContext{ctx.reader, cs_reader, &ctx.doc_map});
+  }
+  cs_writer = std::make_unique<columnstore::Writer>(dir, segment_name, *db);
+}
+
 }  // namespace
 
 MergeWriter::ReaderCtx::ReaderCtx(const SubReader* reader,
@@ -687,7 +754,6 @@ bool MergeWriter::Flush(SegmentMeta& segment,
   SDB_ASSERT(segment.codec);
 
   bool result = false;
-
   Finally segment_invalidator = [&result, &segment]() noexcept {
     if (!result) [[unlikely]] {
       segment.files.clear();
@@ -698,71 +764,24 @@ bool MergeWriter::Flush(SegmentMeta& segment,
   const auto& progress_callback = progress ? progress : kProgressNoop;
   TrackingDirectory track_dir{_dir};
 
-  const size_t size = _readers.size();
   FieldMetaMapT field_meta_map;
-  CompoundFieldIterator fields_itr{size, progress_callback};
+  CompoundFieldIterator fields_itr{_readers.size(), progress_callback};
   IndexFeatures index_features{IndexFeatures::None};
-
-  doc_id_t base_id = doc_limits::min();
-  for (auto& reader_ctx : _readers) {
-    SDB_ASSERT(reader_ctx.reader);
-    auto& reader = *reader_ctx.reader;
-    const auto docs_count = reader.docs_count();
-
-    if (reader.live_docs_count() == docs_count) {
-      const auto reader_base = base_id - doc_limits::min();
-      SDB_ASSERT(static_cast<uint64_t>(base_id) + docs_count <
-                 std::numeric_limits<doc_id_t>::max());
-      base_id += static_cast<doc_id_t>(docs_count);
-      reader_ctx.doc_map = [reader_base](doc_id_t doc) noexcept {
-        return reader_base + doc;
-      };
-    } else {
-      auto& doc_id_map = reader_ctx.doc_id_map;
-      base_id = ComputeDocIds(doc_id_map, reader, base_id);
-      reader_ctx.doc_map = [&doc_id_map](doc_id_t doc) noexcept {
-        return doc >= doc_id_map.size() ? doc_limits::eof() : doc_id_map[doc];
-      };
-    }
-
-    if (!doc_limits::valid(base_id)) {
-      return false;
-    }
-    if (!ComputeFieldMeta(field_meta_map, index_features, reader)) {
-      return false;
-    }
-
-    fields_itr.Add(reader, reader_ctx.doc_map);
+  if (!ComputeDocMappingsAndFieldMeta(_readers, segment, field_meta_map,
+                                      fields_itr, index_features)) {
+    return false;
   }
-
-  segment.docs_count = base_id - doc_limits::min();
-  segment.live_docs_count = segment.docs_count;
 
   if (!progress_callback()) {
     return false;
   }
 
-  // Borrow each source's cached columnstore::Reader from its SubReader so
-  // merge doesn't trigger an extra footer parse per source. Skipped when
-  // the segment isn't backed by a DatabaseInstance (no `<seg>.cs` to read
-  // or write).
   std::vector<SourceContext> sources;
   std::vector<const irs::columnstore::Reader*> source_reader_ptrs;
   std::vector<const DocumentMask*> source_masks;
   std::unique_ptr<columnstore::Writer> cs_writer;
-  if (_db != nullptr) {
-    sources.reserve(_readers.size());
-    source_reader_ptrs.reserve(_readers.size());
-    source_masks.reserve(_readers.size());
-    for (auto& ctx : _readers) {
-      const auto* cs_reader = ctx.reader->CsReader();
-      source_reader_ptrs.push_back(cs_reader);
-      source_masks.push_back(ctx.reader->docs_mask());
-      sources.push_back(SourceContext{ctx.reader, cs_reader, &ctx.doc_map});
-    }
-    cs_writer =
-      std::make_unique<columnstore::Writer>(track_dir, segment.name, *_db);
-  }
+  OpenColumnstoreContexts(_db, track_dir, segment.name, _readers, sources,
+                          source_reader_ptrs, source_masks, cs_writer);
 
   const FlushState state{.dir = &track_dir,
                          .name = segment.name,
@@ -784,11 +803,11 @@ bool MergeWriter::Flush(SegmentMeta& segment,
   }
 
   // Typed columnstore (PK / geo / wildcard / HNSW / ...): merge column by
-  // column via the columnstore merge driver. Norms are handled inline above.
+  // column via the columnstore merge driver. Norms are handled inline in
+  // WriteFields.
   if (cs_writer && !source_reader_ptrs.empty()) {
     irs::columnstore::MergeInto(source_reader_ptrs, source_masks, *cs_writer);
   }
-
   if (cs_writer) {
     cs_writer->Commit();
   }

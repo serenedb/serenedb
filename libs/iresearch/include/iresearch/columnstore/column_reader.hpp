@@ -63,40 +63,26 @@ inline size_t ConsecutiveRunLength(
 
 class ColumnReader final {
  public:
-  // Primitive ctor.
-  ColumnReader(field_id id, std::string name, duckdb::LogicalType type,
+  // Unified ctor. Type-shape determines which extra params are honoured:
+  //   primitive  -> data_pointers + validity_pointers; others empty/0.
+  //   ARRAY      -> validity_pointers + element_child + array_size>0;
+  //                 data_pointers empty (no self data on disk).
+  //   LIST/MAP   -> data_pointers (per-row UBIGINT lengths) +
+  //                 validity_pointers + element_child; array_size 0.
+  //   STRUCT     -> validity_pointers + struct_children;
+  //                 data_pointers empty, element_child null.
+  ColumnReader(field_id id, duckdb::LogicalType type,
                std::vector<duckdb::DataPointer> data_pointers,
                std::vector<duckdb::DataPointer> validity_pointers,
-               IndexInput& in, duckdb::DatabaseInstance& db);
-
-  // ARRAY<child, array_size> ctor. row_count is derived from the child.
-  ColumnReader(field_id id, std::string name, duckdb::LogicalType type,
-               std::vector<duckdb::DataPointer> validity_pointers,
-               std::unique_ptr<ColumnReader> element_child, uint64_t array_size,
-               IndexInput& in, duckdb::DatabaseInstance& db);
-
-  // LIST<child> ctor. data_pointers carry per-row UBIGINT lengths; offsets
-  // are recovered as cumulative sums per row group (cached in
-  // _list_offsets_per_rg). Also used for MAP, which DuckDB encodes as
-  // LIST<STRUCT<key,value>> at PhysicalType::LIST.
-  ColumnReader(field_id id, std::string name, duckdb::LogicalType type,
-               std::vector<duckdb::DataPointer> data_pointers,
-               std::vector<duckdb::DataPointer> validity_pointers,
-               std::unique_ptr<ColumnReader> element_child, IndexInput& in,
-               duckdb::DatabaseInstance& db);
-
-  // STRUCT ctor. No top-level data of its own; row count is taken from
-  // child[0]. Each child mirrors duckdb::StructColumnData::sub_columns.
-  ColumnReader(field_id id, std::string name, duckdb::LogicalType type,
-               std::vector<duckdb::DataPointer> validity_pointers,
+               std::unique_ptr<ColumnReader> element_child,
                std::vector<std::unique_ptr<ColumnReader>> struct_children,
-               IndexInput& in, duckdb::DatabaseInstance& db);
+               uint64_t array_size, IndexInput& in,
+               duckdb::DatabaseInstance& db);
 
   ColumnReader(const ColumnReader&) = delete;
   ColumnReader& operator=(const ColumnReader&) = delete;
 
   field_id Id() const noexcept { return _id; }
-  std::string_view Name() const noexcept { return _name; }
   const duckdb::LogicalType& Type() const noexcept { return _type; }
 
   uint64_t RowCount() const noexcept { return _row_count; }
@@ -285,7 +271,6 @@ class ColumnReader final {
     IndexInput& in) const;
 
   field_id _id;
-  std::string _name;
   duckdb::LogicalType _type;
   std::vector<duckdb::DataPointer> _data_pointers;
   std::vector<duckdb::DataPointer> _validity_pointers;

@@ -47,8 +47,7 @@ void MergeInto(std::span<const Reader* const> sources,
 
   for (const auto& first_col : schema_src->Columns()) {
     const auto field_id_v = first_col->Id();
-    auto& cw =
-      output.OpenColumn(field_id_v, first_col->Name(), first_col->Type());
+    auto& cw = output.OpenColumn(field_id_v, first_col->Type());
 
     uint64_t out_doc = 0;
     for (size_t s = 0; s < sources.size(); ++s) {

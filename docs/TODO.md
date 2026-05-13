@@ -47,113 +47,40 @@ transactions/etc.) are out of scope.
   and then throws them away -- HNSW is rebuilt from scratch on the merged
   data. One full HNSW deserialise per source per merge, wasted. Lazy
   HNSW (above) fixes it; or add a "skip HNSW" Reader flag.
-- **`StoredBytesAccumulator` Vector reallocated per batch `Init`**
-  ([`search_sink_writer.cpp:392-409`](../server/connector/search_sink_writer.cpp)).
-  For uniform STANDARD_VECTOR_SIZE batches this is per-batch alloc/free.
-  Keep the Vector alive when the size matches; only re-emplace on size
-  change.
 
 ## Simplifications (sure)
 
-- **Three `ColumnReader` constructors that diverge only in which arg list
-  + which composite they handle** ([`column_reader.cpp:38,66,101`](../libs/iresearch/include/iresearch/columnstore/column_reader.cpp)).
-  Plus three matching `MakeColumnReader` switch arms in
-  [`format.cpp:90-122`](../libs/iresearch/include/iresearch/columnstore/format.cpp).
-  Collapse into one ctor (default-empty data/validity for ARRAY) and one
-  `MakeColumnReader` body.
 - **`HNSWInfo` footer fields are written/read field-by-field across 8
   `WriteProperty`/`ReadProperty` calls** ([`format.cpp:474-484,628-638`](../libs/iresearch/include/iresearch/columnstore/format.cpp)).
   Either give `HNSWInfo` a `Serialize`/`Deserialize` or use a
   `WriteProperty(0, "info", info)` once with the inspector specialisation.
-- **`Reader::Reader` is a 140-line constructor doing header check + footer
-  parse + per-section walk** ([`format.cpp:530-671`](../libs/iresearch/include/iresearch/columnstore/format.cpp)).
-  Split into `OpenAndCheckHeader`, `ReadFooterBytes`, `BuildColumnReaders`,
-  `BuildNormReaders`, `BuildHnswReaders`. Each becomes individually
-  testable and the ctor becomes orchestration.
-- **`AllocateColumnId() noexcept` is a one-line `next_id++`** --
-  inline it in the header (needs `Impl` exposure; deferred).
-- **`std::function<std::unique_ptr<duckdb::OverflowStringWriter>()>` factory
-  on `ColumnDataCheckpointData`** is a one-shot lambda; pass the writer
-  directly if the DuckDB patch we already carry permits.
-- **`concept DocIdRange`** at `columnstore_materializer.h:54`. Rule:
-  "Prefer template + static_assert over concepts when possible". Convert
-  or drop the constraint (call sites are `std::span<const irs::doc_id_t>`
-  and an inline `PermDocIds` struct).
-- **Raw non-owning pointers** in `ColumnReader::_db`, `_in`,
-  `ColumnWriter::_db`, `_out`, `_entry`, `Writer::Impl::dir`/`db`,
-  `NormColumnReader::_column`. Project convention is references for
-  init-once non-nullable pointees.
-- **`MergeWriter::Flush` is one giant function** ([`merge_writer.cpp:683-797`](../libs/iresearch/include/iresearch/index/merge_writer.cpp)).
-  Split into per-source-context prep / WriteFields / MergeInto / Commit
-  for testability.
-- **`const_cast<duckdb::Vector&>(vec)`** at
-  [`search_sink_writer.cpp:308-320`](../server/connector/search_sink_writer.cpp)
-  -- `ColumnWriter::Append` takes non-const Vector to call
-  `ToUnifiedFormat`. Make Append accept const + do `ToUnifiedFormat`
-  itself to drop the cast.
+  (HNSW item, owned separately.)
 ---
 
 ## Bugs (notsure)
 
-- **`Reader::_impl->in` is shared between `OpenSegment()` (called from
-  materializer / merge / norm reader) and `PointReadCursor`'s owned
-  Reopen'd input.** The cursor path uses its own input. The materializer
-  path uses the shared `_in`. Concurrency: `IndexInput::ReadBytes(offset,
-  buf, size)` is positional, which is required for thread-safety; verify
-  every backend (`MMapIndexInput`, `BufferedIndexInput`, etc.) preserves
-  that contract for concurrent calls. The Reader-side `_in->Seek + ReadHNSW`
-  during `Reader::Reader` happens before any ColumnReader callers can run,
-  so that's safe, but document it.
 - **`HNSWReader::_hnsw` is `mutable` because `faiss::HNSW::search` isn't
   const** (`hnsw.hpp:91`). The graph is shared across threads; faiss
   probably treats search as readonly on the graph nodes (state lives in
   the per-call `VisitedTable`). Verify by reading the faiss search path,
   or wrap with a shared_mutex. Otherwise multi-threaded ANN with one
-  reader could race.
+  reader could race. (HNSW item, owned separately.)
 - **`HNSW _pin_stack` is `std::array<ChunkSlot*, 2>` with hard depth 2**
   ([`hnsw.cpp:308`](../libs/iresearch/include/iresearch/columnstore/hnsw.cpp)).
   Asserts at depth 3. Comment says "Build outer + symmetric_dis inner"
   is enough today -- re-check after any faiss bump. Consider switching
-  to a small_vector with assert-only depth-check.
-- **VARCHAR overflow round-trip** -- `IndexOutputOverflowWriter::WriteString`
-  writes immediately and hands back the file offset as `block_id`. The
-  codec serializes that `block_id` into the segment dictionary. Verify the
-  codec doesn't reorder/relocate overflow strings after `WriteString`
-  returns (which would invalidate our offsets). Probably fine because we
-  intercept *all* overflow writes; recheck.
-- **`columnstore::Reader::Reader` allocates a `std::vector<byte_type>
-  footer_buf` sized from on-disk metadata.** It's already sanity-checked
-  for `footer_offset < footer_offset_pos`, but a corrupted size that
-  passes the check could still allocate up to file size. Probably bounded
-  enough; consider a hard cap.
+  to a small_vector with assert-only depth-check. (HNSW item, owned
+  separately.)
 - **`SegmentReaderImpl::UpdateMeta` shares `_data` (incl. `cs_reader`)
   with the predecessor** ([`segment_reader_impl.cpp:218`](../libs/iresearch/include/iresearch/index/segment_reader_impl.cpp)).
-  Two SegmentReaderImpl instances now read through the same `cs_reader`.
-  `columnstore::Reader` has no internal locking; the HNSW seek path
-  (`_in->Seek`) is racy under concurrent scans on the two readers.
-  `ReopenColumnStore` (line 197) builds fresh ColumnData and is fine.
-  Decide: copy on UpdateMeta, or make cs_reader Seek-free / locked.
-- **No fsync between `_columnstore->Commit()` and opening `_cs_reader`**
-  ([`segment_writer.cpp:142-153`](../libs/iresearch/include/iresearch/index/segment_writer.cpp)).
-  For directories that defer writes (some S3-style backends), the read
-  might miss the write. Today's impls flush on close; document the
-  assumption or fsync explicitly.
-- **`columnstore_materializer.cpp::Scan` LIST path unconditionally
-  `SetListSize(out_vec, 0)`** ([`columnstore_materializer.cpp:71`](../server/connector/columnstore_materializer.cpp))
-  before per-row appends. If a caller ever issues multiple Scan calls
-  into the same chunk, prior LIST rows are truncated. Today's caller
-  writes at slot 0 once per chunk; align with `SelectByDocIds`'s
-  `output_start == 0` guard.
-- **`FieldData::compute_features` appends `_stats.len` to the norm
-  writer with no `> 0` guard** ([`field_data.cpp:646-648`](../libs/iresearch/include/iresearch/index/field_data.cpp)).
-  Zero-token docs land norm=0; BM25 skip-zero semantics make this OK
-  in practice, but the implicit contract should be guarded or
-  documented in the public API.
-- **`FieldsData::emplace` allocates a per-segment norm column id even
-  for fields that may receive zero docs** ([`field_data.cpp:1004-1023`](../libs/iresearch/include/iresearch/index/field_data.cpp)).
-  `NormColumnWriter::Finalize` writes a zero-row entry to the footer.
-  Either prune empty norm columns at finalize or document the
-  dead-entry case.
+  Two SegmentReaderImpl instances read through the same `cs_reader`.
+  This mirrors how the old columnstore handles `UpdateMeta`, so the
+  shape is intentional and not new. `ReopenColumnStore` (line 197)
+  builds a fresh ColumnData and is fine. The remaining concern is
+  whether the HNSW-side seek path needs a `Dup()` here (rare path);
+  if it does, the fix is to `Dup()`/`Reopen()` the IndexInput inside
+  cs_reader on share. Cross-check against old-cs's UpdateMeta when
+  the HNSW owner picks this up.
 
 ## Performance (notsure)
 
@@ -181,12 +108,7 @@ transactions/etc.) are out of scope.
 
 ## Simplifications (notsure)
 
-- **cs column name = `std::to_string(column_id)`** at
-  [`search_sink_writer.cpp:166-169`](../server/connector/search_sink_writer.cpp)
-  while iresearch field names use BE-encoded bytes (see
-  `SetNameToBuffer`). cs entries are looked up by id; the name is just
-  metadata. Drop, or align with BE-bytes convention so a hex dump of the
-  `.cs` footer matches the `.ti` file.
+(All resolved in this pass; see Already-applied + Considered + Follow-ups.)
 
 ---
 
@@ -293,7 +215,7 @@ as separate issues.
 - **`UPDATE` rewrites cs INCLUDE columns from the entire chunk even
   when no value changed**
   ([duckdb_physical_update.cpp:574-585,668-680](../server/connector/duckdb_physical_update.cpp)).
-  For 10-row updates × 100 INCLUDE columns that's 1000 codec analyze
+  For 10-row updates x 100 INCLUDE columns that's 1000 codec analyze
   tournaments per batch. RocksDB partial-column updates only touch
   changed columns; cs design is full-rewrite. Measure on UPDATE-heavy
   workloads first; if it matters, route unchanged INCLUDE cols through
@@ -307,12 +229,39 @@ as separate issues.
   this branch), run a bench comparing the new norm storage vs the
   legacy norm path on size and read/write throughput. Pin numbers so
   the legacy norm deletion is justified.
+- **Rethink the `StoredBytesAccumulator` per-row design.** Today PK
+  and other STORE'd columns funnel through
+  `SearchSinkInsertBaseImpl::StoredBytesAccumulators*`
+  ([search_sink_writer.cpp:332-418](../server/connector/search_sink_writer.cpp))
+  -- the SearchSink builds a per-batch `duckdb::Vector` one slot at a
+  time via `StringVector::AddStringOrBlob` / `SetNull` and only at
+  `Flush` time hands the assembled Vector to
+  `ColumnWriter::Append`. That's row-level access masquerading as a
+  batch interface, complete with: a per-batch `Vector` re-emplace
+  (~32 KB BLOB malloc/free per accumulator per batch), a per-row
+  branch in `Append` vs `AppendNull`, and an extra string-heap copy
+  at `VectorOperations::Copy` time when the accumulator Vector is
+  Append'd into the writer's `_staging`. The intended end state is
+  batch-oriented: have the SearchSink hand the original DuckDB
+  `Vector` (or a `Slice`) to `ColumnWriter::Append` directly, the
+  same way INCLUDE/HNSW columns already do via `WriteFullColumnImpl`.
+  Per-row PK fixup (e.g. generated-PK from rowid) becomes either a
+  one-pass batch transform on the source Vector or a typed Append
+  overload on the writer. Outcome: drop the per-batch buffer
+  re-emplace (the original TODO concern) AND drop one full string
+  copy on every PK/STORE column. Out of this PR; file as its own
+  refactor.
 - **Fix iresearch gtest tests.** `tests/libs/iresearch/...` (the
   `iresearch-tests` ninja target) doesn't compile on this branch --
   `legacy_compat.cpp` has drifted, and other test files have likely
   drifted alongside. Repair as a separate pass; `ninja serened` is
   enough for the columnstore PR's verification. (See user-memory
   `project_iresearch_tests_broken.md`.)
+- **Raw non-owning pointers in cs internals** (`ColumnReader::_db,_in`,
+  `ColumnWriter::_db,_out,_entry`, `Writer::Impl::dir,db`,
+  `NormColumnReader::_column`). Project convention is references for
+  init-once non-nullable pointees. Per-file mechanical change; deferred
+  out of this PR to keep the cs diff focused on the format/refactors.
 
 ---
 
@@ -370,13 +319,83 @@ as separate issues.
 
 - **`field_id` is `uint32_t` in memory but the footer writes it as
   `uint64_t`** (`format.cpp:431,448,474,579,598,628`). 4 bytes wasted
-  per id × few columns × segments -- negligible. Width mismatch is
+  per id x few columns x segments -- negligible. Width mismatch is
   cheap insurance against ever needing to grow the type; leave at 64
   on disk.
 
 - **`Reader::HasColumn` / `HasNormColumn` / `HasHNSW` are three
   separate methods.** No caller uses them together; collapsing would
   force a synthetic enum / type tag. Keep three.
+
+- **`Writer::AllocateColumnId() noexcept` is a one-line `next_id++`.**
+  Inlining in the header would need to expose `Writer::Impl`; the
+  whole point of the PImpl is to NOT expose it. Cost of the
+  out-of-line call is one increment + ret -- negligible against the
+  column-open work that follows. Keep as-is.
+
+- **`std::function<unique_ptr<duckdb::OverflowStringWriter>()>`
+  factory on `ColumnDataCheckpointData`**
+  ([column_writer.cpp:374-376](../libs/iresearch/include/iresearch/columnstore/column_writer.cpp)).
+  One-shot lambda per VARCHAR-UNCOMPRESSED row group. Removing the
+  `std::function` indirection would require a DuckDB API change
+  (`SetOverflowStringWriter(unique_ptr)` direct setter) on top of the
+  patches we already carry. Not worth a new DuckDB-side patch for a
+  per-RG allocation that's nowhere near hot. Keep.
+
+- **`Reader::_impl->in` shared between `OpenSegment()` and concurrent
+  callers.** `PointReadCursor` already takes a `Reopen()`'d input so
+  it's independent. The materializer/merge paths share `_in` but only
+  call positional `ReadBytes(offset, ...)`; the BytesViewInput backend
+  (mmap-backed) just memcpy's from the underlying view and updates
+  `_pos` as a side-effect that no other call observes. Sequential
+  reads (which mutate `_pos`) only happen inside the single-threaded
+  `Reader::Reader` ctor. Safe in practice.
+
+- **VARCHAR overflow round-trip.** `IndexOutputOverflowWriter::WriteString`
+  writes immediately and hands back the file offset as `block_id`,
+  which the codec serializes into the segment dictionary. We intercept
+  *all* overflow writes via the factory we install on
+  `ColumnDataCheckpointData`, so the codec never relocates a string
+  after we've recorded its offset. Stable; no fix needed.
+
+- **`columnstore::Reader::Reader` footer-buf allocation sized from
+  on-disk metadata.** Already gated by
+  `footer_offset >= header_len && footer_offset < footer_offset_pos`;
+  worst-case bound is the file length minus header / iresearch
+  footer, which is what a legitimate footer would consume. The mmap
+  fast path (now via `IndexInput::ReadView`) doesn't allocate at all.
+  Hard cap not worth adding.
+
+- **No `fsync` directly between `_columnstore->Commit()` and opening
+  `_cs_reader`** ([segment_writer.cpp:142-153](../libs/iresearch/include/iresearch/index/segment_writer.cpp)).
+  Verified: the `.cs` IS fsynced -- same code path as old
+  `.csi`/`.csd`. `columnstore::Writer` is constructed with the
+  segment's TrackingDirectory ([segment_writer.cpp:203](../libs/iresearch/include/iresearch/index/segment_writer.cpp)),
+  so `Writer::Commit` creates the `.cs` through the tracker;
+  `SegmentWriter::Commit` collects it via
+  `_dir.FlushTracked(meta.byte_size)` ([segment_writer.cpp:170](../libs/iresearch/include/iresearch/index/segment_writer.cpp)).
+  `IndexWriter::Commit` -> `GetFilesToSync`
+  ([index_writer.cpp:585-592](../libs/iresearch/include/iresearch/index/index_writer.cpp))
+  then iterates `segment.meta.files` and fsyncs each entry, which is
+  exactly the loop that handles `.csi`/`.csd` for old-cs. The
+  reader opened in segment_writer right after `Writer::Commit()`
+  predates that fsync but it reads from the same process's
+  Directory; the segment isn't visible to other processes until
+  `IndexWriter::Commit` finishes its sync.
+
+- **`columnstore_materializer.cpp::Scan` LIST path unconditionally
+  `SetListSize(out_vec, 0)`** before per-row appends. Today's caller
+  passes one IotaRange per batch with `output_start == 0`, so the
+  reset matches the contract; the worry about "multiple Scan calls
+  truncating prior rows" doesn't apply to any live caller. The Scan
+  path was rewritten when the recursive `MaterializeNode` landed --
+  the API now mirrors `SelectByDocIds`'s shape. No fix needed.
+
+- **`FieldData::compute_features` appends `_stats.len` to the norm
+  writer with no `> 0` guard** ([field_data.cpp:646-648](../libs/iresearch/include/iresearch/index/field_data.cpp)).
+  Zero-token docs land norm=0; BM25's skip-zero semantics make that
+  the documented BM25 contract, not an accident. Already vetted on
+  the BM25/TFIDF read side. Leave.
 
 **Rule of thumb being applied here**: choose by *site cost* and
 *diagnostic value*, not by reader-vs-writer category.
@@ -634,3 +653,71 @@ ANN / range-scan include-column materializer pass (this session):
   advancement -- no materialised array of all offsets per RG. The
   "~960 KB per LIST RG, no eviction" concern from the original TODO
   doesn't apply; nothing to evict.
+
+Simplifications pass (this session):
+- Simplification: dropped the `concept DocIdRange` in
+  [columnstore_materializer.h](../server/connector/columnstore_materializer.h).
+  `template<DocIdRange DocIds>` -> `template<typename DocIds>`; the
+  duck-type contract (`.size()` + `operator[](size_t) -> uint64_t`) is
+  now documented on `IotaRange` and enforced at instantiation, matching
+  CONTRIBUTING's "prefer template + static_assert over concepts".
+- Simplification: `ColumnWriter::Append` / `AppendChunk` now take
+  `const duckdb::Vector&` / `const duckdb::DataChunk&` -- source
+  parameters were always logically read-only; the non-const signature
+  was forcing a `const_cast<duckdb::Vector&>` at the only writer call
+  site
+  ([search_sink_writer.cpp:319-320](../server/connector/search_sink_writer.cpp)),
+  which is now gone. `VectorOperations::Copy` already takes
+  `const Vector&` source so no internal change needed.
+- Simplification: cs column name removed entirely. Dropped the `name`
+  field/parameter from `ColumnReader`, `ColumnWriter`,
+  `FooterColumnEntry`, `Writer::OpenColumn`, and `MakeColumnReader`;
+  dropped the `WriteProperty(1, "name", ...)` in `Writer::Commit` and
+  the matching `ReadProperty<string>(1, "name")` in the footer read.
+  cs typed columns are looked up by id everywhere; the persisted name
+  was footer-only metadata that nothing read. (HNSW + norm columns
+  keep their name -- owned separately.)
+- Simplification: collapsed the four `ColumnReader` constructors
+  (primitive / ARRAY / LIST-or-MAP / STRUCT) and the matching
+  `MakeColumnReader` switch arms into one ctor + one factory body. The
+  ctor dispatches on `_type.id()` to compute `_data_offsets` /
+  `_row_count` / `_rg_element_starts` per type-shape; the factory
+  builds the optional `element_child` / `struct_children` / `array_size`
+  triple before delegating.
+- Simplification: split `Reader::Reader` (was ~140 lines) into
+  orchestration + helpers in
+  [format.cpp](../libs/iresearch/include/iresearch/columnstore/format.cpp):
+  - Free anon-namespace helpers `OpenAndCheckHeader(dir, filename)` and
+    `ReadFooterBytes(in, filename)`.
+  - Private member fns `Reader::BuildColumnReaders` /
+    `BuildNormReaders` / `BuildHnswReaders` (declared in `format.hpp`),
+    each iterating one footer slot.
+  The ctor is now header check + footer-bytes read + 3 build calls.
+- Simplification: split `MergeWriter::Flush` into orchestration + two
+  anonymous-namespace helpers in
+  [merge_writer.cpp](../libs/iresearch/include/iresearch/index/merge_writer.cpp):
+  - `ComputeDocMappingsAndFieldMeta(readers, segment, ...)` -- per-
+    source `doc_map` (identity vs compacted), field-meta map,
+    `CompoundFieldIterator::Add`, sets `segment.docs_count` /
+    `live_docs_count`.
+  - `OpenColumnstoreContexts(db, dir, segment_name, readers, ...)` --
+    borrows each source's cached cs Reader from
+    `SubReader::CsReader()` and constructs the output cs Writer when
+    `db != nullptr`.
+  Flush itself is now ~30 lines of orchestration + the existing
+  `WriteFields` / `MergeInto` / `Commit` calls.
+- Perf: `ReadFooterBytes` now tries `IndexInput::ReadView(offset, size)`
+  first and returns a span over the file mapping directly when the
+  directory supports it (mmap-backed). Only falls back to allocating a
+  `std::vector<byte_type>` + `ReadBytes` when ReadView returns nullptr.
+  Avoids a footer-sized heap copy per `.cs` Reader open on every mmap
+  directory.
+- Simplification: empty norm columns no longer reach the footer.
+  `Writer::Commit` does `std::erase_if(_impl->norm_writers, [](const
+  auto& nw) { return nw->Pointers().empty(); })` before writing the
+  norm-columns list. `FieldsData::emplace` allocates a
+  `NormColumnWriter` eagerly per field with the Norm feature; the
+  ones that never receive an indexed doc are dropped in-place at
+  commit time so the footer carries no row_groups=[] no-ops and the
+  writer's in-memory state is freed. field_id growth from the
+  pre-allocation is intentional and harmless.

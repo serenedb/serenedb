@@ -79,53 +79,49 @@ void SerializeColumnData(duckdb::Serializer& obj,
                 });
 }
 
-std::unique_ptr<ColumnReader> MakeColumnReader(field_id id, std::string name,
+std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
                                                PersistentColumnData&& node,
                                                IndexInput& in,
                                                duckdb::DatabaseInstance& db) {
+  std::unique_ptr<ColumnReader> element_child;
+  std::vector<std::unique_ptr<ColumnReader>> struct_children;
+  uint64_t array_size = 0;
+
   switch (node.type.id()) {
     case duckdb::LogicalTypeId::ARRAY: {
       SDB_ASSERT(node.child_columns.size() == 1);
-      const auto array_size =
-        static_cast<uint64_t>(duckdb::ArrayType::GetSize(node.type));
-      auto child =
-        MakeColumnReader(field_limits::invalid(), {},
-                         std::move(node.child_columns.front()), in, db);
-      return std::make_unique<ColumnReader>(
-        id, std::move(name), std::move(node.type),
-        std::move(node.validity_pointers), std::move(child), array_size, in,
-        db);
+      array_size = static_cast<uint64_t>(duckdb::ArrayType::GetSize(node.type));
+      element_child = MakeColumnReader(
+        field_limits::invalid(), std::move(node.child_columns.front()), in, db);
+      node.pointers.clear();  // ARRAY carries no self data on disk.
+      break;
     }
     case duckdb::LogicalTypeId::MAP:
     case duckdb::LogicalTypeId::LIST: {
       // MAP rides on the LIST path: PhysicalType::LIST with a
-      // STRUCT<key, value> element. ListType::GetChildType returns the
-      // STRUCT, which recurses through the STRUCT case below.
+      // STRUCT<key, value> element.
       SDB_ASSERT(node.child_columns.size() == 1);
-      auto child =
-        MakeColumnReader(field_limits::invalid(), {},
-                         std::move(node.child_columns.front()), in, db);
-      return std::make_unique<ColumnReader>(
-        id, std::move(name), std::move(node.type), std::move(node.pointers),
-        std::move(node.validity_pointers), std::move(child), in, db);
+      element_child = MakeColumnReader(
+        field_limits::invalid(), std::move(node.child_columns.front()), in, db);
+      break;
     }
     case duckdb::LogicalTypeId::STRUCT: {
-      std::vector<std::unique_ptr<ColumnReader>> fields;
-      fields.reserve(node.child_columns.size());
+      struct_children.reserve(node.child_columns.size());
       for (auto& cn : node.child_columns) {
-        fields.push_back(
-          MakeColumnReader(field_limits::invalid(), {}, std::move(cn), in, db));
+        struct_children.push_back(
+          MakeColumnReader(field_limits::invalid(), std::move(cn), in, db));
       }
-      return std::make_unique<ColumnReader>(
-        id, std::move(name), std::move(node.type),
-        std::move(node.validity_pointers), std::move(fields), in, db);
+      node.pointers.clear();
+      break;
     }
-    default: {
-      return std::make_unique<ColumnReader>(
-        id, std::move(name), std::move(node.type), std::move(node.pointers),
-        std::move(node.validity_pointers), in, db);
-    }
+    default:
+      break;  // primitive leaf: keep pointers, no children.
   }
+
+  return std::make_unique<ColumnReader>(
+    id, std::move(node.type), std::move(node.pointers),
+    std::move(node.validity_pointers), std::move(element_child),
+    std::move(struct_children), array_size, in, db);
 }
 
 PersistentColumnData DeserializeColumnData(duckdb::Deserializer& obj) {
@@ -260,8 +256,7 @@ Writer::~Writer() {
 
 field_id Writer::AllocateColumnId() noexcept { return _impl->next_id++; }
 
-ColumnWriter& Writer::OpenColumn(field_id id, std::string_view name,
-                                 duckdb::LogicalType type,
+ColumnWriter& Writer::OpenColumn(field_id id, duckdb::LogicalType type,
                                  uint64_t row_group_size, bool skip_validity,
                                  duckdb::CompressionType compression) {
   // Per-batch SearchSink may re-open the same id; return the existing
@@ -286,10 +281,8 @@ ColumnWriter& Writer::OpenColumn(field_id id, std::string_view name,
   }
   auto entry = std::make_unique<FooterColumnEntry>();
   entry->id = id;
-  entry->name = std::string{name};
   entry->root.type = type;
-  auto cw = std::make_unique<ColumnWriter>(id, std::string{name}, type,
-                                           row_group_size, *_impl->db,
+  auto cw = std::make_unique<ColumnWriter>(id, type, row_group_size, *_impl->db,
                                            *_impl->out, *entry, skip_validity);
   cw->SetCompression(compression);
   _impl->column_entries.push_back(std::move(entry));
@@ -389,8 +382,8 @@ std::string Writer::Commit() {
         root_clone = DeserializeColumnData(obj);
       });
       deser.End();
-      auto col_reader = MakeColumnReader(
-        col_entry->id, col_entry->name, std::move(root_clone), *in, *_impl->db);
+      auto col_reader =
+        MakeColumnReader(col_entry->id, std::move(root_clone), *in, *_impl->db);
       entry->writer->Build(*col_reader);
     }
   }
@@ -411,12 +404,13 @@ std::string Writer::Commit() {
       const auto& e = *_impl->column_entries[i];
       list.WriteObject([&](duckdb::Serializer& obj) {
         obj.WriteProperty<uint64_t>(0, "id", e.id);
-        obj.WriteProperty(1, "name", e.name);
-        obj.WriteObject(2, "root", [&](duckdb::Serializer& root_obj) {
+        obj.WriteObject(1, "root", [&](duckdb::Serializer& root_obj) {
           SerializeColumnData(root_obj, e.root);
         });
       });
     });
+  std::erase_if(_impl->norm_writers,
+                [](const auto& nw) { return nw->Pointers().empty(); });
   serializer.WriteList(
     kFooterSlotNormColumns, "norm_columns", _impl->norm_writers.size(),
     [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
@@ -487,20 +481,26 @@ struct Reader::Impl {
   sdb::containers::FlatHashMap<field_id, const HNSWReader*> hnsw_by_id;
 };
 
-Reader::Reader(const Directory& dir, std::string_view segment_name,
-               duckdb::DatabaseInstance& db)
-  : _impl{std::make_unique<Impl>()} {
-  _impl->db = &db;
-  const auto filename = absl::StrCat(segment_name, ".", kFormatExt);
-  _impl->in = dir.open(filename, IOAdvice::RANDOM);
-  if (!_impl->in) {
-    return;  // Segment has no `.cs` file.
+namespace {
+
+IndexInput::ptr OpenAndCheckHeader(const Directory& dir,
+                                   std::string_view filename) {
+  auto in = dir.open(filename, IOAdvice::RANDOM);
+  if (!in) {
+    return nullptr;  // Segment has no `.cs` file.
   }
+  format_utils::CheckHeader(*in, kFormatName, kFormatVersion, kFormatVersion);
+  return in;
+}
 
-  format_utils::CheckHeader(*_impl->in, kFormatName, kFormatVersion,
-                            kFormatVersion);
-
-  const auto file_len = _impl->in->Length();
+// Returns a view over the footer's serialized bytes. Prefers IndexInput's
+// zero-copy ReadView (mmap-backed directories return an immutable pointer
+// into the file mapping); for directories that don't support it ReadView
+// returns nullptr and we fall back to a heap copy in `fallback_storage`.
+std::span<const byte_type> ReadFooterBytes(
+  IndexInput& in, std::string_view filename,
+  std::vector<byte_type>& fallback_storage) {
+  const auto file_len = in.Length();
   const uint64_t header_len =
     static_cast<uint64_t>(format_utils::HeaderLength(kFormatName));
   SDB_ENSURE(
@@ -511,40 +511,43 @@ Reader::Reader(const Directory& dir, std::string_view segment_name,
     "iresearch footer)");
   const uint64_t footer_offset_pos =
     file_len - format_utils::kFooterLen - sizeof(uint64_t);
-  _impl->in->Seek(footer_offset_pos);
-  const uint64_t footer_offset = _impl->in->ReadI64();
-
+  in.Seek(footer_offset_pos);
+  const uint64_t footer_offset = in.ReadI64();
   SDB_ENSURE(footer_offset >= header_len && footer_offset < footer_offset_pos,
              sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
              "columnstore: corrupted `.cs` file ", filename, ": footer offset ",
              footer_offset, " is out of range [", header_len, ", ",
              footer_offset_pos, ")");
   const uint64_t footer_size = footer_offset_pos - footer_offset;
-  std::vector<byte_type> footer_buf(footer_size);
-  _impl->in->Seek(footer_offset);
-  _impl->in->ReadBytes(footer_buf.data(), footer_size);
+  if (const auto* view = in.ReadView(footer_offset, footer_size)) {
+    return {view, static_cast<size_t>(footer_size)};
+  }
+  fallback_storage.resize(footer_size);
+  in.ReadBytes(footer_offset, fallback_storage.data(), footer_size);
+  return {fallback_storage.data(), fallback_storage.size()};
+}
 
-  MemoryReadStream stream{footer_buf.data(), footer_size};
-  duckdb::BinaryDeserializer deserializer{stream};
-  deserializer.Set<duckdb::DatabaseInstance&>(db);
+}  // namespace
 
-  deserializer.Begin();
+void Reader::BuildColumnReaders(duckdb::BinaryDeserializer& deserializer,
+                                duckdb::DatabaseInstance& db) {
   deserializer.ReadList(
     kFooterSlotColumns, "columns",
     [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
       list.ReadObject([&](duckdb::Deserializer& obj) {
         auto id = obj.ReadProperty<uint64_t>(0, "id");
-        auto name = obj.ReadProperty<std::string>(1, "name");
         PersistentColumnData root;
-        obj.ReadObject(2, "root", [&](duckdb::Deserializer& robj) {
+        obj.ReadObject(1, "root", [&](duckdb::Deserializer& robj) {
           root = DeserializeColumnData(robj);
         });
-        auto reader = MakeColumnReader(id, std::move(name), std::move(root),
-                                       *_impl->in, db);
+        auto reader = MakeColumnReader(id, std::move(root), *_impl->in, db);
         _impl->readers.push_back(std::move(reader));
         _impl->by_id.emplace(id, _impl->readers.back().get());
       });
     });
+}
+
+void Reader::BuildNormReaders(duckdb::BinaryDeserializer& deserializer) {
   deserializer.ReadList(
     kFooterSlotNormColumns, "norm_columns",
     [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
@@ -572,6 +575,9 @@ Reader::Reader(const Directory& dir, std::string_view segment_name,
         _impl->norm_by_id.emplace(id, _impl->norm_readers.back().get());
       });
     });
+}
+
+void Reader::BuildHnswReaders(duckdb::BinaryDeserializer& deserializer) {
   deserializer.ReadList(
     kFooterSlotHnswColumns, "hnsw_columns",
     [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
@@ -601,13 +607,36 @@ Reader::Reader(const Directory& dir, std::string_view segment_name,
           return;
         }
         const auto* col_reader = col_it->second;
-        auto hr =
-          std::make_unique<HNSWReader>(id, std::string{col_reader->Name()},
-                                       std::move(hnsw), info, *col_reader);
+        // HNSWReader still carries a name (HNSW owned separately); cs
+        // typed columns no longer do, so pass empty.
+        auto hr = std::make_unique<HNSWReader>(
+          id, std::string{}, std::move(hnsw), info, *col_reader);
         _impl->hnsw_readers.push_back(std::move(hr));
         _impl->hnsw_by_id.emplace(id, _impl->hnsw_readers.back().get());
       });
     });
+}
+
+Reader::Reader(const Directory& dir, std::string_view segment_name,
+               duckdb::DatabaseInstance& db)
+  : _impl{std::make_unique<Impl>()} {
+  _impl->db = &db;
+  const auto filename = absl::StrCat(segment_name, ".", kFormatExt);
+  _impl->in = OpenAndCheckHeader(dir, filename);
+  if (!_impl->in) {
+    return;  // Segment has no `.cs` file.
+  }
+  std::vector<byte_type> footer_storage;  // unused when ReadView succeeds
+  const auto footer_view =
+    ReadFooterBytes(*_impl->in, filename, footer_storage);
+
+  MemoryReadStream stream{footer_view.data(), footer_view.size()};
+  duckdb::BinaryDeserializer deserializer{stream};
+  deserializer.Set<duckdb::DatabaseInstance&>(db);
+  deserializer.Begin();
+  BuildColumnReaders(deserializer, db);
+  BuildNormReaders(deserializer);
+  BuildHnswReaders(deserializer);
   deserializer.End();
 }
 

@@ -1403,18 +1403,21 @@ Result LocalCatalog::CreateSecondaryIndex(
     return std::move(resolved).error();
   }
   for (auto& c : columns) {
-    auto it = absl::c_find_if(
-      resolved->columns, [&](const Column& col) { return col.name == c.name; });
+    const auto column_name = c.ColumnName();
+    auto it = absl::c_find_if(resolved->columns, [&](const Column& col) {
+      return col.name == column_name;
+    });
     if (it == resolved->columns.end()) {
-      return Result{ERROR_BAD_PARAMETER, "column \"", c.name,
+      return Result{ERROR_BAD_PARAMETER, "column \"", column_name,
                     "\" does not exist"};
     }
     if (it->store_mode == ColumnStoreMode::kIndexOnly) {
-      return Result{ERROR_BAD_PARAMETER, "cannot include column \"", c.name,
+      return Result{ERROR_BAD_PARAMETER, "cannot include column \"",
+                    column_name,
                     "\" in a secondary index: column has sdb_indexonly "
                     "storage and is only readable through an inverted index"};
     }
-    c.catalog_column = &*it;
+    c.SetCatalogColumn(&*it);
   }
   auto index = catalog::CreateSecondaryIndex(
     database_id, *schema_id, ObjectId{0}, resolved->relation_id,
@@ -1453,13 +1456,18 @@ Result LocalCatalog::CreateInvertedIndex(
     return std::move(resolved).error();
   }
   for (auto& c : columns) {
-    auto it = absl::c_find_if(
-      resolved->columns, [&](const Column& col) { return col.name == c.name; });
+    if (c.IsIndexedExpression()) {
+      continue;
+    }
+    const auto column_name = c.ColumnName();
+    auto it = absl::c_find_if(resolved->columns, [&](const Column& col) {
+      return col.name == column_name;
+    });
     if (it == resolved->columns.end()) {
-      return Result{ERROR_BAD_PARAMETER, "column \"", c.name,
+      return Result{ERROR_BAD_PARAMETER, "column \"", column_name,
                     "\" does not exist"};
     }
-    c.catalog_column = &*it;
+    c.SetCatalogColumn(&*it);
   }
   auto index = catalog::CreateInvertedIndex(
     database_id, schema, *schema_id, ObjectId{0}, resolved->relation_id,

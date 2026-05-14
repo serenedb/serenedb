@@ -285,8 +285,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
                                        col_name);
       }
       idx_columns.emplace_back(catalog::CreateIndexColumn{
-        .catalog_column = cat_col,
-        .name = cat_col->name,
+        .data = catalog::ColumnRefData{.catalog_column = cat_col,
+                                       .name = cat_col->name},
         .opclass = std::move(opclass),
         .opclass_options = std::move(opclass_options),
       });
@@ -327,6 +327,11 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       throw duckdb::CatalogException(
         "indexed expr path does not refer to a known column");
     }
+    if (cat_col->type.id() != duckdb::LogicalTypeId::VARCHAR) {
+      throw duckdb::CatalogException(
+        "Column \"%s\" must be a JSON/VARCHAR column to be indexed by path",
+        cat_col->name);
+    }
 
     state->indexed_expressions.push_back({
       .normalized_expr = std::move(normalized),
@@ -334,10 +339,13 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       .column_id = cat_col->id,
     });
     idx_columns.emplace_back(catalog::CreateIndexColumn{
-      .catalog_column = cat_col,
-      .name = cat_col->name,
+      .data =
+        catalog::IndexedExpressionData{
+          .serialized = std::move(serialized),
+          .pretty_printed = expr->ToString(),
+          .dependent_columns = {cat_col->id},
+        },
       .opclass = std::move(opclass),
-      .serialized_expr = std::move(serialized),
       .opclass_options = std::move(opclass_options),
     });
   }

@@ -23,8 +23,10 @@
 #include <duckdb/common/types/value.hpp>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
+#include "basics/assert.h"
 #include "catalog/object.h"
 #include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
@@ -39,19 +41,45 @@ namespace catalog {
 class SecondaryIndex;
 class InvertedIndex;
 
-// Aggregated info about column for index creation.
-// Filled on different levels during creaton to gather all
-// necessary info for building and validating new index.
-struct CreateIndexColumn {
+struct ColumnRefData {
   const catalog::Column* catalog_column{nullptr};
   std::string_view name;
+};
+
+struct IndexedExpressionData {
+  std::string serialized;
+  std::string pretty_printed;
+  std::vector<Column::Id> dependent_columns;
+};
+
+struct CreateIndexColumn {
+  std::variant<ColumnRefData, IndexedExpressionData> data;
   std::string opclass;
-  // non empty -> indexing expression that depends on current column,
-  // but no ther columns
-  std::string serialized_expr;
-  // nullopt = no parentheses in source SQL; an (empty or non-empty) map means
-  // parens were present, distinguishing `col opclass` from `col opclass ()`.
   std::optional<duckdb::case_insensitive_map_t<duckdb::Value>> opclass_options;
+
+  bool IsIndexedExpression() const noexcept {
+    return std::holds_alternative<IndexedExpressionData>(data);
+  }
+
+  const IndexedExpressionData& GetIndexedExpression() const {
+    SDB_ASSERT(IsIndexedExpression());
+    return std::get<IndexedExpressionData>(data);
+  }
+
+  const catalog::Column* GetCatalogColumn() const noexcept {
+    SDB_ASSERT(!IsIndexedExpression());
+    return std::get<ColumnRefData>(data).catalog_column;
+  }
+
+  void SetCatalogColumn(const catalog::Column* col) noexcept {
+    SDB_ASSERT(!IsIndexedExpression());
+    std::get<ColumnRefData>(data).catalog_column = col;
+  }
+
+  std::string_view ColumnName() const noexcept {
+    SDB_ASSERT(!IsIndexedExpression());
+    return std::get<ColumnRefData>(data).name;
+  }
 };
 
 class Index : public SchemaObject {

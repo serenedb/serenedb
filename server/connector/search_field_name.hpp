@@ -28,21 +28,17 @@
 
 namespace sdb::connector {
 
-// Layout:
-//   [8 bytes BE column_id]      -- fixed-width column identifier
-//   [serialized_expr]           -- omitted when suffix is empty
-//   [type mangle byte]          -- caller-applied
-//
-// Caller is expected to apply the appropriate `search::mangling::Mangle*` on
-// the result before using it as an iresearch field name.
 inline void MakeColumnFieldName(catalog::Column::Id column_id,
-                                std::string_view serialized_expr,
                                 std::string& out) {
-  basics::StrResize(out, sizeof(column_id) + serialized_expr.size());
+  basics::StrResize(out, sizeof(column_id));
   absl::big_endian::Store(out.data(), column_id);
+}
+
+inline void MakeExpressionFieldName(std::string_view serialized_expr,
+                                    std::string& out) {
+  basics::StrResize(out, serialized_expr.size());
   if (!serialized_expr.empty()) {
-    std::memcpy(out.data() + sizeof(column_id), serialized_expr.data(),
-                serialized_expr.size());
+    std::memcpy(out.data(), serialized_expr.data(), serialized_expr.size());
   }
 }
 

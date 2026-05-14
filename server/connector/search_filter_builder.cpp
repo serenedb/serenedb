@@ -1242,9 +1242,9 @@ const SearchColumnInfo* FindColumnRefInfo(
   }
 
   // The cache key is the un-mangled iresearch field name. For a bare column
-  // reference that is just [BE col_id] with no suffix.
+  // reference that is just [BE col_id].
   std::string cache_key;
-  MakeColumnFieldName(info->column_id, {}, cache_key);
+  MakeColumnFieldName(info->column_id, cache_key);
 
   auto cache_it = ctx.column_cache.find(cache_key);
   if (cache_it != ctx.column_cache.end()) {
@@ -1330,7 +1330,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   // iresearch field share an entry: INTEGER and BIGINT both -> Numeric.
   auto& cache_key = ctx.cache_key;
   cache_key.clear();
-  MakeColumnFieldName(info->column_id, info->serialized_expr, cache_key);
+  MakeExpressionFieldName(info->serialized_expr, cache_key);
   if (auto r = MangleForType(info->logical_type.id(), cache_key); !r.ok()) {
     return nullptr;
   }
@@ -1344,11 +1344,15 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
 }
 
 void MakeFieldName(const SearchColumnInfo& column, std::string& field_name) {
-  MakeColumnFieldName(column.column_id, column.serialized_expr, field_name);
+  if (column.serialized_expr.empty()) {
+    MakeColumnFieldName(column.column_id, field_name);
+  } else {
+    MakeExpressionFieldName(column.serialized_expr, field_name);
+  }
 }
 
 void MakeFieldName(catalog::Column::Id column_id, std::string& field_name) {
-  MakeColumnFieldName(column_id, {}, field_name);
+  MakeColumnFieldName(column_id, field_name);
 }
 
 Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name) {

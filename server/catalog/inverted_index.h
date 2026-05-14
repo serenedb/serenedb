@@ -42,9 +42,9 @@ struct HNSWColumnConfig {
   irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
 };
 
-struct ColumnExpressionInfo {
-  // Normalized serialized subexpression, see `NormalizeBoundExpression()`
+struct ExpressionInfo {
   std::string serialized_expr;
+  std::vector<Column::Id> dependent_columns;
   ObjectId text_dictionary = ObjectId::none();
   search::Features features;
 
@@ -52,15 +52,14 @@ struct ColumnExpressionInfo {
     using is_transparent = void;
 
     size_t operator()(std::string_view sv) const { return absl::HashOf(sv); }
-    size_t operator()(const ColumnExpressionInfo& info) const {
+    size_t operator()(const ExpressionInfo& info) const {
       return (*this)(info.serialized_expr);
     }
 
-    bool operator()(const ColumnExpressionInfo& a, std::string_view b) const {
+    bool operator()(const ExpressionInfo& a, std::string_view b) const {
       return a.serialized_expr == b;
     }
-    bool operator()(const ColumnExpressionInfo& a,
-                    const ColumnExpressionInfo& b) const {
+    bool operator()(const ExpressionInfo& a, const ExpressionInfo& b) const {
       return a.serialized_expr == b.serialized_expr;
     }
   };
@@ -71,13 +70,6 @@ struct InvertedIndexColumnInfo {
   bool store_values = false;
   search::Features features;
   std::optional<HNSWColumnConfig> hnsw_config;
-  // Two restriction for expression indexing:
-  // - one tokenizer per expression
-  // - expresiion should contain exactly one column reference
-  containers::NodeHashSet<ColumnExpressionInfo,
-                          ColumnExpressionInfo::HasherBySerialized,
-                          ColumnExpressionInfo::HasherBySerialized>
-    expressions_infos;
 };
 
 struct FieldTokenizer {
@@ -89,10 +81,14 @@ class InvertedIndex final : public Index {
  public:
   using ColumnOptions =
     containers::FlatHashMap<Column::Id, InvertedIndexColumnInfo>;
+  using ExpressionOptions =
+    containers::NodeHashSet<ExpressionInfo, ExpressionInfo::HasherBySerialized,
+                            ExpressionInfo::HasherBySerialized>;
 
   InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
                 ObjectId relation_id, std::string name,
                 std::vector<Column::Id> column_ids, ColumnOptions columns,
+                ExpressionOptions expressions,
                 std::optional<ScorerOptions> wand_scorer = std::nullopt)
     : Index{database_id,
             schema_id,
@@ -102,6 +98,7 @@ class InvertedIndex final : public Index {
             std::move(column_ids),
             ObjectType::InvertedIndex},
       _columns{std::move(columns)},
+      _expressions{std::move(expressions)},
       _wand_scorer{std::move(wand_scorer)} {}
 
   static std::shared_ptr<InvertedIndex> ReadInternal(vpack::Slice slice,
@@ -114,13 +111,17 @@ class InvertedIndex final : public Index {
   const InvertedIndexColumnInfo* FindColumnInfo(
     catalog::Column::Id column_id) const noexcept;
 
+  const ExpressionOptions& GetExpressions() const noexcept {
+    return _expressions;
+  }
+
   FieldTokenizer GetColumnTokenizer(
     const std::shared_ptr<const Snapshot>& snapshot,
     catalog::Column::Id column_id) const;
 
   FieldTokenizer GetExprTokenizer(
     const std::shared_ptr<const Snapshot>& snapshot,
-    catalog::Column::Id column_id, std::string_view serialized_expr) const;
+    std::string_view serialized_expr) const;
 
   std::optional<irs::HNSWInfo> GetColumnHNSWInfo(
     catalog::Column::Id column_id) const;
@@ -133,6 +134,7 @@ class InvertedIndex final : public Index {
 
  private:
   ColumnOptions _columns;
+  ExpressionOptions _expressions;
   std::optional<ScorerOptions> _wand_scorer;
 };
 

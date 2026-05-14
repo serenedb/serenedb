@@ -323,8 +323,7 @@ struct SearchColumnContext {
   containers::FlatHashMap<catalog::Column::Id, duckdb::LogicalType>
     column_type_by_id;
   containers::FlatHashSet<catalog::Column::Id> indexed_column_ids;
-  containers::FlatHashSet<std::pair<catalog::Column::Id, std::string_view>>
-    indexed_expressions;
+  containers::FlatHashSet<std::string_view> indexed_expressions;
   connector::ColumnTokenizerProvider tokenizer_provider;
   connector::ExpressionTokenizerProvider expr_tokenizer_provider;
 };
@@ -379,14 +378,14 @@ connector::ExpressionGetter MakeJsonPathGetter(SearchColumnContext& ctx,
     auto normalized = connector::NormalizeBoundExpression(
       path_expr, table_id, ctx.projected_column_ids, *ctx.client_context);
     auto serialized = connector::SerializeBoundExpression(*normalized);
-    if (!ctx.indexed_expressions.contains({col_id, serialized})) {
+    if (!ctx.indexed_expressions.contains(serialized)) {
       return std::nullopt;
     }
     connector::SearchColumnInfo info;
     info.column_id = col_id;
     info.serialized_expr = serialized;
     info.logical_type = duckdb::LogicalType::VARCHAR;
-    info.tokenizer = ctx.expr_tokenizer_provider(col_id, serialized);
+    info.tokenizer = ctx.expr_tokenizer_provider(serialized);
     return info;
   };
 }
@@ -424,14 +423,8 @@ void InitSearchColumnContextForGet(
     });
   auto columns = resolved.index->GetColumnIds();
   ctx.indexed_column_ids.insert(columns.begin(), columns.end());
-  for (auto col_id : columns) {
-    const auto* info = resolved.index->FindColumnInfo(col_id);
-    if (!info) {
-      continue;
-    }
-    for (const auto& expr_info : info->expressions_infos) {
-      ctx.indexed_expressions.emplace(col_id, expr_info.serialized_expr);
-    }
+  for (const auto& expr_info : resolved.index->GetExpressions()) {
+    ctx.indexed_expressions.insert(expr_info.serialized_expr);
   }
   ctx.tokenizer_provider =
     connector::MakeColumnTokenizerProvider(snapshot, *resolved.index);

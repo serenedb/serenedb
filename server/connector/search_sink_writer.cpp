@@ -288,14 +288,14 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
 void SearchSinkInsertBaseImpl::SetupExprAuxTypedFields(
   catalog::Column::Id column_id, std::string_view name_suffix) {
   // Build the numeric-mangled field name and analyzer.
-  MakeColumnFieldName(column_id, name_suffix, _aux_numeric_name_buffer);
+  MakeExpressionFieldName(name_suffix, _aux_numeric_name_buffer);
   search::mangling::MangleNumeric(_aux_numeric_name_buffer);
   _aux_numeric_field.PrepareForNumericValue();
   _aux_numeric_field.name = _aux_numeric_name_buffer;
   _aux_numeric_field.store_attr = nullptr;
 
   // Build the bool-mangled field name and analyzer.
-  MakeColumnFieldName(column_id, name_suffix, _aux_bool_name_buffer);
+  MakeExpressionFieldName(name_suffix, _aux_bool_name_buffer);
   search::mangling::MangleBool(_aux_bool_name_buffer);
   _aux_bool_field.PrepareForBooleanValue();
   _aux_bool_field.name = _aux_bool_name_buffer;
@@ -359,10 +359,18 @@ template<duckdb::LogicalTypeId Kind>
 void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
                                                  bool have_nulls,
                                                  std::string_view name_suffix) {
-  MakeColumnFieldName(column_id, name_suffix, _name_buffer);
+  if (name_suffix.empty()) {
+    MakeColumnFieldName(column_id, _name_buffer);
+  } else {
+    MakeExpressionFieldName(name_suffix, _name_buffer);
+  }
 
   if (have_nulls || Kind == duckdb::LogicalTypeId::SQLNULL) {
-    MakeColumnFieldName(column_id, name_suffix, _null_name_buffer);
+    if (name_suffix.empty()) {
+      MakeColumnFieldName(column_id, _null_name_buffer);
+    } else {
+      MakeExpressionFieldName(name_suffix, _null_name_buffer);
+    }
     search::mangling::MangleNull(_null_name_buffer);
     _null_field.name = _null_name_buffer;
     if (!_null_field.analyzer) {
@@ -404,7 +412,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     // A non-empty `name_suffix` indicates an expression field
     auto tokenizer = name_suffix.empty()
                        ? _tokenizer_provider(column_id)
-                       : _subexpr_tokenizer_provider(column_id, name_suffix);
+                       : _subexpr_tokenizer_provider(name_suffix);
     _field.PrepareForStringValue(std::move(tokenizer));
     const bool has_store = _field.store_attr != nullptr;
     if (has_store) {

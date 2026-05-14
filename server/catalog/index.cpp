@@ -213,16 +213,13 @@ Result ApplyHNSWOptions(
 Result ValidateInvertedIndexColumns(
   std::span<CreateIndexColumn> indexed_columns) {
   for (const auto& c : indexed_columns) {
-    SDB_ASSERT(c.catalog_column);
-    const auto kind = c.catalog_column->type.id();
-    if (!c.serialized_expr.empty()) {
-      // TODO(mkornaukhov): accept `->` outermost; see TryLiftJsonPath.
-      if (kind != duckdb::LogicalTypeId::VARCHAR) {
-        return {ERROR_BAD_PARAMETER, "Column ", c.name,
-                " must be a JSON/VARCHAR column to be indexed by path"};
-      }
+    if (c.IsIndexedExpression()) {
+      // TODO(mkornaukhov) maybe some better check?
       continue;
     }
+    const auto* cat_col = c.GetCatalogColumn();
+    SDB_ASSERT(cat_col);
+    const auto kind = cat_col->type.id();
     const bool supported = kind == duckdb::LogicalTypeId::SQLNULL ||
                            kind == duckdb::LogicalTypeId::VARCHAR ||
                            kind == duckdb::LogicalTypeId::BLOB ||
@@ -240,7 +237,7 @@ Result ValidateInvertedIndexColumns(
     if (!supported) {
       return {ERROR_BAD_PARAMETER,
               "Column ",
-              c.name,
+              c.ColumnName(),
               " has unsupported kind ",
               duckdb::EnumUtil::ToString(kind),
               " and can not be indexed"};
@@ -330,11 +327,18 @@ std::vector<Column::Id> ExtractColumnIds(
   ids.reserve(columns.size());
   containers::FlatHashSet<Column::Id> seen;
   seen.reserve(columns.size());
-  for (const auto& c : columns) {
-    SDB_ASSERT(c.catalog_column);
-    auto id = c.catalog_column->id;
+  auto push = [&](Column::Id id) {
     if (seen.insert(id).second) {
       ids.push_back(id);
+    }
+  };
+  for (const auto& c : columns) {
+    if (c.IsIndexedExpression()) {
+      for (auto id : c.GetIndexedExpression().dependent_columns) {
+        push(id);
+      }
+    } else {
+      push(c.GetCatalogColumn()->id);
     }
   }
   return ids;
@@ -347,7 +351,7 @@ ResultOr<std::shared_ptr<SecondaryIndex>> CreateSecondaryIndex(
   std::string name, std::vector<catalog::CreateIndexColumn> columns,
   bool unique) {
   for (const auto& c : columns) {
-    SDB_ASSERT(c.catalog_column);
+    SDB_ASSERT(c.GetCatalogColumn());
     // if (c.catalog_column->type->providesCustomComparison()) {
     //   return std::unexpected<Result>{
     //     std::in_place, ERROR_BAD_PARAMETER, "Column ", c.name,
@@ -367,24 +371,25 @@ ResultOr<std::shared_ptr<SecondaryIndex>> CreateSecondaryIndex(
 ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
   ObjectId id, ObjectId relation_id, std::string name,
-  std::vector<catalog::CreateIndexColumn> columns,
+  std::vector<catalog::CreateIndexColumn> indexed_columns,
   const std::shared_ptr<const Snapshot>& snapshot,
   std::optional<ScorerOptions> wand_scorer) {
-  auto column_validation_res = ValidateInvertedIndexColumns(columns);
+  auto column_validation_res = ValidateInvertedIndexColumns(indexed_columns);
   if (column_validation_res.fail()) {
     return std::unexpected<Result>(std::move(column_validation_res));
   }
 
+  auto describe = [&](const CreateIndexColumn& c) -> std::string_view {
+    if (c.IsIndexedExpression()) {
+      return c.GetIndexedExpression().pretty_printed;
+    }
+    return c.ColumnName();
+  };
+
   auto resolve_dict =
-    [&](std::string_view col_name,
+    [&](const CreateIndexColumn& c,
         const std::string& opclass) -> ResultOr<std::shared_ptr<Tokenizer>> {
     auto object_name = pg::ParseObjectName(opclass, schema_name);
-    // Technically nothing prevents us from allowing so.
-    // But that will make schema drop more complicated as we will need to
-    // check if any dictionaries are used in the indexes from other
-    // schemas and even fail schema drops on this case. For now if we
-    // drop text dictionary as a child entity we can be sure that
-    // indexes will also be dropped along with tables from same schema.
     if (object_name.schema != schema_name) {
       return std::unexpected<Result>{
         std::in_place, ERROR_BAD_PARAMETER,
@@ -397,8 +402,8 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
                                      ERROR_BAD_PARAMETER,
                                      "Unknown opclass '",
                                      opclass,
-                                     "' on column '",
-                                     col_name,
+                                     "' on '",
+                                     describe(c),
                                      "': not a built-in type (known: ",
                                      DescribeKnownOpclassTypes(),
                                      ") and no text dictionary by that name "
@@ -410,32 +415,35 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   };
 
   InvertedIndex::ColumnOptions inverted_columns;
-  for (const auto& c : columns) {
-    auto& index_col = inverted_columns[c.catalog_column->id];
-
-    if (!c.serialized_expr.empty()) {
+  InvertedIndex::ExpressionOptions inverted_expressions;
+  for (const auto& c : indexed_columns) {
+    if (c.IsIndexedExpression()) {
       if (c.opclass_options.has_value()) {
         return std::unexpected<Result>{
           std::in_place, ERROR_BAD_PARAMETER,
-          "inverted index expression do not accept opclass options (used on "
-          "column '",
-          c.name, "')"};
+          "inverted index expression do not accept opclass options"};
       }
-      ColumnExpressionInfo column_expr_info{
-        .serialized_expr = c.serialized_expr,
+      auto& expr_data = c.GetIndexedExpression();
+      ExpressionInfo expr_info{
+        .serialized_expr = expr_data.serialized,
+        .dependent_columns = expr_data.dependent_columns,
       };
       if (!c.opclass.empty()) {
-        auto dict = resolve_dict(c.name, c.opclass);
+        auto dict = resolve_dict(c, c.opclass);
         if (!dict) {
           return std::unexpected<Result>{std::move(dict.error())};
         }
-        column_expr_info.text_dictionary = (*dict)->GetId();
-        column_expr_info.features = (*dict)->GetFeatures();
+        expr_info.text_dictionary = (*dict)->GetId();
+        expr_info.features = (*dict)->GetFeatures();
       }
-      index_col.expressions_infos.emplace(std::move(column_expr_info));
+      inverted_expressions.emplace(std::move(expr_info));
       continue;
     }
+    const auto column_name = c.ColumnName();
 
+    const auto* cat_col = c.GetCatalogColumn();
+    SDB_ASSERT(cat_col);
+    auto& index_col = inverted_columns[cat_col->id];
     if (!c.opclass.empty()) {
       const bool is_builtin = (c.opclass == kHnswKind);
       if (is_builtin && !c.opclass_options.has_value()) {
@@ -444,29 +452,29 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
                                        "Built-in opclass '",
                                        c.opclass,
                                        "' on column '",
-                                       c.name,
+                                       column_name,
                                        "' requires options; use '",
                                        c.opclass,
                                        " (...)'"};
       }
       if (is_builtin) {
         // "hnsw" is a built-in opclass for vector (ARRAY(FLOAT, N)) columns.
-        const auto& col_type = c.catalog_column->type;
+        const auto& col_type = cat_col->type;
         if (col_type.id() != duckdb::LogicalTypeId::ARRAY) {
           return std::unexpected<Result>{
-            std::in_place, ERROR_BAD_PARAMETER, "Column '", c.name,
+            std::in_place, ERROR_BAD_PARAMETER, "Column '", column_name,
             "' must be an ARRAY type to use the 'hnsw' opclass"};
         }
         const auto& child_type = duckdb::ArrayType::GetChildType(col_type);
         if (child_type.id() != duckdb::LogicalTypeId::FLOAT) {
           return std::unexpected<Result>{
-            std::in_place, ERROR_BAD_PARAMETER, "Column '", c.name,
+            std::in_place, ERROR_BAD_PARAMETER, "Column '", column_name,
             "' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass"};
         }
         HNSWColumnConfig cfg{
           .d = static_cast<int>(duckdb::ArrayType::GetSize(col_type)),
         };
-        if (auto r = ApplyHNSWOptions(c.name, *c.opclass_options, cfg);
+        if (auto r = ApplyHNSWOptions(column_name, *c.opclass_options, cfg);
             r.fail()) {
           return std::unexpected<Result>(std::move(r));
         }
@@ -478,12 +486,12 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
                                          "Unknown built-in opclass '",
                                          c.opclass,
                                          "' on column '",
-                                         c.name,
+                                         column_name,
                                          "' (known: ",
                                          DescribeKnownOpclassTypes(),
                                          ")"};
         }
-        auto dict = resolve_dict(c.name, c.opclass);
+        auto dict = resolve_dict(c, c.opclass);
         if (!dict) {
           return std::unexpected<Result>{std::move(dict.error())};
         }
@@ -496,8 +504,8 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
                                          "' failed to instantiate: ",
                                          analyzer.error().errorMessage()};
         }
-        if (auto res = ValidateGeoTokenizerColumn(
-              c.name, c.catalog_column->type, **analyzer);
+        if (auto res = ValidateGeoTokenizerColumn(column_name, cat_col->type,
+                                                  **analyzer);
             res.fail()) {
           return std::unexpected<Result>(std::move(res));
         }
@@ -508,8 +516,8 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   }
   return std::make_shared<InvertedIndex>(
     database_id, schema_id, id, relation_id, std::move(name),
-    ExtractColumnIds(columns), std::move(inverted_columns),
-    std::move(wand_scorer));
+    ExtractColumnIds(indexed_columns), std::move(inverted_columns),
+    std::move(inverted_expressions), std::move(wand_scorer));
 }
 
 Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,

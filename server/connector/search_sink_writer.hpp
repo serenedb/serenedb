@@ -43,8 +43,8 @@ class SearchRemoveFilterBase;
 using ColumnTokenizerProvider =
   absl::AnyInvocable<catalog::FieldTokenizer(catalog::Column::Id)>;
 
-using ExpressionTokenizerProvider = absl::AnyInvocable<catalog::FieldTokenizer(
-  catalog::Column::Id, std::string_view)>;
+using ExpressionTokenizerProvider =
+  absl::AnyInvocable<catalog::FieldTokenizer(std::string_view)>;
 
 inline ColumnTokenizerProvider MakeColumnTokenizerProvider(
   const std::shared_ptr<const catalog::Snapshot>& snapshot,
@@ -57,10 +57,9 @@ inline ColumnTokenizerProvider MakeColumnTokenizerProvider(
 inline ExpressionTokenizerProvider MakeExpressionTokenizerProvider(
   std::shared_ptr<const catalog::Snapshot> snapshot,
   const catalog::InvertedIndex& index) {
-  return [snapshot = std::move(snapshot), &index](
-           catalog::Column::Id column_id,
-           std::string_view serialized_expr) -> catalog::FieldTokenizer {
-    return index.GetExprTokenizer(snapshot, column_id, serialized_expr);
+  return [snapshot = std::move(snapshot),
+          &index](std::string_view serialized_expr) -> catalog::FieldTokenizer {
+    return index.GetExprTokenizer(snapshot, serialized_expr);
   };
 }
 
@@ -72,18 +71,20 @@ inline std::vector<IndexedExpression> MakeIndexedExpressions(
   if (!client_context) {
     return entries;
   }
-  for (auto col_id : columns) {
-    const auto* col = index.FindColumnInfo(col_id);
-    if (!col) {
+  containers::FlatHashSet<catalog::Column::Id> column_set(columns.begin(),
+                                                          columns.end());
+  for (const auto& expr_info : index.GetExpressions()) {
+    SDB_ASSERT(!expr_info.serialized_expr.empty(),
+               "Any expr should be serialized in non-empty string");
+    SDB_ASSERT(!expr_info.dependent_columns.empty(),
+               "expression must declare at least one dependent column");
+    const auto col_id = expr_info.dependent_columns.front();
+    if (!column_set.contains(col_id)) {
       continue;
     }
-    for (const auto& expr_info : col->expressions_infos) {
-      SDB_ASSERT(!expr_info.serialized_expr.empty(),
-                 "Any expr should be serialized in non-empty string");
-      auto bound =
-        DeserializeBoundExpression(expr_info.serialized_expr, *client_context);
-      entries.push_back({std::move(bound), expr_info.serialized_expr, col_id});
-    }
+    auto bound =
+      DeserializeBoundExpression(expr_info.serialized_expr, *client_context);
+    entries.push_back({std::move(bound), expr_info.serialized_expr, col_id});
   }
   return entries;
 }

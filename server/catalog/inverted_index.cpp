@@ -85,6 +85,13 @@ std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
     return nullptr;
   }
 
+  ExpressionOptions expressions;
+  if (auto s = slice.get("expressions"); !s.isNone()) {
+    if (auto r = vpack::ReadTupleNothrow(s, expressions); !r.ok()) {
+      return nullptr;
+    }
+  }
+
   std::optional<ScorerOptions> wand_scorer;
   if (auto s = slice.get("wand_scorer"); !s.isNone()) {
     if (auto r = vpack::ReadTupleNothrow(s, wand_scorer); !r.ok()) {
@@ -95,7 +102,7 @@ std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
   return std::make_shared<InvertedIndex>(
     ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
     std::string{name_slice.stringView()}, std::move(column_ids),
-    std::move(columns), std::move(wand_scorer));
+    std::move(columns), std::move(expressions), std::move(wand_scorer));
 }
 
 void InvertedIndex::WriteInternal(vpack::Builder& b) const {
@@ -105,6 +112,10 @@ void InvertedIndex::WriteInternal(vpack::Builder& b) const {
     vpack::WriteTuple(b, _column_ids);
     b.add("columns");
     vpack::WriteTuple(b, _columns);
+    if (!_expressions.empty()) {
+      b.add("expressions");
+      vpack::WriteTuple(b, _expressions);
+    }
     if (_wand_scorer) {
       b.add("wand_scorer");
       vpack::WriteTuple(b, *_wand_scorer);
@@ -135,16 +146,11 @@ FieldTokenizer InvertedIndex::GetColumnTokenizer(
 
 FieldTokenizer InvertedIndex::GetExprTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot,
-  catalog::Column::Id column_id, std::string_view serialized_expr) const {
-  const auto* info = FindColumnInfo(column_id);
-  if (!info) {
-    SDB_THROW(ERROR_INTERNAL, "Column id ", column_id,
-              " not found in the index definition");
-  }
-  auto it = info->expressions_infos.find(serialized_expr);
-  if (it == info->expressions_infos.end()) {
-    SDB_THROW(ERROR_INTERNAL, "Indexed expression not found for column id ",
-              column_id);
+  std::string_view serialized_expr) const {
+  auto it = _expressions.find(serialized_expr);
+  if (it == _expressions.end()) {
+    SDB_THROW(ERROR_INTERNAL,
+              "Indexed expression not found in the index definition");
   }
   auto tokenizer = BuildTokenizer(snapshot, it->text_dictionary, it->features);
   SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
@@ -172,6 +178,11 @@ containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {
   for (const auto& col : _columns) {
     if (col.second.text_dictionary.isSet()) {
       res.insert(col.second.text_dictionary);
+    }
+  }
+  for (const auto& expr : _expressions) {
+    if (expr.text_dictionary.isSet()) {
+      res.insert(expr.text_dictionary);
     }
   }
   return res;

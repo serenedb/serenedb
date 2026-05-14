@@ -420,8 +420,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
                                        col_name);
       }
       idx_columns.push_back(catalog::CreateIndexColumn{
-        .catalog_column = cat_col,
-        .name = cat_col->name,
+        .data = catalog::ColumnRefData{.catalog_column = cat_col,
+                                       .name = cat_col->name},
       });
     } else {
       throw duckdb::CatalogException(

@@ -1254,7 +1254,7 @@ VACUUM (UPDATE_INDEXES) t_merge;
 
 
 statement ok
-VACUUM (compact_indexes) t_merge;
+PRAGMA serenedb_vacuum('compact_indexes', 't_merge');
 
 
 query
@@ -1263,3 +1263,105 @@ SELECT id FROM merge_idx ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
 id
 7
 5
+
+
+statement ok
+CREATE TABLE arr_c (pk INTEGER PRIMARY KEY, body VARCHAR, vec FLOAT[3])
+
+
+statement ok
+CREATE INDEX arr_c_idx ON arr_c USING inverted(pk, body en) INCLUDE (vec)
+
+
+statement ok
+INSERT INTO arr_c VALUES (1, 'alpha one', [1.0, 2.0, 3.0])
+
+
+statement ok
+INSERT INTO arr_c VALUES (2, 'alpha two', NULL)
+
+
+statement ok
+INSERT INTO arr_c VALUES (3, 'alpha three', [-1.0, 0.0, 1.0])
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) arr_c
+
+
+statement ok
+INSERT INTO arr_c VALUES (4, 'beta one', [4.0, 5.0, 6.0])
+
+
+statement ok
+INSERT INTO arr_c VALUES (5, 'beta two', [7.0, 8.0, 9.0])
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) arr_c
+
+
+query
+SELECT pk, vec FROM arr_c_idx
+WHERE body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta')
+ORDER BY pk;
+----
+pk	vec
+1	{1,2,3}
+2	NULL
+3	{-1,0,1}
+4	{4,5,6}
+5	{7,8,9}
+
+
+statement ok
+PRAGMA serenedb_vacuum('compact_indexes', 'arr_c')
+
+
+query
+SELECT pk, vec FROM arr_c_idx
+WHERE body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta')
+ORDER BY pk;
+----
+pk	vec
+1	{1,2,3}
+2	NULL
+3	{-1,0,1}
+4	{4,5,6}
+5	{7,8,9}
+
+
+query
+SELECT pk FROM arr_c_idx
+WHERE (body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta'))
+  AND vec IS NULL
+ORDER BY pk;
+----
+pk
+2
+
+
+query
+SELECT pk, vec FROM arr_c_idx
+WHERE (body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta'))
+  AND vec IS NOT NULL
+ORDER BY pk;
+----
+pk	vec
+1	{1,2,3}
+3	{-1,0,1}
+4	{4,5,6}
+5	{7,8,9}
+
+
+statement ok
+PRAGMA serenedb_vacuum('compact_indexes', 'arr_c')
+
+
+query
+SELECT pk, vec FROM arr_c_idx WHERE body @@ ts_phrase('alpha') ORDER BY pk;
+----
+pk	vec
+1	{1,2,3}
+2	NULL
+3	{-1,0,1}

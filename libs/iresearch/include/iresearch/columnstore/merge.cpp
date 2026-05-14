@@ -72,7 +72,8 @@ void MergeInto(std::span<const Reader* const> sources,
       const bool is_array = col->Type().id() == duckdb::LogicalTypeId::ARRAY;
       const uint64_t array_size = is_array ? col->ArraySize() : 1;
 
-      ColumnReader::RangeScan data_range{*col};
+      const ColumnReader& data_col = is_array ? *col->Child() : *col;
+      ColumnReader::RangeScan data_range{data_col};
       ColumnReader::RangeScan validity_range{*col, /*validity_side=*/true};
       for (size_t rg = 0; rg < col->RowGroupCount(); ++rg) {
         const auto rg_count = col->RowGroupRowCount(rg);
@@ -93,6 +94,8 @@ void MergeInto(std::span<const Reader* const> sources,
             data_range.Scan(rg_first_doc + scanned, take, batch, 0);
           }
           if (col->HasValidity()) {
+            validity_range.Scan(rg_first_doc + scanned, take, batch, 0);
+          } else {
             duckdb::FlatVector::ValidityMutable(batch).SetAllValid(take);
           }
 

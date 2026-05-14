@@ -29,7 +29,6 @@
 #include "basics/application-exit.h"
 #include "basics/logger/log_level.h"
 #include "basics/runtime_utils.hpp"
-#include "columnstore/legacy_compat.hpp"
 #include "iresearch/search/scorers.hpp"
 
 #if !defined(_WIN32)
@@ -230,12 +229,6 @@ int TestEnv::initialize(int argc, char* argv[]) {
   irs::formats::Init();
   irs::scorers::Init();
   irs::compression::Init();
-
-  // The legacy ColumnstoreReader/Writer impl now lives in tests/ only;
-  // wire it as the format-level factories so all `codec()->
-  // get_columnstore_writer/reader(...)` calls in the test suite resolve
-  // to the new-cs-backed adapter.
-  irs::columnstore::legacy::RegisterAsFormatFactories();
 
   return RUN_ALL_TESTS();
 }

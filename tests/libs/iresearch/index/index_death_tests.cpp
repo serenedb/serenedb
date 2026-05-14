@@ -2734,13 +2734,6 @@ TEST(index_death_test_formats_15,
 
 TEST(index_death_test_formats_15,
      columnstore_creation_fail_implicit_segment_flush) {
-  // The legacy `.csi`/`.csd` write-failure injection points don't exist
-  // in the new `.cs` format, so the legacy-shaped IoError chain this
-  // test asserts can't be reproduced. Skip rather than chase a parallel
-  // injection harness for a test that, by name, is bound to the old
-  // format files.
-  GTEST_SKIP()
-    << "Legacy columnstore I/O failure modes don't apply to new .cs format";
   constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                               irs::IndexFeatures::Pos |
                                               irs::IndexFeatures::Offs;
@@ -2847,8 +2840,6 @@ TEST(index_death_test_formats_15,
 
 TEST(index_death_test_formats_15,
      columnstore_creation_sync_fail_implicit_segment_flush) {
-  GTEST_SKIP()
-    << "Legacy columnstore I/O failure modes don't apply to new .cs format";
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::PayloadedJsonFieldFactory);
   const auto* doc1 = gen.next();
@@ -2912,8 +2903,6 @@ TEST(index_death_test_formats_15,
 }
 
 TEST(index_death_test_formats_15, fails_in_consolidate_with_removals) {
-  GTEST_SKIP()
-    << "Legacy columnstore I/O failure modes don't apply to new .cs format";
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::PayloadedJsonFieldFactory);
   const auto* doc1 = gen.next();
@@ -3081,8 +3070,6 @@ TEST(index_death_test_formats_15, fails_in_consolidate_with_removals) {
 }
 
 TEST(index_death_test_formats_15, fails_in_exists) {
-  GTEST_SKIP()
-    << "Legacy columnstore I/O failure modes don't apply to new .cs format";
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::PayloadedJsonFieldFactory);
 
@@ -3396,8 +3383,6 @@ TEST(index_death_test_formats_15, fails_in_length) {
 }
 
 TEST(index_death_test_formats_15, open_reader) {
-  GTEST_SKIP()
-    << "Legacy columnstore I/O failure modes don't apply to new .cs format";
   ::OpenReader("1_5simd", [](FailingDirectory& dir) {
     // postings list (documents)
     dir.RegisterFailure(FailingDirectory::Failure::OPEN, "_1.doc");
@@ -3421,8 +3406,6 @@ TEST(index_death_test_formats_15, open_reader) {
 }
 
 TEST(index_death_test_formats_15, columnstore_reopen_fail) {
-  GTEST_SKIP()
-    << "Legacy columnstore I/O failure modes don't apply to new .cs format";
   constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                               irs::IndexFeatures::Pos |
                                               irs::IndexFeatures::Offs;
@@ -3527,8 +3510,6 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
 }
 
 TEST(index_death_test_formats_15, fails_in_dup) {
-  GTEST_SKIP()
-    << "Legacy columnstore I/O failure modes don't apply to new .cs format";
   constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                               irs::IndexFeatures::Pos |
                                               irs::IndexFeatures::Offs;

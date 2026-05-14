@@ -341,13 +341,7 @@ void NormTestCase::AssertNormColumn(
     [](auto& lhs, auto& rhs) { return lhs.second < rhs.second; });
   ASSERT_NE(std::end(expected_docs), max);
   ASSERT_LE(*min, *max);
-  // The legacy `column->payload()` carried a 22-byte NormHeader (version,
-  // num_bytes, min/max stats). The new cs columnstore stores norms as a
-  // typed primitive column with stats in the per-row-group DataPointer's
-  // BaseStatistics rather than a column-payload header, so the header
-  // check no longer maps. Keep the iterator + per-doc decode assertions
-  // below -- those still validate that the norm reader yields the
-  // expected per-doc value.
+  AssertNormHeader(column->payload(), sizeof(T), min->second, max->second);
 
   auto values = column->iterator(irs::ColumnHint::Normal);
   auto* cost = irs::get<irs::CostAttr>(*values);

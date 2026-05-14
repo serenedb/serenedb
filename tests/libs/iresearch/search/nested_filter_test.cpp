@@ -391,8 +391,6 @@ void NestedFilterTestCase::InitDataSet() {
 }
 
 TEST_P(NestedFilterTestCase, EmptyFilter) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -417,8 +415,6 @@ TEST_P(NestedFilterTestCase, EmptyFilter) {
 }
 
 TEST_P(NestedFilterTestCase, JoinAny0) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -431,8 +427,6 @@ TEST_P(NestedFilterTestCase, JoinAny0) {
 }
 
 TEST_P(NestedFilterTestCase, JoinAny1) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -515,8 +509,6 @@ TEST_P(NestedFilterTestCase, JoinAny1) {
 }
 
 TEST_P(NestedFilterTestCase, JoinAny2) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -529,8 +521,6 @@ TEST_P(NestedFilterTestCase, JoinAny2) {
 }
 
 TEST_P(NestedFilterTestCase, JoinAny3) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -595,8 +585,6 @@ TEST_P(NestedFilterTestCase, JoinAny3) {
 }
 
 TEST_P(NestedFilterTestCase, JoinAll0) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -697,8 +685,6 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
 }
 
 TEST_P(NestedFilterTestCase, JoinMin0) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -761,8 +747,6 @@ TEST_P(NestedFilterTestCase, JoinMin0) {
 }
 
 TEST_P(NestedFilterTestCase, JoinMin1) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -822,8 +806,6 @@ TEST_P(NestedFilterTestCase, JoinMin1) {
 }
 
 TEST_P(NestedFilterTestCase, JoinMin2) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -892,8 +874,6 @@ TEST_P(NestedFilterTestCase, JoinMin2) {
 }
 
 TEST_P(NestedFilterTestCase, JoinMin3) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -962,8 +942,6 @@ TEST_P(NestedFilterTestCase, JoinMin3) {
 }
 
 TEST_P(NestedFilterTestCase, JoinRange0) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -1026,8 +1004,6 @@ TEST_P(NestedFilterTestCase, JoinRange0) {
 }
 
 TEST_P(NestedFilterTestCase, JoinRange1) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -1087,8 +1063,6 @@ TEST_P(NestedFilterTestCase, JoinRange1) {
 }
 
 TEST_P(NestedFilterTestCase, JoinRange2) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -1157,8 +1131,6 @@ TEST_P(NestedFilterTestCase, JoinRange2) {
 }
 
 TEST_P(NestedFilterTestCase, JoinNone0) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -1218,8 +1190,6 @@ TEST_P(NestedFilterTestCase, JoinNone0) {
 }
 
 TEST_P(NestedFilterTestCase, JoinNone1) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -1280,8 +1250,6 @@ TEST_P(NestedFilterTestCase, JoinNone1) {
 }
 
 TEST_P(NestedFilterTestCase, JoinNone2) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 
@@ -1351,8 +1319,6 @@ TEST_P(NestedFilterTestCase, JoinNone2) {
 }
 
 TEST_P(NestedFilterTestCase, JoinNone3) {
-  GTEST_SKIP() << "NestedFilter relies on legacy track_prev_doc semantics that "
-                  "the new .cs format does not support";
   InitDataSet();
   auto reader = open_reader();
 

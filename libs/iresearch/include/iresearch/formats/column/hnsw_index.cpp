@@ -40,7 +40,7 @@ void Read(IndexInput& in, T& value) {
 template<typename T>
 void WriteVector(DataOutput& out, const T& vec) {
   out.WriteU32(vec.size());
-  SDB_ASSERT(vec.size());
+  SDB_ASSERT(vec.size() != 0);
   out.WriteBytes(reinterpret_cast<const byte_type*>(vec.data()),
                  sizeof(*vec.data()) * vec.size());
 }
@@ -49,7 +49,7 @@ template<typename T>
 void ReadVector(IndexInput& in, T& vec) {
   uint32_t size = irs::read<uint32_t>(in);
   vec.resize(size);
-  SDB_ASSERT(size);
+  SDB_ASSERT(size != 0);
   in.ReadBytes(reinterpret_cast<byte_type*>(vec.data()),
                sizeof(*vec.data()) * size);
 }

@@ -182,42 +182,35 @@ void MergeInto(std::span<const Reader* const> sources,
       const auto* mask = source_masks[s];
 
       auto state = MakeNodeState(*col);
+      const auto total = col->RowCount();
+      uint64_t pos = 0;
+      while (pos < total) {
+        const auto take =
+          std::min<duckdb::idx_t>(total - pos, STANDARD_VECTOR_SIZE);
+        duckdb::Vector batch{col->Type(), STANDARD_VECTOR_SIZE,
+                             duckdb::VectorDataInitialization::ZERO_INITIALIZE};
+        ReadRange(*col, *state, pos, take, batch, /*out_offset=*/0);
 
-      for (size_t rg = 0; rg < col->RowGroupCount(); ++rg) {
-        const auto rg_count = col->RowGroupRowCount(rg);
-        const auto rg_first_doc = col->RowGroupOffset(rg);
-
-        duckdb::idx_t scanned = 0;
-        while (scanned < rg_count) {
-          const auto take =
-            std::min<duckdb::idx_t>(rg_count - scanned, STANDARD_VECTOR_SIZE);
-          duckdb::Vector batch{
-            col->Type(), STANDARD_VECTOR_SIZE,
-            duckdb::VectorDataInitialization::ZERO_INITIALIZE};
-          ReadRange(*col, *state, rg_first_doc + scanned, take, batch,
-                    /*out_offset=*/0);
-
-          if (!mask || mask->empty()) {
-            cw.Append(out_doc, batch, take);
-            out_doc += take;
-          } else {
-            duckdb::SelectionVector sel{take};
-            duckdb::idx_t kept = 0;
-            for (duckdb::idx_t i = 0; i < take; ++i) {
-              const auto src_doc = static_cast<doc_id_t>(
-                rg_first_doc + scanned + i + doc_limits::min());
-              if (mask->contains(src_doc)) {
-                continue;
-              }
-              sel.set_index(kept++, i);
+        if (!mask || mask->empty()) {
+          cw.Append(out_doc, batch, take);
+          out_doc += take;
+        } else {
+          duckdb::SelectionVector sel{take};
+          duckdb::idx_t kept = 0;
+          for (duckdb::idx_t i = 0; i < take; ++i) {
+            const auto src_doc =
+              static_cast<doc_id_t>(pos + i + doc_limits::min());
+            if (mask->contains(src_doc)) {
+              continue;
             }
-            if (kept > 0) {
-              cw.Append(out_doc, batch, sel, kept);
-              out_doc += kept;
-            }
+            sel.set_index(kept++, i);
           }
-          scanned += take;
+          if (kept > 0) {
+            cw.Append(out_doc, batch, sel, kept);
+            out_doc += kept;
+          }
         }
+        pos += take;
       }
     }
   }

@@ -157,7 +157,7 @@ void MaterializeNode(const irs::columnstore::ColumnReader& reader,
     case duckdb::LogicalTypeId::LIST: {
       // MAP shares LIST's physical layout (PhysicalType::LIST with a
       // STRUCT<k,v> element vector); the same accessors work.
-      if (reader.RowGroupCount() == 0) {
+      if (reader.RowCount() == 0) {
         return;
       }
       const auto* child = reader.Child();
@@ -216,7 +216,7 @@ void MaterializeNode(const irs::columnstore::ColumnReader& reader,
       return;
     }
     default: {
-      if (reader.RowGroupCount() == 0) {
+      if (reader.RowCount() == 0) {
         return;
       }
       if (!state.data_scan) {

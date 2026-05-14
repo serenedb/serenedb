@@ -139,16 +139,6 @@ ColumnReader::ColumnReader(
       _row_count = total;
     } break;
   }
-
-  const auto& rg_pointers =
-    _data_pointers.empty() ? _validity_pointers : _data_pointers;
-  _rg_offsets.reserve(rg_pointers.size() + 1);
-  uint64_t rg_total = 0;
-  for (const auto& p : rg_pointers) {
-    _rg_offsets.push_back(rg_total);
-    rg_total += p.tuple_count;
-  }
-  _rg_offsets.push_back(rg_total);
 }
 
 namespace {

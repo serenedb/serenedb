@@ -84,10 +84,10 @@ std::string_view SegmentPkRandomFetcher::Fetch(irs::doc_id_t doc_id) {
     return {};
   }
   const uint64_t row = doc_id - irs::doc_limits::min();
-  const auto window = _pk_col->Locate(row);
-  if (window.rg >= _pk_col->RowGroupCount()) {
+  if (row >= _pk_col->RowCount()) {
     return {};
   }
+  const auto window = _pk_col->Locate(row);
   if (window.rg != _cur_rg) {
     _seg = _pk_col->OpenSegment(window.rg);
     _fetch_state = duckdb::ColumnFetchState{};

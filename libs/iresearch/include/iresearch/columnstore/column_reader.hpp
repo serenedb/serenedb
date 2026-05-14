@@ -90,11 +90,6 @@ class ColumnReader final {
   const duckdb::LogicalType& Type() const noexcept { return _type; }
 
   uint64_t RowCount() const noexcept { return _row_count; }
-  size_t RowGroupCount() const noexcept { return _rg_offsets.size() - 1; }
-  uint64_t RowGroupOffset(size_t rg) const noexcept { return _rg_offsets[rg]; }
-  uint64_t RowGroupRowCount(size_t rg) const noexcept {
-    return _rg_offsets[rg + 1] - _rg_offsets[rg];
-  }
   bool HasValidity() const noexcept { return _has_validity; }
 
   RgWindow Locate(uint64_t row_pos, RgWindow hint = {}) const noexcept;
@@ -257,7 +252,6 @@ class ColumnReader final {
   std::vector<duckdb::DataPointer> _validity_pointers;
   std::vector<uint64_t> _data_offsets;      // size = data_pointers + 1
   std::vector<uint64_t> _validity_offsets;  // size = validity_pointers + 1
-  std::vector<uint64_t> _rg_offsets;
   uint64_t _row_count = 0;
   bool _has_validity = false;  // any RG with non-EMPTY validity codec
   std::unique_ptr<ColumnReader> _child;

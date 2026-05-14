@@ -170,6 +170,14 @@ class S3FIFOCache {
     return EvictMain();
   }
 
+  void Clear() noexcept {
+    _small_fifo.clear();
+    _main_fifo.clear();
+    _small_queue_size = 0;
+    _main_queue_size = 0;
+    _ghost_queue_age = 0;
+  }
+
   struct Stat {
     size_t small_queue_size;
     size_t main_queue_size;

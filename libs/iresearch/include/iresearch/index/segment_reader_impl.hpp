@@ -105,4 +105,5 @@ class SegmentReaderImpl final : public SubReader {
   FieldReader::ptr _field_reader;
   std::shared_ptr<ColumnData> _data;
 };
+
 }  // namespace irs

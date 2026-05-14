@@ -29,15 +29,10 @@
 #include <limits>
 #include <memory>
 #include <string>
-
-#include "basics/containers/node_hash_map.h"
-#include "basics/containers/s3_fifo.h"
-#include "iresearch/columnstore/column_reader.hpp"
-#include <cstdint>
-#include <memory>
-#include <string>
 #include <vector>
 
+#include "basics/containers/node_hash_map.h"
+#include "basics/containers/s3fifo.h"
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
@@ -61,7 +56,7 @@ class ChunkedVectorCache;
 using PendingHook = boost::intrusive::list_member_hook<
   boost::intrusive::link_mode<boost::intrusive::auto_unlink>>;
 
-struct ChunkSlot : public sdb::containers::s3_fifo::CacheHook {
+struct ChunkSlot : public sdb::containers::S3FIFOCacheHook {
   uint64_t chunk_id = std::numeric_limits<uint64_t>::max();
   duckdb::Vector data;
   const float* base;
@@ -79,7 +74,7 @@ struct ChunkSlot : public sdb::containers::s3_fifo::CacheHook {
   ChunkSlot& operator=(ChunkSlot&&) = delete;
 };
 
-struct RgSlot : public sdb::containers::s3_fifo::CacheHook {
+struct RgSlot : public sdb::containers::S3FIFOCacheHook {
   size_t rg = std::numeric_limits<size_t>::max();
   ColumnReader::ScanCursor cursor;
   PendingHook pending_hook;
@@ -177,11 +172,11 @@ class ChunkedVectorCache {
   size_t _pin_depth = 0;
 
   ChunkMap _chunk_index;
-  sdb::containers::s3_fifo::Cache<ChunkSlot, ChunkEvictor> _slots;
+  sdb::containers::S3FIFOCache<ChunkSlot, ChunkEvictor> _slots;
   ChunkPendingList _chunk_evicted;
 
   RgMap _rg_index;
-  sdb::containers::s3_fifo::Cache<RgSlot, RgEvictor> _rgs;
+  sdb::containers::S3FIFOCache<RgSlot, RgEvictor> _rgs;
   RgPendingList _rg_evicted;
   RgWindow _locate_hint;
 };

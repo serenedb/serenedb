@@ -24,9 +24,8 @@
 #include <faiss/impl/ResultHandler.h>
 
 #include <algorithm>
-#include <cmath>
-#include <duckdb/common/types.hpp>
 #include <array>
+#include <cmath>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
@@ -34,12 +33,11 @@
 #include <duckdb/storage/table/scan_state.hpp>
 
 #include "basics/assert.h"
-#include "basics/exceptions.h"
-#include "iresearch/formats/column/hnsw_index.hpp"
 #include "basics/containers/node_hash_map.h"
 #include "basics/containers/s3fifo.h"
 #include "basics/exceptions.h"
 #include "iresearch/columnstore/column_reader.hpp"
+#include "iresearch/formats/column/hnsw_index.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/vector.hpp"
@@ -217,7 +215,7 @@ ChunkSlot* ChunkedVectorCache::FindOrLoad(uint64_t row) {
   auto [it, inserted] = _chunk_index.try_emplace(
     chunk_id, static_cast<duckdb::idx_t>(_chunk_rows * _d));
   if (!inserted) {
-    it->second.touch();
+    it->second.Touch();
     return &it->second;
   }
   ChunkSlot& slot = it->second;
@@ -236,7 +234,7 @@ ChunkSlot* ChunkedVectorCache::FindOrLoad(uint64_t row) {
 RgSlot& ChunkedVectorCache::GetRgSlot(size_t rg) {
   auto [it, inserted] = _rg_index.try_emplace(rg);
   if (!inserted) {
-    it->second.touch();
+    it->second.Touch();
     return it->second;
   }
   RgSlot& slot = it->second;

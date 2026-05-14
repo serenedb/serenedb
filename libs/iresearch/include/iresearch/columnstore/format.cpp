@@ -42,6 +42,7 @@
 #include "iresearch/columnstore/column_writer.hpp"
 #include "iresearch/columnstore/hnsw.hpp"
 #include "iresearch/columnstore/internal/cs_block_manager.hpp"
+#include "iresearch/columnstore/internal/persistent_column_data.hpp"
 #include "iresearch/columnstore/norm_reader.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"

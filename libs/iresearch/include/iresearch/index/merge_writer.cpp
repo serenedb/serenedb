@@ -596,8 +596,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
         IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
       const field_id new_norm_id = cs_writer->AllocateColumnId();
       const auto field_name = field_itr.Meta().name;
-      auto& nw =
-        cs_writer->OpenNormColumn(new_norm_id, std::string{field_name});
+      auto& nw = cs_writer->OpenNormColumn(new_norm_id);
 
       uint64_t merged_row = 0;
       for (const auto& src : sources) {

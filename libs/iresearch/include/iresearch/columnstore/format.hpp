@@ -84,8 +84,7 @@ class Writer final {
 
   // Norm columns share the .cs file with a fixed 1/2/4-byte raw layout
   // per row group plus per-RG stats in the footer.
-  NormColumnWriter& OpenNormColumn(field_id id, std::string_view name,
-                                   uint64_t row_group_size = 0);
+  NormColumnWriter& OpenNormColumn(field_id id, uint64_t row_group_size = 0);
 
   std::span<const std::unique_ptr<NormColumnWriter>> NormWriters()
     const noexcept;

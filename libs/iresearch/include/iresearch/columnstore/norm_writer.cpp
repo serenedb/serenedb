@@ -42,10 +42,9 @@ constexpr uint8_t PickByteSize(uint32_t max) noexcept {
 
 }  // namespace
 
-NormColumnWriter::NormColumnWriter(field_id id, std::string name,
-                                   uint64_t row_group_size, IndexOutput& out)
+NormColumnWriter::NormColumnWriter(field_id id, uint64_t row_group_size,
+                                   IndexOutput& out)
   : _id{id},
-    _name{std::move(name)},
     _row_group_size{row_group_size != 0 ? row_group_size
                                         : kDefaultRowGroupSize},
     _out{&out} {

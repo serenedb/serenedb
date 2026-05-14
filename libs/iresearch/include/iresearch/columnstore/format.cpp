@@ -334,20 +334,15 @@ std::span<const std::unique_ptr<NormColumnWriter>> Writer::NormWriters()
   return _impl->norm_writers;
 }
 
-NormColumnWriter& Writer::OpenNormColumn(field_id id, std::string_view name,
-                                         uint64_t row_group_size) {
+NormColumnWriter& Writer::OpenNormColumn(field_id id, uint64_t row_group_size) {
   // Same dedup contract as OpenColumn; norm + typed maps are separate
   // in the Reader so the same id may appear in both.
   if (auto it = _impl->norm_by_id.find(id); it != _impl->norm_by_id.end()) {
-    auto& existing = *it->second;
-    SDB_ASSERT(existing.Name() == name,
-               "columnstore::Writer::OpenNormColumn: re-opened id ", id,
-               " with mismatched name '", name, "' vs '", existing.Name(), "'");
-    return existing;
+    return *it->second;
   }
   auto cw = std::make_unique<NormColumnWriter>(
-    id, std::string{name},
-    row_group_size != 0 ? row_group_size : kDefaultRowGroupSize, *_impl->out);
+    id, row_group_size != 0 ? row_group_size : kDefaultRowGroupSize,
+    *_impl->out);
   auto& back = *_impl->norm_writers.emplace_back(std::move(cw));
   _impl->norm_by_id.emplace(id, &back);
   return back;
@@ -440,9 +435,8 @@ std::string Writer::Commit() {
       const auto& nw = *_impl->norm_writers[i];
       list.WriteObject([&](duckdb::Serializer& obj) {
         obj.WriteProperty<uint64_t>(0, "id", nw.Id());
-        obj.WriteProperty(1, "name", nw.Name());
         obj.WriteList(
-          2, "row_groups", nw.Pointers().size(),
+          1, "row_groups", nw.Pointers().size(),
           [&](duckdb::Serializer::List& plist, duckdb::idx_t j) {
             const auto& p = nw.Pointers()[j];
             plist.WriteObject([&](duckdb::Serializer& pe) {
@@ -578,10 +572,9 @@ void Reader::BuildNormReaders(duckdb::BinaryDeserializer& deserializer) {
     [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
       list.ReadObject([&](duckdb::Deserializer& obj) {
         auto id = obj.ReadProperty<uint64_t>(0, "id");
-        auto name = obj.ReadProperty<std::string>(1, "name");
         std::vector<NormRowGroupPointer> pointers;
         obj.ReadList(
-          2, "row_groups",
+          1, "row_groups",
           [&](duckdb::Deserializer::List& plist, duckdb::idx_t /*j*/) {
             plist.ReadObject([&](duckdb::Deserializer& pe) {
               NormRowGroupPointer p;

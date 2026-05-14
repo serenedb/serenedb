@@ -631,7 +631,7 @@ FieldData::FieldData(std::string_view name,
     // allocated by FieldsData and recorded in the .cs footer so segment
     // readers can look this norm column up by id directly.
     if (columnstore != nullptr && field_limits::valid(norm_id)) {
-      _norm_writer = &columnstore->OpenNormColumn(norm_id, std::string{name});
+      _norm_writer = &columnstore->OpenNormColumn(norm_id);
       _meta.norm = norm_id;
     }
   }

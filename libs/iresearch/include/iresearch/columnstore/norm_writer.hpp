@@ -44,8 +44,7 @@ struct NormRowGroupPointer {
 
 class NormColumnWriter final {
  public:
-  NormColumnWriter(field_id id, std::string name, uint64_t row_group_size,
-                   IndexOutput& out);
+  NormColumnWriter(field_id id, uint64_t row_group_size, IndexOutput& out);
 
   NormColumnWriter(const NormColumnWriter&) = delete;
   NormColumnWriter& operator=(const NormColumnWriter&) = delete;
@@ -57,7 +56,6 @@ class NormColumnWriter final {
   void Finalize();
 
   field_id Id() const noexcept { return _id; }
-  const std::string& Name() const noexcept { return _name; }
 
   uint64_t RowCount() const noexcept;
 
@@ -69,7 +67,6 @@ class NormColumnWriter final {
   void FlushRowGroup();
 
   field_id _id;
-  std::string _name;
   uint64_t _row_group_size;
   IndexOutput* _out;
 

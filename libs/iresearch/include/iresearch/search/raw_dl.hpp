@@ -28,9 +28,7 @@ namespace irs {
 
 class DocumentLength final : public irs::ScorerBase<DocumentLength, void> {
  public:
-  static constexpr std::string_view type_name() noexcept {
-    return "document_length";
-  }
+  static constexpr std::string_view type_name() noexcept { return "raw_dl"; }
 
   static void init();
 

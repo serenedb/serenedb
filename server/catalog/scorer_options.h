@@ -25,10 +25,10 @@
 #include <cstdint>
 #include <iresearch/search/bm25.hpp>
 #include <iresearch/search/dfi.hpp>
-#include <iresearch/search/document_length.hpp>
 #include <iresearch/search/indri_dirichlet.hpp>
 #include <iresearch/search/lm_dirichlet.hpp>
 #include <iresearch/search/lm_jelinek_mercer.hpp>
+#include <iresearch/search/raw_dl.hpp>
 #include <iresearch/search/raw_tf.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/tfidf.hpp>

@@ -72,7 +72,7 @@ std::string ScorerOptions::ToString() const {
         return absl::StrCat("dfi(measure=", magic_enum::enum_name(p.measure),
                             ")");
       } else if constexpr (std::is_same_v<P, DocumentLength>) {
-        return "document_length()";
+        return "raw_dl()";
       }
     },
     params);
@@ -219,7 +219,7 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("Unknown scorer '", name, "'"),
       ERR_HINT("Expected one of: bm25, tfidf, raw_tf, lm_jm, lm_dirichlet, "
-               "indri_dirichlet, dfi, document_length"));
+               "indri_dirichlet, dfi, raw_dl"));
   }
   return scorer;
 }

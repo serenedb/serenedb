@@ -38,7 +38,7 @@ VACUUM (UPDATE_INDEXES) docs;
 
 
 query
-SELECT id, document_length(docs_idx.tableoid) > 0 AS has_len
+SELECT id, raw_dl(docs_idx.tableoid) > 0 AS has_len
 FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	has_len
@@ -49,7 +49,7 @@ id	has_len
 query
 SELECT id FROM docs_idx
 WHERE body @@ ts_phrase('fox')
-ORDER BY document_length(docs_idx.tableoid) DESC, id;
+ORDER BY raw_dl(docs_idx.tableoid) DESC, id;
 ----
 id
 1
@@ -59,7 +59,7 @@ id
 query
 SELECT id FROM docs_idx
 WHERE body @@ ts_phrase('fox')
-ORDER BY document_length(docs_idx.tableoid) ASC, id;
+ORDER BY raw_dl(docs_idx.tableoid) ASC, id;
 ----
 id
 2
@@ -67,7 +67,7 @@ id
 
 
 query
-SELECT id, CAST(document_length(docs_idx.tableoid) AS INTEGER) AS dl
+SELECT id, CAST(raw_dl(docs_idx.tableoid) AS INTEGER) AS dl
 FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	dl
@@ -88,7 +88,7 @@ VACUUM (UPDATE_INDEXES) docs;
 
 
 query
-SELECT id, CAST(document_length(docs_idx.tableoid) AS INTEGER) AS dl
+SELECT id, CAST(raw_dl(docs_idx.tableoid) AS INTEGER) AS dl
 FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	dl
@@ -98,12 +98,12 @@ id	dl
 5	7
 
 
-query error document_length\(\) requires an inverted index scan in the same sub-query
-SELECT id, document_length(docs.tableoid) FROM docs WHERE id > 0;
+query error raw_dl\(\) requires an inverted index scan in the same sub-query
+SELECT id, raw_dl(docs.tableoid) FROM docs WHERE id > 0;
 
 
 query
-EXPLAIN SELECT id, document_length(docs_idx.tableoid) FROM docs_idx
+EXPLAIN SELECT id, raw_dl(docs_idx.tableoid) FROM docs_idx
 WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 QUERY PLAN
@@ -124,8 +124,7 @@ QUERY PLAN
 │ AND[PHRASE[body(string) = │
 │    <Term:fox(0, 0); >]]   │
 │                           │
-│           Score:          │
-│     document_length()     │
+│      Score: raw_dl()      │
 │                           │
 │        Projections:       │
 │             id            │
@@ -139,11 +138,11 @@ QUERY PLAN
 query error Only one scorer function is allowed per inverted index
 SELECT id FROM docs_idx
 WHERE body @@ ts_phrase('fox')
-ORDER BY document_length(docs_idx.tableoid) DESC, BM25(docs_idx.tableoid) DESC LIMIT 3;
+ORDER BY raw_dl(docs_idx.tableoid) DESC, BM25(docs_idx.tableoid) DESC LIMIT 3;
 
 
 query
-SELECT id, CAST(document_length(docs_idx.tableoid) AS INTEGER) AS dl
+SELECT id, CAST(raw_dl(docs_idx.tableoid) AS INTEGER) AS dl
 FROM docs_idx
 WHERE body @@ ts_phrase('fox') OR body @@ ts_phrase('lazy')
 ORDER BY id;
@@ -157,7 +156,7 @@ id	dl
 
 
 query
-SELECT id, CAST(document_length(docs_idx.tableoid) AS INTEGER) AS dl
+SELECT id, CAST(raw_dl(docs_idx.tableoid) AS INTEGER) AS dl
 FROM docs_idx
 WHERE body @@ ts_phrase('fox') AND body @@ ts_phrase('lazy')
 ORDER BY id;
@@ -167,7 +166,7 @@ id	dl
 
 
 query
-SELECT id, CAST(document_length(docs_idx.tableoid) AS INTEGER) AS dl
+SELECT id, CAST(raw_dl(docs_idx.tableoid) AS INTEGER) AS dl
 FROM docs_idx
 WHERE body @@ ts_phrase('the') AND body @@ ts_phrase('fox')
 ORDER BY id;
@@ -182,7 +181,7 @@ query
 SELECT id
 FROM docs_idx
 WHERE body @@ ts_phrase('fox') OR body @@ ts_phrase('lazy')
-ORDER BY document_length(docs_idx.tableoid) DESC, id;
+ORDER BY raw_dl(docs_idx.tableoid) DESC, id;
 ----
 id
 1
@@ -250,7 +249,7 @@ VACUUM (UPDATE_INDEXES) sparse_norm;
 query
 SELECT id FROM sparse_norm_idx
 WHERE content->>'body' @@ ts_phrase('t')
-ORDER BY document_length(sparse_norm_idx.tableoid) DESC, id;
+ORDER BY raw_dl(sparse_norm_idx.tableoid) DESC, id;
 ----
 id
 4
@@ -259,7 +258,7 @@ id
 
 
 query
-SELECT id, CAST(document_length(sparse_norm_idx.tableoid) AS INTEGER) AS dl
+SELECT id, CAST(raw_dl(sparse_norm_idx.tableoid) AS INTEGER) AS dl
 FROM sparse_norm_idx
 WHERE content->>'body' @@ ts_phrase('t') ORDER BY id;
 ----

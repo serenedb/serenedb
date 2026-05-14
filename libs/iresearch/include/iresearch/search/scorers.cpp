@@ -29,11 +29,11 @@
 #include "bm25.hpp"
 #include "boost_scorer.hpp"
 #include "dfi.hpp"
-#include "document_length.hpp"
 #include "indri_dirichlet.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "lm_dirichlet.hpp"
 #include "lm_jelinek_mercer.hpp"
+#include "raw_dl.hpp"
 #include "raw_tf.hpp"
 #include "tfidf.hpp"
 

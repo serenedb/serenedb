@@ -18,8 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "document_length.hpp"
-
 #include "basics/empty.hpp"
 #include "basics/misc.hpp"
 #include "basics/shared.hpp"
@@ -30,6 +28,7 @@
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/scorer_impl.hpp"
+#include "raw_dl.hpp"
 
 namespace irs {
 namespace {

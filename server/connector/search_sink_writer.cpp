@@ -199,6 +199,8 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col,
   if (wants_columnstore && hnsw_info) {
     open_typed_batch_cs();
   }
+  if (_json_paths_provider) {
+    if (auto paths = _json_paths_provider(column_id); !paths.empty()) {
       SetupJsonColumnWriter(column_id, std::move(paths));
       SDB_ASSERT(_document);
       _document->NextFieldBatch();

@@ -47,6 +47,7 @@
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_search_sink_writer.h"
 #include "connector/index_expression.hpp"
@@ -218,19 +219,9 @@ void ReplayIndexedExpressions(
   for (const auto& col : indexed_columns) {
     slot_to_col_id.push_back(col.id);
   }
-  for (const auto& indexed_expr : indexed_exprs) {
-    auto result = connector::EvaluateExprOverChunk(
-      *indexed_expr.normalized_expr, chunk, table_object_id, slot_to_col_id,
-      client_context);
-    const connector::ExpressionDescriptor expr_desc{
-      indexed_expr.column_id, result.GetType(),
-      /*have_nulls=*/true, indexed_expr.serialized};
-    const bool switched = sink.SwitchExpression(expr_desc);
-    SDB_ASSERT(switched, "Cannot switch to an expression during WAL recovery");
-    connector::DuckDBSinkIndexWriter* writer_ptr = &sink;
-    serializer.WriteVector<connector::DuckDBColumnSerializer::TxnWriter>(
-      nullptr, result, num_rows, row_keys, {&writer_ptr, 1}, expr_desc);
-  }
+  connector::EvaluateAndWriteIndexedExpressions(
+    sink, indexed_exprs, chunk, table_object_id, slot_to_col_id, client_context,
+    num_rows, row_keys, serializer);
 }
 
 void FlushShard(ShardState& s,

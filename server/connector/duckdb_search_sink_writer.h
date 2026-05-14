@@ -50,8 +50,8 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
 
   bool SwitchColumn(const ColumnDescriptor& col) final;
 
-  bool SwitchExpression(const ExpressionDescriptor& json_desc) final {
-    return SwitchExpressionImpl(json_desc);
+  bool SwitchExpression(const ExpressionDescriptor& expr_desc) final {
+    return SwitchExpressionImpl(expr_desc);
   }
 
   std::span<const IndexedExpression> IndexedExpressions() const final {
@@ -109,8 +109,8 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
 
   bool SwitchColumn(const ColumnDescriptor& col) final;
 
-  bool SwitchExpression(const ExpressionDescriptor& json_desc) final {
-    return SwitchExpressionImpl(json_desc);
+  bool SwitchExpression(const ExpressionDescriptor& expr_desc) final {
+    return SwitchExpressionImpl(expr_desc);
   }
 
   std::span<const IndexedExpression> IndexedExpressions() const final {

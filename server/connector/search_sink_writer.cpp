@@ -112,8 +112,6 @@ inline constexpr bool kIsNumericKind =
   Kind == duckdb::LogicalTypeId::TIMESTAMP ||
   Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ;
 
-// Strip the kStringPrefix byte (added on the Insert path) when present.
-// Mirrors the slice-shape handling in WriteStringValue.
 std::string_view ExtractRawString(std::span<const rocksdb::Slice> cell_slices) {
   SDB_ASSERT(!cell_slices.empty() && cell_slices.size() <= 2);
   const auto& first = cell_slices.front();
@@ -231,11 +229,11 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col) {
 }
 
 bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
-  const ExpressionDescriptor& json_desc) {
-  const auto column_id = json_desc.column_id;
-  const auto& return_type = json_desc.type;
-  const auto have_nulls = json_desc.have_nulls;
-  const auto serialized_expr = json_desc.serialized_expr;
+  const ExpressionDescriptor& expr_desc) {
+  const auto column_id = expr_desc.column_id;
+  const auto& return_type = expr_desc.type;
+  const auto have_nulls = expr_desc.have_nulls;
+  const auto serialized_expr = expr_desc.serialized_expr;
   if (!IsIndexed(column_id)) {
 #ifdef SDB_DEV
     _current_writer = nullptr;

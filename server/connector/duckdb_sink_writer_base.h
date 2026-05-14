@@ -50,7 +50,7 @@ class DuckDBSinkIndexWriter {
 
   // Switch to an indexed expression.
   // The base writer only matters for the search-index path.
-  virtual bool SwitchExpression(const ExpressionDescriptor& json_desc) {
+  virtual bool SwitchExpression(const ExpressionDescriptor& expr_desc) {
     return false;
   }
 

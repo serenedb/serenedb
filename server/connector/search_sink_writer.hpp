@@ -103,7 +103,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
                  std::string_view full_key);
 
   bool SwitchColumnImpl(const ColumnDescriptor& col);
-  bool SwitchExpressionImpl(const ExpressionDescriptor& json_desc);
+  bool SwitchExpressionImpl(const ExpressionDescriptor& expr_desc);
   void FinishImpl();
 
   void AbortImpl() {

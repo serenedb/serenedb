@@ -27,6 +27,7 @@
 #include "catalog/inverted_index.h"
 #include "catalog/secondary_index.h"
 #include "connector/duckdb_rocksdb_reader.h"
+#include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_search_sink_writer.h"
 #include "connector/duckdb_secondary_sink_writer.h"
 #include "connector/duckdb_table_entry.h"
@@ -282,6 +283,34 @@ std::vector<size_t> BuildCreateIndexProjection(
   projection.erase(std::unique(projection.begin(), projection.end()),
                    projection.end());
   return projection;
+}
+
+void EvaluateAndWriteIndexedExpressions(
+  DuckDBSinkIndexWriter& sink, std::span<const IndexedExpression> indexed_exprs,
+  duckdb::DataChunk& chunk, ObjectId table_id,
+  std::span<const catalog::Column::Id> slot_to_col_id,
+  duckdb::ClientContext& client_context, duckdb::idx_t num_rows,
+  std::vector<std::string>& row_keys, DuckDBColumnSerializer& serializer) {
+  for (const auto& indexed_expr : indexed_exprs) {
+    SDB_ASSERT(indexed_expr.normalized_expr);
+    auto result =
+      EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk, table_id,
+                            slot_to_col_id, client_context);
+
+    const ExpressionDescriptor expr_desc{
+      indexed_expr.column_id, result.GetType(),
+      /*have_nulls=*/true, indexed_expr.serialized};
+    const bool switched = sink.SwitchExpression(expr_desc);
+    SDB_ASSERT(switched, "Cannot switch to indexed expression");
+
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      key_utils::SetupColumnForKey(row_keys[row], indexed_expr.column_id);
+    }
+
+    DuckDBSinkIndexWriter* writer_ptr = &sink;
+    serializer.WriteVector<DuckDBColumnSerializer::TxnWriter>(
+      nullptr, result, num_rows, row_keys, {&writer_ptr, 1}, expr_desc);
+  }
 }
 
 }  // namespace sdb::connector

@@ -272,26 +272,13 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
                                    gstate.active_writers, desc);
   }
 
-  // 4b. Evaluate per-writer JSON expressions and
+  // 4b. Evaluate per-writer indexed expressions and
   // write them as virtual columns.
   for (auto& writer : gstate.index_writers) {
-    auto evals = writer->IndexedExpressions();
-    for (const auto& indexed_expr : evals) {
-      auto result = EvaluateExprOverChunk(
-        *indexed_expr.normalized_expr, chunk, gstate.table_id,
-        gstate.slot_to_col_id, context.client);
-
-      const ExpressionDescriptor json_desc{
-        indexed_expr.column_id, result.GetType(),
-        /*have_nulls=*/true, indexed_expr.serialized};
-      const bool need = writer->SwitchExpression(json_desc);
-      SDB_ASSERT(need, "Cannot switch to JSON expression");
-
-      DuckDBSinkIndexWriter* writer_ptr = writer.get();
-      gstate.serializer->WriteVector<DuckDBColumnSerializer::TxnWriter>(
-        nullptr, result, num_rows, gstate.row_keys, {&writer_ptr, 1},
-        json_desc);
-    }
+    EvaluateAndWriteIndexedExpressions(
+      *writer, writer->IndexedExpressions(), chunk, gstate.table_id,
+      gstate.slot_to_col_id, context.client, num_rows, gstate.row_keys,
+      *gstate.serializer);
   }
 
   // 5. Finish index writers

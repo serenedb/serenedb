@@ -736,25 +736,9 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
 
   // Evaluate each indexed expression and write the result as a virtual
   // column. Slot map and canonical bytes precomputed on gstate.
-  for (const auto& indexed_expr : gstate.indexed_expressions) {
-    SDB_ASSERT(indexed_expr.normalized_expr);
-    auto result = EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk,
-                                        gstate.table_id, gstate.slot_to_col_id,
-                                        context.client);
-
-    const ExpressionDescriptor json_desc{
-      indexed_expr.column_id, result.GetType(),
-      /*have_nulls=*/true, indexed_expr.serialized};
-    const bool switched = writer->SwitchExpression(json_desc);
-    SDB_ASSERT(switched, "Cannot switch to JSON expression");
-
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      key_utils::SetupColumnForKey(row_keys[row], indexed_expr.column_id);
-    }
-    DuckDBSinkIndexWriter* writer_ptr = writer;
-    serializer->WriteVector<DuckDBColumnSerializer::TxnWriter>(
-      nullptr, result, num_rows, row_keys, {&writer_ptr, 1}, json_desc);
-  }
+  EvaluateAndWriteIndexedExpressions(
+    *writer, gstate.indexed_expressions, chunk, gstate.table_id,
+    gstate.slot_to_col_id, context.client, num_rows, row_keys, *serializer);
 
   writer->Finish();
   gstate.backfill_count_atomic.fetch_add(num_rows, std::memory_order_relaxed);

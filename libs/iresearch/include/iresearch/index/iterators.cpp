@@ -106,41 +106,6 @@ struct EmptyFieldIterator : FieldIterator {
 
 EmptyFieldIterator gEmptyFieldIterator;
 
-struct EmptyColumnReader final : ColumnReader {
-  field_id id() const noexcept final { return field_limits::invalid(); }
-
-  // Returns optional column name.
-  std::string_view name() const noexcept final { return {}; }
-
-  // Returns column header.
-  bytes_view payload() const noexcept final { return {}; }
-
-  // Returns the corresponding column iterator.
-  // If the column implementation supports document payloads then it
-  // can be accessed via the 'payload' attribute.
-  ResettableDocIterator::ptr iterator(
-    ColumnHint /*hint*/) const noexcept final {
-    return ResettableDocIterator::empty();
-  }
-
-  doc_id_t size() const noexcept final { return 0; }
-};
-
-const EmptyColumnReader kEmptyColumnReader;
-
-// Represents a reader with no columns
-struct EmptyColumnIterator : ColumnIterator {
-  const ColumnReader& value() const noexcept final {
-    return kEmptyColumnReader;
-  }
-
-  bool seek(std::string_view /*name*/) final { return false; }
-
-  bool next() final { return false; }
-};
-
-EmptyColumnIterator gEmptyColumnIterator;
-
 }  // namespace
 
 TermIterator::ptr TermIterator::empty() noexcept {
@@ -161,10 +126,6 @@ ResettableDocIterator::ptr ResettableDocIterator::empty() noexcept {
 
 FieldIterator::ptr FieldIterator::empty() noexcept {
   return memory::to_managed<FieldIterator>(gEmptyFieldIterator);
-}
-
-ColumnIterator::ptr ColumnIterator::empty() noexcept {
-  return memory::to_managed<ColumnIterator>(gEmptyColumnIterator);
 }
 
 }  // namespace irs

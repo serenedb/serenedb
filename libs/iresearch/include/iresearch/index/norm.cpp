@@ -22,61 +22,9 @@
 
 #include "norm.hpp"
 
-#include "iresearch/index/buffered_column_iterator.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 
 namespace irs {
-namespace {
-
-// TODO(mbkkt) Make it faster, with compile time known size of value.
-template<NormEncoding Encoding>
-class BufferedNormReader : public NormReader {
- public:
-  explicit BufferedNormReader(uint64_t sum, uint64_t non_zero_count,
-                              std::span<const BufferedValue> values,
-                              bytes_view data) noexcept
-    : _sum{sum}, _non_zero_count{non_zero_count}, _it{values, data} {}
-
-  void Get(std::span<const doc_id_t> docs, std::span<uint32_t> values) final {
-    GetBlockImpl(docs, values);
-  }
-
-  uint32_t Get(doc_id_t doc) final {
-    const auto r = _it.seek(doc);
-    if (r != doc) [[unlikely]] {
-      return {};
-    }
-    const auto payload = _it.GetPayload();
-    return Norm::Read<Encoding>(payload);
-  }
-
-  void GetPostingBlock(std::span<const doc_id_t, kPostingBlock> docs,
-                       std::span<uint32_t, kPostingBlock> values) final {
-    GetBlockImpl(docs, values);
-  }
-
-  score_t GetAvg() const noexcept final {
-    // If non-zero count is equal to zero this won't be really used
-    return static_cast<double>(_sum) / static_cast<double>(_non_zero_count);
-  }
-
- private:
-  template<size_t N>
-  void GetBlockImpl(std::span<const doc_id_t, N> docs,
-                    std::span<uint32_t, N> values) {
-    SDB_ASSERT(docs.size() <= values.size());
-    const auto size = docs.size();
-    for (size_t i = 0; i < size; ++i) {
-      values[i] = Get(docs[i]);
-    }
-  }
-
-  uint64_t _sum;
-  uint64_t _non_zero_count;
-  BufferedColumnIterator _it;
-};
-
-}  // namespace
 
 void NormHeader::Write(const NormHeader& hdr, DataOutput& out) {
   out.WriteU32(static_cast<uint32_t>(ByteSize()));
@@ -121,41 +69,6 @@ std::optional<NormHeader> NormHeader::Read(bytes_view payload) noexcept {
   return hdr;
 }
 
-FeatureWriter::ptr Norm::MakeWriter(std::span<const bytes_view> headers) {
-  size_t max_bytes = sizeof(ValueType);
-  if (!headers.empty()) {
-    uint32_t max_value = 0;
-    for (const auto header : headers) {
-      const auto hdr = NormHeader::Read(header);
-      if (!hdr) {
-        return {};
-      }
-      max_value = std::max(max_value, hdr->Max());
-    }
-    max_bytes = NormHeader::MaxNumBytes(max_value);
-  }
-  SDB_ASSERT(NormHeader::CheckNumBytes(max_bytes));
-  return ResolveNormEncoding(
-    static_cast<NormEncoding>(max_bytes),
-    []<NormEncoding Encoding> -> FeatureWriter::ptr {
-      return memory::make_managed<NormWriter<Encoding>>();
-    });
-}
-
 REGISTER_ATTRIBUTE(Norm);
-
-NormReader::ptr MakeNormReader(bytes_view payload,
-                               std::span<const BufferedValue> values,
-                               bytes_view data) {
-  auto header = NormHeader::Read(payload);
-  if (!header) [[unlikely]] {
-    return {};
-  }
-  return ResolveNormEncoding(
-    header->Encoding(), [&]<NormEncoding Encoding> -> NormReader::ptr {
-      return memory::make_managed<BufferedNormReader<Encoding>>(
-        header->Sum(), header->NonZeroCount(), values, data);
-    });
-}
 
 }  // namespace irs

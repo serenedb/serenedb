@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/common/enums/compression_type.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <optional>
@@ -52,14 +53,22 @@ struct JsonPathInfo {
 struct InvertedIndexColumnInfo {
   ObjectId text_dictionary = ObjectId::none();
   bool store_values = false;
+  // Forced columnstore compression for the stored values. Default
+  // (COMPRESSION_AUTO) lets the writer's analyze tournament pick. Any
+  // other value bypasses analyze; the writer throws at flush time if a
+  // sub-column's physical type doesn't accept that codec.
+  duckdb::CompressionType compression =
+    duckdb::CompressionType::COMPRESSION_AUTO;
   search::Features features;
   std::optional<HNSWColumnConfig> hnsw_config;
   std::vector<JsonPathInfo> json_paths;
+  std::optional<Column::Id> tokenizer_column;
 };
 
 struct ColumnTokenizer {
   Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
+  std::optional<Column::Id> tokenizer_column;
 };
 
 class InvertedIndex final : public Index {

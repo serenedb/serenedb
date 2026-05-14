@@ -133,6 +133,7 @@ ColumnTokenizer InvertedIndex::GetColumnTokenizer(
   auto tokenizer =
     BuildColumnTokenizer(snapshot, info->text_dictionary, info->features);
   SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
+  tokenizer->tokenizer_column = info->tokenizer_column;
   return *std::move(tokenizer);
 }
 

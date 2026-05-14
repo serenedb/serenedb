@@ -454,6 +454,9 @@ run_tests() {
 		skip_opt="--skip $skip"
 	fi
 
+	# TODO(Misha) move this to sqllogictest-rs
+	mkdir -p "$(dirname -- "$junit-$engine")"
+
 	sqllogictest "${tests[@]}" \
 		--host "$host" --port "$port" --engine "$engine" \
 		--jobs "$jobs" \

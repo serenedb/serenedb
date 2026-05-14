@@ -1,0 +1,142 @@
+hash-threshold 100
+
+# End-to-end test: BM25 ordering must remain correct after the inverted
+# index is compacted. We force the index into a multi-segment shape by
+# inserting in three batches with VACUUM (UPDATE_INDEXES) between each
+# batch (each VACUUM commits a fresh segment). Then we drive consolidation
+# to a fixpoint via the new compact_indexes handler and re-run the same
+# BM25 queries. Norms feed BM25, so this also covers the norm read path
+# across pre- and post-merge segments.
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted(id, body en);
+
+
+# Batch 1 — segment A
+statement ok
+INSERT INTO docs VALUES (1, 'the quick brown fox jumps over the lazy dog');
+
+
+statement ok
+INSERT INTO docs VALUES (2, 'the quick fox');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# Batch 2 — segment B
+statement ok
+INSERT INTO docs VALUES (3, 'the lazy dog');
+
+
+statement ok
+INSERT INTO docs VALUES (4, 'a fox is a fox is a fox');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# Batch 3 — segment C
+statement ok
+INSERT INTO docs VALUES (5, 'lazy lazy lazy');
+
+
+statement ok
+INSERT INTO docs VALUES (6, 'nothing here');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# Snapshot the pre-compaction BM25 ordering for 'fox'. The expected
+# ordering is determined by document length (norm) — shorter docs with the
+# same term frequency score higher. id=2 ('the quick fox') is shortest,
+# id=4 has TF=3 in a longer doc, id=1 is the longest.
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC, id;
+----
+id
+4
+2
+1
+
+
+# 'lazy' across all three segments — id=5 ('lazy lazy lazy') has TF=3 in
+# the shortest doc and should rank first; the rest are TF=1.
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('lazy') ORDER BY BM25(docs_idx.tableoid) DESC, id;
+----
+id
+5
+3
+1
+
+
+# Drive consolidation to a fixpoint. After this, all live docs should be
+# in a single merged segment.
+statement ok
+PRAGMA serenedb_vacuum('compact_indexes', 'docs');
+
+
+# Same BM25 queries must give the same ordering after compaction.
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC, id;
+----
+id
+4
+2
+1
+
+
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('lazy') ORDER BY BM25(docs_idx.tableoid) DESC, id;
+----
+id
+5
+3
+1
+
+
+# BM25 scores must still be > 0 after merge — sanity-check the per-doc
+# norm read path on the merged segment.
+query
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id	has_score
+1	t
+2	t
+4	t
+
+
+# Compacting again should be a no-op (idempotent).
+statement ok
+PRAGMA serenedb_vacuum('compact_indexes', 'docs');
+
+
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC, id;
+----
+id
+4
+2
+1

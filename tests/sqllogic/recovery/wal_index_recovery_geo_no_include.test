@@ -1,0 +1,136 @@
+control substitution on
+
+# WAL recovery for a geo-tokenized column WITHOUT INCLUDE.
+#
+# Counterpart to wal_index_recovery_geo.test: same indexing, but no
+# INCLUDE clause. The analyzer-output cs column (aux slot 0) is still
+# populated because the filter needs it; the user-facing cs[user_id]
+# slot is NOT populated. `SELECT geo` falls back to RocksDB which holds
+# the original GeoJSON.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wal_geo_ni_dict(
+    template = 'geojson'
+);
+
+statement ok
+CREATE TABLE wal_geo_ni_t(pk INTEGER PRIMARY KEY, geo JSON);
+
+statement ok
+INSERT INTO wal_geo_ni_t VALUES (1, '{"type":"Point","coordinates":[37.615895,55.703900]}');
+
+# Indexed (geo analyzer for distance), NOT INCLUDE'd.
+statement ok
+CREATE INDEX wal_geo_ni_idx ON wal_geo_ni_t
+  USING inverted(geo wal_geo_ni_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) wal_geo_ni_t;
+
+# Plan: filter served by inverted-index posting + analyzer-output cs aux
+# column; `geo` projection falls back to RocksDB lookup (no INCLUDE).
+query
+EXPLAIN SELECT pk, geo FROM wal_geo_ni_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            geo            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│   Index: wal_geo_ni_idx   │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│    AND[GEO_DISTANCE[geo   │
+│    (string), *, <1000]]   │
+│                           │
+│        Projections:       │
+│            geo            │
+│             pk            │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+# Pre-crash row: geo distance query works against on-disk segment.
+query
+SELECT pk FROM wal_geo_ni_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0
+ORDER BY pk;
+----
+pk
+1
+
+# Pre-crash row: SELECT geo returns raw GeoJSON (read from RocksDB
+# because the column is not INCLUDE'd in cs).
+query
+SELECT pk, geo FROM wal_geo_ni_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+pk	geo
+1	{"type":"Point","coordinates":[37.615895,55.703900]}
+
+# Freeze iresearch commits BEFORE the second batch.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO wal_geo_ni_t VALUES
+  (2, '{"type":"Point","coordinates":[2.349014,48.864716]}'),
+  (3, '{"type":"Point","coordinates":[-74.005941,40.712784]}');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# --- server restarts here ---
+
+connection wal_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) wal_geo_ni_t;
+
+# Pre-crash row still queryable.
+connection wal_after
+query
+SELECT pk FROM wal_geo_ni_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+pk
+1
+
+# Post-crash rows queryable by geo distance (filter reads aux cs column).
+connection wal_after
+query
+SELECT pk FROM wal_geo_ni_idx
+WHERE geo <-> '{"type":"Point","coordinates":[2.35,48.86]}' < 1000.0;
+----
+pk
+2
+
+connection wal_after
+query
+SELECT pk FROM wal_geo_ni_idx
+WHERE geo <-> '{"type":"Point","coordinates":[-74.0,40.71]}' < 1000.0;
+----
+pk
+3
+
+# All three rows visible and `geo` returns the raw GeoJSON (via RocksDB).
+connection wal_after
+query
+SELECT pk, geo FROM wal_geo_ni_idx ORDER BY pk;
+----
+pk	geo
+1	{"type":"Point","coordinates":[37.615895,55.703900]}
+2	{"type":"Point","coordinates":[2.349014,48.864716]}
+3	{"type":"Point","coordinates":[-74.005941,40.712784]}

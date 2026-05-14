@@ -76,9 +76,10 @@ void SKPointLookupFunction(duckdb::ClientContext& context,
   DuckDBSecondaryKeyBuilder builder{scan.shard_id};
 
   if (!gstate.index_source) {
-    gstate.index_source = MakeIndexSource(
-      context, bind_data, gstate.snapshot, gstate.txn, gstate.projected_columns,
-      gstate.projected_types, bind_data.column_ids);
+    gstate.index_source =
+      MakeIndexSource(context, bind_data, gstate.snapshot, gstate.txn,
+                      gstate.external_projected_columns, gstate.projected_types,
+                      bind_data.column_ids);
   }
   if (std::holds_alternative<std::monostate>(gstate.pk_batch)) {
     gstate.pk_batch = gstate.index_source->CreatePkBatch();

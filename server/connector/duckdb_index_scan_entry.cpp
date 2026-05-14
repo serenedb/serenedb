@@ -23,9 +23,11 @@
 #include <duckdb/storage/table_storage_info.hpp>
 
 #include "basics/assert.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/view_fast_path.h"
+#include "pg/connection_context.h"
 
 namespace sdb::connector {
 
@@ -64,8 +66,9 @@ TableInvertedIndexScanEntry::TableInvertedIndexScanEntry(
 }
 
 duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
-  duckdb::ClientContext& /*context*/,
+  duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
+  GetSereneDBContext(context).EnsureSearchSnapshot(_inverted_index->GetId());
   auto data = duckdb::make_uniq<TableScanBindData>();
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {
@@ -117,6 +120,7 @@ ViewInvertedIndexScanEntry::ViewInvertedIndexScanEntry(
 duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
+  GetSereneDBContext(context).EnsureSearchSnapshot(_inverted_index->GetId());
   // The index only captures post-WHERE/ORDER/LIMIT rows; we must not
   // stream the reader directly.
   auto data = duckdb::make_uniq<ViewScanBindData>();
@@ -146,17 +150,18 @@ duckdb::TableStorageInfo ViewInvertedIndexScanEntry::GetStorageInfo(
 
 duckdb::vector<duckdb::column_t> ViewInvertedIndexScanEntry::GetRowIdColumns()
   const {
-  return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
+  return {kColumnIdentifierGeneratedPk};
 }
 
 duckdb::virtual_column_map_t ViewInvertedIndexScanEntry::GetVirtualColumns()
   const {
   duckdb::virtual_column_map_t result;
   result.reserve(2);
-  result.insert({kColumnIdentifierTableOid,
-                 duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
-  result.insert({duckdb::COLUMN_IDENTIFIER_ROW_ID,
-                 duckdb::TableColumn("rowid", duckdb::LogicalType::ROW_TYPE)});
+  result.emplace(kColumnIdentifierTableOid,
+                 duckdb::TableColumn{"tableoid", duckdb::LogicalType::BIGINT});
+  result.emplace(
+    kColumnIdentifierGeneratedPk,
+    duckdb::TableColumn{"generated_pk", duckdb::LogicalType::ROW_TYPE});
   return result;
 }
 
@@ -183,7 +188,7 @@ TableSecondaryIndexScanEntry::TableSecondaryIndexScanEntry(
 }
 
 duckdb::TableFunction TableSecondaryIndexScanEntry::GetScanFunction(
-  duckdb::ClientContext& /*context*/,
+  duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
   auto data = duckdb::make_uniq<TableScanBindData>();
   data->table = _sdb_table;
@@ -268,17 +273,18 @@ duckdb::TableStorageInfo ViewSecondaryIndexScanEntry::GetStorageInfo(
 
 duckdb::vector<duckdb::column_t> ViewSecondaryIndexScanEntry::GetRowIdColumns()
   const {
-  return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
+  return {kColumnIdentifierGeneratedPk};
 }
 
 duckdb::virtual_column_map_t ViewSecondaryIndexScanEntry::GetVirtualColumns()
   const {
   duckdb::virtual_column_map_t result;
   result.reserve(2);
-  result.insert({kColumnIdentifierTableOid,
-                 duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
-  result.insert({duckdb::COLUMN_IDENTIFIER_ROW_ID,
-                 duckdb::TableColumn("rowid", duckdb::LogicalType::ROW_TYPE)});
+  result.emplace(kColumnIdentifierTableOid,
+                 duckdb::TableColumn{"tableoid", duckdb::LogicalType::BIGINT});
+  result.emplace(
+    kColumnIdentifierGeneratedPk,
+    duckdb::TableColumn{"generated_pk", duckdb::LogicalType::ROW_TYPE});
   return result;
 }
 

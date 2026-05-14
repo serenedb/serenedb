@@ -18,28 +18,19 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/column_collector.hpp"
+#pragma once
 
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/search/score_function.hpp"
+#include <span>
 
-namespace irs {
+#include "iresearch/index/index_meta.hpp"
 
-const uint32_t* ColumnArgsFetcher::AddNorms(const ColumnReader* field) {
-  if (!field) {
-    return nullptr;
-  }
-  auto it = _columns.try_emplace(field->id()).first;
-  auto& entry = it->second;
-  if (!entry.reader) {
-    entry.reader = field->norms();
-    if (!entry.reader) [[unlikely]] {
-      _columns.erase(it);
-      return nullptr;
-    }
-    entry.norms.resize(kPostingBlock);  // TODO(gnusi): fix
-  }
-  return entry.norms.data();
-}
+namespace irs::columnstore {
 
-}  // namespace irs
+class Reader;
+class Writer;
+
+void MergeInto(std::span<const Reader* const> sources,
+               std::span<const DocumentMask* const> source_masks,
+               Writer& output);
+
+}  // namespace irs::columnstore

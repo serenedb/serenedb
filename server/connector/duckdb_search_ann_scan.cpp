@@ -95,8 +95,7 @@ void ANNSearchSegment(const irs::SubReader& segment_reader, uint32_t segment_id,
 
   SDB_ASSERT(gstate.reader);
 
-  segment_reader.Search(gstate.scan->field_name, info, lstate.buffer,
-                        segment_id);
+  segment_reader.Search(gstate.scan->field_id, info, lstate.buffer, segment_id);
 
   const float local_kth = lstate.buffer.dis[0];
   float cur = gstate.global_kth_dis.load(std::memory_order_relaxed);
@@ -155,13 +154,14 @@ void MergeResult(duckdb::ClientContext& context,
 
   if (!g.index_source) {
     g.index_source = MakeIndexSource(context, bind_data, g.snapshot, g.txn,
-                                     g.projected_columns, g.projected_types,
-                                     bind_data.column_ids);
+                                     g.external_projected_columns,
+                                     g.projected_types, bind_data.column_ids);
   }
   if (std::holds_alternative<std::monostate>(g.pk_batch)) {
     g.pk_batch = g.index_source->CreatePkBatch();
   }
 
+  g.merged_seg_docs.assign(n, SegDoc{});
   g.total_results = std::visit(
     [&](auto& pk) -> size_t {
       using T = std::decay_t<decltype(pk)>;
@@ -182,8 +182,13 @@ void MergeResult(duckdb::ClientContext& context,
           *g.reader, g.lookup_scratch,
           [&](size_t orig, std::string_view pk_bytes) {
             SetPrimaryKey(pk, orig, pk_bytes);
+            auto [seg, doc] =
+              irs::UnpackSegmentWithDoc(static_cast<uint64_t>(top_ids[orig]));
+            g.merged_seg_docs[orig] = {.segment_idx = seg,
+                                       .doc_pos = static_cast<irs::doc_id_t>(
+                                         doc - irs::doc_limits::min())};
           });
-        return PkCompactResolved(pk, n);
+        return PkCompactResolved(pk, n, g.merged_seg_docs);
       }
     },
     g.pk_batch);
@@ -213,8 +218,15 @@ void EmitResult(duckdb::ClientContext& context,
   }
 
   if (!std::holds_alternative<std::monostate>(g.pk_batch)) {
-    g.index_source->Materialize(context, g.pk_batch, batch_start, batch_size,
-                                output);
+    if (g.has_external_projections) {
+      g.index_source->Materialize(context, g.pk_batch, batch_start, batch_size,
+                                  output);
+    }
+    if (!g.cs_projections.empty()) {
+      std::span<const SegDoc> slice{g.merged_seg_docs.data() + batch_start,
+                                    batch_size};
+      MaterializeIncludeColumnsScoreOrder(g, *g.reader, slice, output);
+    }
   }
   g.current_idx += batch_size;
   output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));
@@ -242,7 +254,7 @@ void RangeSearchSegment(duckdb::ClientContext& context,
     info.params.efSearch = static_cast<size_t>(g.ef_search);
   }
   info.params.sel = composite.Empty() ? nullptr : &composite;
-  sub.RangeSearch(g.scan->field_name, info, l.range_buffer, segment_id);
+  sub.RangeSearch(g.scan->field_id, info, l.range_buffer, segment_id);
 
   auto& ids = l.range_buffer.ids;
   while (!ids.empty() && ids.back() == -1) {
@@ -258,8 +270,8 @@ void RangeSearchSegment(duckdb::ClientContext& context,
     std::lock_guard lock{g.m};
     if (!g.index_source) {
       g.index_source = MakeIndexSource(context, bind_data, g.snapshot, g.txn,
-                                       g.projected_columns, g.projected_types,
-                                       bind_data.column_ids);
+                                       g.external_projected_columns,
+                                       g.projected_types, bind_data.column_ids);
     }
     if (std::holds_alternative<std::monostate>(l.pk_batch)) {
       l.pk_batch = g.index_source->CreatePkBatch();
@@ -281,8 +293,13 @@ void RangeSearchSegment(duckdb::ClientContext& context,
             return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id));
           },
           *g.reader, l.lookup_scratch,
-          [&](size_t /*orig*/, std::string_view pk_bytes) {
+          [&](size_t orig, std::string_view pk_bytes) {
             AppendPrimaryKey(pk, pk_bytes);
+            auto [seg, doc] =
+              irs::UnpackSegmentWithDoc(static_cast<uint64_t>(ids[orig]));
+            l.seg_docs.push_back({.segment_idx = seg,
+                                  .doc_pos = static_cast<irs::doc_id_t>(
+                                    doc - irs::doc_limits::min())});
           });
       }
     },
@@ -298,16 +315,16 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
   const auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
   auto gstate = duckdb::make_uniq<SearchAnnScanGlobalState>();
   InitCommonState(*gstate, context, bind_data, input);
+  ClassifyColumnstoreProjections(*gstate, bind_data);
   gstate->scan = &bind_data.scan_source->Cast<ANNScan>();
   gstate->ef_search = ReadEfSearch(context);
 
-  InitAnnFilterContext(gstate->filter_ctx, context,
-                       gstate->scan->filter_expression.get(),
-                       gstate->scan->filter_column_ids, gstate->scan->index_id,
-                       gstate->snapshot, bind_data);
+  InitAnnFilterContext(
+    gstate->filter_ctx, context, gstate->scan->filter_expression.get(),
+    gstate->scan->filter_column_ids, gstate->snapshot, bind_data);
 
   auto& snapshot =
-    GetSereneDBContext(context).EnsureSearchSnapshot(gstate->scan->index_id);
+    GetSereneDBContext(context).GetSearchSnapshot(gstate->scan->index_id);
   gstate->reader = &snapshot.reader;
   gstate->total_segments = snapshot.reader.size();
 
@@ -373,7 +390,7 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
   while (ClaimNextLiveSegment(g.next_segment, g.total_segments, *g.reader,
                               segment)) {
     const auto& reader = (*g.reader)[segment];
-    composite.Reset(reader);
+    composite.Reset(*g.reader, segment);
     ANNSearchSegment(reader, segment, composite, g, l);
     processed++;
   }
@@ -394,16 +411,16 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(
   const auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
   auto gstate = duckdb::make_uniq<SearchRangeScanGlobalState>();
   InitCommonState(*gstate, context, bind_data, input);
+  ClassifyColumnstoreProjections(*gstate, bind_data);
   gstate->scan = &bind_data.scan_source->Cast<RangeSearchScan>();
   gstate->ef_search = ReadEfSearch(context);
 
-  InitAnnFilterContext(gstate->filter_ctx, context,
-                       gstate->scan->filter_expression.get(),
-                       gstate->scan->filter_column_ids, gstate->scan->index_id,
-                       gstate->snapshot, bind_data);
+  InitAnnFilterContext(
+    gstate->filter_ctx, context, gstate->scan->filter_expression.get(),
+    gstate->scan->filter_column_ids, gstate->snapshot, bind_data);
 
   auto& snapshot =
-    GetSereneDBContext(context).EnsureSearchSnapshot(gstate->scan->index_id);
+    GetSereneDBContext(context).GetSearchSnapshot(gstate->scan->index_id);
   gstate->reader = &snapshot.reader;
   gstate->total_segments = snapshot.reader.size();
   return gstate;
@@ -443,7 +460,7 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
          ClaimNextLiveSegment(g.next_segment, g.total_segments, *g.reader,
                               segment)) {
     const auto& sub = (*g.reader)[segment];
-    composite.Reset(sub);
+    composite.Reset(*g.reader, segment);
     RangeSearchSegment(context, bind_data, sub, segment, composite, g, l);
   }
 
@@ -469,8 +486,15 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
   SDB_ASSERT(g.index_source);
   if (!std::holds_alternative<std::monostate>(l.pk_batch)) {
     std::lock_guard lock{g.m};
-    g.index_source->Materialize(context, l.pk_batch, batch_start, batch_size,
-                                output);
+    if (g.has_external_projections) {
+      g.index_source->Materialize(context, l.pk_batch, batch_start, batch_size,
+                                  output);
+    }
+    if (!g.cs_projections.empty()) {
+      std::span<const SegDoc> slice{l.seg_docs.data() + batch_start,
+                                    batch_size};
+      MaterializeIncludeColumnsScoreOrder(g, *g.reader, slice, output);
+    }
   }
 
   output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));

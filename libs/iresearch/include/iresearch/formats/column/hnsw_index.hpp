@@ -34,7 +34,6 @@
 
 namespace irs {
 
-struct ColumnReader;
 class IndexReader;
 
 void WriteHNSW(DataOutput& out, const faiss::HNSW& hnsw);
@@ -188,48 +187,6 @@ struct HNSWRangeSearchContext {
   uint32_t segment_id;
   faiss::VisitedTable& vt;
   HNSWRangeResultHandler& handler;
-};
-
-class HNSWIndexWriter {
- public:
-  explicit HNSWIndexWriter(
-    HNSWInfo info,
-    absl::AnyInvocable<ResettableDocIterator::ptr()> make_iterator,
-    absl::AnyInvocable<void(ResettableDocIterator::ptr&)> update_iterator)
-    : _max_doc{info.max_doc},
-      _hnsw{info.m},
-      _vt{info.max_doc + 1},
-      _dis{make_iterator(), make_iterator(), info},
-      _update_iterator{std::move(update_iterator)} {
-    _hnsw.efConstruction = info.ef_construction;
-    _hnsw.prepare_level_tab(_max_doc + 1, false);
-  }
-
-  void Add(const float* data, doc_id_t doc);
-
-  void Serialize(DataOutput& out) const { WriteHNSW(out, _hnsw); }
-
- private:
-  doc_id_t _max_doc;
-  faiss::HNSW _hnsw;
-  faiss::VisitedTable _vt;
-  ColumnIndexDistance _dis;
-  absl::AnyInvocable<void(ResettableDocIterator::ptr&)> _update_iterator;
-};
-
-class HNSWIndexReader {
- public:
-  explicit HNSWIndexReader(faiss::HNSW&& hnsw, const ColumnReader& reader,
-                           HNSWInfo info);
-
-  void Search(HNSWSearchContext& context) const;
-  void RangeSearch(HNSWRangeSearchContext& context) const;
-
- private:
-  friend class HNSWIterator;
-  mutable faiss::HNSW _hnsw;  // can change search parameters
-  const HNSWInfo _info;
-  const ColumnReader& _reader;
 };
 
 }  // namespace irs

@@ -21,12 +21,14 @@
 #include "iresearch/columnstore/merge.hpp"
 
 #include <algorithm>
-#include <duckdb/common/allocator.hpp>
-#include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
-#include <duckdb/storage/table/scan_state.hpp>
+#include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
+#include <memory>
+#include <optional>
+#include <vector>
 
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/columnstore/column_writer.hpp"
@@ -34,6 +36,115 @@
 #include "iresearch/columnstore/hnsw.hpp"
 
 namespace irs::columnstore {
+namespace {
+
+struct NodeState {
+  std::optional<ColumnReader::RangeScan> data_scan;
+  std::optional<ColumnReader::RangeScan> validity_scan;
+  ColumnReader::ListOffsetState list_offsets;
+  duckdb::Vector offsets_scratch{duckdb::LogicalType::UBIGINT,
+                                 STANDARD_VECTOR_SIZE};
+  RgWindow rg_hint;
+  std::vector<std::unique_ptr<NodeState>> children;
+};
+
+std::unique_ptr<NodeState> MakeNodeState(const ColumnReader& reader) {
+  auto state = std::make_unique<NodeState>();
+  switch (reader.Type().id()) {
+    case duckdb::LogicalTypeId::ARRAY:
+    case duckdb::LogicalTypeId::MAP:
+    case duckdb::LogicalTypeId::LIST:
+      state->children.push_back(MakeNodeState(*reader.Child()));
+      break;
+    case duckdb::LogicalTypeId::STRUCT:
+      state->children.reserve(reader.StructFieldCount());
+      for (size_t fi = 0; fi < reader.StructFieldCount(); ++fi) {
+        state->children.push_back(MakeNodeState(reader.StructField(fi)));
+      }
+      break;
+    default:
+      break;
+  }
+  return state;
+}
+
+void ReadRange(const ColumnReader& reader, NodeState& state, uint64_t start,
+               duckdb::idx_t count, duckdb::Vector& out,
+               duckdb::idx_t out_offset) {
+  if (count == 0) {
+    return;
+  }
+  if (reader.HasValidity()) {
+    if (!state.validity_scan) {
+      state.validity_scan.emplace(reader, /*validity_side=*/true);
+    }
+    state.validity_scan->Scan(start, count, out, out_offset);
+  }
+  switch (reader.Type().id()) {
+    case duckdb::LogicalTypeId::ARRAY: {
+      const auto array_size = reader.ArraySize();
+      auto& child_out = duckdb::ArrayVector::GetChildMutable(out);
+      ReadRange(*reader.Child(), *state.children[0], start * array_size,
+                count * array_size, child_out, out_offset * array_size);
+      return;
+    }
+    case duckdb::LogicalTypeId::MAP:
+    case duckdb::LogicalTypeId::LIST: {
+      auto* list_entries =
+        duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(out);
+      auto& child_out = duckdb::ListVector::GetChildMutable(out);
+      auto& child_state = *state.children[0];
+      duckdb::idx_t scanned = 0;
+      while (scanned < count) {
+        const uint64_t row0 = start + scanned;
+        state.rg_hint = reader.Locate(row0, state.rg_hint);
+        const auto& window = state.rg_hint;
+        const duckdb::idx_t in_window = static_cast<duckdb::idx_t>(
+          std::min<uint64_t>(count - scanned, window.end - row0));
+        const uint64_t first_in_rg = row0 - window.begin;
+        const uint64_t first_start =
+          reader.ReadListOffsets(state.list_offsets, window.rg, first_in_rg,
+                                 in_window, state.offsets_scratch);
+        const auto* ends =
+          duckdb::FlatVector::GetData<uint64_t>(state.offsets_scratch);
+        const auto child_run_start = duckdb::ListVector::GetListSize(out);
+        uint64_t prev = first_start;
+        for (duckdb::idx_t k = 0; k < in_window; ++k) {
+          list_entries[out_offset + scanned + k] = duckdb::list_entry_t{
+            child_run_start + (prev - first_start), ends[k] - prev};
+          prev = ends[k];
+        }
+        const uint64_t total_len = prev - first_start;
+        if (total_len > 0) {
+          duckdb::ListVector::Reserve(out, child_run_start + total_len);
+          ReadRange(*reader.Child(), child_state, first_start,
+                    static_cast<duckdb::idx_t>(total_len), child_out,
+                    child_run_start);
+          duckdb::ListVector::SetListSize(out, child_run_start + total_len);
+        }
+        scanned += in_window;
+      }
+      return;
+    }
+    case duckdb::LogicalTypeId::STRUCT: {
+      auto& entries = duckdb::StructVector::GetEntries(out);
+      for (size_t fi = 0; fi < entries.size(); ++fi) {
+        ReadRange(reader.StructField(fi), *state.children[fi], start, count,
+                  entries[fi], out_offset);
+      }
+      return;
+    }
+    default: {
+      if (!state.data_scan) {
+        state.data_scan.emplace(reader, /*validity_side=*/false);
+      }
+      state.data_scan->Scan(start, count, out, out_offset);
+      return;
+    }
+  }
+}
+
+}  // namespace
 
 void MergeInto(std::span<const Reader* const> sources,
                std::span<const DocumentMask* const> source_masks,
@@ -69,36 +180,22 @@ void MergeInto(std::span<const Reader* const> sources,
       SDB_ASSERT(col->Type() == first_col->Type(),
                  "schema evolution between merge sources not supported");
       const auto* mask = source_masks[s];
-      const bool is_array = col->Type().id() == duckdb::LogicalTypeId::ARRAY;
-      const uint64_t array_size = is_array ? col->ArraySize() : 1;
 
-      const ColumnReader& data_col = is_array ? *col->Child() : *col;
-      ColumnReader::RangeScan data_range{data_col};
-      ColumnReader::RangeScan validity_range{*col, /*validity_side=*/true};
+      auto state = MakeNodeState(*col);
+
       for (size_t rg = 0; rg < col->RowGroupCount(); ++rg) {
         const auto rg_count = col->RowGroupRowCount(rg);
         const auto rg_first_doc = col->RowGroupOffset(rg);
-
-        duckdb::Vector batch{col->Type(), STANDARD_VECTOR_SIZE,
-                             duckdb::VectorDataInitialization::ZERO_INITIALIZE};
 
         duckdb::idx_t scanned = 0;
         while (scanned < rg_count) {
           const auto take =
             std::min<duckdb::idx_t>(rg_count - scanned, STANDARD_VECTOR_SIZE);
-          if (is_array) {
-            auto& child = duckdb::ArrayVector::GetChildMutable(batch);
-            data_range.Scan((rg_first_doc + scanned) * array_size,
-                            take * array_size, child, 0);
-          } else {
-            data_range.Scan(rg_first_doc + scanned, take, batch, 0);
-          }
-          if (col->HasValidity()) {
-            validity_range.Scan(rg_first_doc + scanned, take, batch, 0);
-          } else {
-            batch.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-            duckdb::FlatVector::ValidityMutable(batch).SetAllValid(take);
-          }
+          duckdb::Vector batch{
+            col->Type(), STANDARD_VECTOR_SIZE,
+            duckdb::VectorDataInitialization::ZERO_INITIALIZE};
+          ReadRange(*col, *state, rg_first_doc + scanned, take, batch,
+                    /*out_offset=*/0);
 
           if (!mask || mask->empty()) {
             cw.Append(out_doc, batch, take);

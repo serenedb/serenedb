@@ -419,3 +419,8 @@ SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) d;
 ----
 count
 0
+
+# Comprehensive 100k-row WAND-vs-non-WAND coverage across every multi-term
+# filter shape (Range / Prefix / Regexp / Levenshtein) lives in the sibling
+# inverted_index_wand.test_slow -- kept out of this file so the cheap
+# correctness checks above stay fast.

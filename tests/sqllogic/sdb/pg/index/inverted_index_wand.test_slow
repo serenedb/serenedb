@@ -1,0 +1,637 @@
+hash-threshold 100
+
+# ---------------------------------------------------------------------------
+# 100k-row WAND-vs-non-WAND top-K equivalence across every filter that
+# compiles to a multi-term iterator with per-block max-impact. The cheap
+# (50k-row) coverage lives in sibling inverted_index_wand.test; this file
+# extends it to every WAND-eligible filter shape beyond term + ts_any:
+# ts_starts_with (ByPrefix), ts_regexp (ByRegexp), ts_levenshtein
+# (ByLevenshtein), and ts_lt / ts_ge (ByRange).
+#
+# Vocabulary is layered so different filter shapes land on different
+# posting fan-outs:
+#   animal (3 values, ~33k docs each) -- cat / dog / fox
+#   color  (5 values, ~20k docs each) -- red / blue / green / yellow / purple
+#   greek  (7 values, ~14k docs each) -- alpha .. eta
+#   fruit  (11 values, ~9k docs each) -- apple .. mango
+#   rare_token (1 value, 1k docs)
+#
+# Each row is 4 or 5 tokens (the rare_token slot adds one), so BM25 length
+# normalisation gives two slightly different score tiers within a posting
+# list -- enough variation that WAND actually has docs to prune rather
+# than skating through a single uniform score plateau.
+#
+# Comparison template per filter, at LIMIT k in {1, 10, 100, 1000}:
+#   wand_top_k EXCEPT plain_top_k  UNION ALL  plain_top_k EXCEPT wand_top_k
+# Must be 0 for the WAND path to agree with the brute-force path on the
+# (score DESC, id ASC) tie-broken ordering.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_wand(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+
+statement ok
+CREATE TABLE wand_huge (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE TABLE plain_huge (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO wand_huge SELECT i, concat_ws(' ',
+    CASE i % 3
+      WHEN 0 THEN 'cat'
+      WHEN 1 THEN 'dog'
+      ELSE        'fox'
+    END,
+    CASE i % 5
+      WHEN 0 THEN 'red'
+      WHEN 1 THEN 'blue'
+      WHEN 2 THEN 'green'
+      WHEN 3 THEN 'yellow'
+      ELSE        'purple'
+    END,
+    CASE i % 7
+      WHEN 0 THEN 'alpha'
+      WHEN 1 THEN 'beta'
+      WHEN 2 THEN 'gamma'
+      WHEN 3 THEN 'delta'
+      WHEN 4 THEN 'epsilon'
+      WHEN 5 THEN 'zeta'
+      ELSE        'eta'
+    END,
+    CASE i % 11
+      WHEN 0 THEN 'apple'
+      WHEN 1 THEN 'banana'
+      WHEN 2 THEN 'cherry'
+      WHEN 3 THEN 'date'
+      WHEN 4 THEN 'elderberry'
+      WHEN 5 THEN 'fig'
+      WHEN 6 THEN 'grape'
+      WHEN 7 THEN 'huckleberry'
+      WHEN 8 THEN 'kiwi'
+      WHEN 9 THEN 'lemon'
+      ELSE        'mango'
+    END,
+    CASE i % 100 WHEN 0 THEN 'rare_token' ELSE NULL END
+  )
+  FROM generate_series(1, 100000) AS s(i);
+
+
+statement ok
+INSERT INTO plain_huge SELECT * FROM wand_huge;
+
+
+statement ok
+CREATE INDEX wand_huge_idx ON wand_huge USING inverted(id, body en_wand)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+CREATE INDEX plain_huge_idx ON plain_huge USING inverted(id, body en_wand);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) wand_huge;
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) plain_huge;
+
+
+# Sanity: both indexes saw the same vocabulary distribution.
+
+query I
+SELECT COUNT(*) FROM wand_huge_idx WHERE body @@ 'fox';
+----
+count
+33333
+
+
+query I
+SELECT COUNT(*) FROM plain_huge_idx WHERE body @@ 'fox';
+----
+count
+33333
+
+
+query I
+SELECT COUNT(*) FROM wand_huge_idx WHERE body @@ 'rare_token';
+----
+count
+1000
+
+
+# === Literal term (ByTerm -> SingleWandIterator) ===
+# Common term: pruning has lots of room (heap fills fast, then skips).
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ 'fox'
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ 'fox'
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ 'fox'
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 10),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ 'fox'
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 10)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ 'fox'
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 100),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ 'fox'
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 100)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ 'fox'
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1000),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ 'fox'
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1000)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+# Rare term: K can exceed posting-list length (1000 hits, LIMIT 1000 is
+# the full set). WAND still has to walk every posting; nothing to prune.
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ 'rare_token'
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ 'rare_token'
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ 'rare_token'
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 100),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ 'rare_token'
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 100)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ 'rare_token'
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1000),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ 'rare_token'
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1000)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+# === ts_any (ByTerms -> MaxScoreIterator) ===
+# Three-term disjunction over the animal slot -- every row matches one
+# branch, so this is the densest possible posting union.
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_any(['fox', 'cat', 'dog'])
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_any(['fox', 'cat', 'dog'])
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_any(['fox', 'cat', 'dog'])
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 10),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_any(['fox', 'cat', 'dog'])
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 10)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_any(['fox', 'cat', 'dog'])
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 100),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_any(['fox', 'cat', 'dog'])
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 100)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_any(['fox', 'cat', 'dog'])
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1000),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_any(['fox', 'cat', 'dog'])
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1000)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+# Skewed disjunction: one huge posting (alpha, ~14k) plus one tiny
+# (rare_token, 1k). WAND must reconcile per-term max-impact correctly when
+# branch sizes differ by an order of magnitude.
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_any(['alpha', 'rare_token'])
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_any(['alpha', 'rare_token'])
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_any(['alpha', 'rare_token'])
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 100),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_any(['alpha', 'rare_token'])
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 100)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_any(['alpha', 'rare_token'])
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1000),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_any(['alpha', 'rare_token'])
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1000)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+# === ts_starts_with (ByPrefix -- expands to all matching terms) ===
+# Prefix 'a' hits {alpha, apple}; a doc can match both branches, so
+# scores fall into a small number of tiers (alpha-only, apple-only, both).
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_starts_with('a')
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_starts_with('a')
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_starts_with('a')
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 100),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_starts_with('a')
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 100)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_starts_with('a')
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1000),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_starts_with('a')
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1000)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+# Prefix 'rare' hits exactly one term -- prefix-as-ByTerm corner case.
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_starts_with('rare')
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 100),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_starts_with('rare')
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 100)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+# === ts_regexp (ByRegexp -- automaton expansion over the term dictionary) ===
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_regexp('^a.+')
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_regexp('^a.+')
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_regexp('^a.+')
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 100),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_regexp('^a.+')
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 100)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_regexp('^a.+')
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1000),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_regexp('^a.+')
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1000)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+# `.*_.*` only `rare_token` carries an underscore.
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_regexp('.*_.*')
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 100),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_regexp('.*_.*')
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 100)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+# === ts_levenshtein (ByLevenshtein -- automaton w/ bounded edit distance) ===
+# Distance-1: only 'alpha' is within 1 edit of 'aplha' (single swap).
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_levenshtein('aplha', 1)
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 100),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_levenshtein('aplha', 1)
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 100)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+# Distance-2: 'alpha' (insert h,a) and 'apple' (insert p,e) both within 2.
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_levenshtein('apl', 2)
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_levenshtein('apl', 2)
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_levenshtein('apl', 2)
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 100),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_levenshtein('apl', 2)
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 100)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_levenshtein('apl', 2)
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1000),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_levenshtein('apl', 2)
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1000)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+# === Range -- ts_lt / ts_ge (ByRange -- half-open term range) ===
+# `< 'cat'` matches {alpha, apple, banana, beta, blue} -- a doc qualifies
+# when any one of its 4-5 tokens falls in that range, score is the sum
+# of BM25 contributions over the matching tokens.
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_lt('cat')
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_lt('cat')
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_lt('cat')
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 100),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_lt('cat')
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 100)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_lt('cat')
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1000),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_lt('cat')
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1000)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+# `>= 'lemon'` flips the direction. Range matches {lemon, mango, purple,
+# rare_token, red, yellow, zeta} -- a mix of very common (red), medium
+# (yellow/purple/mango/lemon/zeta) and very rare (rare_token) terms.
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_ge('lemon')
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 100),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_ge('lemon')
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 100)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_huge_idx WHERE body @@ ts_ge('lemon')
+           ORDER BY BM25(wand_huge_idx.tableoid) DESC, id LIMIT 1000),
+     p AS (SELECT id FROM plain_huge_idx WHERE body @@ ts_ge('lemon')
+           ORDER BY BM25(plain_huge_idx.tableoid) DESC, id LIMIT 1000)
+SELECT COUNT(*) FROM (
+  (SELECT * FROM w EXCEPT SELECT * FROM p)
+  UNION ALL
+  (SELECT * FROM p EXCEPT SELECT * FROM w)
+) d;
+----
+count
+0

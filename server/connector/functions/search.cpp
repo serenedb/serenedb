@@ -834,6 +834,14 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
       duckdb::LogicalType::FLOAT, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
   }
+
+  {
+    duckdb::ScalarFunctionSet set{
+      std::string{catalog::ScorerOptions::DocumentLength::kName}};
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
 }
 
 // offsets(col [, limit]) -> BIGINT[] -- emit position pairs

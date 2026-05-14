@@ -163,11 +163,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     return index(field_name, doc, field.GetIndexFeatures(), tokens);
   }
 
-  void finish() {
-    for (const auto* field : _doc) {
-      field->compute_features();
-    }
-  }
+  void finish();
 
   void FlushFields(FlushState& state);
 
@@ -187,6 +183,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   duckdb::DatabaseInstance* _db = nullptr;
   std::unique_ptr<columnstore::Writer> _columnstore;
   doc_id_t _batch_first_doc_id = doc_limits::eof();
+  doc_id_t _last_indexed_doc = doc_limits::invalid();
   bool _initialized = false;
   bool _valid = true;
 };

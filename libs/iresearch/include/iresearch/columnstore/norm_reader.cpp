@@ -73,6 +73,7 @@ uint32_t NormColumnReader::Get(uint64_t row_pos) const noexcept {
   SDB_ASSERT(row_pos < _total_row_count);
   auto [rg, in_rg] = Locate(row_pos);
   const auto byte_size = _pointers[rg].byte_size;
+  SDB_ASSERT(!_spans[rg].empty());
   return ReadNormValue(_spans[rg].data() + in_rg * byte_size, byte_size);
 }
 

@@ -29,6 +29,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/columnstore/format.hpp"
+#include "iresearch/columnstore/norm_writer.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -101,6 +102,14 @@ bool SegmentWriter::index(const hashed_string_view& name, doc_id_t doc,
                           IndexFeatures index_features, Tokenizer& tokens) {
   auto* slot = _fields.emplace(name, index_features);
 
+  if (_columnstore && doc != _last_indexed_doc) {
+    const uint64_t target = static_cast<uint64_t>(doc) - doc_limits::min();
+    for (auto& nw : _columnstore->NormWriters()) {
+      nw->PadTo(target);
+    }
+    _last_indexed_doc = doc;
+  }
+
   if (IsSubsetOf(index_features, slot->requested_features()) &&
       slot->invert(tokens, doc)) {
     if (!slot->seen() && slot->has_features()) {
@@ -112,6 +121,12 @@ bool SegmentWriter::index(const hashed_string_view& name, doc_id_t doc,
 
   _valid = false;
   return false;
+}
+
+void SegmentWriter::finish() {
+  for (const auto* field : _doc) {
+    field->compute_features();
+  }
 }
 
 void SegmentWriter::FlushFields(FlushState& state) {
@@ -140,6 +155,10 @@ void SegmentWriter::FlushFields(FlushState& state) {
   // Phase A: drain the columnstore (typed columns + norms + HNSW + footer)
   // to disk. After Commit the `.cs` is durable and closed.
   if (_columnstore) {
+    const uint64_t target = buffered_docs();
+    for (auto& nw : _columnstore->NormWriters()) {
+      nw->PadTo(target);
+    }
     _columnstore->Commit();
     _columnstore.reset();
   }
@@ -180,6 +199,7 @@ void SegmentWriter::reset() noexcept {
   _docs_mask.set.clear();
   _docs_mask.count = 0;
   _batch_first_doc_id = doc_limits::eof();
+  _last_indexed_doc = doc_limits::invalid();
   _fields.reset();
   _cs_reader.reset();
   if (_columnstore) {

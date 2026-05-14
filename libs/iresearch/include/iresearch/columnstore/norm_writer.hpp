@@ -52,10 +52,14 @@ class NormColumnWriter final {
 
   void Append(uint32_t value);
 
+  void PadTo(uint64_t target);
+
   void Finalize();
 
   field_id Id() const noexcept { return _id; }
   const std::string& Name() const noexcept { return _name; }
+
+  uint64_t RowCount() const noexcept;
 
   const std::vector<NormRowGroupPointer>& Pointers() const noexcept {
     return _pointers;

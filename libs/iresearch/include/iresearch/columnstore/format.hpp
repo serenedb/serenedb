@@ -87,6 +87,9 @@ class Writer final {
   NormColumnWriter& OpenNormColumn(field_id id, std::string_view name,
                                    uint64_t row_group_size = 0);
 
+  std::span<const std::unique_ptr<NormColumnWriter>> NormWriters()
+    const noexcept;
+
   // Attach an HNSW graph to a previously-opened ARRAY column. Graph is
   // built at Commit() from the just-flushed column bytes and emitted as
   // an inline side-payload referenced by footer slot 102.

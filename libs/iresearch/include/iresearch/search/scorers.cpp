@@ -29,6 +29,7 @@
 #include "bm25.hpp"
 #include "boost_scorer.hpp"
 #include "dfi.hpp"
+#include "document_length.hpp"
 #include "indri_dirichlet.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "lm_dirichlet.hpp"
@@ -92,6 +93,7 @@ void scorers::Init() {
   LMDirichlet::init();
   IndriDirichlet::init();
   DFI::init();
+  DocumentLength::init();
 }
 
 void scorers::LoadAll(std::string_view path) {

@@ -71,6 +71,8 @@ std::string ScorerOptions::ToString() const {
       } else if constexpr (std::is_same_v<P, Dfi>) {
         return absl::StrCat("dfi(measure=", magic_enum::enum_name(p.measure),
                             ")");
+      } else if constexpr (std::is_same_v<P, DocumentLength>) {
+        return "document_length()";
       }
     },
     params);
@@ -91,6 +93,8 @@ std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec) {
         return std::make_unique<irs::LMDirichlet>(p.mu);
       } else if constexpr (std::is_same_v<P, ScorerOptions::IndriDirichlet>) {
         return std::make_unique<irs::IndriDirichlet>(p.mu);
+      } else if constexpr (std::is_same_v<P, ScorerOptions::DocumentLength>) {
+        return std::make_unique<irs::DocumentLength>();
       } else if constexpr (std::is_same_v<P, ScorerOptions::Dfi>) {
         irs::DFIMeasure m{};
         switch (p.measure) {
@@ -208,12 +212,14 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
       p.measure = *parsed;
     }
     scorer.params = p;
+  } else if (name == S::DocumentLength::kName) {
+    scorer.params = S::DocumentLength{};
   } else {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("Unknown scorer '", name, "'"),
       ERR_HINT("Expected one of: bm25, tfidf, raw_tf, lm_jm, lm_dirichlet, "
-               "indri_dirichlet, dfi"));
+               "indri_dirichlet, dfi, document_length"));
   }
   return scorer;
 }

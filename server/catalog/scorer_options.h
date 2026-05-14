@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <iresearch/search/bm25.hpp>
 #include <iresearch/search/dfi.hpp>
+#include <iresearch/search/document_length.hpp>
 #include <iresearch/search/indri_dirichlet.hpp>
 #include <iresearch/search/lm_dirichlet.hpp>
 #include <iresearch/search/lm_jelinek_mercer.hpp>
@@ -90,9 +91,13 @@ struct ScorerOptions {
     DfiMeasure measure = DfiMeasure::Standardized;
     bool operator==(const Dfi&) const = default;
   };
+  struct DocumentLength {
+    static constexpr std::string_view kName = irs::DocumentLength::type_name();
+    bool operator==(const DocumentLength&) const = default;
+  };
 
-  using Params =
-    std::variant<Bm25, Tfidf, RawTf, LmJm, LmDirichlet, IndriDirichlet, Dfi>;
+  using Params = std::variant<Bm25, Tfidf, RawTf, LmJm, LmDirichlet,
+                              IndriDirichlet, Dfi, DocumentLength>;
 
   Params params;
 
@@ -161,6 +166,8 @@ void VPackRead(Context ctx, ScorerOptions& s) {
     s.params = ScorerOptions::IndriDirichlet{};
   } else if (name == ScorerOptions::Dfi::kName) {
     s.params = ScorerOptions::Dfi{};
+  } else if (name == ScorerOptions::DocumentLength::kName) {
+    s.params = ScorerOptions::DocumentLength{};
   } else {
     SDB_THROW(sdb::ERROR_BAD_PARAMETER, "Unknown 'scorer' name '", name, "'");
   }

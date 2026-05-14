@@ -588,49 +588,43 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
   auto field_writer = meta.codec->get_field_writer(true, rm);
   field_writer->prepare(flush_state);
 
-  // Index sources by SubReader* once so the per-field norm merge below does
-  // O(1) lookups instead of an N(sources) linear scan per field. Empty when
-  // cs_writer is null (db-less test path) -- no entries are inserted.
-  absl::flat_hash_map<const SubReader*, const columnstore::Reader*>
-    cs_by_reader;
-  if (cs_writer != nullptr) {
-    cs_by_reader.reserve(sources.size());
-    for (const auto& src : sources) {
-      cs_by_reader.emplace(src.reader, src.cs_reader);
-    }
-  }
-
   while (field_itr.Next()) {
     FieldProperties props;
     props.index_features = field_itr.Meta().index_features;
 
     if (cs_writer != nullptr &&
         IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
-      // Allocate a fresh per-segment norm column id and open the output
-      // norm column. Iteration order: source-by-source, then row-by-row in
-      // each source -- matches FlushUnsorted's doc_id mapping (each source's
-      // live docs occupy a contiguous range in the merged segment), so
-      // sequential Append() lands the norm at the right merged row index.
       const field_id new_norm_id = cs_writer->AllocateColumnId();
-      auto& nw = cs_writer->OpenNormColumn(new_norm_id,
-                                           std::string{field_itr.Meta().name});
+      const auto field_name = field_itr.Meta().name;
+      auto& nw =
+        cs_writer->OpenNormColumn(new_norm_id, std::string{field_name});
 
-      bool any_data = false;
-      field_itr.Visit([&](const SubReader& seg, const DocMapF& doc_map,
-                          const FieldMeta& field) {
-        if (!field_limits::valid(field.norm)) {
-          return true;
+      for (const auto& src : sources) {
+        const columnstore::NormColumnReader* nc = nullptr;
+        if (src.cs_reader != nullptr) {
+          if (const auto* source_terms = src.reader->field(field_name);
+              source_terms != nullptr &&
+              field_limits::valid(source_terms->meta().norm)) {
+            nc = src.cs_reader->NormColumn(source_terms->meta().norm);
+          }
         }
-        auto it = cs_by_reader.find(&seg);
-        if (it == cs_by_reader.end()) {
-          return true;
-        }
-        const auto* cs_reader = it->second;
-        const auto* nc = cs_reader->NormColumn(field.norm);
+
+        const auto src_doc_count = src.reader->docs_count();
         if (nc == nullptr) {
-          return true;
+          for (doc_id_t src_doc = doc_limits::min();
+               src_doc < doc_limits::min() + src_doc_count; ++src_doc) {
+            if (doc_limits::eof((*src.doc_map)(src_doc))) {
+              continue;
+            }
+            nw.Append(0);
+          }
+          continue;
         }
-        any_data = true;
+
+        SDB_ASSERT(nc->RowCount() == src_doc_count,
+                   "merge: source norm column is sparse (RowCount=",
+                   nc->RowCount(), ", src docs_count=", src_doc_count,
+                   "); SegmentWriter::finish should have zero-padded.");
         for (size_t rg = 0, rg_count = nc->RowGroupCount(); rg < rg_count;
              ++rg) {
           const auto bytes = nc->RowGroupBytes(rg);
@@ -639,18 +633,17 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
           for (uint64_t i = 0, n = nc->RowGroupRowCount(rg); i < n; ++i) {
             const auto src_doc =
               static_cast<doc_id_t>(rg_first_row + i + doc_limits::min());
-            if (doc_limits::eof(doc_map(src_doc))) {
-              continue;  // deleted
+            if (doc_limits::eof((*src.doc_map)(src_doc))) {
+              continue;
             }
             const auto value = columnstore::ReadNormValue(
               bytes.data() + i * byte_size, byte_size);
             nw.Append(value);
           }
         }
-        return true;
-      });
+      }
 
-      if (any_data) {
+      if (nw.RowCount() != 0) {
         props.norm = new_norm_id;
       }
     }

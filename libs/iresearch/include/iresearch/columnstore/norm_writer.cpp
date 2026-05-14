@@ -53,9 +53,38 @@ NormColumnWriter::NormColumnWriter(field_id id, std::string name,
 }
 
 void NormColumnWriter::Append(uint32_t value) {
+  SDB_ASSERT(!_finalized, "NormColumnWriter::Append after Finalize on column ",
+             _id);
   _pending.push_back(value);
   if (_pending.size() == _row_group_size) {
     FlushRowGroup();
+  }
+}
+
+uint64_t NormColumnWriter::RowCount() const noexcept {
+  uint64_t n = _pending.size();
+  for (const auto& p : _pointers) {
+    n += p.row_count;
+  }
+  return n;
+}
+
+void NormColumnWriter::PadTo(uint64_t target) {
+  const auto current = RowCount();
+  if (current >= target) {
+    return;
+  }
+  SDB_ASSERT(!_finalized, "NormColumnWriter::PadTo after Finalize on column ",
+             _id);
+  uint64_t needed = target - current;
+  while (needed != 0) {
+    const auto remaining = _row_group_size - _pending.size();
+    const auto chunk = std::min<uint64_t>(needed, remaining);
+    _pending.insert(_pending.end(), chunk, 0u);
+    needed -= chunk;
+    if (_pending.size() == _row_group_size) {
+      FlushRowGroup();
+    }
   }
 }
 

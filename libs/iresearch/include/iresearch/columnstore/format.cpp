@@ -329,12 +329,21 @@ HNSWWriter& Writer::AttachHNSW(field_id column_id, HNSWInfo info) {
   return *back.writer;
 }
 
+std::span<const std::unique_ptr<NormColumnWriter>> Writer::NormWriters()
+  const noexcept {
+  return _impl->norm_writers;
+}
+
 NormColumnWriter& Writer::OpenNormColumn(field_id id, std::string_view name,
                                          uint64_t row_group_size) {
   // Same dedup contract as OpenColumn; norm + typed maps are separate
   // in the Reader so the same id may appear in both.
   if (auto it = _impl->norm_by_id.find(id); it != _impl->norm_by_id.end()) {
-    return *it->second;
+    auto& existing = *it->second;
+    SDB_ASSERT(existing.Name() == name,
+               "columnstore::Writer::OpenNormColumn: re-opened id ", id,
+               " with mismatched name '", name, "' vs '", existing.Name(), "'");
+    return existing;
   }
   auto cw = std::make_unique<NormColumnWriter>(
     id, std::string{name},
@@ -582,9 +591,17 @@ void Reader::BuildNormReaders(duckdb::BinaryDeserializer& deserializer) {
               p.sum = pe.ReadProperty<uint64_t>(3, "sum");
               p.non_zero_count = pe.ReadProperty<uint64_t>(4, "non_zero_count");
               p.file_offset = pe.ReadProperty<uint64_t>(5, "file_offset");
+              SDB_ASSERT(
+                (p.byte_size == 1 || p.byte_size == 2 || p.byte_size == 4) &&
+                  p.row_count != 0,
+                "columnstore: corrupt norm row-group (byte_size=", p.byte_size,
+                ", row_count=", p.row_count, ") on column id ", id);
               pointers.push_back(p);
             });
           });
+        if (pointers.empty()) {
+          return;
+        }
         auto nr = std::make_unique<NormColumnReader>(
           id, std::move(name), std::move(pointers), *_impl->in);
         _impl->norm_readers.push_back(std::move(nr));

@@ -67,6 +67,7 @@ class PersistedNormReader : public NormReader {
  private:
   uint32_t GetOne(doc_id_t doc) const noexcept {
     SDB_ASSERT(doc >= doc_limits::min());
+    SDB_ASSERT(_column->RowCount() != 0);
     return _column->Get(doc - doc_limits::min());
   }
 
@@ -77,6 +78,7 @@ class PersistedNormReader : public NormReader {
   // O(1 + kPostingBlock) instead of O(kPostingBlock * log(rg_count)).
   void GetBatch(std::span<const doc_id_t> docs,
                 std::span<uint32_t> values) const noexcept {
+    SDB_ASSERT(_column->RowCount() != 0);
     uint64_t rg_first_row = 0;
     uint64_t rg_end_row = 0;
     std::span<const byte_type> rg_bytes;

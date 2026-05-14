@@ -641,8 +641,10 @@ FieldData::FieldData(std::string_view name,
 }
 
 void FieldData::compute_features() const {
-  // Reads during the same flush use NormColumnWriter::Get; reads after
-  // commit use columnstore::Reader::NormColumn over the .cs file.
+  // Per-doc norm value sinks into the columnstore Writer; the in-flight
+  // value is not readable from this side. Scorer reads happen later, after
+  // SegmentWriter::flush has committed the columnstore and reopened it as
+  // a columnstore::Reader (see PersistedNormReader).
   if (_norm_writer != nullptr) {
     _norm_writer->Append(_stats.len);
   }

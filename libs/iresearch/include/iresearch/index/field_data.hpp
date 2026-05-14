@@ -59,9 +59,12 @@ class FieldData : util::Noncopyable {
   // `columnstore` (when non-null) is the per-segment Writer that owns
   // the segment's `<seg>.cs`. When the field has a Norm feature, FieldData
   // opens a NormColumnWriter on it -- per-doc norm values flow into the
-  // columnstore. Reads during the same flush are served by
-  // NormColumnWriter::Get; reads after commit go through
-  // columnstore::Reader::NormColumn over the .cs file.
+  // columnstore via Append. There is no in-flush read path on the writer
+  // side: SegmentWriter::flush commits the columnstore before FlushFields,
+  // opens a fresh columnstore::Reader on the just-written `.cs`, and any
+  // scorer norm reads (BM25 / TFIDF / LM-* / DFI / Indri) go through that
+  // PersistedNormReader. Post-commit reads from segment readers follow the
+  // same path.
   // `norm_id` is the per-segment sequential id allocated by FieldsData
   // when the field has a Norm feature; pass field_limits::invalid()
   // otherwise.

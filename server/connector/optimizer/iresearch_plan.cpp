@@ -1429,7 +1429,7 @@ bool IsScorerFunctionName(std::string_view name) {
   return name == S::Bm25::kName || name == S::Tfidf::kName ||
          name == S::RawTf::kName || name == S::LmJm::kName ||
          name == S::LmDirichlet::kName || name == S::IndriDirichlet::kName ||
-         name == S::Dfi::kName;
+         name == S::Dfi::kName || name == S::DocumentLength::kName;
 }
 
 // Returns false if args are non-constant (caller refuses to claim). Throws

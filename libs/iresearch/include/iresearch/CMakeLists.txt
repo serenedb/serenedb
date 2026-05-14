@@ -146,6 +146,7 @@ set(IResearch_core_sources
     ./search/lm_dirichlet.cpp
     ./search/indri_dirichlet.cpp
     ./search/dfi.cpp
+    ./search/document_length.cpp
     ./store/data_input.cpp
     ./store/directory.cpp
     ./store/directory_attributes.cpp

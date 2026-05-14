@@ -513,9 +513,6 @@ struct Reader::Impl {
   sdb::containers::FlatHashMap<field_id, const NormColumnReader*> norm_by_id;
   std::vector<std::unique_ptr<HNSWReader>> hnsw_readers;
   sdb::containers::FlatHashMap<field_id, const HNSWReader*> hnsw_by_id;
-  // Drained by BuildHnswReaders: when a footer entry's id is here, the
-  // shared_ptr is used directly and the on-disk graph bytes are skipped.
-  PreloadedHnswGraphs preloaded;
 };
 
 namespace {
@@ -615,7 +612,8 @@ void Reader::BuildNormReaders(duckdb::BinaryDeserializer& deserializer) {
     });
 }
 
-void Reader::BuildHnswReaders(duckdb::BinaryDeserializer& deserializer) {
+void Reader::BuildHnswReaders(duckdb::BinaryDeserializer& deserializer,
+                              const PreloadedHnswGraphs& preloaded) {
   deserializer.ReadList(
     kFooterSlotHnswColumns, "hnsw_columns",
     [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
@@ -633,10 +631,8 @@ void Reader::BuildHnswReaders(duckdb::BinaryDeserializer& deserializer) {
         info.ef_construction = obj.ReadProperty<int32_t>(7, "ef_construction");
 
         std::shared_ptr<faiss::HNSW> hnsw;
-        if (auto pit = _impl->preloaded.find(id);
-            pit != _impl->preloaded.end()) {
-          hnsw = std::move(pit->second);
-          _impl->preloaded.erase(pit);
+        if (auto pit = preloaded.find(id); pit != preloaded.end()) {
+          hnsw = pit->second;
         } else {
           // Footer is read from a MemoryReadStream, so seeking the
           // IndexInput here doesn't disturb the in-flight footer walk.
@@ -664,10 +660,10 @@ void Reader::BuildHnswReaders(duckdb::BinaryDeserializer& deserializer) {
 }
 
 Reader::Reader(const Directory& dir, std::string_view segment_name,
-               duckdb::DatabaseInstance& db, PreloadedHnswGraphs preloaded)
+               duckdb::DatabaseInstance& db,
+               const PreloadedHnswGraphs& preloaded)
   : _impl{std::make_unique<Impl>()} {
   _impl->db = &db;
-  _impl->preloaded = std::move(preloaded);
   const auto filename = absl::StrCat(segment_name, ".", kFormatExt);
   _impl->in = OpenAndCheckHeader(dir, filename);
   if (!_impl->in) {
@@ -686,7 +682,7 @@ Reader::Reader(const Directory& dir, std::string_view segment_name,
   deserializer.Begin();
   BuildColumnReaders(deserializer, db);
   BuildNormReaders(deserializer);
-  BuildHnswReaders(deserializer);
+  BuildHnswReaders(deserializer, preloaded);
   deserializer.End();
 }
 

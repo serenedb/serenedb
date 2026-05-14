@@ -181,11 +181,6 @@ class ChunkedVectorCache {
   RgWindow _locate_hint;
 };
 
-// Builds a faiss::HNSW for an ARRAY<FLOAT, N> column. Construction is
-// deferred until after the typed column is durable on disk: Build() reads
-// vector slices on demand from the ARRAY child column through a small
-// MRU chunk cache, so no flat in-memory copy of the segment's vectors is
-// ever held -- not during ingest, not during graph construction.
 class HNSWWriter final {
  public:
   explicit HNSWWriter(HNSWInfo info);

@@ -54,8 +54,7 @@ class SegmentReaderImpl final : public SubReader {
 
   static std::shared_ptr<const SegmentReaderImpl> Open(
     const Directory& dir, const SegmentMeta& meta,
-    const IndexReaderOptions& options,
-    columnstore::PreloadedHnswGraphs preloaded_hnsw = {});
+    const IndexReaderOptions& options);
 
   std::shared_ptr<const SegmentReaderImpl> ReopenColumnStore(
     const Directory& dir, const SegmentMeta& meta,
@@ -95,8 +94,7 @@ class SegmentReaderImpl final : public SubReader {
     std::unique_ptr<columnstore::Reader> cs_reader;
 
     void Open(const Directory& dir, const SegmentMeta& meta,
-              const IndexReaderOptions& options,
-              columnstore::PreloadedHnswGraphs preloaded_hnsw = {});
+              const IndexReaderOptions& options);
   };
 
   FileRefs _refs;

@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "iresearch/columnstore/format.hpp"
 #include "iresearch/search/scorer.hpp"
 
 namespace duckdb {
@@ -51,6 +52,7 @@ struct IndexReaderOptions {
   // by Open / Reopen.
   duckdb::DatabaseInstance* db = nullptr;
   bool index = true;  // Open inverted index
+  columnstore::PreloadedHnswGraphs cs_hnsw_graphs;
 };
 
 }  // namespace irs

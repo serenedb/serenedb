@@ -189,8 +189,7 @@ FileRefs GetRefs(const Directory& dir, const SegmentMeta& meta) {
 
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   const Directory& dir, const SegmentMeta& meta,
-  const IndexReaderOptions& options,
-  columnstore::PreloadedHnswGraphs preloaded_hnsw) {
+  const IndexReaderOptions& options) {
   SDB_ASSERT(meta.codec);
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
@@ -201,7 +200,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
       ReaderState{.dir = &dir, .meta = &meta, .scorer = options.scorer});
   }
   reader->_data = std::make_shared<ColumnData>();
-  reader->_data->Open(dir, meta, options, std::move(preloaded_hnsw));
+  reader->_data->Open(dir, meta, options);
   return reader;
 }
 
@@ -281,15 +280,14 @@ DocIterator::ptr SegmentReaderImpl::mask(DocIterator::ptr&& it) const {
   return memory::make_managed<MaskDocIterator>(std::move(it), *_docs_mask);
 }
 
-void SegmentReaderImpl::ColumnData::Open(
-  const Directory& dir, const SegmentMeta& meta,
-  const IndexReaderOptions& options,
-  columnstore::PreloadedHnswGraphs preloaded_hnsw) {
+void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
+                                         const SegmentMeta& meta,
+                                         const IndexReaderOptions& options) {
   if (options.db == nullptr) {
     return;
   }
   cs_reader = std::make_unique<columnstore::Reader>(dir, meta.name, *options.db,
-                                                    std::move(preloaded_hnsw));
+                                                    options.cs_hnsw_graphs);
 }
 
 }  // namespace irs

@@ -1380,9 +1380,10 @@ ConsolidationResult IndexWriter::Consolidate(
     return result;
   }
 
-  auto pending_reader = SegmentReaderImpl::Open(
-    _dir, consolidation_segment.meta, committed_reader->Options(),
-    merger.TakeBuiltHnswGraphs());
+  auto opts = committed_reader->Options();
+  opts.cs_hnsw_graphs = merger.TakeBuiltHnswGraphs();
+  auto pending_reader =
+    SegmentReaderImpl::Open(_dir, consolidation_segment.meta, opts);
   SDB_ASSERT(pending_reader);
 
   // Commit merge, ensure no concurrent Commit/etc
@@ -1523,7 +1524,7 @@ bool IndexWriter::Import(const IndexReader& reader,
     codec = _codec;
   }
 
-  const auto options = GetSnapshotImpl()->Options();
+  auto options = GetSnapshotImpl()->Options();
 
   RefTrackingDirectory dir{_dir};  // Track references
 
@@ -1540,8 +1541,8 @@ bool IndexWriter::Import(const IndexReader& reader,
 
   index_utils::FlushIndexSegment(dir, segment);
 
-  auto imported_reader = SegmentReaderImpl::Open(_dir, segment.meta, options,
-                                                 merger.TakeBuiltHnswGraphs());
+  options.cs_hnsw_graphs = merger.TakeBuiltHnswGraphs();
+  auto imported_reader = SegmentReaderImpl::Open(_dir, segment.meta, options);
   SDB_ASSERT(imported_reader);
 
   auto refs = dir.GetRefs();
@@ -2028,8 +2029,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
             // reuse existing reader with initial meta and docs_mask
             return it->second->UpdateMeta(dir, flushed.meta);
           } else {
-            return SegmentReaderImpl::Open(dir, flushed.meta, reader_options,
-                                           std::move(flushed.cs_hnsw_graphs));
+            reader_options.cs_hnsw_graphs = std::move(flushed.cs_hnsw_graphs);
+            return SegmentReaderImpl::Open(dir, flushed.meta, reader_options);
           }
         }();
         SDB_ASSERT(reader);

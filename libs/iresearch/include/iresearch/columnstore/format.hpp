@@ -117,7 +117,8 @@ class Writer final {
 class Reader final {
  public:
   Reader(const Directory& dir, std::string_view segment_name,
-         duckdb::DatabaseInstance& db, PreloadedHnswGraphs preloaded = {});
+         duckdb::DatabaseInstance& db,
+         const PreloadedHnswGraphs& preloaded = {});
   ~Reader();
 
   Reader(const Reader&) = delete;
@@ -146,7 +147,8 @@ class Reader final {
   void BuildColumnReaders(duckdb::BinaryDeserializer& deserializer,
                           duckdb::DatabaseInstance& db);
   void BuildNormReaders(duckdb::BinaryDeserializer& deserializer);
-  void BuildHnswReaders(duckdb::BinaryDeserializer& deserializer);
+  void BuildHnswReaders(duckdb::BinaryDeserializer& deserializer,
+                        const PreloadedHnswGraphs& preloaded);
 };
 
 }  // namespace columnstore

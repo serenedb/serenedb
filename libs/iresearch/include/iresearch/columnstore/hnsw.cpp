@@ -24,7 +24,6 @@
 #include <faiss/impl/ResultHandler.h>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -33,8 +32,6 @@
 #include <duckdb/storage/table/scan_state.hpp>
 
 #include "basics/assert.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/containers/s3fifo.h"
 #include "basics/exceptions.h"
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/formats/column/hnsw_index.hpp"
@@ -71,13 +68,6 @@ auto ResolveDistanceFunction(HNSWMetric metric) {
   SDB_UNREACHABLE();
 }
 
-// Distance computer over the ARRAY child column. doc_id space is 1-based
-// (faiss::idx_t == iresearch doc_id == row + doc_limits::min()), so the
-// access key is (id - doc_limits::min()). set_query stores the
-// caller-owned query pointer; dis(id) fetches one slice and forwards
-// it to dist(). symmetric_dis(i, j) needs both slices to coexist for
-// the dist() call -- pin the i-side chunk before fetching j so the
-// second cache->Get's eviction can't free `a` out from under us.
 struct ColumnDistance final : public faiss::DistanceComputer {
   ColumnDistance(HNSWInfo info, ChunkedVectorCache* cache) noexcept
     : dim{info.d}, dist{ResolveDistanceFunction(info.metric)}, cache{cache} {}

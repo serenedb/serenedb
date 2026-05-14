@@ -149,20 +149,79 @@ class ChunkedVectorCache {
     --slot->pinned;
   }
 
-  RgSlot& GetRgSlot(size_t rg);
+  RgSlot& GetRgSlot(size_t rg) {
+    auto [it, inserted] = _rg_index.try_emplace(rg);
+    if (!inserted) {
+      it->second.Touch();
+      return it->second;
+    }
+    RgSlot& slot = it->second;
+    slot.rg = rg;
+    slot.cursor = ColumnReader::ScanCursor{_child->OpenSegment(rg)};
+    _rgs.Insert(slot);
+    while (!_rg_evicted.empty()) {
+      auto& s = _rg_evicted.front();
+      _rg_evicted.pop_front();
+      _rg_index.erase(s.rg);
+    }
+    return slot;
+  }
 
   friend struct ChunkEvictor;
   friend struct RgEvictor;
 
  private:
-  ChunkSlot* FindOrLoad(uint64_t row);
+  ChunkSlot* FindOrLoad(uint64_t row) {
+    const uint64_t chunk_id = row / _chunk_rows;
+    auto [it, inserted] = _chunk_index.try_emplace(
+      chunk_id, static_cast<duckdb::idx_t>(_chunk_rows * _d));
+    if (!inserted) {
+      it->second.Touch();
+      return &it->second;
+    }
+    ChunkSlot& slot = it->second;
+    slot.chunk_id = chunk_id;
+    slot.pinned = false;
+    Load(slot, chunk_id);
+    _slots.Insert(slot);
+    while (!_chunk_evicted.empty()) {
+      auto& s = _chunk_evicted.front();
+      _chunk_evicted.pop_front();
+      _chunk_index.erase(s.chunk_id);
+    }
+    return &slot;
+  }
 
   const float* SliceOf(const ChunkSlot& slot, uint64_t row) const noexcept {
     const uint64_t in_chunk = row - slot.chunk_id * _chunk_rows;
     return slot.base + in_chunk * _d;
   }
 
-  void Load(ChunkSlot& slot, uint64_t chunk_id);
+  void Load(ChunkSlot& slot, uint64_t chunk_id) {
+    const uint64_t total_rows = _child->RowCount() / _d;
+    const uint64_t start_row = chunk_id * _chunk_rows;
+    const uint64_t take =
+      std::min<uint64_t>(_chunk_rows, total_rows - start_row);
+    const uint64_t start_elem = start_row * _d;
+    const uint64_t take_elems = take * _d;
+
+    uint64_t produced = 0;
+    while (produced < take_elems) {
+      const uint64_t pos = start_elem + produced;
+      _locate_hint = _child->Locate(pos, _locate_hint);
+      const uint64_t in_rg = pos - _locate_hint.begin;
+      const uint64_t to_take =
+        std::min<uint64_t>(take_elems - produced, _locate_hint.end - pos);
+
+      auto& rgs = GetRgSlot(_locate_hint.rg);
+      if (in_rg < rgs.cursor.Position()) {
+        rgs.cursor.Rewind();
+      }
+      rgs.cursor.SeekTo(in_rg);
+      rgs.cursor.Scan(to_take, slot.data, static_cast<duckdb::idx_t>(produced));
+      produced += to_take;
+    }
+  }
 
   const ColumnReader* _child;
   uint64_t _d;
@@ -180,6 +239,19 @@ class ChunkedVectorCache {
   RgPendingList _rg_evicted;
   RgWindow _locate_hint;
 };
+
+inline bool ChunkEvictor::operator()(ChunkSlot& slot) const noexcept {
+  if (slot.pinned != 0) {
+    return false;
+  }
+  self->_chunk_evicted.push_back(slot);
+  return true;
+}
+
+inline bool RgEvictor::operator()(RgSlot& slot) const noexcept {
+  self->_rg_evicted.push_back(slot);
+  return true;
+}
 
 class HNSWWriter final {
  public:

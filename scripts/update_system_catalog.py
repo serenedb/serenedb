@@ -479,7 +479,7 @@ def qualify_info_schema_refs(sql, view_names, func_names):
             sql
         )
     # "at" is a reserved keyword in DuckDB (time-travel)
-    sql = re.sub(r'\bat\b', 'att', sql)
+    #sql = re.sub(r'\bat\b', 'att', sql)
     return sql
 
 

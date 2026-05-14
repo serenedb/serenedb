@@ -27,10 +27,10 @@
 
 namespace irs::columnstore {
 
-NormColumnReader::NormColumnReader(field_id id, std::string name,
+NormColumnReader::NormColumnReader(field_id id,
                                    std::vector<NormRowGroupPointer> pointers,
                                    IndexInput& in)
-  : _id{id}, _name{std::move(name)}, _pointers{std::move(pointers)} {
+  : _id{id}, _pointers{std::move(pointers)} {
   _row_offsets.reserve(_pointers.size() + 1);
   _row_offsets.push_back(0);
   _spans.resize(_pointers.size());

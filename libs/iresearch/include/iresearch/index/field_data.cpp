@@ -641,12 +641,10 @@ FieldData::FieldData(std::string_view name,
 }
 
 void FieldData::compute_features() const {
-  // Per-doc norm value sinks into the columnstore Writer; the in-flight
-  // value is not readable from this side. Scorer reads happen later, after
-  // SegmentWriter::flush has committed the columnstore and reopened it as
-  // a columnstore::Reader (see PersistedNormReader).
   if (_norm_writer != nullptr) {
-    _norm_writer->Append(_stats.len);
+    const auto target_row =
+      static_cast<uint64_t>(_last_doc) - doc_limits::min();
+    _norm_writer->Append(target_row, _stats.len);
   }
 }
 

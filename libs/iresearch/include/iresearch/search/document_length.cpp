@@ -53,8 +53,7 @@ Scorer::ptr MakeVPack(std::string_view /*args*/) {
 
 template<ScoreMergeType MergeType, bool HasBoost>
 IRS_FORCE_INLINE void DocLenImpl(
-  score_t* IRS_RESTRICT res, scores_size_t n,
-  const uint32_t* IRS_RESTRICT norm,
+  score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT norm,
   [[maybe_unused]] const score_t* IRS_RESTRICT boost,
   score_t base_boost) noexcept {
   for (scores_size_t i = 0; i != n; ++i) {
@@ -132,8 +131,8 @@ ScoreFunction DocumentLength::PrepareScorer(const ScoreContext& ctx) const {
     return attr ? &attr->value : nullptr;
   }();
   if (!norm && ctx.fetcher) {
-    norm = ctx.fetcher->AddNorms(ctx.field.norm,
-                                 ctx.segment.norms(ctx.field.norm));
+    norm =
+      ctx.fetcher->AddNorms(ctx.field.norm, ctx.segment.norms(ctx.field.norm));
   }
   if (!norm) {
     return ScoreFunction::Default();

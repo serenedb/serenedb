@@ -52,9 +52,13 @@ NormColumnWriter::NormColumnWriter(field_id id, std::string name,
   _pending.reserve(_row_group_size);
 }
 
-void NormColumnWriter::Append(uint32_t value) {
+void NormColumnWriter::Append(uint64_t target_row, uint32_t value) {
   SDB_ASSERT(!_finalized, "NormColumnWriter::Append after Finalize on column ",
              _id);
+  SDB_ASSERT(target_row >= RowCount(),
+             "NormColumnWriter::Append target_row=", target_row,
+             " below RowCount=", RowCount(), " on column ", _id);
+  PadTo(target_row);
   _pending.push_back(value);
   if (_pending.size() == _row_group_size) {
     FlushRowGroup();

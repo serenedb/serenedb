@@ -50,7 +50,7 @@ class NormColumnWriter final {
   NormColumnWriter(const NormColumnWriter&) = delete;
   NormColumnWriter& operator=(const NormColumnWriter&) = delete;
 
-  void Append(uint32_t value);
+  void Append(uint64_t target_row, uint32_t value);
 
   void PadTo(uint64_t target);
 

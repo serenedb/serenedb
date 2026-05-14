@@ -40,11 +40,10 @@ namespace columnstore {
 
 class NormColumnReader final {
  public:
-  NormColumnReader(field_id id, std::string name,
-                   std::vector<NormRowGroupPointer> pointers, IndexInput& in);
+  NormColumnReader(field_id id, std::vector<NormRowGroupPointer> pointers,
+                   IndexInput& in);
 
   field_id Id() const noexcept { return _id; }
-  const std::string& Name() const noexcept { return _name; }
   size_t RowGroupCount() const noexcept { return _pointers.size(); }
   uint64_t RowCount() const noexcept { return _total_row_count; }
 
@@ -74,7 +73,6 @@ class NormColumnReader final {
 
  private:
   field_id _id;
-  std::string _name;
   std::vector<NormRowGroupPointer> _pointers;
   std::vector<uint64_t> _row_offsets;  // cumulative; size = pointers + 1
   std::vector<std::span<const byte_type>> _spans;

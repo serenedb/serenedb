@@ -599,6 +599,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
       auto& nw =
         cs_writer->OpenNormColumn(new_norm_id, std::string{field_name});
 
+      uint64_t merged_row = 0;
       for (const auto& src : sources) {
         const columnstore::NormColumnReader* nc = nullptr;
         if (src.cs_reader != nullptr) {
@@ -616,15 +617,12 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
             if (doc_limits::eof((*src.doc_map)(src_doc))) {
               continue;
             }
-            nw.Append(0);
+            nw.Append(merged_row++, 0);
           }
           continue;
         }
 
-        SDB_ASSERT(nc->RowCount() == src_doc_count,
-                   "merge: source norm column is sparse (RowCount=",
-                   nc->RowCount(), ", src docs_count=", src_doc_count,
-                   "); SegmentWriter::finish should have zero-padded.");
+        SDB_ASSERT(nc->RowCount() == src_doc_count);
         for (size_t rg = 0, rg_count = nc->RowGroupCount(); rg < rg_count;
              ++rg) {
           const auto bytes = nc->RowGroupBytes(rg);
@@ -638,7 +636,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
             }
             const auto value = columnstore::ReadNormValue(
               bytes.data() + i * byte_size, byte_size);
-            nw.Append(value);
+            nw.Append(merged_row++, value);
           }
         }
       }

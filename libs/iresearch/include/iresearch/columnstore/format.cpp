@@ -602,8 +602,8 @@ void Reader::BuildNormReaders(duckdb::BinaryDeserializer& deserializer) {
         if (pointers.empty()) {
           return;
         }
-        auto nr = std::make_unique<NormColumnReader>(
-          id, std::move(name), std::move(pointers), *_impl->in);
+        auto nr = std::make_unique<NormColumnReader>(id, std::move(pointers),
+                                                     *_impl->in);
         _impl->norm_readers.push_back(std::move(nr));
         _impl->norm_by_id.emplace(id, _impl->norm_readers.back().get());
       });

@@ -129,7 +129,18 @@ class ChunkedVectorCache {
   ChunkedVectorCache(ChunkedVectorCache&&) = delete;
   ChunkedVectorCache& operator=(ChunkedVectorCache&&) = delete;
 
-  void Rebind(const ColumnReader& child, uint64_t array_size);
+  void Rebind(const ColumnReader& child, uint64_t array_size) {
+    SDB_ASSERT(_pin_depth == 0);
+    _slots.Clear();
+    _rgs.Clear();
+    _chunk_index.clear();
+    _rg_index.clear();
+    _locate_hint = {};
+    _child = &child;
+    _d = array_size;
+    _chunk_rows =
+      std::max<uint64_t>(kChunkSizeFloats / std::max<uint64_t>(_d, 1), 1);
+  }
 
   const float* Get(uint64_t row) { return SliceOf(*FindOrLoad(row), row); }
 
@@ -181,7 +192,7 @@ class ChunkedVectorCache {
     }
     ChunkSlot& slot = it->second;
     slot.chunk_id = chunk_id;
-    slot.pinned = false;
+    slot.pinned = 0;
     Load(slot, chunk_id);
     _slots.Insert(slot);
     while (!_chunk_evicted.empty()) {

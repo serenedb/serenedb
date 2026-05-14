@@ -1051,32 +1051,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     }
   }
 
-  // An inverted index needs at least one tokenised column to drive per-row
-  // doc_id allocation in the sink. If the user wrote `inverted()` (or only
-  // INCLUDE columns are present), inject a synthetic indexed column: the
-  // base table's PK when there is one, otherwise the first column of the
-  // relation (which is the standard convention for view-backed indexes
-  // over read_parquet etc.).
-  const bool has_indexed_column =
-    absl::c_any_of(create_index_info->column_opclasses,
-                   [](const auto& c) { return c != "included"; });
-  if (!has_indexed_column && create_index_info->index_type == "inverted") {
-    std::string inject_name = pk_column_name;
-    if (inject_name.empty() && !rel_columns.empty()) {
-      inject_name = rel_columns.front().first;
-    }
-    SDB_ENSURE(!inject_name.empty(), sdb::ERROR_BAD_PARAMETER,
-               "USING inverted() with only INCLUDE columns requires the "
-               "underlying relation to expose at least one column");
-    create_index_info->parsed_expressions.insert(
-      create_index_info->parsed_expressions.begin(),
-      duckdb::make_uniq<duckdb::ColumnRefExpression>(inject_name));
-    create_index_info->column_opclasses.insert(
-      create_index_info->column_opclasses.begin(), std::string{});
-    create_index_info->column_opclass_options.insert(
-      create_index_info->column_opclass_options.begin(), std::nullopt);
-  }
-
   containers::FlatHashSet<duckdb::column_t> seen_columns;
   for (auto& expr : create_index_info->parsed_expressions) {
     if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {

@@ -153,6 +153,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   }
   columnstore::Writer* Columnstore() noexcept { return _columnstore.get(); }
 
+  columnstore::Writer* Columnstore() noexcept { return _columnstore.get(); }
+
  private:
   bool index(const hashed_string_view& name, doc_id_t doc,
              IndexFeatures index_features, Tokenizer& tokens);

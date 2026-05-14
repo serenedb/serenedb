@@ -320,7 +320,6 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   };
 
   void StoredBytesAccumulatorsEnsure(catalog::Column::Id column_id,
-                                     std::string_view name,
                                      duckdb::LogicalType type,
                                      bool skip_validity);
 

@@ -394,7 +394,7 @@ Filter::Query::ptr MakeQuery(IResourceManager& manager, GeoStates&& states,
 
 std::pair<GeoStates, bstring> PrepareStates(
   const PrepareContext& ctx, std::span<const std::string> geo_terms,
-  std::string_view field) {
+  std::string_view field, field_id store_field_id) {
   SDB_ASSERT(!geo_terms.empty());
 
   std::vector<std::string_view> sorted_terms(geo_terms.begin(),
@@ -412,27 +412,17 @@ std::pair<GeoStates, bstring> PrepareStates(
   FieldCollectors field_stats{ctx.scorer};
   ManagedVector<SeekCookie::ptr> term_states{{ctx.memory}};
 
-  // Field names are 8-byte BE-encoded catalog::Column::Id (+ optional
-  // mangling suffix); decode the prefix to look up the columnstore reader.
-  if (field.size() < sizeof(uint64_t)) {
-    return res;
-  }
-  const auto stored_field_id = absl::big_endian::Load64(field.data());
+  SDB_ASSERT(store_field_id != 0);
   for (const auto& segment : ctx.index) {
     const auto* reader = segment.field(field);
     if (!reader) {
       continue;
     }
-    const auto* stored_field = segment.Column(stored_field_id);
+    const auto* stored_field = segment.Column(store_field_id);
     if (!stored_field) {
       continue;
     }
     auto terms = reader->iterator(SeekMode::NORMAL);
-    if (!terms) [[unlikely]] {
-      continue;
-    }
-
-    field_stats.collect(segment, *reader);
     term_states.reserve(size);
 
     for (const auto term : sorted_terms) {
@@ -558,7 +548,8 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
     return Filter::Query::empty();
   }
 
-  auto [states, stats] = PrepareStates(ctx, geo_terms, field);
+  auto [states, stats] =
+    PrepareStates(ctx, geo_terms, field, options.store_field_id);
 
   if (incl) {
     return MakeQuery(ctx.memory, std::move(states), std::move(stats), ctx.boost,
@@ -606,7 +597,8 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
       return Filter::Query::empty();
     }
 
-    auto [states, stats] = PrepareStates(ctx, geo_terms, field);
+    auto [states, stats] =
+      PrepareStates(ctx, geo_terms, field, options.store_field_id);
 
     return MakeQuery(ctx.memory, std::move(states), std::move(stats), ctx.boost,
                      options,
@@ -640,7 +632,8 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
     return Filter::Query::empty();
   }
 
-  auto [states, stats] = PrepareStates(ctx, geo_terms, field);
+  auto [states, stats] =
+    PrepareStates(ctx, geo_terms, field, options.store_field_id);
 
   switch (size_t(min_incl) + 2 * size_t(max_incl)) {
     case 0:
@@ -697,7 +690,8 @@ Filter::Query::ptr GeoFilter::prepare(const PrepareContext& ctx) const {
     return Filter::Query::empty();
   }
 
-  auto [states, stats] = PrepareStates(ctx, geo_terms, field());
+  auto [states, stats] =
+    PrepareStates(ctx, geo_terms, field(), options.store_field_id);
 
   const auto boost = ctx.boost * this->Boost();
 

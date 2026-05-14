@@ -162,9 +162,11 @@ class WildcardIterator : public DocIterator {
 
 class WildcardQuery : public Filter::Query {
  public:
-  WildcardQuery(std::shared_ptr<RE2> matcher, std::string_view field,
-                Query::ptr&& approx)
-    : _matcher{std::move(matcher)}, _field{field}, _approx{std::move(approx)} {
+  WildcardQuery(std::shared_ptr<RE2> matcher, Query::ptr&& approx,
+                field_id store_field_id)
+    : _matcher{std::move(matcher)},
+      _approx{std::move(approx)},
+      _store_field_id{store_field_id} {
     SDB_ASSERT(_approx);
   }
 
@@ -173,13 +175,8 @@ class WildcardQuery : public Filter::Query {
     if (!_matcher || approx == DocIterator::empty()) {
       return approx;
     }
-    // Field names are 8-byte BE-encoded catalog::Column::Id; decode the
-    // prefix and look up the columnstore reader by id.
-    if (_field.size() < sizeof(uint64_t)) {
-      return DocIterator::empty();
-    }
-    const auto* column =
-      ctx.segment.Column(absl::big_endian::Load64(_field.data()));
+    SDB_ASSERT(_store_field_id != 0);
+    const auto* column = ctx.segment.Column(_store_field_id);
     if (column == nullptr) {
       return DocIterator::empty();
     }
@@ -193,8 +190,8 @@ class WildcardQuery : public Filter::Query {
 
  private:
   std::shared_ptr<RE2> _matcher;
-  std::string _field;
   Query::ptr _approx;
+  field_id _store_field_id;
 };
 
 constexpr size_t kDefaultScoredTermsLimit = 1024;
@@ -227,7 +224,7 @@ Filter::Query::ptr ByWildcardNgram::Prepare(
       return p;
     }
     return memory::make_tracked<WildcardQuery>(
-      ctx.memory, opts.matcher, std::string_view{field}, std::move(p));
+      ctx.memory, opts.matcher, std::move(p), opts.store_field_id);
   }
 
   AndQuery::queries_t queries{{ctx.memory}};
@@ -256,7 +253,7 @@ Filter::Query::ptr ByWildcardNgram::Prepare(
   auto conjunction = memory::make_tracked<AndQuery>(ctx.memory);
   conjunction->prepare(ctx, ScoreMergeType::Sum, std::move(queries), size);
   return memory::make_tracked<WildcardQuery>(
-    ctx.memory, opts.matcher, std::string_view{field}, std::move(conjunction));
+    ctx.memory, opts.matcher, std::move(conjunction), opts.store_field_id);
 }
 
 ByWildcardNgramOptions::ByWildcardNgramOptions(

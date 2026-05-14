@@ -1,0 +1,243 @@
+# Verifies the cs storage split for analyzers with `StoreAttr` (geo,
+# wildcard): the analyzer-output cs column lives at a catalog-allocated
+# aux field id, distinct from the user column id. The filter consults the
+# aux column at query time; `SELECT col` returns the user's raw input,
+# never the analyzer's internal representation.
+#
+# Four cases:
+#   geo + INCLUDE: SELECT geo → cs[user_id] = raw GeoJSON
+#   geo no INCLUDE: SELECT geo → RocksDB lookup = raw GeoJSON
+#   wildcard + INCLUDE: SELECT b → cs[user_id] = raw VARCHAR
+#   wildcard no INCLUDE: SELECT b → RocksDB lookup = raw VARCHAR
+# In all four, the filter still works (it reads cs[aux_id]).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY g_dict(template = 'geojson');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY w_dict(
+    template = 'wildcard',
+    ngramsize = 3,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+# -------- Case 1: geo + INCLUDE --------
+
+statement ok
+CREATE TABLE t_geo_inc(pk INTEGER PRIMARY KEY, geo JSON);
+
+statement ok
+INSERT INTO t_geo_inc VALUES (1, '{"type":"Point","coordinates":[37.615895,55.703900]}');
+
+statement ok
+CREATE INDEX t_geo_inc_idx ON t_geo_inc
+  USING inverted(geo g_dict) INCLUDE (geo);
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_geo_inc;
+
+query
+EXPLAIN SELECT pk, geo FROM t_geo_inc_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            geo            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│    Index: t_geo_inc_idx   │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│    AND[GEO_DISTANCE[geo   │
+│    (string), *, <1000]]   │
+│                           │
+│        Projections:       │
+│          geo (i)          │
+│           pk (l)          │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+SELECT pk, geo FROM t_geo_inc_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+pk	geo
+1	{"type":"Point","coordinates":[37.615895,55.703900]}
+
+# -------- Case 2: geo no INCLUDE --------
+
+statement ok
+CREATE TABLE t_geo_noi(pk INTEGER PRIMARY KEY, geo JSON);
+
+statement ok
+INSERT INTO t_geo_noi VALUES (1, '{"type":"Point","coordinates":[37.615895,55.703900]}');
+
+statement ok
+CREATE INDEX t_geo_noi_idx ON t_geo_noi USING inverted(geo g_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_geo_noi;
+
+query
+EXPLAIN SELECT pk, geo FROM t_geo_noi_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            geo            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│    Index: t_geo_noi_idx   │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│    AND[GEO_DISTANCE[geo   │
+│    (string), *, <1000]]   │
+│                           │
+│        Projections:       │
+│            geo            │
+│             pk            │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+SELECT pk, geo FROM t_geo_noi_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+pk	geo
+1	{"type":"Point","coordinates":[37.615895,55.703900]}
+
+# -------- Case 3: wildcard + INCLUDE --------
+
+statement ok
+CREATE TABLE t_wild_inc(pk INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+INSERT INTO t_wild_inc VALUES (1, 'percent_alpha_one');
+
+statement ok
+CREATE INDEX t_wild_inc_idx ON t_wild_inc
+  USING inverted(b w_dict) INCLUDE (b);
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_wild_inc;
+
+query
+EXPLAIN SELECT pk, b FROM t_wild_inc_idx
+WHERE b @@ ts_like('percent_alpha_one');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│             b             │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│   Index: t_wild_inc_idx   │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│    AND[WILDCARD_NGRAM[b   │
+│  (string), '', has_pos=0, │
+│  parts=[<Term:\\xffpe(0, 0)│
+│ ; Term:per(1, 1); Term:erc│
+│  (1, 1); Term:rce(1, 1);  │
+│  Term:cen(1, 1); Term:ent │
+│ (1, 1); >; <Term:alp(0, 0)│
+│ ; Term:lph(1, 1); Term:pha│
+│ (1, 1); >; <Term:one(0, 0)│
+│; Term:ne\\xff(1, 1); >; ]]]│
+│                           │
+│        Projections:       │
+│           b (i)           │
+│           pk (l)          │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+SELECT pk, b FROM t_wild_inc_idx WHERE b @@ ts_like('percent_alpha_one');
+----
+pk	b
+1	percent_alpha_one
+
+# -------- Case 4: wildcard no INCLUDE --------
+
+statement ok
+CREATE TABLE t_wild_noi(pk INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+INSERT INTO t_wild_noi VALUES (1, 'percent_alpha_one');
+
+statement ok
+CREATE INDEX t_wild_noi_idx ON t_wild_noi USING inverted(b w_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_wild_noi;
+
+query
+EXPLAIN SELECT pk, b FROM t_wild_noi_idx
+WHERE b @@ ts_like('percent_alpha_one');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│             b             │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│   Index: t_wild_noi_idx   │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│    AND[WILDCARD_NGRAM[b   │
+│  (string), '', has_pos=0, │
+│  parts=[<Term:\\xffpe(0, 0)│
+│ ; Term:per(1, 1); Term:erc│
+│  (1, 1); Term:rce(1, 1);  │
+│  Term:cen(1, 1); Term:ent │
+│ (1, 1); >; <Term:alp(0, 0)│
+│ ; Term:lph(1, 1); Term:pha│
+│ (1, 1); >; <Term:one(0, 0)│
+│; Term:ne\\xff(1, 1); >; ]]]│
+│                           │
+│        Projections:       │
+│             b             │
+│             pk            │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+SELECT pk, b FROM t_wild_noi_idx WHERE b @@ ts_like('percent_alpha_one');
+----
+pk	b
+1	percent_alpha_one

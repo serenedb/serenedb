@@ -52,6 +52,7 @@ struct GeoFilterOptionsBase {
   S2RegionTermIndexer::Options options;
   StoredType stored{StoredType::VPack};
   sdb::geo::coding::Options coding{sdb::geo::coding::Options::Invalid};
+  field_id store_field_id{0};
 };
 
 enum class GeoFilterType : uint8_t {

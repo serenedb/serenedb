@@ -30,6 +30,8 @@
 #include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/config.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/utils/attribute_provider.hpp>
 #include <string>
 
 #include "basics/containers/flat_hash_set.h"
@@ -710,8 +712,22 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
             res.fail()) {
           return std::unexpected<Result>(std::move(res));
         }
+        if (irs::get<irs::StoreAttr>(**analyzer)) {
+          index_col.tokenizer_column.emplace();  // sentinel: assign below
+        }
         index_col.text_dictionary = (*dict)->GetId();
         index_col.features = (*dict)->GetFeatures();
+      }
+    }
+  }
+  {
+    auto sorted_col_ids =
+      inverted_columns | std::views::keys | std::ranges::to<std::vector>();
+    absl::c_sort(sorted_col_ids);
+    for (auto tokenizer_column = Column::kMaxRealId;
+         auto col_id : sorted_col_ids) {
+      if (auto& info = inverted_columns[col_id]; info.tokenizer_column) {
+        info.tokenizer_column = --tokenizer_column;
       }
     }
   }

@@ -245,24 +245,34 @@ void FlushShard(ShardState& s,
                                              /*have_nulls=*/true};
       const auto* info = s.index->FindColumnInfo(col.id);
       const bool wants_cs = info != nullptr && info->store_values;
-      const bool text_indexed =
-        info != nullptr && info->text_dictionary.isSet();
-      const bool has_json_paths = info != nullptr && !info->json_paths.empty();
-      const bool has_hnsw = info != nullptr && info->hnsw_config.has_value();
-      if (wants_cs && !text_indexed && !has_json_paths && !has_hnsw) {
-        const auto count = static_cast<duckdb::idx_t>(insert_entries.size());
+      const bool has_hnsw = info && info->hnsw_config;
+      // HNSW columns have wants_cs=false in the catalog (the hnsw opclass
+      // setter does both); still feed cs via the typed-batch path.
+      const bool wants_cs_batch = wants_cs || has_hnsw;
+      const auto count = static_cast<duckdb::idx_t>(insert_entries.size());
+      if (wants_cs_batch) {
+        // Build a typed Vector from the per-cell RocksDB bytes and drive it
+        // through SwitchColumnImpl. This handles three column shapes:
+        //   - pure INCLUDE (not text-indexed): SwitchColumnImpl returns
+        //     false -> skip the per-cell loop, batch covers everything.
+        //   - HNSW: SwitchColumnImpl falls through (ARRAY per-cell is a
+        //     no-op) -> per-cell loop still runs but writes nothing.
+        //   - text-indexed AND INCLUDE'd: typed-batch writes cs values,
+        //     per-cell loop writes inverted-index entries.
         duckdb::Vector vec{col.type, count};
         duckdb::FlatVector::ValidityMutable(vec).SetAllValid(count);
         for (duckdb::idx_t i = 0; i < count; ++i) {
           connector::DeserializeValueIntoDuckDB(
             resolve_cell(*insert_entries[i], col_idx), vec, col.type, i);
         }
-        sink.SwitchColumnImpl(desc, vec, count);
-        continue;
+        if (!sink.SwitchColumnImpl(desc, vec, count)) {
+          continue;
+        }
+      } else {
+        duckdb::Vector unused{col.type, nullptr, 0};
+        const bool switched = sink.SwitchColumnImpl(desc, unused, /*count=*/0);
+        SDB_ASSERT(switched);
       }
-      duckdb::Vector unused{col.type, nullptr, 0};
-      const bool switched = sink.SwitchColumnImpl(desc, unused, /*count=*/0);
-      SDB_ASSERT(switched);
       for (const auto* row : insert_entries) {
         std::string_view cell = resolve_cell(*row, col_idx);
         rocksdb::Slice slice{cell.data(), cell.size()};

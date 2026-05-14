@@ -1,0 +1,137 @@
+control substitution on
+
+# WAL recovery for a geo-tokenized column.
+#
+# Geo columns are indexed via a `geojson` template dictionary. The per-cell
+# WriteImpl runs the geo analyzer, which emits two streams:
+#   1) inverted-index tokens (S2 cell ids) for distance/range queries;
+#   2) `store_attr->value` -- an analyzer-produced byte blob (S2 shapes).
+#
+# These TWO logically distinct cs columns live at DIFFERENT field ids:
+#   - cs[user_id]            = raw GeoJSON input (typed-batch, only when
+#                              the column is INCLUDE'd).
+#   - cs[aux_id (slot 0)]    = analyzer-output S2 shapes (filter-internal).
+#
+# This test covers `inverted(geo dict) INCLUDE (geo)`: post-recovery,
+# `SELECT geo` returns the original GeoJSON the user inserted, and the
+# inverted-index distance filter reads its S2 shapes from the separate
+# aux cs column.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wal_geo_dict(
+    template = 'geojson'
+);
+
+statement ok
+CREATE TABLE wal_geo_t(pk INTEGER PRIMARY KEY, geo JSON);
+
+statement ok
+INSERT INTO wal_geo_t VALUES (1, '{"type":"Point","coordinates":[37.615895,55.703900]}');
+
+# Indexed (geo analyzer for distance) AND INCLUDE'd (analyzer-output blob in cs).
+statement ok
+CREATE INDEX wal_geo_idx ON wal_geo_t
+  USING inverted(geo wal_geo_dict)
+  INCLUDE (geo);
+
+statement ok
+VACUUM (UPDATE_INDEXES) wal_geo_t;
+
+# Plan check: geo distance + projection both served by the inverted index.
+query
+EXPLAIN SELECT pk FROM wal_geo_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: wal_geo_idx    │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│    AND[GEO_DISTANCE[geo   │
+│   (string), *, <1000]]    │
+│                           │
+│      Projections: pk      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+# Pre-crash row: geo distance query works against on-disk segment.
+query
+SELECT pk FROM wal_geo_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0
+ORDER BY pk;
+----
+pk
+1
+
+# Pre-crash row: the INCLUDE'd geo column returns the raw GeoJSON (NOT
+# the analyzer-output blob -- those bytes live in a separate cs aux column
+# that the geo distance filter consults, not user-visible).
+query
+SELECT pk, geo FROM wal_geo_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+pk	geo
+1	{"type":"Point","coordinates":[37.615895,55.703900]}
+
+# Freeze iresearch commits BEFORE the second batch.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# These two rows reach RocksDB WAL but the iresearch trx never commits.
+statement ok
+INSERT INTO wal_geo_t VALUES
+  (2, '{"type":"Point","coordinates":[2.349014,48.864716]}'),
+  (3, '{"type":"Point","coordinates":[-74.005941,40.712784]}');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# --- server restarts here ---
+
+connection wal_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) wal_geo_t;
+
+# Pre-crash row still queryable.
+connection wal_after
+query
+SELECT pk FROM wal_geo_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+pk
+1
+
+# Post-crash rows queryable by geo distance (inverted-index side rebuilt).
+connection wal_after
+query
+SELECT pk FROM wal_geo_idx
+WHERE geo <-> '{"type":"Point","coordinates":[2.35,48.86]}' < 1000.0;
+----
+pk
+2
+
+connection wal_after
+query
+SELECT pk FROM wal_geo_idx
+WHERE geo <-> '{"type":"Point","coordinates":[-74.0,40.71]}' < 1000.0;
+----
+pk
+3
+
+# All three rows visible AND each returns its original GeoJSON from cs.
+connection wal_after
+query
+SELECT pk, geo FROM wal_geo_idx ORDER BY pk;
+----
+pk	geo
+1	{"type":"Point","coordinates":[37.615895,55.703900]}
+2	{"type":"Point","coordinates":[2.349014,48.864716]}
+3	{"type":"Point","coordinates":[-74.005941,40.712784]}

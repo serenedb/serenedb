@@ -46,7 +46,6 @@ struct HNSWSearchContext;
 struct HNSWRangeSearchContext;
 
 namespace columnstore {
-
 inline constexpr uint64_t kChunkSizeFloats = 4 * STANDARD_VECTOR_SIZE;
 inline constexpr size_t kChunkCacheSlots = 64;
 inline constexpr size_t kRgCacheSlots = 8;
@@ -187,10 +186,6 @@ class ChunkedVectorCache {
 // MRU chunk cache, so no flat in-memory copy of the segment's vectors is
 // ever held -- not during ingest, not during graph construction.
 class HNSWWriter final {
- public:
-  HNSWWriter(HNSWInfo info);
-  ~HNSWWriter();
-
   HNSWWriter(const HNSWWriter&) = delete;
   HNSWWriter& operator=(const HNSWWriter&) = delete;
 

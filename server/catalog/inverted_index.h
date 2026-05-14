@@ -62,11 +62,13 @@ struct InvertedIndexColumnInfo {
   search::Features features;
   std::optional<HNSWColumnConfig> hnsw_config;
   std::vector<JsonPathInfo> json_paths;
+  std::optional<Column::Id> tokenizer_column;
 };
 
 struct ColumnTokenizer {
   Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
+  std::optional<Column::Id> tokenizer_column;
 };
 
 class InvertedIndex final : public Index {

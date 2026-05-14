@@ -150,33 +150,38 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col,
     hnsw_info = _hnsw_info_provider(column_id);
   }
   const bool wants_columnstore =
-    (_store_values_provider && _store_values_provider(column_id)) ||
-    hnsw_info.has_value();
-  if (wants_columnstore) {
-    if (auto* doc_columnstore =
-          _document ? _document->Columnstore() : nullptr) {
-      auto [it, inserted] =
-        _columnstore_writers.try_emplace(column_id, nullptr);
-      if (inserted) {
-        const auto compression = _compression_provider
-                                   ? _compression_provider(column_id)
-                                   : duckdb::CompressionType::COMPRESSION_AUTO;
-        it->second = &doc_columnstore->OpenColumn(
-          static_cast<irs::field_id>(column_id), type,
-          /*row_group_size=*/0, /*skip_validity=*/false, compression);
-        if (hnsw_info.has_value()) {
-          doc_columnstore->AttachHNSW(static_cast<irs::field_id>(column_id),
-                                      *hnsw_info);
-        }
-      }
-      _active_columnstore_writer = it->second;
-      if (_document) {
-        _document->NextFieldBatch();
-      }
-      const uint64_t start_row = _document->DocId() - irs::doc_limits::min();
-      _active_columnstore_writer->Append(start_row, vec, count);
+    (_store_values_provider && _store_values_provider(column_id)) || hnsw_info;
+  auto open_typed_batch_cs = [&] {
+    if (!_document) {
+      return;
     }
-  }
+    auto* doc_columnstore = _document->Columnstore();
+    if (!doc_columnstore) {
+      return;
+    }
+    auto [it, inserted] = _columnstore_writers.try_emplace(column_id, nullptr);
+    if (inserted) {
+      const auto compression = _compression_provider
+                                 ? _compression_provider(column_id)
+                                 : duckdb::CompressionType::COMPRESSION_AUTO;
+      it->second = &doc_columnstore->OpenColumn(
+        static_cast<irs::field_id>(column_id), type,
+        /*row_group_size=*/0, /*skip_validity=*/false, compression);
+      if (hnsw_info) {
+        doc_columnstore->AttachHNSW(static_cast<irs::field_id>(column_id),
+                                    *hnsw_info);
+      }
+    }
+    _active_columnstore_writer = it->second;
+    _document->NextFieldBatch();
+    const uint64_t start_row = _document->DocId() - irs::doc_limits::min();
+    _active_columnstore_writer->Append(start_row, vec, count);
+  };
+
+  const bool text_indexed =
+    _is_text_indexed_provider && _is_text_indexed_provider(column_id);
+  const bool has_json_paths =
+    _json_paths_provider && !_json_paths_provider(column_id).empty();
 
   if (!IsIndexed(column_id)) {
 #ifdef SDB_DEV
@@ -184,20 +189,19 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col,
 #endif
     return false;
   }
-  if (_active_columnstore_writer && !hnsw_info.has_value() &&
-      _is_text_indexed_provider && !_is_text_indexed_provider(column_id) &&
-      _json_paths_provider && _json_paths_provider(column_id).empty()) {
+  if (wants_columnstore && !text_indexed && !has_json_paths && !hnsw_info) {
+    open_typed_batch_cs();
 #ifdef SDB_DEV
     _current_writer = nullptr;
 #endif
     return false;
   }
-  if (_json_paths_provider) {
-    if (auto paths = _json_paths_provider(column_id); !paths.empty()) {
+  if (wants_columnstore && hnsw_info) {
+    open_typed_batch_cs();
+  }
       SetupJsonColumnWriter(column_id, std::move(paths));
-      SDB_ASSERT(_document.has_value());
+      SDB_ASSERT(_document);
       _document->NextFieldBatch();
-      return true;
     }
   }
   switch (type.id()) {
@@ -257,15 +261,18 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col,
       _current_writer = nullptr;
       return false;
   }
-  SDB_ASSERT(_document.has_value());
+  SDB_ASSERT(_document);
   _document->NextFieldBatch();
+  if (wants_columnstore && _active_columnstore_writer == nullptr) {
+    open_typed_batch_cs();
+  }
   return true;
 }
 
 void SearchSinkInsertBaseImpl::WriteImpl(
   std::span<const rocksdb::Slice> cell_slices, std::string_view full_key) {
   SDB_ASSERT(_current_writer);
-  SDB_ASSERT(_document.has_value());
+  SDB_ASSERT(_document);
   _current_writer(full_key, cell_slices);
   _document->NextDocument();
 }
@@ -279,8 +286,7 @@ void SearchSinkInsertBaseImpl::FinishImpl() {
 }
 
 void SearchSinkInsertBaseImpl::StoredBytesAccumulatorsEnsure(
-  catalog::Column::Id column_id, std::string_view name,
-  duckdb::LogicalType type, bool skip_validity) {
+  catalog::Column::Id column_id, duckdb::LogicalType type, bool skip_validity) {
   auto* doc_columnstore = _document ? _document->Columnstore() : nullptr;
   if (!doc_columnstore) {
     return;  // SearchSink running without a DuckDB-backed columnstore (rare).
@@ -331,7 +337,7 @@ void SearchSinkInsertBaseImpl::StoredBytesAccumulatorsAppend(
     return;
   }
   auto& acc = it->second;
-  SDB_ASSERT(acc.buffer.has_value());
+  SDB_ASSERT(acc.buffer);
   SDB_ASSERT(acc.count < acc.batch_size);
   auto* slots =
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(*acc.buffer);
@@ -347,7 +353,7 @@ void SearchSinkInsertBaseImpl::StoredBytesAccumulatorsAppendNull(
     return;
   }
   auto& acc = it->second;
-  SDB_ASSERT(acc.buffer.has_value());
+  SDB_ASSERT(acc.buffer);
   SDB_ASSERT(acc.count < acc.batch_size);
   // skip_validity columns shouldn't ever take this path -- assert in dev.
   SDB_ASSERT(!acc.skip_validity);
@@ -367,7 +373,7 @@ void SearchSinkInsertBaseImpl::StoredBytesAccumulatorsFlush() {
 }
 
 void SearchSinkInsertBaseImpl::AppendPkToColumnstore(std::string_view row_key) {
-  StoredBytesAccumulatorsEnsure(catalog::Column::kGeneratedPKId, "pk",
+  StoredBytesAccumulatorsEnsure(catalog::Column::kGeneratedPKId,
                                 duckdb::LogicalType::BLOB,
                                 /*skip_validity=*/true);
   StoredBytesAccumulatorsAppend(
@@ -419,13 +425,20 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   } else if constexpr (Kind == duckdb::LogicalTypeId::VARCHAR ||
                        Kind == duckdb::LogicalTypeId::BLOB) {
     search::mangling::MangleString(_name_buffer);
-    _field.PrepareForStringValue(_tokenizer_provider(column_id));
+    auto column_tokenizer = _tokenizer_provider(column_id);
+    const auto tokenizer_column = column_tokenizer.tokenizer_column;
+    _field.PrepareForStringValue(std::move(column_tokenizer));
     const bool has_store = _field.store_attr != nullptr;
     if (has_store) {
-      StoredBytesAccumulatorsEnsure(column_id, std::to_string(column_id),
+      SDB_ASSERT(tokenizer_column,
+                 "tokenizer registers StoreAttr but catalog has no tokenizer "
+                 "column allocated for column ",
+                 column_id);
+      const auto tokenizer_column_id = *tokenizer_column;
+      StoredBytesAccumulatorsEnsure(tokenizer_column_id,
                                     duckdb::LogicalType::BLOB,
                                     /*skip_validity=*/false);
-      _current_writer = [&, column_id, have_nulls](
+      _current_writer = [&, tokenizer_column_id, have_nulls](
                           std::string_view full_key,
                           std::span<const rocksdb::Slice> cell_slices) {
         Field* field = nullptr;
@@ -442,9 +455,10 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
                     "Failed to insert field into IResearch document");
         }
         if (is_null || !field->store_attr) {
-          StoredBytesAccumulatorsAppendNull(column_id);
+          StoredBytesAccumulatorsAppendNull(tokenizer_column_id);
         } else {
-          StoredBytesAccumulatorsAppend(column_id, field->store_attr->value);
+          StoredBytesAccumulatorsAppend(tokenizer_column_id,
+                                        field->store_attr->value);
         }
       };
     } else {
@@ -476,7 +490,9 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     _current_writer = [](std::string_view, std::span<const rocksdb::Slice>) {};
   } else if constexpr (Kind == duckdb::LogicalTypeId::GEOMETRY) {
     search::mangling::MangleString(_name_buffer);
-    _field.PrepareForStringValue(_tokenizer_provider(column_id));
+    auto column_tokenizer = _tokenizer_provider(column_id);
+    const auto tokenizer_column = column_tokenizer.tokenizer_column;
+    _field.PrepareForStringValue(std::move(column_tokenizer));
     const bool has_store = _field.store_attr != nullptr;
     auto geo_writer = [](std::string_view,
                          std::span<const rocksdb::Slice> cell_slices,
@@ -493,10 +509,15 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       return field;
     };
     if (has_store) {
-      StoredBytesAccumulatorsEnsure(column_id, std::to_string(column_id),
+      SDB_ASSERT(tokenizer_column,
+                 "geo tokenizer registers StoreAttr but catalog has no "
+                 "tokenizer column allocated for column ",
+                 column_id);
+      const auto tokenizer_column_id = *tokenizer_column;
+      StoredBytesAccumulatorsEnsure(tokenizer_column_id,
                                     duckdb::LogicalType::BLOB,
                                     /*skip_validity=*/false);
-      _current_writer = [&, geo_writer, column_id, have_nulls](
+      _current_writer = [&, geo_writer, tokenizer_column_id, have_nulls](
                           std::string_view full_key,
                           std::span<const rocksdb::Slice> cell_slices) {
         Field* field = nullptr;
@@ -513,9 +534,10 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
                     "Failed to insert field into IResearch document");
         }
         if (is_null || !field->store_attr) {
-          StoredBytesAccumulatorsAppendNull(column_id);
+          StoredBytesAccumulatorsAppendNull(tokenizer_column_id);
         } else {
-          StoredBytesAccumulatorsAppend(column_id, field->store_attr->value);
+          StoredBytesAccumulatorsAppend(tokenizer_column_id,
+                                        field->store_attr->value);
         }
       };
     } else {

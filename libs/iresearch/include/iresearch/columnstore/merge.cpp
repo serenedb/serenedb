@@ -72,10 +72,6 @@ void MergeInto(std::span<const Reader* const> sources,
 
       const bool is_array = col->Type().id() == duckdb::LogicalTypeId::ARRAY;
       const uint64_t array_size = is_array ? col->ArraySize() : 1;
-      ColumnReader::RangeScan data_range{is_array ? *col->Child() : *col};
-      ColumnReader::RangeScan validity_range{*col, /*validity_side=*/true};
-      for (size_t rg = 0; rg < col->RowGroupCount(); ++rg) {
-        const auto rg_count = col->RowGroupRowCount(rg);
         const auto rg_first_doc = col->RowGroupOffset(rg);
 
         duckdb::Vector batch{col->Type(), STANDARD_VECTOR_SIZE,
@@ -88,14 +84,10 @@ void MergeInto(std::span<const Reader* const> sources,
           if (is_array) {
             auto& child = duckdb::ArrayVector::GetChildMutable(batch);
             data_range.Scan((rg_first_doc + scanned) * array_size,
-                            take * array_size, child, 0);
           } else {
             data_range.Scan(rg_first_doc + scanned, take, batch, 0);
           }
           if (col->HasValidity()) {
-            validity_range.Scan(rg_first_doc + scanned, take, batch, 0);
-          } else {
-            batch.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
             duckdb::FlatVector::ValidityMutable(batch).SetAllValid(take);
           }
 

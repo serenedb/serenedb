@@ -183,6 +183,22 @@ as separate issues.
   re-emplace (the original TODO concern) AND drop one full string
   copy on every PK/STORE column. Out of this PR; file as its own
   refactor.
+- **PK column stored as real typed columns, not BLOB.** Today the
+  PK side always goes through `AppendPkToColumnstore` ->
+  `StoredBytesAccumulator(kGeneratedPKId, BLOB, skip_validity)`
+  ([search_sink_writer.cpp:386-396](../server/connector/search_sink_writer.cpp))
+  -- the row key is concatenated to one BLOB cell per row. That loses
+  the PK's actual shape. The proper representation is one real cs
+  column per PK component: a single-column PK on `BIGINT file_offset`
+  becomes one i64 cs column; a composite PK `(file_index, file_offset)`
+  becomes two columns. The PK then participates in zone-map pruning
+  and typed lookups; right now PK lookup decodes BLOB row keys per
+  query. Pair this with the StoredBytesAccumulator refactor above:
+  once SearchSink hands typed Vectors to `ColumnWriter::Append`, the
+  PK becomes "always-on" INCLUDE-shaped columns at well-known field
+  ids. File as its own refactor; touches catalog (PK column list),
+  writer (drop BLOB special case), reader (lookup.cpp + materializer
+  use typed cs scan instead of BLOB decode), and merge.
 - **Fix iresearch gtest tests.** `tests/libs/iresearch/...` (the
   `iresearch-tests` ninja target) doesn't compile on this branch --
   `legacy_compat.cpp` has drifted, and other test files have likely
@@ -686,3 +702,87 @@ Simplifications pass (this session):
   commit time so the footer carries no row_groups=[] no-ops and the
   writer's in-memory state is freed. field_id growth from the
   pre-allocation is intentional and harmless.
+
+WAL recovery + dual-purpose INCLUDE pass (this session):
+- Bug fix: WAL recovery for INCLUDE-only and HNSW columns. Recovery
+  re-feeds the typed-batch cs path by building a `duckdb::Vector{col.type,
+  count}` from the per-cell RocksDB bytes via `DeserializeValueIntoDuckDB`
+  (no `duckdb::Value`, no BLOB cast) and calling `SwitchColumnImpl(desc,
+  vec, count)`. Composite types (LIST, ARRAY, STRUCT, MAP, deep nested
+  MAP<VARCHAR,STRUCT<INTEGER[]>>) round-trip through recovery because
+  the existing per-row `DeserializeListValue` / `DeserializeArrayValue`
+  / etc. grow child Vector capacity via `ListVector::Reserve` and the
+  Vector ctor sizes STRUCT/ARRAY children up-front. HNSW columns
+  (ARRAY<FLOAT,N>) take the same batch path -- per-cell ARRAY is a no-op,
+  the batch Append is the sole feed.
+  ([`server/search/wal_recovery.cpp`](../server/search/wal_recovery.cpp))
+- Bug fix: dual-purpose `inverted(col dict) INCLUDE (col)` for analyzers
+  that register `StoreAttr` (geo, wildcard) used to crash at INSERT with
+  `columnstore::Writer::OpenColumn: re-opened id N with mismatched
+  settings (type BLOB vs JSON, ...)`. Cause: the typed-batch path in
+  `SwitchColumnImpl` and the per-cell `StoredBytesAccumulatorsEnsure`
+  both wanted to open the same cs column, with conflicting types
+  (column type vs BLOB analyzer-output). Fix: defer the typed-batch
+  OpenColumn until after `SetupColumnWriter` has had a chance to
+  register the BLOB accumulator; the post-setup check opens cs as the
+  column's actual type only if the per-cell path didn't claim it.
+  ([`server/connector/search_sink_writer.cpp`](../server/connector/search_sink_writer.cpp))
+- Bug fix: `WildcardAnalyzer::reset()` didn't clear `_ngram_term->value`
+  or the inner `_ngram` state, leaving views into the previous input
+  string. When a query used the analyzer (`ByWildcardNgramOptions`
+  constructor on a stack-local `pattern_str`) and a subsequent write
+  used the same pooled analyzer instance, `next()` would read freed
+  stack memory via `utf8_utils::Next(_ngram_term->value.data(), ...)`.
+  Caught by ASAN under wildcard + INCLUDE + query-then-insert; the bug
+  was latent without INCLUDE too, just harder to hit.
+  ([`libs/iresearch/include/iresearch/analysis/wildcard_analyzer.cpp`](../libs/iresearch/include/iresearch/analysis/wildcard_analyzer.cpp))
+- Tests: `wal_index_recovery_include.test` (scalar + LIST + ARRAY +
+  STRUCT + MAP + deep-nested MAP<VARCHAR,STRUCT<INTEGER[]>>),
+  `wal_index_recovery_geo.test`, `wal_index_recovery_wildcard.test`,
+  `wal_index_recovery_hnsw.test`. Each includes an `EXPLAIN` check that
+  the post-recovery queries route through `IRESEARCH_SCAN` /
+  `IRESEARCH_ANN_SCAN`, not a RocksDB fallback.
+
+Catalog-allocated tokenizer-output cs column for store-attr analyzers
+(this session):
+- Refactor: split the analyzer-output cs column (geo S2 shapes, wildcard
+  n-gram packs) from the user-facing INCLUDE'd cs column. They live at
+  different `field_id`s now -- the user id holds the raw input bytes for
+  `SELECT col`, the catalog-allocated tokenizer id holds analyzer-only
+  bytes consulted by the filter.
+- Catalog: `InvertedIndexColumnInfo` gains
+  `tokenizer_column: optional<Column::Id>`. CREATE INDEX detects whether
+  the tokenizer registers `irs::StoreAttr` (geo, wildcard) and allocates
+  an id walking DOWN from `kMaxRealId - 1`. Real-id space is effectively
+  unlimited; reserving the top end keeps the ids disjoint from
+  user-assigned column ids without an artificial cap. Single id per
+  column for now; if a future analyzer wants two side columns, promote
+  to a small vector.
+- ColumnTokenizer rides the id on the existing `TokenizerProvider`
+  channel -- no new provider type, no plumbing through writer/recovery
+  constructors. `InvertedIndex::GetColumnTokenizer` populates
+  `tokenizer.tokenizer_column` from the catalog.
+- Writer: in `SetupColumnWriter` the VARCHAR/GEOMETRY branches read
+  `tokenizer.tokenizer_column` before moving the tokenizer into the
+  Field, and open the BLOB `StoredBytesAccumulator` at that id. The
+  typed-batch post-setup branch then opens cs at `column_id` for
+  INCLUDE'd columns and Appends the raw chunk.
+- Reader: `GeoFilterOptionsBase::store_field_id` and
+  `ByWildcardNgramOptions::store_field_id` carry the id from the
+  serenedb planner to the iresearch filter; the filter calls
+  `segment.Column(store_field_id)` to fetch the analyzer-output bytes.
+  Previously both filters decoded the user `column_id` from the field
+  name and looked up cs there, which is no longer correct since the
+  analyzer-output column lives at a separate id.
+- Planner: geo / wildcard filter builders set
+  `options->store_field_id = *column_info.tokenizer.tokenizer_column` at
+  filter construction; the id is already in the ColumnTokenizer the
+  builders consult.
+- Tests: `wal_index_recovery_geo_no_include.test` and
+  `wal_index_recovery_wildcard_no_include.test` cover the without-
+  INCLUDE case (tokenizer cs column populated for filter, user column
+  read from RocksDB). Existing geo/wildcard recovery tests strengthened
+  to assert the raw input round-trips through cs[user_id] for the
+  INCLUDE'd case. New common test
+  `inverted_index_analyzer_cs_split.test` covers all 4 (geo on/off,
+  wildcard on/off) cases with `EXPLAIN` + value check.

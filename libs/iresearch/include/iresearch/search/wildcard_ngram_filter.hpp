@@ -49,10 +49,11 @@ struct ByWildcardNgramOptions {
   bstring token;
   bool has_pos{true};
   std::shared_ptr<RE2> matcher;
+  field_id store_field_id{0};
 
   bool operator==(const ByWildcardNgramOptions& other) const noexcept {
     if (parts != other.parts || token != other.token ||
-        has_pos != other.has_pos) {
+        has_pos != other.has_pos || store_field_id != other.store_field_id) {
       return false;
     }
     if (!matcher && !other.matcher) {

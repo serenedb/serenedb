@@ -2,9 +2,9 @@ hash-threshold 100
 
 # View-backed CREATE INDEX column pruning: when the view exposes more
 # columns than the index uses, BindCreateIndex's PruneViewFastPathChain
-# narrows the chain so the leaf source only reads what's needed. Every
-# test below verifies end-to-end correctness; the pruning is implicit (a
-# no-op fallback exists for any chain shape v1 doesn't cover).
+# narrows the chain so the leaf source only reads what's needed. EXPLAIN
+# CREATE INDEX exposes the leaf scan's `Projections:` directly, so each
+# case below asserts both end-to-end correctness AND the narrowed leaf.
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +38,26 @@ CREATE TEXT SEARCH DICTIONARY prune_en(
 statement ok
 CREATE VIEW prune_v1 AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
 
+# Leaf scan reads only `body`; the identity projection over a 1-column
+# leaf is collapsed by DuckDB's optimizer, so it doesn't appear here.
+query
+EXPLAIN CREATE INDEX prune_idx1 ON prune_v1 USING inverted(body prune_en);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│        READ_PARQUET       │
+│    ────────────────────   │
+│         Function:         │
+│        READ_PARQUET       │
+│                           │
+│     Projections: body     │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
 statement ok
 CREATE INDEX prune_idx1 ON prune_v1 USING inverted(body prune_en);
 
@@ -62,6 +82,28 @@ count
 statement ok
 CREATE VIEW prune_v2 AS SELECT id, body FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
 
+# Both columns survive (no slack on the view side) -- the early-out in
+# PruneViewFastPathChain bails before touching the leaf.
+query
+EXPLAIN CREATE INDEX prune_idx2 ON prune_v2 USING inverted(id, body prune_en);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│        READ_PARQUET       │
+│    ────────────────────   │
+│         Function:         │
+│        READ_PARQUET       │
+│                           │
+│        Projections:       │
+│             id            │
+│            body           │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
 statement ok
 CREATE INDEX prune_idx2 ON prune_v2 USING inverted(id, body prune_en);
 
@@ -73,9 +115,10 @@ count
 
 
 # ---------------------------------------------------------------------------
-# Case 3: view's projection has a function on a single leaf column. The
-# kept projection expression's leaf refs must be collected through the
-# function wrapper.
+# Case 3: view's projection has a function on a single leaf column.
+# ResolveViewFastPath rejects non-column-ref SELECT items, so this view
+# isn't a fast-path view and our pruning machinery never runs -- the
+# case is here to confirm the no-op fallback still indexes correctly.
 # ---------------------------------------------------------------------------
 
 statement ok
@@ -109,6 +152,57 @@ CREATE VIEW prune_v4 AS
   FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet')
   ORDER BY id;
 
+# Leaf reads only id + body; unused1/unused2 dropped. ORDER BY id keeps
+# id alive via phase-1 above-projection collection. The __internal
+# compress/decompress projections are inserted by a post-bind optimizer
+# pass for integer ORDER BY -- they're unrelated to pruning.
+query
+EXPLAIN CREATE INDEX prune_idx4 ON prune_v4 USING inverted(body prune_en);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│__internal_decompress_integ│
+│     ral_integer(#0, 1)    │
+│             #1            │
+│             #2            │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│    read_parquet.id ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│__internal_compress_integra│
+│     l_utinyint(#0, 1)     │
+│             #1            │
+│             #2            │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│        READ_PARQUET       │
+│    ────────────────────   │
+│         Function:         │
+│        READ_PARQUET       │
+│                           │
+│        Projections:       │
+│             id            │
+│            body           │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
 statement ok
 CREATE INDEX prune_idx4 ON prune_v4 USING inverted(body prune_en);
 
@@ -123,7 +217,9 @@ count
 # Case 5: ORDER BY + LIMIT (LogicalTopN above the projection). Same
 # binding-rewrite path as Order alone, plus the LIMIT operator. The order
 # column `unused1` isn't in the index but must survive the prune through
-# phase-1 above-projection collection.
+# phase-1 above-projection collection. No EXPLAIN assertion here: the
+# planner expands TopN into a HASH_JOIN + TOP_N subtree whose exact
+# shape is too sensitive to upstream changes to pin down in a test.
 # ---------------------------------------------------------------------------
 
 statement ok
@@ -178,7 +274,27 @@ statement ok
 CREATE VIEW prune_v6 AS SELECT * FROM prune_base;
 
 # Secondary index over view, narrow keying. Pruning should drop unused1
-# and unused2 from the underlying leaf scan.
+# and unused2 from the underlying leaf scan -- only body + PK (id)
+# remain, since RocksDBExplicitPK rides the base table's real PK.
+query
+EXPLAIN CREATE INDEX prune_idx6 ON prune_v6 (body);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│     Table: prune_base     │
+│                           │
+│        Projections:       │
+│            body           │
+│             id            │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
 statement ok
 CREATE INDEX prune_idx6 ON prune_v6 (body);
 
@@ -197,6 +313,28 @@ count
 statement ok
 CREATE VIEW prune_v7 AS SELECT * FROM prune_base;
 
+# id appears twice in projections: once as an index key, once as the PK
+# plumbing column added after pruning by BackfillPkVirtualColumns.
+query
+EXPLAIN CREATE INDEX prune_idx7 ON prune_v7 (id, body);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│     Table: prune_base     │
+│                           │
+│        Projections:       │
+│             id            │
+│            body           │
+│             id            │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
 statement ok
 CREATE INDEX prune_idx7 ON prune_v7 (id, body);
 
@@ -214,6 +352,26 @@ count
 
 statement ok
 CREATE VIEW prune_v8 AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
+
+# Leaf reads only body; file_row_number (the surrogate PK) is a virtual
+# column added by BackfillPkVirtualColumns and isn't surfaced here.
+query
+EXPLAIN CREATE INDEX prune_idx8 ON prune_v8 (body);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│        READ_PARQUET       │
+│    ────────────────────   │
+│         Function:         │
+│        READ_PARQUET       │
+│                           │
+│     Projections: body     │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 statement ok
 CREATE INDEX prune_idx8 ON prune_v8 (body);

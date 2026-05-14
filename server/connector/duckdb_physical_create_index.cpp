@@ -850,10 +850,9 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     }
     auto& view = basics::downCast<catalog::PgSqlView>(*relation);
     const auto& vinfo = view.GetInfo();
-    // BindCreateIndex may have stashed a kept-positions list (column
-    // pruning); when present, synthesise view_columns only for those
-    // positions. The column.id keeps the ORIGINAL view position so
-    // downstream id-based lookups stay stable.
+    // When pruning narrowed the view, build view_columns only for the
+    // surviving positions. column.id keeps the original view position
+    // so downstream id-based lookups stay stable.
     std::vector<size_t> view_positions;
     if (auto it = op.info->options.find("_sdb_view_kept_positions");
         it != op.info->options.end()) {

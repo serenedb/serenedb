@@ -204,6 +204,7 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col,
       SetupJsonColumnWriter(column_id, std::move(paths));
       SDB_ASSERT(_document);
       _document->NextFieldBatch();
+      return true;
     }
   }
   switch (type.id()) {

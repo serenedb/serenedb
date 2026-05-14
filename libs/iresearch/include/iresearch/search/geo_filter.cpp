@@ -423,6 +423,11 @@ std::pair<GeoStates, bstring> PrepareStates(
       continue;
     }
     auto terms = reader->iterator(SeekMode::NORMAL);
+    if (!terms) [[unlikely]] {
+      continue;
+    }
+
+    field_stats.collect(segment, *reader);
     term_states.reserve(size);
 
     for (const auto term : sorted_terms) {

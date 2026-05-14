@@ -1015,10 +1015,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   // projection that BuildCreateIndexProjection computes. Stays null for
   // view-backed indexes (whose projection comes from the view body).
   std::shared_ptr<catalog::Table> sdb_table;
-  // Name of the base table's PK column (if any) -- used to auto-inject a
-  // tokenised indexed column when the user wrote `inverted()` with only
-  // INCLUDE clauses.
-  std::string pk_column_name;
   if (view_backed) {
     auto& view_entry = target.Cast<duckdb::ViewCatalogEntry>();
     auto column_info = view_entry.GetColumnInfo();
@@ -1039,16 +1035,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     rel_columns.assign_range(columns | std::views::transform([](const auto& c) {
                                return std::pair{c.name, c.type};
                              }));
-    const auto& pk_ids = sdb_table->PKColumns();
-    use_generated_pk_rowid_col = pk_ids.empty();
-    if (!use_generated_pk_rowid_col) {
-      for (const auto& c : columns) {
-        if (c.id == pk_ids.front()) {
-          pk_column_name = c.name;
-          break;
-        }
-      }
-    }
+    use_generated_pk_rowid_col = sdb_table->PKColumns().empty();
   }
 
   containers::FlatHashSet<duckdb::column_t> seen_columns;

@@ -53,9 +53,6 @@ class NormColumnWriter;
 class HNSWReader;
 class HNSWWriter;
 
-// Maps an HNSW-bearing column id to its in-memory faiss graph. Produced
-// by Writer::TakeBuiltHnswGraphs after Commit(); consumed by the Reader
-// constructor to skip re-deserializing graphs we just serialized.
 using PreloadedHnswGraphs =
   sdb::containers::FlatHashMap<field_id, std::shared_ptr<faiss::HNSW>>;
 

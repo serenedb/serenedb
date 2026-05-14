@@ -938,11 +938,9 @@ void IndexWriter::SegmentContext::Flush() {
   SDB_ASSERT(writer_meta.meta.live_docs_count <= writer_meta.meta.docs_count);
   SDB_ASSERT(writer_meta.meta.docs_count == docs_context.size());
 
-  auto cs_hnsw_graphs = writer->TakeBuiltHnswGraphs();
-
   flushed.emplace_back(std::move(writer_meta), std::move(old2new),
-                       std::move(docs_mask), flushed_docs.size());
-  flushed.back().cs_hnsw_graphs = std::move(cs_hnsw_graphs);
+                       std::move(docs_mask), flushed_docs.size(),
+                       writer->TakeBuiltHnswGraphs());
   try {
     flushed_docs.insert(flushed_docs.end(), docs_context.begin(),
                         docs_context.end());

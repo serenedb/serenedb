@@ -96,6 +96,7 @@ void MergeInto(std::span<const Reader* const> sources,
           if (col->HasValidity()) {
             validity_range.Scan(rg_first_doc + scanned, take, batch, 0);
           } else {
+            batch.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
             duckdb::FlatVector::ValidityMutable(batch).SetAllValid(take);
           }
 

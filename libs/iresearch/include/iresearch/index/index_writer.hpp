@@ -655,12 +655,15 @@ class IndexWriter : private util::Noncopyable {
  public:
   struct FlushedSegment : public IndexSegment {
     FlushedSegment() = default;
-    explicit FlushedSegment(IndexSegment&& segment, DocMap&& old2new,
-                            DocsMask&& docs_mask, size_t docs_begin) noexcept
+    explicit FlushedSegment(
+      IndexSegment&& segment, DocMap&& old2new, DocsMask&& docs_mask,
+      size_t docs_begin,
+      columnstore::PreloadedHnswGraphs&& cs_hnsw_graphs = {}) noexcept
       : IndexSegment{std::move(segment)},
         old2new{std::move(old2new)},
         docs_mask{std::move(docs_mask)},
         document_mask{{this->docs_mask.set.get_allocator()}},
+        cs_hnsw_graphs{std::move(cs_hnsw_graphs)},
         _docs_begin{docs_begin},
         _docs_end{_docs_begin + meta.docs_count} {}
 

@@ -26,7 +26,6 @@
 
 #include <memory>
 
-#include "iresearch/columnstore/format.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/directory_utils.hpp"
@@ -35,6 +34,7 @@
 namespace irs {
 namespace columnstore {
 
+class Reader;
 class NormColumnReader;
 
 }  // namespace columnstore

@@ -141,6 +141,16 @@ SELECT ts_highlight('foo', ARRAY[0::INTEGER, 3::INTEGER],
                     'MaxWords=0')
 
 
+# --- Non-foldable options rejected at bind time ---
+# Per-row options aren't supported: parsing happens once at bind time
+# and the result is cached on the bind data. A column-derived opts
+# expression would silently fall through to defaults, so we refuse it.
+
+statement error ts_highlight: options must be a constant expression
+SELECT ts_highlight('foo', ARRAY[0::INTEGER, 3::INTEGER], opts)
+FROM (VALUES ('HighlightAll=true')) AS t(opts)
+
+
 # --- Bad offsets: odd-length array ---
 
 statement error offsets array must contain an even number of elements

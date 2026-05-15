@@ -551,9 +551,12 @@ duckdb::unique_ptr<duckdb::FunctionData> TsHighlightBind(
   auto bind = duckdb::make_uniq<TsHighlightBindData>();
   auto& args = input.GetArguments();
 
-  // Non-foldable opts fall through and the default-constructed
-  // `options` is used; no runtime per-row parsing.
-  if (args.size() == 3 && args[2]->IsFoldable()) {
+  if (args.size() == 3) {
+    if (!args[2]->IsFoldable()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("ts_highlight: options must be a constant expression"));
+    }
     auto val = duckdb::ExpressionExecutor::EvaluateScalar(context, *args[2]);
     if (!val.IsNull()) {
       bind->options =

@@ -65,6 +65,11 @@ void DFIFieldCollector::collect(bytes_view in) {
   total_term_freq += v;
 }
 
+void DFIFieldCollector::collect(FieldCollector&& other) noexcept {
+  auto& rhs = sdb::basics::downCast<DFIFieldCollector>(other);
+  total_term_freq += rhs.total_term_freq;
+}
+
 void DFIFieldCollector::write(DataOutput& out) const {
   out.WriteV64(total_term_freq);
 }
@@ -84,6 +89,11 @@ void DFITermCollector::collect(bytes_view in) {
     throw IoError{"input not read fully"};
   }
   total_term_freq += v;
+}
+
+void DFITermCollector::collect(TermCollector&& other) noexcept {
+  auto& rhs = sdb::basics::downCast<DFITermCollector>(other);
+  total_term_freq += rhs.total_term_freq;
 }
 
 void DFITermCollector::write(DataOutput& out) const {

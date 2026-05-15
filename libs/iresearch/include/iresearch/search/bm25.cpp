@@ -93,6 +93,12 @@ struct BM25FieldCollector final : FieldCollector {
     total_term_freq += total_term_freq_value;
   }
 
+  void collect(FieldCollector&& other) noexcept final {
+    auto& rhs = sdb::basics::downCast<BM25FieldCollector>(other);
+    docs_with_field += rhs.docs_with_field;
+    total_term_freq += rhs.total_term_freq;
+  }
+
   void write(DataOutput& out) const final {
     out.WriteV64(docs_with_field);
     out.WriteV64(total_term_freq);

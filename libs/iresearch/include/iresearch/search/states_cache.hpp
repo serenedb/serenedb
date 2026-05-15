@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
+#include <absl/container/node_hash_map.h>
 
 #include "basics/noncopyable.hpp"
 #include "basics/resource_manager.hpp"
@@ -32,26 +32,33 @@ namespace irs {
 
 struct SubReader;
 
+class StatesCache {
+ public:
+  virtual ~StatesCache() = default;
+};
+
 // Generic cache for cached query states
 // TODO: consider changing an API so that a sub_reader is indexable by an
 //       integer. we can use a vector for lookup.
 template<typename State>
-class StatesCache : private util::Noncopyable {
+class StatesCacheImpl : public StatesCache, private util::Noncopyable {
  public:
   using state_type = State;
 
-  explicit StatesCache(IResourceManager& memory, size_t size)
+  explicit StatesCacheImpl(IResourceManager& memory, size_t size)
     : _states{Alloc{memory}} {
     _states.reserve(size);
   }
 
-  StatesCache(StatesCache&&) = default;
-  StatesCache& operator=(StatesCache&&) = default;
+  StatesCacheImpl(StatesCacheImpl&&) = default;
+  StatesCacheImpl& operator=(StatesCacheImpl&&) = default;
 
   state_type& insert(const SubReader& segment) {
     auto result = _states.emplace(&segment, _states.get_allocator().Manager());
     return result.first->second;
   }
+
+  void Merge(StatesCacheImpl&& other) { _states.merge(other._states); }
 
   const state_type* find(const SubReader& segment) const noexcept {
     const auto it = _states.find(&segment);
@@ -69,7 +76,7 @@ class StatesCache : private util::Noncopyable {
   using Alloc =
     ManagedTypedAllocator<std::pair<const SubReader* const, state_type>>;
 
-  using StatesMap = absl::flat_hash_map<
+  using StatesMap = absl::node_hash_map<
     const SubReader*, state_type,
     absl::container_internal::hash_default_hash<const SubReader*>,
     absl::container_internal::hash_default_eq<const SubReader*>, Alloc>;

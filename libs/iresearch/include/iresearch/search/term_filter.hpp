@@ -22,7 +22,9 @@
 
 #pragma once
 
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter.hpp"
+#include "iresearch/search/term_query.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -42,11 +44,38 @@ struct ByTermOptions {
 // User-side term filter
 class ByTerm : public FilterWithField<ByTermOptions> {
  public:
+  class Buffer final : public PrepareBuffer {
+   public:
+    Buffer(const PrepareContext& ctx, std::string_view field, bytes_view term)
+      : _field{field},
+        _term{term},
+        _field_stats{ctx.scorer},
+        _term_stats{ctx.scorer, 1},
+        _states{ctx.memory, ctx.index.size()} {}
+
+    void PrepareSegment(const SubReader& segment) final;
+    void Merge(PrepareBuffer&& other) final;
+    bool Empty() const noexcept final { return _states.empty(); }
+    Query::ptr Compile(const PrepareContext& ctx) && final;
+
+   private:
+    std::string_view _field;
+    bstring _term;
+    FieldCollectors _field_stats;
+    TermCollectors _term_stats;
+    TermQuery::States _states;
+  };
+
   static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
                             bytes_view term);
 
   static void visit(const SubReader& segment, const TermReader& field,
                     bytes_view term, FilterVisitor& visitor);
+
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final {
+    return std::make_unique<Buffer>(ctx, field(), options().term);
+  }
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
     auto sub_ctx = ctx;

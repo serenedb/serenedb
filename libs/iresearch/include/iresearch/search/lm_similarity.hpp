@@ -49,6 +49,8 @@ struct LMFieldCollector final : FieldCollector {
 
   void collect(bytes_view in) final;
 
+  void collect(FieldCollector&& other) noexcept final;
+
   void write(DataOutput& out) const final;
 };
 
@@ -63,6 +65,8 @@ struct LMTermCollector final : TermCollector {
   void reset() noexcept final { total_term_freq = 0; }
 
   void collect(bytes_view in) final;
+
+  void collect(TermCollector&& other) noexcept final;
 
   void write(DataOutput& out) const final;
 };

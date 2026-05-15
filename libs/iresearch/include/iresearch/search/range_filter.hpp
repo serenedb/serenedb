@@ -69,7 +69,7 @@ struct ByRangeOptions : ByRangeFilterOptions {
 //////////////////////////////////////////////////////////////////////////////
 class ByRange : public FilterWithField<ByRangeOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
+  static Query::ptr Prepare(const PrepareContext& ctx, std::string_view field,
                             const options_type::range_type& rng,
                             size_t scored_terms_limit);
 
@@ -77,8 +77,11 @@ class ByRange : public FilterWithField<ByRangeOptions> {
                     const options_type::range_type& rng,
                     FilterVisitor& visitor);
 
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final;
+
   Query::ptr prepare(const PrepareContext& ctx) const final {
-    return prepare(ctx.Boost(Boost()), field(), options().range,
+    return Prepare(ctx.Boost(Boost()), field(), options().range,
                    options().scored_terms_limit);
   }
 };

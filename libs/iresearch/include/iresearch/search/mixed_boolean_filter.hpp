@@ -38,6 +38,12 @@ class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final {
+    return std::make_unique<LazyQueryBuffer>(
+      [ctx, this](const PrepareContext&) { return prepare(ctx); });
+  }
+
  private:
   bool equals(const Filter& rhs) const noexcept final;
 

@@ -80,6 +80,12 @@ class GeoFilter final : public FilterWithField<GeoFilterOptions> {
  public:
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final {
+    return std::make_unique<LazyQueryBuffer>(
+      [ctx, this](const PrepareContext&) { return prepare(ctx); });
+  }
+
 #ifdef SDB_DEV
  private:
   // Tracks whether prepare() has already been called on this instance.
@@ -112,6 +118,12 @@ class GeoDistanceFilter final
   : public FilterWithField<GeoDistanceFilterOptions> {
  public:
   Query::ptr prepare(const PrepareContext& ctx) const final;
+
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final {
+    return std::make_unique<LazyQueryBuffer>(
+      [ctx, this](const PrepareContext&) { return prepare(ctx); });
+  }
 };
 
 }  // namespace irs

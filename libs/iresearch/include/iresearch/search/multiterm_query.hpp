@@ -31,9 +31,36 @@ namespace irs {
 // Compiled query suitable for filters with non adjacent set of terms.
 class MultiTermQuery : public Filter::Query {
  public:
-  using States = StatesCache<MultiTermState>;
+  using States = StatesCacheImpl<MultiTermState>;
   // TODO(mbkkt) block_pool<byte>
   using Stats = ManagedVector<bstring>;
+
+  // Shared base for buffers of all multi-term leaf filters (ByTerms,
+  // ByRange, ByPrefix, ByWildcard, ByRegexp, ByEditDistance,
+  // ByGranularRange). Holds the per-segment accumulators common to the
+  // family; subclasses override PrepareSegment with their filter-specific
+  // term-iteration logic.
+  class BufferBase : public Filter::PrepareBuffer {
+   public:
+    BufferBase(const PrepareContext& ctx, size_t terms_count,
+               ScoreMergeType merge_type, size_t min_match)
+      : _field_stats{ctx.scorer},
+        _term_stats{ctx.scorer, terms_count},
+        _states{ctx.memory, ctx.index.size()},
+        _merge_type{merge_type},
+        _min_match{min_match} {}
+
+    void Merge(PrepareBuffer&& other) override;
+    bool Empty() const noexcept override;
+    Query::ptr Compile(const PrepareContext& ctx) && override;
+
+   protected:
+    FieldCollectors _field_stats;
+    TermCollectors _term_stats;
+    States _states;
+    ScoreMergeType _merge_type;
+    size_t _min_match;
+  };
 
   explicit MultiTermQuery(States&& states, Stats&& stats, score_t boost,
                           ScoreMergeType merge_type, size_t min_match)

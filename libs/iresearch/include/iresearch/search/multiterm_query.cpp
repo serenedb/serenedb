@@ -23,6 +23,7 @@
 #include "multiterm_query.hpp"
 
 #include "basics/containers/bitset.hpp"
+#include "basics/down_cast.h"
 #include "basics/shared.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -186,6 +187,38 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
         ctx.wand, static_cast<doc_id_t>(ctx.segment.docs_count()),
         std::move(itrs), _min_match, state->estimation());
     });
+}
+
+void MultiTermQuery::BufferBase::Merge(PrepareBuffer&& other) {
+  auto& rhs = sdb::basics::downCast<BufferBase>(other);
+  _field_stats.collect(std::move(rhs._field_stats));
+  _term_stats.collect(std::move(rhs._term_stats));
+  _states.Merge(std::move(rhs._states));
+}
+
+bool MultiTermQuery::BufferBase::Empty() const noexcept {
+  return _states.empty();
+}
+
+Filter::Query::ptr MultiTermQuery::BufferBase::Compile(
+  const PrepareContext& ctx) && {
+  if (_min_match > 1) {
+    _states.erase_if([min = _min_match](const auto& state) noexcept {
+      return state.scored_states.size() < min;
+    });
+  }
+
+  Stats stats{{ctx.memory}};
+  const size_t terms_count = _term_stats.size();
+  stats.resize(terms_count > 0 ? terms_count : 1);
+  for (size_t term_idx = 0; auto& stat : stats) {
+    stat.resize(GetStatsSize(ctx.scorer), 0);
+    _term_stats.finish(stat.data(), term_idx++, _field_stats, ctx.index);
+  }
+
+  return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(_states),
+                                              std::move(stats), ctx.boost,
+                                              _merge_type, _min_match);
 }
 
 }  // namespace irs

@@ -49,6 +49,26 @@ Filter::Query::ptr Filter::Query::empty() {
   return memory::to_managed<Query>(gEmptyQuery);
 }
 
+std::unique_ptr<Filter::PrepareBuffer> Filter::CreateBuffer(
+  const PrepareContext& /*ctx*/) const {
+  SDB_ASSERT(false);
+  return nullptr;
+}
+
+Filter::Query::ptr Filter::DefaultPrepare(const PrepareContext& ctx) const {
+  auto sub_ctx = ctx;
+  sub_ctx.boost *= BoostImpl();
+  auto buf = CreateBuffer(sub_ctx);
+  SDB_ASSERT(buf);
+  for (const auto& segment : sub_ctx.index) {
+    buf->PrepareSegment(segment);
+  }
+  if (buf->Empty()) {
+    return Query::empty();
+  }
+  return std::move(*buf).Compile(sub_ctx);
+}
+
 Filter::Query::ptr Empty::prepare(const PrepareContext& /*ctx*/) const {
   return memory::to_managed<Query>(gEmptyQuery);
 }

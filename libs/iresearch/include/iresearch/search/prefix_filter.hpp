@@ -23,6 +23,7 @@
 #pragma once
 
 #include "iresearch/search/filter.hpp"
+#include "iresearch/search/limited_sample_collector.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -66,16 +67,34 @@ struct ByPrefixOptions : ByPrefixFilterOptions {
 ////////////////////////////////////////////////////////////////////////////////
 class ByPrefix : public FilterWithField<ByPrefixOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
+  class Buffer final : public SampledMultiTermBuffer {
+   public:
+    Buffer(const PrepareContext& ctx, std::string_view field, bytes_view prefix,
+           size_t scored_terms_limit)
+      : SampledMultiTermBuffer{ctx, scored_terms_limit},
+        _field{field},
+        _prefix{prefix} {}
+
+    void PrepareSegment(const SubReader& segment) final;
+
+   private:
+    std::string_view _field;
+    bstring _prefix;
+  };
+
+  static Query::ptr Prepare(const PrepareContext& ctx, std::string_view field,
                             bytes_view prefix, size_t scored_terms_limit);
 
   static void visit(const SubReader& segment, const TermReader& reader,
                     bytes_view prefix, FilterVisitor& visitor);
 
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final;
+
   Query::ptr prepare(const PrepareContext& ctx) const final {
     auto sub_ctx = ctx;
     sub_ctx.boost *= Boost();
-    return prepare(sub_ctx, field(), options().term,
+    return Prepare(sub_ctx, field(), options().term,
                    options().scored_terms_limit);
   }
 };

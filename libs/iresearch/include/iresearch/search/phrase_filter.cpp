@@ -22,6 +22,7 @@
 
 #include "phrase_filter.hpp"
 
+#include "basics/down_cast.h"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/collectors.hpp"
@@ -121,11 +122,11 @@ struct PrepareVisitor : util::Noncopyable {
   }
 
   auto operator()(const ByPrefixOptions& part) const {
-    return ByPrefix::prepare(ctx, field, part.term, part.scored_terms_limit);
+    return ByPrefix::Prepare(ctx, field, part.term, part.scored_terms_limit);
   }
 
   auto operator()(const ByWildcardOptions& part) const {
-    return ByWildcard::prepare(ctx, field, part.term, part.scored_terms_limit);
+    return ByWildcard::Prepare(ctx, field, part.term, part.scored_terms_limit);
   }
 
   auto operator()(const ByEditDistanceOptions& part) const {
@@ -137,11 +138,11 @@ struct PrepareVisitor : util::Noncopyable {
   Filter::Query::ptr operator()(const ByTermsOptions&) const { return {}; }
 
   auto operator()(const ByRangeOptions& part) const {
-    return ByRange::prepare(ctx, field, part.range, part.scored_terms_limit);
+    return ByRange::Prepare(ctx, field, part.range, part.scored_terms_limit);
   }
 
   auto operator()(const ByRegexpOptions& part) const {
-    return ByRegexp::prepare(ctx, field, part.pattern, part.scored_terms_limit,
+    return ByRegexp::Prepare(ctx, field, part.pattern, part.scored_terms_limit,
                              part.syntax);
   }
 
@@ -447,7 +448,120 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
     std::move(stats), ctx.boost);
 }
 
+class FixedPhraseBuffer final : public Filter::PrepareBuffer {
+ public:
+  FixedPhraseBuffer(const PrepareContext& ctx, std::string_view field,
+                    const ByPhraseOptions& options)
+    : _field{field},
+      _options{&options},
+      _memory{&ctx.memory},
+      _field_stats{ctx.scorer},
+      _term_stats{ctx.scorer, options.size()},
+      _states{ctx.memory, ctx.index.size()} {}
+
+  void PrepareSegment(const SubReader& segment) final {
+    const auto* reader = segment.field(_field);
+    if (!Valid(reader)) {
+      return;
+    }
+
+    _field_stats.collect(segment, *reader);
+
+    FixedPhraseState::Terms phrase_terms{{*_memory}};
+    phrase_terms.reserve(_options->size());
+
+    PhraseTermVisitor<FixedPhraseState::Terms> ptv(phrase_terms);
+    ptv.Reset(_term_stats);
+
+    const auto is_ord_empty = (_term_stats.size() == 0) ? true : false;
+    for (const auto& word : *_options) {
+      SDB_ASSERT(std::get_if<ByTermOptions>(&word.part));
+      ByTerm::visit(segment, *reader, std::get<ByTermOptions>(word.part).term,
+                    ptv);
+      if (!ptv.Found() && is_ord_empty) {
+        break;
+      }
+    }
+
+    if (phrase_terms.size() != _options->size()) {
+      return;
+    }
+
+    auto& state = _states.insert(segment);
+    state.terms = std::move(phrase_terms);
+    state.reader = reader;
+  }
+
+  void Merge(PrepareBuffer&& other) final {
+    auto& rhs = sdb::basics::downCast<FixedPhraseBuffer>(other);
+    _field_stats.collect(std::move(rhs._field_stats));
+    _term_stats.collect(std::move(rhs._term_stats));
+    _states.Merge(std::move(rhs._states));
+  }
+
+  bool Empty() const noexcept final { return _states.empty(); }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    bstring stats(GetStatsSize(ctx.scorer), 0);
+    auto* stats_buf = stats.data();
+
+    FixedPhraseQuery::positions_t positions(_options->size());
+    auto pos_itr = positions.begin();
+
+    size_t term_idx = 0;
+    PosAttr::value_t look_back = 0;
+    for (const auto& term : *_options) {
+      pos_itr->offs_max = term.offs_max;
+      pos_itr->offs_min = term.offs_min;
+      pos_itr->lead_offset = look_back += term.offs_max;
+      _term_stats.finish(stats_buf, term_idx, _field_stats, ctx.index);
+      ++pos_itr;
+      ++term_idx;
+    }
+
+    return memory::make_tracked<FixedPhraseQuery>(
+      ctx.memory, std::move(_states), std::move(positions), std::move(stats),
+      ctx.boost);
+  }
+
+ private:
+  std::string_view _field;
+  const ByPhraseOptions* _options;
+  IResourceManager* _memory;
+  FieldCollectors _field_stats;
+  TermCollectors _term_stats;
+  FixedPhraseQuery::states_t _states;
+};
+
 }  // namespace
+
+std::unique_ptr<Filter::PrepareBuffer> ByPhrase::CreateBuffer(
+  const PrepareContext& ctx) const {
+  if (field().empty() || options().empty()) {
+    return std::make_unique<EmptyBuffer>();
+  }
+
+  if (options().size() == 1 || !options().simple()) {
+    // Single-part shortcut delegates to underlying filter; variadic case has
+    // cross-segment top-terms collection. Both fall back to sequential prepare.
+    return std::make_unique<LazyQueryBuffer>(
+      [ctx, field_name = std::string{field()},
+       opts = options()](const PrepareContext&) {
+        return ByPhrase::Prepare(ctx, field_name, opts);
+      });
+  }
+
+  return std::make_unique<FixedPhraseBuffer>(ctx, field(), options());
+}
+
+std::unique_ptr<Filter::PrepareBuffer> ByPhrase::CreateFixedBuffer(
+  const PrepareContext& ctx, std::string_view field,
+  const ByPhraseOptions& options) {
+  SDB_ASSERT(!field.empty());
+  SDB_ASSERT(!options.empty());
+  SDB_ASSERT(options.simple());
+  return std::make_unique<FixedPhraseBuffer>(ctx, field, options);
+}
 
 Filter::Query::ptr ByPhrase::Prepare(const PrepareContext& ctx,
                                      std::string_view field,

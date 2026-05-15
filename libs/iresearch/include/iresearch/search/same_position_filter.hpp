@@ -23,6 +23,9 @@
 #pragma once
 
 #include "filter.hpp"
+#include "iresearch/search/collectors.hpp"
+#include "iresearch/search/states/term_state.hpp"
+#include "iresearch/search/states_cache.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -49,7 +52,43 @@ class BySamePosition : public FilterWithOptions<BySamePositionOptions> {
   static constexpr IndexFeatures kRequiredFeatures =
     IndexFeatures::Freq | IndexFeatures::Pos;
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  using TermsStatesT = ManagedVector<TermState>;
+  using StatesT = StatesCacheImpl<TermsStatesT>;
+
+  class Buffer final : public PrepareBuffer {
+   public:
+    Buffer(const PrepareContext& ctx,
+           const BySamePositionOptions::search_terms& terms)
+      : _terms{&terms},
+        _memory{&ctx.memory},
+        _field_stats{ctx.scorer},
+        _term_stats{ctx.scorer, terms.size()},
+        _states{ctx.memory, ctx.index.size()} {}
+
+    void PrepareSegment(const SubReader& segment) final;
+    void Merge(PrepareBuffer&& other) final;
+    bool Empty() const noexcept final { return _states.empty(); }
+    Query::ptr Compile(const PrepareContext& ctx) && final;
+
+   private:
+    const BySamePositionOptions::search_terms* _terms;
+    IResourceManager* _memory;
+    FieldCollectors _field_stats;
+    TermCollectors _term_stats;
+    StatesT _states;
+  };
+
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final {
+    if (options().terms.empty()) {
+      return std::make_unique<EmptyBuffer>();
+    }
+    return std::make_unique<Buffer>(ctx, options().terms);
+  }
+
+  Query::ptr prepare(const PrepareContext& ctx) const final {
+    return DefaultPrepare(ctx);
+  }
 };
 
 }  // namespace irs

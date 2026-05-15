@@ -101,7 +101,7 @@ field_visitor ByRegexp::visitor(bytes_view pattern, RegexpSyntax syntax) {
   }
 }
 
-Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx,
+Filter::Query::ptr ByRegexp::Prepare(const PrepareContext& ctx,
                                      std::string_view field, bytes_view pattern,
                                      size_t scored_terms_limit,
                                      RegexpSyntax syntax) {
@@ -121,12 +121,12 @@ Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx,
       auto raw_prefix = ExtractRegexpPrefix(pattern);
       bstring unescaped;
       UnescapeRegexp(raw_prefix, unescaped);
-      return ByPrefix::prepare(ctx, field, unescaped, scored_terms_limit);
+      return ByPrefix::Prepare(ctx, field, unescaped, scored_terms_limit);
     }
 
     case RegexpType::Prefix: {
       auto prefix = ExtractRegexpPrefix(pattern);
-      return ByPrefix::prepare(ctx, field, prefix, scored_terms_limit);
+      return ByPrefix::Prepare(ctx, field, prefix, scored_terms_limit);
     }
 
     case RegexpType::Complex: {
@@ -137,6 +137,50 @@ Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx,
       return PrepareAutomatonFilter(ctx, field, acceptor, scored_terms_limit);
     }
 
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+std::unique_ptr<Filter::PrepareBuffer> ByRegexp::CreateBuffer(
+  const PrepareContext& ctx) const {
+  auto sub_ctx = ctx;
+  sub_ctx.boost *= Boost();
+  const auto type = ComputeRegexpType(options().pattern);
+
+  switch (type) {
+    case RegexpType::LiteralEscaped: {
+      bstring unescaped;
+      UnescapeRegexp(options().pattern, unescaped);
+      return std::make_unique<ByTerm::Buffer>(sub_ctx, field(), unescaped);
+    }
+    case RegexpType::Literal:
+      return std::make_unique<ByTerm::Buffer>(sub_ctx, field(),
+                                              options().pattern);
+    case RegexpType::PrefixEscaped: {
+      auto raw_prefix = ExtractRegexpPrefix(options().pattern);
+      bstring unescaped;
+      UnescapeRegexp(raw_prefix, unescaped);
+      return std::make_unique<ByPrefix::Buffer>(sub_ctx, field(), unescaped,
+                                                options().scored_terms_limit);
+    }
+    case RegexpType::Prefix: {
+      auto prefix = ExtractRegexpPrefix(options().pattern);
+      return std::make_unique<ByPrefix::Buffer>(sub_ctx, field(), prefix,
+                                                options().scored_terms_limit);
+    }
+    case RegexpType::Complex: {
+      auto acceptor =
+        FromRegexp(options().pattern, kDefaultMaxDfaStates, options().syntax);
+      if (!Validate(acceptor)) {
+        return std::make_unique<EmptyBuffer>();
+      }
+      if (auto buf = MakeAutomatonBuffer(sub_ctx, field(), std::move(acceptor),
+                                         options().scored_terms_limit)) {
+        return buf;
+      }
+      return std::make_unique<EmptyBuffer>();
+    }
     default:
       SDB_UNREACHABLE();
   }

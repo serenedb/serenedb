@@ -30,6 +30,7 @@ struct NoopFieldCollector final : FieldCollector {
   void collect(const SubReader&, const TermReader&) final {}
   void reset() final {}
   void collect(bytes_view) final {}
+  void collect(FieldCollector&&) final {}
   void write(DataOutput&) const final {}
 };
 
@@ -38,6 +39,7 @@ struct NoopTermCollector final : TermCollector {
                const AttributeProvider&) final {}
   void reset() final {}
   void collect(bytes_view) final {}
+  void collect(TermCollector&&) final {}
   void write(DataOutput&) const final {}
 };
 
@@ -63,6 +65,13 @@ void FieldCollectors::collect(const SubReader& segment,
                               const TermReader& field) const {
   if (!_collectors.empty()) {
     _collectors.front()->collect(segment, field);
+  }
+}
+
+void FieldCollectors::collect(FieldCollectors&& other) const {
+  SDB_ASSERT(_collectors.size() == other._collectors.size());
+  for (size_t i = 0, n = _collectors.size(); i < n; ++i) {
+    _collectors[i]->collect(std::move(*other._collectors[i]));
   }
 }
 
@@ -94,6 +103,13 @@ void TermCollectors::collect(const SubReader& segment, const TermReader& field,
     SDB_ASSERT(term_idx < _collectors.size());
     SDB_ASSERT(_collectors[term_idx]);
     _collectors[term_idx]->collect(segment, field, attrs);
+  }
+}
+
+void TermCollectors::collect(TermCollectors&& other) const {
+  SDB_ASSERT(_collectors.size() == other._collectors.size());
+  for (size_t i = 0, n = _collectors.size(); i < n; ++i) {
+    _collectors[i]->collect(std::move(*other._collectors[i]));
   }
 }
 

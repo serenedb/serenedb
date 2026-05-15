@@ -22,17 +22,15 @@
 
 #include "same_position_filter.hpp"
 
+#include "basics/down_cast.h"
 #include "basics/misc.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/states/term_state.hpp"
-#include "iresearch/search/states_cache.hpp"
 
 namespace irs {
 namespace {
@@ -129,8 +127,7 @@ class SamePositionIterator : public DocIterator {
 
 class SamePositionQuery : public Filter::Query {
  public:
-  using TermsStatesT = ManagedVector<TermState>;
-  using StatesT = StatesCache<TermsStatesT>;
+  using StatesT = BySamePosition::StatesT;
   using StatsT = ManagedVector<bstring>;
 
   explicit SamePositionQuery(StatesT&& states, StatsT&& stats, score_t boost)
@@ -142,14 +139,11 @@ class SamePositionQuery : public Filter::Query {
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const final {
     auto& segment = ctx.segment;
-    // get query state for the specified reader
     auto query_state = _states.find(segment);
     if (!query_state) {
-      // invalid state
       return DocIterator::empty();
     }
 
-    // get features required for query & order
     const IndexFeatures features =
       GetFeatures(ctx.scorer) | BySamePosition::kRequiredFeatures;
     ScoreAdapters itrs;
@@ -197,100 +191,69 @@ class SamePositionQuery : public Filter::Query {
 
 }  // namespace
 
-Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
-  auto& terms = options().terms;
-  const auto size = terms.size();
+void BySamePosition::Buffer::PrepareSegment(const SubReader& segment) {
+  TermsStatesT term_states{TermsStatesT::allocator_type{*_memory}};
+  term_states.reserve(_terms->size());
 
-  if (0 == size) {
-    // empty field or phrase
-    return Filter::Query::empty();
-  }
+  size_t term_idx = 0;
+  for (const auto& branch : *_terms) {
+    Finally next_stats = [&term_idx]() noexcept { ++term_idx; };
 
-  // per segment query state
-  SamePositionQuery::StatesT query_states{ctx.memory, ctx.index.size()};
-
-  // per segment terms states
-  SamePositionQuery::StatesT::state_type term_states{
-    SamePositionQuery::StatesT::state_type::allocator_type{ctx.memory}};
-  term_states.reserve(size);
-
-  // !!! FIXME !!!
-  // that's completely wrong, we have to collect stats for each field
-  // instead of aggregating them using a single collector
-  FieldCollectors field_stats(ctx.scorer);
-
-  // prepare phrase stats (collector for each term)
-  TermCollectors term_stats(ctx.scorer, size);
-
-  for (const auto& segment : ctx.index) {
-    size_t term_idx = 0;
-
-    for (const auto& branch : terms) {
-      Finally next_stats = [&term_idx]() noexcept { ++term_idx; };
-
-      // get term dictionary for field
-      const TermReader* field = segment.field(branch.first);
-      if (!field) {
-        continue;
-      }
-
-      // check required features
-      if (kRequiredFeatures !=
-          (field->meta().index_features & kRequiredFeatures)) {
-        continue;
-      }
-
-      // collect field statistics once per segment
-      field_stats.collect(segment, *field);
-
-      // find terms
-      SeekTermIterator::ptr term = field->iterator(SeekMode::NORMAL);
-
-      if (!term->seek(branch.second)) {
-        if (!ctx.scorer) {
-          break;
-        } else {
-          // continue here because we should collect
-          // stats for other terms in phrase
-          continue;
-        }
-      }
-
-      term->read();  // read term attributes
-      term_stats.collect(segment, *field, term_idx, *term);
-      term_states.emplace_back(ctx.memory);
-
-      auto& state = term_states.back();
-
-      state.cookie = term->cookie();
-      state.reader = field;
-    }
-
-    if (term_states.size() != terms.size()) {
-      // we have not found all needed terms
-      term_states.clear();
+    const TermReader* field = segment.field(branch.first);
+    if (!field) {
       continue;
     }
 
-    auto& state = query_states.insert(segment);
-    state = std::move(term_states);
+    if (kRequiredFeatures !=
+        (field->meta().index_features & kRequiredFeatures)) {
+      continue;
+    }
 
-    term_states.clear();
-    term_states.reserve(terms.size());
+    _field_stats.collect(segment, *field);
+
+    SeekTermIterator::ptr term = field->iterator(SeekMode::NORMAL);
+
+    if (!term->seek(branch.second)) {
+      // continue here because we should collect stats for other terms
+      continue;
+    }
+
+    term->read();
+    _term_stats.collect(segment, *field, term_idx, *term);
+    term_states.emplace_back(*_memory);
+    auto& state = term_states.back();
+    state.cookie = term->cookie();
+    state.reader = field;
   }
 
-  // finish stats
-  size_t term_idx = 0;
+  if (term_states.size() != _terms->size()) {
+    return;
+  }
+
+  auto& state = _states.insert(segment);
+  state = std::move(term_states);
+}
+
+void BySamePosition::Buffer::Merge(PrepareBuffer&& other) {
+  auto& rhs = sdb::basics::downCast<Buffer>(other);
+  _field_stats.collect(std::move(rhs._field_stats));
+  _term_stats.collect(std::move(rhs._term_stats));
+  _states.Merge(std::move(rhs._states));
+}
+
+Filter::Query::ptr BySamePosition::Buffer::Compile(
+  const PrepareContext& ctx) && {
+  const auto size = _terms->size();
   SamePositionQuery::StatsT stats(
     size, SamePositionQuery::StatsT::allocator_type{ctx.memory});
+  size_t term_idx = 0;
   for (auto& stat : stats) {
     stat.resize(GetStatsSize(ctx.scorer));
-    auto* stats_buf = stat.data();
-    term_stats.finish(stats_buf, term_idx++, field_stats, ctx.index);
+    _term_stats.finish(stat.data(), term_idx++, _field_stats, ctx.index);
   }
 
-  return memory::make_tracked<SamePositionQuery>(
-    ctx.memory, std::move(query_states), std::move(stats), ctx.boost * Boost());
+  return memory::make_tracked<SamePositionQuery>(ctx.memory, std::move(_states),
+                                                 std::move(stats), ctx.boost);
 }
 
 }  // namespace irs

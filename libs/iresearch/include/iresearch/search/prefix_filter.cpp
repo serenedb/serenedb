@@ -70,27 +70,26 @@ void VisitImpl(const SubReader& segment, const TermReader& reader,
 
 }  // namespace
 
-Filter::Query::ptr ByPrefix::prepare(const PrepareContext& ctx,
+void ByPrefix::Buffer::PrepareSegment(const SubReader& segment) {
+  if (const auto* reader = segment.field(_field); reader) {
+    VisitImpl(segment, *reader, _prefix, _visitor);
+  }
+}
+
+Filter::Query::ptr ByPrefix::Prepare(const PrepareContext& ctx,
                                      std::string_view field, bytes_view prefix,
                                      size_t scored_terms_limit) {
-  // object for collecting order stats
-  LimitedSampleCollector<TermFrequency> collector(
-    ctx.scorer ? scored_terms_limit : 0);
-  MultiTermQuery::States states{ctx.memory, ctx.index.size()};
-  MultiTermVisitor mtv{collector, states};
-
-  for (const auto& segment : ctx.index) {
-    if (const auto* reader = segment.field(field); reader) {
-      VisitImpl(segment, *reader, prefix, mtv);
-    }
+  Buffer buf{ctx, field, prefix, scored_terms_limit};
+  for (auto& segment : ctx.index) {
+    buf.PrepareSegment(segment);
   }
+  return std::move(buf).Compile(ctx);
+}
 
-  MultiTermQuery::Stats stats{{ctx.memory}};
-  collector.score(ctx.index, ctx.scorer, stats);
-
-  return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),
-                                              std::move(stats), ctx.boost,
-                                              ScoreMergeType::Sum, size_t{1});
+std::unique_ptr<Filter::PrepareBuffer> ByPrefix::CreateBuffer(
+  const PrepareContext& ctx) const {
+  return std::make_unique<Buffer>(ctx, field(), options().term,
+                                  options().scored_terms_limit);
 }
 
 void ByPrefix::visit(const SubReader& segment, const TermReader& reader,

@@ -178,6 +178,10 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
       // NOOP
     }
 
+    void collect(irs::FieldCollector&& /*other*/) final {
+      // NOOP
+    }
+
     void write(irs::DataOutput& /*out*/) const final {
       // NOOP
     }
@@ -204,6 +208,10 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
     }
 
     void collect(irs::bytes_view /*in*/) final {
+      // NOOP
+    }
+
+    void collect(irs::TermCollector&& /*other*/) final {
       // NOOP
     }
 
@@ -322,6 +330,10 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
     void reset() noexcept final { docs_count = 0; }
 
     void collect(irs::bytes_view /*in*/) final {
+      // NOOP
+    }
+
+    void collect(irs::TermCollector&& /*other*/) final {
       // NOOP
     }
 

@@ -22,6 +22,7 @@
 
 #include "column_existence_filter.hpp"
 
+#include "basics/down_cast.h"
 #include "iresearch/formats/empty_term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/column_collector.hpp"
@@ -117,21 +118,45 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
   ColumnAcceptor _acceptor;
 };
 
+class Buffer final : public Filter::PrepareBuffer {
+ public:
+  Buffer(std::string_view field, ColumnAcceptor acceptor)
+    : _field{field}, _acceptor{acceptor} {}
+
+  void PrepareSegment(const SubReader&) final {}
+
+  void Merge(PrepareBuffer&& other) final {
+    [[maybe_unused]] auto& rhs = sdb::basics::downCast<Buffer>(other);
+  }
+
+  bool Empty() const noexcept final { return false; }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    return _acceptor ? memory::make_tracked<ColumnPrefixExistenceQuery>(
+                         ctx.memory, _field, _acceptor, ctx.boost)
+                     : memory::make_tracked<ColumnExistenceQuery>(
+                         ctx.memory, _field, ctx.boost);
+  }
+
+ private:
+  std::string_view _field;
+  ColumnAcceptor _acceptor;
+};
+
 }  // namespace
+
+std::unique_ptr<Filter::PrepareBuffer> ByColumnExistence::CreateBuffer(
+  const PrepareContext& /*ctx*/) const {
+  return std::make_unique<Buffer>(field(), options().acceptor);
+}
 
 Filter::Query::ptr ByColumnExistence::prepare(const PrepareContext& ctx) const {
   // skip field-level/term-level statistics because there are no explicit
   // fields/terms, but still collect index-level statistics
   // i.e. all fields and terms implicitly match
-
-  const auto filter_boost = ctx.boost * Boost();
-
-  auto& acceptor = options().acceptor;
-
-  return acceptor ? memory::make_tracked<ColumnPrefixExistenceQuery>(
-                      ctx.memory, field(), acceptor, filter_boost)
-                  : memory::make_tracked<ColumnExistenceQuery>(
-                      ctx.memory, field(), filter_boost);
+  auto sub_ctx = ctx;
+  sub_ctx.boost *= Boost();
+  return DefaultPrepare(sub_ctx);
 }
 
 }  // namespace irs

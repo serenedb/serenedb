@@ -1608,7 +1608,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_prepare_with_syntax) {
   auto pattern = irs::ViewCast<irs::byte_type>(std::string_view("(?:foo)bar"));
   // Perl: non-capturing group parses, prepared query is non-null.
   {
-    auto prepared = irs::ByRegexp::prepare(
+    auto prepared = irs::ByRegexp::Prepare(
       {.index = rdr, .memory = irs::IResourceManager::gNoop}, "term", pattern,
       /*scored_terms_limit=*/1024, irs::RegexpSyntax::Perl);
     ASSERT_NE(nullptr, prepared);
@@ -1618,7 +1618,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_prepare_with_syntax) {
   // match case is anchored end-to-end by
   // by_regexp_syntax_posix_rejects_perl_class above.
   {
-    auto prepared = irs::ByRegexp::prepare(
+    auto prepared = irs::ByRegexp::Prepare(
       {.index = rdr, .memory = irs::IResourceManager::gNoop}, "term", pattern,
       /*scored_terms_limit=*/1024, irs::RegexpSyntax::PosixEre);
     ASSERT_NE(nullptr, prepared);

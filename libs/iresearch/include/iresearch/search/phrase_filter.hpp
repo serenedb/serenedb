@@ -135,8 +135,18 @@ class ByPhrase : public FilterWithField<ByPhraseOptions> {
   static Query::ptr Prepare(const PrepareContext& ctx, std::string_view field,
                             const ByPhraseOptions& options);
 
+  // Construct a PrepareBuffer for a simple phrase (parts are ByTermOptions
+  // only). Caller guarantees !field.empty(), !options.empty(), options.simple()
+  // and that `field` / `options` outlive the returned buffer.
+  static std::unique_ptr<PrepareBuffer> CreateFixedBuffer(
+    const PrepareContext& ctx, std::string_view field,
+    const ByPhraseOptions& options);
+
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final;
+
   Query::ptr prepare(const PrepareContext& ctx) const final {
-    return Prepare(ctx.Boost(Boost()), field(), options());
+    return DefaultPrepare(ctx);
   }
 };
 

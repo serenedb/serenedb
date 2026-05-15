@@ -76,6 +76,8 @@ class FieldCollector {
   // representation as produced by write(...) below.
   virtual void collect(bytes_view in) = 0;
 
+  virtual void collect(FieldCollector&& other) = 0;
+
   // Serialize the internal data representation into 'out'.
   virtual void write(DataOutput& out) const = 0;
 };
@@ -104,6 +106,8 @@ struct TermCollector {
   // Collect term related statistics from a serialized
   // representation as produced by write(...) below.
   virtual void collect(bytes_view in) = 0;
+
+  virtual void collect(TermCollector&& other) = 0;
 
   // Serialize the internal data representation into 'out'.
   virtual void write(DataOutput& out) const = 0;

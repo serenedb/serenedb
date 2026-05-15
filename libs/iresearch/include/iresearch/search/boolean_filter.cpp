@@ -22,6 +22,7 @@
 
 #include "boolean_filter.hpp"
 
+#include "basics/down_cast.h"
 #include "conjunction.hpp"
 #include "disjunction.hpp"
 #include "exclusion.hpp"
@@ -32,6 +33,97 @@
 
 namespace irs {
 namespace {
+
+class CompoundBuffer final : public Filter::PrepareBuffer {
+ public:
+  enum class Shape : uint8_t { And, Or, MinMatch };
+
+  struct ChildEntry {
+    std::unique_ptr<Filter::PrepareBuffer> buffer;
+    PrepareContext compile_ctx;
+  };
+
+  CompoundBuffer(Shape shape, ScoreMergeType merge_type,
+                 PrepareContext boolean_ctx, size_t min_match = 0)
+    : _boolean_ctx{boolean_ctx},
+      _shape{shape},
+      _merge_type{merge_type},
+      _min_match{min_match} {}
+
+  void AddIncl(ChildEntry&& e) {
+    SDB_ASSERT(_excl_begin == _children.size());
+    _children.push_back(std::move(e));
+    ++_excl_begin;
+  }
+
+  void AddExcl(ChildEntry&& e) {
+    SDB_ASSERT(_excl_begin <= _children.size());
+    _children.push_back(std::move(e));
+  }
+
+  void AddOwned(AllDocsProvider::Ptr&& f) { _owned.push_back(std::move(f)); }
+
+  void PrepareSegment(const SubReader& segment) final {
+    for (auto& c : _children) {
+      c.buffer->PrepareSegment(segment);
+    }
+  }
+
+  void Merge(PrepareBuffer&& other) final {
+    auto& rhs = sdb::basics::downCast<CompoundBuffer>(other);
+    SDB_ASSERT(_children.size() == rhs._children.size());
+    for (size_t i = 0; i < _children.size(); ++i) {
+      _children[i].buffer->Merge(std::move(*rhs._children[i].buffer));
+    }
+  }
+
+  // BooleanQuery accepts empty child queries naturally; never short-circuit.
+  bool Empty() const noexcept final { return false; }
+
+  Filter::Query::ptr Compile(const PrepareContext&) && final {
+    BooleanQuery::queries_t queries{{_boolean_ctx.memory}};
+    queries.reserve(_children.size());
+    for (auto& c : _children) {
+      auto buf = std::move(c.buffer);
+      queries.emplace_back(buf->Empty()
+                             ? Filter::Query::empty()
+                             : std::move(*buf).Compile(c.compile_ctx));
+    }
+
+    memory::managed_ptr<BooleanQuery> q;
+    switch (_shape) {
+      case Shape::And:
+        q = memory::make_tracked<AndQuery>(_boolean_ctx.memory);
+        break;
+      case Shape::Or:
+        q = memory::make_tracked<OrQuery>(_boolean_ctx.memory);
+        break;
+      case Shape::MinMatch:
+        q =
+          memory::make_tracked<MinMatchQuery>(_boolean_ctx.memory, _min_match);
+        break;
+    }
+    q->prepare(_boolean_ctx, _merge_type, std::move(queries), _excl_begin);
+    return q;
+  }
+
+ private:
+  PrepareContext _boolean_ctx;
+  Shape _shape;
+  ScoreMergeType _merge_type;
+  size_t _min_match;
+  size_t _excl_begin = 0;
+  std::vector<ChildEntry> _children;
+  std::vector<AllDocsProvider::Ptr> _owned;
+};
+
+CompoundBuffer::ChildEntry MakeChildEntry(const Filter& filter,
+                                          const PrepareContext& parent_ctx) {
+  auto compile_ctx = parent_ctx;
+  compile_ctx.boost *= filter.BoostImpl();
+  auto buf = filter.CreateChildBuffer(parent_ctx);
+  return {std::move(buf), compile_ctx};
+}
 
 std::pair<const Filter*, bool> OptimizeNot(const Not& node) {
   bool neg = true;
@@ -369,6 +461,105 @@ Filter::Query::ptr Not::prepare(const PrepareContext& ctx) const {
 
   // negation has been optimized out
   return res.first->prepare(sub_ctx);
+}
+
+std::unique_ptr<Filter::PrepareBuffer> Not::CreateBuffer(
+  const PrepareContext& ctx) const {
+  const auto res = OptimizeNot(*this);
+  if (!res.first) {
+    return std::make_unique<EmptyBuffer>();
+  }
+
+  PrepareContext bool_ctx = ctx;
+  bool_ctx.boost *= Boost();
+
+  if (!res.second) {
+    return res.first->CreateChildBuffer(bool_ctx);
+  }
+
+  auto compound = std::make_unique<CompoundBuffer>(
+    CompoundBuffer::Shape::And, ScoreMergeType::Sum, bool_ctx);
+
+  auto all_docs = MakeAllDocsFilter(kNoBoost);
+  compound->AddIncl(MakeChildEntry(*all_docs, bool_ctx));
+
+  PrepareContext excl_raw{
+    .index = ctx.index, .memory = ctx.memory, .ctx = ctx.ctx};
+  compound->AddExcl(MakeChildEntry(*res.first, excl_raw));
+
+  compound->AddOwned(std::move(all_docs));
+  return compound;
+}
+
+std::unique_ptr<Filter::PrepareBuffer> BooleanFilter::CreateBuffer(
+  const PrepareContext& ctx) const {
+  const auto size = _filters.size();
+
+  if (size == 0) {
+    return std::make_unique<EmptyBuffer>();
+  }
+
+  const bool is_or = type() == Type<Or>::id();
+  const uint32_t min_match =
+    is_or ? sdb::basics::downCast<Or>(*this).min_match_count()
+          : std::numeric_limits<uint32_t>::max();
+
+  auto fallback = [&]() -> std::unique_ptr<PrepareBuffer> {
+    return std::make_unique<LazyQueryBuffer>(
+      [ctx, this](const PrepareContext&) { return prepare(ctx); });
+  };
+
+  // Single-child collapse / ByTerm coalescing / All-folding / Empty handling
+  // all live inside the existing prepare() path; defer to it.
+  if (size == 1) {
+    return fallback();
+  }
+
+  if (min_match != 0 && absl::c_all_of(*this, [&](const auto& filter) {
+        if (filter->type() != Type<ByTerm>::id()) {
+          return false;
+        }
+        const auto& first = sdb::basics::downCast<ByTerm>(*_filters.front());
+        const auto& term = sdb::basics::downCast<ByTerm>(*filter);
+        return first.field() == term.field();
+      })) {
+    return fallback();
+  }
+
+  auto cumulative_all = MakeAllDocsFilter(kNoBoost);
+  for (const auto& f : *this) {
+    if (f->type() == Type<Not>::id() || f->type() == Type<Empty>::id() ||
+        *f == *cumulative_all) {
+      return fallback();
+    }
+  }
+
+  if (is_or && min_match == 0) {
+    return fallback();
+  }
+
+  PrepareContext bool_ctx = ctx;
+  bool_ctx.boost *= Boost();
+
+  CompoundBuffer::Shape shape;
+  size_t cb_min_match = 0;
+  if (!is_or) {
+    shape = CompoundBuffer::Shape::And;
+  } else if (min_match >= _filters.size()) {
+    shape = CompoundBuffer::Shape::And;
+  } else if (min_match == 1) {
+    shape = CompoundBuffer::Shape::Or;
+  } else {
+    shape = CompoundBuffer::Shape::MinMatch;
+    cb_min_match = min_match;
+  }
+
+  auto compound = std::make_unique<CompoundBuffer>(shape, _merge_type, bool_ctx,
+                                                   cb_min_match);
+  for (const auto& f : *this) {
+    compound->AddIncl(MakeChildEntry(*f, bool_ctx));
+  }
+  return compound;
 }
 
 bool Not::equals(const irs::Filter& rhs) const noexcept {

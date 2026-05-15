@@ -93,14 +93,17 @@ void SetGranularTerm(ByGranularRangeOptions::terms& boundary,
 //////////////////////////////////////////////////////////////////////////////
 class ByGranularRange : public FilterWithField<ByGranularRangeOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
+  static Query::ptr Prepare(const PrepareContext& ctx, std::string_view field,
                             const options_type& options);
 
   static void visit(const SubReader& segment, const TermReader& reader,
                     const options_type& options, FilterVisitor& visitor);
 
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final;
+
   Query::ptr prepare(const PrepareContext& ctx) const final {
-    return prepare(ctx.Boost(Boost()), field(), options());
+    return Prepare(ctx.Boost(Boost()), field(), options());
   }
 };
 

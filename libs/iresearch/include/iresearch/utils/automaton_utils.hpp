@@ -461,4 +461,11 @@ Filter::Query::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
                                           const automaton& acceptor,
                                           size_t scored_terms_limit);
 
+// Buffer factory for automaton-based multi-term filters. Returns nullptr if
+// the supplied automaton is not a valid deterministic, epsilon-free acceptor;
+// callers should treat that as the empty filter.
+std::unique_ptr<Filter::PrepareBuffer> MakeAutomatonBuffer(
+  const PrepareContext& ctx, std::string_view field, automaton&& acceptor,
+  size_t scored_terms_limit);
+
 }  // namespace irs

@@ -22,7 +22,9 @@
 
 #pragma once
 
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter.hpp"
+#include "iresearch/search/ngram_similarity_query.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -48,14 +50,43 @@ struct ByNGramSimilarityOptions {
 
 class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
  public:
+  class Buffer final : public PrepareBuffer {
+   public:
+    Buffer(const PrepareContext& ctx, std::string_view field,
+           const std::vector<bstring>& ngrams, size_t min_match_count)
+      : _field{field},
+        _ngrams{&ngrams},
+        _min_match_count{min_match_count},
+        _memory{&ctx.memory},
+        _field_stats{ctx.scorer},
+        _term_stats{ctx.scorer, ngrams.size()},
+        _states{ctx.memory, ctx.index.size()} {}
+
+    void PrepareSegment(const SubReader& segment) final;
+    void Merge(PrepareBuffer&& other) final;
+    bool Empty() const noexcept final { return _states.empty(); }
+    Query::ptr Compile(const PrepareContext& ctx) && final;
+
+   private:
+    std::string_view _field;
+    const std::vector<bstring>* _ngrams;
+    size_t _min_match_count;
+    IResourceManager* _memory;
+    FieldCollectors _field_stats;
+    TermCollectors _term_stats;
+    NGramStates _states;
+  };
+
   static Query::ptr Prepare(const PrepareContext& ctx,
                             std::string_view field_name,
                             const std::vector<irs::bstring>& ngrams,
                             float_t threshold, bool allow_phrase = true);
 
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final;
+
   Query::ptr prepare(const PrepareContext& ctx) const final {
-    return Prepare(ctx.Boost(Boost()), field(), options().ngrams,
-                   options().threshold, options().allow_phrase);
+    return DefaultPrepare(ctx);
   }
 };
 

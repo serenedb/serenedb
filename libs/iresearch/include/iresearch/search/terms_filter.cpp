@@ -79,22 +79,31 @@ class TermsVisitor {
   Collector& _collector;
 };
 
-template<typename Collector>
-void CollectTerms(const IndexReader& index, std::string_view field,
-                  const ByTermsOptions::search_terms& terms,
-                  Collector& collector) {
-  TermsVisitor<Collector> visitor(collector);
+class Buffer final : public MultiTermQuery::BufferBase {
+ public:
+  Buffer(const PrepareContext& ctx, std::string_view field,
+         const ByTermsOptions& options)
+    : BufferBase{ctx, options.terms.size(), options.merge_type,
+                 options.min_match},
+      _field{field},
+      _terms{&options.terms},
+      _collector{_states, _field_stats, _term_stats},
+      _visitor{_collector} {}
 
-  for (auto& segment : index) {
-    auto* reader = segment.field(field);
-
+  void PrepareSegment(const SubReader& segment) final {
+    auto* reader = segment.field(_field);
     if (!reader) {
-      continue;
+      return;
     }
-
-    VisitImpl(segment, *reader, terms, visitor);
+    VisitImpl(segment, *reader, *_terms, _visitor);
   }
-}
+
+ private:
+  std::string_view _field;
+  const ByTermsOptions::search_terms* _terms;
+  AllTermsCollector<MultiTermQuery::States> _collector;
+  TermsVisitor<AllTermsCollector<MultiTermQuery::States>> _visitor;
+};
 
 }  // namespace
 
@@ -123,34 +132,16 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
     return ByTerm::prepare(sub_ctx, field, term->term);
   }
 
-  FieldCollectors field_stats{ctx.scorer};
-  TermCollectors term_stats{ctx.scorer, size};
-  MultiTermQuery::States states{ctx.memory, ctx.index.size()};
-  AllTermsCollector collector{states, field_stats, term_stats};
-  CollectTerms(ctx.index, field, terms, collector);
-
-  // FIXME(gnusi): Filter out unmatched states during collection
-  if (min_match > 1) {
-    states.erase_if([min = min_match](const auto& state) noexcept {
-      return state.scored_states.size() < min;
-    });
+  Buffer buf{ctx, field, options};
+  for (auto& segment : ctx.index) {
+    buf.PrepareSegment(segment);
   }
+  return std::move(buf).Compile(ctx);
+}
 
-  if (states.empty()) {
-    return Query::empty();
-  }
-
-  MultiTermQuery::Stats stats{{ctx.memory}};
-  stats.resize(size);
-  for (size_t term_idx = 0; auto& stat : stats) {
-    stat.resize(GetStatsSize(ctx.scorer), 0);
-    auto* stats_buf = stat.data();
-    term_stats.finish(stats_buf, term_idx++, field_stats, ctx.index);
-  }
-
-  return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),
-                                              std::move(stats), ctx.boost,
-                                              merge_type, min_match);
+std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(
+  const PrepareContext& ctx) const {
+  return std::make_unique<Buffer>(ctx, field(), options());
 }
 
 Filter::Query::ptr ByTerms::prepare(const PrepareContext& ctx) const {

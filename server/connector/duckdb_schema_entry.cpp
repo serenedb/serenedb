@@ -112,8 +112,8 @@ void ApplyColumnModes(
     return;
   }
   for (auto& name : ExtractColumnList(kIndexOnlyKey, *it->second)) {
-    auto col_it =
-      absl::c_find_if(columns, [&](const auto& c) { return c.GetName() == name; });
+    auto col_it = absl::c_find_if(
+      columns, [&](const auto& c) { return c.GetName() == name; });
     if (col_it == columns.end()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                       ERR_MSG("WITH option \"", kIndexOnlyKey,

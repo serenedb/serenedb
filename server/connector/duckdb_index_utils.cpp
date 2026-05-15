@@ -235,8 +235,8 @@ bool NeedsRowDeleteMarkers(
     }
     bool all_indexonly = true;
     for (auto col_id : index->GetColumnIds()) {
-      auto it =
-        absl::c_find_if(columns, [&](const auto& c) { return c.GetId() == col_id; });
+      auto it = absl::c_find_if(
+        columns, [&](const auto& c) { return c.GetId() == col_id; });
       SDB_ASSERT(it != columns.end(),
                  "inverted index references unknown column id ", col_id);
       if (it->store_mode != catalog::ColumnStoreMode::kIndexOnly) {

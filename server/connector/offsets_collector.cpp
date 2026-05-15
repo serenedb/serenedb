@@ -108,14 +108,6 @@ FieldState* OffsetsCollector::FindFieldState(
   return it == _entries.end() ? nullptr : &it->state;
 }
 
-bool OffsetsCollector::Visit(const irs::BooleanQuery&, irs::score_t) {
-  return true;
-}
-
-bool OffsetsCollector::Visit(const irs::ByNestedQuery&, irs::score_t) {
-  return false;
-}
-
 namespace {
 
 void RecordCookie(FieldState& field, const irs::TermReader* reader,

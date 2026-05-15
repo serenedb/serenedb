@@ -87,8 +87,8 @@ class OffsetsCollector final : public irs::PreparedStateVisitor {
   explicit OffsetsCollector(std::span<FieldEntry> entries) noexcept
     : _entries{entries} {}
 
-  bool Visit(const irs::BooleanQuery&, irs::score_t) final;
-  bool Visit(const irs::ByNestedQuery&, irs::score_t) final;
+  bool Visit(const irs::BooleanQuery&, irs::score_t) final { return true; }
+  bool Visit(const irs::ByNestedQuery&, irs::score_t) final { return false; }
   bool Visit(const irs::TermQuery&, const irs::TermState& state,
              irs::score_t) final;
   bool Visit(const irs::MultiTermQuery&, const irs::MultiTermState& state,

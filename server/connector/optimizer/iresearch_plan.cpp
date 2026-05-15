@@ -1124,10 +1124,10 @@ duckdb::ColumnBinding ExposeGetColumnAt(duckdb::LogicalOperator& root,
   }
   auto* proj = FindProjectionByTableIndex(root, anchor_ti);
   if (!proj) [[unlikely]] {
-    throw duckdb::InternalException(
-      "scan rewrite: anchor binds to table_index %llu with no matching "
-      "LogicalProjection in the plan",
-      static_cast<unsigned long long>(anchor_ti.index));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("scan rewrite: anchor binds to table_index ",
+                            static_cast<unsigned long long>(anchor_ti.index),
+                            " with no matching LogicalProjection in the plan"));
   }
   for (duckdb::idx_t i = 0; i < proj->expressions.size(); ++i) {
     auto& e = *proj->expressions[i];
@@ -1638,8 +1638,9 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
                                    duckdb::LogicalOperator& root) {
   if (func.children[0]->expression_class !=
       duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-    throw duckdb::InvalidInputException(
-      "ts_offsets() first argument must be a column reference");
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_offsets() first argument must be a column reference"));
   }
   const auto& col_ref =
     func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
@@ -1651,14 +1652,17 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
   if (func.children.size() == 2) {
     auto& arg1 = *func.children[1];
     if (arg1.expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
-      throw duckdb::InvalidInputException(
-        "ts_offsets() second argument must be an integer literal");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("ts_offsets() second argument must be an integer literal"));
     }
     const auto raw =
       arg1.Cast<duckdb::BoundConstantExpression>().value.GetValue<int32_t>();
     if (raw < 0) {
-      throw duckdb::InvalidInputException(
-        "ts_offsets() limit must be greater than zero or 0 for no limit");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("ts_offsets() limit must be greater than zero or 0 for no "
+                "limit"));
     }
     limit =
       raw == 0 ? std::numeric_limits<size_t>::max() : static_cast<size_t>(raw);
@@ -1666,30 +1670,35 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
 
   auto found = FindSearchScanByTableIndex(root, resolved.table_index);
   if (!found) {
-    throw duckdb::InvalidInputException(
-      "ts_offsets(%s) requires an inverted index scan in the same sub-query",
-      OffsetsColumnName(resolved, col_ref.alias, nullptr));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_offsets(",
+              OffsetsColumnName(resolved, col_ref.alias, nullptr),
+              ") requires an inverted index scan in the same sub-query"));
   }
 
   const auto col_name = OffsetsColumnName(resolved, col_ref.alias, found->get);
   if (!found->bind_data->IsInvertedIndexEntry()) {
-    throw duckdb::InvalidInputException(
-      "ts_offsets(%s) requires an inverted index scan in the same sub-query",
-      col_name);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_offsets(", col_name,
+              ") requires an inverted index scan in the same sub-query"));
   }
 
   const auto target_col_id =
     ResolveColumnId(resolved, *found->bind_data, *found->get);
   if (target_col_id == std::numeric_limits<catalog::Column::Id>::max()) {
-    throw duckdb::InvalidInputException(
-      "ts_offsets(): column '%s' not found in table", col_name);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_offsets(): column '", col_name, "' not found in table"));
   }
   const auto& idx_col_ids = found->bind_data->inverted_index->GetColumnIds();
   const bool in_index =
     absl::c_find(idx_col_ids, target_col_id) != idx_col_ids.end();
   if (!in_index) {
-    throw duckdb::InvalidInputException(
-      "ts_offsets(): column '%s' not found in index", col_name);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_offsets(): column '", col_name, "' not found in index"));
   }
 
   return ParsedOffsetsCall{.scan = *found,
@@ -1743,10 +1752,10 @@ duckdb::unique_ptr<duckdb::Expression> RewriteOffsetsCall(
       continue;
     }
     if (req.limit != parsed.limit) {
-      throw duckdb::InvalidInputException(
-        "ts_offsets() called multiple times for field '%s' with different "
-        "limits",
-        parsed.col_name);
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("ts_offsets() called multiple times for field '",
+                parsed.col_name, "' with different limits"));
     }
     get_col_idx = req.get_col_idx;
     reused = true;
@@ -1763,11 +1772,6 @@ duckdb::unique_ptr<duckdb::Expression> RewriteOffsetsCall(
   }
   const auto col_name = catalog::Column::MakeOffsetsName(parsed.target_col_id);
   const auto col_type = catalog::Column::MakeOffsetsType();
-  // Anchor for the new column ref is the original ts_offsets argument's
-  // table_index -- the host expression sees columns through whatever
-  // operator that table_index identifies. ExposeGetColumnAt handles
-  // both the direct-on-GET and projection-between cases (injecting a
-  // forwarder in the latter).
   auto& col_ref = func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
   const auto binding =
     ExposeGetColumnAt(root, col_ref.binding.table_index, *parsed.scan.get,
@@ -1778,10 +1782,6 @@ duckdb::unique_ptr<duckdb::Expression> RewriteOffsetsCall(
   return col;
 }
 
-// Walk `expr` recursively: rewrite this node if it's an ts_offsets call,
-// otherwise recurse into children. Mutates in-place. Returns a
-// replacement for THIS node (caller substitutes it into its parent)
-// when the top-level expression is itself an ts_offsets call.
 duckdb::unique_ptr<duckdb::Expression> RewriteOffsetsInExpr(
   duckdb::unique_ptr<duckdb::Expression>& expr, duckdb::LogicalOperator& root,
   bool& changed) {
@@ -1805,11 +1805,6 @@ duckdb::unique_ptr<duckdb::Expression> RewriteOffsetsInExpr(
   return nullptr;
 }
 
-// Walk a LogicalProjection's expressions for bm25/tfidf/offsets calls
-// anchored on a SearchScan. Sets scorer params, then rewrites ts_offsets
-// calls (including those the ts_highlight bind_expression hook
-// synthesized at bind time) into BoundColumnRefExpressions pointing at
-// virtual LIST columns on the scan.
 bool TryAttachScoreOffsets(duckdb::LogicalOperator& root,
                            duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
                            duckdb::ClientContext& /*context*/) {

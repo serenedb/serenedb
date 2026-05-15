@@ -34,8 +34,11 @@ LevenshteinArgs ParseLevenshteinArgs(
   const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_levenshtein('test', 1, true, 'pre'). Distance must be 0-4 "
-    "(0-3 with transpositions). Optional `prefix` matches exactly.";
-  SDB_ASSERT(func.children.size() >= 2 && func.children.size() <= 4);
+    "(0-3 with transpositions). Optional `prefix` matches exactly. "
+    "If distance is omitted (ts_levenshtein('test')), it is picked "
+    "automatically from the term length (0 for <=2 chars, 1 for 3-5, "
+    "2 for >=6).";
+  SDB_ASSERT(func.children.size() >= 1 && func.children.size() <= 4);
   LevenshteinArgs out;
   if (auto r =
         GetVarcharArg(*func.children[0], "ts_levenshtein text", out.text);
@@ -50,6 +53,11 @@ LevenshteinArgs ParseLevenshteinArgs(
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
     }
+  } else {
+    // No explicit distance: pick by term length. Keeps short queries from
+    // matching unrelated tokens that happen to be within 2 edits.
+    const auto n = out.text.size();
+    out.distance = (n <= 2) ? 0 : (n <= 5) ? 1 : 2;
   }
   if (out.distance < 0 || out.distance > 4) {
     THROW_SQL_ERROR(
@@ -105,7 +113,10 @@ void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
                      const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_levenshtein('test', 1, true, 'pre'). Distance must be 0-4 "
-    "(0-3 with transpositions). Optional `prefix` matches exactly.";
+    "(0-3 with transpositions). Optional `prefix` matches exactly. "
+    "If distance is omitted (ts_levenshtein('test')), it is picked "
+    "automatically from the term length (0 for <=2 chars, 1 for 3-5, "
+    "2 for >=6).";
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_levenshtein field is not VARCHAR"),

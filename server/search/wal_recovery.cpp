@@ -253,8 +253,8 @@ void FlushShard(ShardState& s,
     connector::MakeColumnTokenizerProvider(snapshot, *s.index);
   auto expr_tokenizer_provider =
     connector::MakeExpressionTokenizerProvider(snapshot, *s.index);
-  auto indexed_exprs = connector::MakeIndexedExpressions(
-    *s.index, s.indexed_column_ids, &client_context);
+  auto indexed_exprs =
+    connector::MakeIndexedExpressions(*s.index, &client_context);
 
   connector::DuckDBSearchSinkInsertWriter insert_sink{
     trx, std::move(tokenizer_provider), s.index->GetColumnIds(),

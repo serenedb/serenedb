@@ -580,9 +580,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
     MakeColumnTokenizerProvider(gstate.snapshot_for_providers, inverted_index);
   auto expr_tokenizer_provider = MakeExpressionTokenizerProvider(
     gstate.snapshot_for_providers, inverted_index);
-  auto indexed_exprs = MakeIndexedExpressions(
-    inverted_index, gstate.index_for_providers->GetReferencedColumnIds(),
-    &context.client);
+  auto indexed_exprs = MakeIndexedExpressions(inverted_index, &context.client);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx, std::move(tokenizer_provider),
     gstate.index_for_providers->GetColumnIds(),

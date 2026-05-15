@@ -233,28 +233,16 @@ db error: ERROR: No function matches the given name and argument types 'json_ext
 	json_extract(JSON, VARCHAR[]) -> JSON[]
 
 
-# CREATE INDEX itself rejects a JSON-typed (`->`) leaf: the indexed leaf must
-# be TEXT, otherwise we'd index JSON tokens (`{`, `[`) that nobody can
-# meaningfully query. The user has to write `->>` (or json_extract_field_text).
+# `->` (JSON-typed leaf) is accepted as an indexed expression; the sink emits
+# multi-field (text + numeric + bool + null mangles) for any JSON-typed
+# expression, so primitive leaves of every type at that path stay queryable
+# through the natural cast (see prim_types below). Compound (object/array)
+# leaves are rejected at insert time -- they have no meaningful term form.
 
 statement ok
 CREATE TABLE bad_index (id INTEGER PRIMARY KEY, content JSON);
 
-statement error
-CREATE INDEX bad_index_idx ON bad_index USING inverted(id, (content->'host') verbatim_dict);
-----
-db error: ERROR: Only json text extractor expression are supported
-
-
-# Same rejection in a chain whose OUTERMOST step is `->`: even though deeper
-# steps could be `->>`, the leaf type at the top is what matters.
-statement error
-CREATE INDEX bad_index_idx ON bad_index USING inverted(id, (content->'a'->'b') verbatim_dict);
-----
-db error: ERROR: Only json text extractor expression are supported
-
-
-# Mixed chain ending in ->> is accepted: the OUTERMOST step yields TEXT.
+# Mixed chain ending in ->> (VARCHAR leaf) is accepted.
 statement ok
 CREATE INDEX bad_index_idx ON bad_index USING inverted(id, (content->'a'->>'b') verbatim_dict);
 
@@ -269,7 +257,7 @@ statement ok
 CREATE TABLE prim_types (id INTEGER PRIMARY KEY, content JSON);
 
 statement ok
-CREATE INDEX prim_types_idx ON prim_types USING inverted(id, (content->>'val') verbatim_dict);
+CREATE INDEX prim_types_idx ON prim_types USING inverted(id, (content->'val') verbatim_dict);
 
 # Every primitive leaf type is accepted at insert time:
 statement ok
@@ -334,36 +322,37 @@ id
 statement ok
 VACUUM (UPDATE_INDEXES) prim_types;
 
-# String leaf is searchable through TERM_EQ on the ->> form (string mangle).
+# String leaf is searchable through TERM_EQ via the ->> form.
 query
 SELECT id FROM prim_types_idx WHERE content->>'val' = 'hello';
 ----
 id
 1
 
-# Each leaf type is queryable via the predicate's natural type. The filter
-# builder peels the user's CAST around the JSON path, picks the matching
-# mangle byte, and looks up the correct pre-emitted field on the index.
-# Numeric casts are normalised to DOUBLE because all JSON numbers are
-# written through NumericTokenizer.reset(double) in the sink.
+# Each non-string leaf type is queryable via the predicate's natural type
+# applied to the (JSON-typed) indexed expression. The filter builder peels
+# the user's CAST around the path, picks the matching mangle byte, and looks
+# up the correct pre-emitted field on the index. Numeric casts are
+# normalised to DOUBLE because all JSON numbers are written through
+# NumericTokenizer.reset(double) in the sink.
 
 # Integer-valued leaf via ::int cast.
 query
-SELECT id FROM prim_types_idx WHERE (content->>'val')::int = 42;
+SELECT id FROM prim_types_idx WHERE (content->'val')::int = 42;
 ----
 id
 2
 
 # Float-valued leaf via ::double cast.
 query
-SELECT id FROM prim_types_idx WHERE (content->>'val')::double = 3.14;
+SELECT id FROM prim_types_idx WHERE (content->'val')::double = 3.14;
 ----
 id
 3
 
 # Numeric range -- granular range filter on the numeric mangle.
 query
-SELECT id FROM prim_types_idx WHERE (content->>'val')::double > 2 ORDER BY id;
+SELECT id FROM prim_types_idx WHERE (content->'val')::double > 2 ORDER BY id;
 ----
 id
 2
@@ -371,13 +360,13 @@ id
 
 # Boolean true / false leaves via ::bool cast.
 query
-SELECT id FROM prim_types_idx WHERE (content->>'val')::bool = true;
+SELECT id FROM prim_types_idx WHERE (content->'val')::bool = true;
 ----
 id
 4
 
 query
-SELECT id FROM prim_types_idx WHERE (content->>'val')::bool = false;
+SELECT id FROM prim_types_idx WHERE (content->'val')::bool = false;
 ----
 id
 5
@@ -434,7 +423,7 @@ CREATE TABLE mixed_tok (id INTEGER PRIMARY KEY, content JSON);
 
 statement ok
 CREATE INDEX mixed_tok_idx ON mixed_tok USING inverted(
-    id, (content->>'val') verbatim_dict);
+    id, (content->'val') verbatim_dict);
 
 statement ok
 INSERT INTO mixed_tok VALUES
@@ -457,14 +446,14 @@ id
 # Numeric tokenizer side: integer cast routes to the numeric-mangled field
 # without ever evaluating the cast on string-leaf rows.
 query
-SELECT id FROM mixed_tok_idx WHERE (content->>'val')::int = 42;
+SELECT id FROM mixed_tok_idx WHERE (content->'val')::int = 42;
 ----
 id
 2
 
 # Range filter on the numeric side.
 query
-SELECT id FROM mixed_tok_idx WHERE (content->>'val')::double > 10 ORDER BY id;
+SELECT id FROM mixed_tok_idx WHERE (content->'val')::double > 10 ORDER BY id;
 ----
 id
 2
@@ -641,22 +630,3 @@ SELECT id FROM dml_idx WHERE content->>'host' = 'gamma';
 ----
 id
 1
-
-
-# CREATE INDEX rejects expressions that aren't a JSON-extract chain bottoming
-# out at a column ref. Exercises the IndexBinder + TryLiftJsonPath path.
-statement ok
-CREATE TABLE bad_expr (id INTEGER PRIMARY KEY, content JSON, other VARCHAR);
-
-# Non-constant key: the `->>` key is a column ref, not a constant.
-statement error
-CREATE INDEX bad_expr_a ON bad_expr USING inverted(id, (content->>other) verbatim_dict);
-----
-db error: ERROR: Only json text extractor expression are supported
-
-
-# Wrapping function: outermost is LOWER, not a JSON-extract.
-statement error
-CREATE INDEX bad_expr_b ON bad_expr USING inverted(id, (LOWER(content->>'a')) verbatim_dict);
-----
-db error: ERROR: Only json text extractor expression are supported

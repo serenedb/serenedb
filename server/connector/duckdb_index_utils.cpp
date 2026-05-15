@@ -179,9 +179,8 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
         MakeColumnTokenizerProvider(snapshot, inverted_index);
       auto expr_tokenizer_provider =
         MakeExpressionTokenizerProvider(snapshot, inverted_index);
-      auto indexed_exprs = MakeIndexedExpressions(
-        inverted_index, index.GetReferencedColumnIds(),
-        &conn_ctx.GetClientContext());
+      auto indexed_exprs =
+        MakeIndexedExpressions(inverted_index, &conn_ctx.GetClientContext());
 
       writers.push_back(
         MakeDuckDBSearchWriter(Kind, index_txn, std::move(tokenizer_provider),
@@ -298,8 +297,8 @@ void EvaluateAndWriteIndexedExpressions(
       EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk, table_id,
                             slot_to_col_id, client_context);
 
-    const ExpressionDescriptor expr_desc{
-      result.GetType(), /*have_nulls=*/true, indexed_expr.serialized};
+    const ExpressionDescriptor expr_desc{result.GetType(), /*have_nulls=*/true,
+                                         indexed_expr.serialized};
     const bool switched = sink.SwitchExpression(expr_desc);
     SDB_ASSERT(switched, "Cannot switch to indexed expression");
 

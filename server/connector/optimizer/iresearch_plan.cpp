@@ -605,7 +605,8 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   InitSearchColumnContextForGet(sctx, proj_ids_storage, get, bind_data,
                                 *resolved, snapshot, options.client_context);
   auto getter = MakeColumnGetter(sctx);
-  auto expr_getter = MakeExpressionGetter(sctx, resolved->index->GetRelationId());
+  auto expr_getter =
+    MakeExpressionGetter(sctx, resolved->index->GetRelationId());
 
   auto proxy = std::make_unique<irs::ProxyFilter>();
   auto [and_root, cache] =
@@ -832,7 +833,8 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   InitSearchColumnContextForGet(sctx, proj_ids_storage, get, bind_data,
                                 *resolved, snapshot, options.client_context);
   auto getter = MakeColumnGetter(sctx);
-  auto expr_getter = MakeExpressionGetter(sctx, resolved->index->GetRelationId());
+  auto expr_getter =
+    MakeExpressionGetter(sctx, resolved->index->GetRelationId());
 
   auto proxy = std::make_unique<irs::ProxyFilter>();
   auto [and_root, cache] =
@@ -927,7 +929,8 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   InitSearchColumnContextForGet(ctx, projected_ids, get, bind_data, *resolved,
                                 snapshot, options.client_context);
   auto getter = MakeColumnGetter(ctx);
-  auto expr_getter = MakeExpressionGetter(ctx, resolved->index->GetRelationId());
+  auto expr_getter =
+    MakeExpressionGetter(ctx, resolved->index->GetRelationId());
 
   // Try each expression individually -- non-iresearch predicates stay on the
   // LogicalFilter.

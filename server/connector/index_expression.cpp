@@ -24,8 +24,6 @@
 #include <absl/strings/str_cat.h>
 #include <simdjson.h>
 
-#include "basics/containers/flat_hash_set.h"
-
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
@@ -44,6 +42,8 @@
 #include <duckdb/planner/expression_iterator.hpp>
 #include <utility>
 #include <vector>
+
+#include "basics/containers/flat_hash_set.h"
 
 namespace sdb::connector {
 namespace {
@@ -258,8 +258,7 @@ std::vector<catalog::Column::Id> CollectDependentColumns(
       }
     }
     duckdb::ExpressionIterator::EnumerateChildren(
-      node,
-      [&](const duckdb::Expression& child) { self(self, child); });
+      node, [&](const duckdb::Expression& child) { self(self, child); });
   };
   visit(visit, expr);
   return ordered;

@@ -20,15 +20,12 @@
 
 #pragma once
 
-#include <absl/algorithm/container.h>
-
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <span>
 #include <string>
 #include <vector>
 
-#include "basics/containers/flat_hash_set.h"
 #include "catalog/inverted_index.h"
 #include "catalog/search_analyzer_impl.h"
 #include "connector/index_expression.hpp"
@@ -66,29 +63,16 @@ inline ExpressionTokenizerProvider MakeExpressionTokenizerProvider(
 }
 
 inline std::vector<IndexedExpression> MakeIndexedExpressions(
-  const catalog::InvertedIndex& index,
-  std::span<const catalog::Column::Id> columns,
-  duckdb::ClientContext* client_context) {
+  const catalog::InvertedIndex& index, duckdb::ClientContext* client_context) {
   std::vector<IndexedExpression> entries;
   if (!client_context) {
     return entries;
   }
-  containers::FlatHashSet<catalog::Column::Id> column_set(columns.begin(),
-                                                          columns.end());
   for (const auto& expr_info : index.GetExpressions()) {
     SDB_ASSERT(!expr_info.serialized_expr.empty(),
                "Any expr should be serialized in non-empty string");
     SDB_ASSERT(!expr_info.dependent_columns.empty(),
                "expression must declare at least one dependent column");
-    const bool any_indexed =
-      absl::c_any_of(expr_info.dependent_columns,
-                     [&](catalog::Column::Id id) {
-                       return column_set.contains(id);
-                     });
-                     // TODO(mkornaukhov) maybe throw error?
-    if (!any_indexed) {
-      continue;
-    }
     auto bound =
       DeserializeBoundExpression(expr_info.serialized_expr, *client_context);
     entries.push_back({std::move(bound), expr_info.serialized_expr,

@@ -36,7 +36,6 @@ struct ColumnDescriptor {
 };
 
 struct ExpressionDescriptor {
-  catalog::Column::Id column_id;
   duckdb::LogicalType type;
   bool have_nulls;
   std::string_view serialized_expr;

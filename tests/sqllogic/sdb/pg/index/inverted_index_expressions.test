@@ -1,0 +1,839 @@
+# Inverted index over scalar expressions (non-JSON). Covers 1, 2 and 3
+# base columns with varchar, boolean and numeric return types.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY verbatim_dict(template = 'keyword');
+
+
+# --- 1 column, numeric return ----------------------------------------------
+
+statement ok
+CREATE TABLE num1(id INTEGER PRIMARY KEY, a INTEGER);
+
+statement ok
+CREATE INDEX num1_idx ON num1 USING inverted(id, (a + 1) verbatim_dict);
+
+statement ok
+INSERT INTO num1 VALUES (1, 10), (2, 41), (3, -5);
+
+statement ok
+VACUUM (UPDATE_INDEXES) num1;
+
+query
+SELECT id FROM num1_idx WHERE a + 1 = 42;
+----
+id
+2
+
+query
+SELECT id FROM num1_idx WHERE a + 1 > 0 ORDER BY id;
+----
+id
+1
+2
+
+
+# --- 1 column, varchar return ----------------------------------------------
+
+statement ok
+CREATE TABLE vc1(id INTEGER PRIMARY KEY, s VARCHAR);
+
+statement ok
+CREATE INDEX vc1_idx ON vc1 USING inverted(id, (LOWER(s)) verbatim_dict);
+
+statement ok
+INSERT INTO vc1 VALUES (1, 'HELLO'), (2, 'World'), (3, 'mixed');
+
+statement ok
+VACUUM (UPDATE_INDEXES) vc1;
+
+query
+SELECT id FROM vc1_idx WHERE LOWER(s) = 'hello';
+----
+id
+1
+
+query
+SELECT id FROM vc1_idx WHERE LOWER(s) = 'world';
+----
+id
+2
+
+query
+SELECT id FROM vc1_idx WHERE LOWER(s) = 'mixed';
+----
+id
+3
+
+
+# --- 1 column, boolean return ----------------------------------------------
+
+statement ok
+CREATE TABLE b1(id INTEGER PRIMARY KEY, x INTEGER);
+
+statement ok
+CREATE INDEX b1_idx ON b1 USING inverted(id, (x > 0) verbatim_dict);
+
+statement ok
+INSERT INTO b1 VALUES (1, 5), (2, -3), (3, 0), (4, 7);
+
+statement ok
+VACUUM (UPDATE_INDEXES) b1;
+
+query
+SELECT id FROM b1_idx WHERE (x > 0) = true ORDER BY id;
+----
+id
+1
+4
+
+query
+SELECT id FROM b1_idx WHERE (x > 0) = false ORDER BY id;
+----
+id
+2
+3
+
+
+# --- 2 columns, numeric return ---------------------------------------------
+
+statement ok
+CREATE TABLE num2(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX num2_idx ON num2 USING inverted(id, (a + b) verbatim_dict);
+
+statement ok
+INSERT INTO num2 VALUES (1, 10, 20), (2, 5, 5), (3, 7, 13);
+
+statement ok
+VACUUM (UPDATE_INDEXES) num2;
+
+query
+SELECT id FROM num2_idx WHERE a + b = 30;
+----
+id
+1
+
+query
+SELECT id FROM num2_idx WHERE a + b > 15 ORDER BY id;
+----
+id
+1
+3
+
+
+# --- 2 columns, varchar return ---------------------------------------------
+
+statement ok
+CREATE TABLE vc2(id INTEGER PRIMARY KEY, s1 VARCHAR, s2 VARCHAR);
+
+statement ok
+CREATE INDEX vc2_idx ON vc2 USING inverted(id, (s1 || s2) verbatim_dict);
+
+statement ok
+INSERT INTO vc2 VALUES (1, 'foo', 'bar'), (2, 'hello', 'world'), (3, 'a', 'b');
+
+statement ok
+VACUUM (UPDATE_INDEXES) vc2;
+
+query
+SELECT id FROM vc2_idx WHERE s1 || s2 = 'foobar';
+----
+id
+1
+
+query
+SELECT id FROM vc2_idx WHERE s1 || s2 = 'helloworld';
+----
+id
+2
+
+
+# --- 2 columns, boolean return ---------------------------------------------
+
+statement ok
+CREATE TABLE b2(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX b2_idx ON b2 USING inverted(id, (a > b) verbatim_dict);
+
+statement ok
+INSERT INTO b2 VALUES (1, 10, 5), (2, 3, 7), (3, 4, 4);
+
+statement ok
+VACUUM (UPDATE_INDEXES) b2;
+
+query
+SELECT id FROM b2_idx WHERE (a > b) = true ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM b2_idx WHERE (a > b) = false ORDER BY id;
+----
+id
+2
+3
+
+
+# --- 3 columns, numeric return ---------------------------------------------
+
+statement ok
+CREATE TABLE num3(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, c INTEGER);
+
+statement ok
+CREATE INDEX num3_idx ON num3 USING inverted(id, (a + b + c) verbatim_dict);
+
+statement ok
+INSERT INTO num3 VALUES (1, 1, 2, 3), (2, 10, 20, 30), (3, 0, 0, 0);
+
+statement ok
+VACUUM (UPDATE_INDEXES) num3;
+
+query
+SELECT id FROM num3_idx WHERE a + b + c = 6;
+----
+id
+1
+
+query
+SELECT id FROM num3_idx WHERE a + b + c > 10 ORDER BY id;
+----
+id
+2
+
+
+# --- 3 columns, varchar return ---------------------------------------------
+
+statement ok
+CREATE TABLE vc3(id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR, c VARCHAR);
+
+statement ok
+CREATE INDEX vc3_idx ON vc3 USING inverted(id, (CONCAT(a, '-', b, '-', c)) verbatim_dict);
+
+statement ok
+INSERT INTO vc3 VALUES (1, 'x', 'y', 'z'), (2, 'foo', 'bar', 'baz');
+
+statement ok
+VACUUM (UPDATE_INDEXES) vc3;
+
+query
+SELECT id FROM vc3_idx WHERE CONCAT(a, '-', b, '-', c) = 'x-y-z';
+----
+id
+1
+
+query
+SELECT id FROM vc3_idx WHERE CONCAT(a, '-', b, '-', c) = 'foo-bar-baz';
+----
+id
+2
+
+
+# --- 3 columns, boolean return ---------------------------------------------
+
+statement ok
+CREATE TABLE b3(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, c INTEGER);
+
+statement ok
+CREATE INDEX b3_idx ON b3 USING inverted(id, (a + b > c) verbatim_dict);
+
+statement ok
+INSERT INTO b3 VALUES (1, 1, 2, 10), (2, 10, 20, 5), (3, 4, 4, 8);
+
+statement ok
+VACUUM (UPDATE_INDEXES) b3;
+
+query
+SELECT id FROM b3_idx WHERE (a + b > c) = true ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM b3_idx WHERE (a + b > c) = false ORDER BY id;
+----
+id
+1
+3
+
+
+# --- Same column indexed both directly and as an expression dependent -----
+
+statement ok
+CREATE TABLE mix(id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement ok
+CREATE INDEX mix_idx ON mix USING inverted(
+    id, a verbatim_dict, b verbatim_dict, (a || b) verbatim_dict);
+
+statement ok
+INSERT INTO mix VALUES
+    (1, 'foo', 'bar'), (2, 'hello', 'world'), (3, 'foo', 'baz');
+
+statement ok
+VACUUM (UPDATE_INDEXES) mix;
+
+query
+SELECT id FROM mix_idx WHERE a = 'foo' ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM mix_idx WHERE b = 'bar';
+----
+id
+1
+
+query
+SELECT id FROM mix_idx WHERE a || b = 'foobar';
+----
+id
+1
+
+query
+SELECT id FROM mix_idx WHERE a || b = 'helloworld';
+----
+id
+2
+
+query
+SELECT id FROM mix_idx WHERE a = 'foo' AND a || b = 'foobaz';
+----
+id
+3
+
+
+# --- DML re-indexes the expression -----------------------------------------
+
+statement ok
+CREATE TABLE dml(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX dml_idx ON dml USING inverted(id, (a + b) verbatim_dict);
+
+statement ok
+INSERT INTO dml VALUES (1, 10, 20), (2, 1, 1);
+
+statement ok
+VACUUM (UPDATE_INDEXES) dml;
+
+statement ok
+UPDATE dml SET a = 100 WHERE id = 1;
+
+statement ok
+VACUUM (UPDATE_INDEXES) dml;
+
+query
+SELECT id FROM dml_idx WHERE a + b = 30;
+----
+id
+
+query
+SELECT id FROM dml_idx WHERE a + b = 120;
+----
+id
+1
+
+statement ok
+DELETE FROM dml WHERE id = 2;
+
+statement ok
+VACUUM (UPDATE_INDEXES) dml;
+
+query
+SELECT id FROM dml_idx ORDER BY id;
+----
+id
+1
+
+
+# --- NULL handling: NULL inputs produce a NULL expression value ------------
+
+statement ok
+CREATE TABLE n1(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX n1_idx ON n1 USING inverted(id, (a + b) verbatim_dict);
+
+statement ok
+INSERT INTO n1 VALUES (1, 1, 2), (2, NULL, 5), (3, 7, NULL);
+
+statement ok
+VACUUM (UPDATE_INDEXES) n1;
+
+query
+SELECT id FROM n1_idx WHERE a + b IS NULL ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id FROM n1_idx WHERE a + b = 3;
+----
+id
+1
+
+
+# --- Other expression shapes ----------------------------------------------
+
+# Column referenced multiple times in the same expression.
+statement ok
+CREATE TABLE poly(id INTEGER PRIMARY KEY, a INTEGER);
+
+statement ok
+CREATE INDEX poly_idx ON poly USING inverted(id, (a * a + a) verbatim_dict);
+
+statement ok
+INSERT INTO poly VALUES (1, 3), (2, 0), (3, 5);
+
+statement ok
+VACUUM (UPDATE_INDEXES) poly;
+
+query
+SELECT id FROM poly_idx WHERE a * a + a = 12;
+----
+id
+1
+
+query
+SELECT id FROM poly_idx WHERE a * a + a = 0;
+----
+id
+2
+
+query
+SELECT id FROM poly_idx WHERE a * a + a = 30;
+----
+id
+3
+
+
+# CASE expression producing varchar.
+statement ok
+CREATE TABLE sgn(id INTEGER PRIMARY KEY, a INTEGER);
+
+statement ok
+CREATE INDEX sgn_idx ON sgn USING inverted(
+    id,
+    (CASE WHEN a > 0 THEN 'pos' WHEN a < 0 THEN 'neg' ELSE 'zero' END)
+    verbatim_dict);
+
+statement ok
+INSERT INTO sgn VALUES (1, 5), (2, -3), (3, 0), (4, 7);
+
+statement ok
+VACUUM (UPDATE_INDEXES) sgn;
+
+query
+SELECT id FROM sgn_idx
+WHERE CASE WHEN a > 0 THEN 'pos' WHEN a < 0 THEN 'neg' ELSE 'zero' END = 'pos'
+ORDER BY id;
+----
+id
+1
+4
+
+query
+SELECT id FROM sgn_idx
+WHERE CASE WHEN a > 0 THEN 'pos' WHEN a < 0 THEN 'neg' ELSE 'zero' END = 'neg';
+----
+id
+2
+
+query
+SELECT id FROM sgn_idx
+WHERE CASE WHEN a > 0 THEN 'pos' WHEN a < 0 THEN 'neg' ELSE 'zero' END = 'zero';
+----
+id
+3
+
+
+# --- More DML scenarios ---------------------------------------------------
+
+# Multi-row UPDATE that re-indexes every row.
+statement ok
+CREATE TABLE mu1(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX mu1_idx ON mu1 USING inverted(id, (a + b) verbatim_dict);
+
+statement ok
+INSERT INTO mu1 VALUES (1, 10, 20), (2, 5, 25);
+
+statement ok
+VACUUM (UPDATE_INDEXES) mu1;
+
+statement ok
+UPDATE mu1 SET b = 100;
+
+statement ok
+VACUUM (UPDATE_INDEXES) mu1;
+
+query
+SELECT id FROM mu1_idx WHERE a + b = 110;
+----
+id
+1
+
+query
+SELECT id FROM mu1_idx WHERE a + b = 105;
+----
+id
+2
+
+
+# UPDATE that does NOT touch any indexed column or dep column must leave the
+# index untouched -- a row remains queryable by its (old) expression value.
+statement ok
+CREATE TABLE mu2(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, extra VARCHAR);
+
+statement ok
+CREATE INDEX mu2_idx ON mu2 USING inverted(id, (a + b) verbatim_dict);
+
+statement ok
+INSERT INTO mu2 VALUES (1, 10, 20, 'x'), (2, 5, 5, 'y');
+
+statement ok
+VACUUM (UPDATE_INDEXES) mu2;
+
+statement ok
+UPDATE mu2 SET extra = 'z' WHERE id = 1;
+
+statement ok
+VACUUM (UPDATE_INDEXES) mu2;
+
+query
+SELECT id FROM mu2_idx WHERE a + b = 30;
+----
+id
+1
+
+query
+SELECT id FROM mu2_idx WHERE a + b = 10;
+----
+id
+2
+
+
+# UPDATE of a column that is BOTH directly indexed AND a dep of an expression
+# must re-index both the direct field and the expression value for that row.
+statement ok
+CREATE TABLE mu3(id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement ok
+CREATE INDEX mu3_idx ON mu3
+USING inverted(id, a verbatim_dict, b verbatim_dict, (a || b) verbatim_dict);
+
+statement ok
+INSERT INTO mu3 VALUES (1, 'foo', 'bar'), (2, 'hello', 'world');
+
+statement ok
+VACUUM (UPDATE_INDEXES) mu3;
+
+statement ok
+UPDATE mu3 SET a = 'baz' WHERE id = 1;
+
+statement ok
+VACUUM (UPDATE_INDEXES) mu3;
+
+query
+SELECT id FROM mu3_idx WHERE a = 'foo';
+----
+id
+
+query
+SELECT id FROM mu3_idx WHERE a = 'baz';
+----
+id
+1
+
+query
+SELECT id FROM mu3_idx WHERE a || b = 'foobar';
+----
+id
+
+query
+SELECT id FROM mu3_idx WHERE a || b = 'bazbar';
+----
+id
+1
+
+
+# Multi-row DELETE.
+statement ok
+CREATE TABLE md(id INTEGER PRIMARY KEY, a INTEGER);
+
+statement ok
+CREATE INDEX md_idx ON md USING inverted(id, (a + 1) verbatim_dict);
+
+statement ok
+INSERT INTO md VALUES (1, 10), (2, 41), (3, -5), (4, 100);
+
+statement ok
+VACUUM (UPDATE_INDEXES) md;
+
+statement ok
+DELETE FROM md WHERE a > 10;
+
+statement ok
+VACUUM (UPDATE_INDEXES) md;
+
+query
+SELECT id FROM md_idx ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM md_idx WHERE a + 1 = 42;
+----
+id
+
+query
+SELECT id FROM md_idx WHERE a + 1 = 11;
+----
+id
+1
+
+
+# DELETE of every row leaves the index empty.
+statement ok
+CREATE TABLE md2(id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement ok
+CREATE INDEX md2_idx ON md2 USING inverted(
+    id, a verbatim_dict, (a || b) verbatim_dict);
+
+statement ok
+INSERT INTO md2 VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
+
+statement ok
+VACUUM (UPDATE_INDEXES) md2;
+
+statement ok
+DELETE FROM md2;
+
+statement ok
+VACUUM (UPDATE_INDEXES) md2;
+
+query
+SELECT id FROM md2_idx;
+----
+id
+
+query
+SELECT id FROM md2_idx WHERE a = 'foo';
+----
+id
+
+query
+SELECT id FROM md2_idx WHERE a || b = 'foobar';
+----
+id
+
+
+# --- CREATE INDEX rejects invalid expressions ------------------------------
+
+statement ok
+CREATE TABLE bad(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+# Expression references a column that does not exist on the table.
+statement error
+CREATE INDEX bad_missing ON bad USING inverted(id, (nonexistent + 1) verbatim_dict);
+----
+db error: ERROR: Referenced column "nonexistent" not found in FROM clause!
+Candidate bindings: "a"
+
+
+# Expression has no base-table column references at all (constant fold).
+statement error
+CREATE INDEX bad_const ON bad USING inverted(id, (1 + 1) verbatim_dict);
+----
+db error: ERROR: indexed expression must reference at least one base table column
+
+
+# Expression contains a subquery.
+statement error
+CREATE INDEX bad_subq ON bad USING inverted(id, ((SELECT 1)) verbatim_dict);
+----
+db error: ERROR: cannot use subquery in index expressions
+
+
+# Expression contains an aggregate.
+statement error
+CREATE INDEX bad_agg ON bad USING inverted(id, (sum(a)) verbatim_dict);
+----
+db error: ERROR: aggregate functions are not allowed in index expressions
+
+
+# Expression contains a volatile (side-effect) function.
+statement error
+CREATE INDEX bad_volatile ON bad USING inverted(id, (random()) verbatim_dict);
+----
+db error: ERROR: Index keys cannot contain expressions with side effects.
+
+
+# --- @@ on indexed expressions (forces filter pushdown) -------------------
+
+# Varchar expression: ts_like / ts_phrase / ts_any / TERM_EQ via `=`.
+statement ok
+CREATE TABLE tx_v(id INTEGER PRIMARY KEY, s1 VARCHAR, s2 VARCHAR);
+
+statement ok
+CREATE INDEX tx_v_idx ON tx_v USING inverted(id, (s1 || s2) verbatim_dict);
+
+statement ok
+INSERT INTO tx_v VALUES
+    (1, 'foo', 'bar'),
+    (2, 'hello', 'world'),
+    (3, 'foo', 'baz');
+
+statement ok
+VACUUM (UPDATE_INDEXES) tx_v;
+
+# TERM_EQ
+query
+SELECT id FROM tx_v_idx WHERE (s1 || s2) @@ 'foobar'::tsquery;
+----
+id
+1
+
+# ts_like with wildcard
+query
+SELECT id FROM tx_v_idx WHERE (s1 || s2) @@ ts_like('foo%') ORDER BY id;
+----
+id
+1
+3
+
+# ts_any
+query
+SELECT id FROM tx_v_idx WHERE (s1 || s2) @@ ts_any(['foobar', 'helloworld']) ORDER BY id;
+----
+id
+1
+2
+
+
+# Same expression with `=` (TERM_EQ) — also pushes down.
+query
+SELECT id FROM tx_v_idx WHERE s1 || s2 = 'helloworld';
+----
+id
+2
+
+
+# Numeric expression: TERM_EQ and range.
+statement ok
+CREATE TABLE tx_n(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX tx_n_idx ON tx_n USING inverted(id, (a + b) verbatim_dict);
+
+statement ok
+INSERT INTO tx_n VALUES (1, 10, 20), (2, 5, 5), (3, 7, 13), (4, 50, 50);
+
+statement ok
+VACUUM (UPDATE_INDEXES) tx_n;
+
+# TERM_EQ
+query
+SELECT id FROM tx_n_idx WHERE a + b = 30;
+----
+id
+1
+
+# Range >
+query
+SELECT id FROM tx_n_idx WHERE a + b > 15 ORDER BY id;
+----
+id
+1
+3
+4
+
+# Range >= ... AND <=
+query
+SELECT id FROM tx_n_idx WHERE a + b >= 10 AND a + b <= 30 ORDER BY id;
+----
+id
+1
+2
+3
+
+
+# Boolean expression: TERM_EQ on true/false.
+statement ok
+CREATE TABLE tx_b(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX tx_b_idx ON tx_b USING inverted(id, (a > b) verbatim_dict);
+
+statement ok
+INSERT INTO tx_b VALUES (1, 10, 5), (2, 3, 7), (3, 4, 4);
+
+statement ok
+VACUUM (UPDATE_INDEXES) tx_b;
+
+query
+SELECT id FROM tx_b_idx WHERE (a > b) = true;
+----
+id
+1
+
+query
+SELECT id FROM tx_b_idx WHERE (a > b) = false ORDER BY id;
+----
+id
+2
+3
+
+
+# Mixed: direct column `a` and expression `(a||b)` both indexed. `@@` can
+# target either side and pushes down independently.
+statement ok
+CREATE TABLE tx_mix(id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement ok
+CREATE INDEX tx_mix_idx ON tx_mix USING inverted(
+    id, a verbatim_dict, b verbatim_dict, (a || b) verbatim_dict);
+
+statement ok
+INSERT INTO tx_mix VALUES
+    (1, 'foo', 'bar'),
+    (2, 'hello', 'world'),
+    (3, 'foo', 'baz');
+
+statement ok
+VACUUM (UPDATE_INDEXES) tx_mix;
+
+# Direct-column @@.
+query
+SELECT id FROM tx_mix_idx WHERE a @@ ts_like('foo') ORDER BY id;
+----
+id
+1
+3
+
+# Expression @@ — different rows.
+query
+SELECT id FROM tx_mix_idx WHERE (a || b) @@ ts_like('foob%') ORDER BY id;
+----
+id
+1
+3
+
+# Conjunction of direct and expression pushdowns.
+query
+SELECT id FROM tx_mix_idx
+WHERE a @@ ts_like('foo') AND (a || b) @@ ts_like('foobaz');
+----
+id
+3

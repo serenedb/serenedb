@@ -180,7 +180,8 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
       auto expr_tokenizer_provider =
         MakeExpressionTokenizerProvider(snapshot, inverted_index);
       auto indexed_exprs = MakeIndexedExpressions(
-        inverted_index, index.GetColumnIds(), &conn_ctx.GetClientContext());
+        inverted_index, index.GetReferencedColumnIds(),
+        &conn_ctx.GetClientContext());
 
       writers.push_back(
         MakeDuckDBSearchWriter(Kind, index_txn, std::move(tokenizer_provider),
@@ -240,7 +241,7 @@ bool NeedsRowDeleteMarkers(
       continue;
     }
     bool all_indexonly = true;
-    for (auto col_id : index->GetColumnIds()) {
+    for (auto col_id : index->GetReferencedColumnIds()) {
       auto it =
         absl::c_find_if(columns, [&](const auto& c) { return c.id == col_id; });
       SDB_ASSERT(it != columns.end(),
@@ -298,14 +299,9 @@ void EvaluateAndWriteIndexedExpressions(
                             slot_to_col_id, client_context);
 
     const ExpressionDescriptor expr_desc{
-      indexed_expr.column_id, result.GetType(),
-      /*have_nulls=*/true, indexed_expr.serialized};
+      result.GetType(), /*have_nulls=*/true, indexed_expr.serialized};
     const bool switched = sink.SwitchExpression(expr_desc);
     SDB_ASSERT(switched, "Cannot switch to indexed expression");
-
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      key_utils::SetupColumnForKey(row_keys[row], indexed_expr.column_id);
-    }
 
     DuckDBSinkIndexWriter* writer_ptr = &sink;
     serializer.WriteVector<DuckDBColumnSerializer::TxnWriter>(

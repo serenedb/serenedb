@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/common/types.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <optional>
@@ -45,6 +46,7 @@ struct HNSWColumnConfig {
 struct ExpressionInfo {
   std::string serialized_expr;
   std::vector<Column::Id> dependent_columns;
+  duckdb::LogicalType return_type;
   ObjectId text_dictionary = ObjectId::none();
   search::Features features;
 
@@ -110,6 +112,8 @@ class InvertedIndex final : public Index {
 
   const InvertedIndexColumnInfo* FindColumnInfo(
     catalog::Column::Id column_id) const noexcept;
+
+  std::vector<Column::Id> GetReferencedColumnIds() const final;
 
   const ExpressionOptions& GetExpressions() const noexcept {
     return _expressions;

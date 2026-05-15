@@ -36,7 +36,7 @@ namespace sdb::connector {
 struct IndexedExpression {
   duckdb::unique_ptr<duckdb::Expression> normalized_expr;
   std::string serialized;
-  catalog::Column::Id column_id;
+  std::vector<catalog::Column::Id> dependent_columns;
 };
 
 // Walks a JSON-extract chain and validates every step: outermost must be
@@ -44,6 +44,9 @@ struct IndexedExpression {
 // any JSON-extract with constant keys, bottoming out at a
 // BoundColumnRef. Returns the leaf column ref on success, nullptr otherwise.
 const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
+  const duckdb::Expression& expr);
+
+std::vector<catalog::Column::Id> CollectDependentColumns(
   const duckdb::Expression& expr);
 
 // Serialise a bound expression to an opaque byte buffer suitable for

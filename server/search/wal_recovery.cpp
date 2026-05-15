@@ -138,12 +138,12 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
     return false;
   }
 
-  auto column_ids = inverted->GetColumnIds();
+  auto column_ids = inverted->GetReferencedColumnIds();
   if (column_ids.empty()) {
     return false;
   }
 
-  s.indexed_column_ids.assign(column_ids.begin(), column_ids.end());
+  s.indexed_column_ids = std::move(column_ids);
   s.col2index.reserve(s.indexed_column_ids.size());
   for (size_t i = 0; i < s.indexed_column_ids.size(); ++i) {
     s.col2index.emplace(s.indexed_column_ids[i], i);
@@ -257,7 +257,7 @@ void FlushShard(ShardState& s,
     *s.index, s.indexed_column_ids, &client_context);
 
   connector::DuckDBSearchSinkInsertWriter insert_sink{
-    trx, std::move(tokenizer_provider), s.indexed_column_ids,
+    trx, std::move(tokenizer_provider), s.index->GetColumnIds(),
     std::move(expr_tokenizer_provider), std::move(indexed_exprs)};
   connector::SearchSinkDeleteBaseImpl delete_sink{trx};
 

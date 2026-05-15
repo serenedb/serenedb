@@ -30,6 +30,7 @@
 #include "catalog/catalog.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
+#include "utils/velox_vpack.h"
 
 namespace sdb::catalog {
 namespace {
@@ -128,6 +129,19 @@ const InvertedIndexColumnInfo* InvertedIndex::FindColumnInfo(
   catalog::Column::Id column_id) const noexcept {
   auto it = _columns.find(column_id);
   return it == _columns.end() ? nullptr : &it->second;
+}
+
+std::vector<Column::Id> InvertedIndex::GetReferencedColumnIds() const {
+  std::vector<Column::Id> ids(_column_ids.begin(), _column_ids.end());
+  containers::FlatHashSet<Column::Id> seen(ids.begin(), ids.end());
+  for (const auto& expr : _expressions) {
+    for (auto id : expr.dependent_columns) {
+      if (seen.insert(id).second) {
+        ids.push_back(id);
+      }
+    }
+  }
+  return ids;
 }
 
 FieldTokenizer InvertedIndex::GetColumnTokenizer(

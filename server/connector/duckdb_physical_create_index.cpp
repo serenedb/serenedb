@@ -305,45 +305,25 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     auto normalized = NormalizeBoundExpression(*bound_expr, _relation->GetId(),
                                                col_index_to_id, context);
     std::string serialized = SerializeBoundExpression(*normalized);
-
-    // TODO(mkornaukhov) support non-JSON expression indexing
-    const auto* leaf = TryGetJsonLeafColumnRef(*normalized);
-    if (!leaf) {
+    auto dependent_columns = CollectDependentColumns(*normalized);
+    if (dependent_columns.empty()) {
       throw duckdb::CatalogException(
-        "Only json text extractor expression are supported");
+        "indexed expression must reference at least one base table column");
     }
-    // After NormalizeBoundExpression, the leaf binding encodes the catalog
-    // Column::Id directly in `column_index`.
-    const auto col_id =
-      static_cast<catalog::Column::Id>(leaf->binding.column_index.GetIndex());
-    const catalog::Column* cat_col = nullptr;
-    for (const auto& col : columns) {
-      if (col.id == col_id) {
-        cat_col = &col;
-        break;
-      }
-    }
-    if (!cat_col) {
-      throw duckdb::CatalogException(
-        "indexed expr path does not refer to a known column");
-    }
-    if (cat_col->type.id() != duckdb::LogicalTypeId::VARCHAR) {
-      throw duckdb::CatalogException(
-        "Column \"%s\" must be a JSON/VARCHAR column to be indexed by path",
-        cat_col->name);
-    }
+    auto return_type = normalized->return_type;
 
     state->indexed_expressions.push_back({
       .normalized_expr = std::move(normalized),
       .serialized = serialized,
-      .column_id = cat_col->id,
+      .dependent_columns = dependent_columns,
     });
     idx_columns.emplace_back(catalog::CreateIndexColumn{
       .data =
         catalog::IndexedExpressionData{
           .serialized = std::move(serialized),
           .pretty_printed = expr->ToString(),
-          .dependent_columns = {cat_col->id},
+          .dependent_columns = std::move(dependent_columns),
+          .return_type = std::move(return_type),
         },
       .opclass = std::move(opclass),
       .opclass_options = std::move(opclass_options),
@@ -601,7 +581,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   auto expr_tokenizer_provider = MakeExpressionTokenizerProvider(
     gstate.snapshot_for_providers, inverted_index);
   auto indexed_exprs = MakeIndexedExpressions(
-    inverted_index, gstate.index_for_providers->GetColumnIds(),
+    inverted_index, gstate.index_for_providers->GetReferencedColumnIds(),
     &context.client);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx, std::move(tokenizer_provider),

@@ -210,34 +210,41 @@ Result ApplyHNSWOptions(
   return {};
 }
 
+bool IsIndexableTypeId(duckdb::LogicalTypeId kind) {
+  return kind == duckdb::LogicalTypeId::SQLNULL ||
+         kind == duckdb::LogicalTypeId::VARCHAR ||
+         kind == duckdb::LogicalTypeId::BLOB ||
+         kind == duckdb::LogicalTypeId::BOOLEAN ||
+         kind == duckdb::LogicalTypeId::TINYINT ||
+         kind == duckdb::LogicalTypeId::SMALLINT ||
+         kind == duckdb::LogicalTypeId::INTEGER ||
+         kind == duckdb::LogicalTypeId::BIGINT ||
+         kind == duckdb::LogicalTypeId::FLOAT ||
+         kind == duckdb::LogicalTypeId::DOUBLE ||
+         kind == duckdb::LogicalTypeId::DATE ||
+         kind == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
+         kind == duckdb::LogicalTypeId::ARRAY ||
+         kind == duckdb::LogicalTypeId::GEOMETRY;
+}
+
 Result ValidateInvertedIndexColumns(
   std::span<CreateIndexColumn> indexed_columns) {
   for (const auto& c : indexed_columns) {
+    duckdb::LogicalTypeId kind;
+    std::string_view display;
     if (c.IsIndexedExpression()) {
-      // TODO(mkornaukhov) maybe some better check?
-      continue;
+      kind = c.GetIndexedExpression().return_type.id();
+      display = c.GetIndexedExpression().pretty_printed;
+    } else {
+      const auto* cat_col = c.GetCatalogColumn();
+      SDB_ASSERT(cat_col);
+      kind = cat_col->type.id();
+      display = c.ColumnName();
     }
-    const auto* cat_col = c.GetCatalogColumn();
-    SDB_ASSERT(cat_col);
-    const auto kind = cat_col->type.id();
-    const bool supported = kind == duckdb::LogicalTypeId::SQLNULL ||
-                           kind == duckdb::LogicalTypeId::VARCHAR ||
-                           kind == duckdb::LogicalTypeId::BLOB ||
-                           kind == duckdb::LogicalTypeId::BOOLEAN ||
-                           kind == duckdb::LogicalTypeId::TINYINT ||
-                           kind == duckdb::LogicalTypeId::SMALLINT ||
-                           kind == duckdb::LogicalTypeId::INTEGER ||
-                           kind == duckdb::LogicalTypeId::BIGINT ||
-                           kind == duckdb::LogicalTypeId::FLOAT ||
-                           kind == duckdb::LogicalTypeId::DOUBLE ||
-                           kind == duckdb::LogicalTypeId::DATE ||
-                           kind == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
-                           kind == duckdb::LogicalTypeId::ARRAY ||
-                           kind == duckdb::LogicalTypeId::GEOMETRY;
-    if (!supported) {
+    if (!IsIndexableTypeId(kind)) {
       return {ERROR_BAD_PARAMETER,
               "Column ",
-              c.ColumnName(),
+              display,
               " has unsupported kind ",
               duckdb::EnumUtil::ToString(kind),
               " and can not be indexed"};
@@ -334,12 +341,9 @@ std::vector<Column::Id> ExtractColumnIds(
   };
   for (const auto& c : columns) {
     if (c.IsIndexedExpression()) {
-      for (auto id : c.GetIndexedExpression().dependent_columns) {
-        push(id);
-      }
-    } else {
-      push(c.GetCatalogColumn()->id);
+      continue;
     }
+    push(c.GetCatalogColumn()->id);
   }
   return ids;
 }
@@ -427,6 +431,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       ExpressionInfo expr_info{
         .serialized_expr = expr_data.serialized,
         .dependent_columns = expr_data.dependent_columns,
+        .return_type = expr_data.return_type,
       };
       if (!c.opclass.empty()) {
         auto dict = resolve_dict(c, c.opclass);

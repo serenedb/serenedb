@@ -183,7 +183,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     }
     containers::FlatHashSet<size_t> seen;
     for (auto& index : indexes) {
-      for (auto col_id : index->GetColumnIds()) {
+      for (auto col_id : index->GetReferencedColumnIds()) {
         for (size_t i = 0; i < columns.size(); ++i) {
           if (columns[i].id == col_id && !pk_table_indices.contains(i) &&
               !seen.contains(i)) {

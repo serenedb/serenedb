@@ -321,7 +321,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
                                                            pk_col_ids.end());
     containers::FlatHashSet<catalog::Column::Id> indexed_col_ids;
     for (auto& index : indexes) {
-      for (auto col_id : index->GetColumnIds()) {
+      for (auto col_id : index->GetReferencedColumnIds()) {
         if (!pk_id_set.contains(col_id)) {
           indexed_col_ids.insert(col_id);
         }
@@ -372,7 +372,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
       }
       bool in_any_index = false;
       for (auto& index : indexes) {
-        for (auto idx_col_id : index->GetColumnIds()) {
+        for (auto idx_col_id : index->GetReferencedColumnIds()) {
           if (idx_col_id == pk_col_id) {
             in_any_index = true;
             break;

@@ -1309,11 +1309,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   }
 
   const auto unwrapped = UnwrapFieldCast(expr);
-  const auto* col_ref = TryGetJsonLeafColumnRef(*unwrapped.expr);
-  if (!col_ref) {
-    return nullptr;
-  }
-  auto info = (*ctx.expr_getter)(*col_ref, *unwrapped.expr);
+  auto info = (*ctx.expr_getter)(*unwrapped.expr);
   if (!info) {
     return nullptr;
   }

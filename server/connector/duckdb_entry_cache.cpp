@@ -263,7 +263,7 @@ TableInfoAndIndices BuildTableInfoAndIndices(
   const auto& cols = table.Columns();
   containers::FlatHashSet<size_t> idx_set;
   for (auto& index : indexes) {
-    for (auto col_id : index->GetColumnIds()) {
+    for (auto col_id : index->GetReferencedColumnIds()) {
       for (size_t i = 0; i < cols.size(); ++i) {
         if (cols[i].id == col_id) {
           idx_set.insert(i);

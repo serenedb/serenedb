@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <span>
@@ -78,13 +80,19 @@ inline std::vector<IndexedExpression> MakeIndexedExpressions(
                "Any expr should be serialized in non-empty string");
     SDB_ASSERT(!expr_info.dependent_columns.empty(),
                "expression must declare at least one dependent column");
-    const auto col_id = expr_info.dependent_columns.front();
-    if (!column_set.contains(col_id)) {
+    const bool any_indexed =
+      absl::c_any_of(expr_info.dependent_columns,
+                     [&](catalog::Column::Id id) {
+                       return column_set.contains(id);
+                     });
+                     // TODO(mkornaukhov) maybe throw error?
+    if (!any_indexed) {
       continue;
     }
     auto bound =
       DeserializeBoundExpression(expr_info.serialized_expr, *client_context);
-    entries.push_back({std::move(bound), expr_info.serialized_expr, col_id});
+    entries.push_back({std::move(bound), expr_info.serialized_expr,
+                       expr_info.dependent_columns});
   }
   return entries;
 }
@@ -220,6 +228,10 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   void SetupColumnWriter(catalog::Column::Id column_id, bool have_nulls,
                          std::string_view name_suffix = {});
 
+  bool SetupTypedWriter(catalog::Column::Id column_id,
+                        const duckdb::LogicalType& type, bool have_nulls,
+                        std::string_view name_suffix);
+
   // Sets up `_aux_numeric_field` + `_aux_bool_field` for an indexed expression
   void SetupExprAuxTypedFields(catalog::Column::Id column_id,
                                std::string_view name_suffix);
@@ -243,9 +255,6 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   bool _emit_pk{true};
 
   std::vector<IndexedExpression> _indexed_expressions;
-  // Column IDs that are used in indexed expressions.
-  // For now only exactly once column ID per expression is allowed.
-  containers::FlatHashSet<catalog::Column::Id> _indexed_expressions_columns;
 
  public:
   std::span<const IndexedExpression> IndexedExpressionImpl() const noexcept {

@@ -50,6 +50,7 @@ struct IndexedExpressionData {
   std::string serialized;
   std::string pretty_printed;
   std::vector<Column::Id> dependent_columns;
+  duckdb::LogicalType return_type;
 };
 
 struct CreateIndexColumn {
@@ -86,6 +87,10 @@ class Index : public SchemaObject {
  public:
   auto GetRelationId() const noexcept { return _relation_id; }
   std::span<const Column::Id> GetColumnIds() const noexcept {
+    return _column_ids;
+  }
+
+  virtual std::vector<Column::Id> GetReferencedColumnIds() const {
     return _column_ids;
   }
 

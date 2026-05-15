@@ -140,88 +140,92 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   _pk_field.PrepareForVerbatimStringValue();
   _pk_field.name = kPkFieldName;
 
-  std::erase_if(_indexed_expressions,
-                [](const auto& e) { return !e.normalized_expr; });
-  for (const auto& owned : _indexed_expressions) {
-    _indexed_expressions_columns.insert(owned.column_id);
+  SDB_ASSERT(absl::c_all_of(_indexed_expressions, [](const auto& e) {
+    return static_cast<bool>(e.normalized_expr);
+  }));
+}
+
+bool SearchSinkInsertBaseImpl::SetupTypedWriter(catalog::Column::Id column_id,
+                                                const duckdb::LogicalType& type,
+                                                bool have_nulls,
+                                                std::string_view name_suffix) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::SQLNULL:
+      SetupColumnWriter<duckdb::LogicalTypeId::SQLNULL>(column_id, false,
+                                                        name_suffix);
+      return true;
+    case duckdb::LogicalTypeId::VARCHAR:
+      SetupColumnWriter<duckdb::LogicalTypeId::VARCHAR>(column_id, have_nulls,
+                                                        name_suffix);
+      return true;
+    case duckdb::LogicalTypeId::BLOB:
+      SetupColumnWriter<duckdb::LogicalTypeId::BLOB>(column_id, have_nulls,
+                                                     name_suffix);
+      return true;
+    case duckdb::LogicalTypeId::BOOLEAN:
+      SetupColumnWriter<duckdb::LogicalTypeId::BOOLEAN>(column_id, have_nulls,
+                                                        name_suffix);
+      return true;
+    case duckdb::LogicalTypeId::TINYINT:
+      SetupColumnWriter<duckdb::LogicalTypeId::TINYINT>(column_id, have_nulls,
+                                                        name_suffix);
+      return true;
+    case duckdb::LogicalTypeId::SMALLINT:
+      SetupColumnWriter<duckdb::LogicalTypeId::SMALLINT>(column_id, have_nulls,
+                                                         name_suffix);
+      return true;
+    case duckdb::LogicalTypeId::INTEGER:
+      SetupColumnWriter<duckdb::LogicalTypeId::INTEGER>(column_id, have_nulls,
+                                                        name_suffix);
+      return true;
+    case duckdb::LogicalTypeId::BIGINT:
+      SetupColumnWriter<duckdb::LogicalTypeId::BIGINT>(column_id, have_nulls,
+                                                       name_suffix);
+      return true;
+    case duckdb::LogicalTypeId::FLOAT:
+      SetupColumnWriter<duckdb::LogicalTypeId::FLOAT>(column_id, have_nulls,
+                                                      name_suffix);
+      return true;
+    case duckdb::LogicalTypeId::DOUBLE:
+      SetupColumnWriter<duckdb::LogicalTypeId::DOUBLE>(column_id, have_nulls,
+                                                       name_suffix);
+      return true;
+    case duckdb::LogicalTypeId::DATE:
+      SetupColumnWriter<duckdb::LogicalTypeId::DATE>(column_id, have_nulls,
+                                                     name_suffix);
+      return true;
+    case duckdb::LogicalTypeId::TIMESTAMP:
+      SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP>(column_id, have_nulls,
+                                                          name_suffix);
+      return true;
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+      SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP_TZ>(
+        column_id, have_nulls, name_suffix);
+      return true;
+    case duckdb::LogicalTypeId::ARRAY:
+      SetupColumnWriter<duckdb::LogicalTypeId::ARRAY>(column_id, have_nulls,
+                                                      name_suffix);
+      return true;
+    case duckdb::LogicalTypeId::GEOMETRY:
+      SetupColumnWriter<duckdb::LogicalTypeId::GEOMETRY>(column_id, have_nulls,
+                                                         name_suffix);
+      return true;
+    default:
+      return false;
   }
 }
 
 bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col) {
   const auto column_id = col.id;
-  const auto& type = col.type;
-  const auto have_nulls = col.have_nulls;
   if (!IsIndexed(column_id)) {
 #ifdef SDB_DEV
     _current_writer = nullptr;
 #endif
     return false;
   }
-  if (_indexed_expressions_columns.contains(column_id)) {
-#ifdef SDB_DEV
+  if (!SetupTypedWriter(column_id, col.type, col.have_nulls, {})) {
     _current_writer = nullptr;
-#endif
     return false;
-  }
-  // For now we do not support types that are not default comparable as our
-  // ranges depend on that.
-  // SDB_ASSERT(!type.providesCustomComparison());
-  switch (type.id()) {
-    case duckdb::LogicalTypeId::SQLNULL:
-      SetupColumnWriter<duckdb::LogicalTypeId::SQLNULL>(column_id, false);
-      break;
-    case duckdb::LogicalTypeId::VARCHAR:
-      SetupColumnWriter<duckdb::LogicalTypeId::VARCHAR>(column_id, have_nulls);
-      break;
-    case duckdb::LogicalTypeId::BLOB:
-      SetupColumnWriter<duckdb::LogicalTypeId::BLOB>(column_id, have_nulls);
-      break;
-    case duckdb::LogicalTypeId::BOOLEAN:
-      SetupColumnWriter<duckdb::LogicalTypeId::BOOLEAN>(column_id, have_nulls);
-      break;
-    case duckdb::LogicalTypeId::TINYINT:
-      SetupColumnWriter<duckdb::LogicalTypeId::TINYINT>(column_id, have_nulls);
-      break;
-    case duckdb::LogicalTypeId::SMALLINT:
-      SetupColumnWriter<duckdb::LogicalTypeId::SMALLINT>(column_id, have_nulls);
-      break;
-    case duckdb::LogicalTypeId::INTEGER:
-      SetupColumnWriter<duckdb::LogicalTypeId::INTEGER>(column_id, have_nulls);
-      break;
-    case duckdb::LogicalTypeId::BIGINT:
-      SetupColumnWriter<duckdb::LogicalTypeId::BIGINT>(column_id, have_nulls);
-      break;
-    case duckdb::LogicalTypeId::FLOAT:
-      SetupColumnWriter<duckdb::LogicalTypeId::FLOAT>(column_id, have_nulls);
-      break;
-    case duckdb::LogicalTypeId::DOUBLE:
-      SetupColumnWriter<duckdb::LogicalTypeId::DOUBLE>(column_id, have_nulls);
-      break;
-    case duckdb::LogicalTypeId::DATE:
-      SetupColumnWriter<duckdb::LogicalTypeId::DATE>(column_id, have_nulls);
-      break;
-    case duckdb::LogicalTypeId::TIMESTAMP:
-      SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP>(column_id,
-                                                          have_nulls);
-      break;
-    // TODO(Dronplane): other timestamp derived types could be handled same way
-    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
-      SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP_TZ>(column_id,
-                                                             have_nulls);
-      break;
-    case duckdb::LogicalTypeId::ARRAY: {
-      SetupColumnWriter<duckdb::LogicalTypeId::ARRAY>(column_id, have_nulls);
-      break;
-    }
-    case duckdb::LogicalTypeId::GEOMETRY: {
-      SetupColumnWriter<duckdb::LogicalTypeId::GEOMETRY>(column_id, have_nulls);
-      break;
-    }
-    default:
-      // Unsupported type for inverted index (e.g. INTEGER without opclass).
-      // Skip this column rather than crashing in WriteImpl.
-      _current_writer = nullptr;
-      return false;
   }
   SDB_ASSERT(_document.has_value());
   _document->NextFieldBatch();
@@ -230,55 +234,21 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col) {
 
 bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
   const ExpressionDescriptor& expr_desc) {
-  const auto column_id = expr_desc.column_id;
   const auto& return_type = expr_desc.type;
   const auto have_nulls = expr_desc.have_nulls;
   const auto serialized_expr = expr_desc.serialized_expr;
-  if (!IsIndexed(column_id)) {
-#ifdef SDB_DEV
+  // column_id is unused on the expression path: SetupColumnWriter routes
+  // through MakeExpressionFieldName + _subexpr_tokenizer_provider whenever
+  // name_suffix (serialized_expr) is non-empty.
+  constexpr catalog::Column::Id kUnusedColumnId{};
+  if (return_type.IsJSONType()) {
+    SetupColumnWriter<duckdb::LogicalTypeId::VARCHAR>(
+      kUnusedColumnId, have_nulls, serialized_expr);
+    SetupExprAuxTypedFields(kUnusedColumnId, serialized_expr);
+  } else if (!SetupTypedWriter(kUnusedColumnId, return_type, have_nulls,
+                               serialized_expr)) {
     _current_writer = nullptr;
-#endif
     return false;
-  }
-
-  switch (return_type.id()) {
-    case duckdb::LogicalTypeId::VARCHAR:
-      SetupColumnWriter<duckdb::LogicalTypeId::VARCHAR>(column_id, have_nulls,
-                                                        serialized_expr);
-      // Also emit numeric/bool variants so cast filters (e.g. ::int) match.
-      SetupExprAuxTypedFields(column_id, serialized_expr);
-      break;
-    case duckdb::LogicalTypeId::BOOLEAN:
-      SetupColumnWriter<duckdb::LogicalTypeId::BOOLEAN>(column_id, have_nulls,
-                                                        serialized_expr);
-      break;
-    case duckdb::LogicalTypeId::TINYINT:
-      SetupColumnWriter<duckdb::LogicalTypeId::TINYINT>(column_id, have_nulls,
-                                                        serialized_expr);
-      break;
-    case duckdb::LogicalTypeId::SMALLINT:
-      SetupColumnWriter<duckdb::LogicalTypeId::SMALLINT>(column_id, have_nulls,
-                                                         serialized_expr);
-      break;
-    case duckdb::LogicalTypeId::INTEGER:
-      SetupColumnWriter<duckdb::LogicalTypeId::INTEGER>(column_id, have_nulls,
-                                                        serialized_expr);
-      break;
-    case duckdb::LogicalTypeId::BIGINT:
-      SetupColumnWriter<duckdb::LogicalTypeId::BIGINT>(column_id, have_nulls,
-                                                       serialized_expr);
-      break;
-    case duckdb::LogicalTypeId::FLOAT:
-      SetupColumnWriter<duckdb::LogicalTypeId::FLOAT>(column_id, have_nulls,
-                                                      serialized_expr);
-      break;
-    case duckdb::LogicalTypeId::DOUBLE:
-      SetupColumnWriter<duckdb::LogicalTypeId::DOUBLE>(column_id, have_nulls,
-                                                       serialized_expr);
-      break;
-    default:
-      _current_writer = nullptr;
-      return false;
   }
   SDB_ASSERT(_document.has_value());
   _document->NextFieldBatch();

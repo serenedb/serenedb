@@ -56,12 +56,13 @@ struct SearchColumnInfo {
 using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::BoundColumnRefExpression&) const>;
 
-// Resolves a expression an already-known base column to a SearchColumnInfo
-// carrying the per-expresion analyzer. The implementation is responsible for
-// normalising `expr` (via `NormalizeBoundExpression`) and serialising
-// it to bytes that match what CREATE INDEX persisted in the catalog.
+// Resolves an arbitrary expression to a SearchColumnInfo carrying the
+// per-expression analyzer. The implementation normalises `expr` (via
+// `NormalizeBoundExpression`) and serialises it to bytes that match what
+// CREATE INDEX persisted in the catalog; it also validates that any
+// referenced columns belong to the inverted-indexed scan being filtered.
 using ExpressionGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
-  const duckdb::BoundColumnRefExpression&, const duckdb::Expression&) const>;
+  const duckdb::Expression&) const>;
 
 // Encodes column_id as an 8-byte big-endian binary string into
 // field_name. Before being used as an iresearch field name, the result

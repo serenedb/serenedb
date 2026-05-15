@@ -24,6 +24,8 @@
 #include <absl/strings/str_cat.h>
 #include <simdjson.h>
 
+#include "basics/containers/flat_hash_set.h"
+
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
@@ -242,10 +244,30 @@ const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
   return &cur->Cast<duckdb::BoundColumnRefExpression>();
 }
 
-// TODO(mkornaukhov) get rid of such a function, #597
+std::vector<catalog::Column::Id> CollectDependentColumns(
+  const duckdb::Expression& expr) {
+  containers::FlatHashSet<catalog::Column::Id> seen;
+  std::vector<catalog::Column::Id> ordered;
+  auto visit = [&](auto& self, const duckdb::Expression& node) -> void {
+    if (node.expression_class == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+      auto col_id = static_cast<catalog::Column::Id>(
+        node.Cast<duckdb::BoundColumnRefExpression>()
+          .binding.column_index.GetIndex());
+      if (seen.insert(col_id).second) {
+        ordered.push_back(col_id);
+      }
+    }
+    duckdb::ExpressionIterator::EnumerateChildren(
+      node,
+      [&](const duckdb::Expression& child) { self(self, child); });
+  };
+  visit(visit, expr);
+  return ordered;
+}
+
 void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
                                  duckdb::idx_t num_rows) {
-  if (result.GetType().id() != duckdb::LogicalTypeId::VARCHAR) {
+  if (!result.GetType().IsJSONType()) {
     return;
   }
   duckdb::UnifiedVectorFormat fmt;

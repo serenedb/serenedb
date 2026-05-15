@@ -89,9 +89,6 @@ void WriteOffsets(SearchFullScanGlobalState& gstate, const SearchScan& search,
   }
 }
 
-// Fill virtual-column slots (tableoid / rowid). Streaming wrote score and
-// offsets inline during the scan loop; top-K passes scores via
-// `scores_or_empty` while offsets remain unsupported there.
 void WriteVirtualColumns(SearchFullScanGlobalState& gstate,
                          duckdb::idx_t num_rows, duckdb::DataChunk& output,
                          std::span<const float> scores_or_empty) {

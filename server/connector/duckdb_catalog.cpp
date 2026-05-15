@@ -508,76 +508,20 @@ duckdb::PhysicalOperator& ResolveDefaultsWithGenerated(
 //
 // Insert a scope-boundary LogicalProjection between LOGICAL_CREATE_INDEX
 // and the view chain that enumerates only the columns the index actually
-// needs. DuckDB's RemoveUnusedColumns then prunes the rest of the chain
-// (outermost projection's expressions and the leaf scan's column_ids) on
-// its own.
+// needs. RemoveUnusedColumns then prunes the rest of the chain on its
+// own. Wrappers above the outer projection (ORDER BY / LIMIT / TopN /
+// FILTER) keep their referenced view positions alive automatically:
+// RemoveUnusedColumns visits each wrapper's expressions during its
+// descent into the projection, so those refs land in column_references
+// without us pre-enumerating them.
 
-template<typename Visit>
-void VisitWrapperExpressions(duckdb::LogicalOperator& op, Visit&& visit) {
-  switch (op.type) {
-    case duckdb::LogicalOperatorType::LOGICAL_FILTER:
-    case duckdb::LogicalOperatorType::LOGICAL_PROJECTION:
-      for (auto& e : op.expressions) {
-        visit(e);
-      }
-      break;
-    case duckdb::LogicalOperatorType::LOGICAL_ORDER_BY:
-      for (auto& o : op.Cast<duckdb::LogicalOrder>().orders) {
-        visit(o.expression);
-      }
-      break;
-    case duckdb::LogicalOperatorType::LOGICAL_TOP_N:
-      for (auto& o : op.Cast<duckdb::LogicalTopN>().orders) {
-        visit(o.expression);
-      }
-      break;
-    case duckdb::LogicalOperatorType::LOGICAL_LIMIT:
-      break;
-    default:
-      SDB_ASSERT(false, "unexpected fast-path wrapper type: ",
-                 static_cast<int>(op.type));
-  }
-}
-
-// Returns the outermost LogicalProjection reachable from `chain_root`
-// through single-child operators (optionally stopping at `leaf_get_opt`
-// for the fast-path call sites). Returns nullptr if none is reachable.
-duckdb::LogicalProjection* FindOutermostViewProjection(
-  duckdb::LogicalOperator& chain_root,
-  duckdb::LogicalGet* leaf_get_opt = nullptr) {
-  auto* cur = &chain_root;
-  while (cur) {
-    if (cur->type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION) {
-      return &cur->Cast<duckdb::LogicalProjection>();
-    }
-    if (leaf_get_opt && cur == leaf_get_opt) {
-      return nullptr;
-    }
-    if (cur->children.size() != 1) {
-      return nullptr;
-    }
-    cur = cur->children[0].get();
-  }
-  return nullptr;
-}
-
-// Compute the view-declared positions the index actually consumes:
-//   * positions of column-ref index keys (looked up by name)
-//   * positions referenced by any wrapper above the outer projection
-//     (ORDER BY / LIMIT / TopN expressions)
-// Returns a sorted, deduplicated list. PK plumbing columns are handled
-// separately by the caller. `leaf_get_opt` is non-null for fast-path
-// views; null for non-fast-path views (where there's no single leaf).
+// Compute view-declared positions the index keys reference by name.
 std::vector<duckdb::idx_t> ComputeKeptViewPositions(
   const duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>&
     parsed_index_exprs,
-  const duckdb::ViewColumnInfo& column_info,
-  duckdb::LogicalOperator& chain_root,
-  duckdb::LogicalGet* leaf_get_opt = nullptr) {
+  const duckdb::ViewColumnInfo& column_info) {
   std::vector<duckdb::idx_t> kept;
   kept.reserve(parsed_index_exprs.size());
-
-  // 1. Named index keys.
   for (const auto& expr : parsed_index_exprs) {
     if (expr->GetExpressionType() != duckdb::ExpressionType::COLUMN_REF) {
       continue;
@@ -591,32 +535,6 @@ std::vector<duckdb::idx_t> ComputeKeptViewPositions(
       }
     }
   }
-
-  // 2. Wrappers above outer_proj (Order/Limit/TopN) reference view
-  // positions through outer_proj->table_index; those positions must
-  // survive too.
-  if (auto* outer = FindOutermostViewProjection(chain_root, leaf_get_opt)) {
-    auto target = outer->table_index;
-    auto* cur = &chain_root;
-    while (cur != outer) {
-      VisitWrapperExpressions(
-        *cur, [&](duckdb::unique_ptr<duckdb::Expression>& e) {
-          if (!e) {
-            return;
-          }
-          duckdb::ExpressionIterator::VisitExpression<
-            duckdb::BoundColumnRefExpression>(
-            *e, [&](const duckdb::BoundColumnRefExpression& ref) {
-              if (ref.binding.table_index == target) {
-                kept.push_back(ref.binding.column_index.GetIndex());
-              }
-            });
-        });
-      SDB_ASSERT(cur->children.size() == 1);
-      cur = cur->children[0].get();
-    }
-  }
-
   absl::c_sort(kept);
   kept.erase(std::unique(kept.begin(), kept.end()), kept.end());
   return kept;
@@ -1162,14 +1080,14 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                  "the leaf get came from binding the view body");
       auto kept = ComputeKeptViewPositions(
         stmt.info->Cast<duckdb::CreateIndexInfo>().parsed_expressions,
-        *column_info, *plan, leaf_get);
+        *column_info);
       if (kept.size() < column_info->names.size()) {
         plan = InsertBackfillFilterProjection(
           std::move(plan), kept, column_info->names.size(), vcols.size(),
           binder.GenerateTableIndex());
         kept_view_positions = std::move(kept);
       }
-    } else if (view_backed) {
+    } else {
       // Non-fast-path view: no PK plumbing, but the same filter-projection
       // trick still lets RemoveUnusedColumns prune what the index doesn't
       // reference.
@@ -1177,7 +1095,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       if (auto column_info = view_entry.GetColumnInfo()) {
         auto kept = ComputeKeptViewPositions(
           stmt.info->Cast<duckdb::CreateIndexInfo>().parsed_expressions,
-          *column_info, *plan);
+          *column_info);
         if (kept.size() < column_info->names.size()) {
           plan = InsertBackfillFilterProjection(
             std::move(plan), kept, column_info->names.size(),

@@ -737,7 +737,7 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
   }
 
   auto tokenizer = std::make_shared<catalog::Tokenizer>(
-    ObjectId{0}, name, features,
+    ObjectId{}, ObjectId{}, name, features,
     std::string{reinterpret_cast<const char*>(b.slice().getDataPtr()),
                 b.slice().byteSize()});
 

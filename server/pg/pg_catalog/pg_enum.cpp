@@ -39,7 +39,7 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgEnum>::GetTableData() {
   auto snapshot = _config.EnsureCatalogSnapshot();
-  auto database_id = GetDatabaseId();
+  auto database_id = GetParentId();
 
   std::vector<PgEnum> rows;
   // Keep labels alive: enum labels come from duckdb::EnumType storage which

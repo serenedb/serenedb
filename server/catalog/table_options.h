@@ -33,15 +33,16 @@
 #include "catalog/column_expr.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/object.h"
 #include "catalog/sequence.h"
-#include "pg/sql_collector.h"
 #include "query/utils.h"
 #include "utils/velox_vpack.h"
 
 namespace sdb::catalog {
 
 // NOLINTBEGIN
-struct Column {
+class Column final : public Object {
+ public:
   enum GeneratedType : uint8_t {
     kNone = 0,
     // TODO(mbkkt) swap these, to make it more like duckdb values?
@@ -49,17 +50,13 @@ struct Column {
     kVirtual = 2,
   };
 
-  bool IsGenerated() const noexcept {
-    return generated_type != GeneratedType::kNone;
-  }
+  using Id = ObjectId;
 
-  using Id = uint64_t;
-
-  static constexpr Id kMaxRealId =
+  static constexpr uint64_t kMaxRealIdValue =
     std::numeric_limits<uint64_t>::max() - 1'000'000;
-  static constexpr Id kGeneratedPKId = kMaxRealId + 1;
-  static constexpr Id kInvertedIndexScoreId = kMaxRealId + 2;
-  static constexpr Id kInvertedIndexOffsetsId = kMaxRealId + 3;
+  static constexpr Id kGeneratedPKId{kMaxRealIdValue + 1};
+  static constexpr Id kInvertedIndexScoreId{kMaxRealIdValue + 2};
+  static constexpr Id kInvertedIndexOffsetsId{kMaxRealIdValue + 3};
 
   static constexpr std::string_view kScoreName = "sdb_inverted_index_score";
   // Prefix used in virtual offsets column names. Ends with kReservedSymbol so
@@ -67,25 +64,60 @@ struct Column {
   static constexpr std::string_view kOffsetsNamePrefix =
     "sdb_inverted_index_offsets$";
 
-  // Encodes the searched column's catalog ID into the virtual column name.
   static std::string MakeOffsetsName(Id column_id) {
     static_assert(kOffsetsNamePrefix.ends_with(query::kReservedSymbol));
-    return absl::StrCat(kOffsetsNamePrefix, column_id);
+    return absl::StrCat(kOffsetsNamePrefix, column_id.id());
   }
 
-  // LIST(BIGINT) -- flat offsets column: interleaved start,end pairs.
   static duckdb::LogicalType MakeOffsetsType() {
     return duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT);
   }
 
-  Id id;
+  Column() : Object{{}, {}, {}, ObjectType::Column} {}
+
+  Column(ObjectId owner_table_id, ObjectId id, std::string_view name,
+         duckdb::LogicalType ty, std::shared_ptr<ColumnExpr> e = nullptr,
+         GeneratedType gt = kNone)
+    : Object{owner_table_id, id, std::string{name}, ObjectType::Column},
+      type{std::move(ty)},
+      expr{std::move(e)},
+      generated_type{gt} {}
+
+  bool IsGenerated() const noexcept {
+    return generated_type != GeneratedType::kNone;
+  }
+
+  void WriteInternal(vpack::Builder&) const final {}
+  std::shared_ptr<Object> Clone() const final;
+
+  void SetId(Id id) noexcept { _id = id; }
+
   duckdb::LogicalType type;
-  std::string name;
-  // if generated type is not kNone, expr = generated expression
-  // else expr = default value expression (if any)
   std::shared_ptr<ColumnExpr> expr;
   GeneratedType generated_type = GeneratedType::kNone;
 };
+
+inline std::shared_ptr<Object> Column::Clone() const {
+  return std::make_shared<Column>(*this);
+}
+
+inline void VPackWrite(auto ctx, const Column& col) {
+  vpack::WriteTuple(
+    ctx.vpack(),
+    std::forward_as_tuple(col.GetId(), col.type, std::string{col.GetName()},
+                          col.expr, col.generated_type));
+}
+
+inline void VPackRead(auto ctx, Column& col) {
+  ObjectId id;
+  duckdb::LogicalType type;
+  std::string name;
+  std::shared_ptr<ColumnExpr> expr;
+  Column::GeneratedType gt = Column::kNone;
+  auto tup = std::tie(id, type, name, expr, gt);
+  vpack::ReadTuple(ctx.vpack(), tup);
+  col = Column{ctx.arg(), id, name, std::move(type), std::move(expr), gt};
+}
 
 struct CheckConstraint {
   ObjectId id;

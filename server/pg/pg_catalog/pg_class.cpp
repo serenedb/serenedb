@@ -74,8 +74,8 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 
 }  // namespace
 
-PgClass MakeBaseRow(ObjectId schema_id, const catalog::SchemaObject& object) {
-  auto owner = object.GetOwnerId();
+PgClass MakeBaseRow(ObjectId schema_id, const catalog::Object& object) {
+  auto owner = object.GetParentId();
   if (!owner) {
     owner = id::kRootUser;
   }
@@ -170,7 +170,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
       if (table->PKColumns().empty()) {
         continue;
       }
-      auto owner = table->GetOwnerId();
+      auto owner = table->GetParentId();
       if (!owner) {
         owner = id::kRootUser;
       }
@@ -218,7 +218,7 @@ catalog::MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
   std::vector<PgClass> values;
   std::deque<std::string> pk_index_names;
   auto catalog = _config.EnsureCatalogSnapshot();
-  RetrieveObjects(GetDatabaseId(), values, pk_index_names, *catalog);
+  RetrieveObjects(GetParentId(), values, pk_index_names, *catalog);
 
   {
     VisitSystemTables([&](const catalog::VirtualTable& table, Oid schema_oid) {

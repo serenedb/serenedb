@@ -38,17 +38,17 @@ catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
 
   std::vector<PgTsDict> values;
 
-  for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
+  for (const auto& schema : catalog->GetSchemas(GetParentId())) {
     for (const auto& tokenizer :
-         catalog->GetTokenizers(GetDatabaseId(), schema->GetName())) {
-      auto owner = tokenizer->GetOwnerId();
+         catalog->GetTokenizers(GetParentId(), schema->GetName())) {
+      auto owner = tokenizer->GetParentId();
       if (!owner) {
         owner = id::kRootUser;
       }
       values.push_back({
         .oid = tokenizer->GetId().id(),
         .dictname = tokenizer->GetName(),
-        .dictnamespace = tokenizer->GetSchemaId().id(),
+        .dictnamespace = tokenizer->GetParentId().id(),
         .dictowner = owner.id(),
         .dicttemplate = 0,
       });

@@ -96,7 +96,7 @@ std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
   }
 
   return std::make_shared<InvertedIndex>(
-    ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
+    ctx.schema_id, ctx.id, ctx.relation_id,
     std::string{name_slice.stringView()}, std::move(column_ids),
     std::move(columns), std::move(wand_scorer));
 }
@@ -189,8 +189,7 @@ std::shared_ptr<Object> InvertedIndex::Clone() const {
   WriteInternal(b);
   return ReadInternal(b.slice(), {
                                    .id = GetId(),
-                                   .database_id = GetDatabaseId(),
-                                   .schema_id = GetSchemaId(),
+                                   .schema_id = GetParentId(),
                                    .relation_id = GetRelationId(),
                                  });
 }

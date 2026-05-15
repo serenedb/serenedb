@@ -50,7 +50,8 @@ struct CTASGlobalState final : public SSTInsertGlobalState {
         auto& catalog = SerenedServer::Instance()
                           .getFeature<catalog::CatalogFeature>()
                           .Global();
-        std::ignore = catalog.DropTable(database_name, schema_name, table_name);
+        std::ignore =
+          catalog.DropTable(database_name, schema_name, table_name, true);
       } catch (...) {
       }
     }
@@ -81,12 +82,8 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   catalog::CreateTableOptions options;
   options.name = table_info.table;
 
-  catalog::Column::Id next_col_id = 0;
   for (auto& col : table_info.columns.Logical()) {
-    catalog::Column sdb_col;
-    sdb_col.id = next_col_id++;
-    sdb_col.name = col.Name();
-    sdb_col.type = col.Type();
+    catalog::Column sdb_col{{}, catalog::NextId(), col.Name(), col.Type()};
     if (col.Generated()) {
       sdb_col.generated_type = catalog::Column::GeneratedType::kStored;
       sdb_col.expr =

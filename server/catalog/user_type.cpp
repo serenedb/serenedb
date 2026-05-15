@@ -32,11 +32,10 @@
 
 namespace sdb::catalog {
 
-PgSqlType::PgSqlType(ObjectId database_id, ObjectId id, std::string_view name,
+PgSqlType::PgSqlType(ObjectId schema_id, ObjectId id, std::string_view name,
                      duckdb::unique_ptr<duckdb::CreateTypeInfo> info)
-  : SchemaObject{{},   database_id,
-                 {},   id == id::kInvalid ? ObjectId{NewTickServer(2) + 1} : id,
-                 name, ObjectType::PgSqlType},
+  : Object{schema_id, id == id::kInvalid ? ObjectId{NewTickServer(2) + 1} : id,
+           name, ObjectType::PgSqlType},
     _info{std::move(info)} {
   _info->type.SetAlias(std::string{GetName()});
   auto ext = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
@@ -61,7 +60,7 @@ std::shared_ptr<PgSqlType> PgSqlType::ReadInternal(vpack::Slice slice,
   auto type_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTypeInfo>(
       std::move(create_info));
-  return std::make_shared<PgSqlType>(ctx.database_id, ctx.id, name,
+  return std::make_shared<PgSqlType>(ctx.schema_id, ctx.id, name,
                                      std::move(type_info));
 }
 
@@ -84,7 +83,7 @@ std::shared_ptr<Object> PgSqlType::Clone() const {
   auto cloned_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTypeInfo>(
       _info->Copy());
-  return std::make_shared<PgSqlType>(GetDatabaseId(), GetId(), GetName(),
+  return std::make_shared<PgSqlType>(GetParentId(), GetId(), GetName(),
                                      std::move(cloned_info));
 }
 

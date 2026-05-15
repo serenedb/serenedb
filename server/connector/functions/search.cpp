@@ -43,7 +43,7 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/vector.h"
 #include "pg/connection_context.h"
-#include "pg/sql_collector.h"
+#include "pg/sql_utils.h"
 
 namespace sdb::connector {
 namespace {

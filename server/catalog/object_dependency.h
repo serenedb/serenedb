@@ -20,23 +20,180 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <concepts>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
+#include "basics/down_cast.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/object.h"
+#include "catalog/table.h"
 
 namespace sdb::catalog {
 
+// One per external table that needs a column/CHECK mutation.
+struct TableRewrite {
+  ObjectId schema_id;
+  std::shared_ptr<Table> table;
+};
+
+// Cross-tree catalog mutations needed alongside the seed's tombstone.
+struct DropPlan {
+  containers::FlatHashMap<ObjectId, TableRewrite> table_rewrites;
+  std::vector<std::pair<ObjectId, ObjectId>> view_drops;      // (schema, view)
+  std::vector<std::pair<ObjectId, ObjectId>> function_drops;  // (schema, fn)
+  // Indexes on external tables that cover a dropped column -- PG drops the
+  // whole index when any of its columns goes away. Handled by separate
+  // IndexDrop tasks (catalog tombstone + shard data wipe).
+  std::vector<ObjectId> index_drops;
+
+  // RESTRICT would have blocked.
+  bool IsCascade() const noexcept {
+    return !table_rewrites.empty() || !view_drops.empty() ||
+           !function_drops.empty() || !index_drops.empty();
+  }
+};
+
+class DropEmitter {
+ public:
+  using ObjectLookup = absl::FunctionRef<std::shared_ptr<Object>(ObjectId)>;
+  // Indexes on `table_id` that include `col_id` -- driver for column->index
+  // cascade when a column is dropped.
+  using IndexesUsingColumn = absl::FunctionRef<std::vector<ObjectId>(
+    ObjectId table_id, ObjectId col_id)>;
+
+  DropEmitter(ObjectLookup lookup, IndexesUsingColumn indexes_using_col,
+              DropPlan& plan, containers::FlatHashSet<ObjectId>& auto_drops,
+              std::vector<ObjectId>& stack)
+    : _lookup{lookup},
+      _indexes_using_col{indexes_using_col},
+      _plan{plan},
+      _auto_drops{auto_drops},
+      _stack{stack} {}
+
+  // AUTO/INTERNAL dep. Tag closure, queue for walk (dedup via _visited).
+  void EmitAutoDrop(ObjectId id) {
+    _auto_drops.insert(id);
+    if (!_visited.insert(id).second) {
+      return;
+    }
+    _stack.push_back(id);
+  }
+
+  void EmitCascadeDrop(ObjectId id) {
+    if (_auto_drops.contains(id) || !_visited.insert(id).second) {
+      return;
+    }
+    auto obj = _lookup(id);
+    if (!obj) {
+      return;
+    }
+    auto parent = obj->GetParentId();
+    switch (obj->GetType()) {
+      case ObjectType::PgSqlView:
+        _plan.view_drops.emplace_back(parent, id);
+        break;
+      case ObjectType::PgSqlFunction:
+        _plan.function_drops.emplace_back(parent, id);
+        break;
+      default:
+        // Only views and functions reach us cross-tree.
+        SDB_UNREACHABLE();
+    }
+    _stack.push_back(id);
+  }
+
+  void ColumnDefaultValueDrop(ObjectId col_id) {
+    RewriteOwningTable(col_id,
+                       [&](auto& t) { return t->DropColumnDefault(col_id); });
+  }
+
+  // doesn't work well now, it leaves the column data.
+  // TODO: delete it when we'll have deleted rocksdb
+  void ColumnDrop(ObjectId col_id) {
+    RewriteOwningTable(col_id, [&](auto& t) { return t->DropColumn(col_id); });
+    // PG's column->index cascade: any index that covers col_id goes too.
+    auto col = _lookup(col_id);
+    if (!col) {
+      return;
+    }
+    auto table_id = col->GetParentId();
+    if (!table_id.isSet() || _auto_drops.contains(table_id)) {
+      return;
+    }
+    for (auto idx_id : _indexes_using_col(table_id, col_id)) {
+      _plan.index_drops.push_back(idx_id);
+    }
+  }
+
+  void CheckConstraintDrop(ObjectId table_id, ObjectId constraint_id) {
+    if (_auto_drops.contains(table_id)) {
+      return;
+    }
+    auto& slot = _plan.table_rewrites[table_id];
+    if (!CloneIntoSlot(table_id, slot)) {
+      return;
+    }
+    slot.table = slot.table->DropCheckConstraint(constraint_id);
+  }
+
+ private:
+  template<typename Mutate>
+  void RewriteOwningTable(ObjectId col_id, Mutate&& mutate) {
+    auto col = _lookup(col_id);
+    if (!col) {
+      return;
+    }
+    auto table_id = col->GetParentId();
+    if (!table_id.isSet() || _auto_drops.contains(table_id)) {
+      return;
+    }
+    auto& slot = _plan.table_rewrites[table_id];
+    if (!CloneIntoSlot(table_id, slot)) {
+      return;
+    }
+    slot.table = std::forward<Mutate>(mutate)(slot.table);
+  }
+
+  bool CloneIntoSlot(ObjectId table_id, TableRewrite& slot) {
+    if (slot.table) {
+      return true;
+    }
+    auto obj = _lookup(table_id);
+    if (!obj || obj->GetType() != ObjectType::Table) {
+      _plan.table_rewrites.erase(table_id);
+      return false;
+    }
+    slot.schema_id = obj->GetParentId();
+    slot.table = basics::downCast<Table>(obj->Clone());
+    return true;
+  }
+
+  const ObjectLookup _lookup;
+  const IndexesUsingColumn _indexes_using_col;
+  DropPlan& _plan;
+  containers::FlatHashSet<ObjectId>& _auto_drops;
+  std::vector<ObjectId>& _stack;
+  containers::FlatHashSet<ObjectId> _visited;  // push-dedup
+};
+
+// Per-object reverse-edges. Emit routes each edge to the right callback.
 struct ObjectDependencyBase {
   virtual ~ObjectDependencyBase() = default;
   virtual std::shared_ptr<ObjectDependencyBase> Clone() const = 0;
+  virtual void Emit(DropEmitter&) const = 0;
 };
 
 struct RelationDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> indexes;
+  containers::FlatHashSet<ObjectId> views;
+  containers::FlatHashSet<ObjectId> functions;
 };
 
 struct TableDependency : RelationDependency {
@@ -45,11 +202,96 @@ struct TableDependency : RelationDependency {
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<TableDependency>(*this);
   }
+  void Emit(DropEmitter& e) const final {
+    if (shard_id.isSet()) {
+      e.EmitAutoDrop(shard_id);
+    }
+    for (auto id : owned_sequences) {
+      e.EmitAutoDrop(id);
+    }
+    for (auto id : indexes) {
+      e.EmitAutoDrop(id);
+    }
+    for (auto id : views) {
+      e.EmitCascadeDrop(id);
+    }
+    for (auto id : functions) {
+      e.EmitCascadeDrop(id);
+    }
+  }
 };
 
 struct ViewDependency : RelationDependency {
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<ViewDependency>(*this);
+  }
+  void Emit(DropEmitter& e) const final {
+    for (auto id : views) {
+      e.EmitCascadeDrop(id);
+    }
+    for (auto id : functions) {
+      e.EmitCascadeDrop(id);
+    }
+  }
+};
+
+struct SequenceDependency : ObjectDependencyBase {
+  containers::FlatHashSet<ObjectId> column_defaults;
+  containers::FlatHashSet<std::pair<ObjectId, ObjectId>> constraints;
+  containers::FlatHashSet<ObjectId> views;
+  containers::FlatHashSet<ObjectId> functions;
+  std::shared_ptr<ObjectDependencyBase> Clone() const final {
+    return std::make_shared<SequenceDependency>(*this);
+  }
+  void Emit(DropEmitter& e) const final {
+    for (auto col_id : column_defaults) {
+      e.ColumnDefaultValueDrop(col_id);
+    }
+    for (const auto& [tid, cid] : constraints) {
+      e.CheckConstraintDrop(tid, cid);
+    }
+    for (auto id : views) {
+      e.EmitCascadeDrop(id);
+    }
+    for (auto id : functions) {
+      e.EmitCascadeDrop(id);
+    }
+  }
+};
+
+struct PgSqlTypeDependency : ObjectDependencyBase {
+  containers::FlatHashSet<ObjectId> column_types;
+  std::shared_ptr<ObjectDependencyBase> Clone() const final {
+    return std::make_shared<PgSqlTypeDependency>(*this);
+  }
+  void Emit(DropEmitter& e) const final {
+    for (auto col_id : column_types) {
+      e.ColumnDrop(col_id);
+    }
+  }
+};
+
+struct PgSqlFunctionDependency : ObjectDependencyBase {
+  containers::FlatHashSet<ObjectId> views;
+  containers::FlatHashSet<ObjectId> functions;
+  containers::FlatHashSet<std::pair<ObjectId, ObjectId>> constraints;
+  containers::FlatHashSet<ObjectId> column_defaults;
+  std::shared_ptr<ObjectDependencyBase> Clone() const final {
+    return std::make_shared<PgSqlFunctionDependency>(*this);
+  }
+  void Emit(DropEmitter& e) const final {
+    for (auto id : views) {
+      e.EmitCascadeDrop(id);
+    }
+    for (auto id : functions) {
+      e.EmitCascadeDrop(id);
+    }
+    for (const auto& [tid, cid] : constraints) {
+      e.CheckConstraintDrop(tid, cid);
+    }
+    for (auto col_id : column_defaults) {
+      e.ColumnDefaultValueDrop(col_id);
+    }
   }
 };
 
@@ -57,6 +299,11 @@ struct IndexDependency : ObjectDependencyBase {
   ObjectId shard_id;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<IndexDependency>(*this);
+  }
+  void Emit(DropEmitter& e) const final {
+    if (shard_id.isSet()) {
+      e.EmitAutoDrop(shard_id);
+    }
   }
 };
 
@@ -74,12 +321,37 @@ struct SchemaDependency : ObjectDependencyBase {
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<SchemaDependency>(*this);
   }
+  void Emit(DropEmitter& e) const final {
+    for (auto id : tables) {
+      e.EmitAutoDrop(id);
+    }
+    for (auto id : views) {
+      e.EmitAutoDrop(id);
+    }
+    for (auto id : functions) {
+      e.EmitAutoDrop(id);
+    }
+    for (auto id : types) {
+      e.EmitAutoDrop(id);
+    }
+    for (auto id : sequences) {
+      e.EmitAutoDrop(id);
+    }
+    for (auto id : tokenizers) {
+      e.EmitAutoDrop(id);
+    }
+  }
 };
 
 struct DatabaseDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> schemas;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<DatabaseDependency>(*this);
+  }
+  void Emit(DropEmitter& e) const final {
+    for (auto id : schemas) {
+      e.EmitAutoDrop(id);
+    }
   }
 };
 
@@ -88,28 +360,42 @@ struct TokenizerDependency : ObjectDependencyBase {
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<TokenizerDependency>(*this);
   }
+  void Emit(DropEmitter&) const final {
+    // `indexes` reverse-edge not wired through the cascade.
+  }
 };
 
 class ObjectDependencies {
  public:
   std::shared_ptr<const ObjectDependencyBase> GetDependency(ObjectId id) const {
-    auto it = _object_dependencies.find(id);
-    SDB_ASSERT(it != _object_dependencies.end());
+    auto it = _deps.find(id);
+    SDB_ASSERT(it != _deps.end());
     return it->second;
+  }
+
+  std::shared_ptr<const ObjectDependencyBase> TryGetDependency(
+    ObjectId id) const {
+    auto it = _deps.find(id);
+    return it == _deps.end() ? nullptr : it->second;
   }
 
   template<std::derived_from<ObjectDependencyBase> T>
   bool AddDependency(ObjectId id,
                      std::shared_ptr<T> dep = std::make_shared<T>()) {
-    auto [_, inserted] = _object_dependencies.insert_or_assign(id, dep);
+    auto [_, inserted] = _deps.try_emplace(id, std::move(dep));
     return inserted;
   }
 
-  void RemoveDependency(ObjectId id) { _object_dependencies.erase(id); }
+  void SetDependency(ObjectId id,
+                     std::shared_ptr<const ObjectDependencyBase> dep) {
+    _deps.insert_or_assign(id, std::move(dep));
+  }
+
+  void RemoveDependency(ObjectId id) { _deps.erase(id); }
 
  private:
   containers::FlatHashMap<ObjectId, std::shared_ptr<const ObjectDependencyBase>>
-    _object_dependencies;
+    _deps;
 };
 
 }  // namespace sdb::catalog

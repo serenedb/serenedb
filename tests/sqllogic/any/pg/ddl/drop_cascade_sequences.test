@@ -1,0 +1,361 @@
+# Vedernikoff sequence cascade scenarios -- PG-compatible.
+
+# --- 1. Single sequence, 5-table fan-out via column DEFAULT ---------------
+
+statement ok
+CREATE SEQUENCE vedernikoff_solid_master_seq START 1000;
+
+
+statement ok
+CREATE TABLE vedernikoff_solid_a (id INT DEFAULT nextval('vedernikoff_solid_master_seq'), b TEXT);
+
+
+statement ok
+CREATE TABLE vedernikoff_solid_b (id INT DEFAULT nextval('vedernikoff_solid_master_seq'), b TEXT);
+
+
+statement ok
+CREATE TABLE vedernikoff_solid_c (id INT DEFAULT nextval('vedernikoff_solid_master_seq'), b TEXT);
+
+
+statement ok
+CREATE TABLE vedernikoff_solid_d (id INT DEFAULT nextval('vedernikoff_solid_master_seq'), b TEXT);
+
+
+statement ok
+CREATE TABLE vedernikoff_solid_e (id INT DEFAULT nextval('vedernikoff_solid_master_seq'), b TEXT);
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_a (b) VALUES ('a1');
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_b (b) VALUES ('b1');
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_c (b) VALUES ('c1');
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_d (b) VALUES ('d1');
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_e (b) VALUES ('e1');
+
+
+query
+SELECT id FROM vedernikoff_solid_a;
+----
+id
+1000
+
+
+query
+SELECT id FROM vedernikoff_solid_b;
+----
+id
+1001
+
+
+query
+SELECT id FROM vedernikoff_solid_c;
+----
+id
+1002
+
+
+query
+SELECT id FROM vedernikoff_solid_d;
+----
+id
+1003
+
+
+query
+SELECT id FROM vedernikoff_solid_e;
+----
+id
+1004
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_solid_master_seq.*
+DROP SEQUENCE vedernikoff_solid_master_seq;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_solid_master_seq CASCADE;
+
+
+# All five tables: DEFAULT cleared, data preserved.
+statement ok
+INSERT INTO vedernikoff_solid_a (b) VALUES ('a2');
+
+
+statement ok
+INSERT INTO vedernikoff_solid_b (b) VALUES ('b2');
+
+
+statement ok
+INSERT INTO vedernikoff_solid_c (b) VALUES ('c2');
+
+
+statement ok
+INSERT INTO vedernikoff_solid_d (b) VALUES ('d2');
+
+
+statement ok
+INSERT INTO vedernikoff_solid_e (b) VALUES ('e2');
+
+
+query
+SELECT count(*) FROM vedernikoff_solid_a;
+----
+count
+2
+
+
+statement ok
+DROP TABLE vedernikoff_solid_a;
+
+
+statement ok
+DROP TABLE vedernikoff_solid_b;
+
+
+statement ok
+DROP TABLE vedernikoff_solid_c;
+
+
+statement ok
+DROP TABLE vedernikoff_solid_d;
+
+
+statement ok
+DROP TABLE vedernikoff_solid_e;
+
+
+# --- 2. Multiple sequences feeding one table via various columns ---------
+
+statement ok
+CREATE SEQUENCE vedernikoff_clickclack_seq_a;
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_clickclack_seq_b;
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_clickclack_seq_c;
+
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_orders (
+  order_id INT DEFAULT nextval('vedernikoff_clickclack_seq_a'),
+  ticket_id INT DEFAULT nextval('vedernikoff_clickclack_seq_b'),
+  ref_id INT DEFAULT nextval('vedernikoff_clickclack_seq_c'),
+  body TEXT
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_clickclack_orders (body) VALUES ('o1');
+
+
+query
+SELECT order_id, ticket_id, ref_id FROM vedernikoff_clickclack_orders;
+----
+order_id  ticket_id  ref_id
+1         1          1
+
+
+# Drop seq_a CASCADE: only order_id DEFAULT cleared. Other seqs unaffected.
+statement error (?i)cannot drop sequence .*vedernikoff_clickclack_seq_a.*
+DROP SEQUENCE vedernikoff_clickclack_seq_a;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_clickclack_seq_a CASCADE;
+
+
+statement ok
+INSERT INTO vedernikoff_clickclack_orders (body) VALUES ('o2');
+
+
+query
+SELECT order_id, ticket_id, ref_id, body FROM vedernikoff_clickclack_orders ORDER BY body;
+----
+order_id  ticket_id  ref_id  body
+1         1          1       o1
+NULL      2          2       o2
+
+
+# Drop seq_b CASCADE: ticket_id DEFAULT cleared. Then seq_c.
+statement ok
+DROP SEQUENCE vedernikoff_clickclack_seq_b CASCADE;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_clickclack_seq_c CASCADE;
+
+
+statement ok
+INSERT INTO vedernikoff_clickclack_orders (body) VALUES ('o3');
+
+
+query
+SELECT body FROM vedernikoff_clickclack_orders WHERE order_id IS NULL AND ticket_id IS NULL AND ref_id IS NULL;
+----
+body
+o3
+
+
+statement ok
+DROP TABLE vedernikoff_clickclack_orders;
+
+
+# --- 3. Sequence with CYCLE and MAXVALUE ---------------------------------
+
+statement ok
+CREATE SEQUENCE vedernikoff_iceberg_cycle_seq
+  MINVALUE 1 MAXVALUE 3 CYCLE START 1;
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_cyclic (
+  id INT DEFAULT nextval('vedernikoff_iceberg_cycle_seq'),
+  body TEXT
+);
+
+
+statement count 7
+INSERT INTO vedernikoff_iceberg_cyclic (body) VALUES
+  ('r1'), ('r2'), ('r3'), ('r4'), ('r5'), ('r6'), ('r7');
+
+
+query
+SELECT id, body FROM vedernikoff_iceberg_cyclic ORDER BY body;
+----
+id  body
+1   r1
+2   r2
+3   r3
+1   r4
+2   r5
+3   r6
+1   r7
+
+
+statement ok
+DROP SEQUENCE vedernikoff_iceberg_cycle_seq CASCADE;
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_cyclic;
+
+
+# --- 4. Owned sequence via SERIAL -- nothing else references it ----------
+
+statement ok
+CREATE TABLE vedernikoff_mop_orders (
+  id SERIAL PRIMARY KEY,
+  body TEXT
+);
+
+
+statement count 3
+INSERT INTO vedernikoff_mop_orders (body) VALUES ('o1'), ('o2'), ('o3');
+
+
+statement ok
+DROP TABLE vedernikoff_mop_orders;
+
+
+# Owned sequence is also gone.
+statement error (?i).*vedernikoff_mop_orders_id_seq.* does not exist
+SELECT nextval('vedernikoff_mop_orders_id_seq');
+
+
+# --- 5. Many sequences, many tables, fan out --------------------------------
+
+statement ok
+CREATE SEQUENCE vedernikoff_x_seq_1;
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_x_seq_2;
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_x_seq_3;
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_x_seq_4;
+
+
+statement ok
+CREATE TABLE vedernikoff_x_t1 (a INT DEFAULT nextval('vedernikoff_x_seq_1'),
+                                 b INT DEFAULT nextval('vedernikoff_x_seq_2'),
+                                 c INT DEFAULT nextval('vedernikoff_x_seq_3'),
+                                 d INT DEFAULT nextval('vedernikoff_x_seq_4'),
+                                 body TEXT);
+
+
+statement ok
+CREATE TABLE vedernikoff_x_t2 (a INT DEFAULT nextval('vedernikoff_x_seq_1'),
+                                 b INT DEFAULT nextval('vedernikoff_x_seq_2'),
+                                 c INT DEFAULT nextval('vedernikoff_x_seq_3'),
+                                 d INT DEFAULT nextval('vedernikoff_x_seq_4'),
+                                 body TEXT);
+
+
+statement count 1
+INSERT INTO vedernikoff_x_t1 (body) VALUES ('row1');
+
+
+statement count 1
+INSERT INTO vedernikoff_x_t2 (body) VALUES ('row2');
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_x_seq_1.*
+DROP SEQUENCE vedernikoff_x_seq_1;
+
+
+# CASCADE one by one.
+statement ok
+DROP SEQUENCE vedernikoff_x_seq_1 CASCADE;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_x_seq_2 CASCADE;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_x_seq_3 CASCADE;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_x_seq_4 CASCADE;
+
+
+# All defaults cleared.
+statement ok
+INSERT INTO vedernikoff_x_t1 (body) VALUES ('row3');
+
+
+query
+SELECT a, b, c, d FROM vedernikoff_x_t1 WHERE body = 'row3';
+----
+a     b     c     d
+NULL  NULL  NULL  NULL
+
+
+statement ok
+DROP TABLE vedernikoff_x_t1;
+
+
+statement ok
+DROP TABLE vedernikoff_x_t2;

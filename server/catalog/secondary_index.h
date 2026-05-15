@@ -28,9 +28,9 @@ namespace sdb::catalog {
 
 class SecondaryIndex : public Index {
  public:
-  SecondaryIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
-                 ObjectId relation_id, std::string name,
-                 std::vector<Column::Id> column_ids, bool unique);
+  SecondaryIndex(ObjectId schema_id, ObjectId id, ObjectId relation_id,
+                 std::string name, std::vector<Column::Id> column_ids,
+                 bool unique);
 
   static std::shared_ptr<SecondaryIndex> ReadInternal(vpack::Slice slice,
                                                       ReadContext ctx);

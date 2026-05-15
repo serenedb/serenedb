@@ -1313,6 +1313,35 @@ void RocksDBEngineCatalog::CatalogWriteContext::PutSequence(
              key, encoded);
 }
 
+void RocksDBEngineCatalog::CatalogWriteContext::DropDefinition(
+  ObjectId parent_id, catalog::ObjectType type, ObjectId id) {
+  RocksDBKeyWithBuffer<DefinitionKey> key{parent_id, type, id};
+  _batch.Delete(RocksDBColumnFamilyManager::get(
+                  RocksDBColumnFamilyManager::Family::Definitions),
+                key.GetBuffer());
+}
+
+void RocksDBEngineCatalog::CatalogWriteContext::DropSequence(
+  ObjectId sequence_id) {
+  std::string key;
+  rocksutils::Uint64ToPersistent(key, sequence_id.id());
+  _batch.Delete(RocksDBColumnFamilyManager::get(
+                  RocksDBColumnFamilyManager::Family::Sequences),
+                key);
+}
+
+void RocksDBEngineCatalog::CatalogWriteContext::WriteTombstone(
+  ObjectId parent_id, ObjectId id) {
+  RocksDBKeyWithBuffer<DefinitionKey> key{parent_id,
+                                          catalog::ObjectType::Tombstone, id};
+  auto v = vpack::Slice::emptyStringSlice();
+  _batch.Put(
+    RocksDBColumnFamilyManager::get(
+      RocksDBColumnFamilyManager::Family::Definitions),
+    key.GetBuffer(),
+    std::string_view{reinterpret_cast<const char*>(v.start()), v.byteSize()});
+}
+
 Result RocksDBEngineCatalog::Write(
   absl::FunctionRef<void(CatalogWriteContext&)> fill) {
   rocksdb::WriteBatch batch;

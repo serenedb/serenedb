@@ -93,11 +93,11 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
   const auto& pk_col_ids = _table->PKColumns();
 
   for (const auto& col : columns) {
-    if (col.id == catalog::Column::kGeneratedPKId) {
+    if (col.GetId() == catalog::Column::kGeneratedPKId) {
       continue;
     }
     state->columns.push_back(DeleteColumnMeta{
-      .id = col.id,
+      .id = col.GetId(),
       .duckdb_type = col.type,
     });
   }
@@ -107,7 +107,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     duckdb::LogicalType pk_type = duckdb::LogicalType::BIGINT;
     if (i < pk_col_ids.size()) {
       for (const auto& col : columns) {
-        if (col.id == pk_col_ids[i]) {
+        if (col.GetId() == pk_col_ids[i]) {
           pk_type = col.type;
           break;
         }
@@ -148,7 +148,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     containers::FlatHashSet<size_t> pk_table_indices;
     for (auto pk_id : pk_col_ids) {
       for (size_t i = 0; i < columns.size(); ++i) {
-        if (columns[i].id == pk_id) {
+        if (columns[i].GetId() == pk_id) {
           pk_table_indices.insert(i);
           break;
         }
@@ -158,7 +158,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     for (auto& index : indexes) {
       for (auto col_id : index->GetColumnIds()) {
         for (size_t i = 0; i < columns.size(); ++i) {
-          if (columns[i].id == col_id && !pk_table_indices.contains(i) &&
+          if (columns[i].GetId() == col_id && !pk_table_indices.contains(i) &&
               !seen.contains(i)) {
             seen.insert(i);
             non_pk_idx_col_ids.push_back(col_id);
@@ -172,10 +172,10 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
               [&](auto a, auto b) {
                 size_t pos_a = 0, pos_b = 0;
                 for (size_t i = 0; i < columns.size(); ++i) {
-                  if (columns[i].id == a) {
+                  if (columns[i].GetId() == a) {
                     pos_a = i;
                   }
-                  if (columns[i].id == b) {
+                  if (columns[i].GetId() == b) {
                     pos_b = i;
                   }
                 }
@@ -191,8 +191,8 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
   // Also map all table columns by their table position (for INSERT-style
   // writers)
   for (size_t i = 0; i < columns.size(); ++i) {
-    if (!col_mapping.contains(columns[i].id)) {
-      col_mapping[columns[i].id] = i;  // fallback: table position
+    if (!col_mapping.contains(columns[i].GetId())) {
+      col_mapping[columns[i].GetId()] = i;  // fallback: table position
     }
   }
 

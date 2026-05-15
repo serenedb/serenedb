@@ -24,6 +24,7 @@
 #include <rocksdb/utilities/transaction.h>
 
 #include <cmath>
+#include <iresearch/utils/bytes_utils.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 
 #include "basics/assert.h"

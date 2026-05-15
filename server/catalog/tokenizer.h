@@ -39,7 +39,7 @@
 
 namespace sdb::catalog {
 
-class Tokenizer : public SchemaObject {
+class Tokenizer : public Object {
  public:
   struct Deleter {
     Tokenizer* tokenizer{nullptr};
@@ -68,8 +68,8 @@ class Tokenizer : public SchemaObject {
   void WriteInternal(vpack::Builder&) const final;
   std::shared_ptr<Object> Clone() const final;
 
-  Tokenizer(ObjectId id, std::string_view name, search::Features features,
-            std::string data);
+  Tokenizer(ObjectId schema_id, ObjectId id, std::string_view name,
+            search::Features features, std::string data);
 
   const search::Features& GetFeatures() const noexcept { return _features; }
 

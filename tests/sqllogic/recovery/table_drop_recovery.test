@@ -1,0 +1,128 @@
+control substitution on
+
+
+# Vedernikoff DROP TABLE CASCADE recovery -- table with SERIAL PK referenced
+# by sibling tables / views. Crash mid-finalize; recovery must complete the
+# drop and stick the cross-tree fixups.
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_owner (
+  id SERIAL PRIMARY KEY,
+  hero TEXT
+);
+
+
+statement count 3
+INSERT INTO vedernikoff_clickclack_owner (hero) VALUES
+  ('vedernikoff_iceberg'), ('vedernikoff_clickclack'), ('vedernikoff_mop');
+
+
+# Sibling: column DEFAULT references the owner's auto-PK seq.
+statement ok
+CREATE TABLE vedernikoff_clickclack_dashboard (
+  id BIGINT DEFAULT nextval('vedernikoff_clickclack_owner_id_seq'),
+  payload TEXT
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_clickclack_dashboard (payload) VALUES ('pre_crash_payload');
+
+
+# Sibling: view referencing the owner table.
+statement ok
+CREATE VIEW vedernikoff_clickclack_view AS
+  SELECT id, hero FROM vedernikoff_clickclack_owner;
+
+
+query
+SELECT count(*) FROM vedernikoff_clickclack_view;
+----
+count
+3
+
+
+# Standalone survivor table -- must be untouched.
+statement ok
+CREATE TABLE vedernikoff_solid_witness (id INT, body TEXT);
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_witness VALUES (1, 'unaffected');
+
+
+statement ok
+SET sdb_faults = 'crash_before_seq_counter_wipe';
+
+
+statement ok
+DROP TABLE vedernikoff_clickclack_owner CASCADE;
+
+
+statement error (?i)connection closed|server closed|terminat|reset|EOF
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# Owner table and its auto-PK seq are both gone.
+connection after_crash
+query
+SELECT count(*) FROM pg_class
+  WHERE relname IN ('vedernikoff_clickclack_owner', 'vedernikoff_clickclack_owner_id_seq');
+----
+count
+0
+
+
+# View that referenced the owner is gone.
+connection after_crash
+statement error (?i).*vedernikoff_clickclack_view.* does not exist
+SELECT * FROM vedernikoff_clickclack_view;
+
+
+# Sibling dashboard table survived, DEFAULT cleared, pre-crash row preserved.
+# (Pre-crash id is 4: the owner SERIAL consumed 1,2,3 then the dashboard
+# DEFAULT consumed 4 from the same sequence.)
+connection after_crash
+query
+SELECT id, payload FROM vedernikoff_clickclack_dashboard;
+----
+id  payload
+4   pre_crash_payload
+
+
+connection after_crash
+statement ok
+INSERT INTO vedernikoff_clickclack_dashboard (payload) VALUES ('post_crash_payload');
+
+
+connection after_crash
+query
+SELECT id, payload FROM vedernikoff_clickclack_dashboard ORDER BY payload;
+----
+id    payload
+NULL  post_crash_payload
+4     pre_crash_payload
+
+
+# Standalone witness intact.
+connection after_crash
+query
+SELECT id, body FROM vedernikoff_solid_witness;
+----
+id  body
+1   unaffected
+
+
+connection after_crash
+statement ok
+DROP TABLE vedernikoff_clickclack_dashboard;
+
+
+connection after_crash
+statement ok
+DROP TABLE vedernikoff_solid_witness;

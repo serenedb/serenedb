@@ -1,0 +1,224 @@
+control substitution on
+
+
+# Huge vedernikoff cross-tree graph: schema X has a sequence + ENUM type used
+# by tables and views across schemas Alpha, Bravo, Charlie. Drop schema X
+# with CASCADE and crash mid-cleanup. Recovery must atomically:
+#   * remove schema X
+#   * clear DEFAULTs in Alpha.records, Bravo.records, Charlie.records
+#   * drop the ENUM-typed column from each
+#   * drop the proxy views in Charlie that select from the dropped column
+# and leave everything else intact.
+
+statement ok
+CREATE SCHEMA vedernikoff_x_core;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_x_alpha;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_x_bravo;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_x_charlie;
+
+
+# SERIAL table to anchor the auto-drop closure with an owned sequence --
+# its TableDrop::Finalize hits `crash_before_seq_counter_wipe`.
+statement ok
+CREATE TABLE vedernikoff_x_core.anchor (
+  id SERIAL PRIMARY KEY,
+  body TEXT
+);
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_x_core.master_seq START 10000;
+
+
+statement ok
+CREATE TYPE vedernikoff_x_core.color AS ENUM('red','green','blue','iceberg');
+
+
+# Three sibling tables -- each uses the core seq for DEFAULT and the core
+# ENUM for one of their columns.
+statement ok
+CREATE TABLE vedernikoff_x_alpha.records (
+  id INT DEFAULT nextval('vedernikoff_x_core.master_seq'),
+  payload TEXT,
+  c vedernikoff_x_core.color
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_x_bravo.records (
+  id INT DEFAULT nextval('vedernikoff_x_core.master_seq'),
+  payload TEXT,
+  c vedernikoff_x_core.color
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_x_charlie.records (
+  id INT DEFAULT nextval('vedernikoff_x_core.master_seq'),
+  payload TEXT,
+  c vedernikoff_x_core.color
+);
+
+
+# Proxy views projecting the soon-to-be-dropped ENUM column -- these must
+# disappear because their target column goes away.
+statement ok
+CREATE VIEW vedernikoff_x_charlie.alpha_pulse AS
+  SELECT id, c FROM vedernikoff_x_alpha.records;
+
+
+statement ok
+CREATE VIEW vedernikoff_x_charlie.bravo_pulse AS
+  SELECT id, c FROM vedernikoff_x_bravo.records;
+
+
+# Cross-schema view that only references the payload columns -- survives.
+statement ok
+CREATE VIEW vedernikoff_x_charlie.payload_pulse AS
+  SELECT id, payload FROM vedernikoff_x_alpha.records;
+
+
+statement count 1
+INSERT INTO vedernikoff_x_alpha.records (payload, c) VALUES ('alpha_pre', 'red');
+
+
+statement count 1
+INSERT INTO vedernikoff_x_bravo.records (payload, c) VALUES ('bravo_pre', 'green');
+
+
+statement count 1
+INSERT INTO vedernikoff_x_charlie.records (payload, c) VALUES ('charlie_pre', 'blue');
+
+
+query
+SELECT count(*) FROM vedernikoff_x_charlie.payload_pulse;
+----
+count
+1
+
+
+# Independent schema -- must be entirely untouched after recovery.
+statement ok
+CREATE SCHEMA vedernikoff_x_witness;
+
+
+statement ok
+CREATE TABLE vedernikoff_x_witness.notes (id INT, body TEXT);
+
+
+statement count 2
+INSERT INTO vedernikoff_x_witness.notes VALUES (1, 'first'), (2, 'second');
+
+
+statement ok
+SET sdb_faults = 'crash_before_seq_counter_wipe';
+
+
+statement ok
+DROP SCHEMA vedernikoff_x_core CASCADE;
+
+
+statement error (?i)connection closed|server closed|terminat|reset|EOF
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# Core schema and its contents are gone.
+connection after_crash
+query
+SELECT count(*) FROM pg_namespace WHERE nspname = 'vedernikoff_x_core';
+----
+count
+0
+
+
+# Sibling records survived with their payload, lost the 'c' column.
+connection after_crash
+query
+SELECT id, payload FROM vedernikoff_x_alpha.records;
+----
+id     payload
+10000  alpha_pre
+
+
+connection after_crash
+query
+SELECT id, payload FROM vedernikoff_x_bravo.records;
+----
+id     payload
+10001  bravo_pre
+
+
+connection after_crash
+query
+SELECT id, payload FROM vedernikoff_x_charlie.records;
+----
+id     payload
+10002  charlie_pre
+
+
+# DEFAULT cleared.
+connection after_crash
+statement ok
+INSERT INTO vedernikoff_x_alpha.records (payload) VALUES ('alpha_post');
+
+
+connection after_crash
+query
+SELECT id, payload FROM vedernikoff_x_alpha.records ORDER BY payload;
+----
+id     payload
+NULL   alpha_post
+10000  alpha_pre
+
+
+# Payload-only view survived (only references columns that still exist).
+connection after_crash
+query
+SELECT count(*) FROM vedernikoff_x_charlie.payload_pulse;
+----
+count
+2
+
+
+# Witness schema unaffected.
+connection after_crash
+query
+SELECT id, body FROM vedernikoff_x_witness.notes ORDER BY id;
+----
+id  body
+1   first
+2   second
+
+
+connection after_crash
+statement ok
+DROP SCHEMA vedernikoff_x_alpha CASCADE;
+
+
+connection after_crash
+statement ok
+DROP SCHEMA vedernikoff_x_bravo CASCADE;
+
+
+connection after_crash
+statement ok
+DROP SCHEMA vedernikoff_x_charlie CASCADE;
+
+
+connection after_crash
+statement ok
+DROP SCHEMA vedernikoff_x_witness CASCADE;

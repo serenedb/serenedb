@@ -67,12 +67,11 @@ class InvertedIndex final : public Index {
   using ColumnOptions =
     containers::FlatHashMap<Column::Id, InvertedIndexColumnInfo>;
 
-  InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
-                ObjectId relation_id, std::string name,
-                std::vector<Column::Id> column_ids, ColumnOptions columns,
+  InvertedIndex(ObjectId schema_id, ObjectId id, ObjectId relation_id,
+                std::string name, std::vector<Column::Id> column_ids,
+                ColumnOptions columns,
                 std::optional<ScorerOptions> wand_scorer = std::nullopt)
-    : Index{database_id,
-            schema_id,
+    : Index{schema_id,
             id,
             relation_id,
             std::move(name),

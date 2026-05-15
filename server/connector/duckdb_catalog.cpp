@@ -130,7 +130,8 @@ Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
 
   if (macro_info.macros.size() == 1) {
     // Last overload -- drop the whole function.
-    return catalog.DropFunction(info.catalog, info.schema, info.name);
+    return catalog.DropFunction(info.catalog, info.schema, info.name,
+                                info.cascade);
   }
 
   // Remove just the matched overload and update the stored function.
@@ -153,7 +154,7 @@ Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
                               : duckdb::CatalogType::TABLE_MACRO_ENTRY;
 
   auto function = std::make_shared<catalog::PgSqlFunction>(
-    database_id, ObjectId{}, info.name, std::move(new_info));
+    ObjectId{}, ObjectId{}, info.name, std::move(new_info));
   return catalog.CreateFunction(database_id, info.schema, function, true);
 }
 
@@ -190,7 +191,8 @@ Result DropFunctionByKind(catalog::LogicalCatalog& catalog,
       ERR_MSG("could not find a ", kind, " named \"", info.name, "\""));
   }
   if (all_match) {
-    return catalog.DropFunction(info.catalog, info.schema, info.name);
+    return catalog.DropFunction(info.catalog, info.schema, info.name,
+                                info.cascade);
   }
   // Mixed: remove only matching overloads, keep the rest.
   auto new_info =
@@ -211,7 +213,7 @@ Result DropFunctionByKind(catalog::LogicalCatalog& catalog,
                               : duckdb::CatalogType::TABLE_MACRO_ENTRY;
 
   auto function = std::make_shared<catalog::PgSqlFunction>(
-    database_id, ObjectId{}, info.name, std::move(new_info));
+    ObjectId{}, ObjectId{}, info.name, std::move(new_info));
   return catalog.CreateFunction(database_id, info.schema, function, true);
 }
 
@@ -225,13 +227,29 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
   switch (info.type) {
     using enum duckdb::CatalogType;
     case TABLE_ENTRY:
-      r = catalog.DropTable(info.catalog, info.schema, info.name);
+      r = catalog.DropTable(info.catalog, info.schema, info.name, info.cascade);
+      if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+          ERR_MSG("cannot drop table ", info.name,
+                  " because other objects depend on it"),
+          ERR_DETAIL(r.errorMessage()),
+          ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
+      }
       break;
     case INDEX_ENTRY:
-      r = catalog.DropIndex(info.catalog, info.schema, info.name);
+      r = catalog.DropIndex(info.catalog, info.schema, info.name, info.cascade);
       break;
     case VIEW_ENTRY:
-      r = catalog.DropView(info.catalog, info.schema, info.name);
+      r = catalog.DropView(info.catalog, info.schema, info.name, info.cascade);
+      if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+          ERR_MSG("cannot drop view ", info.name,
+                  " because other objects depend on it"),
+          ERR_DETAIL(r.errorMessage()),
+          ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
+      }
       break;
     case MACRO_ENTRY:
     case TABLE_MACRO_ENTRY:
@@ -240,22 +258,42 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
       } else {
         r = DropFunctionByKind(catalog, info);
       }
+      if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+          ERR_MSG("cannot drop function ", info.name,
+                  " because other objects depend on it"),
+          ERR_DETAIL(r.errorMessage()),
+          ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
+      }
       break;
     case TYPE_ENTRY:
-      r = catalog.DropType(info.catalog, info.schema, info.name);
+      r = catalog.DropType(info.catalog, info.schema, info.name, info.cascade);
+      if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+          ERR_MSG("cannot drop type ", info.name,
+                  " because other objects depend on it"),
+          ERR_DETAIL(r.errorMessage()),
+          ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
+      }
       break;
     case SEQUENCE_ENTRY: {
       bool if_exists =
         info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
-      r = catalog.DropSequence(info.catalog, info.schema, info.name, if_exists);
+      r = catalog.DropSequence(info.catalog, info.schema, info.name, if_exists,
+                               info.cascade);
       if (r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
           ERR_MSG("cannot drop sequence ", info.name,
                   " because other objects depend on it"),
           ERR_DETAIL(r.errorMessage()),
-          ERR_HINT("Use DROP TABLE on the owning table to drop the sequence "
-                   "as a side-effect."));
+          ERR_HINT(info.cascade
+                     ? "Use DROP TABLE on the owning table to drop the "
+                       "sequence as a side-effect."
+                     : "Use DROP ... CASCADE to drop the dependent "
+                       "objects too, or DROP TABLE on the owning table."));
       }
     } break;
     case SCHEMA_ENTRY:
@@ -554,7 +592,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
       // Sort by PK columns (ascending, nulls first)
       for (auto pk_id : pk_col_ids) {
         for (size_t i = 0; i < columns.size(); ++i) {
-          if (columns[i].id == pk_id) {
+          if (columns[i].GetId() == pk_id) {
             auto col_expr =
               duckdb::make_uniq_base<duckdb::Expression,
                                      duckdb::BoundReferenceExpression>(
@@ -612,7 +650,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   containers::FlatHashSet<size_t> pk_set;
   for (auto pk_id : pk_col_ids) {
     for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == pk_id) {
+      if (columns[i].GetId() == pk_id) {
         pk_set.insert(i);
         break;
       }
@@ -670,7 +708,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   containers::FlatHashSet<size_t> pk_set;
   for (auto pk_id : pk_col_ids) {
     for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == pk_id) {
+      if (columns[i].GetId() == pk_id) {
         pk_set.insert(i);
         break;
       }
@@ -1012,7 +1050,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     auto sdb_table = sdb_entry.GetSereneDBTable();
     const auto& columns = sdb_table->Columns();
     rel_columns.assign_range(columns | std::views::transform([](const auto& c) {
-                               return std::pair{c.name, c.type};
+                               return std::pair{std::string{c.GetName()},
+                                                c.type};
                              }));
     use_generated_pk_rowid_col = sdb_table->PKColumns().empty();
   }

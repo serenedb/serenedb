@@ -1,0 +1,107 @@
+control substitution on
+
+
+# Vedernikoff DROP TABLE CASCADE recovery on a SERIAL anchor while a
+# cross-tree sibling table holds a DEFAULT pointing at the anchor's
+# owned PK sequence. Crash mid-finalize, then verify the sibling
+# survives with its DEFAULT cleared.
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_owner (
+  id SERIAL PRIMARY KEY,
+  hero TEXT
+);
+
+
+statement count 3
+INSERT INTO vedernikoff_iceberg_owner (hero) VALUES
+  ('vedernikoff_alpha'), ('vedernikoff_bravo'), ('vedernikoff_charlie');
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_proxy (
+  id BIGINT DEFAULT nextval('vedernikoff_iceberg_owner_id_seq'),
+  body TEXT
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_iceberg_proxy (body) VALUES ('pre_crash');
+
+
+# Survivor with no relationship to the dropped graph.
+statement ok
+CREATE TABLE vedernikoff_solid_witness (id INT, body TEXT);
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_witness VALUES (1, 'untouched');
+
+
+statement ok
+SET sdb_faults = 'crash_before_seq_counter_wipe';
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_owner CASCADE;
+
+
+statement error (?i)connection closed|server closed|terminat|reset|EOF
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# Owner and its auto-PK seq are gone.
+connection after_crash
+query
+SELECT count(*) FROM pg_class
+  WHERE relname IN ('vedernikoff_iceberg_owner', 'vedernikoff_iceberg_owner_id_seq');
+----
+count
+0
+
+
+# Proxy survived, DEFAULT cleared, pre-crash row preserved.
+connection after_crash
+query
+SELECT id, body FROM vedernikoff_iceberg_proxy;
+----
+id  body
+4   pre_crash
+
+
+connection after_crash
+statement ok
+INSERT INTO vedernikoff_iceberg_proxy (body) VALUES ('post_crash');
+
+
+connection after_crash
+query
+SELECT id, body FROM vedernikoff_iceberg_proxy ORDER BY body;
+----
+id    body
+NULL  post_crash
+4     pre_crash
+
+
+# Survivor.
+connection after_crash
+query
+SELECT id, body FROM vedernikoff_solid_witness;
+----
+id  body
+1   untouched
+
+
+connection after_crash
+statement ok
+DROP TABLE vedernikoff_iceberg_proxy;
+
+
+connection after_crash
+statement ok
+DROP TABLE vedernikoff_solid_witness;

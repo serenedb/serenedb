@@ -40,6 +40,7 @@
 #include "catalog/secondary_index.h"
 #include "catalog/tokenizer.h"
 #include "catalog/types.h"
+#include "pg/sql_utils.h"
 
 namespace sdb::catalog {
 namespace {
@@ -342,7 +343,7 @@ std::vector<Column::Id> ExtractColumnIds(
   seen.reserve(columns.size());
   for (const auto& c : columns) {
     SDB_ASSERT(c.catalog_column);
-    auto id = c.catalog_column->id;
+    auto id = c.catalog_column->GetId();
     if (seen.insert(id).second) {
       ids.push_back(id);
     }
@@ -369,8 +370,8 @@ ResultOr<std::shared_ptr<SecondaryIndex>> CreateSecondaryIndex(
     //     " has non primitive type and can not be indexed"};
     // }
   }
-  return std::make_shared<SecondaryIndex>(database_id, schema_id, id,
-                                          relation_id, std::move(name),
+  return std::make_shared<SecondaryIndex>(schema_id, id, relation_id,
+                                          std::move(name),
                                           ExtractColumnIds(columns), unique);
 }
 
@@ -423,7 +424,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
 
   InvertedIndex::ColumnOptions inverted_columns;
   for (const auto& c : columns) {
-    auto& index_col = inverted_columns[c.catalog_column->id];
+    auto& index_col = inverted_columns[c.catalog_column->GetId()];
 
     if (!c.json_path.empty()) {
       if (c.opclass_options.has_value()) {
@@ -517,15 +518,14 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     }
   }
   return std::make_shared<InvertedIndex>(
-    database_id, schema_id, id, relation_id, std::move(name),
-    ExtractColumnIds(columns), std::move(inverted_columns),
-    std::move(wand_scorer));
+    schema_id, id, relation_id, std::move(name), ExtractColumnIds(columns),
+    std::move(inverted_columns), std::move(wand_scorer));
 }
 
-Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
-             ObjectId relation_id, std::string name,
-             std::vector<Column::Id> column_ids, ObjectType type)
-  : SchemaObject{{}, database_id, schema_id, id, std::move(name), type},
+Index::Index(ObjectId schema_id, ObjectId id, ObjectId relation_id,
+             std::string name, std::vector<Column::Id> column_ids,
+             ObjectType type)
+  : Object{schema_id, id, std::move(name), type},
     _relation_id{relation_id},
     _column_ids{std::move(column_ids)} {
   SDB_ASSERT(GetId().isSet());

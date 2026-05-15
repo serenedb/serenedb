@@ -20,13 +20,137 @@
 
 #include "catalog/column_expr.h"
 
+#include <absl/algorithm/container.h>
 #include <vpack/vpack_helper.h>
 
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/parser/expression/constant_expression.hpp>
+#include <duckdb/parser/expression/function_expression.hpp>
+#include <duckdb/parser/expression/subquery_expression.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
+#include <duckdb/parser/query_node.hpp>
+#include <duckdb/parser/statement/select_statement.hpp>
+#include <duckdb/parser/tableref.hpp>
+#include <duckdb/parser/tableref/basetableref.hpp>
+#include <duckdb/parser/tableref/subqueryref.hpp>
+
+#include "connector/functions/sequence.h"
 
 namespace sdb {
+namespace {
+
+bool IsSequenceFunctionName(std::string_view fn_name) {
+  return absl::c_contains(connector::kSequenceFunctionNames, fn_name);
+}
+
+void WalkSelect(const duckdb::SelectStatement& stmt, RefKinds kinds, Refs& out);
+
+void WalkExpr(const duckdb::ParsedExpression& expr, RefKinds kinds, Refs& out) {
+  if (expr.GetExpressionType() == duckdb::ExpressionType::FUNCTION) {
+    const auto& fn = expr.Cast<duckdb::FunctionExpression>();
+    if (IsSequenceFunctionName(fn.function_name)) {
+      if (RefKinds::None != (kinds & RefKinds::Sequences) &&
+          !fn.children.empty()) {
+        const auto& arg = *fn.children[0];
+        if (arg.GetExpressionType() == duckdb::ExpressionType::VALUE_CONSTANT) {
+          const auto& konst = arg.Cast<duckdb::ConstantExpression>();
+          if (konst.value.type().id() == duckdb::LogicalTypeId::VARCHAR &&
+              !konst.value.IsNull()) {
+            // nextval('[schema.]name') -- split here so callers see a
+            // uniform QualifiedRef like relations/functions.
+            auto qualified = konst.value.GetValue<std::string>();
+            auto dot = qualified.find('.');
+            if (dot == std::string::npos) {
+              out.sequences.emplace_back("", "", std::move(qualified));
+            } else {
+              out.sequences.emplace_back("", qualified.substr(0, dot),
+                                         qualified.substr(dot + 1));
+            }
+          }
+        }
+      }
+    } else if (RefKinds::None != (kinds & RefKinds::Functions)) {
+      out.functions.emplace_back(fn.catalog, fn.schema, fn.function_name);
+    }
+  }
+  if (expr.GetExpressionType() == duckdb::ExpressionType::SUBQUERY) {
+    const auto& sub = expr.Cast<duckdb::SubqueryExpression>();
+    if (sub.subquery) {
+      WalkSelect(*sub.subquery, kinds, out);
+    }
+  }
+  duckdb::ParsedExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::ParsedExpression& child) {
+      WalkExpr(child, kinds, out);
+    });
+}
+
+void WalkQueryNode(const duckdb::QueryNode& node, RefKinds kinds, Refs& out) {
+  for (const auto& kv : node.cte_map.map) {
+    if (kv.second && kv.second->query_node) {
+      WalkQueryNode(*kv.second->query_node, kinds, out);
+    }
+  }
+  auto expr_cb = [&](duckdb::unique_ptr<duckdb::ParsedExpression>& expr) {
+    if (expr) {
+      WalkExpr(*expr, kinds, out);
+    }
+  };
+  auto ref_cb = [&](duckdb::TableRef& ref) {
+    if (ref.type == duckdb::TableReferenceType::BASE_TABLE &&
+        RefKinds::None != (kinds & RefKinds::Relations)) {
+      const auto& base = ref.Cast<duckdb::BaseTableRef>();
+      out.relations.emplace_back(base.catalog_name, base.schema_name,
+                                 base.table_name);
+    }
+    // DuckDB's EnumerateTableRefChildren already recursed into the
+    // SubqueryRef's QueryNode for expressions and FROM, but it doesn't
+    // touch cte_map on the way down. Pick those up here.
+    if (ref.type == duckdb::TableReferenceType::SUBQUERY) {
+      const auto& sub = ref.Cast<duckdb::SubqueryRef>();
+      if (sub.subquery && sub.subquery->node) {
+        for (const auto& kv : sub.subquery->node->cte_map.map) {
+          if (kv.second && kv.second->query_node) {
+            WalkQueryNode(*kv.second->query_node, kinds, out);
+          }
+        }
+      }
+    }
+  };
+  duckdb::ParsedExpressionIterator::EnumerateQueryNodeChildren(
+    const_cast<duckdb::QueryNode&>(node), expr_cb, ref_cb);
+}
+
+void WalkSelect(const duckdb::SelectStatement& stmt, RefKinds kinds,
+                Refs& out) {
+  if (stmt.node) {
+    WalkQueryNode(*stmt.node, kinds, out);
+  }
+}
+
+}  // namespace
+
+Refs ExtractRefs(const duckdb::SelectStatement& stmt, RefKinds kinds) {
+  Refs out;
+  WalkSelect(stmt, kinds, out);
+  return out;
+}
+
+Refs ColumnExpr::ExtractRefs(RefKinds kinds) const {
+  Refs out;
+  if (HasExpr()) {
+    WalkExpr(GetExpr(), kinds, out);
+  }
+  return out;
+}
+
+Refs ExtractRefs(const duckdb::ParsedExpression& expr, RefKinds kinds) {
+  Refs out;
+  WalkExpr(expr, kinds, out);
+  return out;
+}
 
 ColumnExpr::ColumnExpr(duckdb::unique_ptr<duckdb::ParsedExpression> expr)
   : _expr(std::move(expr)) {}

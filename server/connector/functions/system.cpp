@@ -326,7 +326,7 @@ void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
                                        oid);
       }
       return static_cast<int64_t>(GetServerEngine().GetSchemaSize(
-        *snapshot, schema->GetDatabaseId(), schema->GetName()));
+        *snapshot, schema->GetParentId(), schema->GetName()));
     });
 }
 

@@ -122,7 +122,7 @@ void EmitColumnsForTable(const catalog::Table& table,
 
     bool is_pk = false;
     for (auto pk_id : pk_columns) {
-      if (pk_id == col.id) {
+      if (pk_id == col.GetId()) {
         is_pk = true;
         break;
       }
@@ -137,7 +137,7 @@ void EmitColumnsForTable(const catalog::Table& table,
 
     PgAttribute row{
       .attrelid = table.GetId().id(),
-      .attname = col.name,
+      .attname = col.GetName(),
       .atttypid = type_oid,
       .attlen = phys.attlen,
       .attnum = static_cast<int16_t>(i + 1),
@@ -250,13 +250,13 @@ catalog::MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
 
   std::vector<PgAttribute> values;
 
-  for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
+  for (const auto& schema : catalog->GetSchemas(GetParentId())) {
     for (const auto& table :
-         catalog->GetTables(GetDatabaseId(), schema->GetName())) {
+         catalog->GetTables(GetParentId(), schema->GetName())) {
       EmitColumnsForTable(*table, values);
     }
     for (const auto& type :
-         catalog->GetTypes(GetDatabaseId(), schema->GetName())) {
+         catalog->GetTypes(GetParentId(), schema->GetName())) {
       EmitColumnsForCompositeType(*type, values);
     }
   }

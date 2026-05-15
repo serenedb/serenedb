@@ -28,9 +28,9 @@
 
 namespace sdb::catalog {
 
-class Table final : public SchemaObject {
+class Table final : public Object {
  public:
-  Table(ObjectId database_id, ObjectId id, std::string_view name,
+  Table(ObjectId schema_id, ObjectId id, std::string_view name,
         std::vector<Column> columns, std::vector<Column::Id> pk_columns,
         std::vector<CheckConstraint> check_constraints,
         ObjectId generated_pk_seq_id);
@@ -54,8 +54,11 @@ class Table final : public SchemaObject {
   Result RenameConstraint(std::shared_ptr<Table>& result,
                           std::string_view old_name,
                           std::string_view new_name) const;
-  Result DropConstraint(std::shared_ptr<Table>& result,
-                        std::string_view constraint_name) const;
+  Result DropCheckConstraint(std::shared_ptr<Table>& result,
+                             std::string_view constraint_name) const;
+  std::shared_ptr<Table> DropCheckConstraint(ObjectId constraint_id) const;
+  std::shared_ptr<Table> DropColumnDefault(Column::Id column_id) const;
+  std::shared_ptr<Table> DropColumn(Column::Id column_id) const;
 
  private:
   std::vector<Column> _columns;

@@ -47,7 +47,7 @@ std::optional<size_t> CheckConstraint::IsNotNull(
   auto name =
     op.children[0]->Cast<duckdb::ColumnRefExpression>().GetColumnName();
   for (size_t i = 0; i < columns.size(); ++i) {
-    if (columns[i].name == name) {
+    if (columns[i].GetName() == name) {
       return i;
     }
   }

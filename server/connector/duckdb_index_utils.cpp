@@ -53,7 +53,7 @@ std::vector<duckdb_secondary_key::SKColumn> BuildSKColumns(
     bool found = false;
 
     for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == col_id) {
+      if (columns[i].GetId() == col_id) {
         type = columns[i].type;
         if (!col_id_to_chunk_pos.empty()) {
           auto it = col_id_to_chunk_pos.find(col_id);

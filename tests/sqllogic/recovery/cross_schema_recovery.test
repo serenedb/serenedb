@@ -1,0 +1,146 @@
+control substitution on
+
+
+# Vedernikoff cross-schema cascade with crash midway. Tables/types/sequences
+# across three schemas; drop the source schema with CASCADE and crash before
+# the seq counter wipe completes. Recovery must end up with: source schema
+# fully gone, sibling tables intact with DEFAULT cleared and ENUM column
+# dropped.
+
+statement ok
+CREATE SCHEMA vedernikoff_ml_paper_core;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_ml_paper_alpha;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_ml_paper_bravo;
+
+
+# A SERIAL table inside the core schema -- its owned sequence is what
+# triggers `crash_before_seq_counter_wipe` in TableDrop::Finalize during the
+# cascade drop.
+statement ok
+CREATE TABLE vedernikoff_ml_paper_core.runs (
+  id SERIAL PRIMARY KEY,
+  body TEXT
+);
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_ml_paper_core.run_seq START 200;
+
+
+statement ok
+CREATE TYPE vedernikoff_ml_paper_core.status AS ENUM('draft','review','accepted','rejected');
+
+
+statement ok
+CREATE TABLE vedernikoff_ml_paper_alpha.runs (
+  id INT DEFAULT nextval('vedernikoff_ml_paper_core.run_seq'),
+  s vedernikoff_ml_paper_core.status,
+  note TEXT
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_ml_paper_bravo.runs (
+  id INT DEFAULT nextval('vedernikoff_ml_paper_core.run_seq'),
+  s vedernikoff_ml_paper_core.status,
+  note TEXT
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_ml_paper_alpha.runs (s, note) VALUES ('review', 'alpha_pre');
+
+
+statement count 1
+INSERT INTO vedernikoff_ml_paper_bravo.runs (s, note) VALUES ('draft', 'bravo_pre');
+
+
+# Plain DROP refused (schema is non-empty AND has cross-schema referrers).
+statement error (?i)
+DROP SCHEMA vedernikoff_ml_paper_core;
+
+
+statement ok
+SET sdb_faults = 'crash_before_seq_counter_wipe';
+
+
+statement ok
+DROP SCHEMA vedernikoff_ml_paper_core CASCADE;
+
+
+statement error (?i)connection closed|server closed|terminat|reset|EOF
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT count(*) FROM pg_namespace WHERE nspname = 'vedernikoff_ml_paper_core';
+----
+count
+0
+
+
+connection after_crash
+query
+SELECT note FROM vedernikoff_ml_paper_alpha.runs;
+----
+note
+alpha_pre
+
+
+connection after_crash
+query
+SELECT note FROM vedernikoff_ml_paper_bravo.runs;
+----
+note
+bravo_pre
+
+
+# DEFAULT cleared and 's' column dropped: insert with just (note).
+connection after_crash
+statement ok
+INSERT INTO vedernikoff_ml_paper_alpha.runs (note) VALUES ('alpha_post');
+
+
+connection after_crash
+statement ok
+INSERT INTO vedernikoff_ml_paper_bravo.runs (note) VALUES ('bravo_post');
+
+
+connection after_crash
+query
+SELECT id, note FROM vedernikoff_ml_paper_alpha.runs ORDER BY note;
+----
+id    note
+NULL  alpha_post
+200   alpha_pre
+
+
+connection after_crash
+query
+SELECT id, note FROM vedernikoff_ml_paper_bravo.runs ORDER BY note;
+----
+id    note
+NULL  bravo_post
+201   bravo_pre
+
+
+connection after_crash
+statement ok
+DROP SCHEMA vedernikoff_ml_paper_alpha CASCADE;
+
+
+connection after_crash
+statement ok
+DROP SCHEMA vedernikoff_ml_paper_bravo CASCADE;

@@ -40,8 +40,8 @@
 #include "pg/parse_array.h"
 #include "pg/parse_record.h"
 #include "pg/serialize.h"
-#include "pg/sql_collector.h"
 #include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
 #include "pg/system_catalog.h"
 
 namespace sdb::pg {

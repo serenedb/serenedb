@@ -66,9 +66,9 @@ irs::analysis::Analyzer::ptr Tokenizer::CreateAnalyzer() const {
   return output;
 }
 
-Tokenizer::Tokenizer(ObjectId id, std::string_view name,
+Tokenizer::Tokenizer(ObjectId schema_id, ObjectId id, std::string_view name,
                      search::Features features, std::string data)
-  : SchemaObject{{}, {}, {}, id, name, ObjectType::Tokenizer},
+  : Object{schema_id, id, name, ObjectType::Tokenizer},
     _data{std::move(data)},
     _features{features} {}
 
@@ -84,7 +84,7 @@ std::shared_ptr<Tokenizer> Tokenizer::ReadInternal(vpack::Slice slice,
     return nullptr;
   }
   return std::make_shared<Tokenizer>(
-    ctx.id, name.stringView(), std::move(features),
+    ctx.schema_id, ctx.id, name.stringView(), std::move(features),
     std::string{reinterpret_cast<const char*>(slice.getDataPtr()),
                 slice.byteSize()});
 }
@@ -103,7 +103,7 @@ void Tokenizer::WriteInternal(vpack::Builder& b) const {
 std::shared_ptr<Object> Tokenizer::Clone() const {
   vpack::Builder b;
   WriteInternal(b);
-  return ReadInternal(b.slice(), {.id = GetId()});
+  return ReadInternal(b.slice(), {.id = GetId(), .schema_id = GetParentId()});
 }
 
 }  // namespace sdb::catalog

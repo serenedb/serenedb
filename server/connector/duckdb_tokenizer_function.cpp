@@ -57,6 +57,7 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
 
 namespace sdb::connector {
 namespace {
@@ -105,8 +106,8 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
 
   auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
 
-  auto r =
-    catalog.DropTokenizer(conn_ctx.GetDatabase(), name.schema, name.relation);
+  auto r = catalog.DropTokenizer(conn_ctx.GetDatabase(), name.schema,
+                                 name.relation, false);
 
   std::string_view object_name = "text search dictionary";
   if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {

@@ -410,7 +410,7 @@ std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
     result.reserve(pk_ids.size());
     for (auto pk_id : pk_ids) {
       for (size_t i = 0; i < base_cols.size(); ++i) {
-        if (base_cols[i].id == pk_id) {
+        if (base_cols[i].GetId() == pk_id) {
           result.push_back(static_cast<duckdb::column_t>(i));
           break;
         }

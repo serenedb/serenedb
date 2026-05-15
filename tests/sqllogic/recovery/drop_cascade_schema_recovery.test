@@ -1,0 +1,111 @@
+control substitution on
+
+
+statement ok
+CREATE SCHEMA mop_escape;
+
+
+statement ok
+CREATE TABLE mop_escape.mop_applications (id SERIAL PRIMARY KEY, name TEXT);
+
+
+statement count 2
+INSERT INTO mop_escape.mop_applications (name) VALUES ('a'), ('b');
+
+
+statement ok
+CREATE TABLE mop_escape.mop_recruiter_calls (
+  id BIGINT NOT NULL DEFAULT nextval('mop_escape.mop_applications_id_seq'),
+  payload TEXT
+);
+
+
+statement count 1
+INSERT INTO mop_escape.mop_recruiter_calls (payload) VALUES ('pre-crash');
+
+
+statement ok
+CREATE SCHEMA ml_haven;
+
+
+statement ok
+CREATE TABLE ml_haven.ml_papers (id INT, v TEXT);
+
+
+statement count 1
+INSERT INTO ml_haven.ml_papers VALUES (1, 'survives');
+
+
+statement ok
+SET sdb_faults = 'crash_before_seq_counter_wipe';
+
+
+statement ok
+DROP SCHEMA mop_escape CASCADE;
+
+
+statement error (?i)connection closed|server closed|terminat|reset|EOF
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT count(*) FROM pg_namespace WHERE nspname = 'mop_escape';
+----
+count
+0
+
+
+connection after_crash
+query
+SELECT count(*) FROM pg_class
+  WHERE relname IN ('mop_applications', 'mop_recruiter_calls', 'mop_applications_id_seq');
+----
+count
+0
+
+
+connection after_crash
+query
+SELECT id, v FROM ml_haven.ml_papers;
+----
+id	v
+1	survives
+
+
+connection after_crash
+statement ok
+CREATE SCHEMA mop_escape;
+
+
+connection after_crash
+statement ok
+CREATE TABLE mop_escape.mop_applications (id SERIAL PRIMARY KEY, name TEXT);
+
+
+connection after_crash
+statement count 1
+INSERT INTO mop_escape.mop_applications (name) VALUES ('post');
+
+
+connection after_crash
+query
+SELECT id, name FROM mop_escape.mop_applications;
+----
+id	name
+1	post
+
+
+connection after_crash
+statement ok
+DROP SCHEMA mop_escape CASCADE;
+
+
+connection after_crash
+statement ok
+DROP SCHEMA ml_haven CASCADE;

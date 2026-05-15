@@ -259,7 +259,11 @@ class OpenDatabase {
   Result RegisterFunctions(ObjectId database_id, ObjectId schema_id);
   Result RegisterTokenizers(ObjectId database_id, ObjectId schema_id);
   Result RegisterViews(ObjectId database_id, ObjectId schema_id);
-  Result RegisterSequences(ObjectId database_id, ObjectId schema_id);
+  // Sequences load in two passes: standalone before tables/views (so refs
+  // to them resolve at the referrer's own registration), owned after
+  // tables.
+  Result RegisterSequences(ObjectId database_id, ObjectId schema_id,
+                           bool owned);
   Result RegisterTypes(ObjectId database_id, ObjectId schema_id);
   Result RegisterTableShard(ObjectId table_id);
   Result RegisterTables(ObjectId database_id, ObjectId schema_id);
@@ -400,7 +404,8 @@ Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
     });
 }
 
-Result OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id) {
+Result OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id,
+                                       bool owned) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::Sequence,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
@@ -410,6 +415,14 @@ Result OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id) {
       if (!seq) {
         return ErrorMeta(ERROR_INTERNAL, "sequence",
                          "Failed to read sequence definition", slice);
+      }
+      if (seq->GetOwnerTableId().isSet() != owned) {
+        return Result{};
+      }
+      // Owner table is tombstoned -> skip; its DropTask will clean the seq.
+      if (auto owner = seq->GetOwnerTableId();
+          owner.isSet() && IsDeleted(owner, DeletedScope::Schema)) {
+        return {};
       }
       return _catalog.RegisterSequence(db_id, schema_id, std::move(seq));
     });
@@ -632,19 +645,19 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
   if (auto r = RegisterTypes(db_id, schema_id); !r.ok()) {
     return r;
   }
+  if (auto r = RegisterSequences(db_id, schema_id, false); !r.ok()) {
+    return r;
+  }
   if (auto r = RegisterFunctions(db_id, schema_id); !r.ok()) {
+    return r;
+  }
+  if (auto r = RegisterTables(db_id, schema_id); !r.ok()) {
     return r;
   }
   if (auto r = RegisterViews(db_id, schema_id); !r.ok()) {
     return r;
   }
-  // Tables must register before Sequences: owned (SERIAL / auto-PK)
-  // sequences look up their owner Table's TableDependency in the dep map
-  // when registered, so the Table needs to be there first.
-  if (auto r = RegisterTables(db_id, schema_id); !r.ok()) {
-    return r;
-  }
-  if (auto r = RegisterSequences(db_id, schema_id); !r.ok()) {
+  if (auto r = RegisterSequences(db_id, schema_id, true); !r.ok()) {
     return r;
   }
   return {};

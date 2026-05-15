@@ -30,9 +30,9 @@ namespace sdb::catalog {
 // A SQL view stored in the catalog.
 // Stores the full DuckDB CreateViewInfo -- preserves aliases, types, names,
 // etc. Serialized to/from RocksDB via DuckDB's BinarySerializer.
-class PgSqlView final : public SchemaObject {
+class PgSqlView final : public Object {
  public:
-  PgSqlView(ObjectId database_id, ObjectId id, std::string_view name,
+  PgSqlView(ObjectId schema_id, ObjectId id, std::string_view name,
             duckdb::unique_ptr<duckdb::CreateViewInfo> info);
 
   static std::shared_ptr<PgSqlView> ReadInternal(vpack::Slice slice,

@@ -32,6 +32,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <duckdb/common/extension_type_info.hpp>
+#include <duckdb/function/scalar_macro_function.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <iterator>
@@ -67,6 +69,7 @@
 #include "basics/static_strings.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
+#include "catalog/column_expr.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
 #include "catalog/function.h"
@@ -129,6 +132,8 @@ Result Apply(
 
 }  // namespace
 
+enum class EdgeAction : uint8_t { Add, Delete };
+
 class SnapshotImpl : public Snapshot {
  public:
   std::shared_ptr<SnapshotImpl> Clone() const {
@@ -136,7 +141,7 @@ class SnapshotImpl : public Snapshot {
     auto result = std::make_shared<SnapshotImpl>();
     result->_resolution_table = _resolution_table;
     result->_objects = _objects;
-    result->_object_dependencies = _object_dependencies;
+    result->_deps = _deps;
     // New snapshot starts with empty DuckDB cache (lazily populated)
     return result;
   }
@@ -247,14 +252,15 @@ class SnapshotImpl : public Snapshot {
       if (!r.ok()) {
         return r;
       }
-      return AddObjectDefinition(parent_id, std::move(object));
+      return AddObjectDefinition<SequenceDependency>(parent_id,
+                                                     std::move(object));
     } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
       auto r = AddToResolution<ResolveType::Function>(
         parent_id, object->GetId(), object->GetName(), replace);
       if (!r.ok()) {
         return r;
       }
-      return AddObjectDefinition(parent_id, object);
+      return AddObjectDefinition<PgSqlFunctionDependency>(parent_id, object);
     } else if constexpr (std::is_same_v<T, Tokenizer>) {
       auto r = AddToResolution<ResolveType::Tokenizer>(
         parent_id, object->GetId(), object->GetName(), replace);
@@ -268,7 +274,8 @@ class SnapshotImpl : public Snapshot {
       if (!r.ok()) {
         return r;
       }
-      return AddObjectDefinition(parent_id, std::move(object));
+      return AddObjectDefinition<PgSqlTypeDependency>(parent_id,
+                                                      std::move(object));
     } else if constexpr (std::is_same_v<T, Table>) {
       auto r = AddToResolution<ResolveType::Relation>(
         parent_id, object->GetId(), object->GetName(), replace);
@@ -278,7 +285,7 @@ class SnapshotImpl : public Snapshot {
       return AddObjectDefinition<TableDependency>(parent_id, std::move(object));
     } else if constexpr (std::is_same_v<T, Index>) {
       auto r = AddToResolution<ResolveType::Relation>(
-        object->GetSchemaId(), object->GetId(), object->GetName(), replace);
+        object->GetParentId(), object->GetId(), object->GetName(), replace);
       if (!r.ok()) {
         return r;
       }
@@ -324,7 +331,7 @@ class SnapshotImpl : public Snapshot {
                                                   maybe_not_found);
     } else if constexpr (std::is_same_v<T, Index>) {
       RemoveFromResolution<ResolveType::Relation>(
-        object->GetSchemaId(), object->GetName(), maybe_not_found);
+        object->GetParentId(), object->GetName(), maybe_not_found);
       parent_id = object->GetRelationId();
     } else if constexpr (std::is_same_v<T, TableShard>) {
     } else if constexpr (std::is_same_v<T, IndexShard>) {
@@ -350,85 +357,271 @@ class SnapshotImpl : public Snapshot {
     }
   }
 
+  template<typename Dep, typename Member, typename Edge>
+  void ModifyDependency(ObjectId target, Member Dep::* mem, const Edge& edge,
+                        EdgeAction action) {
+    if (!_deps.TryGetDependency(target)) {
+      // unset target: pg_catalog/information_schema ref -- no edge to track.
+      // missing Dep: graph traversal reached the same target twice, fine
+      // on Delete (firstly we delete auto drop dependencies and then cascade).
+      SDB_ASSERT(action == EdgeAction::Delete || !target.isSet());
+      return;
+    }
+    auto d = GetDependencyForWrite<Dep>(target);
+    switch (action) {
+      case EdgeAction::Add:
+        (d.get()->*mem).insert(edge);
+        break;
+      case EdgeAction::Delete:
+        (d.get()->*mem).erase(edge);
+        break;
+    }
+  }
+
+  void ModifyTableDependencies(ObjectId schema_id, const Table& table,
+                               EdgeAction action) {
+    auto database_id = GetDatabaseId(table);
+    auto resolve_seq = [&](const QualifiedRef& ref) {
+      return Resolve<ResolveType::Relation, ObjectType::Sequence>(
+        database_id, schema_id, ref.catalog, ref.schema, ref.name);
+    };
+    for (const auto& col : table.Columns()) {
+      if (auto ext = col.type.GetExtensionInfo()) {
+        if (auto it = ext->properties.find(kPgSqlTypeOidProp);
+            it != ext->properties.end()) {
+          ObjectId type_id{it->second.GetValue<uint64_t>()};
+          ModifyDependency(type_id, &PgSqlTypeDependency::column_types,
+                           col.GetId(), action);
+        }
+      }
+      if (col.expr && col.expr->HasExpr() && !col.IsGenerated()) {
+        auto refs =
+          col.expr->ExtractRefs(RefKinds::Sequences | RefKinds::Functions);
+        for (const auto& ref : refs.sequences) {
+          ModifyDependency(resolve_seq(ref),
+                           &SequenceDependency::column_defaults, col.GetId(),
+                           action);
+        }
+        for (const auto& ref : refs.functions) {
+          ModifyDependency(
+            Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
+              database_id, schema_id, ref.catalog, ref.schema, ref.name),
+            &PgSqlFunctionDependency::column_defaults, col.GetId(), action);
+        }
+      }
+    }
+    for (const auto& c : table.CheckConstraints()) {
+      if (!c.expr || !c.expr->HasExpr()) {
+        continue;
+      }
+      auto refs =
+        c.expr->ExtractRefs(RefKinds::Sequences | RefKinds::Functions);
+      auto edge = std::pair{table.GetId(), c.id};
+      for (const auto& ref : refs.functions) {
+        ModifyDependency(
+          Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
+            database_id, schema_id, ref.catalog, ref.schema, ref.name),
+          &PgSqlFunctionDependency::constraints, edge, action);
+      }
+      for (const auto& ref : refs.sequences) {
+        ModifyDependency(resolve_seq(ref), &SequenceDependency::constraints,
+                         edge, action);
+      }
+    }
+  }
+
+  template<ResolveType Kind, ObjectType... Allowed>
+  ObjectId Resolve(ObjectId db_id, ObjectId default_schema_id,
+                   std::string_view catalog, std::string_view schema,
+                   std::string_view name) const {
+    if (schema == StaticStrings::kPgCatalogSchema ||
+        schema == StaticStrings::kInformationSchema) {
+      return {};
+    }
+    if (!catalog.empty()) {
+      auto r = _resolution_table.ResolveObject<ResolveType::Database>(
+        id::kInstance, catalog);
+      if (!r) {
+        return {};
+      }
+      db_id = *r;
+    }
+    ObjectId schema_id = default_schema_id;
+    if (!schema.empty()) {
+      auto r =
+        _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
+      if (!r) {
+        return {};
+      }
+      schema_id = *r;
+    }
+    auto r = _resolution_table.ResolveObject<Kind>(schema_id, name);
+    if (!r) {
+      return {};
+    }
+    auto it = _objects.find(*r);
+    if (it == _objects.end()) {
+      return {};
+    }
+    auto t = (*it)->GetType();
+    if (!((t == Allowed) || ...)) {
+      return {};
+    }
+    return *r;
+  }
+
+  void ModifyViewDependencies(ObjectId schema_id, const PgSqlView& view,
+                              RefKinds kinds, EdgeAction action) {
+    const auto& info = view.GetInfo();
+    if (!info.query) {
+      return;
+    }
+    auto database_id = GetDatabaseId(view);
+    auto view_id = view.GetId();
+    auto refs = ExtractRefs(*info.query, kinds);
+    for (const auto& ref : refs.sequences) {
+      ModifyDependency(
+        Resolve<ResolveType::Relation, ObjectType::Sequence>(
+          database_id, schema_id, ref.catalog, ref.schema, ref.name),
+        &SequenceDependency::views, view_id, action);
+    }
+    for (const auto& ref : refs.relations) {
+      // Table or View -- both inherit RelationDependency.views.
+      ModifyDependency(
+        Resolve<ResolveType::Relation, ObjectType::Table,
+                ObjectType::PgSqlView>(database_id, schema_id, ref.catalog,
+                                       ref.schema, ref.name),
+        &RelationDependency::views, view_id, action);
+    }
+    for (const auto& ref : refs.functions) {
+      ModifyDependency(
+        Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
+          database_id, schema_id, ref.catalog, ref.schema, ref.name),
+        &PgSqlFunctionDependency::views, view_id, action);
+    }
+  }
+
+  void ModifyFunctionDependencies(ObjectId schema_id, const PgSqlFunction& func,
+                                  EdgeAction action) {
+    auto database_id = GetDatabaseId(func);
+    auto fn_id = func.GetId();
+    for (const auto& macro : func.GetInfo().macros) {
+      if (!macro || macro->type != duckdb::MacroType::SCALAR_MACRO) {
+        continue;
+      }
+      const auto& sm = macro->Cast<duckdb::ScalarMacroFunction>();
+      if (!sm.expression) {
+        continue;
+      }
+      auto refs =
+        ExtractRefs(*sm.expression, RefKinds::Sequences | RefKinds::Functions);
+      for (const auto& ref : refs.sequences) {
+        ModifyDependency(
+          Resolve<ResolveType::Relation, ObjectType::Sequence>(
+            database_id, schema_id, ref.catalog, ref.schema, ref.name),
+          &SequenceDependency::functions, fn_id, action);
+      }
+      for (const auto& ref : refs.functions) {
+        auto target = Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
+          database_id, schema_id, ref.catalog, ref.schema, ref.name);
+        if (target == fn_id) {
+          continue;  // skip self
+        }
+        ModifyDependency(target, &PgSqlFunctionDependency::functions, fn_id,
+                         action);
+      }
+    }
+  }
+
   template<typename DependencyType = void>
   Result AddObjectDefinition(ObjectId parent_id,
                              std::shared_ptr<Object> object) {
     if constexpr (!std::is_void_v<DependencyType>) {
-      bool inserted =
-        _object_dependencies.AddDependency<DependencyType>(object->GetId());
+      bool inserted = _deps.AddDependency<DependencyType>(object->GetId());
       SDB_ASSERT(inserted);
     }
     SDB_ASSERT(object->GetId().isSet());
-    switch (object->GetType()) {
+    auto [_, inserted] = _objects.insert(object);
+    SDB_ASSERT(inserted);
+    AddDependencies(parent_id, *object);
+    return {};
+  }
+
+  void AddDependencies(ObjectId parent_id, const Object& obj) {
+    auto id = obj.GetId();
+    switch (obj.GetType()) {
       case ObjectType::Database:
       case ObjectType::Role:
         break;
-      case ObjectType::Schema: {
-        auto db_deps = GetDependencyForWrite<DatabaseDependency>(parent_id);
-        db_deps->schemas.insert(object->GetId());
-      } break;
+      case ObjectType::Schema:
+        GetDependencyForWrite<DatabaseDependency>(parent_id)->schemas.insert(
+          id);
+        break;
+      case ObjectType::Tokenizer:
+        GetDependencyForWrite<SchemaDependency>(parent_id)->tokenizers.insert(
+          id);
+        break;
       case ObjectType::Table: {
-        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
-        schema_deps->tables.insert(object->GetId());
+        GetDependencyForWrite<SchemaDependency>(parent_id)->tables.insert(id);
+        const auto& table = basics::downCast<Table>(obj);
+        for (const auto& col : table.Columns()) {
+          if (_objects.find(col.GetId()) == _objects.end()) {
+            _objects.insert(std::make_shared<Column>(col));
+          }
+        }
+        ModifyTableDependencies(parent_id, table, EdgeAction::Add);
       } break;
-      case ObjectType::PgSqlFunction: {
-        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
-        schema_deps->functions.insert(object->GetId());
-      } break;
-      case ObjectType::Tokenizer: {
-        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
-        schema_deps->tokenizers.insert(object->GetId());
-      } break;
-      case ObjectType::PgSqlView: {
-        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
-        schema_deps->views.insert(object->GetId());
-      } break;
-      case ObjectType::PgSqlType: {
-        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
-        schema_deps->types.insert(object->GetId());
-      } break;
+      case ObjectType::PgSqlView:
+        GetDependencyForWrite<SchemaDependency>(parent_id)->views.insert(id);
+        ModifyViewDependencies(parent_id, basics::downCast<PgSqlView>(obj),
+                               RefKinds::All, EdgeAction::Add);
+        break;
+      case ObjectType::PgSqlFunction:
+        GetDependencyForWrite<SchemaDependency>(parent_id)->functions.insert(
+          id);
+        ModifyFunctionDependencies(
+          parent_id, basics::downCast<PgSqlFunction>(obj), EdgeAction::Add);
+        break;
+      case ObjectType::PgSqlType:
+        GetDependencyForWrite<SchemaDependency>(parent_id)->types.insert(id);
+        break;
       case ObjectType::Sequence: {
-        // Owned (SERIAL or auto-PK) sequences live under the table only --
-        // putting them in SchemaDep.sequences too would cause a double
-        // cascade on DROP SCHEMA / DROP DATABASE (schema iterates its
-        // sequences AND its tables, the table cascade already handles its
-        // owned sequences).
-        const auto& seq = basics::downCast<Sequence>(*object);
+        // Owned sequences live under the table only
+        const auto& seq = basics::downCast<Sequence>(obj);
         if (auto owner = seq.GetOwnerTableId(); owner.isSet()) {
-          auto table_deps = GetDependencyForWrite<TableDependency>(owner);
-          table_deps->owned_sequences.insert(object->GetId());
+          GetDependencyForWrite<TableDependency>(owner)->owned_sequences.insert(
+            id);
+          auto table = GetObject<Table>(owner);
+          SDB_ASSERT(table);
+          ModifyTableDependencies(parent_id, *table, EdgeAction::Add);
         } else {
-          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
-          schema_deps->sequences.insert(object->GetId());
+          GetDependencyForWrite<SchemaDependency>(parent_id)->sequences.insert(
+            id);
         }
       } break;
       case ObjectType::SecondaryIndex:
       case ObjectType::InvertedIndex: {
-        auto relation_deps =
-          GetDependencyForWrite<RelationDependency>(parent_id);
-        relation_deps->indexes.insert(object->GetId());
-        const auto& index = basics::downCast<Index>(*object);
+        GetDependencyForWrite<RelationDependency>(parent_id)->indexes.insert(
+          id);
+        const auto& index = basics::downCast<Index>(obj);
         for (auto tokenizer_id : index.GetTokenizers()) {
-          auto dep = GetDependencyForWrite<TokenizerDependency>(tokenizer_id);
-          SDB_ASSERT(dep);
-          dep->indexes.insert(object->GetId());
+          GetDependencyForWrite<TokenizerDependency>(tokenizer_id)
+            ->indexes.insert(id);
         }
       } break;
-      case ObjectType::TableShard: {
-        auto table_deps = GetDependencyForWrite<TableDependency>(parent_id);
-        table_deps->shard_id = object->GetId();
-      } break;
+      case ObjectType::TableShard:
+        GetDependencyForWrite<TableDependency>(parent_id)->shard_id = id;
+        break;
       case ObjectType::SecondaryIndexShard:
-      case ObjectType::InvertedIndexShard: {
-        auto index_deps = GetDependencyForWrite<IndexDependency>(parent_id);
-        index_deps->shard_id = object->GetId();
-      } break;
-      default:
+      case ObjectType::InvertedIndexShard:
+        GetDependencyForWrite<IndexDependency>(parent_id)->shard_id = id;
+        break;
+      case ObjectType::Invalid:
+      case ObjectType::Tombstone:
+      case ObjectType::Column:
+      case ObjectType::Virtual:
         SDB_UNREACHABLE();
     }
-    auto [_, inserted] = _objects.insert(std::move(object));
-    SDB_ASSERT(inserted);
-    return {};
   }
 
   std::vector<std::shared_ptr<Role>> GetRoles() const final {
@@ -461,18 +654,18 @@ class SnapshotImpl : public Snapshot {
            std::ranges::to<std::vector>();
   }
 
-  std::vector<std::shared_ptr<SchemaObject>> GetRelations(
+  std::vector<std::shared_ptr<Object>> GetRelations(
     ObjectId db_id, std::string_view schema) const final {
     return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
       .transform([&](ObjectId schema_id) {
         return _resolution_table.GetRelationIds(schema_id) |
                std::views::transform(
-                 [&](ObjectId relation_id) -> std::shared_ptr<SchemaObject> {
-                   return GetObject<SchemaObject>(relation_id);
+                 [&](ObjectId relation_id) -> std::shared_ptr<Object> {
+                   return GetObject<Object>(relation_id);
                  }) |
                std::ranges::to<std::vector>();
       })
-      .value_or(std::vector<std::shared_ptr<SchemaObject>>{});
+      .value_or(std::vector<std::shared_ptr<Object>>{});
   }
 
   std::vector<std::shared_ptr<Table>> GetTables(
@@ -552,7 +745,7 @@ class SnapshotImpl : public Snapshot {
 
   void VisitRelations(
     ObjectId db_id, std::string_view schema,
-    absl::FunctionRef<void(const SchemaObject&)> visitor) const final {
+    absl::FunctionRef<void(const Object&)> visitor) const final {
     auto schema_id =
       _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
     if (!schema_id) {
@@ -562,7 +755,7 @@ class SnapshotImpl : public Snapshot {
          _resolution_table.GetRelationIds(*schema_id)) {
       auto it = _objects.find(relation_id);
       SDB_ASSERT(it != _objects.end());
-      visitor(basics::downCast<SchemaObject>(**it));
+      visitor(basics::downCast<Object>(**it));
     }
   }
 
@@ -690,9 +883,8 @@ class SnapshotImpl : public Snapshot {
     return GetDependency<SchemaDependency>(schema_id)->Empty();
   }
 
-  std::shared_ptr<SchemaObject> GetRelation(
-    ObjectId db_id, std::string_view schema,
-    std::string_view relation) const final {
+  std::shared_ptr<Object> GetRelation(ObjectId db_id, std::string_view schema,
+                                      std::string_view relation) const final {
     return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
       .and_then([&](ObjectId schema_id) {
         return _resolution_table.ResolveObject<ResolveType::Relation>(schema_id,
@@ -701,7 +893,7 @@ class SnapshotImpl : public Snapshot {
       .transform([&](ObjectId relation_id) {
         auto it = _objects.find(relation_id);
         SDB_ASSERT(it != _objects.end());
-        return basics::downCast<SchemaObject>(*it);
+        return basics::downCast<Object>(*it);
       })
       .value_or(nullptr);
   }
@@ -873,23 +1065,174 @@ class SnapshotImpl : public Snapshot {
     auto it = _objects.find(new_object->GetId());
     SDB_ASSERT(it != _objects.end());
     SDB_ASSERT((*it)->GetId() == new_object->GetId());
-    const_cast<std::shared_ptr<Object>&>(*it) = std::move(new_object);
+    auto old_object = *it;
+    // Refresh reverse-edges if the object's body changed. Replaces of
+    // objects without body (Role, Sequence, ...) are pure name/value
+    // swaps and need no edge fixups.
+    switch (new_object->GetType()) {
+      case ObjectType::Table:
+        ModifyTableDependencies(parent_id, basics::downCast<Table>(*old_object),
+                                EdgeAction::Delete);
+        break;
+      case ObjectType::PgSqlView:
+        ModifyViewDependencies(parent_id,
+                               basics::downCast<PgSqlView>(*old_object),
+                               RefKinds::All, EdgeAction::Delete);
+        break;
+      case ObjectType::PgSqlFunction:
+        ModifyFunctionDependencies(parent_id,
+                                   basics::downCast<PgSqlFunction>(*old_object),
+                                   EdgeAction::Delete);
+        break;
+      default:
+        break;
+    }
+    const_cast<std::shared_ptr<Object>&>(*it) = new_object;
+    switch (new_object->GetType()) {
+      case ObjectType::Table:
+        ModifyTableDependencies(parent_id, basics::downCast<Table>(*new_object),
+                                EdgeAction::Add);
+        break;
+      case ObjectType::PgSqlView:
+        ModifyViewDependencies(parent_id,
+                               basics::downCast<PgSqlView>(*new_object),
+                               RefKinds::All, EdgeAction::Add);
+        break;
+      case ObjectType::PgSqlFunction:
+        ModifyFunctionDependencies(parent_id,
+                                   basics::downCast<PgSqlFunction>(*new_object),
+                                   EdgeAction::Add);
+        break;
+      default:
+        break;
+    }
     return {};
   }
 
   template<typename T>
   std::shared_ptr<const T> GetDependency(ObjectId id) const {
-    return basics::downCast<const T>(_object_dependencies.GetDependency(id));
+    return basics::downCast<const T>(_deps.GetDependency(id));
   }
 
   template<typename T>
   std::shared_ptr<T> GetDependencyForWrite(ObjectId id) {
-    auto dep =
-      basics::downCast<T>(_object_dependencies.GetDependency(id)->Clone());
-
-    auto inserted = _object_dependencies.AddDependency<T>(id, dep);
-    SDB_ASSERT(!inserted);
+    auto dep = basics::downCast<T>(_deps.GetDependency(id)->Clone());
+    _deps.SetDependency(id, dep);
     return dep;
+  }
+
+  // Cross-tree fixups for DROP `seed`. Composition cleanup is async.
+  DropPlan ComputeDropPlan(ObjectId seed) const {
+    DropPlan plan;
+    containers::FlatHashSet<ObjectId> auto_drops{seed};
+    std::vector<ObjectId> stack{seed};
+
+    // Named so the FunctionRefs have something stable to point at.
+    auto lookup = [this](ObjectId id) { return GetObject(id); };
+    auto indexes_using_col = [this](ObjectId table_id,
+                                    ObjectId col_id) -> std::vector<ObjectId> {
+      std::vector<ObjectId> result;
+      auto dep = _deps.TryGetDependency(table_id);
+      if (!dep) {
+        return result;
+      }
+      auto td = std::dynamic_pointer_cast<const TableDependency>(dep);
+      if (!td) {
+        return result;
+      }
+      for (auto idx_id : td->indexes) {
+        auto idx = std::dynamic_pointer_cast<const Index>(GetObject(idx_id));
+        if (!idx) {
+          continue;
+        }
+        for (auto cid : idx->GetColumnIds()) {
+          if (cid == col_id) {
+            result.push_back(idx_id);
+            break;
+          }
+        }
+      }
+      return result;
+    };
+    DropEmitter emitter{lookup, indexes_using_col, plan, auto_drops, stack};
+
+    while (!stack.empty()) {
+      auto cur = stack.back();
+      stack.pop_back();
+      if (auto dep = _deps.TryGetDependency(cur)) {
+        dep->Emit(emitter);
+      }
+    }
+
+    // Auto drops run via the DropTask tree; scrub anything intra-closure
+    // that the walker tentatively recorded as cross-tree.
+    std::erase_if(plan.view_drops,
+                  [&](const auto& p) { return auto_drops.contains(p.second); });
+    std::erase_if(plan.function_drops,
+                  [&](const auto& p) { return auto_drops.contains(p.second); });
+    absl::erase_if(plan.table_rewrites, [&](const auto& kv) {
+      return auto_drops.contains(kv.first);
+    });
+    return plan;
+  }
+
+  void CommitDropPlan(RocksDBEngineCatalog::CatalogWriteContext& ctx,
+                      const DropPlan& plan) const {
+    for (const auto& [tid, rw] : plan.table_rewrites) {
+      vpack::Builder b;
+      rw.table->WriteInternal(b);
+      ctx.PutDefinition(rw.schema_id, ObjectType::Table, tid, b.slice());
+    }
+    for (const auto& [schema_id, view_id] : plan.view_drops) {
+      ctx.DropDefinition(schema_id, ObjectType::PgSqlView, view_id);
+    }
+    for (const auto& [schema_id, fn_id] : plan.function_drops) {
+      ctx.DropDefinition(schema_id, ObjectType::PgSqlFunction, fn_id);
+    }
+    // Recovery anchor for cascade-dropped indexes (column->index cascade).
+    for (auto idx_id : plan.index_drops) {
+      if (auto idx = GetObject<Index>(idx_id)) {
+        ctx.WriteTombstone(idx->GetRelationId(), idx_id);
+      }
+    }
+  }
+
+  // Apply cross-tree mutations in-memory; schedule IndexDrop tasks for
+  // cascade-dropped indexes (column->index cascade).
+  void ApplyDropPlan(ObjectId db_id, DropPlan& plan) {
+    for (const auto& [schema_id, view_id] : plan.view_drops) {
+      if (auto v = GetObject<PgSqlView>(view_id)) {
+        UnregisterObject(std::move(v), schema_id);
+      }
+    }
+    for (const auto& [schema_id, fn_id] : plan.function_drops) {
+      if (auto f = GetObject<PgSqlFunction>(fn_id)) {
+        UnregisterObject(std::move(f), schema_id);
+      }
+    }
+    for (auto& [tid, rw] : plan.table_rewrites) {
+      auto it = _objects.find(tid);
+      if (it == _objects.end()) {
+        continue;
+      }
+      std::ignore = ReplaceObject<ResolveType::Relation>(
+        rw.schema_id, (*it)->GetName(), std::move(rw.table));
+    }
+    for (auto idx_id : plan.index_drops) {
+      auto idx = GetObject<Index>(idx_id);
+      if (!idx) {
+        continue;
+      }
+      auto table_id = idx->GetRelationId();
+      auto table = GetObject<Table>(table_id);
+      if (!table) {
+        continue;
+      }
+      auto task = CreateIndexDrop(db_id, table->GetParentId(), table_id, idx,
+                                  /*is_root=*/true);
+      UnregisterObject(std::move(idx), table_id);
+      DropTask::Schedule(std::move(task)).Detach();
+    }
   }
 
  private:
@@ -932,24 +1275,28 @@ class SnapshotImpl : public Snapshot {
           }
         } break;
         case ObjectType::PgSqlFunction: {
-          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
-          SDB_ASSERT(schema_deps);
-          schema_deps->functions.erase(id);
+          GetDependencyForWrite<SchemaDependency>(parent_id)->functions.erase(
+            id);
+          ModifyFunctionDependencies(parent_id,
+                                     basics::downCast<PgSqlFunction>(*obj),
+                                     EdgeAction::Delete);
         } break;
-        case ObjectType::Tokenizer: {
-          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
-          SDB_ASSERT(schema_deps);
-          schema_deps->tokenizers.erase(id);
-        } break;
+        case ObjectType::Tokenizer:
+          GetDependencyForWrite<SchemaDependency>(parent_id)->tokenizers.erase(
+            id);
+          break;
         case ObjectType::Table: {
-          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
-          SDB_ASSERT(schema_deps);
-          schema_deps->tables.erase(id);
+          GetDependencyForWrite<SchemaDependency>(parent_id)->tables.erase(id);
+          const auto& t = basics::downCast<Table>(*obj);
+          ModifyTableDependencies(parent_id, t, EdgeAction::Delete);
+          for (const auto& col : t.Columns()) {
+            _objects.erase(col.GetId());
+          }
         } break;
         case ObjectType::PgSqlView: {
-          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
-          SDB_ASSERT(schema_deps);
-          schema_deps->views.erase(id);
+          GetDependencyForWrite<SchemaDependency>(parent_id)->views.erase(id);
+          ModifyViewDependencies(parent_id, basics::downCast<PgSqlView>(*obj),
+                                 RefKinds::All, EdgeAction::Delete);
         } break;
         case ObjectType::PgSqlType: {
           auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
@@ -971,7 +1318,13 @@ class SnapshotImpl : public Snapshot {
             schema_deps->sequences.erase(id);
           }
         } break;
-        default:
+        case ObjectType::TableShard:
+        case ObjectType::SecondaryIndexShard:
+        case ObjectType::InvertedIndexShard:
+        case ObjectType::Invalid:
+        case ObjectType::Tombstone:
+        case ObjectType::Column:
+        case ObjectType::Virtual:
           SDB_UNREACHABLE();
       }
     }
@@ -990,6 +1343,7 @@ class SnapshotImpl : public Snapshot {
         drop_childs(schema_deps->views);
         drop_childs(schema_deps->tables);
         drop_childs(schema_deps->sequences);
+        drop_childs(schema_deps->tokenizers);
       } break;
       case ObjectType::Table:
       case ObjectType::PgSqlView: {
@@ -1043,10 +1397,13 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::InvertedIndexShard:
         SDB_ASSERT(!root);
         break;
-      default:
+      case ObjectType::Invalid:
+      case ObjectType::Tombstone:
+      case ObjectType::Column:
+      case ObjectType::Virtual:
         SDB_UNREACHABLE();
     }
-    _object_dependencies.RemoveDependency(id);
+    _deps.RemoveDependency(id);
   }
 
   template<typename W>
@@ -1089,12 +1446,12 @@ class SnapshotImpl : public Snapshot {
       return true;
     }
 
-    ObjectSetByName<SchemaObject> relations;
-    ObjectSetByName<SchemaObject> functions;
+    ObjectSetByName<Object> relations;
+    ObjectSetByName<Object> functions;
   };
 
   ResolutionTable _resolution_table;
-  ObjectDependencies _object_dependencies;
+  ObjectDependencies _deps;
   ObjectSetById<Object> _objects;
   mutable connector::DuckDBEntryCache _duckdb_cache;
 };
@@ -1174,7 +1531,6 @@ Result LocalCatalog::RegisterType(ObjectId database_id, ObjectId schema_id,
 }
 
 Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
-  const auto owner_id = database->GetOwnerId();
   const auto database_id = database->GetId();
 
   // TODO(gnusi): make it atomic
@@ -1202,7 +1558,6 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
 
       auto schema = std::make_shared<Schema>(
         database_id, SchemaOptions{
-                       .owner_id = owner_id,
                        .name = std::string{StaticStrings::kPublic},
                      });
       r = clone->RegisterObject(schema, database_id, false);
@@ -1349,7 +1704,7 @@ struct ResolvedIndexRelation {
 };
 
 ResultOr<ResolvedIndexRelation> ResolveIndexRelation(
-  const std::shared_ptr<SchemaObject>& relation) {
+  const std::shared_ptr<Object>& relation) {
   if (relation->GetType() == ObjectType::Table) {
     auto& table = basics::downCast<Table>(*relation);
     return ResolvedIndexRelation{
@@ -1361,11 +1716,8 @@ ResultOr<ResolvedIndexRelation> ResolveIndexRelation(
     const auto& view_info = view.GetInfo();
     auto columns = std::views::iota(size_t{0}, view_info.names.size()) |
                    std::views::transform([&](size_t i) {
-                     return Column{
-                       .id = static_cast<Column::Id>(i),
-                       .type = view_info.types[i],
-                       .name = view_info.names[i],
-                     };
+                     return Column{ObjectId{}, Column::Id{i},
+                                   view_info.names[i], view_info.types[i]};
                    }) |
                    std::ranges::to<std::vector>();
     return ResolvedIndexRelation{
@@ -1403,8 +1755,9 @@ Result LocalCatalog::CreateSecondaryIndex(
     return std::move(resolved).error();
   }
   for (auto& c : columns) {
-    auto it = absl::c_find_if(
-      resolved->columns, [&](const Column& col) { return col.name == c.name; });
+    auto it = absl::c_find_if(resolved->columns, [&](const Column& col) {
+      return col.GetName() == c.name;
+    });
     if (it == resolved->columns.end()) {
       return Result{ERROR_BAD_PARAMETER, "column \"", c.name,
                     "\" does not exist"};
@@ -1448,8 +1801,9 @@ Result LocalCatalog::CreateInvertedIndex(
     return std::move(resolved).error();
   }
   for (auto& c : columns) {
-    auto it = absl::c_find_if(
-      resolved->columns, [&](const Column& col) { return col.name == c.name; });
+    auto it = absl::c_find_if(resolved->columns, [&](const Column& col) {
+      return col.GetName() == c.name;
+    });
     if (it == resolved->columns.end()) {
       return Result{ERROR_BAD_PARAMETER, "column \"", c.name,
                     "\" does not exist"};
@@ -1473,12 +1827,13 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
   if (!schema_id) {
     return Result(ERROR_SERVER_ILLEGAL_NAME);
   }
+  view->SetParentId(*schema_id);
   if (replace) {
     // Check replaced object have the same type
     Result r =
       _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, view->GetName())
         .transform([&](ObjectId existed_id) {
-          auto existed_object = _snapshot->GetObject<SchemaObject>(existed_id);
+          auto existed_object = _snapshot->GetObject<Object>(existed_id);
           return existed_object->GetType() == ObjectType::PgSqlView
                    ? Result{}
                    : Result{ERROR_SERVER_ILLEGAL_NAME, "\"", view->GetName(),
@@ -1525,6 +1880,7 @@ Result LocalCatalog::CreateSequence(ObjectId database_id,
     }
     return {ERROR_SERVER_DUPLICATE_NAME};
   }
+  sequence->SetParentId(*schema_id);
 
   return Apply(
     _snapshot,
@@ -1555,6 +1911,7 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
+  function->SetParentId(*schema_id);
 
   return Apply(
     _snapshot,
@@ -1580,8 +1937,8 @@ Result LocalCatalog::CreateTable(
     return r;
   }
   for (auto pk_id : options.pk_columns) {
-    auto col = absl::c_find_if(options.columns,
-                               [&](const auto& c) { return c.id == pk_id; });
+    auto col = absl::c_find_if(
+      options.columns, [&](const auto& c) { return c.GetId() == pk_id; });
     SDB_ASSERT(col != options.columns.end());
   }
   auto sequence_specs = std::move(options.sequences);
@@ -1614,21 +1971,22 @@ Result LocalCatalog::CreateTable(
                                                     std::move(args)));
   };
 
-  // Pre-allocate so SERIAL sequences can stamp owner_table_id before the
-  // Table itself is constructed.
+  // Columns come in with whatever owner_table_id callers set (unused);
+  // Table's constructor stamps the real id on each.
   auto table_id = NextId();
 
   std::vector<std::shared_ptr<Sequence>> sequences;
   sequences.reserve(sequence_specs.size() + 1);
   for (const auto& spec : sequence_specs) {
-    auto col_it = absl::c_find_if(
-      options.columns, [&](const auto& c) { return c.id == spec.column_id; });
+    auto col_it = absl::c_find_if(options.columns, [&](const auto& c) {
+      return c.GetId() == spec.column_id;
+    });
     SDB_ASSERT(col_it != options.columns.end());
-    auto resolved =
-      pick_unique_name(absl::StrCat(options.name, "_", col_it->name, "_seq"));
+    auto resolved = pick_unique_name(
+      absl::StrCat(options.name, "_", col_it->GetName(), "_seq"));
     col_it->expr = make_nextval_default(absl::StrCat(schema, ".", resolved));
     sequences.push_back(std::make_shared<Sequence>(
-      database_id, *schema_id, ObjectId{}, resolved, spec.options, table_id));
+      *schema_id, ObjectId{}, resolved, spec.options, table_id));
   }
 
   // Tables without an explicit PK get an auto-PK owned sequence. Table
@@ -1639,14 +1997,14 @@ Result LocalCatalog::CreateTable(
     auto resolved = pick_unique_name(absl::StrCat(options.name, "_pk_seq"));
     SequenceOptions opts;
     opts.cache = 65536;
-    auto pk_seq = std::make_shared<Sequence>(
-      database_id, *schema_id, ObjectId{}, resolved, opts, table_id);
+    auto pk_seq = std::make_shared<Sequence>(*schema_id, ObjectId{}, resolved,
+                                             opts, table_id);
     generated_pk_seq_id = pk_seq->GetId();
     sequences.push_back(std::move(pk_seq));
   }
 
   auto table = std::make_shared<Table>(
-    database_id, table_id, options.name, std::move(options.columns),
+    *schema_id, table_id, options.name, std::move(options.columns),
     std::move(options.pk_columns), std::move(options.check_constraints),
     generated_pk_seq_id);
   if (operation_options.create_with_tombstone) {
@@ -1711,6 +2069,7 @@ Result LocalCatalog::CreateTokenizer(ObjectId database_id,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
+  dict->SetParentId(*schema_id);
 
   return Apply(
     _snapshot,
@@ -1738,6 +2097,7 @@ Result LocalCatalog::CreateType(ObjectId database_id, std::string_view schema,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
+  type->SetParentId(*schema_id);
 
   return Apply(
     _snapshot,
@@ -2059,21 +2419,29 @@ Result LocalCatalog::DropRole(std::string_view role) {
 
 Result LocalCatalog::DropDatabase(std::string_view name) {
   absl::MutexLock lock{&_mutex};
+  auto database_id =
+    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, name);
+  if (!database_id) {
+    return Result{ERROR_SERVER_DATABASE_NOT_FOUND, "database \"", name,
+                  "\" does not exist"};
+  }
+
+  auto plan = _snapshot->ComputeDropPlan(*database_id);
+
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
     SDB_ASSERT(clone);
-    auto database = clone->GetDatabase(name);
-    if (!database) {
-      return Result{ERROR_SERVER_DATABASE_NOT_FOUND, "database \"", name,
-                    "\" does not exist"};
-    }
+    auto database = clone->GetObject<Database>(*database_id);
+    SDB_ASSERT(database);
     auto task = clone->CreateDatabaseDrop(database);
-    if (auto r =
-          GetServerEngine().WriteTombstone(id::kInstance, database->GetId());
-        !r.ok()) {
-      return r;
+    auto wr = _engine->Write([&](auto& ctx) {
+      ctx.WriteTombstone(id::kInstance, *database_id);
+      clone->CommitDropPlan(ctx, plan);
+    });
+    if (!wr.ok()) {
+      return wr;
     }
-    clone->UnregisterObject(clone->GetObject<Database>(database->GetId()),
-                            id::kInstance);
+    clone->UnregisterObject(std::move(database), id::kInstance);
+    clone->ApplyDropPlan(*database_id, plan);
     // Check that SereneDB won't open this database after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     DropTask::Schedule(std::move(task)).Detach();
@@ -2100,15 +2468,22 @@ Result LocalCatalog::DropSchema(std::string_view database,
     return Result{ERROR_BAD_PARAMETER};
   }
 
+  auto plan = _snapshot->ComputeDropPlan(*schema_id);
+
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
     SDB_ASSERT(clone);
     auto schema = clone->GetObject<Schema>(*schema_id);
     SDB_ASSERT(schema);
     auto task = clone->CreateSchemaDrop(*database_id, schema, true);
-    if (auto r = _engine->WriteTombstone(*database_id, *schema_id); !r.ok()) {
-      return r;
+    auto wr = _engine->Write([&](auto& ctx) {
+      ctx.WriteTombstone(*database_id, *schema_id);
+      clone->CommitDropPlan(ctx, plan);
+    });
+    if (!wr.ok()) {
+      return wr;
     }
     clone->UnregisterObject(std::move(schema), *database_id);
+    clone->ApplyDropPlan(*database_id, plan);
     // Check that SereneDB won't open this schema after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     DropTask::Schedule(std::move(task)).Detach();
@@ -2117,7 +2492,8 @@ Result LocalCatalog::DropSchema(std::string_view database,
 }
 
 Result LocalCatalog::DropTable(std::string_view database,
-                               std::string_view schema, std::string_view name) {
+                               std::string_view schema, std::string_view name,
+                               bool cascade) {
   absl::MutexLock lock{&_mutex};
 
   const auto database_id =
@@ -2136,6 +2512,11 @@ Result LocalCatalog::DropTable(std::string_view database,
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
+  auto plan = _snapshot->ComputeDropPlan(*table_id);
+  if (!cascade && plan.IsCascade()) {
+    return Result{ERROR_BAD_PARAMETER, "other objects depend on table ", name};
+  }
+
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
     SDB_ASSERT(clone);
     auto object = clone->GetObject(*table_id);
@@ -2146,12 +2527,17 @@ Result LocalCatalog::DropTable(std::string_view database,
     }
     auto table = basics::downCast<Table>(std::move(object));
     auto task = clone->CreateTableDrop(*database_id, *schema_id, table, true);
-    if (auto r = _engine->WriteTombstone(*schema_id, *table_id); !r.ok()) {
-      return r;
+
+    auto wr = _engine->Write([&](auto& ctx) {
+      ctx.WriteTombstone(*schema_id, *table_id);
+      clone->CommitDropPlan(ctx, plan);
+    });
+    if (!wr.ok()) {
+      return wr;
     }
 
     clone->UnregisterObject(std::move(table), *schema_id);
-    // Check that SereneDB won't open this table after reboot
+    clone->ApplyDropPlan(*database_id, plan);
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     DropTask::Schedule(std::move(task)).Detach();
     return Result{};
@@ -2192,14 +2578,15 @@ Result LocalCatalog::RemoveTombstone(ObjectId database_id,
 
   // Unlike most catalog operations that clone the snapshot, here we modify the
   // object in-place because the tombstone flag is simple in-memory state.
-  auto& schema_obj = basics::downCast<SchemaObject>(*object);
+  auto& schema_obj = basics::downCast<Object>(*object);
   schema_obj.SetTombstoned(false);
 
   return r;
 }
 
 Result LocalCatalog::DropIndex(std::string_view database,
-                               std::string_view schema, std::string_view name) {
+                               std::string_view schema, std::string_view name,
+                               bool cascade) {
   absl::MutexLock lock{&_mutex};
 
   const auto database_id =
@@ -2244,7 +2631,8 @@ Result LocalCatalog::DropIndex(std::string_view database,
 }
 
 Result LocalCatalog::DropView(std::string_view database,
-                              std::string_view schema, std::string_view name) {
+                              std::string_view schema, std::string_view name,
+                              bool cascade) {
   absl::MutexLock lock{&_mutex};
 
   const auto database_id =
@@ -2263,6 +2651,11 @@ Result LocalCatalog::DropView(std::string_view database,
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
+  auto plan = _snapshot->ComputeDropPlan(*view_id);
+  if (!cascade && plan.IsCascade()) {
+    return Result{ERROR_BAD_PARAMETER, "other objects depend on view ", name};
+  }
+
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
     SDB_ASSERT(clone);
     auto object = clone->GetObject(*view_id);
@@ -2272,19 +2665,24 @@ Result LocalCatalog::DropView(std::string_view database,
                     pg::ToPgObjectTypeName(object->GetType())};
     }
     auto view = basics::downCast<PgSqlView>(std::move(object));
-    auto r =
-      _engine->DropDefinition(*schema_id, ObjectType::PgSqlView, view->GetId());
-    if (!r.ok()) {
-      return r;
+
+    auto wr = _engine->Write([&](auto& ctx) {
+      ctx.DropDefinition(*schema_id, ObjectType::PgSqlView, *view_id);
+      clone->CommitDropPlan(ctx, plan);
+    });
+    if (!wr.ok()) {
+      return wr;
     }
     clone->UnregisterObject(std::move(view), *schema_id);
+    clone->ApplyDropPlan(*database_id, plan);
     return Result{};
   });
 }
 
 Result LocalCatalog::DropSequence(std::string_view database,
                                   std::string_view schema,
-                                  std::string_view name, bool if_exists) {
+                                  std::string_view name, bool if_exists,
+                                  bool cascade) {
   absl::MutexLock lock{&_mutex};
 
   const auto database_id =
@@ -2303,15 +2701,10 @@ Result LocalCatalog::DropSequence(std::string_view database,
     return if_exists ? Result{} : Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
-  if (auto seq = _snapshot->GetObject<Sequence>(*seq_id); seq) {
-    if (auto owner = seq->GetOwnerTableId(); owner.isSet()) {
-      auto table_deps = _snapshot->GetDependency<TableDependency>(owner);
-      if (table_deps && table_deps->owned_sequences.contains(*seq_id)) {
-        auto owner_table = _snapshot->GetObject<Table>(owner);
-        return Result{ERROR_BAD_PARAMETER, "Can not drop sequence ", name,
-                      " owned by table ", owner_table->GetName()};
-      }
-    }
+  auto plan = _snapshot->ComputeDropPlan(*seq_id);
+  if (!cascade && plan.IsCascade()) {
+    return Result{ERROR_BAD_PARAMETER, "other objects depend on sequence ",
+                  name};
   }
 
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
@@ -2323,21 +2716,24 @@ Result LocalCatalog::DropSequence(std::string_view database,
                     pg::ToPgObjectTypeName(object->GetType())};
     }
     auto seq = basics::downCast<Sequence>(std::move(object));
-    auto r =
-      _engine->DropDefinition(*schema_id, ObjectType::Sequence, seq->GetId());
-    if (!r.ok()) {
-      return r;
-    }
-    if (auto cr = _engine->DropSequence(seq->GetId()); !cr.ok()) {
-      return cr;
+
+    auto wr = _engine->Write([&](auto& ctx) {
+      ctx.DropDefinition(*schema_id, ObjectType::Sequence, *seq_id);
+      ctx.DropSequence(*seq_id);  // counter row in same atomic batch
+      clone->CommitDropPlan(ctx, plan);
+    });
+    if (!wr.ok()) {
+      return wr;
     }
     clone->UnregisterObject(std::move(seq), *schema_id);
+    clone->ApplyDropPlan(*database_id, plan);
     return Result{};
   });
 }
 
 Result LocalCatalog::DropType(std::string_view database,
-                              std::string_view schema, std::string_view name) {
+                              std::string_view schema, std::string_view name,
+                              bool cascade) {
   absl::MutexLock lock{&_mutex};
 
   const auto database_id =
@@ -2356,6 +2752,11 @@ Result LocalCatalog::DropType(std::string_view database,
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
+  auto plan = _snapshot->ComputeDropPlan(*type_id);
+  if (!cascade && plan.IsCascade()) {
+    return Result{ERROR_BAD_PARAMETER, "other objects depend on type ", name};
+  }
+
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
     SDB_ASSERT(clone);
     auto object = clone->GetObject(*type_id);
@@ -2365,19 +2766,23 @@ Result LocalCatalog::DropType(std::string_view database,
                     pg::ToPgObjectTypeName(object->GetType())};
     }
     auto type = basics::downCast<PgSqlType>(std::move(object));
-    auto r =
-      _engine->DropDefinition(*schema_id, ObjectType::PgSqlType, type->GetId());
-    if (!r.ok()) {
-      return r;
+
+    auto wr = _engine->Write([&](auto& ctx) {
+      ctx.DropDefinition(*schema_id, ObjectType::PgSqlType, *type_id);
+      clone->CommitDropPlan(ctx, plan);
+    });
+    if (!wr.ok()) {
+      return wr;
     }
     clone->UnregisterObject(std::move(type), *schema_id);
+    clone->ApplyDropPlan(*database_id, plan);
     return Result{};
   });
 }
 
 Result LocalCatalog::DropFunction(std::string_view database,
                                   std::string_view schema,
-                                  std::string_view name) {
+                                  std::string_view name, bool cascade) {
   absl::MutexLock lock{&_mutex};
 
   const auto database_id =
@@ -2396,23 +2801,33 @@ Result LocalCatalog::DropFunction(std::string_view database,
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
+  auto plan = _snapshot->ComputeDropPlan(*function_id);
+  if (!cascade && plan.IsCascade()) {
+    return Result{ERROR_BAD_PARAMETER, "other objects depend on function ",
+                  name};
+  }
+
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
     SDB_ASSERT(clone);
     auto function = clone->GetObject<PgSqlFunction>(*function_id);
     SDB_ASSERT(function);
-    auto r = _engine->DropDefinition(*schema_id, ObjectType::PgSqlFunction,
-                                     *function_id);
-    if (!r.ok()) {
-      return r;
+
+    auto wr = _engine->Write([&](auto& ctx) {
+      ctx.DropDefinition(*schema_id, ObjectType::PgSqlFunction, *function_id);
+      clone->CommitDropPlan(ctx, plan);
+    });
+    if (!wr.ok()) {
+      return wr;
     }
     clone->UnregisterObject(std::move(function), *schema_id);
+    clone->ApplyDropPlan(*database_id, plan);
     return Result{};
   });
 }
 
 Result LocalCatalog::DropTokenizer(std::string_view database,
                                    std::string_view schema,
-                                   std::string_view name) {
+                                   std::string_view name, bool cascade) {
   absl::MutexLock lock{&_mutex};
 
   const auto database_id =

@@ -143,8 +143,8 @@ std::string_view TableScanBindData::RelationName() const {
 catalog::Column::Id TableScanBindData::ColumnIdByName(
   std::string_view name) const {
   for (const auto& col : table->Columns()) {
-    if (col.name == name) {
-      return col.id;
+    if (col.GetName() == name) {
+      return col.GetId();
     }
   }
   return kInvalidColumnId;
@@ -153,8 +153,8 @@ catalog::Column::Id TableScanBindData::ColumnIdByName(
 std::string_view TableScanBindData::ColumnNameById(
   catalog::Column::Id col_id) const {
   for (const auto& col : table->Columns()) {
-    if (col.id == col_id) {
-      return col.name;
+    if (col.GetId() == col_id) {
+      return col.GetName();
     }
   }
   return {};
@@ -162,7 +162,7 @@ std::string_view TableScanBindData::ColumnNameById(
 
 void TableScanBindData::IterateColumns(const ColumnVisitor& cb) const {
   for (const auto& col : table->Columns()) {
-    cb(col.id, col.type);
+    cb(col.GetId(), col.type);
   }
 }
 

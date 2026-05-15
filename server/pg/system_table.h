@@ -192,11 +192,8 @@ template<typename T>
 class SystemTableSnapshot final : public catalog::VirtualTableSnapshot {
  public:
   explicit SystemTableSnapshot(const catalog::VirtualTable& table,
-                               ObjectId database, const Config& config)
-    : VirtualTableSnapshot{{},
-                           database,
-                           {},
-                           table.Id(),
+                               ObjectId database_id, const Config& config)
+    : VirtualTableSnapshot{database_id, table.Id(),
                            std::string{table.GetName()},
                            catalog::ObjectType::Virtual},
       _config{config} {

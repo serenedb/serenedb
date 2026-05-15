@@ -53,8 +53,6 @@ struct OptionsContext {
 
 class OptionsParser {
  public:
-  // Build the internal Options map directly from a runtime
-  // "Key=Value, Key=Value" string (e.g. PG ts_headline's options arg).
   static Options MakeOptions(std::string_view text) {
     Options out;
     for (std::string_view entry :
@@ -68,7 +66,6 @@ class OptionsParser {
                         ERR_HINT("Use Key=Value syntax."));
       }
       auto value_raw = absl::StripAsciiWhitespace(*it);
-      // Strip a single layer of single or double quotes around the value.
       if (value_raw.size() >= 2 &&
           ((value_raw.front() == '"' && value_raw.back() == '"') ||
            (value_raw.front() == '\'' && value_raw.back() == '\''))) {
@@ -136,8 +133,6 @@ class OptionsParser {
       }
       if constexpr (!std::holds_alternative<std::monostate>(Info.constraint)) {
         if constexpr (kIsString) {
-          // ConstraintFunction stores void(*)(string_view, string_view);
-          // string converts implicitly.
           std::get<void (*)(std::string_view, std::string_view)>(
             Info.constraint)(Info.name, std::string_view{*value});
         } else {

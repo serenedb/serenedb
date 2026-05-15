@@ -20,7 +20,6 @@
 
 #include "connector/functions/ts_lexize.h"
 
-#include <duckdb/common/exception.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
@@ -39,7 +38,9 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/ts_common.hpp"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
 #include "pg/sql_collector.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -50,8 +51,9 @@ std::shared_ptr<catalog::Tokenizer> LookupTokenizerDict(
   auto name = pg::ParseObjectName(dict_name, current_schema);
   auto dict = snapshot.GetTokenizer(db_id, name.schema, name.relation);
   if (!dict) {
-    throw duckdb::InvalidInputException{
-      "text search dictionary \"%s\" does not exist", std::string{dict_name}};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("text search dictionary \"", dict_name, "\" does not exist"));
   }
   return dict;
 }
@@ -60,9 +62,9 @@ catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   catalog::Tokenizer& dict) {
   auto result = dict.GetTokenizer();
   if (!result) {
-    throw duckdb::InvalidInputException(
-      "failed to get tokenizer: %s",
-      std::string{result.error().errorMessage()});
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("failed to get tokenizer: ", result.error().errorMessage()));
   }
   return std::move(*result);
 }
@@ -128,7 +130,8 @@ class ListTokenSink {
 
   void Push(irs::analysis::Analyzer& tokenizer, std::string_view text) {
     if (!tokenizer.reset(text)) {
-      throw duckdb::InvalidInputException{"error while preparing tokenizer"};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG("error while preparing tokenizer"));
     }
     auto* term = irs::get<irs::TermAttr>(tokenizer);
     while (tokenizer.next()) {

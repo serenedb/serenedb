@@ -271,10 +271,6 @@ void SearchSinkInsertBaseImpl::SetupExprAuxTypedFields(
   _aux_bool_field.name = _aux_bool_name_buffer;
   _aux_bool_field.store_attr = nullptr;
 
-  // Route each cell to one field by parsing the text: numeric/bool/string.
-  // TODO(mkornaukhov): all values arrive as json text extractors today;
-  // once typed JSON leaf extractors land (or just arbitrary expressions),
-  // dispatch by return_type and drop these aux fields.
   _current_writer = [this, string_writer = std::move(_current_writer)](
                       std::string_view full_key,
                       std::span<const rocksdb::Slice> cell_slices) {

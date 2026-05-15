@@ -20,7 +20,6 @@
 
 #include "connector/duckdb_catalog.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
@@ -569,6 +568,7 @@ duckdb::LogicalProjection* FindOutermostViewProjection(
   return nullptr;
 }
 
+#ifdef SDB_DEV
 // True iff a LogicalProjection appears strictly between `outer_proj` and
 // `leaf_get`.
 bool HasNestedProjectionBelow(duckdb::LogicalProjection& outer_proj,
@@ -587,6 +587,7 @@ bool HasNestedProjectionBelow(duckdb::LogicalProjection& outer_proj,
   }
   return false;
 }
+#endif
 
 // Prune unused view columns from the fast-path view-backed CREATE INDEX
 // chain. Returns the sorted kept view positions, or nullopt if no
@@ -600,11 +601,15 @@ std::optional<std::vector<duckdb::idx_t>> PruneViewFastPathChain(
     return std::nullopt;
   }
 
-  // Nested projections would require cascading the rewrite across
-  // layers; v1 punts.
-  if (HasNestedProjectionBelow(*outer_proj, leaf_get)) {
-    return std::nullopt;
-  }
+#ifdef SDB_DEV
+  // ResolveViewFastPath only accepts SELECT (col-refs) FROM <single
+  // base/function> [ORDER BY/LIMIT], so the chain below outer_proj is
+  // wrapper-only -- no nested projection is reachable today.
+  // If we alllow view body like (FROM (SELECT ... FROM t))  into fast path
+  // we need to design pruning around multiple projections. Maybe something
+  // like native DuckDB pruner works.
+  SDB_ASSERT(!HasNestedProjectionBelow(*outer_proj, leaf_get));
+#endif
   SDB_ASSERT(outer_proj->expressions.size() == view_decl_size,
              "outermost projection expressions count ",
              outer_proj->expressions.size(),

@@ -1147,6 +1147,116 @@ constexpr auto kSampleData = std::to_array<PgType>({
     .typdefault = {},
     .typacl = {},
   },
+  // internal (OID 2281) -- PG pseudo-type for arguments/results of internal
+  // C-level functions. Not user-visible, but PG tooling (sqlsmith, ORMs,
+  // catalog readers) expects this to exist in pg_type.
+  {
+    .oid = 2281,
+    .typname = "internal",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 8,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Pseudo,
+    .typcategory = PgType::Typcategory::Pseudo,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 0,
+    .typinput = 2304,   // internal_in
+    .typoutput = 2305,  // internal_out
+    .typreceive = 0,
+    .typsend = 0,
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Double,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  // anyarray (OID 2277) -- PG pseudo-type used to declare polymorphic
+  // array-of-anything arguments and results (e.g. array_agg, unnest).
+  {
+    .oid = 2277,
+    .typname = "anyarray",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = -1,
+    .typbyval = false,
+    .typtype = PgType::Typetype::Pseudo,
+    .typcategory = PgType::Typcategory::Pseudo,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 0,
+    .typinput = 2296,    // anyarray_in
+    .typoutput = 2297,   // anyarray_out
+    .typreceive = 2502,  // anyarray_recv
+    .typsend = 2503,     // anyarray_send
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Double,
+    .typstorage = PgType::Typstorage::Extended,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  // unknown (OID 705) -- PG's catch-all for types serened doesn't yet map to
+  // a concrete PG OID. Returned by Type2Oid() as a fallback so that
+  // pg_attribute.atttypid always resolves to a row in pg_type.
+  {
+    .oid = 705,
+    .typname = "unknown",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = -2,
+    .typbyval = false,
+    .typtype = PgType::Typetype::Pseudo,
+    .typcategory = PgType::Typcategory::Unknown,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 0,
+    .typinput = 109,     // unknownin
+    .typoutput = 110,    // unknownout
+    .typreceive = 2402,  // unknownrecv
+    .typsend = 2403,     // unknownsend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Char,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
   // name (OID 19)
   {
     .oid = 19,
@@ -1373,7 +1483,7 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
   auto database_id = GetParentId();
 
   std::vector<PgType> rows;
-  rows.reserve(kSampleData.size());
+  rows.reserve(kSampleData.size() * 2);
   for (const auto& row : kSampleData) {
     rows.push_back(row);
   }
@@ -1396,6 +1506,51 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
     taken.insert(array_names.back());
     return array_names.back();
   };
+
+  // Synthesize an array-type row for every scalar entry above that declares a
+  // non-zero typarray. PG clients (and sqlsmith) resolve column types via
+  // pg_attribute.atttypid -> pg_type.oid; without these rows, columns whose
+  // type is an array (text[], oid[], int2[], ...) fail to resolve.
+  for (const auto& scalar : kSampleData) {
+    if (scalar.typarray == 0 ||
+        scalar.typcategory == PgType::Typcategory::Array) {
+      continue;
+    }
+    rows.push_back(PgType{
+      .oid = scalar.typarray,
+      .typname = make_array_name(scalar.typname.v),
+      .typnamespace = scalar.typnamespace,
+      .typowner = scalar.typowner,
+      .typlen = -1,
+      .typbyval = false,
+      .typtype = PgType::Typetype::Base,
+      .typcategory = PgType::Typcategory::Array,
+      .typispreferred = false,
+      .typisdefined = true,
+      .typdelim = scalar.typdelim,
+      .typrelid = 0,
+      .typsubscript = 0,
+      .typelem = scalar.oid,
+      .typarray = 0,
+      .typinput = 750,     // array_in
+      .typoutput = 751,    // array_out
+      .typreceive = 2400,  // array_recv
+      .typsend = 2401,     // array_send
+      .typmodin = 0,
+      .typmodout = 0,
+      .typanalyze = 0,
+      .typalign = scalar.typalign,
+      .typstorage = PgType::Typstorage::Extended,
+      .typnotnull = false,
+      .typbasetype = 0,
+      .typtypmod = -1,
+      .typndims = 0,
+      .typcollation = scalar.typcollation,
+      .typdefaultbin = {},
+      .typdefault = {},
+      .typacl = {},
+    });
+  }
 
   for (const auto& schema : snapshot->GetSchemas(database_id)) {
     for (const auto& type :

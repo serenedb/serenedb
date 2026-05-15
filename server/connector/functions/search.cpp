@@ -372,12 +372,15 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(set));
   }
 
-  // LEVENSHTEIN(term, distance [, transpositions [, prefix]]) -- raw
+  // LEVENSHTEIN(term [, distance [, transpositions [, prefix]]]) -- raw
   // fuzzy match. The optional `prefix` is a literal leading substring
   // that must match exactly; only the suffix after `prefix` participates
-  // in edit-distance computation.
+  // in edit-distance computation. The 1-arg form `ts_levenshtein('term')`
+  // picks the distance automatically from term length.
   {
     duckdb::ScalarFunctionSet set{std::string{kTSQLevenshtein}};
+    set.AddFunction(duckdb::ScalarFunction({duckdb::LogicalType::VARCHAR},
+                                           MakeTSQueryType(), TSQueryStubFn));
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::INTEGER},
       MakeTSQueryType(), TSQueryStubFn));

@@ -20,10 +20,14 @@
 
 #include "connector/duckdb_physical_insert.h"
 
+#include <absl/synchronization/mutex.h>
+
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
+#include <shared_mutex>
 
 #include "basics/assert.h"
+#include "catalog/catalog.h"
 #include "catalog/sequence.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_constraint_verify.h"
@@ -36,6 +40,9 @@
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "storage_engine/engine_feature.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
 
@@ -44,6 +51,7 @@ struct InsertColumnMeta {
   catalog::Column::Id id;
   duckdb::LogicalType duckdb_type;
   size_t input_col_idx;
+  catalog::ColumnStoreMode store_mode;
 };
 
 struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
@@ -60,6 +68,8 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   // RocksDB handles
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
+  // sdb-side transaction; the IndexOnly writer registers markers on it.
+  query::Transaction* sdb_txn = nullptr;
 
   std::shared_ptr<catalog::Sequence> generated_pk_seq;
 
@@ -72,6 +82,9 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   std::string value_buffer;
   duckdb::unique_ptr<DuckDBColumnSerializer> serializer;
   DuckDBWriteConflictResolver conflict_resolver;
+
+  std::shared_ptr<TableShard> table_shard;
+  std::shared_lock<std::shared_mutex> table_lock;
 };
 
 struct SereneDBInsertSourceState : public duckdb::GlobalSourceState {
@@ -107,6 +120,12 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
   state->table_id = _table->GetId();
   state->table_key = key_utils::PrepareTableKey(state->table_id);
 
+  auto& conn_ctx = GetSereneDBContext(context);
+  state->table_shard =
+    conn_ctx.EnsureCatalogSnapshot()->GetTableShard(state->table_id);
+  SDB_ASSERT(state->table_shard);
+  state->table_lock = std::shared_lock{state->table_shard->GetTableLock()};
+
   // Build column metadata
   const auto& columns = _table->Columns();
   size_t input_idx = 0;
@@ -118,6 +137,7 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
       .id = columns[i].GetId(),
       .duckdb_type = columns[i].type,
       .input_col_idx = input_idx++,
+      .store_mode = columns[i].store_mode,
     });
   }
 
@@ -133,10 +153,8 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
     }
   }
 
-  // Set up transaction and index writers once
-  auto& conn_ctx = GetSereneDBContext(context);
-  conn_ctx.AddRocksDBWrite();
-  state->txn = &conn_ctx.EnsureRocksDBTransaction();
+  state->txn = &conn_ctx.GetRocksDBTransaction();
+  state->sdb_txn = &conn_ctx;
   state->conflict_resolver.Init(*state->txn, *state->cf, _on_conflict,
                                 state->table_name);
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
@@ -214,20 +232,23 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   }
 
   // 4. Write each column via DuckDBColumnSerializer
-  DuckDBColumnSerializer::TxnWriter txn_writer{txn, gstate.cf};
+  DuckDBColumnSerializer::TxnWriter txn_writer{*gstate.sdb_txn, gstate.cf};
 
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {
       continue;
     }
 
+    auto& vec = chunk.data[col.input_col_idx];
+    const bool may_have_nulls =
+      vec.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
+      !duckdb::FlatVector::Validity(vec).CannotHaveNull();
+    const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
+                                may_have_nulls};
+
     gstate.active_writers.clear();
     for (auto& writer : gstate.index_writers) {
-      auto& vec = chunk.data[col.input_col_idx];
-      bool may_have_nulls =
-        vec.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
-        !duckdb::FlatVector::Validity(vec).CannotHaveNull();
-      if (writer->SwitchColumn(col.duckdb_type, may_have_nulls, col.id)) {
+      if (writer->SwitchColumn(desc)) {
         gstate.active_writers.push_back(writer.get());
       }
     }
@@ -239,9 +260,8 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
       }
     }
 
-    gstate.serializer->WriteColumn(txn_writer, chunk.data[col.input_col_idx],
-                                   col.duckdb_type, num_rows, gstate.row_keys,
-                                   gstate.active_writers);
+    gstate.serializer->WriteColumn(txn_writer, vec, num_rows, gstate.row_keys,
+                                   gstate.active_writers, desc);
   }
 
   // 5. Finish index writers

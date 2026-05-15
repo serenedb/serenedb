@@ -128,9 +128,10 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   _pk_field.name = kPkFieldName;
 }
 
-bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const duckdb::LogicalType& type,
-                                                bool have_nulls,
-                                                catalog::Column::Id column_id) {
+bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col) {
+  const auto column_id = col.id;
+  const auto& type = col.type;
+  const auto have_nulls = col.have_nulls;
   if (!IsIndexed(column_id)) {
 #ifdef SDB_DEV
     _current_writer = nullptr;

@@ -1,0 +1,147 @@
+control substitution on
+
+# WAL index recovery: TRUNCATE on a table with MULTIPLE inverted indexes.
+#
+# The recovery handler iterates `_table2shards[table_id].shards` and resets
+# each shard. With more than one inverted index on the same table this loop
+# runs more than once -- this test verifies all of them get reset
+# consistently and recovery replays post-truncate writes into every shard.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY abramov_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE abramov_t(id INTEGER PRIMARY KEY, body TEXT, tag TEXT);
+
+statement ok
+INSERT INTO abramov_t VALUES (1, 'seed alpha', 'red'), (2, 'seed bravo', 'blue');
+
+# Two separate inverted indexes covering different columns -- two shards per
+# table in `_table2shards`.
+statement ok
+CREATE INDEX abramov_body_idx ON abramov_t USING inverted(id, body abramov_dict);
+
+statement ok
+CREATE INDEX abramov_tag_idx ON abramov_t USING inverted(id, tag abramov_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) abramov_t;
+
+# Sanity: both shards return seed rows.
+query
+SELECT id FROM abramov_body_idx WHERE body @@ ts_phrase('alpha');
+----
+id
+1
+
+query
+SELECT id FROM abramov_tag_idx WHERE tag @@ ts_phrase('blue');
+----
+id
+2
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# Pre-truncate WAL-only writes that never reach iresearch.
+statement ok
+INSERT INTO abramov_t VALUES (3, 'pre echo', 'green'), (4, 'pre foxtrot', 'yellow');
+
+statement ok
+TRUNCATE abramov_t;
+
+# Post-truncate writes -- only these survive.
+statement ok
+INSERT INTO abramov_t VALUES (10, 'post golf', 'orange'), (20, 'post hotel', 'purple');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection abramov_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+# Catalog still has both indexes.
+connection abramov_after
+query
+SELECT COUNT(*) FROM pg_class WHERE relname IN ('abramov_body_idx', 'abramov_tag_idx');
+----
+count
+2
+
+connection abramov_after
+query
+SELECT id, body, tag FROM abramov_t ORDER BY id;
+----
+id	body	tag
+10	post golf	orange
+20	post hotel	purple
+
+# body shard -- pre-truncate phrases gone, post-truncate present.
+connection abramov_after
+query
+SELECT id FROM abramov_body_idx WHERE body @@ ts_phrase('alpha');
+----
+id
+
+connection abramov_after
+query
+SELECT id FROM abramov_body_idx WHERE body @@ ts_phrase('echo');
+----
+id
+
+connection abramov_after
+query
+SELECT id FROM abramov_body_idx WHERE body @@ ts_phrase('post golf');
+----
+id
+10
+
+# tag shard -- same outcome on the second shard.
+connection abramov_after
+query
+SELECT id FROM abramov_tag_idx WHERE tag @@ ts_phrase('blue');
+----
+id
+
+connection abramov_after
+query
+SELECT id FROM abramov_tag_idx WHERE tag @@ ts_phrase('green');
+----
+id
+
+connection abramov_after
+query
+SELECT id FROM abramov_tag_idx WHERE tag @@ ts_phrase('purple');
+----
+id
+20
+
+connection abramov_after
+statement ok
+DROP INDEX abramov_body_idx;
+
+connection abramov_after
+statement ok
+DROP INDEX abramov_tag_idx;
+
+connection abramov_after
+statement ok
+DROP TABLE abramov_t;
+
+connection abramov_after
+statement ok
+DROP TEXT SEARCH DICTIONARY abramov_dict;

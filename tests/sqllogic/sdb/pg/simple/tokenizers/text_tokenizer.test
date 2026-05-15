@@ -2247,3 +2247,7 @@ Text Search Dictionary:
       optimizeforspace (boolean) [default: false] - Optimize S2 index for space rather than speed
   keyword:
     (no additional options)
+  solr_synonyms:
+    synonyms[required] (string) [default: none] - Inline Solr-format synonyms file content: one rule per line, comma-separated terms; `=>` separates LHS from RHS for one-way mappings
+  wordnet_synonyms:
+    synonyms[required] (string) [default: none] - Inline WordNet Prolog database content: one `s(synset,w_num,'word',ss_type,sense_number,tag_count).` record per line

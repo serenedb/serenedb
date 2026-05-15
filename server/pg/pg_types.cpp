@@ -208,7 +208,7 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
     case ARRAY:
       return Type2Oid(duckdb::ArrayType::GetChildType(type), true);
     default:
-      return -1;
+      return kUnknown;
   }
 }
 

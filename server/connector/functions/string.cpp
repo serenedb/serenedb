@@ -28,6 +28,7 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
+#include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 
 #include "connector/pg_logical_types.h"
@@ -489,6 +490,22 @@ void NormalizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [&](duckdb::string_t input) -> duckdb::string_t {
       return duckdb::StringVector::AddString(result, input);
     });
+}
+
+// PG format() accepts varargs of any type and stringifies each one via its
+// standard text output. Coerce non-VARCHAR varargs to VARCHAR at bind time so
+// the executor body can read every input as `string_t` unconditionally.
+duckdb::unique_ptr<duckdb::FunctionData> PgFormatBind(
+  duckdb::BindScalarFunctionInput& input) {
+  auto& arguments = input.GetArguments();
+  auto& context = input.GetClientContext();
+  for (auto& arg : arguments) {
+    if (arg->return_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+      arg = duckdb::BoundCastExpression::AddCastToType(
+        context, std::move(arg), duckdb::LogicalType::VARCHAR);
+    }
+  }
+  return nullptr;
 }
 
 // PG format(text, ...) -- implements %s, %I, %L, %%, positional %n$s, width
@@ -1159,7 +1176,8 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     duckdb::ScalarFunction func{"format",
                                 {duckdb::LogicalType::VARCHAR},
                                 duckdb::LogicalType::VARCHAR,
-                                PgFormatFunction};
+                                PgFormatFunction,
+                                PgFormatBind};
     func.varargs = duckdb::LogicalType::ANY;
     func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
     loader.RegisterFunction(func);

@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include "basics/message_buffer.h"
 #include "catalog/identifiers/object_id.h"
 #include "pg/copy_messages_queue.h"
@@ -29,7 +31,7 @@
 
 namespace sdb {
 
-class ConnectionContext : public ExecContext, public query::Transaction {
+class ConnectionContext final : public ExecContext, public query::Transaction {
  public:
   ConnectionContext(duckdb::ClientContext& duckdb_ctx, std::string_view user,
                     std::string_view dbname, ObjectId database_id,
@@ -37,31 +39,34 @@ class ConnectionContext : public ExecContext, public query::Transaction {
                     message::Buffer* send_buffer,
                     pg::CopyMessagesQueue* copy_queue);
 
+  ~ConnectionContext() final { SDB_ASSERT(_notices.empty()); }
+
   std::string GetCurrentSchema() const;
   std::string GetCurrentSchemaFromSnapshot(
     std::shared_ptr<const catalog::Snapshot> snapshot) const;
 
-  message::Buffer* GetSendBuffer() { return _send_buffer; }
+  const auto& GetDatabasePtr() const { return _database; }
 
-  pg::CopyMessagesQueue* GetCopyQueue() { return _copy_queue; }
+  auto* GetSendBuffer() const { return _send_buffer; }
+
+  auto* GetCopyQueue() const { return _copy_queue; }
 
   void AddNotice(pg::SqlErrorData notice) {
+    std::lock_guard lock{_mutex};
     _notices.push_back(std::move(notice));
   }
 
-  auto StealNotices() { return std::exchange(_notices, {}); }
-
-  // Keeps the database alive for this connection's lifetime
-  // (prevents async drop until connection closes -- matches PG behavior)
-  const std::shared_ptr<catalog::Database>& GetDatabasePtr() const {
-    return _database;
+  auto StealNotices() {
+    std::lock_guard lock{_mutex};
+    return std::exchange(_notices, {});
   }
 
  private:
   std::shared_ptr<catalog::Database> _database;
+  message::Buffer* const _send_buffer;
+  pg::CopyMessagesQueue* const _copy_queue;
+  absl::Mutex _mutex;
   std::vector<pg::SqlErrorData> _notices;
-  message::Buffer* _send_buffer;
-  pg::CopyMessagesQueue* _copy_queue;
 };
 
 }  // namespace sdb

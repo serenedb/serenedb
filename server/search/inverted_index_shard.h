@@ -38,6 +38,11 @@
 #include "storage_engine/index_shard.h"
 #include "storage_engine/search_engine.h"
 
+namespace sdb::query {
+
+class Transaction;
+
+}  // namespace sdb::query
 namespace sdb::search {
 
 class InvertedIndexShard;
@@ -166,6 +171,26 @@ class InvertedIndexShard final
     InvertedIndexShardOptions options, bool is_new);
 
   void WriteInternal(vpack::Builder& builder) const final;
+
+  struct TruncateGuard {
+    struct UnlockDeleter {
+      void operator()(absl::Mutex* m) const ABSL_NO_THREAD_SAFETY_ANALYSIS {
+        m->Unlock();
+      }
+    };
+    using Ptr = std::unique_ptr<absl::Mutex, UnlockDeleter>;
+    Ptr mutex;
+  };
+  TruncateGuard TruncateBegin() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+    _commit_mutex.Lock();
+    return {TruncateGuard::Ptr{&_commit_mutex}};
+  }
+  // `user_txn` (nullable) is the connection's transaction whose pending
+  // per-conn iresearch staging we need to drop before Clear -- the new-arch
+  // analog of the old SearchTrxState cookie cleanup. Pass nullptr from
+  // contexts that don't have a user transaction (WAL recovery).
+  void TruncateCommit(TruncateGuard&& guard, Tick tick,
+                      query::Transaction* user_txn);
 
   auto GetTransaction() {
     SDB_ASSERT(_writer);

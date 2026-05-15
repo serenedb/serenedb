@@ -159,6 +159,10 @@ class LocalCatalog final : public LogicalCatalog,
   Result RenameObjectImpl(ObjectId database_id, std::string_view schema,
                           std::string_view name, std::string_view new_name);
 
+  template<typename T>
+  Result RenameObjectImpl(ObjectId schema_id, std::string_view name,
+                          std::string_view new_name, std::shared_ptr<T> object);
+
   mutable absl::Mutex _mutex;
   std::shared_ptr<const SnapshotImpl> _snapshot;
   RocksDBEngineCatalog* _engine;

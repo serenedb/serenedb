@@ -146,30 +146,22 @@ AsyncResult IndexDrop::Execute() {
 Result TableDrop::Finalize() {
   SDB_IF_FAILURE("crash_before_seq_counter_wipe") { SDB_IMMEDIATE_ABORT(); }
   auto& server = GetServerEngine();
-  // Owned seqs: def + counter, atomic per seq.
-  auto r = server.Write([&](auto& ctx) {
+  // Indexes, shards.
+  auto r = server.DropEntry(_id);
+  if (!r.ok()) {
+    return r;
+  }
+  // Owned seqs (def + counter) + the table's own catalog rows in one batch.
+  return server.Write([&](auto& ctx) {
     for (auto seq_id : _owned_sequences) {
       ctx.DropDefinition(_parent_id, catalog::ObjectType::Sequence, seq_id);
       ctx.DropSequence(seq_id);
     }
-  });
-  if (!r.ok()) {
-    return r;
-  }
-  // Indexes, shards.
-  r = server.DropEntry(_id);
-  if (!r.ok()) {
-    return r;
-  }
-  if (_is_root) {
-    r = server.DropDefinition(_parent_id, catalog::ObjectType::Table, _id);
-    if (!r.ok()) {
-      return r;
+    if (_is_root) {
+      ctx.DropDefinition(_parent_id, catalog::ObjectType::Table, _id);
+      ctx.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
     }
-    return server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone,
-                                 _id);
-  }
-  return {};
+  });
 }
 
 AsyncResult TableDrop::Execute() {

@@ -97,6 +97,8 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // CTAS has no PK/UNIQUE constraints -- pkColumns stays empty, so the
   // Table constructor wires up a generated PK sequence.
 
+  ApplyColumnModes(options.columns, table_info.options);
+
   auto& catalog_impl =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
 
@@ -143,7 +145,6 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
 
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.DropCatalogSnapshot();
-  conn_ctx.AddRocksDBWrite();
 
   return state;
 }

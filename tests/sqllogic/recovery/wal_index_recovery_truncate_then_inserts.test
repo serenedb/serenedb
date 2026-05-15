@@ -1,0 +1,107 @@
+control substitution on
+
+# WAL index recovery: TRUNCATE followed by a heavy insert burst.
+#
+# The truncate seq sits in the middle of the recovery window, with a large
+# number of post-truncate inserts after it. Verifies that RunWalRecovery's
+# accumulator can replay the post-truncate burst correctly even when its size
+# exceeds the per-shard flush threshold (kFlushThreshold).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mironov_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE mironov_t(id INTEGER PRIMARY KEY, body TEXT);
+
+# Seed a few hundred rows and vacuum -- gives iresearch real on-disk segments
+# that the truncate will need to wipe at recovery time.
+statement count 500
+INSERT INTO mironov_t
+SELECT x, 'pre truncate row ' || x::TEXT FROM generate_series(1, 500) AS t(x);
+
+statement ok
+CREATE INDEX mironov_idx ON mironov_t USING inverted(id, body mironov_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) mironov_t;
+
+# Sanity: pre-truncate rows are searchable.
+query
+SELECT count(*) FROM mironov_idx WHERE body @@ ts_phrase('pre truncate');
+----
+count
+500
+
+# Block search commits, then truncate and burst-insert.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+TRUNCATE mironov_t;
+
+statement count 500
+INSERT INTO mironov_t
+SELECT x, 'post truncate row ' || x::TEXT FROM generate_series(1, 500) AS t(x);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection mironov_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+connection mironov_after
+query
+SELECT count(*) FROM mironov_t;
+----
+count
+500
+
+# Pre-truncate phrase must not match anything.
+connection mironov_after
+query
+SELECT count(*) FROM mironov_idx WHERE body @@ ts_phrase('pre truncate');
+----
+count
+0
+
+# Post-truncate phrase must match every recovered row.
+connection mironov_after
+query
+SELECT count(*) FROM mironov_idx WHERE body @@ ts_phrase('post truncate');
+----
+count
+500
+
+# Spot-check a specific row pulled from the inverted index.
+connection mironov_after
+query
+SELECT id FROM mironov_idx WHERE body @@ ts_phrase('post truncate row 42');
+----
+id
+42
+
+connection mironov_after
+statement ok
+DROP INDEX mironov_idx;
+
+connection mironov_after
+statement ok
+DROP TABLE mironov_t;
+
+connection mironov_after
+statement ok
+DROP TEXT SEARCH DICTIONARY mironov_dict;

@@ -56,6 +56,13 @@ Result Transaction::Commit() {
                        : 0;
   SDB_ASSERT(!_rocksdb_transaction || _rocksdb_transaction->GetNumMerges() == 0,
              "We do not expect merges for now");
+  // Marker-only txns have zero rocksdb ops and would skip the commit block;
+  // force a no-op Delete to consume a seq number so markers reach the WAL
+  // and the inverted index has a tick to commit on.
+  if (num_ops == 0 && _num_log_data_markers > 0 && _rocksdb_transaction) {
+    _rocksdb_transaction->Delete(rocksdb::Slice{});
+    ++num_ops;
+  }
   if (num_ops > 0) [[likely]] {
     for (auto& search_transaction : _search_transactions) {
       // tie iresearch transaction's active segment to current flush context in
@@ -142,20 +149,6 @@ Result Transaction::Rollback() {
   return {};
 }
 
-void Transaction::AddRocksDBRead() noexcept { _state |= State::HasRocksDBRead; }
-
-bool Transaction::HasRocksDBRead() const noexcept {
-  return (_state & State::HasRocksDBRead) != State::None;
-}
-
-void Transaction::AddRocksDBWrite() noexcept {
-  _state |= State::HasRocksDBWrite;
-}
-
-bool Transaction::HasRocksDBWrite() const noexcept {
-  return (_state & State::HasRocksDBWrite) != State::None;
-}
-
 const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
   ObjectId index_id) {
   auto it = _search_snapshots.find(index_id);
@@ -173,42 +166,36 @@ const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
   return *it->second;
 }
 
-const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
-  SDB_ASSERT(HasRocksDBRead());
-  EnsureCatalogSnapshot();
-  if (!_rocksdb_snapshot) {
-    if (HasRocksDBWrite() || IsExplicitTransaction()) {
-      EnsureRocksDBTransaction();
-    } else {
-      SDB_ASSERT(!_storage_snapshot);
-      _storage_snapshot = GetServerEngine().currentSnapshot();
-      SDB_ASSERT(_storage_snapshot);
-      _rocksdb_snapshot = _storage_snapshot->GetSnapshot();
-      SDB_ASSERT(_rocksdb_snapshot);
-    }
+void Transaction::EnsureRocksDBSnapshot() {
+  if (_rocksdb_snapshot) {
+    return;
   }
-  return *_rocksdb_snapshot;
-}
-
-rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
-  SDB_ASSERT(HasRocksDBWrite() || IsExplicitTransaction());
-  if (!_rocksdb_transaction) [[unlikely]] {
-    SDB_ASSERT(!_rocksdb_snapshot);
-    auto* db = GetServerEngine().db();
-    SDB_ASSERT(db);
-    rocksdb::WriteOptions write_options;
-    rocksdb::TransactionOptions txn_options;
-    txn_options.skip_concurrency_control = true;
-    _rocksdb_transaction.reset(
-      db->BeginTransaction(write_options, txn_options));
-    SDB_ASSERT(_rocksdb_transaction);
-  }
-  if (!_rocksdb_snapshot) {
+  SDB_ASSERT(!_storage_snapshot);
+  if (_rocksdb_transaction) {
     _rocksdb_transaction->SetSnapshot();
     _rocksdb_snapshot = _rocksdb_transaction->GetSnapshot();
-    SDB_ASSERT(_rocksdb_snapshot);
+  } else {
+    _storage_snapshot = GetServerEngine().currentSnapshot();
+    SDB_ASSERT(_storage_snapshot);
+    _rocksdb_snapshot = _storage_snapshot->GetSnapshot();
   }
-  return *_rocksdb_transaction;
+  SDB_ASSERT(_rocksdb_snapshot);
+}
+
+void Transaction::EnsureRocksDBTransaction() {
+  SDB_ASSERT(!_storage_snapshot);
+  if (_rocksdb_transaction) {
+    return;
+  }
+  SDB_ASSERT(!_storage_snapshot);
+  SDB_ASSERT(!_rocksdb_snapshot);
+  auto* db = GetServerEngine().db();
+  SDB_ASSERT(db);
+  rocksdb::WriteOptions write_options;
+  rocksdb::TransactionOptions txn_options;
+  txn_options.skip_concurrency_control = true;
+  _rocksdb_transaction.reset(db->BeginTransaction(write_options, txn_options));
+  SDB_ASSERT(_rocksdb_transaction);
 }
 
 void Transaction::RegisterSearchFlushes() noexcept {
@@ -228,13 +215,13 @@ void Transaction::CommitSearchTransactions(uint64_t post_ingest_seq) noexcept {
 
 void Transaction::Destroy() noexcept {
   DropCatalogSnapshot();
-  _state = State::None;
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();
   _rocksdb_snapshot = nullptr;
   _search_transactions.clear();
   _table_rows_deltas.clear();
   _search_snapshots.clear();
+  _num_log_data_markers = 0;
 }
 
 catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {

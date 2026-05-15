@@ -9,6 +9,11 @@
 # introduced an AT_LA pseudo-token (emitted by a 3-token lookahead
 # filter in base_yylex) to keep the two AT-prefixed productions
 # unambiguous.  These tests pin the result.
+#
+# Note on column-name case: this codebase's scanner preserves the
+# user-typed case for keyword-derived identifiers (divergence from
+# upstream Postgres).  So `AS at` yields a column named "at" and
+# `AS AT` yields a column named "AT".  Headers below reflect that.
 
 
 # ----------------------------------------------------------------------
@@ -21,22 +26,25 @@ CREATE TABLE at_col_test(at INTEGER, x INTEGER);
 statement ok
 INSERT INTO at_col_test VALUES (1, 10), (2, 20), (3, 30);
 
-query II
+query
 SELECT at, x FROM at_col_test ORDER BY at;
 ----
+at	x
 1	10
 2	20
 3	30
 
-query I
+query
 SELECT at FROM at_col_test WHERE at > 1 ORDER BY at;
 ----
+at
 2
 3
 
-query I
+query
 SELECT at AS aliased FROM at_col_test ORDER BY aliased;
 ----
+aliased
 1
 2
 3
@@ -50,14 +58,16 @@ DROP TABLE at_col_test;
 #    → ColLabel; pinning to ensure recategorization didn't regress it).
 # ----------------------------------------------------------------------
 
-query I
+query
 SELECT 1 AS at;
 ----
+at
 1
 
-query I
+query
 SELECT 42 as AT;
 ----
+AT
 42
 
 
@@ -81,22 +91,25 @@ statement ok
 INSERT INTO at_alias_test VALUES (1, 100), (2, 200);
 
 # Explicit AS, then bare alias.
-query II
+query
 SELECT at.a, at.b FROM at_alias_test AS at ORDER BY at.a;
 ----
+a	b
 1	100
 2	200
 
-query II
+query
 SELECT at.a, at.b FROM at_alias_test at ORDER BY at.a;
 ----
+a	b
 1	100
 2	200
 
 # Quoted alias still works (was unchanged by reclassification).
-query II
+query
 SELECT "at".a, "at".b FROM at_alias_test AS "at" ORDER BY "at".a;
 ----
+a	b
 1	100
 2	200
 
@@ -108,24 +121,27 @@ SELECT "at".a, "at".b FROM at_alias_test AS "at" ORDER BY "at".a;
 #    contents are an identifier list (no '=>'), not an at_specifier.
 # ----------------------------------------------------------------------
 
-query II
+query
 SELECT at.c1, at.c2 FROM at_alias_test AS at(c1, c2) ORDER BY at.c1;
 ----
+c1	c2
 1	100
 2	200
 
 # The hardest corner: rename a column to literally VERSION or TIMESTAMP
 # using the AT-aliased form.  Distinguishing this from time-travel is
 # exactly what the EQUALS_GREATER check in the lookahead filter does.
-query II
+query
 SELECT at.version, at.timestamp FROM at_alias_test AS at(version, timestamp) ORDER BY at.version;
 ----
+version	timestamp
 1	100
 2	200
 
-query I
+query
 SELECT at.version FROM at_alias_test AS at(version) ORDER BY at.version;
 ----
+version
 1
 2
 
@@ -135,25 +151,12 @@ DROP TABLE at_alias_test;
 
 # ----------------------------------------------------------------------
 # 5. AT TIME ZONE still parses correctly.  The actual binder needs the
-#    ICU extension, which may not be installed in CI, so we just verify
-#    the failure (if any) is NOT a syntax error — checking the error
-#    text starts with the ICU-load message rather than "syntax error".
+#    ICU extension, which may not be installed in CI, so we exercise
+#    via EXPLAIN — EXPLAIN runs the parser and planner without invoking
+#    the timezone() function at execution time.  A parser regression
+#    would surface here as "syntax error", whereas a missing-ICU issue
+#    would surface only when the function actually runs.
 # ----------------------------------------------------------------------
-
-# A timezone-free form would be ideal, but the operator always routes
-# through the timezone() function which requires ICU even for offset
-# strings.  So we pin "either succeeds or fails with the ICU loader
-# message" via a statement test.
-#
-# If ICU is available the next query yields a timestamp; otherwise the
-# binder error is "An error occurred while trying to automatically
-# install the required extension 'icu'".  Both are valid — only a
-# "syntax error" would indicate parser regression.
-#
-# We can't express "succeed OR specific-error" cleanly in sqllogic, so
-# we use EXPLAIN to exercise the parser without invoking the timezone
-# function at runtime.  EXPLAIN still binds, but binding the function
-# reference doesn't need ICU loaded — only execution does.
 
 statement ok
 EXPLAIN SELECT TIMESTAMP '2026-01-01 12:00:00' AT TIME ZONE 'UTC';

@@ -1752,10 +1752,9 @@ duckdb::unique_ptr<duckdb::Expression> RewriteOffsetsCall(
       continue;
     }
     if (req.limit != parsed.limit) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("ts_offsets() called multiple times for field '",
-                parsed.col_name, "' with different limits"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("ts_offsets() called multiple times for field '",
+                              parsed.col_name, "' with different limits"));
     }
     get_col_idx = req.get_col_idx;
     reused = true;

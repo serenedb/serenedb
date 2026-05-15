@@ -169,17 +169,16 @@ struct Snapshot {
     if (obj.GetType() == ObjectType::Database) {
       return obj.GetId();
     }
-    auto cur = obj.GetParentId();
-    for (int i = 0; i < 4 && cur.isSet(); ++i) {
+    for (auto cur = obj.GetParentId(); cur.isSet();) {
       auto parent = GetObject(cur);
-      if (!parent) {
-        break;
-      }
+      SDB_ASSERT(parent);
       if (parent->GetType() == ObjectType::Database) {
         return cur;
       }
       cur = parent->GetParentId();
     }
+    SDB_ASSERT(false, "object ", obj.GetId(),
+               " has no Database ancestor");
     return {};
   }
 

@@ -23,6 +23,7 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/function_ref.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 #include <absl/synchronization/mutex.h>
 #include <vpack/builder.h>
 #include <vpack/iterator.h>
@@ -1003,18 +1004,6 @@ class SnapshotImpl : public Snapshot {
     return _resolution_table.ResolveObject<Type>(parent_id, name);
   }
 
-  std::vector<std::shared_ptr<Index>> GetIndexesByTokenizer(
-    ObjectId tokenizer_id) const {
-    auto deps = GetDependency<TokenizerDependency>(tokenizer_id);
-    SDB_ASSERT(deps);
-    std::vector<std::shared_ptr<Index>> result;
-    result.reserve(deps->indexes.size());
-    for (auto id : deps->indexes) {
-      result.push_back(GetObject<Index>(id));
-    }
-    return result;
-  }
-
   template<typename T>
   std::shared_ptr<T> GetObject(ObjectId id) const {
     auto it = _objects.find(id);
@@ -1129,27 +1118,15 @@ class SnapshotImpl : public Snapshot {
 
     // Named so the FunctionRefs have something stable to point at.
     auto lookup = [this](ObjectId id) { return GetObject(id); };
-    auto indexes_using_col = [this](ObjectId table_id,
-                                    ObjectId col_id) -> std::vector<ObjectId> {
+    auto indexes_using_col = [this](ObjectId table_id, ObjectId col_id) {
       std::vector<ObjectId> result;
-      auto dep = _deps.TryGetDependency(table_id);
-      if (!dep) {
-        return result;
-      }
-      auto td = std::dynamic_pointer_cast<const TableDependency>(dep);
-      if (!td) {
-        return result;
-      }
+      auto td = GetDependency<TableDependency>(table_id);
+      SDB_ASSERT(td);
       for (auto idx_id : td->indexes) {
-        auto idx = std::dynamic_pointer_cast<const Index>(GetObject(idx_id));
-        if (!idx) {
-          continue;
-        }
-        for (auto cid : idx->GetColumnIds()) {
-          if (cid == col_id) {
-            result.push_back(idx_id);
-            break;
-          }
+        auto idx = GetObject<Index>(idx_id);
+        SDB_ASSERT(idx);
+        if (absl::c_contains(idx->GetColumnIds(), col_id)) {
+          result.push_back(idx_id);
         }
       }
       return result;
@@ -1455,6 +1432,37 @@ class SnapshotImpl : public Snapshot {
   ObjectSetById<Object> _objects;
   mutable connector::DuckDBEntryCache _duckdb_cache;
 };
+
+std::string DropPlan::FormatDependentsDetail(const Snapshot& snap,
+                                             std::string_view seed_kind,
+                                             std::string_view seed_name) const {
+  std::vector<std::string> lines;
+  auto add = [&](std::string_view kind, std::string_view name) {
+    lines.push_back(
+      absl::StrCat(kind, " ", name, " depends on ", seed_kind, " ", seed_name));
+  };
+  for (const auto& [tid, _] : table_rewrites) {
+    if (auto t = snap.GetObject<Table>(tid)) {
+      add("table", t->GetName());
+    }
+  }
+  for (const auto& [_, view_id] : view_drops) {
+    if (auto v = snap.GetObject<PgSqlView>(view_id)) {
+      add("view", v->GetName());
+    }
+  }
+  for (const auto& [_, fn_id] : function_drops) {
+    if (auto f = snap.GetObject<PgSqlFunction>(fn_id)) {
+      add("function", f->GetName());
+    }
+  }
+  for (auto idx_id : index_drops) {
+    if (auto i = snap.GetObject<Index>(idx_id)) {
+      add("index", i->GetName());
+    }
+  }
+  return absl::StrJoin(lines, "\n");
+}
 
 LocalCatalog::LocalCatalog()
   : _snapshot(std::make_shared<SnapshotImpl>()), _engine{&GetServerEngine()} {}
@@ -2532,7 +2540,8 @@ Result LocalCatalog::DropTable(std::string_view database,
 
   auto plan = _snapshot->ComputeDropPlan(*table_id);
   if (!cascade && plan.IsCascade()) {
-    return Result{ERROR_BAD_PARAMETER, "other objects depend on table ", name};
+    return Result{ERROR_BAD_PARAMETER,
+                  plan.FormatDependentsDetail(*_snapshot, "table", name)};
   }
 
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
@@ -2671,7 +2680,8 @@ Result LocalCatalog::DropView(std::string_view database,
 
   auto plan = _snapshot->ComputeDropPlan(*view_id);
   if (!cascade && plan.IsCascade()) {
-    return Result{ERROR_BAD_PARAMETER, "other objects depend on view ", name};
+    return Result{ERROR_BAD_PARAMETER,
+                  plan.FormatDependentsDetail(*_snapshot, "view", name)};
   }
 
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
@@ -2721,8 +2731,8 @@ Result LocalCatalog::DropSequence(std::string_view database,
 
   auto plan = _snapshot->ComputeDropPlan(*seq_id);
   if (!cascade && plan.IsCascade()) {
-    return Result{ERROR_BAD_PARAMETER, "other objects depend on sequence ",
-                  name};
+    return Result{ERROR_BAD_PARAMETER,
+                  plan.FormatDependentsDetail(*_snapshot, "sequence", name)};
   }
 
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
@@ -2772,7 +2782,8 @@ Result LocalCatalog::DropType(std::string_view database,
 
   auto plan = _snapshot->ComputeDropPlan(*type_id);
   if (!cascade && plan.IsCascade()) {
-    return Result{ERROR_BAD_PARAMETER, "other objects depend on type ", name};
+    return Result{ERROR_BAD_PARAMETER,
+                  plan.FormatDependentsDetail(*_snapshot, "type", name)};
   }
 
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
@@ -2821,8 +2832,8 @@ Result LocalCatalog::DropFunction(std::string_view database,
 
   auto plan = _snapshot->ComputeDropPlan(*function_id);
   if (!cascade && plan.IsCascade()) {
-    return Result{ERROR_BAD_PARAMETER, "other objects depend on function ",
-                  name};
+    return Result{ERROR_BAD_PARAMETER,
+                  plan.FormatDependentsDetail(*_snapshot, "function", name)};
   }
 
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
@@ -2864,35 +2875,28 @@ Result LocalCatalog::DropTokenizer(std::string_view database,
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
-  const auto deps = _snapshot->GetIndexesByTokenizer(*tokenizer_id);
-  if (!deps.empty()) {
-    static constexpr size_t kReportIndexes = 5;
-    std::vector<std::string_view> confliciting_indexes;
-    for (auto index : deps) {
-      SDB_ASSERT(index);
-      confliciting_indexes.push_back(index->GetName());
-      if (confliciting_indexes.size() == kReportIndexes) {
-        break;
-      }
-    }
-    if (confliciting_indexes.size() < deps.size()) {
-      confliciting_indexes.push_back("...");
-    }
-    return Result{ERROR_INTERNAL,
-                  "Can not drop text dictionary used in the indexes ",
-                  absl::StrJoin(confliciting_indexes, ", ")};
+  auto plan = _snapshot->ComputeDropPlan(*tokenizer_id);
+  if (!cascade && plan.IsCascade()) {
+    return Result{
+      ERROR_BAD_PARAMETER,
+      plan.FormatDependentsDetail(*_snapshot, "text search dictionary", name)};
   }
 
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
     SDB_ASSERT(clone);
     auto tokenizer = clone->GetObject<Tokenizer>(*tokenizer_id);
     SDB_ASSERT(tokenizer);
-    auto r =
-      _engine->DropDefinition(*schema_id, ObjectType::Tokenizer, *tokenizer_id);
-    if (!r.ok()) {
-      return r;
+
+    auto wr = _engine->Write([&](auto& ctx) {
+      ctx.DropDefinition(*schema_id, ObjectType::Tokenizer, *tokenizer_id);
+      clone->CommitDropPlan(ctx, plan);
+    });
+    if (!wr.ok()) {
+      return wr;
     }
+
     clone->UnregisterObject(std::move(tokenizer), *schema_id);
+    clone->ApplyDropPlan(*database_id, plan);
     return Result{};
   });
 }

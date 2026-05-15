@@ -177,8 +177,7 @@ struct Snapshot {
       }
       cur = parent->GetParentId();
     }
-    SDB_ASSERT(false, "object ", obj.GetId(),
-               " has no Database ancestor");
+    SDB_ASSERT(false, "object ", obj.GetId(), " has no Database ancestor");
     return {};
   }
 

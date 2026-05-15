@@ -37,6 +37,8 @@
 
 namespace sdb::catalog {
 
+struct Snapshot;
+
 // One per external table that needs a column/CHECK mutation.
 struct TableRewrite {
   ObjectId schema_id;
@@ -48,9 +50,6 @@ struct DropPlan {
   containers::FlatHashMap<ObjectId, TableRewrite> table_rewrites;
   std::vector<std::pair<ObjectId, ObjectId>> view_drops;      // (schema, view)
   std::vector<std::pair<ObjectId, ObjectId>> function_drops;  // (schema, fn)
-  // Indexes on external tables that cover a dropped column -- PG drops the
-  // whole index when any of its columns goes away. Handled by separate
-  // IndexDrop tasks (catalog tombstone + shard data wipe).
   std::vector<ObjectId> index_drops;
 
   // RESTRICT would have blocked.
@@ -58,6 +57,12 @@ struct DropPlan {
     return !table_rewrites.empty() || !view_drops.empty() ||
            !function_drops.empty() || !index_drops.empty();
   }
+
+  // PG-style RESTRICT DETAIL text. One "<kind> <name> depends on <seed>" line
+  // per dependent, joined with '\n'. Snapshot supplies the id->name lookups.
+  std::string FormatDependentsDetail(const Snapshot& snap,
+                                     std::string_view seed_kind,
+                                     std::string_view seed_name) const;
 };
 
 class DropEmitter {
@@ -124,12 +129,22 @@ class DropEmitter {
       return;
     }
     auto table_id = col->GetParentId();
-    if (!table_id.isSet() || _auto_drops.contains(table_id)) {
+    SDB_ASSERT(table_id.isSet());
+    if (_auto_drops.contains(table_id)) {
       return;
     }
     for (auto idx_id : _indexes_using_col(table_id, col_id)) {
-      _plan.index_drops.push_back(idx_id);
+      IndexCascadeDrop(idx_id);
     }
+  }
+
+  // Tokenizer->index, column->index etc. -- cross-tree index drop with
+  // a recovery anchor written in CommitDropPlan.
+  void IndexCascadeDrop(ObjectId idx_id) {
+    if (_auto_drops.contains(idx_id) || !_visited.insert(idx_id).second) {
+      return;
+    }
+    _plan.index_drops.push_back(idx_id);
   }
 
   void CheckConstraintDrop(ObjectId table_id, ObjectId constraint_id) {
@@ -151,7 +166,8 @@ class DropEmitter {
       return;
     }
     auto table_id = col->GetParentId();
-    if (!table_id.isSet() || _auto_drops.contains(table_id)) {
+    SDB_ASSERT(table_id.isSet());
+    if (_auto_drops.contains(table_id)) {
       return;
     }
     auto& slot = _plan.table_rewrites[table_id];
@@ -360,8 +376,10 @@ struct TokenizerDependency : ObjectDependencyBase {
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<TokenizerDependency>(*this);
   }
-  void Emit(DropEmitter&) const final {
-    // `indexes` reverse-edge not wired through the cascade.
+  void Emit(DropEmitter& e) const final {
+    for (auto id : indexes) {
+      e.IndexCascadeDrop(id);
+    }
   }
 };
 

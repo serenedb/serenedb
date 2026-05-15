@@ -116,15 +116,41 @@ count
 
 # ---------------------------------------------------------------------------
 # Case 3: view's projection has a function on a single leaf column.
-# ResolveViewFastPath rejects non-column-ref SELECT items, so this view
-# isn't a fast-path view and our pruning machinery never runs -- the
-# case is here to confirm the no-op fallback still indexes correctly.
+# ResolveViewFastPath rejects non-column-ref SELECT items, so this isn't
+# a fast-path view -- but the filter-projection trick still applies
+# (without PK plumbing). `id` is dropped from both projection and leaf;
+# only `body` flows through.
 # ---------------------------------------------------------------------------
 
 statement ok
 CREATE VIEW prune_v3 AS
   SELECT id, upper(body) AS body
   FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
+
+query
+EXPLAIN CREATE INDEX prune_idx3 ON prune_v3 USING inverted(body prune_en);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            body           │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│        READ_PARQUET       │
+│    ────────────────────   │
+│         Function:         │
+│        READ_PARQUET       │
+│                           │
+│     Projections: body     │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 statement ok
 CREATE INDEX prune_idx3 ON prune_v3 USING inverted(body prune_en);
@@ -171,14 +197,14 @@ QUERY PLAN
 │             #1            │
 │             #2            │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │    read_parquet.id ASC    │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
@@ -215,11 +241,10 @@ count
 
 # ---------------------------------------------------------------------------
 # Case 5: ORDER BY + LIMIT (LogicalTopN above the projection). Same
-# binding-rewrite path as Order alone, plus the LIMIT operator. The order
-# column `unused1` isn't in the index but must survive the prune through
-# phase-1 above-projection collection. No EXPLAIN assertion here: the
-# planner expands TopN into a HASH_JOIN + TOP_N subtree whose exact
-# shape is too sensitive to upstream changes to pin down in a test.
+# above-projection collection path as Order alone; the order column
+# `unused1` isn't in the index but must survive the prune. The planner
+# expands TopN into a HASH_JOIN + TOP_N subtree; the leaf scan ends up
+# with body + unused1 (id is dropped).
 # ---------------------------------------------------------------------------
 
 statement ok
@@ -228,6 +253,68 @@ CREATE VIEW prune_v5 AS
   FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet')
   ORDER BY unused1
   LIMIT 4;
+
+query
+EXPLAIN CREATE INDEX prune_idx5 ON prune_v5 USING inverted(body prune_en);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│  read_parquet.unused1 ASC │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         HASH_JOIN         │
+│    ────────────────────   │
+│      Join Type: SEMI      │
+│                           │
+│        Conditions:        │
+│  file_index = file_index  ├──────────────┐
+│     file_row_number =     │              │
+│       file_row_number     │              │
+│                           │              │
+│          ~0 rows          │              │
+└─────────────┬─────────────┘              │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│        READ_PARQUET       ││           TOP_N           │
+│    ────────────────────   ││    ────────────────────   │
+│         Function:         ││           Top: 4          │
+│        READ_PARQUET       ││                           │
+│                           ││         Order By:         │
+│        Projections:       ││  read_parquet.unused1 ASC │
+│            body           ││                           │
+│          unused1          ││                           │
+│                           ││                           │
+│          ~5 rows          ││          ~4 rows          │
+└───────────────────────────┘└─────────────┬─────────────┘
+                             ┌─────────────┴─────────────┐
+                             │         PROJECTION        │
+                             │    ────────────────────   │
+                             │          unused1          │
+                             │         file_index        │
+                             │      file_row_number      │
+                             │                           │
+                             │          ~5 rows          │
+                             └─────────────┬─────────────┘
+                             ┌─────────────┴─────────────┐
+                             │        READ_PARQUET       │
+                             │    ────────────────────   │
+                             │         Function:         │
+                             │        READ_PARQUET       │
+                             │                           │
+                             │    Projections: unused1   │
+                             │                           │
+                             │          Filters:         │
+                             │ optional: Dynamic Filter  │
+                             │         (unused1)         │
+                             │                           │
+                             │          ~5 rows          │
+                             └───────────────────────────┘
 
 statement ok
 CREATE INDEX prune_idx5 ON prune_v5 USING inverted(body prune_en);

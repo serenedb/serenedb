@@ -44,10 +44,6 @@
 namespace sdb::connector {
 namespace {
 
-// Resolve a possibly schema-qualified dict name against the catalog
-// snapshot and throw if missing. Used only by ts_lexize -- other
-// text-search scalars resolve via ResolveCatalogTokenizer in
-// search.cpp through the bind callback's ClientContext.
 std::shared_ptr<catalog::Tokenizer> LookupTokenizerDict(
   const catalog::Snapshot& snapshot, sdb::ObjectId db_id,
   std::string_view current_schema, std::string_view dict_name) {
@@ -60,8 +56,6 @@ std::shared_ptr<catalog::Tokenizer> LookupTokenizerDict(
   return dict;
 }
 
-// Materialise the analyzer instance for a catalog dict entry. Per-row
-// in the dynamic-path executor, once-at-init in the foldable fast path.
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   catalog::Tokenizer& dict) {
   auto result = dict.GetTokenizer();
@@ -73,8 +67,6 @@ catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   return std::move(*result);
 }
 
-// Dynamic-path resolution context: dict_name varies per row, so the
-// snapshot stays around to be re-used inside the row loop.
 struct DynamicCtx {
   std::shared_ptr<const catalog::Snapshot> snapshot;
   sdb::ObjectId db_id;
@@ -97,9 +89,6 @@ struct TsLexizeBindData final : public duckdb::FunctionData {
   }
 };
 
-// Holds the per-thread tokenizer wrapper for the constant fast path.
-// Analyzer state isn't thread-safe; the wrapper returns to the dict's
-// pool on destruction.
 struct TsLexizeLocalState final : public duckdb::FunctionLocalState {
   catalog::Tokenizer::TokenizerWrapper wrapper;
 };
@@ -115,10 +104,6 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsLexizeLocalState(
   return local;
 }
 
-// AddStringOrBlob (not AddString): some analyzers (notably wildcard)
-// emit tokens with non-UTF-8 bytes (\xFF). Callers round-trip those
-// via `ts_lexize(...)::BLOB[]`, which avoids VARCHAR Value validation;
-// the heap-side path here still needs the unvalidated insert.
 class ListTokenSink {
  public:
   explicit ListTokenSink(duckdb::Vector& result_list)
@@ -166,7 +151,6 @@ const TsLexizeBindData& GetBindData(duckdb::ExpressionState& state) {
     .bind_info->Cast<TsLexizeBindData>();
 }
 
-// Fast path: dict resolved once at bind, no per-row lookup.
 void TsLexizeFunctionConstant(duckdb::DataChunk& args,
                               duckdb::ExpressionState& state,
                               duckdb::Vector& result) {
@@ -247,7 +231,6 @@ void TsLexizeArrayFunctionConstant(duckdb::DataChunk& args,
   }
 }
 
-// Slow path: dict_name varies per row, lookup against the bind snapshot.
 void TsLexizeFunctionDynamic(duckdb::DataChunk& args,
                              duckdb::ExpressionState& state,
                              duckdb::Vector& result) {

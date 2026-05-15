@@ -850,8 +850,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
 // mini-segment built per chunk.
 void RegisterPositionFunctions(duckdb::ExtensionLoader& loader) {
   duckdb::ScalarFunctionSet set{std::string{kOffsets}};
-  const auto list_int =
-    duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
+  const auto list_int = duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
 
   auto add_inline = [&](duckdb::vector<duckdb::LogicalType> args) {
     duckdb::ScalarFunction fn{std::move(args), list_int, SearchStubFn};

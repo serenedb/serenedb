@@ -24,9 +24,6 @@
 
 namespace sdb::connector {
 
-// ts_lexize(dict, token) / ts_lexize(dict, tokens[]). List overload
-// concatenates per-element lexemes in input order; NULL elements
-// are skipped, a NULL list yields NULL.
 void RegisterTsLexize(duckdb::ExtensionLoader& loader);
 
 }  // namespace sdb::connector

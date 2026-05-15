@@ -30,9 +30,6 @@
 
 namespace sdb::connector {
 
-// Append `hits` for `row_idx` into the LIST<INTEGER> at `list_vec`.
-// The list's current size is the write cursor -- callers don't thread
-// an external counter.
 inline void WriteRowOffsets(duckdb::Vector& list_vec, duckdb::idx_t row_idx,
                             std::span<const highlight::HitRange> hits) {
   const auto running = duckdb::ListVector::GetListSize(list_vec);

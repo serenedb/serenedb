@@ -149,9 +149,6 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 
   auto& field = EnsureField(local_state, bind);
 
-  // Both bind sites (OffsetsStandaloneBind + RewriteOffsetsCall) lay
-  // the children out with body at index 1; the inline path inserts a
-  // placeholder at index 0 to keep the layout uniform.
   SDB_ASSERT(args.ColumnCount() >= 2);
   auto& body = args.data[1];
   duckdb::UnifiedVectorFormat fmt;
@@ -192,8 +189,6 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 
 namespace {
 
-// Evaluate `expr` as a foldable VARCHAR; populate `out`. Returns false
-// on NULL. Throws if non-foldable or wrong type.
 bool EvalFoldableVarchar(duckdb::ClientContext& context,
                          const duckdb::Expression& expr, const char* arg_name,
                          std::string& out) {
@@ -231,18 +226,10 @@ int64_t EvalOptionalLimit(duckdb::ClientContext& context,
 
 }  // namespace
 
-// Build an irs::Filter from a TSQUERY-producing expression. The filter
-// is anchored on a synthetic single-column field described by
-// `column_id` + `dict_tokenizer`. Mechanism: synthesize
-// `synthetic_body_ref @@ tsquery_expr` and run the existing filter
-// builder -- it dispatches `@@` by function name, so a hand-rolled
-// BoundFunctionExpression with the right name routes correctly.
 std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::ClientContext& context, const duckdb::Expression& tsquery_expr,
   catalog::Column::Id column_id,
   const std::shared_ptr<catalog::Tokenizer>& dict_tokenizer) {
-  // Pick arbitrary (table_idx, column_idx) for the synthetic ref; the
-  // ColumnGetter below pattern-matches on the exact pair.
   static constexpr duckdb::idx_t kSyntheticTableIdx = 0;
   static constexpr duckdb::idx_t kSyntheticColumnIdx = 0;
 
@@ -255,8 +242,6 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   at_at_children.push_back(std::move(body_ref));
   at_at_children.push_back(tsquery_expr.Copy());
 
-  // The filter builder dispatches @@ by name only, so a hand-rolled
-  // ScalarFunction shell with the right name is enough.
   duckdb::ScalarFunction at_at(std::string{kTSQueryMatch}, {},
                                duckdb::LogicalType::BOOLEAN, nullptr);
   auto match_expr = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
@@ -339,9 +324,6 @@ duckdb::unique_ptr<duckdb::FunctionData> OffsetsStandaloneBind(
       raw_limit > 0 ? raw_limit : std::numeric_limits<size_t>::max();
   }
 
-  // Replace the TSQUERY arg with a NULL placeholder so the runtime
-  // doesn't try to evaluate it (its stub throws). The scalar body
-  // reads the prepared filter from bind data, never from args[2].
   arguments[2] = duckdb::make_uniq<duckdb::BoundConstantExpression>(
     duckdb::Value{MakeTSQueryType()});
   return bind;

@@ -28,13 +28,6 @@
 
 namespace sdb::connector {
 
-// TSQUERY constructors and @@ are stubs; the filter builder claims
-// them at bind time and emits the iresearch filter.
-
-// TSQUERY logical type + per-modifier aliases. DuckDB elides
-// same-alias casts, so each variant gets its own alias to keep the
-// cast wrapper (and its ExtensionTypeInfo modifier) alive in the
-// bound tree.
 inline constexpr std::string_view kTSQueryTypeName = "TSQUERY";
 inline constexpr std::string_view kTokenizerTypeName = "tokenize";
 inline constexpr std::string_view kTokenizedTSQueryTypeName =
@@ -85,9 +78,6 @@ inline constexpr std::string_view kHasAnyTokens = "has_any_tokens";
 // Highlighting + position projections.
 inline constexpr std::string_view kTsHeadline = "ts_headline";
 inline constexpr std::string_view kTsHighlight = "ts_highlight";
-// ts_offsets(col) is claimed by iresearch_plan into a SearchScan
-// projection; the (dict, body, filter [, limit]) overloads run
-// per-chunk via a mini-segment.
 inline constexpr std::string_view kOffsets = "ts_offsets";
 
 // Geo -- ST_Distance_Centroid is only usable inside an index scan
@@ -99,13 +89,9 @@ inline constexpr std::string_view kGeoContains = "ST_Contains";
 
 duckdb::LogicalType MakeTSQueryType();
 
-// Mint a ready-to-use tokenizer instance from the named dict's pool.
-// Returns null on miss; the wrapper returns the instance on destruction.
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name);
 
-// Same lookup, returning the dict factory. Use when you need to mint
-// fresh instances across calls (per-chunk resets). nullptr on miss.
 std::shared_ptr<catalog::Tokenizer> ResolveCatalogTokenizer(
   duckdb::ClientContext& context, std::string_view name);
 

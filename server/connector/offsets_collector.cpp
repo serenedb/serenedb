@@ -80,9 +80,6 @@ void FillRowOffsets(FieldState& state, const irs::SubReader& segment,
     if (entry.docs->seek(doc_id) != doc_id) {
       continue;
     }
-    // Per-entry cap: pre-dedup work is bounded at
-    // max_pairs * entries.size(); post-dedup still gives up to
-    // max_pairs unique hits.
     const size_t entry_start = hits.size();
     while (entry.pos->next()) {
       if (hits.size() - entry_start >= max_pairs) {
@@ -91,9 +88,6 @@ void FillRowOffsets(FieldState& state, const irs::SubReader& segment,
       hits.emplace_back(entry.offs->start, entry.offs->end);
     }
   }
-  // Single-entry positions are already sorted+unique. Cross-entry
-  // walks can overlap, so dedup before truncating -- otherwise
-  // duplicates eat into the cap and under-emit unique hits.
   if (state.entries.size() > 1) {
     absl::c_sort(hits);
     hits.erase(std::unique(hits.begin(), hits.end()), hits.end());

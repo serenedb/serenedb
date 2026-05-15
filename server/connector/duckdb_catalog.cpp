@@ -1022,6 +1022,10 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
           leaf_get->GetColumnType(leaf_get->GetColumnIds()[i]));
       }
       for (size_t i = 0; i < vcols.size(); ++i) {
+        // TODO(Dronplane): deduplicate when vcols[i] already appears in
+        // leaf_get->column_ids (RocksDBExplicitPK + user-named PK key);
+        // requires teaching the runtime to find the PK at a non-fixed
+        // chunk position. See Case 7 in inverted_index_view_pruning.test
         leaf_get->AddColumnId(vcols[i]);
         leaf_get->types.push_back(pk_types[i]);
         // Iceberg's get_virtual_columns omits file_index even though the

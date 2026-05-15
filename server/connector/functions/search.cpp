@@ -860,8 +860,6 @@ void RegisterPositionFunctions(duckdb::ExtensionLoader& loader) {
   add_inline({duckdb::LogicalType::ANY});
   add_inline({duckdb::LogicalType::ANY, duckdb::LogicalType::INTEGER});
 
-  // SPECIAL_HANDLING preserves the NULL TSQUERY placeholder that
-  // OffsetsStandaloneBind installs in place of the real filter.
   auto add_standalone = [&](duckdb::vector<duckdb::LogicalType> args) {
     duckdb::ScalarFunction fn{std::move(args), list_int, OffsetsScalarFn,
                               OffsetsStandaloneBind};

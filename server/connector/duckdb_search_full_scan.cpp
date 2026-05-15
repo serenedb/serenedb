@@ -205,12 +205,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   if (scan.scorer) {
     state->scorer_obj = catalog::MakeScorer(*scan.scorer);
   }
-  // Single prepare site for SearchScan. We pass the scorer here (or null
-  // when no BM25/TFIDF was attached by the planner) so any IDF/norm
-  // stats that the scorer requires are collected during this one
-  // prepare; an earlier optimizer-time prepare with a null scorer used
-  // to break filters that mutate options() (GeoFilter) when this
-  // scorer-aware re-prepare ran afterwards.
   SDB_ASSERT(scan.stored_filter);
   SDB_ASSERT(scan.snapshot);
   state->query = scan.stored_filter->prepare({
@@ -218,22 +212,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
     .scorer = state->scorer_obj.get(),
   });
 
-  // Offsets output-slot mapping. InitCommonState walks input.column_ids
-  // in order and pushes one projected_columns entry per valid input
-  // column; repeat the walk here to find the slot for each offsets
-  // request. The k-th kInvertedIndexOffsetsId occurrence in
-  // input.column_ids maps to the k-th SearchScan.offsets entry, which
-  // matches the order AddOffsetsColumn appended them.
   if (!scan.offsets.empty()) {
     state->offsets_entries.resize(scan.offsets.size());
     for (size_t i = 0; i < scan.offsets.size(); ++i) {
       MakeFieldName(scan.offsets[i].column_id, state->offsets_entries[i].name);
       search::mangling::MangleString(state->offsets_entries[i].name);
     }
-    // Walk input.column_ids in order; the k-th kInvertedIndexOffsetsId
-    // occurrence maps to the k-th SearchScan.offsets entry (matches the
-    // order AddOffsetsColumn appended them), so a single counter `k`
-    // keeps the AoS entries in sync with their DataChunk slots.
     size_t j = 0;
     duckdb::idx_t out_slot = 0;
     for (auto col_id : input.column_ids) {

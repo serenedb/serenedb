@@ -30,6 +30,7 @@
 #include <functional>
 #include <limits>
 #include <string_view>
+#include <yaclib/exe/executor.hpp>
 
 #include "basics/async_utils.hpp"
 #include "basics/noncopyable.hpp"
@@ -161,6 +162,8 @@ struct IndexWriterOptions : public SegmentOptions {
   // Acquire an exclusive lock on the repository to guard against index
   // corruption from multiple index_writers
   bool lock_repository{true};
+
+  yaclib::IExecutorPtr executor;
 
   IndexWriterOptions() {}  // compiler requires non-default definition
 };
@@ -604,7 +607,8 @@ class IndexWriter : private util::Noncopyable {
               const SegmentOptions& segment_limits, const Comparer* comparator,
               const ColumnInfoProvider& column_info,
               const PayloadProvider& meta_payload_provider,
-              std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
+              std::shared_ptr<const DirectoryReaderImpl>&& committed_reader,
+              yaclib::IExecutorPtr executor);
 
  private:
   struct ConsolidationContext : util::Noncopyable {
@@ -989,6 +993,8 @@ class IndexWriter : private util::Noncopyable {
   // Flushed contexts, while one commiting another writing
   // TODO(mbkkt) Code maybe not ready to more than 2 FlushContext.
   std::array<FlushContext, 2> _flush_contexts;
+
+  yaclib::IExecutorPtr _executor;
 };
 
 }  // namespace irs

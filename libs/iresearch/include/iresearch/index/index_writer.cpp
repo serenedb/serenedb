@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <shared_mutex>
 #include <type_traits>
+#include <yaclib/exe/submit.hpp>
 
 #include "basics/assert.h"
 #include "basics/resource_manager.hpp"
@@ -192,26 +193,27 @@ struct FlushedSegmentContext {
 // readers readers by segment name
 // meta key used to get reader for the segment to evaluate
 // Return if any new records were added (modification_queries_ modified).
-void RemoveFromExistingSegment(DocumentMask& deleted_docs,
+bool RemoveFromExistingSegment(DocumentMask& deleted_docs,
                                IndexWriter::QueryContext& query,
                                const SubReader& reader) {
   if (query.filter == nullptr) {
-    return;
+    return false;
   }
 
   auto prepared = query.filter->prepare({.index = reader});
 
   if (!prepared) [[unlikely]] {
-    return;  // skip invalid prepared filters
+    return false;  // skip invalid prepared filters
   }
 
   auto itr =
     prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
 
   if (!itr) [[unlikely]] {
-    return;  // skip invalid iterators
+    return false;  // skip invalid iterators
   }
 
+  bool modified = false;
   const auto* docs_mask = reader.docs_mask();
   while (itr->next()) {
     const auto doc_id = itr->value();
@@ -221,9 +223,11 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
       continue;  // the current modification query does not match any records
     }
     if (deleted_docs.insert(doc_id).second) {
-      query.ForceDone();
+      // query.ForceDone();
+      modified = true;
     }
   }
+  return modified;
 }
 
 bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
@@ -1096,7 +1100,8 @@ IndexWriter::IndexWriter(
   const SegmentOptions& segment_limits, const Comparer* comparator,
   const ColumnInfoProvider& column_info,
   const PayloadProvider& meta_payload_provider,
-  std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
+  std::shared_ptr<const DirectoryReaderImpl>&& committed_reader,
+  yaclib::IExecutorPtr executor)
   : _column_info{column_info},
     _meta_payload_provider{meta_payload_provider},
     _comparator{comparator},
@@ -1109,7 +1114,8 @@ IndexWriter::IndexWriter(
     _last_gen{_committed_reader->Meta().index_meta.gen},
     _writer{_codec->get_index_meta_writer()},
     _write_lock{std::move(lock)},
-    _write_lock_file_ref{std::move(lock_file_ref)} {
+    _write_lock_file_ref{std::move(lock_file_ref)},
+    _executor{executor} {
   SDB_ASSERT(column_info);  // ensured by 'make'
   SDB_ASSERT(_codec);
 
@@ -1240,7 +1246,8 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     std::move(codec), options.segment_pool_size, SegmentOptions{options},
     options.comparator,
     options.column_info ? options.column_info : kDefaultColumnInfo,
-    options.meta_payload_provider, std::move(reader));
+    options.meta_payload_provider, std::move(reader),
+    std::move(options.executor));
   // Remove non-index files from directory
   directory_utils::RemoveAllUnreferenced(dir);
 
@@ -1744,33 +1751,81 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   readers.reserve(committed_reader_size);
   pending_meta.segments.reserve(committed_reader_size);
 
-  for (DocumentMask deleted_docs{{*dir.ResourceManager().transactions}};
-       const auto& existing_segment : committed_reader.GetReaders()) {
+  WaitGroup wg;
+  std::vector<DocumentMask> deleted_docs_vector;
+  std::vector<std::vector<QueryContext*>> applied_queries;
+  deleted_docs_vector.reserve(committed_reader_size);
+  applied_queries.reserve(committed_reader_size);
+  for (size_t i = 0; i != committed_reader_size; ++i) {
+    deleted_docs_vector.emplace_back(
+      DocumentMask{{*dir.ResourceManager().transactions}});
+    applied_queries.emplace_back();
+  }
+
+  auto batch_size = _executor != nullptr
+                      ? std::max(size_t(1), (committed_reader_size + 7) / 8)
+                      : committed_reader_size;
+
+  for (size_t i = 0; i < committed_reader_size; i += batch_size) {
+    auto task = [&, i, batch_size] {
+      Finally task_ended = [&] noexcept { wg.Done(); };
+      for (size_t j = i; j < std::min(i + batch_size, committed_reader_size);
+           ++j) {
+        auto& deleted_docs = deleted_docs_vector[j];
+        auto& local_applied_queries = applied_queries[j];
+
+        // progress("Stage 1: Apply removals to the existing segments",
+        //          current_segment_index++, committed_reader_size);
+        const auto& existing_segment = committed_reader[j];
+        // skip already masked segments
+        if (segment_mask.contains(existing_segment->Meta().name)) {
+          continue;
+        }
+
+        // mask documents matching filters from segment_contexts
+        // (i.e. from new operations)
+
+        apply_all_queries([&](QueryContext& query) {
+          // FIXME(gnusi): optimize PK queries
+          if (RemoveFromExistingSegment(deleted_docs, query,
+                                        existing_segment)) {
+            local_applied_queries.push_back(&query);
+          }
+        });
+      }
+    };
+
+    wg.Add();
+    if (_executor != nullptr) {
+      yaclib::Submit(*_executor, std::move(task));
+    } else {
+      task();
+    }
+  }
+
+  wg.Wait();
+  current_segment_index = 0;
+  for (const auto& existing_segment : committed_reader.GetReaders()) {
     auto& index_segment =
       committed_meta.index_meta.segments[current_segment_index];
-    progress("Stage 1: Apply removals to the existing segments",
-             current_segment_index++, committed_reader_size);
-
     // skip already masked segments
     if (segment_mask.contains(existing_segment->Meta().name)) {
+      ++current_segment_index;
       continue;
     }
+    auto& local_applied_queries = applied_queries[current_segment_index];
+    auto& deleted_docs = deleted_docs_vector[current_segment_index];
+    ++current_segment_index;
 
-    // We don't want to call clear here because even for empty map it costs O(n)
-    SDB_ASSERT(deleted_docs.empty());
-
-    // mask documents matching filters from segment_contexts
-    // (i.e. from new operations)
-    apply_all_queries([&](QueryContext& query) {
-      // FIXME(gnusi): optimize PK queries
-      RemoveFromExistingSegment(deleted_docs, query, existing_segment);
-    });
+    for (auto* query : local_applied_queries) {
+      query->ForceDone();
+    }
 
     // Write docs_mask if masks added
-    if (const size_t num_removals = deleted_docs.size(); num_removals) {
+    const size_t num_removals = deleted_docs.size();
+    if (num_removals) {
       // If all docs are masked then mask segment
       if (existing_segment.live_docs_count() == num_removals) {
-        deleted_docs.clear();
         // It's important to mask empty segment to rollback
         // the affected consolidations
 
@@ -1786,7 +1841,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         docs_mask->merge(deleted_docs);
         return docs_mask;
       }();
-      deleted_docs.clear();
 
       index_utils::FlushIndexSegment(dir, segment);  // Write with new mask
       auto new_segment =

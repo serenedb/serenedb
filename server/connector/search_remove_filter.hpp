@@ -54,6 +54,17 @@ class SearchRemoveFilterBase : public irs::Filter,
     return irs::memory::to_managed<const irs::Filter::Query>(*this);
   }
 
+  std::unique_ptr<irs::Filter::PrepareBuffer> CreateBuffer(
+    const irs::PrepareContext&) const final {
+    if (_pks.empty()) {
+      return std::make_unique<irs::Filter::EmptyBuffer>();
+    }
+    return std::make_unique<irs::Filter::LazyQueryBuffer>(
+      [this](const irs::PrepareContext&) {
+        return irs::memory::to_managed<const irs::Filter::Query>(*this);
+      });
+  }
+
   irs::DocIterator::ptr execute(const irs::ExecutionContext& ctx) const final;
 
   void visit(const irs::SubReader&, irs::PreparedStateVisitor&,

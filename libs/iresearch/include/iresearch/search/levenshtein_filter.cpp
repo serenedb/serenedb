@@ -22,6 +22,7 @@
 
 #include "levenshtein_filter.hpp"
 
+#include "basics/down_cast.h"
 #include "basics/noncopyable.hpp"
 #include "basics/shared.hpp"
 #include "basics/std.hpp"
@@ -191,45 +192,125 @@ bool CollectTerms(const IndexReader& index, std::string_view field,
   return true;
 }
 
+class LevenshteinSpec {
+ public:
+  LevenshteinSpec(automaton&& acceptor, byte_type max_distance,
+                  uint32_t utf8_term_size)
+    : _acceptor{std::make_unique<automaton>(std::move(acceptor))},
+      _matcher{MakeAutomatonMatcher(*_acceptor)},
+      _max_distance{max_distance},
+      _utf8_term_size{utf8_term_size} {}
+
+  automaton_table_matcher& matcher() noexcept { return _matcher; }
+  byte_type max_distance() const noexcept { return _max_distance; }
+  uint32_t utf8_term_size() const noexcept { return _utf8_term_size; }
+
+ private:
+  std::unique_ptr<automaton> _acceptor;
+  automaton_table_matcher _matcher;
+  byte_type _max_distance;
+  uint32_t _utf8_term_size;
+};
+
+std::unique_ptr<LevenshteinSpec> MakeSpec(bytes_view prefix, bytes_view term,
+                                          const ParametricDescription& d) {
+  auto acceptor = MakeLevenshteinAutomaton(d, prefix, term);
+  if (!Validate(acceptor)) {
+    return nullptr;
+  }
+  const uint32_t utf8_term_size =
+    std::max(1U, static_cast<uint32_t>(utf8_utils::Length(prefix) +
+                                       utf8_utils::Length(term)));
+  return std::make_unique<LevenshteinSpec>(
+    std::move(acceptor), d.max_distance() + 1, utf8_term_size);
+}
+
+class AllTermsBuffer final : public MultiTermQuery::BufferBase {
+ public:
+  AllTermsBuffer(const PrepareContext& ctx, std::string_view field,
+                 std::unique_ptr<LevenshteinSpec> spec)
+    : BufferBase{ctx, 1, ScoreMergeType::Max, 1},
+      _field{field},
+      _spec{std::move(spec)},
+      _collector{_states, _field_stats, _term_stats} {
+    _collector.stat_index(0);
+  }
+
+  void PrepareSegment(const SubReader& segment) final {
+    if (const auto* reader = segment.field(_field); reader) {
+      VisitImpl(segment, *reader, _spec->max_distance(),
+                _spec->utf8_term_size(), _spec->matcher(), _collector);
+    }
+  }
+
+ private:
+  std::string_view _field;
+  std::unique_ptr<LevenshteinSpec> _spec;
+  AllTermsCollector<MultiTermQuery::States> _collector;
+};
+
+class TopTermsBuffer final : public MultiTermQuery::BufferBase {
+ public:
+  TopTermsBuffer(const PrepareContext& ctx, std::string_view field,
+                 std::unique_ptr<LevenshteinSpec> spec, size_t terms_limit)
+    : BufferBase{ctx, 1, ScoreMergeType::Max, 1},
+      _field{field},
+      _spec{std::move(spec)},
+      _collector{terms_limit, _field_stats} {}
+
+  void PrepareSegment(const SubReader& segment) final {
+    if (const auto* reader = segment.field(_field); reader) {
+      VisitImpl(segment, *reader, _spec->max_distance(),
+                _spec->utf8_term_size(), _spec->matcher(), _collector);
+    }
+  }
+
+  void Merge(PrepareBuffer&& other) final {
+    auto& rhs = sdb::basics::downCast<TopTermsBuffer>(other);
+    _field_stats.collect(std::move(rhs._field_stats));
+    _collector.Merge(std::move(rhs._collector));
+  }
+
+  bool Empty() const noexcept final { return _collector.empty(); }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    AggregatedStatsVisitor aggregate_stats{_states, _term_stats};
+    _collector.Visit([&aggregate_stats](TopTermState<score_t>& state) {
+      aggregate_stats.boost = std::max(0.f, state.key);
+      state.Visit(aggregate_stats);
+    });
+    return std::move(*this).BufferBase::Compile(ctx);
+  }
+
+ private:
+  std::string_view _field;
+  std::unique_ptr<LevenshteinSpec> _spec;
+  TopTermsCollectorImpl _collector;
+};
+
 Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
                                             std::string_view field,
                                             bytes_view prefix, bytes_view term,
                                             size_t terms_limit,
                                             const ParametricDescription& d) {
-  FieldCollectors field_stats{ctx.scorer};
-  TermCollectors term_stats{ctx.scorer, 1};
-  MultiTermQuery::States states{ctx.memory, ctx.index.size()};
-
-  if (!terms_limit) {
-    AllTermsCollector term_collector{states, field_stats, term_stats};
-    term_collector.stat_index(0);  // aggregate stats from different terms
-
-    if (!CollectTerms(ctx.index, field, prefix, term, d, term_collector)) {
-      return Filter::Query::empty();
-    }
-  } else {
-    TopTermsCollectorImpl term_collector(terms_limit, field_stats);
-
-    if (!CollectTerms(ctx.index, field, prefix, term, d, term_collector)) {
-      return Filter::Query::empty();
-    }
-
-    AggregatedStatsVisitor aggregate_stats{states, term_stats};
-    term_collector.Visit([&aggregate_stats](TopTermState<score_t>& state) {
-      aggregate_stats.boost = std::max(0.f, state.key);
-      state.Visit(aggregate_stats);
-    });
+  auto spec = MakeSpec(prefix, term, d);
+  if (!spec) {
+    return Filter::Query::empty();
   }
-
-  MultiTermQuery::Stats stats(
-    1, MultiTermQuery::Stats::allocator_type{ctx.memory});
-  stats.back().resize(GetStatsSize(ctx.scorer), 0);
-  auto* stats_buf = stats[0].data();
-  term_stats.finish(stats_buf, 0, field_stats, ctx.index);
-
-  return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),
-                                              std::move(stats), ctx.boost,
-                                              ScoreMergeType::Max, size_t{1});
+  std::unique_ptr<Filter::PrepareBuffer> buf;
+  if (!terms_limit) {
+    buf = std::make_unique<AllTermsBuffer>(ctx, field, std::move(spec));
+  } else {
+    buf = std::make_unique<TopTermsBuffer>(ctx, field, std::move(spec),
+                                           terms_limit);
+  }
+  for (auto& segment : ctx.index) {
+    buf->PrepareSegment(segment);
+  }
+  if (buf->Empty()) {
+    return Filter::Query::empty();
+  }
+  return std::move(*buf).Compile(ctx);
 }
 
 }  // namespace
@@ -278,6 +359,46 @@ field_visitor ByEditDistance::visitor(const ByEditDistanceAllOptions& opts) {
         return VisitImpl(segment, field, max_distance, utf8_term_size,
                          ctx->matcher, visitor);
       };
+    });
+}
+
+std::unique_ptr<Filter::PrepareBuffer> ByEditDistance::CreateBuffer(
+  const PrepareContext& ctx) const {
+  auto sub_ctx = ctx;
+  sub_ctx.boost *= Boost();
+  const auto& opts = options();
+  return ExecuteLevenshtein(
+    opts.max_distance, opts.provider, opts.with_transpositions, opts.prefix,
+    opts.term,
+    [] -> std::unique_ptr<PrepareBuffer> {
+      return std::make_unique<EmptyBuffer>();
+    },
+    [&] -> std::unique_ptr<PrepareBuffer> {
+      bytes_view target;
+      bstring joined;
+      if (!opts.prefix.empty() && !opts.term.empty()) {
+        joined.reserve(opts.prefix.size() + opts.term.size());
+        joined += opts.prefix;
+        joined += opts.term;
+        target = joined;
+      } else {
+        target =
+          opts.prefix.empty() ? bytes_view{opts.term} : bytes_view{opts.prefix};
+      }
+      return std::make_unique<ByTerm::Buffer>(sub_ctx, field(), target);
+    },
+    [&](const ParametricDescription& d, const bytes_view prefix,
+        const bytes_view term) -> std::unique_ptr<PrepareBuffer> {
+      auto spec = MakeSpec(prefix, term, d);
+      if (!spec) {
+        return std::make_unique<EmptyBuffer>();
+      }
+      if (!opts.max_terms) {
+        return std::make_unique<AllTermsBuffer>(sub_ctx, field(),
+                                                std::move(spec));
+      }
+      return std::make_unique<TopTermsBuffer>(sub_ctx, field(), std::move(spec),
+                                              opts.max_terms);
     });
 }
 

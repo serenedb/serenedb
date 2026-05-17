@@ -100,17 +100,7 @@ class ByEditDistance final : public FilterWithField<ByEditDistanceOptions> {
   static field_visitor visitor(const ByEditDistanceAllOptions& options);
 
   std::unique_ptr<PrepareBuffer> CreateBuffer(
-    const PrepareContext& ctx) const final {
-    auto sub_ctx = ctx;
-    sub_ctx.boost *= Boost();
-    return std::make_unique<LazyQueryBuffer>(
-      [sub_ctx, field = std::string{field()},
-       opts = options()](const PrepareContext&) {
-        return ByEditDistance::prepare(
-          sub_ctx, field, opts.term, opts.max_terms, opts.max_distance,
-          opts.provider, opts.with_transpositions, opts.prefix);
-      });
-  }
+    const PrepareContext& ctx) const final;
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
     auto sub_ctx = ctx;

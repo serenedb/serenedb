@@ -54,6 +54,10 @@ struct TopTerm {
     // NOOP
   }
 
+  void Merge(TopTerm&& /*other*/) noexcept {
+    // NOOP -- TopTerm has no per-segment data to fold in
+  }
+
   bstring term;
   key_type key;
 };
@@ -113,6 +117,14 @@ struct TopTermState : TopTerm<T> {
         visitor(*cookie);
       }
     }
+  }
+
+  void Merge(TopTermState&& other) {
+    segments.insert(segments.end(),
+                    std::make_move_iterator(other.segments.begin()),
+                    std::make_move_iterator(other.segments.end()));
+    terms.insert(terms.end(), std::make_move_iterator(other.terms.begin()),
+                 std::make_move_iterator(other.terms.end()));
   }
 
   std::vector<SegmentState> segments;
@@ -227,6 +239,48 @@ class TopTermsCollector : private util::Noncopyable {
   void Visit(const Visitor& visitor) noexcept {
     for (auto& entry : _terms) {
       visitor(entry.second);
+    }
+  }
+
+  bool empty() const noexcept { return _terms.empty(); }
+
+  void Merge(TopTermsCollector&& other) {
+    SDB_ASSERT(_size == other._size);
+    for (auto& rhs_entry : other._terms) {
+      auto& rhs_key = rhs_entry.first;
+      auto& rhs_state = rhs_entry.second;
+
+      if (auto it = _terms.find(rhs_key); it != _terms.end()) {
+        it->second.Merge(std::move(rhs_state));
+        continue;
+      }
+
+      if (_left) {
+        auto res = _terms.try_emplace(rhs_key, std::move(rhs_state));
+        SDB_ASSERT(res.second);
+        auto& key_ref = const_cast<hashed_bytes_view&>(res.first->first);
+        key_ref = hashed_bytes_view{res.first->second.term, rhs_key.Hash()};
+        _heap.emplace_back(res.first);
+        if (!--_left) {
+          make_heap();
+        }
+        continue;
+      }
+
+      const auto min = _heap.front();
+      if (!_comparer(min->second, rhs_state.key, rhs_state.term)) {
+        continue;
+      }
+
+      pop();
+      auto node = _terms.extract(min);
+      SDB_ASSERT(!node.empty());
+      node.mapped() = std::move(rhs_state);
+      node.key() = hashed_bytes_view{node.mapped().term, rhs_key.Hash()};
+      auto ins = _terms.insert(std::move(node));
+      SDB_ASSERT(ins.inserted);
+      _heap.back() = ins.position;
+      push();
     }
   }
 

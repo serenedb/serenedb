@@ -31,6 +31,7 @@
 #include <utility>
 #include <variant>
 
+#include "basics/down_cast.h"
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/cost.hpp"
@@ -644,6 +645,65 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
             std::move(parent), *prev, std::move(child), std::move(matcher));
         });
     });
+}
+
+namespace {
+
+class NestedBuffer final : public Filter::PrepareBuffer {
+ public:
+  NestedBuffer(const PrepareContext& ctx, const ByNestedOptions& opts)
+    : _parent{opts.parent},
+      _match{opts.match},
+      _merge_type{opts.merge_type},
+      _none_boost{ctx.boost},
+      _child_ctx{[&] {
+        auto c = ctx;
+        c.scorer = GetOrder(opts.match, ctx.scorer);
+        c.boost *= opts.child->BoostImpl();
+        return c;
+      }()},
+      _child{opts.child->CreateBuffer(_child_ctx)} {}
+
+  void PrepareSegment(const SubReader& segment) final {
+    _child->PrepareSegment(segment);
+  }
+
+  void Merge(Filter::PrepareBuffer&& other) final {
+    auto& rhs = sdb::basics::downCast<NestedBuffer>(other);
+    _child->Merge(std::move(*rhs._child));
+  }
+
+  bool Empty() const noexcept final { return false; }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    auto child_q = _child->Empty() ? Filter::Query::empty()
+                                   : std::move(*_child).Compile(_child_ctx);
+    if (!child_q) {
+      return Filter::Query::empty();
+    }
+    return memory::make_tracked<ByNestedQuery>(ctx.memory, std::move(_parent),
+                                               std::move(child_q), _merge_type,
+                                               std::move(_match), _none_boost);
+  }
+
+ private:
+  DocIteratorProvider _parent;
+  ByNestedOptions::MatchType _match;
+  ScoreMergeType _merge_type;
+  score_t _none_boost;
+  PrepareContext _child_ctx;
+  std::unique_ptr<Filter::PrepareBuffer> _child;
+};
+
+}  // namespace
+
+std::unique_ptr<Filter::PrepareBuffer> ByNestedFilter::CreateBuffer(
+  const PrepareContext& ctx) const {
+  const auto& opts = options();
+  if (!opts.parent || !opts.child || !IsValid(opts.match)) {
+    return std::make_unique<EmptyBuffer>();
+  }
+  return std::make_unique<NestedBuffer>(ctx, opts);
 }
 
 Filter::Query::ptr ByNestedFilter::prepare(const PrepareContext& ctx) const {

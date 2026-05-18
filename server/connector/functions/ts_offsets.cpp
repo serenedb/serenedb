@@ -163,7 +163,7 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
         const auto& s = data[idx];
         if (s.GetSize() > 0) {
           field.SetValue(std::string_view{s.GetData(), s.GetSize()});
-          doc.template Insert<irs::Action::INDEX>(field);
+          doc.Insert(field);
         }
       }
       doc.NextDocument();

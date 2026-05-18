@@ -419,7 +419,7 @@ std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
     return result;
   }
   if (fp.pk_spec == catalog::PkSpec::RocksDBGeneratedRowId) {
-    return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
+    return {kColumnIdentifierGeneratedPk};
   }
   if (catalog::IsGlobPK(fp.pk_spec)) {
     return {duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX,

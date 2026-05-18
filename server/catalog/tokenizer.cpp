@@ -67,10 +67,12 @@ irs::analysis::Analyzer::ptr Tokenizer::CreateAnalyzer() const {
 }
 
 Tokenizer::Tokenizer(ObjectId id, std::string_view name,
-                     search::Features features, std::string data)
+                     search::Features features, uint32_t norm_row_group_size,
+                     std::string data)
   : SchemaObject{{}, {}, {}, id, name, ObjectType::Tokenizer},
     _data{std::move(data)},
-    _features{features} {}
+    _features{features},
+    _norm_row_group_size{norm_row_group_size} {}
 
 std::shared_ptr<Tokenizer> Tokenizer::ReadInternal(vpack::Slice slice,
                                                    ReadContext ctx) {
@@ -83,10 +85,14 @@ std::shared_ptr<Tokenizer> Tokenizer::ReadInternal(vpack::Slice slice,
   if (auto r = features.FromVPack(features_slice); !r.ok()) {
     return nullptr;
   }
+  const auto norm_row_group_size_slice = slice.get("norm_row_group_size");
+  const uint32_t norm_row_group_size =
+    norm_row_group_size_slice.isNumber<uint32_t>()
+      ? norm_row_group_size_slice.getNumber<uint32_t>()
+      : DEFAULT_ROW_GROUP_SIZE;
   return std::make_shared<Tokenizer>(
-    ctx.id, name.stringView(), std::move(features),
-    std::string{reinterpret_cast<const char*>(slice.getDataPtr()),
-                slice.byteSize()});
+    ctx.id, name.stringView(), std::move(features), norm_row_group_size,
+    std::string{slice.startAs<char>(), slice.byteSize()});
 }
 
 void Tokenizer::WriteInternal(vpack::Builder& b) const {
@@ -96,6 +102,7 @@ void Tokenizer::WriteInternal(vpack::Builder& b) const {
     b.add("tokenizer", slice.get("tokenizer"));
     b.add("features");
     _features.ToVPack(b);
+    b.add("norm_row_group_size", _norm_row_group_size);
   });
   b.close();
 }

@@ -18,10 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/parser/parser.h>
-
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/parser/parser.hpp>
 #include <iresearch/search/mixed_boolean_filter.hpp>
 #include <iresearch/utils/string.hpp>
 

@@ -26,10 +26,6 @@
 
 namespace sdb {
 
-struct IndexShardOptions {
-  virtual ~IndexShardOptions() = default;
-};
-
 class IndexShard : public catalog::Object {
  public:
   IndexShard(ObjectId id, ObjectId index_id, catalog::ObjectType type);

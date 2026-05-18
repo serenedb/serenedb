@@ -49,6 +49,7 @@
 #include "catalog/scorer_options.h"
 #include "metrics/gauge.h"
 #include "metrics/guard.h"
+#include "query/duckdb_engine.h"
 #include "query/transaction.h"
 #include "rest_server/flush_feature.h"
 #include "rest_server/serened_single.h"
@@ -116,24 +117,22 @@ std::filesystem::path InvertedIndexShard::GetPath(ObjectId db_id,
 }
 
 std::shared_ptr<InvertedIndexShard> InvertedIndexShard::Create(
-  ObjectId id, const catalog::InvertedIndex& index,
-  InvertedIndexShardOptions options, bool is_new) {
-  return std::make_shared<InvertedIndexShard>(id, index, options, is_new);
+  ObjectId id, const catalog::InvertedIndex& index, bool is_new) {
+  return std::make_shared<InvertedIndexShard>(id, index, is_new);
 }
 
 InvertedIndexShard::InvertedIndexShard(ObjectId id,
                                        const catalog::InvertedIndex& index,
-                                       InvertedIndexShardOptions options,
                                        bool is_new)
   : IndexShard{id, index.GetId(), catalog::ObjectType::InvertedIndexShard},
     _engine{GetServerEngine()},
     _search{GetSearchEngine()},
-    _state{std::make_shared<ThreadPoolState>()},
-    _options{std::move(options)} {
-  _tasks_settings.commit_interval_msec = _options.base.commit_interval_ms;
+    _state{std::make_shared<ThreadPoolState>()} {
+  const auto& options = index.GetOptions();
+  _tasks_settings.commit_interval_msec = options.commit_interval_ms;
   _tasks_settings.consolidation_interval_msec =
-    _options.base.consolidation_interval_ms;
-  _tasks_settings.cleanup_interval_step = _options.base.cleanup_interval_step;
+    options.consolidation_interval_ms;
+  _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
   auto& server = SerenedServer::Instance();
 
   const auto db_id = index.GetDatabaseId();
@@ -188,10 +187,78 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = 256 * (size_t{1} << 20);  // 256MB
   writer_options.lock_repository = false;  // RocksDB has its own lock
+  writer_options.db = query::DuckDBEngine::Instance().GetDB().instance.get();
+  writer_options.reader_options.db = writer_options.db;
+  writer_options.column_options = [&](irs::field_id id) -> irs::ColumnOptions {
+    const auto column_id = static_cast<catalog::Column::Id>(id);
+    if (const auto* column_info = index.FindColumnInfo(column_id)) {
+      return {
+        .row_group_size = column_info->row_group_size,
+        .compression = column_info->compression,
+        .hnsw_info = index.GetColumnHNSWInfo(column_id),
+      };
+    }
+    if (column_id == catalog::Column::kGeneratedPKId) {
+      return {
+        .skip_validity = true,
+        .row_group_size = index.GetOptions().row_group_size,
+      };
+    }
+    const auto* features = index.FindSyntheticFeatures(column_id);
+    SDB_ASSERT(features, "column callback for unknown column: ", id);
+    SDB_ASSERT(!features->HasFeatures(irs::IndexFeatures::Norm),
+               "norm-role synthetic id must not reach column callback: ", id);
+    return {
+      .skip_validity = true,
+      .row_group_size = index.GetOptions().row_group_size,
+    };
+  };
+  writer_options.norm_column_options =
+    [&](std::string_view name) -> irs::NormColumnOptions {
+    static constexpr size_t kColumnIdSize = sizeof(catalog::Column::Id);
+    SDB_ASSERT(name.size() > kColumnIdSize);
+    const auto column_id =
+      static_cast<catalog::Column::Id>(absl::big_endian::Load64(name.data()));
+    const auto* column_info = index.FindColumnInfo(column_id);
+    SDB_ASSERT(column_info, "norm callback for unknown col_id: ", column_id);
+    if (name.size() == kColumnIdSize + 1) {
+      SDB_ASSERT(column_info->synthetic_column,
+                 "whole-column norm callback fired without a catalog "
+                 "reservation for column: ",
+                 column_id);
+      SDB_ASSERT(column_info->features.HasFeatures(irs::IndexFeatures::Norm),
+                 "whole-column norm callback fired but catalog features lack "
+                 "Norm for column: ",
+                 column_id);
+      return {
+        .id = static_cast<irs::field_id>(*column_info->synthetic_column),
+        .row_group_size = column_info->norm_row_group_size,
+      };
+    }
+    const auto json_pointer =
+      name.substr(kColumnIdSize, name.size() - kColumnIdSize - 1);
+    for (const auto& path_info : column_info->json_paths) {
+      if (json_pointer == path_info.json_pointer) {
+        SDB_ASSERT(path_info.synthetic_column,
+                   "JSON-path norm callback fired without a catalog "
+                   "reservation; col_id: ",
+                   column_id, ", pointer: ", json_pointer);
+        SDB_ASSERT(path_info.features.HasFeatures(irs::IndexFeatures::Norm),
+                   "JSON-path norm callback fired but catalog features lack "
+                   "Norm; col_id: ",
+                   column_id, ", pointer: ", json_pointer);
+        return {.id = static_cast<irs::field_id>(*path_info.synthetic_column),
+                .row_group_size = path_info.norm_row_group_size};
+      }
+    }
+    SDB_ENSURE(false, ERROR_INTERNAL,
+               "norm callback for unknown JSON path; col_id: ", column_id,
+               ", pointer: ", json_pointer);
+  };
 
-  if (const auto& options = index.GetWandScorer()) {
-    _wand_scorer = catalog::MakeScorer(*options);
-    writer_options.reader_options.scorer = _wand_scorer.get();
+  if (const auto& options = index.GetTopKScorer()) {
+    _topk_scorer = catalog::MakeScorer(*options);
+    writer_options.reader_options.scorer = _topk_scorer.get();
   }
 
   writer_options.meta_payload_provider = [this](uint64_t tick,
@@ -212,34 +279,6 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
 
   SDB_IF_FAILURE("segment_1000_docs_max") {
     writer_options.segment_docs_max = 1000;
-  }
-
-  // Configure column_info for HNSW vector columns.
-  // The field name is the big-endian encoded catalog Column::Id.
-  {
-    containers::FlatHashMap<std::string, irs::HNSWInfo> hnsw_columns;
-    for (auto col_id : index.GetColumnIds()) {
-      if (auto hnsw = index.GetColumnHNSWInfo(col_id)) {
-        std::string name(sizeof(col_id), '\0');
-        absl::big_endian::Store64(name.data(), col_id);
-        hnsw_columns.emplace(std::move(name), *hnsw);
-      }
-    }
-    if (!hnsw_columns.empty()) {
-      writer_options.column_info =
-        [hnsw_map = std::move(hnsw_columns)](std::string_view name) {
-          auto it = hnsw_map.find(std::string(name));
-          if (it != hnsw_map.end()) {
-            return irs::ColumnInfo{
-              .compression = irs::Type<irs::compression::None>::get(),
-              .value_type = irs::ValueType::VectorF32,
-              .hnsw_info = it->second,
-            };
-          }
-          return irs::ColumnInfo{.compression =
-                                   irs::Type<irs::compression::None>::get()};
-        };
-    }
   }
 
   _writer = irs::IndexWriter::Make(*_dir, codec, open_mode, writer_options);
@@ -280,9 +319,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   }
 }
 
-void InvertedIndexShard::WriteInternal(vpack::Builder& b) const {
-  vpack::WriteTuple(b, _options.base);
-}
+void InvertedIndexShard::WriteInternal(vpack::Builder& /*b*/) const {}
 
 void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
                                         query::Transaction* user_txn)

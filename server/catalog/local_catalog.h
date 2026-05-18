@@ -95,12 +95,11 @@ class LocalCatalog final : public LogicalCatalog,
     ObjectId database_id, std::string_view schema, std::string_view relation,
     std::string name, std::vector<CreateIndexColumn>&& columns, bool unique,
     CreateIndexOperationOptions operation_options) final;
-  Result CreateInvertedIndex(ObjectId database_id, std::string_view schema,
-                             std::string_view relation, std::string name,
-                             std::vector<CreateIndexColumn>&& columns,
-                             IndexShardOptions& shard_options,
-                             CreateIndexOperationOptions operation_options,
-                             std::optional<ScorerOptions> wand_scorer) final;
+  Result CreateInvertedIndex(
+    ObjectId database_id, std::string_view schema, std::string_view relation,
+    std::string name, std::vector<CreateIndexColumn>&& columns,
+    InvertedIndexOptions options,
+    CreateIndexOperationOptions operation_options) final;
   Result CreateTokenizer(ObjectId database_id, std::string_view schema,
                          std::shared_ptr<Tokenizer> dict) final;
   Result CreateType(ObjectId database_id, std::string_view schema,
@@ -151,7 +150,6 @@ class LocalCatalog final : public LogicalCatalog,
 
  private:
   Result CreateIndexImpl(std::string_view schema, std::shared_ptr<Index> index,
-                         IndexShardOptions& shard_options,
                          CreateIndexOperationOptions operation_options);
 
   template<typename T>

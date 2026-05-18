@@ -25,7 +25,7 @@
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 
-#include "executor.hpp"
+#include "executor.h"
 
 enum class QueryType {
   Count,

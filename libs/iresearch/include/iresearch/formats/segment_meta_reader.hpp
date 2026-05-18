@@ -96,8 +96,6 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
   const auto docs_count =
     live_docs_count + static_cast<doc_id_t>(docs_mask ? docs_mask->size() : 0);
   const auto size = in->ReadV64();
-  const auto flags = in->ReadByte();
-  field_id sort = in->ReadV64() - 1;
   auto files = ReadStrings(*in);
   format_utils::CheckFooter(*in, checksum);
 
@@ -107,36 +105,15 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
       ") > live_docs_count(", live_docs_count, ")")};
   }
 
-  if (flags & ~(SegmentMetaWriterImpl::kHasColumnStore |
-                SegmentMetaWriterImpl::kSorted)) [[unlikely]] {
-    throw IndexError{absl::StrCat("While reading segment meta '", name,
-                                  "', error: use of unsupported flags '", flags,
-                                  "'")};
-  }
-
-  const auto sorted = bool(flags & SegmentMetaWriterImpl::kSorted);
-
-  if ((!field_limits::valid(sort)) && sorted) [[unlikely]] {
-    throw IndexError{absl::StrCat("While reading segment meta '", name,
-                                  "', error: incorrectly marked as sorted")};
-  }
-
-  if ((field_limits::valid(sort)) && !sorted) [[unlikely]] {
-    throw IndexError{absl::StrCat("While reading segment meta '", name,
-                                  "', error: incorrectly marked as unsorted")};
-  }
-
   // ...........................................................................
   // all operations below are noexcept
   // ...........................................................................
 
   meta.name = std::move(name);
   meta.version = segment_version;
-  meta.column_store = flags & SegmentMetaWriterImpl::kHasColumnStore;
   meta.docs_count = docs_count;
   meta.live_docs_count = live_docs_count;
   meta.docs_mask = std::move(docs_mask);
-  meta.sort = sort;
   meta.docs_mask_size = docs_mask_size;
   meta.byte_size = size + docs_mask_size;
   meta.files = std::move(files);

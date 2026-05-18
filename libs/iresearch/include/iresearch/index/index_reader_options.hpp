@@ -22,21 +22,15 @@
 
 #pragma once
 
-#include <functional>
-
-#include "basics/bit_utils.hpp"
-#include "basics/resource_manager.hpp"
+#include "iresearch/columnstore/format.hpp"
 #include "iresearch/search/scorer.hpp"
 
+namespace duckdb {
+
+class DatabaseInstance;
+}
+
 namespace irs {
-
-struct SegmentMeta;
-struct FieldReader;
-struct ColumnReader;
-
-using ColumnWarmupCallback =
-  std::function<bool(const SegmentMeta& meta, const FieldReader& fields,
-                     const ColumnReader& column)>;
 
 // Scorers allowed to be used in conjunction with wanderator.
 using ScorerPtr = const Scorer*;
@@ -51,10 +45,14 @@ struct WandContext {
 };
 
 struct IndexReaderOptions {
-  ColumnWarmupCallback warmup_columns;
-  ScorerPtr scorer = nullptr;  // A list of wand scorers
-  bool index = true;           // Open inverted index
-  bool columnstore = true;     // Open columnstore
+  ScorerPtr scorer = nullptr;  // A list of topk scorers
+  // When non-null, the per-segment columnstore::Reader is opened so
+  // norm-bearing fields and typed/HNSW columns are accessible via
+  // SubReader::norms / Column / HNSW. Must outlive every reader produced
+  // by Open / Reopen.
+  duckdb::DatabaseInstance* db = nullptr;
+  bool index = true;  // Open inverted index
+  columnstore::PreloadedHnswGraphs cs_hnsw_graphs;
 };
 
 }  // namespace irs

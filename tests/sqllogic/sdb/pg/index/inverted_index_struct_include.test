@@ -1,0 +1,163 @@
+hash-threshold 100
+
+# End-to-end: INCLUDE'd STRUCT column round-trips through new cs.
+#
+# STRUCT has no top-level data of its own: top-level carries only parent
+# validity, every field is its own ColumnReader. NULL parent rows and
+# NULL field values must both round-trip.
+
+statement ok
+CREATE TABLE struct_t (
+  pk INTEGER PRIMARY KEY,
+  text_for_search VARCHAR,
+  payload STRUCT(name VARCHAR, score INTEGER)
+)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE INDEX struct_t_idx ON struct_t USING inverted(pk, text_for_search en)
+  INCLUDE (payload)
+
+
+statement ok
+INSERT INTO struct_t VALUES (1, 'first',  ROW('alpha', 10))
+
+
+# Whole-struct NULL.
+statement ok
+INSERT INTO struct_t VALUES (2, 'second', NULL)
+
+
+# NULL inside a non-null struct.
+statement ok
+INSERT INTO struct_t VALUES (3, 'third',  ROW(NULL, 30))
+
+
+statement ok
+INSERT INTO struct_t VALUES (4, 'fourth', ROW('delta', NULL))
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) struct_t
+
+
+# Sanity: the nested column is served by the iresearch columnstore (i),
+# pk falls through to the rocksdb lookup (l).
+query
+EXPLAIN SELECT pk, payload FROM struct_t_idx WHERE text_for_search @@ ts_phrase('first');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│    Index: struct_t_idx    │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[text_for_search│
+│ (string) = <Term:first(0, │
+│           0); >]]         │
+│                           │
+│        Projections:       │
+│           pk (l)          │
+│        payload (i)        │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+# pg-wire serialises a STRUCT as a postgres composite tuple: "(field1,field2)"
+# with NULL fields rendered as empty (so {'name': NULL, 'score': 30} comes
+# back as "(,30)" and {'name': delta, 'score': NULL} as "(delta,)").
+query
+SELECT pk, payload FROM struct_t_idx WHERE text_for_search @@ ts_phrase('first')
+ORDER BY pk;
+----
+pk	payload
+1	(alpha,10)
+
+
+# NULL row must roundtrip as NULL, not as a default-filled struct.
+query
+SELECT pk, payload FROM struct_t_idx WHERE text_for_search @@ ts_phrase('second')
+ORDER BY pk;
+----
+pk	payload
+2	NULL
+
+
+# NULL field on the first slot.
+query
+SELECT pk, payload FROM struct_t_idx WHERE text_for_search @@ ts_phrase('third')
+ORDER BY pk;
+----
+pk	payload
+3	(,30)
+
+
+# NULL field on the second slot.
+query
+SELECT pk, payload FROM struct_t_idx WHERE text_for_search @@ ts_phrase('fourth')
+ORDER BY pk;
+----
+pk	payload
+4	(delta,)
+
+
+# All four rows materialised side by side -- exercises validity at parent
+# and field levels in one projection.
+query
+SELECT pk, payload FROM struct_t_idx
+WHERE text_for_search @@ ts_phrase('first')
+   OR text_for_search @@ ts_phrase('second')
+   OR text_for_search @@ ts_phrase('third')
+   OR text_for_search @@ ts_phrase('fourth')
+ORDER BY pk;
+----
+pk	payload
+1	(alpha,10)
+2	NULL
+3	(,30)
+4	(delta,)
+
+
+# IS NULL on the INCLUDE-only STRUCT column: the filter falls through to
+# DuckDB's residual evaluator (no inverted-index postings on `payload`).
+query
+SELECT pk FROM struct_t_idx
+WHERE (text_for_search @@ ts_phrase('first')
+       OR text_for_search @@ ts_phrase('second')
+       OR text_for_search @@ ts_phrase('third')
+       OR text_for_search @@ ts_phrase('fourth'))
+  AND payload IS NULL
+ORDER BY pk;
+----
+pk
+2
+
+
+query
+SELECT pk FROM struct_t_idx
+WHERE (text_for_search @@ ts_phrase('first')
+       OR text_for_search @@ ts_phrase('second')
+       OR text_for_search @@ ts_phrase('third')
+       OR text_for_search @@ ts_phrase('fourth'))
+  AND payload IS NOT NULL
+ORDER BY pk;
+----
+pk
+1
+3
+4

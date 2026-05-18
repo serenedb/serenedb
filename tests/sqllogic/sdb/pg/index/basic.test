@@ -22,7 +22,7 @@ CREATE INDEX index_t ON t USING inverted(r test_english);
 statement error
 CREATE INDEX index_t_parens ON t USING inverted(r test_english ());
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english' on column 'r' (known: hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english' on column 'r' (known: included, hnsw)
 
 
 statement error
@@ -240,13 +240,13 @@ DROP INDEX index_ts;
 statement error
 CREATE INDEX index_ts on tstest USING inverted(c unknown_dict);
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'unknown_dict' on column 'c': not a built-in type (known: hnsw) and no text dictionary by that name in schema 'public'
+db error: ERROR: Failed to create index: Unknown opclass 'unknown_dict' on column 'c': not a built-in type (known: included, hnsw) and no text dictionary by that name in schema 'public'
 
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(a test_english);
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'test_english' on column 'a': not a built-in type (known: hnsw) and no text dictionary by that name in schema 'public'
+db error: ERROR: Failed to create index: Unknown opclass 'test_english' on column 'a': not a built-in type (known: included, hnsw) and no text dictionary by that name in schema 'public'
 
 
 statement error
@@ -258,7 +258,7 @@ db error: ERROR: Opclass option must be a constant value
 statement error
 CREATE INDEX index_ts on tstest USING inverted(c test_english ());
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english' on column 'c' (known: hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english' on column 'c' (known: included, hnsw)
 
 
 
@@ -581,6 +581,11 @@ INSERT INTO t VALUES (2, 'kek');
 connection conn2
 statement async ok
 DROP TABLE t;
+
+
+connection conn1
+statement ok
+SELECT SUM(x) FROM generate_series(1, 1000000) t(x);
 
 
 connection conn1

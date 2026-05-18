@@ -486,19 +486,6 @@ struct FieldIterator : Iterator<const TermReader&> {
   virtual bool seek(std::string_view target) = 0;
 };
 
-struct ColumnReader;
-
-// An iterator providing sequential and random access to stored columns.
-struct ColumnIterator : Iterator<const ColumnReader&> {
-  using ptr = memory::managed_ptr<ColumnIterator>;
-
-  [[nodiscard]] static ColumnIterator::ptr empty() noexcept;
-
-  // Position iterator at a specified target.
-  // Return if the target is found, false otherwise.
-  virtual bool seek(std::string_view name) = 0;
-};
-
 // An iterator providing sequential access to term dictionary
 struct TermIterator : Iterator<bytes_view, AttributeProvider> {
   using ptr = memory::managed_ptr<TermIterator>;

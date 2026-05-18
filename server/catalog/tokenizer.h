@@ -69,9 +69,11 @@ class Tokenizer : public SchemaObject {
   std::shared_ptr<Object> Clone() const final;
 
   Tokenizer(ObjectId id, std::string_view name, search::Features features,
-            std::string data);
+            uint32_t norm_row_group_size, std::string data);
 
   const search::Features& GetFeatures() const noexcept { return _features; }
+
+  uint32_t GetNormRowGroupSize() const noexcept { return _norm_row_group_size; }
 
  private:
   irs::analysis::Analyzer::ptr CreateAnalyzer() const;
@@ -80,6 +82,7 @@ class Tokenizer : public SchemaObject {
   std::vector<irs::analysis::Analyzer::ptr> _pool;
   std::string _data;
   search::Features _features;
+  uint32_t _norm_row_group_size;
 };
 
 }  // namespace sdb::catalog

@@ -41,14 +41,15 @@ namespace sdb::connector {
 // columns get a null tokenizer here).
 //
 // For JSON-path indexed fields (e.g. `TERM_LIKE(content->'host', ...)`)
-// `json_path` is non-empty and holds the keys root-to-leaf; `logical_type`
-// is the DuckDB type of the indexed leaf (VARCHAR for the string-leaf MVP,
-// or the cast target type for numeric/bool/null lookups).
+// `json_pointer` is non-empty and holds the JSON pointer (pre-encoded,
+// see `EncodeJsonPointer`); `logical_type` is the DuckDB type of the
+// indexed leaf (VARCHAR for the string-leaf MVP, or the cast target
+// type for numeric/bool/null lookups).
 struct SearchColumnInfo {
   catalog::Column::Id column_id{};
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
-  std::vector<std::string> json_path;
+  std::string json_pointer;
 };
 
 // Resolves a DuckDB bound column reference (by table_index + column_index,

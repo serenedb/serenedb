@@ -485,31 +485,15 @@ Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
 }
 
 Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
-  auto load_shard = [&]<typename Options>(DefinitionKey key,
-                                          vpack::Slice slice) -> Result {
-    Options options;
-    if (auto r = vpack::ReadTupleNothrow(slice, options.base); !r.ok()) {
-      return r;
-    }
-    auto shard = index->CreateIndexShard(false, key.GetObjectId(), options);
-    if (!shard) {
-      return std::move(shard.error());
-    }
-    SDB_ASSERT(*shard);
-    return _catalog.RegisterIndexShard(std::move(*shard));
-  };
-
-  auto is_inverted = index->GetType() == ObjectType::InvertedIndex;
-  auto shard_type = IndexShardType(index->GetType());
-
   return GetServerEngine().VisitDefinitions(
-    index->GetId(), shard_type,
-    [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      if (is_inverted) {
-        return load_shard.operator()<search::InvertedIndexShardOptions>(key,
-                                                                        slice);
+    index->GetId(), IndexShardType(index->GetType()),
+    [&](DefinitionKey key, vpack::Slice /*slice*/) -> Result {
+      auto shard = index->CreateIndexShard(false, key.GetObjectId());
+      if (!shard) {
+        return std::move(shard.error());
       }
-      return load_shard.operator()<SecondaryIndexShardOptions>(key, slice);
+      SDB_ASSERT(*shard);
+      return _catalog.RegisterIndexShard(std::move(*shard));
     });
 }
 

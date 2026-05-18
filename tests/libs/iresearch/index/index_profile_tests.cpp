@@ -24,6 +24,7 @@
 #include <thread>
 
 #include "basics/file_utils_ext.hpp"
+#include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/store/fs_directory.hpp"
@@ -33,23 +34,16 @@
 
 namespace {
 
-bool Visit(const irs::ColumnReader& reader,
-           const std::function<bool(irs::doc_id_t, irs::bytes_view)>& visitor) {
-  auto it = reader.iterator(irs::ColumnHint::Consolidation);
+inline constexpr irs::field_id kSameId = 1;
+inline constexpr irs::field_id kUpdatedId = 2;
 
-  irs::PayAttr dummy;
-  auto* payload = irs::get<irs::PayAttr>(*it);
-  if (!payload) {
-    payload = &dummy;
+template<typename ParticleT>
+void StoreNamed(irs::IndexWriter::Document& d, const ParticleT& fields,
+                std::string_view name, irs::field_id id) {
+  const auto* field = fields.template get<tests::StringField>(name);
+  if (field) {
+    irs::tests::StoreFieldAt(*d.Columnstore(), id, d.DocId(), *field);
   }
-
-  while (it->next()) {
-    if (!visitor(it->value(), payload->value)) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 }  // namespace
@@ -130,7 +124,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     std::mutex mutex;
 
     if (!writer) {
-      irs::IndexWriterOptions options;
+      auto options = irs::tests::DefaultWriterOptions();
       // match original implementation or may run out of file handles
       // (e.g. MacOS/Travis)
       options.segment_count_max = 8;
@@ -140,7 +134,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     // initialize reader data source for import threads
     if (num_import_threads != 0) {
       auto import_writer =
-        irs::IndexWriter::Make(import_dir, codec(), irs::kOmCreate);
+        irs::IndexWriter::Make(import_dir, codec(), irs::kOmCreate,
+                               irs::tests::DefaultWriterOptions());
 
       {
         REGISTER_TIMER_NAMED_DETAILED("init - setup");
@@ -152,10 +147,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
           auto ctx = import_writer->GetBatch();
           {
             auto d = ctx.Insert();
-            EXPECT_TRUE(d.Insert<irs::Action::INDEX>(doc->indexed.begin(),
-                                                     doc->indexed.end()));
-            EXPECT_TRUE(d.Insert<irs::Action::STORE>(doc->stored.begin(),
-                                                     doc->stored.end()));
+            EXPECT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+            StoreNamed(d, doc->indexed, "same", kSameId);
           }
           TransactionTick(ctx);
         }
@@ -168,7 +161,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       }
 
       REGISTER_TIMER_NAMED_DETAILED("init - open");
-      import_reader = irs::DirectoryReader(import_dir);
+      import_reader = irs::DirectoryReader(import_dir, codec(),
+                                           irs::tests::DefaultReaderOptions());
     }
 
     {
@@ -218,12 +212,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
               auto ctx = writer->GetBatch();
               {
                 auto d = ctx.Insert();
-                EXPECT_TRUE(
-                  d.Insert<irs::Action::INDEX>(csv_doc_template.indexed.begin(),
-                                               csv_doc_template.indexed.end()));
-                EXPECT_TRUE(
-                  d.Insert<irs::Action::STORE>(csv_doc_template.stored.begin(),
-                                               csv_doc_template.stored.end()));
+                EXPECT_TRUE(d.Insert(csv_doc_template.indexed.begin(),
+                                     csv_doc_template.indexed.end()));
               }
               TransactionTick(ctx);
             }
@@ -357,12 +347,10 @@ class IndexProfileTestCase : public tests::IndexTestBase {
                 auto ctx = writer->GetBatch();
                 {
                   auto d = ctx.Replace(std::move(filter));
-                  EXPECT_TRUE(d.Insert<irs::Action::INDEX>(
-                    csv_doc_template.indexed.begin(),
-                    csv_doc_template.indexed.end()));
-                  EXPECT_TRUE(d.Insert<irs::Action::STORE>(
-                    csv_doc_template.stored.begin(),
-                    csv_doc_template.stored.end()));
+                  EXPECT_TRUE(d.Insert(csv_doc_template.indexed.begin(),
+                                       csv_doc_template.indexed.end()));
+                  StoreNamed(d, csv_doc_template.indexed, "updated",
+                             kUpdatedId);
                 }
                 TransactionTick(ctx);
               }
@@ -420,7 +408,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     irs::file_utils::EnsureAbsolute(path);
     std::cout << "Path to timing log: " << path.string() << std::endl;
 
-    auto reader = irs::DirectoryReader(dir(), codec());
+    auto reader =
+      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     // not all commits might produce a new segment,
     ASSERT_LE(1, reader.size());
     // some might merge with concurrent commits
@@ -445,16 +434,16 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     for (size_t i = 0, count = reader.size(); i < count; ++i) {
       indexed_docs_count += reader[i].live_docs_count();
 
-      const auto* column = reader[i].column("same");
+      const auto* column = reader[i].Column(kSameId);
       if (column) {
-        // field present in all docs from simple_sequential.json
-        Visit(*column, imported_visitor);
+        irs::tests::VisitBlobColumn(*reader[i].CsReader(), *column,
+                                    imported_visitor);
       }
 
-      column = reader[i].column("updated");
+      column = reader[i].Column(kUpdatedId);
       if (column) {
-        // field inserted by updater threads
-        Visit(*column, updated_visitor);
+        irs::tests::VisitBlobColumn(*reader[i].CsReader(), *column,
+                                    updated_visitor);
       }
     }
 
@@ -492,7 +481,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
   void ProfileBulkIndexDedicatedCommit(size_t insert_threads,
                                        size_t commit_threads,
                                        size_t commit_interval) {
-    irs::IndexWriterOptions options;
+    auto options = irs::tests::DefaultWriterOptions();
     std::atomic<bool> working(true);
     std::atomic<size_t> writer_commit_count(0);
 
@@ -532,7 +521,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
                                             size_t consolidate_interval) {
     const auto policy =
       irs::index_utils::MakePolicy(irs::index_utils::ConsolidateCount());
-    irs::IndexWriterOptions options;
+    auto options = irs::tests::DefaultWriterOptions();
     std::atomic<bool> working(true);
     irs::async_utils::ThreadPool<> thread_pool(2);
 

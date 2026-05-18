@@ -434,32 +434,35 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
 
   Result create_result;
   if (index_type == catalog::ObjectType::InvertedIndex) {
-    search::InvertedIndexShardOptions shard_options;
-    auto it = info.options.find("commit_interval");
-    if (it != info.options.end()) {
-      shard_options.base.commit_interval_ms = it->second.GetValue<int64_t>();
-    }
-    it = info.options.find("consolidation_interval");
-    if (it != info.options.end()) {
-      shard_options.base.consolidation_interval_ms =
-        it->second.GetValue<int64_t>();
-    }
-    it = info.options.find("cleanup_interval_step");
-    if (it != info.options.end()) {
-      shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
-    }
-    std::optional<catalog::ScorerOptions> wand_scorer;
-    it = info.options.find("optimize_top_k");
-    if (it != info.options.end()) {
-      auto value = it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
-                     .GetValue<std::string>();
-      wand_scorer =
-        catalog::ParseScorerExpression(transaction.GetContext(), value);
+    auto& context = transaction.GetContext();
+    auto find_with = [&](std::string_view key) -> const duckdb::Value* {
+      auto it = info.options.find(key);
+      return it != info.options.end() ? &it->second : nullptr;
+    };
+    auto resolve_uint = [&](std::string_view key) -> uint32_t {
+      if (auto* v = find_with(key)) {
+        return v->GetValue<uint32_t>();
+      }
+      duckdb::Value v;
+      auto r = context.TryGetCurrentSetting(std::string{key}, v);
+      SDB_ASSERT(r, "missing DB-level default for setting '", key, "'");
+      return v.GetValue<uint32_t>();
+    };
+    catalog::InvertedIndexOptions options{
+      .row_group_size = resolve_uint("row_group_size"),
+      .norm_row_group_size = resolve_uint("norm_row_group_size"),
+      .commit_interval_ms = resolve_uint("commit_interval"),
+      .consolidation_interval_ms = resolve_uint("consolidation_interval"),
+      .cleanup_interval_step = resolve_uint("cleanup_interval_step"),
+    };
+    if (auto* v = find_with("optimize_top_k")) {
+      auto value =
+        v->DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>();
+      options.topk_scorer = catalog::ParseScorerExpression(context, value);
     }
     create_result = catalog_impl.CreateInvertedIndex(
       database_id, name, sdb_table->GetName(), info.index_name,
-      std::move(idx_columns), shard_options, /*operation_options=*/{},
-      std::move(wand_scorer));
+      std::move(idx_columns), std::move(options), /*operation_options=*/{});
   } else {
     bool unique = (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
@@ -496,21 +499,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   return nullptr;
 }
 
-// Returns true if two MacroFunction parameter signatures are identical
-// (same number of params, same types in order).
-static bool MacroSignatureMatches(const duckdb::MacroFunction& a,
-                                  const duckdb::MacroFunction& b) {
-  if (a.types.size() != b.types.size()) {
-    return false;
-  }
-  for (size_t i = 0; i < a.types.size(); ++i) {
-    if (a.types[i] != b.types[i]) {
-      return false;
-    }
-  }
-  return true;
-}
-
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   duckdb::CatalogTransaction transaction, duckdb::CreateFunctionInfo& info) {
   auto& catalog_feature =
@@ -543,7 +531,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
       // Find an existing overload with the same parameter signature.
       bool found = false;
       for (size_t i = 0; i < merged_info->macros.size(); ++i) {
-        if (MacroSignatureMatches(*merged_info->macros[i], *new_macro)) {
+        if (merged_info->macros[i]->types == new_macro->types) {
           if (!replace) {
             // Plain CREATE FUNCTION: duplicate signature is an error.
             throw duckdb::CatalogException(

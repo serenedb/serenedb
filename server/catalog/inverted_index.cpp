@@ -63,10 +63,8 @@ ResultOr<ColumnTokenizer> BuildColumnTokenizer(
 }  // namespace
 
 ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
-  bool is_new, ObjectId id, IndexShardOptions& options) const {
-  auto& shard_options =
-    basics::downCast<search::InvertedIndexShardOptions>(options);
-  return search::InvertedIndexShard::Create(id, *this, shard_options, is_new);
+  bool is_new, ObjectId id) const {
+  return search::InvertedIndexShard::Create(id, *this, is_new);
 }
 
 std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
@@ -88,9 +86,9 @@ std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
     return nullptr;
   }
 
-  std::optional<ScorerOptions> wand_scorer;
-  if (auto s = slice.get("wand_scorer"); !s.isNone()) {
-    if (auto r = vpack::ReadTupleNothrow(s, wand_scorer); !r.ok()) {
+  InvertedIndexOptions options;
+  if (auto s = slice.get("options"); !s.isNone()) {
+    if (auto r = vpack::ReadTupleNothrow(s, options); !r.ok()) {
       return nullptr;
     }
   }
@@ -98,7 +96,7 @@ std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
   return std::make_shared<InvertedIndex>(
     ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
     std::string{name_slice.stringView()}, std::move(column_ids),
-    std::move(columns), std::move(wand_scorer));
+    std::move(columns), std::move(options));
 }
 
 void InvertedIndex::WriteInternal(vpack::Builder& b) const {
@@ -108,10 +106,8 @@ void InvertedIndex::WriteInternal(vpack::Builder& b) const {
     vpack::WriteTuple(b, _column_ids);
     b.add("columns");
     vpack::WriteTuple(b, _columns);
-    if (_wand_scorer) {
-      b.add("wand_scorer");
-      vpack::WriteTuple(b, *_wand_scorer);
-    }
+    b.add("options");
+    vpack::WriteTuple(b, _options);
   });
   b.close();
 }
@@ -120,6 +116,21 @@ const InvertedIndexColumnInfo* InvertedIndex::FindColumnInfo(
   catalog::Column::Id column_id) const noexcept {
   auto it = _columns.find(column_id);
   return it == _columns.end() ? nullptr : &it->second;
+}
+
+const search::Features* InvertedIndex::FindSyntheticFeatures(
+  catalog::Column::Id synthetic_id) const noexcept {
+  for (const auto& [_, info] : _columns) {
+    if (info.synthetic_column == synthetic_id) {
+      return &info.features;
+    }
+    for (const auto& path_info : info.json_paths) {
+      if (path_info.synthetic_column == synthetic_id) {
+        return &path_info.features;
+      }
+    }
+  }
+  return nullptr;
 }
 
 ColumnTokenizer InvertedIndex::GetColumnTokenizer(
@@ -133,12 +144,15 @@ ColumnTokenizer InvertedIndex::GetColumnTokenizer(
   auto tokenizer =
     BuildColumnTokenizer(snapshot, info->text_dictionary, info->features);
   SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
+  if (!info->features.HasFeatures(irs::IndexFeatures::Norm)) {
+    tokenizer->tokenizer_column = info->synthetic_column;
+  }
   return *std::move(tokenizer);
 }
 
 std::optional<ColumnTokenizer> InvertedIndex::GetJsonPathTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot,
-  catalog::Column::Id column_id, std::span<const std::string> path) const {
+  catalog::Column::Id column_id, std::string_view json_pointer) const {
   const auto* info = FindColumnInfo(column_id);
   if (!info) {
     return std::nullopt;
@@ -146,12 +160,15 @@ std::optional<ColumnTokenizer> InvertedIndex::GetJsonPathTokenizer(
 
   if (auto it = absl::c_find_if(info->json_paths,
                                 [&](const auto& path_info) {
-                                  return absl::c_equal(path_info.path, path);
+                                  return path_info.json_pointer == json_pointer;
                                 });
       it != info->json_paths.end()) {
     auto tokenizer =
       BuildColumnTokenizer(snapshot, it->text_dictionary, it->features);
     SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
+    if (!it->features.HasFeatures(irs::IndexFeatures::Norm)) {
+      tokenizer->tokenizer_column = it->synthetic_column;
+    }
     return *std::move(tokenizer);
   }
 

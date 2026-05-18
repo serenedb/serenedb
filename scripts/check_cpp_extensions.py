@@ -1,31 +1,63 @@
 #!/usr/bin/env python3
-"""Check that C++ files use .hpp/.tpp/.cpp extensions.
+"""Check that C++ files use approved extensions.
 
-TODO: disallow .h once all headers are renamed, then remove .h from allowed set.
-Currently also allows .h for legacy code.
-
-Flags .cc, .ipp, .c, .c++, .h++, .hh as disallowed.
+Three rule sets exist:
+- Default (most of the codebase): .h is allowed, .hpp is disallowed
+  (transition period; TODO: add .h once rename is complete).
+- libs/iresearch: .hpp is allowed, .h is disallowed.
+- Mixed directories (libs/basics, server/connector): both .h and .hpp are allowed,
+  while other unwanted extensions remain forbidden.
 """
 
 import os
 import sys
 
-# TODO: remove .h once rename is complete
-ALLOWED = {".hpp", ".tpp", ".cpp", ".h"}
-DISALLOWED_MSG = {
+# Default disallowed extensions (for most of the codebase)
+DEFAULT_DISALLOWED = {
     ".cc": "use .cpp",
     ".ipp": "use .tpp",
     ".c": "use .cpp (or move to a C-specific directory)",
     ".hh": "use .hpp",
     ".h++": "use .hpp",
     ".c++": "use .cpp",
+    ".hpp": "use .h",   # .hpp not allowed in the main code (transition period)
+}
+
+# Disallowed extensions for libs/iresearch
+IRESEARCH_DISALLOWED = {
+    ".cc": "use .cpp",
+    ".ipp": "use .tpp",
+    ".c": "use .cpp (or move to a C-specific directory)",
+    ".hh": "use .hpp",
+    ".h++": "use .hpp",
+    ".c++": "use .cpp",
+    ".h": "use .hpp",   # iresearch must use .hpp headers
+}
+
+# Mixed directories where both .h and .hpp are allowed
+MIXED_DISALLOWED = {
+    ".cc": "use .cpp",
+    ".ipp": "use .tpp",
+    ".c": "use .cpp (or move to a C-specific directory)",
+    ".hh": "use .hpp",
+    ".h++": "use .hpp",
+    ".c++": "use .cpp",
+    # no .h or .hpp entries -> both are permitted
 }
 
 errors = 0
 for path in sys.argv[1:]:
+    # Choose rule set based on path
+    if "libs/iresearch" in path:
+        disallowed = IRESEARCH_DISALLOWED
+    elif "libs/basics" in path or "server/connector" in path:
+        disallowed = MIXED_DISALLOWED
+    else:
+        disallowed = DEFAULT_DISALLOWED
+
     ext = os.path.splitext(path)[1]
-    if ext in DISALLOWED_MSG:
-        print(f"{path}: {ext} not allowed -- {DISALLOWED_MSG[ext]}")
+    if ext in disallowed:
+        print(f"{path}: {ext} not allowed -- {disallowed[ext]}")
         errors += 1
 
 sys.exit(1 if errors else 0)

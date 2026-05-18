@@ -204,7 +204,9 @@ duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(
     }
   }
 
-  result.push_back(duckdb::COLUMN_IDENTIFIER_ROW_ID);
+  if (pk_col_ids.empty()) {
+    result.push_back(kColumnIdentifierGeneratedPk);
+  }
   return result;
 }
 
@@ -238,9 +240,19 @@ duckdb::virtual_column_map_t SereneDBTableEntry::BuildVirtualColumns(
   result.insert({kColumnIdentifierTableOid,
                  duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
 
-  // Standard rowid
-  result.insert({duckdb::COLUMN_IDENTIFIER_ROW_ID,
-                 duckdb::TableColumn("rowid", duckdb::LogicalType::ROW_TYPE)});
+  // COLUMN_IDENTIFIER_EMPTY: the "no data needed" placeholder DuckDB's
+  // LogicalGet::GetAnyColumn picks for queries like COUNT(*) that have
+  // no real column dependency.
+  result.insert({duckdb::COLUMN_IDENTIFIER_EMPTY,
+                 duckdb::TableColumn("", duckdb::LogicalType::BOOLEAN)});
+
+  // Generated-PK virtual column: only declared on tables without an
+  // explicit PK.
+  if (pk_col_ids.empty()) {
+    result.insert(
+      {kColumnIdentifierGeneratedPk,
+       duckdb::TableColumn("rowid", duckdb::LogicalType::ROW_TYPE)});
+  }
   return result;
 }
 
@@ -281,8 +293,10 @@ duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
 
 duckdb::column_t SereneDBTableEntry::VirtualToPKColumnIndex(
   duckdb::column_t virtual_id) {
+  // Virtual PK column ids live in
+  // [VIRTUAL_COLUMN_START, kColumnIdentifierGeneratedPk):
   if (virtual_id >= duckdb::VIRTUAL_COLUMN_START &&
-      virtual_id < duckdb::COLUMN_IDENTIFIER_ROW_ID) {
+      virtual_id < kColumnIdentifierGeneratedPk) {
     return virtual_id - duckdb::VIRTUAL_COLUMN_START;
   }
   return duckdb::DConstants::INVALID_INDEX;

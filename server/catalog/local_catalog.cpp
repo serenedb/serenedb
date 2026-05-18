@@ -1288,7 +1288,6 @@ Result LocalCatalog::RegisterTableShard(std::shared_ptr<TableShard> shard) {
 
 Result LocalCatalog::CreateIndexImpl(
   std::string_view relation_schema, std::shared_ptr<Index> index,
-  IndexShardOptions& shard_options,
   CreateIndexOperationOptions operation_options) {
   return Apply(
     _snapshot,
@@ -1297,7 +1296,7 @@ Result LocalCatalog::CreateIndexImpl(
       if (!r.ok()) {
         return r;
       }
-      auto shard = index->CreateIndexShard(true, ObjectId{0}, shard_options);
+      auto shard = index->CreateIndexShard(true, ObjectId{0});
       if (!shard) {
         return std::move(shard).error();
       }
@@ -1422,17 +1421,13 @@ Result LocalCatalog::CreateSecondaryIndex(
   if (!index) {
     return std::move(index).error();
   }
-  SecondaryIndexShardOptions shard_options;
-  shard_options.base.unique = unique;
-  return CreateIndexImpl(schema, *index, shard_options, operation_options);
+  return CreateIndexImpl(schema, *index, operation_options);
 }
 
 Result LocalCatalog::CreateInvertedIndex(
   ObjectId database_id, std::string_view schema, std::string_view relation,
   std::string name, std::vector<CreateIndexColumn>&& columns,
-  IndexShardOptions& shard_options,
-  CreateIndexOperationOptions operation_options,
-  std::optional<ScorerOptions> wand_scorer) {
+  InvertedIndexOptions options, CreateIndexOperationOptions operation_options) {
   if (columns.empty()) {
     return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
   }
@@ -1463,11 +1458,11 @@ Result LocalCatalog::CreateInvertedIndex(
   }
   auto index = catalog::CreateInvertedIndex(
     database_id, schema, *schema_id, ObjectId{0}, resolved->relation_id,
-    std::move(name), std::move(columns), _snapshot, std::move(wand_scorer));
+    std::move(name), std::move(columns), _snapshot, std::move(options));
   if (!index) {
     return std::move(index).error();
   }
-  return CreateIndexImpl(schema, *index, shard_options, operation_options);
+  return CreateIndexImpl(schema, *index, operation_options);
 }
 
 Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,

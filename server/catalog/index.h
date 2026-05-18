@@ -33,12 +33,20 @@
 namespace sdb {
 
 class IndexShard;
-struct IndexShardOptions;
 
 namespace catalog {
 
 class SecondaryIndex;
 class InvertedIndex;
+
+struct InvertedIndexOptions {
+  uint32_t row_group_size = 0;
+  uint32_t norm_row_group_size = 0;
+  uint32_t commit_interval_ms = 0;
+  uint32_t consolidation_interval_ms = 0;
+  uint32_t cleanup_interval_step = 0;
+  std::optional<ScorerOptions> topk_scorer;
+};
 
 // Aggregated info about column for index creation.
 // Filled on different levels during creaton to gather all
@@ -47,7 +55,7 @@ struct CreateIndexColumn {
   const catalog::Column* catalog_column{nullptr};
   std::string_view name;
   std::string opclass;
-  std::vector<std::string> json_path;
+  std::string json_pointer;
   // nullopt = no parentheses in source SQL; an (empty or non-empty) map means
   // parens were present, distinguishing `col opclass` from `col opclass ()`.
   std::optional<duckdb::case_insensitive_map_t<duckdb::Value>> opclass_options;
@@ -62,9 +70,8 @@ class Index : public SchemaObject {
 
   virtual containers::FlatHashSet<ObjectId> GetTokenizers() const { return {}; }
 
-  // TODO(codeworse): support arguments for index shards
   virtual ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool is_new, ObjectId id, IndexShardOptions& options) const = 0;
+    bool is_new, ObjectId id) const = 0;
 
   virtual ~Index() = default;
 
@@ -87,7 +94,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   ObjectId id, ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns,
   const std::shared_ptr<const Snapshot>& snapshot,
-  std::optional<ScorerOptions> wand_scorer);
+  InvertedIndexOptions options);
 
 }  // namespace catalog
 }  // namespace sdb

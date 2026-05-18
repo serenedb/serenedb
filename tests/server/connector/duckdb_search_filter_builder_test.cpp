@@ -19,7 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/base/internal/endian.h>
-#include <iresearch/search/geo_filter.h>
 #include <s2/s2latlng.h>
 #include <vpack/parser.h>
 
@@ -35,6 +34,7 @@
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/geo_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/mixed_boolean_filter.hpp>
@@ -137,7 +137,8 @@ catalog::ColumnTokenizer IdentityAnalyzerProvider(catalog::Column::Id) {
                        vpack::Slice::emptyObjectSlice().byteSize());
   };
   static catalog::Tokenizer gStringTokenizer(
-    ObjectId{12345}, "test_string_verbartim", {}, make_identity());
+    ObjectId{12345}, "test_string_verbartim", {}, DEFAULT_ROW_GROUP_SIZE,
+    make_identity());
   auto tokenizer = gStringTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer),
@@ -153,7 +154,8 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
                        builder->slice().byteSize());
   };
   static catalog::Tokenizer gStringTokenizer(
-    ObjectId{12346}, "test_segmentation", {}, make_segmentation());
+    ObjectId{12346}, "test_segmentation", {}, DEFAULT_ROW_GROUP_SIZE,
+    make_segmentation());
   auto tokenizer = gStringTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer), .features = Features};
@@ -175,8 +177,8 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
     return std::string(builder->slice().startAs<char>(),
                        builder->slice().byteSize());
   };
-  static catalog::Tokenizer gNgramTokenizer(ObjectId{12347}, "test_ngram", {},
-                                            make_ngram());
+  static catalog::Tokenizer gNgramTokenizer(
+    ObjectId{12347}, "test_ngram", {}, DEFAULT_ROW_GROUP_SIZE, make_ngram());
   auto tokenizer = gNgramTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer),
@@ -194,11 +196,15 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
                        builder->slice().byteSize());
   };
   static catalog::Tokenizer gWildcardTokenizer(ObjectId{12348}, "test_wildcard",
-                                               {}, make_wildcard());
+                                               {}, DEFAULT_ROW_GROUP_SIZE,
+                                               make_wildcard());
   auto tokenizer = gWildcardTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
-  return {.analyzer = *std::move(tokenizer),
-          .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
+  return {
+    .analyzer = *std::move(tokenizer),
+    .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq,
+    .tokenizer_column = catalog::Column::kMaxRealId,
+  };
 }
 
 [[maybe_unused]] catalog::ColumnTokenizer GeoJsonAnalyzerProvider(
@@ -210,17 +216,19 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
                        builder->slice().byteSize());
   };
   static catalog::Tokenizer gGeoTokenizer(ObjectId{12349}, "test_geojson", {},
+                                          DEFAULT_ROW_GROUP_SIZE,
                                           make_geojson());
   auto tokenizer = gGeoTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
-  return {.analyzer = *std::move(tokenizer),
-          .features = irs::IndexFeatures::None};
+  return {
+    .analyzer = *std::move(tokenizer),
+    .features = irs::IndexFeatures::None,
+    .tokenizer_column = catalog::Column::kMaxRealId,
+  };
 }
 
-// ---------------------------------------------------------------------------
 // Expected-filter builders (ported from velox test suite).
 // Type dispatch is now by duckdb::LogicalType / native C++ type.
-// ---------------------------------------------------------------------------
 template<typename T>
 std::string MakeFieldName(catalog::Column::Id column_id) {
   std::string field_name;
@@ -451,6 +459,11 @@ irs::GeoDistanceFilter& AddGeoDistanceFilter(
     options->range.max_type =
       max_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
   }
+  // FromGeoDistanceComparison stamps the tokenizer column id onto the
+  // filter; mirror that here so operator== matches.
+  auto column_analyzer = GeoJsonAnalyzerProvider(column);
+  SDB_ASSERT(column_analyzer.tokenizer_column);
+  options->store_field_id = *column_analyzer.tokenizer_column;
   return geo;
 }
 
@@ -470,6 +483,11 @@ irs::GeoFilter& AddGeoFilter(Filter& root, catalog::Column::Id column,
   auto* options = gf.mutable_options();
   options->type = type;
   options->shape.reset(shape_point);
+  // FromGeoInRange stamps the tokenizer column id onto the filter;
+  // mirror that here so operator== matches.
+  auto column_analyzer = GeoJsonAnalyzerProvider(column);
+  SDB_ASSERT(column_analyzer.tokenizer_column);
+  options->store_field_id = *column_analyzer.tokenizer_column;
   return gf;
 }
 
@@ -481,10 +499,13 @@ irs::ByWildcardNgram& AddWildcardNgramFilter(Filter& root,
   auto column_analyzer = WildcardAnalyzerProvider(column);
   auto& wf = AddFilter<irs::ByWildcardNgram>(root);
   *wf.mutable_field() = MakeFieldName<std::string_view>(column);
-  *wf.mutable_options() = {pattern,
-                           basics::downCast<irs::analysis::WildcardAnalyzer>(
-                             *column_analyzer.analyzer.get()),
-                           has_positions};
+  auto* opts = wf.mutable_options();
+  *opts = {pattern,
+           basics::downCast<irs::analysis::WildcardAnalyzer>(
+             *column_analyzer.analyzer.get()),
+           has_positions};
+  SDB_ASSERT(column_analyzer.tokenizer_column);
+  opts->store_field_id = *column_analyzer.tokenizer_column;
   return wf;
 }
 

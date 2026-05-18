@@ -1,0 +1,75 @@
+hash-threshold 100
+
+# End-to-end: INCLUDE'd LIST<VARCHAR> column round-trips through new cs.
+# Exercises the LIST<T> writer (compressed UBIGINT lengths + element child)
+# and reader (recursive PersistentColumnData walk + per-row materialization).
+
+statement ok
+CREATE TABLE list_t (
+  pk INTEGER PRIMARY KEY,
+  text_for_search VARCHAR,
+  tags VARCHAR[]
+)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE INDEX list_t_idx ON list_t USING inverted(pk, text_for_search en)
+  INCLUDE (tags)
+
+
+statement ok
+INSERT INTO list_t VALUES (1, 'first', ['alpha', 'beta'])
+
+
+statement ok
+INSERT INTO list_t VALUES (2, 'second', ['gamma'])
+
+
+statement ok
+INSERT INTO list_t VALUES (3, 'third', ['alpha', 'gamma', 'delta'])
+
+
+statement ok
+INSERT INTO list_t VALUES (4, 'fourth', [])
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) list_t
+
+
+# Materialize the LIST column through the new-cs columnstore materializer.
+query
+SELECT pk, tags FROM list_t_idx WHERE text_for_search @@ ts_phrase('first')
+ORDER BY pk;
+----
+pk	tags
+1	{alpha,beta}
+
+
+query
+SELECT pk, tags FROM list_t_idx WHERE text_for_search @@ ts_phrase('third')
+ORDER BY pk;
+----
+pk	tags
+3	{alpha,gamma,delta}
+
+
+# Empty list round-trips.
+query
+SELECT pk, tags FROM list_t_idx WHERE text_for_search @@ ts_phrase('fourth')
+ORDER BY pk;
+----
+pk	tags
+4	{}

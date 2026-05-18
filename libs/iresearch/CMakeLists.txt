@@ -14,7 +14,4 @@ add_definitions(-DUNICODE -D_UNICODE)
 
 add_subdirectory(include/iresearch)
 
-option(IRESEARCH_BUILD_EXAMPLES "Build iresearch examples" OFF)
-if(IRESEARCH_BUILD_EXAMPLES)
-    add_subdirectory(examples)
-endif()
+add_subdirectory(examples)

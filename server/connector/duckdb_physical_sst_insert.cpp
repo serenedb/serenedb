@@ -212,8 +212,9 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
     const ColumnDescriptor desc{meta.id, meta.store_mode, meta.duckdb_type,
                                 /*have_nulls=*/true};
     gstate.active_writers.clear();
+    auto& vec = chunk.data[meta.input_col_idx];
     for (auto& writer : gstate.index_writers) {
-      if (writer->SwitchColumn(desc)) {
+      if (writer->SwitchColumn(desc, vec, num_rows)) {
         gstate.active_writers.push_back(writer.get());
       }
     }

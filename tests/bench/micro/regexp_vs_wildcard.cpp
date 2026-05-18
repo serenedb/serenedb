@@ -355,8 +355,7 @@ Corpus BuildIndex() {
   while (auto* doc = reader.Next()) {
     auto trx = writer->GetBatch();
     auto inserter = trx.Insert();
-    if (!inserter.Insert<irs::Action::INDEX>(doc->indexed.begin(),
-                                             doc->indexed.end())) {
+    if (!inserter.Insert(doc->indexed.begin(), doc->indexed.end())) {
       Die("Insert returned false");
     }
     ++inserted;

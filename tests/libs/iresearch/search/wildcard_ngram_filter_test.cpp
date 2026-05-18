@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/analysis/wildcard_analyzer.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
@@ -63,7 +64,15 @@ struct WildcardField final {
   std::string_view field_name{"text"};
 };
 
+// Per-file cs column id for the analyzer's packed-terms STORE bytes.
+// In production this id comes from the catalog via
+// `InvertedIndexColumnInfo::tokenizer_column`; in tests we pick a fixed
+// constant so writer and filter agree without any name->id mapping.
+inline constexpr irs::field_id kStoreId = 1;
+
 // Build a ByWildcardNgram for the given field and SQL LIKE pattern.
+// `store_field_id` is wired to kStoreId so the filter's per-doc point
+// access lands on the cs column written below in the `query` test.
 irs::ByWildcardNgram MakeFilter(std::string_view field,
                                 std::string_view pattern,
                                 irs::analysis::WildcardAnalyzer& analyzer,
@@ -72,6 +81,7 @@ irs::ByWildcardNgram MakeFilter(std::string_view field,
   *filter.mutable_field() = field;
   *filter.mutable_options() =
     irs::ByWildcardNgramOptions{pattern, analyzer, has_positions};
+  filter.mutable_options()->store_field_id = kStoreId;
   return filter;
 }
 
@@ -184,13 +194,14 @@ TEST(WildcardNgramFilterTest, query) {
 
   irs::MemoryDirectory dir;
 
-  // Index all documents with the WildcardField using both INDEX and STORE so
-  // that WildcardIterator can access the stored packed terms for
-  // post-filtering.
+  // Index all documents. INDEX goes through the inverted path; STORE is
+  // now an explicit BLOB write to cs column kStoreId so WildcardIterator
+  // can post-filter via its store_field_id point cursor.
   {
     auto codec = irs::formats::Get("1_5simd");
     ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate);
+    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
     WildcardField field;
@@ -201,13 +212,19 @@ TEST(WildcardNgramFilterTest, query) {
     for (auto v : kValues) {
       field.value = v;
       auto doc = ctx.Insert();
-      ASSERT_TRUE(doc.Insert<(irs::Action::INDEX | irs::Action::STORE)>(field));
+      ASSERT_TRUE(doc.Insert(field));
+      // Stored bytes -> cs BLOB column kStoreId; filter reads via the
+      // same id (set in MakeFilter / mutable_options()->store_field_id).
+      auto* cs = doc.Columnstore();
+      ASSERT_NE(nullptr, cs);
+      irs::tests::StoreFieldAt(*cs, kStoreId, doc.DocId(), field);
     }
     ctx.Commit();
     writer->Commit();
   }
 
-  irs::DirectoryReader reader{dir, irs::formats::Get("1_5simd")};
+  irs::DirectoryReader reader{dir, irs::formats::Get("1_5simd"),
+                              irs::tests::DefaultReaderOptions()};
   ASSERT_NE(nullptr, reader);
   ASSERT_EQ(std::size(kValues), reader->live_docs_count());
 

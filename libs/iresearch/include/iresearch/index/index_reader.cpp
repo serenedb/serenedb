@@ -23,6 +23,7 @@
 #include "index_reader.hpp"
 
 #include "basics/resource_manager.hpp"
+#include "iresearch/columnstore/hnsw.hpp"
 
 namespace irs {
 namespace {
@@ -32,11 +33,7 @@ const SegmentInfo kEmptyInfo;
 struct EmptySubReader final : SubReader {
   uint64_t CountMappedMemory() const final { return 0; }
 
-  ColumnIterator::ptr columns() const final {
-    return irs::ColumnIterator::empty();
-  }
-  const ColumnReader* column(field_id) const final { return nullptr; }
-  const ColumnReader* column(std::string_view) const final { return nullptr; }
+  NormReader::ptr norms(field_id) const final { return {}; }
   const SegmentInfo& Meta() const final { return kEmptyInfo; }
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
   DocIterator::ptr docs_iterator() const final { return DocIterator::empty(); }
@@ -44,68 +41,46 @@ struct EmptySubReader final : SubReader {
   irs::FieldIterator::ptr fields() const final {
     return irs::FieldIterator::empty();
   }
-  const irs::ColumnReader* sort() const final { return nullptr; }
 };
 
 const EmptySubReader kEmpty;
 
 }  // namespace
 
-void IndexReader::Search(std::string_view field, HNSWSearchInfo info,
-                         HNSWSearchBuffer& buffer) const {
-  for (size_t segment_id = 0; segment_id < this->size(); ++segment_id) {
-    const auto& segment = (*this)[segment_id];
-    segment.Search(field, std::move(info), buffer, segment_id);
+void SubReader::Search(field_id field, HNSWSearchInfo info,
+                       HNSWAnnSearchBuffer& buffer, uint32_t segment_id,
+                       columnstore::ReadContext& read_ctx) const {
+  const auto* hnsw_reader = HNSW(field);
+  if (!hnsw_reader) {
+    return;
   }
-}
-
-void IndexReader::RangeSearch(std::string_view field, HNSWRangeSearchInfo info,
-                              HNSWRangeSearchBuffer& buffer) const {
-  for (uint32_t segment_id = 0; segment_id < this->size(); ++segment_id) {
-    const auto& segment = (*this)[segment_id];
-    segment.RangeSearch(field, info, buffer, segment_id);
-  }
-}
-
-void SubReader::Search(std::string_view field, HNSWSearchInfo info,
-                       HNSWSearchBuffer& buffer, uint32_t segment_id) const {
   HNSWResultHandler handler{
     1,
     buffer.dis.data(),
     buffer.ids.data(),
     info.top_k,
   };
-
+  auto& cache = hnsw_reader->PrepareCache(buffer.cache, read_ctx);
   HNSWSearchContext context{
-    info,
-    segment_id,
-    buffer.vt,
-    handler,
+    info, segment_id, buffer.vt, handler, cache, docs_mask(),
   };
-
-  const auto* column = (*this).column(field);
-  if (!column) {
-    return;
-  }
-  column->Search(context);
+  hnsw_reader->Search(context);
 }
 
-void SubReader::RangeSearch(std::string_view field, HNSWRangeSearchInfo info,
-                            HNSWRangeSearchBuffer& buffer,
-                            uint32_t segment_id) const {
-  const auto* column = (*this).column(field);
-  if (!column) {
+void SubReader::RangeSearch(field_id field, HNSWRangeSearchInfo info,
+                            HNSWRangeSearchBuffer& buffer, uint32_t segment_id,
+                            columnstore::ReadContext& read_ctx) const {
+  const auto* hnsw_reader = HNSW(field);
+  if (!hnsw_reader) {
     return;
   }
   faiss::RangeSearchResult seg_result{1};
   HNSWRangeResultHandler handler{&seg_result, info.radius};
+  auto& cache = hnsw_reader->PrepareCache(buffer.cache, read_ctx);
   HNSWRangeSearchContext context{
-    info,
-    segment_id,
-    buffer.vt,
-    handler,
+    info, segment_id, buffer.vt, handler, cache, docs_mask(),
   };
-  column->RangeSearch(context);
+  hnsw_reader->RangeSearch(context);
   size_t sz = seg_result.lims[1] - seg_result.lims[0];
   buffer.dis.reserve(buffer.dis.size() + sz);
   buffer.ids.reserve(buffer.ids.size() + sz);

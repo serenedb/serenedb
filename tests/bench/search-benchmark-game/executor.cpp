@@ -18,12 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "executor.hpp"
-
-#include <iresearch/parser/parser.h>
+#include "executor.h"
 
 #include <cstring>
 #include <iresearch/index/norm.hpp>
+#include <iresearch/parser/parser.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/store/store_utils.hpp>
 

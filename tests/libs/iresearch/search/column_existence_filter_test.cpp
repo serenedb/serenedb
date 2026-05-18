@@ -22,7 +22,10 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "filter_test_case_base.hpp"
+#include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
+#include "iresearch/columnstore/column_reader.hpp"
+#include "iresearch/index/index_writer.hpp"
 #include "iresearch/search/column_existence_filter.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/lz4compression.hpp"
@@ -30,763 +33,216 @@
 
 namespace {
 
-irs::ByColumnExistence MakeFilter(const std::string_view& field,
-                                  bool prefix_match) {
-  irs::ByColumnExistence filter;
-  *filter.mutable_field() = field;
-  if (prefix_match) {
-    filter.mutable_options()->acceptor = [](std::string_view,
-                                            std::string_view) { return true; };
+// cs field ids for every column the existence filter is exercised against.
+inline constexpr irs::field_id kPrefix = 1;
+inline constexpr irs::field_id kName = 2;
+inline constexpr irs::field_id kSeq = 3;
+inline constexpr irs::field_id kSame = 4;
+inline constexpr irs::field_id kValue = 5;
+inline constexpr irs::field_id kDuplicated = 6;
+inline constexpr irs::field_id kInvalidColumn = 7;
+
+irs::field_id ColumnIdFor(std::string_view name) {
+  if (name == "prefix") {
+    return kPrefix;
   }
+  if (name == "name") {
+    return kName;
+  }
+  if (name == "seq") {
+    return kSeq;
+  }
+  if (name == "same") {
+    return kSame;
+  }
+  if (name == "value") {
+    return kValue;
+  }
+  if (name == "duplicated") {
+    return kDuplicated;
+  }
+  return irs::field_limits::invalid();
+}
+
+irs::ByColumnExistence MakeFilter(irs::field_id id) {
+  irs::ByColumnExistence filter;
+  *filter.mutable_id() = id;
   return filter;
+}
+
+// Collect the set of doc_ids stored in the cs column.
+std::vector<irs::doc_id_t> ExpectedDocs(
+  const irs::SubReader& segment, const irs::columnstore::ColumnReader& column) {
+  std::vector<irs::doc_id_t> docs;
+  irs::tests::VisitBlobColumn(*segment.CsReader(), column,
+                              [&](irs::doc_id_t doc, irs::bytes_view) {
+                                docs.push_back(doc);
+                                return true;
+                              });
+  return docs;
+}
+
+std::vector<irs::doc_id_t> DrainIterator(irs::DocIterator& it) {
+  std::vector<irs::doc_id_t> docs;
+  while (it.next()) {
+    docs.push_back(it.value());
+  }
+  return docs;
 }
 
 class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
  protected:
-  void SimpleSequentialMask() {
-    // add segment
+  // Mirror MaskField from origin: indexed but writes no bytes.
+  class MaskField : public tests::Ifield {
+   public:
+    explicit MaskField(const std::string& name) : _name(name) {}
+
+    bool Write(irs::DataOutput&) const final { return true; }
+    std::string_view Name() const final { return _name; }
+    irs::IndexFeatures GetIndexFeatures() const noexcept final {
+      return irs::IndexFeatures::None;
+    }
+    irs::Tokenizer& GetTokens() const final {
+      _stream.next();
+      return _stream;
+    }
+
+   private:
+    std::string _name;
+    mutable irs::NullTokenizer _stream;
+  };
+
+  static void StoreIfPresent(irs::IndexWriter::Document& doc,
+                             const tests::Document& src,
+                             std::string_view name) {
+    const auto id = ColumnIdFor(name);
+    if (id == irs::field_limits::invalid()) {
+      return;
+    }
+    const auto* field = src.indexed.get(name);
+    if (field == nullptr) {
+      return;
+    }
+    auto* cs = doc.Columnstore();
+    if (cs == nullptr) {
+      return;
+    }
+    irs::tests::StoreFieldAt(*cs, id, doc.DocId(), *field);
+  }
+
+  static StoreHook MakeStoreHook() {
+    return [](irs::IndexWriter::Document& doc, const tests::Document& src) {
+      for (std::string_view name :
+           {"prefix", "name", "seq", "same", "value", "duplicated"}) {
+        StoreIfPresent(doc, src, name);
+      }
+    };
+  }
+
+  void RunExistenceCases(const std::vector<std::string>& column_names,
+                         bool dense_assertions) {
+    auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+    MaxMemoryCounter counter;
+
+    for (const auto& column_name : column_names) {
+      const auto id = ColumnIdFor(column_name);
+      irs::ByColumnExistence filter = MakeFilter(id);
+
+      {
+        auto prepared = tests::FilterWrapper{filter}.prepare({
+          .index = *rdr,
+          .memory = counter,
+        });
+
+        ASSERT_EQ(1, rdr->size());
+        auto& segment = (*rdr)[0];
+
+        const auto* column = segment.Column(id);
+        ASSERT_NE(nullptr, column);
+        const auto expected = ExpectedDocs(segment, *column);
+
+        auto filter_it = prepared->execute({.segment = segment});
+        ASSERT_LE(expected.size(), irs::CostAttr::extract(*filter_it));
+
+        const auto actual = DrainIterator(*filter_it);
+        ASSERT_EQ(expected, actual);
+        if (dense_assertions) {
+          ASSERT_EQ(segment.docs_count(), actual.size());
+          ASSERT_EQ(segment.live_docs_count(), actual.size());
+        }
+      }
+      EXPECT_EQ(counter.current, 0);
+      EXPECT_GT(counter.max, 0);
+      counter.Reset();
+    }
+
+    // Missing column id resolves to an empty iterator.
     {
-      class MaskField : public tests::Ifield {
-       public:
-        explicit MaskField(const std::string& name) : _name(name) {}
+      irs::ByColumnExistence filter = MakeFilter(kInvalidColumn);
+      {
+        auto prepared = tests::FilterWrapper{filter}.prepare({
+          .index = *rdr,
+          .memory = counter,
+        });
+        ASSERT_EQ(1, rdr->size());
+        auto& segment = (*rdr)[0];
+        auto filter_it = prepared->execute({.segment = segment});
+        ASSERT_EQ(0, irs::CostAttr::extract(*filter_it));
+        ASSERT_EQ(irs::doc_limits::eof(), filter_it->value());
+        ASSERT_FALSE(filter_it->next());
+      }
+      EXPECT_EQ(counter.current, 0);
+      EXPECT_GT(counter.max, 0);
+      counter.Reset();
+    }
+  }
 
-        bool Write(irs::DataOutput&) const final { return true; }
-        std::string_view Name() const final { return _name; }
-        irs::IndexFeatures GetIndexFeatures() const noexcept final {
-          return irs::IndexFeatures::None;
-        }
-        irs::Tokenizer& GetTokens() const final {
-          // nothing to index
-          _stream.next();
-          return _stream;
-        }
-
-       private:
-        std::string _name;
-        mutable irs::NullTokenizer _stream;
-      };
-
+  void SimpleSequentialMask() {
+    {
       tests::JsonDocGenerator gen(
         resource("simple_sequential.json"),
         [](tests::Document& doc, const std::string& name,
            const tests::JsonDocGenerator::JsonValue& /*data*/) {
           doc.insert(std::make_shared<MaskField>(name));
         });
-      add_segment(gen);
+      add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+                  MakeStoreHook());
     }
 
-    auto rdr = open_reader();
-
-    MaxMemoryCounter counter;
-
-    // 'prefix' column
-    {
-      const std::string column_name = "prefix";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, false);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto column = segment.column(column_name);
-      ASSERT_NE(nullptr, column);
-      auto column_it = column->iterator(irs::ColumnHint::Normal);
-      auto filter_it = prepared->execute({.segment = segment});
-
-      ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
-
-      while (filter_it->next()) {
-        ASSERT_TRUE(column_it->next());
-        ASSERT_EQ(filter_it->value(), column_it->value());
-      }
-      ASSERT_FALSE(column_it->next());
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // 'name' column
-    {
-      const std::string column_name = "name";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, false);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto column = segment.column(column_name);
-      ASSERT_NE(nullptr, column);
-      auto column_it = column->iterator(irs::ColumnHint::Normal);
-      auto filter_it = prepared->execute({.segment = segment});
-      ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
-
-      size_t docs_count = 0;
-      while (filter_it->next()) {
-        ASSERT_TRUE(column_it->next());
-        ASSERT_EQ(filter_it->value(), column_it->value());
-        ++docs_count;
-      }
-      ASSERT_FALSE(column_it->next());
-      ASSERT_EQ(segment.docs_count(), docs_count);
-      ASSERT_EQ(segment.live_docs_count(), docs_count);
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // 'seq' column
-    {
-      const std::string column_name = "seq";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, false);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto column = segment.column(column_name);
-      ASSERT_NE(nullptr, column);
-      auto column_it = column->iterator(irs::ColumnHint::Normal);
-      auto filter_it = prepared->execute({.segment = segment});
-      ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
-
-      size_t docs_count = 0;
-      while (filter_it->next()) {
-        ASSERT_TRUE(column_it->next());
-        ASSERT_EQ(filter_it->value(), column_it->value());
-        ++docs_count;
-      }
-      ASSERT_FALSE(column_it->next());
-      ASSERT_EQ(segment.docs_count(), docs_count);
-      ASSERT_EQ(segment.live_docs_count(), docs_count);
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // 'same' column
-    {
-      const std::string column_name = "same";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, false);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto column = segment.column(column_name);
-      ASSERT_NE(nullptr, column);
-      auto column_it = column->iterator(irs::ColumnHint::Normal);
-      auto filter_it = prepared->execute({.segment = segment});
-      ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
-
-      size_t docs_count = 0;
-      while (filter_it->next()) {
-        ASSERT_TRUE(column_it->next());
-        ASSERT_EQ(filter_it->value(), column_it->value());
-        ++docs_count;
-      }
-      ASSERT_FALSE(column_it->next());
-      ASSERT_EQ(segment.docs_count(), docs_count);
-      ASSERT_EQ(segment.live_docs_count(), docs_count);
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // 'value' column
-    {
-      const std::string column_name = "value";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, false);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto column = segment.column(column_name);
-      ASSERT_NE(nullptr, column);
-      auto column_it = column->iterator(irs::ColumnHint::Normal);
-      auto filter_it = prepared->execute({.segment = segment});
-      ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
-
-      while (filter_it->next()) {
-        ASSERT_TRUE(column_it->next());
-        ASSERT_EQ(filter_it->value(), column_it->value());
-      }
-      ASSERT_FALSE(column_it->next());
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // 'duplicated' column
-    {
-      const std::string column_name = "duplicated";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, false);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto column = segment.column(column_name);
-      ASSERT_NE(nullptr, column);
-      auto column_it = column->iterator(irs::ColumnHint::Normal);
-      auto filter_it = prepared->execute({.segment = segment});
-      ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
-
-      while (filter_it->next()) {
-        ASSERT_TRUE(column_it->next());
-        ASSERT_EQ(filter_it->value(), column_it->value());
-      }
-      ASSERT_FALSE(column_it->next());
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // invalid column
-    {
-      const std::string column_name = "invalid_column";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, false);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto filter_it = prepared->execute({.segment = segment});
-      ASSERT_EQ(0, irs::CostAttr::extract(*filter_it));
-
-      ASSERT_EQ(irs::doc_limits::eof(), filter_it->value());
-      ASSERT_FALSE(filter_it->next());
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
+    // 'prefix', 'value', 'duplicated' are sparse (not on every doc).
+    RunExistenceCases({"prefix"}, /*dense_assertions=*/false);
+    RunExistenceCases({"name", "seq", "same"}, /*dense_assertions=*/true);
+    RunExistenceCases({"value", "duplicated"}, /*dense_assertions=*/false);
   }
 
   void SimpleSequentialExactMatch() {
-    // add segment
     {
       tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                   &tests::GenericJsonFieldFactory);
-      add_segment(gen);
+      add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+                  MakeStoreHook());
     }
 
-    auto rdr = open_reader();
-
-    MaxMemoryCounter counter;
-
-    // 'prefix' column
-    {
-      const std::string column_name = "prefix";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, false);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto column = segment.column(column_name);
-      ASSERT_NE(nullptr, column);
-      auto column_it = column->iterator(irs::ColumnHint::Normal);
-      auto filter_it = prepared->execute({.segment = segment});
-
-      ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
-
-      while (filter_it->next()) {
-        ASSERT_TRUE(column_it->next());
-        ASSERT_EQ(filter_it->value(), column_it->value());
-      }
-      ASSERT_FALSE(column_it->next());
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // 'name' column
-    {
-      const std::string column_name = "name";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, false);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto column = segment.column(column_name);
-      ASSERT_NE(nullptr, column);
-      auto column_it = column->iterator(irs::ColumnHint::Normal);
-      auto filter_it = prepared->execute({.segment = segment});
-      ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
-
-      size_t docs_count = 0;
-      while (filter_it->next()) {
-        ASSERT_TRUE(column_it->next());
-        ASSERT_EQ(filter_it->value(), column_it->value());
-        ++docs_count;
-      }
-      ASSERT_FALSE(column_it->next());
-      ASSERT_EQ(segment.docs_count(), docs_count);
-      ASSERT_EQ(segment.live_docs_count(), docs_count);
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // 'seq' column
-    {
-      const std::string column_name = "seq";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, false);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto column = segment.column(column_name);
-      ASSERT_NE(nullptr, column);
-      auto column_it = column->iterator(irs::ColumnHint::Normal);
-      auto filter_it = prepared->execute({.segment = segment});
-      ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
-
-      size_t docs_count = 0;
-      while (filter_it->next()) {
-        ASSERT_TRUE(column_it->next());
-        ASSERT_EQ(filter_it->value(), column_it->value());
-        ++docs_count;
-      }
-      ASSERT_FALSE(column_it->next());
-      ASSERT_EQ(segment.docs_count(), docs_count);
-      ASSERT_EQ(segment.live_docs_count(), docs_count);
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // 'same' column
-    {
-      const std::string column_name = "same";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, false);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto column = segment.column(column_name);
-      ASSERT_NE(nullptr, column);
-      auto column_it = column->iterator(irs::ColumnHint::Normal);
-      auto filter_it = prepared->execute({.segment = segment});
-      ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
-
-      size_t docs_count = 0;
-      while (filter_it->next()) {
-        ASSERT_TRUE(column_it->next());
-        ASSERT_EQ(filter_it->value(), column_it->value());
-        ++docs_count;
-      }
-      ASSERT_FALSE(column_it->next());
-      ASSERT_EQ(segment.docs_count(), docs_count);
-      ASSERT_EQ(segment.live_docs_count(), docs_count);
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // 'value' column
-    {
-      const std::string column_name = "value";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, false);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto column = segment.column(column_name);
-      ASSERT_NE(nullptr, column);
-      auto column_it = column->iterator(irs::ColumnHint::Normal);
-      auto filter_it = prepared->execute({.segment = segment});
-      ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
-
-      while (filter_it->next()) {
-        ASSERT_TRUE(column_it->next());
-        ASSERT_EQ(filter_it->value(), column_it->value());
-      }
-      ASSERT_FALSE(column_it->next());
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // 'duplicated' column
-    {
-      const std::string column_name = "duplicated";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, false);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto column = segment.column(column_name);
-      ASSERT_NE(nullptr, column);
-      auto column_it = column->iterator(irs::ColumnHint::Normal);
-      auto filter_it = prepared->execute({.segment = segment});
-      ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
-
-      while (filter_it->next()) {
-        ASSERT_TRUE(column_it->next());
-        ASSERT_EQ(filter_it->value(), column_it->value());
-      }
-      ASSERT_FALSE(column_it->next());
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // invalid column
-    {
-      const std::string column_name = "invalid_column";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, false);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto filter_it = prepared->execute({.segment = segment});
-      ASSERT_EQ(0, irs::CostAttr::extract(*filter_it));
-
-      ASSERT_EQ(irs::doc_limits::eof(), filter_it->value());
-      ASSERT_FALSE(filter_it->next());
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-  }
-
-  void SimpleSequentialPrefixMatch() {
-    // add segment
-    {
-      tests::JsonDocGenerator gen(
-        resource("simple_sequential_common_prefix.json"),
-        &tests::GenericJsonFieldFactory);
-      add_segment(gen);
-    }
-
-    auto rdr = open_reader();
-
-    MaxMemoryCounter counter;
-
-    // looking for 'foo*' columns
-    {
-      const std::string column_prefix = "foo";
-
-      irs::ByColumnExistence filter = MakeFilter(column_prefix, true);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-      auto column = segment.column("name");
-      ASSERT_NE(nullptr, column);
-      auto values = column->iterator(irs::ColumnHint::Normal);
-      ASSERT_NE(nullptr, values);
-      auto* value = irs::get<irs::PayAttr>(*values);
-      ASSERT_NE(nullptr, value);
-
-      auto it = prepared->execute({.segment = segment});
-
-      // #(foo) + #(foobar) + #(foobaz) + #(fookar)
-      ASSERT_EQ(8 + 9 + 1 + 10, irs::CostAttr::extract(*it));
-
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("A", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("C", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("D", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("J", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("K", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("L", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("R", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("S", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("T", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("U", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("V", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("!", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("%", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_FALSE(it->next());
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // looking for 'koob*' columns
-    {
-      const std::string column_prefix = "koob";
-
-      irs::ByColumnExistence filter = MakeFilter(column_prefix, true);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-      auto column = segment.column("name");
-      ASSERT_NE(nullptr, column);
-      auto values = column->iterator(irs::ColumnHint::Normal);
-      ASSERT_NE(nullptr, values);
-      auto* value = irs::get<irs::PayAttr>(*values);
-      ASSERT_NE(nullptr, value);
-
-      auto it = prepared->execute({.segment = segment});
-
-      // #(koobar) + #(koobaz)
-      ASSERT_EQ(4 + 2, irs::CostAttr::extract(*it));
-
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("B", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("U", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("V", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("X", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("Z", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_FALSE(it->next());
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // looking for 'oob*' columns
-    {
-      const std::string column_prefix = "oob";
-
-      irs::ByColumnExistence filter = MakeFilter(column_prefix, true);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-      auto column = segment.column("name");
-      ASSERT_NE(nullptr, column);
-      auto values = column->iterator(irs::ColumnHint::Normal);
-      ASSERT_NE(nullptr, values);
-      auto* value = irs::get<irs::PayAttr>(*values);
-      ASSERT_NE(nullptr, value);
-
-      auto it = prepared->execute({.segment = segment});
-
-      // #(oobar) + #(oobaz)
-      ASSERT_EQ(5 + 3, irs::CostAttr::extract(*it));
-
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("Z", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("~", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("@", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("#", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("$", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_FALSE(it->next());
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // looking for 'collection*' columns
-    {
-      const std::string column_prefix = "collection";
-
-      irs::ByColumnExistence filter = MakeFilter(column_prefix, true);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-      auto column = segment.column("name");
-      ASSERT_NE(nullptr, column);
-      auto values = column->iterator(irs::ColumnHint::Normal);
-      ASSERT_NE(nullptr, values);
-      auto* value = irs::get<irs::PayAttr>(*values);
-      ASSERT_NE(nullptr, value);
-
-      auto it = prepared->execute({.segment = segment});
-
-      // #(collection)
-      ASSERT_EQ(4, irs::CostAttr::extract(*it));
-
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("A", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("J", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("L", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ(it->value(), values->seek(it->value()));
-      ASSERT_EQ("N", irs::ToString<std::string_view>(value->value.data()));
-      ASSERT_FALSE(it->next());
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // invalid prefix
-    {
-      const std::string column_prefix = "invalid_prefix";
-
-      irs::ByColumnExistence filter = MakeFilter(column_prefix, true);
-
-      auto prepared = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-      });
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto filter_it = prepared->execute({.segment = segment});
-      ASSERT_EQ(0, irs::CostAttr::extract(*filter_it));
-
-      ASSERT_EQ(irs::doc_limits::eof(), filter_it->value());
-      ASSERT_FALSE(filter_it->next());
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
+    RunExistenceCases({"prefix"}, /*dense_assertions=*/false);
+    RunExistenceCases({"name", "seq", "same"}, /*dense_assertions=*/true);
+    RunExistenceCases({"value", "duplicated"}, /*dense_assertions=*/false);
   }
 
   void SimpleSequentialOrder() {
-    // add segment
     {
       tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                   &tests::GenericJsonFieldFactory);
-      add_segment(gen);
+      add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+                  MakeStoreHook());
     }
 
-    auto rdr = open_reader();
+    auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
     MaxMemoryCounter counter;
 
-    // 'seq' column
     {
-      const std::string column_name = "seq";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, false);
+      irs::ByColumnExistence filter = MakeFilter(kSeq);
 
       size_t collector_collect_field_count = 0;
       size_t collector_collect_term_count = 0;
@@ -812,7 +268,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
                                   const irs::TermCollector*) -> void {
         ++collector_finish_count;
       };
-      sort.scorer_score = [&](const irs::ScoreOperator* ctx,
+      sort.scorer_score = [&](const irs::ScoreOperator* /*ctx*/,
                               irs::score_t* score, size_t n) -> void {
         ASSERT_EQ(1, n);
         ++scorer_score_count;
@@ -829,39 +285,27 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_EQ(1, rdr->size());
       auto& segment = (*rdr)[0];
 
-      auto column = segment.column(column_name);
+      const auto* column = segment.Column(kSeq);
       ASSERT_NE(nullptr, column);
-      auto column_itr = column->iterator(irs::ColumnHint::Normal);
+      const auto expected_docs = ExpectedDocs(segment, *column);
+
       auto filter_itr =
         prepared_filter->execute({.segment = segment, .scorer = &sort});
-      ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_itr));
-
-      size_t docs_count = 0;
-      auto score = column_itr->PrepareScore({
-        .scorer = &sort,
-        .segment = &segment,
-      });
-      ASSERT_TRUE(score.IsDefault());
+      ASSERT_LE(expected_docs.size(), irs::CostAttr::extract(*filter_itr));
 
       while (filter_itr->next()) {
         cur_doc = filter_itr->value();
         irs::score_t score_value{};
-        score.Score(&score_value, 1);
+        // Score is default (no score provider for column existence).
         scored_result.emplace(score_value, filter_itr->value());
-        ASSERT_TRUE(column_itr->next());
-        ASSERT_EQ(filter_itr->value(), column_itr->value());
-        ++docs_count;
       }
 
-      ASSERT_FALSE(column_itr->next());
-      ASSERT_EQ(segment.docs_count(), docs_count);
-      ASSERT_EQ(segment.live_docs_count(), docs_count);
+      ASSERT_EQ(segment.docs_count(), expected_docs.size());
+      ASSERT_EQ(segment.live_docs_count(), expected_docs.size());
 
-      ASSERT_EQ(
-        0, collector_collect_field_count);  // should not be executed (field
-                                            // statistics not applicable to
-                                            // columnstore) FIXME TODO discuss
-      ASSERT_EQ(0, collector_collect_term_count);  // should not be executed
+      // Collectors are not exercised by columnstore-existence filters.
+      ASSERT_EQ(0, collector_collect_field_count);
+      ASSERT_EQ(0, collector_collect_term_count);
       ASSERT_EQ(0, collector_finish_count);
       ASSERT_EQ(0, scorer_score_count);
 
@@ -869,211 +313,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       absl::c_iota(expected, 1);
 
       std::vector<irs::doc_id_t> actual;
-
-      for (auto& entry : scored_result) {
-        actual.emplace_back(entry.second);
-      }
-
-      ASSERT_EQ(expected, actual);
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // 'seq*' column (prefix single)
-    {
-      const std::string column_name = "seq";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, true);
-
-      size_t collector_collect_field_count = 0;
-      size_t collector_collect_term_count = 0;
-      size_t collector_finish_count = 0;
-      size_t scorer_score_count = 0;
-      irs::doc_id_t cur_doc = 0;
-
-      tests::sort::CustomSort sort;
-
-      sort.collector_collect_field = [&collector_collect_field_count](
-                                       const irs::SubReader&,
-                                       const irs::TermReader&) -> void {
-        ++collector_collect_field_count;
-      };
-      sort.collector_collect_term = [&collector_collect_term_count](
-                                      const irs::SubReader&,
-                                      const irs::TermReader&,
-                                      const irs::AttributeProvider&) -> void {
-        ++collector_collect_term_count;
-      };
-      sort.collectors_collect = [&collector_finish_count](
-                                  irs::byte_type*, const irs::FieldCollector*,
-                                  const irs::TermCollector*) -> void {
-        ++collector_finish_count;
-      };
-      sort.scorer_score = [&](const irs::ScoreOperator* ctx,
-                              irs::score_t* score, size_t n) -> void {
-        ASSERT_EQ(1, n);
-        ++scorer_score_count;
-        *score = irs::score_t(cur_doc & 0xAAAAAAAA);
-      };
-
-      auto prepared_filter = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-        .scorer = &sort,
-      });
-      std::multimap<irs::score_t, irs::doc_id_t> scored_result;
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto column = segment.column(column_name);
-      ASSERT_NE(nullptr, column);
-      auto column_itr = column->iterator(irs::ColumnHint::Normal);
-      auto filter_itr =
-        prepared_filter->execute({.segment = segment, .scorer = &sort});
-      ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_itr));
-
-      size_t docs_count = 0;
-      auto score = column_itr->PrepareScore({
-        .scorer = &sort,
-        .segment = &segment,
-      });
-      ASSERT_TRUE(score.IsDefault());
-
-      while (filter_itr->next()) {
-        cur_doc = filter_itr->value();
-
-        irs::score_t score_value{};
-        score.Score(&score_value, 1);
-
-        scored_result.emplace(score_value, filter_itr->value());
-        ASSERT_TRUE(column_itr->next());
-        ASSERT_EQ(filter_itr->value(), column_itr->value());
-        ++docs_count;
-      }
-
-      ASSERT_FALSE(column_itr->next());
-      ASSERT_EQ(segment.docs_count(), docs_count);
-      ASSERT_EQ(segment.live_docs_count(), docs_count);
-
-      ASSERT_EQ(
-        0, collector_collect_field_count);  // should not be executed (field
-                                            // statistics not applicable to
-                                            // columnstore) FIXME TODO discuss
-      ASSERT_EQ(0, collector_collect_term_count);  // should not be executed
-      ASSERT_EQ(0, collector_finish_count);
-      ASSERT_EQ(0, scorer_score_count);
-
-      std::vector<irs::doc_id_t> expected(32);
-      absl::c_iota(expected, 1);
-      std::vector<irs::doc_id_t> actual;
-
-      for (auto& entry : scored_result) {
-        actual.emplace_back(entry.second);
-      }
-
-      ASSERT_EQ(expected, actual);
-    }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
-
-    // 's*' column (prefix multiple)
-    {
-      const std::string column_name = "s";
-      const std::string column_name_full = "seq";
-
-      irs::ByColumnExistence filter = MakeFilter(column_name, true);
-
-      size_t collector_collect_field_count = 0;
-      size_t collector_collect_term_count = 0;
-      size_t collector_finish_count = 0;
-      size_t scorer_score_count = 0;
-      irs::doc_id_t cur_doc = 0;
-
-      tests::sort::CustomSort sort;
-
-      sort.collector_collect_field = [&collector_collect_field_count](
-                                       const irs::SubReader&,
-                                       const irs::TermReader&) -> void {
-        ++collector_collect_field_count;
-      };
-      sort.collector_collect_term = [&collector_collect_term_count](
-                                      const irs::SubReader&,
-                                      const irs::TermReader&,
-                                      const irs::AttributeProvider&) -> void {
-        ++collector_collect_term_count;
-      };
-      sort.collectors_collect = [&collector_finish_count](
-                                  irs::byte_type*, const irs::FieldCollector*,
-                                  const irs::TermCollector*) -> void {
-        ++collector_finish_count;
-      };
-      sort.scorer_score = [&](const irs::ScoreOperator* ctx,
-                              irs::score_t* score, size_t n) -> void {
-        ASSERT_EQ(1, n);
-        ++scorer_score_count;
-        *score = irs::score_t(cur_doc & 0xAAAAAAAA);
-      };
-
-      auto prepared_filter = filter.prepare({
-        .index = *rdr,
-        .memory = counter,
-        .scorer = &sort,
-      });
-      std::multimap<irs::score_t, irs::doc_id_t> scored_result;
-
-      ASSERT_EQ(1, rdr->size());
-      auto& segment = (*rdr)[0];
-
-      auto column = segment.column(column_name_full);
-      ASSERT_NE(nullptr, column);
-      auto column_itr = column->iterator(irs::ColumnHint::Normal);
-      auto filter_itr = prepared_filter->execute({
-        .segment = segment,
-        .scorer = &sort,
-
-      });
-      ASSERT_EQ(
-        column->size(),
-        irs::CostAttr::extract(
-          *filter_itr));  // 2 columns matched, capped by segment docs_count
-
-      size_t docs_count = 0;
-      auto score = column_itr->PrepareScore({
-        .scorer = &sort,
-        .segment = &segment,
-      });
-      ASSERT_TRUE(score.IsDefault());
-
-      while (filter_itr->next()) {
-        filter_itr->FetchScoreArgs(0);
-        cur_doc = filter_itr->value();
-        irs::score_t score_value{};
-        score.Score(&score_value, 1);
-        scored_result.emplace(score_value, filter_itr->value());
-        ASSERT_TRUE(column_itr->next());
-        ASSERT_EQ(filter_itr->value(), column_itr->value());
-        ++docs_count;
-      }
-
-      ASSERT_FALSE(column_itr->next());
-      ASSERT_EQ(segment.docs_count(), docs_count);
-      ASSERT_EQ(segment.live_docs_count(), docs_count);
-
-      ASSERT_EQ(
-        0, collector_collect_field_count);  // should not be executed (field
-                                            // statistics not applicable to
-                                            // columnstore) FIXME TODO discuss
-      ASSERT_EQ(0, collector_collect_term_count);  // should not be executed
-      ASSERT_EQ(0, collector_finish_count);
-      ASSERT_EQ(0, scorer_score_count);  // 2 columns matched
-
-      std::vector<irs::doc_id_t> expected(32);
-      absl::c_iota(expected, 1);
-      std::vector<irs::doc_id_t> actual;
-
       for (auto& entry : scored_result) {
         actual.emplace_back(entry.second);
       }
@@ -1088,22 +327,21 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
 TEST_P(ColumnExistenceFilterTestCase, mask_column) { SimpleSequentialMask(); }
 
-TEST_P(ColumnExistenceFilterTestCase, exact_prefix_match) {
+TEST_P(ColumnExistenceFilterTestCase, exact_match) {
   SimpleSequentialExactMatch();
-  SimpleSequentialPrefixMatch();
   SimpleSequentialOrder();
 }
 
 TEST(by_column_existence, options) {
   irs::ByColumnExistenceOptions opts;
-  ASSERT_FALSE(opts.acceptor);
+  ASSERT_EQ(irs::ByColumnExistenceOptions{}, opts);
 }
 
 TEST(by_column_existence, ctor) {
   irs::ByColumnExistence filter;
   ASSERT_EQ(irs::Type<irs::ByColumnExistence>::id(), filter.type());
   ASSERT_EQ(irs::ByColumnExistenceOptions{}, filter.options());
-  ASSERT_TRUE(filter.field().empty());
+  ASSERT_EQ(irs::field_id{0}, filter.id());
   ASSERT_EQ(irs::kNoBoost, filter.Boost());
 }
 
@@ -1115,20 +353,14 @@ TEST(by_column_existence, equal) {
   ASSERT_EQ(irs::ByColumnExistence(), irs::ByColumnExistence());
 
   {
-    irs::ByColumnExistence q0 = MakeFilter("name", false);
-    irs::ByColumnExistence q1 = MakeFilter("name", false);
+    irs::ByColumnExistence q0 = MakeFilter(kName);
+    irs::ByColumnExistence q1 = MakeFilter(kName);
     ASSERT_EQ(q0, q1);
   }
 
   {
-    irs::ByColumnExistence q0 = MakeFilter("name", true);
-    irs::ByColumnExistence q1 = MakeFilter("name", false);
-    ASSERT_NE(q0, q1);
-  }
-
-  {
-    irs::ByColumnExistence q0 = MakeFilter("name", true);
-    irs::ByColumnExistence q1 = MakeFilter("name1", true);
+    irs::ByColumnExistence q0 = MakeFilter(kName);
+    irs::ByColumnExistence q1 = MakeFilter(kSeq);
     ASSERT_NE(q0, q1);
   }
 }
@@ -1136,6 +368,8 @@ TEST(by_column_existence, equal) {
 class ColumnExistenceLongFilterTestCase : public tests::FilterTestCaseBase {};
 
 TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
+  constexpr irs::field_id kTarget = 1;
+  constexpr irs::field_id kAllDocs = 2;
   // need that many docs as in "some_docs" should be at least 4096 docs
   // and should be sparse
   irs::doc_id_t with_fields[] = {
@@ -1521,30 +755,33 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
     size_t span_index{0};
   };
 
-  constexpr std::string_view kTarget{"some_docs"};
+  constexpr std::string_view kTargetName{"some_docs"};
+  constexpr std::string_view kAllName{"all_docs"};
 
   auto max_doc_id = with_fields[std::size(with_fields) - 1];
   {
-    PatternDocGenerator gen("all_docs", kTarget, max_doc_id, with_fields);
-    irs::IndexWriterOptions opts;
-    opts.column_info = [kTarget](std::string_view name) -> irs::ColumnInfo {
-      // std::string to avoid ambigous comparison operator
-      if (std::string(kTarget) == name) {
-        return {.compression = irs::Type<irs::compression::Lz4>::id()(),
-                .options = {},
-                .encryption = false,
-                .track_prev_doc = true};
-      } else {
-        return {.compression = irs::Type<irs::compression::Lz4>::id()(),
-                .options = {},
-                .encryption = false,
-                .track_prev_doc = false};
-      }
-    };
-    add_segment(gen, irs::kOmCreate, opts);
+    PatternDocGenerator gen(kAllName, kTargetName, max_doc_id, with_fields);
+    add_segment(
+      gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+      [&](irs::IndexWriter::Document& d, const tests::Document& src) {
+        auto* cs = d.Columnstore();
+        if (cs == nullptr) {
+          return;
+        }
+        if (auto* all_field = dynamic_cast<const tests::StringField*>(
+              src.indexed.get(kAllName));
+            all_field != nullptr) {
+          irs::tests::StoreFieldAt(*cs, kAllDocs, d.DocId(), *all_field);
+        }
+        if (auto* target_field = dynamic_cast<const tests::StringField*>(
+              src.stored.get(kTargetName));
+            target_field != nullptr) {
+          irs::tests::StoreFieldAt(*cs, kTarget, d.DocId(), *target_field);
+        }
+      });
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -1553,8 +790,7 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
   const SeekType seeks[] = {{527, 543}};
   // surrogate seek pattern check
   {
-    // target, expected seek result
-    irs::ByColumnExistence filter = MakeFilter(kTarget, false);
+    irs::ByColumnExistence filter = MakeFilter(kTarget);
 
     auto prepared = tests::FilterWrapper{filter}.prepare({
       .index = *rdr,
@@ -1564,16 +800,15 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
     ASSERT_EQ(1, rdr->size());
     auto& segment = (*rdr)[0];
 
-    auto column = segment.column(kTarget);
+    const auto* column = segment.Column(kTarget);
     ASSERT_NE(nullptr, column);
-    auto column_it = column->iterator(irs::ColumnHint::PrevDoc);
+    const auto expected_docs = ExpectedDocs(segment, *column);
+
     auto filter_it = prepared->execute({.segment = segment});
 
-    ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
+    ASSERT_LE(expected_docs.size(), irs::CostAttr::extract(*filter_it));
     for (auto& seek : seeks) {
       irs::seek(*filter_it, std::get<0>(seek));
-      irs::seek(*column_it, std::get<0>(seek));
-      ASSERT_EQ(filter_it->value(), column_it->value());
       ASSERT_EQ(std::get<1>(seek), filter_it->value());
     }
   }
@@ -1583,7 +818,7 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
 
   // seek pattern check
   {
-    irs::ByColumnExistence filter = MakeFilter(kTarget, false);
+    irs::ByColumnExistence filter = MakeFilter(kTarget);
 
     auto prepared = tests::FilterWrapper{filter}.prepare({
       .index = *rdr,
@@ -1593,16 +828,15 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
     ASSERT_EQ(1, rdr->size());
     auto& segment = (*rdr)[0];
 
-    auto column = segment.column(kTarget);
+    const auto* column = segment.Column(kTarget);
     ASSERT_NE(nullptr, column);
-    auto column_it = column->iterator(irs::ColumnHint::PrevDoc);
+    const auto expected_docs = ExpectedDocs(segment, *column);
+
     auto filter_it = prepared->execute({.segment = segment});
 
-    ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
+    ASSERT_LE(expected_docs.size(), irs::CostAttr::extract(*filter_it));
     for (auto& seek : seeks) {
       ASSERT_EQ(std::get<1>(seek), filter_it->seek(std::get<0>(seek)));
-      ASSERT_EQ(std::get<1>(seek), column_it->seek(std::get<0>(seek)));
-      ASSERT_EQ(filter_it->value(), column_it->value());
       ASSERT_EQ(std::get<1>(seek), filter_it->value());
     }
   }

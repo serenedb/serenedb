@@ -24,11 +24,11 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
-#include <iresearch/search/geo_filter.h>
 
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/column_existence_filter.hpp>
+#include <iresearch/search/geo_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/nested_filter.hpp>
@@ -220,9 +220,8 @@ void StringifyNGram(std::string* out, const ByNGramSimilarity& filter,
 
 template<typename FT>
 void StringifyColumnExistence(std::string* out, const ByColumnExistence& filter,
-                              FT&& ft) {
-  absl::StrAppend(out, "EXISTS[", ft(filter.field()), ", ",
-                  size_t(filter.options().acceptor), "]");
+                              FT&& /*ft*/) {
+  absl::StrAppend(out, "EXISTS[", filter.id(), "]");
 }
 
 template<typename FT>
@@ -440,15 +439,15 @@ std::string ToString(const Filter& f) {
 
 std::string ToStringDemangled(
   const Filter& f,
-  const std::function<std::string_view(sdb::catalog::Column::Id)>& col_name) {
+  const std::function<std::string(sdb::catalog::Column::Id)>& col_name) {
   return StringifyFilter(f, [&](std::string_view field) -> std::string {
     constexpr size_t kIdSize = sizeof(uint64_t);
     if (field.size() < kIdSize) {
       return TermToString(field);
     }
     const uint64_t col_id = absl::big_endian::Load64(field.data());
-    const std::string_view name = col_name(col_id);
-    return absl::StrCat(name, "(", MangleName(field.substr(kIdSize)), ")");
+    return absl::StrCat(col_name(col_id), "(",
+                        MangleName(field.substr(kIdSize)), ")");
   });
 }
 

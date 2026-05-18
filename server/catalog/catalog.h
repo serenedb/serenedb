@@ -272,9 +272,8 @@ struct LogicalCatalog {
   virtual Result CreateInvertedIndex(
     ObjectId database_id, std::string_view schema, std::string_view relation,
     std::string name, std::vector<CreateIndexColumn>&& columns,
-    IndexShardOptions& shard_options,
-    CreateIndexOperationOptions operation_options,
-    std::optional<ScorerOptions> wand_scorer) = 0;
+    InvertedIndexOptions options,
+    CreateIndexOperationOptions operation_options) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,

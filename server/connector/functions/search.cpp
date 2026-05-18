@@ -473,6 +473,14 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(set));
   }
 
+  // ts_is_null() / ts_is_not_null() -- zero-arg existence predicates.
+  // Paired with a column via @@; the filter builder emits an
+  // irs::ByColumnExistence (negated for IS NULL).
+  for (auto name : {kTSQIsNull, kTSQIsNotNull}) {
+    loader.RegisterFunction(duckdb::ScalarFunction(
+      std::string{name}, {}, MakeTSQueryType(), TSQueryStubFn));
+  }
+
   // TOKENIZE(text [, analyzer]). 1-arg uses ambient analyzer (same as
   // bare VARCHAR); 2-arg uses the named analyzer (equivalent to
   // text::tokenize(analyzer)).
@@ -523,7 +531,7 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
   // bound is NULL (NULL operands have meaning here -- "unbounded").
   {
     duckdb::ScalarFunction fn(
-      std::string{kTSQRange},
+      std::string{kTSQBetween},
       {duckdb::LogicalType::ANY, duckdb::LogicalType::ANY,
        duckdb::LogicalType::BOOLEAN, duckdb::LogicalType::BOOLEAN},
       MakeTSQueryType(), TSQueryStubFn);
@@ -774,17 +782,6 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(set));
   }
 
-  // raw_tf(tableoid) -> FLOAT -- emits raw term frequency per matched doc.
-  // Shape mirrors bm25/tfidf: anchor is tableoid; the iresearch_plan rule
-  // claims the call at compile time and threads the scorer into bind_data.
-  {
-    duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::RawTf::kName}};
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
-    loader.RegisterFunction(std::move(set));
-  }
-
   // lm_jm(tableoid) / lm_jm(tableoid, lambda) -> FLOAT.
   // Language model with Jelinek-Mercer (linear interpolation) smoothing.
   // lambda in (0, 1]; iresearch default is 0.1.
@@ -838,6 +835,33 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT, duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::FLOAT, ScorerStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // raw_tf(tableoid) -> FLOAT -- emits raw term frequency per matched doc.
+  {
+    duckdb::ScalarFunctionSet set{
+      std::string{catalog::ScorerOptions::RawBoost::kName}};
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // raw_tf(tableoid) -> FLOAT -- emits raw term frequency per matched doc.
+  {
+    duckdb::ScalarFunctionSet set{
+      std::string{catalog::ScorerOptions::RawTf::kName}};
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // raw_dl(tableoid) -> FLOAT -- emits raw document length per matched doc.
+  {
+    duckdb::ScalarFunctionSet set{
+      std::string{catalog::ScorerOptions::RawDL::kName}};
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
   }
 }

@@ -772,7 +772,8 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │   ROCKSDB_TABLE_FULLSCAN  │
 │    ────────────────────   │
-│         Table: explain_t  │
+│      Table: explain_t     │
+│      Projections: id      │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘

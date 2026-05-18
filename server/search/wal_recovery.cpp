@@ -44,6 +44,7 @@
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/duckdb_rocksdb_reader.h"
 #include "connector/indexonly_marker.h"
 #include "connector/search_sink_writer.hpp"
 #include "rest_server/serened_single.h"
@@ -189,9 +190,19 @@ void FlushShard(ShardState& s,
     connector::MakeTokenizerProvider(snapshot, *s.index);
   auto json_paths_provider =
     connector::MakeJsonPathsProvider(snapshot, *s.index);
+  auto store_values_provider = connector::MakeStoreValuesProvider(*s.index);
+  auto is_text_indexed_provider =
+    connector::MakeIsTextIndexedProvider(*s.index);
+  auto hnsw_info_provider = connector::MakeHNSWInfoProvider(*s.index);
   connector::SearchSinkInsertBaseImpl insert_sink{
-    trx, std::move(tokenizer_provider), std::move(json_paths_provider),
-    s.indexed_column_ids};
+    trx,
+    std::move(tokenizer_provider),
+    std::move(json_paths_provider),
+    std::move(store_values_provider),
+    std::move(is_text_indexed_provider),
+    std::move(hnsw_info_provider),
+    s.indexed_column_ids,
+  };
   connector::SearchSinkDeleteBaseImpl delete_sink{trx};
 
   delete_sink.InitImpl(s.pk2row.size());
@@ -207,35 +218,67 @@ void FlushShard(ShardState& s,
     auto& get_key_buffer = s.full_key_prefix;
     rocksdb::ReadOptions read_opts;
     rocksdb::PinnableSlice value_buffer;
+    auto resolve_cell = [&](const Row& row,
+                            size_t col_idx) -> std::string_view {
+      std::string_view cell = row.indexed_cols[col_idx];
+      if (!cell.empty()) {
+        return cell;
+      }
+      std::string_view pk = row.full_key.substr(kKeyPrefixSize);
+      get_key_buffer.resize(kKeyPrefixSize);
+      get_key_buffer.append(pk.data(), pk.size());
+      value_buffer.Reset();
+      auto status = db.Get(read_opts, &cf, get_key_buffer, &value_buffer);
+      SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
+                   "WAL recovery: rocksdb Get failed for index '",
+                   s.shard->GetId().id(),
+                   "' col=", s.indexed_columns[col_idx].id, ": ",
+                   status.ToString(), kSkipHint);
+      return std::string_view{value_buffer.data(), value_buffer.size()};
+    };
     for (size_t col_idx = 0; col_idx < s.indexed_columns.size(); ++col_idx) {
       const auto& col = s.indexed_columns[col_idx];
-      const bool switched = sink.SwitchColumnImpl(connector::ColumnDescriptor{
-        col.id, col.store_mode, col.type, /*have_nulls=*/true});
-      SDB_ASSERT(switched);
       absl::big_endian::Store(get_key_buffer.data() + sizeof(ObjectId), col.id);
-      for (const auto* row : insert_entries) {
-        std::string_view cell = row->indexed_cols[col_idx];
-        if (!cell.empty()) {
-          rocksdb::Slice slice{cell.data(), cell.size()};
-          sink.WriteImpl(std::span{&slice, 1}, row->full_key);
-        } else {
-          // This is a very bad code that exists because we don't support PATCH
-          // queries for inverted index. It happens when we update a column that
-          // is indexed but not included in the UPDATE statement: the new value
-          // is missing from the WAL window, so we have to fetch it from the db
-          // to be able to write it to iresearch.
-          std::string_view pk = row->full_key.substr(kKeyPrefixSize);
-          get_key_buffer.resize(kKeyPrefixSize);
-          get_key_buffer.append(pk.data(), pk.size());
-          value_buffer.Reset();
-          auto status = db.Get(read_opts, &cf, get_key_buffer, &value_buffer);
-          SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
-                       "WAL recovery: rocksdb Get failed for index '",
-                       s.shard->GetId().id(), "' col=", col.id, ": ",
-                       status.ToString(), kSkipHint);
-          rocksdb::Slice slice{value_buffer.data(), value_buffer.size()};
-          sink.WriteImpl(std::span{&slice, 1}, row->full_key);
+      const connector::ColumnDescriptor desc{col.id, col.store_mode, col.type,
+                                             /*have_nulls=*/true};
+      const auto* info = s.index->FindColumnInfo(col.id);
+      const bool wants_cs = info != nullptr && info->store_values;
+      const bool has_hnsw = info && info->hnsw_config;
+      // HNSW columns have wants_cs=false in the catalog (the hnsw opclass
+      // setter does both); still feed cs via the typed-batch path.
+      const bool wants_cs_batch = wants_cs || has_hnsw;
+      const auto count = static_cast<duckdb::idx_t>(insert_entries.size());
+      if (wants_cs_batch) {
+        bool switched_for_inverted = false;
+        for (duckdb::idx_t emitted = 0; emitted < count;) {
+          const auto chunk =
+            std::min<duckdb::idx_t>(count - emitted, STANDARD_VECTOR_SIZE);
+          duckdb::Vector vec{col.type, chunk};
+          duckdb::FlatVector::ValidityMutable(vec).SetAllValid(chunk);
+          for (duckdb::idx_t i = 0; i < chunk; ++i) {
+            connector::DeserializeValueIntoDuckDB(
+              resolve_cell(*insert_entries[emitted + i], col_idx), vec,
+              col.type, i);
+          }
+          if (emitted == 0) {
+            switched_for_inverted = sink.SwitchColumnImpl(desc, vec, chunk);
+          } else {
+            sink.AppendCsContinuation(vec, chunk, emitted);
+          }
+          emitted += chunk;
         }
+        if (!switched_for_inverted) {
+          continue;
+        }
+      } else {
+        duckdb::Vector unused{col.type, nullptr, 0};
+        const bool switched = sink.SwitchColumnImpl(desc, unused, /*count=*/0);
+        SDB_ASSERT(switched);
+      }
+      for (const auto* row : insert_entries) {
+        std::string_view cell = resolve_cell(*row, col_idx);
+        rocksdb::Slice slice{cell.data(), cell.size()};
+        sink.WriteImpl(std::span{&slice, 1}, row->full_key);
       }
     }
     sink.FinishImpl();
@@ -468,7 +511,7 @@ void RunWalRecovery(std::vector<ShardState>& shards,
     table2shards[s.table_object_id].shards.emplace_back(&s);
   }
   for (auto& [_, shards] : table2shards) {
-    std::ranges::sort(shards.shards, ShardState::ByStartTick());
+    absl::c_sort(shards.shards, ShardState::ByStartTick());
   }
 
   auto* default_cf = RocksDBColumnFamilyManager::get(

@@ -22,11 +22,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "filter_test_case_base.hpp"
-#include "iresearch/index/index_features.hpp"
+#include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/search/granular_range_filter.hpp"
+#include "iresearch/store/store_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace {
+
+inline constexpr irs::field_id kKey = 1;
 
 class GranularFloatField : public tests::FloatField {};
 
@@ -2001,9 +2004,19 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
       }
     });
 
-  add_segment(gen, irs::kOmCreate);
+  auto store_key = [](irs::IndexWriter::Document& doc,
+                      const tests::Document& src) {
+    const auto* key =
+      dynamic_cast<const tests::StringField*>(src.indexed.get("_key"));
+    ASSERT_NE(nullptr, key);
+    auto* cs = doc.Columnstore();
+    ASSERT_NE(nullptr, cs);
+    irs::tests::StoreFieldAt(*cs, kKey, doc.DocId(), *key);
+  };
+  add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+              store_key);
 
-  auto reader = open_reader();
+  auto reader = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader->size());
   auto& segment = reader[0];
 
@@ -2042,20 +2055,19 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
 
     auto prepared = query.prepare({.index = reader});
     ASSERT_NE(nullptr, prepared);
-    auto* column = segment.column("_key");
+    const auto* column = segment.Column(kKey);
     ASSERT_NE(nullptr, column);
-    auto values = column->iterator(irs::ColumnHint::Normal);
-    ASSERT_NE(nullptr, values);
-    auto* actual_value = irs::get<irs::PayAttr>(*values);
-    ASSERT_NE(nullptr, actual_value);
+    irs::tests::BlobPointReader values{segment, *column};
 
     std::set<std::string> actual;
 
     auto docs = prepared->execute({.segment = segment});
     while (docs->next()) {
       const auto doc = docs->value();
-      ASSERT_EQ(doc, values->seek(doc));
-      actual.emplace(irs::ToString<std::string>(actual_value->value.data()));
+      const auto bytes = values.Get(doc);
+      irs::BytesViewInput in;
+      in.reset(bytes);
+      actual.emplace(irs::ReadString<std::string>(in));
     }
     ASSERT_EQ(expected, actual);
   }
@@ -2092,20 +2104,19 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
 
     auto prepared = query.prepare({.index = reader});
     ASSERT_NE(nullptr, prepared);
-    auto* column = segment.column("_key");
+    const auto* column = segment.Column(kKey);
     ASSERT_NE(nullptr, column);
-    auto values = column->iterator(irs::ColumnHint::Normal);
-    ASSERT_NE(nullptr, values);
-    auto* actual_value = irs::get<irs::PayAttr>(*values);
-    ASSERT_NE(nullptr, actual_value);
+    irs::tests::BlobPointReader values{segment, *column};
 
     std::set<std::string> actual;
 
     auto docs = prepared->execute({.segment = segment});
     while (docs->next()) {
       const auto doc = docs->value();
-      ASSERT_EQ(doc, values->seek(doc));
-      actual.emplace(irs::ToString<std::string>(actual_value->value.data()));
+      const auto bytes = values.Get(doc);
+      irs::BytesViewInput in;
+      in.reset(bytes);
+      actual.emplace(irs::ReadString<std::string>(in));
     }
     ASSERT_EQ(expected, actual);
   }
@@ -2145,20 +2156,19 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
 
     auto prepared = query.prepare({.index = reader});
     ASSERT_NE(nullptr, prepared);
-    auto* column = segment.column("_key");
+    const auto* column = segment.Column(kKey);
     ASSERT_NE(nullptr, column);
-    auto values = column->iterator(irs::ColumnHint::Normal);
-    ASSERT_NE(nullptr, values);
-    auto* actual_value = irs::get<irs::PayAttr>(*values);
-    ASSERT_NE(nullptr, actual_value);
+    irs::tests::BlobPointReader values{segment, *column};
 
     std::set<std::string> actual;
 
     auto docs = prepared->execute({.segment = segment});
     while (docs->next()) {
       const auto doc = docs->value();
-      ASSERT_EQ(doc, values->seek(doc));
-      actual.emplace(irs::ToString<std::string>(actual_value->value.data()));
+      const auto bytes = values.Get(doc);
+      irs::BytesViewInput in;
+      in.reset(bytes);
+      actual.emplace(irs::ReadString<std::string>(in));
     }
     ASSERT_EQ(expected, actual);
   }
@@ -2195,20 +2205,19 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
 
     auto prepared = query.prepare({.index = reader});
     ASSERT_NE(nullptr, prepared);
-    auto* column = segment.column("_key");
+    const auto* column = segment.Column(kKey);
     ASSERT_NE(nullptr, column);
-    auto values = column->iterator(irs::ColumnHint::Normal);
-    ASSERT_NE(nullptr, values);
-    auto* actual_value = irs::get<irs::PayAttr>(*values);
-    ASSERT_NE(nullptr, actual_value);
+    irs::tests::BlobPointReader values{segment, *column};
 
     std::set<std::string> actual;
 
     auto docs = prepared->execute({.segment = segment});
     while (docs->next()) {
       const auto doc = docs->value();
-      ASSERT_EQ(doc, values->seek(doc));
-      actual.emplace(irs::ToString<std::string>(actual_value->value.data()));
+      const auto bytes = values.Get(doc);
+      irs::BytesViewInput in;
+      in.reset(bytes);
+      actual.emplace(irs::ReadString<std::string>(in));
     }
     ASSERT_EQ(expected, actual);
   }

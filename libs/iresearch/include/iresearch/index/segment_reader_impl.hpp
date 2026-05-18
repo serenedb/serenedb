@@ -32,8 +32,13 @@
 #include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {
+namespace columnstore {
 
-// Reader holds file refs to files from the segment.
+class Reader;
+class NormColumnReader;
+
+}  // namespace columnstore
+
 class SegmentReaderImpl final : public SubReader {
   struct PrivateTag final {
     explicit PrivateTag() = default;
@@ -44,9 +49,6 @@ class SegmentReaderImpl final : public SubReader {
     : _info{meta}, _docs_mask{meta.docs_mask} {
     SDB_ASSERT(meta.live_docs_count <= meta.docs_count);
     SDB_ASSERT(RemovalCount(meta) <= meta.docs_count);
-    // We need this logic only for splitted segments, we need to open
-    // segment without removals, but they are already accounted in
-    // live_docs_count.
     _info.live_docs_count = meta.docs_count - RemovalCount(meta);
   }
 
@@ -64,8 +66,6 @@ class SegmentReaderImpl final : public SubReader {
 
   const SegmentInfo& Meta() const final { return _info; }
 
-  ColumnIterator::ptr columns() const final;
-
   const DocumentMask* docs_mask() const final { return _docs_mask.get(); }
 
   DocIterator::ptr docs_iterator() const final;
@@ -78,26 +78,23 @@ class SegmentReaderImpl final : public SubReader {
 
   FieldIterator::ptr fields() const final { return _field_reader->iterator(); }
 
-  const irs::ColumnReader* sort() const noexcept final { return _sort; }
+  NormReader::ptr norms(field_id field) const final;
 
-  const irs::ColumnReader* column(field_id field) const final;
-
-  const irs::ColumnReader* column(std::string_view name) const final;
+  const columnstore::ColumnReader* Column(field_id field) const final;
+  const columnstore::HNSWReader* HNSW(field_id field) const final;
+  const columnstore::Reader* CsReader() const final {
+    return _data ? _data->cs_reader.get() : nullptr;
+  }
 
  private:
-  using NamedColumns =
-    absl::flat_hash_map<std::string_view, const irs::ColumnReader*>;
-  using SortedNamedColumns =
-    std::vector<std::reference_wrapper<const irs::ColumnReader>>;
-
   struct ColumnData {
-    ColumnstoreReader::ptr columnstore_reader;
-    NamedColumns named_columns;
-    SortedNamedColumns sorted_named_columns;
+    // Per-segment columnstore reader. Opened when IndexReaderOptions::db
+    // is non-null; norm-bearing fields are looked up directly off it via
+    // SegmentReaderImpl::norms(field_id).
+    std::unique_ptr<columnstore::Reader> cs_reader;
 
-    const irs::ColumnReader* Open(const Directory& dir, const SegmentMeta& meta,
-                                  const IndexReaderOptions& options,
-                                  const FieldReader& field_reader);
+    void Open(const Directory& dir, const SegmentMeta& meta,
+              const IndexReaderOptions& options);
   };
 
   FileRefs _refs;
@@ -105,8 +102,6 @@ class SegmentReaderImpl final : public SubReader {
   std::shared_ptr<const DocumentMask> _docs_mask;
   FieldReader::ptr _field_reader;
   std::shared_ptr<ColumnData> _data;
-  // logically part of data_, stored separate to avoid unnecessary indirection
-  const irs::ColumnReader* _sort{};
 };
 
 }  // namespace irs

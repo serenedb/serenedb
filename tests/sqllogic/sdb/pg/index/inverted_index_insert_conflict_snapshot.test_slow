@@ -1,0 +1,54 @@
+hash-threshold 100
+
+# Regression test for the snapshot data-race fixed by moving the
+# rocksdb txn + snapshot setup from lazy pipeline-init callers to the
+# single-threaded plan-generation phase (PlanInsert / PlanMergeInto /
+# PlanDelete / PlanUpdate).
+#
+# Before the fix:
+#   - PhysicalMergeInto sink-init (SereneDBPhysicalInsert::GetGlobalSinkState)
+#     called Transaction::EnsureRocksDBTransaction on worker T_a.
+#   - Target-scan source-init (PKFullScanInitGlobal -> InitCommonState)
+#     called the same lazy init on a different worker T_b, in parallel.
+#   - Both wrote `_rocksdb_snapshot` and both invoked
+#     rocksdb::Transaction::SetSnapshot() concurrently (TSan log
+#     2026-05-11). The later writer's SetSnapshot() also freed the
+#     earlier's SnapshotImpl, dangling any raw pointer the earlier
+#     caller had already cached (DuckDBWriteConflictResolver::Init).
+#
+# After the fix EnsureRocksDBTransaction's mutating branches run only
+# on the plan-generation thread; pipeline workers re-enter the function
+# but both `if (!_rocksdb_transaction)` and `if (!_rocksdb_snapshot)`
+# short-circuit -- no concurrent writes, no rocksdb API violation,
+# nothing for TSan to flag.
+#
+# Run with TSan to verify the race is gone (no warning under load):
+#   ./tests/sqllogic/run.sh ... --test '.../inverted_index_insert_conflict_snapshot.test_slow'
+
+statement ok
+CREATE TABLE t (id INT PRIMARY KEY, val INT);
+
+statement ok
+INSERT INTO t VALUES (1, 1), (2, 2), (3, 3);
+
+statement count 0
+INSERT INTO t VALUES (1, 11), (2, 22), (3, 33) ON CONFLICT DO NOTHING;
+
+statement count 2
+INSERT INTO t VALUES (10, 100), (1, 999), (11, 110) ON CONFLICT DO NOTHING;
+
+statement count 0
+INSERT INTO t VALUES (1, 1001), (2, 2002), (3, 3003) ON CONFLICT DO NOTHING;
+
+query II
+SELECT id, val FROM t ORDER BY id;
+----
+id  val
+1	1
+2	2
+3	3
+10	100
+11	110
+
+statement ok
+DROP TABLE t;

@@ -1703,8 +1703,10 @@ ResultOr<ResolvedIndexRelation> ResolveIndexRelation(
     const auto& view_info = view.GetInfo();
     auto columns = std::views::iota(size_t{0}, view_info.names.size()) |
                    std::views::transform([&](size_t i) {
-                     return Column{ObjectId{}, Column::Id{i},
-                                   view_info.names[i], view_info.types[i]};
+                     Column c{ObjectId{}, Column::Id{i}, view_info.names[i],
+                              view_info.types[i]};
+                     c.SetId(Column::Id{i});
+                     return c;
                    }) |
                    std::ranges::to<std::vector>();
     return ResolvedIndexRelation{

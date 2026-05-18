@@ -26,6 +26,7 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_existence_filter.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
@@ -1579,6 +1580,129 @@ TEST_P(TfidfTestCase, test_collector_serialization) {
     auto out = tcollector_out;
     out.append(1, 42);
     ASSERT_THROW(collector->collect(out), irs::IoError);
+  }
+}
+
+TEST_P(TfidfTestCase, test_collector_merge) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::PayloadedJsonFieldFactory);
+    auto writer = open_writer(irs::kOmCreate);
+    const Document* doc;
+    while ((doc = gen.next())) {
+      ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end(),
+                         doc->stored.begin(), doc->stored.end()));
+    }
+    writer->Commit();
+    AssertSnapshotEquality(*writer);
+  }
+
+  auto reader = irs::DirectoryReader(dir(), codec());
+  ASSERT_EQ(1, reader.size());
+  auto* field = reader[0].field("name");
+  ASSERT_NE(nullptr, field);
+  auto term_iter = field->iterator(irs::SeekMode::NORMAL);
+  ASSERT_NE(nullptr, term_iter);
+  ASSERT_TRUE(term_iter->next());
+  term_iter->read();
+
+  irs::TFIDF prepared_sort;
+
+  {
+    auto a = prepared_sort.PrepareFieldCollector();
+    auto b = prepared_sort.PrepareFieldCollector();
+    auto c = prepared_sort.PrepareFieldCollector();
+    ASSERT_NE(nullptr, a);
+    ASSERT_NE(nullptr, b);
+    ASSERT_NE(nullptr, c);
+
+    a->collect(reader[0], *field);
+    a->collect(reader[0], *field);
+
+    b->collect(reader[0], *field);
+    c->collect(reader[0], *field);
+    b->collect(std::move(*c));
+
+    irs::StrOutput out_a;
+    irs::StrOutput out_b;
+    a->write(out_a);
+    b->write(out_b);
+    ASSERT_EQ(out_a.out, out_b.out);
+  }
+
+  {
+    auto populated = prepared_sort.PrepareFieldCollector();
+    auto fresh = prepared_sort.PrepareFieldCollector();
+    populated->collect(reader[0], *field);
+
+    irs::StrOutput before;
+    populated->write(before);
+
+    populated->collect(std::move(*fresh));
+
+    irs::StrOutput after;
+    populated->write(after);
+    ASSERT_EQ(before.out, after.out);
+  }
+
+  {
+    irs::FieldCollectors a{&prepared_sort};
+    irs::FieldCollectors b{&prepared_sort};
+    irs::FieldCollectors c{&prepared_sort};
+
+    a.collect(reader[0], *field);
+    a.collect(reader[0], *field);
+
+    b.collect(reader[0], *field);
+    c.collect(reader[0], *field);
+    b.collect(std::move(c));
+
+    irs::StrOutput out_a;
+    irs::StrOutput out_b;
+    a.front()->write(out_a);
+    b.front()->write(out_b);
+    ASSERT_EQ(out_a.out, out_b.out);
+  }
+
+  {
+    auto a = prepared_sort.PrepareTermCollector();
+    auto b = prepared_sort.PrepareTermCollector();
+    auto c = prepared_sort.PrepareTermCollector();
+    ASSERT_NE(nullptr, a);
+    ASSERT_NE(nullptr, b);
+    ASSERT_NE(nullptr, c);
+
+    a->collect(reader[0], *field, *term_iter);
+    a->collect(reader[0], *field, *term_iter);
+
+    b->collect(reader[0], *field, *term_iter);
+    c->collect(reader[0], *field, *term_iter);
+    b->collect(std::move(*c));
+
+    irs::StrOutput out_a;
+    irs::StrOutput out_b;
+    a->write(out_a);
+    b->write(out_b);
+    ASSERT_EQ(out_a.out, out_b.out);
+  }
+
+  {
+    irs::TermCollectors a{&prepared_sort, 1};
+    irs::TermCollectors b{&prepared_sort, 1};
+    irs::TermCollectors c{&prepared_sort, 1};
+
+    a.collect(reader[0], *field, 0, *term_iter);
+    a.collect(reader[0], *field, 0, *term_iter);
+
+    b.collect(reader[0], *field, 0, *term_iter);
+    c.collect(reader[0], *field, 0, *term_iter);
+    b.collect(std::move(c));
+
+    irs::StrOutput out_a;
+    irs::StrOutput out_b;
+    a.front()->write(out_a);
+    b.front()->write(out_b);
+    ASSERT_EQ(out_a.out, out_b.out);
   }
 }
 

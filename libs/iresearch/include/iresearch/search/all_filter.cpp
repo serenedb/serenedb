@@ -23,6 +23,7 @@
 #include "all_filter.hpp"
 
 #include "all_iterator.hpp"
+#include "basics/down_cast.h"
 
 namespace irs {
 
@@ -47,15 +48,39 @@ class AllQuery : public Filter::Query {
   score_t _boost;
 };
 
-Filter::Query::ptr All::prepare(const PrepareContext& ctx) const {
-  bstring stats(GetStatsSize(ctx.scorer), 0);
+namespace {
 
-  if (ctx.scorer) {
-    ctx.scorer->collect(stats.data(), nullptr, nullptr);
+class Buffer final : public Filter::PrepareBuffer {
+ public:
+  void PrepareSegment(const SubReader&) final {}
+
+  void Merge(PrepareBuffer&& other) final {
+    [[maybe_unused]] auto& rhs = sdb::basics::downCast<Buffer>(other);
   }
 
-  return memory::make_tracked<AllQuery>(ctx.memory, std::move(stats),
-                                        ctx.boost * Boost());
+  bool Empty() const noexcept final { return false; }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    bstring stats(GetStatsSize(ctx.scorer), 0);
+    if (ctx.scorer) {
+      ctx.scorer->collect(stats.data(), nullptr, nullptr);
+    }
+    return memory::make_tracked<AllQuery>(ctx.memory, std::move(stats),
+                                          ctx.boost);
+  }
+};
+
+}  // namespace
+
+std::unique_ptr<Filter::PrepareBuffer> All::CreateBuffer(
+  const PrepareContext& /*ctx*/) const {
+  return std::make_unique<Buffer>();
+}
+
+Filter::Query::ptr All::prepare(const PrepareContext& ctx) const {
+  auto sub_ctx = ctx;
+  sub_ctx.boost *= Boost();
+  return DefaultPrepare(sub_ctx);
 }
 
 }  // namespace irs

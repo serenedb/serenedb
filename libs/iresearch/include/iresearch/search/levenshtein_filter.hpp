@@ -99,6 +99,9 @@ class ByEditDistance final : public FilterWithField<ByEditDistanceOptions> {
 
   static field_visitor visitor(const ByEditDistanceAllOptions& options);
 
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final;
+
   Query::ptr prepare(const PrepareContext& ctx) const final {
     auto sub_ctx = ctx;
     sub_ctx.boost *= Boost();

@@ -85,6 +85,42 @@ TEST(dfi_test, equals) {
   ASSERT_FALSE(a->equals(*c));
 }
 
+TEST(dfi_test, field_collector_merge) {
+  irs::DFIFieldCollector a;
+  a.total_term_freq = 22;
+
+  irs::DFIFieldCollector b;
+  b.total_term_freq = 13;
+
+  irs::DFIFieldCollector c;
+  c.total_term_freq = 9;
+
+  b.collect(std::move(c));
+  ASSERT_EQ(a.total_term_freq, b.total_term_freq);
+
+  irs::DFIFieldCollector fresh;
+  b.collect(std::move(fresh));
+  ASSERT_EQ(a.total_term_freq, b.total_term_freq);
+}
+
+TEST(dfi_test, term_collector_merge) {
+  irs::DFITermCollector a;
+  a.total_term_freq = 22;
+
+  irs::DFITermCollector b;
+  b.total_term_freq = 13;
+
+  irs::DFITermCollector c;
+  c.total_term_freq = 9;
+
+  b.collect(std::move(c));
+  ASSERT_EQ(a.total_term_freq, b.total_term_freq);
+
+  irs::DFITermCollector fresh;
+  b.collect(std::move(fresh));
+  ASSERT_EQ(a.total_term_freq, b.total_term_freq);
+}
+
 class DFIIndexTest : public IndexTestBase {
  protected:
   void BuildFixture();

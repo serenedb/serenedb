@@ -31,7 +31,9 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/states_cache.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {
@@ -90,12 +92,64 @@ class Filter {
     virtual score_t Boost() const noexcept = 0;
   };
 
+  class PrepareBuffer {
+   public:
+    virtual ~PrepareBuffer() = default;
+
+    virtual void PrepareSegment(const SubReader& segment) = 0;
+
+    virtual void Merge(PrepareBuffer&& other) = 0;
+
+    virtual bool Empty() const noexcept = 0;
+
+    virtual Query::ptr Compile(const PrepareContext& ctx) && = 0;
+  };
+
+  class EmptyBuffer final : public PrepareBuffer {
+   public:
+    void PrepareSegment(const SubReader&) final {}
+    void Merge(PrepareBuffer&&) final {}
+    bool Empty() const noexcept final { return true; }
+    Query::ptr Compile(const PrepareContext&) && final {
+      return Query::empty();
+    }
+  };
+
+  class LazyQueryBuffer final : public PrepareBuffer {
+   public:
+    using PrepareFn = std::function<Query::ptr(const PrepareContext&)>;
+
+    explicit LazyQueryBuffer(PrepareFn fn) : _fn{std::move(fn)} {}
+
+    void PrepareSegment(const SubReader&) final {}
+    void Merge(PrepareBuffer&&) final {}
+    bool Empty() const noexcept final { return false; }
+    Query::ptr Compile(const PrepareContext& ctx) && final { return _fn(ctx); }
+
+   private:
+    PrepareFn _fn;
+  };
+
   using ptr = std::unique_ptr<Filter>;
 
   virtual ~Filter() = default;
 
   IRS_FORCE_INLINE bool operator==(const Filter& rhs) const noexcept {
     return equals(rhs);
+  }
+
+  virtual std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const;
+
+  // Builds a buffer for use as a child of a CompoundBuffer (or any caller that
+  // wants to drive `prepare()` through the buffer pipeline). The default impl
+  // wraps prepare() in a LazyQueryBuffer with raw ctx -- prepare() self-folds
+  // its own Boost(). Filters with a real per-segment Buffer override this to
+  // pre-fold their own Boost() into ctx and route to CreateBuffer.
+  virtual std::unique_ptr<PrepareBuffer> CreateChildBuffer(
+    const PrepareContext& ctx) const {
+    return std::make_unique<LazyQueryBuffer>(
+      [ctx, this](const PrepareContext&) { return this->prepare(ctx); });
   }
 
   virtual Query::ptr prepare(const PrepareContext& ctx) const = 0;
@@ -106,6 +160,8 @@ class Filter {
   virtual score_t BoostImpl() const noexcept { return kNoBoost; }
 
  protected:
+  Query::ptr DefaultPrepare(const PrepareContext& ctx) const;
+
   virtual bool equals(const Filter& rhs) const noexcept {
     return type() == rhs.type();
   }
@@ -177,6 +233,11 @@ class FilterWithField : public FilterWithOptions<Options> {
 class Empty final : public FilterWithType<Empty> {
  public:
   Query::ptr prepare(const PrepareContext& ctx) const final;
+
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext&) const final {
+    return std::make_unique<EmptyBuffer>();
+  }
 };
 
 struct FilterVisitor;

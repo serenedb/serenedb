@@ -24,13 +24,16 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "basics/down_cast.h"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/collectors.hpp"
+#include "iresearch/search/filter.hpp"
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/multiterm_query.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -72,57 +75,27 @@ class LimitedSampleCollector : private util::Noncopyable {
   // Collect current term
   void collect(const Key& key) {
     SDB_ASSERT(_state.segment && _state.terms && _state.state);
+    CollectImpl(key, _state.state, _state.segment, _state.terms->cookie(),
+                _state.terms->value(), *_state.docs_count);
+  }
 
+  // Fold another collector built from a disjoint set of segments into this one.
+  // Caller is responsible for merging the underlying StatesCache (which owns
+  // the MultiTermState nodes the snapshots in `other` point into) BEFORE
+  // calling this -- node_hash_map guarantees those pointers stay valid after
+  // the node-by-node merge.
+  void Merge(LimitedSampleCollector&& other) {
     if (!_scored_terms_limit) {
-      // state will not be scored
-
-      _state.state->unscored_states.emplace_back(_state.terms->cookie());
-      _state.state->unscored_states_estimation += *_state.docs_count;
-      return;  // nothing to collect (optimization)
-    }
-
-    if (_scored_states.size() < _scored_terms_limit) {
-      // have not reached the scored state limit yet
-      _scored_states_heap.emplace_back(_scored_states.size());
-      _scored_states.emplace_back(key, _state);
-
-      if (_scored_states.size() == _scored_terms_limit) [[unlikely]] {
-        absl::c_make_heap(_scored_states_heap, [&](const size_t lhs,
-                                                   const size_t rhs) noexcept {
-          return _comparer(_scored_states[rhs].key, _scored_states[lhs].key);
-        });
-      }
-
+      SDB_ASSERT(other._scored_states.empty());
       return;
     }
-
-    const size_t min_state_idx = _scored_states_heap.front();
-
-    if (_scored_states[min_state_idx].key < key) {
-      pop();
-
-      auto& min_state = _scored_states[min_state_idx];
-
-      SDB_ASSERT(min_state.cookie);
-      // state will not be scored
-      min_state.state->unscored_states.emplace_back(
-        std::move(min_state.cookie));
-      min_state.state->unscored_states_estimation += min_state.docs_count;
-
-      // update min state
-      min_state.docs_count = *_state.docs_count;
-      min_state.state = _state.state;
-      min_state.cookie = _state.terms->cookie();
-      min_state.term = _state.terms->value();
-      min_state.segment = _state.segment;
-      min_state.key = key;
-
-      push();
-    } else {
-      // state will not be scored
-      _state.state->unscored_states.emplace_back(_state.terms->cookie());
-      _state.state->unscored_states_estimation += *_state.docs_count;
+    for (auto& s : other._scored_states) {
+      SDB_ASSERT(s.cookie);
+      CollectImpl(s.key, s.state, s.segment, std::move(s.cookie),
+                  bytes_view{s.term}, s.docs_count);
     }
+    other._scored_states.clear();
+    other._scored_states_heap.clear();
   }
 
   // Finish collecting and evaluate stats
@@ -206,13 +179,15 @@ class LimitedSampleCollector : private util::Noncopyable {
 
   // A representation of a term cookie with its associated range_state
   struct ScoredTermState {
-    ScoredTermState(const Key& key, const CollectorState& state)
+    ScoredTermState(const Key& key, MultiTermState* state,
+                    const SubReader* segment, SeekCookie::ptr&& cookie,
+                    bytes_view term, uint32_t docs_count)
       : key(key),
-        cookie(state.terms->cookie()),
-        state(state.state),
-        segment(state.segment),
-        term(state.terms->value()),
-        docs_count(*state.docs_count) {
+        cookie(std::move(cookie)),
+        state(state),
+        segment(segment),
+        term(term.data(), term.size()),
+        docs_count(docs_count) {
       SDB_ASSERT(this->cookie);
     }
 
@@ -226,6 +201,58 @@ class LimitedSampleCollector : private util::Noncopyable {
     bstring term;              // actual term value this state is for
     uint32_t docs_count;
   };
+
+  void CollectImpl(const Key& key, MultiTermState* state,
+                   const SubReader* segment, SeekCookie::ptr cookie,
+                   bytes_view term, uint32_t docs_count) {
+    SDB_ASSERT(state && segment && cookie);
+
+    if (!_scored_terms_limit) {
+      state->unscored_states.emplace_back(std::move(cookie));
+      state->unscored_states_estimation += docs_count;
+      return;
+    }
+
+    if (_scored_states.size() < _scored_terms_limit) {
+      _scored_states_heap.emplace_back(_scored_states.size());
+      _scored_states.emplace_back(key, state, segment, std::move(cookie), term,
+                                  docs_count);
+
+      if (_scored_states.size() == _scored_terms_limit) [[unlikely]] {
+        absl::c_make_heap(_scored_states_heap, [&](const size_t lhs,
+                                                   const size_t rhs) noexcept {
+          return _comparer(_scored_states[rhs].key, _scored_states[lhs].key);
+        });
+      }
+
+      return;
+    }
+
+    const size_t min_state_idx = _scored_states_heap.front();
+
+    if (_scored_states[min_state_idx].key < key) {
+      pop();
+
+      auto& min_state = _scored_states[min_state_idx];
+
+      SDB_ASSERT(min_state.cookie);
+      min_state.state->unscored_states.emplace_back(
+        std::move(min_state.cookie));
+      min_state.state->unscored_states_estimation += min_state.docs_count;
+
+      min_state.docs_count = docs_count;
+      min_state.state = state;
+      min_state.cookie = std::move(cookie);
+      min_state.term.assign(term.data(), term.size());
+      min_state.segment = segment;
+      min_state.key = key;
+
+      push();
+    } else {
+      state->unscored_states.emplace_back(std::move(cookie));
+      state->unscored_states_estimation += docs_count;
+    }
+  }
 
   void push() noexcept {
     absl::c_push_heap(
@@ -306,6 +333,40 @@ class MultiTermVisitor {
   States& _states;
   TermFrequency _key;
   const decltype(TermMeta::docs_count)* _docs_count = nullptr;
+};
+
+// Shared prepare-buffer for multi-term filters that score a bounded sample of
+// terms (ByRange, ByPrefix, ByWildcard, ByRegexp, ByEditDistance,
+// ByGranularRange). Holds the per-segment states cache, the bounded-top-N
+// sampler, and a MultiTermVisitor wired to both; subclasses only need to
+// implement PrepareSegment with their filter-specific term-iteration logic.
+class SampledMultiTermBuffer : public Filter::PrepareBuffer {
+ public:
+  SampledMultiTermBuffer(const PrepareContext& ctx, size_t scored_terms_limit)
+    : _states{ctx.memory, ctx.index.size()},
+      _collector{ctx.scorer ? scored_terms_limit : 0},
+      _visitor{_collector, _states} {}
+
+  void Merge(Filter::PrepareBuffer&& other) override {
+    auto& rhs = sdb::basics::downCast<SampledMultiTermBuffer>(other);
+    _states.Merge(std::move(rhs._states));
+    _collector.Merge(std::move(rhs._collector));
+  }
+
+  bool Empty() const noexcept override { return _states.empty(); }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && override {
+    MultiTermQuery::Stats stats{{ctx.memory}};
+    _collector.score(ctx.index, ctx.scorer, stats);
+    return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(_states),
+                                                std::move(stats), ctx.boost,
+                                                ScoreMergeType::Sum, size_t{1});
+  }
+
+ protected:
+  MultiTermQuery::States _states;
+  LimitedSampleCollector<TermFrequency> _collector;
+  MultiTermVisitor<MultiTermQuery::States> _visitor;
 };
 
 }  // namespace irs

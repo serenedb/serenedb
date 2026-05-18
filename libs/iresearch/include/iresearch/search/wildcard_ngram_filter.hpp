@@ -78,11 +78,36 @@ struct ByWildcardNgramOptions {
 
 class ByWildcardNgram final : public FilterWithField<ByWildcardNgramOptions> {
  public:
+  class Buffer final : public PrepareBuffer {
+   public:
+    Buffer(const PrepareContext& ctx, std::string_view field,
+           const ByWildcardNgramOptions& options);
+
+    void PrepareSegment(const SubReader& segment) final;
+    void Merge(PrepareBuffer&& other) final;
+    bool Empty() const noexcept final;
+    Query::ptr Compile(const PrepareContext& ctx) && final;
+
+   private:
+    std::string_view _field;
+    std::shared_ptr<RE2> _matcher;
+    std::vector<std::unique_ptr<PrepareBuffer>> _children;
+    // true when the result is a single sub-filter wrapped in WildcardQuery;
+    // false when result is an AndQuery of all children wrapped in
+    // WildcardQuery.
+    bool _single{true};
+  };
+
   static Query::ptr Prepare(const PrepareContext& ctx, std::string_view field,
                             const ByWildcardNgramOptions& options);
 
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final {
+    return std::make_unique<Buffer>(ctx, field(), options());
+  }
+
   Query::ptr prepare(const PrepareContext& ctx) const final {
-    return Prepare(ctx.Boost(Boost()), field(), options());
+    return DefaultPrepare(ctx);
   }
 };
 

@@ -20,6 +20,7 @@
 
 #include "lm_similarity.hpp"
 
+#include "basics/down_cast.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -49,6 +50,12 @@ void LMFieldCollector::collect(bytes_view in) {
   total_term_freq += total_term_freq_value;
 }
 
+void LMFieldCollector::collect(FieldCollector&& other) noexcept {
+  auto& rhs = sdb::basics::downCast<LMFieldCollector>(other);
+  docs_with_field += rhs.docs_with_field;
+  total_term_freq += rhs.total_term_freq;
+}
+
 void LMFieldCollector::write(DataOutput& out) const {
   out.WriteV64(docs_with_field);
   out.WriteV64(total_term_freq);
@@ -69,6 +76,11 @@ void LMTermCollector::collect(bytes_view in) {
     throw IoError{"input not read fully"};
   }
   total_term_freq += ttf;
+}
+
+void LMTermCollector::collect(TermCollector&& other) noexcept {
+  auto& rhs = sdb::basics::downCast<LMTermCollector>(other);
+  total_term_freq += rhs.total_term_freq;
 }
 
 void LMTermCollector::write(DataOutput& out) const {

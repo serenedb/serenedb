@@ -41,7 +41,7 @@ class PhraseQuery : public Filter::Query {
                 std::is_same_v<State, VariadicPhraseState>);
 
  public:
-  using states_t = StatesCache<State>;
+  using states_t = StatesCacheImpl<State>;
   using positions_t = std::vector<TermInterval>;
 
   // Returns features required for phrase filter

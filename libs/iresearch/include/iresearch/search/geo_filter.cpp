@@ -223,7 +223,7 @@ struct GeoState {
   ManagedVector<SeekCookie::ptr> states;
 };
 
-using GeoStates = StatesCache<GeoState>;
+using GeoStates = StatesCacheImpl<GeoState>;
 
 // Compiled GeoFilter
 template<typename Parser, typename Acceptor>

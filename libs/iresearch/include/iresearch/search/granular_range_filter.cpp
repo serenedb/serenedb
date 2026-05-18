@@ -547,7 +547,30 @@ void SetGranularTerm(ByGranularRangeOptions::terms& boundary,
   }
 }
 
-Filter::Query::ptr ByGranularRange::prepare(const PrepareContext& ctx,
+namespace {
+
+class Buffer final : public SampledMultiTermBuffer {
+ public:
+  Buffer(const PrepareContext& ctx, std::string_view field,
+         const ByGranularRangeOptions& options)
+    : SampledMultiTermBuffer{ctx, options.scored_terms_limit},
+      _field{field},
+      _options{&options} {}
+
+  void PrepareSegment(const SubReader& segment) final {
+    if (const auto* reader = segment.field(_field); reader) {
+      VisitImpl(segment, *reader, *_options, _visitor);
+    }
+  }
+
+ private:
+  std::string_view _field;
+  const ByGranularRangeOptions* _options;
+};
+
+}  // namespace
+
+Filter::Query::ptr ByGranularRange::Prepare(const PrepareContext& ctx,
                                             std::string_view field,
                                             const options_type& options) {
   const auto& rng = options.range;
@@ -568,34 +591,16 @@ Filter::Query::ptr ByGranularRange::prepare(const PrepareContext& ctx,
     }
   }
 
-  // object for collecting order stats
-  LimitedSampleCollector<TermFrequency> collector{
-    ctx.scorer ? options.scored_terms_limit : 0};
-  MultiTermQuery::States states{ctx.memory, ctx.index.size()};
-  MultiTermVisitor mtv{collector, states};
-
-  // iterate over the segments
-  for (const auto& segment : ctx.index) {
-    // get term dictionary for field
-    const TermReader* reader = segment.field(field);
-
-    if (!reader) {
-      continue;  // no such field in this reader
-    }
-
-    VisitImpl(segment, *reader, options, mtv);
+  Buffer buf{ctx, field, options};
+  for (auto& segment : ctx.index) {
+    buf.PrepareSegment(segment);
   }
+  return std::move(buf).Compile(ctx);
+}
 
-  if (states.empty()) {
-    return Query::empty();
-  }
-
-  MultiTermQuery::Stats stats{{ctx.memory}};
-  collector.score(ctx.index, ctx.scorer, stats);
-
-  return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),
-                                              std::move(stats), ctx.boost,
-                                              ScoreMergeType::Sum, size_t{1});
+std::unique_ptr<Filter::PrepareBuffer> ByGranularRange::CreateBuffer(
+  const PrepareContext& ctx) const {
+  return std::make_unique<Buffer>(ctx, field(), options());
 }
 
 void ByGranularRange::visit(const SubReader& segment, const TermReader& reader,

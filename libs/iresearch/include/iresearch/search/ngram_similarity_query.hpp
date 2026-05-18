@@ -30,7 +30,7 @@
 
 namespace irs {
 
-using NGramStates = StatesCache<NGramState>;
+using NGramStates = StatesCacheImpl<NGramState>;
 
 // Prepared ngram similarity query implementation
 class NGramSimilarityQuery : public Filter::Query {

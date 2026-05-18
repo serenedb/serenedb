@@ -632,6 +632,70 @@ TEST_P(TermFilterTestCase, by_term_boost) { ByTermSequentialBoost(); }
 
 TEST_P(TermFilterTestCase, by_term_cost) { ByTermSequentialCost(); }
 
+TEST_P(TermFilterTestCase, by_term_parallel_prepare_parity) {
+  // Build a multi-segment index so the parallel path is exercised against
+  // more than one SubReader. Two add_segment calls = two Commits = two
+  // segments (add_segments collapses to one Commit and one segment).
+  {
+    auto writer = open_writer(irs::kOmCreate);
+    tests::JsonDocGenerator gen_a(resource("simple_sequential.json"),
+                                  &tests::GenericJsonFieldFactory);
+    tests::JsonDocGenerator gen_b(resource("simple_sequential.json"),
+                                  &tests::GenericJsonFieldFactory);
+    add_segment(*writer, gen_a);
+    add_segment(*writer, gen_b);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_GE(rdr.size(), 2u);
+
+  std::vector<const irs::SubReader*> segments;
+  segments.reserve(rdr.size());
+  for (const auto& s : rdr) {
+    segments.push_back(&s);
+  }
+
+  const irs::ByTerm filter = MakeFilter("same", "xyz");
+
+  MaxMemoryCounter counter;
+  const irs::PrepareContext ctx{.index = rdr, .memory = counter};
+
+  // Sequential path -- the existing single-buffer pipeline.
+  auto seq = filter.prepare(ctx);
+  ASSERT_NE(nullptr, seq);
+
+  // Parallel-style path: two buffers each handle a disjoint half of the
+  // segments, then one is merged into the other and compiled.
+  auto buf_lhs = filter.CreateBuffer(ctx);
+  auto buf_rhs = filter.CreateBuffer(ctx);
+  ASSERT_NE(nullptr, buf_lhs);
+  ASSERT_NE(nullptr, buf_rhs);
+
+  for (size_t i = 0; i < segments.size(); ++i) {
+    auto& buf = (i & 1u) ? *buf_rhs : *buf_lhs;
+    buf.PrepareSegment(*segments[i]);
+  }
+  buf_lhs->Merge(std::move(*buf_rhs));
+  ASSERT_FALSE(buf_lhs->Empty());
+  auto par = std::move(*buf_lhs).Compile(ctx);
+  ASSERT_NE(nullptr, par);
+
+  // Both prepared queries must yield identical doc id sequences per segment.
+  for (const auto* segment : segments) {
+    auto docs_seq = seq->execute({.segment = *segment});
+    auto docs_par = par->execute({.segment = *segment});
+    while (true) {
+      const bool has_seq = docs_seq->next();
+      const bool has_par = docs_par->next();
+      ASSERT_EQ(has_seq, has_par);
+      if (!has_seq) {
+        break;
+      }
+      ASSERT_EQ(docs_seq->value(), docs_par->value());
+    }
+  }
+}
+
 TEST_P(TermFilterTestCase, visit) {
   // add segment
   {

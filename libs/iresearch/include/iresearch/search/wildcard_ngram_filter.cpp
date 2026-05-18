@@ -23,6 +23,7 @@
 
 #include "iresearch/search/wildcard_ngram_filter.hpp"
 
+#include "basics/down_cast.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/wildcard_analyzer.hpp"
 #include "iresearch/search/boolean_query.hpp"
@@ -176,6 +177,96 @@ constexpr size_t kDefaultScoredTermsLimit = 1024;
 
 }  // namespace
 
+ByWildcardNgram::Buffer::Buffer(const PrepareContext& ctx,
+                                std::string_view field,
+                                const ByWildcardNgramOptions& opts)
+  : _field{field}, _matcher{opts.matcher} {
+  auto& parts = opts.parts;
+  const auto size = parts.size();
+
+  if (size == 0) {
+    bytes_view token = opts.token;
+    if (token.size() != 1 && token.back() == 0xFF) {
+      _children.push_back(std::make_unique<ByTerm::Buffer>(ctx, field, token));
+    } else {
+      if (token.back() == 0xFF) {
+        token = kEmptyStringView<byte_type>;
+      }
+      _children.push_back(std::make_unique<ByPrefix::Buffer>(
+        ctx, field, token, kDefaultScoredTermsLimit));
+    }
+    _single = true;
+    return;
+  }
+
+  if (size == 1 && opts.has_pos) {
+    _children.push_back(ByPhrase::CreateFixedBuffer(ctx, field, parts[0]));
+    _single = true;
+    return;
+  }
+
+  _single = false;
+  if (opts.has_pos) {
+    _children.reserve(size);
+    for (const auto& part : parts) {
+      _children.push_back(ByPhrase::CreateFixedBuffer(ctx, field, part));
+    }
+  } else {
+    for (const auto& part : parts) {
+      for (const auto& info : part) {
+        _children.push_back(std::make_unique<ByTerm::Buffer>(
+          ctx, field, std::get<ByTermOptions>(info.part).term));
+      }
+    }
+  }
+}
+
+void ByWildcardNgram::Buffer::PrepareSegment(const SubReader& segment) {
+  for (auto& child : _children) {
+    child->PrepareSegment(segment);
+  }
+}
+
+void ByWildcardNgram::Buffer::Merge(PrepareBuffer&& other) {
+  auto& rhs = sdb::basics::downCast<Buffer>(other);
+  SDB_ASSERT(_children.size() == rhs._children.size());
+  for (size_t i = 0; i < _children.size(); ++i) {
+    _children[i]->Merge(std::move(*rhs._children[i]));
+  }
+}
+
+bool ByWildcardNgram::Buffer::Empty() const noexcept {
+  for (const auto& child : _children) {
+    if (child->Empty()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+Filter::Query::ptr ByWildcardNgram::Buffer::Compile(
+  const PrepareContext& ctx) && {
+  if (_single) {
+    auto child = std::move(_children.front());
+    auto inner = std::move(*child).Compile(ctx);
+    return memory::make_tracked<WildcardQuery>(ctx.memory, std::move(_matcher),
+                                               _field, std::move(inner));
+  }
+
+  AndQuery::queries_t queries{{ctx.memory}};
+  queries.reserve(_children.size());
+  for (auto& cbuf : _children) {
+    auto child = std::move(cbuf);
+    queries.emplace_back(std::move(*child).Compile(ctx));
+  }
+  const auto excl_start = queries.size();
+  auto conjunction = memory::make_tracked<AndQuery>(ctx.memory);
+  conjunction->prepare(ctx, ScoreMergeType::Sum, std::move(queries),
+                       excl_start);
+  return memory::make_tracked<WildcardQuery>(ctx.memory, std::move(_matcher),
+                                             _field, std::move(conjunction));
+}
+
 Filter::Query::ptr ByWildcardNgram::Prepare(
   const PrepareContext& ctx, std::string_view field,
   const ByWildcardNgramOptions& opts) {
@@ -191,7 +282,7 @@ Filter::Query::ptr ByWildcardNgram::Prepare(
       if (token.back() == 0xFF) {
         token = kEmptyStringView<byte_type>;
       }
-      p = ByPrefix::prepare(ctx, field, token, kDefaultScoredTermsLimit);
+      p = ByPrefix::Prepare(ctx, field, token, kDefaultScoredTermsLimit);
     }
   } else if (size == 1 && opts.has_pos) {
     p = ByPhrase::Prepare(ctx, field, parts[0]);

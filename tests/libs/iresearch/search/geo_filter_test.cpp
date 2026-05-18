@@ -60,6 +60,8 @@ struct CustomSort final : public irs::ScorerBase<void> {
 
     void collect(irs::bytes_view) final {}
 
+    void collect(irs::FieldCollector&&) final {}
+
     void reset() final {}
 
     void write(irs::DataOutput&) const final {}
@@ -81,6 +83,8 @@ struct CustomSort final : public irs::ScorerBase<void> {
     }
 
     void collect(irs::bytes_view) final {}
+
+    void collect(irs::TermCollector&&) final {}
 
     void reset() final {}
 

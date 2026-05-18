@@ -47,6 +47,9 @@ struct ByColumnExistenceOptions {
 class ByColumnExistence final
   : public FilterWithField<ByColumnExistenceOptions> {
  public:
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final;
+
   Query::ptr prepare(const PrepareContext& ctx) const final;
 };
 

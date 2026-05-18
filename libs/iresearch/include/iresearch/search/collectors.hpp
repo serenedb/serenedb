@@ -179,6 +179,8 @@ class FieldCollectors : public CollectorsBase<FieldCollectorWrapper> {
   // contains a matching 'term'
   void collect(const SubReader& segment, const TermReader& field) const;
 
+  void collect(FieldCollectors&& other) const;
+
   // Store collected index statistics into 'stats' of the
   // current 'filter'
   // stats out-parameter to store statistics for later use in
@@ -239,6 +241,8 @@ class TermCollectors : public CollectorsBase<TermCollectorWrapper> {
   // Note only called on a matched 'term' in the 'field' in the 'segment'
   void collect(const SubReader& segment, const TermReader& field,
                size_t term_idx, const AttributeProvider& attrs) const;
+
+  void collect(TermCollectors&& other) const;
 
   // Store collected index statistics into 'stats' of the
   // current 'filter'

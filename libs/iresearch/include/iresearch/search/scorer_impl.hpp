@@ -26,6 +26,7 @@
 #include <iterator>
 #include <type_traits>
 
+#include "basics/down_cast.h"
 #include "basics/misc.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
@@ -83,6 +84,11 @@ struct TermCollectorImpl final : TermCollector {
     }
 
     docs_with_term += docs_with_term_value;
+  }
+
+  void collect(TermCollector&& other) noexcept final {
+    auto& rhs = sdb::basics::downCast<TermCollectorImpl>(other);
+    docs_with_term += rhs.docs_with_term;
   }
 
   void write(DataOutput& out) const final { out.WriteV64(docs_with_term); }

@@ -121,7 +121,7 @@ field_visitor ByWildcard::visitor(bytes_view term) {
     });
 }
 
-Filter::Query::ptr ByWildcard::prepare(const PrepareContext& ctx,
+Filter::Query::ptr ByWildcard::Prepare(const PrepareContext& ctx,
                                        std::string_view field, bytes_view term,
                                        size_t scored_terms_limit) {
   bstring buf;
@@ -131,11 +131,35 @@ Filter::Query::ptr ByWildcard::prepare(const PrepareContext& ctx,
       return ByTerm::prepare(ctx, field, term);
     },
     [&, scored_terms_limit](bytes_view term) -> Query::ptr {
-      return ByPrefix::prepare(ctx, field, term, scored_terms_limit);
+      return ByPrefix::Prepare(ctx, field, term, scored_terms_limit);
     },
     [&, scored_terms_limit](bytes_view term) -> Query::ptr {
       return PrepareAutomatonFilter(ctx, field, FromWildcard(term),
                                     scored_terms_limit);
+    });
+}
+
+std::unique_ptr<Filter::PrepareBuffer> ByWildcard::CreateBuffer(
+  const PrepareContext& ctx) const {
+  auto sub_ctx = ctx;
+  sub_ctx.boost *= Boost();
+  bstring buf;
+  return ExecuteWildcard(
+    buf, options().term,
+    [&](bytes_view term) -> std::unique_ptr<PrepareBuffer> {
+      return std::make_unique<ByTerm::Buffer>(sub_ctx, field(), term);
+    },
+    [&](bytes_view term) -> std::unique_ptr<PrepareBuffer> {
+      return std::make_unique<ByPrefix::Buffer>(sub_ctx, field(), term,
+                                                options().scored_terms_limit);
+    },
+    [&](bytes_view term) -> std::unique_ptr<PrepareBuffer> {
+      auto acceptor = FromWildcard(term);
+      if (auto b = MakeAutomatonBuffer(sub_ctx, field(), std::move(acceptor),
+                                       options().scored_terms_limit)) {
+        return b;
+      }
+      return std::make_unique<EmptyBuffer>();
     });
 }
 

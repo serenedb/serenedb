@@ -77,6 +77,9 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
 
   Query::ptr PrepareImpl(const PrepareContext& ctx, uint32_t min_match) const;
 
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final;
+
  protected:
   bool equals(const Filter& rhs) const noexcept final;
 
@@ -151,6 +154,9 @@ class Not : public FilterWithType<Not>, public AllDocsProvider {
   bool empty() const { return nullptr == _filter; }
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
+
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final;
 
  protected:
   bool equals(const irs::Filter& rhs) const noexcept final;

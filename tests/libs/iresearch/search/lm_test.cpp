@@ -145,6 +145,49 @@ TEST(lm_test, jm_vs_dirichlet_not_equal) {
   ASSERT_FALSE(jm->equals(*dir));
 }
 
+TEST(lm_test, field_collector_merge) {
+  irs::LMFieldCollector a;
+  a.docs_with_field = 11;
+  a.total_term_freq = 22;
+
+  irs::LMFieldCollector b;
+  b.docs_with_field = 7;
+  b.total_term_freq = 13;
+
+  irs::LMFieldCollector c;
+  c.docs_with_field = 4;
+  c.total_term_freq = 9;
+
+  b.collect(std::move(c));
+
+  ASSERT_EQ(a.docs_with_field, b.docs_with_field);
+  ASSERT_EQ(a.total_term_freq, b.total_term_freq);
+
+  irs::LMFieldCollector fresh;
+  b.collect(std::move(fresh));
+
+  ASSERT_EQ(a.docs_with_field, b.docs_with_field);
+  ASSERT_EQ(a.total_term_freq, b.total_term_freq);
+}
+
+TEST(lm_test, term_collector_merge) {
+  irs::LMTermCollector a;
+  a.total_term_freq = 22;
+
+  irs::LMTermCollector b;
+  b.total_term_freq = 13;
+
+  irs::LMTermCollector c;
+  c.total_term_freq = 9;
+
+  b.collect(std::move(c));
+  ASSERT_EQ(a.total_term_freq, b.total_term_freq);
+
+  irs::LMTermCollector fresh;
+  b.collect(std::move(fresh));
+  ASSERT_EQ(a.total_term_freq, b.total_term_freq);
+}
+
 // ---------------------------------------------------------------------------
 // End-to-end scoring on a tiny fixture index.
 //

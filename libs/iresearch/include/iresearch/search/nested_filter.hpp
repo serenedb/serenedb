@@ -94,6 +94,9 @@ struct ByNestedOptions {
 class ByNestedFilter final : public FilterWithOptions<ByNestedOptions> {
  public:
   Query::ptr prepare(const PrepareContext& ctx) const final;
+
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final;
 };
 
 }  // namespace irs

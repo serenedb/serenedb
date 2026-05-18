@@ -14863,6 +14863,51 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
   }
 }
 
+TEST_P(BooleanFilterTestCase, and_create_buffer_parity) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+  ASSERT_NE(0u, rdr.size());
+
+  // Multi-field And: two ByTerms on different fields -- bypasses ByTerm
+  // coalescing and exercises the CompoundBuffer code path.
+  irs::And root;
+  Append<irs::ByTerm>(root, "duplicated", "abcd");
+  Append<irs::ByTerm>(root, "same", "xyz");
+
+  MaxMemoryCounter counter;
+  const irs::PrepareContext ctx{.index = rdr, .memory = counter};
+
+  auto seq = root.prepare(ctx);
+  ASSERT_NE(nullptr, seq);
+
+  auto buf = root.CreateBuffer(ctx);
+  ASSERT_NE(nullptr, buf);
+  for (const auto& segment : rdr) {
+    buf->PrepareSegment(segment);
+  }
+  ASSERT_FALSE(buf->Empty());
+  auto par = std::move(*buf).Compile(ctx);
+  ASSERT_NE(nullptr, par);
+
+  for (const auto& segment : rdr) {
+    auto docs_seq = seq->execute({.segment = segment});
+    auto docs_par = par->execute({.segment = segment});
+    while (true) {
+      const bool has_seq = docs_seq->next();
+      const bool has_par = docs_par->next();
+      ASSERT_EQ(has_seq, has_par);
+      if (!has_seq) {
+        break;
+      }
+      ASSERT_EQ(docs_seq->value(), docs_par->value());
+    }
+  }
+}
+
 TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
   // add segment
   {

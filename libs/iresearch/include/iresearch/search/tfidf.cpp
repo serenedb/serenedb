@@ -81,6 +81,11 @@ struct TFIDFFieldCollector final : FieldCollector {
     docs_with_field += docs_with_field_value;
   }
 
+  void collect(FieldCollector&& other) noexcept final {
+    auto& rhs = sdb::basics::downCast<TFIDFFieldCollector>(other);
+    docs_with_field += rhs.docs_with_field;
+  }
+
   void write(DataOutput& out) const final { out.WriteV64(docs_with_field); }
 };
 

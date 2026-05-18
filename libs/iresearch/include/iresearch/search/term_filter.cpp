@@ -22,112 +22,76 @@
 
 #include "term_filter.hpp"
 
+#include "basics/down_cast.h"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/term_query.hpp"
 
 namespace irs {
-namespace {
 
-// Filter visitor for term queries
-class TermVisitor : private util::Noncopyable {
- public:
-  TermVisitor(const TermCollectors& term_stats, TermQuery::States& states)
-    : _term_stats(term_stats), _states(states) {}
-
-  void Prepare(const SubReader& segment, const TermReader& field,
-               const SeekTermIterator& terms) noexcept {
-    _segment = &segment;
-    _reader = &field;
-    _terms = &terms;
-  }
-
-  void Visit(score_t /*boost*/) {
-    // collect statistics
-    SDB_ASSERT(_segment && _reader && _terms);
-    _term_stats.collect(*_segment, *_reader, 0, *_terms);
-
-    // Cache term state in prepared query attributes.
-    // Later, using cached state we could easily "jump" to
-    // postings without relatively expensive FST traversal
-    auto& state = _states.insert(*_segment);
-    state.reader = _reader;
-    state.cookie = _terms->cookie();
-  }
-
- private:
-  const TermCollectors& _term_stats;
-  TermQuery::States& _states;
-  const SubReader* _segment{};
-  const TermReader* _reader{};
-  const SeekTermIterator* _terms{};
-};
-
-template<typename Visitor>
-void VisitImpl(const SubReader& segment, const TermReader& field,
-               bytes_view term, Visitor& visitor) {
-  // find term
+void ByTerm::visit(const SubReader& segment, const TermReader& field,
+                   bytes_view term, FilterVisitor& visitor) {
   auto terms = field.iterator(SeekMode::RandomOnly);
-
   if (!terms) [[unlikely]] {
     return;
   }
   if (!terms->seek(term)) {
     return;
   }
-
   visitor.Prepare(segment, field, *terms);
-
-  // read term attributes
   terms->read();
-
   visitor.Visit(kNoBoost);
 }
 
-}  // namespace
+void ByTerm::Buffer::PrepareSegment(const SubReader& segment) {
+  const auto* reader = segment.field(_field);
+  if (!reader) {
+    return;
+  }
+  _field_stats.collect(segment, *reader);
 
-void ByTerm::visit(const SubReader& segment, const TermReader& field,
-                   bytes_view term, FilterVisitor& visitor) {
-  VisitImpl(segment, field, term, visitor);
+  auto terms = reader->iterator(SeekMode::RandomOnly);
+  if (!terms) [[unlikely]] {
+    return;
+  }
+  if (!terms->seek(_term)) {
+    return;
+  }
+  terms->read();
+  _term_stats.collect(segment, *reader, 0, *terms);
+  auto& state = _states.insert(segment);
+  state.reader = reader;
+  state.cookie = terms->cookie();
+}
+
+void ByTerm::Buffer::Merge(PrepareBuffer&& other) {
+  auto& rhs = sdb::basics::downCast<Buffer>(other);
+  _field_stats.collect(std::move(rhs._field_stats));
+  _term_stats.collect(std::move(rhs._term_stats));
+  _states.Merge(std::move(rhs._states));
+}
+
+Filter::Query::ptr ByTerm::Buffer::Compile(const PrepareContext& ctx) && {
+  bstring stats(GetStatsSize(ctx.scorer), 0);
+  _term_stats.finish(stats.data(), 0, _field_stats, ctx.index);
+  return memory::make_tracked<TermQuery>(ctx.memory, std::move(_states),
+                                         std::move(stats), ctx.boost);
 }
 
 Filter::Query::ptr ByTerm::prepare(const PrepareContext& ctx,
                                    std::string_view field, bytes_view term) {
-  TermQuery::States states{ctx.memory, ctx.index.size()};
-  FieldCollectors field_stats{ctx.scorer};
-  TermCollectors term_stats{ctx.scorer, 1};
-
-  TermVisitor visitor(term_stats, states);
-
-  // iterate over the segments
+  Buffer buf{ctx, field, term};
   for (const auto& segment : ctx.index) {
-    // get field
-    const auto* reader = segment.field(field);
-
-    if (!reader) {
-      continue;
-    }
-
-    field_stats.collect(segment, *reader);
-    // collect field statistics once per segment
-
-    VisitImpl(segment, *reader, term, visitor);
+    buf.PrepareSegment(segment);
   }
 
 #ifndef SDB_GTEST  // TODO(mbkkt) adjust tests
-  if (states.empty()) {
+  if (buf.Empty()) {
     return Query::empty();
   }
 #endif
 
-  bstring stats(GetStatsSize(ctx.scorer), 0);
-  auto* stats_buf = stats.data();
-
-  term_stats.finish(stats_buf, 0, field_stats, ctx.index);
-
-  return memory::make_tracked<TermQuery>(ctx.memory, std::move(states),
-                                         std::move(stats), ctx.boost);
+  return std::move(buf).Compile(ctx);
 }
 
 }  // namespace irs

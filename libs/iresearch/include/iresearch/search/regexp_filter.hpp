@@ -47,15 +47,18 @@ struct ByRegexpOptions : ByRegexpFilterOptions {
 
 class ByRegexp final : public FilterWithField<ByRegexpOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
+  static Query::ptr Prepare(const PrepareContext& ctx, std::string_view field,
                             bytes_view pattern, size_t scored_terms_limit,
                             RegexpSyntax syntax = RegexpSyntax::Perl);
 
   static field_visitor visitor(bytes_view pattern,
                                RegexpSyntax syntax = RegexpSyntax::Perl);
 
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final;
+
   Query::ptr prepare(const PrepareContext& ctx) const final {
-    return prepare(ctx.Boost(Boost()), field(), options().pattern,
+    return Prepare(ctx.Boost(Boost()), field(), options().pattern,
                    options().scored_terms_limit, options().syntax);
   }
 };

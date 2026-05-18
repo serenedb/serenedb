@@ -206,41 +206,63 @@ void Utf8TransitionsBuilder::Finish(automaton& a, automaton::StateId from) {
   a.EmplaceArc(_rho_states[3], kRhoLabel, _rho_states[2]);
 }
 
-Filter::Query::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
-                                          std::string_view field,
-                                          const automaton& acceptor,
-                                          size_t scored_terms_limit) {
-  auto matcher = MakeAutomatonMatcher(acceptor);
+namespace {
 
-  if (fst::kError == matcher.Properties(0)) {
+class AutomatonBuffer final : public SampledMultiTermBuffer {
+ public:
+  AutomatonBuffer(const PrepareContext& ctx, std::string_view field,
+                  automaton&& acceptor, size_t scored_terms_limit)
+    : SampledMultiTermBuffer{ctx, scored_terms_limit},
+      _field{field},
+      _acceptor{std::make_unique<automaton>(std::move(acceptor))},
+      _matcher{MakeAutomatonMatcher(*_acceptor)} {}
+
+  void PrepareSegment(const SubReader& segment) final {
+    if (const auto* reader = segment.field(_field); reader) {
+      Visit(segment, *reader, _matcher, _visitor);
+    }
+  }
+
+  automaton_table_matcher& matcher() noexcept { return _matcher; }
+
+ private:
+  std::string_view _field;
+  std::unique_ptr<automaton> _acceptor;
+  automaton_table_matcher _matcher;
+};
+
+}  // namespace
+
+std::unique_ptr<Filter::PrepareBuffer> MakeAutomatonBuffer(
+  const PrepareContext& ctx, std::string_view field, automaton&& acceptor,
+  size_t scored_terms_limit) {
+  auto buf = std::make_unique<AutomatonBuffer>(ctx, field, std::move(acceptor),
+                                               scored_terms_limit);
+  if (fst::kError == buf->matcher().Properties(0)) {
     SDB_ERROR(
       "xxxxx", sdb::Logger::IRESEARCH,
       absl::StrCat("Expected deterministic, epsilon-free acceptor, got the "
                    "following properties ",
-                   matcher.GetFst().Properties(
+                   buf->matcher().GetFst().Properties(
                      automaton_table_matcher::kFstProperties, false)));
+    return nullptr;
+  }
+  return buf;
+}
 
+Filter::Query::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
+                                          std::string_view field,
+                                          const automaton& acceptor,
+                                          size_t scored_terms_limit) {
+  auto buf =
+    MakeAutomatonBuffer(ctx, field, automaton{acceptor}, scored_terms_limit);
+  if (!buf) {
     return Filter::Query::empty();
   }
-
-  // object for collecting order stats
-  LimitedSampleCollector<TermFrequency> collector(
-    ctx.scorer ? scored_terms_limit : 0);
-  MultiTermQuery::States states{ctx.memory, ctx.index.size()};
-  MultiTermVisitor mtv{collector, states};
-
-  for (const auto& segment : ctx.index) {
-    if (const auto* reader = segment.field(field); reader) {
-      Visit(segment, *reader, matcher, mtv);
-    }
+  for (auto& segment : ctx.index) {
+    buf->PrepareSegment(segment);
   }
-
-  MultiTermQuery::Stats stats{{ctx.memory}};
-  collector.score(ctx.index, ctx.scorer, stats);
-
-  return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),
-                                              std::move(stats), ctx.boost,
-                                              ScoreMergeType::Sum, size_t{1});
+  return std::move(*buf).Compile(ctx);
 }
 
 }  // namespace irs

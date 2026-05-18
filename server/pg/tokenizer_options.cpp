@@ -29,31 +29,32 @@
 
 namespace sdb::pg::tokenizer_options {
 
-void CheckFileExists(std::string_view name) {
-  if (!std::filesystem::exists(name)) {
+void CheckFileExists(std::string_view option, std::string_view path) {
+  if (!std::filesystem::exists(path)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("File \"", name, "\" does not exist"));
+                    ERR_MSG("File \"", path, "\" referenced by option \"",
+                            option, "\" does not exist"));
   }
 }
 
-void CheckCase(std::string_view value) {
+void CheckCase(std::string_view option, std::string_view value) {
   if (!magic_enum::enum_cast<irs::Case>(value, magic_enum::case_insensitive)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("invalid value in \"", kCase.name, "\" parameter"),
+                    ERR_MSG("invalid value in \"", option, "\" parameter"),
                     ERR_HINT(kCase.description));
   }
 }
 
-void CheckThreshold(double value) {
+void CheckThreshold(std::string_view option, double value) {
   if (value < 0. || value > 1.) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("invalid value in \"", kThreshold.name,
+                    ERR_MSG("invalid value in \"", option,
                             "\" parameter. Should be in [0, 1]"),
                     ERR_HINT(kThreshold.description));
   }
 }
 
-void CheckTemplate(std::string_view value) {
+void CheckTemplate(std::string_view /*option*/, std::string_view value) {
   for (const auto& group : kTokenizerSubgroups) {
     if (group.name == value) {
       return;
@@ -63,17 +64,10 @@ void CheckTemplate(std::string_view value) {
                   ERR_MSG("Invalid type of text search dictionary"));
 }
 
-void CheckNumHashes(int value) {
-  if (value <= 0) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("The number of hashes should be positive number"));
-  }
-}
-
-void CheckNgramSize(int value) {
+void CheckNgramSize(std::string_view option, int value) {
   if (value < 2) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("ngramsize must be at least 2"),
+                    ERR_MSG("\"", option, "\" must be at least 2"),
                     ERR_HINT(kNgramSize.description));
   }
 }

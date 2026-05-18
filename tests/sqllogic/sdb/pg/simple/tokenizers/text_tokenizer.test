@@ -160,7 +160,7 @@ CREATE TEXT SEARCH DICTIONARY t_err14(
     maxgram = 3
 )
 ----
-db error: ERROR: invalid input syntax for type integer: "abc"
+db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "mingram": "abc"
 
 
 statement error
@@ -170,7 +170,7 @@ CREATE TEXT SEARCH DICTIONARY t_err15(
     maxgram = 'three'
 )
 ----
-db error: ERROR: invalid input syntax for type integer: "three"
+db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "maxgram": "three"
 
 
 statement error
@@ -181,7 +181,7 @@ CREATE TEXT SEARCH DICTIONARY t_err16(
     numhashes = 'two'
 )
 ----
-db error: ERROR: invalid input syntax for type integer: "two"
+db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "numhashes": "two"
 
 
 # --- Invalid threshold (out of range 0.0 to 1.0) ---
@@ -229,6 +229,61 @@ SELECT ts_lexize('t1', 'a QUICK Brown FoX');
 ----
 ts_lexize
 {a,QUICK,Brown,FoX}
+
+
+# --- ts_lexize array overload ---
+# Concatenates tokens from each element in input order.
+
+query
+SELECT ts_lexize('t1', ARRAY['a QUICK Brown', 'FoX jumps']);
+----
+ts_lexize
+{a,QUICK,Brown,FoX,jump}
+
+
+# Empty array -> empty result (no tokens to concatenate).
+query
+SELECT ts_lexize('t1', ARRAY[]::VARCHAR[]);
+----
+ts_lexize
+{}
+
+
+# Single-element array equals the scalar form.
+query
+SELECT ts_lexize('t1', ARRAY['a QUICK Brown FoX']);
+----
+ts_lexize
+{a,QUICK,Brown,FoX}
+
+
+# NULL elements are skipped (treated as empty contribution).
+query
+SELECT ts_lexize('t1', ARRAY['Alpha Beta', NULL, 'Gamma']);
+----
+ts_lexize
+{Alpha,Beta,Gamma}
+
+
+# NULL array yields NULL output (per SPECIAL_HANDLING).
+query
+SELECT ts_lexize('t1', NULL::VARCHAR[]) IS NULL;
+----
+?column?
+t
+
+
+# NULL dict name yields NULL output.
+query
+SELECT ts_lexize(NULL::VARCHAR, ARRAY['Hello']) IS NULL;
+----
+?column?
+t
+
+
+# Non-existent dict raises -- same error as the scalar overload.
+statement error
+SELECT ts_lexize('does_not_exist', ARRAY['Hello']);
 
 
 # --- case = upper ---
@@ -1700,7 +1755,7 @@ CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram1(
     tokenizer_delimiter = ' '
 )
 ----
-db error: ERROR: ngramsize must be at least 2
+db error: ERROR: "ngramsize" must be at least 2
 HINT: N-gram size for wildcard prefix indexing (minimum 2)
 
 
@@ -1714,7 +1769,7 @@ CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram0(
     tokenizer_delimiter = ' '
 )
 ----
-db error: ERROR: ngramsize must be at least 2
+db error: ERROR: "ngramsize" must be at least 2
 HINT: N-gram size for wildcard prefix indexing (minimum 2)
 
 
@@ -1728,7 +1783,7 @@ CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram_str(
     tokenizer_delimiter = ' '
 )
 ----
-db error: ERROR: invalid input syntax for type integer: "three"
+db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "ngramsize": "three"
 
 
 # --- Invalid: option not applicable to wildcard ---
@@ -1889,7 +1944,7 @@ CREATE TEXT SEARCH DICTIONARY t_gp_err3(
     maxcells = 'many'
 )
 ----
-db error: ERROR: invalid input syntax for type integer: "many"
+db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "maxcells": "many"
 
 
 # --- Error: invalid boolean for optimizeforspace ---

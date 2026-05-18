@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "connector/duckdb_scan_base.hpp"
+#include "connector/highlight/highlight_types.h"
 #include "connector/index_source.h"
 #include "connector/offsets_collector.hpp"
 #include "connector/search_pk_lookup.h"
@@ -62,22 +63,22 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   // `hits` is sized to BlockSize(K) at top-K execute; the collector writes
   // `(score, doc, segment_idx)` directly into it. We extract scores into
   // `topk_scores` for the contiguous memcpy fast path on the score output
-  // column; `hits` itself is kept around for OFFSETS dispatch (the seg/doc
+  // column; `hits` itself is kept around for ts_offsets dispatch (the seg/doc
   // walk uses ScoreDoc.segment_idx + .doc directly).
   std::vector<irs::ScoreDoc> hits;
   std::vector<float> topk_scores;
   size_t topk_offset = 0;
   bool topk_executed = false;
 
-  // Reusable scratch for LookupSegmentsValues / WalkSegmentsSorted -- avoids
+  // Reusable scratch for LookupSegmentsValues / VisitSegmentsSorted -- avoids
   // per-call heap alloc. Single-threaded usage (top-K execute then pagination
   // are serialised).
   std::vector<uint32_t> lookup_scratch;
 
-  // Populated only when SearchScan requests OFFSETS columns.
-  std::vector<duckdb::idx_t> offsets_output_idx;
-  std::vector<PerFieldState> offsets_field_state;
-  std::vector<std::vector<int64_t>> offsets_doc_scratch;
+  // Populated only when SearchScan requests ts_offsets columns. All
+  // entries are stored-offsets
+  std::vector<FieldEntry> offsets_entries;
+  std::vector<highlight::HitRange> offsets_doc_scratch;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(

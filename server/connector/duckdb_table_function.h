@@ -134,14 +134,10 @@ struct SearchScan : ScanSource {
   // pruning is engaged at runtime iff this matches `scorer`.
   std::optional<catalog::ScorerOptions> wand_scorer;
 
-  // Optional: positions/offsets output. Each entry records the catalog
-  // column whose offsets will be emitted, and a per-doc limit on the
-  // number of offset pairs. The runtime produces one
-  // LIST(BIGINT) output column per entry, in this vector's order.
-  // Empty when no OFFSETS() projection was claimed.
   struct OffsetsRequest {
     catalog::Column::Id column_id;
-    size_t limit = 0;
+    size_t limit = std::numeric_limits<size_t>::max();
+    duckdb::idx_t get_col_idx = 0;
   };
   std::vector<OffsetsRequest> offsets;
 

@@ -4436,7 +4436,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TsqueryPhraseFunction) {
   *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>(0, 0).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"hello"});
-  phrase.mutable_options()->push_back<irs::ByTermOptions>(4, 4).term =
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"world"});
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "

@@ -24,6 +24,7 @@
 #include <absl/strings/internal/damerau_levenshtein_distance.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <absl/strings/str_split.h>
 
 #include <algorithm>
 #include <duckdb/common/named_parameter_map.hpp>
@@ -45,17 +46,70 @@ using Options = containers::NodeHashMap<std::string, OptionEntry>;
 struct OptionsContext {
   std::string_view operation;
   std::function<void(std::string)> notice;
+  // Appended to "unrecognized option" errors. Empty in scalar-function
+  // contexts where the WITH-syntax suggestion would be misleading.
+  std::string_view help_hint;
 };
 
 class OptionsParser {
  public:
-  OptionsParser(const duckdb::named_parameter_map_t& options,
-                const OptionGroup& option_group, OptionsContext context)
+  static Options MakeOptions(std::string_view text) {
+    Options out;
+    for (std::string_view entry :
+         absl::StrSplit(text, ',', absl::SkipWhitespace())) {
+      auto kv = absl::StrSplit(entry, absl::MaxSplits('=', 1));
+      auto it = kv.begin();
+      auto key_raw = absl::StripAsciiWhitespace(*it++);
+      if (it == kv.end()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("option \"", key_raw, "\" has no value"),
+                        ERR_HINT("Use Key=Value syntax."));
+      }
+      auto value_raw = absl::StripAsciiWhitespace(*it);
+      if (value_raw.size() >= 2 &&
+          ((value_raw.front() == '"' && value_raw.back() == '"') ||
+           (value_raw.front() == '\'' && value_raw.back() == '\''))) {
+        value_raw = value_raw.substr(1, value_raw.size() - 2);
+      }
+      auto [_, inserted] = out.try_emplace(
+        absl::AsciiStrToLower(key_raw),
+        std::make_unique<duckdb::Value>(std::string{value_raw}));
+      if (!inserted) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("conflicting or redundant options"));
+      }
+    }
+    return out;
+  }
+
+  OptionsParser(Options options, const OptionGroup& option_group,
+                OptionsContext context)
     : _operation{context.operation},
+      _help_hint{context.help_hint},
       _notice{std::move(context.notice)},
+      _options{std::move(options)},
       _option_group{option_group} {
-    MakeOptions(options);
     HandleHelp();
+  }
+
+  OptionsParser(duckdb::named_parameter_map_t named_params,
+                const OptionGroup& option_group, OptionsContext context)
+    : OptionsParser{ConvertMap(std::move(named_params)), option_group,
+                    std::move(context)} {}
+
+ private:
+  static Options ConvertMap(duckdb::named_parameter_map_t named_params) {
+    Options out;
+    out.reserve(named_params.size());
+    for (auto&& [name, value] : named_params) {
+      auto [_, inserted] = out.try_emplace(
+        name, std::make_unique<duckdb::Value>(std::move(value)));
+      if (!inserted) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("conflicting or redundant options"));
+      }
+    }
+    return out;
   }
 
  protected:
@@ -79,13 +133,13 @@ class OptionsParser {
       }
       if constexpr (!std::holds_alternative<std::monostate>(Info.constraint)) {
         if constexpr (kIsString) {
-          // ConstraintFunction stores void(*)(string_view); string converts
-          // implicitly.
-          std::get<void (*)(std::string_view)>(Info.constraint)(
-            std::string_view{*value});
+          std::get<void (*)(std::string_view, std::string_view)>(
+            Info.constraint)(Info.name, std::string_view{*value});
         } else {
-          SDB_ASSERT(std::holds_alternative<void (*)(T)>(Info.constraint));
-          std::get<void (*)(T)>(Info.constraint)(*value);
+          SDB_ASSERT((std::holds_alternative<void (*)(std::string_view, T)>(
+            Info.constraint)));
+          std::get<void (*)(std::string_view, T)>(Info.constraint)(Info.name,
+                                                                   *value);
         }
       }
       return *value;
@@ -256,16 +310,16 @@ class OptionsParser {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
           ERR_MSG("option \"", name, "\" is not applicable in this context"),
-          ERR_HINT("Use WITH (HELP) to see available options"));
+          ERR_HINT(_help_hint));
       }
       auto hint = FindClosestOption(known_names, name);
       auto msg =
         hint.empty()
-          ? absl::StrCat("option \"", name, "\" not recognized")
-          : absl::StrCat("option \"", name,
+          ? absl::StrCat(_operation, ": option \"", name, "\" not recognized")
+          : absl::StrCat(_operation, ": option \"", name,
                          "\" not recognized, did you mean \"", hint, "\"?");
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR), ERR_MSG(msg),
-                      ERR_HINT("Use WITH (HELP) to see available options"));
+                      ERR_HINT(_help_hint));
     }
   }
 
@@ -298,6 +352,7 @@ class OptionsParser {
   }
 
   std::string _operation;
+  std::string _help_hint;
   std::function<void(std::string)> _notice;
   Options _options;
   const OptionGroup& _option_group;

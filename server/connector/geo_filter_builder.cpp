@@ -33,13 +33,13 @@
 #include "catalog/geo_validate.h"
 #include "catalog/mangling.h"
 #include "functions/search.h"
+#include "functions/ts_common.hpp"
 #include "functions/vector.h"
 #include "geo/coding.h"
 #include "geo/geo_json.h"
 #include "geo/shape_container.h"
 #include "geo/wkb.h"
 #include "search_filter_builder.hpp"
-#include "ts_common.hpp"
 
 namespace sdb::connector {
 namespace {

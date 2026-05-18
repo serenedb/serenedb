@@ -30,10 +30,10 @@
 
 #include "basics/assert.h"
 #include "catalog/mangling.h"
-#include "functions/search.h"
-#include "functions/string.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "search.h"
+#include "string.h"
 #include "ts_common.hpp"
 
 namespace sdb::connector {
@@ -99,9 +99,6 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b'). "
     "INTEGER / INTEGER[] gap allowed between text args.";
-  // ts_phrase is registered with at least one VARCHAR arg (plus variadic
-  // ANY tail), so DuckDB's function resolver rejects empty calls at
-  // bind time before we get here.
   SDB_ASSERT(!func.children.empty());
 
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
@@ -247,8 +244,6 @@ void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
                    PhraseGap{});
 }
 
-// Expression-level wrapper for `##`: extracts the constant Value from
-// `expr` (unwrapping any TSQUERY casts) and delegates to ParsePhraseGap.
 PhraseGap ParsePhraseSeqGap(const duckdb::Expression& expr) {
   static constexpr std::string_view kHint =
     "Use a literal INTEGER (e.g. ts_phrase('a') ## 1 ## 'b') or a "
@@ -264,6 +259,44 @@ PhraseGap ParsePhraseSeqGap(const duckdb::Expression& expr) {
 
 namespace {
 
+PhraseGap ParseTsqueryPhraseDistance(const duckdb::Expression& expr) {
+  static constexpr std::string_view kHint =
+    "Use a literal positive INTEGER (e.g. tsquery_phrase(q1, q2, 3)). "
+    "Distance follows PG semantics: 1 = adjacent.";
+  const auto& unwrapped = UnwrapTSQueryCast(expr);
+  const auto* val = TryGetConstant(unwrapped);
+  if (!val) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("tsquery_phrase distance must be a constant"),
+                    ERR_HINT(kHint));
+  }
+  const auto id = val->type().id();
+  if (id == duckdb::LogicalTypeId::LIST || id == duckdb::LogicalTypeId::ARRAY) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("tsquery_phrase distance must be a scalar INTEGER, got "
+              "LIST/ARRAY"),
+      ERR_HINT(kHint));
+  }
+  duckdb::Value out;
+  if (val->IsNull() || !val->type().IsNumeric() ||
+      !val->DefaultTryCastAs(duckdb::LogicalType::BIGINT, out,
+                             /*error_message=*/nullptr, /*strict=*/true)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("tsquery_phrase distance must be a non-null integer, got ",
+              val->ToString(), " of type ", val->type().ToString()),
+      ERR_HINT(kHint));
+  }
+  const auto raw = out.GetValue<int64_t>();
+  if (raw < 1) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("tsquery_phrase distance must be >= 1, got ", raw),
+                    ERR_HINT(kHint));
+  }
+  return {.min = static_cast<size_t>(raw), .max = static_cast<size_t>(raw)};
+}
+
 bool IsPhraseSeqGapType(const duckdb::Expression& expr) {
   const auto& type = expr.return_type;
   const auto id = type.id();
@@ -271,20 +304,18 @@ bool IsPhraseSeqGapType(const duckdb::Expression& expr) {
          id == duckdb::LogicalTypeId::ARRAY;
 }
 
-// True iff `expr` is a ## FunctionExpression.
 bool IsPhraseSeqNode(const duckdb::Expression& expr) {
   const auto& unwrapped = UnwrapTSQueryCast(expr);
   if (unwrapped.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return false;
   }
   const auto& f = unwrapped.Cast<duckdb::BoundFunctionExpression>();
-  return f.function.name == kTSQueryPhraseSeq;
+  return f.function.name == kTSQueryPhraseSeq ||
+         f.function.name == kTsqueryPhrase;
 }
 
 }  // namespace
 
-// Attaches `next` (a part OR a gap-bearing sub-expression) to `seq`,
-// using the `pending` gap if any, defaulting to "adjacent" otherwise.
 void AttachPart(PhraseSeq& seq, const duckdb::Expression& next) {
   if (IsPhraseSeqNode(next)) {
     PhraseSeq sub;
@@ -329,6 +360,24 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
     return;
   }
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
+  if (func.function.name == kTsqueryPhrase) {
+    SDB_ASSERT(func.children.size() == 2 || func.children.size() == 3);
+    FlattenPhraseSeq(*func.children[0], seq);
+    if (func.children.size() == 3) {
+      if (seq.pending) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("tsquery_phrase distance follows a pending phrase gap"),
+          ERR_HINT("A `##` gap must be followed by a part, not by another "
+                   "tsquery_phrase distance."));
+      }
+      seq.pending = ParseTsqueryPhraseDistance(*func.children[2]);
+    }
+    AttachPart(seq, *func.children[1]);
+    return;
+  }
+  // `##` operator: left-associative binary tree.
+  SDB_ASSERT(func.function.name == kTSQueryPhraseSeq);
   SDB_ASSERT(func.children.size() == 2);
   FlattenPhraseSeq(*func.children[0], seq);
   const auto& right = *func.children[1];

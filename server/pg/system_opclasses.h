@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,14 +20,29 @@
 
 #pragma once
 
-#include <duckdb/common/named_parameter_map.hpp>
+#include <absl/functional/function_ref.h>
 
-#include "pg/connection_context.h"
+#include <memory>
+#include <string_view>
+
+#include "catalog/opclass.h"
 
 namespace sdb::pg {
 
-void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
-                     std::string_view schema, bool if_not_exists,
-                     const duckdb::named_parameter_map_t& options);
+// Populate the in-memory system opclass map. Mirrors InitSystemViews: the
+// entries live for the process lifetime, are not persisted, and shadow no
+// user objects. Safe to call once at startup before any connection is
+// accepted.
+void InitSystemOpClasses();
+
+// Lookup a system opclass by (schema, name). Returns nullptr if absent.
+std::shared_ptr<catalog::OpClass> GetSystemOpClass(std::string_view schema,
+                                                   std::string_view name);
+
+// Visit every system opclass in `schema`. The visitor must not retain a
+// reference past the call.
+void VisitSystemOpClasses(
+  std::string_view schema,
+  absl::FunctionRef<void(const catalog::OpClass&)> visitor);
 
 }  // namespace sdb::pg

@@ -34,7 +34,7 @@
 #include <variant>
 
 #include "catalog/catalog.h"
-#include "catalog/tokenizer.h"
+#include "catalog/opclass.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/ts_common.hpp"
 #include "pg/connection_context.h"
@@ -45,11 +45,11 @@
 namespace sdb::connector {
 namespace {
 
-std::shared_ptr<catalog::Tokenizer> LookupTokenizerDict(
+std::shared_ptr<catalog::OpClass> LookupTokenizerDict(
   const catalog::Snapshot& snapshot, sdb::ObjectId db_id,
   std::string_view current_schema, std::string_view dict_name) {
   auto name = pg::ParseObjectName(dict_name, current_schema);
-  auto dict = snapshot.GetTokenizer(db_id, name.schema, name.relation);
+  auto dict = snapshot.GetOpClass(db_id, name.schema, name.relation);
   if (!dict) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -58,8 +58,8 @@ std::shared_ptr<catalog::Tokenizer> LookupTokenizerDict(
   return dict;
 }
 
-catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
-  catalog::Tokenizer& dict) {
+catalog::OpClass::TokenizerWrapper AcquireTokenizer(
+  catalog::OpClass& dict) {
   auto result = dict.GetTokenizer();
   if (!result) {
     THROW_SQL_ERROR(
@@ -81,7 +81,7 @@ struct DynamicCtx {
 };
 
 struct TsLexizeBindData final : public duckdb::FunctionData {
-  std::variant<DynamicCtx, std::shared_ptr<catalog::Tokenizer>> state;
+  std::variant<DynamicCtx, std::shared_ptr<catalog::OpClass>> state;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<TsLexizeBindData>(*this);
@@ -92,14 +92,14 @@ struct TsLexizeBindData final : public duckdb::FunctionData {
 };
 
 struct TsLexizeLocalState final : public duckdb::FunctionLocalState {
-  catalog::Tokenizer::TokenizerWrapper wrapper;
+  catalog::OpClass::TokenizerWrapper wrapper;
 };
 
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsLexizeLocalState(
   duckdb::ExpressionState& /*state*/,
   const duckdb::BoundFunctionExpression& expr,
   duckdb::FunctionData* bind_data) {
-  auto& dict = std::get<std::shared_ptr<catalog::Tokenizer>>(
+  auto& dict = std::get<std::shared_ptr<catalog::OpClass>>(
     bind_data->Cast<TsLexizeBindData>().state);
   auto local = duckdb::make_uniq<TsLexizeLocalState>();
   local->wrapper = AcquireTokenizer(*dict);

@@ -38,7 +38,7 @@
 #include "catalog/inverted_index.h"
 #include "catalog/object.h"
 #include "catalog/secondary_index.h"
-#include "catalog/tokenizer.h"
+#include "catalog/opclass.h"
 #include "catalog/types.h"
 
 namespace sdb::catalog {
@@ -387,9 +387,9 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
 
   // Resolves a text-dictionary opclass against the current snapshot. The HNSW
   // opclass is handled inline because it does not feed JSON paths.
-  auto resolve_dict =
+  auto resolve_opclass =
     [&](std::string_view col_name,
-        const std::string& opclass) -> ResultOr<std::shared_ptr<Tokenizer>> {
+        const std::string& opclass) -> ResultOr<std::shared_ptr<OpClass>> {
     auto object_name = pg::ParseObjectName(opclass, schema_name);
     // Technically nothing prevents us from allowing so.
     // But that will make schema drop more complicated as we will need to
@@ -402,8 +402,8 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         std::in_place, ERROR_BAD_PARAMETER,
         "Accessing text dictionary from different schema is not supported"};
     }
-    auto dict = snapshot->GetTokenizer(database_id, object_name.schema,
-                                       object_name.relation);
+    auto dict = snapshot->GetOpClass(database_id, object_name.schema,
+                                     object_name.relation);
     if (!dict) {
       return std::unexpected<Result>{std::in_place,
                                      ERROR_BAD_PARAMETER,
@@ -435,7 +435,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       }
       JsonPathInfo path_info{.path = c.json_path};
       if (!c.opclass.empty()) {
-        auto dict = resolve_dict(c.name, c.opclass);
+        auto dict = resolve_opclass(c.name, c.opclass);
         if (!dict) {
           return std::unexpected<Result>{std::move(dict.error())};
         }
@@ -493,7 +493,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
                                          DescribeKnownOpclassTypes(),
                                          ")"};
         }
-        auto dict = resolve_dict(c.name, c.opclass);
+        auto dict = resolve_opclass(c.name, c.opclass);
         if (!dict) {
           return std::unexpected<Result>{std::move(dict.error())};
         }

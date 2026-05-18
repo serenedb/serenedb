@@ -23,7 +23,7 @@ target_sources(
         inverted_index.cpp
         mangling.cpp
         scorer_options.cpp
-        tokenizer.cpp
+        opclass.cpp
 )
 
 add_subdirectory(identifiers)

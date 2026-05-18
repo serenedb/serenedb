@@ -40,7 +40,7 @@ enum class ResolveType {
   Schema,
   Function,
   Relation,
-  Tokenizer,
+  OpClass,
   Type,
 };
 
@@ -52,7 +52,7 @@ class ResolutionTable {
     _schemas = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
     _relations = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
     _functions = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
-    _tokenizers = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
+    _opclasses = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
     _types = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
   }
   template<ResolveType Type>
@@ -84,8 +84,8 @@ class ResolutionTable {
         return resolve(_schemas, parent_id, object_name);
       } else if constexpr (Type == ResolveType::Relation) {
         return resolve(_relations, parent_id, object_name);
-      } else if constexpr (Type == ResolveType::Tokenizer) {
-        return resolve(_tokenizers, parent_id, object_name);
+      } else if constexpr (Type == ResolveType::OpClass) {
+        return resolve(_opclasses, parent_id, object_name);
       } else if constexpr (Type == ResolveType::Type) {
         return resolve(_types, parent_id, object_name);
       } else {
@@ -157,14 +157,14 @@ class ResolutionTable {
           auto [_, insert_function] =
             CloneData(_functions)
               .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
-          auto [_, insert_tokenizer] =
-            CloneData(_tokenizers)
+          auto [_, insert_opclass] =
+            CloneData(_opclasses)
               .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
           auto [_, insert_type] = CloneData(_types).try_emplace(
             object_id, std::make_shared<MapByName<ObjectId>>());
           SDB_ASSERT(insert_relation);
           SDB_ASSERT(insert_function);
-          SDB_ASSERT(insert_tokenizer);
+          SDB_ASSERT(insert_opclass);
           SDB_ASSERT(insert_type);
           return {};
         }
@@ -173,8 +173,8 @@ class ResolutionTable {
         return insert(_relations, parent_id, object_name, object_id)
                  ? Result{}
                  : Result{ERROR_SERVER_DUPLICATE_NAME};
-      } else if constexpr (Type == ResolveType::Tokenizer) {
-        return insert(_tokenizers, parent_id, object_name, object_id)
+      } else if constexpr (Type == ResolveType::OpClass) {
+        return insert(_opclasses, parent_id, object_name, object_id)
                  ? Result{}
                  : Result{ERROR_SERVER_DUPLICATE_NAME};
       } else if constexpr (Type == ResolveType::Type) {
@@ -202,7 +202,7 @@ class ResolutionTable {
       for (auto [_, id] : *node.mapped()) {
         CloneData(_relations).erase(id);
         CloneData(_functions).erase(id);
-        CloneData(_tokenizers).erase(id);
+        CloneData(_opclasses).erase(id);
         CloneData(_types).erase(id);
       }
       return {id};
@@ -236,14 +236,14 @@ class ResolutionTable {
         if (result) {
           CloneData(_relations).erase(*result);
           CloneData(_functions).erase(*result);
-          CloneData(_tokenizers).erase(*result);
+          CloneData(_opclasses).erase(*result);
           CloneData(_types).erase(*result);
         }
         return result;
       } else if constexpr (Type == ResolveType::Relation) {
         return remove(_relations, parent_id, object_name);
-      } else if constexpr (Type == ResolveType::Tokenizer) {
-        return remove(_tokenizers, parent_id, object_name);
+      } else if constexpr (Type == ResolveType::OpClass) {
+        return remove(_opclasses, parent_id, object_name);
       } else if constexpr (Type == ResolveType::Type) {
         return remove(_types, parent_id, object_name);
       } else {
@@ -274,9 +274,9 @@ class ResolutionTable {
     return *it->second | std::views::values;
   }
 
-  auto GetTokenizerIds(ObjectId schema_id) const {
-    auto it = _tokenizers->find(schema_id);
-    SDB_ASSERT(it != _tokenizers->end());
+  auto GetOpClassIds(ObjectId schema_id) const {
+    auto it = _opclasses->find(schema_id);
+    SDB_ASSERT(it != _opclasses->end());
     return *it->second | std::views::values;
   }
 
@@ -313,8 +313,8 @@ class ResolutionTable {
   MapByIdPtr<MapByNamePtr<ObjectId>> _relations;
   // schema_id -> (function_name -> object_id)
   MapByIdPtr<MapByNamePtr<ObjectId>> _functions;
-  // schema_id -> (tokenizer_name -> object_id)
-  MapByIdPtr<MapByNamePtr<ObjectId>> _tokenizers;
+  // schema_id -> (opclass_name -> object_id)
+  MapByIdPtr<MapByNamePtr<ObjectId>> _opclasses;
   // schema_id -> (type_name -> object_id)
   MapByIdPtr<MapByNamePtr<ObjectId>> _types;
 };

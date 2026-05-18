@@ -64,12 +64,12 @@ struct SchemaDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> tables;
   containers::FlatHashSet<ObjectId> functions;
   containers::FlatHashSet<ObjectId> views;
-  containers::FlatHashSet<ObjectId> tokenizers;
+  containers::FlatHashSet<ObjectId> opclasses;
   containers::FlatHashSet<ObjectId> types;
   containers::FlatHashSet<ObjectId> sequences;
   bool Empty() const {
     return tables.empty() && functions.empty() && views.empty() &&
-           tokenizers.empty() && types.empty() && sequences.empty();
+           opclasses.empty() && types.empty() && sequences.empty();
   }
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<SchemaDependency>(*this);
@@ -83,10 +83,10 @@ struct DatabaseDependency : ObjectDependencyBase {
   }
 };
 
-struct TokenizerDependency : ObjectDependencyBase {
+struct OpClassDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> indexes;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
-    return std::make_shared<TokenizerDependency>(*this);
+    return std::make_shared<OpClassDependency>(*this);
   }
 };
 

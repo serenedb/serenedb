@@ -31,6 +31,8 @@
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <memory>
+#include <optional>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -39,15 +41,25 @@
 
 namespace sdb::catalog {
 
-class Tokenizer : public SchemaObject {
+// Discriminator for opclass kinds. Persisted under the "type" key in the
+// stored vpack body. Adding new kinds is append-only; existing values must
+// never be renumbered.
+enum class OpClassKind : uint8_t {
+  Text = 0,
+};
+
+std::string_view ToString(OpClassKind kind) noexcept;
+std::optional<OpClassKind> ParseOpClassKind(std::string_view name) noexcept;
+
+class OpClass : public SchemaObject {
  public:
   struct Deleter {
-    Tokenizer* tokenizer{nullptr};
+    OpClass* opclass{nullptr};
 
     void operator()(irs::analysis::Analyzer* analyzer) {
       // TODO(mbkkt) Revert this when global identity will be available
-      if (tokenizer) {
-        tokenizer->PushTokenizer(irs::analysis::Analyzer::ptr{analyzer});
+      if (opclass) {
+        opclass->PushTokenizer(irs::analysis::Analyzer::ptr{analyzer});
       } else {
         delete analyzer;
       }
@@ -56,8 +68,8 @@ class Tokenizer : public SchemaObject {
 
   using TokenizerWrapper = std::unique_ptr<irs::analysis::Analyzer, Deleter>;
 
-  static std::shared_ptr<Tokenizer> ReadInternal(vpack::Slice slice,
-                                                 ReadContext ctx);
+  static std::shared_ptr<OpClass> ReadInternal(vpack::Slice slice,
+                                               ReadContext ctx);
 
   ResultOr<TokenizerWrapper> GetTokenizer();
 
@@ -68,9 +80,10 @@ class Tokenizer : public SchemaObject {
   void WriteInternal(vpack::Builder&) const final;
   std::shared_ptr<Object> Clone() const final;
 
-  Tokenizer(ObjectId id, std::string_view name, search::Features features,
-            std::string data);
+  OpClass(ObjectId id, std::string_view name, OpClassKind kind,
+          search::Features features, std::string data);
 
+  OpClassKind GetKind() const noexcept { return _kind; }
   const search::Features& GetFeatures() const noexcept { return _features; }
 
  private:
@@ -79,6 +92,7 @@ class Tokenizer : public SchemaObject {
   mutable absl::Mutex _m;
   std::vector<irs::analysis::Analyzer::ptr> _pool;
   std::string _data;
+  OpClassKind _kind;
   search::Features _features;
 };
 

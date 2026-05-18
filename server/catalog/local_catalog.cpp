@@ -82,7 +82,7 @@
 #include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "catalog/tokenizer.h"
+#include "catalog/opclass.h"
 #include "catalog/types.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
@@ -255,13 +255,13 @@ class SnapshotImpl : public Snapshot {
         return r;
       }
       return AddObjectDefinition(parent_id, object);
-    } else if constexpr (std::is_same_v<T, Tokenizer>) {
-      auto r = AddToResolution<ResolveType::Tokenizer>(
+    } else if constexpr (std::is_same_v<T, OpClass>) {
+      auto r = AddToResolution<ResolveType::OpClass>(
         parent_id, object->GetId(), object->GetName(), replace);
       if (!r.ok()) {
         return r;
       }
-      return AddObjectDefinition<TokenizerDependency>(parent_id, object);
+      return AddObjectDefinition<OpClassDependency>(parent_id, object);
     } else if constexpr (std::is_same_v<T, PgSqlType>) {
       auto r = AddToResolution<ResolveType::Type>(parent_id, object->GetId(),
                                                   object->GetName(), replace);
@@ -313,9 +313,9 @@ class SnapshotImpl : public Snapshot {
     } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
       RemoveFromResolution<ResolveType::Function>(parent_id, object->GetName(),
                                                   maybe_not_found);
-    } else if constexpr (std::is_same_v<T, Tokenizer>) {
-      RemoveFromResolution<ResolveType::Tokenizer>(parent_id, object->GetName(),
-                                                   maybe_not_found);
+    } else if constexpr (std::is_same_v<T, OpClass>) {
+      RemoveFromResolution<ResolveType::OpClass>(parent_id, object->GetName(),
+                                                 maybe_not_found);
     } else if constexpr (std::is_same_v<T, PgSqlType>) {
       RemoveFromResolution<ResolveType::Type>(parent_id, object->GetName(),
                                               maybe_not_found);
@@ -375,9 +375,9 @@ class SnapshotImpl : public Snapshot {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->functions.insert(object->GetId());
       } break;
-      case ObjectType::Tokenizer: {
+      case ObjectType::OpClass: {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
-        schema_deps->tokenizers.insert(object->GetId());
+        schema_deps->opclasses.insert(object->GetId());
       } break;
       case ObjectType::PgSqlView: {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
@@ -408,8 +408,8 @@ class SnapshotImpl : public Snapshot {
           GetDependencyForWrite<RelationDependency>(parent_id);
         relation_deps->indexes.insert(object->GetId());
         const auto& index = basics::downCast<Index>(*object);
-        for (auto tokenizer_id : index.GetTokenizers()) {
-          auto dep = GetDependencyForWrite<TokenizerDependency>(tokenizer_id);
+        for (auto opclass_id : index.GetOpClasses()) {
+          auto dep = GetDependencyForWrite<OpClassDependency>(opclass_id);
           SDB_ASSERT(dep);
           dep->indexes.insert(object->GetId());
         }
@@ -624,18 +624,18 @@ class SnapshotImpl : public Snapshot {
     }
   }
 
-  std::vector<std::shared_ptr<Tokenizer>> GetTokenizers(
+  std::vector<std::shared_ptr<OpClass>> GetOpClasses(
     ObjectId db_id, std::string_view schema) const final {
     return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
       .transform([&](ObjectId schema_id) {
-        return _resolution_table.GetTokenizerIds(schema_id) |
+        return _resolution_table.GetOpClassIds(schema_id) |
                std::views::transform(
-                 [&](ObjectId tokenizer_id) -> std::shared_ptr<Tokenizer> {
-                   return GetObject<Tokenizer>(tokenizer_id);
+                 [&](ObjectId opclass_id) -> std::shared_ptr<OpClass> {
+                   return GetObject<OpClass>(opclass_id);
                  }) |
                std::ranges::to<std::vector>();
       })
-      .value_or(std::vector<std::shared_ptr<Tokenizer>>{});
+      .value_or(std::vector<std::shared_ptr<OpClass>>{});
   }
 
   std::vector<std::shared_ptr<PgSqlType>> GetTypes(
@@ -720,20 +720,20 @@ class SnapshotImpl : public Snapshot {
       .value_or(nullptr);
   }
 
-  std::shared_ptr<Tokenizer> GetTokenizer(ObjectId db_id,
-                                          std::string_view schema,
-                                          std::string_view name) const final {
+  std::shared_ptr<OpClass> GetOpClass(ObjectId db_id,
+                                      std::string_view schema,
+                                      std::string_view name) const final {
     auto schema_id =
       _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
     if (!schema_id) {
       return nullptr;
     }
     auto id =
-      _resolution_table.ResolveObject<ResolveType::Tokenizer>(*schema_id, name);
+      _resolution_table.ResolveObject<ResolveType::OpClass>(*schema_id, name);
     if (!id) {
       return nullptr;
     }
-    return GetObject<Tokenizer>(*id);
+    return GetObject<OpClass>(*id);
   }
 
   std::shared_ptr<Table> GetTable(ObjectId db_id, std::string_view schema,
@@ -811,9 +811,9 @@ class SnapshotImpl : public Snapshot {
     return _resolution_table.ResolveObject<Type>(parent_id, name);
   }
 
-  std::vector<std::shared_ptr<Index>> GetIndexesByTokenizer(
-    ObjectId tokenizer_id) const {
-    auto deps = GetDependency<TokenizerDependency>(tokenizer_id);
+  std::vector<std::shared_ptr<Index>> GetIndexesByOpClass(
+    ObjectId opclass_id) const {
+    auto deps = GetDependency<OpClassDependency>(opclass_id);
     SDB_ASSERT(deps);
     std::vector<std::shared_ptr<Index>> result;
     result.reserve(deps->indexes.size());
@@ -925,8 +925,8 @@ class SnapshotImpl : public Snapshot {
             GetDependencyForWrite<RelationDependency>(parent_id);
           relation_deps->indexes.erase(id);
           const auto& index = basics::downCast<Index>(*obj);
-          for (auto tokenizer_id : index.GetTokenizers()) {
-            auto dep = GetDependencyForWrite<TokenizerDependency>(tokenizer_id);
+          for (auto opclass_id : index.GetOpClasses()) {
+            auto dep = GetDependencyForWrite<OpClassDependency>(opclass_id);
             SDB_ASSERT(dep);
             dep->indexes.erase(obj->GetId());
           }
@@ -936,10 +936,10 @@ class SnapshotImpl : public Snapshot {
           SDB_ASSERT(schema_deps);
           schema_deps->functions.erase(id);
         } break;
-        case ObjectType::Tokenizer: {
+        case ObjectType::OpClass: {
           auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
-          schema_deps->tokenizers.erase(id);
+          schema_deps->opclasses.erase(id);
         } break;
         case ObjectType::Table: {
           auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
@@ -1035,7 +1035,7 @@ class SnapshotImpl : public Snapshot {
       } break;
       case ObjectType::PgSqlFunction:
       case ObjectType::PgSqlType:
-      case ObjectType::Tokenizer:
+      case ObjectType::OpClass:
       case ObjectType::Sequence:
         break;
       case ObjectType::TableShard:
@@ -1157,11 +1157,11 @@ Result LocalCatalog::RegisterFunction(ObjectId database_id, ObjectId schema_id,
   });
 }
 
-Result LocalCatalog::RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
-                                       std::shared_ptr<Tokenizer> tokenizer) {
+Result LocalCatalog::RegisterOpClass(ObjectId database_id, ObjectId schema_id,
+                                     std::shared_ptr<OpClass> opclass) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
-    return clone->RegisterObject(std::move(tokenizer), schema_id, false);
+    return clone->RegisterObject(std::move(opclass), schema_id, false);
   });
 }
 
@@ -1707,9 +1707,9 @@ Result LocalCatalog::CreateTable(
     [&](auto clone) { clone->UnregisterObject(table, *schema_id, true); });
 }
 
-Result LocalCatalog::CreateTokenizer(ObjectId database_id,
-                                     std::string_view schema,
-                                     std::shared_ptr<Tokenizer> dict) {
+Result LocalCatalog::CreateOpClass(ObjectId database_id,
+                                   std::string_view schema,
+                                   std::shared_ptr<OpClass> opclass) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
@@ -1720,18 +1720,18 @@ Result LocalCatalog::CreateTokenizer(ObjectId database_id,
   return Apply(
     _snapshot,
     [&](std::shared_ptr<SnapshotImpl>& clone) {
-      auto r = clone->RegisterObject(dict, *schema_id, false);
+      auto r = clone->RegisterObject(opclass, *schema_id, false);
       if (!r.ok()) {
         return r;
       }
       vpack::Builder b;
-      dict->WriteInternal(b);
-      return _engine->CreateDefinition(*schema_id, ObjectType::Tokenizer,
-                                       dict->GetId(),
+      opclass->WriteInternal(b);
+      return _engine->CreateDefinition(*schema_id, ObjectType::OpClass,
+                                       opclass->GetId(),
                                        [&](bool) { return b.slice(); });
     },
     [&](auto& clone) {
-      return clone->UnregisterObject(dict, *schema_id, true);
+      return clone->UnregisterObject(opclass, *schema_id, true);
     });
 }
 
@@ -2428,9 +2428,9 @@ Result LocalCatalog::DropFunction(std::string_view database,
   });
 }
 
-Result LocalCatalog::DropTokenizer(std::string_view database,
-                                   std::string_view schema,
-                                   std::string_view name) {
+Result LocalCatalog::DropOpClass(std::string_view database,
+                                 std::string_view schema,
+                                 std::string_view name) {
   absl::MutexLock lock{&_mutex};
 
   const auto database_id =
@@ -2443,13 +2443,13 @@ Result LocalCatalog::DropTokenizer(std::string_view database,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  const auto tokenizer_id =
-    _snapshot->GetObjectId<ResolveType::Tokenizer>(*schema_id, name);
-  if (!tokenizer_id) {
+  const auto opclass_id =
+    _snapshot->GetObjectId<ResolveType::OpClass>(*schema_id, name);
+  if (!opclass_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
-  const auto deps = _snapshot->GetIndexesByTokenizer(*tokenizer_id);
+  const auto deps = _snapshot->GetIndexesByOpClass(*opclass_id);
   if (!deps.empty()) {
     static constexpr size_t kReportIndexes = 5;
     std::vector<std::string_view> confliciting_indexes;
@@ -2470,14 +2470,14 @@ Result LocalCatalog::DropTokenizer(std::string_view database,
 
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
     SDB_ASSERT(clone);
-    auto tokenizer = clone->GetObject<Tokenizer>(*tokenizer_id);
-    SDB_ASSERT(tokenizer);
+    auto opclass = clone->GetObject<OpClass>(*opclass_id);
+    SDB_ASSERT(opclass);
     auto r =
-      _engine->DropDefinition(*schema_id, ObjectType::Tokenizer, *tokenizer_id);
+      _engine->DropDefinition(*schema_id, ObjectType::OpClass, *opclass_id);
     if (!r.ok()) {
       return r;
     }
-    clone->UnregisterObject(std::move(tokenizer), *schema_id);
+    clone->UnregisterObject(std::move(opclass), *schema_id);
     return Result{};
   });
 }

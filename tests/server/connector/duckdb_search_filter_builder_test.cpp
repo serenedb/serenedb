@@ -136,8 +136,9 @@ catalog::ColumnTokenizer IdentityAnalyzerProvider(catalog::Column::Id) {
     return std::string(vpack::Slice::emptyObjectSlice().startAs<char>(),
                        vpack::Slice::emptyObjectSlice().byteSize());
   };
-  static catalog::Tokenizer gStringTokenizer(
-    ObjectId{12345}, "test_string_verbartim", {}, make_identity());
+  static catalog::OpClass gStringTokenizer(
+    ObjectId{12345}, "test_string_verbartim", catalog::OpClassKind::Text, {},
+    make_identity());
   auto tokenizer = gStringTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer),
@@ -152,8 +153,9 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
     return std::string(builder->slice().startAs<char>(),
                        builder->slice().byteSize());
   };
-  static catalog::Tokenizer gStringTokenizer(
-    ObjectId{12346}, "test_segmentation", {}, make_segmentation());
+  static catalog::OpClass gStringTokenizer(
+    ObjectId{12346}, "test_segmentation", catalog::OpClassKind::Text, {},
+    make_segmentation());
   auto tokenizer = gStringTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer), .features = Features};
@@ -175,8 +177,9 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
     return std::string(builder->slice().startAs<char>(),
                        builder->slice().byteSize());
   };
-  static catalog::Tokenizer gNgramTokenizer(ObjectId{12347}, "test_ngram", {},
-                                            make_ngram());
+  static catalog::OpClass gNgramTokenizer(ObjectId{12347}, "test_ngram",
+                                          catalog::OpClassKind::Text, {},
+                                          make_ngram());
   auto tokenizer = gNgramTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer),
@@ -193,8 +196,9 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
     return std::string(builder->slice().startAs<char>(),
                        builder->slice().byteSize());
   };
-  static catalog::Tokenizer gWildcardTokenizer(ObjectId{12348}, "test_wildcard",
-                                               {}, make_wildcard());
+  static catalog::OpClass gWildcardTokenizer(ObjectId{12348}, "test_wildcard",
+                                             catalog::OpClassKind::Text, {},
+                                             make_wildcard());
   auto tokenizer = gWildcardTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer),
@@ -209,8 +213,9 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
     return std::string(builder->slice().startAs<char>(),
                        builder->slice().byteSize());
   };
-  static catalog::Tokenizer gGeoTokenizer(ObjectId{12349}, "test_geojson", {},
-                                          make_geojson());
+  static catalog::OpClass gGeoTokenizer(ObjectId{12349}, "test_geojson",
+                                        catalog::OpClassKind::Text, {},
+                                        make_geojson());
   auto tokenizer = gGeoTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer),

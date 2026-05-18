@@ -65,7 +65,7 @@ constexpr catalog::Column::Id kStandaloneSyntheticColumnId = 0;
 
 struct IndexField {
   void Reset(catalog::Column::Id column_id,
-             catalog::Tokenizer::TokenizerWrapper analyzer) {
+             catalog::OpClass::TokenizerWrapper analyzer) {
     tokenizer = std::move(analyzer);
     name.clear();
     MakeFieldName(column_id, name);
@@ -82,7 +82,7 @@ struct IndexField {
   void SetValue(std::string_view value) const { tokenizer->reset(value); }
 
   std::string name;
-  catalog::Tokenizer::TokenizerWrapper tokenizer;
+  catalog::OpClass::TokenizerWrapper tokenizer;
 };
 
 struct OffsetsLocalState final : duckdb::FunctionLocalState {
@@ -229,7 +229,7 @@ int64_t EvalOptionalLimit(duckdb::ClientContext& context,
 std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::ClientContext& context, const duckdb::Expression& tsquery_expr,
   catalog::Column::Id column_id,
-  const std::shared_ptr<catalog::Tokenizer>& dict_tokenizer) {
+  const std::shared_ptr<catalog::OpClass>& dict_tokenizer) {
   static constexpr duckdb::idx_t kSyntheticTableIdx = 0;
   static constexpr duckdb::idx_t kSyntheticColumnIdx = 0;
 

@@ -38,7 +38,7 @@
 
 #include "basics/containers/node_hash_map.h"
 #include "basics/result.h"
-#include "catalog/tokenizer.h"
+#include "catalog/opclass.h"
 #include "connector/search_filter_builder.hpp"
 
 namespace sdb::catalog {

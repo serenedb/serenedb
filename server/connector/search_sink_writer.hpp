@@ -151,7 +151,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     void SetNullValue();
 
     search::AnalyzerImpl::CacheType::ptr analyzer;
-    catalog::Tokenizer::TokenizerWrapper string_analyzer;
+    catalog::OpClass::TokenizerWrapper string_analyzer;
     std::string_view name;
     irs::IndexFeatures index_features;
     // For paths that don't receive a StoreAttr from an analyzer

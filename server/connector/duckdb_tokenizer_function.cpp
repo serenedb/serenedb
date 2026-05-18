@@ -50,10 +50,10 @@
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/search_analyzer_impl.h"
-#include "catalog/tokenizer.h"
+#include "catalog/opclass.h"
 #include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
-#include "pg/commands/create_tsdictionary.h"
+#include "pg/commands/create_opclass.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -61,17 +61,17 @@
 namespace sdb::connector {
 namespace {
 
-// PRAGMA create_text_search_dictionary('name', if_not_exists, key := value,
-// ...) Positional parameters:
+// PRAGMA create_opclass('name', if_not_exists, key := value, ...)
+// Positional parameters:
 //   [0] name (VARCHAR)  -- optionally schema-qualified as "schema.name"
 //   [1] if_not_exists (BOOLEAN)
-// Named parameters: tokenizer options (template, frequency, etc.)
-void CreateTSDictionaryPragma(duckdb::ClientContext& context,
-                              const duckdb::FunctionParameters& params) {
+// Named parameters: opclass options (type, plus per-type options).
+void CreateOpClassPragma(duckdb::ClientContext& context,
+                         const duckdb::FunctionParameters& params) {
   auto& args = params.values;
   if (args.size() < 2) {
     throw duckdb::InvalidInputException(
-      "create_text_search_dictionary requires at least name and if_not_exists");
+      "create_opclass requires at least name and if_not_exists");
   }
 
   auto dict_name = args[0].GetValue<std::string>();
@@ -79,20 +79,20 @@ void CreateTSDictionaryPragma(duckdb::ClientContext& context,
 
   auto& conn_ctx = GetSereneDBContext(context);
   auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
-  pg::CreateTokenizer(conn_ctx, name.relation, name.schema, if_not_exists,
-                      params.named_parameters);
+  pg::CreateOpClass(conn_ctx, name.relation, name.schema, if_not_exists,
+                    params.named_parameters);
 }
 
-// PRAGMA drop_text_search_dictionary('name', missing_ok)
+// PRAGMA drop_opclass('name', missing_ok)
 // Parameters:
 //   [0] name (VARCHAR) -- optionally schema-qualified as "schema.name"
 //   [1] missing_ok (BOOLEAN)
-void DropTSDictionaryPragma(duckdb::ClientContext& context,
-                            const duckdb::FunctionParameters& params) {
+void DropOpClassPragma(duckdb::ClientContext& context,
+                       const duckdb::FunctionParameters& params) {
   auto& args = params.values;
   if (args.size() < 2) {
     throw duckdb::InvalidInputException(
-      "drop_text_search_dictionary requires name and missing_ok");
+      "drop_opclass requires name and missing_ok");
   }
 
   const auto dict_name = args[0].GetValue<std::string>();
@@ -106,7 +106,7 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
   auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
 
   auto r =
-    catalog.DropTokenizer(conn_ctx.GetDatabase(), name.schema, name.relation);
+    catalog.DropOpClass(conn_ctx.GetDatabase(), name.schema, name.relation);
 
   std::string_view object_name = "text search dictionary";
   if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
@@ -140,16 +140,16 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
 
 }  // namespace
 
-void RegisterTokenizerPragma(duckdb::DatabaseInstance& db) {
+void RegisterOpClassPragma(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
 
   auto create_pragma = duckdb::PragmaFunction::PragmaCall(
-    "create_text_search_dictionary", CreateTSDictionaryPragma,
+    "create_opclass", CreateOpClassPragma,
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BOOLEAN});
   loader.RegisterFunction(create_pragma);
 
   auto drop_pragma = duckdb::PragmaFunction::PragmaCall(
-    "drop_text_search_dictionary", DropTSDictionaryPragma,
+    "drop_opclass", DropOpClassPragma,
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BOOLEAN});
   loader.RegisterFunction(drop_pragma);
 }

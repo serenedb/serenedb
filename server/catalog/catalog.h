@@ -44,7 +44,7 @@
 #include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "catalog/tokenizer.h"
+#include "catalog/opclass.h"
 #include "catalog/types.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
@@ -91,8 +91,8 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::SecondaryIndex;
   } else if constexpr (std::is_same_v<T, InvertedIndex>) {
     return ObjectType::InvertedIndex;
-  } else if constexpr (std::is_same_v<T, Tokenizer>) {
-    return ObjectType::Tokenizer;
+  } else if constexpr (std::is_same_v<T, OpClass>) {
+    return ObjectType::OpClass;
   } else if constexpr (std::is_same_v<T, Sequence>) {
     return ObjectType::Sequence;
   } else {
@@ -118,7 +118,7 @@ struct Snapshot {
     ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<Index>> GetIndexes(
     ObjectId database, std::string_view schema) const = 0;
-  virtual std::vector<std::shared_ptr<Tokenizer>> GetTokenizers(
+  virtual std::vector<std::shared_ptr<OpClass>> GetOpClasses(
     ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<PgSqlType>> GetTypes(
     ObjectId database, std::string_view schema) const = 0;
@@ -150,7 +150,7 @@ struct Snapshot {
   virtual std::shared_ptr<PgSqlFunction> GetFunction(
     ObjectId database, std::string_view schema,
     std::string_view name) const = 0;
-  virtual std::shared_ptr<Tokenizer> GetTokenizer(
+  virtual std::shared_ptr<OpClass> GetOpClass(
     ObjectId database, std::string_view schema,
     std::string_view name) const = 0;
   virtual std::shared_ptr<PgSqlType> GetType(ObjectId database,
@@ -235,9 +235,9 @@ struct LogicalCatalog {
   virtual Result RegisterFunction(
     ObjectId database_id, ObjectId schema_id,
     std::shared_ptr<catalog::PgSqlFunction> function) = 0;
-  virtual Result RegisterTokenizer(
+  virtual Result RegisterOpClass(
     ObjectId database_id, ObjectId schema_id,
-    std::shared_ptr<catalog::Tokenizer> tokenizer) = 0;
+    std::shared_ptr<catalog::OpClass> opclass) = 0;
   virtual Result RegisterType(ObjectId database_id, ObjectId schema_id,
                               std::shared_ptr<catalog::PgSqlType> type) = 0;
   virtual Result RegisterIndex(ObjectId database_id, ObjectId schema_id,
@@ -258,8 +258,8 @@ struct LogicalCatalog {
   virtual Result CreateFunction(
     ObjectId database_id, std::string_view schema,
     std::shared_ptr<catalog::PgSqlFunction> function, bool replace) = 0;
-  virtual Result CreateTokenizer(ObjectId database_id, std::string_view schema,
-                                 std::shared_ptr<Tokenizer> dict) = 0;
+  virtual Result CreateOpClass(ObjectId database_id, std::string_view schema,
+                               std::shared_ptr<OpClass> opclass) = 0;
   virtual Result CreateType(ObjectId database_id, std::string_view schema,
                             std::shared_ptr<PgSqlType> type) = 0;
   virtual Result CreateTable(ObjectId database_id, std::string_view schema,
@@ -308,9 +308,9 @@ struct LogicalCatalog {
   virtual Result DropFunction(std::string_view database,
                               std::string_view schema,
                               std::string_view name) = 0;
-  virtual Result DropTokenizer(std::string_view database,
-                               std::string_view schema,
-                               std::string_view name) = 0;
+  virtual Result DropOpClass(std::string_view database,
+                             std::string_view schema,
+                             std::string_view name) = 0;
   virtual Result DropView(std::string_view database, std::string_view schema,
                           std::string_view name) = 0;
   virtual Result DropSequence(std::string_view database,

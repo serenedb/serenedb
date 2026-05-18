@@ -40,7 +40,7 @@ catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
 
   for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
     for (const auto& tokenizer :
-         catalog->GetTokenizers(GetDatabaseId(), schema->GetName())) {
+         catalog->GetOpClasses(GetDatabaseId(), schema->GetName())) {
       auto owner = tokenizer->GetOwnerId();
       if (!owner) {
         owner = id::kRootUser;

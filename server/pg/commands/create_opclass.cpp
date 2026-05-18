@@ -53,7 +53,7 @@
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/search_analyzer_impl.h"
-#include "catalog/tokenizer.h"
+#include "catalog/opclass.h"
 #include "pg/connection_context.h"
 #include "pg/option_help.h"
 #include "pg/options_parser.h"
@@ -653,7 +653,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
       OptionsParser::EraseOptionOrDefault<tokenizer_options::kFrom>(prefix);
     auto name = ParseObjectName(from, _current_schema);
     auto tokenizer =
-      _snapshot->GetTokenizer(_db_id, name.schema, name.relation);
+      _snapshot->GetOpClass(_db_id, name.schema, name.relation);
     if (!tokenizer) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -691,11 +691,34 @@ class CreateTSDictionaryOptions : public OptionsParser {
   std::string_view _current_schema;
 };
 
-}  // namespace
+// Pops `type` from `options` (required, no default) and parses it into an
+// OpClassKind. Returns the parsed kind plus the remaining options.
+std::pair<catalog::OpClassKind, duckdb::named_parameter_map_t> ExtractKind(
+  const duckdb::named_parameter_map_t& options) {
+  auto type_it = options.find("type");
+  if (type_it == options.end()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("CREATE OPCLASS requires a 'type' option"));
+  }
+  if (type_it->second.type().id() != duckdb::LogicalTypeId::VARCHAR) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("CREATE OPCLASS 'type' option must be a string"));
+  }
+  auto type_str = type_it->second.GetValue<std::string>();
+  auto parsed = catalog::ParseOpClassKind(type_str);
+  if (!parsed) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Unknown opclass type '", type_str,
+                            "' (known: text)"));
+  }
+  auto rest = options;
+  rest.erase(type_it->first);
+  return {*parsed, std::move(rest)};
+}
 
-void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
-                     std::string_view schema, bool if_not_exists,
-                     const duckdb::named_parameter_map_t& options) {
+void CreateTextOpClass(ConnectionContext& conn_ctx, std::string_view name,
+                       std::string_view schema, bool if_not_exists,
+                       const duckdb::named_parameter_map_t& options) {
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
   auto db_id = conn_ctx.GetDatabaseId();
   auto current_schema = conn_ctx.GetCurrentSchema();
@@ -718,7 +741,6 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
               reinterpret_cast<const char*>(properties_slice.getDataPtr()),
               properties_slice.byteSize()},
             false)) {
-        // If validation fails, the error should already be logged
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("Failed to create text search dictionary \"", name, "\""));
@@ -737,20 +759,35 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
     }
   }
 
-  auto tokenizer = std::make_shared<catalog::Tokenizer>(
-    ObjectId{0}, name, features,
+  auto opclass = std::make_shared<catalog::OpClass>(
+    ObjectId{0}, name, catalog::OpClassKind::Text, features,
     std::string{reinterpret_cast<const char*>(b.slice().getDataPtr()),
                 b.slice().byteSize()});
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto r = catalog.CreateTokenizer(db_id, schema, std::move(tokenizer));
+  auto r = catalog.CreateOpClass(db_id, schema, std::move(opclass));
 
   if (!r.ok() && !if_not_exists) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-      ERR_MSG("text search dictionary \"", name, "\" already exists"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("text search dictionary \"", name,
+                            "\" already exists"));
   }
+}
+
+}  // namespace
+
+void CreateOpClass(ConnectionContext& conn_ctx, std::string_view name,
+                   std::string_view schema, bool if_not_exists,
+                   const duckdb::named_parameter_map_t& options) {
+  auto [kind, kind_options] = ExtractKind(options);
+  switch (kind) {
+    case catalog::OpClassKind::Text:
+      CreateTextOpClass(conn_ctx, name, schema, if_not_exists, kind_options);
+      return;
+    // TODO(opclass): add CreateJsonOpClass when OpClassKind::Json lands.
+  }
+  SDB_UNREACHABLE();
 }
 
 }  // namespace sdb::pg

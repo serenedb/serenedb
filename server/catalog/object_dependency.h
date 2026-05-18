@@ -91,70 +91,64 @@ class DropEmitter {
     _stack.push_back(id);
   }
 
-  void EmitCascadeDrop(ObjectId id) {
-    if (_auto_drops.contains(id) || !_visited.insert(id).second) {
+  void EmitCascadeViewDrop(ObjectId view_id) {
+    if (_auto_drops.contains(view_id) || !_visited.insert(view_id).second) {
       return;
     }
-    auto obj = _lookup(id);
-    if (!obj) {
-      return;
-    }
-    auto parent = obj->GetParentId();
-    switch (obj->GetType()) {
-      case ObjectType::PgSqlView:
-        _plan.view_drops.emplace_back(parent, id);
-        break;
-      case ObjectType::PgSqlFunction:
-        _plan.function_drops.emplace_back(parent, id);
-        break;
-      default:
-        // Only views and functions reach us cross-tree.
-        SDB_UNREACHABLE();
-    }
-    _stack.push_back(id);
+    auto obj = _lookup(view_id);
+    SDB_ASSERT(obj && obj->GetType() == ObjectType::PgSqlView);
+    _plan.view_drops.emplace_back(obj->GetParentId(), view_id);
+    _stack.push_back(view_id);
   }
 
-  void ColumnDefaultValueDrop(ObjectId col_id) {
+  void EmitCascadeFunctionDrop(ObjectId fn_id) {
+    if (_auto_drops.contains(fn_id) || !_visited.insert(fn_id).second) {
+      return;
+    }
+    auto obj = _lookup(fn_id);
+    SDB_ASSERT(obj && obj->GetType() == ObjectType::PgSqlFunction);
+    _plan.function_drops.emplace_back(obj->GetParentId(), fn_id);
+    _stack.push_back(fn_id);
+  }
+
+  void EmitCascadeColumnDefaultValueDrop(ObjectId col_id) {
     RewriteOwningTable(col_id,
                        [&](auto& t) { return t->DropColumnDefault(col_id); });
   }
 
   // doesn't work well now, it leaves the column data.
   // TODO: delete it when we'll have deleted rocksdb
-  void ColumnDrop(ObjectId col_id) {
+  void EmitCascadeColumnDrop(ObjectId col_id) {
     RewriteOwningTable(col_id, [&](auto& t) { return t->DropColumn(col_id); });
     // PG's column->index cascade: any index that covers col_id goes too.
     auto col = _lookup(col_id);
-    if (!col) {
-      return;
-    }
+    SDB_ASSERT(col);
     auto table_id = col->GetParentId();
     SDB_ASSERT(table_id.isSet());
     if (_auto_drops.contains(table_id)) {
       return;
     }
     for (auto idx_id : _indexes_using_col(table_id, col_id)) {
-      IndexCascadeDrop(idx_id);
+      EmitCascadeIndexDrop(idx_id);
     }
   }
 
   // Tokenizer->index, column->index etc. -- cross-tree index drop with
   // a recovery anchor written in CommitDropPlan.
-  void IndexCascadeDrop(ObjectId idx_id) {
+  void EmitCascadeIndexDrop(ObjectId idx_id) {
     if (_auto_drops.contains(idx_id) || !_visited.insert(idx_id).second) {
       return;
     }
     _plan.index_drops.push_back(idx_id);
   }
 
-  void CheckConstraintDrop(ObjectId table_id, ObjectId constraint_id) {
+  void EmitCascadeCheckConstraintDrop(ObjectId table_id,
+                                      ObjectId constraint_id) {
     if (_auto_drops.contains(table_id)) {
       return;
     }
     auto& slot = _plan.table_rewrites[table_id];
-    if (!CloneIntoSlot(table_id, slot)) {
-      return;
-    }
+    CloneIntoSlot(table_id, slot);
     slot.table = slot.table->DropCheckConstraint(constraint_id);
   }
 
@@ -162,33 +156,25 @@ class DropEmitter {
   template<typename Mutate>
   void RewriteOwningTable(ObjectId col_id, Mutate&& mutate) {
     auto col = _lookup(col_id);
-    if (!col) {
-      return;
-    }
+    SDB_ASSERT(col);
     auto table_id = col->GetParentId();
     SDB_ASSERT(table_id.isSet());
     if (_auto_drops.contains(table_id)) {
       return;
     }
     auto& slot = _plan.table_rewrites[table_id];
-    if (!CloneIntoSlot(table_id, slot)) {
-      return;
-    }
+    CloneIntoSlot(table_id, slot);
     slot.table = std::forward<Mutate>(mutate)(slot.table);
   }
 
-  bool CloneIntoSlot(ObjectId table_id, TableRewrite& slot) {
+  void CloneIntoSlot(ObjectId table_id, TableRewrite& slot) {
     if (slot.table) {
-      return true;
+      return;
     }
     auto obj = _lookup(table_id);
-    if (!obj || obj->GetType() != ObjectType::Table) {
-      _plan.table_rewrites.erase(table_id);
-      return false;
-    }
+    SDB_ASSERT(obj && obj->GetType() == ObjectType::Table);
     slot.schema_id = obj->GetParentId();
     slot.table = basics::downCast<Table>(obj->Clone());
-    return true;
   }
 
   const ObjectLookup _lookup;
@@ -229,10 +215,10 @@ struct TableDependency : RelationDependency {
       e.EmitAutoDrop(id);
     }
     for (auto id : views) {
-      e.EmitCascadeDrop(id);
+      e.EmitCascadeViewDrop(id);
     }
     for (auto id : functions) {
-      e.EmitCascadeDrop(id);
+      e.EmitCascadeFunctionDrop(id);
     }
   }
 };
@@ -243,10 +229,10 @@ struct ViewDependency : RelationDependency {
   }
   void Emit(DropEmitter& e) const final {
     for (auto id : views) {
-      e.EmitCascadeDrop(id);
+      e.EmitCascadeViewDrop(id);
     }
     for (auto id : functions) {
-      e.EmitCascadeDrop(id);
+      e.EmitCascadeFunctionDrop(id);
     }
   }
 };
@@ -261,16 +247,16 @@ struct SequenceDependency : ObjectDependencyBase {
   }
   void Emit(DropEmitter& e) const final {
     for (auto col_id : column_defaults) {
-      e.ColumnDefaultValueDrop(col_id);
+      e.EmitCascadeColumnDefaultValueDrop(col_id);
     }
     for (const auto& [tid, cid] : constraints) {
-      e.CheckConstraintDrop(tid, cid);
+      e.EmitCascadeCheckConstraintDrop(tid, cid);
     }
     for (auto id : views) {
-      e.EmitCascadeDrop(id);
+      e.EmitCascadeViewDrop(id);
     }
     for (auto id : functions) {
-      e.EmitCascadeDrop(id);
+      e.EmitCascadeFunctionDrop(id);
     }
   }
 };
@@ -282,7 +268,7 @@ struct PgSqlTypeDependency : ObjectDependencyBase {
   }
   void Emit(DropEmitter& e) const final {
     for (auto col_id : column_types) {
-      e.ColumnDrop(col_id);
+      e.EmitCascadeColumnDrop(col_id);
     }
   }
 };
@@ -297,16 +283,16 @@ struct PgSqlFunctionDependency : ObjectDependencyBase {
   }
   void Emit(DropEmitter& e) const final {
     for (auto id : views) {
-      e.EmitCascadeDrop(id);
+      e.EmitCascadeViewDrop(id);
     }
     for (auto id : functions) {
-      e.EmitCascadeDrop(id);
+      e.EmitCascadeFunctionDrop(id);
     }
     for (const auto& [tid, cid] : constraints) {
-      e.CheckConstraintDrop(tid, cid);
+      e.EmitCascadeCheckConstraintDrop(tid, cid);
     }
     for (auto col_id : column_defaults) {
-      e.ColumnDefaultValueDrop(col_id);
+      e.EmitCascadeColumnDefaultValueDrop(col_id);
     }
   }
 };
@@ -378,7 +364,7 @@ struct TokenizerDependency : ObjectDependencyBase {
   }
   void Emit(DropEmitter& e) const final {
     for (auto id : indexes) {
-      e.IndexCascadeDrop(id);
+      e.EmitCascadeIndexDrop(id);
     }
   }
 };

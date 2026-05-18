@@ -88,15 +88,11 @@ catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
 
         auto pronargs = static_cast<int16_t>(argtypes.size());
         argtypes_storage.push_back(std::move(argtypes));
-        auto owner = func->GetParentId().id();
-        if (!owner) {
-          owner = id::kRootUser.id();
-        }
         values.push_back({
           .oid = func->GetId().id(),
           .proname = func->GetName(),
           .pronamespace = schema->GetId().id(),
-          .proowner = owner,
+          .proowner = id::kRootUser.id(),
           .prolang = kLangSql,
           .procost = 0.0f,
           .prorows = 0.0f,

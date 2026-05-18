@@ -1116,7 +1116,6 @@ class SnapshotImpl : public Snapshot {
     containers::FlatHashSet<ObjectId> auto_drops{seed};
     std::vector<ObjectId> stack{seed};
 
-    // Named so the FunctionRefs have something stable to point at.
     auto lookup = [this](ObjectId id) { return GetObject(id); };
     auto indexes_using_col = [this](ObjectId table_id, ObjectId col_id) {
       std::vector<ObjectId> result;
@@ -1141,12 +1140,13 @@ class SnapshotImpl : public Snapshot {
       }
     }
 
-    // Auto drops run via the DropTask tree; scrub anything intra-closure
-    // that the walker tentatively recorded as cross-tree.
+    // Auto drops run via the DropTask
     std::erase_if(plan.view_drops,
                   [&](const auto& p) { return auto_drops.contains(p.second); });
     std::erase_if(plan.function_drops,
                   [&](const auto& p) { return auto_drops.contains(p.second); });
+    std::erase_if(plan.index_drops,
+                  [&](auto id) { return auto_drops.contains(id); });
     absl::erase_if(plan.table_rewrites, [&](const auto& kv) {
       return auto_drops.contains(kv.first);
     });

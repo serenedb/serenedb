@@ -41,15 +41,11 @@ catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
   for (const auto& schema : catalog->GetSchemas(GetParentId())) {
     for (const auto& tokenizer :
          catalog->GetTokenizers(GetParentId(), schema->GetName())) {
-      auto owner = tokenizer->GetParentId();
-      if (!owner) {
-        owner = id::kRootUser;
-      }
       values.push_back({
         .oid = tokenizer->GetId().id(),
         .dictname = tokenizer->GetName(),
         .dictnamespace = tokenizer->GetParentId().id(),
-        .dictowner = owner.id(),
+        .dictowner = id::kRootUser.id(),
         .dicttemplate = 0,
       });
     }

@@ -75,17 +75,13 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 }  // namespace
 
 PgClass MakeBaseRow(ObjectId schema_id, const catalog::Object& object) {
-  auto owner = object.GetParentId();
-  if (!owner) {
-    owner = id::kRootUser;
-  }
   return {
     .oid = object.GetId().id(),
     .relname = object.GetName(),
     .relnamespace = schema_id.id(),
     .reltype = 0,
     .reloftype = 0,
-    .relowner = owner.id(),
+    .relowner = id::kRootUser.id(),
     .relam = 0,
     .relfilenode = 0,
     .reltablespace = 0,
@@ -170,10 +166,6 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
       if (table->PKColumns().empty()) {
         continue;
       }
-      auto owner = table->GetParentId();
-      if (!owner) {
-        owner = id::kRootUser;
-      }
       pk_index_names.push_back(std::string{table->GetName()} + "_pkey");
       PgClass row{
         .oid = PkIndexOid(table->GetId().id()),
@@ -181,7 +173,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
         .relnamespace = schema_id.id(),
         .reltype = 0,
         .reloftype = 0,
-        .relowner = owner.id(),
+        .relowner = id::kRootUser.id(),
         .relam = 0,
         .relfilenode = 0,
         .reltablespace = 0,

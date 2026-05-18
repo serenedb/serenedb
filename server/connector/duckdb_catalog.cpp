@@ -286,17 +286,14 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
         info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
       r = catalog.DropSequence(info.catalog, info.schema, info.name, if_exists,
                                info.cascade);
-      if (r.is(ERROR_BAD_PARAMETER)) {
+      if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
           ERR_MSG("cannot drop sequence ", info.name,
                   " because other objects depend on it"),
           ERR_DETAIL(r.errorMessage()),
-          ERR_HINT(info.cascade
-                     ? "Use DROP TABLE on the owning table to drop the "
-                       "sequence as a side-effect."
-                     : "Use DROP ... CASCADE to drop the dependent "
-                       "objects too, or DROP TABLE on the owning table."));
+          ERR_HINT("Use DROP ... CASCADE to drop the dependent "
+                   "objects too, or DROP TABLE on the owning table."));
       }
     } break;
     case SCHEMA_ENTRY:

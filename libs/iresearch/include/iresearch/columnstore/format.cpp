@@ -374,6 +374,7 @@ std::string Writer::Commit(uint64_t target_row) {
   // doesn't carry an in-memory vector cache during ingest.
   if (!_impl->hnsw_writers.empty()) {
     _impl->out->Flush();
+    // TODO(mbkkt) measure seq vs rand for hnsw construction
     auto in = _impl->dir->open(_impl->filename, IOAdvice::RANDOM);
     if (!in) {
       throw IoError{absl::StrCat("failed to open columnstore for HNSW build: ",
@@ -507,7 +508,7 @@ namespace {
 
 IndexInput::ptr OpenAndCheckHeader(const Directory& dir,
                                    std::string_view filename) {
-  auto in = dir.open(filename, IOAdvice::RANDOM);
+  auto in = dir.open(filename, IOAdvice::SEQUENTIAL);
   if (!in) {
     throw IoError{
       absl::StrCat("Failed to open columnstore file, path: ", filename)};

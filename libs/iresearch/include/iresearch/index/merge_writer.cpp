@@ -39,6 +39,7 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/norm_column_reader.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -596,17 +597,50 @@ field_id MergeNormColumnFromSources(
   return out_id;
 }
 
-// Drives the merged segment's field meta + posting-list write. For fields
-// with the Norm feature, allocates a fresh norm column id on `cs_writer`,
-// opens its NormColumnWriter, and walks each source's NormColumnReader
-// (looked up by the source's per-segment norm id) appending live values.
+using MergedNormIdMap = absl::flat_hash_map<std::string_view, field_id>;
+
+MergedNormIdMap MergeNorms(
+  columnstore::Writer* cs_writer,
+  std::span<const columnstore::MergeSource> sources,
+  const FieldMetaMapT& field_meta_map,
+  const NormColumnOptionsProvider* norm_column_options) {
+  MergedNormIdMap out;
+  if (cs_writer == nullptr) {
+    return out;
+  }
+  for (const auto& [name, meta] : field_meta_map) {
+    if (!IsSubsetOf(IndexFeatures::Norm, meta->index_features)) {
+      continue;
+    }
+    const auto new_norm_id = MergeNormColumnFromSources(
+      *cs_writer, name, sources, norm_column_options);
+    if (field_limits::valid(new_norm_id)) {
+      out.emplace(name, new_norm_id);
+    }
+  }
+  return out;
+}
+
+struct MergedNormProvider final : public NormProvider {
+  const columnstore::Reader* reader = nullptr;
+
+  NormReader::ptr norms(field_id id) const final {
+    if (reader == nullptr) {
+      return {};
+    }
+    const auto* col = reader->NormColumn(id);
+    if (col == nullptr) {
+      return {};
+    }
+    return MakePersistedNormReader(*col);
+  }
+};
+
 bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  CompoundFieldIterator& field_itr,
-                 std::span<const columnstore::MergeSource> sources,
-                 columnstore::Writer* cs_writer,
+                 const MergedNormIdMap& merged_norm_ids,
                  const MergeWriter::FlushProgress& progress,
-                 IResourceManager& rm,
-                 const NormColumnOptionsProvider* norm_column_options) {
+                 IResourceManager& rm) {
   auto field_writer = meta.codec->get_field_writer(true, rm);
   field_writer->prepare(flush_state);
 
@@ -614,11 +648,10 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     FieldProperties props;
     props.index_features = field_itr.Meta().index_features;
 
-    if (cs_writer && IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
-      const auto new_norm_id = MergeNormColumnFromSources(
-        *cs_writer, field_itr.Meta().name, sources, norm_column_options);
-      if (field_limits::valid(new_norm_id)) {
-        props.norm = new_norm_id;
+    if (IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
+      const auto it = merged_norm_ids.find(field_itr.Meta().name);
+      if (it != merged_norm_ids.end()) {
+        props.norm = it->second;
       }
     }
 
@@ -741,23 +774,8 @@ bool MergeWriter::Flush(SegmentMeta& segment,
   OpenColumnstoreContexts(_db, track_dir, segment.name, _readers, sources,
                           cs_writer, _column_options, _norm_column_options);
 
-  const FlushState state{
-    .dir = &track_dir,
-    .name = segment.name,
-    .scorer = _scorer,
-    .doc_count = segment.docs_count,
-    .index_features = index_features,
-  };
-
-  if (!progress_callback()) {
-    return false;
-  }
-
-  if (!WriteFields(state, segment, fields_itr, sources, cs_writer.get(),
-                   progress_callback, _readers.get_allocator().Manager(),
-                   _norm_column_options)) {
-    return false;
-  }
+  const auto merged_norm_ids =
+    MergeNorms(cs_writer.get(), sources, field_meta_map, _norm_column_options);
 
   if (!progress_callback()) {
     return false;
@@ -772,10 +790,35 @@ bool MergeWriter::Flush(SegmentMeta& segment,
     return false;
   }
 
+  std::unique_ptr<columnstore::Reader> cs_reader;
+  MergedNormProvider norm_provider;
   if (cs_writer) {
     // TODO(mbkkt) Use progress_callback?
     cs_writer->Commit(segment.docs_count);
     _built_hnsw_graphs = cs_writer->TakeBuiltHnswGraphs();
+    if (_db && segment.docs_count != 0) {
+      cs_reader =
+        std::make_unique<columnstore::Reader>(track_dir, segment.name, *_db);
+      norm_provider.reader = cs_reader.get();
+    }
+  }
+
+  if (!progress_callback()) {
+    return false;
+  }
+
+  const FlushState state{
+    .dir = &track_dir,
+    .norms = norm_provider.reader != nullptr ? &norm_provider : nullptr,
+    .name = segment.name,
+    .scorer = _scorer,
+    .doc_count = segment.docs_count,
+    .index_features = index_features,
+  };
+
+  if (!WriteFields(state, segment, fields_itr, merged_norm_ids,
+                   progress_callback, _readers.get_allocator().Manager())) {
+    return false;
   }
 
   if (!progress_callback()) {

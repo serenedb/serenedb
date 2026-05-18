@@ -33,11 +33,6 @@ namespace irs {
 namespace {
 
 template<typename T>
-void Read(IndexInput& in, T& value) {
-  in.ReadBytes(reinterpret_cast<byte_type*>(&value), sizeof(T));
-}
-
-template<typename T>
 void WriteVector(DataOutput& out, const T& vec) {
   out.WriteU32(vec.size());
   SDB_ASSERT(vec.size() != 0);

@@ -9,12 +9,26 @@
 # sides decodes the same codec-compressed chunks; any speed difference
 # is in the scan/materialise wrapper.
 #
-# Runs two timed phases per query:
-#  - cold: first hit on a fresh-from-setup server (segments not yet
-#          opened, codec state cold; OS page cache may still be warm
-#          from CREATE INDEX writes).
-#  - hot:  3rd hit (after one discarded warmup) -- steady-state warm.
-# Both per-side and across-side speedups are printed.
+# Bench phases, picked by env:
+#  - default (no env):     hot only -- 1 warmup + 1 timed hit per query.
+#  - PERF_COLD=1:          same-session cold (1st-touch) + warmup + hot.
+#  - PERF_DROP_CACHES=1:   restart + drop_caches before each query +
+#                          cold + hot (PERF_DROP_CACHES wins over PERF_COLD).
+#
+# Regen knobs (independent):
+#  - PERF_REGEN_PARQUET=1: rebuild the source parquet only. Implies a
+#                          rebuild of native db + data dir to match.
+#  - PERF_REGEN=1:         rebuild native db + serened data dir from the
+#                          existing parquet.
+# Missing artifacts auto-trigger the matching regen.
+#
+# Server lifecycle:
+#  - PERF_EXTERNAL_SERENED=1: connect to a serened the user has already
+#                             started on PERF_PORT (default 6263). The
+#                             script does NOT spawn or kill serened.
+#                             Incompatible with PERF_DROP_CACHES (needs
+#                             a restart) and with any regen path (would
+#                             surprise the user's data dir).
 
 set -euo pipefail
 
@@ -43,7 +57,21 @@ RUN_LOG="${RESULTS_DIR}/types-$(date -u +%Y%m%dT%H%M%SZ).log"
 
 declare -A TIMINGS=()
 
+EXTERNAL_SERENED="${PERF_EXTERNAL_SERENED:-0}"
+PSQL_CONN="postgres://postgres@localhost:${PORT}/postgres"
+
 start_server() {
+	if [[ "${EXTERNAL_SERENED}" == "1" ]]; then
+		# Server is owned by the user; just verify it's reachable.
+		for _ in $(seq 1 5); do
+			if psql "${PSQL_CONN}" -c 'SELECT 1' >/dev/null 2>&1; then
+				return 0
+			fi
+			sleep 0.5
+		done
+		echo "ERROR: PERF_EXTERNAL_SERENED=1 but no serened reachable on ${PORT}" >&2
+		exit 1
+	fi
 	killall -9 serened >/dev/null 2>&1 || true
 	sleep 1
 	"${SERENED_BIN}" "${SERENED_DATA_DIR}" \
@@ -62,74 +90,123 @@ start_server() {
 	exit 1
 }
 
-PSQL_CONN="postgres://postgres@localhost:${PORT}/postgres"
-
 BUILD_THREADS="${PERF_BUILD_THREADS:-$(nproc)}"
 SCAN_THREADS="${PERF_SCAN_THREADS:-1}"
 SEARCH_PATH_SQL="SET search_path TO public, native_db.main;"
 
 extract_last_time_ms() {
-	awk '/^Time: /{t=$2} END{if (t!="") printf "%s", t}' <<<"$1"
+	awk '/^Time: /{t=$2} END{if (t!="") printf "%s", t}' <"$1"
+}
+
+# Stream psql output live (so a long-running CREATE INDEX or a server
+# crash doesn't leave you staring at a blank terminal), while also
+# capturing it for the run log and the timing extractor. PIPESTATUS[0]
+# is psql's exit code; on failure we surface it instead of letting
+# `set -e` silently abort.
+run_psql() {
+	local label="$1" out_file="$2"
+	shift 2
+	printf '\n=== %s ===\n' "${label}" | tee -a "${RUN_LOG}"
+	set +e
+	psql "${PSQL_CONN}" -v ON_ERROR_STOP=1 -X "$@" 2>&1 |
+		tee -a "${RUN_LOG}" | tee "${out_file}"
+	local rc=${PIPESTATUS[0]}
+	set -e
+	if [[ ${rc} -ne 0 ]]; then
+		echo "ERROR: psql exited ${rc} on '${label}'" | tee -a "${RUN_LOG}" >&2
+		echo "  check your serened logs for a crash / mid-query disconnect" >&2
+		return ${rc}
+	fi
 }
 
 run_sql() {
 	local label="$1" threads="$2" sql="$3"
-	printf '\n=== %s (threads=%s) ===\n' "${label}" "${threads}" |
-		tee -a "${RUN_LOG}"
-	local out
-	out=$(psql "${PSQL_CONN}" -v ON_ERROR_STOP=1 -X \
+	local out_file
+	out_file=$(mktemp)
+	run_psql "${label} (threads=${threads})" "${out_file}" \
 		-c "SET threads = ${threads};" \
 		-c "${SEARCH_PATH_SQL}" \
 		-c '\timing on' \
-		-c "${sql}" 2>&1)
-	printf '%s\n' "${out}" | tee -a "${RUN_LOG}"
-	TIMINGS["${label}"]=$(extract_last_time_ms "${out}")
+		-c "${sql}"
+	TIMINGS["${label}"]=$(extract_last_time_ms "${out_file}")
+	rm -f "${out_file}"
 }
 
 run_setup() {
 	local label="$1" threads="$2" sql="$3"
-	printf '\n=== %s (threads=%s) ===\n' "${label}" "${threads}" |
-		tee -a "${RUN_LOG}"
-	local out
-	out=$(psql "${PSQL_CONN}" -v ON_ERROR_STOP=1 -X \
+	local out_file
+	out_file=$(mktemp)
+	run_psql "${label} (threads=${threads})" "${out_file}" \
 		-c "SET threads = ${threads};" \
 		-c '\timing on' \
-		-c "${sql}" 2>&1)
-	printf '%s\n' "${out}" | tee -a "${RUN_LOG}"
-	TIMINGS["${label}"]=$(extract_last_time_ms "${out}")
+		-c "${sql}"
+	TIMINGS["${label}"]=$(extract_last_time_ms "${out_file}")
+	rm -f "${out_file}"
 }
 
 PQ_SQL_PATH=$(printf '%s' "${PARQUET_FILE}" | sed "s/'/''/g")
 NDB_SQL_PATH=$(printf '%s' "${NATIVE_DB}" | sed "s/'/''/g")
 
-# Setup is skipped when the prior bench artifacts are already on disk
-# (parquet + native_db + serened data dir all present) -- the data
-# generation step is by far the slowest part of the run, so we cache it
-# and only redo it when the user explicitly asks for it.
-# Force a fresh build with PERF_REGEN=1.
-NEED_REGEN=0
-if [[ "${PERF_REGEN:-0}" == "1" ]]; then
-	echo "PERF_REGEN=1: regenerating parquet + native db + data dir"
-	NEED_REGEN=1
-elif [[ ! -f "${PARQUET_FILE}" ]] || [[ ! -f "${NATIVE_DB}" ]] ||
-	[[ ! -d "${SERENED_DATA_DIR}" ]]; then
-	echo "one or more of {parquet, native db, data dir} missing -- regenerating"
-	NEED_REGEN=1
-else
-	echo "reusing existing parquet (${PARQUET_FILE}), native db, and data dir"
-	echo "  (PERF_REGEN=1 to force a fresh build)"
+# Reject incompatible env combinations up-front.
+if [[ "${EXTERNAL_SERENED}" == "1" ]] && [[ "${PERF_DROP_CACHES:-0}" == "1" ]]; then
+	echo "ERROR: PERF_EXTERNAL_SERENED=1 is incompatible with PERF_DROP_CACHES=1" >&2
+	echo "  (drop_caches needs to kill+restart serened, which would clobber the user's server)" >&2
+	exit 1
 fi
 
-if [[ "${NEED_REGEN}" == "1" ]]; then
-	# --- 1. Generate the parquet file ------------------------------------
-	# Done on a transient serened that we throw away afterwards -- only the
-	# parquet file survives. This avoids landing the synthetic source data
-	# in the perf serened's rocksdb base store.
-	rm -rf "${SERENED_DATA_DIR}" ${RESULTS_DIR}/types_genparquet_data
-	rm -f "${NATIVE_DB}" "${NATIVE_DB}.wal" "${PARQUET_FILE}"
+# Two independent regen knobs:
+#   PERF_REGEN_PARQUET=1 -- rebuild the synthetic source parquet.
+#                           Forces a data-dir rebuild too (the parquet
+#                           contents may differ; native db + cs columns
+#                           need to match).
+#   PERF_REGEN=1         -- rebuild the native db + serened data dir from
+#                           the existing parquet. Parquet untouched.
+# Missing artifacts auto-trigger the matching regen.
+NEED_PARQUET=0
+NEED_DATA=0
+[[ "${PERF_REGEN_PARQUET:-0}" == "1" ]] && NEED_PARQUET=1
+[[ "${PERF_REGEN:-0}" == "1" ]] && NEED_DATA=1
+[[ ! -f "${PARQUET_FILE}" ]] && NEED_PARQUET=1
+[[ "${NEED_PARQUET}" == "1" ]] && NEED_DATA=1
+{ [[ ! -f "${NATIVE_DB}" ]] || [[ ! -d "${SERENED_DATA_DIR}" ]]; } && NEED_DATA=1
+
+if [[ "${EXTERNAL_SERENED}" == "1" ]] && [[ "${NEED_PARQUET}" == "1" ]]; then
+	echo "ERROR: PERF_EXTERNAL_SERENED=1 + parquet regen is not supported." >&2
+	echo "  Parquet generation needs a transient serened on PERF_PORT, which would" >&2
+	echo "  conflict with your external one. Generate parquet first without" >&2
+	echo "  PERF_EXTERNAL_SERENED, then reuse." >&2
+	exit 1
+fi
+# external + data regen is supported: the script runs CREATE VIEW / CTAS /
+# CREATE INDEX over psql against your serened, and does NOT `rm -rf` the
+# data dir (your serened owns it -- start it with an empty data dir if
+# you want a clean slate). The native_db file IS removed because it's a
+# perf-script-owned artifact.
+
+if [[ "${NEED_PARQUET}" == "1" ]]; then
+	echo "regenerating parquet (${PARQUET_FILE})"
+else
+	echo "reusing existing parquet (${PARQUET_FILE})"
+fi
+if [[ "${NEED_DATA}" == "1" ]]; then
+	echo "regenerating native db + serened data dir"
+else
+	echo "reusing existing native db (${NATIVE_DB}) and data dir (${SERENED_DATA_DIR})"
+fi
+echo "  (PERF_REGEN_PARQUET=1 forces parquet rebuild; PERF_REGEN=1 forces data rebuild)"
+
+# --- 1. Parquet (if needed) ----------------------------------------------
+# Generated on a transient serened that we throw away afterwards -- only
+# the parquet file survives. This avoids landing the synthetic source
+# data in the perf serened's rocksdb base store.
+if [[ "${NEED_PARQUET}" == "1" ]]; then
+	killall -9 serened >/dev/null 2>&1 || true
+	sleep 1
+	rm -rf "${RESULTS_DIR}/types_genparquet_data"
+	rm -f "${PARQUET_FILE}"
 
 	echo "generating ${PARQUET_FILE} (${N} rows) via temporary serened"
-	"${SERENED_BIN}" ${RESULTS_DIR}/types_genparquet_data \
+	"${SERENED_BIN}" "${RESULTS_DIR}/types_genparquet_data" \
 		--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
 		--log.foreground-tty true \
 		>"${LOG}" 2>&1 &
@@ -171,46 +248,71 @@ COPY (
 
 	killall -9 serened >/dev/null 2>&1 || true
 	sleep 1
+	rm -rf "${RESULTS_DIR}/types_genparquet_data"
+fi
 
-	# --- 2. Fresh serened for the actual benchmark -----------------------
-	rm -rf "${SERENED_DATA_DIR}" ${RESULTS_DIR}/types_genparquet_data
+# --- 2. Native db + serened data dir -------------------------------------
+if [[ "${NEED_DATA}" == "1" ]]; then
+	# With an external serened the user owns the data dir -- they decide
+	# whether it's empty before launching their server. We only clean up
+	# the perf-script-owned native db file.
+	if [[ "${EXTERNAL_SERENED}" != "1" ]]; then
+		rm -rf "${SERENED_DATA_DIR}"
+	fi
+	rm -f "${NATIVE_DB}" "${NATIVE_DB}.wal"
+fi
+
+if [[ "${EXTERNAL_SERENED}" == "1" ]]; then
+	echo "reusing external serened on port ${PORT}"
+else
 	echo "starting bench serened with data dir ${SERENED_DATA_DIR}"
-	start_server
+fi
+start_server
+if [[ "${EXTERNAL_SERENED}" != "1" ]]; then
 	trap "killall -9 serened >/dev/null 2>&1 || true" EXIT
+fi
 
-	run_setup "attach_native_db" "${BUILD_THREADS}" "
+run_setup "attach_native_db" "${BUILD_THREADS}" "
+DETACH DATABASE IF EXISTS native_db;
 ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
 SET search_path TO public, native_db.main;
 "
 
+if [[ "${NEED_DATA}" == "1" ]]; then
 	run_sql "create_view" "${BUILD_THREADS}" "
-CREATE VIEW bench_view AS SELECT * FROM read_parquet('${PQ_SQL_PATH}');
+CREATE OR REPLACE VIEW bench_view AS
+  SELECT * FROM read_parquet('${PQ_SQL_PATH}');
 "
 
 	run_sql "create_native_table" "${BUILD_THREADS}" "
+DROP TABLE IF EXISTS native_db.main.bench_native;
 CREATE TABLE native_db.main.bench_native AS
 SELECT * FROM read_parquet('${PQ_SQL_PATH}');
 "
 
 	run_setup "checkpoint_native_db" "${BUILD_THREADS}" "CHECKPOINT native_db;"
 
+	# The bench measures INCLUDE-column scan, not posting-list traversal.
+	# An empty `inverted()` (PK-only) is rejected by the grammar today
+	# (see docs/issue-operability-diagnostics.md "Inverted index without
+	# any indexed column"), so we index the lowest-cardinality column we
+	# have -- bool_col -- as a near-zero-overhead filler. Two distinct
+	# values means two posting lists ~50M docs each; delta+bitpacking
+	# makes them tiny vs indexing a unique-per-row column like pk
+	# (which would build 100M length-1 posting lists and dominate
+	# CREATE INDEX time).
+	# bool_col is dual-purpose: indexed AND in INCLUDE. The bench queries
+	# (bool / boolCast / boolFilt) read it via cs, so it has to be an
+	# INCLUDE column; the inverted-index side carries it just to satisfy
+	# the "at least one indexed column" requirement.
 	run_sql "create_index" "${BUILD_THREADS}" "
-CREATE INDEX bench_idx ON bench_view USING inverted()
+DROP INDEX IF EXISTS bench_idx;
+CREATE INDEX bench_idx ON bench_view USING inverted(bool_col)
 INCLUDE (
   i8, i16, i32, i64, f32, f64, s, bool_col,
   arr_i32, arr_f64, lst_i32, struct_basic, struct_f64,
   map_i32, lst_struct, deep
 );
-"
-else
-	# --- 2b. Reuse the existing data dir / native db ---------------------
-	echo "starting bench serened with data dir ${SERENED_DATA_DIR}"
-	start_server
-	trap "killall -9 serened >/dev/null 2>&1 || true" EXIT
-
-	run_setup "attach_native_db" "${BUILD_THREADS}" "
-ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
-SET search_path TO public, native_db.main;
 "
 fi
 
@@ -252,26 +354,30 @@ QUERIES=(
 	"deep|SUM(length(deep.name)) + SUM(list_sum(list_transform(deep.vals, p -> p.v)))"
 )
 
-# Two cold modes, picked by PERF_DROP_CACHES=1:
+# Three timing modes, picked by env:
 #
-# - PERF_DROP_CACHES unset (default): "cold" means 1st-touch within the
-#   same session.  Captures per-segment open + per-codec init cost (the
-#   hot pass amortises both); does NOT capture OS-cache fetch cost
-#   because the .cs files are still in page cache from CREATE INDEX,
-#   AND DuckDB's BufferManager keeps the native side warm in process
-#   memory across the drop.
+# - default (no env): hot only.  1 warmup hit + 1 timed hit per query
+#   per side.  Steady-state warm.  Fastest run.
 #
-# - PERF_DROP_CACHES=1: true cold.  Before each query we kill serened,
-#   drop the OS page cache, restart, and re-attach native_db.  The
-#   restart drops both serened's BlockHandles AND DuckDB's BufferManager
-#   state for the native side, so both sides re-read from disk on the
-#   first query.  The view-backed `bench_idx` alias is reloaded by
-#   serened on startup (fixed in #662) so no CREATE INDEX is needed and
-#   no data duplication occurs.
+# - PERF_COLD=1: same-session cold + hot.  "cold" means 1st-touch within
+#   the same session (per-segment open + per-codec init cost).  Does NOT
+#   capture OS-cache fetch cost because the .cs files are still in page
+#   cache from CREATE INDEX, AND DuckDB's BufferManager keeps the native
+#   side warm across the drop.
+#
+# - PERF_DROP_CACHES=1: true cold + hot.  Before each query we kill
+#   serened, drop the OS page cache, restart, and re-attach native_db.
+#   The restart drops both serened's BlockHandles AND DuckDB's
+#   BufferManager state for the native side, so both sides re-read from
+#   disk on the first query.  The view-backed `bench_idx` alias is
+#   reloaded by serened on startup (fixed in #662) so no CREATE INDEX is
+#   needed and no data duplication occurs.
 #
 #   sudo runs *only* the drop_caches command.  Credentials are cached
 #   once via `sudo -v` at the start so the bench runs uninterrupted.
 #   Other files this script produces stay owned by the invoking user.
+#
+# PERF_DROP_CACHES=1 takes precedence over PERF_COLD=1.
 
 drop_os_cache_with_sudo() {
 	# Flush dirty pages first so drop_caches=3 can free clean copies
@@ -303,7 +409,16 @@ cycle_cold() {
 	reattach_native_db
 }
 
-# Mode A: same-session cold + warmup + hot
+# Default mode: hot only.  1 warmup hit + 1 timed hit.
+run_pass_hot_only() {
+	for q in "${QUERIES[@]}"; do
+		local label="${q%%|*}" expr="${q#*|}"
+		bench_pair_idx "warmup" "${label}" "${expr}" # ignored
+		bench_pair_idx "hot" "${label}" "${expr}"    # timed
+	done
+}
+
+# PERF_COLD=1: same-session cold + warmup + hot.
 run_pass_same_session() {
 	for q in "${QUERIES[@]}"; do
 		local label="${q%%|*}" expr="${q#*|}"
@@ -313,9 +428,10 @@ run_pass_same_session() {
 	done
 }
 
-# Mode B: restart-and-drop-OS-cache before each query, then cold + hot.
-# Each cycle: kill serened -> drop_caches -> restart -> reattach native.
-# This clears DuckDB BufferManager too so native isn't unfairly warm.
+# PERF_DROP_CACHES=1: restart-and-drop-OS-cache before each query, then
+# cold + hot.  Each cycle: kill serened -> drop_caches -> restart ->
+# reattach native.  Clears DuckDB BufferManager too so native isn't
+# unfairly warm.
 run_pass_drop_caches() {
 	for q in "${QUERIES[@]}"; do
 		local label="${q%%|*}" expr="${q#*|}"
@@ -328,8 +444,11 @@ run_pass_drop_caches() {
 	done
 }
 
+# Dispatch the bench pass.  PERF_DROP_CACHES wins over PERF_COLD.
+HAS_COLD=0
 echo
 if [[ "${PERF_DROP_CACHES:-0}" == "1" ]]; then
+	HAS_COLD=1
 	# Cache the sudo credential up front. Without this, sudo would
 	# prompt mid-loop and stall the bench.
 	echo "PERF_DROP_CACHES=1: caching sudo credential for drop_caches"
@@ -348,10 +467,16 @@ if [[ "${PERF_DROP_CACHES:-0}" == "1" ]]; then
 	trap "kill ${SUDO_REFRESH_PID} 2>/dev/null; killall -9 serened >/dev/null 2>&1 || true" EXIT
 	echo "================ TRUE-COLD / HOT PASS (restart + drop_caches) ================"
 	run_pass_drop_caches
-else
+elif [[ "${PERF_COLD:-0}" == "1" ]]; then
+	HAS_COLD=1
 	echo "================ COLD / HOT PASS (same-session) ================"
 	echo "rerun with PERF_DROP_CACHES=1 for restart+drop-OS-cache cold timings"
 	run_pass_same_session
+else
+	echo "================ HOT PASS ================"
+	echo "rerun with PERF_COLD=1 for same-session cold timings,"
+	echo "or PERF_DROP_CACHES=1 for restart+drop-OS-cache cold timings"
+	run_pass_hot_only
 fi
 
 # --- 4. Sizes --------------------------------------------------------------
@@ -410,24 +535,44 @@ ratio() {
 	echo "parquet file:  ${PARQUET_FILE} (${human_pq})"
 	echo "build threads: ${BUILD_THREADS}    scan threads: ${SCAN_THREADS}"
 	echo
-	printf "%-10s | %s\n" "phase" "cold = 1st-touch same-session; hot = 3rd-touch steady-state"
-	echo
-	printf "%-10s %12s %12s %8s | %12s %12s %8s\n" \
-		"query" "cs cold" "native cold" "cold x" \
-		"cs hot" "native hot" "hot x"
-	printf "%-10s %12s %12s %8s | %12s %12s %8s\n" \
-		"----------" "------------" "------------" "--------" \
-		"------------" "------------" "--------"
-	for q in count i8 i16 i32 i64 f32 f64 varchar bool boolCast boolFilt \
-		array arrayF list struct structF map lstStr deep; do
-		ci="${TIMINGS[cold_${q}_indexed]:-}"
-		cn="${TIMINGS[cold_${q}_native]:-}"
-		hi="${TIMINGS[hot_${q}_indexed]:-}"
-		hn="${TIMINGS[hot_${q}_native]:-}"
-		printf "%-10s %12s %12s %8s | %12s %12s %8s\n" "${q}" \
-			"$(fmt_ms "${ci}")" "$(fmt_ms "${cn}")" "$(ratio "${cn}" "${ci}")" \
-			"$(fmt_ms "${hi}")" "$(fmt_ms "${hn}")" "$(ratio "${hn}" "${hi}")"
-	done
+	if [[ "${HAS_COLD}" == "1" ]]; then
+		printf "%-10s | %s\n" "phase" \
+			"cold = 1st-touch same-session; hot = 3rd-touch steady-state"
+		echo
+		printf "%-10s %12s %12s %8s | %12s %12s %8s\n" \
+			"query" "cs cold" "native cold" "cold x" \
+			"cs hot" "native hot" "hot x"
+		printf "%-10s %12s %12s %8s | %12s %12s %8s\n" \
+			"----------" "------------" "------------" "--------" \
+			"------------" "------------" "--------"
+		for q in count i8 i16 i32 i64 f32 f64 varchar bool boolCast boolFilt \
+			array arrayF list struct structF map lstStr deep; do
+			ci="${TIMINGS[cold_${q}_indexed]:-}"
+			cn="${TIMINGS[cold_${q}_native]:-}"
+			hi="${TIMINGS[hot_${q}_indexed]:-}"
+			hn="${TIMINGS[hot_${q}_native]:-}"
+			printf "%-10s %12s %12s %8s | %12s %12s %8s\n" "${q}" \
+				"$(fmt_ms "${ci}")" "$(fmt_ms "${cn}")" \
+				"$(ratio "${cn}" "${ci}")" \
+				"$(fmt_ms "${hi}")" "$(fmt_ms "${hn}")" \
+				"$(ratio "${hn}" "${hi}")"
+		done
+	else
+		printf "%-10s | %s\n" "phase" "hot = warmup + timed hit"
+		echo
+		printf "%-10s %12s %12s %8s\n" \
+			"query" "cs hot" "native hot" "hot x"
+		printf "%-10s %12s %12s %8s\n" \
+			"----------" "------------" "------------" "--------"
+		for q in count i8 i16 i32 i64 f32 f64 varchar bool boolCast boolFilt \
+			array arrayF list struct structF map lstStr deep; do
+			hi="${TIMINGS[hot_${q}_indexed]:-}"
+			hn="${TIMINGS[hot_${q}_native]:-}"
+			printf "%-10s %12s %12s %8s\n" "${q}" \
+				"$(fmt_ms "${hi}")" "$(fmt_ms "${hn}")" \
+				"$(ratio "${hn}" "${hi}")"
+		done
+	fi
 	echo
 	printf "%-26s %12s\n" "storage" "bytes"
 	printf "%-26s %12s\n" "--------------------------" "------------"

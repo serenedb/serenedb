@@ -279,7 +279,7 @@ class Conjunction : public ConjunctionBase<Adapter> {
     // but depends on underlying iterator implementation
     SDB_ASSERT(target >= this->value());
     for (auto& it : this->_itrs) {
-      const auto doc = it.LazySeek(target);
+      const auto doc = it.value() <= target ? it.LazySeek(target) : it.value();
       if (doc != target) {
         return doc;
       }

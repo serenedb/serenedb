@@ -1364,7 +1364,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   if (!col_ref) {
     return nullptr;
   }
-  auto info = (*ctx.json_path_getter)(*col_ref, path);
+  auto info = (*ctx.json_path_getter)(*col_ref, EncodeJsonPointer(path));
   if (!info) {
     return nullptr;
   }

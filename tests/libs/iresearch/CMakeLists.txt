@@ -61,6 +61,7 @@ set(iresearch-tests_sources
     ./search/sort_tests.cpp
     ./search/tfidf_test.cpp
     ./search/wand_test.cpp
+    ./search/wand_norm_merge_test.cpp
     ./search/bm25_test.cpp
     ./search/raw_tf_test.cpp
     ./search/lm_test.cpp

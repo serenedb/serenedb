@@ -202,11 +202,11 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
 
 template<typename IteratorTraits>
 doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
+  SDB_ASSERT(target >= value());
   if constexpr (IteratorTraits::Position()) {
-    SDB_ASSERT(target >= value());
     return seek(target);
   } else {
-    if (target <= _doc) [[unlikely]] {
+    if (target == _doc) [[unlikely]] {
       return _doc;
     }
 
@@ -639,7 +639,7 @@ PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand, InputType>::FillBlock(
                   base, data, words, std::end(this->_docs) - tail, tail);
               }
             } else if (bitset) {
-              const uint32_t mask_words = (max - min) >> 6;
+              const uint32_t mask_words = (max - min + 63) >> 6;
               const auto offset = base >= min ? base - min : min - base;
               const uint32_t word_offset = offset >> 6;
               const uint32_t bit_offset = offset % BitsRequired<uint64_t>();

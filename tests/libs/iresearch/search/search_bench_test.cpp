@@ -428,6 +428,7 @@ void BuildIndex(const std::string& corpus_path,
     .consolidation_interval_ms = 5000,
     .consolidation_threads = 0,
     .consolidate_all = true,
+    .norm_row_group_size = 10'000'000,
   };
 
   bench::IndexBuilder builder{index_dir.string(), builder_options, config};

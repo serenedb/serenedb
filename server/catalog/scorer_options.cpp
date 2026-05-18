@@ -224,7 +224,7 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("Unknown scorer '", name, "'"),
-      ERR_HINT("Expected one of: bm25, tfidf,  lm_jm, lm_dirichlet, "
+      ERR_HINT("Expected one of: bm25, tfidf, lm_jm, lm_dirichlet, "
                "indri_dirichlet, dfi, raw_boost, raw_tf, raw_dl"));
   }
   return scorer;

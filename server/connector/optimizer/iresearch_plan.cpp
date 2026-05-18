@@ -362,7 +362,7 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
 
 connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx) {
   return [&ctx](const duckdb::BoundColumnRefExpression& ref,
-                std::span<const std::string> path)
+                std::string_view json_pointer)
            -> std::optional<connector::SearchColumnInfo> {
     if (ref.binding.table_index != ctx.table_index) {
       return std::nullopt;
@@ -377,7 +377,6 @@ connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx) {
     if (!ctx.json_path_tokenizer_provider) {
       return std::nullopt;
     }
-    auto json_pointer = connector::EncodeJsonPointer(path);
     auto tokenizer = ctx.json_path_tokenizer_provider(col_id, json_pointer);
     if (!tokenizer) {
       return std::nullopt;
@@ -386,7 +385,7 @@ connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx) {
     info.column_id = col_id;
     info.logical_type = duckdb::LogicalType::VARCHAR;
     info.tokenizer = *std::move(tokenizer);
-    info.json_pointer = std::move(json_pointer);
+    info.json_pointer = json_pointer;
     return info;
   };
 }

@@ -21,12 +21,22 @@
 #include "index_builder.h"
 
 #include <atomic>
+#include <duckdb/main/database.hpp>
 #include <iostream>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <memory>
 
 namespace bench {
+
+duckdb::DatabaseInstance& CsDb() {
+  static std::unique_ptr<duckdb::DuckDB> kDb = [] {
+    duckdb::DBConfig cfg;
+    cfg.options.access_mode = duckdb::AccessMode::AUTOMATIC;
+    return std::make_unique<duckdb::DuckDB>(":memory:", &cfg);
+  }();
+  return *kDb->instance;
+}
 
 static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
                                                  size_t segment_pool_size,
@@ -37,6 +47,8 @@ static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
   writer_opts.reader_options.scorer = scorer_ptr;
   writer_opts.segment_pool_size = segment_pool_size;
   writer_opts.segment_memory_max = segment_mem_max;
+  writer_opts.db = &CsDb();
+  writer_opts.reader_options.db = &CsDb();
   writer_opts.column_options =
     [row_group_size](irs::field_id id) -> irs::ColumnOptions {
     return {.row_group_size = row_group_size};

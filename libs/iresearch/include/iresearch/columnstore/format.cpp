@@ -517,10 +517,6 @@ IndexInput::ptr OpenAndCheckHeader(const Directory& dir,
   return in;
 }
 
-// Returns a view over the footer's serialized bytes. Prefers IndexInput's
-// zero-copy ReadView (mmap-backed directories return an immutable pointer
-// into the file mapping); for directories that don't support it ReadView
-// returns nullptr and we fall back to a heap copy in `fallback_storage`.
 std::span<const byte_type> ReadFooterBytes(
   IndexInput& in, std::string_view filename,
   std::vector<byte_type>& fallback_storage) {
@@ -543,7 +539,7 @@ std::span<const byte_type> ReadFooterBytes(
              footer_offset, " is out of range [", header_len, ", ",
              footer_offset_pos, ")");
   const uint64_t footer_size = footer_offset_pos - footer_offset;
-  if (const auto* view = in.ReadView(footer_offset, footer_size)) {
+  if (const auto* view = in.ReadData(footer_offset, footer_size)) {
     return {view, static_cast<size_t>(footer_size)};
   }
   fallback_storage.resize(footer_size);

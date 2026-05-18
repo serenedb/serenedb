@@ -289,15 +289,10 @@ struct DocIterator : AttributeProvider {
   // (for more information see class description)
   virtual doc_id_t seek(doc_id_t target) = 0;
 
-  // Precondition: target >= value().
   // If target is in the iterator: returns target and value() == target.
   // If target isn't in the iterator: value() is unchanged (no advance).
-  // Because value() may be left behind, callers forwarding seeks from a
-  // parent (e.g. conjunctions) must re-check target >= value() each call.
-  virtual doc_id_t LazySeek(doc_id_t target) {
-    SDB_ASSERT(target >= value());
-    return seek(target);
-  }
+  // If target <= value(): returns target
+  virtual doc_id_t LazySeek(doc_id_t target) { return seek(target); }
 
   virtual void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                        ScoreCollector& collector) {

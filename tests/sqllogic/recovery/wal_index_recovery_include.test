@@ -64,7 +64,7 @@ INSERT INTO wal_inc_t VALUES (
 statement ok
 CREATE INDEX wal_inc_idx ON wal_inc_t
   USING inverted(txt wal_inc_dict, dual wal_inc_dict)
-  INCLUDE (pk, v included, dual, ints, triple, pt, m, nest);
+  INCLUDE (pk, v, dual, ints, triple, pt, m, nest);
 
 statement ok
 VACUUM (UPDATE_INDEXES) wal_inc_t;

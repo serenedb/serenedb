@@ -202,11 +202,10 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
 
 template<typename IteratorTraits>
 doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
-  SDB_ASSERT(target >= value());
   if constexpr (IteratorTraits::Position()) {
     return seek(target);
   } else {
-    if (target == _doc) [[unlikely]] {
+    if (target <= _doc) [[unlikely]] {
       return _doc;
     }
 

@@ -484,12 +484,6 @@ PreloadedHnswGraphs Writer::TakeBuiltHnswGraphs() {
 
 void Writer::Rollback() noexcept {
   _impl->out.reset();
-  if (!_impl->filename.empty()) {
-    try {
-      _impl->dir->remove(_impl->filename);
-    } catch (...) {
-    }
-  }
   _impl->committed = true;
 }
 

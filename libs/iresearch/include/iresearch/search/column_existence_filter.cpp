@@ -99,7 +99,7 @@ class ColumnExistenceIterator : public DocIterator {
   }
 
   doc_id_t seek(doc_id_t target) noexcept final {
-    if (target <= _doc) {
+    if (target <= _doc) [[unlikely]] {
       return _doc;
     }
     while (_doc < target && !doc_limits::eof(_doc)) {
@@ -108,10 +108,7 @@ class ColumnExistenceIterator : public DocIterator {
     return _doc;
   }
 
-  doc_id_t LazySeek(doc_id_t target) noexcept final {
-    SDB_ASSERT(target >= value());
-    return seek(target);
-  }
+  doc_id_t LazySeek(doc_id_t target) noexcept final { return seek(target); }
 
   uint32_t count() noexcept final {
     uint32_t c = 0;
@@ -224,10 +221,7 @@ class AllDocsExistenceIterator : public DocIterator {
     return _doc;
   }
 
-  doc_id_t LazySeek(doc_id_t target) noexcept final {
-    SDB_ASSERT(target >= value());
-    return seek(target);
-  }
+  doc_id_t LazySeek(doc_id_t target) noexcept final { return seek(target); }
 
   uint32_t count() noexcept final {
     if (doc_limits::eof(_doc)) {

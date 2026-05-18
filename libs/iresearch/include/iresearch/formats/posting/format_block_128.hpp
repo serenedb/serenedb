@@ -251,6 +251,9 @@ struct FormatTraits128 {
                                          uint32_t* in, uint32_t* buf) {
     SDB_ASSERT(1 <= len);
     SDB_ASSERT(len <= doc_limits::kBlockSize);
+    // Checking correct aligning for __m128i
+    SDB_ASSERT(reinterpret_cast<uint64_t>(buf) % 16 == 0);
+    SDB_ASSERT(reinterpret_cast<uint64_t>(in) % 16 == 0);
     byte_type best_encoding = e_values;
     uint32_t best_size = len * sizeof(uint32_t);
 
@@ -269,7 +272,7 @@ struct FormatTraits128 {
 
         all_same &= max == value;
         max = std::max(max, value);
-        min = std::min(max, value);
+        min = std::min(min, value);
 
         size_streamvbyte1234 += ByteSize1234(value);
       }
@@ -308,11 +311,12 @@ struct FormatTraits128 {
           const auto bits = std::bit_width(max - min);
           SDB_ASSERT(bits >= 1); // if max == min, then all_same would be choosen.
 
-          const auto min_byte_size = ByteSize124(min);
+          min_byte_size = ByteSize124(min);
           const auto size = FromBits<byte_type>(doc_limits::kBlockSize * bits) + min_byte_size;
-          if (best_size < size) {
+          if (size < best_size) {
             std::array<byte_type, 5> to_choose = {0, e_for1_bitpack_01, e_for2_bitpack_01, 0, e_for4_bitpack_01};
             best_encoding = to_choose[min_byte_size] + (bits - 1);
+            best_size = size;
           }
         }
       }
@@ -485,8 +489,8 @@ struct FormatTraits128 {
         MakeBlockFromTail(in, len);
         simdpackFOR(min, in, reinterpret_cast<__m128i*>(buf), std::bit_width(max - min));
         Serialize124(min_byte_size, min, out);
-        out.WriteBytes(reinterpret_cast<byte_type*>(buf), best_size);
-      }
+        out.WriteBytes(reinterpret_cast<byte_type*>(buf), best_size - min_byte_size);
+      } break;
 
       default:
         SDB_UNREACHABLE();
@@ -684,6 +688,10 @@ struct FormatTraits128 {
                                         uint32_t* buf, uint32_t* out) {
     SDB_ASSERT(1 <= len);
     SDB_ASSERT(len <= doc_limits::kBlockSize);
+    // Checking correct aligning for __m128i
+    SDB_ASSERT(reinterpret_cast<uint64_t>(buf) % 16 == 0);
+    SDB_ASSERT(reinterpret_cast<uint64_t>(out) % 16 == 0);
+
     const auto type = static_cast<Encoding>(in.ReadByte());
     auto* const begin = out + (doc_limits::kBlockSize - len);
     switch (type) {
@@ -776,12 +784,12 @@ struct FormatTraits128 {
       case e_for1_bitpack_29:
       case e_for1_bitpack_30:
       case e_for1_bitpack_31: {
-        const auto* data = ReadData(type, in, buf);
         const auto bits = (type - e_for1_bitpack_01) + 1;
-
-        uint32_t min = static_cast<uint32_t>(*data);
-        ++data;
-        simdunpackFOR(min, reinterpret_cast<const __m128i*>(data), out, bits);
+        const auto size = Size(0, type, in);
+        uint32_t min = static_cast<uint32_t>(in.ReadByte());
+        [[maybe_unused]] const auto read = in.ReadBytes(reinterpret_cast<byte_type*>(buf), size - 1);
+        SDB_ASSERT(read == size - 1);
+        simdunpackFOR(min, reinterpret_cast<const __m128i*>(buf), out, bits);
       } break;
 
       case e_for2_bitpack_01:
@@ -815,12 +823,12 @@ struct FormatTraits128 {
       case e_for2_bitpack_29:
       case e_for2_bitpack_30:
       case e_for2_bitpack_31: {
-        const auto* data = ReadData(type, in, buf);
         const auto bits = (type - e_for1_bitpack_01) + 1;
-
-        uint32_t min = *reinterpret_cast<const uint16_t*>(data);
-        data += 2;
-        simdunpackFOR(min, reinterpret_cast<const __m128i*>(data), out, bits);
+        const auto size = Size(0, type, in);
+        uint32_t min = static_cast<uint16_t>(in.ReadI16());
+        [[maybe_unused]] const auto read = in.ReadBytes(reinterpret_cast<byte_type*>(buf), size - 2);
+        SDB_ASSERT(read == size - 2);
+        simdunpackFOR(min, reinterpret_cast<const __m128i*>(buf), out, bits);
       } break;
 
       case e_for4_bitpack_01:
@@ -854,12 +862,12 @@ struct FormatTraits128 {
       case e_for4_bitpack_29:
       case e_for4_bitpack_30:
       case e_for4_bitpack_31: {
-        const auto* data = ReadData(type, in, buf);
         const auto bits = (type - e_for1_bitpack_01) + 1;
-
-        uint32_t min = *reinterpret_cast<const uint32_t*>(data);
-        data += 4;
-        simdunpackFOR(min, reinterpret_cast<const __m128i*>(data), out, bits);
+        const auto size = Size(0, type, in);
+        uint32_t min = static_cast<uint32_t>(in.ReadI32());
+        [[maybe_unused]] const auto read = in.ReadBytes(reinterpret_cast<byte_type*>(buf), size - 4);
+        SDB_ASSERT(read == size - 4);
+        simdunpackFOR(min, reinterpret_cast<const __m128i*>(buf), out, bits);
       } break;
 
       default:

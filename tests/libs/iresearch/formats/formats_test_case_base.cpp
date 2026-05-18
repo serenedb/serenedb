@@ -2853,17 +2853,17 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   irs::MemoryDirectory dir;
   auto& db = irs::tests::CsDb();
 
-  // Rollback path: a writer that's rolled back should not leave a .cs file
-  // for that segment behind.
+  // Rollback path: the eagerly-created `.cs` stays on disk as an orphan;
+  // the directory cleaner sweeps it later (matches legacy `.csd`).
   {
     irs::columnstore::Writer w{dir, "_rollback_seg", db};
     irs::tests::OpenBlobColumn(w, /*id=*/1);
     w.Rollback();
   }
   {
-    bool exists = true;
+    bool exists = false;
     ASSERT_TRUE(dir.exists(exists, "_rollback_seg.cs"));
-    EXPECT_FALSE(exists);
+    EXPECT_TRUE(exists);
   }
 
   // Three sequential segments.

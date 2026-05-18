@@ -837,3 +837,59 @@ WHERE a @@ ts_like('foo') AND (a || b) @@ ts_like('foobaz');
 ----
 id
 3
+
+
+# EXPLAIN binds successfully for an expression-index pushdown.
+query
+EXPLAIN SELECT id FROM tx_n_idx WHERE a + b = 30;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: tx_n_idx      │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+<slt:ignore>
+│                           │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM tx_v_idx WHERE (s1 || s2) @@ 'foobar'::tsquery;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: tx_v_idx      │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+<slt:ignore>
+│                           │
+│      Projections: id      │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
+query ??
+EXPLAIN SELECT id FROM tx_b_idx WHERE (a > b) = true;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: tx_b_idx      │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+<slt:ignore>
+│                           │
+│      Projections: id      │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘

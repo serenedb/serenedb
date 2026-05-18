@@ -180,7 +180,7 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
       auto expr_tokenizer_provider =
         MakeExpressionTokenizerProvider(snapshot, inverted_index);
       auto indexed_exprs =
-        MakeIndexedExpressions(inverted_index, &conn_ctx.GetClientContext());
+        MakeIndexedExpressions(inverted_index, conn_ctx.GetClientContext());
 
       writers.push_back(
         MakeDuckDBSearchWriter(Kind, index_txn, std::move(tokenizer_provider),
@@ -303,8 +303,8 @@ void EvaluateAndWriteIndexedExpressions(
     SDB_ASSERT(switched, "Cannot switch to indexed expression");
 
     DuckDBSinkIndexWriter* writer_ptr = &sink;
-    serializer.WriteVector<DuckDBColumnSerializer::TxnWriter>(
-      nullptr, result, num_rows, row_keys, {&writer_ptr, 1}, expr_desc);
+    serializer.WriteVectorIndexOnly(result, num_rows, row_keys,
+                                    {&writer_ptr, 1}, expr_desc);
   }
 }
 

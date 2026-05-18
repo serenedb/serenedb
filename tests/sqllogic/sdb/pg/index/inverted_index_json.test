@@ -412,6 +412,151 @@ WHERE content->>'val' = '[lit]';
 id
 2
 
+# Type dispatch keys off the JSON type of the leaf, not its textual shape:
+# `"42"` (string) and `42` (number) land in different fields.
+statement ok
+CREATE TABLE num_str_split (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX num_str_split_idx ON num_str_split USING inverted(
+    id, (content->'val') verbatim_dict);
+
+statement ok
+INSERT INTO num_str_split VALUES
+    (1, '{"val":"42"}'::json),
+    (2, '{"val":42}'::json),
+    (3, '{"val":"true"}'::json),
+    (4, '{"val":true}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) num_str_split;
+
+query
+SELECT id FROM num_str_split_idx WHERE (content->'val')::int = 42;
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM num_str_split_idx WHERE (content->'val')::int = 42;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│     num_str_split_idx     │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+<slt:ignore>
+
+
+
+query
+SELECT id FROM num_str_split_idx WHERE (content->'val')::bool = true;
+----
+id
+4
+
+query
+EXPLAIN SELECT id FROM num_str_split_idx WHERE (content->'val')::bool = true;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│     num_str_split_idx     │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+<slt:ignore>
+
+query
+SELECT id FROM num_str_split_idx WHERE content->>'val' = '42';
+----
+id
+1
+2
+
+# Indexed expression is not used, need to read all fields
+query
+EXPLAIN SELECT id FROM num_str_split_idx WHERE content->>'val' = '42';
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ ((content ->> 'val') = '42│
+│             ')            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│     num_str_split_idx     │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│        Projections:       │
+│          content          │
+│             id            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+query
+SELECT id FROM num_str_split_idx WHERE content->>'val' = 'true';
+----
+id
+3
+4
+
+# Indexed expression is not used, need to read all fields
+query
+EXPLAIN SELECT id FROM num_str_split_idx WHERE content->>'val' = 'true';
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│  ((content ->> 'val') =   │
+│          'true')          │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│     num_str_split_idx     │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│        Projections:       │
+│          content          │
+│             id            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────
+
 # Same JSON path indexed once, but two tokenizers are in flight at the
 # same time: the user-configured keyword tokenizer for string
 # leaves, and the built-in NumericTokenizer for integer/float leaves.

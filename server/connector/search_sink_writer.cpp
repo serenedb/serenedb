@@ -20,9 +20,8 @@
 
 #include "search_sink_writer.hpp"
 
-#include <absl/strings/numbers.h>
+#include <simdjson.h>
 
-#include <cmath>
 #include <duckdb/common/enum_util.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
@@ -284,9 +283,16 @@ void SearchSinkInsertBaseImpl::SetupExprAuxTypedFields(
       string_writer(full_key, cell_slices);
       return;
     }
-    double numeric_val = 0.0;
-    if (absl::SimpleAtod(raw, &numeric_val) && std::isfinite(numeric_val)) {
-      _aux_numeric_field.SetNumericValue(numeric_val);
+    // DOM: ondemand mis-classifies top-level scalars from the first byte.
+    simdjson::dom::parser dom_parser;
+    simdjson::dom::element doc;
+    if (dom_parser.parse(raw.data(), raw.size()).get(doc) !=
+        simdjson::SUCCESS) {
+      SDB_THROW(ERROR_INTERNAL,
+                "Invalid JSON leaf for indexed expression: ", raw);
+    }
+    if (doc.is_number()) {
+      _aux_numeric_field.SetNumericValue(double(doc.get_double()));
       const bool ok =
         _document->template Insert<irs::Action::INDEX>(&_aux_numeric_field);
       if (!ok) {
@@ -296,8 +302,8 @@ void SearchSinkInsertBaseImpl::SetupExprAuxTypedFields(
       }
       return;
     }
-    if (raw == "true" || raw == "false") {
-      _aux_bool_field.SetBooleanValue(raw == "true");
+    if (doc.is_bool()) {
+      _aux_bool_field.SetBooleanValue(bool(doc.get_bool()));
       const bool ok =
         _document->template Insert<irs::Action::INDEX>(&_aux_bool_field);
       if (!ok) {

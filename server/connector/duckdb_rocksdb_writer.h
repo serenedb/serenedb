@@ -117,6 +117,16 @@ class DuckDBColumnSerializer {
                    std::span<DuckDBSinkIndexWriter*> index_writers,
                    const Desc& desc);
 
+  // Source row already persisted in rocksdb; notify index_writers only.
+  template<typename Desc>
+  void WriteVectorIndexOnly(const duckdb::Vector& vec, duckdb::idx_t num_rows,
+                            std::vector<std::string>& row_keys,
+                            std::span<DuckDBSinkIndexWriter*> index_writers,
+                            const Desc& desc) {
+    WriteVector<TxnWriter, Desc>(nullptr, vec, num_rows, row_keys,
+                                 index_writers, desc);
+  }
+
   size_t WriteSubVector(const duckdb::RecursiveUnifiedVectorFormat& rdata,
                         duckdb::idx_t offset, duckdb::idx_t count,
                         const duckdb::LogicalType& type);

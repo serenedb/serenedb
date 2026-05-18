@@ -63,18 +63,15 @@ inline ExpressionTokenizerProvider MakeExpressionTokenizerProvider(
 }
 
 inline std::vector<IndexedExpression> MakeIndexedExpressions(
-  const catalog::InvertedIndex& index, duckdb::ClientContext* client_context) {
+  const catalog::InvertedIndex& index, duckdb::ClientContext& client_context) {
   std::vector<IndexedExpression> entries;
-  if (!client_context) {
-    return entries;
-  }
   for (const auto& expr_info : index.GetExpressions()) {
     SDB_ASSERT(!expr_info.serialized_expr.empty(),
                "Any expr should be serialized in non-empty string");
     SDB_ASSERT(!expr_info.dependent_columns.empty(),
                "expression must declare at least one dependent column");
     auto bound =
-      DeserializeBoundExpression(expr_info.serialized_expr, *client_context);
+      DeserializeBoundExpression(expr_info.serialized_expr, client_context);
     entries.push_back({std::move(bound), expr_info.serialized_expr,
                        expr_info.dependent_columns});
   }

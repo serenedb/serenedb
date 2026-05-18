@@ -227,9 +227,9 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
       key_utils::SetupColumnForKey(gstate.row_keys[row], meta.id);
     }
 
-    gstate.serializer->WriteVector<DuckDBColumnSerializer::SstWriter>(
-      nullptr, chunk.data[meta.input_col_idx], num_rows, gstate.row_keys,
-      gstate.active_writers, desc);
+    gstate.serializer->WriteVectorIndexOnly(chunk.data[meta.input_col_idx],
+                                            num_rows, gstate.row_keys,
+                                            gstate.active_writers, desc);
   }
 
   for (auto& writer : gstate.index_writers) {

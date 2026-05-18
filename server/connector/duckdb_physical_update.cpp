@@ -628,9 +628,9 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
         key_utils::SetupColumnForKey(gstate.new_row_keys[row], col.id);
       }
-      gstate.serializer.WriteVector<DuckDBColumnSerializer::TxnWriter>(
-        nullptr, chunk.data[col.chunk_idx], num_rows, gstate.new_row_keys,
-        gstate.active_writers, desc);
+      gstate.serializer.WriteVectorIndexOnly(chunk.data[col.chunk_idx],
+                                             num_rows, gstate.new_row_keys,
+                                             gstate.active_writers, desc);
     }
 
     // Non-updated columns: from saved values via Put.
@@ -716,9 +716,9 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
         key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
       }
-      gstate.serializer.WriteVector<DuckDBColumnSerializer::TxnWriter>(
-        nullptr, chunk.data[col.chunk_idx], num_rows, gstate.row_keys,
-        gstate.active_writers, desc);
+      gstate.serializer.WriteVectorIndexOnly(chunk.data[col.chunk_idx],
+                                             num_rows, gstate.row_keys,
+                                             gstate.active_writers, desc);
     }
   }
 

@@ -10,5 +10,20 @@ target_sources(
         system.cpp
         search.cpp
         sequence.cpp
+        ts_anyall.cpp
+        ts_between.cpp
+        ts_compound.cpp
+        ts_highlight.cpp
+        ts_levenshtein.cpp
+        ts_lexize.cpp
+        ts_like.cpp
+        ts_ngram.cpp
+        ts_offsets.cpp
+        ts_phrase.cpp
+        ts_prefix.cpp
+        ts_regexp.cpp
+        ts_term.cpp
+        ts_to_tsquery.cpp
+        ts_tokenize.cpp
         vector.cpp
 )

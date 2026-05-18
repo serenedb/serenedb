@@ -20,7 +20,10 @@
 
 #include "connector/duckdb_search_full_scan.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/formats.hpp>
@@ -54,139 +57,45 @@
 #include "connector/duckdb_table_function.h"
 #include "connector/index_source.h"
 #include "connector/index_source_factory.h"
-#include "connector/key_utils.hpp"
+#include "connector/offsets_writer.hpp"
 #include "connector/pk_batch_helpers.h"
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_pk_lookup.h"
-#include "connector/search_remove_filter.hpp"
-#include "rocksdb/db.h"
-#include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
+namespace {
 
-// Rebuild per-field sub-filter state for a new segment. The OffsetsCollector
-// walks the prepared query tree and matches each sub-filter's field name
-// (8-byte BE column id + string mangle byte -- OFFSETS is VARCHAR-only)
-// against the requested columns.
-static void ResetOffsetsForSegment(SearchFullScanGlobalState& gstate,
-                                   const SearchScan& search,
-                                   const irs::SubReader& segment) {
-  for (auto& fs : gstate.offsets_field_state) {
-    fs.Clear();
+void ResetOffsets(SearchFullScanGlobalState& gstate,
+                  const irs::SubReader& segment) {
+  for (auto& entry : gstate.offsets_entries) {
+    entry.state.Clear();
   }
-  std::vector<std::string> field_names(search.offsets.size());
-  for (size_t i = 0; i < search.offsets.size(); ++i) {
-    MakeFieldName(search.offsets[i].column_id, field_names[i]);
-    search::mangling::MangleString(field_names[i]);
-  }
-  OffsetsCollector visitor(field_names, gstate.offsets_field_state);
+  OffsetsCollector visitor{gstate.offsets_entries};
   SDB_ASSERT(gstate.query);
   gstate.query->visit(segment, visitor, irs::kNoBoost);
 }
 
-// Per doc, dedupe + sort offset pairs in `gstate.offsets_doc_scratch[fi]`,
-// then memcpy into output's LIST(BIGINT) child at `row_idx`.
-static void CollectAndWriteDocOffsets(
-  SearchFullScanGlobalState& gstate, const SearchScan& search,
-  const irs::SubReader& segment, irs::doc_id_t doc_id,
-  duckdb::DataChunk& output, duckdb::idx_t row_idx,
-  std::vector<duckdb::idx_t>& running_child_size) {
-  constexpr auto kFeatures = irs::IndexFeatures::Freq |
-                             irs::IndexFeatures::Pos | irs::IndexFeatures::Offs;
-
-  for (size_t fi = 0; fi < search.offsets.size(); ++fi) {
-    auto& doc_offsets = gstate.offsets_doc_scratch[fi];
-    doc_offsets.clear();
-    const size_t max_pairs = search.offsets[fi].limit == 0
-                               ? std::numeric_limits<size_t>::max()
-                               : search.offsets[fi].limit;
-    containers::FlatHashSet<uint64_t> seen;
-    for (auto& fe : gstate.offsets_field_state[fi].entries) {
-      if (doc_offsets.size() / 2 >= max_pairs) {
-        break;
-      }
-      if (!fe.docs) {
-        fe.docs = std::visit(
-          [&]<typename T>(const T* ptr) -> irs::DocIterator::ptr {
-            if constexpr (std::is_same_v<T, irs::SeekCookie>) {
-              return gstate.offsets_field_state[fi].reader->Iterator(
-                kFeatures, irs::PostingCookie{.cookie = ptr});
-            } else {
-              return ptr->ExecuteWithOffsets(segment);
-            }
-          },
-          fe.filter);
-        if (!fe.docs || irs::doc_limits::eof(fe.docs->value())) {
-          fe.docs.reset();
-          continue;
-        }
-        fe.pos = irs::GetMutable<irs::PosAttr>(fe.docs.get());
-        if (!fe.pos) {
-          fe.docs.reset();
-          continue;
-        }
-        fe.offs = irs::get<irs::OffsAttr>(*fe.pos);
-        if (!fe.offs) {
-          fe.docs.reset();
-          continue;
-        }
-      }
-      if (fe.docs->seek(doc_id) != doc_id) {
-        continue;
-      }
-      while (fe.pos->next()) {
-        if (doc_offsets.size() / 2 >= max_pairs) {
-          break;
-        }
-        const uint64_t key = (uint64_t{fe.offs->start} << 32) | fe.offs->end;
-        if (!seen.insert(key).second) {
-          continue;
-        }
-        doc_offsets.push_back(static_cast<int64_t>(fe.offs->start));
-        doc_offsets.push_back(static_cast<int64_t>(fe.offs->end));
-      }
-    }
-    if (doc_offsets.size() > 2) {
-      using Pair = std::array<int64_t, 2>;
-      auto* pairs = reinterpret_cast<Pair*>(doc_offsets.data());
-      std::sort(pairs, pairs + doc_offsets.size() / 2,
-                [](const Pair& a, const Pair& b) { return a[0] < b[0]; });
-    }
-
-    auto& list_vec = output.data[gstate.offsets_output_idx[fi]];
-    const auto current_size = running_child_size[fi];
-    duckdb::ListVector::Reserve(list_vec, current_size + doc_offsets.size());
-    auto& child = duckdb::ListVector::GetChildMutable(list_vec);
-    auto* child_data = duckdb::FlatVector::GetDataMutable<int64_t>(child);
-    if (!doc_offsets.empty()) {
-      std::memcpy(&child_data[current_size], doc_offsets.data(),
-                  doc_offsets.size() * sizeof(int64_t));
-    }
-    auto* entries =
-      duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(list_vec);
-    entries[row_idx].offset = current_size;
-    entries[row_idx].length = doc_offsets.size();
-    running_child_size[fi] = current_size + doc_offsets.size();
+void WriteOffsets(SearchFullScanGlobalState& gstate, const SearchScan& search,
+                  const irs::SubReader& segment, irs::doc_id_t doc_id,
+                  duckdb::DataChunk& output, duckdb::idx_t row_idx) {
+  for (size_t i = 0; i < search.offsets.size(); ++i) {
+    auto& entry = gstate.offsets_entries[i];
+    FillRowOffsets(entry.state, segment, doc_id, search.offsets[i].limit,
+                   gstate.offsets_doc_scratch);
+    WriteRowOffsets(output.data[entry.output_idx], row_idx,
+                    gstate.offsets_doc_scratch);
   }
 }
 
-// Fill virtual-column slots (tableoid / rowid). Streaming wrote score and
-// offsets inline during the scan loop; top-K passes scores via
-// `scores_or_empty` while offsets remain unsupported there.
-static void WriteVirtualColumns(SearchFullScanGlobalState& gstate,
-                                duckdb::idx_t num_rows,
-                                duckdb::DataChunk& output,
-                                std::span<const float> scores_or_empty) {
-  auto find_offsets_entry = [&](duckdb::idx_t proj) -> size_t {
-    for (size_t i = 0; i < gstate.offsets_output_idx.size(); ++i) {
-      if (gstate.offsets_output_idx[i] == proj) {
-        return i;
-      }
-    }
-    return gstate.offsets_output_idx.size();
+void WriteVirtualColumns(SearchFullScanGlobalState& gstate,
+                         duckdb::idx_t num_rows, duckdb::DataChunk& output,
+                         std::span<const float> scores_or_empty) {
+  auto is_offsets_slot = [&](duckdb::idx_t proj) {
+    return absl::c_any_of(gstate.offsets_entries, [&](const FieldEntry& e) {
+      return e.output_idx == proj;
+    });
   };
 
   for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
@@ -204,7 +113,7 @@ static void WriteVirtualColumns(SearchFullScanGlobalState& gstate,
                     num_rows * sizeof(float));
       }
       // streaming path wrote scores inline
-    } else if (find_offsets_entry(proj) < gstate.offsets_output_idx.size()) {
+    } else if (is_offsets_slot(proj)) {
       // offsets written inline
     } else {
       // rowid
@@ -217,45 +126,29 @@ static void WriteVirtualColumns(SearchFullScanGlobalState& gstate,
   }
 }
 
-static void WriteTopkOffsets(SearchFullScanGlobalState& gstate,
-                             const SearchScan& search,
-                             const irs::IndexReader& reader,
-                             duckdb::DataChunk& output,
-                             std::span<const irs::ScoreDoc> hit_slice) {
-  if (gstate.offsets_doc_scratch.size() != search.offsets.size()) {
-    gstate.offsets_doc_scratch.assign(search.offsets.size(),
-                                      std::vector<int64_t>{});
-  } else {
-    for (auto& s : gstate.offsets_doc_scratch) {
-      s.clear();
-    }
-  }
-  std::vector<duckdb::idx_t> offsets_running_size(search.offsets.size(), 0);
-  for (auto out_slot : gstate.offsets_output_idx) {
-    auto& list_vec = output.data[out_slot];
+void WriteTopkOffsets(SearchFullScanGlobalState& gstate,
+                      const SearchScan& search, const irs::IndexReader& reader,
+                      duckdb::DataChunk& output,
+                      std::span<const irs::ScoreDoc> hit_slice) {
+  for (const auto& entry : gstate.offsets_entries) {
+    auto& list_vec = output.data[entry.output_idx];
     list_vec.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
     duckdb::ListVector::SetListSize(list_vec, 0);
     auto& child = duckdb::ListVector::GetChildMutable(list_vec);
     child.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   }
 
-  WalkSegmentsSorted(
+  VisitSegmentsSorted(
     hit_slice,
     [](const irs::ScoreDoc& sd) { return std::pair{sd.segment_idx, sd.doc}; },
     gstate.lookup_scratch,
     [&](uint32_t seg) {
-      ResetOffsetsForSegment(gstate, search, reader[seg]);
+      ResetOffsets(gstate, reader[seg]);
       return true;
     },
     [&](uint32_t orig, uint32_t seg, uint32_t doc) {
-      CollectAndWriteDocOffsets(gstate, search, reader[seg], doc, output, orig,
-                                offsets_running_size);
+      WriteOffsets(gstate, search, reader[seg], doc, output, orig);
     });
-
-  for (size_t fi = 0; fi < gstate.offsets_output_idx.size(); ++fi) {
-    duckdb::ListVector::SetListSize(output.data[gstate.offsets_output_idx[fi]],
-                                    offsets_running_size[fi]);
-  }
 }
 
 // Bare `SELECT * FROM idx;` lands here with the default FullTableScan
@@ -294,6 +187,8 @@ static void EnsureDefaultMatchAllSearchScan(SereneDBScanBindData& bind_data) {
   bind_data.scan_source = std::move(search);
 }
 
+}  // namespace
+
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto& bind_data = const_cast<SereneDBScanBindData&>(
@@ -303,31 +198,24 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
 
   InitCommonState(*state, context, bind_data, input);
 
-  const auto& ss = bind_data.scan_source->Cast<SearchScan>();
-  if (ss.scorer) {
-    state->scorer_obj = catalog::MakeScorer(*ss.scorer);
+  const auto& scan = bind_data.scan_source->Cast<SearchScan>();
+  if (scan.scorer) {
+    state->scorer_obj = catalog::MakeScorer(*scan.scorer);
   }
-  // Single prepare site for SearchScan. We pass the scorer here (or null
-  // when no BM25/TFIDF was attached by the planner) so any IDF/norm
-  // stats that the scorer requires are collected during this one
-  // prepare; an earlier optimizer-time prepare with a null scorer used
-  // to break filters that mutate options() (GeoFilter) when this
-  // scorer-aware re-prepare ran afterwards.
-  SDB_ASSERT(ss.stored_filter);
-  SDB_ASSERT(ss.snapshot);
-  state->query = ss.stored_filter->prepare({
-    .index = ss.snapshot->reader,
+  SDB_ASSERT(scan.stored_filter);
+  SDB_ASSERT(scan.snapshot);
+  state->query = scan.stored_filter->prepare({
+    .index = scan.snapshot->reader,
     .scorer = state->scorer_obj.get(),
   });
 
-  // Offsets output-slot mapping. InitCommonState walks input.column_ids
-  // in order and pushes one projected_columns entry per valid input
-  // column; repeat the walk here to find the slot for each offsets
-  // request. The k-th kInvertedIndexOffsetsId occurrence in
-  // input.column_ids maps to the k-th SearchScan.offsets entry, which
-  // matches the order AddOffsetsColumn appended them.
-  if (!ss.offsets.empty()) {
-    state->offsets_field_state.resize(ss.offsets.size());
+  if (!scan.offsets.empty()) {
+    state->offsets_entries.resize(scan.offsets.size());
+    for (size_t i = 0; i < scan.offsets.size(); ++i) {
+      MakeFieldName(scan.offsets[i].column_id, state->offsets_entries[i].name);
+      search::mangling::MangleString(state->offsets_entries[i].name);
+    }
+    size_t j = 0;
     duckdb::idx_t out_slot = 0;
     for (auto col_id : input.column_ids) {
       if (col_id == duckdb::COLUMN_IDENTIFIER_ROW_ID) {
@@ -343,7 +231,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
       }
       if (bind_data.column_ids[col_id] ==
           catalog::Column::kInvertedIndexOffsetsId) {
-        state->offsets_output_idx.push_back(out_slot);
+        state->offsets_entries[j].output_idx = out_slot;
+        ++j;
       }
       ++out_slot;
     }
@@ -510,19 +399,9 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
   // -------------------------------------------------------------------------
   // Streaming path (with optional block-based scoring and/or offsets)
   // -------------------------------------------------------------------------
-  std::vector<duckdb::idx_t> offsets_running_size;
   if (search.EmitOffsets()) {
-    if (gstate.offsets_doc_scratch.size() != search.offsets.size()) {
-      gstate.offsets_doc_scratch.assign(search.offsets.size(),
-                                        std::vector<int64_t>{});
-    } else {
-      for (auto& s : gstate.offsets_doc_scratch) {
-        s.clear();
-      }
-    }
-    offsets_running_size.assign(search.offsets.size(), 0);
-    for (auto out_slot : gstate.offsets_output_idx) {
-      auto& list_vec = output.data[out_slot];
+    for (const auto& entry : gstate.offsets_entries) {
+      auto& list_vec = output.data[entry.output_idx];
       list_vec.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
       duckdb::ListVector::SetListSize(list_vec, 0);
       auto& child = duckdb::ListVector::GetChildMutable(list_vec);
@@ -579,7 +458,7 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
           });
         }
         if (search.EmitOffsets()) {
-          ResetOffsetsForSegment(gstate, search, segment);
+          ResetOffsets(gstate, segment);
         }
       }
 
@@ -613,8 +492,7 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
       pk_collect(pk_bytes);
       if (search.EmitOffsets()) {
         const auto& segment = reader[gstate.search_segment_idx - 1];
-        CollectAndWriteDocOffsets(gstate, search, segment, doc_id, output,
-                                  collected, offsets_running_size);
+        WriteOffsets(gstate, search, segment, doc_id, output, collected);
       }
       ++collected;
     }
@@ -650,13 +528,6 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
     gstate.finished = true;
     output.SetCardinality(0);
     return;
-  }
-
-  if (search.EmitOffsets()) {
-    for (size_t fi = 0; fi < gstate.offsets_output_idx.size(); ++fi) {
-      duckdb::ListVector::SetListSize(
-        output.data[gstate.offsets_output_idx[fi]], offsets_running_size[fi]);
-    }
   }
 
   // Empty span: streaming path wrote scores and offsets inline during the

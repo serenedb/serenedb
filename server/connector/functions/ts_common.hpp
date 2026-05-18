@@ -38,9 +38,19 @@
 
 #include "basics/containers/node_hash_map.h"
 #include "basics/result.h"
-#include "search_filter_builder.hpp"
+#include "catalog/tokenizer.h"
+#include "connector/search_filter_builder.hpp"
 
+namespace sdb::catalog {
+
+struct Snapshot;
+
+}  // namespace sdb::catalog
 namespace sdb::connector {
+
+inline std::string_view AsView(const duckdb::string_t& s) noexcept {
+  return {s.GetData(), s.GetSize()};
+}
 
 struct FilterContext {
   bool negated = false;

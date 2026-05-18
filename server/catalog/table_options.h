@@ -82,9 +82,9 @@ struct Column {
     return absl::StrCat(kOffsetsNamePrefix, column_id);
   }
 
-  // LIST(BIGINT) -- flat offsets column: interleaved start,end pairs.
+  // LIST(INTEGER) -- flat offsets column: interleaved start,end pairs.
   static duckdb::LogicalType MakeOffsetsType() {
-    return duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT);
+    return duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
   }
 
   Id id;

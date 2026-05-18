@@ -52,6 +52,9 @@ inline constexpr auto kEnumNames = magic_enum::enum_names<E>();
 
 }  // namespace detail
 
+void CheckPositiveInt(std::string_view name, int value);
+void CheckNonNegativeInt(std::string_view name, int value);
+
 struct OptionInfo {
   enum class Type : uint8_t {
     String,
@@ -92,9 +95,11 @@ struct OptionInfo {
 
   using DefaultValue =
     std::variant<std::monostate, std::string_view, bool, int, double, char>;
-  using ConstraintFunction =
-    std::variant<std::monostate, void (*)(std::string_view), void (*)(bool),
-                 void (*)(int), void (*)(double), void (*)(char)>;
+
+  using ConstraintFunction = std::variant<
+    std::monostate, void (*)(std::string_view, std::string_view),
+    void (*)(std::string_view, bool), void (*)(std::string_view, int),
+    void (*)(std::string_view, double), void (*)(std::string_view, char)>;
 
   bool operator==(std::string_view option_name) const {
     return name == option_name;
@@ -113,7 +118,7 @@ struct OptionInfo {
   template<typename T>
   consteval OptionInfo(std::string_view name, RequiredTag<T>,
                        std::string_view desc,
-                       void (*constraint_fn)(T) = nullptr)
+                       void (*constraint_fn)(std::string_view, T) = nullptr)
     : name{name}, type{GetType<T>()}, description{desc} {
     if (constraint_fn) {
       constraint = constraint_fn;
@@ -123,7 +128,7 @@ struct OptionInfo {
   template<typename T>
   consteval OptionInfo(std::string_view name, T default_value,
                        std::string_view desc,
-                       void (*constraint_fn)(T) = nullptr)
+                       void (*constraint_fn)(std::string_view, T) = nullptr)
     : name{name},
       type{GetType<T>()},
       description{desc},
@@ -187,14 +192,10 @@ struct OptionInfo {
                            std::string_view raw_value) const {
     switch (type) {
       case Type::Boolean:
+      case Type::Integer:
+      case Type::Double:
         return absl::StrCat("invalid value for ", operation, " parameter \"",
                             name, "\": \"", raw_value, "\"");
-      case Type::Integer:
-        return absl::StrCat("invalid input syntax for type integer: \"",
-                            raw_value, "\"");
-      case Type::Double:
-        return absl::StrCat("invalid input syntax for type double: \"",
-                            raw_value, "\"");
       case Type::Character:
         return absl::StrCat(operation, " ", name,
                             " must be a single one-byte character");

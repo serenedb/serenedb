@@ -823,7 +823,7 @@ struct FormatTraits128 {
       case e_for2_bitpack_29:
       case e_for2_bitpack_30:
       case e_for2_bitpack_31: {
-        const auto bits = (type - e_for1_bitpack_01) + 1;
+        const auto bits = (type - e_for2_bitpack_01) + 1;
         const auto size = Size(0, type, in);
         uint32_t min = static_cast<uint16_t>(in.ReadI16());
         [[maybe_unused]] const auto read = in.ReadBytes(reinterpret_cast<byte_type*>(buf), size - 2);
@@ -862,7 +862,7 @@ struct FormatTraits128 {
       case e_for4_bitpack_29:
       case e_for4_bitpack_30:
       case e_for4_bitpack_31: {
-        const auto bits = (type - e_for1_bitpack_01) + 1;
+        const auto bits = (type - e_for4_bitpack_01) + 1;
         const auto size = Size(0, type, in);
         uint32_t min = static_cast<uint32_t>(in.ReadI32());
         [[maybe_unused]] const auto read = in.ReadBytes(reinterpret_cast<byte_type*>(buf), size - 4);

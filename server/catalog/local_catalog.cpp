@@ -1110,12 +1110,8 @@ class SnapshotImpl : public Snapshot {
     return dep;
   }
 
-  // Cross-tree fixups for DROP `seed`. Composition cleanup is async.
+  // Cross-tree fixups for DROP seed. Composition cleanup is async.
   DropPlan ComputeDropPlan(ObjectId seed) const {
-    DropPlan plan;
-    containers::FlatHashSet<ObjectId> auto_drops{seed};
-    std::vector<ObjectId> stack{seed};
-
     auto lookup = [this](ObjectId id) { return GetObject(id); };
     auto indexes_using_col = [this](ObjectId table_id, ObjectId col_id) {
       std::vector<ObjectId> result;
@@ -1130,27 +1126,11 @@ class SnapshotImpl : public Snapshot {
       }
       return result;
     };
-    DropEmitter emitter{lookup, indexes_using_col, plan, auto_drops, stack};
-
-    while (!stack.empty()) {
-      auto cur = stack.back();
-      stack.pop_back();
-      if (auto dep = _deps.TryGetDependency(cur)) {
-        dep->Emit(emitter);
-      }
-    }
-
-    // Auto drops run via the DropTask
-    std::erase_if(plan.view_drops,
-                  [&](const auto& p) { return auto_drops.contains(p.second); });
-    std::erase_if(plan.function_drops,
-                  [&](const auto& p) { return auto_drops.contains(p.second); });
-    std::erase_if(plan.index_drops,
-                  [&](auto id) { return auto_drops.contains(id); });
-    absl::erase_if(plan.table_rewrites, [&](const auto& kv) {
-      return auto_drops.contains(kv.first);
-    });
-    return plan;
+    auto dep_lookup = [this](ObjectId id) {
+      return _deps.TryGetDependency(id);
+    };
+    return DropEmitter{seed, lookup, indexes_using_col, dep_lookup}
+      .ComputePlan();
   }
 
   void CommitDropPlan(RocksDBEngineCatalog::CatalogWriteContext& ctx,

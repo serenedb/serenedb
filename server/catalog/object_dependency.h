@@ -20,10 +20,13 @@
 
 #pragma once
 
+#include <absl/container/flat_hash_map.h>
 #include <absl/functional/function_ref.h>
 
+#include <algorithm>
 #include <concepts>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -58,12 +61,13 @@ struct DropPlan {
            !function_drops.empty() || !index_drops.empty();
   }
 
-  // PG-style RESTRICT DETAIL text. One "<kind> <name> depends on <seed>" line
-  // per dependent, joined with '\n'. Snapshot supplies the id->name lookups.
+  // PG-style RESTRICT DETAIL text.
   std::string FormatDependentsDetail(const Snapshot& snap,
                                      std::string_view seed_kind,
                                      std::string_view seed_name) const;
 };
+
+struct ObjectDependencyBase;
 
 class DropEmitter {
  public:
@@ -72,15 +76,18 @@ class DropEmitter {
   // cascade when a column is dropped.
   using IndexesUsingColumn = absl::FunctionRef<std::vector<ObjectId>(
     ObjectId table_id, ObjectId col_id)>;
+  using DepLookup =
+    absl::FunctionRef<std::shared_ptr<const ObjectDependencyBase>(ObjectId)>;
 
-  DropEmitter(ObjectLookup lookup, IndexesUsingColumn indexes_using_col,
-              DropPlan& plan, containers::FlatHashSet<ObjectId>& auto_drops,
-              std::vector<ObjectId>& stack)
+  DropEmitter(ObjectId seed, ObjectLookup lookup,
+              IndexesUsingColumn indexes_using_col, DepLookup dep_lookup)
     : _lookup{lookup},
       _indexes_using_col{indexes_using_col},
-      _plan{plan},
-      _auto_drops{auto_drops},
-      _stack{stack} {}
+      _dep_lookup{dep_lookup},
+      _auto_drops{seed},
+      _stack{seed} {}
+
+  DropPlan ComputePlan() &&;
 
   // AUTO/INTERNAL dep. Tag closure, queue for walk (dedup via _visited).
   void EmitAutoDrop(ObjectId id) {
@@ -179,9 +186,10 @@ class DropEmitter {
 
   const ObjectLookup _lookup;
   const IndexesUsingColumn _indexes_using_col;
-  DropPlan& _plan;
-  containers::FlatHashSet<ObjectId>& _auto_drops;
-  std::vector<ObjectId>& _stack;
+  const DepLookup _dep_lookup;
+  DropPlan _plan;
+  containers::FlatHashSet<ObjectId> _auto_drops;
+  std::vector<ObjectId> _stack;
   containers::FlatHashSet<ObjectId> _visited;  // push-dedup
 };
 
@@ -368,6 +376,28 @@ struct TokenizerDependency : ObjectDependencyBase {
     }
   }
 };
+
+inline DropPlan DropEmitter::ComputePlan() && {
+  while (!_stack.empty()) {
+    auto cur = _stack.back();
+    _stack.pop_back();
+    if (auto dep = _dep_lookup(cur)) {
+      dep->Emit(*this);
+    }
+  }
+
+  // Auto drops run via the DropTask
+  std::erase_if(_plan.view_drops,
+                [&](const auto& p) { return _auto_drops.contains(p.second); });
+  std::erase_if(_plan.function_drops,
+                [&](const auto& p) { return _auto_drops.contains(p.second); });
+  std::erase_if(_plan.index_drops,
+                [&](auto id) { return _auto_drops.contains(id); });
+  absl::erase_if(_plan.table_rewrites, [&](const auto& kv) {
+    return _auto_drops.contains(kv.first);
+  });
+  return std::move(_plan);
+}
 
 class ObjectDependencies {
  public:

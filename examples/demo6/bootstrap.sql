@@ -1,20 +1,22 @@
 \timing on
 
-CREATE SECRET IF NOT EXISTS my_ollama (
-  TYPE openai,
-  api_key 'ollama',
-  base_url 'http://localhost:11434'
-);
+CREATE SECRET gemini (
+    TYPE openai,
+    api_key 'API_KEY',
+    base_url 'https://generativelanguage.googleapis.com',
+    embeddings_path '/v1beta/openai/embeddings'
+  );
 
 DROP INDEX IF EXISTS arxiv_idx;
 DROP TABLE IF EXISTS arxiv;
 
 CREATE TABLE arxiv (
-  id        VARCHAR PRIMARY KEY,
-  title     VARCHAR,
-  abstract  VARCHAR,
-  authors VARCHAR,
-  embedding FLOAT[384]
+  id             VARCHAR,
+  title          VARCHAR,
+  abstract       VARCHAR,
+  authors        VARCHAR,
+  published_date TIMESTAMP,
+  embedding      FLOAT[3072]
 );
 
 INSERT INTO arxiv
@@ -22,15 +24,16 @@ SELECT id,
        title,
        abstract,
        authors,
-       generate_embedding(
+       published_date,
+       ai_embed(
          abstract,
-         'openai',
-         'snowflake-arctic-embed:22m',
-         'my_ollama')::FLOAT[384] AS embedding
+         'gemini-embedding-001',
+         'gemini')::FLOAT[3072] AS embedding
 FROM (
-  SELECT id, title, abstract, authors
+  SELECT id, title, abstract, authors,
+         strptime(published_date, '%Y-%m-%dT%H:%M:%SZ') AS published_date
   FROM read_parquet(
     'https://huggingface.co/datasets/neuralwork/arxiver/resolve/main/data/train.parquet')
-);
+) src;
 
 SELECT count(*) AS rows FROM arxiv;

@@ -22,6 +22,7 @@ End-to-end demos that show what SereneDB does, against real data, in scripts you
 | [demo1](demo1/) | Same demo over **local** Parquet -- same SQL, two orders of magnitude faster | IMDb reviews staged in `/tmp` |
 | [demo2](demo2/) | Same demo over a **native table** -- production shape, durable, sub-millisecond queries | IMDb reviews ingested into a SereneDB table |
 | [demo3](demo3/) | **Elastic-grade FTS tour** -- phrase + slop, boolean, prefix / wildcard / regex / fuzzy, ngram, four scoring models, byte-range highlights, plus a complex composite query and a `##`-chained mixed-part phrase | IMDb reviews on Hugging Face (~100k reviews, two analyzers in one index) |
+| [demo4](demo4/) | **Hybrid vector + FTS** -- one index with BM25 text retrieval and HNSW cosine ANN, vector top-K, range search, text+vector hybrid, structured filters | MongoDB `embedded_movies` on Hugging Face (~3.5k movies, 1536-dim ada-002 embeddings) |
 
 ## Running a demo
 

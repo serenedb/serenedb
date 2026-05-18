@@ -270,6 +270,24 @@ id
 3
 
 
+
+query
+EXPLAIN SELECT id FROM l2_index WHERE emb <-> '[0, 0, 0]'::FLOAT[3] < (0.5 + 0.2);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│      Radius: 0.700000     │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
 statement ok
 CREATE TABLE t_l2 (id INT, emb FLOAT[3]);
 

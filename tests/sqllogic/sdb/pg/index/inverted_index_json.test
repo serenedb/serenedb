@@ -555,7 +555,7 @@ QUERY PLAN
 │             id            │
 │                           │
 │          ~4 rows          │
-└───────────────────────────
+└───────────────────────────┘
 
 # Same JSON path indexed once, but two tokenizers are in flight at the
 # same time: the user-configured keyword tokenizer for string

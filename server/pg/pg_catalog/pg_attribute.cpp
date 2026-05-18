@@ -250,13 +250,13 @@ catalog::MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
 
   std::vector<PgAttribute> values;
 
-  for (const auto& schema : catalog->GetSchemas(GetParentId())) {
+  for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
     for (const auto& table :
-         catalog->GetTables(GetParentId(), schema->GetName())) {
+         catalog->GetTables(GetDatabaseId(), schema->GetName())) {
       EmitColumnsForTable(*table, values);
     }
     for (const auto& type :
-         catalog->GetTypes(GetParentId(), schema->GetName())) {
+         catalog->GetTypes(GetDatabaseId(), schema->GetName())) {
       EmitColumnsForCompositeType(*type, values);
     }
   }

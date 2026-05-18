@@ -1480,7 +1480,7 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
   auto snapshot = _config.EnsureCatalogSnapshot();
-  auto database_id = GetParentId();
+  auto database_id = GetDatabaseId();
 
   std::vector<PgType> rows;
   rows.reserve(kSampleData.size() * 2);

@@ -62,12 +62,12 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
   std::vector<PgIndex> values;
   std::vector<std::vector<int16_t>> indkey_storage;
 
-  for (const auto& schema : catalog->GetSchemas(GetParentId())) {
+  for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
     SDB_ASSERT(schema);
 
     // Explicit user-created indexes
     for (const auto& index_ptr :
-         catalog->GetIndexes(GetParentId(), schema->GetName())) {
+         catalog->GetIndexes(GetDatabaseId(), schema->GetName())) {
       SDB_ASSERT(index_ptr);
       auto& index = *index_ptr;
       auto column_ids = index.GetColumnIds();
@@ -117,7 +117,7 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
     // index). Use the table's OID as both indexrelid and indrelid so it lines
     // up with pg_constraint.conindid and pg_class lookups.
     for (const auto& table :
-         catalog->GetTables(GetParentId(), schema->GetName())) {
+         catalog->GetTables(GetDatabaseId(), schema->GetName())) {
       auto& pk_columns = table->PKColumns();
       if (pk_columns.empty()) {
         continue;

@@ -210,7 +210,7 @@ catalog::MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
   std::vector<PgClass> values;
   std::deque<std::string> pk_index_names;
   auto catalog = _config.EnsureCatalogSnapshot();
-  RetrieveObjects(GetParentId(), values, pk_index_names, *catalog);
+  RetrieveObjects(GetDatabaseId(), values, pk_index_names, *catalog);
 
   {
     VisitSystemTables([&](const catalog::VirtualTable& table, Oid schema_oid) {

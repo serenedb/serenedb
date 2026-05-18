@@ -57,8 +57,8 @@ catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
   std::vector<PgProc> values;
   std::vector<std::vector<Oid>> argtypes_storage;
 
-  for (const auto& schema : catalog->GetSchemas(GetParentId())) {
-    auto functions = catalog->GetFunctions(GetParentId(), schema->GetName());
+  for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
+    auto functions = catalog->GetFunctions(GetDatabaseId(), schema->GetName());
     for (const auto& func : functions) {
       const auto& info = func->GetInfo();
       for (const auto& macro : info.macros) {

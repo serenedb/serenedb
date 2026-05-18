@@ -60,7 +60,7 @@ template<>
 catalog::MaterializedData SystemTableSnapshot<PgNamespace>::GetTableData() {
   std::vector<PgNamespace> values;
   auto snapshot = _config.EnsureCatalogSnapshot();
-  RetrieveObjects(GetParentId(), values, *snapshot);
+  RetrieveObjects(GetDatabaseId(), values, *snapshot);
 
   auto result = CreateColumns<PgNamespace>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

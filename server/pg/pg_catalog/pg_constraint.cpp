@@ -48,9 +48,9 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
   std::deque<std::string> conname_storage;
   std::vector<std::vector<int16_t>> conkey_storage;
 
-  for (const auto& schema : catalog->GetSchemas(GetParentId())) {
+  for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
     for (const auto& table :
-         catalog->GetTables(GetParentId(), schema->GetName())) {
+         catalog->GetTables(GetDatabaseId(), schema->GetName())) {
       auto& pk_columns = table->PKColumns();
       auto& columns = table->Columns();
 

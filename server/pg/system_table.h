@@ -204,6 +204,8 @@ class SystemTableSnapshot final : public catalog::VirtualTableSnapshot {
     return _table->RowType();
   }
 
+  ObjectId GetDatabaseId() const noexcept { return GetParentId(); }
+
   const catalog::MaterializedData& GetData(
     std::vector<std::string> names) final {
     if (!_data) {

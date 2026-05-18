@@ -38,9 +38,9 @@ catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
 
   std::vector<PgTsDict> values;
 
-  for (const auto& schema : catalog->GetSchemas(GetParentId())) {
+  for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
     for (const auto& tokenizer :
-         catalog->GetTokenizers(GetParentId(), schema->GetName())) {
+         catalog->GetTokenizers(GetDatabaseId(), schema->GetName())) {
       values.push_back({
         .oid = tokenizer->GetId().id(),
         .dictname = tokenizer->GetName(),

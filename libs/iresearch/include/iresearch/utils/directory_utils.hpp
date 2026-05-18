@@ -74,10 +74,7 @@ struct TrackingDirectory final : public Directory {
     return _impl.open(name, advice);
   }
 
-  bool remove(std::string_view) noexcept final {
-    // not supported
-    return false;
-  }
+  bool remove(std::string_view name) noexcept final;
 
   bool rename(std::string_view src, std::string_view dst) noexcept final;
 

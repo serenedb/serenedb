@@ -836,8 +836,6 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     for (size_t i = 0; i < vinfo.names.size(); ++i) {
       view_columns.emplace_back(ObjectId{}, catalog::Column::Id{i},
                                 vinfo.names[i], vinfo.types[i]);
-      // SetId overrides Object ctor's "id == 0 -> NextId()" auto-allocation;
-      // view-column ids match ViewScanBindData's 0..N positional space.
       view_columns.back().SetId(catalog::Column::Id{i});
     }
   } else {

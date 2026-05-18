@@ -1,0 +1,285 @@
+# Vedernikoff CHECK constraint cascade scenarios. SDB-specific: relies on
+# our CREATE FUNCTION ... AS expr syntax for CHECK predicates.
+
+# --- 1. Single function used by CHECK on five sibling tables -------------
+
+statement ok
+CREATE FUNCTION vedernikoff_iceberg_within_bounds(x INT)
+  AS x BETWEEN 0 AND 1000;
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_t1 (
+  v INT, CONSTRAINT ck_t1 CHECK (vedernikoff_iceberg_within_bounds(v))
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_t2 (
+  v INT, CONSTRAINT ck_t2 CHECK (vedernikoff_iceberg_within_bounds(v))
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_t3 (
+  v INT, CONSTRAINT ck_t3 CHECK (vedernikoff_iceberg_within_bounds(v))
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_t4 (
+  v INT, CONSTRAINT ck_t4 CHECK (vedernikoff_iceberg_within_bounds(v))
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_t5 (
+  v INT, CONSTRAINT ck_t5 CHECK (vedernikoff_iceberg_within_bounds(v))
+);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_iceberg_t1 VALUES (5000);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_iceberg_t2 VALUES (-5);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_iceberg_t3 VALUES (100000);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_iceberg_t4 VALUES (-99);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_iceberg_t5 VALUES (9999);
+
+
+statement error (?i)cannot drop function .*vedernikoff_iceberg_within_bounds.*
+DROP FUNCTION vedernikoff_iceberg_within_bounds(INT);
+
+
+statement ok
+DROP FUNCTION vedernikoff_iceberg_within_bounds(INT) CASCADE;
+
+
+# All CHECKs cleared.
+statement count 1
+INSERT INTO vedernikoff_iceberg_t1 VALUES (5000);
+
+
+statement count 1
+INSERT INTO vedernikoff_iceberg_t2 VALUES (-5);
+
+
+statement count 1
+INSERT INTO vedernikoff_iceberg_t3 VALUES (100000);
+
+
+statement count 1
+INSERT INTO vedernikoff_iceberg_t4 VALUES (-99);
+
+
+statement count 1
+INSERT INTO vedernikoff_iceberg_t5 VALUES (9999);
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_t1;
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_t2;
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_t3;
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_t4;
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_t5;
+
+
+# --- 2. Sequence in CHECK + DEFAULT on the same table --------------------
+
+statement ok
+CREATE SEQUENCE vedernikoff_solid_payday_seq;
+
+
+statement ok
+CREATE TABLE vedernikoff_solid_payments (
+  id INT DEFAULT nextval('vedernikoff_solid_payday_seq'),
+  amount INT,
+  CONSTRAINT cap CHECK (amount < (nextval('vedernikoff_solid_payday_seq') * 1000 + 10000))
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_payments (amount) VALUES (500);
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_solid_payday_seq.*
+DROP SEQUENCE vedernikoff_solid_payday_seq;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_solid_payday_seq CASCADE;
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_payments (amount) VALUES (999999999);
+
+
+statement ok
+DROP TABLE vedernikoff_solid_payments;
+
+
+# --- 3. Multiple functions in one CHECK constraint -----------------------
+
+statement ok
+CREATE FUNCTION vedernikoff_mop_is_positive(x INT) AS x > 0;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_mop_is_small(x INT) AS x < 1000;
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_data (
+  v INT,
+  CONSTRAINT ck CHECK (
+    vedernikoff_mop_is_positive(v) AND vedernikoff_mop_is_small(v)
+  )
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_data VALUES (500);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_mop_data VALUES (-1);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_mop_data VALUES (5000);
+
+
+# Drop one function with CASCADE -- whole CHECK should be cleared.
+statement error (?i)cannot drop function .*vedernikoff_mop_is_positive.*
+DROP FUNCTION vedernikoff_mop_is_positive(INT);
+
+
+statement ok
+DROP FUNCTION vedernikoff_mop_is_positive(INT) CASCADE;
+
+
+# CHECK cleared, both predicates gone.
+statement count 1
+INSERT INTO vedernikoff_mop_data VALUES (-1);
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_data VALUES (5000);
+
+
+statement ok
+DROP FUNCTION vedernikoff_mop_is_small(INT);
+
+
+statement ok
+DROP TABLE vedernikoff_mop_data;
+
+
+# --- 4. Chained: fn1 calls fn2 used by CHECK -----------------------------
+
+statement ok
+CREATE FUNCTION vedernikoff_ml_inner(x INT) AS x % 100;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_ml_outer(x INT) AS vedernikoff_ml_inner(x) >= 0;
+
+
+statement ok
+CREATE TABLE vedernikoff_ml_data (
+  v INT, CONSTRAINT ck CHECK (vedernikoff_ml_outer(v))
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_ml_data VALUES (42);
+
+
+# Drop the inner with CASCADE -- outer fn dies, CHECK on data table cleared.
+statement error (?i)cannot drop function .*vedernikoff_ml_inner.*
+DROP FUNCTION vedernikoff_ml_inner(INT);
+
+
+statement ok
+DROP FUNCTION vedernikoff_ml_inner(INT) CASCADE;
+
+
+statement error (?i)(macro|function).*vedernikoff_ml_outer.*does not exist
+SELECT vedernikoff_ml_outer(1);
+
+
+statement ok
+DROP TABLE vedernikoff_ml_data;
+
+
+# --- 5. Multiple CHECKs on one table, all referencing a single fn --------
+
+statement ok
+CREATE FUNCTION vedernikoff_clickclack_threshold() AS 1000;
+
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_metrics (
+  qps INT,
+  latency INT,
+  err INT,
+  CONSTRAINT cap_qps CHECK (qps < vedernikoff_clickclack_threshold()),
+  CONSTRAINT cap_lat CHECK (latency < vedernikoff_clickclack_threshold()),
+  CONSTRAINT cap_err CHECK (err < vedernikoff_clickclack_threshold())
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_clickclack_metrics VALUES (100, 50, 1);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_clickclack_metrics VALUES (5000, 1, 1);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_clickclack_metrics VALUES (1, 5000, 1);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_clickclack_metrics VALUES (1, 1, 5000);
+
+
+statement error (?i)cannot drop function .*vedernikoff_clickclack_threshold.*
+DROP FUNCTION vedernikoff_clickclack_threshold();
+
+
+statement ok
+DROP FUNCTION vedernikoff_clickclack_threshold() CASCADE;
+
+
+# All three CHECKs cleared.
+statement count 1
+INSERT INTO vedernikoff_clickclack_metrics VALUES (5000, 5000, 5000);
+
+
+statement ok
+DROP TABLE vedernikoff_clickclack_metrics;

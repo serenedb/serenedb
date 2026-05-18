@@ -25,8 +25,8 @@
 namespace sdb::catalog {
 
 Schema::Schema(ObjectId database_id, SchemaOptions options)
-  : DatabaseObject{options.owner_id, database_id, options.id,
-                   std::move(options.name), ObjectType::Schema} {}
+  : Object{database_id, options.id, std::move(options.name),
+           ObjectType::Schema} {}
 
 std::shared_ptr<Schema> Schema::ReadInternal(vpack::Slice slice,
                                              ReadContext ctx) {
@@ -39,7 +39,6 @@ std::shared_ptr<Schema> Schema::ReadInternal(vpack::Slice slice,
 
 void Schema::WriteInternal(vpack::Builder& b) const {
   vpack::WriteTuple(b, SchemaOptions{
-                         .owner_id = GetOwnerId(),
                          .id = GetId(),
                          .name = _name,
                        });
@@ -48,7 +47,7 @@ void Schema::WriteInternal(vpack::Builder& b) const {
 std::shared_ptr<Object> Schema::Clone() const {
   vpack::Builder b;
   WriteInternal(b);
-  return ReadInternal(b.slice(), {.database_id = GetDatabaseId()});
+  return ReadInternal(b.slice(), {.database_id = GetParentId()});
 }
 
 }  // namespace sdb::catalog

@@ -61,8 +61,9 @@ struct CreateIndexColumn {
   std::optional<duckdb::case_insensitive_map_t<duckdb::Value>> opclass_options;
 };
 
-class Index : public SchemaObject {
+class Index : public Object {
  public:
+  ObjectId GetDatabaseId() const noexcept { return _database_id; }
   auto GetRelationId() const noexcept { return _relation_id; }
   std::span<const Column::Id> GetColumnIds() const noexcept {
     return _column_ids;
@@ -80,6 +81,7 @@ class Index : public SchemaObject {
         ObjectId relation_id, std::string name,
         std::vector<Column::Id> column_ids, ObjectType type);
 
+  ObjectId _database_id;
   ObjectId _relation_id;
   std::vector<Column::Id> _column_ids;
 };

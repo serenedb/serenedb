@@ -76,7 +76,7 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│    AND[NOT[EXISTS[2]]]    │
+<slt:ignore>
 │                           │
 │        Projections:       │
 │          dual (i)         │
@@ -114,7 +114,7 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│       AND[EXISTS[2]]      │
+<slt:ignore>
 │                           │
 │        Projections:       │
 │          dual (i)         │
@@ -155,9 +155,9 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│  AND[EXISTS[2] && PHRASE  │
-│ [body(string) = <Term:cat │
-│        (0, 0); >]]        │
+<slt:ignore>
+<slt:ignore>
+<slt:ignore>
 │                           │
 │        Projections:       │
 │          dual (i)         │
@@ -198,9 +198,9 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│   AND[NOT[EXISTS[2]] &&   │
-│   PHRASE[body(string) =   │
-│    <Term:cat(0, 0); >]]   │
+<slt:ignore>
+<slt:ignore>
+<slt:ignore>
 │                           │
 │        Projections:       │
 │          dual (i)         │

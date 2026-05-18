@@ -123,22 +123,21 @@ FindFilterAndGet(const duckdb::LogicalOperator& op) {
 // column name that the SQL query references.
 // ---------------------------------------------------------------------------
 struct ColumnSpec {
-  catalog::Column::Id id;
+  uint64_t id;
   duckdb::LogicalType type;
   std::string name;
 };
 
-using AnalyzerProvider =
-  std::function<catalog::ColumnTokenizer(catalog::Column::Id)>;
+using AnalyzerProvider = std::function<catalog::ColumnTokenizer(uint64_t)>;
 
-catalog::ColumnTokenizer IdentityAnalyzerProvider(catalog::Column::Id) {
+catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
   auto make_identity = [] {
     return std::string(vpack::Slice::emptyObjectSlice().startAs<char>(),
                        vpack::Slice::emptyObjectSlice().byteSize());
   };
   static catalog::Tokenizer gStringTokenizer(
-    ObjectId{12345}, "test_string_verbartim", {}, DEFAULT_ROW_GROUP_SIZE,
-    make_identity());
+    ObjectId{0}, ObjectId{12345}, "test_string_verbartim", {},
+    DEFAULT_ROW_GROUP_SIZE, make_identity());
   auto tokenizer = gStringTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer),
@@ -146,7 +145,7 @@ catalog::ColumnTokenizer IdentityAnalyzerProvider(catalog::Column::Id) {
 }
 
 template<irs::IndexFeatures Features>
-catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
+catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
   auto make_segmentation = [] {
     auto builder =
       vpack::Parser::fromJson("{ \"tokenizer\": {\"type\":\"segmentation\"}}");
@@ -154,21 +153,20 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
                        builder->slice().byteSize());
   };
   static catalog::Tokenizer gStringTokenizer(
-    ObjectId{12346}, "test_segmentation", {}, DEFAULT_ROW_GROUP_SIZE,
-    make_segmentation());
+    ObjectId{0}, ObjectId{12346}, "test_segmentation", {},
+    DEFAULT_ROW_GROUP_SIZE, make_segmentation());
   auto tokenizer = gStringTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer), .features = Features};
 }
 
 [[maybe_unused]] catalog::ColumnTokenizer SegmentationAnalyzerProvider(
-  catalog::Column::Id id) {
+  uint64_t id) {
   return SegmentationAnalyzerProviderBase<irs::IndexFeatures::Pos |
                                           irs::IndexFeatures::Freq>(id);
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer NgramAnalyzerProvider(
-  catalog::Column::Id) {
+[[maybe_unused]] catalog::ColumnTokenizer NgramAnalyzerProvider(uint64_t) {
   auto make_ngram = [] {
     auto builder = vpack::Parser::fromJson(
       "{ \"tokenizer\": {\"type\":\"ngram\","
@@ -178,15 +176,15 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
                        builder->slice().byteSize());
   };
   static catalog::Tokenizer gNgramTokenizer(
-    ObjectId{12347}, "test_ngram", {}, DEFAULT_ROW_GROUP_SIZE, make_ngram());
+    ObjectId{0}, ObjectId{12347}, "test_ngram", {}, DEFAULT_ROW_GROUP_SIZE,
+    make_ngram());
   auto tokenizer = gNgramTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer),
           .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer WildcardAnalyzerProvider(
-  catalog::Column::Id) {
+[[maybe_unused]] catalog::ColumnTokenizer WildcardAnalyzerProvider(uint64_t) {
   auto make_wildcard = [] {
     auto builder = vpack::Parser::fromJson(
       "{ \"tokenizer\": {\"type\":\"wildcard\","
@@ -195,42 +193,41 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
     return std::string(builder->slice().startAs<char>(),
                        builder->slice().byteSize());
   };
-  static catalog::Tokenizer gWildcardTokenizer(ObjectId{12348}, "test_wildcard",
-                                               {}, DEFAULT_ROW_GROUP_SIZE,
-                                               make_wildcard());
+  static catalog::Tokenizer gWildcardTokenizer(
+    ObjectId{0}, ObjectId{12348}, "test_wildcard", {}, DEFAULT_ROW_GROUP_SIZE,
+    make_wildcard());
   auto tokenizer = gWildcardTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {
     .analyzer = *std::move(tokenizer),
     .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq,
-    .tokenizer_column = catalog::Column::kMaxRealId,
+    .tokenizer_column = catalog::Column::Id{catalog::Column::kMaxRealIdValue},
   };
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer GeoJsonAnalyzerProvider(
-  catalog::Column::Id) {
+[[maybe_unused]] catalog::ColumnTokenizer GeoJsonAnalyzerProvider(uint64_t) {
   auto make_geojson = [] {
     auto builder = vpack::Parser::fromJson(
       "{ \"tokenizer\": {\"type\":\"geojson\",\"properties\":{}}}");
     return std::string(builder->slice().startAs<char>(),
                        builder->slice().byteSize());
   };
-  static catalog::Tokenizer gGeoTokenizer(ObjectId{12349}, "test_geojson", {},
-                                          DEFAULT_ROW_GROUP_SIZE,
-                                          make_geojson());
+  static catalog::Tokenizer gGeoTokenizer(
+    ObjectId{0}, ObjectId{12349}, "test_geojson", {}, DEFAULT_ROW_GROUP_SIZE,
+    make_geojson());
   auto tokenizer = gGeoTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {
     .analyzer = *std::move(tokenizer),
     .features = irs::IndexFeatures::None,
-    .tokenizer_column = catalog::Column::kMaxRealId,
+    .tokenizer_column = catalog::Column::Id{catalog::Column::kMaxRealIdValue},
   };
 }
 
 // Expected-filter builders (ported from velox test suite).
 // Type dispatch is now by duckdb::LogicalType / native C++ type.
 template<typename T>
-std::string MakeFieldName(catalog::Column::Id column_id) {
+std::string MakeFieldName(uint64_t column_id) {
   std::string field_name;
   basics::StrResize(field_name, sizeof(column_id));
   absl::big_endian::Store(field_name.data(), column_id);
@@ -257,8 +254,7 @@ auto& AddFilter(Source& parent) {
 }
 
 template<typename T, typename Filter>
-irs::ByTerm& AddTermFilter(Filter& root, catalog::Column::Id column,
-                           const T& value) {
+irs::ByTerm& AddTermFilter(Filter& root, uint64_t column, const T& value) {
   auto& term = AddFilter<irs::ByTerm>(root);
   *term.mutable_field() = MakeFieldName<T>(column);
   if constexpr (std::is_same_v<T, bool>) {
@@ -284,7 +280,7 @@ irs::ByTerm& AddTermFilter(Filter& root, catalog::Column::Id column,
 }
 
 template<typename T, typename Filter>
-irs::FilterWithBoost& AddRangeFilter(Filter& root, catalog::Column::Id column,
+irs::FilterWithBoost& AddRangeFilter(Filter& root, uint64_t column,
                                      const std::optional<T>& min_value,
                                      bool min_inclusive,
                                      const std::optional<T>& max_value,
@@ -343,7 +339,7 @@ irs::FilterWithBoost& AddRangeFilter(Filter& root, catalog::Column::Id column,
 }
 
 template<typename Filter>
-irs::ByTerm& AddNullFilter(Filter& root, catalog::Column::Id column) {
+irs::ByTerm& AddNullFilter(Filter& root, uint64_t column) {
   auto& term = AddFilter<irs::ByTerm>(root);
   std::string field_name;
   basics::StrResize(field_name, sizeof(column));
@@ -356,7 +352,7 @@ irs::ByTerm& AddNullFilter(Filter& root, catalog::Column::Id column) {
 }
 
 template<typename Filter>
-irs::ByWildcard& AddLikeFilter(Filter& root, catalog::Column::Id column,
+irs::ByWildcard& AddLikeFilter(Filter& root, uint64_t column,
                                std::string_view value) {
   auto& wc = AddFilter<irs::ByWildcard>(root);
   *wc.mutable_field() = MakeFieldName<std::string_view>(column);
@@ -365,7 +361,7 @@ irs::ByWildcard& AddLikeFilter(Filter& root, catalog::Column::Id column,
 }
 
 template<typename Filter>
-irs::ByPrefix& AddPrefixFilter(Filter& root, catalog::Column::Id column,
+irs::ByPrefix& AddPrefixFilter(Filter& root, uint64_t column,
                                std::string_view value) {
   auto& pf = AddFilter<irs::ByPrefix>(root);
   *pf.mutable_field() = MakeFieldName<std::string_view>(column);
@@ -375,7 +371,7 @@ irs::ByPrefix& AddPrefixFilter(Filter& root, catalog::Column::Id column,
 
 template<typename Filter>
 irs::ByRegexp& AddRegexpFilter(
-  Filter& root, catalog::Column::Id column, std::string_view pattern,
+  Filter& root, uint64_t column, std::string_view pattern,
   irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl) {
   auto& re = AddFilter<irs::ByRegexp>(root);
   *re.mutable_field() = MakeFieldName<std::string_view>(column);
@@ -387,8 +383,8 @@ irs::ByRegexp& AddRegexpFilter(
 
 template<typename Filter>
 irs::ByNGramSimilarity& AddNgramSimilarityFilter(
-  Filter& root, catalog::Column::Id column,
-  std::vector<std::string_view> ngrams, float threshold = 0.7f) {
+  Filter& root, uint64_t column, std::vector<std::string_view> ngrams,
+  float threshold = 0.7f) {
   auto& ngf = AddFilter<irs::ByNGramSimilarity>(root);
   *ngf.mutable_field() = MakeFieldName<std::string_view>(column);
   ngf.mutable_options()->threshold = threshold;
@@ -400,10 +396,12 @@ irs::ByNGramSimilarity& AddNgramSimilarityFilter(
 }
 
 template<typename Filter>
-irs::ByEditDistance& AddEditDistanceFilter(
-  Filter& root, catalog::Column::Id column, std::string_view term,
-  uint8_t max_distance, bool with_transpositions = true,
-  size_t max_terms = 1024, std::string_view prefix = "") {
+irs::ByEditDistance& AddEditDistanceFilter(Filter& root, uint64_t column,
+                                           std::string_view term,
+                                           uint8_t max_distance,
+                                           bool with_transpositions = true,
+                                           size_t max_terms = 1024,
+                                           std::string_view prefix = "") {
   auto& ed = AddFilter<irs::ByEditDistance>(root);
   *ed.mutable_field() = MakeFieldName<std::string_view>(column);
   ed.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(term));
@@ -417,7 +415,7 @@ irs::ByEditDistance& AddEditDistanceFilter(
 }
 
 template<typename Filter>
-irs::ByPhrase& AddPhraseFilter(Filter& root, catalog::Column::Id column,
+irs::ByPhrase& AddPhraseFilter(Filter& root, uint64_t column,
                                std::vector<std::string_view> values) {
   auto& wc = AddFilter<irs::ByPhrase>(root);
   *wc.mutable_field() = MakeFieldName<std::string_view>(column);
@@ -441,10 +439,12 @@ S2Point GeoPointFromDegrees(double lat, double lng) {
 // set those two -- exactly what FromGeoInRange / FromGeoDistanceComparison
 // populate from user inputs.
 template<typename Filter>
-irs::GeoDistanceFilter& AddGeoDistanceFilter(
-  Filter& root, catalog::Column::Id column, const S2Point& origin,
-  std::optional<double> min_distance, bool min_inclusive,
-  std::optional<double> max_distance, bool max_inclusive) {
+irs::GeoDistanceFilter& AddGeoDistanceFilter(Filter& root, uint64_t column,
+                                             const S2Point& origin,
+                                             std::optional<double> min_distance,
+                                             bool min_inclusive,
+                                             std::optional<double> max_distance,
+                                             bool max_inclusive) {
   auto& geo = AddFilter<irs::GeoDistanceFilter>(root);
   *geo.mutable_field() = MakeFieldName<std::string_view>(column);
   auto* options = geo.mutable_options();
@@ -475,7 +475,7 @@ irs::GeoDistanceFilter& AddGeoDistanceFilter(
 // type + S2 contents (coding compared via IsSameLoss, where Invalid and
 // any non-U32 coding compare equal).
 template<typename Filter>
-irs::GeoFilter& AddGeoFilter(Filter& root, catalog::Column::Id column,
+irs::GeoFilter& AddGeoFilter(Filter& root, uint64_t column,
                              const S2Point& shape_point,
                              irs::GeoFilterType type) {
   auto& gf = AddFilter<irs::GeoFilter>(root);
@@ -492,8 +492,7 @@ irs::GeoFilter& AddGeoFilter(Filter& root, catalog::Column::Id column,
 }
 
 template<typename Filter>
-irs::ByWildcardNgram& AddWildcardNgramFilter(Filter& root,
-                                             catalog::Column::Id column,
+irs::ByWildcardNgram& AddWildcardNgramFilter(Filter& root, uint64_t column,
                                              std::string_view pattern,
                                              bool has_positions) {
   auto column_analyzer = WildcardAnalyzerProvider(column);
@@ -510,7 +509,7 @@ irs::ByWildcardNgram& AddWildcardNgramFilter(Filter& root,
 }
 
 template<typename T, typename Filter>
-irs::ByTerms& AddTermsFilter(Filter& root, catalog::Column::Id column,
+irs::ByTerms& AddTermsFilter(Filter& root, uint64_t column,
                              const std::vector<T>& values) {
   auto& terms = AddFilter<irs::ByTerms>(root);
   *terms.mutable_field() = MakeFieldName<T>(column);
@@ -639,9 +638,10 @@ class SearchFilterBuilderTest : public ::testing::Test {
       SDB_ASSERT(ref.binding.table_index == table_index);
       const auto local = ref.binding.column_index.GetIndexUnsafe();
       const auto phys = projected[local].GetPrimaryIndex();
-      return SearchColumnInfo{.column_id = columns[phys].id,
-                              .logical_type = columns[phys].type,
-                              .tokenizer = analyzer_provider(columns[phys].id)};
+      return SearchColumnInfo{
+        .column_id = catalog::Column::Id{columns[phys].id},
+        .logical_type = columns[phys].type,
+        .tokenizer = analyzer_provider(columns[phys].id)};
     };
 
     // Per-expression claim loop, mirroring production

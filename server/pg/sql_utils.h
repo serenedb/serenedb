@@ -21,11 +21,22 @@
 #pragma once
 
 #include <duckdb/common/enums/catalog_type.hpp>
+#include <string_view>
 
 #include "basics/assert.h"
 #include "catalog/object.h"
 
 namespace sdb::pg {
+
+// Pair of (schema, name) parsed out of a qualified PG object name.
+struct ObjectName {
+  std::string_view schema;
+  std::string_view relation;
+};
+
+// "[schema.]name" -> ObjectName. Unqualified names take `default_schema`.
+ObjectName ParseObjectName(std::string_view name,
+                           std::string_view default_schema);
 
 std::string_view ToPgObjectTypeName(duckdb::CatalogType t) noexcept;
 

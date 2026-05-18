@@ -72,10 +72,10 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
   auto data = duckdb::make_uniq<TableScanBindData>();
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {
-    if (col.id == catalog::Column::kGeneratedPKId) {
+    if (col.GetId() == catalog::Column::kGeneratedPKId) {
       continue;
     }
-    data->column_ids.push_back(col.id);
+    data->column_ids.push_back(col.GetId());
     data->column_types.push_back(col.type);
   }
   data->has_rowid = true;
@@ -193,10 +193,10 @@ duckdb::TableFunction TableSecondaryIndexScanEntry::GetScanFunction(
   auto data = duckdb::make_uniq<TableScanBindData>();
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {
-    if (col.id == catalog::Column::kGeneratedPKId) {
+    if (col.GetId() == catalog::Column::kGeneratedPKId) {
       continue;
     }
-    data->column_ids.push_back(col.id);
+    data->column_ids.push_back(col.GetId());
     data->column_types.push_back(col.type);
   }
   data->has_rowid = true;

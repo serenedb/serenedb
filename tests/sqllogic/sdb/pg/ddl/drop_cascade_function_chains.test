@@ -1,0 +1,585 @@
+# Vedernikoff function-cascade scenarios. SDB-specific function syntax
+# (CREATE FUNCTION name(args) AS expr) -- not valid in upstream PG, so this
+# test lives in sdb/.
+
+# --- 1. Deep call chain ----------------------------------------------------
+
+statement ok
+CREATE FUNCTION vedernikoff_step1(x INT) AS x + 1;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_step2(x INT) AS vedernikoff_step1(x) * 2;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_step3(x INT) AS vedernikoff_step2(x) - 3;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_step4(x INT) AS vedernikoff_step3(x) + 7;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_step5(x INT) AS vedernikoff_step4(x) * 10;
+
+
+query
+SELECT vedernikoff_step5(10);
+----
+vedernikoff_step5
+260
+
+
+# RESTRICT refuses at every level except the leaf.
+statement error (?i)cannot drop function .*vedernikoff_step1.*
+DROP FUNCTION vedernikoff_step1(INT);
+
+
+statement error (?i)cannot drop function .*vedernikoff_step2.*
+DROP FUNCTION vedernikoff_step2(INT);
+
+
+statement error (?i)cannot drop function .*vedernikoff_step3.*
+DROP FUNCTION vedernikoff_step3(INT);
+
+
+statement error (?i)cannot drop function .*vedernikoff_step4.*
+DROP FUNCTION vedernikoff_step4(INT);
+
+
+statement ok
+DROP FUNCTION vedernikoff_step5(INT);
+
+
+statement ok
+DROP FUNCTION vedernikoff_step4(INT);
+
+
+statement ok
+DROP FUNCTION vedernikoff_step3(INT);
+
+
+statement ok
+DROP FUNCTION vedernikoff_step2(INT);
+
+
+statement ok
+DROP FUNCTION vedernikoff_step1(INT);
+
+
+# Same chain via root CASCADE.
+statement ok
+CREATE FUNCTION vedernikoff_step1(x INT) AS x + 1;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_step2(x INT) AS vedernikoff_step1(x) * 2;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_step3(x INT) AS vedernikoff_step2(x) - 3;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_step4(x INT) AS vedernikoff_step3(x) + 7;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_step5(x INT) AS vedernikoff_step4(x) * 10;
+
+
+statement ok
+DROP FUNCTION vedernikoff_step1(INT) CASCADE;
+
+
+statement error (?i)(macro|function).*vedernikoff_step2.*does not exist
+SELECT vedernikoff_step2(0);
+
+
+statement error (?i)(macro|function).*vedernikoff_step5.*does not exist
+SELECT vedernikoff_step5(0);
+
+
+# --- 2. Function depending on sequence -------------------------------------
+
+statement ok
+CREATE SEQUENCE vedernikoff_iceberg_snap_seq;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_iceberg_next_snap()
+  AS nextval('vedernikoff_iceberg_snap_seq');
+
+
+query
+SELECT vedernikoff_iceberg_next_snap();
+----
+vedernikoff_iceberg_next_snap
+1
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_iceberg_snap_seq.*
+DROP SEQUENCE vedernikoff_iceberg_snap_seq;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_iceberg_snap_seq CASCADE;
+
+
+statement error (?i)(macro|function).*vedernikoff_iceberg_next_snap.*does not exist
+SELECT vedernikoff_iceberg_next_snap();
+
+
+# --- 3. View depending on a function depending on a sequence --------------
+
+statement ok
+CREATE SEQUENCE vedernikoff_solid_partition_seq;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_solid_next_partition()
+  AS nextval('vedernikoff_solid_partition_seq');
+
+
+statement ok
+CREATE TABLE vedernikoff_solid_manifest (id INT);
+
+
+statement count 3
+INSERT INTO vedernikoff_solid_manifest VALUES (1), (2), (3);
+
+
+statement ok
+CREATE VIEW vedernikoff_solid_manifest_feed AS
+  SELECT vedernikoff_solid_next_partition() AS pid, id
+  FROM vedernikoff_solid_manifest;
+
+
+query
+SELECT count(*) FROM vedernikoff_solid_manifest_feed;
+----
+count
+3
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_solid_partition_seq.*
+DROP SEQUENCE vedernikoff_solid_partition_seq;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_solid_partition_seq CASCADE;
+
+
+statement error (?i)(macro|function).*vedernikoff_solid_next_partition.*does not exist
+SELECT vedernikoff_solid_next_partition();
+
+
+statement error (?i).*vedernikoff_solid_manifest_feed.*does not exist
+SELECT * FROM vedernikoff_solid_manifest_feed;
+
+
+# Underlying table is fine.
+query
+SELECT count(*) FROM vedernikoff_solid_manifest;
+----
+count
+3
+
+
+statement ok
+DROP TABLE vedernikoff_solid_manifest;
+
+
+# --- 4. Multiple downstream views on one function -------------------------
+
+statement ok
+CREATE FUNCTION vedernikoff_clickclack_fan_root() AS 100;
+
+
+statement ok
+CREATE VIEW vedernikoff_clickclack_view_a AS
+  SELECT vedernikoff_clickclack_fan_root() AS v;
+
+
+statement ok
+CREATE VIEW vedernikoff_clickclack_view_b AS
+  SELECT vedernikoff_clickclack_fan_root() + 1 AS v;
+
+
+statement ok
+CREATE VIEW vedernikoff_clickclack_view_c AS
+  SELECT vedernikoff_clickclack_fan_root() * 2 AS v;
+
+
+statement error (?i)cannot drop function .*vedernikoff_clickclack_fan_root.*
+DROP FUNCTION vedernikoff_clickclack_fan_root();
+
+
+statement ok
+DROP FUNCTION vedernikoff_clickclack_fan_root() CASCADE;
+
+
+statement error (?i).*vedernikoff_clickclack_view_a.*does not exist
+SELECT * FROM vedernikoff_clickclack_view_a;
+
+
+statement error (?i).*vedernikoff_clickclack_view_b.*does not exist
+SELECT * FROM vedernikoff_clickclack_view_b;
+
+
+statement error (?i).*vedernikoff_clickclack_view_c.*does not exist
+SELECT * FROM vedernikoff_clickclack_view_c;
+
+
+# --- 5. Function used by column DEFAULT on multiple tables -----------------
+
+statement ok
+CREATE SEQUENCE vedernikoff_mop_listing_seq;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_mop_next_listing()
+  AS nextval('vedernikoff_mop_listing_seq');
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_active (
+  id INT DEFAULT vedernikoff_mop_next_listing(),
+  body TEXT
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_archived (
+  id INT DEFAULT vedernikoff_mop_next_listing(),
+  body TEXT
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_active (body) VALUES ('a1');
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_archived (body) VALUES ('arch1');
+
+
+statement error (?i)cannot drop function .*vedernikoff_mop_next_listing.*
+DROP FUNCTION vedernikoff_mop_next_listing();
+
+
+statement ok
+DROP FUNCTION vedernikoff_mop_next_listing() CASCADE;
+
+
+# Both DEFAULTs cleared.
+statement ok
+INSERT INTO vedernikoff_mop_active (body) VALUES ('a2');
+
+
+statement ok
+INSERT INTO vedernikoff_mop_archived (body) VALUES ('arch2');
+
+
+query
+SELECT id, body FROM vedernikoff_mop_active ORDER BY body;
+----
+id    body
+1     a1
+NULL  a2
+
+
+query
+SELECT id, body FROM vedernikoff_mop_archived ORDER BY body;
+----
+id    body
+2     arch1
+NULL  arch2
+
+
+statement ok
+DROP TABLE vedernikoff_mop_active;
+
+
+statement ok
+DROP TABLE vedernikoff_mop_archived;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_mop_listing_seq;
+
+
+# --- 6. Function used by CHECK constraints on multiple tables -------------
+
+statement ok
+CREATE FUNCTION vedernikoff_iceberg_threshold(x INT) AS x BETWEEN 0 AND 100;
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_t_alpha (
+  v INT, CONSTRAINT ck_a CHECK (vedernikoff_iceberg_threshold(v))
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_t_bravo (
+  v INT, CONSTRAINT ck_b CHECK (vedernikoff_iceberg_threshold(v))
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_t_charlie (
+  v INT, CONSTRAINT ck_c CHECK (vedernikoff_iceberg_threshold(v))
+);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_iceberg_t_alpha VALUES (500);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_iceberg_t_bravo VALUES (-1);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_iceberg_t_charlie VALUES (10000);
+
+
+statement error (?i)cannot drop function .*vedernikoff_iceberg_threshold.*
+DROP FUNCTION vedernikoff_iceberg_threshold(INT);
+
+
+statement ok
+DROP FUNCTION vedernikoff_iceberg_threshold(INT) CASCADE;
+
+
+# CHECKs cleared on every table.
+statement count 1
+INSERT INTO vedernikoff_iceberg_t_alpha VALUES (500);
+
+
+statement count 1
+INSERT INTO vedernikoff_iceberg_t_bravo VALUES (-1);
+
+
+statement count 1
+INSERT INTO vedernikoff_iceberg_t_charlie VALUES (10000);
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_t_alpha;
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_t_bravo;
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_t_charlie;
+
+
+# --- 7. Mixed: function used by view, DEFAULT, and CHECK simultaneously ---
+
+statement ok
+CREATE SEQUENCE vedernikoff_grand_master_seq START 100;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_grand_master_next()
+  AS nextval('vedernikoff_grand_master_seq');
+
+
+statement ok
+CREATE TABLE vedernikoff_grand_records (
+  id INT DEFAULT vedernikoff_grand_master_next(),
+  payload TEXT,
+  CONSTRAINT id_cap CHECK (id < vedernikoff_grand_master_next() + 1000000)
+);
+
+
+statement ok
+CREATE VIEW vedernikoff_grand_pulse AS
+  SELECT vedernikoff_grand_master_next() AS n;
+
+
+statement count 1
+INSERT INTO vedernikoff_grand_records (payload) VALUES ('start');
+
+
+statement error (?i)cannot drop function .*vedernikoff_grand_master_next.*
+DROP FUNCTION vedernikoff_grand_master_next();
+
+
+statement ok
+DROP FUNCTION vedernikoff_grand_master_next() CASCADE;
+
+
+# View and function gone.
+statement error (?i).*vedernikoff_grand_pulse.*does not exist
+SELECT * FROM vedernikoff_grand_pulse;
+
+
+statement error (?i)(macro|function).*vedernikoff_grand_master_next.*does not exist
+SELECT vedernikoff_grand_master_next();
+
+
+# Record table survives, CHECK cleared, DEFAULT cleared.
+statement ok
+INSERT INTO vedernikoff_grand_records (payload) VALUES ('after');
+
+
+query
+SELECT id, payload FROM vedernikoff_grand_records ORDER BY payload;
+----
+id    payload
+NULL  after
+100   start
+
+
+statement ok
+DROP TABLE vedernikoff_grand_records;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_grand_master_seq;
+
+
+# --- 8. Cross-tree drop of multiple functions chained through views -------
+
+statement ok
+CREATE FUNCTION vedernikoff_solid_root_fn() AS 42;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_solid_mid_fn() AS vedernikoff_solid_root_fn() * 2;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_solid_top_fn() AS vedernikoff_solid_mid_fn() - 7;
+
+
+statement ok
+CREATE VIEW vedernikoff_solid_dashboard AS
+  SELECT vedernikoff_solid_top_fn() AS v;
+
+
+query
+SELECT v FROM vedernikoff_solid_dashboard;
+----
+v
+77
+
+
+statement error (?i)cannot drop function .*vedernikoff_solid_root_fn.*
+DROP FUNCTION vedernikoff_solid_root_fn();
+
+
+statement ok
+DROP FUNCTION vedernikoff_solid_root_fn() CASCADE;
+
+
+statement error (?i)(macro|function).*vedernikoff_solid_mid_fn.*does not exist
+SELECT vedernikoff_solid_mid_fn();
+
+
+statement error (?i)(macro|function).*vedernikoff_solid_top_fn.*does not exist
+SELECT vedernikoff_solid_top_fn();
+
+
+statement error (?i).*vedernikoff_solid_dashboard.*does not exist
+SELECT * FROM vedernikoff_solid_dashboard;
+
+
+# --- 9. Self-overlapping: same seq used as DEFAULT AND CHECK on one table -
+
+statement ok
+CREATE SEQUENCE vedernikoff_ml_journal_seq;
+
+
+statement ok
+CREATE TABLE vedernikoff_ml_journal (
+  id INT DEFAULT nextval('vedernikoff_ml_journal_seq'),
+  body TEXT,
+  CONSTRAINT body_window
+    CHECK (length(body) < nextval('vedernikoff_ml_journal_seq') + 1000)
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_ml_journal (body) VALUES ('entry_alpha');
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_ml_journal_seq.*
+DROP SEQUENCE vedernikoff_ml_journal_seq;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_ml_journal_seq CASCADE;
+
+
+# Both DEFAULT and CHECK gone.
+statement count 1
+INSERT INTO vedernikoff_ml_journal (body) VALUES (repeat('z', 5000));
+
+
+statement ok
+DROP TABLE vedernikoff_ml_journal;
+
+
+# --- 10. Mutually overlapping chain: fn1 used by fn2 used by view used by
+# table column DEFAULT (function chain reaching column DEFAULT) ----------
+
+statement ok
+CREATE FUNCTION vedernikoff_ml_base(x INT) AS x + 1;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_ml_mid(x INT) AS vedernikoff_ml_base(x) * 2;
+
+
+statement ok
+CREATE TABLE vedernikoff_ml_runs (
+  id INT DEFAULT vedernikoff_ml_mid(5),
+  name TEXT
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_ml_runs (name) VALUES ('first');
+
+
+query
+SELECT id, name FROM vedernikoff_ml_runs;
+----
+id  name
+12  first
+
+
+statement error (?i)cannot drop function .*vedernikoff_ml_base.*
+DROP FUNCTION vedernikoff_ml_base(INT);
+
+
+statement ok
+DROP FUNCTION vedernikoff_ml_base(INT) CASCADE;
+
+
+# Mid is gone, DEFAULT cleared.
+statement error (?i)(macro|function).*vedernikoff_ml_mid.*does not exist
+SELECT vedernikoff_ml_mid(1);
+
+
+statement ok
+INSERT INTO vedernikoff_ml_runs (name) VALUES ('after');
+
+
+query
+SELECT id, name FROM vedernikoff_ml_runs ORDER BY name;
+----
+id    name
+NULL  after
+12    first
+
+
+statement ok
+DROP TABLE vedernikoff_ml_runs;

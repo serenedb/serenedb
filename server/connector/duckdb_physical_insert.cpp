@@ -130,11 +130,11 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
   const auto& columns = _table->Columns();
   size_t input_idx = 0;
   for (size_t i = 0; i < columns.size(); ++i) {
-    if (columns[i].id == catalog::Column::kGeneratedPKId) {
+    if (columns[i].GetId() == catalog::Column::kGeneratedPKId) {
       continue;
     }
     state->columns.push_back(InsertColumnMeta{
-      .id = columns[i].id,
+      .id = columns[i].GetId(),
       .duckdb_type = columns[i].type,
       .input_col_idx = input_idx++,
       .store_mode = columns[i].store_mode,
@@ -146,8 +146,8 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
   state->table_name = _table->GetName();
   for (auto pk_id : _table->PKColumns()) {
     for (const auto& col : columns) {
-      if (col.id == pk_id) {
-        state->pk_col_names.push_back(col.name);
+      if (col.GetId() == pk_id) {
+        state->pk_col_names.emplace_back(col.GetName());
         break;
       }
     }

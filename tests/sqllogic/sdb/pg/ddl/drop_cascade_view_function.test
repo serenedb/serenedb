@@ -1,0 +1,301 @@
+statement ok
+CREATE FUNCTION ml_square(x INT) AS x * x;
+
+
+statement ok
+CREATE TABLE ml_features (id INT);
+
+
+statement count 3
+INSERT INTO ml_features VALUES (1), (2), (3);
+
+
+statement ok
+CREATE VIEW v_ml_square AS SELECT ml_square(id) AS s FROM ml_features;
+
+
+query
+SELECT s FROM v_ml_square ORDER BY s;
+----
+s
+1
+4
+9
+
+
+statement error (?i)cannot drop function .*ml_square.* because other objects depend on it
+DROP FUNCTION ml_square(INT);
+
+
+statement error (?i)cannot drop function .*ml_square.* because other objects depend on it
+DROP FUNCTION ml_square;
+
+
+statement ok
+DROP FUNCTION ml_square(INT) CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_ml_square.*does not exist
+SELECT * FROM v_ml_square;
+
+
+query
+SELECT count(*) FROM ml_features;
+----
+count
+3
+
+
+statement ok
+DROP TABLE ml_features;
+
+
+statement ok
+CREATE FUNCTION ml_cube(x INT) AS x * x * x;
+
+
+statement ok
+CREATE TABLE ml_nums (n INT);
+
+
+statement count 3
+INSERT INTO ml_nums VALUES (1), (2), (3);
+
+
+statement ok
+CREATE VIEW v_ml_cube1 AS SELECT ml_cube(n) AS c FROM ml_nums;
+
+
+statement ok
+CREATE VIEW v_ml_cube2 AS SELECT ml_cube(n) + 1 AS c FROM ml_nums;
+
+
+statement ok
+CREATE VIEW v_ml_cube3 AS SELECT ml_cube(ml_cube(n)) AS c FROM ml_nums;
+
+
+statement error (?i)cannot drop function .*ml_cube.* because other objects depend on it
+DROP FUNCTION ml_cube(INT);
+
+
+statement ok
+DROP FUNCTION ml_cube(INT) CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_ml_cube1.*does not exist
+SELECT * FROM v_ml_cube1;
+
+
+statement error (?i)(table|relation|view).*v_ml_cube2.*does not exist
+SELECT * FROM v_ml_cube2;
+
+
+statement error (?i)(table|relation|view).*v_ml_cube3.*does not exist
+SELECT * FROM v_ml_cube3;
+
+
+statement ok
+DROP TABLE ml_nums;
+
+
+statement ok
+CREATE FUNCTION ml_double_it(x INT) AS x * 2;
+
+
+statement ok
+CREATE TABLE ml_t3 (id INT);
+
+
+statement count 1
+INSERT INTO ml_t3 VALUES (5);
+
+
+statement ok
+CREATE VIEW v_ml_double1 AS SELECT ml_double_it(id) AS d FROM ml_t3;
+
+
+statement ok
+CREATE VIEW v_ml_double2 AS SELECT d * 10 AS x FROM v_ml_double1;
+
+
+statement ok
+CREATE VIEW v_ml_double3 AS SELECT x + 1 AS y FROM v_ml_double2;
+
+
+statement error (?i)cannot drop function .*ml_double_it.* because other objects depend on it
+DROP FUNCTION ml_double_it(INT);
+
+
+statement ok
+DROP FUNCTION ml_double_it(INT) CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_ml_double1.*does not exist
+SELECT * FROM v_ml_double1;
+
+
+statement error (?i)(table|relation|view).*v_ml_double2.*does not exist
+SELECT * FROM v_ml_double2;
+
+
+statement error (?i)(table|relation|view).*v_ml_double3.*does not exist
+SELECT * FROM v_ml_double3;
+
+
+statement ok
+DROP TABLE ml_t3;
+
+
+statement ok
+CREATE FUNCTION ml_lonely(x INT) AS x;
+
+
+statement ok
+DROP FUNCTION ml_lonely(INT);
+
+
+statement ok
+CREATE FUNCTION ml_clear(x INT) AS x + 100;
+
+
+statement ok
+CREATE TABLE ml_c5 (id INT);
+
+
+statement ok
+CREATE VIEW v_ml_c5 AS SELECT ml_clear(id) AS y FROM ml_c5;
+
+
+statement ok
+DROP VIEW v_ml_c5;
+
+
+statement ok
+DROP FUNCTION ml_clear(INT);
+
+
+statement ok
+DROP TABLE ml_c5;
+
+
+statement ok
+CREATE TABLE ml_builtin_t (v TEXT);
+
+
+statement count 2
+INSERT INTO ml_builtin_t VALUES ('hi'), ('hello');
+
+
+statement ok
+CREATE VIEW v_ml_builtin AS SELECT length(v) AS n, upper(v) AS u FROM ml_builtin_t;
+
+
+query
+SELECT n, u FROM v_ml_builtin ORDER BY n;
+----
+n	u
+2	HI
+5	HELLO
+
+
+statement error (?i)cannot drop table .*ml_builtin_t.* because other objects depend on it
+DROP TABLE ml_builtin_t;
+
+
+statement ok
+DROP TABLE ml_builtin_t CASCADE;
+
+
+statement ok
+CREATE SEQUENCE ml_seq7;
+
+
+statement ok
+CREATE FUNCTION ml_mix7(x INT) AS x + nextval('public.ml_seq7');
+
+
+statement ok
+CREATE TABLE ml_t7 (id INT);
+
+
+statement count 1
+INSERT INTO ml_t7 VALUES (10);
+
+
+statement ok
+CREATE VIEW v_ml_mix7 AS SELECT ml_mix7(id) AS r FROM ml_t7;
+
+
+statement error (?i)cannot drop function .*ml_mix7.* because other objects depend on it
+DROP FUNCTION ml_mix7(INT);
+
+
+statement error (?i)cannot drop table .*ml_t7.* because other objects depend on it
+DROP TABLE ml_t7;
+
+
+statement ok
+DROP FUNCTION ml_mix7(INT) CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_ml_mix7.*does not exist
+SELECT * FROM v_ml_mix7;
+
+
+statement ok
+DROP TABLE ml_t7;
+
+
+statement ok
+DROP SEQUENCE ml_seq7;
+
+
+statement ok
+CREATE SCHEMA ml_fn_sch;
+
+
+statement ok
+CREATE SCHEMA ml_vw_sch;
+
+
+statement ok
+CREATE FUNCTION ml_fn_sch.ml_times3(x INT) AS x * 3;
+
+
+statement ok
+CREATE TABLE ml_vw_sch.ml_inputs_t (id INT);
+
+
+statement count 1
+INSERT INTO ml_vw_sch.ml_inputs_t VALUES (4);
+
+
+statement ok
+CREATE VIEW ml_vw_sch.v_ml_outputs AS SELECT ml_fn_sch.ml_times3(id) AS y FROM ml_vw_sch.ml_inputs_t;
+
+
+query
+SELECT y FROM ml_vw_sch.v_ml_outputs;
+----
+y
+12
+
+
+statement error (?i)cannot drop function .*ml_times3.* because other objects depend on it
+DROP FUNCTION ml_fn_sch.ml_times3(INT);
+
+
+statement ok
+DROP FUNCTION ml_fn_sch.ml_times3(INT) CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_ml_outputs.*does not exist
+SELECT * FROM ml_vw_sch.v_ml_outputs;
+
+
+statement ok
+DROP SCHEMA ml_fn_sch CASCADE;
+
+
+statement ok
+DROP SCHEMA ml_vw_sch CASCADE;

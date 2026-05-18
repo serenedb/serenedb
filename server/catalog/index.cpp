@@ -45,6 +45,7 @@
 #include "catalog/secondary_index.h"
 #include "catalog/tokenizer.h"
 #include "catalog/types.h"
+#include "pg/sql_utils.h"
 
 namespace sdb::catalog {
 namespace {
@@ -483,7 +484,7 @@ std::vector<Column::Id> ExtractColumnIds(
   seen.reserve(columns.size());
   for (const auto& c : columns) {
     SDB_ASSERT(c.catalog_column);
-    auto id = c.catalog_column->id;
+    auto id = c.catalog_column->GetId();
     if (seen.insert(id).second) {
       ids.push_back(id);
     }
@@ -566,7 +567,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
 
   InvertedIndex::ColumnOptions inverted_columns;
   for (const auto& c : columns) {
-    auto& index_col = inverted_columns[c.catalog_column->id];
+    auto& index_col = inverted_columns[c.catalog_column->GetId()];
 
     if (!c.json_pointer.empty()) {
       if (c.opclass_options) {
@@ -750,15 +751,15 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     auto sorted_col_ids =
       inverted_columns | std::views::keys | std::ranges::to<std::vector>();
     absl::c_sort(sorted_col_ids);
-    auto next = Column::kMaxRealId;
+    uint64_t next = Column::kMaxRealIdValue;
     for (auto col_id : sorted_col_ids) {
       auto& column_info = inverted_columns[col_id];
       if (column_info.synthetic_column) {
-        column_info.synthetic_column = --next;
+        column_info.synthetic_column = Column::Id{--next};
       }
       for (auto& path_info : column_info.json_paths) {
         if (path_info.synthetic_column) {
-          path_info.synthetic_column = --next;
+          path_info.synthetic_column = Column::Id{--next};
         }
       }
     }
@@ -784,7 +785,8 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
 Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
              ObjectId relation_id, std::string name,
              std::vector<Column::Id> column_ids, ObjectType type)
-  : SchemaObject{{}, database_id, schema_id, id, std::move(name), type},
+  : Object{schema_id, id, std::move(name), type},
+    _database_id{database_id},
     _relation_id{relation_id},
     _column_ids{std::move(column_ids)} {
   SDB_ASSERT(GetId().isSet());

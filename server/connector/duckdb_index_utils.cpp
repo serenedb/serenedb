@@ -55,7 +55,7 @@ std::vector<duckdb_secondary_key::SKColumn> BuildSKColumns(
     bool found = false;
 
     for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == col_id) {
+      if (columns[i].GetId() == col_id) {
         type = columns[i].type;
         if (!col_id_to_chunk_pos.empty()) {
           auto it = col_id_to_chunk_pos.find(col_id);
@@ -245,8 +245,8 @@ bool NeedsRowDeleteMarkers(
     }
     bool all_indexonly = true;
     for (auto col_id : index->GetColumnIds()) {
-      auto it =
-        absl::c_find_if(columns, [&](const auto& c) { return c.id == col_id; });
+      auto it = absl::c_find_if(
+        columns, [&](const auto& c) { return c.GetId() == col_id; });
       SDB_ASSERT(it != columns.end(),
                  "inverted index references unknown column id ", col_id);
       if (it->store_mode != catalog::ColumnStoreMode::kIndexOnly) {
@@ -277,7 +277,7 @@ std::vector<size_t> BuildCreateIndexProjection(
   }
   for (auto pk_id : pk_column_ids) {
     for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == pk_id) {
+      if (columns[i].GetId() == pk_id) {
         projection.push_back(i);
         break;
       }

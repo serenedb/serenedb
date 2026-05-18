@@ -28,7 +28,9 @@ db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english'
 statement error
 DROP TEXT SEARCH DICTIONARY test_english;
 ----
-db error: ERROR: Can not drop text dictionary used in the indexes index_t
+db error: ERROR: cannot drop text search dictionary test_english because other objects depend on it
+DETAIL: index index_t depends on text search dictionary test_english
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok

@@ -66,10 +66,10 @@ irs::analysis::Analyzer::ptr Tokenizer::CreateAnalyzer() const {
   return output;
 }
 
-Tokenizer::Tokenizer(ObjectId id, std::string_view name,
+Tokenizer::Tokenizer(ObjectId schema_id, ObjectId id, std::string_view name,
                      search::Features features, uint32_t norm_row_group_size,
                      std::string data)
-  : SchemaObject{{}, {}, {}, id, name, ObjectType::Tokenizer},
+  : Object{schema_id, id, name, ObjectType::Tokenizer},
     _data{std::move(data)},
     _features{features},
     _norm_row_group_size{norm_row_group_size} {}
@@ -91,8 +91,8 @@ std::shared_ptr<Tokenizer> Tokenizer::ReadInternal(vpack::Slice slice,
       ? norm_row_group_size_slice.getNumber<uint32_t>()
       : DEFAULT_ROW_GROUP_SIZE;
   return std::make_shared<Tokenizer>(
-    ctx.id, name.stringView(), std::move(features), norm_row_group_size,
-    std::string{slice.startAs<char>(), slice.byteSize()});
+    ctx.schema_id, ctx.id, name.stringView(), std::move(features),
+    norm_row_group_size, std::string{slice.startAs<char>(), slice.byteSize()});
 }
 
 void Tokenizer::WriteInternal(vpack::Builder& b) const {
@@ -110,7 +110,7 @@ void Tokenizer::WriteInternal(vpack::Builder& b) const {
 std::shared_ptr<Object> Tokenizer::Clone() const {
   vpack::Builder b;
   WriteInternal(b);
-  return ReadInternal(b.slice(), {.id = GetId()});
+  return ReadInternal(b.slice(), {.id = GetId(), .schema_id = GetParentId()});
 }
 
 }  // namespace sdb::catalog

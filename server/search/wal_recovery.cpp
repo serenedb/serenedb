@@ -144,8 +144,9 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
   s.indexed_columns.reserve(s.indexed_column_ids.size());
   const auto& table_columns = table->Columns();
   for (auto col_id : s.indexed_column_ids) {
-    auto it = absl::c_find_if(
-      table_columns, [col_id](const auto& col) { return col.id == col_id; });
+    auto it = absl::c_find_if(table_columns, [col_id](const auto& col) {
+      return col.GetId() == col_id;
+    });
     if (it == table_columns.end()) {
       return false;
     }

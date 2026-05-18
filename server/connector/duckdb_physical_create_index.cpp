@@ -202,7 +202,8 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
         auto& catalog = SerenedServer::Instance()
                           .getFeature<catalog::CatalogFeature>()
                           .Global();
-        std::ignore = catalog.DropIndex(database_name, schema_name, index_name);
+        std::ignore =
+          catalog.DropIndex(database_name, schema_name, index_name, true);
       } catch (...) {
       }
     }
@@ -228,7 +229,7 @@ struct CreateIndexSourceState : public duckdb::GlobalSourceState {
 }  // namespace
 
 SereneDBPhysicalCreateIndex::SereneDBPhysicalCreateIndex(
-  duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::SchemaObject> relation,
+  duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Object> relation,
   std::vector<catalog::Column> view_columns, ObjectId database_id,
   duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
   SereneDBSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality)
@@ -294,7 +295,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   std::vector<catalog::CreateIndexColumn> idx_columns;
   auto resolve_column = [&](std::string_view col_name) {
     for (const auto& col : columns) {
-      if (absl::EqualsIgnoreCase(col.name, col_name)) {
+      if (absl::EqualsIgnoreCase(col.GetName(), col_name)) {
         return &col;
       }
     }
@@ -323,7 +324,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       }
       idx_columns.emplace_back(catalog::CreateIndexColumn{
         .catalog_column = cat_col,
-        .name = cat_col->name,
+        .name = cat_col->GetName(),
         .opclass = std::move(opclass),
         .opclass_options = std::move(opclass_options),
       });
@@ -345,7 +346,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
     idx_columns.emplace_back(catalog::CreateIndexColumn{
       .catalog_column = cat_col,
-      .name = cat_col->name,
+      .name = cat_col->GetName(),
       .opclass = std::move(opclass),
       .json_pointer = EncodeJsonPointer(json_path),
       .opclass_options = std::move(opclass_options),
@@ -447,7 +448,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     for (size_t chunk_idx = 0; chunk_idx < projection.size(); ++chunk_idx) {
       const auto& col = columns[projection[chunk_idx]];
       state->columns.push_back(InsertColumnMeta{
-        .id = col.id,
+        .id = col.GetId(),
         .duckdb_type = col.type,
         .input_col_idx = chunk_idx,
         .store_mode = col.store_mode,
@@ -458,11 +459,11 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     // positions; trailing positions hold virtual PK columns appended by
     // BindCreateIndex.
     for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == catalog::Column::kGeneratedPKId) {
+      if (columns[i].GetId() == catalog::Column::kGeneratedPKId) {
         continue;
       }
       state->columns.push_back(InsertColumnMeta{
-        .id = columns[i].id,
+        .id = columns[i].GetId(),
         .duckdb_type = columns[i].type,
         .input_col_idx = i,
         .store_mode = columns[i].store_mode,
@@ -514,7 +515,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     duckdb::idx_t trailing_pos = state->columns.size();
     for (auto pk_id : pk_ids) {
       for (const auto& c : base_cols) {
-        if (c.id == pk_id) {
+        if (c.GetId() == pk_id) {
           state->pk_columns.push_back(duckdb_primary_key::PKColumn{
             .input_col_idx = trailing_pos,
             .type = c.type,
@@ -814,7 +815,7 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   auto& schema_entry = op.table.ParentSchema().Cast<SereneDBSchemaEntry>();
   auto database_id = sdb_catalog.GetDatabaseId();
 
-  std::shared_ptr<catalog::SchemaObject> relation;
+  std::shared_ptr<catalog::Object> relation;
   std::vector<catalog::Column> view_columns;
 
   if (op.table.type == duckdb::CatalogType::VIEW_ENTRY) {
@@ -833,11 +834,9 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     const auto& vinfo = view.GetInfo();
     view_columns.reserve(vinfo.names.size());
     for (size_t i = 0; i < vinfo.names.size(); ++i) {
-      view_columns.push_back(catalog::Column{
-        .id = static_cast<catalog::Column::Id>(i),
-        .type = vinfo.types[i],
-        .name = vinfo.names[i],
-      });
+      view_columns.emplace_back(ObjectId{}, catalog::Column::Id{i},
+                                vinfo.names[i], vinfo.types[i]);
+      view_columns.back().SetId(catalog::Column::Id{i});
     }
   } else {
     auto& table_catalog = op.table.Cast<duckdb::TableCatalogEntry>();

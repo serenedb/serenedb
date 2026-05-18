@@ -207,7 +207,7 @@ std::shared_ptr<Object> InvertedIndex::Clone() const {
   return ReadInternal(b.slice(), {
                                    .id = GetId(),
                                    .database_id = GetDatabaseId(),
-                                   .schema_id = GetSchemaId(),
+                                   .schema_id = GetParentId(),
                                    .relation_id = GetRelationId(),
                                  });
 }

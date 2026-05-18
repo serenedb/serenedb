@@ -446,7 +446,7 @@ std::string ToStringDemangled(
       return TermToString(field);
     }
     const uint64_t col_id = absl::big_endian::Load64(field.data());
-    return absl::StrCat(col_name(col_id), "(",
+    return absl::StrCat(col_name(sdb::catalog::Column::Id{col_id}), "(",
                         MangleName(field.substr(kIdSize)), ")");
   });
 }

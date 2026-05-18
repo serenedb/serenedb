@@ -135,8 +135,11 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
   auto& server = SerenedServer::Instance();
 
-  const auto db_id = index.GetDatabaseId();
-  const auto schema_id = index.GetSchemaId();
+  const auto schema_id = index.GetParentId();
+  const auto db_id = server.getFeature<catalog::CatalogFeature>()
+                       .Global()
+                       .GetCatalogSnapshot()
+                       ->GetDatabaseId(index);
   const auto index_id = index.GetId();
   SDB_ASSERT(index_id.isSet());
   std::filesystem::path path =

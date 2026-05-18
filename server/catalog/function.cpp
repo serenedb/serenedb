@@ -30,11 +30,10 @@
 
 namespace sdb::catalog {
 
-PgSqlFunction::PgSqlFunction(ObjectId database_id, ObjectId id,
+PgSqlFunction::PgSqlFunction(ObjectId schema_id, ObjectId id,
                              std::string_view name,
                              duckdb::unique_ptr<duckdb::CreateMacroInfo> info)
-  : SchemaObject{{}, database_id,       {},
-                 id, std::string{name}, ObjectType::PgSqlFunction},
+  : Object{schema_id, id, std::string{name}, ObjectType::PgSqlFunction},
     _info{std::move(info)} {}
 
 std::shared_ptr<PgSqlFunction> PgSqlFunction::ReadInternal(vpack::Slice slice,
@@ -54,7 +53,7 @@ std::shared_ptr<PgSqlFunction> PgSqlFunction::ReadInternal(vpack::Slice slice,
   auto macro_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
       std::move(create_info));
-  return std::make_shared<PgSqlFunction>(ctx.database_id, ctx.id, name,
+  return std::make_shared<PgSqlFunction>(ctx.schema_id, ctx.id, name,
                                          std::move(macro_info));
 }
 
@@ -77,7 +76,7 @@ std::shared_ptr<Object> PgSqlFunction::Clone() const {
   auto cloned_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
       _info->Copy());
-  return std::make_shared<PgSqlFunction>(GetDatabaseId(), GetId(), GetName(),
+  return std::make_shared<PgSqlFunction>(GetParentId(), GetId(), GetName(),
                                          std::move(cloned_info));
 }
 

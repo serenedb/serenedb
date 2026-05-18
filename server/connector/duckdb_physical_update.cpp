@@ -155,7 +155,7 @@ SereneDBPhysicalUpdate::SereneDBPhysicalUpdate(
   std::vector<std::pair<catalog::Column::Id, size_t>> pk_id_to_table_idx;
   for (auto pk_id : pk_col_ids) {
     for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == pk_id) {
+      if (columns[i].GetId() == pk_id) {
         pk_id_to_table_idx.emplace_back(pk_id, i);
         break;
       }
@@ -221,11 +221,11 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
   const auto& pk_col_ids = _table->PKColumns();
 
   for (const auto& col : columns) {
-    if (col.id == catalog::Column::kGeneratedPKId) {
+    if (col.GetId() == catalog::Column::kGeneratedPKId) {
       continue;
     }
     state->all_columns.push_back(SereneDBUpdateGlobalState::ColumnMeta{
-      .id = col.id,
+      .id = col.GetId(),
       .duckdb_type = col.type,
       .store_mode = col.store_mode,
     });
@@ -235,19 +235,19 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     auto table_col_idx = _update_columns[i].index;
     const auto& col = columns[table_col_idx];
     state->update_columns.push_back(UpdateColumnMeta{
-      .id = col.id,
+      .id = col.GetId(),
       .duckdb_type = col.type,
       .table_col_idx = table_col_idx,
       .store_mode = col.store_mode,
     });
-    state->update_col_id_set.insert(col.id);
+    state->update_col_id_set.insert(col.GetId());
   }
 
   for (size_t i = 0; i < _pk_col_indices.size(); ++i) {
     duckdb::LogicalType pk_type = duckdb::LogicalType::BIGINT;
     if (i < pk_col_ids.size()) {
       for (const auto& col : columns) {
-        if (col.id == pk_col_ids[i]) {
+        if (col.GetId() == pk_col_ids[i]) {
           pk_type = col.type;
           break;
         }
@@ -265,7 +265,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
       duckdb::LogicalType pk_type = duckdb::LogicalType::BIGINT;
       if (i < pk_col_ids.size()) {
         for (const auto& col : columns) {
-          if (col.id == pk_col_ids[i]) {
+          if (col.GetId() == pk_col_ids[i]) {
             pk_type = col.type;
             break;
           }
@@ -278,8 +278,8 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     }
     for (auto pk_id : pk_col_ids) {
       for (const auto& col : columns) {
-        if (col.id == pk_id) {
-          state->pk_col_names.push_back(col.name);
+        if (col.GetId() == pk_id) {
+          state->pk_col_names.emplace_back(col.GetName());
           break;
         }
       }
@@ -326,11 +326,11 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     std::vector<catalog::Column::Id> non_pk_idx_col_ids;
     non_pk_idx_col_ids.reserve(indexed_col_ids.size());
     for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == catalog::Column::kGeneratedPKId) {
+      if (columns[i].GetId() == catalog::Column::kGeneratedPKId) {
         continue;
       }
-      if (indexed_col_ids.contains(columns[i].id)) {
-        non_pk_idx_col_ids.push_back(columns[i].id);
+      if (indexed_col_ids.contains(columns[i].GetId())) {
+        non_pk_idx_col_ids.push_back(columns[i].GetId());
       }
     }
     SDB_ASSERT(non_pk_idx_col_ids.size() == _indexed_col_indices.size());
@@ -344,7 +344,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
         continue;
       }
       for (const auto& col : columns) {
-        if (col.id == col_id) {
+        if (col.GetId() == col_id) {
           state->non_update_idx_cols.push_back(
             SereneDBUpdateGlobalState::NonUpdateIdxColMeta{
               .id = col_id,
@@ -382,7 +382,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
         continue;
       }
       for (const auto& col : columns) {
-        if (col.id == pk_col_id) {
+        if (col.GetId() == pk_col_id) {
           state->non_update_idx_cols.push_back(
             SereneDBUpdateGlobalState::NonUpdateIdxColMeta{
               .id = pk_col_id,

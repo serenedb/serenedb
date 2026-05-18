@@ -117,7 +117,7 @@ void InitCommonState(CommonScanGlobalState& state,
       const auto& tbd = bind_data.As<TableScanBindData>();
       const auto& catalog_cols = tbd.table->Columns();
       SDB_ASSERT(cat_idx < catalog_cols.size());
-      const auto catalog_col_id = catalog_cols[cat_idx].id;
+      const auto catalog_col_id = catalog_cols[cat_idx].GetId();
       duckdb::idx_t bind_idx = duckdb::DConstants::INVALID_INDEX;
       for (duckdb::idx_t i = 0; i < bind_data.column_ids.size(); ++i) {
         if (bind_data.column_ids[i] == catalog_col_id) {
@@ -154,7 +154,7 @@ void InitCommonState(CommonScanGlobalState& state,
         if (!bind_data.IsViewBacked()) {
           const auto& tbd = bind_data.As<TableScanBindData>();
           for (const auto& col : tbd.table->Columns()) {
-            if (col.id != catalog_col_id ||
+            if (col.GetId() != catalog_col_id ||
                 col.store_mode != catalog::ColumnStoreMode::kIndexOnly) {
               continue;
             }
@@ -164,7 +164,7 @@ void InitCommonState(CommonScanGlobalState& state,
               THROW_SQL_ERROR(
                 ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                 ERR_MSG(
-                  "column \"", col.name,
+                  "column \"", col.GetName(),
                   "\" has sdb_indexonly storage and cannot be read directly;"
                   " it is only accessible through an inverted-index search"
                   " predicate"));
@@ -387,7 +387,8 @@ std::vector<std::string> InitPKScanColumns(
     basics::StrResize(key, key_utils::kTablePrefixSize);
 
     state.upper_bound_data.append(key);
-    key_utils::AppendColumnKey(state.upper_bound_data, column_id + 1);
+    key_utils::AppendColumnKey(state.upper_bound_data,
+                               catalog::Column::Id{column_id.id() + 1});
 
     key_utils::AppendColumnKey(key, column_id);
     column_keys.push_back(std::move(key));

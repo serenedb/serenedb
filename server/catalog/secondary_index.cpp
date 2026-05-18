@@ -68,7 +68,7 @@ std::shared_ptr<Object> SecondaryIndex::Clone() const {
   WriteInternal(b);
   return ReadInternal(b.slice(), {.id = GetId(),
                                   .database_id = GetDatabaseId(),
-                                  .schema_id = GetSchemaId(),
+                                  .schema_id = GetParentId(),
                                   .relation_id = GetRelationId()});
 }
 

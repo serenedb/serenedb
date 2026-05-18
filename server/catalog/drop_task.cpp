@@ -28,6 +28,7 @@
 #include <yaclib/async/when_all.hpp>
 
 #include "basics/assert.h"
+#include "basics/debugging.h"
 #include "basics/errors.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
@@ -143,13 +144,14 @@ AsyncResult IndexDrop::Execute() {
 }
 
 Result TableDrop::Finalize() {
+  SDB_IF_FAILURE("crash_before_seq_counter_wipe") { SDB_IMMEDIATE_ABORT(); }
   auto& server = GetServerEngine();
-
+  // Indexes, shards.
   auto r = server.DropEntry(_id);
   if (!r.ok()) {
     return r;
   }
-
+  // Owned seqs (def + counter) + the table's own catalog rows in one batch.
   return server.Write([&](auto& ctx) {
     for (auto seq_id : _owned_sequences) {
       ctx.DropDefinition(_parent_id, catalog::ObjectType::Sequence, seq_id);
@@ -188,21 +190,26 @@ AsyncResult TableDrop::Execute() {
 
 Result SchemaDrop::Finalize() {
   auto& server = GetServerEngine();
-  auto r = server.DropEntry(_id);
+  // Standalone seq counter rows -- DropEntry only sweeps Definitions CF.
+  auto r =
+    server.VisitDefinitions(_id, catalog::ObjectType::Sequence,
+                            [&](DefinitionKey key, vpack::Slice) -> Result {
+                              return server.DropSequence(key.GetObjectId());
+                            });
   if (!r.ok()) {
     return r;
   }
-
+  r = server.DropEntry(_id);
+  if (!r.ok()) {
+    return r;
+  }
   if (_is_root) {
-    auto r =
-      server.DropDefinition(_parent_id, catalog::ObjectType::Schema, _id);
+    r = server.DropDefinition(_parent_id, catalog::ObjectType::Schema, _id);
     if (!r.ok()) {
       return r;
     }
-    r = server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
-    if (!r.ok()) {
-      return r;
-    }
+    return server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone,
+                                 _id);
   }
   return {};
 }
@@ -230,6 +237,8 @@ AsyncResult SchemaDrop::Execute() {
 
 Result DatabaseDrop::Finalize() {
   auto& server = GetServerEngine();
+  // Range-delete schema Definitions under db. Per-schema standalone-seq
+  // counter wipes already ran inside each SchemaDrop::Finalize above.
   auto r = server.DropEntry(_id, catalog::ObjectType::Schema);
   if (!r.ok()) {
     return r;

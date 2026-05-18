@@ -39,7 +39,6 @@
 #include "connector/functions/ts_common.hpp"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
-#include "pg/sql_collector.h"
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {

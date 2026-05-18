@@ -51,7 +51,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // when `relation` is a view (Tables expose Columns() directly); ignored
   // for tables.
   SereneDBPhysicalCreateIndex(duckdb::PhysicalPlan& plan,
-                              std::shared_ptr<catalog::SchemaObject> relation,
+                              std::shared_ptr<catalog::Object> relation,
                               std::vector<catalog::Column> view_columns,
                               ObjectId database_id,
                               duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
@@ -89,7 +89,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // Returns the `_relation` cast to a Table when it is one; nullptr for views.
   catalog::Table* TableOrNull() const noexcept;
 
-  std::shared_ptr<catalog::SchemaObject> _relation;
+  std::shared_ptr<catalog::Object> _relation;
   // Empty when `_relation` is a Table (use Columns()); populated when view.
   std::vector<catalog::Column> _view_columns;
   ObjectId _database_id;

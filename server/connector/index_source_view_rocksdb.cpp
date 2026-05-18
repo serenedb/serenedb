@@ -45,7 +45,7 @@ ViewRocksDBIndexSource::ViewRocksDBIndexSource(
   std::vector<size_t> real_col_positions;
   real_col_positions.reserve(base_cols.size());
   for (size_t i = 0; i < base_cols.size(); ++i) {
-    if (base_cols[i].id != catalog::Column::kGeneratedPKId) {
+    if (base_cols[i].GetId() != catalog::Column::kGeneratedPKId) {
       real_col_positions.push_back(i);
     }
   }
@@ -53,7 +53,7 @@ ViewRocksDBIndexSource::ViewRocksDBIndexSource(
   if (!_fast_path.projection_columns.empty()) {
     name_to_base_col.reserve(real_col_positions.size());
     for (auto i : real_col_positions) {
-      name_to_base_col.emplace(base_cols[i].name, i);
+      name_to_base_col.emplace(base_cols[i].GetName(), i);
     }
   }
   _real_proj_slots.reserve(projected_columns.size());
@@ -95,7 +95,7 @@ ViewRocksDBIndexSource::ViewRocksDBIndexSource(
     inner_projected_columns.push_back(
       static_cast<duckdb::idx_t>(inner_projected_columns.size()));
     inner_projected_types.push_back(base_col.type);
-    inner_bind_column_ids.push_back(base_col.id);
+    inner_bind_column_ids.push_back(base_col.GetId());
   }
 
   _cast_executors.resize(_scratch_types.size());

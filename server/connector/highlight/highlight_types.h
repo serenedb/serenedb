@@ -34,7 +34,7 @@ namespace sdb::connector::highlight {
 using HitRange = std::pair<uint32_t, uint32_t>;
 
 struct Field {
-  catalog::Column::Id column_id = 0;
+  catalog::Column::Id column_id{};
   std::string field_name;
   catalog::Tokenizer::TokenizerWrapper* analyzer = nullptr;
   size_t limit = 0;

@@ -23,6 +23,7 @@
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 
+#include "basics/containers/flat_hash_set.h"
 #include "catalog/table_options.h"
 #include "connector/sink_writer_base.hpp"
 #include "rocksdb/slice.h"

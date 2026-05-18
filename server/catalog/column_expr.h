@@ -24,11 +24,40 @@
 #include <vpack/slice.h>
 
 #include <duckdb/parser/parsed_expression.hpp>
+#include <string>
+#include <vector>
 
 #include "basics/assert.h"
+#include "basics/bit_utils.hpp"
 #include "basics/result.h"
 
+namespace duckdb {
+
+class SelectStatement;
+}
+
 namespace sdb {
+
+struct QualifiedRef {
+  std::string catalog;
+  std::string schema;
+  std::string name;
+};
+
+enum class RefKinds : uint8_t {
+  None = 0,
+  Sequences = 1U << 0,
+  Relations = 1U << 1,
+  Functions = 1U << 2,
+  All = Sequences | Relations | Functions,
+};
+ENABLE_BITMASK_ENUM(RefKinds);
+
+struct Refs {
+  std::vector<QualifiedRef> sequences;
+  std::vector<QualifiedRef> relations;
+  std::vector<QualifiedRef> functions;
+};
 
 // Column expression (default value, computed column).
 // In memory: DuckDB ParsedExpression.
@@ -48,9 +77,14 @@ class ColumnExpr {
 
   bool HasExpr() const { return _expr != nullptr; }
 
+  Refs ExtractRefs(RefKinds kinds) const;
+
  private:
   duckdb::unique_ptr<duckdb::ParsedExpression> _expr;
 };
+
+Refs ExtractRefs(const duckdb::SelectStatement& stmt, RefKinds kinds);
+Refs ExtractRefs(const duckdb::ParsedExpression& expr, RefKinds kinds);
 
 void VPackWrite(auto ctx, const ColumnExpr& column_expr) {
   column_expr.ToVPack(ctx.vpack());

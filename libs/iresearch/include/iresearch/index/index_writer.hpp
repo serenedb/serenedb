@@ -177,6 +177,8 @@ struct IndexWriterOptions : public SegmentOptions {
   NormColumnOptionsProvider norm_column_options;
   yaclib::IExecutorPtr executor;
 
+  size_t executor_parallelism{0};
+
   IndexWriterOptions() {}  // compiler requires non-default definition
 };
 
@@ -612,7 +614,7 @@ class IndexWriter : private util::Noncopyable {
               const SegmentOptions& segment_limits, const Comparer* comparator,
               const PayloadProvider& meta_payload_provider,
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader,
-              yaclib::IExecutorPtr executor);
+              yaclib::IExecutorPtr executor, size_t executor_parallelism);
 
  private:
   struct ConsolidationContext : util::Noncopyable {
@@ -1005,6 +1007,7 @@ class IndexWriter : private util::Noncopyable {
   std::array<FlushContext, 2> _flush_contexts;
 
   yaclib::IExecutorPtr _executor;
+  size_t _executor_parallelism{0};
 };
 
 }  // namespace irs

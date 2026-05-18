@@ -30,6 +30,7 @@
 
 #include "index_tests.hpp"
 #include "tests_shared.hpp"
+#include "yaclib/runtime/fair_thread_pool.hpp"
 
 namespace {
 
@@ -104,6 +105,33 @@ TEST_P(SortedIndexTestCase,
 TEST_P(SortedIndexTestCase,
        check_document_order_after_consolidation_sparse_with_removals) {
   GTEST_SKIP() << kSortedReason;
+}
+
+struct SortedIndexStressSchedulerTestCase : SortedIndexStressTestCase {
+ protected:
+  yaclib::IntrusivePtr<yaclib::FairThreadPool> GetScheduler() const {
+    tests::dir_param_f factory{};
+    std::tie(factory, std::ignore) = GetParam();
+    if (factory == &MemoryDirectoryWithScheduler) {
+      return yaclib::MakeFairThreadPool();
+    }
+
+    return nullptr;
+  }
+};
+
+std::pair<std::shared_ptr<irs::Directory>, std::string>
+MemoryDirectoryWithScheduler(const TestBase* ctx) {
+  auto [dir, name] = tests::Directory<&tests::MemoryDirectory>(ctx);
+  name += "_scheduler";
+  return {std::move(dir), std::move(name)};
+}
+
+std::pair<std::shared_ptr<irs::Directory>, std::string>
+MemoryDirectoryWithoutScheduler(const TestBase* ctx) {
+  auto [dir, name] = tests::Directory<&tests::MemoryDirectory>(ctx);
+  name += "_no_scheduler";
+  return {std::move(dir), std::move(name)};
 }
 
 TEST_P(SortedIndexStressTestCase, doc_removal_same_key_within_trx) {

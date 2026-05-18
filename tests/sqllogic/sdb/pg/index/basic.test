@@ -242,13 +242,13 @@ DROP INDEX index_ts;
 statement error
 CREATE INDEX index_ts on tstest USING inverted(c unknown_dict);
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'unknown_dict' on column 'c': not a built-in type (known: hnsw) and no text dictionary by that name in schema 'public'
+db error: ERROR: Failed to create index: Unknown opclass 'unknown_dict' on 'c': not a built-in type (known: hnsw) and no text dictionary by that name in schema 'public'
 
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(a test_english);
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'test_english' on column 'a': not a built-in type (known: hnsw) and no text dictionary by that name in schema 'public'
+db error: ERROR: Failed to create index: Unknown opclass 'test_english' on 'a': not a built-in type (known: hnsw) and no text dictionary by that name in schema 'public'
 
 
 statement error
@@ -267,7 +267,7 @@ db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english'
 statement error
 CREATE INDEX index_ts on tstest USING inverted(ts_lexize('test_english', c));
 ----
-db error: ERROR: CREATE INDEX does not refer to any columns in the base table!
+db error: ERROR: text search dictionary "test_english" does not exist
 
 
 statement ok

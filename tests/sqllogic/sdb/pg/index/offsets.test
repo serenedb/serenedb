@@ -45,7 +45,7 @@ statement ok
 VACUUM (UPDATE_INDEXES) offsets_test2;
 
 query
-SELECT id, OFFSETS(body) AS bo
+SELECT id, ts_offsets(body) AS bo
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY id;
@@ -53,10 +53,10 @@ ORDER BY id;
 id	bo
 1	{6,9}
 2	{0,3}
-4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}
 
 query
-SELECT id, OFFSETS(offsets_test_idx.body) AS bo
+SELECT id, ts_offsets(offsets_test_idx.body) AS bo
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY id;
@@ -64,11 +64,11 @@ ORDER BY id;
 id	bo
 1	{6,9}
 2	{0,3}
-4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}
 
 
 query
-EXPLAIN SELECT id, OFFSETS(offsets_test_idx.body) AS bo
+EXPLAIN SELECT id, ts_offsets(offsets_test_idx.body) AS bo
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY id;
@@ -105,7 +105,7 @@ QUERY PLAN
 
 
 query
-SELECT id, OFFSETS(title) AS to_, OFFSETS(body) AS bo
+SELECT id, ts_offsets(title) AS to_, ts_offsets(body) AS bo
 FROM offsets_test_idx
 WHERE title @@ ts_phrase('hello') AND body @@ ts_phrase('fox')
 ORDER BY id;
@@ -116,7 +116,7 @@ id	to_	bo
 
 
 query
-SELECT id, OFFSETS(body, 0) AS bo
+SELECT id, ts_offsets(body, 0) AS bo
 FROM offsets_test_idx
 WHERE body @@ 'fox'
 ORDER BY id;
@@ -128,7 +128,7 @@ id	bo
 
 
 query
-SELECT id, OFFSETS(body) AS bo
+SELECT id, ts_offsets(body) AS bo
 FROM offsets_test_idx
 WHERE body @@ ('fox'::TSQUERY || 'quick'::TSQUERY)
 ORDER BY id;
@@ -137,11 +137,11 @@ id	bo
 1	{0,5,6,9}
 2	{0,3}
 3	{0,5}
-4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}
 
 
 query
-SELECT id, OFFSETS(body) AS bo
+SELECT id, ts_offsets(body) AS bo
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox') AND body @@ ts_phrase('quick')
 ORDER BY id;
@@ -150,7 +150,7 @@ id	bo
 1	{0,5,6,9}
 
 query
-SELECT id, OFFSETS(title) AS to_
+SELECT id, ts_offsets(title) AS to_
 FROM offsets_test_idx
 WHERE title @@ ts_phrase('hello') OR title @@ ts_phrase('world')
 ORDER BY id;
@@ -161,29 +161,29 @@ id	to_
 3	{0,5}
 
 query
-SELECT id, OFFSETS(body) AS bo
+SELECT id, ts_offsets(body) AS bo
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
-ORDER BY OFFSETS(body), id;
+ORDER BY ts_offsets(body), id;
 ----
 id	bo
 2	{0,3}
-4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}
 1	{6,9}
 
 query
-SELECT id, OFFSETS(body) AS bo
+SELECT id, ts_offsets(body) AS bo
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY bo, id;
 ----
 id	bo
 2	{0,3}
-4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}
 1	{6,9}
 
 query
-SELECT id, OFFSETS(body, 3) AS bo
+SELECT id, ts_offsets(body, 3) AS bo
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY id;
@@ -194,7 +194,7 @@ id	bo
 4	{0,3,4,7,8,11}
 
 query
-SELECT id, OFFSETS(body, 1) AS bo
+SELECT id, ts_offsets(body, 1) AS bo
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY id;
@@ -205,7 +205,7 @@ id	bo
 4	{0,3}
 
 query
-SELECT id, length(OFFSETS(body, 0)) AS num_offsets
+SELECT id, length(ts_offsets(body, 0)) AS num_offsets
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox') AND id = 4;
 ----
@@ -213,10 +213,10 @@ id	num_offsets
 4	24
 
 query
-SELECT id, OFFSETS(body, 2) AS bo
+SELECT id, ts_offsets(body, 2) AS bo
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
-ORDER BY OFFSETS(body, 2), id;
+ORDER BY ts_offsets(body, 2), id;
 ----
 id	bo
 2	{0,3}
@@ -225,7 +225,7 @@ id	bo
 
 query
 SELECT id, b_offs FROM (
-SELECT id, OFFSETS(body, 2) AS b_offs
+SELECT id, ts_offsets(body, 2) AS b_offs
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ) sub ORDER BY id;
@@ -237,7 +237,7 @@ id	b_offs
 
 
 query
-SELECT id, OFFSETS(wordcount) AS wo
+SELECT id, ts_offsets(wordcount) AS wo
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY id;
@@ -252,11 +252,11 @@ id	wo
 # (title + body), second branch requests one (body only). Verifies that each
 # DataSource receives only its own filtered and correctly ordered requests.
 query
-SELECT id, OFFSETS(title) AS title_offs, OFFSETS(body) AS body_offs
+SELECT id, ts_offsets(title) AS title_offs, ts_offsets(body) AS body_offs
 FROM offsets_test_idx
 WHERE title @@ ts_phrase('hello') AND body @@ ts_phrase('fox')
 UNION ALL
-SELECT id, NULL::bigint[], OFFSETS(body)
+SELECT id, NULL::integer[], ts_offsets(body)
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('quick')
 ORDER BY id, title_offs NULLS LAST;
@@ -272,11 +272,11 @@ id	title_offs	body_offs
 # (body only), second branch requests two (title + body). Verifies correct
 # filtering regardless of which branch accumulates requests first.
 query
-SELECT id, NULL::bigint[] AS title_offs, OFFSETS(body) AS body_offs
+SELECT id, NULL::integer[] AS title_offs, ts_offsets(body) AS body_offs
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('quick')
 UNION ALL
-SELECT id, OFFSETS(title), OFFSETS(body)
+SELECT id, ts_offsets(title), ts_offsets(body)
 FROM offsets_test_idx
 WHERE title @@ ts_phrase('hello') AND body @@ ts_phrase('fox')
 ORDER BY id, title_offs NULLS FIRST;
@@ -291,11 +291,11 @@ id	title_offs	body_offs
 # Same field in both sub-queries but with different limits. Row id=4 has 12
 # fox matches so the limit difference is visible in its output.
 query
-SELECT id, 2 AS lim, OFFSETS(body, 2) AS body_offs
+SELECT id, 2 AS lim, ts_offsets(body, 2) AS body_offs
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 UNION ALL
-SELECT id, 4, OFFSETS(body, 4)
+SELECT id, 4, ts_offsets(body, 4)
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY id, lim;
@@ -310,11 +310,11 @@ id	lim	body_offs
 
 
 query
-EXPLAIN SELECT id, 2 AS lim, OFFSETS(body, 2) AS body_offs
+EXPLAIN SELECT id, 2 AS lim, ts_offsets(body, 2) AS body_offs
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 UNION ALL
-SELECT id, 4, OFFSETS(body, 4)
+SELECT id, 4, ts_offsets(body, 4)
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY id, lim;
@@ -384,7 +384,7 @@ QUERY PLAN
 
 
 query
-SELECT offsets_test_idx.id, OFFSETS(offsets_test_idx.body) AS bo
+SELECT offsets_test_idx.id, ts_offsets(offsets_test_idx.body) AS bo
 FROM offsets_test_idx
 JOIN offsets_test2_idx ON offsets_test_idx.id = offsets_test2_idx.id
 WHERE offsets_test_idx.body @@ ts_phrase('fox') AND offsets_test2_idx.body @@ ts_phrase('fox')
@@ -395,7 +395,7 @@ id	bo
 
 
 query
-SELECT offsets_test_idx.id, OFFSETS(offsets_test2_idx.body) AS bo
+SELECT offsets_test_idx.id, ts_offsets(offsets_test2_idx.body) AS bo
 FROM offsets_test_idx
 JOIN offsets_test2_idx ON offsets_test_idx.id = offsets_test2_idx.id
 WHERE offsets_test_idx.body @@ ts_phrase('fox') AND offsets_test2_idx.body @@ ts_phrase('fox')
@@ -406,68 +406,68 @@ id	bo
 
 
 query error
-SELECT OFFSETS() FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
+SELECT ts_offsets() FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 
 
 query error
-SELECT OFFSETS(body, 5, 'extra') FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
+SELECT ts_offsets(body, 5, 'extra') FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 
 
 query error
-SELECT OFFSETS('literal') FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
+SELECT ts_offsets('literal') FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
-db error: ERROR: OFFSETS() first argument must be a column reference
+db error: ERROR: ts_offsets() first argument must be a column reference
 
 
 query error
-SELECT OFFSETS(body, 'five') FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
+SELECT ts_offsets(body, 'five') FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
-db error: ERROR: OFFSETS() second argument must be an integer literal
+db error: ERROR: ts_offsets() second argument must be an integer literal
 
 
 query error
-SELECT OFFSETS(body, id) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
+SELECT ts_offsets(body, id) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
-db error: ERROR: OFFSETS() second argument must be an integer literal
+db error: ERROR: ts_offsets() second argument must be an integer literal
 
 
 query error
-SELECT OFFSETS(body, -1) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
+SELECT ts_offsets(body, -1) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
-db error: ERROR: OFFSETS() limit must be greater than zero or 0 for no limit
+db error: ERROR: ts_offsets() limit must be greater than zero or 0 for no limit
 
 
 query error
-SELECT OFFSETS(body, 3) AS bo3, OFFSETS(body, 5) AS bo5
+SELECT ts_offsets(body, 3) AS bo3, ts_offsets(body, 5) AS bo5
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox');
 ----
-db error: ERROR: OFFSETS() called multiple times for field 'body' with different limits
+db error: ERROR: ts_offsets() called multiple times for field 'body' with different limits
 
 
 query error
-SELECT OFFSETS(nonexistent) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
+SELECT ts_offsets(nonexistent) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
 db error: ERROR: Referenced column "nonexistent" not found in FROM clause!
 Candidate bindings: "body"
 
 
 query error
-SELECT OFFSETS(id) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
+SELECT ts_offsets(id) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
-db error: ERROR: OFFSETS(): column 'id' not found in index
+db error: ERROR: ts_offsets(): column 'id' not found in index
 
 
 query error
-SELECT OFFSETS(body) FROM offsets_test;
+SELECT ts_offsets(body) FROM offsets_test;
 ----
-db error: ERROR: OFFSETS(body) requires an inverted index scan in the same sub-query
+db error: ERROR: ts_offsets(body) requires an inverted index scan in the same sub-query
 
 
 query error
-SELECT OFFSETS(body) FROM offsets_test;
+SELECT ts_offsets(body) FROM offsets_test;
 ----
-db error: ERROR: OFFSETS(body) requires an inverted index scan in the same sub-query
+db error: ERROR: ts_offsets(body) requires an inverted index scan in the same sub-query
 
 
 # Extract a context window around the first search hit using byte offsets.
@@ -477,7 +477,7 @@ db error: ERROR: OFFSETS(body) requires an inverted index scan in the same sub-q
 query
 SELECT id, SUBSTRING(body, GREATEST(1, bo[1] - 3), bo[2] - bo[1] + 8) AS context, bo
 FROM (
-  SELECT id, body, OFFSETS(body, 1) AS bo
+  SELECT id, body, ts_offsets(body, 1) AS bo
   FROM offsets_test_idx
   WHERE body @@ ts_phrase('fox')
 ) sub
@@ -498,13 +498,13 @@ id	context	bo
 # Basic top-K + OFFSETS: ranks docs by BM25 over 'fox' and emits per-doc
 # match offsets. Tie-break by id for determinism.
 query
-SELECT id, OFFSETS(body) AS bo
+SELECT id, ts_offsets(body) AS bo
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
 ----
 id	bo
-4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}
 1	{6,9}
 2	{0,3}
 
@@ -513,32 +513,32 @@ id	bo
 # is purely virtual: only OFFSETS and ranking). Exercises the WriteTopkOffsets
 # path without the Materialize step.
 query
-SELECT OFFSETS(body) AS bo
+SELECT ts_offsets(body) AS bo
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(offsets_test_idx.tableoid) DESC LIMIT 3;
 ----
 bo
-{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}
 {6,9}
 {0,3}
 
 
 # Top-K + OFFSETS with LIMIT 1 -- smallest pagination slice.
 query
-SELECT id, OFFSETS(body) AS bo
+SELECT id, ts_offsets(body) AS bo
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 1;
 ----
 id	bo
-4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}
 
 
 # Top-K + multi-field OFFSETS. Both title and body have offset-enabled
 # dicts; each row gets two ListVector entries.
 query
-SELECT id, OFFSETS(title) AS t, OFFSETS(body) AS bo
+SELECT id, ts_offsets(title) AS t, ts_offsets(body) AS bo
 FROM offsets_test_idx
 WHERE title @@ ts_phrase('hello') AND body @@ ts_phrase('fox')
 ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 5;
@@ -548,10 +548,10 @@ id	t	bo
 2	{0,5}	{0,3}
 
 
-# Top-K + OFFSETS with `OFFSETS(col, N)` cap. The N applies per row's
+# Top-K + OFFSETS with `ts_offsets(col, N)` cap. The N applies per row's
 # byte-range list, not to the top-K K.
 query
-SELECT id, OFFSETS(body, 3) AS bo
+SELECT id, ts_offsets(body, 3) AS bo
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
@@ -567,7 +567,7 @@ id	bo
 # them. Verifies the subquery delivers the right number of rows.
 query
 SELECT count(*) FROM (
-  SELECT OFFSETS(body) FROM offsets_test_idx
+  SELECT ts_offsets(body) FROM offsets_test_idx
   WHERE body @@ ts_phrase('fox')
   ORDER BY BM25(offsets_test_idx.tableoid) DESC LIMIT 2
 ) sub;
@@ -579,43 +579,43 @@ count
 # Top-K + OFFSETS where K exceeds the number of matches. Engine returns all
 # matches (no padding/truncation).
 query
-SELECT id, OFFSETS(body) AS bo
+SELECT id, ts_offsets(body) AS bo
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 100;
 ----
 id	bo
-4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}
 1	{6,9}
 2	{0,3}
 
 
 # Top-K + OFFSETS with a BM25-in-expression in SELECT (and bare BM25 in
 # ORDER BY). DuckDB inserts an intermediate projection above TopN to
-# materialise the ORDER BY value, which used to misalign OFFSETS()'s
+# materialise the ORDER BY value, which used to misalign ts_offsets()'s
 # column ref against the GET.
 query
-SELECT id, OFFSETS(body) AS bo, BM25(offsets_test_idx.tableoid) > 0 AS pos
+SELECT id, ts_offsets(body) AS bo, BM25(offsets_test_idx.tableoid) > 0 AS pos
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
 ----
 id	bo	pos
-4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}	t
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}	t
 1	{6,9}	t
 2	{0,3}	t
 
 
 # Same intermediate-projection shape with BM25 wrapped in a cast.
 query
-SELECT id, OFFSETS(body) AS bo,
+SELECT id, ts_offsets(body) AS bo,
        round(BM25(offsets_test_idx.tableoid)::numeric, 2) AS s
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
 ----
 id	bo	s
-4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}	0.76
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}	0.76
 1	{6,9}	0.53
 2	{0,3}	0.53
 
@@ -624,7 +624,7 @@ id	bo	s
 # the PROJECTION -> TOP_N -> PROJECTION -> IRESEARCH_SCAN shape. The
 # inner projection forwards the offsets virtual column up to the outer.
 query
-EXPLAIN SELECT id, OFFSETS(body) AS bo,
+EXPLAIN SELECT id, ts_offsets(body) AS bo,
               BM25(offsets_test_idx.tableoid) > 0 AS pos
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
@@ -691,7 +691,7 @@ QUERY PLAN
 # Plan check: ORDER BY BM25 DESC alone -- top-K pull-up drops the TopN,
 # leaving a single PROJECTION above the scan even with BM25-in-expression.
 query
-EXPLAIN SELECT id, OFFSETS(body) AS bo,
+EXPLAIN SELECT id, ts_offsets(body) AS bo,
               BM25(offsets_test_idx.tableoid) > 0 AS pos
 FROM offsets_test_idx
 WHERE body @@ ts_phrase('fox')
@@ -735,6 +735,273 @@ QUERY PLAN
 └───────────────────────────┘
 
 
+# --- Inline OFFSETS per FilterEntry variant (SearchScan path) ---
+# Exercises each sub-filter shape walked by FillRowOffsets through the
+# SearchScan stored-offsets path (separate code from the standalone
+# in-memory mini-segment cases below).
+
+# ts_like -> MultiTermQuery -> SeekCookie entry
+query
+SELECT id, ts_offsets(body)
+FROM offsets_test_idx
+WHERE body @@ ts_like('q%k')
+ORDER BY id;
+----
+id	ts_offsets
+1	{0,5}
+3	{0,5}
+
+# ts_levenshtein -> MultiTermQuery -> SeekCookie entry
+query
+SELECT id, ts_offsets(body)
+FROM offsets_test_idx
+WHERE body @@ ts_levenshtein('quik')
+ORDER BY id;
+----
+id	ts_offsets
+1	{0,5}
+3	{0,5}
+
+# ts_regexp -> MultiTermQuery -> SeekCookie entry
+query
+SELECT id, ts_offsets(body)
+FROM offsets_test_idx
+WHERE body @@ ts_regexp('qu.*k')
+ORDER BY id;
+----
+id	ts_offsets
+1	{0,5}
+3	{0,5}
+
+# Multi-word phrase -> FixedPhraseQuery entry
+query
+SELECT id, ts_offsets(body)
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('quick fox')
+ORDER BY id;
+----
+id	ts_offsets
+1	{0,9}
+
+# Phrase with explicit gap (1 token between) -> VariadicPhraseQuery entry
+query
+SELECT id, ts_offsets(body)
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('quick', 1, 'jumps')
+ORDER BY id;
+----
+id	ts_offsets
+1	{0,15}
+3	{0,15}
+
+# ts_ngram -> NGramSimilarityQuery entry
+query
+SELECT id, ts_offsets(body)
+FROM offsets_test_idx
+WHERE body @@ ts_ngram('quick', 0.5)
+ORDER BY id;
+----
+id	ts_offsets
+1	{0,5}
+3	{0,5}
+
+
+# --- Per-FilterEntry variant with non-default OFFSETS limit ---
+# Row 4 has 12 fox tokens so the limit is observable per row.
+
+# ts_like + limit=1 -> SeekCookie entry, cap reduces row 4 to one pair
+query
+SELECT id, ts_offsets(body, 1)
+FROM offsets_test_idx
+WHERE body @@ ts_like('f%x')
+ORDER BY id;
+----
+id	ts_offsets
+1	{6,9}
+2	{0,3}
+4	{0,3}
+
+# ts_levenshtein + limit=2 -> SeekCookie entry
+query
+SELECT id, ts_offsets(body, 2)
+FROM offsets_test_idx
+WHERE body @@ ts_levenshtein('fox')
+ORDER BY id;
+----
+id	ts_offsets
+1	{6,9}
+2	{0,3}
+4	{0,3,4,7}
+
+# ts_regexp + limit=5 -> SeekCookie entry
+query
+SELECT id, ts_offsets(body, 5)
+FROM offsets_test_idx
+WHERE body @@ ts_regexp('f.x')
+ORDER BY id;
+----
+id	ts_offsets
+1	{6,9}
+2	{0,3}
+4	{0,3,4,7,8,11,12,15,16,19}
+
+# Multi-word phrase + limit=2 -> FixedPhraseQuery entry. Row 4's 12-fox
+# string yields 11 adjacent fox-fox phrases; limit caps to 2.
+query
+SELECT id, ts_offsets(body, 2)
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox fox')
+ORDER BY id;
+----
+id	ts_offsets
+4	{0,7,4,11}
+
+# Phrase with explicit gap + limit=1 -> VariadicPhraseQuery entry
+query
+SELECT id, ts_offsets(body, 1)
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox', 1, 'fox')
+ORDER BY id;
+----
+id	ts_offsets
+4	{0,11}
+
+# ts_ngram + limit=4 -> NGramSimilarityQuery entry
+query
+SELECT id, ts_offsets(body, 4)
+FROM offsets_test_idx
+WHERE body @@ ts_ngram('fox', 0.5)
+ORDER BY id;
+----
+id	ts_offsets
+1	{6,9}
+2	{0,3}
+4	{0,3,4,7,8,11,12,15}
+
+
+# --- Per-FilterEntry variant with explicit limit=0 (== no cap) ---
+# Sentinel-explicit form of the default no-cap behavior; row 4 should
+# emit every hit for each variant.
+
+# ts_like + limit=0 -> SeekCookie entry, full row-4 hit set
+query
+SELECT id, ts_offsets(body, 0)
+FROM offsets_test_idx
+WHERE body @@ ts_like('f%x')
+ORDER BY id;
+----
+id	ts_offsets
+1	{6,9}
+2	{0,3}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}
+
+# Multi-word phrase + limit=0 -> FixedPhraseQuery entry; 11 fox-fox pairs
+query
+SELECT id, ts_offsets(body, 0)
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox fox')
+ORDER BY id;
+----
+id	ts_offsets
+4	{0,7,4,11,8,15,12,19,16,23,20,27,24,31,28,35,32,39,36,43,40,47}
+
+# Phrase with explicit gap + limit=0 -> VariadicPhraseQuery entry
+query
+SELECT id, ts_offsets(body, 0)
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox', 1, 'fox')
+ORDER BY id;
+----
+id	ts_offsets
+4	{0,11,4,15,8,19,12,23,16,27,20,31,24,35,28,39,32,43,36,47}
+
+# ts_ngram + limit=0 -> NGramSimilarityQuery entry, full hit set
+query
+SELECT id, ts_offsets(body, 0)
+FROM offsets_test_idx
+WHERE body @@ ts_ngram('fox', 0.5)
+ORDER BY id;
+----
+id	ts_offsets
+1	{6,9}
+2	{0,3}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}
+
+
+# --- Compound / nested TSQUERY composition ---
+
+# `||` inside @@: doc filtered by OR, OFFSETS walks every reachable
+# positive sub-filter and dedupes across them.
+query
+SELECT id, ts_offsets(body)
+FROM offsets_test_idx
+WHERE body @@ (ts_phrase('fox') || ts_phrase('cat'))
+ORDER BY id;
+----
+id	ts_offsets
+1	{6,9}
+2	{0,3}
+3	{6,9}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}
+
+# Deeper nesting `(a || b) && c`: doc filtered by AND, OFFSETS still
+# walks every reachable positive sub-filter regardless of boolean
+# shape.
+query
+SELECT id, ts_offsets(body)
+FROM offsets_test_idx
+WHERE body @@ ((ts_phrase('quick') || ts_phrase('jumps')) && ts_phrase('fox'))
+ORDER BY id;
+----
+id	ts_offsets
+1	{0,5,6,9,10,15}
+
+# `body @@ X OR body @@ Y` -- DuckDB-side OR of two predicates on the
+# same column. The planner unions the SearchScan, OFFSETS sees both
+# sub-filters via the union'd plan.
+query
+SELECT id, ts_offsets(body)
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox') OR body @@ ts_phrase('cat')
+ORDER BY id;
+----
+id	ts_offsets
+1	{6,9}
+2	{0,3}
+3	{6,9}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}
+
+
+# --- Multiple OFFSETS calls in one projection ---
+
+# Same column, same TSQUERY: RewriteOffsetsCall dedups to a single
+# virtual SearchScan column, both projections read from the same slot.
+query
+SELECT id, ts_offsets(body) AS a, ts_offsets(body) AS b
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY id;
+----
+id	a	b
+1	{6,9}	{6,9}
+2	{0,3}	{0,3}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}
+
+# Two columns with OR predicate: each OFFSETS column reflects only its
+# own field's hits; rows that match only the other branch get an empty
+# list for the unmatched column.
+query
+SELECT id, ts_offsets(title) AS to_, ts_offsets(body) AS bo
+FROM offsets_test_idx
+WHERE title @@ ts_phrase('hello') OR body @@ ts_phrase('cat')
+ORDER BY id;
+----
+id	to_	bo
+1	{0,5}	{}
+2	{0,5}	{}
+3	{}	{6,9}
+
+
 statement ok
 DROP TABLE offsets_test;
 
@@ -743,3 +1010,257 @@ DROP TABLE offsets_test2;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY offsets_en;
+
+
+# --- Standalone ts_offsets(dict, body, filter [, limit]) ---
+# Runs in-place: no SearchScan involved, no surrounding WHERE. The
+# bind callback resolves the dict, translates the TSQUERY filter into
+# an iresearch filter, and stashes both on bind data. The runtime
+# body builds a per-chunk mini-segment from `body` and emits hits.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY standalone_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    offset = false
+)
+
+query
+SELECT ts_offsets('standalone_dict', 'the quick brown fox', ts_phrase('quick'))
+----
+ts_offsets
+{4,9}
+
+# Multiple matches in one body.
+query
+SELECT ts_offsets('standalone_dict', 'quick red fox runs quick',
+               ts_phrase('quick'))
+----
+ts_offsets
+{0,5,19,24}
+
+# TSQUERY combinator: OR of two phrases.
+query
+SELECT ts_offsets('standalone_dict', 'the quick brown fox',
+               ts_phrase('quick') || ts_phrase('fox'))
+----
+ts_offsets
+{4,9,16,19}
+
+# Explicit limit caps the emitted (start, end) pairs.
+query
+SELECT ts_offsets('standalone_dict', 'quick red fox runs quick',
+               ts_phrase('quick'), 1)
+----
+ts_offsets
+{0,5}
+
+# No matches: empty list, not NULL.
+query
+SELECT ts_offsets('standalone_dict', 'the lazy dog sleeps',
+               ts_phrase('quick'))
+----
+ts_offsets
+{}
+
+# Non-foldable dict name -- must be a constant.
+statement error must be a constant expression
+SELECT ts_offsets(name, 'body', ts_phrase('x'))
+FROM (VALUES ('standalone_dict')) t(name)
+
+# Unknown dict resolves to an error at bind.
+statement error not found
+SELECT ts_offsets('no_such_dict', 'body', ts_phrase('x'))
+
+
+# --- Standalone OFFSETS with richer TSQUERY constructs ---
+# Body positions for 'the quick brown fox jumps over the lazy dog':
+#   the[0,3]  quick[4,9]  brown[10,15]  fox[16,19]  jumps[20,25]
+#   over[26,30]  the[31,34]  lazy[35,39]  dog[40,43]
+
+# Single-term phrase matching multiple positions in the body -- the
+# emitted offsets are deduped + sorted.
+query
+SELECT ts_offsets('standalone_dict',
+               'the quick brown fox jumps over the lazy dog',
+               ts_phrase('the'))
+----
+ts_offsets
+{0,3,31,34}
+
+# Multi-word phrase: emitted as a single span from start-of-first-term
+# to end-of-last-term, not as separate per-term ranges. Phrase matches
+# require terms to be adjacent.
+query
+SELECT ts_offsets('standalone_dict',
+               'the quick brown fox jumps over the lazy dog',
+               ts_phrase('quick brown'))
+----
+ts_offsets
+{4,15}
+
+# Phrase with explicit gap (## N ## term): allows N-1 intervening
+# terms between the two phrase parts. Here 'quick' then 1-gap then
+# 'fox' matches 'quick brown fox'.
+query
+SELECT ts_offsets('standalone_dict',
+               'the quick brown fox jumps over the lazy dog',
+               ts_phrase('quick') ## 1 ## 'fox')
+----
+ts_offsets
+{4,19}
+
+# AND: both sub-filters contribute their offsets independently --
+# OffsetsCollector visits each side of the boolean tree.
+query
+SELECT ts_offsets('standalone_dict',
+               'the quick brown fox jumps over the lazy dog',
+               ts_phrase('quick') && ts_phrase('fox'))
+----
+ts_offsets
+{4,9,16,19}
+
+# OR: same shape as AND for OFFSETS purposes -- the visitor walks
+# every reachable sub-filter regardless of boolean composition.
+query
+SELECT ts_offsets('standalone_dict',
+               'the quick brown fox jumps over the lazy dog',
+               ts_phrase('quick') || ts_phrase('dog'))
+----
+ts_offsets
+{4,9,40,43}
+
+# AND with NOT: NOT(...) is a doc-level negation and does NOT
+# contribute offsets through the visitor. Only the positive
+# sub-filter on the left emits hits, regardless of whether the
+# excluded term is present in the body.
+query
+SELECT ts_offsets('standalone_dict',
+               'the quick brown fox jumps over the lazy dog',
+               ts_phrase('quick') && !! ts_phrase('lazy'))
+----
+ts_offsets
+{4,9}
+
+# Wildcard via ts_like: 'q%k' matches 'quick'.
+query
+SELECT ts_offsets('standalone_dict',
+               'the quick brown fox jumps over the lazy dog',
+               ts_like('q%k'))
+----
+ts_offsets
+{4,9}
+
+# Fuzzy via ts_levenshtein: edit distance <= 2 from 'quikc'
+# matches 'quick'.
+query
+SELECT ts_offsets('standalone_dict',
+               'the quick brown fox jumps over the lazy dog',
+               ts_levenshtein('quikc', 2))
+----
+ts_offsets
+{4,9}
+
+# ts_levenshtein single-arg form: distance defaults to 1. 'quik' ->
+# 'quick' is one insertion, so matches; 'quikc' (distance 2) wouldn't.
+query
+SELECT ts_offsets('standalone_dict',
+               'the quick brown fox jumps over the lazy dog',
+               ts_levenshtein('quik'))
+----
+ts_offsets
+{4,9}
+
+# Regex via ts_regexp: 'qu.*k' matches 'quick'.
+query
+SELECT ts_offsets('standalone_dict',
+               'the quick brown fox jumps over the lazy dog',
+               ts_regexp('qu.*k'))
+----
+ts_offsets
+{4,9}
+
+# Limit caps the emitted (start, end) pairs across the boolean
+# composition: only the first pair survives.
+query
+SELECT ts_offsets('standalone_dict',
+               'the quick brown fox jumps over the lazy dog',
+               ts_phrase('quick') && ts_phrase('fox'), 1)
+----
+ts_offsets
+{4,9}
+
+
+# --- Standalone OFFSETS over longer text with disjoint matches ---
+# Body (128 chars across 3 sentences):
+#   The quick brown fox jumps over the lazy dog.    -- 'fox' at [16,19]
+#    Another fox watches from the trees.            -- 'fox' at [53,56]
+#    A third fox slept peacefully through the night. -- 'fox' at [89,92]
+
+query
+SELECT ts_offsets('standalone_dict',
+               'The quick brown fox jumps over the lazy dog. Another fox watches from the trees. A third fox slept peacefully through the night.',
+               ts_phrase('fox'))
+----
+ts_offsets
+{16,19,53,56,89,92}
+
+# Limit caps the disjoint set: first two of three matches.
+query
+SELECT ts_offsets('standalone_dict',
+               'The quick brown fox jumps over the lazy dog. Another fox watches from the trees. A third fox slept peacefully through the night.',
+               ts_phrase('fox'), 2)
+----
+ts_offsets
+{16,19,53,56}
+
+
+# --- Standalone OFFSETS with overlapping matches ---
+
+# OR of two phrases that share a token: 'quick brown' [4,15] and
+# 'brown fox' [10,19] overlap on 'brown'. OFFSETS preserves both
+# spans (no merging), sorted by start.
+query
+SELECT ts_offsets('standalone_dict',
+               'the quick brown fox jumps over the lazy dog',
+               ts_phrase('quick brown') || ts_phrase('brown fox'))
+----
+ts_offsets
+{4,15,10,19}
+
+# Identical hit reachable via two sub-filters ('quick' and ts_like
+# 'q%k'). WalkDocHits dedups via the `seen` set so the hit appears
+# once in the output.
+query
+SELECT ts_offsets('standalone_dict',
+               'the quick brown fox',
+               ts_phrase('quick') || ts_like('q%k'))
+----
+ts_offsets
+{4,9}
+
+# Nested overlap: 'fox' [16,19] is wholly contained within the
+# longer phrase 'brown fox jumps' [10,25]. Both spans are emitted;
+# the inner is NOT swallowed.
+query
+SELECT ts_offsets('standalone_dict',
+               'the quick brown fox jumps',
+               ts_phrase('fox') || ts_phrase('brown fox jumps'))
+----
+ts_offsets
+{10,25,16,19}
+
+
+# --- ts_offsets on non-VARCHAR column ---
+# Standalone form requires VARCHAR body -- bind fails at type check.
+statement error No function matches the given name and argument types 'ts_offsets\(STRING_LITERAL, INTEGER_LITERAL, TSQUERY\)'
+SELECT ts_offsets('standalone_dict', 42, ts_phrase('fox'))
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY standalone_dict

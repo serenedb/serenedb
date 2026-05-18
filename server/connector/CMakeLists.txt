@@ -2,6 +2,7 @@ add_library(
     serene_connector
     STATIC
     key_utils.cpp
+    offsets_collector.cpp
     search_sink_writer.cpp
     search_pk_lookup.cpp
     search_remove_filter.cpp
@@ -9,18 +10,6 @@ add_library(
     rocksdb_filter.cpp
     search_filter_builder.cpp
     geo_filter_builder.cpp
-    ts_anyall.cpp
-    ts_compound.cpp
-    ts_levenshtein.cpp
-    ts_like.cpp
-    ts_ngram.cpp
-    ts_phrase.cpp
-    ts_prefix.cpp
-    ts_between.cpp
-    ts_regexp.cpp
-    ts_term.cpp
-    ts_tokenize.cpp
-    ts_to_tsquery.cpp
     search_filter_printer.cpp
     duckdb_ann_filter.cpp
     duckdb_client_state.cpp
@@ -64,6 +53,8 @@ add_library(
     duckdb_physical_delete.cpp
     duckdb_physical_update.cpp
     duckdb_transaction.cpp
+    highlight/highlight_options.cpp
+    highlight/memory_index.cpp
 )
 
 target_link_libraries(

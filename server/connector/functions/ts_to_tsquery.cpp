@@ -218,19 +218,14 @@ void FromWebsearchToTsquery(irs::BooleanFilter& parent,
   ParseWebsearchQuery(text, column_info, ctx, parent);
 }
 
-// tsquery_phrase(q1, q2 [, distance]): function form of `##`. Wraps
-// the args into a synthetic PhraseSeq (q1, optional gap, q2) and
-// emits via the shared phrase-seq emitter.
+// tsquery_phrase(q1, q2 [, distance]): function form of `##`, PG
+// semantics (distance = lexemes apart, N=1 = adjacent). Same shape as
+// the `##` walker: flatten + emit.
 void FromTsqueryPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
                        const SearchColumnInfo& column_info,
                        const duckdb::BoundFunctionExpression& func) {
-  SDB_ASSERT(func.children.size() >= 2 && func.children.size() <= 3);
   PhraseSeq seq;
-  FlattenPhraseSeq(*func.children[0], seq);
-  if (func.children.size() == 3) {
-    seq.pending = ParsePhraseSeqGap(*func.children[2]);
-  }
-  AttachPart(seq, *func.children[1]);
+  FlattenPhraseSeq(func, seq);
   EmitPhraseSeq(parent, ctx, column_info, seq);
 }
 

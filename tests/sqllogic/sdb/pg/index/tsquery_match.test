@@ -716,20 +716,202 @@ a
 1
 2
 
-# tsquery_phrase function form
+# tsquery_phrase function form. PG semantics: distance = "lexemes apart"
+# (1 = adjacent). Data is "quick brown fox" -- distance 2 means 1 token
+# between (matching brown), so rows 1 and 2 match.
 query
-SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_phrase('quick'), ts_phrase('fox'), 1) ORDER BY a;
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_phrase('quick'), ts_phrase('fox'), 2) ORDER BY a;
 ----
 a
 1
 2
 
-# tsquery_phrase 2-arg form (strictly adjacent)
+# tsquery_phrase 2-arg form (defaults to adjacent / distance 1).
 query
 SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_phrase('quick'), ts_phrase('brown'));
 ----
 a
 1
+
+# tsquery_phrase 3-arg form with distance=1 -- equivalent to 2-arg
+# (PG `<1>` is adjacent).
+query
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_phrase('quick'), ts_phrase('brown'), 1);
+----
+a
+1
+
+# Nested tsquery_phrase: flattens to a 3-part phrase. Equivalent to
+# 'quick' <-> 'brown' <-> 'fox' (all adjacent), only row 1 has all three
+# in sequence.
+query
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(tsquery_phrase(ts_phrase('quick'), ts_phrase('brown')), ts_phrase('fox'));
+----
+a
+1
+
+# Mixing tsquery_phrase with `##`: both forms flatten into the same
+# PhraseSeq.
+query
+SELECT a FROM tsq_idx WHERE b @@ (tsquery_phrase(ts_phrase('quick'), ts_phrase('brown')) ## ts_phrase('fox'));
+----
+a
+1
+
+# Mixing the other direction.
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('quick') ## tsquery_phrase(ts_phrase('brown'), ts_phrase('fox')));
+----
+a
+1
+
+# Three-level nesting: `quick <-> brown <-> fox <-> jumps`. Row 1
+# ("quick brown fox jumps over lazy dog") is the only match.
+query
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(tsquery_phrase(tsquery_phrase(ts_phrase('quick'), ts_phrase('brown')), ts_phrase('fox')), ts_phrase('jumps'));
+----
+a
+1
+
+# tsquery_phrase with a wider distance: `quick <3> fox` = 2 tokens between.
+# Neither row has a 2-token gap between quick and fox; both have 1.
+query
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_phrase('quick'), ts_phrase('fox'), 3) ORDER BY a;
+----
+a
+
+# tsquery_phrase distance applied between non-adjacent fragments: skip 2
+# lexemes from quick to jumps. Row 1: positions quick=0, jumps=3 -> distance
+# 3. Row 2: same -> distance 3. Both match `<3>`.
+query
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_phrase('quick'), ts_phrase('jumps'), 3) ORDER BY a;
+----
+a
+1
+2
+
+# tsquery_phrase composing with non-phrase parts: ts_starts_with prefix
+# part. `qu*` <-> `brown` matches "quick brown" (row 1).
+query
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_starts_with('qu'), ts_phrase('brown'));
+----
+a
+1
+
+# Regex isn't a supported phrase part (the emitter accepts term-shaped
+# parts only). Same restriction as `##`.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_regexp('^qu.*ck$'), ts_phrase('red'));
+
+# tsquery_phrase with multi-word phrase part on either side. The inner
+# multi-word ts_phrase('brown fox') is itself a 2-part phrase that
+# composes adjacent with the LHS.
+query
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_phrase('quick'), ts_phrase('brown fox'));
+----
+a
+1
+
+# Multi-word phrase with PG distance applied between the two phrase
+# fragments. `'quick brown' <2> 'jumps over'` == positions 0,1,3,4 in
+# row 1's "quick brown fox jumps over". Distance 2 = 1 token between
+# (`fox`).
+query
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_phrase('quick brown'), ts_phrase('jumps over'), 2);
+----
+a
+1
+
+# Mixed shape: tsquery_phrase nested inside `##`, with a multi-word leaf.
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('quick') ## tsquery_phrase(ts_phrase('brown fox'), ts_phrase('jumps')));
+----
+a
+1
+
+# Both arguments to tsquery_phrase are themselves `##` chains. Flattens
+# to a single 4-part adjacent phrase: quick<->brown<->fox<->jumps.
+query
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase((ts_phrase('quick') ## ts_phrase('brown')), (ts_phrase('fox') ## ts_phrase('jumps')));
+----
+a
+1
+
+# Both arguments nested tsquery_phrase calls with non-default distances.
+# Inner LHS: quick <2> fox (1 token between). Inner RHS: jumps <2> lazy.
+# Outer: adjacent. Final positions row 1: quick=0, fox=2, jumps=3, lazy=5.
+# Both rows 1 and 2 have the same skeleton (red vs brown at position 1).
+query
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(tsquery_phrase(ts_phrase('quick'), ts_phrase('fox'), 2), tsquery_phrase(ts_phrase('jumps'), ts_phrase('lazy'), 2)) ORDER BY a;
+----
+a
+1
+2
+
+# `##` with explicit gap stitching two tsquery_phrase calls. Flattens to
+# quick<->brown <2> jumps<->over -- 1 token between brown(pos 1) and
+# jumps(pos 3) in row 1, satisfied by `fox` at pos 2.
+query
+SELECT a FROM tsq_idx WHERE b @@ (tsquery_phrase(ts_phrase('quick'), ts_phrase('brown')) ## 1 ## tsquery_phrase(ts_phrase('jumps'), ts_phrase('over')));
+----
+a
+1
+
+# Three-level deep tsquery_phrase nesting with non-default distances at
+# each layer. Flattens to a 6-part phrase across the row's full
+# "quick ... fox jumps over lazy dog" skeleton:
+#
+#   tsquery_phrase(  -- outer (distance 1)
+#     tsquery_phrase(  -- middle LHS (distance 1)
+#       tsquery_phrase(quick, fox, 2),   -- inner LHS: quick<2>fox
+#       jumps),                           -- ...<1>jumps
+#     tsquery_phrase(  -- middle RHS (distance 1)
+#       tsquery_phrase(over, lazy, 1),   -- inner RHS: over<1>lazy
+#       dog),                             -- ...<1>dog
+#     1)                                  -- jumps <1> over
+#
+# Resulting positions: quick=P, fox=P+2, jumps=P+3, over=P+4, lazy=P+5,
+# dog=P+6. Both rows 1 and 2 fit (their skeletons differ only at pos 1).
+query
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(tsquery_phrase(tsquery_phrase(ts_phrase('quick'), ts_phrase('fox'), 2), ts_phrase('jumps'), 1), tsquery_phrase(tsquery_phrase(ts_phrase('over'), ts_phrase('lazy'), 1), ts_phrase('dog'), 1), 1) ORDER BY a;
+----
+a
+1
+2
+
+# Plan-level confirmation: the 3-level deep tsquery_phrase tree from
+# above flattens into a SINGLE 6-term irs::ByPhrase filter -- no per-
+# subtree boolean wrappers, distances from every layer land in the
+# right per-pair slot.
+query
+EXPLAIN SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(tsquery_phrase(tsquery_phrase(ts_phrase('quick'), ts_phrase('fox'), 2), ts_phrase('jumps'), 1), tsquery_phrase(tsquery_phrase(ts_phrase('over'), ts_phrase('lazy'), 1), ts_phrase('dog'), 1), 1);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: tsq_idx      │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  AND[PHRASE[b(string) =   │
+│  <Term:quick(0, 0); Term  │
+│ :fox(2, 2); Term:jumps(1, │
+│  1); Term:over(1, 1); Term│
+│ :lazy(1, 1); Term:dog(1, 1│
+│           ); >]]          │
+│                           │
+│       Projections: a      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+# Reject distance < 1 (PG's `<0>` is invalid, `<1>` is adjacent).
+statement error
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_phrase('a'), ts_phrase('b'), 0);
+
+statement error
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_phrase('a'), ts_phrase('b'), -1);
 
 # ## with multi-step (> 2 parts)
 query
@@ -1098,6 +1280,14 @@ a
 # LEVENSHTEIN distance-1 allows one edit.
 query
 SELECT a FROM tsq_idx WHERE b @@ ts_levenshtein('quikc', 1) ORDER BY a;
+----
+a
+1
+2
+
+# Single-arg form: distance defaults to 1 (same result as above).
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_levenshtein('quikc') ORDER BY a;
 ----
 a
 1

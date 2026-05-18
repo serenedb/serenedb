@@ -107,6 +107,55 @@ a
 2
 3
 
+# 1-arg form -- distance is picked from term length: 0 for <=2 chars,
+# 1 for 3-5 chars, 2 for >=6 chars. 
+# Keeps short queries from drifting into unrelated
+# tokens in stemmed indexes (e.g. `rocks` reaching `lock` via 2 edits).
+
+# 3 chars -> distance 1. Same hits as ts_levenshtein('cat', 1).
+query
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat') ORDER BY a;
+----
+a
+1
+2
+3
+5
+6
+
+# 4 chars -> distance 1. Same hits as ts_levenshtein('cats', 1).
+query
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cats') ORDER BY a;
+----
+a
+1
+5
+
+# 2 chars -> distance 0. No row exactly matches 'ab', so empty.
+query
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('ab') ORDER BY a;
+----
+a
+
+# 1 char -> distance 0. No row exactly matches.
+query
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('z') ORDER BY a;
+----
+a
+
+# 6+ chars -> distance 2. No row is within 2 edits of 'caterpillar'.
+query
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('caterpillar') ORDER BY a;
+----
+a
+
+# Auto distance composes with negation, AND, and the boost operator.
+query
+SELECT a FROM test_levenshtein_idx WHERE b @@ !!ts_levenshtein('cat') ORDER BY a;
+----
+a
+4
+
 statement ok
 DROP TABLE test_levenshtein;
 

@@ -144,7 +144,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
                             const duckdb::named_parameter_map_t& named_params)
     : OptionsParser{named_params,
                     kTSDictionaryGroup,
-                    {.operation = "CREATE TEXT SEARCH DICTIONARY"}},
+                    {.operation = "CREATE TEXT SEARCH DICTIONARY",
+                     .help_hint = "Use WITH (HELP) to see available options"}},
       _snapshot{std::move(snapshot)},
       _db_id{db_id},
       _current_schema{current_schema} {

@@ -24,9 +24,9 @@
 #include <iresearch/utils/string.hpp>
 
 #include "catalog/mangling.h"
-#include "functions/search.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "search.h"
 #include "ts_common.hpp"
 
 namespace sdb::connector {
@@ -119,8 +119,7 @@ void FromTokenizeListInAnyAllOf(
     if (analyzer_name == irs::StringTokenizer::type_name()) {
       use_identity = true;
     } else {
-      override_wrapper =
-        ResolveTokenizerAnalyzer(ctx.client_context, analyzer_name);
+      override_wrapper = AcquireTokenizer(ctx.client_context, analyzer_name);
       if (!override_wrapper) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_OBJECT),

@@ -31,6 +31,7 @@
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "tests_shared.hpp"
+#include "yaclib/runtime/fair_thread_pool.hpp"
 
 namespace {
 
@@ -2762,7 +2763,39 @@ INSTANTIATE_TEST_SUITE_P(SortedIndexTest, SortedIndexTestCase,
                                             kSortedIndexTestCaseValues),
                          SortedIndexTestCase::to_string);
 
+std::pair<std::shared_ptr<irs::Directory>, std::string>
+MemoryDirectoryWithScheduler(const TestBase* ctx);
+std::pair<std::shared_ptr<irs::Directory>, std::string>
+MemoryDirectoryWithoutScheduler(const TestBase* ctx);
+
 struct SortedIndexStressTestCase : SortedIndexTestCase {};
+
+struct SortedIndexStressSchedulerTestCase : SortedIndexStressTestCase {
+ protected:
+  yaclib::IntrusivePtr<yaclib::FairThreadPool> GetScheduler() const {
+    tests::dir_param_f factory{};
+    std::tie(factory, std::ignore) = GetParam();
+    if (factory == &MemoryDirectoryWithScheduler) {
+      return yaclib::MakeFairThreadPool();
+    }
+
+    return nullptr;
+  }
+};
+
+std::pair<std::shared_ptr<irs::Directory>, std::string>
+MemoryDirectoryWithScheduler(const TestBase* ctx) {
+  auto [dir, name] = tests::Directory<&tests::MemoryDirectory>(ctx);
+  name += "_scheduler";
+  return {std::move(dir), std::move(name)};
+}
+
+std::pair<std::shared_ptr<irs::Directory>, std::string>
+MemoryDirectoryWithoutScheduler(const TestBase* ctx) {
+  auto [dir, name] = tests::Directory<&tests::MemoryDirectory>(ctx);
+  name += "_no_scheduler";
+  return {std::move(dir), std::move(name)};
+}
 
 TEST_P(SortedIndexStressTestCase, doc_removal_same_key_within_trx) {
 #if !GTEST_OS_LINUX
@@ -2875,7 +2908,9 @@ TEST_P(SortedIndexStressTestCase, doc_removal_same_key_within_trx) {
   }
 }
 
-TEST_P(SortedIndexStressTestCase, commit_on_tick) {
+TEST_P(SortedIndexStressSchedulerTestCase, commit_on_tick) {
+  auto scheduler = GetScheduler();
+
   tests::JsonDocGenerator gen(
     resource("simple_sequential.json"),
     [](tests::Document& doc, std::string_view name,
@@ -2904,6 +2939,7 @@ TEST_P(SortedIndexStressTestCase, commit_on_tick) {
       irs::IndexWriterOptions opts;
       opts.segment_docs_max = 2;
       opts.comparator = &compare;
+      opts.executor = scheduler;
       auto writer = open_writer(irs::kOmCreate, opts);
       ASSERT_NE(nullptr, writer);
       ASSERT_EQ(&compare, writer->Comparator());
@@ -2989,9 +3025,16 @@ TEST_P(SortedIndexStressTestCase, commit_on_tick) {
       ASSERT_FALSE(docs->next());
     }
   }
+
+  if (scheduler) {
+    scheduler->HardStop();
+    scheduler->Wait();
+  }
 }
 
-TEST_P(SortedIndexStressTestCase, split_empty_commit) {
+TEST_P(SortedIndexStressSchedulerTestCase, split_empty_commit) {
+  auto scheduler = GetScheduler();
+
   tests::JsonDocGenerator gen(
     resource("simple_sequential.json"),
     [](tests::Document& doc, std::string_view name,
@@ -3017,6 +3060,7 @@ TEST_P(SortedIndexStressTestCase, split_empty_commit) {
   StringComparer compare;
   irs::IndexWriterOptions opts;
   opts.comparator = &compare;
+  opts.executor = scheduler;
   auto writer = open_writer(irs::kOmCreate, opts);
   auto segment1 = writer->GetBatch();
   auto insert_doc = [&](size_t i) {
@@ -3051,9 +3095,16 @@ TEST_P(SortedIndexStressTestCase, split_empty_commit) {
   EXPECT_EQ(reader->docs_count(), 0);
   EXPECT_EQ(reader->live_docs_count(), 0);
   EXPECT_EQ(reader->size(), 0);
+
+  if (scheduler) {
+    scheduler->HardStop();
+    scheduler->Wait();
+  }
 }
 
-TEST_P(SortedIndexStressTestCase, remove_tick) {
+TEST_P(SortedIndexStressSchedulerTestCase, remove_tick) {
+  auto scheduler = GetScheduler();
+
   tests::JsonDocGenerator gen(
     resource("simple_sequential.json"),
     [](tests::Document& doc, std::string_view name,
@@ -3079,6 +3130,7 @@ TEST_P(SortedIndexStressTestCase, remove_tick) {
   StringComparer compare;
   irs::IndexWriterOptions opts;
   opts.comparator = &compare;
+  opts.executor = scheduler;
   auto writer = open_writer(irs::kOmCreate, opts);
   auto segment1 = writer->GetBatch();
   auto insert_doc = [&](size_t i) {
@@ -3112,7 +3164,21 @@ TEST_P(SortedIndexStressTestCase, remove_tick) {
   EXPECT_EQ(reader->docs_count(), 5);
   EXPECT_EQ(reader->live_docs_count(), 3);
   EXPECT_EQ(reader->size(), 1);
+
+  if (scheduler) {
+    scheduler->HardStop();
+    scheduler->Wait();
+  }
 }
+
+const auto kStressSchedulerTestDirs = std::array<tests::dir_param_f, 2>{
+  &MemoryDirectoryWithScheduler, &MemoryDirectoryWithoutScheduler};
+
+INSTANTIATE_TEST_SUITE_P(
+  SortedIndexStressSchedulerModes, SortedIndexStressSchedulerTestCase,
+  ::testing::Combine(::testing::ValuesIn(kStressSchedulerTestDirs),
+                     ::testing::Values(tests::FormatInfo{"1_5simd"})),
+  SortedIndexStressSchedulerTestCase::to_string);
 
 INSTANTIATE_TEST_SUITE_P(
   SortedIndexStressTest, SortedIndexStressTestCase,

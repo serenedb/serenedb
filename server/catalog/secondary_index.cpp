@@ -24,11 +24,12 @@
 
 namespace sdb::catalog {
 
-SecondaryIndex::SecondaryIndex(ObjectId schema_id, ObjectId id,
-                               ObjectId relation_id, std::string name,
+SecondaryIndex::SecondaryIndex(ObjectId database_id, ObjectId schema_id,
+                               ObjectId id, ObjectId relation_id,
+                               std::string name,
                                std::vector<Column::Id> column_ids, bool unique)
-  : Index(schema_id, id, relation_id, std::move(name), std::move(column_ids),
-          ObjectType::SecondaryIndex),
+  : Index(database_id, schema_id, id, relation_id, std::move(name),
+          std::move(column_ids), ObjectType::SecondaryIndex),
     _unique{unique} {}
 
 std::shared_ptr<SecondaryIndex> SecondaryIndex::ReadInternal(vpack::Slice slice,
@@ -47,7 +48,7 @@ std::shared_ptr<SecondaryIndex> SecondaryIndex::ReadInternal(vpack::Slice slice,
   auto unique = slice.get("unique");
 
   return std::make_shared<SecondaryIndex>(
-    ctx.schema_id, ctx.id, ctx.relation_id,
+    ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
     std::string{name_slice.stringView()}, std::move(column_ids),
     unique.getBool());
 }
@@ -66,6 +67,7 @@ std::shared_ptr<Object> SecondaryIndex::Clone() const {
   vpack::Builder b;
   WriteInternal(b);
   return ReadInternal(b.slice(), {.id = GetId(),
+                                  .database_id = GetDatabaseId(),
                                   .schema_id = GetParentId(),
                                   .relation_id = GetRelationId()});
 }

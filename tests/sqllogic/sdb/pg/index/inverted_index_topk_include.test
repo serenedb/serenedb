@@ -1,0 +1,122 @@
+hash-threshold 100
+
+# Top-K precomputed path (`SearchScan.score_top_k` set by
+# TryAttachScoreTopK in optimizer/iresearch_plan.cpp) has to
+# materialise INCLUDE columns from the typed columnstore -- the
+# planner only routes IndexSource::Materialize for non-INCLUDE
+# projections.
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR, val INTEGER, label VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted(body en) INCLUDE (id, val, label);
+
+statement ok
+INSERT INTO docs VALUES
+  (1, 'fox',                11, 'one'),
+  (2, 'fox dog',             22, 'two'),
+  (3, 'fox cat dog elephant',33, 'three'),
+  (4, 'a clever fox',        44, 'four');
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+# Plan check: optimizer pulls TOP_N(score) into the SearchScan.
+query
+EXPLAIN SELECT id, val, label FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: docs_idx      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│          TopK: 3          │
+│                           │
+│        Projections:       │
+│             id            │
+│            val            │
+│           label           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+# All-INCLUDE projections under the top-K path: must come back from
+# the columnstore. (Without the materializer wired in, label slots
+# read uninitialised string_t bytes -- ASan crash.)
+query
+SELECT id, val, label FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3;
+----
+id	val	label
+1	11	one
+2	22	two
+4	44	four
+
+# Mixed projection: `body` is non-INCLUDE so IndexSource fills it;
+# `id` / `val` come from the columnstore. Both sides must be
+# populated for the same set of rows.
+query
+SELECT id, val, body FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3;
+----
+id	val	body
+1	11	fox
+2	22	fox dog
+4	44	a clever fox
+
+# Multi-segment: insert + flush a few times so the snapshot has
+# distinct segments. Top-K then walks score-ordered hits across
+# segments, and the materializer must merge each segment's slice
+# into the right output positions.
+
+statement ok
+INSERT INTO docs VALUES (5, 'fox alpha',          55, 'five');
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+statement ok
+INSERT INTO docs VALUES (6, 'fox beta gamma',     66, 'six');
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+statement ok
+INSERT INTO docs VALUES (7, 'fox delta epsilon zeta eta', 77, 'seven');
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+# Sanity: INCLUDE columns coming from later segments must still
+# resolve to the right rows for each score-ordered hit.
+query
+SELECT id, val, label FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 5;
+----
+id	val	label
+1	11	one
+2	22	two
+5	55	five
+4	44	four
+6	66	six
+
+statement ok
+DROP TABLE docs;

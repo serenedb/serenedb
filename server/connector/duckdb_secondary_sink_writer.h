@@ -93,7 +93,8 @@ class DuckDBSecondarySinkWriteBase : public DuckDBSinkIndexWriter,
       _sk_columns{std::move(sk_columns)},
       _trigger_column_id{columns[0]} {}
 
-  bool SwitchColumn(const ColumnDescriptor& col) final {
+  bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& /*vec*/,
+                    duckdb::idx_t /*count*/) final {
     return col.id == _trigger_column_id;
   }
 

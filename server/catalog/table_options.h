@@ -78,8 +78,9 @@ class Column final : public Object {
     return absl::StrCat(kOffsetsNamePrefix, column_id.id());
   }
 
+  // LIST(INTEGER) -- flat offsets column: interleaved start,end pairs.
   static duckdb::LogicalType MakeOffsetsType() {
-    return duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT);
+    return duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
   }
 
   Column() : Object{{}, {}, {}, ObjectType::Column} {}

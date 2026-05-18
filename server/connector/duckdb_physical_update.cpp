@@ -580,7 +580,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
                                   /*have_nulls=*/true};
       gstate.active_writers.clear();
       for (auto& writer : gstate.index_writers) {
-        if (writer->SwitchColumn(desc)) {
+        if (writer->SwitchColumn(desc, chunk.data[i], num_rows)) {
           gstate.active_writers.push_back(writer.get());
         }
       }
@@ -602,7 +602,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
                                     /*have_nulls=*/true};
         gstate.active_writers.clear();
         for (auto& writer : gstate.index_writers) {
-          if (writer->SwitchColumn(desc)) {
+          if (writer->SwitchColumn(desc, chunk.data[col.chunk_idx], num_rows)) {
             gstate.active_writers.push_back(writer.get());
           }
         }
@@ -670,7 +670,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
                                   /*have_nulls=*/true};
       gstate.active_writers.clear();
       for (auto& writer : gstate.index_writers) {
-        if (writer->SwitchColumn(desc)) {
+        if (writer->SwitchColumn(desc, chunk.data[i], num_rows)) {
           gstate.active_writers.push_back(writer.get());
         }
       }
@@ -691,7 +691,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
                                     /*have_nulls=*/true};
         gstate.active_writers.clear();
         for (auto& writer : gstate.index_writers) {
-          if (writer->SwitchColumn(desc)) {
+          if (writer->SwitchColumn(desc, chunk.data[col.chunk_idx], num_rows)) {
             gstate.active_writers.push_back(writer.get());
           }
         }

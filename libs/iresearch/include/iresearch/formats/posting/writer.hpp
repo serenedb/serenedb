@@ -263,7 +263,7 @@ class PostingsWriterBase : public PostingsWriter {
   PayBuffer _pay;             // Payloads and offsets stream
   uint32_t* _buf;             // Buffer for encoding
   Attributes _attrs;          // Set of attributes
-  const ColumnProvider* _columns{};
+  const NormProvider* _norms{};
   WandWriter::ptr _writer;    // Wand writers
   WandWriter* _valid_writer;  // Valid wand writer
   Features _features;         // Features supported by current field
@@ -274,14 +274,14 @@ class PostingsWriterBase : public PostingsWriter {
 inline void PostingsWriterBase::PrepareWriters(const FieldProperties& meta) {
   _valid_writer = nullptr;
 
-  if (!_columns) [[unlikely]] {
+  if (!_norms) [[unlikely]] {
     return;
   }
 
   // Enable/Disable frequency for WandWriter::Prepare
   _attrs.wand_freq = _features.HasFrequency() ? &_attrs.freq : nullptr;
 
-  if (_writer && _writer->Prepare(*_columns, meta, _attrs)) {
+  if (_writer && _writer->Prepare(*_norms, meta, _attrs)) {
     _valid_writer = _writer.get();
   }
 }
@@ -348,7 +348,7 @@ inline void PostingsWriterBase::Prepare(IndexOutput& out,
 
   // Prepare wand writers
   _writer = PrepareWandWriter(state.scorer, doc_limits::kMaxSkipLevels);
-  _columns = state.columns;
+  _norms = state.norms;
 
   // Prepare documents bitset
   _docs.reset(doc_limits::min() + state.doc_count);

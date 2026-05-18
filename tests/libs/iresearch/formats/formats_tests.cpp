@@ -27,13 +27,6 @@
 TEST(formats_tests, duplicate_register) {
   struct DummyFormat final : public irs::Format {
     static ptr Make() { return ptr(new DummyFormat()); }
-    irs::ColumnstoreWriter::ptr get_columnstore_writer(
-      bool, irs::IResourceManager&) const final {
-      return nullptr;
-    }
-    irs::ColumnstoreReader::ptr get_columnstore_reader() const final {
-      return nullptr;
-    }
     irs::FieldWriter::ptr get_field_writer(bool,
                                            irs::IResourceManager&) const final {
       return nullptr;

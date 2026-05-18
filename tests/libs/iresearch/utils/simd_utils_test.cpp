@@ -20,198 +20,50 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <cstring>
-
-#include "basics/misc.hpp"
-#include "basics/std.hpp"
 #include "iresearch/utils/simd_utils.hpp"
 #include "tests_shared.hpp"
 
-TEST(simd_utils_test, delta32) {
-  {
-    HWY_ALIGN uint32_t values[1024];
-    std::iota(std::begin(values), std::end(values), 42);
-
-    // 128-bit
-    {
-      HWY_ALIGN uint32_t encoded[1024];
-      std::memcpy(encoded, values, sizeof values);
-      irs::simd::delta_encode<std::size(encoded), true, uint32_t, 0>(
-        encoded, encoded[0] - 1);
-      ASSERT_TRUE(std::all_of(std::begin(encoded), std::end(encoded),
-                              [](auto v) { return 1 == v; }));
-    }
-
-#if HWY_CAP_GE256
-    // 256-bit and greater
-    {
-      HWY_ALIGN uint32_t encoded[1024];
-      std::memcpy(encoded, values, sizeof values);
-      irs::simd::delta_encode<std::size(encoded), true, uint32_t, 1>(
-        encoded, encoded[0] - 1);
-      ASSERT_TRUE(std::all_of(std::begin(encoded), std::end(encoded),
-                              [](auto v) { return 1 == v; }));
-    }
-#endif
-  }
-
-  {
-    HWY_ALIGN uint32_t values[1024];
-    std::iota(std::begin(values), std::end(values), 42);
-    values[std::size(values) / 2] = values[1 + (std::size(values) / 2)];
-
-    // 128-bit
-    {
-      HWY_ALIGN uint32_t encoded[1024];
-      std::memcpy(encoded, values, sizeof values);
-      irs::simd::delta_encode<std::size(encoded), true, uint32_t, 0>(
-        encoded, encoded[0] - 1);
-
-      ASSERT_TRUE(std::all_of(std::begin(encoded),
-                              std::begin(encoded) + std::size(values) / 2,
-                              [](auto v) { return 1 == v; }));
-      ASSERT_EQ(2, encoded[std::size(values) / 2]);
-      ASSERT_EQ(0, encoded[1 + std::size(values) / 2]);
-      ASSERT_TRUE(std::all_of(2 + std::begin(encoded) + std::size(values) / 2,
-                              std::end(encoded),
-                              [](auto v) { return 1 == v; }));
-    }
-
-#if HWY_CAP_GE256
-    // 256-bit and greater
-    {
-      HWY_ALIGN uint32_t encoded[1024];
-      std::memcpy(encoded, values, sizeof values);
-      irs::simd::delta_encode<std::size(encoded), true, uint32_t, 1>(
-        encoded, encoded[0] - 1);
-      ASSERT_TRUE(std::all_of(std::begin(encoded),
-                              std::begin(encoded) + std::size(values) / 2,
-                              [](auto v) { return 1 == v; }));
-      ASSERT_EQ(2, encoded[std::size(values) / 2]);
-      ASSERT_EQ(0, encoded[1 + std::size(values) / 2]);
-      ASSERT_TRUE(std::all_of(2 + std::begin(encoded) + std::size(values) / 2,
-                              std::end(encoded),
-                              [](auto v) { return 1 == v; }));
-    }
-#endif
-  }
-}
-
-TEST(simd_utils_test, avg) {
-  HWY_ALIGN uint32_t values[1024];
-  std::iota(std::begin(values), std::end(values), 42);
-
-  HWY_ALIGN uint32_t encoded[1024];
-  std::memcpy(encoded, values, sizeof values);
-  const auto stats = irs::simd::avg_encode<std::size(encoded), true>(encoded);
-
-  HWY_ALIGN uint32_t decoded[std::size(encoded)];
-  irs::simd::avg_decode<std::size(encoded), true>(encoded, decoded, stats.first,
-                                                  stats.second);
-
-  ASSERT_TRUE(std::equal(std::begin(values), std::end(values),
-                         std::begin(decoded), std::end(decoded)));
-}
-
-TEST(simd_utils_test, zigzag32) {
-  const auto tag = HWY_FULL(int32_t){};
-  auto expected = Iota(tag, 0);
-  auto encoded = irs::simd::sdb::ZigZagEncode(expected);
-  auto decoded = irs::simd::sdb::ZigZagDecode(encoded);
-  ASSERT_TRUE(AllTrue(tag, expected == decoded));
-}
-
-TEST(simd_utils_test, zigzag64) {
-  const auto tag = HWY_FULL(int64_t){};
-  auto expected = Iota(tag, 0);
-  auto encoded = irs::simd::sdb::ZigZagEncode(expected);
-  auto decoded = irs::simd::sdb::ZigZagDecode(encoded);
-  ASSERT_TRUE(AllTrue(tag, expected == decoded));
-}
-
+// `irs::AllSame` is the only function left in simd_utils.hpp after the
+// HWY-based helpers (delta_encode / avg / zigzag / maxmin / maxbits) were
+// removed along with the legacy columnstore. `AllSame` is still called
+// from `utils/bitpack.hpp` to short-circuit FOR-encoding when every value
+// in a block is identical.
 TEST(simd_utils_test, all_equal) {
-  constexpr size_t BLOCK_SIZE = 128;
-  HWY_ALIGN uint32_t values[BLOCK_SIZE * 2];
-  std::fill(std::begin(values), std::end(values), 42);
-  ASSERT_TRUE(
-    irs::simd::all_equal<true>(std::begin(values), std::size(values)));
-  ASSERT_TRUE(
-    irs::simd::all_equal<true>(std::begin(values), std::size(values) - 1));
-  ASSERT_TRUE(irs::simd::all_equal<true>(std::begin(values), 31));
-  ASSERT_TRUE(irs::simd::all_equal<true>(std::begin(values), 33));
-
-  values[0] = 0;
-  ASSERT_FALSE(
-    irs::simd::all_equal<true>(std::begin(values), std::size(values)));
-  ASSERT_FALSE(
-    irs::simd::all_equal<true>(std::begin(values), std::size(values) - 1));
-  ASSERT_FALSE(irs::simd::all_equal<true>(std::begin(values), 31));
-  ASSERT_FALSE(irs::simd::all_equal<true>(std::begin(values), 33));
-
+  // Trivially-true: one element.
   {
-    auto* begin = values;
-    for (size_t i = 0; i < 32; ++i) {
-      begin[0] = 0;
-      begin[1] = 1;
-      begin[2] = 2;
-      begin[3] = 4;
-      begin += 4;
-    }
+    const uint32_t one[1] = {7};
+    EXPECT_TRUE(irs::AllSame(one, 1));
   }
-  ASSERT_FALSE(
-    irs::simd::all_equal<true>(std::begin(values), std::size(values)));
-  ASSERT_FALSE(
-    irs::simd::all_equal<true>(std::begin(values), std::size(values) - 1));
-  ASSERT_FALSE(irs::simd::all_equal<true>(std::begin(values), 31));
-  ASSERT_FALSE(irs::simd::all_equal<true>(std::begin(values), 33));
-}
-
-TEST(simd_utils_test, maxmin) {
-  constexpr size_t BLOCK_SIZE = 128;
-  HWY_ALIGN uint32_t values[BLOCK_SIZE * 2];
-  std::iota(std::begin(values), std::end(values), 42);
-  ASSERT_EQ((std::pair<uint32_t, uint32_t>(42, 42 + std::size(values) - 1)),
-            (irs::simd::maxmin<std::size(values), true>(values)));
-  ASSERT_EQ((std::pair<uint32_t, uint32_t>(42, 42 + std::size(values) - 2)),
-            (irs::simd::maxmin<std::size(values) - 1, true>(values)));
-}
-
-TEST(simd_utils_test, maxbits) {
-  constexpr size_t BLOCK_SIZE = 128;
-
-  // 32-bit
+  // All equal.
   {
-    HWY_ALIGN uint32_t values[BLOCK_SIZE * 2];
-    std::iota(std::begin(values), std::end(values), 42);
-    const auto max = *std::max_element(std::begin(values), std::end(values));
-    ASSERT_EQ(irs::packed::maxbits32(max),
-              irs::simd::maxbits<true>(values, std::size(values)));
+    const uint32_t same[8] = {5, 5, 5, 5, 5, 5, 5, 5};
+    EXPECT_TRUE(irs::AllSame(same, 8));
   }
-
-  // 32-bit
+  // One differs at the start, middle, end.
   {
-    HWY_ALIGN uint32_t values[BLOCK_SIZE - 1];
-    std::iota(std::begin(values), std::end(values), 42);
-    const auto max = *std::max_element(std::begin(values), std::end(values));
-    ASSERT_EQ(irs::packed::maxbits32(max),
-              irs::simd::maxbits<true>(values, std::size(values)));
+    uint32_t differ[16];
+    std::fill(std::begin(differ), std::end(differ), 9);
+    differ[0] = 8;
+    EXPECT_FALSE(irs::AllSame(differ, 16));
+
+    std::fill(std::begin(differ), std::end(differ), 9);
+    differ[7] = 10;
+    EXPECT_FALSE(irs::AllSame(differ, 16));
+
+    std::fill(std::begin(differ), std::end(differ), 9);
+    differ[15] = 11;
+    EXPECT_FALSE(irs::AllSame(differ, 16));
   }
-
-  // 64-bit
+  // Different scalar widths exercise the type-generic template.
   {
-    HWY_ALIGN uint64_t values[BLOCK_SIZE * 2];
-    std::iota(std::begin(values), std::end(values), 42);
-    const auto max = *std::max_element(std::begin(values), std::end(values));
-    ASSERT_EQ(irs::packed::maxbits64(max),
-              irs::simd::maxbits<true>(values, std::size(values)));
-  }
+    const uint8_t u8[4] = {1, 1, 1, 1};
+    EXPECT_TRUE(irs::AllSame(u8, 4));
 
-  // 64-bit
-  {
-    HWY_ALIGN uint64_t values[BLOCK_SIZE - 1];
-    std::iota(std::begin(values), std::end(values), 42);
-    const auto max = *std::max_element(std::begin(values), std::end(values));
-    ASSERT_EQ(irs::packed::maxbits64(max),
-              irs::simd::maxbits<true>(values, std::size(values)));
+    const uint64_t u64[4] = {0xdeadbeefULL, 0xdeadbeefULL, 0xdeadbeefULL,
+                             0xdeadbeefULL};
+    EXPECT_TRUE(irs::AllSame(u64, 4));
+
+    const int32_t mixed[3] = {-1, -1, 0};
+    EXPECT_FALSE(irs::AllSame(mixed, 3));
   }
 }

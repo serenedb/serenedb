@@ -1,0 +1,1418 @@
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY hl_simple(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    offset = true
+)
+
+
+# --- ts_highlight POSTINGS overload: basic single-token hit ---
+
+query
+SELECT ts_highlight('the quick brown fox jumps over the lazy dog',
+                    ARRAY[4::INTEGER, 9::INTEGER])
+----
+ts_highlight
+the <b>quick</b> brown fox jumps over the lazy dog
+
+
+# --- Multiple offsets on one line ---
+
+query
+SELECT ts_highlight('the quick brown fox jumps over the lazy dog',
+                    ARRAY[4::INTEGER, 9::INTEGER, 16::INTEGER, 19::INTEGER])
+----
+ts_highlight
+the <b>quick</b> brown <b>fox</b> jumps over the lazy dog
+
+
+# --- Custom delimiters ---
+
+query
+SELECT ts_highlight('the quick brown fox',
+                    ARRAY[4::INTEGER, 9::INTEGER],
+                    'StartSel=[, StopSel=]')
+----
+ts_highlight
+the [quick] brown fox
+
+
+# --- HighlightAll: render whole doc with hits wrapped ---
+
+query
+SELECT ts_highlight('the quick brown fox',
+                    ARRAY[4::INTEGER, 9::INTEGER],
+                    'HighlightAll=true')
+----
+ts_highlight
+the <b>quick</b> brown fox
+
+
+# --- Sentence-bounded selection: pick the matching sentence only ---
+# Output range covers the matching sentence's tokens; trailing punctuation
+# (the period) isn't tokenized and so isn't rendered. This is V1 behavior;
+# ts_headline (PG port) preserves trailing punctuation per PG semantics.
+
+query
+SELECT ts_highlight(
+    'Sentence one. The quick brown fox is here. Sentence three.',
+    ARRAY[18::INTEGER, 23::INTEGER, 30::INTEGER, 33::INTEGER])
+----
+ts_highlight
+The <b>quick</b> brown <b>fox</b> is here
+
+
+# --- No hits: PG fallback to first MaxWords tokens ---
+
+query
+SELECT ts_highlight('Lorem ipsum dolor sit amet consectetur',
+                    ARRAY[]::INTEGER[])
+----
+ts_highlight
+Lorem ipsum dolor sit amet consectetur
+
+
+# --- NULL document → NULL output ---
+
+query
+SELECT ts_highlight(NULL, ARRAY[0::INTEGER, 5::INTEGER])
+----
+ts_highlight
+NULL
+
+
+# --- NULL offsets → NULL output ---
+
+query
+SELECT ts_highlight('some text', NULL)
+----
+ts_highlight
+NULL
+
+
+# --- MaxFragments: pick top-K sentences ---
+
+# Note: adjacent hit tokens merge into a single wrapped span (more natural),
+# and trailing sentence punctuation is omitted (analyzer doesn't tokenize it).
+query
+SELECT ts_highlight(
+    'A quick fox runs. Slow turtle naps. Another quick fox.',
+    ARRAY[2::INTEGER, 7::INTEGER, 8::INTEGER, 11::INTEGER,
+          44::INTEGER, 49::INTEGER, 50::INTEGER, 53::INTEGER],
+    'MaxFragments=2')
+----
+ts_highlight
+A <b>quick fox</b> runs ... Another <b>quick fox</b>
+
+
+# --- Bad options: unrecognized key ---
+
+statement error ts_highlight: option "notarealoption" not recognized
+SELECT ts_highlight('foo', ARRAY[0::INTEGER, 3::INTEGER],
+                    'NotARealOption=bar')
+
+
+# --- Bad options: typo near a real option ---
+# Damerau-Levenshtein distance pick suggests the closest match.
+
+statement error did you mean "maxwords"
+SELECT ts_highlight('foo', ARRAY[0::INTEGER, 3::INTEGER],
+                    'MaxWord=10')
+
+
+# --- Bad options: non-numeric MaxWords (type-conversion fails) ---
+
+statement error invalid value for ts_highlight parameter "maxwords": "abc"
+SELECT ts_highlight('foo', ARRAY[0::INTEGER, 3::INTEGER],
+                    'MaxWords=abc')
+
+
+# --- Bad options: zero MaxWords (constraint fn rejects) ---
+
+statement error "maxwords" must be a positive integer
+SELECT ts_highlight('foo', ARRAY[0::INTEGER, 3::INTEGER],
+                    'MaxWords=0')
+
+
+# --- Non-foldable options rejected at bind time ---
+# Per-row options aren't supported: parsing happens once at bind time
+# and the result is cached on the bind data. A column-derived opts
+# expression would silently fall through to defaults, so we refuse it.
+
+statement error ts_highlight: options must be a constant expression
+SELECT ts_highlight('foo', ARRAY[0::INTEGER, 3::INTEGER], opts)
+FROM (VALUES ('HighlightAll=true')) AS t(opts)
+
+
+# --- Bad offsets: odd-length array ---
+
+statement error offsets array must contain an even number of elements
+SELECT ts_highlight('foo bar', ARRAY[0::INTEGER, 3::INTEGER, 5::INTEGER])
+
+
+# --- Offset validation: malformed/inconsistent input is rejected ---
+
+# Negative start
+statement error malformed offset pair
+SELECT ts_highlight('the quick brown fox',
+                    ARRAY[(-5)::INTEGER, 10::INTEGER])
+
+# start > end
+statement error malformed offset pair
+SELECT ts_highlight('the quick brown fox',
+                    ARRAY[5::INTEGER, 3::INTEGER])
+
+# start past document size
+statement error past document size
+SELECT ts_highlight('the quick brown fox',
+                    ARRAY[100::INTEGER, 200::INTEGER])
+
+# Out-of-order: must be sorted ascending by start. The diagnostic
+# reports both the offending start and its predecessor so callers can
+# pinpoint the bad pair.
+statement error ts_highlight: offsets array must be sorted ascending by start; saw start=4 after start=16
+SELECT ts_highlight('the quick brown fox jumps over the lazy dog',
+                    ARRAY[16::INTEGER, 19::INTEGER, 4::INTEGER, 9::INTEGER])
+
+
+# --- Non-foldable inputs (doc + offsets from a table) ---
+
+statement ok
+CREATE TABLE hl_dyn (doc VARCHAR, offs INTEGER[])
+
+statement ok
+INSERT INTO hl_dyn VALUES
+    ('the quick brown fox', ARRAY[4::INTEGER, 9::INTEGER]),
+    ('foo bar baz', ARRAY[4::INTEGER, 7::INTEGER])
+
+query
+SELECT ts_highlight(doc, offs) FROM hl_dyn ORDER BY doc
+----
+ts_highlight
+foo <b>bar</b> baz
+the <b>quick</b> brown fox
+
+
+# --- End-to-end with inverted index: feed offsets() to ts_highlight ---
+
+statement ok
+CREATE TABLE hl_docs (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX hl_docs_idx ON hl_docs USING inverted(id, body hl_simple)
+
+statement ok
+INSERT INTO hl_docs VALUES
+    (1, 'the quick brown fox jumps over the lazy dog'),
+    (2, 'a quick red fox runs fast'),
+    (3, 'no match here at all'),
+    (4, 'First sentence here. The quick brown fox is in this sentence. Third one.'),
+    (5, 'lorem ipsum dolor sit amet quick consectetur adipiscing elit fox sed do')
+
+statement ok
+VACUUM (UPDATE_INDEXES) hl_docs
+
+
+# Single-term match: search scan emits ts_offsets(body); piped into
+# ts_highlight to render the snippet. The canonical use case.
+
+query
+SELECT id, ts_highlight(body, ts_offsets(body))
+FROM hl_docs_idx WHERE body @@ ts_phrase('quick')
+ORDER BY id
+----
+id	ts_highlight
+1	the <b>quick</b> brown fox jumps over the lazy dog
+2	a <b>quick</b> red fox runs fast
+4	The <b>quick</b> brown fox is in this sentence
+5	lorem ipsum dolor sit amet <b>quick</b> consectetur adipiscing elit fox sed do
+
+
+# Multi-term match: each matching token highlighted independently.
+
+query
+SELECT id, ts_highlight(body, ts_offsets(body))
+FROM hl_docs_idx WHERE body @@ ts_any(ARRAY['quick'::tsquery, 'fox'::tsquery])
+ORDER BY id
+----
+id	ts_highlight
+1	the <b>quick</b> brown <b>fox</b> jumps over the lazy dog
+2	a <b>quick</b> red <b>fox</b> runs fast
+4	The <b>quick</b> brown <b>fox</b> is in this sentence
+5	lorem ipsum dolor sit amet <b>quick</b> consectetur adipiscing elit <b>fox</b> sed do
+
+
+# Phrase match: only adjacent token sequence highlighted. Row 5 has both
+# 'quick' and 'fox' but they aren't adjacent, so it doesn't match the WHERE
+# filter and isn't returned. Also note that phrase queries emit a single
+# (start, end) offset pair covering the full phrase span — that's why
+# `length(ts_offsets(...))` is 2 for these rows below, not 6.
+
+query
+SELECT id, ts_highlight(body, ts_offsets(body))
+FROM hl_docs_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
+----
+id	ts_highlight
+1	the <b>quick brown fox</b> jumps over the lazy dog
+4	The <b>quick brown fox</b> is in this sentence
+
+
+# Custom delimiters propagate correctly through the index path.
+
+query
+SELECT id, ts_highlight(body, ts_offsets(body),
+                        'StartSel=<mark>, StopSel=</mark>')
+FROM hl_docs_idx WHERE body @@ ts_phrase('quick') AND id <= 2
+ORDER BY id
+----
+id	ts_highlight
+1	the <mark>quick</mark> brown fox jumps over the lazy dog
+2	a <mark>quick</mark> red fox runs fast
+
+
+# Combine ts_highlight with ts_offsets() in the same projection: same offsets
+# both rendered AND exposed as a column for downstream processing. Length 2
+# = one (start, end) pair covering the phrase span.
+
+query
+SELECT id, length(ts_offsets(body)) AS num_offsets,
+       ts_highlight(body, ts_offsets(body))
+FROM hl_docs_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
+----
+id	num_offsets	ts_highlight
+1	2	the <b>quick brown fox</b> jumps over the lazy dog
+4	2	The <b>quick brown fox</b> is in this sentence
+
+
+# --- ts_highlight + ORDER BY BM25 + LIMIT on a larger corpus ---
+# This is the canonical search-results-UI pattern: rank by relevance, take
+# top-K, render highlights only for those rows. The optimizer pushes the
+# scorer + LIMIT into the SearchScan; ts_offsets(body) is materialized once
+# per surviving row; ts_highlight runs over those offsets.
+
+statement ok
+CREATE TABLE hl_corpus (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX hl_corpus_idx ON hl_corpus USING inverted(id, body hl_simple)
+
+# 30-doc corpus; 'fox' appears in many docs with varying density / position
+# so BM25 ranking has something to work with.
+statement ok
+INSERT INTO hl_corpus VALUES
+    (1, 'the quick brown fox jumps over the lazy dog'),
+    (2, 'fox runs in the woods at dawn'),
+    (3, 'a clever fox outsmarts the hunter once again'),
+    (4, 'no relevant content here just filler text'),
+    (5, 'fox fox fox fox fox fox fox fox fox fox'),
+    (6, 'the silver fox watches from the hilltop'),
+    (7, 'in the forest a brown fox stalks its prey carefully'),
+    (8, 'cat dog bird turtle fish nothing here'),
+    (9, 'a fox is a small omnivorous mammal of the dog family'),
+    (10, 'fox news today reports updated weather forecast at noon'),
+    (11, 'fennec fox lives in north african deserts'),
+    (12, 'the arctic fox changes coat color with seasons'),
+    (13, 'completely unrelated content about turtles and lakes'),
+    (14, 'fast fox fast fox fast fox fast'),
+    (15, 'the gray fox climbs trees better than most canids'),
+    (16, 'absolutely nothing relevant here'),
+    (17, 'a urban fox raids garbage bins at night'),
+    (18, 'fox population recovery in protected areas'),
+    (19, 'old folk tale tells of a clever fox tricking a crow'),
+    (20, 'red fox red fox red fox'),
+    (21, 'red panda is not a panda not a fox just a red panda'),
+    (22, 'fox tail mushroom grows in temperate forests'),
+    (23, 'about that famous fox who jumped a fence'),
+    (24, 'silent night calm sky empty road no animals seen'),
+    (25, 'island fox subspecies recovers from near-extinction'),
+    (26, 'the fox terrier is a small fearless breed'),
+    (27, 'corsac fox roams central asian steppes'),
+    (28, 'pampas fox is sometimes called azaras zorro'),
+    (29, 'just plain text no fox at all in this row'),
+    (30, 'fox in socks by dr seuss is a classic')
+
+statement ok
+VACUUM (UPDATE_INDEXES) hl_corpus
+
+# BM25 ORDER BY + LIMIT: top-3 most relevant snippets. Pure-fox doc (5)
+# scores highest by raw frequency. We take top 3 and render with
+# ts_highlight; this is the load-bearing real-world pattern.
+
+query
+SELECT id, ts_highlight(body, ts_offsets(body))
+FROM hl_corpus_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(hl_corpus_idx.tableoid) DESC, id
+LIMIT 3
+----
+id	ts_highlight
+5	<b>fox fox fox fox fox fox fox fox fox fox</b>
+14	fast <b>fox</b> fast <b>fox</b> fast <b>fox</b> fast
+20	red <b>fox</b> red <b>fox</b> red <b>fox</b>
+
+
+# Same shape with custom snippet styling: confirms options string carries
+# through the BM25 + LIMIT optimization path. Take top 5 with phrase query
+# and render with <em>...</em> wrappers.
+
+query
+SELECT id, ts_highlight(body, ts_offsets(body),
+                        'StartSel=<em>, StopSel=</em>') AS snippet
+FROM hl_corpus_idx
+WHERE body @@ ts_any(ARRAY['fox'::tsquery, 'brown'::tsquery])
+ORDER BY BM25(hl_corpus_idx.tableoid) DESC, id
+LIMIT 5
+----
+id	snippet
+1	the quick <em>brown fox</em> jumps over the lazy dog
+7	in the forest a <em>brown fox</em> stalks its prey carefully
+5	<em>fox fox fox fox fox fox fox fox fox fox</em>
+14	fast <em>fox</em> fast <em>fox</em> fast <em>fox</em> fast
+20	red <em>fox</em> red <em>fox</em> red <em>fox</em>
+
+
+# Phrase + BM25 + LIMIT: only docs matching the phrase contribute, ranked
+# by BM25, then highlighted. Phrase emits a single span per match.
+
+query
+SELECT id, ts_highlight(body, ts_offsets(body)) AS snippet
+FROM hl_corpus_idx
+WHERE body @@ ts_phrase('brown fox')
+ORDER BY BM25(hl_corpus_idx.tableoid) DESC, id
+LIMIT 5
+----
+id	snippet
+1	the quick <b>brown fox</b> jumps over the lazy dog
+7	in the forest a <b>brown fox</b> stalks its prey carefully
+
+
+# --- Virtual-column form: ts_highlight(col [, options]) ---
+# The optimizer rewrites these to the standalone form by resolving the
+# dict from column metadata and synthesizing ts_offsets(col). Equivalent
+# behavior to the explicit form, but ergonomic for the common case.
+
+query
+SELECT id, ts_highlight(body)
+FROM hl_docs_idx WHERE body @@ ts_phrase('quick')
+ORDER BY id
+----
+id	ts_highlight
+1	the <b>quick</b> brown fox jumps over the lazy dog
+2	a <b>quick</b> red fox runs fast
+4	The <b>quick</b> brown fox is in this sentence
+5	lorem ipsum dolor sit amet <b>quick</b> consectetur adipiscing elit fox sed do
+
+
+# Virtual-column form with options.
+
+query
+SELECT id, ts_highlight(body, 'StartSel=[, StopSel=]')
+FROM hl_docs_idx WHERE body @@ ts_phrase('fox') AND id <= 2
+ORDER BY id
+----
+id	ts_highlight
+1	the quick brown [fox] jumps over the lazy dog
+2	a quick red [fox] runs fast
+
+
+# Virtual-column form: phrase query → phrase span highlighted as unit.
+
+query
+SELECT id, ts_highlight(body)
+FROM hl_docs_idx WHERE body @@ ts_phrase('quick brown fox')
+ORDER BY id
+----
+id	ts_highlight
+1	the <b>quick brown fox</b> jumps over the lazy dog
+4	The <b>quick brown fox</b> is in this sentence
+
+
+# Virtual-column form + BM25 + LIMIT: top-3 most relevant snippets
+# rendered without the user spelling out dict_name or ts_offsets().
+
+query
+SELECT id, ts_highlight(body)
+FROM hl_corpus_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(hl_corpus_idx.tableoid) DESC, id
+LIMIT 3
+----
+id	ts_highlight
+5	<b>fox fox fox fox fox fox fox fox fox fox</b>
+14	fast <b>fox</b> fast <b>fox</b> fast <b>fox</b> fast
+20	red <b>fox</b> red <b>fox</b> red <b>fox</b>
+
+
+# Error: virtual-column form on a non-FTS-indexed scan.
+
+statement error requires an inverted index scan
+SELECT ts_highlight(body) FROM hl_docs WHERE body LIKE '%fox%'
+
+
+# Error: virtual-column form without a WHERE predicate on the FTS column.
+# The optimizer's rewrite reaches the SearchScan but there's no query to
+# propagate, so ts_offsets() materialization has nothing to mark.
+
+statement error requires an inverted index scan
+SELECT ts_highlight(body) FROM hl_docs_idx
+
+
+# Error: virtual-column form with a literal first arg (no col-ref). The
+# rewrite synthesises ts_offsets(<literal>), which iresearch_plan
+# rejects because the OFFSETS argument must resolve to an indexed
+# column.
+
+statement error ts_offsets\(\) first argument must be a column reference
+SELECT ts_highlight('arbitrary text')
+
+
+# Multiple ts_highlight(body) calls in the same SELECT -- both produce
+# correct output. Verifies the rewrite doesn't double-bind or trip on
+# repeated col-refs.
+
+query
+SELECT id, ts_highlight(body), ts_highlight(body, 'StartSel=[, StopSel=]')
+FROM hl_docs_idx WHERE body @@ ts_phrase('quick') AND id <= 2
+ORDER BY id
+----
+id	ts_highlight	ts_highlight
+1	the <b>quick</b> brown fox jumps over the lazy dog	the [quick] brown fox jumps over the lazy dog
+2	a <b>quick</b> red fox runs fast	a [quick] red fox runs fast
+
+
+# Virtual-column form inside a CTE -- the SearchScan is reachable from
+# the inner projection, so the rewrite still fires.
+
+query
+WITH matched AS (
+  SELECT id, ts_highlight(body) AS snippet
+  FROM hl_docs_idx WHERE body @@ ts_phrase('fox') AND id <= 2
+)
+SELECT id, snippet FROM matched ORDER BY id
+----
+id	snippet
+1	the quick brown <b>fox</b> jumps over the lazy dog
+2	a quick red <b>fox</b> runs fast
+
+
+# Explicit composition ts_highlight(body, ts_offsets(body)) -- should
+# produce the same output as the sugar form ts_highlight(body). Sanity-
+# checks that the rewrite doesn't change semantics.
+
+query
+SELECT id, ts_highlight(body, ts_offsets(body))
+FROM hl_docs_idx WHERE body @@ ts_phrase('quick') AND id <= 2
+ORDER BY id
+----
+id	ts_highlight
+1	the <b>quick</b> brown fox jumps over the lazy dog
+2	a <b>quick</b> red fox runs fast
+
+
+# --- Derived offsets: column without stored offsets ---
+# The bind-time check stamps OffsetsRequest::use_derived_path. After
+# Materialize, the executor builds a per-chunk in-memory mini-segment
+# from the body bytes (re-tokenised through the column's analyzer),
+# prepares the WHERE filter against it, runs OffsetsCollector and
+# writes hits into the same LIST<INTEGER> column the stored-offsets
+# path would. The rendered output is byte-identical to what the
+# stored-offsets path would produce.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY hl_no_offs(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    offset = false
+)
+
+statement ok
+CREATE TABLE hl_no_offs_docs (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX hl_no_offs_idx ON hl_no_offs_docs USING inverted(id, body hl_no_offs)
+
+statement ok
+INSERT INTO hl_no_offs_docs VALUES (1, 'the quick brown fox')
+
+statement ok
+VACUUM (UPDATE_INDEXES) hl_no_offs_docs
+
+query
+SELECT id, ts_highlight(body)
+FROM hl_no_offs_idx WHERE body @@ ts_phrase('quick')
+----
+id	ts_highlight
+1	the <b>quick</b> brown fox
+
+
+# Multiple rows, mixed match positions. Exercises the per-(row, field)
+# transition logic in EmitDerivedOffsetsForChunk: row 0 has hits, row 1
+# doesn't match the WHERE so isn't produced, row 2 has multiple hits.
+
+statement ok
+INSERT INTO hl_no_offs_docs VALUES
+    (2, 'no match here'),
+    (3, 'quick red fox runs quick'),
+    (4, 'a slow brown bear')
+
+statement ok
+VACUUM (UPDATE_INDEXES) hl_no_offs_docs
+
+query
+SELECT id, ts_highlight(body)
+FROM hl_no_offs_idx WHERE body @@ ts_phrase('quick')
+ORDER BY id
+----
+id	ts_highlight
+1	the <b>quick</b> brown fox
+3	<b>quick</b> red fox runs <b>quick</b>
+
+
+# Options pass through the derived-offsets path end-to-end. The render
+# reads opts from the Highlighter's RowInput; the derived-offsets
+# executor just supplies the hits.
+
+query
+SELECT id, ts_highlight(body, 'StartSel=[, StopSel=]')
+FROM hl_no_offs_idx WHERE body @@ ts_phrase('quick')
+ORDER BY id
+----
+id	ts_highlight
+1	the [quick] brown fox
+3	[quick] red fox runs [quick]
+
+
+# Direct ts_offsets(body) -- bypasses ts_highlight entirely. The
+# LIST<INTEGER> emitted by the derived-offsets path is the raw output a
+# caller sees when composing manually.
+
+query
+SELECT id, ts_offsets(body)
+FROM hl_no_offs_idx WHERE body @@ ts_phrase('quick')
+ORDER BY id
+----
+id	ts_offsets
+1	{4,9}
+3	{0,5,19,24}
+
+
+# Explicit composition ts_highlight(body, ts_offsets(body)) -- should match
+# the sugar form byte-for-byte even when OFFSETS is derived.
+
+query
+SELECT id, ts_highlight(body, ts_offsets(body))
+FROM hl_no_offs_idx WHERE body @@ ts_phrase('quick')
+ORDER BY id
+----
+id	ts_highlight
+1	the <b>quick</b> brown fox
+3	<b>quick</b> red fox runs <b>quick</b>
+
+
+# Multiple ts_highlight(body) calls in the same SELECT. OFFSETS dedup
+# happens at rewrite time; the runtime sees a single derived-offsets request and
+# the two calls share its output column.
+
+query
+SELECT id, ts_highlight(body), ts_highlight(body, 'StartSel=<m>, StopSel=</m>')
+FROM hl_no_offs_idx WHERE body @@ ts_phrase('quick')
+ORDER BY id
+----
+id	ts_highlight	ts_highlight
+1	the <b>quick</b> brown fox	the <m>quick</m> brown fox
+3	<b>quick</b> red fox runs <b>quick</b>	<m>quick</m> red fox runs <m>quick</m>
+
+
+# --- ts_highlight bind-time rewrite: EXPLAIN ---
+# Each test below pins the planner output to confirm RewriteToPostings
+# synthesises the right shape:
+#   * virtual-col 1-arg/2-arg => SearchScan gains an OFFSETS column,
+#     the projected ts_highlight binds to POSTINGS and reads the slot.
+#   * multi-field => one OFFSETS entry per column, plan reports
+#     "Offsets: title, body" and two `sdb_inverted_index_offsets` slots.
+#   * MaxOffsets=N in options => visible in the projection's options
+#     literal; for the standalone form it propagates into the inner
+#     ts_offsets() call as a trailing INTEGER limit.
+
+# Virtual-column 1-arg form -- the SearchScan owns the OFFSETS column,
+# PROJECTION runs `ts_highlight(body, #2)` where #2 references the
+# scan-emitted sdb_inverted_index_offsets slot.
+query
+EXPLAIN SELECT id, ts_highlight(body)
+FROM hl_docs_idx WHERE body @@ ts_phrase('fox')
+ORDER BY id;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│     hl_docs_idx.id ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│   ts_highlight(body, #2)  │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: hl_docs_idx    │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│       Offsets: body       │
+│                           │
+│        Projections:       │
+│            body           │
+│             id            │
+│ sdb_inverted_index_offsets│
+│             $1            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+# Virtual-column 2-arg form with MaxOffsets in the options string. The
+# options literal stays on the outer call; bind-time parsing pulls
+# MaxOffsets out and applies it inside the synthesised ts_offsets().
+query
+EXPLAIN SELECT id, ts_highlight(body, 'MaxOffsets=3, HighlightAll=true')
+FROM hl_docs_idx WHERE body @@ ts_phrase('fox')
+ORDER BY id;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│     hl_docs_idx.id ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│  ts_highlight(body, #2,   │
+│       'MaxOffsets=3,      │
+│     HighlightAll=true')   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: hl_docs_idx    │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│       Offsets: body       │
+│                           │
+│        Projections:       │
+│            body           │
+│             id            │
+│ sdb_inverted_index_offsets│
+│             $1            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+# --- ts_highlight MaxOffsets behaviour ---
+# Row 5 has many 'fox' / 'quick' tokens; capping the synthesised
+# ts_offsets() shortens the highlighted span. Default (no cap) wraps
+# every fox; MaxOffsets=3 caps to the first 3.
+query
+SELECT id, ts_highlight(body, 'HighlightAll=true')
+FROM hl_docs_idx WHERE body @@ ts_like('q%k') AND id = 5
+----
+id	ts_highlight
+5	lorem ipsum dolor sit amet <b>quick</b> consectetur adipiscing elit fox sed do
+
+# Same row + filter, but MaxOffsets=1 caps to one hit -- still the
+# single quick on row 5.
+query
+SELECT id, ts_highlight(body, 'MaxOffsets=1, HighlightAll=true')
+FROM hl_docs_idx WHERE body @@ ts_like('q%k') AND id = 5
+----
+id	ts_highlight
+5	lorem ipsum dolor sit amet <b>quick</b> consectetur adipiscing elit fox sed do
+
+
+# --- Multi-field ts_offsets / ts_highlight ---
+# A separate index with two text columns exercises the AoS
+# offsets_entries layout in the SearchScan: one FieldEntry per
+# column, the OffsetsCollector dispatches by mangled name. Different
+# MaxOffsets per column proves the limits are independent.
+
+statement ok
+CREATE TABLE hl_multi (id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR)
+
+statement ok
+CREATE INDEX hl_multi_idx ON hl_multi
+    USING inverted(id, title hl_simple, body hl_simple)
+
+statement ok
+INSERT INTO hl_multi VALUES
+    (1, 'fox news', 'fox fox fox fox fox fox fox fox fox fox'),
+    (2, 'cat news', 'cat is here')
+
+statement ok
+VACUUM (UPDATE_INDEXES) hl_multi
+
+# Two ts_offsets() projections on different columns with different
+# limits. The per-FieldEntry cap in FillRowOffsets keeps the
+# truncations independent.
+query
+SELECT id, ts_offsets(title, 1) AS to_, ts_offsets(body, 5) AS bo
+FROM hl_multi_idx
+WHERE title @@ ts_phrase('fox') AND body @@ ts_phrase('fox')
+ORDER BY id
+----
+id	to_	bo
+1	{0,3}	{0,3,4,7,8,11,12,15,16,19}
+
+# Two ts_highlight() projections on different columns. Plan check
+# confirms the SearchScan emits two `sdb_inverted_index_offsets`
+# columns and "Offsets: title, body" appears in the plan summary.
+query
+EXPLAIN SELECT id,
+              ts_highlight(title) AS th,
+              ts_highlight(body) AS bh
+FROM hl_multi_idx
+WHERE title @@ ts_phrase('fox') AND body @@ ts_phrase('fox')
+ORDER BY id
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│    hl_multi_idx.id ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│             th            │
+│             bh            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│    Index: hl_multi_idx    │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[title(string) =│
+│   <Term:fox(0, 0); >] &&  │
+│   PHRASE[body(string) =   │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│    Offsets: title, body   │
+│                           │
+│        Projections:       │
+│           title           │
+│            body           │
+│             id            │
+│ sdb_inverted_index_offsets│
+│             $1            │
+│ sdb_inverted_index_offsets│
+│             $2            │
+│                           │
+│          ~2 rows          │
+└───────────────────────────┘
+
+# Multi-field render with MaxOffsets on one column only. Title renders
+# all hits (default unlimited); body is capped at 4 fox hits.
+query
+SELECT id,
+       ts_highlight(title, 'HighlightAll=true') AS th,
+       ts_highlight(body, 'MaxOffsets=4, HighlightAll=true') AS bh
+FROM hl_multi_idx
+WHERE title @@ ts_phrase('fox') AND body @@ ts_phrase('fox')
+ORDER BY id
+----
+id	th	bh
+1	<b>fox</b> news	<b>fox</b> <b>fox</b> <b>fox</b> <b>fox</b> fox fox fox fox fox fox
+
+statement ok
+DROP TABLE hl_multi
+
+
+# --- Standalone ts_highlight(dict, body, filter [, options]) ---
+# Runs in-place: no SearchScan involved, no WHERE clause. The
+# bind_expression hook rewrites the call into
+# `ts_highlight(body, ts_offsets(dict, body, filter) [, options])`; at
+# runtime the inner OFFSETS builds a per-chunk mini-segment from
+# `body`, runs the filter, and the outer ts_highlight POSTINGS form
+# renders against the resulting LIST<INTEGER>.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY hl_inplace_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    offset = false
+)
+
+query
+SELECT ts_highlight('hl_inplace_dict', 'the quick brown fox',
+                    ts_phrase('quick'))
+----
+ts_highlight
+the <b>quick</b> brown fox
+
+# Multiple matches in one body.
+query
+SELECT ts_highlight('hl_inplace_dict', 'quick red fox runs quick',
+                    ts_phrase('quick'))
+----
+ts_highlight
+<b>quick</b> red fox runs <b>quick</b>
+
+# Options pass through.
+query
+SELECT ts_highlight('hl_inplace_dict', 'the quick brown fox',
+                    ts_phrase('quick'), 'StartSel=[, StopSel=]')
+----
+ts_highlight
+the [quick] brown fox
+
+# TSQUERY combinator: OR of two phrases.
+query
+SELECT ts_highlight('hl_inplace_dict', 'the quick brown fox',
+                    ts_phrase('quick') || ts_phrase('fox'))
+----
+ts_highlight
+the <b>quick</b> brown <b>fox</b>
+
+# No match: body renders unchanged (no hits, no fragmenter -- emits
+# the first MaxWords tokens, which for a short doc is the whole body).
+query
+SELECT ts_highlight('hl_inplace_dict', 'the lazy dog sleeps',
+                    ts_phrase('quick'))
+----
+ts_highlight
+the lazy dog sleeps
+
+# Non-foldable dict name -- must be a constant.
+statement error must be a constant expression
+SELECT ts_highlight(name, 'body', ts_phrase('x'))
+FROM (VALUES ('hl_inplace_dict')) t(name)
+
+# Unknown dict resolves to an error at bind.
+statement error not found
+SELECT ts_highlight('no_such_dict', 'body', ts_phrase('x'))
+
+# Per-row body from a table -- the bind data is shared across rows;
+# the runtime builds one mini-segment per chunk over all body values.
+statement ok
+CREATE TABLE hl_inplace_docs (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+INSERT INTO hl_inplace_docs VALUES
+    (1, 'the quick brown fox'),
+    (2, 'no match here'),
+    (3, 'quick red fox runs quick')
+
+query
+SELECT id, ts_highlight('hl_inplace_dict', body, ts_phrase('quick'))
+FROM hl_inplace_docs
+ORDER BY id
+----
+id	ts_highlight
+1	the <b>quick</b> brown fox
+2	no match here
+3	<b>quick</b> red fox runs <b>quick</b>
+
+statement ok
+DROP TABLE hl_inplace_docs
+
+
+# --- Standalone ts_highlight with richer TSQUERY constructs ---
+# Body positions for 'the quick brown fox jumps over the lazy dog':
+#   the[0,3]  quick[4,9]  brown[10,15]  fox[16,19]  jumps[20,25]
+#   over[26,30]  the[31,34]  lazy[35,39]  dog[40,43]
+
+# Multi-word phrase: 'quick brown' matches adjacent tokens; both
+# words get wrapped together since the hit span covers both tokens.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'the quick brown fox jumps over the lazy dog',
+                    ts_phrase('quick brown'))
+----
+ts_highlight
+the <b>quick brown</b> fox jumps over the lazy dog
+
+# Phrase with explicit gap: 'quick' followed by 1-gap then 'fox'
+# matches 'quick brown fox' as one span.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'the quick brown fox jumps over the lazy dog',
+                    ts_phrase('quick') ## 1 ## 'fox')
+----
+ts_highlight
+the <b>quick brown fox</b> jumps over the lazy dog
+
+# Single-term phrase matching multiple positions -- both 'the' get
+# highlighted.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'the quick brown fox jumps over the lazy dog',
+                    ts_phrase('the'))
+----
+ts_highlight
+<b>the</b> quick brown fox jumps over <b>the</b> lazy dog
+
+# AND: both terms emit offsets and get highlighted.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'the quick brown fox jumps over the lazy dog',
+                    ts_phrase('quick') && ts_phrase('fox'))
+----
+ts_highlight
+the <b>quick</b> brown <b>fox</b> jumps over the lazy dog
+
+# OR: highlights every matching sub-filter.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'the quick brown fox jumps over the lazy dog',
+                    ts_phrase('quick') || ts_phrase('dog'))
+----
+ts_highlight
+the <b>quick</b> brown fox jumps over the lazy <b>dog</b>
+
+# AND with NOT: NOT contributes no offsets via the visitor, so the
+# positive 'quick' is still highlighted even though 'lazy' is in
+# the body.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'the quick brown fox jumps over the lazy dog',
+                    ts_phrase('quick') && !! ts_phrase('lazy'))
+----
+ts_highlight
+the <b>quick</b> brown fox jumps over the lazy dog
+
+# Wildcard via ts_like.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'the quick brown fox jumps over the lazy dog',
+                    ts_like('q%k'))
+----
+ts_highlight
+the <b>quick</b> brown fox jumps over the lazy dog
+
+# Fuzzy via ts_levenshtein: 'quikc' edit-distance 2 matches 'quick'.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'the quick brown fox jumps over the lazy dog',
+                    ts_levenshtein('quikc', 2))
+----
+ts_highlight
+the <b>quick</b> brown fox jumps over the lazy dog
+
+# ts_levenshtein single-arg form: distance defaults to 1. 'quik' ->
+# 'quick' is one insertion, matched and highlighted.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'the quick brown fox jumps over the lazy dog',
+                    ts_levenshtein('quik'))
+----
+ts_highlight
+the <b>quick</b> brown fox jumps over the lazy dog
+
+# Regex via ts_regexp.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'the quick brown fox jumps over the lazy dog',
+                    ts_regexp('qu.*k'))
+----
+ts_highlight
+the <b>quick</b> brown fox jumps over the lazy dog
+
+# Custom selector strings still apply to complex TSQUERY composition.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'the quick brown fox jumps over the lazy dog',
+                    ts_phrase('quick') || ts_phrase('dog'),
+                    'StartSel=<<, StopSel=>>')
+----
+ts_highlight
+the <<quick>> brown fox jumps over the lazy <<dog>>
+
+
+# --- ts_highlight over longer text with disjoint matches ---
+# Body has 3 sentences with 'fox' at offsets [16,19], [53,56], [89,92].
+# The fragmenter picks top-K sentences by score; defaults to 1.
+
+# Default MaxFragments (== 1): single best-scoring sentence picked.
+# Sentence 2 ('Another fox watches...') outranks the others due to the
+# fragmenter's earlier-in-sentence bias (SloppyWeight on hit offset
+# within sentence).
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'The quick brown fox jumps over the lazy dog. Another fox watches from the trees. A third fox slept peacefully through the night.',
+                    ts_phrase('fox'))
+----
+ts_highlight
+Another <b>fox</b> watches from the trees
+
+# MaxFragments=3: emits all three matched sentences, joined by the
+# default fragment delimiter ' ... '.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'The quick brown fox jumps over the lazy dog. Another fox watches from the trees. A third fox slept peacefully through the night.',
+                    ts_phrase('fox'), 'MaxFragments=3')
+----
+ts_highlight
+The quick brown <b>fox</b> jumps over the lazy dog ... Another <b>fox</b> watches from the trees ... A third <b>fox</b> slept peacefully through the night
+
+# Custom FragmentDelimiter on the same multi-fragment render.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'The quick brown fox jumps. Another fox watches. A third fox slept.',
+                    ts_phrase('fox'),
+                    'MaxFragments=3, FragmentDelimiter= | ')
+----
+ts_highlight
+The quick brown <b>fox</b> jumps|Another <b>fox</b> watches|A third <b>fox</b> slept
+
+# HighlightAll=true: render the whole body, wrapping every hit
+# regardless of sentence boundaries. No fragmenting.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'The quick brown fox jumps over the lazy dog. Another fox watches from the trees. A third fox slept peacefully through the night.',
+                    ts_phrase('fox'), 'HighlightAll=true')
+----
+ts_highlight
+The quick brown <b>fox</b> jumps over the lazy dog. Another <b>fox</b> watches from the trees. A third <b>fox</b> slept peacefully through the night.
+
+
+# --- ts_highlight with overlapped matches ---
+
+# Overlapping phrase hits: 'quick brown' (covers 'quick brown') and
+# 'brown fox' (covers 'brown fox') share 'brown'. The Highlighter
+# marks tokens whose byte range overlaps any hit; the renderer wraps
+# contiguous runs of hit-marked tokens into a SINGLE span. So the
+# two overlapping hits coalesce into 'quick brown fox' wrapped once.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'the quick brown fox jumps over the lazy dog',
+                    ts_phrase('quick brown') || ts_phrase('brown fox'),
+                    'HighlightAll=true')
+----
+ts_highlight
+the <b>quick brown fox</b> jumps over the lazy dog
+
+# Identical hit from two sub-filters (term 'quick' + wildcard 'q%k'
+# both match 'quick'). Dedup at the OffsetsCollector level means a
+# single mark; renderer wraps once.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'the quick brown fox',
+                    ts_phrase('quick') || ts_like('q%k'),
+                    'HighlightAll=true')
+----
+ts_highlight
+the <b>quick</b> brown fox
+
+# Nested overlap: shorter phrase wholly inside a longer one. The
+# longer span's wrapping dominates; the result is a single contiguous
+# wrapped run covering the union.
+query
+SELECT ts_highlight('hl_inplace_dict',
+                    'the quick brown fox jumps',
+                    ts_phrase('fox') || ts_phrase('brown fox jumps'),
+                    'HighlightAll=true')
+----
+ts_highlight
+the quick <b>brown fox jumps</b>
+
+
+# --- Standalone form EXPLAIN ---
+# Non-foldable body (column ref into hl_dyn) keeps the call live in
+# the plan so the rewritten shape is visible. The synthesised
+# ts_offsets() takes (dict, body, filter[, limit]); OffsetsStandaloneBind
+# stashes the prepared filter on bind data and replaces the TSQUERY
+# child with a NULL placeholder, which is what shows up in the plan.
+
+query
+EXPLAIN SELECT ts_highlight('hl_inplace_dict', doc, ts_phrase('fox'))
+FROM hl_dyn
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│     ts_highlight(doc,     │
+│         ts_offsets(       │
+│  'hl_inplace_dict', doc,  │
+│           NULL))          │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│       Table: hl_dyn       │
+│      Projections: doc     │
+│                           │
+│          ~2 rows          │
+└───────────────────────────┘
+
+# Standalone form with MaxOffsets in the options string. The limit
+# flows into the inner ts_offsets() as a trailing INTEGER arg (= 2);
+# the outer options literal stays on the outer call so the runtime
+# renderer still sees it.
+query
+EXPLAIN SELECT ts_highlight('hl_inplace_dict', doc,
+                            ts_phrase('fox'), 'MaxOffsets=2')
+FROM hl_dyn
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│     ts_highlight(doc,     │
+│         ts_offsets(       │
+│  'hl_inplace_dict', doc,  │
+│  NULL, 2), 'MaxOffsets=2')│
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│       Table: hl_dyn       │
+│      Projections: doc     │
+│                           │
+│          ~2 rows          │
+└───────────────────────────┘
+
+# Standalone MaxOffsets behaviour: 5-fox body, MaxOffsets=2 caps to
+# the first two highlighted spans.
+query
+SELECT ts_highlight('hl_inplace_dict', 'fox fox fox fox fox',
+                    ts_phrase('fox'), 'MaxOffsets=2, HighlightAll=true')
+----
+ts_highlight
+<b>fox</b> <b>fox</b> fox fox fox
+
+
+# --- Big-body fragmenting: lazy seek to the hit's sentence ---
+# Pins the lazy fragmenting path on a ~2.7 KB body where the single
+# hit lives in the middle. `DiscoverPassagesLazy` should `preceding/
+# next` straight to the needle sentence and `TokenizeSentence` should
+# word-segment only that slice -- the full filler before/after the
+# needle stays untouched. Result equivalence is what the SLT pins;
+# the perf win is silent.
+query
+WITH big AS (
+  SELECT repeat('The quick brown fox jumps over the lazy dog. ', 30) ||
+         'A unique needle sits hidden inside this sentence. ' ||
+         repeat('Another generic sentence follows the marker. ', 30) AS body
+)
+SELECT ts_highlight('hl_inplace_dict', body, ts_phrase('needle'))
+FROM big
+----
+ts_highlight
+A unique <b>needle</b> sits hidden inside this sentence
+
+# Multi-fragment on a big body: two hits in well-separated sentences,
+# MaxFragments=2. Each hit triggers its own `preceding/next` seek;
+# passages render in doc order with the default ' ... ' delimiter.
+query
+WITH big AS (
+  SELECT repeat('Filler sentence. ', 20) ||
+         'First needle marker here. ' ||
+         repeat('More filler text. ', 20) ||
+         'Second needle marker arrives. ' ||
+         repeat('Trailing filler. ', 20) AS body
+)
+SELECT ts_highlight('hl_inplace_dict', body, ts_phrase('needle'),
+                    'MaxFragments=2')
+FROM big
+----
+ts_highlight
+First <b>needle</b> marker here ... Second <b>needle</b> marker arrives
+
+# Edge case: hit at byte 0. `DiscoverPassagesLazy` uses `first()`
+# instead of `preceding(0)` because the latter returns DONE.
+query
+WITH big AS (
+  SELECT 'needle sits at the doc start. ' ||
+         repeat('Trailing filler sentence here. ', 50) AS body
+)
+SELECT ts_highlight('hl_inplace_dict', body, ts_phrase('needle'))
+FROM big
+----
+ts_highlight
+<b>needle</b> sits at the doc start
+
+# Edge case: hit at doc tail with no trailing sentence terminator.
+# `sentence_iter.next()` returns DONE after the hit, so we clamp the
+# sentence end to doc.size() and render through to EOF.
+query
+WITH big AS (
+  SELECT repeat('Filler sentence here. ', 50) || 'tail needle' AS body
+)
+SELECT ts_highlight('hl_inplace_dict', body, ts_phrase('needle'))
+FROM big
+----
+ts_highlight
+Filler sentence here. tail <b>needle</b>
+
+# Big-body no-hit fallback: PG semantics is "first MaxWords tokens of
+# the doc". `TokenizeDocPrefix` stops once MaxWords tokens have been
+# emitted instead of word-segmenting the whole body.
+query
+WITH big AS (
+  SELECT repeat('Filler sentence. ', 60) AS body
+)
+SELECT ts_highlight('hl_inplace_dict', body, ts_phrase('needle'),
+                    'MaxWords=10')
+FROM big
+----
+ts_highlight
+Filler sentence. Filler sentence. Filler sentence. Filler sentence. Filler sentence
+
+
+# --- Big-body fragmenting with complex TSQUERY shapes ---
+# A 2-3 KB body with multiple distinct "anchor" sentences scattered
+# among filler. Each query below targets one or more anchors; the
+# lazy fragmenter seeks straight to each anchor via
+# `BreakIterator::preceding(hit.byte_start)`. The point of these is
+# correctness on non-trivial TSQUERY shapes (multi-word phrase,
+# phrase-with-gap, AND, OR, Levenshtein, ngram); the perf win is
+# silent.
+
+# Multi-word phrase: 'brown fox' as a 2-token phrase (FixedPhrase).
+query
+WITH big AS (
+  SELECT repeat('Filler sentence about computers. ', 20) ||
+         'The quick brown fox jumps over the lazy dog. ' ||
+         repeat('More boring text continues. ', 20) ||
+         'A peculiar nightingale sang at midnight. ' ||
+         repeat('Padding sentence repeats here. ', 20) ||
+         'Search engines index large corpora efficiently. ' ||
+         repeat('Final filler block of text. ', 20) AS body
+)
+SELECT ts_highlight('hl_inplace_dict', body, ts_phrase('brown fox'))
+FROM big
+----
+ts_highlight
+The quick <b>brown fox</b> jumps over the lazy dog
+
+# Phrase with gap=1 (VariadicPhrase): 'quick' and 'fox' with one
+# token between. Body has 'quick brown fox' (gap of one == 'brown').
+query
+WITH big AS (
+  SELECT repeat('Filler sentence. ', 30) ||
+         'The quick brown fox jumps over the lazy dog. ' ||
+         repeat('More filler text. ', 30) AS body
+)
+SELECT ts_highlight('hl_inplace_dict', body, ts_phrase('quick', 1, 'fox'))
+FROM big
+----
+ts_highlight
+The <b>quick brown fox</b> jumps over the lazy dog
+
+# AND of two phrases in different sentences. MaxFragments=2 picks
+# both anchor sentences. Lazy fragmenter discovers each via a
+# separate `preceding/next` seek; passages render in doc order.
+query
+WITH big AS (
+  SELECT repeat('Filler sentence about computers. ', 20) ||
+         'The quick brown fox jumps over the lazy dog. ' ||
+         repeat('More boring text continues. ', 20) ||
+         'A peculiar nightingale sang at midnight. ' ||
+         repeat('Padding sentence repeats here. ', 20) AS body
+)
+SELECT ts_highlight('hl_inplace_dict', body,
+                    ts_phrase('quick') && ts_phrase('midnight'),
+                    'MaxFragments=2')
+FROM big
+----
+ts_highlight
+The <b>quick</b> brown fox jumps over the lazy dog ... A peculiar nightingale sang at <b>midnight</b>
+
+# OR of two phrases in different sentences. Same shape but the
+# match is non-conjunctive -- each side fires independently.
+query
+WITH big AS (
+  SELECT repeat('Filler sentence. ', 20) ||
+         'A peculiar nightingale sang at midnight. ' ||
+         repeat('Padding sentence repeats here. ', 20) ||
+         'Search engines index large corpora efficiently. ' ||
+         repeat('Final filler. ', 20) AS body
+)
+SELECT ts_highlight('hl_inplace_dict', body,
+                    ts_phrase('nightingale') || ts_phrase('corpora'),
+                    'MaxFragments=2')
+FROM big
+----
+ts_highlight
+A peculiar <b>nightingale</b> sang at midnight ... Search engines index large <b>corpora</b> efficiently
+
+# Levenshtein typo: 'quikc' edit-distance 2 from 'quick'. The
+# in-memory mini-segment runs the fuzzy match against the analyzed
+# tokens.
+query
+WITH big AS (
+  SELECT repeat('Filler sentence. ', 30) ||
+         'The quick brown fox jumps over the lazy dog. ' ||
+         repeat('More filler. ', 30) AS body
+)
+SELECT ts_highlight('hl_inplace_dict', body, ts_levenshtein('quikc', 2))
+FROM big
+----
+ts_highlight
+The <b>quick</b> brown fox jumps over the lazy dog
+
+# N-gram exact match. Note: in the standalone (mini-segment) path
+# `ts_ngram` only matches exact terms today; similarity scoring
+# requires features the in-memory analyzer doesn't store. The
+# inverted-index path supports similarity (see tsquery_match.test).
+query
+WITH big AS (
+  SELECT repeat('Filler sentence. ', 30) ||
+         'The quick brown fox jumps over the lazy dog. ' ||
+         repeat('More filler. ', 30) AS body
+)
+SELECT ts_highlight('hl_inplace_dict', body, ts_ngram('quick', 0.5e0))
+FROM big
+----
+ts_highlight
+The <b>quick</b> brown fox jumps over the lazy dog
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY hl_inplace_dict

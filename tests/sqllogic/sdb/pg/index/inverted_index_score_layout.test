@@ -1,0 +1,255 @@
+# Reproducer for the flaky BM25-OR scoring bug from inverted_index_score.test:1480.
+# The original test was non-deterministic w.r.t. segment layout; here we pin
+# each layout explicitly via `VACUUM (UPDATE_INDEXES)` per INSERT or as a
+# single batch, plus `PRAGMA serenedb_vacuum('compact_indexes', tbl)` for
+# consolidation.
+#
+# Data: 3 docs, each with one unique single-term body. The 3-way OR
+# `body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'` must return all
+# three docs with identical BM25 (df=1 per term globally => uniform IDF).
+
+hash-threshold 100
+
+
+# =====================================================================
+# Layout A: all 3 docs flushed into ONE segment.
+# =====================================================================
+
+statement ok
+CREATE TABLE one_seg_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY one_seg_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX one_seg_idx ON one_seg_docs USING inverted(id, body one_seg_en);
+
+
+statement count 1
+INSERT INTO one_seg_docs VALUES (1, 'alpha');
+
+statement count 1
+INSERT INTO one_seg_docs VALUES (2, 'beta');
+
+statement count 1
+INSERT INTO one_seg_docs VALUES (3, 'gamma');
+
+
+# Single VACUUM => single batch flush => one segment.
+statement ok
+VACUUM (UPDATE_INDEXES) one_seg_docs;
+
+
+# All three should be uniform.
+query
+SELECT id, BM25(one_seg_idx.tableoid) as d FROM one_seg_idx
+WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
+ORDER BY d DESC, id;
+----
+id  d
+1 0.9808291
+2 0.9808291
+3 0.9808291
+
+
+# =====================================================================
+# Layout B: each doc in its OWN segment (VACUUM after each INSERT).
+# =====================================================================
+
+statement ok
+CREATE TABLE three_segs_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX three_segs_idx ON three_segs_docs USING inverted(id, body one_seg_en);
+
+
+statement count 1
+INSERT INTO three_segs_docs VALUES (1, 'alpha');
+
+statement ok
+VACUUM (UPDATE_INDEXES) three_segs_docs;
+
+statement count 1
+INSERT INTO three_segs_docs VALUES (2, 'beta');
+
+statement ok
+VACUUM (UPDATE_INDEXES) three_segs_docs;
+
+statement count 1
+INSERT INTO three_segs_docs VALUES (3, 'gamma');
+
+statement ok
+VACUUM (UPDATE_INDEXES) three_segs_docs;
+
+
+query
+SELECT id, BM25(three_segs_idx.tableoid) as d FROM three_segs_idx
+WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
+ORDER BY d DESC, id;
+----
+id  d
+1 0.9808291
+2 0.9808291
+3 0.9808291
+
+
+# =====================================================================
+# Layout C: docs 1+3 in segment A, doc 2 in segment B (alphabetical
+# split -- matches the failure pattern where alpha/gamma scores
+# diverge from beta).
+# =====================================================================
+
+statement ok
+CREATE TABLE split_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX split_idx ON split_docs USING inverted(id, body one_seg_en);
+
+
+statement count 1
+INSERT INTO split_docs VALUES (1, 'alpha');
+
+statement count 1
+INSERT INTO split_docs VALUES (3, 'gamma');
+
+statement ok
+VACUUM (UPDATE_INDEXES) split_docs;
+
+statement count 1
+INSERT INTO split_docs VALUES (2, 'beta');
+
+statement ok
+VACUUM (UPDATE_INDEXES) split_docs;
+
+
+query
+SELECT id, BM25(split_idx.tableoid) as d FROM split_idx
+WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
+ORDER BY d DESC, id;
+----
+id  d
+1 0.9808291
+2 0.9808291
+3 0.9808291
+
+
+# =====================================================================
+# Layout D: doc 2 alone in segment A, docs 1+3 in segment B (reversed
+# from C -- isolates whether segment ORDER matters).
+# =====================================================================
+
+statement ok
+CREATE TABLE split2_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX split2_idx ON split2_docs USING inverted(id, body one_seg_en);
+
+
+statement count 1
+INSERT INTO split2_docs VALUES (2, 'beta');
+
+statement ok
+VACUUM (UPDATE_INDEXES) split2_docs;
+
+statement count 1
+INSERT INTO split2_docs VALUES (1, 'alpha');
+
+statement count 1
+INSERT INTO split2_docs VALUES (3, 'gamma');
+
+statement ok
+VACUUM (UPDATE_INDEXES) split2_docs;
+
+
+query
+SELECT id, BM25(split2_idx.tableoid) as d FROM split2_idx
+WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
+ORDER BY d DESC, id;
+----
+id  d
+1 0.9808291
+2 0.9808291
+3 0.9808291
+
+
+# =====================================================================
+# Layout E: 3 segments then consolidate via compact_indexes => should
+# match Layout A (single merged segment).
+# =====================================================================
+
+statement ok
+CREATE TABLE consolidated_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX consolidated_idx ON consolidated_docs USING inverted(id, body one_seg_en);
+
+
+statement count 1
+INSERT INTO consolidated_docs VALUES (1, 'alpha');
+
+statement ok
+VACUUM (UPDATE_INDEXES) consolidated_docs;
+
+statement count 1
+INSERT INTO consolidated_docs VALUES (2, 'beta');
+
+statement ok
+VACUUM (UPDATE_INDEXES) consolidated_docs;
+
+statement count 1
+INSERT INTO consolidated_docs VALUES (3, 'gamma');
+
+statement ok
+VACUUM (UPDATE_INDEXES) consolidated_docs;
+
+statement ok
+PRAGMA serenedb_vacuum('compact_indexes', 'consolidated_docs');
+
+
+query
+SELECT id, BM25(consolidated_idx.tableoid) as d FROM consolidated_idx
+WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
+ORDER BY d DESC, id;
+----
+id  d
+1 0.9808291
+2 0.9808291
+3 0.9808291
+
+
+# =====================================================================
+# Cleanup
+# =====================================================================
+
+statement ok
+DROP TABLE one_seg_docs;
+
+statement ok
+DROP TABLE three_segs_docs;
+
+statement ok
+DROP TABLE split_docs;
+
+statement ok
+DROP TABLE split2_docs;
+
+statement ok
+DROP TABLE consolidated_docs;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY one_seg_en;

@@ -22,6 +22,7 @@
 
 #include "basics/misc.hpp"
 #include "filter_test_case_base.hpp"
+#include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/column_collector.hpp"
@@ -170,7 +171,7 @@ TEST_P(ByEditDistanceTestCase, test_order) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   // empty query
   CheckQuery(irs::ByEditDistance(), Docs{}, Costs{0}, rdr);
@@ -325,7 +326,7 @@ TEST_P(ByEditDistanceTestCase, test_filter) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   // empty query
   CheckQuery(irs::ByEditDistance(), Docs{}, Costs{0}, rdr);
@@ -549,7 +550,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
         }
       });
 
-    irs::IndexWriterOptions opts;
+    auto opts = irs::tests::DefaultWriterOptions();
 
     add_segment(gen, irs::kOmCreate, opts);
   }
@@ -558,7 +559,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     "bm25", irs::Type<irs::text_format::Json>::get(), std::string_view{})};
   ASSERT_NE(nullptr, order.front());
 
-  auto index = open_reader();
+  auto index = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, index);
   ASSERT_EQ(1, index->size());
 
@@ -952,7 +953,7 @@ TEST_P(ByEditDistanceTestCase, visit) {
   const std::string_view field = "prefix";
   const auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
   // read segment
-  auto index = open_reader();
+  auto index = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, index.size());
   auto& segment = index[0];
   // get term dictionary for field

@@ -76,15 +76,21 @@ set(IResearch_core_sources
     ./analysis/pattern_tokenizer.cpp
     ./analysis/wildcard_analyzer.cpp
     ./error/error.cpp
-    ./formats/column/common.cpp
+    ./columnstore/format.cpp
+    ./columnstore/column_writer.cpp
+    ./columnstore/column_reader.cpp
+    ./columnstore/norm_writer.cpp
+    ./columnstore/norm_reader.cpp
+    ./columnstore/merge.cpp
+    ./columnstore/hnsw.cpp
+    ./columnstore/internal/write_context.cpp
+    ./columnstore/read_context.cpp
     ./formats/formats.cpp
     ./formats/format_utils.cpp
     ./formats/posting/skip_list.cpp
-    ./formats/column/sparse_bitmap.cpp
     ./formats/format_block_128.cpp
     ./formats/index/burst_trie.cpp
     ./formats/column/hnsw_index.cpp
-    ./index/buffered_column.cpp
     ./index/directory_reader.cpp
     ./index/directory_reader_impl.cpp
     ./index/field_data.cpp
@@ -102,7 +108,6 @@ set(IResearch_core_sources
     ./search/all_docs_provider.cpp
     ./search/all_filter.cpp
     ./search/all_iterator.cpp
-    ./search/boost_scorer.cpp
     ./search/granular_range_filter.cpp
     ./search/scorers.cpp
     ./search/scorer.cpp
@@ -115,7 +120,6 @@ set(IResearch_core_sources
     ./search/nested_filter.cpp
     ./search/terms_filter.cpp
     ./search/prefix_filter.cpp
-    ./search/column_collector.cpp
     ./search/range_filter.cpp
     ./search/phrase_filter.cpp
     ./search/phrase_query.cpp
@@ -136,12 +140,14 @@ set(IResearch_core_sources
     ./search/proxy_filter.cpp
     ./search/tfidf.cpp
     ./search/bm25.cpp
-    ./search/raw_tf.cpp
     ./search/lm_similarity.cpp
     ./search/lm_jelinek_mercer.cpp
     ./search/lm_dirichlet.cpp
     ./search/indri_dirichlet.cpp
     ./search/dfi.cpp
+    ./search/raw_boost.cpp
+    ./search/raw_tf.cpp
+    ./search/raw_dl.cpp
     ./store/data_input.cpp
     ./store/directory.cpp
     ./store/directory_attributes.cpp
@@ -255,6 +261,7 @@ target_link_libraries(
     PUBLIC re2
     PUBLIC serene_geo
     PUBLIC streamvbyte
+    PUBLIC duckdb_static
     PRIVATE lz4_static
     PRIVATE text
     PRIVATE stemmer-static

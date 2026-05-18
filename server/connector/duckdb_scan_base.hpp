@@ -23,10 +23,14 @@
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <iresearch/types.hpp>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
+#include "catalog/table_options.h"
+#include "connector/columnstore_materializer.h"
 #include "rocksdb/iterator.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/snapshot.h"
@@ -36,6 +40,11 @@ namespace sdb::connector {
 
 struct SereneDBScanBindData;
 class IndexSource;
+
+struct ColumnstoreProjection {
+  duckdb::idx_t output_slot;
+  catalog::Column::Id column_id;
+};
 
 // Common state inherited by all per-scan global states.
 // Holds the fields shared across every scan strategy: isolation context,
@@ -49,6 +58,31 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   // INVALID_INDEX marks virtual columns (rowid, tableoid, score).
   std::vector<duckdb::idx_t> projected_columns;
   std::vector<duckdb::LogicalType> projected_types;
+
+  // Same shape as `projected_columns` but with INCLUDE'd columnstore
+  // slots reset to INVALID_INDEX. Pass this (not `projected_columns`)
+  // to `MakeIndexSource` so RocksDB does not double-materialize columns
+  // the cs overlay will overwrite. Default: copy of projected_columns
+  // (no behavior change until `ClassifyColumnstoreProjections` runs).
+  std::vector<duckdb::idx_t> external_projected_columns;
+
+  // INCLUDE'd projections served by the columnstore overlay.
+  // Populated by `ClassifyColumnstoreProjections`.
+  std::vector<ColumnstoreProjection> cs_projections;
+  // Parallel arrays derived from `cs_projections` once at init time --
+  // bulk + streaming + score-ordered materializer paths all want them
+  // in this shape and would otherwise rebuild per batch.
+  std::vector<irs::field_id> cs_field_ids;
+  std::vector<duckdb::idx_t> cs_output_slots;
+  // True iff at least one projected real column is NOT an INCLUDE
+  // column (i.e. IndexSource still has work to do).
+  bool has_external_projections = false;
+
+  // Per-segment materializers shared by streaming, top-K, ANN, range,
+  // and bulk-scan paths. Populated lazily on first batch that touches
+  // the segment; lives for the whole query. Sized to the index reader's
+  // segment count on first use (see GetOrOpenSegmentMaterializer).
+  std::vector<std::unique_ptr<ColumnstoreMaterializer>> cs_materializers;
 
   // Rowid virtual column
   bool has_generated_pk = false;
@@ -105,6 +139,34 @@ void InitCommonState(CommonScanGlobalState& state,
                      duckdb::ClientContext& context,
                      const SereneDBScanBindData& bind_data,
                      duckdb::TableFunctionInitInput& input);
+
+void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
+                                    const SereneDBScanBindData& bind_data);
+
+struct SegDoc {
+  uint32_t segment_idx;
+  irs::doc_id_t doc_pos;
+};
+
+}  // namespace sdb::connector
+namespace irs {
+
+class IndexReader;
+
+}  // namespace irs
+namespace sdb::connector {
+
+// Returns the materializer for `seg_idx`, lazy-building it on first call.
+// Returns nullptr when the segment has no cs reader or no bound INCLUDE'd
+// columns. The returned pointer is owned by `gstate.cs_materializers` and
+// lives for the rest of the query.
+ColumnstoreMaterializer* GetOrOpenSegmentMaterializer(
+  CommonScanGlobalState& gstate, const irs::IndexReader& reader,
+  size_t seg_idx);
+
+void MaterializeIncludeColumnsScoreOrder(
+  CommonScanGlobalState& gstate, const irs::IndexReader& reader,
+  std::span<const SegDoc> seg_doc_score_order, duckdb::DataChunk& output);
 
 // Read generated PK int64 values from RocksDB iterator keys into output.
 // Key format: [ObjectId(8)][ColumnId(8)][PK int64 big-endian XOR 0x80].

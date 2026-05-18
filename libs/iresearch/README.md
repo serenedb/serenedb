@@ -46,10 +46,10 @@ The [examples/](examples/) directory contains self-contained programs demonstrat
 
 - **[basic.cpp](examples/basic.cpp)** -- Index documents with text fields, run term queries, boolean queries, top-K retrieval with BM25 scoring, read stored fields and delete documents.
 
-To build the examples, enable the `IRESEARCH_BUILD_EXAMPLES` CMake option:
+To build the examples:
 
 ```bash
-cmake -S . -B build -DIRESEARCH_BUILD_EXAMPLES=ON
+cmake --preset lldb
 cmake --build build --target iresearch-example-basic
 ./build/iresearch/examples/iresearch-example-basic
 ```

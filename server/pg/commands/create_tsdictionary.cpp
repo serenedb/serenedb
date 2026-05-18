@@ -144,7 +144,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
                             const duckdb::named_parameter_map_t& named_params)
     : OptionsParser{named_params,
                     kTSDictionaryGroup,
-                    {.operation = "CREATE TEXT SEARCH DICTIONARY"}},
+                    {.operation = "CREATE TEXT SEARCH DICTIONARY",
+                     .help_hint = "Use WITH (HELP) to see available options"}},
       _snapshot{std::move(snapshot)},
       _db_id{db_id},
       _current_schema{current_schema} {
@@ -159,7 +160,10 @@ class CreateTSDictionaryOptions : public OptionsParser {
     });
   }
 
-  auto Result() && { return std::make_pair(std::move(_builder), _features); }
+  auto Result() && {
+    return std::make_tuple(std::move(_builder), _features,
+                           _norm_row_group_size);
+  }
 
  private:
   bool HasUnionChildOption(std::string_view prefix) const {
@@ -675,6 +679,16 @@ class CreateTSDictionaryOptions : public OptionsParser {
           SDB_ASSERT(added);
         }
       });
+    if (OptionsParser::HasOption(tokenizer_options::kNormRowGroupSize)) {
+      if (!_features.HasFeatures(irs::IndexFeatures::Norm)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("norm_row_group_size requires norm = true"),
+          ERR_HINT(tokenizer_options::kNormRowGroupSize.description));
+      }
+      _norm_row_group_size = static_cast<uint32_t>(
+        EraseOptionOrDefault<tokenizer_options::kNormRowGroupSize>());
+    }
     auto r = _features.Validate(type);
     if (!r.ok()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -684,6 +698,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
 
   vpack::Builder _builder;
   search::Features _features;
+  uint32_t _norm_row_group_size = DEFAULT_ROW_GROUP_SIZE;
   std::vector<std::pair<std::string, vpack::Slice>> _copy_from;
   std::shared_ptr<const catalog::Snapshot> _snapshot;
   ObjectId _db_id;
@@ -699,9 +714,10 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
   auto db_id = conn_ctx.GetDatabaseId();
   auto current_schema = conn_ctx.GetCurrentSchema();
 
-  auto [b, features] = std::move(CreateTSDictionaryOptions{
-                                   snapshot, db_id, current_schema, options})
-                         .Result();
+  auto [b, features, norm_row_group_size] =
+    std::move(
+      CreateTSDictionaryOptions{snapshot, db_id, current_schema, options})
+      .Result();
 
   // Validate tokenizer configuration
   auto tokenizer_slice = b.slice().get(kTokenizerField);
@@ -737,7 +753,7 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
   }
 
   auto tokenizer = std::make_shared<catalog::Tokenizer>(
-    ObjectId{}, ObjectId{}, name, features,
+    ObjectId{}, ObjectId{}, name, features, norm_row_group_size,
     std::string{reinterpret_cast<const char*>(b.slice().getDataPtr()),
                 b.slice().byteSize()});
 

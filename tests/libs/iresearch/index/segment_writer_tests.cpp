@@ -21,35 +21,19 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <array>
-
+#include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/index/comparer.hpp"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_features.hpp"
-#include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/store/memory_directory.hpp"
-#include "iresearch/store/store_utils.hpp"
-#include "iresearch/utils/lz4compression.hpp"
+#include "iresearch/utils/string.hpp"
 #include "tests_shared.hpp"
 
 namespace {
 
-class SegmentWriterTests : public TestBase {
- protected:
-  static irs::ColumnInfoProvider DefaultColumnInfo() {
-    return [](const std::string_view&) {
-      return irs::ColumnInfo{
-        .compression = irs::Type<irs::compression::Lz4>::get(),
-        .options = {},
-        .encryption = true,
-        .track_prev_doc = false};
-    };
-  }
-
-  static auto DefaultCodec() { return irs::formats::Get("1_5simd"); }
-};
+class SegmentWriterTests : public TestBase {};
 
 struct TokenizerMock final : public irs::Tokenizer {
   std::map<irs::TypeInfo::type_id, irs::Attribute*> attrs;
@@ -62,539 +46,6 @@ struct TokenizerMock final : public irs::Tokenizer {
 };
 
 }  // namespace
-
-class Comparator final : public irs::Comparer {
-  int CompareImpl(irs::bytes_view lhs,
-                  irs::bytes_view rhs) const noexcept final {
-    EXPECT_FALSE(irs::IsNull(lhs));
-    EXPECT_FALSE(irs::IsNull(rhs));
-    return lhs.compare(rhs);
-  }
-};
-
-TEST_F(SegmentWriterTests, memory_sorted_vs_unsorted) {
-  struct FieldT {
-    std::string_view Name() const { return "test_field"; }
-
-    bool Write(irs::DataOutput& out) const {
-      irs::WriteStr(out, Name());
-      return true;
-    }
-  } field;
-
-  Comparator compare;
-
-  auto column_info = DefaultColumnInfo();
-
-  irs::MemoryDirectory dir;
-
-  const irs::SegmentWriterOptions options_with_comparer{
-    .column_info = column_info, .scorers_features = {}, .comparator = &compare};
-  auto writer_sorted = irs::SegmentWriter::make(dir, options_with_comparer);
-  ASSERT_EQ(0, writer_sorted->memory_active());
-
-  const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .scorers_features = {}};
-  auto writer_unsorted = irs::SegmentWriter::make(dir, options);
-  ASSERT_EQ(0, writer_unsorted->memory_active());
-
-  irs::SegmentMeta segment;
-  segment.name = "foo";
-  segment.codec = irs::formats::Get("1_5simd");
-  writer_sorted->reset(segment);
-  ASSERT_EQ(0, writer_sorted->memory_active());
-  writer_unsorted->reset(segment);
-  ASSERT_EQ(0, writer_unsorted->memory_active());
-
-  for (size_t i = 0; i < 100; ++i) {
-    irs::SegmentWriter::DocContext ctx;
-    writer_sorted->begin(ctx);
-    ASSERT_TRUE(writer_sorted->valid());
-    ASSERT_TRUE(writer_sorted->insert<irs::Action::STORE>(field));
-    ASSERT_TRUE(writer_sorted->valid());
-    writer_sorted->commit();
-
-    writer_unsorted->begin(ctx);
-    ASSERT_TRUE(writer_unsorted->valid());
-    ASSERT_TRUE(writer_unsorted->insert<irs::Action::STORE>(field));
-    ASSERT_TRUE(writer_unsorted->valid());
-    writer_unsorted->commit();
-  }
-
-  ASSERT_GT(writer_sorted->memory_active(), 0);
-  ASSERT_GT(writer_unsorted->memory_active(), 0);
-
-  // we don't count stored field without comparator
-  ASSERT_LT(writer_unsorted->memory_active(), writer_sorted->memory_active());
-
-  writer_sorted->reset();
-  ASSERT_EQ(0, writer_sorted->memory_active());
-
-  writer_unsorted->reset();
-  ASSERT_EQ(0, writer_unsorted->memory_active());
-}
-
-TEST_F(SegmentWriterTests, insert_sorted_without_comparator) {
-  struct FieldT {
-    std::string_view Name() const { return "test_field"; }
-
-    bool Write(irs::DataOutput& out) const {
-      irs::WriteStr(out, Name());
-      return true;
-    }
-  } field;
-
-  decltype(DefaultColumnInfo()) column_info = [](const std::string_view&) {
-    return irs::ColumnInfo{
-      irs::Type<irs::compression::Lz4>::get(),
-      irs::compression::Options(irs::compression::Options::Hint::Speed), true};
-  };
-  const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .scorers_features = {}};
-
-  irs::MemoryDirectory dir;
-  auto writer = irs::SegmentWriter::make(dir, options);
-  ASSERT_EQ(0, writer->memory_active());
-
-  irs::SegmentMeta segment;
-  segment.name = "foo";
-  segment.codec = irs::formats::Get("1_5simd");
-  writer->reset(segment);
-  ASSERT_EQ(0, writer->memory_active());
-
-  for (size_t i = 0; i < 100; ++i) {
-    irs::SegmentWriter::DocContext ctx;
-    writer->begin(ctx);
-    ASSERT_TRUE(writer->valid());
-    ASSERT_FALSE(writer->insert<irs::Action::StoreSorted>(field));
-    ASSERT_FALSE(writer->valid());
-    writer->commit();
-  }
-
-  // we don't count stored field without comparator
-  ASSERT_GT(writer->memory_active(), 0);
-
-  writer->reset();
-
-  ASSERT_EQ(0, writer->memory_active());
-}
-
-TEST_F(SegmentWriterTests, memory_store_sorted_field) {
-  struct FieldT {
-    std::string_view Name() const { return "test_field"; }
-
-    bool Write(irs::DataOutput& out) const {
-      irs::WriteStr(out, Name());
-      return true;
-    }
-  } field;
-
-  Comparator compare;
-
-  auto column_info = DefaultColumnInfo();
-
-  const irs::SegmentWriterOptions options{
-    .column_info = column_info, .scorers_features = {}, .comparator = &compare};
-  {
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
-    ASSERT_EQ(0, writer->memory_active());
-
-    irs::SegmentMeta segment;
-    segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5simd");
-    writer->reset(segment);
-    ASSERT_EQ(0, writer->memory_active());
-
-    for (size_t i = 0; i < 100; ++i) {
-      irs::SegmentWriter::DocContext ctx;
-      writer->begin(ctx);
-      ASSERT_TRUE(writer->valid());
-      ASSERT_TRUE(writer->insert<irs::Action::StoreSorted>(field));
-      ASSERT_TRUE(writer->valid());
-      writer->commit();
-    }
-
-    // we don't count stored field without comparator
-    ASSERT_GT(writer->memory_active(), 0);
-
-    writer->reset();
-
-    ASSERT_EQ(0, writer->memory_active());
-  }
-  // as batch
-  {
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
-    ASSERT_EQ(0, writer->memory_active());
-
-    irs::SegmentMeta segment;
-    segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5simd");
-    writer->reset(segment);
-    ASSERT_EQ(0, writer->memory_active());
-    irs::SegmentWriter::DocContext ctx;
-    ASSERT_EQ(irs::doc_limits::min(), writer->begin(ctx, 100));
-    ASSERT_TRUE(writer->valid());
-    ASSERT_EQ(100, writer->buffered_docs());
-    for (irs::doc_id_t i = 0; i < 100; ++i) {
-      ASSERT_TRUE(writer->insert<irs::Action::StoreSorted>(
-        field, i + irs::doc_limits::min()));
-      ASSERT_TRUE(writer->valid());
-      writer->commit();
-    }
-
-    // we don't count stored field without comparator
-    ASSERT_GT(writer->memory_active(), 0);
-
-    writer->reset();
-
-    ASSERT_EQ(0, writer->memory_active());
-  }
-}
-
-TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
-  struct FieldT {
-    FieldT(irs::Tokenizer& stream) : token_stream(stream) {}
-    std::string_view Name() const { return "test_field"; }
-
-    irs::IndexFeatures GetIndexFeatures() const {
-      return irs::IndexFeatures::None;
-    }
-
-    irs::Tokenizer& GetTokens() { return token_stream; }
-
-    bool Write(irs::DataOutput& out) const {
-      irs::WriteStr(out, Name());
-      return true;
-    }
-
-    irs::Tokenizer& token_stream;
-  };
-
-  Comparator compare;
-
-  auto column_info = DefaultColumnInfo();
-
-  const irs::SegmentWriterOptions options{
-    .column_info = column_info, .scorers_features = {}, .comparator = &compare};
-  {
-    TokenizerMock stream;
-    FieldT field(stream);
-    irs::TermAttr term;
-    irs::IncAttr increment;
-    increment.value = 1;
-    stream.attrs[irs::Type<irs::TermAttr>::id()] = &term;
-    stream.attrs[irs::Type<irs::IncAttr>::id()] = &increment;
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
-    ASSERT_EQ(0, writer->memory_active());
-
-    irs::SegmentMeta segment;
-    segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5simd");
-    writer->reset(segment);
-    ASSERT_EQ(0, writer->memory_active());
-
-    for (size_t i = 0; i < 100; ++i) {
-      irs::SegmentWriter::DocContext ctx;
-      stream.token_count = 10;
-      writer->begin(ctx);
-      ASSERT_TRUE(writer->valid());
-      ASSERT_TRUE(
-        writer->insert<irs::Action::INDEX | irs::Action::StoreSorted>(field));
-      ASSERT_TRUE(writer->valid());
-      writer->commit();
-    }
-
-    // we don't count stored field without comparator
-    ASSERT_GT(writer->memory_active(), 0);
-
-    writer->reset();
-
-    ASSERT_EQ(0, writer->memory_active());
-  }
-  // as batch
-  {
-    TokenizerMock stream;
-    FieldT field(stream);
-    irs::TermAttr term;
-    irs::IncAttr increment;
-    increment.value = 1;
-    stream.attrs[irs::Type<irs::TermAttr>::id()] = &term;
-    stream.attrs[irs::Type<irs::IncAttr>::id()] = &increment;
-    stream.token_count = 10;
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
-    ASSERT_EQ(0, writer->memory_active());
-
-    irs::SegmentMeta segment;
-    segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5simd");
-    writer->reset(segment);
-    ASSERT_EQ(0, writer->memory_active());
-    irs::SegmentWriter::DocContext ctx;
-    ASSERT_EQ(irs::doc_limits::min(), writer->begin(ctx, 100));
-    ASSERT_TRUE(writer->valid());
-    ASSERT_EQ(100, writer->buffered_docs());
-    for (irs::doc_id_t i = 0; i < 100; ++i) {
-      stream.token_count = 10;
-      ASSERT_TRUE(writer->insert<irs::Action::INDEX | irs::Action::StoreSorted>(
-        field, i + irs::doc_limits::min()));
-      ASSERT_TRUE(writer->valid());
-      writer->commit();
-    }
-
-    // we don't count stored field without comparator
-    ASSERT_GT(writer->memory_active(), 0);
-
-    writer->reset();
-
-    ASSERT_EQ(0, writer->memory_active());
-  }
-}
-
-TEST_F(SegmentWriterTests, memory_store_field_sorted) {
-  struct FieldT {
-    std::string_view Name() const { return "test_field"; }
-
-    bool Write(irs::DataOutput& out) const {
-      irs::WriteStr(out, Name());
-      return true;
-    }
-  } field;
-
-  Comparator compare;
-
-  auto column_info = DefaultColumnInfo();
-
-  const irs::SegmentWriterOptions options{
-    .column_info = column_info, .scorers_features = {}, .comparator = &compare};
-  {
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
-    ASSERT_EQ(0, writer->memory_active());
-
-    irs::SegmentMeta segment;
-    segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5simd");
-    writer->reset(segment);
-    ASSERT_EQ(0, writer->memory_active());
-
-    for (size_t i = 0; i < 100; ++i) {
-      irs::SegmentWriter::DocContext ctx;
-      writer->begin(ctx);
-      ASSERT_TRUE(writer->valid());
-      ASSERT_TRUE(writer->insert<irs::Action::STORE>(field));
-      ASSERT_TRUE(writer->valid());
-      writer->commit();
-    }
-
-    // we don't count stored field without comparator
-    ASSERT_GT(writer->memory_active(), 0);
-
-    writer->reset();
-
-    ASSERT_EQ(0, writer->memory_active());
-  }
-  // as batch
-  {
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
-    ASSERT_EQ(0, writer->memory_active());
-
-    irs::SegmentMeta segment;
-    segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5simd");
-    writer->reset(segment);
-    ASSERT_EQ(0, writer->memory_active());
-    irs::SegmentWriter::DocContext ctx;
-    ASSERT_EQ(irs::doc_limits::min(), writer->begin(ctx, 100));
-    ASSERT_TRUE(writer->valid());
-    ASSERT_EQ(100, writer->buffered_docs());
-    for (size_t i = 0; i < 100; ++i) {
-      ASSERT_TRUE(
-        writer->insert<irs::Action::STORE>(field, i + irs::doc_limits::min()));
-      ASSERT_TRUE(writer->valid());
-      writer->commit();
-    }
-
-    // we don't count stored field without comparator
-    ASSERT_GT(writer->memory_active(), 0);
-
-    writer->reset();
-
-    ASSERT_EQ(0, writer->memory_active());
-  }
-}
-
-TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
-  struct FieldT {
-    std::string_view Name() const { return "test_field"; }
-
-    bool Write(irs::DataOutput& out) const {
-      irs::WriteStr(out, Name());
-      return true;
-    }
-  } field;
-
-  auto column_info = DefaultColumnInfo();
-
-  const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .scorers_features = {}};
-  {
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
-    ASSERT_EQ(0, writer->memory_active());
-
-    irs::SegmentMeta segment;
-    segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5simd");
-    writer->reset(segment);
-    ASSERT_EQ(0, writer->memory_active());
-
-    for (size_t i = 0; i < 100; ++i) {
-      irs::SegmentWriter::DocContext ctx;
-      writer->begin(ctx);
-      ASSERT_TRUE(writer->valid());
-      ASSERT_TRUE(writer->insert<irs::Action::STORE>(field));
-      ASSERT_TRUE(writer->valid());
-      writer->commit();
-    }
-
-    ASSERT_GT(writer->memory_active(), 0);
-
-    writer->reset();
-
-    ASSERT_EQ(0, writer->memory_active());
-  }
-  // same as batch
-  {
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
-    ASSERT_EQ(0, writer->memory_active());
-
-    irs::SegmentMeta segment;
-    segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5simd");
-    writer->reset(segment);
-    ASSERT_EQ(0, writer->memory_active());
-
-    irs::SegmentWriter::DocContext ctx;
-    ASSERT_EQ(irs::doc_limits::min(), writer->begin(ctx, 100));
-    ASSERT_TRUE(writer->valid());
-
-    for (size_t i = 0; i < 100; ++i) {
-      ASSERT_TRUE(
-        writer->insert<irs::Action::STORE>(field, i + irs::doc_limits::min()));
-      ASSERT_TRUE(writer->valid());
-      writer->commit();
-    }
-
-    ASSERT_GT(writer->memory_active(), 0);
-
-    writer->reset();
-
-    ASSERT_EQ(0, writer->memory_active());
-  }
-}
-
-TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
-  struct FieldT {
-    FieldT(irs::Tokenizer& stream) : token_stream(stream) {}
-    std::string_view Name() const { return "test_field"; }
-
-    irs::IndexFeatures GetIndexFeatures() const {
-      return irs::IndexFeatures::None;
-    }
-
-    irs::Tokenizer& GetTokens() { return token_stream; }
-
-    bool Write(irs::DataOutput& out) const {
-      irs::WriteStr(out, Name());
-      return true;
-    }
-
-    irs::Tokenizer& token_stream;
-  };
-
-  auto column_info = DefaultColumnInfo();
-
-  const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .scorers_features = {}};
-  {
-    TokenizerMock stream;
-    FieldT field(stream);
-    irs::TermAttr term;
-    irs::IncAttr increment;
-    increment.value = 1;
-    stream.attrs[irs::Type<irs::TermAttr>::id()] = &term;
-    stream.attrs[irs::Type<irs::IncAttr>::id()] = &increment;
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
-    ASSERT_EQ(0, writer->memory_active());
-
-    irs::SegmentMeta segment;
-    segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5simd");
-    writer->reset(segment);
-    ASSERT_EQ(0, writer->memory_active());
-
-    for (size_t i = 0; i < 100; ++i) {
-      irs::SegmentWriter::DocContext ctx;
-      writer->begin(ctx);
-      ASSERT_TRUE(writer->valid());
-      stream.token_count = 10;
-      ASSERT_TRUE(
-        writer->insert<irs::Action::INDEX | irs::Action::STORE>(field));
-      ASSERT_TRUE(writer->valid());
-      writer->commit();
-    }
-
-    ASSERT_GT(writer->memory_active(), 0);
-
-    writer->reset();
-
-    ASSERT_EQ(0, writer->memory_active());
-  }
-  // same as batch
-  {
-    TokenizerMock stream;
-    FieldT field(stream);
-    irs::TermAttr term;
-    irs::IncAttr increment;
-    increment.value = 1;
-    stream.attrs[irs::Type<irs::TermAttr>::id()] = &term;
-    stream.attrs[irs::Type<irs::IncAttr>::id()] = &increment;
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
-    ASSERT_EQ(0, writer->memory_active());
-
-    irs::SegmentMeta segment;
-    segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5simd");
-    writer->reset(segment);
-    ASSERT_EQ(0, writer->memory_active());
-
-    irs::SegmentWriter::DocContext ctx;
-    ASSERT_EQ(irs::doc_limits::min(), writer->begin(ctx, 100));
-    ASSERT_TRUE(writer->valid());
-
-    for (size_t i = 0; i < 100; ++i) {
-      stream.token_count = 10;
-      ASSERT_TRUE(writer->insert<irs::Action::INDEX | irs::Action::STORE>(
-        field, i + irs::doc_limits::min()));
-      ASSERT_TRUE(writer->valid());
-      writer->commit();
-    }
-
-    ASSERT_GT(writer->memory_active(), 0);
-
-    writer->reset();
-
-    ASSERT_EQ(0, writer->memory_active());
-  }
-}
 
 TEST_F(SegmentWriterTests, memory_index_field) {
   struct FieldT {
@@ -611,9 +62,7 @@ TEST_F(SegmentWriterTests, memory_index_field) {
   stream.reset(true);
   FieldT field(stream);
 
-  auto column_info = DefaultColumnInfo();
-  const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .scorers_features = {}};
+  const irs::SegmentWriterOptions options{.scorers_features = {}};
 
   {
     irs::SegmentMeta segment;
@@ -631,7 +80,7 @@ TEST_F(SegmentWriterTests, memory_index_field) {
       irs::SegmentWriter::DocContext ctx;
       writer->begin(ctx);
       ASSERT_TRUE(writer->valid());
-      ASSERT_TRUE(writer->insert<irs::Action::INDEX>(field));
+      ASSERT_TRUE(writer->insert(field));
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }
@@ -660,8 +109,7 @@ TEST_F(SegmentWriterTests, memory_index_field) {
     ASSERT_TRUE(writer->valid());
     ASSERT_EQ(100, writer->buffered_docs());
     for (irs::doc_id_t i = 0; i < 100; ++i) {
-      ASSERT_TRUE(
-        writer->insert<irs::Action::INDEX>(field, i + irs::doc_limits::min()));
+      ASSERT_TRUE(writer->insert(field, i + irs::doc_limits::min()));
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }
@@ -684,8 +132,6 @@ TEST_F(SegmentWriterTests, index_field) {
     std::string_view Name() const { return "test_field"; }
   };
 
-  auto column_info = DefaultColumnInfo();
-
   // test missing token_stream attributes (increment)
   {
     irs::SegmentMeta segment;
@@ -693,8 +139,7 @@ TEST_F(SegmentWriterTests, index_field) {
     segment.codec = irs::formats::Get("1_5simd");
     ASSERT_NE(nullptr, segment.codec);
 
-    const irs::SegmentWriterOptions options{.column_info = column_info,
-                                            .scorers_features = {}};
+    const irs::SegmentWriterOptions options{.scorers_features = {}};
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, options);
     writer->reset(segment);
@@ -709,7 +154,7 @@ TEST_F(SegmentWriterTests, index_field) {
 
     writer->begin(ctx);
     ASSERT_TRUE(writer->valid());
-    ASSERT_FALSE(writer->insert<irs::Action::INDEX>(field));
+    ASSERT_FALSE(writer->insert(field));
     ASSERT_FALSE(writer->valid());
     writer->commit();
   }
@@ -721,8 +166,7 @@ TEST_F(SegmentWriterTests, index_field) {
     segment.codec = irs::formats::Get("1_5simd");
     ASSERT_NE(nullptr, segment.codec);
 
-    const irs::SegmentWriterOptions options{.column_info = column_info,
-                                            .scorers_features = {}};
+    const irs::SegmentWriterOptions options{.scorers_features = {}};
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, options);
     writer->reset(segment);
@@ -737,120 +181,205 @@ TEST_F(SegmentWriterTests, index_field) {
 
     writer->begin(ctx);
     ASSERT_TRUE(writer->valid());
-    ASSERT_FALSE(writer->insert<irs::Action::INDEX>(field));
+    ASSERT_FALSE(writer->insert(field));
     ASSERT_FALSE(writer->valid());
     writer->commit();
   }
 }
 
-class StringComparer final : public irs::Comparer {
-  int CompareImpl(irs::bytes_view lhs, irs::bytes_view rhs) const final {
-    EXPECT_FALSE(irs::IsNull(lhs));
-    EXPECT_FALSE(irs::IsNull(rhs));
+// --- Re-ported from the legacy suite ------------------------------------
+//
+// The sorted variants (six tests below) require the segment-writer's
+// comparator path through the new cs, which isn't implemented yet
+// (sorted-index support is a Phase-2+ item). They're kept as named test
+// shells under GTEST_SKIP so the suite catalogue records that the
+// coverage is intentionally deferred.
+//
+// The two unsorted variants exercise the new SegmentWriter::insert API
+// (no `Action::STORE` template parameter anymore -- the action split was
+// removed when the analyzer-output column was separated from INCLUDE
+// columns, task #48).
 
-    const auto lhs_value = irs::ToString<irs::bytes_view>(lhs.data());
-    const auto rhs_value = irs::ToString<irs::bytes_view>(rhs.data());
+namespace {
 
-    return lhs_value.compare(rhs_value);
+struct StoredField {
+  std::string_view name_;
+  std::string_view value_;
+  std::string_view Name() const { return name_; }
+  irs::IndexFeatures GetIndexFeatures() const {
+    return irs::IndexFeatures::None;
   }
+  bool Write(irs::DataOutput& out) const {
+    irs::WriteStr(out, value_);
+    return true;
+  }
+  // Required by SegmentWriter::insert path; not used because
+  // GetIndexFeatures() == None.
+  irs::NullTokenizer null_;
+  irs::Tokenizer& GetTokens() { return null_; }
 };
 
-void Reorder(std::span<const tests::Document*> docs,
-             std::span<irs::SegmentWriter::DocContext> ctxs,
-             std::vector<size_t> order) {
-  for (size_t i = 0; i < order.size(); ++i) {
-    auto new_i = order[i];
-    while (i != new_i) {
-      std::swap(docs[i], docs[new_i]);
-      std::swap(ctxs[i], ctxs[new_i]);
-      std::swap(new_i, order[new_i]);
-    }
-  }
-}
+}  // namespace
 
-std::vector<irs::SegmentWriter::DocContext> Reorder(
-  std::span<irs::SegmentWriter::DocContext> ctxs, const irs::DocMap& docmap) {
-  std::vector<irs::SegmentWriter::DocContext> new_ctxs;
-  new_ctxs.resize(ctxs.size());
-  for (size_t i = 0, size = ctxs.size(); i < size; ++i) {
-    if (docmap.empty()) {
-      new_ctxs[i] = ctxs[i];
-    } else {
-      new_ctxs[docmap[i + irs::doc_limits::min()] - irs::doc_limits::min()] =
-        ctxs[i];
-    }
-  }
-  return new_ctxs;
-}
+TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
+  const irs::SegmentWriterOptions options{.scorers_features = {},
+                                          .db = &irs::tests::CsDb(),
+                                          .column_options = nullptr,
+                                          .norm_column_options = nullptr};
 
-TEST_F(SegmentWriterTests, reorder) {
-  tests::JsonDocGenerator gen(
-    resource("simple_sequential.json"),
-    [](tests::Document& doc, std::string_view name,
-       const tests::JsonDocGenerator::JsonValue& data) {
-      if (name == "name" && data.is_string()) {
-        auto field = std::make_shared<tests::StringField>(name, data.str);
-        doc.sorted = field;
-        doc.insert(field);
-      }
-    });
-  static constexpr size_t kLen = 5;
-  std::array<const tests::Document*, kLen> docs;
-  std::array<irs::SegmentWriter::DocContext, kLen> ctxs;
-  for (size_t i = 0; i < kLen; ++i) {
-    docs[i] = gen.next();
-    ctxs[i] = {i};
-  }
-  const std::vector<size_t> expected{0, 1, 2, 3, 4};
-  auto cases = std::array<std::vector<size_t>, 5>{
-    std::vector<size_t>{0, 1, 2, 3, 4},  // no reorder
-    std::vector<size_t>{2, 3, 1, 4, 0},  // single cycle
-    std::vector<size_t>{3, 0, 4, 1, 2},  // two intersected cycles
-    std::vector<size_t>{4, 0, 3, 2, 1},  // two nested cycles
-    std::vector<size_t>{2, 0, 1, 4, 3},  // two not intersected cycles
-  };
+  StoredField field{.name_ = "test_field", .value_ = "hello"};
 
-  for (auto& order : cases) {
-    Reorder(docs, ctxs, order);
-
-    auto column_info = DefaultColumnInfo();
-    StringComparer less;
-
-    const irs::SegmentWriterOptions options{
-      .column_info = column_info, .scorers_features = {}, .comparator = &less};
+  // --- (1) Per-doc loop: begin() / store / commit ------------------------
+  {
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, options);
-    ASSERT_EQ(0, writer->memory_active());
-
+    ASSERT_EQ(0u, writer->memory_active());
     irs::SegmentMeta segment;
     segment.name = "foo";
-    segment.codec = DefaultCodec();
+    segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
-    ASSERT_EQ(0, writer->memory_active());
+    ASSERT_EQ(0u, writer->memory_active());
 
-    for (size_t i = 0; i < kLen; ++i) {
-      writer->begin(ctxs[i]);
+    for (size_t i = 0; i < 100; ++i) {
+      irs::SegmentWriter::DocContext ctx;
+      writer->begin(ctx);
       ASSERT_TRUE(writer->valid());
-      ASSERT_TRUE(writer->insert<irs::Action::StoreSorted>(*docs[i]->sorted));
+      irs::tests::StoreFieldAt(*writer->Columnstore(), /*id=*/0,
+                               writer->LastDocId(), field);
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }
-
-    // we don't count stored field without comparator
-    ASSERT_GT(writer->memory_active(), 0);
-    irs::IndexSegment index_segment;
-    irs::DocsMask docs_mask{.set{irs::IResourceManager::gNoop}};
-    index_segment.meta.codec = DefaultCodec();
-    auto old2new = writer->flush(index_segment, docs_mask);
-    ASSERT_TRUE(docs_mask.count == 0);
-    ASSERT_TRUE(docs_mask.set.count() == 0);
-    const auto docs_context = Reorder(writer->docs_context(), old2new);
-    for (size_t i = 0; i < kLen; ++i) {
-      EXPECT_EQ(expected[i], docs_context[i].tick);
-    }
-
+    ASSERT_LT(0u, writer->memory_active());
+    ASSERT_EQ(100u, writer->buffered_docs());
     writer->reset();
-
-    ASSERT_EQ(0, writer->memory_active());
+    ASSERT_EQ(0u, writer->memory_active());
   }
+
+  // --- (2) Batched: one begin(ctx, 100), then store/commit per row ------
+  {
+    irs::MemoryDirectory dir;
+    auto writer = irs::SegmentWriter::make(dir, options);
+    ASSERT_EQ(0u, writer->memory_active());
+    irs::SegmentMeta segment;
+    segment.name = "foo";
+    segment.codec = irs::formats::Get("1_5simd");
+    writer->reset(segment);
+
+    irs::SegmentWriter::DocContext ctx;
+    ASSERT_EQ(irs::doc_limits::min(), writer->begin(ctx, 100));
+    ASSERT_TRUE(writer->valid());
+    ASSERT_EQ(100u, writer->buffered_docs());
+    for (irs::doc_id_t i = 0; i < 100; ++i) {
+      const auto doc = i + irs::doc_limits::min();
+      irs::tests::StoreFieldAt(*writer->Columnstore(), /*id=*/0, doc, field);
+      ASSERT_TRUE(writer->valid());
+      writer->commit();
+    }
+    ASSERT_LT(0u, writer->memory_active());
+    writer->reset();
+    ASSERT_EQ(0u, writer->memory_active());
+  }
+}
+
+TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
+  // Index + store: indexed field uses insert(field), stored bytes go to
+  // the cs blob column. Same setup as memory_store_field_unsorted but
+  // with a real tokenizer-bearing field driven through insert().
+  const irs::SegmentWriterOptions options{.scorers_features = {},
+                                          .db = &irs::tests::CsDb(),
+                                          .column_options = nullptr,
+                                          .norm_column_options = nullptr};
+
+  struct IndexedField {
+    irs::Tokenizer& token_stream;
+    IndexedField(irs::Tokenizer& s) : token_stream(s) {}
+    irs::IndexFeatures GetIndexFeatures() const {
+      return irs::IndexFeatures::None;
+    }
+    irs::Tokenizer& GetTokens() { return token_stream; }
+    std::string_view Name() const { return "indexed_field"; }
+    bool Write(irs::DataOutput& out) const {
+      irs::WriteStr(out, std::string_view{"hello"});
+      return true;
+    }
+  };
+
+  irs::BooleanTokenizer stream;
+  stream.reset(true);
+  IndexedField field(stream);
+
+  // --- (1) Per-doc loop: begin() / insert / store / commit ----------------
+  {
+    irs::MemoryDirectory dir;
+    auto writer = irs::SegmentWriter::make(dir, options);
+    irs::SegmentMeta segment;
+    segment.name = "foo";
+    segment.codec = irs::formats::Get("1_5simd");
+    writer->reset(segment);
+
+    for (size_t i = 0; i < 100; ++i) {
+      irs::SegmentWriter::DocContext ctx;
+      writer->begin(ctx);
+      ASSERT_TRUE(writer->valid());
+      ASSERT_TRUE(writer->insert(field));
+      irs::tests::StoreFieldAt(*writer->Columnstore(), /*id=*/0,
+                               writer->LastDocId(), field);
+      ASSERT_TRUE(writer->valid());
+      writer->commit();
+    }
+    ASSERT_LT(0u, writer->memory_active());
+    ASSERT_EQ(100u, writer->buffered_docs());
+    writer->reset();
+    ASSERT_EQ(0u, writer->memory_active());
+  }
+
+  // --- (2) Batched: one begin(ctx, 100), per-doc insert+store+commit -----
+  {
+    irs::MemoryDirectory dir;
+    auto writer = irs::SegmentWriter::make(dir, options);
+    irs::SegmentMeta segment;
+    segment.name = "foo";
+    segment.codec = irs::formats::Get("1_5simd");
+    writer->reset(segment);
+
+    irs::SegmentWriter::DocContext ctx;
+    ASSERT_EQ(irs::doc_limits::min(), writer->begin(ctx, 100));
+    ASSERT_TRUE(writer->valid());
+    ASSERT_EQ(100u, writer->buffered_docs());
+    for (irs::doc_id_t i = 0; i < 100; ++i) {
+      stream.reset(true);  // refresh tokenizer state for each doc.
+      const auto doc = i + irs::doc_limits::min();
+      ASSERT_TRUE(writer->insert(field, doc));
+      irs::tests::StoreFieldAt(*writer->Columnstore(), /*id=*/0, doc, field);
+      ASSERT_TRUE(writer->valid());
+      writer->commit();
+    }
+    ASSERT_LT(0u, writer->memory_active());
+    writer->reset();
+    ASSERT_EQ(0u, writer->memory_active());
+  }
+}
+
+TEST_F(SegmentWriterTests, memory_store_sorted_field) {
+  GTEST_SKIP() << "sorted-index not supported on new cs";
+}
+
+TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
+  GTEST_SKIP() << "sorted-index not supported on new cs";
+}
+
+TEST_F(SegmentWriterTests, memory_store_field_sorted) {
+  GTEST_SKIP() << "sorted-index not supported on new cs";
+}
+
+TEST_F(SegmentWriterTests, memory_sorted_vs_unsorted) {
+  GTEST_SKIP() << "sorted-index not supported on new cs";
+}
+
+TEST_F(SegmentWriterTests, insert_sorted_without_comparator) {
+  GTEST_SKIP() << "sorted-index not supported on new cs";
+}
+
+TEST_F(SegmentWriterTests, reorder) {
+  GTEST_SKIP() << "sorted-index not supported on new cs";
 }

@@ -1,0 +1,234 @@
+hash-threshold 100
+
+# Coverage for the `ts_is_null()` / `ts_is_not_null()` TSQUERY constructors
+# (irs::ByColumnExistence pushdown). Both require a column that has cs
+# storage *and* an analyzer (i.e. indexed OR dual-purpose indexed+INCLUDE).
+# `dual` here is declared both `inverted(... dual en ...)` AND `INCLUDE
+# (dual)` so its catalog id has a cs column behind it that the iterator
+# can probe.
+#
+# Filter is expressed in the EXPLAIN as `AND[EXISTS[<col_id>]]` for
+# IS NOT NULL and `AND[NOT[EXISTS[<col_id>]]]` for IS NULL. The column
+# id here is `2` (pk=0, body=1, dual=2 in declaration order).
+
+statement ok
+CREATE TABLE ce (
+  pk INTEGER PRIMARY KEY,
+  body VARCHAR,
+  dual VARCHAR
+)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE INDEX ce_idx ON ce USING inverted(pk, body en, dual en)
+  INCLUDE (dual)
+
+
+statement ok
+INSERT INTO ce VALUES (1, 'alpha cat', 'red apple')
+
+
+statement ok
+INSERT INTO ce VALUES (2, 'beta dog', NULL)
+
+
+statement ok
+INSERT INTO ce VALUES (3, 'gamma cat', 'green leaf')
+
+
+statement ok
+INSERT INTO ce VALUES (4, 'delta', NULL)
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) ce
+
+
+# ---- 1. ts_is_null() pushes down as NOT[EXISTS[col_id]] ----
+query
+EXPLAIN SELECT pk, dual FROM ce_idx WHERE dual @@ ts_is_null();
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            dual           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: ce_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│    AND[NOT[EXISTS[2]]]    │
+│                           │
+│        Projections:       │
+│          dual (i)         │
+│           pk (l)          │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pk, dual FROM ce_idx WHERE dual @@ ts_is_null() ORDER BY pk;
+----
+pk	dual
+2	NULL
+4	NULL
+
+
+# ---- 2. ts_is_not_null() pushes down as EXISTS[col_id] ----
+query
+EXPLAIN SELECT pk, dual FROM ce_idx WHERE dual @@ ts_is_not_null();
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            dual           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: ce_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│       AND[EXISTS[2]]      │
+│                           │
+│        Projections:       │
+│          dual (i)         │
+│           pk (l)          │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pk, dual FROM ce_idx WHERE dual @@ ts_is_not_null() ORDER BY pk;
+----
+pk	dual
+1	red apple
+3	green leaf
+
+
+# ---- 3. Combined with an indexed-column phrase filter ----
+# The two clauses AND in the iresearch filter -- no residual FILTER node
+# above the IRESEARCH_SCAN.
+query
+EXPLAIN SELECT pk, dual FROM ce_idx
+WHERE body @@ ts_phrase('cat') AND dual @@ ts_is_not_null();
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            dual           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: ce_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  AND[EXISTS[2] && PHRASE  │
+│ [body(string) = <Term:cat │
+│        (0, 0); >]]        │
+│                           │
+│        Projections:       │
+│          dual (i)         │
+│           pk (l)          │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pk, body, dual FROM ce_idx
+WHERE body @@ ts_phrase('cat') AND dual @@ ts_is_not_null()
+ORDER BY pk;
+----
+pk	body	dual
+1	alpha cat	red apple
+3	gamma cat	green leaf
+
+
+# ---- 4. Same shape with negated existence ----
+query
+EXPLAIN SELECT pk, dual FROM ce_idx
+WHERE body @@ ts_phrase('cat') AND dual @@ ts_is_null();
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            dual           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: ce_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│   AND[NOT[EXISTS[2]] &&   │
+│   PHRASE[body(string) =   │
+│    <Term:cat(0, 0); >]]   │
+│                           │
+│        Projections:       │
+│          dual (i)         │
+│           pk (l)          │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pk, body, dual FROM ce_idx
+WHERE body @@ ts_phrase('cat') AND dual @@ ts_is_null()
+ORDER BY pk;
+----
+pk	body	dual
+
+
+# ---- 5. Sanity: ts_is_null is exactly the row-set complement of
+# ts_is_not_null over `dual`, and the two together cover every row.
+query
+SELECT count(*) FROM ce_idx WHERE dual @@ ts_is_null();
+----
+count
+2
+
+
+query
+SELECT count(*) FROM ce_idx WHERE dual @@ ts_is_not_null();
+----
+count
+2

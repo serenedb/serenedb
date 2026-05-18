@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/storage/storage_info.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
@@ -53,7 +54,7 @@ namespace sdb::pg::tokenizer_options {
 
 using namespace std::string_view_literals;
 
-void CheckFileExists(std::string_view name);
+void CheckFileExists(std::string_view option, std::string_view path);
 
 // Features
 
@@ -73,6 +74,14 @@ inline constexpr OptionInfo kPosFeature{"position", false,
 inline constexpr OptionInfo kOffsetFeature{"offset", false,
                                            "Enables offset feature in index"};
 
+inline constexpr OptionInfo kNormRowGroupSize{
+  "norm_row_group_size",
+  static_cast<int>(DEFAULT_ROW_GROUP_SIZE),
+  "Norm column row-group size for indexes that bind this dictionary "
+  "with norm = true.",
+  CheckPositiveInt,
+};
+
 // Common
 
 inline constexpr OptionInfo kLocale{"locale", ""sv,
@@ -80,7 +89,7 @@ inline constexpr OptionInfo kLocale{"locale", ""sv,
 
 inline constexpr OptionInfo kAccent{"accent", true, "Preserve accent marks"};
 
-void CheckCase(std::string_view value);
+void CheckCase(std::string_view option, std::string_view value);
 
 inline constexpr OptionInfo kCase{
   "case", "none"sv, "Text case conversion: none, lower, upper", CheckCase};
@@ -121,7 +130,7 @@ inline constexpr OptionInfo kEndMarker{
 
 // Classification
 
-void CheckThreshold(double);
+void CheckThreshold(std::string_view option, double value);
 
 inline constexpr OptionInfo kThreshold{
   "threshold", 0.0, "Minimum confidence score [0.0..1.0]", CheckThreshold};
@@ -133,13 +142,12 @@ inline constexpr OptionInfo kHex{"hex", false,
 
 // MinHash
 
-void CheckNumHashes(int);
 inline constexpr OptionInfo kNumHashes{
-  "numhashes", 1, "Number of hash functions to use", CheckNumHashes};
+  "numhashes", 1, "Number of hash functions to use", CheckPositiveInt};
 
 // Wildcard
 
-void CheckNgramSize(int);
+void CheckNgramSize(std::string_view option, int value);
 inline constexpr OptionInfo kNgramSize{
   "ngramsize", 3, "N-gram size for wildcard prefix indexing (minimum 2)",
   CheckNgramSize};
@@ -172,7 +180,7 @@ inline constexpr OptionInfo kFrom{"from",
 
 // Template
 
-void CheckTemplate(std::string_view);
+void CheckTemplate(std::string_view option, std::string_view value);
 constexpr OptionInfo kTemplate{"template",
                                OptionInfo::RequiredTag<std::string_view>{},
                                "Tokenizer template type", CheckTemplate};

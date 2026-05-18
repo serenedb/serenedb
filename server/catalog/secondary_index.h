@@ -28,9 +28,9 @@ namespace sdb::catalog {
 
 class SecondaryIndex : public Index {
  public:
-  SecondaryIndex(ObjectId schema_id, ObjectId id, ObjectId relation_id,
-                 std::string name, std::vector<Column::Id> column_ids,
-                 bool unique);
+  SecondaryIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
+                 ObjectId relation_id, std::string name,
+                 std::vector<Column::Id> column_ids, bool unique);
 
   static std::shared_ptr<SecondaryIndex> ReadInternal(vpack::Slice slice,
                                                       ReadContext ctx);
@@ -39,12 +39,11 @@ class SecondaryIndex : public Index {
   bool IsUnique() const noexcept { return _unique; }
 
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool is_new, ObjectId id, IndexShardOptions& options) const final {
-    auto& opts = basics::downCast<SecondaryIndexShardOptions>(options);
+    bool is_new, ObjectId id) const final {
     if (is_new) {
-      return std::make_shared<SecondaryIndexShard>(GetId(), std::move(opts));
+      return std::make_shared<SecondaryIndexShard>(GetId());
     }
-    return std::make_shared<SecondaryIndexShard>(id, GetId(), std::move(opts));
+    return std::make_shared<SecondaryIndexShard>(id, GetId());
   }
 
  private:

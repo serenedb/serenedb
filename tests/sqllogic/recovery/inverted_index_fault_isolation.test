@@ -1,0 +1,216 @@
+hash-threshold 100
+
+# Fault-armed assertions that the search scans read *exactly* what their
+# projection needs:
+#   - cs-only INCLUDE projections must not fetch PK from cs and must not
+#     call IndexSource::Materialize (which would hit RocksDB).
+#   - external-only projections must not touch the cs materializer.
+#
+# Each fault site `SDB_THROW(ERROR_DEBUG)` when armed -- queries that don't
+# exercise that path complete normally; queries that do trip surface
+# "intentional debug error" so we can pin the routing rule in CI.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE TABLE doc (
+  pk INTEGER PRIMARY KEY,
+  body VARCHAR,
+  label VARCHAR,
+  tag INTEGER,
+  ext_only VARCHAR
+)
+
+
+statement ok
+CREATE INDEX doc_idx ON doc USING inverted(pk, body en) INCLUDE (label, tag)
+
+
+statement ok
+INSERT INTO doc VALUES (1, 'alpha one', 'a', 100, 'x-one')
+
+
+statement ok
+INSERT INTO doc VALUES (2, 'alpha two', 'b', 200, 'x-two')
+
+
+statement ok
+INSERT INTO doc VALUES (3, 'beta three', 'c', 300, 'x-three')
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) doc
+
+
+# Baseline: no fault armed, every shape works.
+query
+SELECT label, tag FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY label;
+----
+label	tag
+a	100
+b	200
+
+
+# --- cs-only INCLUDE projection -- streaming path ---------------------
+# label + tag are both INCLUDE'd. The streaming path must:
+#   - skip per-batch SegmentPkSequentialFetcher::Fetch
+#     (so SearchPkFetchFault is dormant);
+#   - skip IndexSource::Materialize
+#     (so SearchRocksDBLookupFault is dormant);
+#   - go through ColumnstoreMaterializer::SelectByDocIds
+#     (so SearchIncludeFetchFault *would* trip if armed -- not armed here).
+
+statement ok
+SET sdb_faults = 'SearchPkFetchFault'
+
+
+query
+SELECT label, tag FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY label;
+----
+label	tag
+a	100
+b	200
+
+
+statement ok
+SET sdb_faults = '-SearchPkFetchFault'
+
+
+statement ok
+SET sdb_faults = 'SearchRocksDBLookupFault'
+
+
+query
+SELECT label, tag FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY label;
+----
+label	tag
+a	100
+b	200
+
+
+statement ok
+SET sdb_faults = '-SearchRocksDBLookupFault'
+
+
+# --- cs-only INCLUDE projection -- top-K path -------------------------
+# ORDER BY ts_rank ... LIMIT k drives the score_top_k path. With only
+# INCLUDE'd columns projected, the precomputed PK collection block
+# (LookupSegmentsValues) must be skipped.
+
+statement ok
+SET sdb_faults = 'SearchPkFetchFault'
+
+
+query
+SELECT label, tag FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY BM25(doc_idx.tableoid) DESC LIMIT 1;
+----
+label	tag
+a	100
+
+
+statement ok
+SET sdb_faults = '-SearchPkFetchFault'
+
+
+statement ok
+SET sdb_faults = 'SearchRocksDBLookupFault'
+
+
+query
+SELECT label, tag FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY BM25(doc_idx.tableoid) DESC LIMIT 1;
+----
+label	tag
+a	100
+
+
+statement ok
+SET sdb_faults = '-SearchRocksDBLookupFault'
+
+
+# --- external-only projection -- streaming path -----------------------
+# pk + ext_only are not INCLUDE'd, so they must come from RocksDB via
+# IndexSource. The cs materializer must not be touched.
+
+statement ok
+SET sdb_faults = 'SearchIncludeFetchFault'
+
+
+query
+SELECT pk, ext_only FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY pk;
+----
+pk	ext_only
+1	x-one
+2	x-two
+
+
+statement ok
+SET sdb_faults = '-SearchIncludeFetchFault'
+
+
+# --- sanity: arming the right fault on a wrong-shape query trips it ---
+# Streaming + external column -> must fetch PK and call Materialize.
+
+statement ok
+SET sdb_faults = 'SearchPkFetchFault'
+
+
+statement error intentional debug error
+SELECT pk, ext_only FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY pk;
+
+
+statement ok
+SET sdb_faults = '-SearchPkFetchFault'
+
+
+statement ok
+SET sdb_faults = 'SearchRocksDBLookupFault'
+
+
+statement error intentional debug error
+SELECT pk, ext_only FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY pk;
+
+
+statement ok
+SET sdb_faults = '-SearchRocksDBLookupFault'
+
+
+# Streaming + INCLUDE projection -> must touch the cs materializer.
+
+statement ok
+SET sdb_faults = 'SearchIncludeFetchFault'
+
+
+statement error intentional debug error
+SELECT label, tag FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY label;
+
+
+statement ok
+SET sdb_faults = '-SearchIncludeFetchFault'

@@ -37,15 +37,24 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
   DuckDBSearchSinkInsertWriter(
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     std::span<const catalog::Column::Id> columns,
-    JsonPathsProvider&& json_paths_provider = NoJsonPaths())
-    : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider),
-                               std::move(json_paths_provider), columns} {}
+    JsonPathsProvider&& json_paths_provider = NoJsonPaths(),
+    StoreValuesProvider&& store_values_provider = NoStoreValues(),
+    IsTextIndexedProvider&& is_text_indexed_provider = AllTextIndexed(),
+    HNSWInfoProvider&& hnsw_info_provider = NoHNSW())
+    : SearchSinkInsertBaseImpl{trx,
+                               std::move(tokenizer_provider),
+                               std::move(json_paths_provider),
+                               std::move(store_values_provider),
+                               std::move(is_text_indexed_provider),
+                               std::move(hnsw_info_provider),
+                               columns} {}
 
   void Init(duckdb::idx_t batch_size, const duckdb::DataChunk&) final {
     InitImpl(batch_size);
   }
 
-  bool SwitchColumn(const ColumnDescriptor& col) final;
+  bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
+                    duckdb::idx_t count) final;
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {
@@ -83,9 +92,17 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
   DuckDBSearchSinkUpdateWriter(
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     std::span<const catalog::Column::Id> columns,
-    JsonPathsProvider&& json_paths_provider = NoJsonPaths())
-    : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider),
-                               std::move(json_paths_provider), columns},
+    JsonPathsProvider&& json_paths_provider = NoJsonPaths(),
+    StoreValuesProvider&& store_values_provider = NoStoreValues(),
+    IsTextIndexedProvider&& is_text_indexed_provider = AllTextIndexed(),
+    HNSWInfoProvider&& hnsw_info_provider = NoHNSW())
+    : SearchSinkInsertBaseImpl{trx,
+                               std::move(tokenizer_provider),
+                               std::move(json_paths_provider),
+                               std::move(store_values_provider),
+                               std::move(is_text_indexed_provider),
+                               std::move(hnsw_info_provider),
+                               columns},
       SearchSinkDeleteBaseImpl{trx} {}
 
   void Init(duckdb::idx_t batch_size, const duckdb::DataChunk&) final {
@@ -93,7 +110,8 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
     SearchSinkDeleteBaseImpl::InitImpl(batch_size);
   }
 
-  bool SwitchColumn(const ColumnDescriptor& col) final;
+  bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
+                    duckdb::idx_t count) final;
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {

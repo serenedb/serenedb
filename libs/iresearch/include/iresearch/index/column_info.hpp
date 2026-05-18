@@ -22,24 +22,17 @@
 
 #pragma once
 
+#include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/storage/storage_info.hpp>
 #include <functional>
+#include <optional>
+#include <string_view>
 
 #include "iresearch/utils/compression.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
-
-enum class ValueType : uint8_t {
-  Bool = 0,
-  I8,
-  I16,
-  I32,
-  I64,
-  F32,
-  F64,
-  Str,
-  VectorF32,
-};
 
 enum class HNSWMetric : uint8_t {
   L2Sqr = 0,
@@ -64,26 +57,22 @@ struct HNSWInfo {
   int ef_construction = 40;
 };
 
-struct ColumnInfo {
-  // Column compression
-  TypeInfo compression{irs::Type<irs::compression::None>::get()};
-  // Column compression options
-  compression::Options options{};
-
-  // Encrypt column
-  bool encryption = false;
-
-  // Allow iterator accessing previous document
-  // (currently supported by columnstore2 only)
-  bool track_prev_doc = false;
-
-  // Column value type
-  ValueType value_type = ValueType::Str;
-
-  // for vector columns
-  std::optional<HNSWInfo> hnsw_info = std::nullopt;
+struct ColumnOptions {
+  bool skip_validity = false;
+  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+  duckdb::CompressionType compression =
+    duckdb::CompressionType::COMPRESSION_AUTO;
+  std::optional<HNSWInfo> hnsw_info;
 };
 
-using ColumnInfoProvider = std::function<ColumnInfo(const std::string_view)>;
+using ColumnOptionsProvider = std::function<ColumnOptions(field_id)>;
+
+struct NormColumnOptions {
+  field_id id = field_limits::invalid();
+  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+};
+
+using NormColumnOptionsProvider =
+  std::function<NormColumnOptions(std::string_view field_name)>;
 
 }  // namespace irs

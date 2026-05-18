@@ -1,0 +1,128 @@
+hash-threshold 100
+
+# End-to-end: INCLUDE'd columns alongside an HNSW ANN search.
+# Verifies the ANN result rows pull their INCLUDE'd column values
+# from the columnstore overlay rather than falling back to RocksDB,
+# and that ORDER BY emb <-> ... LIMIT k still returns the right
+# rows with the right values.
+
+statement ok
+CREATE TABLE vec_t (
+  pk INTEGER PRIMARY KEY,
+  emb FLOAT[3],
+  label VARCHAR,
+  tag INTEGER,
+  body VARCHAR
+)
+
+
+statement ok
+CREATE INDEX vec_t_idx ON vec_t USING inverted(pk, emb hnsw (metric = 'l2'))
+  INCLUDE (label, tag)
+
+
+statement ok
+INSERT INTO vec_t VALUES (1, [1, 0, 0]::FLOAT[3], 'alpha', 100, 'body-one')
+
+
+statement ok
+INSERT INTO vec_t VALUES (2, [0, 1, 0]::FLOAT[3], 'beta', 200, 'body-two')
+
+
+statement ok
+INSERT INTO vec_t VALUES (3, [0, 0, 1]::FLOAT[3], 'gamma', 300, 'body-three')
+
+
+statement ok
+INSERT INTO vec_t VALUES (4, [10, 10, 10]::FLOAT[3], 'delta', 400, 'body-four')
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) vec_t
+
+
+# All-INCLUDE projection: label + tag are both INCLUDE'd, so the
+# plan should NOT carry a "Lookup" line -- every projection is
+# served from the columnstore overlay and IndexSource has no
+# residual to fetch.
+query
+EXPLAIN SELECT label, tag FROM vec_t_idx
+  ORDER BY emb <-> [1, 0, 0]::FLOAT[3] LIMIT 1;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: vec_t_idx     │
+│          TopK: 1          │
+│          Dims: 3          │
+│                           │
+│        Projections:       │
+│           label           │
+│            tag            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT label, tag FROM vec_t_idx
+  ORDER BY emb <-> [1, 0, 0]::FLOAT[3] LIMIT 1;
+----
+label	tag
+alpha	100
+
+
+# Mixed projection: label is INCLUDE'd (i), pk + body fall back to
+# IndexSource (l). EXPLAIN should annotate per-column sources.
+query
+EXPLAIN SELECT pk, label, body FROM vec_t_idx
+  ORDER BY emb <-> [10, 10, 10]::FLOAT[3] LIMIT 1;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: vec_t_idx     │
+│      Lookup: rocksdb      │
+│          TopK: 1          │
+│          Dims: 3          │
+│                           │
+│        Projections:       │
+│           pk (l)          │
+│         label (i)         │
+│          body (l)         │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pk, label, body FROM vec_t_idx
+  ORDER BY emb <-> [10, 10, 10]::FLOAT[3] LIMIT 1;
+----
+pk	label	body
+4	delta	body-four
+
+
+# Top-3: closest to [0.5, 0.5, 0.5] are pk=1,2,3 in some order;
+# re-sort by pk for stable output.
+query
+SELECT pk, label, tag FROM (
+  SELECT pk, label, tag FROM vec_t_idx
+    ORDER BY emb <-> [0.5, 0.5, 0.5]::FLOAT[3] LIMIT 3
+) ORDER BY pk;
+----
+pk	label	tag
+1	alpha	100
+2	beta	200
+3	gamma	300
+
+
+# Project an INCLUDE'd column only (no PK in output).
+query
+SELECT label FROM vec_t_idx
+  ORDER BY emb <-> [10, 10, 10]::FLOAT[3] LIMIT 1;
+----
+label
+delta

@@ -30,11 +30,12 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
   return os << "(" << p.first << ", " << p.second << ")";
 }
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
-#include "iresearch/parser/parser.h"
+#include "iresearch/parser/parser.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/doc_collector.hpp"
@@ -45,6 +46,38 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "tests_shared.hpp"
 
 namespace {
+
+inline constexpr irs::field_id kTopicId = 1;
+inline constexpr irs::field_id kCategoryId = 2;
+inline constexpr irs::field_id kTagsId = 3;
+
+irs::field_id ColumnIdFor(std::string_view name) {
+  if (name == "topic") {
+    return kTopicId;
+  }
+  if (name == "category") {
+    return kCategoryId;
+  }
+  if (name == "tags") {
+    return kTagsId;
+  }
+  return irs::field_limits::invalid();
+}
+
+void StoreScoringFields(irs::IndexWriter::Document& doc,
+                        const tests::Document& src) {
+  auto* cs = doc.Columnstore();
+  if (cs == nullptr) {
+    return;
+  }
+  for (std::string_view name : {"topic", "category", "tags"}) {
+    auto* field =
+      dynamic_cast<const tests::StringField*>(src.indexed.get(name));
+    if (field != nullptr) {
+      irs::tests::StoreFieldAt(*cs, ColumnIdFor(name), doc.DocId(), *field);
+    }
+  }
+}
 
 // TODO(gnusi): try
 // * Move collect from score to doc_iterator -> remove virtual call
@@ -161,50 +194,19 @@ class BlockScoringTestCase : public IndexTestBase {
     if (!IsValidDoc(doc)) {
       return {};
     }
-    auto* column = segment.column(column_name);
-    if (!column) {
+    const auto column_id = ColumnIdFor(column_name);
+    if (irs::field_limits::valid(column_id) == false) {
       return {};
     }
-    auto values = column->iterator(irs::ColumnHint::Normal);
-    if (!values) {
+    const auto* column = segment.Column(column_id);
+    if (column == nullptr) {
       return {};
     }
-    auto* payload = irs::get<irs::PayAttr>(*values);
-    if (!payload) {
+    irs::tests::BlobPointReader values{segment, *column};
+    if (values.IsNull(doc.doc)) {
       return {};
     }
-    if (doc.doc != values->seek(doc.doc)) {
-      return {};
-    }
-    return irs::ToString<std::string>(payload->value.data());
-  }
-
-  // Helper to read double column value for a document (for "seq" field)
-  std::optional<double> ReadDoubleColumn(const irs::SubReader& segment,
-                                         std::string_view column_name,
-                                         irs::doc_id_t doc) {
-    auto* column = segment.column(column_name);
-    if (!column) {
-      return std::nullopt;
-    }
-    auto values = column->iterator(irs::ColumnHint::Normal);
-    if (!values) {
-      return std::nullopt;
-    }
-    auto* payload = irs::get<irs::PayAttr>(*values);
-    if (!payload) {
-      return std::nullopt;
-    }
-    if (doc != values->seek(doc)) {
-      return std::nullopt;
-    }
-    // Double values are stored as 8 bytes
-    if (payload->value.size() < sizeof(double)) {
-      return std::nullopt;
-    }
-    double val;
-    std::memcpy(&val, payload->value.data(), sizeof(double));
-    return val;
+    return irs::tests::ReadStoredStr<std::string>(values, doc.doc);
   }
 
   // Helper to verify a doc has expected value in any segment (for multi-seg)
@@ -242,14 +244,15 @@ class BlockScoringTestCase : public IndexTestBase {
     auto& index = const_cast<tests::index_t&>(this->index());
     for (auto& gen : gens) {
       index.emplace_back();
-      write_segment(writer, index.back(), gen);
+      write_segment(writer, index.back(), gen, &StoreScoringFields);
     }
     writer.Commit();
   }
 
   // Create single segment from multiple JSON files (420 total docs)
   void CreateLargeIndex() {
-    auto writer = open_writer(irs::kOmCreate);
+    auto writer =
+      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     std::vector<tests::JsonDocGenerator> gens;
     gens.emplace_back(resource("block_scoring_segment1.json"),
@@ -261,13 +264,15 @@ class BlockScoringTestCase : public IndexTestBase {
 
     WriteSegment(*writer, gens);
 
-    auto reader = irs::DirectoryReader(dir(), codec());
+    auto reader =
+      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size()) << "Expected 1 segment";
   }
 
   // Create multi-segment index (3 segments with ~140 docs each)
   void CreateMultiSegmentIndex() {
-    auto writer = open_writer(irs::kOmCreate);
+    auto writer =
+      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
     auto& index_ref = const_cast<tests::index_t&>(index());
 
     // Segment 1
@@ -275,7 +280,7 @@ class BlockScoringTestCase : public IndexTestBase {
       tests::JsonDocGenerator gen(resource("block_scoring_segment1.json"),
                                   &BlockScoringFieldFactory);
       index_ref.emplace_back();
-      write_segment(*writer, index_ref.back(), gen);
+      write_segment(*writer, index_ref.back(), gen, &StoreScoringFields);
       writer->Commit();
     }
 
@@ -284,7 +289,7 @@ class BlockScoringTestCase : public IndexTestBase {
       tests::JsonDocGenerator gen(resource("block_scoring_segment2.json"),
                                   &BlockScoringFieldFactory);
       index_ref.emplace_back();
-      write_segment(*writer, index_ref.back(), gen);
+      write_segment(*writer, index_ref.back(), gen, &StoreScoringFields);
       writer->Commit();
     }
 
@@ -293,11 +298,12 @@ class BlockScoringTestCase : public IndexTestBase {
       tests::JsonDocGenerator gen(resource("block_scoring_segment3.json"),
                                   &BlockScoringFieldFactory);
       index_ref.emplace_back();
-      write_segment(*writer, index_ref.back(), gen);
+      write_segment(*writer, index_ref.back(), gen, &StoreScoringFields);
       writer->Commit();
     }
 
-    auto reader = irs::DirectoryReader(dir(), codec());
+    auto reader =
+      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(3, reader.size()) << "Expected 3 segments";
   }
 
@@ -323,7 +329,8 @@ TEST_P(BlockScoringTestCase, TfidfBytermBlockScoring) {
 
   auto scorer = irs::TFIDF{true};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   size_t total_docs = 0;
   for (auto& segment : reader) {
     total_docs += segment.docs_count();
@@ -353,7 +360,8 @@ TEST_P(BlockScoringTestCase, TfidfTopicSearch) {
 
   auto scorer = irs::TFIDF{true};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 
@@ -386,7 +394,8 @@ TEST_P(BlockScoringTestCase, Bm25BytermBlockScoring) {
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 
@@ -419,7 +428,8 @@ TEST_P(BlockScoringTestCase, Bm25ChemistrySearch) {
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 
@@ -453,7 +463,8 @@ TEST_P(BlockScoringTestCase, TfidfAndFilterBlockScoring) {
 
   auto scorer = irs::TFIDF{true};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 
@@ -489,7 +500,8 @@ TEST_P(BlockScoringTestCase, Bm25AndFilterBlockScoring) {
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 
@@ -525,7 +537,8 @@ TEST_P(BlockScoringTestCase, BlockBoundarySmallK) {
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 
@@ -561,7 +574,8 @@ TEST_P(BlockScoringTestCase, BlockBoundaryLargeK) {
 
   auto scorer = irs::TFIDF{true};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 
@@ -595,7 +609,8 @@ TEST_P(BlockScoringTestCase, TfidfVsBm25Comparison) {
   auto tfidf_scorer = irs::TFIDF{true};
   auto bm25_scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 
@@ -643,7 +658,8 @@ TEST_P(BlockScoringTestCase, KLargerThanMatches) {
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 
@@ -677,7 +693,8 @@ TEST_P(BlockScoringTestCase, EmptyResultSet) {
 
   auto scorer = irs::TFIDF{true};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
 
   // Search for non-existent term
   auto filter = ParseQuery("xyznonexistent123");
@@ -698,7 +715,8 @@ TEST_P(BlockScoringTestCase, AndFilterThreeClauses) {
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 
@@ -738,7 +756,8 @@ TEST_P(BlockScoringTestCase, AndFilterThreeClauses) {
 TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
   CreateLargeIndex();
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 
@@ -819,7 +838,8 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
 TEST_P(BlockScoringTestCase, TfidfWithWithoutNorms) {
   CreateLargeIndex();
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 
@@ -880,7 +900,8 @@ TEST_P(BlockScoringTestCase, MultisegTfidfByterm) {
 
   auto scorer = irs::TFIDF{true};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
 
   // Verify we have multiple segments
   ASSERT_EQ(3, reader.size()) << "Expected 3 segments";
@@ -919,7 +940,8 @@ TEST_P(BlockScoringTestCase, MultisegBm25Byterm) {
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(3, reader.size());
 
   // Use parser to create query for "search"
@@ -949,7 +971,8 @@ TEST_P(BlockScoringTestCase, MultisegTfidfAndFilter) {
 
   auto scorer = irs::TFIDF{true};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(3, reader.size());
 
   // AND filter: category:tech AND topic:database
@@ -982,7 +1005,8 @@ TEST_P(BlockScoringTestCase, MultisegBm25AndFilter) {
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(3, reader.size());
 
   // AND filter: category:science AND topic:physics
@@ -1015,7 +1039,8 @@ TEST_P(BlockScoringTestCase, MultisegSmallKBlockBoundaries) {
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(3, reader.size());
 
   // Use category field - "tech" appears frequently
@@ -1046,7 +1071,8 @@ TEST_P(BlockScoringTestCase, MultisegQuantumQuery) {
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(3, reader.size());
 
   // Use topic field which has single-word indexed values
@@ -1076,7 +1102,8 @@ TEST_P(BlockScoringTestCase, TfidfDisjunctionTwoTerms) {
 
   auto scorer = irs::TFIDF{true};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 
@@ -1110,7 +1137,8 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionTwoTerms) {
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 
@@ -1144,7 +1172,8 @@ TEST_P(BlockScoringTestCase, MultisegTfidfDisjunction) {
 
   auto scorer = irs::TFIDF{true};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(3, reader.size()) << "Expected 3 segments";
 
   // OR filter: topic:physics OR topic:chemistry
@@ -1179,7 +1208,8 @@ TEST_P(BlockScoringTestCase, MultisegBm25Disjunction) {
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(3, reader.size()) << "Expected 3 segments";
 
   // OR filter: category:tech OR category:science
@@ -1214,7 +1244,8 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionFourTerms) {
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 
@@ -1250,7 +1281,8 @@ TEST_P(BlockScoringTestCase, MultisegTfidfDisjunctionFiveTerms) {
 
   auto scorer = irs::TFIDF{true};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(3, reader.size()) << "Expected 3 segments";
 
   // OR filter with 5 terms across different fields
@@ -1293,7 +1325,8 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionThreeTermsSameField) {
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
   auto& segment = reader[0];
 

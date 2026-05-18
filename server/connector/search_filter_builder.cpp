@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
-#include <iresearch/parser/parser.h>
 
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
@@ -36,8 +35,10 @@
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
+#include <iresearch/parser/parser.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/column_existence_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/mixed_boolean_filter.hpp>
@@ -67,11 +68,11 @@
 #include "connector/search_field_name.hpp"
 #include "functions/search.h"
 #include "functions/string.h"
+#include "functions/ts_common.hpp"
 #include "geo_filter_builder.hpp"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "rocksdb_filter.hpp"
-#include "ts_common.hpp"
 
 namespace magic_enum {
 
@@ -96,7 +97,7 @@ customize::enum_name<sdb::connector::TSQueryOp>(
     case All:
       return sdb::connector::kTSQAllOf;
     case Between:
-      return sdb::connector::kTSQRange;
+      return sdb::connector::kTSQBetween;
     case Regexp:
       return sdb::connector::kTSQRegexp;
     case Less:
@@ -131,6 +132,10 @@ customize::enum_name<sdb::connector::TSQueryOp>(
       return sdb::connector::kToTsquery;
     case Compound:
       return sdb::connector::kTSQCompound;
+    case IsNull:
+      return sdb::connector::kTSQIsNull;
+    case IsNotNull:
+      return sdb::connector::kTSQIsNotNull;
     case Unknown:
     case Term:
       return invalid_tag;
@@ -1078,7 +1083,7 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
       ERR_MSG("::tokenize('keyword'): inner expression has unsupported "
               "shape"));
   }
-  auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, tokenizer);
+  auto wrapper = AcquireTokenizer(ctx.client_context, tokenizer);
   if (!wrapper) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -1231,10 +1236,21 @@ Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
 }  // namespace
 
 const duckdb::Value* TryGetConstant(const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
+  // Peel cast wrappers: the standalone ts_offsets/ts_highlight forms
+  // run the filter builder mid-bind, before the optimizer folds
+  // redundant casts the binder may have inserted around literals.
+  const auto* cur = &expr;
+  while (cur->expression_class == duckdb::ExpressionClass::BOUND_CAST) {
+    const auto& cast = cur->Cast<duckdb::BoundCastExpression>();
+    if (!cast.child) {
+      return nullptr;
+    }
+    cur = cast.child.get();
+  }
+  if (cur->expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
     return nullptr;
   }
-  return &expr.Cast<duckdb::BoundConstantExpression>().value;
+  return &cur->Cast<duckdb::BoundConstantExpression>().value;
 }
 
 const SearchColumnInfo* FindColumnRefInfo(
@@ -1343,12 +1359,12 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   }
 
   const auto unwrapped = UnwrapFieldCast(expr);
-  auto& path = ctx.json_path;
+  std::vector<std::string> path;
   const auto* col_ref = TryGetJsonColumnRef(*unwrapped.expr, path);
   if (!col_ref) {
     return nullptr;
   }
-  auto info = (*ctx.json_path_getter)(*col_ref, path);
+  auto info = (*ctx.json_path_getter)(*col_ref, EncodeJsonPointer(path));
   if (!info) {
     return nullptr;
   }
@@ -1367,7 +1383,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   // iresearch field share an entry: INTEGER and BIGINT both -> Numeric.
   auto& cache_key = ctx.cache_key;
   cache_key.clear();
-  MakeColumnFieldName(info->column_id, info->json_path, cache_key);
+  MakeColumnFieldName(info->column_id, info->json_pointer, cache_key);
   if (auto r = MangleForType(info->logical_type.id(), cache_key); !r.ok()) {
     return nullptr;
   }
@@ -1381,7 +1397,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
 }
 
 void MakeFieldName(const SearchColumnInfo& column, std::string& field_name) {
-  MakeColumnFieldName(column.column_id, column.json_path, field_name);
+  MakeColumnFieldName(column.column_id, column.json_pointer, field_name);
 }
 
 void MakeFieldName(catalog::Column::Id column_id, std::string& field_name) {
@@ -1475,6 +1491,25 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
   return *cur;
 }
 
+// After cast-peel the peeled Value's type may not match the target
+// (e.g. binder rewrites BOOLEAN literal as `Cast(BOOLEAN, Const(VARCHAR
+// "t"))` in standalone bind paths). Coerce via DefaultTryCastAs.
+template<typename T>
+bool TryCoerce(const duckdb::Value& val, duckdb::LogicalTypeId target_id,
+               T& out) {
+  if (val.type().id() == target_id) {
+    out = val.GetValue<T>();
+    return true;
+  }
+  duckdb::Value coerced;
+  std::string err;
+  if (!val.DefaultTryCastAs(duckdb::LogicalType{target_id}, coerced, &err)) {
+    return false;
+  }
+  out = coerced.GetValue<T>();
+  return true;
+}
+
 Result GetVarcharArg(const duckdb::Expression& expr, std::string_view label,
                      std::string& out) {
   const auto& unwrapped = UnwrapTSQueryCast(expr);
@@ -1482,10 +1517,9 @@ Result GetVarcharArg(const duckdb::Expression& expr, std::string_view label,
   if (!val || val->IsNull()) {
     return {ERROR_BAD_PARAMETER, label, " must be a non-null VARCHAR constant"};
   }
-  if (val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
+  if (!TryCoerce(*val, duckdb::LogicalTypeId::VARCHAR, out)) {
     return {ERROR_BAD_PARAMETER, label, " must be a VARCHAR constant"};
   }
-  out = val->GetValue<std::string>();
   return {};
 }
 
@@ -1507,7 +1541,10 @@ Result GetIntArg(const duckdb::Expression& expr, std::string_view label,
       out = val->GetValue<int64_t>();
       return {};
     default:
-      return {ERROR_BAD_PARAMETER, label, " must be an INTEGER constant"};
+      if (!TryCoerce(*val, duckdb::LogicalTypeId::BIGINT, out)) {
+        return {ERROR_BAD_PARAMETER, label, " must be an INTEGER constant"};
+      }
+      return {};
   }
 }
 
@@ -1517,10 +1554,9 @@ Result GetBoolArg(const duckdb::Expression& expr, std::string_view label,
   if (!val || val->IsNull()) {
     return {ERROR_BAD_PARAMETER, label, " must be a non-null BOOLEAN constant"};
   }
-  if (val->type().id() != duckdb::LogicalTypeId::BOOLEAN) {
+  if (!TryCoerce(*val, duckdb::LogicalTypeId::BOOLEAN, out)) {
     return {ERROR_BAD_PARAMETER, label, " must be a BOOLEAN constant"};
   }
-  out = val->GetValue<bool>();
   return {};
 }
 
@@ -1541,7 +1577,10 @@ Result GetDoubleArg(const duckdb::Expression& expr, std::string_view label,
       out = val->GetValue<double>();
       return {};
     default:
-      return {ERROR_BAD_PARAMETER, label, " must be a numeric constant"};
+      if (!TryCoerce(*val, duckdb::LogicalTypeId::DOUBLE, out)) {
+        return {ERROR_BAD_PARAMETER, label, " must be a numeric constant"};
+      }
+      return {};
   }
 }
 
@@ -1729,6 +1768,21 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
       return FromTsqueryPhrase(parent, ctx, column_info, func);
     case TSQueryOp::ToTSQuery:
       return FromToTsquery(parent, ctx, column_info, func);
+    case TSQueryOp::IsNull:
+    case TSQueryOp::IsNotNull: {
+      // `col @@ ts_is_null()` -> Not(ByColumnExistence(col_id));
+      // `col @@ ts_is_not_null()` -> ByColumnExistence(col_id). The cs
+      // column id space and the catalog column id space are aligned
+      // (see search_pk_lookup.h's cast for the PK).
+      const bool exists = (op == TSQueryOp::IsNotNull);
+      auto& existence = (ctx.negated ^ exists)
+                          ? AddFilter<irs::ByColumnExistence>(parent)
+                          : Negate<irs::ByColumnExistence>(parent);
+      existence.boost(ctx.boost);
+      *existence.mutable_id() =
+        static_cast<irs::field_id>(column_info.column_id);
+      return;
+    }
     case TSQueryOp::Unknown:
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1747,7 +1801,6 @@ Result MakeSearchFilter(
   const JsonPathGetter& json_path_getter) {
   irs::StringTokenizer identity;
   containers::NodeHashMap<std::string, SearchColumnInfo> column_cache;
-  std::vector<std::string> json_path_scratch;
   std::string cache_key_scratch;
 
   FilterContext ctx{
@@ -1755,7 +1808,7 @@ Result MakeSearchFilter(
     .column_getter = column_getter,
     .json_path_getter = json_path_getter ? &json_path_getter : nullptr,
     .column_cache = column_cache,
-    .json_path = json_path_scratch,
+    .json_pointer = {},
     .cache_key = cache_key_scratch,
     .identity = identity,
     .tokenizer = identity,

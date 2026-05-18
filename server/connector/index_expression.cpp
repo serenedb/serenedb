@@ -328,8 +328,8 @@ duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
   // BoundReferenceExpression(slot, chunk_types[slot]).
   duckdb::vector<duckdb::ColumnBinding> bindings;
   duckdb::vector<duckdb::LogicalType> types;
-  const auto count =
-    std::min<duckdb::idx_t>(chunk.ColumnCount(), slot_to_col_id.size());
+  SDB_ASSERT(chunk.ColumnCount() >= slot_to_col_id.size());
+  const auto count = slot_to_col_id.size();
   bindings.reserve(count);
   types.reserve(count);
   for (duckdb::idx_t slot = 0; slot < count; ++slot) {

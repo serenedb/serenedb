@@ -368,7 +368,7 @@ const duckdb::BoundColumnRefExpression* FindAnyColumnRef(
   }
   const duckdb::BoundColumnRefExpression* found = nullptr;
   duckdb::ExpressionIterator::EnumerateChildren(
-    const_cast<duckdb::Expression&>(expr), [&](duckdb::Expression& child) {
+    expr, [&](const duckdb::Expression& child) {
       if (!found) {
         found = FindAnyColumnRef(child);
       }

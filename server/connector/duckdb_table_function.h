@@ -288,8 +288,7 @@ enum class ScanEntryKind : uint8_t {
   SecondaryIndex,
 };
 
-constexpr catalog::Column::Id kInvalidColumnId =
-  std::numeric_limits<catalog::Column::Id>::max();
+constexpr catalog::Column::Id kInvalidColumnId = catalog::Column::kInvalidId;
 
 struct SereneDBScanBindData : public duckdb::FunctionData {
   enum class Kind : uint8_t { Table, View };

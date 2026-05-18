@@ -41,8 +41,7 @@
 namespace sdb::connector {
 namespace {
 
-constexpr catalog::Column::Id kInvalidId =
-  std::numeric_limits<catalog::Column::Id>::max();
+constexpr catalog::Column::Id kInvalidId = catalog::Column::kInvalidId;
 
 std::vector<KeyBounds> MergeKeyConstraints(std::vector<KeyBounds>);
 

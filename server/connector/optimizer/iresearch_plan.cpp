@@ -339,7 +339,7 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
       return std::nullopt;
     }
     const auto col_id = ctx.projected_column_ids[ref.binding.column_index];
-    if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
+    if (col_id == catalog::Column::kInvalidId) {
       return std::nullopt;
     }
     if (!ctx.indexed_column_ids.contains(col_id)) {
@@ -371,7 +371,7 @@ connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx) {
       return std::nullopt;
     }
     const auto col_id = ctx.projected_column_ids[ref.binding.column_index];
-    if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
+    if (col_id == catalog::Column::kInvalidId) {
       return std::nullopt;
     }
     if (!ctx.json_path_tokenizer_provider) {
@@ -397,7 +397,7 @@ void InitSearchColumnContextForGet(
   const connector::SereneDBScanBindData& bind_data,
   const ResolvedIresearch& resolved,
   std::shared_ptr<const catalog::Snapshot> snapshot) {
-  constexpr auto kInvalidId = std::numeric_limits<catalog::Column::Id>::max();
+  constexpr auto kInvalidId = catalog::Column::kInvalidId;
   projected_ids_storage.clear();
   projected_ids_storage.reserve(get.GetColumnIds().size());
   for (const auto& ci : get.GetColumnIds()) {
@@ -558,7 +558,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     col_arg = args.col_arg;
   }
   auto col_id = ColumnIdByName(bind_data, col_arg->GetName());
-  if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
+  if (col_id == catalog::Column::kInvalidId) {
     return false;
   }
 
@@ -695,7 +695,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   float radius = 0.0f;
   bool radius_needs_square = false;
   std::vector<float> query_vector;
-  catalog::Column::Id col_id = std::numeric_limits<catalog::Column::Id>::max();
+  catalog::Column::Id col_id = catalog::Column::kInvalidId;
 
   for (duckdb::idx_t i = 0; i < filter.expressions.size(); ++i) {
     auto& expr = *filter.expressions[i];
@@ -773,7 +773,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
       col_expr = args.col_arg;
     }
     auto candidate_col_id = ColumnIdByName(bind_data, col_expr->GetName());
-    if (candidate_col_id == std::numeric_limits<catalog::Column::Id>::max()) {
+    if (candidate_col_id == catalog::Column::kInvalidId) {
       continue;
     }
     auto hnsw_info = resolved->index->GetColumnHNSWInfo(candidate_col_id);
@@ -1412,19 +1412,19 @@ catalog::Column::Id ResolveColumnId(
   const connector::SereneDBScanBindData& bind_data,
   const duckdb::LogicalGet& get) {
   if (binding.table_index != get.table_index) {
-    return std::numeric_limits<catalog::Column::Id>::max();
+    return catalog::Column::kInvalidId;
   }
   const auto col_idx = binding.column_index.GetIndex();
   const auto& column_ids = get.GetColumnIds();
   if (col_idx >= column_ids.size()) {
-    return std::numeric_limits<catalog::Column::Id>::max();
+    return catalog::Column::kInvalidId;
   }
   if (!column_ids[col_idx].HasPrimaryIndex()) {
-    return std::numeric_limits<catalog::Column::Id>::max();
+    return catalog::Column::kInvalidId;
   }
   const auto phys = column_ids[col_idx].GetPrimaryIndex();
   if (phys >= bind_data.column_ids.size()) {
-    return std::numeric_limits<catalog::Column::Id>::max();
+    return catalog::Column::kInvalidId;
   }
   return bind_data.column_ids[phys];
 }
@@ -1682,7 +1682,7 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
 
   const auto target_col_id =
     ResolveColumnId(resolved, *found->bind_data, *found->get);
-  if (target_col_id == std::numeric_limits<catalog::Column::Id>::max()) {
+  if (target_col_id == catalog::Column::kInvalidId) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_offsets(): column '", col_name, "' not found in table"));

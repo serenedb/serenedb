@@ -66,6 +66,9 @@ class Column final : public Object {
   static constexpr Id kGeneratedPKId{kMaxRealIdValue + 1};
   static constexpr Id kInvertedIndexScoreId{kMaxRealIdValue + 2};
   static constexpr Id kInvertedIndexOffsetsId{kMaxRealIdValue + 3};
+  // Sentinel for "no/invalid column id". numeric_limits<Id>::max() does NOT
+  // work (Id is a class wrapping uint64_t, not an arithmetic type).
+  static constexpr Id kInvalidId{std::numeric_limits<uint64_t>::max()};
 
   static constexpr std::string_view kScoreName = "sdb_inverted_index_score";
   // Prefix used in virtual offsets column names. Ends with kReservedSymbol so

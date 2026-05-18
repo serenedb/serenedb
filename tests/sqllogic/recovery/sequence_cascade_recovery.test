@@ -28,15 +28,11 @@ id	payload
 
 
 statement ok
-SET sdb_faults = 'crash_before_seq_counter_wipe';
-
-
-statement ok
-DROP TABLE iceberg_manifest CASCADE;
+SET sdb_faults = 'crash_on_drop';
 
 
 statement error (?i)connection closed|server closed|terminat|reset|EOF
-SELECT 1;
+DROP TABLE iceberg_manifest CASCADE;
 
 
 connection after_crash

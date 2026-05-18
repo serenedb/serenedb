@@ -52,15 +52,11 @@ INSERT INTO vedernikoff_solid_witness VALUES (1, 'unaffected');
 
 
 statement ok
-SET sdb_faults = 'crash_before_seq_counter_wipe';
-
-
-statement ok
-DROP TABLE vedernikoff_clickclack_owner CASCADE;
+SET sdb_faults = 'crash_on_drop';
 
 
 statement error (?i)connection closed|server closed|terminat|reset|EOF
-SELECT 1;
+DROP TABLE vedernikoff_clickclack_owner CASCADE;
 
 
 connection after_crash

@@ -37,15 +37,11 @@ INSERT INTO ml_haven.ml_papers VALUES (1, 'survives');
 
 
 statement ok
-SET sdb_faults = 'crash_before_seq_counter_wipe';
-
-
-statement ok
-DROP SCHEMA mop_escape CASCADE;
+SET sdb_faults = 'crash_on_drop';
 
 
 statement error (?i)connection closed|server closed|terminat|reset|EOF
-SELECT 1;
+DROP SCHEMA mop_escape CASCADE;
 
 
 connection after_crash

@@ -171,13 +171,14 @@ struct Snapshot {
     }
     for (auto cur = obj.GetParentId(); cur.isSet();) {
       auto parent = GetObject(cur);
-      SDB_ASSERT(parent);
+      if (!parent) {
+        return {};
+      }
       if (parent->GetType() == ObjectType::Database) {
         return cur;
       }
       cur = parent->GetParentId();
     }
-    SDB_ASSERT(false, "object ", obj.GetId(), " has no Database ancestor");
     return {};
   }
 

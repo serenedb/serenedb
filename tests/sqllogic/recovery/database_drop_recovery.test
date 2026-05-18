@@ -75,16 +75,12 @@ INSERT INTO vedernikoff_solid_survivor.bookings VALUES (1, 'still_here');
 
 
 statement ok
-SET sdb_faults = 'crash_before_seq_counter_wipe';
+SET sdb_faults = 'crash_on_drop';
 
 
 # DROP SCHEMA CASCADE -- biggest auto-drop closure in this DB.
-statement ok
-DROP SCHEMA vedernikoff_iceberg_lake CASCADE;
-
-
 statement error (?i)connection closed|server closed|terminat|reset|EOF
-SELECT 1;
+DROP SCHEMA vedernikoff_iceberg_lake CASCADE;
 
 
 connection after_crash

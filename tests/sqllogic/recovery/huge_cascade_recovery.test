@@ -27,7 +27,7 @@ CREATE SCHEMA vedernikoff_x_charlie;
 
 
 # SERIAL table to anchor the auto-drop closure with an owned sequence --
-# its TableDrop::Finalize hits `crash_before_seq_counter_wipe`.
+# its TableDrop::Finalize hits `crash_on_drop`.
 statement ok
 CREATE TABLE vedernikoff_x_core.anchor (
   id SERIAL PRIMARY KEY,
@@ -120,15 +120,11 @@ INSERT INTO vedernikoff_x_witness.notes VALUES (1, 'first'), (2, 'second');
 
 
 statement ok
-SET sdb_faults = 'crash_before_seq_counter_wipe';
-
-
-statement ok
-DROP SCHEMA vedernikoff_x_core CASCADE;
+SET sdb_faults = 'crash_on_drop';
 
 
 statement error (?i)connection closed|server closed|terminat|reset|EOF
-SELECT 1;
+DROP SCHEMA vedernikoff_x_core CASCADE;
 
 
 connection after_crash

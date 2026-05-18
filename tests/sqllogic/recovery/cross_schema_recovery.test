@@ -20,7 +20,7 @@ CREATE SCHEMA vedernikoff_ml_paper_bravo;
 
 
 # A SERIAL table inside the core schema -- its owned sequence is what
-# triggers `crash_before_seq_counter_wipe` in TableDrop::Finalize during the
+# triggers `crash_on_drop` in TableDrop::Finalize during the
 # cascade drop.
 statement ok
 CREATE TABLE vedernikoff_ml_paper_core.runs (
@@ -67,15 +67,11 @@ DROP SCHEMA vedernikoff_ml_paper_core;
 
 
 statement ok
-SET sdb_faults = 'crash_before_seq_counter_wipe';
-
-
-statement ok
-DROP SCHEMA vedernikoff_ml_paper_core CASCADE;
+SET sdb_faults = 'crash_on_drop';
 
 
 statement error (?i)connection closed|server closed|terminat|reset|EOF
-SELECT 1;
+DROP SCHEMA vedernikoff_ml_paper_core CASCADE;
 
 
 connection after_crash

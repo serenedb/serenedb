@@ -50,15 +50,11 @@ INSERT INTO vedernikoff_solid_survivor.notes VALUES (1, 'still_here');
 
 
 statement ok
-SET sdb_faults = 'crash_before_seq_counter_wipe';
-
-
-statement ok
-DROP SCHEMA vedernikoff_iceberg_src CASCADE;
+SET sdb_faults = 'crash_on_drop';
 
 
 statement error (?i)connection closed|server closed|terminat|reset|EOF
-SELECT 1;
+DROP SCHEMA vedernikoff_iceberg_src CASCADE;
 
 
 connection after_crash

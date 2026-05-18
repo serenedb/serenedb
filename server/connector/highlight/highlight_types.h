@@ -27,7 +27,7 @@
 #include <utility>
 
 #include "catalog/table_options.h"
-#include "catalog/tokenizer.h"
+#include "catalog/opclass.h"
 
 namespace sdb::connector::highlight {
 
@@ -36,7 +36,7 @@ using HitRange = std::pair<uint32_t, uint32_t>;
 struct Field {
   catalog::Column::Id column_id = 0;
   std::string field_name;
-  catalog::Tokenizer::TokenizerWrapper* analyzer = nullptr;
+  catalog::OpClass::TokenizerWrapper* analyzer = nullptr;
   size_t limit = 0;
 };
 

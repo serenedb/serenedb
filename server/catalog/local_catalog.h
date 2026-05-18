@@ -37,7 +37,7 @@
 #include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "catalog/tokenizer.h"
+#include "catalog/opclass.h"
 #include "catalog/user_type.h"
 #include "storage_engine/table_shard.h"
 
@@ -65,8 +65,8 @@ class LocalCatalog final : public LogicalCatalog,
                           std::shared_ptr<Sequence> sequence) final;
   Result RegisterFunction(ObjectId database_id, ObjectId schema_id,
                           std::shared_ptr<PgSqlFunction> function) final;
-  Result RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
-                           std::shared_ptr<Tokenizer> tokenizer) final;
+  Result RegisterOpClass(ObjectId database_id, ObjectId schema_id,
+                         std::shared_ptr<OpClass> opclass) final;
   Result RegisterType(ObjectId database_id, ObjectId schema_id,
                       std::shared_ptr<PgSqlType> type) final;
   Result RegisterTable(ObjectId database_id, ObjectId schema_id,
@@ -101,8 +101,8 @@ class LocalCatalog final : public LogicalCatalog,
                              IndexShardOptions& shard_options,
                              CreateIndexOperationOptions operation_options,
                              std::optional<ScorerOptions> wand_scorer) final;
-  Result CreateTokenizer(ObjectId database_id, std::string_view schema,
-                         std::shared_ptr<Tokenizer> dict) final;
+  Result CreateOpClass(ObjectId database_id, std::string_view schema,
+                       std::shared_ptr<OpClass> opclass) final;
   Result CreateType(ObjectId database_id, std::string_view schema,
                     std::shared_ptr<PgSqlType> type) final;
 
@@ -137,8 +137,8 @@ class LocalCatalog final : public LogicalCatalog,
                   std::string_view name) final;
   Result DropFunction(std::string_view database, std::string_view schema,
                       std::string_view name) final;
-  Result DropTokenizer(std::string_view database, std::string_view schema,
-                       std::string_view name) final;
+  Result DropOpClass(std::string_view database, std::string_view schema,
+                     std::string_view name) final;
   Result DropTable(std::string_view database, std::string_view schema,
                    std::string_view name) final;
   Result DropIndex(std::string_view database, std::string_view schema,

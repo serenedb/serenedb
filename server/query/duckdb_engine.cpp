@@ -44,6 +44,7 @@
 #include "connector/pg_logical_types.h"
 #include "pg/pg_catalog/pg_statistic.h"
 #include "pg/system_catalog.h"
+#include "pg/system_opclasses.h"
 #include "pg/system_table.h"
 #include "query/config.h"
 
@@ -218,7 +219,7 @@ void DuckDBEngine::Initialize() {
 
   _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
 
-  connector::RegisterTokenizerPragma(*_db->instance);
+  connector::RegisterOpClassPragma(*_db->instance);
 
   connector::RegisterPgCasts(*_db->instance);
 
@@ -266,6 +267,7 @@ void DuckDBEngine::Initialize() {
   // for serving from our attached catalog.
   pg::InitSystemFunctions();
   pg::InitSystemViews();
+  pg::InitSystemOpClasses();
 }
 
 void DuckDBEngine::Shutdown() { _db.reset(); }

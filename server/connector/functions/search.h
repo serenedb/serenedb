@@ -24,7 +24,7 @@
 #include <duckdb/main/database.hpp>
 #include <iresearch/analysis/analyzer.hpp>
 
-#include "catalog/tokenizer.h"
+#include "catalog/opclass.h"
 
 namespace sdb::connector {
 
@@ -89,10 +89,10 @@ inline constexpr std::string_view kGeoContains = "ST_Contains";
 
 duckdb::LogicalType MakeTSQueryType();
 
-catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
+catalog::OpClass::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name);
 
-std::shared_ptr<catalog::Tokenizer> ResolveCatalogTokenizer(
+std::shared_ptr<catalog::OpClass> ResolveCatalogTokenizer(
   duckdb::ClientContext& context, std::string_view name);
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db);

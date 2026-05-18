@@ -30,7 +30,7 @@
 #include "catalog/index.h"
 #include "catalog/scorer_options.h"
 #include "catalog/search_analyzer_impl.h"
-#include "catalog/tokenizer.h"
+#include "catalog/opclass.h"
 #include "storage_engine/index_shard.h"
 
 namespace sdb::catalog {
@@ -58,7 +58,7 @@ struct InvertedIndexColumnInfo {
 };
 
 struct ColumnTokenizer {
-  Tokenizer::TokenizerWrapper analyzer;
+  OpClass::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
 };
 
@@ -106,7 +106,7 @@ class InvertedIndex final : public Index {
     return _wand_scorer;
   }
 
-  containers::FlatHashSet<ObjectId> GetTokenizers() const final;
+  containers::FlatHashSet<ObjectId> GetOpClasses() const final;
 
  private:
   ColumnOptions _columns;

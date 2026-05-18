@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog/tokenizer.h"
+#include "catalog/opclass.h"
 
 #include <vpack/builder.h>
 #include <vpack/slice.h>
@@ -34,7 +34,28 @@
 
 namespace sdb::catalog {
 
-ResultOr<Tokenizer::TokenizerWrapper> Tokenizer::GetTokenizer() {
+namespace {
+
+constexpr std::string_view kTextKindName = "text";
+
+}  // namespace
+
+std::string_view ToString(OpClassKind kind) noexcept {
+  switch (kind) {
+    case OpClassKind::Text:
+      return kTextKindName;
+  }
+  SDB_UNREACHABLE();
+}
+
+std::optional<OpClassKind> ParseOpClassKind(std::string_view name) noexcept {
+  if (name == kTextKindName) {
+    return OpClassKind::Text;
+  }
+  return std::nullopt;
+}
+
+ResultOr<OpClass::TokenizerWrapper> OpClass::GetTokenizer() {
   absl::MutexLock lock{&_m};
   if (_pool.empty()) {
     auto analyzer = CreateAnalyzer();
@@ -50,30 +71,31 @@ ResultOr<Tokenizer::TokenizerWrapper> Tokenizer::GetTokenizer() {
   return TokenizerWrapper{analyzer.release(), Deleter{this}};
 }
 
-void Tokenizer::PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept {
+void OpClass::PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept {
   SDB_ASSERT(analyzer);
   absl::MutexLock lock{&_m};
   _pool.push_back(std::move(analyzer));
 }
 
-vpack::Slice Tokenizer::Slice() const noexcept {
+vpack::Slice OpClass::Slice() const noexcept {
   return vpack::Slice{reinterpret_cast<const uint8_t*>(_data.data())};
 }
 
-irs::analysis::Analyzer::ptr Tokenizer::CreateAnalyzer() const {
+irs::analysis::Analyzer::ptr OpClass::CreateAnalyzer() const {
   irs::analysis::Analyzer::ptr output;
   irs::analysis::analyzers::MakeAnalyzer(Slice(), output);
   return output;
 }
 
-Tokenizer::Tokenizer(ObjectId id, std::string_view name,
-                     search::Features features, std::string data)
-  : SchemaObject{{}, {}, {}, id, name, ObjectType::Tokenizer},
+OpClass::OpClass(ObjectId id, std::string_view name, OpClassKind kind,
+                 search::Features features, std::string data)
+  : SchemaObject{{}, {}, {}, id, name, ObjectType::OpClass},
     _data{std::move(data)},
+    _kind{kind},
     _features{features} {}
 
-std::shared_ptr<Tokenizer> Tokenizer::ReadInternal(vpack::Slice slice,
-                                                   ReadContext ctx) {
+std::shared_ptr<OpClass> OpClass::ReadInternal(vpack::Slice slice,
+                                               ReadContext ctx) {
   auto name = slice.get("name");
   if (!name.isString()) {
     return nullptr;
@@ -83,16 +105,27 @@ std::shared_ptr<Tokenizer> Tokenizer::ReadInternal(vpack::Slice slice,
   if (auto r = features.FromVPack(features_slice); !r.ok()) {
     return nullptr;
   }
-  return std::make_shared<Tokenizer>(
-    ctx.id, name.stringView(), std::move(features),
+  // Persisted bodies written before the kind tag was introduced have no
+  // "type" key. Treat them as Text -- the only kind that existed then.
+  OpClassKind kind = OpClassKind::Text;
+  if (auto type_slice = slice.get("type"); type_slice.isString()) {
+    auto parsed = ParseOpClassKind(type_slice.stringView());
+    if (!parsed) {
+      return nullptr;
+    }
+    kind = *parsed;
+  }
+  return std::make_shared<OpClass>(
+    ctx.id, name.stringView(), kind, std::move(features),
     std::string{reinterpret_cast<const char*>(slice.getDataPtr()),
                 slice.byteSize()});
 }
 
-void Tokenizer::WriteInternal(vpack::Builder& b) const {
+void OpClass::WriteInternal(vpack::Builder& b) const {
   b.openObject();
   WriteObject(b, [&](vpack::Builder& b) {
     auto slice = vpack::Slice{reinterpret_cast<const uint8_t*>(_data.data())};
+    b.add("type", ToString(_kind));
     b.add("tokenizer", slice.get("tokenizer"));
     b.add("features");
     _features.ToVPack(b);
@@ -100,7 +133,7 @@ void Tokenizer::WriteInternal(vpack::Builder& b) const {
   b.close();
 }
 
-std::shared_ptr<Object> Tokenizer::Clone() const {
+std::shared_ptr<Object> OpClass::Clone() const {
   vpack::Builder b;
   WriteInternal(b);
   return ReadInternal(b.slice(), {.id = GetId()});

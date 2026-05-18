@@ -47,7 +47,7 @@ constexpr std::string_view ToPgObjectTypeName(catalog::ObjectType t) noexcept {
       return "database";
     case Role:
       return "role";
-    case Tokenizer:
+    case OpClass:
       return "text search dictionary";
     case PgSqlType:
       return "type";

@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,12 +20,14 @@
 
 #pragma once
 
-#include <duckdb.hpp>
+#include <duckdb/common/named_parameter_map.hpp>
 
-namespace sdb::connector {
+#include "pg/connection_context.h"
 
-// Register the PRAGMA create_text_search_dictionary(...) handler.
-// Called from DuckDBEngine::Initialize().
-void RegisterOpClassPragma(duckdb::DatabaseInstance& db);
+namespace sdb::pg {
 
-}  // namespace sdb::connector
+void CreateOpClass(ConnectionContext& conn_ctx, std::string_view name,
+                   std::string_view schema, bool if_not_exists,
+                   const duckdb::named_parameter_map_t& options);
+
+}  // namespace sdb::pg

@@ -25,6 +25,7 @@ target_sources(
         pg_types.cpp
         serialize.cpp
         system_catalog.cpp
+        system_opclasses.cpp
         progress_tracker.cpp
         sdb_catalog/sdb_log.cpp
         sql_utils.cpp

@@ -46,8 +46,10 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
       return std::string(vpack::Slice::emptyObjectSlice().startAs<char>(),
                          vpack::Slice::emptyObjectSlice().byteSize());
     };
-    static catalog::Tokenizer gStringTokenizer(
-      ObjectId{12345}, "test_string_verbartim", {}, make_identity());
+    static catalog::OpClass gStringTokenizer(ObjectId{12345},
+                                             "test_string_verbartim",
+                                             catalog::OpClassKind::Text, {},
+                                             make_identity());
     auto tokenizer = gStringTokenizer.GetTokenizer();
     EXPECT_TRUE(tokenizer);
     return {.analyzer = *std::move(tokenizer),

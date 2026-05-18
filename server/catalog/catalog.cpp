@@ -57,7 +57,7 @@
 #include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "catalog/tokenizer.h"
+#include "catalog/opclass.h"
 #include "catalog/types.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
@@ -257,7 +257,7 @@ class OpenDatabase {
   Result RegisterDatabases();
   Result RegisterSchemas(ObjectId database_id);
   Result RegisterFunctions(ObjectId database_id, ObjectId schema_id);
-  Result RegisterTokenizers(ObjectId database_id, ObjectId schema_id);
+  Result RegisterOpClasses(ObjectId database_id, ObjectId schema_id);
   Result RegisterViews(ObjectId database_id, ObjectId schema_id);
   Result RegisterSequences(ObjectId database_id, ObjectId schema_id);
   Result RegisterTypes(ObjectId database_id, ObjectId schema_id);
@@ -372,17 +372,16 @@ Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
     });
 }
 
-Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
+Result OpenDatabase::RegisterOpClasses(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
-    schema_id, ObjectType::Tokenizer,
+    schema_id, ObjectType::OpClass,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto tokenizer =
-        Tokenizer::ReadInternal(slice, {.id = key.GetObjectId()});
-      if (!tokenizer) {
-        return ErrorMeta(ERROR_INTERNAL, "tokenizer",
-                         "Failed to read tokenizer definition", slice);
+      auto opclass = OpClass::ReadInternal(slice, {.id = key.GetObjectId()});
+      if (!opclass) {
+        return ErrorMeta(ERROR_INTERNAL, "opclass",
+                         "Failed to read opclass definition", slice);
       }
-      return _catalog.RegisterTokenizer(db_id, schema_id, std::move(tokenizer));
+      return _catalog.RegisterOpClass(db_id, schema_id, std::move(opclass));
     });
 }
 
@@ -638,7 +637,7 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
     ClearDeletedDefinitions(DeletedScope::Schema);
   };
 
-  if (auto r = RegisterTokenizers(db_id, schema_id); !r.ok()) {
+  if (auto r = RegisterOpClasses(db_id, schema_id); !r.ok()) {
     return r;
   }
   if (auto r = RegisterTypes(db_id, schema_id); !r.ok()) {

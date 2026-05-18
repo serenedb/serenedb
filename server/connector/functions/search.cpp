@@ -39,7 +39,7 @@
 #include <iresearch/utils/utf8_utils.hpp>
 
 #include "catalog/scorer_options.h"
-#include "catalog/tokenizer.h"
+#include "catalog/opclass.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/ts_highlight.h"
 #include "connector/functions/ts_lexize.h"
@@ -972,16 +972,16 @@ duckdb::LogicalType MakeTSQueryType() {
   return type;
 }
 
-catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
+catalog::OpClass::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name) {
   auto entry = ResolveCatalogTokenizer(context, name);
   if (!entry) {
     return {};
   }
-  return entry->GetTokenizer().value_or(catalog::Tokenizer::TokenizerWrapper{});
+  return entry->GetTokenizer().value_or(catalog::OpClass::TokenizerWrapper{});
 }
 
-std::shared_ptr<catalog::Tokenizer> ResolveCatalogTokenizer(
+std::shared_ptr<catalog::OpClass> ResolveCatalogTokenizer(
   duckdb::ClientContext& context, std::string_view name) {
   auto state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
@@ -996,7 +996,7 @@ std::shared_ptr<catalog::Tokenizer> ResolveCatalogTokenizer(
   if (!snapshot) {
     return nullptr;
   }
-  return snapshot->GetTokenizer(db_id, qualified.schema, qualified.relation);
+  return snapshot->GetOpClass(db_id, qualified.schema, qualified.relation);
 }
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {

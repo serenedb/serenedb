@@ -43,10 +43,10 @@ ResultOr<ColumnTokenizer> BuildColumnTokenizer(
   search::Features features) {
   if (!text_dictionary.isSet()) {
     auto analyzer = std::make_unique<irs::StringTokenizer>();
-    return ColumnTokenizer{.analyzer = Tokenizer::TokenizerWrapper{
-                             analyzer.release(), Tokenizer::Deleter{nullptr}}};
+    return ColumnTokenizer{.analyzer = OpClass::TokenizerWrapper{
+                             analyzer.release(), OpClass::Deleter{nullptr}}};
   }
-  auto dict = snapshot->GetObject<Tokenizer>(text_dictionary);
+  auto dict = snapshot->GetObject<OpClass>(text_dictionary);
   if (!dict) {
     return std::unexpected<Result>{std::in_place, ERROR_INTERNAL,
                                    "Dictionary for inverted index does not "
@@ -174,7 +174,7 @@ std::optional<irs::HNSWInfo> InvertedIndex::GetColumnHNSWInfo(
   };
 }
 
-containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {
+containers::FlatHashSet<ObjectId> InvertedIndex::GetOpClasses() const {
   containers::FlatHashSet<ObjectId> res;
   for (const auto& col : _columns) {
     if (col.second.text_dictionary.isSet()) {

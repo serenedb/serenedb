@@ -60,7 +60,11 @@ class Index : public SchemaObject {
     return _column_ids;
   }
 
-  virtual containers::FlatHashSet<ObjectId> GetTokenizers() const { return {}; }
+  virtual std::vector<Column::Id> GetReferencedColumnIds() const {
+    return _column_ids;
+  }
+
+  virtual containers::FlatHashSet<ObjectId> GetOpClasses() const { return {}; }
 
   // TODO(codeworse): support arguments for index shards
   virtual ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(

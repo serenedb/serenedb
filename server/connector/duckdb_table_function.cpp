@@ -526,7 +526,7 @@ std::string ProjectionDisplayName(const SereneDBScanBindData& bind,
     if (const auto* tbd = dynamic_cast<const TableScanBindData*>(&bind)) {
       const auto& cols = tbd->table->Columns();
       if (pk_idx < cols.size()) {
-        return cols[pk_idx].name;
+        return std::string{cols[pk_idx].GetName()};
       }
     }
   }

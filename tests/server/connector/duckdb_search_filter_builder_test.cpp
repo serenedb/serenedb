@@ -175,10 +175,9 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
     return std::string(builder->slice().startAs<char>(),
                        builder->slice().byteSize());
   };
-  static catalog::Tokenizer gNgramTokenizer(ObjectId{0}, ObjectId{12347},
-                                            "test_ngram", {},
-                                            DEFAULT_ROW_GROUP_SIZE,
-                                            make_ngram());
+  static catalog::Tokenizer gNgramTokenizer(
+    ObjectId{0}, ObjectId{12347}, "test_ngram", {}, DEFAULT_ROW_GROUP_SIZE,
+    make_ngram());
   auto tokenizer = gNgramTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer),
@@ -213,10 +212,9 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
     return std::string(builder->slice().startAs<char>(),
                        builder->slice().byteSize());
   };
-  static catalog::Tokenizer gGeoTokenizer(ObjectId{0}, ObjectId{12349},
-                                          "test_geojson", {},
-                                          DEFAULT_ROW_GROUP_SIZE,
-                                          make_geojson());
+  static catalog::Tokenizer gGeoTokenizer(
+    ObjectId{0}, ObjectId{12349}, "test_geojson", {}, DEFAULT_ROW_GROUP_SIZE,
+    make_geojson());
   auto tokenizer = gGeoTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {

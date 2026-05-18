@@ -61,7 +61,7 @@ bool OffsetsBindData::Equals(const duckdb::FunctionData& other) const {
 
 namespace {
 
-constexpr catalog::Column::Id kStandaloneSyntheticColumnId = 0;
+constexpr catalog::Column::Id kStandaloneSyntheticColumnId{};
 
 struct IndexField {
   void Reset(catalog::Column::Id column_id,

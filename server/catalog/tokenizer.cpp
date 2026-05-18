@@ -92,8 +92,7 @@ std::shared_ptr<Tokenizer> Tokenizer::ReadInternal(vpack::Slice slice,
       : DEFAULT_ROW_GROUP_SIZE;
   return std::make_shared<Tokenizer>(
     ctx.schema_id, ctx.id, name.stringView(), std::move(features),
-    norm_row_group_size,
-    std::string{slice.startAs<char>(), slice.byteSize()});
+    norm_row_group_size, std::string{slice.startAs<char>(), slice.byteSize()});
 }
 
 void Tokenizer::WriteInternal(vpack::Builder& b) const {

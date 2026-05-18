@@ -80,6 +80,18 @@ SELECT 1 at;
 db error: ERROR: syntax error at or near "at"
 
 
+# Pin the postfix-operator path that motivates the IDENT-only rule above:
+# `expr Op` must still parse as a postfix operator application.  `!` is
+# the factorial postfix operator; if the AT reclassification had broken
+# target_el → a_expr → `a_expr qual_Op %prec POSTFIXOP`, this would
+# regress to a syntax error.
+query I
+SELECT 5!;
+----
+?column?
+120
+
+
 # ----------------------------------------------------------------------
 # 3. AT as a table alias.
 # ----------------------------------------------------------------------
@@ -150,16 +162,16 @@ DROP TABLE at_alias_test;
 
 
 # ----------------------------------------------------------------------
-# 5. AT TIME ZONE still parses correctly.  The actual binder needs the
-#    ICU extension, which may not be installed in CI, so we exercise
-#    via EXPLAIN — EXPLAIN runs the parser and planner without invoking
-#    the timezone() function at execution time.  A parser regression
-#    would surface here as "syntax error", whereas a missing-ICU issue
-#    would surface only when the function actually runs.
+# 5. AT TIME ZONE still parses correctly.  The binder needs the ICU
+#    extension, which is not yet installed in CI; the binder tries to
+#    auto-install it and fails with a known message but NOT parse error.
+# TODO(Dronplane): change to success if we have icu extension pre-installed
 # ----------------------------------------------------------------------
 
-statement ok
-EXPLAIN SELECT TIMESTAMP '2026-01-01 12:00:00' AT TIME ZONE 'UTC';
+statement error
+SELECT TIMESTAMP '2026-01-01 12:00:00' AT TIME ZONE 'UTC';
+----
+db error: ERROR: An error occurred while trying to automatically install the required extension <slt:ignore>
 
 
 # ----------------------------------------------------------------------
@@ -180,10 +192,12 @@ SELECT * FROM at_tt_test AT (VERSION => 1);
 ----
 db error: ERROR: Catalog type does not support time travel
 
+
 query error
 SELECT * FROM at_tt_test AT (TIMESTAMP => '2026-01-01'::timestamp);
 ----
 db error: ERROR: Catalog type does not support time travel
+
 
 # Combination: aliased as AT *and* time-travel.  This is the scenario
 # that drove the AT_LA filter design — first AT becomes a plain
@@ -192,6 +206,7 @@ query error
 SELECT * FROM at_tt_test AS at AT (VERSION => 1);
 ----
 db error: ERROR: Catalog type does not support time travel
+
 
 statement ok
 DROP TABLE at_tt_test;

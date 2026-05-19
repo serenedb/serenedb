@@ -90,6 +90,22 @@ class BasicDocIterator : public irs::DocIterator {
  public:
   typedef std::vector<irs::doc_id_t> DocidsT;
 
+  // Owning ctor: copies the doc list so callers can hand us a temp range
+  // (`{1, 5, 10}` etc.) without lifetime worries.
+  BasicDocIterator(DocidsT docs, const irs::byte_type* stats = nullptr,
+                   irs::score_t boost = irs::kNoBoost)
+    : _docs(std::move(docs)),
+      _first(_docs.begin()),
+      _last(_docs.end()),
+      _stats(stats),
+      _boost{boost} {
+    _est.reset(std::distance(_first, _last));
+    _attrs[irs::Type<irs::CostAttr>::id()] = &_est;
+  }
+
+  // Backward-compatible iterator-pair ctor: same dangling-prone behavior
+  // as before -- caller must keep the underlying range alive. Existing
+  // call sites that pass `docs.begin()/end()` still compile.
   BasicDocIterator(const DocidsT::const_iterator& first,
                    const DocidsT::const_iterator& last,
                    const irs::byte_type* stats = nullptr,
@@ -141,6 +157,10 @@ class BasicDocIterator : public irs::DocIterator {
  private:
   std::map<irs::TypeInfo::type_id, irs::Attribute*> _attrs;
   irs::CostAttr _est;
+  // Owned doc storage for the value-taking ctor. Empty when the
+  // iterator-pair ctor is used; the iterators then reference an
+  // externally-owned range and the caller must keep it alive.
+  DocidsT _docs;
   DocidsT::const_iterator _first;
   DocidsT::const_iterator _last;
   const irs::byte_type* _stats;
@@ -164,8 +184,11 @@ std::vector<DocIteratorImpl> ExecuteAll(
   std::vector<DocIteratorImpl> itrs;
   itrs.reserve(docs.size());
   for (const auto& doc : docs) {
+    // BasicDocIterator takes ownership of a copy so it no longer carries
+    // dangling iterators into the caller's `docs` range. Callers used to
+    // need a named local for `docs`; this lifts that constraint.
     itrs.emplace_back(irs::memory::make_managed<detail::BasicDocIterator>(
-      doc.begin(), doc.end()));
+      detail::BasicDocIterator::DocidsT{doc}));
   }
 
   return itrs;
@@ -7369,6 +7392,580 @@ TEST(block_disjunction_test, seek_no_readahead) {
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     ASSERT_EQ(expected, result);
   }
+}
+
+TEST(block_disjunction_test, lazy_seek) {
+  // BlockDisjunction::LazySeek is a "is target a match?" probe.
+  // Contract:
+  //   - target <= value(): stay, return value().
+  //   - target is a disjunction match: state advances to target,
+  //     return target, value() == target.
+  //   - target is NOT a match: state unchanged, return target + 1
+  //     (the "advance past" hint used across iresearch).
+  using Disjunction = irs::BlockDisjunction<
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
+    irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
+
+  // (i) In-buffer hit: bit set at target -> returns target.
+  // (ii) In-buffer miss: bit unset at target -> returns target+1,
+  //      value() unchanged.
+  {
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {1, 2, 5, 7, 9, 11, 12, 29, 45},
+    };
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                   irs::doc_limits::eof());
+
+    // Hit at 1 (OOB on first call -> refills, but the second hit
+    // is the in-buffer one).
+    ASSERT_EQ(1, it.LazySeek(1));
+    ASSERT_EQ(1, it.value());
+
+    // After hit, _max is advanced past target. In-buffer hits.
+    ASSERT_EQ(9, it.LazySeek(9));
+    ASSERT_EQ(9, it.value());
+    ASSERT_EQ(12, it.LazySeek(12));
+    ASSERT_EQ(12, it.value());
+
+    // In-buffer miss: 13 is not in the disjunction; value() stays
+    // at 12, return is 14.
+    ASSERT_EQ(14, it.LazySeek(13));
+    ASSERT_EQ(12, it.value());
+
+    // A second miss in a row: state still unchanged.
+    ASSERT_EQ(15, it.LazySeek(14));
+    ASSERT_EQ(12, it.value());
+
+    // Next real match: 29 -> still in-buffer hit.
+    ASSERT_EQ(29, it.LazySeek(29));
+    ASSERT_EQ(29, it.value());
+
+    // 45 hit, then 46 is past all docs.
+    ASSERT_EQ(45, it.LazySeek(45));
+    ASSERT_EQ(45, it.value());
+  }
+
+  // (iii) Stay clause: target <= value() returns value() without
+  //       touching subs.
+  {
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {1, 9, 45},
+    };
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                   irs::doc_limits::eof());
+    ASSERT_EQ(1, it.LazySeek(1));
+    ASSERT_EQ(1, it.LazySeek(1));  // target == value(): stay.
+    ASSERT_EQ(9, it.LazySeek(9));
+    ASSERT_EQ(9, it.LazySeek(9));  // stay.
+    ASSERT_EQ(45, it.LazySeek(45));
+    ASSERT_EQ(45, it.LazySeek(45));  // stay.
+  }
+
+  // (iv) OOB hit: target jumps past _max into a new sub window.
+  // (v)  OOB miss: target in a "gap" between subs' values returns
+  //      target+1, state unchanged.
+  {
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {1, 5, 9, 65, 1145, 111165},
+      {2, 7, 12, 78, 1111178},
+      {11, 29, 45, 127, 111111127},
+    };
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                   irs::doc_limits::eof());
+
+    ASSERT_EQ(1, it.LazySeek(1));
+    ASSERT_EQ(1, it.value());
+
+    // OOB hit: 78 lives in sub 1 (window past initial refill).
+    ASSERT_EQ(78, it.LazySeek(78));
+    ASSERT_EQ(78, it.value());
+
+    // OOB miss: 1146 isn't in any sub (next docs are 111165, 1111178,
+    // 111111127). Return 1147, value unchanged at 78.
+    ASSERT_EQ(1147, it.LazySeek(1146));
+    ASSERT_EQ(78, it.value());
+
+    // Hit again at the next real doc.
+    ASSERT_EQ(111165, it.LazySeek(111165));
+    ASSERT_EQ(111165, it.value());
+
+    // OOB hit at the tail.
+    ASSERT_EQ(111111127, it.LazySeek(111111127));
+    ASSERT_EQ(111111127, it.value());
+  }
+
+  // (vi) Hit + advance(): after a hit, next() walks to the next bit
+  //      (in-buffer follow-up).
+  {
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {1, 2, 5, 7, 9, 11, 12, 29, 45},
+    };
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                   irs::doc_limits::eof());
+    ASSERT_EQ(7, it.LazySeek(7));
+    ASSERT_EQ(7, it.value());
+    ASSERT_EQ(9, it.advance());  // popped bit 7; next set bit is 9.
+    ASSERT_EQ(11, it.advance());
+    ASSERT_EQ(12, it.advance());
+    ASSERT_EQ(29, it.advance());
+    ASSERT_EQ(45, it.advance());
+    ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+  }
+
+  // (vii) Miss + seek(): seek() recovers the real next-doc that
+  //       LazySeek's bit-probe deliberately skipped.
+  {
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {1, 2, 5, 7, 9, 11, 12, 29, 45},
+    };
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                   irs::doc_limits::eof());
+    ASSERT_EQ(5, it.LazySeek(5));    // hit, refills the buffer.
+    ASSERT_EQ(14, it.LazySeek(13));  // miss; value() stays at 5.
+    ASSERT_EQ(5, it.value());
+    ASSERT_EQ(29, it.seek(13));  // seek finds the real next.
+    ASSERT_EQ(29, it.value());
+  }
+
+  // (viii) Exhausted-sub purge: a sub that hits eof during the OOB
+  //        sub-probe is dropped from _itrs. Caller-visible signal:
+  //        after the LazySeek the remaining matches still come from
+  //        live subs only.
+  {
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {1, 5},  // exhausted past 5.
+      {3, 9, 100},
+      {7, 200},
+    };
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                   irs::doc_limits::eof());
+
+    ASSERT_EQ(1, it.LazySeek(1));
+    // Jump past sub 0's last doc (5). Sub 0 will return eof on
+    // LazySeek(100) and be purged.
+    ASSERT_EQ(100, it.LazySeek(100));
+    ASSERT_EQ(100, it.value());
+    // Continue: sub 1 just hit 100, sub 2 still has 200 ahead.
+    ASSERT_EQ(200, it.LazySeek(200));
+    ASSERT_EQ(200, it.value());
+  }
+
+  // (ix) All-subs-exhausted: after every sub is purged, LazySeek
+  //      collapses to value() == eof(), and subsequent calls
+  //      short-circuit via the stay clause.
+  {
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {1, 5},
+      {3, 7},
+    };
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                   irs::doc_limits::eof());
+    ASSERT_EQ(1, it.LazySeek(1));
+    ASSERT_EQ(7, it.LazySeek(7));
+    // Past every sub; both purged -> _doc = eof.
+    ASSERT_EQ(irs::doc_limits::eof(), it.LazySeek(100));
+    ASSERT_TRUE(irs::doc_limits::eof(it.value()));
+    // Subsequent call short-circuits via stay clause.
+    ASSERT_EQ(irs::doc_limits::eof(), it.LazySeek(200));
+  }
+}
+
+// Extra LazySeek coverage: interleaving with seek/advance, word- and
+// window-boundary edges, MinMatch + MinMatchFast, scored cross-product.
+namespace {
+
+using LSDisjunction = irs::BlockDisjunction<
+  irs::ScoreAdapter, irs::ScoreMergeType::Noop,
+  irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
+
+using LSMinMatchDisjunction = irs::BlockDisjunction<
+  irs::ScoreAdapter, irs::ScoreMergeType::Noop,
+  irs::BlockDisjunctionTraits<irs::MatchType::MinMatch, false, 1>>;
+
+using LSMinMatchFastDisjunction = irs::BlockDisjunction<
+  irs::ScoreAdapter, irs::ScoreMergeType::Noop,
+  irs::BlockDisjunctionTraits<irs::MatchType::MinMatchFast, false, 1>>;
+
+LSDisjunction MakeLS(const std::vector<std::vector<irs::doc_id_t>>& docs) {
+  return LSDisjunction(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                       irs::doc_limits::eof());
+}
+
+}  // namespace
+
+// LazySeek hit, then seek() forward within the same 64-bit word.
+TEST(block_disjunction_test, lazy_seek_then_seek_same_word) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 13, 20, 45, 63}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(13, it.LazySeek(13));
+  ASSERT_EQ(13, it.value());
+  ASSERT_EQ(20, it.seek(20));
+  ASSERT_EQ(45, it.advance());
+  ASSERT_EQ(63, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// LazySeek hit, then seek() across the window boundary (forces a Refill).
+TEST(block_disjunction_test, lazy_seek_then_seek_different_window) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{2, 5, 10},
+                                                     {100, 130, 200}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(5, it.LazySeek(5));
+  ASSERT_EQ(100, it.seek(50));  // crosses into the next refill
+  ASSERT_EQ(130, it.advance());
+  ASSERT_EQ(200, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// seek() to position the cursor, then LazySeek probes ahead.
+TEST(block_disjunction_test, seek_then_lazy_seek) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 3, 7, 11, 15, 30}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(7, it.seek(7));
+  ASSERT_EQ(11, it.LazySeek(11));
+  ASSERT_EQ(11, it.value());
+  ASSERT_EQ(13, it.LazySeek(12));  // miss -> target+1; value() stays
+  ASSERT_EQ(11, it.value());
+  ASSERT_EQ(30, it.LazySeek(30));
+  ASSERT_EQ(30, it.value());
+}
+
+// 4. LazySeek miss followed by advance(). advance() must walk from the
+//    current value, not from the miss target.
+TEST(block_disjunction_test, lazy_seek_miss_then_advance) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 7, 13, 30}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(7, it.LazySeek(7));
+  ASSERT_EQ(9, it.LazySeek(8));  // miss; bit 8 unset -> target + 1
+  ASSERT_EQ(7, it.value());
+  ASSERT_EQ(13, it.advance());  // walks from 7's _cur, not from 8
+  ASSERT_EQ(30, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// Interleaved hits and advances.
+TEST(block_disjunction_test, lazy_seek_interleaved_advance) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 3, 7, 11, 15, 19, 23, 31, 50, 55}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(3, it.LazySeek(3));
+  ASSERT_EQ(7, it.advance());
+  ASSERT_EQ(11, it.LazySeek(11));
+  ASSERT_EQ(15, it.advance());
+  ASSERT_EQ(19, it.advance());
+  ASSERT_EQ(31, it.LazySeek(31));
+  ASSERT_EQ(50, it.advance());
+  ASSERT_EQ(55, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// LazySeek target at bit 0 of a word -- widest possible cursor mask.
+TEST(block_disjunction_test, lazy_seek_bit_zero) {
+  // Second window starts at doc 64 -> bit_offset 0.
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1}, {64, 65, 70, 90}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(1, it.LazySeek(1));
+  ASSERT_EQ(64, it.LazySeek(64));
+  ASSERT_EQ(65, it.advance());
+  ASSERT_EQ(70, it.advance());
+  ASSERT_EQ(90, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// LazySeek target at bit 63 -- _cur ends up empty, advance() must cross.
+TEST(block_disjunction_test, lazy_seek_bit_63) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 63}, {64, 65}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(1, it.LazySeek(1));
+  ASSERT_EQ(63, it.LazySeek(63));
+  ASSERT_EQ(64, it.advance());
+  ASSERT_EQ(65, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// Consecutive LazySeek hits in the same word -- XOR-no-store regression.
+TEST(block_disjunction_test, lazy_seek_consecutive_hits_same_word) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{5, 12, 13, 25}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(5, it.LazySeek(5));
+  ASSERT_EQ(12, it.LazySeek(12));
+  ASSERT_EQ(13, it.LazySeek(13));
+  ASSERT_EQ(25, it.LazySeek(25));
+  ASSERT_EQ(25, it.value());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// Consecutive LazySeek misses leave state untouched.
+TEST(block_disjunction_test, lazy_seek_consecutive_misses_same_word) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 10, 50}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(1, it.LazySeek(1));
+  ASSERT_EQ(21, it.LazySeek(20));  // miss
+  ASSERT_EQ(31, it.LazySeek(30));  // miss
+  ASSERT_EQ(1, it.value());        // still at 1
+  ASSERT_EQ(50, it.LazySeek(50));
+  ASSERT_EQ(50, it.value());
+}
+
+// Miss then hit at the adjacent bit.
+TEST(block_disjunction_test, lazy_seek_miss_then_hit_adjacent_bit) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 6, 50}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(1, it.LazySeek(1));
+  ASSERT_EQ(5, it.LazySeek(4));  // miss at bit 4 -> target+1
+  ASSERT_EQ(1, it.value());
+  ASSERT_EQ(5, it.LazySeek(5));  // hit at 5
+  ASSERT_EQ(6, it.LazySeek(6));  // hit at adjacent bit 6
+  ASSERT_EQ(6, it.value());
+  ASSERT_EQ(50, it.LazySeek(50));
+}
+
+// LazySeek hit then drain via advance() until eof.
+TEST(block_disjunction_test, lazy_seek_then_drain_via_advance) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(3, it.LazySeek(3));
+  std::vector<irs::doc_id_t> seen;
+  while (!irs::doc_limits::eof(it.advance())) {
+    seen.push_back(it.value());
+  }
+  ASSERT_EQ((std::vector<irs::doc_id_t>{4, 5, 6, 7, 8, 9, 10}), seen);
+}
+
+// Forward walk via LazySeek+advance never re-emits a returned doc.
+TEST(block_disjunction_test, lazy_seek_no_duplicate_emit) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 5, 9, 13, 17, 21, 25, 29, 33, 50}};
+  auto it = MakeLS(docs);
+  std::vector<irs::doc_id_t> seen;
+  irs::doc_id_t r = it.LazySeek(1);
+  while (!irs::doc_limits::eof(r)) {
+    seen.push_back(it.value());
+    r = it.advance();
+  }
+  ASSERT_EQ((std::vector<irs::doc_id_t>{1, 5, 9, 13, 17, 21, 25, 29, 33, 50}),
+            seen);
+}
+
+// MinMatch -- doc meets the threshold, LazySeek hits.
+TEST(block_disjunction_test, lazy_seek_min_match_threshold_passed) {
+  std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 5, 10},
+    {3, 10},
+    {7, 10, 20},
+  };
+  LSMinMatchDisjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2,
+                           irs::doc_limits::eof());
+  ASSERT_EQ(10, it.LazySeek(10));
+  ASSERT_EQ(10, it.value());
+  ASSERT_GE(it.MatchCount(), 2u);
+}
+
+// MinMatch -- only one sub hits target, LazySeek must reject.
+TEST(block_disjunction_test, lazy_seek_min_match_threshold_failed) {
+  std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 5, 10},
+    {3, 10},
+    {7, 10, 20},
+  };
+  LSMinMatchDisjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2,
+                           irs::doc_limits::eof());
+  ASSERT_EQ(2, it.LazySeek(1));  // matches < 2 -> target+1
+  ASSERT_EQ(10, it.advance());   // first qualifying doc
+}
+
+// MinMatch hit then advance() -- buffer-refill match-count semantics.
+TEST(block_disjunction_test, lazy_seek_min_match_then_advance) {
+  std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 3, 5, 7},
+    {1, 5, 7, 9},
+    {3, 5, 9},
+  };
+  LSMinMatchDisjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2,
+                           irs::doc_limits::eof());
+  ASSERT_EQ(1, it.LazySeek(1));
+  ASSERT_EQ(3, it.advance());
+  ASSERT_EQ(5, it.advance());
+  ASSERT_EQ(7, it.advance());
+  ASSERT_EQ(9, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// MinMatchFast -- LazySeek over a sparse sub set; some targets fail.
+TEST(block_disjunction_test, lazy_seek_min_match_fast_pruning) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 5, 9},
+    {1, 9, 15},
+    {5, 9, 30},
+  };
+  LSMinMatchFastDisjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2,
+                               irs::doc_limits::eof());
+  ASSERT_EQ(1, it.LazySeek(1));
+  ASSERT_EQ(5, it.LazySeek(5));
+  ASSERT_EQ(9, it.LazySeek(9));
+  // 15 only hits sub 1 -> threshold fails. Either target+1 or eof is
+  // acceptable depending on whether subs were purged.
+  const auto r = it.LazySeek(15);
+  if (!irs::doc_limits::eof(r)) {
+    ASSERT_EQ(16, r);
+    ASSERT_EQ(9, it.value());
+  }
+}
+
+// Stay clause: repeated / lower / zero targets short-circuit after a hit.
+TEST(block_disjunction_test, lazy_seek_stay_clause_idempotent) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 17}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(5, it.LazySeek(5));
+  for (int i = 0; i < 8; ++i) {
+    ASSERT_EQ(5, it.LazySeek(5));
+    ASSERT_EQ(5, it.value());
+  }
+  ASSERT_EQ(5, it.LazySeek(3));
+  ASSERT_EQ(5, it.LazySeek(0));
+  ASSERT_EQ(5, it.value());
+  ASSERT_EQ(17, it.LazySeek(17));
+}
+
+// Scored LazySeek across Match / MinMatch / MinMatchFast.
+namespace {
+
+template<irs::MatchType M>
+using LSScoredDisjunction =
+  irs::BlockDisjunction<irs::ScoreAdapter, irs::ScoreMergeType::Sum,
+                        irs::BlockDisjunctionTraits<M, false, 1>>;
+
+}  // namespace
+
+// Match + Sum, single sub: LazySeek hit produces the sub's constant.
+TEST(block_disjunction_test, lazy_seek_scored_match_single_sub) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 10, 17, 30}};
+  detail::CompoundSort sort{{7}};
+  LSScoredDisjunction<irs::MatchType::Match> it(
+    detail::ExecuteAll<irs::ScoreAdapter>(docs), irs::doc_limits::eof());
+  auto score = it.PrepareScore({
+    .scorer = &sort,
+    .segment = &irs::SubReader::empty(),
+  });
+  ASSERT_FALSE(score.IsDefault());
+
+  ASSERT_EQ(10, it.LazySeek(10));
+  ASSERT_EQ(10, it.value());
+  it.FetchScoreArgs(0);
+  ASSERT_FLOAT_EQ(7.f, score.Score());
+}
+
+// Match + Sum, two subs both hit: window score = sum.
+TEST(block_disjunction_test, lazy_seek_scored_match_two_subs_sum) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 10}, {2, 10, 30}};
+  detail::CompoundSort sort{{3, 4}};
+  LSScoredDisjunction<irs::MatchType::Match> it(
+    detail::ExecuteAll<irs::ScoreAdapter>(docs), irs::doc_limits::eof());
+  auto score = it.PrepareScore({
+    .scorer = &sort,
+    .segment = &irs::SubReader::empty(),
+  });
+  ASSERT_FALSE(score.IsDefault());
+
+  ASSERT_EQ(10, it.LazySeek(10));  // both subs hit
+  it.FetchScoreArgs(0);
+  ASSERT_FLOAT_EQ(7.f, score.Score());  // 3 + 4 from Sum
+}
+
+// Match + Sum: a miss between two hits must not leave stale score state.
+TEST(block_disjunction_test, lazy_seek_scored_match_miss_clears_score) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 10}, {3, 10, 20}};
+  detail::CompoundSort sort{{2, 5}};
+  LSScoredDisjunction<irs::MatchType::Match> it(
+    detail::ExecuteAll<irs::ScoreAdapter>(docs), irs::doc_limits::eof());
+  auto score = it.PrepareScore({
+    .scorer = &sort,
+    .segment = &irs::SubReader::empty(),
+  });
+  ASSERT_FALSE(score.IsDefault());
+
+  ASSERT_EQ(5, it.LazySeek(5));  // only sub 0 hits
+  it.FetchScoreArgs(0);
+  ASSERT_FLOAT_EQ(2.f, score.Score());
+
+  ASSERT_EQ(7, it.LazySeek(6));  // miss, value() stays at 5
+  ASSERT_EQ(5, it.value());
+
+  ASSERT_EQ(10, it.LazySeek(10));  // both subs hit
+  it.FetchScoreArgs(0);
+  ASSERT_FLOAT_EQ(7.f, score.Score());  // 2 + 5
+}
+
+// MinMatch + Sum, threshold passed: deferred sweep sums all contributing subs.
+TEST(block_disjunction_test, lazy_seek_scored_min_match_threshold_passed) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 5, 10},
+    {3, 10},
+    {7, 10, 20},
+  };
+  detail::CompoundSort sort{{1, 2, 4}};
+  LSScoredDisjunction<irs::MatchType::MinMatch> it(
+    detail::ExecuteAll<irs::ScoreAdapter>(docs), size_t{2},
+    irs::doc_limits::eof());
+  auto score = it.PrepareScore({
+    .scorer = &sort,
+    .segment = &irs::SubReader::empty(),
+  });
+  ASSERT_FALSE(score.IsDefault());
+
+  ASSERT_EQ(10, it.LazySeek(10));  // all three hit -> 1 + 2 + 4
+  ASSERT_GE(it.MatchCount(), 2u);
+  it.FetchScoreArgs(0);
+  ASSERT_FLOAT_EQ(7.f, score.Score());
+}
+
+// MinMatch + Sum, only two subs hit -- deferred sweep skips the non-hit.
+// Note: ctor sorts subs by cost ascending; with the data below the
+// post-sort scorer order is sub 2 -> 1, sub 0 -> 2, sub 1 -> 4.
+TEST(block_disjunction_test, lazy_seek_scored_min_match_partial_subs) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 7, 10},
+    {3, 7, 9},
+    {5, 20},
+  };
+  detail::CompoundSort sort{{1, 2, 4}};
+  LSScoredDisjunction<irs::MatchType::MinMatch> it(
+    detail::ExecuteAll<irs::ScoreAdapter>(docs), size_t{2},
+    irs::doc_limits::eof());
+  auto score = it.PrepareScore({
+    .scorer = &sort,
+    .segment = &irs::SubReader::empty(),
+  });
+  ASSERT_FALSE(score.IsDefault());
+
+  ASSERT_EQ(7, it.LazySeek(7));
+  it.FetchScoreArgs(0);
+  ASSERT_FLOAT_EQ(6.f, score.Score());  // sub 0 (2) + sub 1 (4); sub 2 skipped
+}
+
+// MinMatchFast + Sum -- LazySeek-OOB deferred scoring with early pruning.
+TEST(block_disjunction_test, lazy_seek_scored_min_match_fast) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 5, 10},
+    {3, 5, 10},
+    {7, 10, 20},
+  };
+  detail::CompoundSort sort{{2, 3, 5}};
+  using DisjFast = irs::BlockDisjunction<
+    irs::ScoreAdapter, irs::ScoreMergeType::Sum,
+    irs::BlockDisjunctionTraits<irs::MatchType::MinMatchFast, false, 1>>;
+  DisjFast it(detail::ExecuteAll<irs::ScoreAdapter>(docs), size_t{2},
+              irs::doc_limits::eof());
+  auto score = it.PrepareScore({
+    .scorer = &sort,
+    .segment = &irs::SubReader::empty(),
+  });
+  ASSERT_FALSE(score.IsDefault());
+
+  ASSERT_EQ(5, it.LazySeek(5));
+  it.FetchScoreArgs(0);
+  ASSERT_FLOAT_EQ(5.f, score.Score());  // 2 + 3
 }
 
 TEST(block_disjunction_test, seek_scored_no_readahead) {
@@ -15210,6 +15807,51 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
                             13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
                             24, 25, 26, 27, 28, 29, 30, 31, 32},
                  rdr);
+    }
+  }
+}
+
+// Regression: Conjunction::LazySeek used to leave _doc unchanged on
+// the partial-converge bail-out path, so when wrapped on the excl
+// side of Not (Not(And(...)) -> Exclusion -> Conjunction), the next
+// Exclusion::converge call re-read a stale value() and seeded a
+// LazySeek with target < some leaf's current position, tripping the
+// posting leaf's `target >= value()` assertion. Exercises that same
+// composition end-to-end via `Not(And(same=xyz, duplicated=abcd))`,
+// where the conjunction's two leaves have very different match
+// densities (32 docs vs 6 docs) so the bail-out path runs on every
+// gap between abcd matches.
+TEST_P(BooleanFilterTestCase, not_and_conjunction_regression) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+
+  irs::Not root;
+  auto& conj = root.filter<irs::And>();
+  conj.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("same", "xyz");
+  conj.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+
+  // duplicated=abcd matches {1, 5, 11, 21, 27, 31}; same=xyz matches
+  // all 32 docs; the And matches the abcd set; Not is the complement.
+  CheckQuery(root, Docs{2,  3,  4,  6,  7,  8,  9,  10, 12, 13, 14, 15, 16,
+                        17, 18, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 32},
+             rdr);
+
+  // Also exercise seek() across the result set -- this is the path
+  // that drove the SQL-side crash, since the table scan repeatedly
+  // re-enters Exclusion::converge with the next incl doc.
+  auto prepared = root.prepare({.index = rdr});
+  for (const auto& sub : rdr) {
+    auto docs = prepared->execute({.segment = sub});
+    for (irs::doc_id_t target : {2, 5, 6, 11, 12, 21, 22, 27, 28, 31, 32}) {
+      const auto landed = docs->seek(target);
+      EXPECT_GE(landed, target);
+      if (irs::doc_limits::eof(landed)) {
+        break;
+      }
     }
   }
 }

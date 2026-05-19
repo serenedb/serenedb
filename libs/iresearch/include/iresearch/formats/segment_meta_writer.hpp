@@ -123,29 +123,12 @@ inline uint64_t WriteDocumentMask(IndexOutput& out,
     return 0;
   }
 
-  // TODO: consider deletion-ratio based choice of format, rather than straighforward counting
-  // Estimate on-disk size
-  size_t deleted_varint_list_size = std::numeric_limits<size_t>::max();
-  size_t alive_varint_list_size = std::numeric_limits<size_t>::max();
-  if (deleted_doc_count < doc_count - deleted_doc_count) {
-    deleted_varint_list_size = 0;
-    docs_mask->ForEachDeleted([&deleted_varint_list_size](doc_id_t doc_id) {
-      deleted_varint_list_size += bytes_io<doc_id_t, sizeof(doc_id_t)>::vsize(doc_id);
-    });
-  } else {
-    alive_varint_list_size = 0;
-    docs_mask->ForEachAlive([&alive_varint_list_size](doc_id_t doc_id) {
-      alive_varint_list_size += bytes_io<doc_id_t, sizeof(doc_id_t)>::vsize(doc_id);
-    });
-  }
-  auto fixed_bitset_size = ManagedBitset::bits_to_words(doc_count) * sizeof(ManagedBitset::word_t);
-  auto optimal_size = std::min({deleted_varint_list_size, alive_varint_list_size, fixed_bitset_size});
-  if (optimal_size == deleted_varint_list_size) {
+  if (deleted_doc_count < 0.04 * doc_count) {
     return WriteDocumentMaskDeletedVarintList(out, *docs_mask);
-  } else if (optimal_size == alive_varint_list_size) {
-    return WriteDocumentMaskAliveVarintList(out, *docs_mask);
-  } else {
+  } else if (deleted_doc_count < 0.96 * doc_count) {
     return WriteDocumentMaskDenseBitset(out, *docs_mask);
+  } else {
+    return WriteDocumentMaskAliveVarintList(out, *docs_mask);
   }
 }
 

@@ -196,7 +196,7 @@ jobs:
         run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash
 
       # One-time setup required on each CI machine:
-      #   sudo install -d -m 2777 /mnt/data/.ccache /mnt/data/.gtest-parallel-cache /mnt/data/.cargo-target-sqllogic /mnt/data/cores
+      #   sudo install -d -m 2777 /mnt/data/.ccache /mnt/data/.gtest-parallel-cache /mnt/data/.cargo-target-sqllogic /mnt/data/cores /mnt/data/searchbench
       #   echo 'kernel.core_pattern=/mnt/data/cores/%e.%p.%t' | sudo tee /etc/sysctl.d/99-serenedb-ci.conf
       #   echo 'kernel.randomize_va_space=0' | sudo tee -a /etc/sysctl.d/99-serenedb-ci.conf
       #   sudo sysctl --system

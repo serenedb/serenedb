@@ -47,6 +47,8 @@ else
 	echo "Fetching $s3_uri (endpoint=$SEARCHBENCH_S3_ENDPOINT)"
 
 	rm -f "$tmp_path"
+	trap 'rm -f "$tmp_path"' EXIT
+
 	AWS_ACCESS_KEY_ID="$SEARCHBENCH_S3_KEY_ID" \
 		AWS_SECRET_ACCESS_KEY="$SEARCHBENCH_S3_SECRET" \
 		AWS_DEFAULT_REGION="$SEARCHBENCH_S3_REGION" \
@@ -56,6 +58,7 @@ else
 		gunzip >"$tmp_path"
 
 	mv "$tmp_path" "$corpus_path"
+	trap - EXIT
 	echo "Cached: $corpus_path ($(du -h "$corpus_path" | cut -f1))"
 fi
 

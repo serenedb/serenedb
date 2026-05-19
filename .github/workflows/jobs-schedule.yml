@@ -113,8 +113,20 @@ jobs:
       INSTRUMENTATION: tsan
 
 
+  searchbench:
+    if: github.event.schedule == '0 5 * * *'
+    uses: ./.github/workflows/searchbench-reusable.yml
+    with:
+      LOCATION: linux-amd64
+      DATASET: wiki_small
+      GTEST_FILTER: SearchBenchTest*
+      DEV: true
+      INSTRUMENTATION: none
+    secrets: inherit
+
+
   notify:
-    needs: [coverage, release-check, msan-unit, msan-functional, asan-unit, asan-functional, ubsan-unit, ubsan-functional, tsan-unit, tsan-functional]
+    needs: [coverage, release-check, msan-unit, msan-functional, asan-unit, asan-functional, ubsan-unit, ubsan-functional, tsan-unit, tsan-functional, searchbench]
     if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:

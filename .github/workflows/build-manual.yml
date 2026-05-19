@@ -35,6 +35,10 @@ on:
         description: 'Validate tests with Postgres'
         type: boolean
         default: true
+      ENABLE_SEARCHBENCH:
+        description: 'Run SearchBench validation (wiki_small)'
+        type: boolean
+        default: true
       PR_SHA:
         description: 'Exact commit SHA to build (fork PR support; empty = workflow ref)'
         type: string
@@ -112,9 +116,22 @@ jobs:
       BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
     secrets: inherit
 
+  searchbench:
+    name: searchbench
+    if: inputs.ENABLE_SEARCHBENCH
+    uses: ./.github/workflows/searchbench-reusable.yml
+    with:
+      LOCATION: linux-amd64
+      DATASET: wiki_small
+      GTEST_FILTER: SearchBenchTest.WikiSmall
+      DEV: true
+      INSTRUMENTATION: none
+      PR_SHA: ${{ inputs.PR_SHA }}
+    secrets: inherit
+
   report:
     name: Report Status
-    needs: [test-unit, test-functional, compile-check, validate-pg]
+    needs: [test-unit, test-functional, compile-check, validate-pg, searchbench]
     if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:

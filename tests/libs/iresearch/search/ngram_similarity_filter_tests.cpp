@@ -1516,8 +1516,7 @@ TEST_P(NGramSimilarityFilterTestCase, negation_regression) {
   // Complement must be non-empty and disjoint from the positive hits.
   ASSERT_FALSE(not_hits.empty());
   for (auto doc : ngram_hits) {
-    EXPECT_EQ(not_hits.end(),
-              std::find(not_hits.begin(), not_hits.end(), doc));
+    EXPECT_EQ(not_hits.end(), std::find(not_hits.begin(), not_hits.end(), doc));
   }
 
   // Drive seek() across positive hits -- mirrors the path that

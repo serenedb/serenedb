@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run iresearch-tests SearchBenchTest filter against the host-cached corpus.
 # Expects: BUILD_DIR, WORKSPACE, BUILD_IMAGE, CORPUS_PATH
-# Optional: SEARCHBENCH_GTEST_FILTER (default: SearchBenchTest.WikiSmall)
+# Optional: SEARCHBENCH_GTEST_FILTER (default: SearchBenchTest*)
 
 set -e
 
@@ -34,7 +34,7 @@ if ! docker run --rm \
     set -o pipefail
     cd /serenedb/${BUILD_DIR}/bin
     export MALLOC_ARENA_MAX=1
-    ./iresearch-tests \
+    ./iresearch-searchbench-tests \
       --gtest_filter="${SEARCHBENCH_GTEST_FILTER}" \
       --gtest_output="xml:/serenedb/searchbench-tests.xml" \
       2>&1 | tee -a /serenedb/searchbench-tests.log

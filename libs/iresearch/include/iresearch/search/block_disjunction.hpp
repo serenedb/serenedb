@@ -435,10 +435,6 @@ class BlockDisjunction : public DocIterator {
 
   struct ResolveOverloadTag {};
 
-  // Merge one matching sub's contribution into the active score window.
-  // Callers must have already established that `it` hit the current
-  // target (i.e. `it.value() == _doc`). No-op for default scorers and
-  // for kHasScore == false.
   template<typename It, typename Scorer>
   IRS_FORCE_INLINE void MergeSubScore(It& it, Scorer& scorer) {
     if constexpr (kHasScore) {

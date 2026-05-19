@@ -378,8 +378,7 @@ Result ValidateInvertedIndexColumns(
                              kind == duckdb::LogicalTypeId::DATE ||
                              kind == duckdb::LogicalTypeId::TIMESTAMP_TZ;
       if (!supported) {
-        return {ERROR_BAD_PARAMETER,
-                "Indexed expression ",
+        return {ERROR_BAD_PARAMETER, "Indexed expression ",
                 c.GetIndexedExpression().pretty_printed,
                 " has unsupported return kind ",
                 duckdb::EnumUtil::ToString(kind)};

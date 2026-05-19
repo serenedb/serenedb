@@ -20,8 +20,6 @@
 
 #include "connector/optimizer/iresearch_plan.h"
 
-#include "connector/index_expression.hpp"
-
 #include <absl/base/internal/endian.h>
 
 #include <duckdb/function/aggregate/distributive_functions.hpp>
@@ -62,6 +60,7 @@
 #include "connector/functions/search.h"
 #include "connector/functions/ts_offsets.h"
 #include "connector/functions/vector.h"
+#include "connector/index_expression.hpp"
 #include "connector/optimizer/flatten_projection_ids.h"
 #include "connector/search_field_name.hpp"
 #include "connector/search_filter_builder.hpp"
@@ -380,8 +379,7 @@ const duckdb::BoundColumnRefExpression* FindAnyColumnRef(
   }
   const duckdb::BoundColumnRefExpression* found = nullptr;
   duckdb::ExpressionIterator::EnumerateChildren(
-    const_cast<duckdb::Expression&>(expr),
-    [&](duckdb::Expression& child) {
+    const_cast<duckdb::Expression&>(expr), [&](duckdb::Expression& child) {
       if (!found) {
         found = FindAnyColumnRef(child);
       }
@@ -399,10 +397,8 @@ connector::ExpressionGetter MakeExpressionGetter(SearchColumnContext& ctx) {
     if (!any_ref || any_ref->binding.table_index != ctx.table_index) {
       return std::nullopt;
     }
-    auto normalized =
-      connector::NormalizeBoundExpression(expr, ctx.relation_id,
-                                          ctx.projected_column_ids,
-                                          *ctx.client_context);
+    auto normalized = connector::NormalizeBoundExpression(
+      expr, ctx.relation_id, ctx.projected_column_ids, *ctx.client_context);
     auto serialized = connector::SerializeBoundExpression(*normalized);
     auto entry = ctx.indexed_expressions.find(serialized);
     if (entry == ctx.indexed_expressions.end()) {
@@ -492,10 +488,10 @@ void InitSearchColumnContextForGet(
                                        std::string_view json_pointer) {
     return index_ptr->GetJsonPathTokenizer(snapshot, col_id, json_pointer);
   };
-  ctx.expr_tokenizer_provider =
-    [index_ptr, snapshot](std::string_view serialized_expr) {
-      return index_ptr->GetExprTokenizer(snapshot, serialized_expr);
-    };
+  ctx.expr_tokenizer_provider = [index_ptr,
+                                 snapshot](std::string_view serialized_expr) {
+    return index_ptr->GetExprTokenizer(snapshot, serialized_expr);
+  };
   for (const auto& expr_info : resolved.index->GetExpressions()) {
     ctx.indexed_expressions.emplace(expr_info.serialized_expr,
                                     expr_info.return_type);
@@ -522,9 +518,8 @@ bool TryClaimIresearchConjunct(
   const connector::SearchFilterOptions& options) {
   const auto before = and_root.size();
   std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&conjunct, 1};
-  auto r =
-    connector::MakeSearchFilter(and_root, single, getter, options, json_getter,
-                                expr_getter);
+  auto r = connector::MakeSearchFilter(and_root, single, getter, options,
+                                       json_getter, expr_getter);
   if (r.ok() && and_root.size() > before) {
     return true;
   }
@@ -1000,7 +995,7 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     std::span<const duckdb::unique_ptr<duckdb::Expression>> single{
       &filter.expressions[i], 1};
     auto result = connector::MakeSearchFilter(*root, single, getter, options,
-                                               json_getter, expr_getter);
+                                              json_getter, expr_getter);
     if (result.ok() && root->size() > before) {
       claimed_indices.push_back(i);
     } else {

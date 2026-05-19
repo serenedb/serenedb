@@ -52,7 +52,7 @@ struct SearchColumnInfo {
   std::string json_pointer;
   // Canonical bytes of an indexed expression (matching the catalog). Empty
   // for bare-column / JSON-path entries; set when the filter builder
-  // resolved a `(expr) @@ …` predicate against a CREATE INDEX (…) entry.
+  // resolved a `(expr) @@ ...` predicate against a CREATE INDEX (...) entry.
   std::string serialized_expr;
 };
 

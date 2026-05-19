@@ -199,8 +199,7 @@ inline HNSWInfoProvider NoHNSW() {
 class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
  public:
   SearchSinkInsertBaseImpl(
-    irs::IndexWriter::Transaction& trx,
-    TokenizerProvider&& tokenizer_provider,
+    irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     JsonPathsProvider&& json_paths_provider,
     StoreValuesProvider&& store_values_provider,
     IsTextIndexedProvider&& is_text_indexed_provider,
@@ -356,7 +355,12 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
     void Init(catalog::Column::Id column_id, std::string_view json_pointer,
               catalog::ColumnTokenizer string_analyzer);
+    void InitForExpression(std::string_view serialized_expr,
+                           catalog::ColumnTokenizer string_analyzer);
   };
+
+  void SetupJsonExpressionWriter(std::string_view serialized_expr,
+                                 catalog::ColumnTokenizer string_analyzer);
 
   TokenizerProvider _tokenizer_provider;
   JsonPathsProvider _json_paths_provider;

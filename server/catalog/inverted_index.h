@@ -54,7 +54,7 @@ struct JsonPathInfo {
   uint32_t norm_row_group_size = 0;
 };
 
-// One indexed expression (`CREATE INDEX … inverted((expr) opclass)`),
+// One indexed expression (`CREATE INDEX ... inverted((expr) opclass)`),
 // flattened to its canonical serialized form. Looked up by serialized bytes
 // at filter-build / write time; `dependent_columns` lets DML decide which
 // indexes a write must trigger.

@@ -297,9 +297,8 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
       continue;
     }
     EvaluateAndWriteIndexedExpressions(*writer, exprs, chunk, gstate.table_id,
-                                       slot_to_col_id, context.client,
-                                       num_rows, gstate.row_keys,
-                                       *gstate.serializer);
+                                       slot_to_col_id, context.client, num_rows,
+                                       gstate.row_keys, *gstate.serializer);
   }
 
   // 5. Finish index writers

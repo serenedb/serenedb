@@ -1807,8 +1807,7 @@ Result MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, const SearchFilterOptions& options,
-  const JsonPathGetter& json_path_getter,
-  const ExpressionGetter& expr_getter) {
+  const JsonPathGetter& json_path_getter, const ExpressionGetter& expr_getter) {
   irs::StringTokenizer identity;
   containers::NodeHashMap<std::string, SearchColumnInfo> column_cache;
   std::string cache_key_scratch;

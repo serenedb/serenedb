@@ -20,8 +20,8 @@
 --
 -- The upstream embedding column is a generic LIST<FLOAT>; we cast it to
 -- FLOAT[1536] (HNSW requires a typed, fixed-length vector) and rename
--- the hyphenated upstream name to `embedding` so demo_view.sql can use
--- the same identifiers as demo.sql.
+-- the hyphenated upstream name to `embedding` so the same demo.sql runs
+-- unchanged against either bootstrap.
 --
 -- Run:
 --   psql -h <host> -p <port> -U postgres -d postgres -f bootstrap_view.sql
@@ -38,7 +38,7 @@ CREATE VIEW dbpedia AS
          text,
          "text-embedding-3-small-1536-embedding"::FLOAT[1536] AS embedding
   FROM read_parquet(
-    'https://huggingface.co/datasets/Qdrant/dbpedia-entities-openai3-text-embedding-3-small-1536-100K/resolve/main/data/train-00000-of-00004.parquet'
+    'hf://datasets/Qdrant/dbpedia-entities-openai3-text-embedding-3-small-1536-100K/**/*.parquet'
   );
 
 SELECT count(*) AS rows FROM dbpedia;

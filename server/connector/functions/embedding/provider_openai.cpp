@@ -33,6 +33,7 @@
 #include <utility>
 
 #include "basics/assert.h"
+#include "basics/system-compiler.h"
 
 namespace sdb::connector::embedding {
 namespace {
@@ -40,9 +41,26 @@ namespace {
 constexpr const std::string_view kDefaultBaseUrl = "https://api.openai.com";
 constexpr const std::string_view kEmbeddingsPath = "/v1/embeddings";
 
+bool NeedsJsonEscape(unsigned char c) {
+  return c == '"' || c == '\\' || c == '\b' || c == '\f' || c == '\n' ||
+         c == '\r' || c == '\t';
+}
+
 void AppendJsonEscaped(std::string& out, std::string_view s) {
-  out.reserve(out.size() + s.size() + 2);
-  for (unsigned char c : s) {
+  size_t i = 0;
+  while (i < s.size()) {
+    size_t j = i;
+    while (j < s.size() && !NeedsJsonEscape(static_cast<unsigned char>(s[j]))) {
+      j++;
+    }
+    if (j > i) {
+      out.append(s.data() + i, j - i);
+      i = j;
+    }
+    if (i >= s.size()) {
+      break;
+    }
+    unsigned char c = static_cast<unsigned char>(s[i++]);
     switch (c) {
       case '"':
         out.append("\\\"");
@@ -66,13 +84,7 @@ void AppendJsonEscaped(std::string& out, std::string_view s) {
         out.append("\\t");
         break;
       default:
-        if (c < 0x20) {
-          char buf[8];
-          std::snprintf(buf, sizeof(buf), "\\u%04x", c);
-          out.append(buf);
-        } else {
-          out.push_back(static_cast<char>(c));
-        }
+        SDB_UNREACHABLE();
     }
   }
 }
@@ -81,10 +93,6 @@ class OpenAIProvider final : public EmbeddingProvider {
  public:
   OpenAIProvider(duckdb::DatabaseInstance& db, ProviderConfig cfg)
     : _db(db), _cfg(std::move(cfg)) {
-    if (_cfg.api_key.empty()) {
-      throw duckdb::InvalidInputException(
-        "OpenAI secret is missing required 'api_key'");
-    }
     if (_cfg.base_url.empty()) {
       _cfg.base_url = kDefaultBaseUrl;
     }
@@ -101,7 +109,7 @@ class OpenAIProvider final : public EmbeddingProvider {
 
   void EmbedBatch(std::span<std::string_view> texts,
                   duckdb::Vector& result) const final {
-    constexpr size_t kMaxBatch = 96;
+    constexpr size_t kMaxBatch = 256;
     duckdb::idx_t next_row = 0;
     for (size_t start = 0; start < texts.size(); start += kMaxBatch) {
       size_t end = std::min(start + kMaxBatch, texts.size());
@@ -112,7 +120,12 @@ class OpenAIProvider final : public EmbeddingProvider {
  private:
   void EmbedChunk(std::span<std::string_view> texts, duckdb::Vector& result,
                   duckdb::idx_t& next_row) const {
+    size_t total = 32 + _cfg.model.size();
+    for (auto t : texts) {
+      total += t.size() + 4;
+    }
     std::string body;
+    body.reserve(total);
     body.append("{\"model\":\"");
     AppendJsonEscaped(body, _cfg.model);
     body.append("\",\"input\":[");
@@ -133,7 +146,9 @@ class OpenAIProvider final : public EmbeddingProvider {
 
     duckdb::HTTPHeaders headers;
     headers.Insert("Content-Type", "application/json");
-    headers.Insert("Authorization", "Bearer " + _cfg.api_key);
+    if (!_cfg.api_key.empty()) {
+      headers.Insert("Authorization", "Bearer " + _cfg.api_key);
+    }
 
     duckdb::PostRequestInfo post_request(
       url, headers, *params,
@@ -205,7 +220,7 @@ class OpenAIProvider final : public EmbeddingProvider {
       duckdb::ListVector::Reserve(result, size + values_size);
       duckdb::ListVector::SetListSize(result, size + values_size);
       auto& child = duckdb::ListVector::GetEntry(result);
-      auto writer = duckdb::FlatVector::Writer<float>(child);
+      auto* data = duckdb::FlatVector::GetDataMutable<float>(child);
 
       list_entries[next_row] = {size, values_size};
 
@@ -215,7 +230,7 @@ class OpenAIProvider final : public EmbeddingProvider {
           throw duckdb::InvalidInputException(
             "OpenAI embedding contains non-numeric value: %s", body);
         }
-        writer[size++] = static_cast<float>(d);
+        data[size++] = static_cast<float>(d);
       }
       parsed++;
       next_row++;

@@ -15,7 +15,6 @@ DROP TABLE IF EXISTS dbpedia;
 DROP VIEW IF EXISTS dbpedia;
 
 CREATE TABLE dbpedia (
-  id         INTEGER PRIMARY KEY,
   entity_id  VARCHAR,
   title      VARCHAR,
   text       VARCHAR,
@@ -26,8 +25,7 @@ CREATE TABLE dbpedia (
 -- column is named with hyphens upstream, so it's quoted on the read side
 -- and aliased to the local schema name on insert.
 INSERT INTO dbpedia
-SELECT row_number() OVER ()::INTEGER AS id,
-       _id    AS entity_id,
+SELECT _id    AS entity_id,
        title,
        text,
        emb    AS embedding

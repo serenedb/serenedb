@@ -38,6 +38,7 @@
 #include <utility>
 #include <vector>
 
+#include "basics/down_cast.h"
 #include "connector/functions/embedding/provider.h"
 
 namespace sdb::connector {
@@ -107,7 +108,8 @@ ProviderConfig LoadProviderConfig(duckdb::ClientContext& context,
     throw duckdb::BinderException("ai_embed: secret '%s' not found",
                                   secret_name);
   }
-  const auto& kv = dynamic_cast<const duckdb::KeyValueSecret&>(*entry->secret);
+  const auto& kv =
+    basics::downCast<const duckdb::KeyValueSecret>(*entry->secret);
 
   ProviderConfig cfg;
   cfg.protocol = entry->secret->GetType();
@@ -182,11 +184,13 @@ void AIEmbedFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       list_entries[i] = {0, 0};
       continue;
     }
-    auto text = text_data[idx];
+    const auto& text = text_data[idx];
     batch_texts.emplace_back(text.GetData(), text.GetSize());
   }
 
-  provider.EmbedBatch(batch_texts, result);
+  if (!batch_texts.empty()) {
+    provider.EmbedBatch(batch_texts, result);
+  }
 }
 
 }  // namespace

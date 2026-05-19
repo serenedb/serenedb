@@ -36,7 +36,7 @@ FROM (
          strptime(published_date, '%Y-%m-%dT%H:%M:%SZ') AS published_date
   FROM read_parquet(
     'https://huggingface.co/datasets/neuralwork/arxiver/resolve/main/data/train.parquet')
-  LIMIT 100
+  LIMIT 5000
 ) src;
 
 SELECT count(*) AS rows FROM arxiv;

@@ -8,8 +8,10 @@
 -- index -- BM25 phrase search, ANN top-K, range filtering, and hybrid
 -- text+vector all hit one structure.
 --
--- Prereq: stage the rows in a local table once via bootstrap.sql:
+-- Prereq: stage `dbpedia` once via either bootstrap (table or view):
 --   psql -h <host> -p <port> -U postgres -d postgres -f bootstrap.sql
+--   -- or --
+--   psql -h <host> -p <port> -U postgres -d postgres -f bootstrap_view.sql
 -- Then run this demo:
 --   psql -h <host> -p <port> -U postgres -d postgres -f demo.sql
 
@@ -29,28 +31,27 @@ CREATE TEXT SEARCH DICTIONARY dbpedia_en(
     norm = true
 );
 
--- Reference vector: Albert Einstein's abstract embedding, captured into
--- the psql variable :qvec. `replace(..., ' ', '')` strips spaces so the
--- array text is a single token that `\bind` can pass as one parameter.
-SELECT replace(embedding::TEXT, ' ', '') AS qvec
-FROM dbpedia WHERE title = 'Endorphins' LIMIT 1
-\gset
-
 -- Hybrid index. text gets a BM25/phrase posting list, embedding gets an
 -- HNSW graph under cosine distance. Both share the same rocksdb row
 -- store, so filters and projections from one column compose with the
--- other for free.
+-- other for free. Works against both bootstraps -- the view variant
+-- fetches row data from the URLs on column materialisation.
 CREATE INDEX dbpedia_idx ON dbpedia USING inverted(
-  id,
   text       dbpedia_en,
   embedding  hnsw (metric = 'cosine', m = 32, ef_construction = 64)
 );
 
+SELECT replace(d.embedding::TEXT, ' ', '') AS qvec,
+       d.title AS qtitle
+FROM dbpedia_idx d
+WHERE text @@ ts_phrase('general relativity')
+LIMIT 1
+\gset
 
--- Q1: Pure vector ANN -- "entities most like Albert Einstein". The
--- reference embedding arrives as a PostgreSQL bind parameter ($1) via
--- the extended protocol; the cast `$1::FLOAT[1536]` folds at plan time
--- so the optimizer picks IRESEARCH_ANN_SCAN over the HNSW graph.
+-- Q1: Pure vector ANN -- entities most like the reference doc. The
+-- embedding arrives as a PostgreSQL bind parameter ($1) via the extended
+-- protocol; the cast `$1::FLOAT[1536]` folds at plan time so the
+-- optimizer picks IRESEARCH_ANN_SCAN over the HNSW graph.
 
 SELECT title
 FROM dbpedia_idx d
@@ -87,4 +88,4 @@ LIMIT 5
 -- Cleanup (uncomment to drop the demo objects; dbpedia itself is durable):
 -- DROP INDEX dbpedia_idx;
 -- DROP TEXT SEARCH DICTIONARY dbpedia_en;
--- DROP TABLE dbpedia;
+-- DROP TABLE dbpedia;   -- or: DROP VIEW dbpedia;

@@ -6,4 +6,4 @@ Indexes the [Qdrant dbpedia-entities-openai3-text-embedding-3-small-1536-100K da
 
 - **One index, two retrieval modes.** BM25 (phrase, positional) and HNSW cosine ANN on the same physical structure.
 - **Vector ANN top-K, range search, and hybrid `text @@ ... ORDER BY embedding <=> ...`** -- one SQL statement, one index hit.
-- **Two ingestion shapes:** `bootstrap.sql` loads into a native table; `bootstrap_view.sql` builds the index over a remote-parquet view.
+- **Two ingestion shapes, one demo:** `bootstrap.sql` loads into a native table; `bootstrap_view.sql` builds the index over a remote-parquet view. `demo.sql` runs unchanged against either.

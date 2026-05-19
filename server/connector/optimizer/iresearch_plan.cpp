@@ -261,14 +261,18 @@ DistanceArgs ExtractDistanceArgs(duckdb::BoundFunctionExpression& func_expr) {
   if (func_expr.children.size() != 2) {
     return out;
   }
-  for (auto& child : func_expr.children) {
-    const auto cls = child->expression_class;
-    if (cls == duckdb::ExpressionClass::BOUND_COLUMN_REF ||
-        cls == duckdb::ExpressionClass::BOUND_REF) {
-      out.col_arg = child.get();
-    } else {
-      out.value_arg = child.get();
-    }
+  auto is_col = [](const duckdb::Expression& e) {
+    return e.expression_class == duckdb::ExpressionClass::BOUND_COLUMN_REF ||
+           e.expression_class == duckdb::ExpressionClass::BOUND_REF;
+  };
+  auto& lhs = func_expr.children[0];
+  auto& rhs = func_expr.children[1];
+  if (is_col(*lhs) && !is_col(*rhs)) {
+    out.col_arg = lhs.get();
+    out.value_arg = rhs.get();
+  } else if (!is_col(*lhs) && is_col(*rhs)) {
+    out.col_arg = rhs.get();
+    out.value_arg = lhs.get();
   }
   return out;
 }

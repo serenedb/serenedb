@@ -263,8 +263,7 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
   {
     auto writer = irs::IndexWriter::Make(dir, codec_ptr, irs::kOmCreate);
 
-    ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end(),
-                       doc1->stored.begin(), doc1->stored.end()));
+    ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
     writer->Commit();
     tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                   irs::DirectoryReader(dir, codec_ptr));
@@ -280,8 +279,7 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
     file_set.insert(files.begin(), files.end());
 
     writer->GetBatch().Remove(std::move(query_doc1));
-    ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end(),
-                       doc2->stored.begin(), doc2->stored.end()));
+    ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
     writer->Commit();
     tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                   irs::DirectoryReader(dir, codec_ptr));

@@ -30,9 +30,9 @@ namespace sdb::catalog {
 inline constexpr std::string kPgSqlTypeOidProp = "sdb_oid";
 
 // A user-defined type (ENUM or RECORD).
-class PgSqlType final : public SchemaObject {
+class PgSqlType final : public Object {
  public:
-  PgSqlType(ObjectId database_id, ObjectId id, std::string_view name,
+  PgSqlType(ObjectId schema_id, ObjectId id, std::string_view name,
             duckdb::unique_ptr<duckdb::CreateTypeInfo> info);
 
   static std::shared_ptr<PgSqlType> ReadInternal(vpack::Slice slice,

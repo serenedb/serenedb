@@ -24,7 +24,7 @@ namespace sdb::catalog {
 
 struct Snapshot;
 
-class SchemaObject;
+class Object;
 class PgSqlFunction;
 class Table;
 class Role;

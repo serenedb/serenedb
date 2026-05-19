@@ -24,12 +24,16 @@
 
 namespace sdb::connector {
 
-bool DuckDBSearchSinkInsertWriter::SwitchColumn(const ColumnDescriptor& col) {
-  return SwitchColumnImpl(col);
+bool DuckDBSearchSinkInsertWriter::SwitchColumn(const ColumnDescriptor& col,
+                                                const duckdb::Vector& vec,
+                                                duckdb::idx_t count) {
+  return SwitchColumnImpl(col, vec, count);
 }
 
-bool DuckDBSearchSinkUpdateWriter::SwitchColumn(const ColumnDescriptor& col) {
-  return SwitchColumnImpl(col);
+bool DuckDBSearchSinkUpdateWriter::SwitchColumn(const ColumnDescriptor& col,
+                                                const duckdb::Vector& vec,
+                                                duckdb::idx_t count) {
+  return SwitchColumnImpl(col, vec, count);
 }
 
 }  // namespace sdb::connector

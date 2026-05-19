@@ -27,15 +27,40 @@
 
 #include "basics/memory.hpp"
 #include "basics/noncopyable.hpp"
+#include "iresearch/columnstore/format.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/string.hpp"
 
+namespace duckdb {
+
+class DatabaseInstance;
+}
+
 namespace irs {
 
 struct TrackingDirectory;
-class Comparer;
+
+struct DocRemap {
+  explicit DocRemap(IResourceManager& rm) noexcept : id_map{{rm}} {}
+
+  const DocumentMask* mask = nullptr;
+  doc_id_t base_id = doc_limits::invalid();
+  ManagedVector<doc_id_t> id_map;
+
+  bool IsMasked(doc_id_t src) const noexcept {
+    return mask != nullptr && mask->contains(src);
+  }
+
+  doc_id_t Remap(doc_id_t src) const noexcept {
+    if (!id_map.empty()) {
+      SDB_ASSERT(src < id_map.size());
+      return id_map[src];
+    }
+    return base_id + (src - doc_limits::min());
+  }
+};
 
 class MergeWriter : public util::Noncopyable {
  public:
@@ -46,9 +71,8 @@ class MergeWriter : public util::Noncopyable {
     ReaderCtx(const SubReader& reader, IResourceManager& rm) noexcept
       : ReaderCtx{&reader, rm} {}
 
-    const SubReader* reader;                    // segment reader
-    ManagedVector<doc_id_t> doc_id_map;         // FIXME use bitpacking vector
-    std::function<doc_id_t(doc_id_t)> doc_map;  // mapping function
+    const SubReader* reader;
+    DocRemap remap;
   };
 
   MergeWriter(IResourceManager& resource_manager) noexcept;
@@ -57,12 +81,10 @@ class MergeWriter : public util::Noncopyable {
                        const SegmentWriterOptions& options) noexcept
     : _dir{dir},
       _readers{{options.resource_manager}},
-      _column_info{&options.column_info},
       _scorer{options.scorer},
-      _comparator{options.comparator},
-      _scorers_features{options.scorers_features} {
-    SDB_ASSERT(_column_info);
-  }
+      _db{options.db},
+      _column_options{options.column_options},
+      _norm_column_options{options.norm_column_options} {}
   MergeWriter(MergeWriter&&) = default;
   MergeWriter& operator=(MergeWriter&&) = delete;
 
@@ -76,11 +98,12 @@ class MergeWriter : public util::Noncopyable {
     }
   }
 
-  // Flush all of the added readers into a single segment.
-  // `segment` the segment that was flushed.
-  // `progress` report flush progress (abort if 'progress' returns false).
-  // Return merge successful.
+  // Flush all added readers into a single segment.
   bool Flush(SegmentMeta& segment, const FlushProgress& progress = {});
+
+  columnstore::PreloadedHnswGraphs TakeBuiltHnswGraphs() noexcept {
+    return std::move(_built_hnsw_graphs);
+  }
 
   const ReaderCtx& operator[](size_t i) const noexcept {
     SDB_ASSERT(i < _readers.size());
@@ -88,18 +111,13 @@ class MergeWriter : public util::Noncopyable {
   }
 
  private:
-  bool FlushSorted(TrackingDirectory& dir, SegmentMeta& segment,
-                   const FlushProgress& progress);
-
-  bool FlushUnsorted(TrackingDirectory& dir, SegmentMeta& segment,
-                     const FlushProgress& progress);
-
   Directory& _dir;
   ManagedVector<ReaderCtx> _readers;
-  const ColumnInfoProvider* _column_info{};
   ScorerPtr _scorer;
-  const Comparer* const _comparator{};
-  IndexFeatures _scorers_features{};
+  duckdb::DatabaseInstance* _db = nullptr;
+  const ColumnOptionsProvider* _column_options = nullptr;
+  const NormColumnOptionsProvider* _norm_column_options = nullptr;
+  columnstore::PreloadedHnswGraphs _built_hnsw_graphs;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<MergeWriter>);

@@ -339,12 +339,8 @@ TEST_F(DirectoryUtilsTests, test_tracking_dir) {
     ASSERT_EQ(1, byte_size);
     bool exists{false};
     ASSERT_TRUE(dir.exists(exists, file) && exists);
-    ASSERT_FALSE(track_dir.remove(file));
     ASSERT_TRUE(track_dir.rename(file, "def"));
-    ASSERT_FALSE(track_dir.remove(file));
     ASSERT_TRUE(dir.exists(exists, file) && !exists);
-    ASSERT_TRUE(dir.exists(exists, "def") && exists);
-    ASSERT_FALSE(track_dir.remove("def"));
     ASSERT_TRUE(dir.exists(exists, "def") && exists);
 
     byte_size = 0;
@@ -357,5 +353,29 @@ TEST_F(DirectoryUtilsTests, test_tracking_dir) {
     files = track_dir.FlushTracked(byte_size);
     ASSERT_EQ(0, files.size());
     ASSERT_EQ(0, byte_size);
+  }
+
+  // test remove forwards to impl and untracks
+  {
+    irs::MemoryDirectory dir;
+    irs::TrackingDirectory track_dir{dir};
+    const std::string_view file{"abc"};
+    {
+      auto file1 = track_dir.create(file);
+      ASSERT_FALSE(!file1);
+      file1->WriteByte(42);
+      file1->Flush();
+    }
+    bool exists{false};
+    ASSERT_TRUE(dir.exists(exists, file) && exists);
+
+    ASSERT_TRUE(track_dir.remove(file));
+    ASSERT_TRUE(dir.exists(exists, file) && !exists);
+
+    uint64_t byte_size{0};
+    auto files = track_dir.FlushTracked(byte_size);
+    ASSERT_TRUE(files.empty());
+
+    ASSERT_FALSE(track_dir.remove("def"));
   }
 }

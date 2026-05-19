@@ -41,14 +41,15 @@ namespace sdb::connector {
 // columns get a null tokenizer here).
 //
 // For JSON-path indexed fields (e.g. `TERM_LIKE(content->'host', ...)`)
-// `json_path` is non-empty and holds the keys root-to-leaf; `logical_type`
-// is the DuckDB type of the indexed leaf (VARCHAR for the string-leaf MVP,
-// or the cast target type for numeric/bool/null lookups).
+// `json_pointer` is non-empty and holds the JSON pointer (pre-encoded,
+// see `EncodeJsonPointer`); `logical_type` is the DuckDB type of the
+// indexed leaf (VARCHAR for the string-leaf MVP, or the cast target
+// type for numeric/bool/null lookups).
 struct SearchColumnInfo {
   catalog::Column::Id column_id{};
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
-  std::vector<std::string> json_path;
+  std::string json_pointer;
 };
 
 // Resolves a DuckDB bound column reference (by table_index + column_index,
@@ -60,11 +61,13 @@ struct SearchColumnInfo {
 using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::BoundColumnRefExpression&) const>;
 
-// Resolves a JSON path (e.g. {"host"}) on an already-known base column to
-// a SearchColumnInfo carrying the per-path analyzer. Returns nullopt if no
-// indexed path matches.
+// Resolves a JSON pointer (e.g. "/host") on an already-known base column
+// to a SearchColumnInfo carrying the per-path analyzer. Returns nullopt
+// if no indexed path matches. The pointer is RFC-6901 encoded (see
+// `EncodeJsonPointer`), matching the form stored on
+// `InvertedIndexColumnInfo::json_paths[*].json_pointer`.
 using JsonPathGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
-  const duckdb::BoundColumnRefExpression&, std::span<const std::string>) const>;
+  const duckdb::BoundColumnRefExpression&, std::string_view) const>;
 
 // Encodes column_id as an 8-byte big-endian binary string into
 // field_name. Before being used as an iresearch field name, the result

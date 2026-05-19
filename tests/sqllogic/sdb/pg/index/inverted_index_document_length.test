@@ -1,0 +1,272 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted(id, body en);
+
+
+statement count 1
+INSERT INTO docs VALUES (1, 'the quick brown fox jumps over the lazy dog');
+
+
+statement count 1
+INSERT INTO docs VALUES (2, 'the quick fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (3, 'the lazy dog');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+query
+SELECT id, raw_dl(docs_idx.tableoid) > 0 AS has_len
+FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id	has_len
+1	t
+2	t
+
+
+query
+SELECT id FROM docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY raw_dl(docs_idx.tableoid) DESC, id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY raw_dl(docs_idx.tableoid) ASC, id;
+----
+id
+2
+1
+
+
+query
+SELECT id, CAST(raw_dl(docs_idx.tableoid) AS INTEGER) AS dl
+FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id	dl
+1	9
+2	3
+
+
+statement count 1
+INSERT INTO docs VALUES (4, 'the fox runs fast');
+
+
+statement count 1
+INSERT INTO docs VALUES (5, 'a quick brown rabbit and a fox');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+query
+SELECT id, CAST(raw_dl(docs_idx.tableoid) AS INTEGER) AS dl
+FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id	dl
+1	9
+2	3
+4	4
+5	7
+
+
+query error raw_dl\(\) requires an inverted index scan in the same sub-query
+SELECT id, raw_dl(docs.tableoid) FROM docs WHERE id > 0;
+
+
+query
+EXPLAIN SELECT id, raw_dl(docs_idx.tableoid) FROM docs_idx
+WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│      docs_idx.id ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: docs_idx      │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│      Score: raw_dl()      │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+
+query error Only one scorer function is allowed per inverted index
+SELECT id FROM docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY raw_dl(docs_idx.tableoid) DESC, BM25(docs_idx.tableoid) DESC LIMIT 3;
+
+
+query
+SELECT id, CAST(raw_dl(docs_idx.tableoid) AS INTEGER) AS dl
+FROM docs_idx
+WHERE body @@ ts_phrase('fox') OR body @@ ts_phrase('lazy')
+ORDER BY id;
+----
+id	dl
+1	18
+2	3
+3	3
+4	4
+5	7
+
+
+query
+SELECT id, CAST(raw_dl(docs_idx.tableoid) AS INTEGER) AS dl
+FROM docs_idx
+WHERE body @@ ts_phrase('fox') AND body @@ ts_phrase('lazy')
+ORDER BY id;
+----
+id	dl
+1	18
+
+
+query
+SELECT id, CAST(raw_dl(docs_idx.tableoid) AS INTEGER) AS dl
+FROM docs_idx
+WHERE body @@ ts_phrase('the') AND body @@ ts_phrase('fox')
+ORDER BY id;
+----
+id	dl
+1	18
+2	6
+4	8
+
+
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ ts_phrase('fox') OR body @@ ts_phrase('lazy')
+ORDER BY raw_dl(docs_idx.tableoid) DESC, id;
+----
+id
+1
+5
+4
+2
+3
+
+
+statement ok
+DROP TABLE docs;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_norm(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE TABLE sparse_norm (id INTEGER PRIMARY KEY, content JSON);
+
+
+statement ok
+CREATE INDEX sparse_norm_idx ON sparse_norm
+    USING inverted(id, (content->>'body') en_norm);
+
+
+statement count 1
+INSERT INTO sparse_norm VALUES (1, '{"body":"t"}'::json);
+
+
+statement count 1
+INSERT INTO sparse_norm VALUES (2, '{"other":"x"}'::json);
+
+
+statement count 1
+INSERT INTO sparse_norm VALUES (3, '{"body":"t"}'::json);
+
+
+statement count 1
+INSERT INTO sparse_norm VALUES
+    (4, '{"body":"t a b c d e f g h"}'::json);
+
+
+statement count 1
+INSERT INTO sparse_norm VALUES (5, '{"body":"x"}'::json);
+
+
+statement count 1
+INSERT INTO sparse_norm VALUES (6, '{"body":"x"}'::json);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) sparse_norm;
+
+
+query
+SELECT id FROM sparse_norm_idx
+WHERE content->>'body' @@ ts_phrase('t')
+ORDER BY raw_dl(sparse_norm_idx.tableoid) DESC, id;
+----
+id
+4
+1
+3
+
+
+query
+SELECT id, CAST(raw_dl(sparse_norm_idx.tableoid) AS INTEGER) AS dl
+FROM sparse_norm_idx
+WHERE content->>'body' @@ ts_phrase('t') ORDER BY id;
+----
+id	dl
+1	1
+3	1
+4	9
+
+
+statement ok
+DROP TABLE sparse_norm;

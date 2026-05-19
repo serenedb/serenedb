@@ -50,9 +50,9 @@ class WandWriterImpl final : public WandWriter {
     _levels.resize(max_levels + 1);
   }
 
-  bool Prepare(const ColumnProvider& reader, const FieldProperties& meta,
+  bool Prepare(const NormProvider& norms, const FieldProperties& meta,
                const AttributeProvider& attrs) final {
-    return _producer.Prepare(reader, meta, attrs);
+    return _producer.Prepare(norms, meta, attrs);
   }
 
   void Reset() noexcept final {
@@ -219,7 +219,7 @@ class FreqNormProducer : public AttributeProvider {
 
   explicit FreqNormProducer(score_t b = 0.f) : _b{b} {}
 
-  bool Prepare(const ColumnProvider& reader, const FieldProperties& meta,
+  bool Prepare(const NormProvider& norms, const FieldProperties& meta,
                const AttributeProvider& attrs) {
     _freq = irs::get<FreqAttr>(attrs);
 
@@ -234,12 +234,7 @@ class FreqNormProducer : public AttributeProvider {
         return false;
       }
 
-      const auto* column = reader.column(meta.norm);
-      if (!column) {
-        return false;
-      }
-
-      _norm_it = column->norms();
+      _norm_it = norms.norms(meta.norm);
       if (!_norm_it) [[unlikely]] {
         return false;
       }

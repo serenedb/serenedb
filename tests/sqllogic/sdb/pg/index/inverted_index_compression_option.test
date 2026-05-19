@@ -1,0 +1,255 @@
+# Force-compression option on INCLUDE and HNSW columns. The user-supplied
+# `compression` option bypasses the analyze tournament and pins the column
+# to one specific DuckDB codec; an unsupported codec for the column's
+# physical type must throw at flush time.
+
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY compr_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+# --- 1. INCLUDE column with forced UNCOMPRESSED ---------------------------
+statement ok
+CREATE TABLE compr_unc (
+  pk INTEGER PRIMARY KEY,
+  big_int BIGINT,
+  txt VARCHAR
+);
+
+statement ok
+INSERT INTO compr_unc VALUES
+  (1, 1000, 'one'), (2, 2000, 'two'), (3, 3000, 'three'),
+  (4, 4000, 'four'), (5, 5000, 'five');
+
+statement ok
+CREATE INDEX compr_unc_idx ON compr_unc USING inverted(txt compr_english)
+  INCLUDE (pk, big_int included (compression = 'uncompressed'));
+
+query
+SELECT pk, big_int FROM compr_unc_idx ORDER BY pk;
+----
+pk	big_int
+1	1000
+2	2000
+3	3000
+4	4000
+5	5000
+
+query
+SELECT pk, big_int FROM compr_unc_idx WHERE txt @@ ts_phrase('three');
+----
+pk	big_int
+3	3000
+
+# --- 2. INCLUDE column with forced BITPACKING ----------------------------
+statement ok
+CREATE TABLE compr_bp (
+  pk INTEGER PRIMARY KEY,
+  small_seq INTEGER,
+  txt VARCHAR
+);
+
+statement ok
+INSERT INTO compr_bp VALUES
+  (1, 10, 'a'), (2, 11, 'b'), (3, 12, 'c'), (4, 13, 'd'),
+  (5, 14, 'e'), (6, 15, 'f'), (7, 16, 'g'), (8, 17, 'h');
+
+statement ok
+CREATE INDEX compr_bp_idx ON compr_bp USING inverted(txt compr_english)
+  INCLUDE (pk, small_seq included (compression = 'bitpacking'));
+
+query
+SELECT pk, small_seq FROM compr_bp_idx ORDER BY pk;
+----
+pk	small_seq
+1	10
+2	11
+3	12
+4	13
+5	14
+6	15
+7	16
+8	17
+
+# --- 3. INCLUDE column with forced ALP for doubles -----------------------
+statement ok
+CREATE TABLE compr_alp (
+  pk INTEGER PRIMARY KEY,
+  sensor DOUBLE,
+  txt VARCHAR
+);
+
+statement ok
+INSERT INTO compr_alp VALUES
+  (1, 1.25, 'r1'), (2, 2.50, 'r2'), (3, 3.75, 'r3'),
+  (4, 4.50, 'r4'), (5, 5.25, 'r5');
+
+statement ok
+CREATE INDEX compr_alp_idx ON compr_alp USING inverted(txt compr_english)
+  INCLUDE (pk, sensor included (compression = 'alp'));
+
+query
+SELECT pk, sensor FROM compr_alp_idx ORDER BY pk;
+----
+pk	sensor
+1	1.25
+2	2.5
+3	3.75
+4	4.5
+5	5.25
+
+# --- 4. INCLUDE column with forced RLE on constant data ------------------
+statement ok
+CREATE TABLE compr_rle (
+  pk INTEGER PRIMARY KEY,
+  flag INTEGER,
+  txt VARCHAR
+);
+
+statement ok
+INSERT INTO compr_rle VALUES
+  (1, 7, 'k1'), (2, 7, 'k2'), (3, 7, 'k3'),
+  (4, 7, 'k4'), (5, 7, 'k5'), (6, 7, 'k6');
+
+statement ok
+CREATE INDEX compr_rle_idx ON compr_rle USING inverted(txt compr_english)
+  INCLUDE (pk, flag included (compression = 'rle'));
+
+query
+SELECT pk, flag FROM compr_rle_idx ORDER BY pk;
+----
+pk	flag
+1	7
+2	7
+3	7
+4	7
+5	7
+6	7
+
+# --- 5. Default behaviour (no `compression` option) preserved ------------
+# Explicitly use INCLUDE without the compression option to confirm the
+# analyze tournament still picks a codec automatically.
+statement ok
+CREATE TABLE compr_auto (
+  pk INTEGER PRIMARY KEY,
+  v INTEGER,
+  txt VARCHAR
+);
+
+statement ok
+INSERT INTO compr_auto VALUES (1, 7, 'x'), (2, 7, 'y'), (3, 7, 'z');
+
+statement ok
+CREATE INDEX compr_auto_idx ON compr_auto USING inverted(txt compr_english)
+  INCLUDE (pk, v);
+
+query
+SELECT pk, v FROM compr_auto_idx ORDER BY pk;
+----
+pk	v
+1	7
+2	7
+3	7
+
+# --- 6. Unknown compression name rejected at parse time ------------------
+statement ok
+CREATE TABLE compr_bad (
+  pk INTEGER PRIMARY KEY,
+  s VARCHAR,
+  txt VARCHAR
+);
+
+statement error
+CREATE INDEX compr_unknown ON compr_bad USING inverted(txt compr_english)
+  INCLUDE (pk, s included (compression = 'no_such_codec'));
+
+# --- 7. Unknown included option rejected --------------------------------
+statement error
+CREATE INDEX compr_unknown_opt ON compr_bad USING inverted(txt compr_english)
+  INCLUDE (pk, s included (sparse = true));
+
+# --- 8. Codec/type mismatch rejected synchronously at CREATE INDEX -------
+# ALP is FLOAT/DOUBLE only -- forcing it on VARCHAR must error here, not
+# later during the asynchronous segment commit.
+statement error
+CREATE INDEX compr_mismatch ON compr_bad USING inverted(txt compr_english)
+  INCLUDE (pk, s included (compression = 'alp'));
+
+# FSST is VARCHAR-only; rejecting it on a numeric column.
+statement ok
+CREATE TABLE compr_bad_num (pk INTEGER PRIMARY KEY, n BIGINT, txt VARCHAR);
+
+statement error
+CREATE INDEX compr_mismatch_num ON compr_bad_num USING inverted(txt compr_english)
+  INCLUDE (pk, n included (compression = 'fsst'));
+
+# --- 9. HNSW column accepts compression option --------------------------
+# HNSW vectors used to be force-uncompressed; now the same compression
+# knob applies. UNCOMPRESSED is a safe choice for FLOAT[].
+statement ok
+CREATE TABLE hnsw_comp (id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX hnsw_comp_unc ON hnsw_comp
+  USING inverted(emb hnsw (metric = 'l2', compression = 'uncompressed'));
+
+statement ok
+INSERT INTO hnsw_comp VALUES
+  (1, [1.0, 0.0, 0.0]::FLOAT[3]),
+  (2, [0.0, 1.0, 0.0]::FLOAT[3]),
+  (3, [0.0, 0.0, 1.0]::FLOAT[3]);
+
+statement ok
+VACUUM (UPDATE_INDEXES) hnsw_comp;
+
+query
+SELECT id FROM hnsw_comp_unc ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+----
+id
+1
+
+# --- 10. HNSW vector column visible to materialization ------------------
+# After auto-promoting hnsw columns to store_values=true, the materializer
+# can return the vector itself (not just rocksdb-fallback).
+statement ok
+CREATE TABLE hnsw_mat (id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX hnsw_mat_idx ON hnsw_mat USING inverted(emb hnsw (metric = 'l2'));
+
+statement ok
+INSERT INTO hnsw_mat VALUES
+  (1, [1.0, 2.0, 3.0]::FLOAT[3]),
+  (2, [4.0, 5.0, 6.0]::FLOAT[3]);
+
+statement ok
+VACUUM (UPDATE_INDEXES) hnsw_mat;
+
+query
+SELECT id, emb FROM hnsw_mat_idx ORDER BY id;
+----
+id	emb
+1	{1,2,3}
+2	{4,5,6}
+
+# --- 11. HNSW with unknown compression name rejected at parse time ------
+statement ok
+CREATE TABLE hnsw_bad (id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement error
+CREATE INDEX hnsw_bad_idx ON hnsw_bad
+  USING inverted(emb hnsw (metric = 'l2', compression = 'no_such'));
+
+# --- 12. HNSW codec/type mismatch rejected synchronously ----------------
+# FSST is VARCHAR-only; ARRAY(FLOAT,N) leaf is FLOAT, not VARCHAR.
+statement error
+CREATE INDEX hnsw_mismatch ON hnsw_bad
+  USING inverted(emb hnsw (metric = 'l2', compression = 'fsst'));

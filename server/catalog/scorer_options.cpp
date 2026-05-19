@@ -60,8 +60,6 @@ std::string ScorerOptions::ToString() const {
       } else if constexpr (std::is_same_v<P, Tfidf>) {
         return absl::StrCat(
           "tfidf(with_norms=", p.with_norms ? "true" : "false", ")");
-      } else if constexpr (std::is_same_v<P, RawTf>) {
-        return "raw_tf()";
       } else if constexpr (std::is_same_v<P, LmJm>) {
         return absl::StrCat("lm_jm(lambda=", p.lambda, ")");
       } else if constexpr (std::is_same_v<P, LmDirichlet>) {
@@ -71,6 +69,12 @@ std::string ScorerOptions::ToString() const {
       } else if constexpr (std::is_same_v<P, Dfi>) {
         return absl::StrCat("dfi(measure=", magic_enum::enum_name(p.measure),
                             ")");
+      } else if constexpr (std::is_same_v<P, RawBoost>) {
+        return "raw_boost()";
+      } else if constexpr (std::is_same_v<P, RawTf>) {
+        return "raw_tf()";
+      } else if constexpr (std::is_same_v<P, RawDL>) {
+        return "raw_dl()";
       }
     },
     params);
@@ -91,6 +95,10 @@ std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec) {
         return std::make_unique<irs::LMDirichlet>(p.mu);
       } else if constexpr (std::is_same_v<P, ScorerOptions::IndriDirichlet>) {
         return std::make_unique<irs::IndriDirichlet>(p.mu);
+      } else if constexpr (std::is_same_v<P, ScorerOptions::RawDL>) {
+        return std::make_unique<irs::RawDL>();
+      } else if constexpr (std::is_same_v<P, ScorerOptions::RawBoost>) {
+        return std::make_unique<irs::RawBoost>();
       } else if constexpr (std::is_same_v<P, ScorerOptions::Dfi>) {
         irs::DFIMeasure m{};
         switch (p.measure) {
@@ -137,8 +145,6 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
       p.with_norms = cv->GetValue<bool>();
     }
     scorer.params = p;
-  } else if (name == S::RawTf::kName) {
-    scorer.params = S::RawTf{};
   } else if (name == S::LmJm::kName) {
     S::LmJm p;
     if (func.children.size() == 2) {
@@ -208,12 +214,18 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
       p.measure = *parsed;
     }
     scorer.params = p;
+  } else if (name == S::RawBoost::kName) {
+    scorer.params = S::RawBoost{};
+  } else if (name == S::RawTf::kName) {
+    scorer.params = S::RawTf{};
+  } else if (name == S::RawDL::kName) {
+    scorer.params = S::RawDL{};
   } else {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("Unknown scorer '", name, "'"),
-      ERR_HINT("Expected one of: bm25, tfidf, raw_tf, lm_jm, lm_dirichlet, "
-               "indri_dirichlet, dfi"));
+      ERR_HINT("Expected one of: bm25, tfidf, lm_jm, lm_dirichlet, "
+               "indri_dirichlet, dfi, raw_boost, raw_tf, raw_dl"));
   }
   return scorer;
 }

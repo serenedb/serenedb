@@ -23,31 +23,36 @@
 #pragma once
 
 #include "filter.hpp"
-#include "iresearch/utils/string.hpp"
+#include "iresearch/types.hpp"
 
 namespace irs {
 
 class ByColumnExistence;
 
-using ColumnAcceptor = bool (*)(std::string_view prefix, std::string_view name);
-
 // Options for column existence filter
 struct ByColumnExistenceOptions {
   using FilterType = ByColumnExistence;
 
-  // If set approves column matched the specified prefix
-  ColumnAcceptor acceptor{};
-
-  bool operator==(const ByColumnExistenceOptions& rhs) const noexcept {
-    return acceptor == rhs.acceptor;
-  }
+  bool operator==(const ByColumnExistenceOptions&) const noexcept = default;
 };
 
 // User-side column existence filter
 class ByColumnExistence final
-  : public FilterWithField<ByColumnExistenceOptions> {
+  : public FilterWithOptions<ByColumnExistenceOptions> {
  public:
+  field_id id() const noexcept { return _id; }
+  field_id* mutable_id() noexcept { return &_id; }
+
   Query::ptr prepare(const PrepareContext& ctx) const final;
+
+ protected:
+  bool equals(const Filter& rhs) const noexcept final {
+    return FilterWithOptions<ByColumnExistenceOptions>::equals(rhs) &&
+           _id == sdb::basics::downCast<ByColumnExistence>(rhs)._id;
+  }
+
+ private:
+  field_id _id{0};
 };
 
 }  // namespace irs

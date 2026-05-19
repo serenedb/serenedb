@@ -61,7 +61,7 @@ inline std::vector<PKColumn> BuildPKColumns(
   for (auto pk_id : pk_col_ids) {
     for (size_t i = 0; i < n; ++i) {
       const catalog::Column& c = begin[i];
-      if (c.id == pk_id) {
+      if (c.GetId() == pk_id) {
         result.push_back(PKColumn{
           .input_col_idx = i,
           .type = c.type,

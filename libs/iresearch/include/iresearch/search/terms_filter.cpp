@@ -46,7 +46,12 @@ void VisitImpl(const SubReader& segment, const TermReader& field,
 
   visitor.Prepare(segment, field, *terms);
 
+  [[maybe_unused]] uint32_t idx = 0;
   for (auto& term : search_terms) {
+    if constexpr (requires { visitor.SetIndex(idx); }) {
+      visitor.SetIndex(idx++);
+    }
+
     if (!terms->seek(term.term)) {
       continue;
     }
@@ -63,17 +68,14 @@ class TermsVisitor {
   explicit TermsVisitor(Collector& collector) noexcept
     : _collector(collector) {}
 
+  void SetIndex(uint32_t term_idx) noexcept { _collector.stat_index(term_idx); }
+
   void Prepare(const SubReader& segment, const TermReader& field,
                const SeekTermIterator& terms) {
     _collector.Prepare(segment, field, terms);
-    _collector.stat_index(0);
   }
 
-  void Visit(score_t boost) {
-    auto stat_index = _collector.stat_index();
-    _collector.Visit(boost);
-    _collector.stat_index(++stat_index);
-  }
+  void Visit(score_t boost) { _collector.Visit(boost); }
 
  private:
   Collector& _collector;

@@ -35,13 +35,16 @@
 #include "basics/bit_utils.hpp"
 #include "basics/files.h"
 #include "basics/math_utils.hpp"
-#include "executor.hpp"
-#include "index_builder.hpp"
+#include "executor.h"
+#include "formats/column/test_cs_helpers.hpp"
+#include "index_builder.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "tests_shared.hpp"
 
 namespace {
+
+inline constexpr irs::field_id kIdId = 1;
 
 // How to fill a window: collect docs in [window_min, window_max).
 using FillWindowFunc = std::function<void(
@@ -407,8 +410,10 @@ struct StoredIdBatchHandler : bench::IBatchHandler {
     for (auto& line : buf) {
       doc.Fill(line);
       auto trx = ctx.Insert();
-      trx.Insert<irs::Action::INDEX | irs::Action::STORE>(doc.fields[0]);
-      trx.Insert<irs::Action::INDEX>(doc.fields[1]);
+      trx.Insert(doc.fields[0]);
+      irs::tests::StoreFieldAt(*trx.Columnstore(), kIdId, trx.DocId(),
+                               doc.fields[0]);
+      trx.Insert(doc.fields[1]);
     }
   }
 };
@@ -423,6 +428,7 @@ void BuildIndex(const std::string& corpus_path,
     .consolidation_interval_ms = 5000,
     .consolidation_threads = 0,
     .consolidate_all = true,
+    .norm_row_group_size = 10'000'000,
   };
 
   bench::IndexBuilder builder{index_dir.string(), builder_options, config};
@@ -439,21 +445,20 @@ std::vector<std::string> BuildDocIdMap(const irs::DirectoryReader& reader) {
   std::vector<std::string> id_map(reader.docs_count());
   uint64_t base = 0;
   for (auto& segment : reader) {
-    auto* column = segment.column("id");
+    const auto* column = segment.Column(kIdId);
     EXPECT_NE(column, nullptr) << "'id' column not found";
     if (!column) {
       return {};
     }
 
-    auto it = column->iterator(irs::ColumnHint::Normal);
-    auto* payload = irs::get<irs::PayAttr>(*it);
-
-    for (auto doc = it->advance(); !irs::doc_limits::eof(doc);
-         doc = it->advance()) {
-      auto idx = base + doc - irs::doc_limits::min();
-      EXPECT_LT(idx, id_map.size()) << "doc_id out of range";
-      id_map[idx] = irs::ToString<std::string_view>(payload->value.data());
-    }
+    irs::tests::VisitBlobColumn(
+      *segment.CsReader(), *column,
+      [&](irs::doc_id_t doc, irs::bytes_view payload) {
+        auto idx = base + doc - irs::doc_limits::min();
+        EXPECT_LT(idx, id_map.size()) << "doc_id out of range";
+        id_map[idx] = irs::ToString<std::string>(payload.data());
+        return true;
+      });
     base += segment.docs_count();
   }
   return id_map;

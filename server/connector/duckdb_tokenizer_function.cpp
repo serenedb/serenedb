@@ -57,6 +57,7 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
 
 namespace sdb::connector {
 namespace {
@@ -105,8 +106,8 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
 
   auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
 
-  auto r =
-    catalog.DropTokenizer(conn_ctx.GetDatabase(), name.schema, name.relation);
+  auto r = catalog.DropTokenizer(conn_ctx.GetDatabase(), name.schema,
+                                 name.relation, false);
 
   std::string_view object_name = "text search dictionary";
   if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
@@ -131,6 +132,15 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
                                       ERR_MSG(object_name, " \"", name.relation,
                                               "\" does not exist, skipping")));
     r = {};
+  }
+  // Cascade RESTRICT: catalog packs PG DETAIL lines into errorMessage.
+  if (r.is(ERROR_BAD_PARAMETER)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+      ERR_MSG("cannot drop ", object_name, " ", name.relation,
+              " because other objects depend on it"),
+      ERR_DETAIL(std::move(r).errorMessage()),
+      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
   }
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
   if (!r.ok()) {

@@ -97,8 +97,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
-│             id            │
-│            emb            │
+│           id (l)          │
+│          emb (i)          │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘
@@ -173,8 +173,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
-│            emb            │
-│             id            │
+│          emb (i)          │
+│           id (l)          │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘
@@ -476,8 +476,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
-│            emb            │
-│             id            │
+│          emb (i)          │
+│           id (l)          │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘
@@ -597,8 +597,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
-│            emb            │
-│             id            │
+│          emb (i)          │
+│           id (l)          │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘
@@ -627,7 +627,7 @@ CREATE TABLE t_err (id INT, emb FLOAT[3], emb_int INT[3]);
 statement error
 CREATE INDEX bad_opt ON t_err USING inverted(emb hnsw (metric = 'l2', ef_search = 50));
 ----
-db error: ERROR: Failed to create index: Column 'emb': unknown hnsw option 'ef_search'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), m (int >= 2, default 32), ef_construction (int >= 1, default 40, must be >= m)
+db error: ERROR: Failed to create index: Column 'emb': unknown hnsw option 'ef_search'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), m (int >= 2, default 32), ef_construction (int >= 1, default 40, must be >= m), compression (string, default 'auto'), row_group_size (int >= 1)
 
 
 statement error
@@ -700,25 +700,25 @@ db error: ERROR: Failed to create index: Built-in opclass 'hnsw' on column 'emb'
 statement error
 CREATE INDEX m_fake_empty ON t_err USING inverted(emb fake_idx ());
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: included, hnsw)
 
 
 statement error
 CREATE INDEX m_fake_real ON t_err USING inverted(emb fake_idx (m = 16));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: included, hnsw)
 
 
 statement error
 CREATE INDEX m_fake_fake ON t_err USING inverted(emb fake_idx (foo = 1));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: included, hnsw)
 
 
 statement error
 CREATE INDEX m_fake_name ON t_err USING inverted(emb fake_dict);
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'fake_dict' on column 'emb': not a built-in type (known: hnsw) and no text dictionary by that name in schema 'public'
+db error: ERROR: Failed to create index: Unknown opclass 'fake_dict' on column 'emb': not a built-in type (known: included, hnsw) and no text dictionary by that name in schema 'public'
 
 
 
@@ -1211,3 +1211,55 @@ id
 
 statement ok
 RESET sdb_ef_search;
+
+
+statement ok
+CREATE TABLE t_merge (id INT, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX merge_idx ON t_merge USING inverted(id, emb hnsw (metric = 'l2'));
+
+
+statement count 2
+INSERT INTO t_merge VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_merge;
+
+
+statement count 2
+INSERT INTO t_merge VALUES (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_merge;
+
+
+statement count 2
+INSERT INTO t_merge VALUES (5, [10, 10, 10]::FLOAT[3]), (6, [20, 20, 20]::FLOAT[3]);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_merge;
+
+
+statement count 2
+INSERT INTO t_merge VALUES (7, [5, 5, 5]::FLOAT[3]), (8, [30, 30, 30]::FLOAT[3]);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_merge;
+
+
+statement ok
+PRAGMA serenedb_vacuum('compact_indexes', 't_merge');
+
+
+query
+SELECT id FROM merge_idx ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+7
+5

@@ -146,6 +146,7 @@ Attribute* WildcardAnalyzer::GetMutable(TypeInfo::type_id type) noexcept {
 }
 
 bool WildcardAnalyzer::reset(std::string_view data) {
+  _ngram->reset({});
   if (!_analyzer->reset(data)) {
     return false;
   }

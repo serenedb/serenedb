@@ -1,0 +1,119 @@
+hash-threshold 100
+
+# End-to-end: INCLUDE'd columns alongside an HNSW range search.
+# WHERE l2_distance(emb, q) < radius triggers IRESEARCH_RANGE_SCAN;
+# verifies projected INCLUDE'd columns route through the
+# columnstore overlay (per-segment perm + materialize), while
+# non-INCLUDE'd columns fall through to IndexSource (RocksDB).
+
+statement ok
+CREATE TABLE vec_r (
+  pk INTEGER PRIMARY KEY,
+  emb FLOAT[3],
+  label VARCHAR,
+  tag INTEGER,
+  body VARCHAR
+)
+
+
+statement ok
+CREATE INDEX vec_r_idx ON vec_r USING inverted(pk, emb hnsw (metric = 'l2'))
+  INCLUDE (label, tag)
+
+
+statement ok
+INSERT INTO vec_r VALUES (1, [1, 0, 0]::FLOAT[3], 'alpha', 100, 'body-one')
+
+
+statement ok
+INSERT INTO vec_r VALUES (2, [0, 1, 0]::FLOAT[3], 'beta', 200, 'body-two')
+
+
+statement ok
+INSERT INTO vec_r VALUES (3, [0, 0, 1]::FLOAT[3], 'gamma', 300, 'body-three')
+
+
+statement ok
+INSERT INTO vec_r VALUES (4, [10, 10, 10]::FLOAT[3], 'delta', 400, 'body-four')
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) vec_r
+
+
+# All-INCLUDE projection: plan should suppress the "Lookup" line --
+# the cs overlay covers every projection and IndexSource has no
+# residual.
+query
+EXPLAIN SELECT label, tag FROM vec_r_idx
+  WHERE l2_distance(emb, [1, 0, 0]::FLOAT[3]) < 1.0;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│      Index: vec_r_idx     │
+│      Radius: 1.000000     │
+│          Dims: 3          │
+│                           │
+│        Projections:       │
+│           label           │
+│            tag            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT label, tag FROM vec_r_idx
+  WHERE l2_distance(emb, [1, 0, 0]::FLOAT[3]) < 0.5
+  ORDER BY tag;
+----
+label	tag
+alpha	100
+
+
+# Mixed projection: label is INCLUDE'd (i); pk + body fall back to
+# IndexSource (l). EXPLAIN should annotate per-column sources.
+query
+EXPLAIN SELECT pk, label, body FROM vec_r_idx
+  WHERE l2_distance(emb, [10, 10, 10]::FLOAT[3]) < 1.0;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│      Index: vec_r_idx     │
+│      Lookup: rocksdb      │
+│      Radius: 1.000000     │
+│          Dims: 3          │
+│                           │
+│        Projections:       │
+│           pk (l)          │
+│         label (i)         │
+│          body (l)         │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pk, label, body FROM vec_r_idx
+  WHERE l2_distance(emb, [10, 10, 10]::FLOAT[3]) < 1.0;
+----
+pk	label	body
+4	delta	body-four
+
+
+# Wider radius pulls in pk=1,2,3 around the unit basis vectors;
+# re-sort by pk for stable output.
+query
+SELECT label, tag FROM (
+  SELECT label, tag FROM vec_r_idx
+    WHERE l2_distance(emb, [0.5, 0.5, 0.5]::FLOAT[3]) < 1.0
+) ORDER BY tag;
+----
+label	tag
+alpha	100
+beta	200
+gamma	300

@@ -19,6 +19,8 @@ set(iresearch-tests_sources
     ./analysis/token_attributes_test.cpp
     ./analysis/tokenizer_tests.cpp
     ./analysis/pattern_tokenizer_tests.cpp
+    ./formats/column/columnstore_test.cpp
+    ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
     ./formats/sparse_bitmap_test.cpp
     ./formats/formats_tests.cpp
@@ -31,19 +33,19 @@ set(iresearch-tests_sources
     ./store/store_utils_tests.cpp
     ./index/doc_generator.cpp
     ./index/assert_format.cpp
+    ./index/buffered_column_test.cpp
+    ./index/index_column_tests.cpp
     ./index/index_meta_tests.cpp
     ./index/index_profile_tests.cpp
     ./index/index_tests.cpp
     ./index/index_levenshtein_tests.cpp
-    ./index/index_column_tests.cpp
     ./index/norm_test.cpp
-    ./index/sorted_index_tests.cpp
     ./index/index_death_tests.cpp
     ./index/field_meta_test.cpp
     ./index/merge_writer_tests.cpp
     ./index/postings_tests.cpp
-    ./index/buffered_column_test.cpp
     ./index/segment_writer_tests.cpp
+    ./index/sorted_index_tests.cpp
     ./index/consolidation_policy_tests.cpp
     ./parser/lucene_parser_test.cpp
     ./search/empty_filter_tests.cpp
@@ -59,6 +61,7 @@ set(iresearch-tests_sources
     ./search/sort_tests.cpp
     ./search/tfidf_test.cpp
     ./search/wand_test.cpp
+    ./search/wand_norm_merge_test.cpp
     ./search/bm25_test.cpp
     ./search/raw_tf_test.cpp
     ./search/lm_test.cpp
@@ -92,13 +95,13 @@ set(iresearch-tests_sources
     ./utils/automaton_test.cpp
     ./utils/bitvector_tests.cpp
     ./utils/encryption_test.cpp
-    # TODO(mbkkt) ./utils/faiss_test.cpp
     ./utils/container_utils_tests.cpp
     ./utils/compression_test.cpp
     ./utils/crc_test.cpp
     ./utils/file_utils_tests.cpp
     ./utils/object_pool_tests.cpp
     ./utils/numeric_utils_test.cpp
+    ./utils/simd_utils_test.cpp
     ./utils/attributes_tests.cpp
     ./utils/directory_utils_tests.cpp
     ./utils/bit_packing_tests.cpp
@@ -110,7 +113,6 @@ set(iresearch-tests_sources
     ./utils/ref_counter_tests.cpp
     ./utils/minhash_utils_test.cpp
     ./utils/string_tests.cpp
-    # TODO(mbkkt) ./utils/simd_utils_test.cpp
     ./utils/bitset_tests.cpp
     ./utils/math_utils_test.cpp
     ./utils/misc_test.cpp

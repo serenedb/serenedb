@@ -33,6 +33,7 @@ add_library(
     duckdb_search_ann_scan.cpp
     duckdb_rocksdb_reader.cpp
     duckdb_rocksdb_writer.cpp
+    columnstore_materializer.cpp
     index_source_factory.cpp
     index_source_rocksdb.cpp
     index_source_view_file.cpp

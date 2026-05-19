@@ -35,15 +35,19 @@
 
 namespace sdb::catalog {
 
-Table::Table(ObjectId database_id, ObjectId id, std::string_view name,
+Table::Table(ObjectId schema_id, ObjectId id, std::string_view name,
              std::vector<Column> columns, std::vector<Column::Id> pk_columns,
              std::vector<CheckConstraint> check_constraints,
              ObjectId generated_pk_seq_id)
-  : SchemaObject{{}, database_id, {}, id, std::string{name}, ObjectType::Table},
+  : Object{schema_id, id, std::string{name}, ObjectType::Table},
     _columns{std::move(columns)},
     _pk_columns{std::move(pk_columns)},
     _check_constraints{std::move(check_constraints)},
-    _generated_pk_seq_id{generated_pk_seq_id} {}
+    _generated_pk_seq_id{generated_pk_seq_id} {
+  for (auto& col : _columns) {
+    col.SetParentId(_id);
+  }
+}
 
 std::shared_ptr<Table> Table::ReadInternal(vpack::Slice slice,
                                            ReadContext ctx) {
@@ -53,7 +57,7 @@ std::shared_ptr<Table> Table::ReadInternal(vpack::Slice slice,
   }
 
   std::vector<Column> columns;
-  if (auto r = vpack::ReadTupleNothrow(slice.get("columns"), columns);
+  if (auto r = vpack::ReadTupleNothrow(slice.get("columns"), columns, ctx.id);
       !r.ok()) {
     return nullptr;
   }
@@ -73,7 +77,7 @@ std::shared_ptr<Table> Table::ReadInternal(vpack::Slice slice,
     basics::VPackHelper::getNumber<uint64_t>(slice, "generated_pk_seq_id", 0)};
 
   return std::make_shared<Table>(
-    ctx.database_id, ctx.id, name_slice.stringView(), std::move(columns),
+    ctx.schema_id, ctx.id, name_slice.stringView(), std::move(columns),
     std::move(pk_columns), std::move(check_constraints), generated_pk_seq_id);
 }
 
@@ -98,10 +102,10 @@ Result Table::RenameColumn(std::shared_ptr<Table>& result,
                            std::string_view new_name) const {
   auto column_it = _columns.end();
   for (auto it = _columns.begin(); it != _columns.end(); ++it) {
-    if (it->name == new_name) {
+    if (it->GetName() == new_name) {
       return Result{ERROR_SERVER_DUPLICATE_NAME};
     }
-    if (it->name == old_name) {
+    if (it->GetName() == old_name) {
       column_it = it;
     }
   }
@@ -110,8 +114,8 @@ Result Table::RenameColumn(std::shared_ptr<Table>& result,
   }
 
   auto new_table = basics::downCast<Table>(Clone());
-  new_table->_columns[std::distance(_columns.begin(), column_it)].name =
-    new_name;
+  new_table->_columns[std::distance(_columns.begin(), column_it)].SetName(
+    new_name);
   result = std::move(new_table);
   return {};
 }
@@ -142,8 +146,8 @@ Result Table::RenameConstraint(std::shared_ptr<Table>& result,
   return {};
 }
 
-Result Table::DropConstraint(std::shared_ptr<Table>& result,
-                             std::string_view constraint_name) const {
+Result Table::DropCheckConstraint(std::shared_ptr<Table>& result,
+                                  std::string_view constraint_name) const {
   auto it = absl::c_find_if(_check_constraints, [&](const CheckConstraint& c) {
     return c.name == constraint_name;
   });
@@ -161,9 +165,41 @@ Result Table::DropConstraint(std::shared_ptr<Table>& result,
 
 std::shared_ptr<Object> Table::Clone() const {
   auto cloned = std::make_shared<Table>(
-    GetDatabaseId(), GetId(), GetName(), _columns, _pk_columns,
+    GetParentId(), GetId(), GetName(), _columns, _pk_columns,
     _check_constraints, _generated_pk_seq_id);
   cloned->SetTombstoned(Tombstoned());
+  return cloned;
+}
+
+std::shared_ptr<Table> Table::DropColumnDefault(Column::Id column_id) const {
+  auto cloned = basics::downCast<Table>(Clone());
+  auto it = absl::c_find_if(
+    cloned->_columns, [&](const Column& c) { return c.GetId() == column_id; });
+  if (it != cloned->_columns.end()) {
+    SDB_ASSERT(!it->IsGenerated());
+    it->expr.reset();
+  }
+  return cloned;
+}
+
+std::shared_ptr<Table> Table::DropColumn(Column::Id column_id) const {
+  auto cloned = basics::downCast<Table>(Clone());
+  std::erase_if(cloned->_check_constraints, [&](const CheckConstraint& c) {
+    auto idx = c.IsNotNull(cloned->_columns);
+    return idx.has_value() && cloned->_columns[*idx].GetId() == column_id;
+  });
+  std::erase_if(cloned->_columns,
+                [&](const Column& c) { return c.GetId() == column_id; });
+  std::erase(cloned->_pk_columns, column_id);
+  return cloned;
+}
+
+std::shared_ptr<Table> Table::DropCheckConstraint(
+  ObjectId constraint_id) const {
+  auto cloned = basics::downCast<Table>(Clone());
+  std::erase_if(cloned->_check_constraints, [&](const CheckConstraint& c) {
+    return c.id == constraint_id;
+  });
   return cloned;
 }
 

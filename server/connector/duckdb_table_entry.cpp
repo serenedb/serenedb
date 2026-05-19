@@ -75,10 +75,10 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   auto data = duckdb::make_uniq<TableScanBindData>();
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {
-    if (col.id == catalog::Column::kGeneratedPKId) {
+    if (col.GetId() == catalog::Column::kGeneratedPKId) {
       continue;  // Skip generated PK -- not stored as a value
     }
-    data->column_ids.push_back(col.id);
+    data->column_ids.push_back(col.GetId());
     data->column_types.push_back(col.type);
   }
   // Always include rowid (PK bytes) as the last column for DELETE/UPDATE
@@ -163,7 +163,7 @@ duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(
   containers::FlatHashSet<size_t> needed;
   for (auto pk_id : pk_col_ids) {
     for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == pk_id) {
+      if (columns[i].GetId() == pk_id) {
         needed.insert(i);
         break;
       }
@@ -176,7 +176,7 @@ duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(
   // Register as virtual columns in stable order (PK first, then indexed)
   for (auto pk_id : pk_col_ids) {
     for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == pk_id) {
+      if (columns[i].GetId() == pk_id) {
         result.push_back(duckdb::VIRTUAL_COLUMN_START + i);
         break;
       }
@@ -190,7 +190,7 @@ duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(
     bool is_pk = false;
     for (auto pk_id : pk_col_ids) {
       for (size_t i = 0; i < columns.size(); ++i) {
-        if (columns[i].id == pk_id && i == idx) {
+        if (columns[i].GetId() == pk_id && i == idx) {
           is_pk = true;
           break;
         }
@@ -204,7 +204,9 @@ duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(
     }
   }
 
-  result.push_back(duckdb::COLUMN_IDENTIFIER_ROW_ID);
+  if (pk_col_ids.empty()) {
+    result.push_back(kColumnIdentifierGeneratedPk);
+  }
   return result;
 }
 
@@ -217,9 +219,10 @@ duckdb::virtual_column_map_t SereneDBTableEntry::BuildVirtualColumns(
   // PK columns
   for (auto pk_id : pk_col_ids) {
     for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == pk_id) {
+      if (columns[i].GetId() == pk_id) {
         result.insert({duckdb::VIRTUAL_COLUMN_START + i,
-                       duckdb::TableColumn(columns[i].name, columns[i].type)});
+                       duckdb::TableColumn(std::string{columns[i].GetName()},
+                                           columns[i].type)});
         break;
       }
     }
@@ -230,7 +233,8 @@ duckdb::virtual_column_map_t SereneDBTableEntry::BuildVirtualColumns(
     auto virt_id = duckdb::VIRTUAL_COLUMN_START + idx;
     if (!result.contains(virt_id)) {
       result.insert(
-        {virt_id, duckdb::TableColumn(columns[idx].name, columns[idx].type)});
+        {virt_id, duckdb::TableColumn(std::string{columns[idx].GetName()},
+                                      columns[idx].type)});
     }
   }
 
@@ -238,9 +242,19 @@ duckdb::virtual_column_map_t SereneDBTableEntry::BuildVirtualColumns(
   result.insert({kColumnIdentifierTableOid,
                  duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
 
-  // Standard rowid
-  result.insert({duckdb::COLUMN_IDENTIFIER_ROW_ID,
-                 duckdb::TableColumn("rowid", duckdb::LogicalType::ROW_TYPE)});
+  // COLUMN_IDENTIFIER_EMPTY: the "no data needed" placeholder DuckDB's
+  // LogicalGet::GetAnyColumn picks for queries like COUNT(*) that have
+  // no real column dependency.
+  result.insert({duckdb::COLUMN_IDENTIFIER_EMPTY,
+                 duckdb::TableColumn("", duckdb::LogicalType::BOOLEAN)});
+
+  // Generated-PK virtual column: only declared on tables without an
+  // explicit PK.
+  if (pk_col_ids.empty()) {
+    result.insert(
+      {kColumnIdentifierGeneratedPk,
+       duckdb::TableColumn("rowid", duckdb::LogicalType::ROW_TYPE)});
+  }
   return result;
 }
 
@@ -259,7 +273,7 @@ duckdb::TableStorageInfo SereneDBTableEntry::BuildStorageInfo(
     const auto& columns = table.Columns();
     for (auto pk_id : pk_col_ids) {
       for (size_t i = 0; i < columns.size(); ++i) {
-        if (columns[i].id == pk_id) {
+        if (columns[i].GetId() == pk_id) {
           idx_info.column_set.insert(i);
           break;
         }
@@ -281,8 +295,10 @@ duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
 
 duckdb::column_t SereneDBTableEntry::VirtualToPKColumnIndex(
   duckdb::column_t virtual_id) {
+  // Virtual PK column ids live in
+  // [VIRTUAL_COLUMN_START, kColumnIdentifierGeneratedPk):
   if (virtual_id >= duckdb::VIRTUAL_COLUMN_START &&
-      virtual_id < duckdb::COLUMN_IDENTIFIER_ROW_ID) {
+      virtual_id < kColumnIdentifierGeneratedPk) {
     return virtual_id - duckdb::VIRTUAL_COLUMN_START;
   }
   return duckdb::DConstants::INVALID_INDEX;

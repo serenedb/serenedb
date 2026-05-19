@@ -1,0 +1,181 @@
+hash-threshold 100
+
+# End-to-end: INCLUDE'd MAP column round-trips through new cs.
+#
+# MAP is encoded as LIST<STRUCT<key, value>> at PhysicalType::LIST in DuckDB,
+# so the cs LIST path handles it transparently and the inner STRUCT path
+# handles the key/value pairs.
+
+statement ok
+CREATE TABLE map_t (
+  pk INTEGER PRIMARY KEY,
+  text_for_search VARCHAR,
+  attrs MAP(VARCHAR, INTEGER)
+)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE INDEX map_t_idx ON map_t USING inverted(pk, text_for_search en)
+  INCLUDE (attrs)
+
+
+statement ok
+INSERT INTO map_t VALUES (1, 'first',  MAP {'a': 1, 'b': 2})
+
+
+# NULL row.
+statement ok
+INSERT INTO map_t VALUES (2, 'second', NULL)
+
+
+# Empty map -- distinct from NULL.
+statement ok
+INSERT INTO map_t VALUES (3, 'third',  MAP {})
+
+
+# Non-null value.
+statement ok
+INSERT INTO map_t VALUES (4, 'fourth', MAP {'c': 3, 'd': 4})
+
+
+# NULL value within a non-null map (non-null key, null value).
+statement ok
+INSERT INTO map_t VALUES (5, 'fifth',  MAP {'e': NULL, 'f': 5})
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) map_t
+
+
+# Sanity: the MAP column is served by the iresearch columnstore (i),
+# pk falls through to the rocksdb lookup (l).
+query
+EXPLAIN SELECT pk, attrs FROM map_t_idx WHERE text_for_search @@ ts_phrase('first');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: map_t_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[text_for_search│
+│ (string) = <Term:first(0, │
+│           0); >]]         │
+│                           │
+│        Projections:       │
+│           pk (l)          │
+│         attrs (i)         │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+# pg-wire serialises MAP as an ARRAY of STRUCT<key,value> -- DuckDB's
+# physical layout for MAP. NULL values inside a non-null map come back as
+# empty pg-tuple values: `(key,)`.
+query
+SELECT pk, attrs FROM map_t_idx WHERE text_for_search @@ ts_phrase('first')
+ORDER BY pk;
+----
+pk	attrs
+1	{"(a,1)","(b,2)"}
+
+
+# NULL map row must roundtrip as NULL.
+query
+SELECT pk, attrs FROM map_t_idx WHERE text_for_search @@ ts_phrase('second')
+ORDER BY pk;
+----
+pk	attrs
+2	NULL
+
+
+# Empty map stays distinct from NULL.
+query
+SELECT pk, attrs FROM map_t_idx WHERE text_for_search @@ ts_phrase('third')
+ORDER BY pk;
+----
+pk	attrs
+3	{}
+
+
+query
+SELECT pk, attrs FROM map_t_idx WHERE text_for_search @@ ts_phrase('fourth')
+ORDER BY pk;
+----
+pk	attrs
+4	{"(c,3)","(d,4)"}
+
+
+# NULL value inside non-null map.
+query
+SELECT pk, attrs FROM map_t_idx WHERE text_for_search @@ ts_phrase('fifth')
+ORDER BY pk;
+----
+pk	attrs
+5	{"(e,)","(f,5)"}
+
+
+# All five rows materialised side by side.
+query
+SELECT pk, attrs FROM map_t_idx
+WHERE text_for_search @@ ts_phrase('first')
+   OR text_for_search @@ ts_phrase('second')
+   OR text_for_search @@ ts_phrase('third')
+   OR text_for_search @@ ts_phrase('fourth')
+   OR text_for_search @@ ts_phrase('fifth')
+ORDER BY pk;
+----
+pk	attrs
+1	{"(a,1)","(b,2)"}
+2	NULL
+3	{}
+4	{"(c,3)","(d,4)"}
+5	{"(e,)","(f,5)"}
+
+
+# IS NULL / IS NOT NULL on the INCLUDE-only MAP column: empty map (pk=3)
+# is NOT NULL; only pk=2 (whole-row NULL) is NULL.
+query
+SELECT pk FROM map_t_idx
+WHERE (text_for_search @@ ts_phrase('first')
+       OR text_for_search @@ ts_phrase('second')
+       OR text_for_search @@ ts_phrase('third')
+       OR text_for_search @@ ts_phrase('fourth')
+       OR text_for_search @@ ts_phrase('fifth'))
+  AND attrs IS NULL
+ORDER BY pk;
+----
+pk
+2
+
+
+query
+SELECT pk FROM map_t_idx
+WHERE (text_for_search @@ ts_phrase('first')
+       OR text_for_search @@ ts_phrase('second')
+       OR text_for_search @@ ts_phrase('third')
+       OR text_for_search @@ ts_phrase('fourth')
+       OR text_for_search @@ ts_phrase('fifth'))
+  AND attrs IS NOT NULL
+ORDER BY pk;
+----
+pk
+1
+3
+4
+5

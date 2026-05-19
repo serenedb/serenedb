@@ -28,7 +28,7 @@
 #include "basics/down_cast.h"
 #include "geo/geo_json.h"
 #include "iresearch/analysis/geo_analyzer.hpp"
-#include "iresearch/search/geo_filter.h"
+#include "iresearch/search/geo_filter.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 #include "tests_shared.hpp"
 

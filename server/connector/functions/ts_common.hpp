@@ -62,8 +62,10 @@ struct FilterContext {
   // Memo of resolved (column, path, mangle) -> SearchColumnInfo. Key is
   // the iresearch field name. NodeHashMap so refs survive insertions.
   containers::NodeHashMap<std::string, SearchColumnInfo>& column_cache;
-  // Scratch buffers reused across FindColumnInfoForExpr calls.
-  std::vector<std::string>& json_path;
+  // JSON pointer (pre-encoded, see `EncodeJsonPointer`) for the current
+  // expression being resolved; empty when no JSON-path scoping applies.
+  std::string_view json_pointer;
+  // Scratch buffer reused across FindColumnInfoForExpr calls.
   std::string& cache_key;
   irs::analysis::Analyzer& identity;
   irs::analysis::Analyzer& tokenizer;
@@ -77,7 +79,7 @@ struct FilterContext {
       .column_getter = column_getter,
       .json_path_getter = json_path_getter,
       .column_cache = column_cache,
-      .json_path = json_path,
+      .json_pointer = json_pointer,
       .cache_key = cache_key,
       .identity = identity,
       .tokenizer = tokenizer,
@@ -93,7 +95,7 @@ struct FilterContext {
       .column_getter = column_getter,
       .json_path_getter = json_path_getter,
       .column_cache = column_cache,
-      .json_path = json_path,
+      .json_pointer = json_pointer,
       .cache_key = cache_key,
       .identity = identity,
       .tokenizer = tokenizer,
@@ -251,6 +253,8 @@ enum class TSQueryOp {
   PhraseSeq,
   ToTSQuery,
   Compound,
+  IsNull,
+  IsNotNull,
 };
 
 }  // namespace sdb::connector

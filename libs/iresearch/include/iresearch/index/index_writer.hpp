@@ -38,6 +38,11 @@
 #include "basics/wait_group.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/column_info.hpp"
+
+namespace duckdb {
+
+class DatabaseInstance;
+}
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -143,9 +148,6 @@ struct IndexWriterOptions : public SegmentOptions {
   // Options for snapshot management
   IndexReaderOptions reader_options;
 
-  // Returns column info the writer should use for columnstore
-  ColumnInfoProvider column_info;
-
   // Provides payload for index_meta created by writer
   PayloadProvider meta_payload_provider;
 
@@ -161,6 +163,17 @@ struct IndexWriterOptions : public SegmentOptions {
   // Acquire an exclusive lock on the repository to guard against index
   // corruption from multiple index_writers
   bool lock_repository{true};
+
+  // Enables the typed columnstore on segments allocated by this writer.
+  // Lifetime of `*db` must extend until IndexWriter shutdown.
+  duckdb::DatabaseInstance* db = nullptr;
+
+  // Per-column knobs the writer consults at flush + merge time. The
+  // catalog is the single source of truth; both callbacks return what's
+  // currently configured for the column, never anything baked into a
+  // source segment. See `iresearch/index/column_info.hpp` for the shape.
+  ColumnOptionsProvider column_options;
+  NormColumnOptionsProvider norm_column_options;
 
   IndexWriterOptions() {}  // compiler requires non-default definition
 };
@@ -315,44 +328,37 @@ class IndexWriter : private util::Noncopyable {
     // will not take any effect
     explicit operator bool() const noexcept { return _writer.valid(); }
 
-    // Inserts the specified field into the document according to the
-    // specified ACTION
-    // Note that 'Field' type type must satisfy the Field concept
-    // field attribute to be inserted
-    // Return true, if field was successfully inserted
-    template<Action A, typename Field>
+    // Inserts a field into the document for inverted indexing.
+    template<typename Field>
     bool Insert(Field&& field) const {
-      return _writer.insert<A>(std::forward<Field>(field), _doc_id);
+      return _writer.insert(std::forward<Field>(field), _doc_id);
     }
 
-    // Inserts the specified field (denoted by the pointer) into the
-    //        document according to the specified ACTION
-    // Note that 'Field' type type must satisfy the Field concept
-    // Note that pointer must not be nullptr
-    // field attribute to be inserted
-    // Return true, if field was successfully inserted
-    template<Action A, typename Field>
+    // Inserts the field denoted by `field` (must not be nullptr).
+    template<typename Field>
     bool Insert(Field* field) const {
-      return _writer.insert<A>(*field, _doc_id);
+      return _writer.insert(*field, _doc_id);
     }
 
-    // Inserts the specified range of fields, denoted by the [begin;end)
-    // into the document according to the specified ACTION
-    // Note that 'Iterator' underline value type must satisfy the Field concept
-    // begin the beginning of the fields range
-    // end the end of the fields range
-    // Return true, if the range was successfully inserted
-    template<Action A, typename Iterator>
+    // Inserts the range of fields [begin; end) for inverted indexing.
+    template<typename Iterator>
     bool Insert(Iterator begin, Iterator end) const {
       for (; _writer.valid() && begin != end; ++begin) {
-        Insert<A>(*begin);
+        Insert(*begin);
       }
-
       return _writer.valid();
     }
 #ifdef SDB_GTEST
     SegmentWriter& Writer() noexcept { return _writer; }
 #endif
+
+    // Per-segment columnstore writer; nullptr when the index was opened
+    // without a DatabaseInstance. Callers open a typed column at switch
+    // time and append duckdb::Vectors via ColumnWriter::Append.
+    columnstore::Writer* Columnstore() noexcept {
+      return _writer.Columnstore();
+    }
+    doc_id_t DocId() const noexcept { return _doc_id; }
 
    private:
     void Finish() noexcept;
@@ -602,7 +608,6 @@ class IndexWriter : private util::Noncopyable {
               IndexFileRefs::ref_t&& lock_file_ref, Directory& dir,
               Format::ptr codec, size_t segment_pool_size,
               const SegmentOptions& segment_limits, const Comparer* comparator,
-              const ColumnInfoProvider& column_info,
               const PayloadProvider& meta_payload_provider,
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
 
@@ -657,12 +662,15 @@ class IndexWriter : private util::Noncopyable {
  public:
   struct FlushedSegment : public IndexSegment {
     FlushedSegment() = default;
-    explicit FlushedSegment(IndexSegment&& segment, DocMap&& old2new,
-                            DocsMask&& docs_mask, size_t docs_begin) noexcept
+    explicit FlushedSegment(
+      IndexSegment&& segment, DocMap&& old2new, DocsMask&& docs_mask,
+      size_t docs_begin,
+      columnstore::PreloadedHnswGraphs&& cs_hnsw_graphs = {}) noexcept
       : IndexSegment{std::move(segment)},
         old2new{std::move(old2new)},
         docs_mask{std::move(docs_mask)},
         document_mask{{this->docs_mask.set.get_allocator()}},
+        cs_hnsw_graphs{std::move(cs_hnsw_graphs)},
         _docs_begin{docs_begin},
         _docs_end{_docs_begin + meta.docs_count} {}
 
@@ -681,6 +689,7 @@ class IndexWriter : private util::Noncopyable {
     // Flushed segment removals
     DocsMask docs_mask;
     DocumentMask document_mask;
+    columnstore::PreloadedHnswGraphs cs_hnsw_graphs;
     bool was_flush = false;
 
    private:
@@ -949,8 +958,10 @@ class IndexWriter : private util::Noncopyable {
   void Abort() noexcept;
 
   IndexFeatures _wand_features{};  // Set of features required for wand
-  ScorerPtr _wand_scorer;
-  ColumnInfoProvider _column_info;
+  ScorerPtr _topk_scorer;
+  duckdb::DatabaseInstance* _db = nullptr;
+  ColumnOptionsProvider _column_options;
+  NormColumnOptionsProvider _norm_column_options;
   PayloadProvider _meta_payload_provider;  // provides payload for new segments
   const Comparer* _comparator;
   Format::ptr _codec;

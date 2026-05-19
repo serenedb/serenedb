@@ -59,11 +59,6 @@ const ProgressReportCallback kNoProgress =
     // intentionally do nothing
   };
 
-const ColumnInfoProvider kDefaultColumnInfo = [](std::string_view) {
-  // no compression, no encryption
-  return ColumnInfo{irs::Type<compression::None>::get(), {}, false};
-};
-
 struct FlushedSegmentContext {
   FlushedSegmentContext(std::shared_ptr<const SegmentReaderImpl>&& reader,
                         IndexWriter::SegmentContext& segment,
@@ -446,9 +441,8 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       // mask all remaining doc_ids
       if (!current_itr->next()) {
         do {
-          SDB_ASSERT(doc_limits::valid(merge_ctx.doc_map(
-            merged_itr->value())));  // doc_id must have a valid mapping
-          docs_mask.insert(merge_ctx.doc_map(merged_itr->value()));
+          SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->value()));
+          docs_mask.insert(merge_ctx.remap.Remap(merged_itr->value()));
         } while (merged_itr->next());
 
         continue;  // continue wih next mapping
@@ -458,9 +452,8 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       // removed docs to the merged mask
       for (;;) {
         while (merged_itr->value() < current_itr->value()) {
-          // doc_id must have a valid mapping
-          SDB_ASSERT(doc_limits::valid(merge_ctx.doc_map(merged_itr->value())));
-          docs_mask.insert(merge_ctx.doc_map(merged_itr->value()));
+          SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->value()));
+          docs_mask.insert(merge_ctx.remap.Remap(merged_itr->value()));
 
           if (!merged_itr->next()) {
             SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
@@ -507,10 +500,8 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
         // mask all remaining doc_ids
         if (!current_itr->next()) {
           do {
-            // doc_id must have a valid mapping
-            SDB_ASSERT(
-              doc_limits::valid(merge_ctx.doc_map(merged_itr->value())));
-            docs_mask.insert(merge_ctx.doc_map(merged_itr->value()));
+            SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->value()));
+            docs_mask.insert(merge_ctx.remap.Remap(merged_itr->value()));
           } while (merged_itr->next());
 
           break;  // continue wih next mapping
@@ -944,7 +935,8 @@ void IndexWriter::SegmentContext::Flush() {
   SDB_ASSERT(writer_meta.meta.docs_count == docs_context.size());
 
   flushed.emplace_back(std::move(writer_meta), std::move(old2new),
-                       std::move(docs_mask), flushed_docs.size());
+                       std::move(docs_mask), flushed_docs.size(),
+                       writer->TakeBuiltHnswGraphs());
   try {
     flushed_docs.insert(flushed_docs.end(), docs_context.begin(),
                         docs_context.end());
@@ -1094,11 +1086,9 @@ IndexWriter::IndexWriter(
   ConstructToken, IndexLock::ptr&& lock, IndexFileRefs::ref_t&& lock_file_ref,
   Directory& dir, Format::ptr codec, size_t segment_pool_size,
   const SegmentOptions& segment_limits, const Comparer* comparator,
-  const ColumnInfoProvider& column_info,
   const PayloadProvider& meta_payload_provider,
   std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
-  : _column_info{column_info},
-    _meta_payload_provider{meta_payload_provider},
+  : _meta_payload_provider{meta_payload_provider},
     _comparator{comparator},
     _codec{std::move(codec)},
     _dir{dir},
@@ -1110,12 +1100,11 @@ IndexWriter::IndexWriter(
     _writer{_codec->get_index_meta_writer()},
     _write_lock{std::move(lock)},
     _write_lock_file_ref{std::move(lock_file_ref)} {
-  SDB_ASSERT(column_info);  // ensured by 'make'
   SDB_ASSERT(_codec);
 
-  _wand_scorer = _committed_reader->Options().scorer;
-  if (_wand_scorer) {
-    _wand_features |= _wand_scorer->GetIndexFeatures();
+  _topk_scorer = _committed_reader->Options().scorer;
+  if (_topk_scorer) {
+    _wand_features |= _topk_scorer->GetIndexFeatures();
   }
 
   _flush_context.store(_flush_contexts.data());
@@ -1238,9 +1227,10 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
   auto writer = std::make_shared<IndexWriter>(
     ConstructToken{}, std::move(lock), std::move(lock_ref), dir,
     std::move(codec), options.segment_pool_size, SegmentOptions{options},
-    options.comparator,
-    options.column_info ? options.column_info : kDefaultColumnInfo,
-    options.meta_payload_provider, std::move(reader));
+    options.comparator, options.meta_payload_provider, std::move(reader));
+  writer->_db = options.db;
+  writer->_column_options = options.column_options;
+  writer->_norm_column_options = options.norm_column_options;
   // Remove non-index files from directory
   directory_utils::RemoveAllUnreferenced(dir);
 
@@ -1386,8 +1376,10 @@ ConsolidationResult IndexWriter::Consolidate(
     return result;
   }
 
-  auto pending_reader = SegmentReaderImpl::Open(
-    _dir, consolidation_segment.meta, committed_reader->Options());
+  auto opts = committed_reader->Options();
+  opts.cs_hnsw_graphs = merger.TakeBuiltHnswGraphs();
+  auto pending_reader =
+    SegmentReaderImpl::Open(_dir, consolidation_segment.meta, opts);
   SDB_ASSERT(pending_reader);
 
   // Commit merge, ensure no concurrent Commit/etc
@@ -1528,7 +1520,7 @@ bool IndexWriter::Import(const IndexReader& reader,
     codec = _codec;
   }
 
-  const auto options = GetSnapshotImpl()->Options();
+  auto options = GetSnapshotImpl()->Options();
 
   RefTrackingDirectory dir{_dir};  // Track references
 
@@ -1545,6 +1537,7 @@ bool IndexWriter::Import(const IndexReader& reader,
 
   index_utils::FlushIndexSegment(dir, segment);
 
+  options.cs_hnsw_graphs = merger.TakeBuiltHnswGraphs();
   auto imported_reader = SegmentReaderImpl::Open(_dir, segment.meta, options);
   SDB_ASSERT(imported_reader);
 
@@ -1661,12 +1654,14 @@ IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext() try {
 SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
   bool consolidation) const noexcept {
   return {
-    .column_info = _column_info,
     .scorers_features = _wand_features,
-    .scorer = _wand_scorer,
+    .scorer = _topk_scorer,
     .comparator = _comparator,
     .resource_manager = consolidation ? *_dir.ResourceManager().consolidations
                                       : *_dir.ResourceManager().transactions,
+    .db = _db,
+    .column_options = &_column_options,
+    .norm_column_options = &_norm_column_options,
   };
 }
 
@@ -2032,6 +2027,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
             // reuse existing reader with initial meta and docs_mask
             return it->second->UpdateMeta(dir, flushed.meta);
           } else {
+            reader_options.cs_hnsw_graphs = std::move(flushed.cs_hnsw_graphs);
             return SegmentReaderImpl::Open(dir, flushed.meta, reader_options);
           }
         }();

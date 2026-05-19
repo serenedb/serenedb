@@ -51,13 +51,12 @@ struct SequenceOptions {
 
 class Table;
 
-class Sequence final : public SchemaObject {
+class Sequence final : public Object {
   friend class Table;
 
  public:
-  Sequence(ObjectId database_id, ObjectId schema_id, ObjectId id,
-           std::string_view name, SequenceOptions opts,
-           ObjectId owner_table_id);
+  Sequence(ObjectId schema_id, ObjectId id, std::string_view name,
+           SequenceOptions opts, ObjectId owner_table_id);
 
   ~Sequence() = default;
 

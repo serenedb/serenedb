@@ -18,14 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "executor.hpp"
-
-#include <iresearch/parser/parser.h>
+#include "executor.h"
 
 #include <cstring>
 #include <iresearch/index/norm.hpp>
+#include <iresearch/parser/parser.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/store/store_utils.hpp>
+
+#include "index_builder.h"  // for bench::CsDb()
 
 namespace bench {
 
@@ -38,7 +39,8 @@ Executor::Executor(std::string_view path, const BenchConfig& config)
       config.tokenizer_options)},
     _format{irs::formats::Get(config.format_name, false)},
     _dir{path},
-    _reader{irs::DirectoryReader(_dir, _format, {.scorer = _scorer_ptr})} {}
+    _reader{irs::DirectoryReader(_dir, _format,
+                                 {.scorer = _scorer_ptr, .db = &CsDb()})} {}
 
 size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
   ResetResults(k);

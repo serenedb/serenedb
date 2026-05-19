@@ -1,0 +1,229 @@
+# EXPLAIN annotation: each projected column on an inverted-index scan
+# should declare its source ((i) = typed columnstore, (l) = IndexSource
+# / rocksdb fallback). Annotations only appear when projections mix
+# both sources; the "Lookup: rocksdb" line only appears when at least
+# one projected column is served via lookup.
+
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY src_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+# --- 1. INCLUDE-only projection: all columns served from index ----------
+# pk + body are INCLUDE'd so SELECT pk, body FROM idx pulls everything
+# from the typed columnstore. EXPLAIN should drop the "Lookup" line and
+# emit bare names (no "(i)" annotation).
+statement ok
+CREATE TABLE src_inc_only (
+  pk INTEGER PRIMARY KEY,
+  body VARCHAR,
+  notes VARCHAR
+);
+
+statement ok
+INSERT INTO src_inc_only VALUES (1, 'alpha', 'one'), (2, 'beta', 'two');
+
+statement ok
+CREATE INDEX src_inc_only_idx ON src_inc_only USING inverted(notes src_english)
+  INCLUDE (pk, body);
+
+query
+EXPLAIN SELECT pk, body FROM src_inc_only_idx WHERE notes @@ ts_phrase('one');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      src_inc_only_idx     │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[notes(string) =│
+│    <Term:one(0, 0); >]]   │
+│                           │
+│        Projections:       │
+│             pk            │
+│            body           │
+│                           │
+│          ~2 rows          │
+└───────────────────────────┘
+
+
+# --- 2. Lookup-only projection: column not INCLUDE'd ---------------------
+# notes is not INCLUDE'd; SELECT notes pulls it through IndexSource. The
+# "Lookup: rocksdb" line is present, projections are bare (no "(l)"
+# annotation -- the user explicitly does not want bare-(l) noise).
+query
+EXPLAIN SELECT notes FROM src_inc_only_idx WHERE notes @@ ts_phrase('one');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      src_inc_only_idx     │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[notes(string) =│
+│    <Term:one(0, 0); >]]   │
+│                           │
+│     Projections: notes    │
+│                           │
+│          ~2 rows          │
+└───────────────────────────┘
+
+
+# --- 3. Mixed projection: index + lookup columns ------------------------
+# pk is INCLUDE'd → (i); notes is the indexed text column, not stored
+# → (l). The annotation appears only because both sources are present.
+query
+EXPLAIN SELECT pk, notes FROM src_inc_only_idx WHERE notes @@ ts_phrase('one');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│           notes           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      src_inc_only_idx     │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[notes(string) =│
+│    <Term:one(0, 0); >]]   │
+│                           │
+│        Projections:       │
+│         notes (l)         │
+│           pk (i)          │
+│                           │
+│          ~2 rows          │
+└───────────────────────────┘
+
+
+# --- 4. HNSW vector served by index when user projects only it ---------
+# After the auto-promotion of HNSW columns to store_values=true, the
+# vector column is materialized from the typed columnstore. Projecting
+# just `emb` is the all-index case, so the "Lookup" line disappears
+# and emb is shown without "(i)" annotation.
+statement ok
+CREATE TABLE src_hnsw_only (id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX src_hnsw_only_idx ON src_hnsw_only
+  USING inverted(emb hnsw (metric = 'l2'));
+
+statement ok
+INSERT INTO src_hnsw_only VALUES
+  (1, [1.0, 0.0, 0.0]::FLOAT[3]),
+  (2, [0.0, 1.0, 0.0]::FLOAT[3]);
+
+query
+EXPLAIN SELECT emb FROM src_hnsw_only_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│           Index:          │
+│     src_hnsw_only_idx     │
+│                           │
+│          TopK: 1          │
+│          Dims: 3          │
+│      Projections: emb     │
+│                           │
+│          ~2 rows          │
+└───────────────────────────┘
+
+
+# --- 4b. HNSW with PK projection: PK is lookup-served, emb is index-served
+# Without an INCLUDE on the PK column, projecting (id, emb) is mixed.
+query
+EXPLAIN SELECT id, emb FROM src_hnsw_only_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│           Index:          │
+│     src_hnsw_only_idx     │
+│                           │
+│      Lookup: rocksdb      │
+│          TopK: 1          │
+│          Dims: 3          │
+│                           │
+│        Projections:       │
+│           id (l)          │
+│          emb (i)          │
+│                           │
+│          ~2 rows          │
+└───────────────────────────┘
+
+
+# --- 5. HNSW + extra non-INCLUDE'd column → mixed annotation -----------
+# Add a non-INCLUDE'd column to an HNSW index and project both. emb is
+# (i) (HNSW columns are store_values=true), label is (l) (lookup
+# fallback through IndexSource).
+statement ok
+CREATE TABLE src_hnsw_mixed (id INT PRIMARY KEY, emb FLOAT[3], label VARCHAR);
+
+statement ok
+CREATE INDEX src_hnsw_mixed_idx ON src_hnsw_mixed
+  USING inverted(emb hnsw (metric = 'l2'));
+
+statement ok
+INSERT INTO src_hnsw_mixed VALUES
+  (1, [1.0, 0.0, 0.0]::FLOAT[3], 'a'),
+  (2, [0.0, 1.0, 0.0]::FLOAT[3], 'b');
+
+query
+EXPLAIN SELECT emb, label FROM src_hnsw_mixed_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│           Index:          │
+│     src_hnsw_mixed_idx    │
+│                           │
+│      Lookup: rocksdb      │
+│          TopK: 1          │
+│          Dims: 3          │
+│                           │
+│        Projections:       │
+│          emb (i)          │
+│         label (l)         │
+│                           │
+│          ~2 rows          │
+└───────────────────────────┘
+
+
+# --- 6. Functional check: HNSW vector is correctly materialized --------
+# Confirms that when EXPLAIN says (i) for emb, the value really comes
+# back through the index path (not garbage / not empty).
+statement ok
+VACUUM (UPDATE_INDEXES) src_hnsw_only;
+
+query
+SELECT id, emb FROM src_hnsw_only_idx ORDER BY id;
+----
+id	emb
+1	{1,0,0}
+2	{0,1,0}

@@ -213,10 +213,10 @@ TableInfoAndIndices BuildTableInfoAndIndices(
     // Skip internal generated PK column -- it's not part of the user-visible
     // schema and must not show up via `*` expansion or column-count checks.
     // Kept in bind_data separately only if needed for row identification.
-    if (col.id == catalog::Column::kGeneratedPKId) {
+    if (col.GetId() == catalog::Column::kGeneratedPKId) {
       continue;
     }
-    auto cd = duckdb::ColumnDefinition(col.name, col.type);
+    auto cd = duckdb::ColumnDefinition(std::string{col.GetName()}, col.type);
     if (col.IsGenerated() && col.expr && col.expr->HasExpr()) {
       cd.SetGeneratedExpression(
         col.expr->GetExpr().Copy(),
@@ -235,8 +235,8 @@ TableInfoAndIndices BuildTableInfoAndIndices(
     duckdb::vector<duckdb::string> pk_names;
     for (auto pk_id : pk_col_ids) {
       for (const auto& col : table.Columns()) {
-        if (col.id == pk_id) {
-          pk_names.push_back(col.name);
+        if (col.GetId() == pk_id) {
+          pk_names.emplace_back(col.GetName());
           break;
         }
       }
@@ -265,7 +265,7 @@ TableInfoAndIndices BuildTableInfoAndIndices(
   for (auto& index : indexes) {
     for (auto col_id : index->GetColumnIds()) {
       for (size_t i = 0; i < cols.size(); ++i) {
-        if (cols[i].id == col_id) {
+        if (cols[i].GetId() == col_id) {
           idx_set.insert(i);
           break;
         }
@@ -478,7 +478,7 @@ void DuckDBEntryCache::ScanEntries(
   static constexpr std::type_identity<catalog::VirtualTable> kTable{};
   static constexpr std::type_identity<catalog::PgSqlView> kView{};
   static constexpr std::type_identity<catalog::PgSqlFunction> kFunc{};
-  static constexpr std::type_identity<catalog::SchemaObject> kRelation{};
+  static constexpr std::type_identity<catalog::Object> kRelation{};
   static constexpr std::type_identity<catalog::Index> kIndex{};
   static constexpr std::type_identity<catalog::PgSqlType> kType{};
 

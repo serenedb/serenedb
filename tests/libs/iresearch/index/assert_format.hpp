@@ -86,8 +86,6 @@ struct Term {
 struct Field : public irs::FieldMeta {
   struct FeatureInfo {
     irs::field_id id;
-    irs::FeatureWriterFactory factory;
-    irs::FeatureWriter::ptr writer;
   };
 
   struct FieldStats : irs::FieldStats {
@@ -118,12 +116,10 @@ struct Field : public irs::FieldMeta {
 
 class ColumnValues {
  public:
-  explicit ColumnValues(irs::field_id id, irs::FeatureWriterFactory factory,
-                        irs::FeatureWriter* writer)
-    : _id{id}, _factory{factory}, _writer{writer} {}
-
   ColumnValues(std::string name, irs::field_id id)
     : _id{id}, _name{std::move(name)} {}
+
+  explicit ColumnValues(irs::field_id id) : _id{id} {}
 
   void insert(irs::doc_id_t key, irs::bytes_view value);
 
@@ -132,23 +128,17 @@ class ColumnValues {
     return _name.has_value() ? _name.value() : std::string_view{};
   }
 
-  irs::bstring payload() const;
-
   auto begin() const { return _values.begin(); }
   auto end() const { return _values.end(); }
   auto size() const { return _values.size(); }
   auto empty() const { return _values.empty(); }
 
   void sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs);
-  void rewrite();
 
  private:
   irs::field_id _id;
   std::optional<std::string> _name;
-  mutable std::optional<irs::bstring> _payload;
   std::map<irs::doc_id_t, irs::bstring> _values;
-  irs::FeatureWriterFactory _factory;
-  irs::FeatureWriter* _writer{};
 };
 
 class IndexSegment : irs::util::Noncopyable {
@@ -246,23 +236,14 @@ void IndexSegment::insert(IndexedFieldIterator indexed_begin,
 
 using index_t = std::vector<IndexSegment>;
 
-void AssertColumnstore(
-  const irs::Directory& dir, irs::Format::ptr codec,
-  const index_t& expected_index,
-  size_t skip = 0);  // do not validate the first 'skip' segments
-
-void AssertColumnstore(
-  irs::IndexReader::ptr actual_index, const index_t& expected_index,
-  size_t skip = 0);  // do not validate the first 'skip' segments
-
 void AssertIndex(irs::IndexReader::ptr actual_index,
                  const index_t& expected_index, irs::IndexFeatures features,
-                 size_t skip = 0,  // do not validate the first 'skip' segments
+                 size_t skip = 0,
                  irs::automaton_table_matcher* matcher = nullptr);
 
 void AssertIndex(const irs::Directory& dir, irs::Format::ptr codec,
                  const index_t& index, irs::IndexFeatures features,
-                 size_t skip = 0,  // no not validate the first 'skip' segments
+                 size_t skip = 0,
                  irs::automaton_table_matcher* matcher = nullptr);
 
 }  // namespace tests

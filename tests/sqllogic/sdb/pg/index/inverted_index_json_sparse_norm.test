@@ -1,0 +1,99 @@
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_norm(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE TABLE sparse_norm (id INTEGER PRIMARY KEY, content JSON);
+
+
+statement ok
+CREATE INDEX sparse_norm_idx ON sparse_norm
+    USING inverted(id, (content->>'body') en_norm);
+
+
+statement count 1
+INSERT INTO sparse_norm VALUES (1, '{"body":"t"}'::json);
+
+
+statement count 1
+INSERT INTO sparse_norm VALUES (2, '{"other":"x"}'::json);
+
+
+statement count 1
+INSERT INTO sparse_norm VALUES (3, '{"body":"t"}'::json);
+
+
+statement count 1
+INSERT INTO sparse_norm VALUES
+    (4, '{"body":"t a b c d e f g h"}'::json);
+
+
+statement count 1
+INSERT INTO sparse_norm VALUES (5, '{"body":"x"}'::json);
+
+
+statement count 1
+INSERT INTO sparse_norm VALUES (6, '{"body":"x"}'::json);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) sparse_norm;
+
+
+query
+SELECT id FROM sparse_norm_idx
+WHERE content->>'body' @@ ts_phrase('t') ORDER BY id;
+----
+id
+1
+3
+4
+
+
+query
+SELECT id, BM25(sparse_norm_idx.tableoid) > 0 AS has_score
+FROM sparse_norm_idx
+WHERE content->>'body' @@ ts_phrase('t')
+ORDER BY id;
+----
+id	has_score
+1	t
+3	t
+4	t
+
+
+query
+SELECT id FROM sparse_norm_idx
+WHERE content->>'body' @@ ts_phrase('t')
+ORDER BY BM25(sparse_norm_idx.tableoid) DESC, id;
+----
+id
+1
+3
+4
+
+
+query
+SELECT id FROM sparse_norm_idx
+WHERE content->>'body' @@ ts_phrase('t')
+ORDER BY TFIDF(sparse_norm_idx.tableoid, true) DESC, id;
+----
+id
+1
+3
+4
+
+
+statement ok
+DROP TABLE sparse_norm;

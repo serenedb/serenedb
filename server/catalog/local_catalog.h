@@ -95,12 +95,11 @@ class LocalCatalog final : public LogicalCatalog,
     ObjectId database_id, std::string_view schema, std::string_view relation,
     std::string name, std::vector<CreateIndexColumn>&& columns, bool unique,
     CreateIndexOperationOptions operation_options) final;
-  Result CreateInvertedIndex(ObjectId database_id, std::string_view schema,
-                             std::string_view relation, std::string name,
-                             std::vector<CreateIndexColumn>&& columns,
-                             IndexShardOptions& shard_options,
-                             CreateIndexOperationOptions operation_options,
-                             std::optional<ScorerOptions> wand_scorer) final;
+  Result CreateInvertedIndex(
+    ObjectId database_id, std::string_view schema, std::string_view relation,
+    std::string name, std::vector<CreateIndexColumn>&& columns,
+    InvertedIndexOptions options,
+    CreateIndexOperationOptions operation_options) final;
   Result CreateTokenizer(ObjectId database_id, std::string_view schema,
                          std::shared_ptr<Tokenizer> dict) final;
   Result CreateType(ObjectId database_id, std::string_view schema,
@@ -130,19 +129,20 @@ class LocalCatalog final : public LogicalCatalog,
   Result DropSchema(std::string_view database, std::string_view name,
                     bool cascade) final;
   Result DropView(std::string_view database, std::string_view schema,
-                  std::string_view name) final;
+                  std::string_view name, bool cascade) final;
   Result DropSequence(std::string_view database, std::string_view schema,
-                      std::string_view name, bool if_exists) final;
+                      std::string_view name, bool if_exists,
+                      bool cascade) final;
   Result DropType(std::string_view database, std::string_view schema,
-                  std::string_view name) final;
+                  std::string_view name, bool cascade) final;
   Result DropFunction(std::string_view database, std::string_view schema,
-                      std::string_view name) final;
+                      std::string_view name, bool cascade) final;
   Result DropTokenizer(std::string_view database, std::string_view schema,
-                       std::string_view name) final;
+                       std::string_view name, bool cascade) final;
   Result DropTable(std::string_view database, std::string_view schema,
-                   std::string_view name) final;
+                   std::string_view name, bool cascade) final;
   Result DropIndex(std::string_view database, std::string_view schema,
-                   std::string_view name) final;
+                   std::string_view name, bool cascade) final;
 
   Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                          std::string_view name) final;
@@ -151,7 +151,6 @@ class LocalCatalog final : public LogicalCatalog,
 
  private:
   Result CreateIndexImpl(std::string_view schema, std::shared_ptr<Index> index,
-                         IndexShardOptions& shard_options,
                          CreateIndexOperationOptions operation_options);
 
   template<typename T>

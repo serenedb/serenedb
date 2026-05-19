@@ -230,10 +230,9 @@ void Setval3Function(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 
 void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
-
   {
     duckdb::ScalarFunction func{
-      "nextval",
+      std::string{kNextval},
       {duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::BIGINT,
       NextvalFunction,
@@ -243,7 +242,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
   }
   {
     duckdb::ScalarFunction func{
-      "currval",
+      std::string{kCurrval},
       {duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::BIGINT,
       CurrvalFunction,
@@ -253,7 +252,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
   }
   {
     duckdb::ScalarFunction func{
-      "setval",
+      std::string{kSetval},
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BIGINT},
       duckdb::LogicalType::BIGINT,
       Setval2Function,
@@ -263,7 +262,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
   }
   {
     duckdb::ScalarFunction func{
-      "setval",
+      std::string{kSetval},
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BIGINT,
        duckdb::LogicalType::BOOLEAN},
       duckdb::LogicalType::BIGINT,

@@ -122,24 +122,7 @@ class SubReaderMock final : public irs::SubReader {
     return nullptr;
   }
 
-  // Columnstore
-
-  irs::ColumnIterator::ptr columns() const final {
-    EXPECT_FALSE(true);
-    return nullptr;
-  }
-
-  const irs::ColumnReader* column(irs::field_id) const final {
-    EXPECT_FALSE(true);
-    return nullptr;
-  }
-
-  const irs::ColumnReader* column(std::string_view) const final {
-    EXPECT_FALSE(true);
-    return nullptr;
-  }
-
-  const irs::ColumnReader* sort() const final {
+  irs::NormReader::ptr norms(irs::field_id) const final {
     EXPECT_FALSE(true);
     return nullptr;
   }

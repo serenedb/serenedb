@@ -1,0 +1,332 @@
+control substitution on
+
+# Baseline: every codec name accepted by ParseCompressionName (server/catalog/
+# index.cpp, kMap) must (1) be picked when forced via `compression = '<name>'`
+# at CREATE INDEX time, (2) round-trip its data correctly, and (3) survive a
+# serened restart. This test is the canary for the cs writer's codec-->segment
+# plumbing (column_writer.cpp + the FlushSegment / BlockManager callback hooks
+# on ColumnDataCheckpointData). Any future codec change in that path must keep
+# these green.
+#
+# Names that are NOT in kMap (constant, dictionary, fsst, chimp, patas) are
+# also covered here as `statement error` so a future re-add doesn't quietly
+# regress to an async commit failure. Each table-backed codec is also queried
+# *before* the crash to catch write-time / readback-without-restart bugs, then
+# requeried after `connection after_crash` to catch persistence bugs.
+#
+# zstd's extra-page path (one or more 256 KB blocks beyond the main segment,
+# block_ids embedded inline as next-page pointers) is exercised by the
+# 4096-row varchar case at the tail.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cs_eng(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+# --- 1. UNCOMPRESSED  (BIGINT) ------------------------------------------
+statement ok
+CREATE TABLE cs_unc (pk INTEGER PRIMARY KEY, v BIGINT, txt VARCHAR);
+
+statement ok
+INSERT INTO cs_unc SELECT i, i * 1000, 't' || i::VARCHAR FROM range(64) t(i);
+
+statement ok
+CREATE INDEX cs_unc_idx ON cs_unc USING inverted(txt cs_eng)
+  INCLUDE (pk, v included (compression = 'uncompressed'));
+
+query
+SELECT count(*) AS n, sum(v) AS s FROM cs_unc_idx;
+----
+n	s
+64	2016000
+
+
+# --- 2. CONSTANT  (internal-only codec; name not in kMap) ---------------
+# DuckDB marks COMPRESSION_CONSTANT as "internal only" in compression_type.hpp
+# -- it's chosen by the analyzer when a row group is all-equal, never by user
+# choice. kMap omits the name so the parse-time gate rejects it as "unknown
+# compression". The all-equal case still gets CONSTANT under `compression =
+# 'auto'`, which is the right channel.
+statement error
+CREATE INDEX cs_const_idx ON cs_unc USING inverted(txt cs_eng)
+  INCLUDE (pk, v included (compression = 'constant'));
+
+
+# --- 3. RLE  (INTEGER, long runs) ---------------------------------------
+statement ok
+CREATE TABLE cs_rle (pk INTEGER PRIMARY KEY, v INTEGER, txt VARCHAR);
+
+statement ok
+INSERT INTO cs_rle SELECT i, (i / 64) * 7, 'r' || i::VARCHAR FROM range(256) t(i);
+
+statement ok
+CREATE INDEX cs_rle_idx ON cs_rle USING inverted(txt cs_eng)
+  INCLUDE (pk, v included (compression = 'rle'));
+
+query
+SELECT count(*) AS n, sum(v) AS s FROM cs_rle_idx;
+----
+n	s
+256	2688
+
+
+# --- 4. DICTIONARY / FSST (catalog rejects: superseded by dict_fsst) ----
+# At storage_version VERSION_NUMBER_UPPER the DuckDB analyzers for both
+# COMPRESSION_DICTIONARY and COMPRESSION_FSST return nullptr from
+# init_analyze (dict_fsst replaces them). kMap omits both names so the
+# catalog gate rejects them with an "unknown compression" parse error;
+# users wanting either behavior go through `compression = 'dict_fsst'`
+# instead (covered later in this file).
+statement error
+CREATE INDEX cs_dict_idx ON cs_unc USING inverted(txt cs_eng)
+  INCLUDE (pk, v included (compression = 'dictionary'));
+
+statement error
+CREATE INDEX cs_fsst_x_idx ON cs_unc USING inverted(txt cs_eng)
+  INCLUDE (pk, v included (compression = 'fsst'));
+
+
+# --- 5. BITPACKING  (small-bit INTEGER) ---------------------------------
+statement ok
+CREATE TABLE cs_bp (pk INTEGER PRIMARY KEY, v INTEGER, txt VARCHAR);
+
+statement ok
+INSERT INTO cs_bp SELECT i, i % 16, 'b' || i::VARCHAR FROM range(512) t(i);
+
+statement ok
+CREATE INDEX cs_bp_idx ON cs_bp USING inverted(txt cs_eng)
+  INCLUDE (pk, v included (compression = 'bitpacking'));
+
+query
+SELECT count(*) AS n, sum(v) AS s FROM cs_bp_idx;
+----
+n	s
+512	3840
+
+
+# --- 6. (FSST slot intentionally empty -- see section 4) ----------------
+
+
+# --- 7-8. CHIMP / PATAS  (deprecated upstream; names not in kMap) -------
+# DuckDB's Chimp* and Patas* init_compression bodies throw
+# InternalException("...has been deprecated, can no longer be used to
+# compress data"). init_analyze still exists, so a static
+# TryGetCompressionFunction would falsely accept the name. kMap omits
+# both, so the parse-time gate rejects them as "unknown compression"
+# before the writer ever sees the choice.
+statement error
+CREATE INDEX cs_chimp_idx ON cs_unc USING inverted(txt cs_eng)
+  INCLUDE (pk, v included (compression = 'chimp'));
+
+statement error
+CREATE INDEX cs_patas_idx ON cs_unc USING inverted(txt cs_eng)
+  INCLUDE (pk, v included (compression = 'patas'));
+
+
+# --- 9. ALP  (DOUBLE, clean decimals) -----------------------------------
+statement ok
+CREATE TABLE cs_alp (pk INTEGER PRIMARY KEY, v DOUBLE, txt VARCHAR);
+
+statement ok
+INSERT INTO cs_alp SELECT i, (i * 0.25), 'a' || i::VARCHAR
+       FROM range(256) t(i);
+
+statement ok
+CREATE INDEX cs_alp_idx ON cs_alp USING inverted(txt cs_eng)
+  INCLUDE (pk, v included (compression = 'alp'));
+
+query
+SELECT count(*) AS n, round(sum(v), 2) AS s FROM cs_alp_idx;
+----
+n	s
+256	8160
+
+
+# --- 10. ALPRD  (DOUBLE, low-precision pattern) -------------------------
+statement ok
+CREATE TABLE cs_alprd (pk INTEGER PRIMARY KEY, v DOUBLE, txt VARCHAR);
+
+statement ok
+INSERT INTO cs_alprd SELECT i, sin(i * 0.001) * 1e12, 'A' || i::VARCHAR
+       FROM range(256) t(i);
+
+statement ok
+CREATE INDEX cs_alprd_idx ON cs_alprd USING inverted(txt cs_eng)
+  INCLUDE (pk, v included (compression = 'alprd'));
+
+query
+SELECT count(*) AS n FROM cs_alprd_idx;
+----
+n
+256
+
+
+# --- 11. ROARING  (BOOL with skew, exercises roaring validity codec) ----
+# Roaring is selected for sparse-validity columns. We force it on a BOOL
+# column with mixed-density nulls to give it something to encode.
+statement ok
+CREATE TABLE cs_roar (pk INTEGER PRIMARY KEY, v BOOL, txt VARCHAR);
+
+statement ok
+INSERT INTO cs_roar SELECT i, (i % 7 = 0), 'R' || i::VARCHAR FROM range(512) t(i);
+
+statement ok
+CREATE INDEX cs_roar_idx ON cs_roar USING inverted(txt cs_eng)
+  INCLUDE (pk, v included (compression = 'roaring'));
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE v) AS t FROM cs_roar_idx;
+----
+n	t
+512	74
+
+
+# --- 12. DICT_FSST  (low-cardinality longer strings) --------------------
+statement ok
+CREATE TABLE cs_dfsst (pk INTEGER PRIMARY KEY, v VARCHAR, txt VARCHAR);
+
+statement ok
+INSERT INTO cs_dfsst
+  SELECT i,
+         (['lorem ipsum dolor sit amet consectetur adipiscing elit_001',
+           'lorem ipsum dolor sit amet consectetur adipiscing elit_002',
+           'lorem ipsum dolor sit amet consectetur adipiscing elit_003',
+           'lorem ipsum dolor sit amet consectetur adipiscing elit_004',
+           'lorem ipsum dolor sit amet consectetur adipiscing elit_005',
+           'lorem ipsum dolor sit amet consectetur adipiscing elit_006',
+           'lorem ipsum dolor sit amet consectetur adipiscing elit_007',
+           'lorem ipsum dolor sit amet consectetur adipiscing elit_008'])[(i % 8) + 1],
+         'D' || i::VARCHAR
+  FROM range(256) t(i);
+
+statement ok
+CREATE INDEX cs_dfsst_idx ON cs_dfsst USING inverted(txt cs_eng)
+  INCLUDE (pk, v included (compression = 'dict_fsst'));
+
+query
+SELECT count(*) AS n, count(DISTINCT v) AS d FROM cs_dfsst_idx;
+----
+n	d
+256	8
+
+
+# --- 13. ZSTD  (large incompressible-ish varchar; multi-page path) ------
+# Each row carries 128 distinct bytes. With 4096 rows that is ~512 KB of
+# raw strings -- big enough to push zstd past a single block_size (256 KB)
+# and force the NewPage / FinalizePage path that allocates extra block
+# ids from CsBlockManager (block_id == file offset).
+statement ok
+CREATE TABLE cs_zstd (pk INTEGER PRIMARY KEY, v VARCHAR, txt VARCHAR);
+
+statement ok
+INSERT INTO cs_zstd
+  SELECT i,
+         repeat(md5(i::VARCHAR || '_padding_' || (i * 31337)::VARCHAR), 4),
+         'z' || i::VARCHAR
+  FROM range(4096) t(i);
+
+statement ok
+CREATE INDEX cs_zstd_idx ON cs_zstd USING inverted(txt cs_eng)
+  INCLUDE (pk, v included (compression = 'zstd'));
+
+query
+SELECT count(*) AS n, min(length(v)) AS lo, max(length(v)) AS hi FROM cs_zstd_idx;
+----
+n	lo	hi
+4096	128	128
+
+
+# =========================================================================
+# Crash + recover. Everything above written through the cs writer; the
+# post-crash queries below re-open each `.cs` from disk and must read the
+# same values back.
+# =========================================================================
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+# Post-restart: rerun the same aggregate per codec. Any divergence here
+# means the codec wrote bytes that don't round-trip from the `.cs` file.
+
+connection after_crash
+query
+SELECT count(*) AS n, sum(v) AS s FROM cs_unc_idx;
+----
+n	s
+64	2016000
+
+
+connection after_crash
+query
+SELECT count(*) AS n, sum(v) AS s FROM cs_rle_idx;
+----
+n	s
+256	2688
+
+
+connection after_crash
+query
+SELECT count(*) AS n, sum(v) AS s FROM cs_bp_idx;
+----
+n	s
+512	3840
+
+
+connection after_crash
+query
+SELECT count(*) AS n, round(sum(v), 2) AS s FROM cs_alp_idx;
+----
+n	s
+256	8160
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM cs_alprd_idx;
+----
+n
+256
+
+
+connection after_crash
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE v) AS t FROM cs_roar_idx;
+----
+n	t
+512	74
+
+
+connection after_crash
+query
+SELECT count(*) AS n, count(DISTINCT v) AS d FROM cs_dfsst_idx;
+----
+n	d
+256	8
+
+
+# Zstd multi-page round-trip: the extra-page block_ids stored in the main
+# segment must resolve to file offsets via CsBlockManager.Read.
+connection after_crash
+query
+SELECT count(*) AS n, min(length(v)) AS lo, max(length(v)) AS hi FROM cs_zstd_idx;
+----
+n	lo	hi
+4096	128	128

@@ -501,18 +501,6 @@ duckdb::PhysicalOperator& ResolveDefaultsWithGenerated(
   return pass2;
 }
 
-// --- View-backed CREATE INDEX column pruning ---------------------------
-//
-// Insert a scope-boundary LogicalProjection between LOGICAL_CREATE_INDEX
-// and the view chain that enumerates only the columns the index actually
-// needs. RemoveUnusedColumns then prunes the rest of the chain on its
-// own. Wrappers above the outer projection (ORDER BY / LIMIT / TopN /
-// FILTER) keep their referenced view positions alive automatically:
-// RemoveUnusedColumns visits each wrapper's expressions during its
-// descent into the projection, so those refs land in column_references
-// without us pre-enumerating them.
-
-// Compute view-declared positions the index keys reference by name.
 std::vector<duckdb::idx_t> ComputeKeptViewPositions(
   const duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>&
     parsed_index_exprs,
@@ -538,14 +526,9 @@ std::vector<duckdb::idx_t> ComputeKeptViewPositions(
 }
 
 // Wrap `plan` in a LogicalProjection that enumerates only the kept view
-// columns + PK plumbing. RemoveUnusedColumns then treats this projection
-// as a scope boundary and prunes the chain below to match.
-//
-// Preconditions:
-//   * `plan`'s output bindings are [view col 0..view_decl_size-1, PK
-//     col 0..vcols.size()-1] -- this is what BackfillPkVirtualColumns +
-//     thread_pk_through leave on top.
-//   * `kept_view` is sorted and < view_decl_size.
+// columns + PK plumbing. Optimizer rule RemoveUnusedColumns then treats this projection
+// as a scope boundary and prunes the chain below to match. Need this as
+// CREATE INDEX itself is not a prune boundary.
 duckdb::unique_ptr<duckdb::LogicalOperator> InsertBackfillFilterProjection(
   duckdb::unique_ptr<duckdb::LogicalOperator> plan,
   const std::vector<duckdb::idx_t>& kept_view, duckdb::idx_t view_decl_size,
@@ -937,17 +920,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   bool view_backed = false;
   std::optional<ViewFastPath> view_fast_path;
   int64_t pinned_iceberg_snapshot_id = 0;
-  // Set iff PruneViewFastPathChain narrowed the view's exposed schema.
-  // Holds the kept view positions in ascending order; downstream code
-  // (rel_columns / column_ids / scan_types / LogicalCreateIndex input
-  // expressions / SereneDBPhysicalCreateIndex view_columns) operates on
-  // this pruned schema.
   std::optional<std::vector<duckdb::idx_t>> kept_view_positions;
-  // PK virtual columns for the resolved fast path. Populated alongside
-  // view_fast_path; reused later when stamping the _sdb_view_fast_path_pk
-  // option onto create_index_info. Optional so a future refactor that
-  // skips the initial population trips an assert at the second use site
-  // instead of silently using an empty vector.
   std::optional<std::vector<duckdb::column_t>> vcols_opt;
   if (target.type == duckdb::CatalogType::VIEW_ENTRY) {
     view_backed = true;
@@ -1071,9 +1044,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         EnableIcebergSort(leaf_get->bind_data.get());
       }
 
-      // Compute kept view positions and wrap the chain with a filter
-      // projection so RemoveUnusedColumns can prune the outer projection
-      // and the leaf scan.
       auto& view_entry = target.Cast<duckdb::ViewCatalogEntry>();
       auto column_info = view_entry.GetColumnInfo();
       SDB_ASSERT(column_info,
@@ -1089,9 +1059,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         kept_view_positions = std::move(kept);
       }
     } else {
-      // Non-fast-path view: no PK plumbing, but the same filter-projection
-      // trick still lets RemoveUnusedColumns prune what the index doesn't
-      // reference.
       auto& view_entry = target.Cast<duckdb::ViewCatalogEntry>();
       if (auto column_info = view_entry.GetColumnInfo()) {
         auto kept = ComputeKeptViewPositions(
@@ -1142,9 +1109,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                               "\" must be bound before it can be indexed"));
     }
     if (kept_view_positions) {
-      // Pruned view schema: only the kept view positions appear in
-      // rel_columns. column_ids resolution below indexes into this
-      // narrowed list, so positions are intrinsically remapped.
+
       rel_columns.reserve(kept_view_positions->size());
       for (auto p : *kept_view_positions) {
         rel_columns.emplace_back(column_info->names[p], column_info->types[p]);

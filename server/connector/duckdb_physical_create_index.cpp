@@ -55,6 +55,7 @@
 #include "connector/json_extract_names.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
+#include "connector/search_field_name.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
@@ -192,10 +193,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
 
   std::string value_buffer;
 
-  // Surfaces ingest progress through pg_stat_progress_create_index. Lives
-  // for the duration of the build pipeline; phases advance Initializing ->
-  // BuildingIndex (after catalog row exists) -> Committing (Finalize before
-  // CommitWait) -> Finalizing (Finalize after CommitWait, before tombstone).
   std::unique_ptr<pg::IndexProgressReporter> progress;
 
   ~CreateIndexGlobalState() {
@@ -205,7 +202,8 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
         auto& catalog = SerenedServer::Instance()
                           .getFeature<catalog::CatalogFeature>()
                           .Global();
-        std::ignore = catalog.DropIndex(database_name, schema_name, index_name);
+        std::ignore =
+          catalog.DropIndex(database_name, schema_name, index_name, true);
       } catch (...) {
       }
     }
@@ -230,10 +228,8 @@ struct CreateIndexSourceState : public duckdb::GlobalSourceState {
 
 }  // namespace
 
-// --- Constructor ---
-
 SereneDBPhysicalCreateIndex::SereneDBPhysicalCreateIndex(
-  duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::SchemaObject> relation,
+  duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Object> relation,
   std::vector<catalog::Column> view_columns, ObjectId database_id,
   duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
   SereneDBSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality)
@@ -261,8 +257,6 @@ const std::vector<catalog::Column>& SereneDBPhysicalCreateIndex::Columns()
   return _view_columns;
 }
 
-// --- GetGlobalSinkState: create index with tombstone ---
-
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
@@ -275,10 +269,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   state->table_name = std::string{_relation->GetName()};
   state->index_name = _info->index_name;
 
-  // Surface progress in pg_stat_progress_create_index. We don't yet know the
-  // catalog index_relid (it's assigned by
-  // CreateInvertedIndex/CreateSecondaryIndex below), so start with an empty one
-  // and patch it in after the catalog row exists.
   state->progress = std::make_unique<pg::IndexProgressReporter>(
     _database_id, _relation->GetId(),
     pg::create_index_progress::Command::CreateIndex,
@@ -305,7 +295,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   std::vector<catalog::CreateIndexColumn> idx_columns;
   auto resolve_column = [&](std::string_view col_name) {
     for (const auto& col : columns) {
-      if (col.name == col_name) {
+      if (absl::EqualsIgnoreCase(col.GetName(), col_name)) {
         return &col;
       }
     }
@@ -334,7 +324,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       }
       idx_columns.emplace_back(catalog::CreateIndexColumn{
         .catalog_column = cat_col,
-        .name = cat_col->name,
+        .name = cat_col->GetName(),
         .opclass = std::move(opclass),
         .opclass_options = std::move(opclass_options),
       });
@@ -356,9 +346,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
     idx_columns.emplace_back(catalog::CreateIndexColumn{
       .catalog_column = cat_col,
-      .name = cat_col->name,
+      .name = cat_col->GetName(),
       .opclass = std::move(opclass),
-      .json_path = std::move(json_path),
+      .json_pointer = EncodeJsonPointer(json_path),
       .opclass_options = std::move(opclass_options),
     });
   }
@@ -368,31 +358,37 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
   Result create_result;
   if (state->index_type == catalog::ObjectType::InvertedIndex) {
-    search::InvertedIndexShardOptions shard_options;
-    auto it = _info->options.find("commit_interval");
-    if (it != _info->options.end()) {
-      shard_options.base.commit_interval_ms = it->second.GetValue<int64_t>();
+    auto find_with = [&](std::string_view name) -> const duckdb::Value* {
+      auto it = _info->options.find(name);
+      return it != _info->options.end() ? &it->second : nullptr;
+    };
+    auto resolve_uint = [&](std::string_view name) -> uint32_t {
+      if (auto* v = find_with(name)) {
+        return v->GetValue<uint32_t>();
+      }
+      duckdb::Value v;
+      auto r = context.TryGetCurrentSetting(std::string{name}, v);
+      SDB_ASSERT(r, "missing DB-level default for setting: ", name);
+      return v.GetValue<uint32_t>();
+    };
+
+    catalog::InvertedIndexOptions options{
+      .row_group_size = resolve_uint("row_group_size"),
+      .norm_row_group_size = resolve_uint("norm_row_group_size"),
+      .commit_interval_ms = resolve_uint("commit_interval"),
+      .consolidation_interval_ms = resolve_uint("consolidation_interval"),
+      .cleanup_interval_step = resolve_uint("cleanup_interval_step"),
+    };
+    if (auto* v = find_with("optimize_top_k")) {
+      auto value =
+        v->DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>();
+      options.topk_scorer = catalog::ParseScorerExpression(context, value);
     }
-    it = _info->options.find("consolidation_interval");
-    if (it != _info->options.end()) {
-      shard_options.base.consolidation_interval_ms =
-        it->second.GetValue<int64_t>();
-    }
-    it = _info->options.find("cleanup_interval_step");
-    if (it != _info->options.end()) {
-      shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
-    }
-    std::optional<catalog::ScorerOptions> wand_scorer;
-    it = _info->options.find("optimize_top_k");
-    if (it != _info->options.end()) {
-      auto value = it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
-                     .GetValue<std::string>();
-      wand_scorer = catalog::ParseScorerExpression(context, value);
-    }
+
     create_result = catalog_impl.CreateInvertedIndex(
       _database_id, _schema_entry.name, _relation->GetName(), _info->index_name,
-      std::move(idx_columns), shard_options, {.create_with_tombstone = true},
-      std::move(wand_scorer));
+      std::move(idx_columns), std::move(options),
+      {.create_with_tombstone = true});
   } else {
     bool unique =
       (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE);
@@ -452,7 +448,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     for (size_t chunk_idx = 0; chunk_idx < projection.size(); ++chunk_idx) {
       const auto& col = columns[projection[chunk_idx]];
       state->columns.push_back(InsertColumnMeta{
-        .id = col.id,
+        .id = col.GetId(),
         .duckdb_type = col.type,
         .input_col_idx = chunk_idx,
         .store_mode = col.store_mode,
@@ -463,11 +459,11 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     // positions; trailing positions hold virtual PK columns appended by
     // BindCreateIndex.
     for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == catalog::Column::kGeneratedPKId) {
+      if (columns[i].GetId() == catalog::Column::kGeneratedPKId) {
         continue;
       }
       state->columns.push_back(InsertColumnMeta{
-        .id = columns[i].id,
+        .id = columns[i].GetId(),
         .duckdb_type = columns[i].type,
         .input_col_idx = i,
         .store_mode = columns[i].store_mode,
@@ -519,7 +515,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     duckdb::idx_t trailing_pos = state->columns.size();
     for (auto pk_id : pk_ids) {
       for (const auto& c : base_cols) {
-        if (c.id == pk_id) {
+        if (c.GetId() == pk_id) {
           state->pk_columns.push_back(duckdb_primary_key::PKColumn{
             .input_col_idx = trailing_pos,
             .type = c.type,
@@ -558,17 +554,11 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         trx, shard->GetId(), index->GetColumnIds(), std::move(sk_columns));
     }
   } else {
-    // Parallel-Sink build context: each CreateIndexLocalState pulls a
-    // fresh transaction off the shard and builds its own writer using
-    // providers resolved against the snapshot and InvertedIndex stored
-    // on gstate.
     state->snapshot_for_providers = snapshot;
     state->index_for_providers = index;
   }
   return state;
 }
-
-// --- Parallelism toggles ---
 
 bool SereneDBPhysicalCreateIndex::ParallelSink() const {
   return _info && absl::EqualsIgnoreCase(_info->index_type, "inverted");
@@ -603,14 +593,17 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
     MakeTokenizerProvider(gstate.snapshot_for_providers, inverted_index);
   auto json_paths_provider =
     MakeJsonPathsProvider(gstate.snapshot_for_providers, inverted_index);
+  auto store_values_provider = MakeStoreValuesProvider(inverted_index);
+  auto is_text_indexed_provider = MakeIsTextIndexedProvider(inverted_index);
+  auto hnsw_info_provider = MakeHNSWInfoProvider(inverted_index);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx, std::move(tokenizer_provider),
-    gstate.index_for_providers->GetColumnIds(), std::move(json_paths_provider));
+    gstate.index_for_providers->GetColumnIds(), std::move(json_paths_provider),
+    std::move(store_values_provider), std::move(is_text_indexed_provider),
+    std::move(hnsw_info_provider));
 
   return lstate;
 }
-
-// --- Sink: backfill existing data ---
 
 duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
@@ -625,9 +618,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
-  // Pick which writer/buffers to use. Inverted-index parallel path keeps a
-  // CreateIndexLocalState per scan thread (its own iresearch transaction
-  // = its own segment). Secondary-index serial path uses gstate.
   const bool parallel = ParallelSink();
   CreateIndexLocalState* lstate = nullptr;
   if (parallel) {
@@ -638,6 +628,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   } else if (!gstate.writer) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
+
   auto* writer = parallel ? lstate->writer.get() : gstate.writer.get();
   auto* serializer =
     parallel ? lstate->serializer.get() : gstate.serializer.get();
@@ -692,8 +683,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
   } else if (gstate.is_view_synth_pk) {
     // View-backed: no PK column in chunk; synthesise a monotonic counter.
-    // fetch_add reserves a contiguous run of ids per Sink call so PKs stay
-    // unique even when N threads are sinking concurrently.
     const int64_t base = gstate.view_row_counter_atomic.fetch_add(
       static_cast<int64_t>(num_rows), std::memory_order_relaxed);
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
@@ -728,7 +717,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
 
     const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
                                 /*have_nulls=*/true};
-    if (!writer->SwitchColumn(desc)) {
+    if (!writer->SwitchColumn(desc, chunk.data[col.input_col_idx], num_rows)) {
       continue;
     }
 
@@ -748,8 +737,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   }
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
-
-// --- Finalize: CommitWait + RemoveTombstone ---
 
 duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   duckdb::Pipeline& pipeline, duckdb::Event& event,
@@ -793,8 +780,6 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   return duckdb::SinkFinalizeType::READY;
 }
 
-// --- Source (returns CREATE INDEX tag) ---
-
 duckdb::unique_ptr<duckdb::GlobalSourceState>
 SereneDBPhysicalCreateIndex::GetGlobalSourceState(
   duckdb::ClientContext& context) const {
@@ -812,14 +797,11 @@ duckdb::SourceResultType SereneDBPhysicalCreateIndex::GetDataInternal(
 
   auto& gstate = sink_state->Cast<CreateIndexGlobalState>();
   chunk.SetCardinality(1);
-  chunk.SetValue(
-    0, 0,
-    duckdb::Value::BIGINT(static_cast<int64_t>(
-      gstate.backfill_count_atomic.load(std::memory_order_relaxed))));
+  const auto count = static_cast<int64_t>(
+    gstate.backfill_count_atomic.load(std::memory_order_relaxed));
+  chunk.SetValue(0, 0, duckdb::Value::BIGINT(count));
   return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
 }
-
-// --- create_plan callback ---
 
 duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   duckdb::PlanIndexInput& input) {
@@ -833,7 +815,7 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   auto& schema_entry = op.table.ParentSchema().Cast<SereneDBSchemaEntry>();
   auto database_id = sdb_catalog.GetDatabaseId();
 
-  std::shared_ptr<catalog::SchemaObject> relation;
+  std::shared_ptr<catalog::Object> relation;
   std::vector<catalog::Column> view_columns;
 
   if (op.table.type == duckdb::CatalogType::VIEW_ENTRY) {
@@ -850,13 +832,27 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     }
     auto& view = basics::downCast<catalog::PgSqlView>(*relation);
     const auto& vinfo = view.GetInfo();
-    view_columns.reserve(vinfo.names.size());
-    for (size_t i = 0; i < vinfo.names.size(); ++i) {
-      view_columns.push_back(catalog::Column{
-        .id = static_cast<catalog::Column::Id>(i),
-        .type = vinfo.types[i],
-        .name = vinfo.names[i],
-      });
+    // When pruning narrowed the view, build view_columns only for the
+    // surviving positions. column.id keeps the original view position
+    // so downstream id-based lookups stay stable.
+    std::vector<size_t> view_positions;
+    if (auto it = op.info->options.find("_sdb_view_kept_positions");
+        it != op.info->options.end()) {
+      for (const auto& v : duckdb::ListValue::GetChildren(it->second)) {
+        view_positions.push_back(v.GetValue<uint64_t>());
+      }
+    } else {
+      view_positions.reserve(vinfo.names.size());
+      for (size_t i = 0; i < vinfo.names.size(); ++i) {
+        view_positions.push_back(i);
+      }
+    }
+    view_columns.reserve(view_positions.size());
+    for (auto p : view_positions) {
+      SDB_ASSERT(p < vinfo.names.size());
+      view_columns.emplace_back(ObjectId{}, catalog::Column::Id{p},
+                                vinfo.names[p], vinfo.types[p]);
+      view_columns.back().SetId(catalog::Column::Id{p});
     }
   } else {
     auto& table_catalog = op.table.Cast<duckdb::TableCatalogEntry>();

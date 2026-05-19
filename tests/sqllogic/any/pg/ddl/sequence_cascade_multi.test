@@ -1,0 +1,171 @@
+statement ok
+CREATE SEQUENCE clickclack_query_id_seq START WITH 1000 INCREMENT BY 7;
+
+
+statement ok
+CREATE TABLE clickclack_dashboards (
+  id BIGINT NOT NULL DEFAULT nextval('public.clickclack_query_id_seq'),
+  v TEXT
+);
+
+
+statement ok
+CREATE TABLE clickclack_ingest_jobs (
+  id BIGINT NOT NULL DEFAULT nextval('public.clickclack_query_id_seq'),
+  other_id BIGINT NOT NULL DEFAULT 42,
+  v TEXT
+);
+
+
+statement ok
+CREATE TABLE clickclack_query_plans (
+  id BIGINT NOT NULL DEFAULT nextval('public.clickclack_query_id_seq'),
+  v TEXT
+);
+
+
+statement ok
+CREATE TABLE clickclack_error_log (
+  id BIGINT NOT NULL DEFAULT nextval('public.clickclack_query_id_seq'),
+  v TEXT
+);
+
+
+statement ok
+CREATE TABLE clickclack_audit (
+  id BIGINT NOT NULL DEFAULT nextval('public.clickclack_query_id_seq'),
+  v TEXT
+);
+
+
+statement count 1
+INSERT INTO clickclack_dashboards (v) VALUES ('r1a');
+
+
+statement count 1
+INSERT INTO clickclack_ingest_jobs (v) VALUES ('r2a');
+
+
+statement count 1
+INSERT INTO clickclack_query_plans (v) VALUES ('r3a');
+
+
+statement count 1
+INSERT INTO clickclack_error_log (v) VALUES ('r4a');
+
+
+statement count 1
+INSERT INTO clickclack_audit (v) VALUES ('r5a');
+
+
+query
+SELECT id, v FROM clickclack_dashboards ORDER BY id;
+----
+id	v
+1000	r1a
+
+
+query
+SELECT id, v FROM clickclack_audit ORDER BY id;
+----
+id	v
+1028	r5a
+
+
+statement error (?i)cannot drop sequence .*clickclack_query_id_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_query_id_seq;
+
+
+statement ok
+DROP SEQUENCE clickclack_query_id_seq CASCADE;
+
+
+statement error (?i)(sequence|relation).*clickclack_query_id_seq.*does not exist
+SELECT nextval('clickclack_query_id_seq');
+
+
+query
+SELECT id, v FROM clickclack_dashboards ORDER BY id;
+----
+id	v
+1000	r1a
+
+
+query
+SELECT id, v FROM clickclack_ingest_jobs ORDER BY id;
+----
+id	v
+1007	r2a
+
+
+query
+SELECT id, v FROM clickclack_query_plans ORDER BY id;
+----
+id	v
+1014	r3a
+
+
+query
+SELECT id, v FROM clickclack_error_log ORDER BY id;
+----
+id	v
+1021	r4a
+
+
+query
+SELECT id, v FROM clickclack_audit ORDER BY id;
+----
+id	v
+1028	r5a
+
+
+statement error (?i)(null|not.?null|violates|constraint)
+INSERT INTO clickclack_dashboards (v) VALUES ('after');
+
+
+statement error (?i)(null|not.?null|violates|constraint)
+INSERT INTO clickclack_ingest_jobs (v) VALUES ('after');
+
+
+statement error (?i)(null|not.?null|violates|constraint)
+INSERT INTO clickclack_query_plans (v) VALUES ('after');
+
+
+statement error (?i)(null|not.?null|violates|constraint)
+INSERT INTO clickclack_error_log (v) VALUES ('after');
+
+
+statement error (?i)(null|not.?null|violates|constraint)
+INSERT INTO clickclack_audit (v) VALUES ('after');
+
+
+statement count 1
+INSERT INTO clickclack_ingest_jobs (id, v) VALUES (777, 'r2-explicit');
+
+
+query
+SELECT id, other_id, v FROM clickclack_ingest_jobs ORDER BY id;
+----
+id	other_id	v
+777	42	r2-explicit
+1007	42	r2a
+
+
+statement ok
+DROP TABLE clickclack_dashboards;
+
+
+statement ok
+DROP TABLE clickclack_ingest_jobs;
+
+
+statement ok
+DROP TABLE clickclack_query_plans;
+
+
+statement ok
+DROP TABLE clickclack_error_log;
+
+
+statement ok
+DROP TABLE clickclack_audit;

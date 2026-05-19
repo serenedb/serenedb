@@ -39,7 +39,7 @@
 
 namespace sdb::catalog {
 
-class Tokenizer : public SchemaObject {
+class Tokenizer : public Object {
  public:
   struct Deleter {
     Tokenizer* tokenizer{nullptr};
@@ -68,10 +68,13 @@ class Tokenizer : public SchemaObject {
   void WriteInternal(vpack::Builder&) const final;
   std::shared_ptr<Object> Clone() const final;
 
-  Tokenizer(ObjectId id, std::string_view name, search::Features features,
+  Tokenizer(ObjectId schema_id, ObjectId id, std::string_view name,
+            search::Features features, uint32_t norm_row_group_size,
             std::string data);
 
   const search::Features& GetFeatures() const noexcept { return _features; }
+
+  uint32_t GetNormRowGroupSize() const noexcept { return _norm_row_group_size; }
 
  private:
   irs::analysis::Analyzer::ptr CreateAnalyzer() const;
@@ -80,6 +83,7 @@ class Tokenizer : public SchemaObject {
   std::vector<irs::analysis::Analyzer::ptr> _pool;
   std::string _data;
   search::Features _features;
+  uint32_t _norm_row_group_size;
 };
 
 }  // namespace sdb::catalog

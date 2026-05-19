@@ -1,0 +1,508 @@
+statement ok
+CREATE SEQUENCE iceberg_partition_seq START WITH 10;
+
+
+statement ok
+CREATE SEQUENCE iceberg_snapshot_seq START WITH 100;
+
+
+statement ok
+CREATE TABLE iceberg_manifest (
+  id BIGINT NOT NULL DEFAULT nextval('public.iceberg_partition_seq') + nextval('public.iceberg_snapshot_seq'),
+  v TEXT
+);
+
+
+statement count 1
+INSERT INTO iceberg_manifest (v) VALUES ('row1');
+
+
+statement count 1
+INSERT INTO iceberg_manifest (v) VALUES ('row2');
+
+
+query
+SELECT id, v FROM iceberg_manifest ORDER BY v;
+----
+id	v
+110	row1
+112	row2
+
+
+statement error (?i)cannot drop sequence .*iceberg_partition_seq.* because other objects depend on it
+DROP SEQUENCE iceberg_partition_seq;
+
+
+statement error (?i)cannot drop sequence .*iceberg_partition_seq.* because other objects depend on it
+DROP SEQUENCE iceberg_partition_seq RESTRICT;
+
+
+statement error (?i)cannot drop sequence .*iceberg_snapshot_seq.* because other objects depend on it
+DROP SEQUENCE iceberg_snapshot_seq;
+
+
+statement error (?i)cannot drop sequence .*iceberg_snapshot_seq.* because other objects depend on it
+DROP SEQUENCE iceberg_snapshot_seq RESTRICT;
+
+
+statement ok
+DROP SEQUENCE iceberg_partition_seq CASCADE;
+
+
+query
+SELECT count(*) FROM pg_class WHERE relname = 'iceberg_partition_seq';
+----
+count
+0
+
+
+query
+SELECT nextval('public.iceberg_snapshot_seq');
+----
+nextval
+102
+
+
+query
+SELECT id, v FROM iceberg_manifest ORDER BY v;
+----
+id	v
+110	row1
+112	row2
+
+
+statement error (?i)(null|not.?null|violates|constraint)
+INSERT INTO iceberg_manifest (v) VALUES ('after-cascade');
+
+
+statement count 1
+INSERT INTO iceberg_manifest (id, v) VALUES (9999, 'explicit');
+
+
+statement ok
+DROP SEQUENCE iceberg_snapshot_seq RESTRICT;
+
+
+statement ok
+DROP TABLE iceberg_manifest;
+
+
+statement ok
+CREATE SEQUENCE clickclack_query_seq;
+
+
+statement ok
+CREATE TABLE clickclack_query_log (
+  v BIGINT DEFAULT nextval('public.clickclack_query_seq') + nextval('public.clickclack_query_seq')
+);
+
+
+statement count 1
+INSERT INTO clickclack_query_log DEFAULT VALUES;
+
+
+statement count 1
+INSERT INTO clickclack_query_log DEFAULT VALUES;
+
+
+query
+SELECT v FROM clickclack_query_log ORDER BY v;
+----
+v
+3
+7
+
+
+statement error (?i)cannot drop sequence .*clickclack_query_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_query_seq;
+
+
+statement ok
+DROP SEQUENCE clickclack_query_seq CASCADE;
+
+
+query
+SELECT v FROM clickclack_query_log ORDER BY v;
+----
+v
+3
+7
+
+
+statement count 1
+INSERT INTO clickclack_query_log DEFAULT VALUES;
+
+
+query
+SELECT count(*) FROM clickclack_query_log WHERE v IS NULL;
+----
+count
+1
+
+
+statement ok
+DROP TABLE clickclack_query_log;
+
+
+statement ok
+CREATE SEQUENCE mop_listing_seq;
+
+
+statement ok
+CREATE SEQUENCE mop_recruiter_seq;
+
+
+statement ok
+CREATE TABLE mop_applications_log (
+  a BIGINT DEFAULT nextval('public.mop_listing_seq'),
+  b BIGINT DEFAULT nextval('public.mop_recruiter_seq'),
+  v TEXT
+);
+
+
+statement count 1
+INSERT INTO mop_applications_log (v) VALUES ('first');
+
+
+query
+SELECT a, b, v FROM mop_applications_log;
+----
+a	b	v
+1	1	first
+
+
+statement ok
+DROP SEQUENCE mop_listing_seq CASCADE;
+
+
+statement count 1
+INSERT INTO mop_applications_log (v) VALUES ('after-x');
+
+
+query
+SELECT a IS NULL AS a_null, b, v FROM mop_applications_log WHERE v = 'after-x';
+----
+a_null	b	v
+t	2	after-x
+
+
+statement ok
+DROP SEQUENCE mop_recruiter_seq CASCADE;
+
+
+statement count 1
+INSERT INTO mop_applications_log (v) VALUES ('after-both');
+
+
+query
+SELECT a IS NULL AS a_null, b IS NULL AS b_null, v
+  FROM mop_applications_log WHERE v = 'after-both';
+----
+a_null	b_null	v
+t	t	after-both
+
+
+statement ok
+DROP TABLE mop_applications_log;
+
+
+statement ok
+CREATE TABLE solid_module (id SERIAL PRIMARY KEY, v TEXT);
+
+
+statement count 1
+INSERT INTO solid_module (v) VALUES ('o');
+
+
+statement ok
+CREATE TABLE solid_violations_ironically (
+  a BIGINT DEFAULT nextval('public.solid_module_id_seq'),
+  b BIGINT DEFAULT nextval('public.solid_module_id_seq'),
+  payload TEXT
+);
+
+
+statement count 1
+INSERT INTO solid_violations_ironically (payload) VALUES ('r');
+
+
+statement error (?i)cannot drop table .*solid_module.* because other objects depend on it
+DROP TABLE solid_module;
+
+
+statement ok
+DROP TABLE solid_module CASCADE;
+
+
+query
+SELECT count(*) FROM pg_class
+  WHERE relname IN ('solid_module', 'solid_module_id_seq');
+----
+count
+0
+
+
+query
+SELECT a IS NOT NULL AS a_set, b IS NOT NULL AS b_set, payload
+  FROM solid_violations_ironically WHERE payload = 'r';
+----
+a_set	b_set	payload
+t	t	r
+
+
+statement count 1
+INSERT INTO solid_violations_ironically (payload) VALUES ('after');
+
+
+query
+SELECT a IS NULL AS a_null, b IS NULL AS b_null, payload
+  FROM solid_violations_ironically WHERE payload = 'after';
+----
+a_null	b_null	payload
+t	t	after
+
+
+statement ok
+DROP TABLE solid_violations_ironically;
+
+
+statement ok
+CREATE SEQUENCE clickclack_ingest_a;
+
+
+statement ok
+CREATE SEQUENCE clickclack_ingest_b;
+
+
+statement ok
+CREATE SEQUENCE clickclack_ingest_c;
+
+
+statement ok
+CREATE TABLE clickclack_ingest_job (
+  v BIGINT DEFAULT
+    nextval('public.clickclack_ingest_a') + nextval('public.clickclack_ingest_b') + nextval('public.clickclack_ingest_c')
+);
+
+
+statement count 1
+INSERT INTO clickclack_ingest_job DEFAULT VALUES;
+
+
+query
+SELECT v FROM clickclack_ingest_job;
+----
+v
+3
+
+
+statement error (?i)cannot drop sequence .*clickclack_ingest_a.* because other objects depend on it
+DROP SEQUENCE clickclack_ingest_a;
+
+
+statement error (?i)cannot drop sequence .*clickclack_ingest_b.* because other objects depend on it
+DROP SEQUENCE clickclack_ingest_b;
+
+
+statement error (?i)cannot drop sequence .*clickclack_ingest_c.* because other objects depend on it
+DROP SEQUENCE clickclack_ingest_c;
+
+
+statement ok
+DROP SEQUENCE clickclack_ingest_b CASCADE;
+
+
+statement ok
+DROP SEQUENCE clickclack_ingest_a RESTRICT;
+
+
+statement ok
+DROP SEQUENCE clickclack_ingest_c RESTRICT;
+
+
+statement ok
+DROP TABLE clickclack_ingest_job;
+
+
+statement ok
+CREATE SEQUENCE ml_loss_seq;
+
+
+query
+SELECT nextval('public.ml_loss_seq');
+----
+nextval
+1
+
+
+statement ok
+CREATE TABLE ml_weights (
+  v BIGINT DEFAULT currval('public.ml_loss_seq'),
+  payload TEXT
+);
+
+
+statement count 1
+INSERT INTO ml_weights (payload) VALUES ('r1');
+
+
+query
+SELECT v, payload FROM ml_weights;
+----
+v	payload
+1	r1
+
+
+statement error (?i)cannot drop sequence .*ml_loss_seq.* because other objects depend on it
+DROP SEQUENCE ml_loss_seq;
+
+
+statement error (?i)cannot drop sequence .*ml_loss_seq.* because other objects depend on it
+DROP SEQUENCE ml_loss_seq RESTRICT;
+
+
+statement ok
+DROP SEQUENCE ml_loss_seq CASCADE;
+
+
+query
+SELECT v, payload FROM ml_weights;
+----
+v	payload
+1	r1
+
+
+statement count 1
+INSERT INTO ml_weights (payload) VALUES ('r2');
+
+
+query
+SELECT v IS NULL AS v_null, payload FROM ml_weights WHERE payload = 'r2';
+----
+v_null	payload
+t	r2
+
+
+statement ok
+DROP TABLE ml_weights;
+
+
+statement ok
+CREATE SEQUENCE ml_lecture_seq;
+
+
+statement ok
+CREATE TABLE ml_lectures (
+  v BIGINT DEFAULT setval('public.ml_lecture_seq', 100),
+  payload TEXT
+);
+
+
+statement count 1
+INSERT INTO ml_lectures (payload) VALUES ('r1');
+
+
+query
+SELECT v, payload FROM ml_lectures;
+----
+v	payload
+100	r1
+
+
+statement error (?i)cannot drop sequence .*ml_lecture_seq.* because other objects depend on it
+DROP SEQUENCE ml_lecture_seq;
+
+
+statement error (?i)cannot drop sequence .*ml_lecture_seq.* because other objects depend on it
+DROP SEQUENCE ml_lecture_seq RESTRICT;
+
+
+statement ok
+DROP SEQUENCE ml_lecture_seq CASCADE;
+
+
+query
+SELECT v, payload FROM ml_lectures;
+----
+v	payload
+100	r1
+
+
+statement count 1
+INSERT INTO ml_lectures (payload) VALUES ('r2');
+
+
+query
+SELECT v IS NULL AS v_null, payload FROM ml_lectures WHERE payload = 'r2';
+----
+v_null	payload
+t	r2
+
+
+statement ok
+DROP TABLE ml_lectures;
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_seq_a;
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_seq_b;
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_seq_c;
+
+
+query
+SELECT nextval('public.vedernikoff_seq_a');
+----
+nextval
+1
+
+
+statement ok
+CREATE TABLE vedernikoff_journal (
+  v BIGINT DEFAULT
+    nextval('public.vedernikoff_seq_b') + currval('public.vedernikoff_seq_a') + setval('public.vedernikoff_seq_c', 10)
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_journal DEFAULT VALUES;
+
+
+query
+SELECT v FROM vedernikoff_journal;
+----
+v
+12
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_seq_a.* because other objects depend on it
+DROP SEQUENCE vedernikoff_seq_a;
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_seq_b.* because other objects depend on it
+DROP SEQUENCE vedernikoff_seq_b;
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_seq_c.* because other objects depend on it
+DROP SEQUENCE vedernikoff_seq_c;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_seq_a CASCADE;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_seq_b RESTRICT;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_seq_c RESTRICT;
+
+
+statement ok
+DROP TABLE vedernikoff_journal;

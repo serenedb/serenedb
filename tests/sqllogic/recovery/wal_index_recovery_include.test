@@ -1,0 +1,236 @@
+control substitution on
+
+# WAL recovery for INCLUDE'd columns served by the new columnstore.
+#
+# Mirrors wal_index_recovery.test, but with STORE'd INCLUDE columns whose
+# only durable home is the .cs file. RocksDB carries the indexed-side bytes
+# (used by the inverted-index analyzer) and ALSO the include'd cell bytes,
+# so the recovery driver has everything it needs in RAM; the question is
+# whether it re-drives them into the cs writer's Append path.
+#
+# Pre-crash row -> committed iresearch segment, .cs already durable.
+# Post-crash rows -> only in RocksDB WAL; their cs row positions don't
+# exist in any on-disk .cs file yet and must be rebuilt from WAL on
+# restart.
+#
+# Column shapes exercised by this test:
+#   txt       TEXT             -- text-indexed only (no INCLUDE), per-cell path
+#   v         BIGINT           -- INCLUDE-only scalar, batch path
+#   dual      TEXT             -- text-indexed AND INCLUDE'd (plain text dict
+#                                 has no StoreAttr -> typed-batch owns cs)
+#   ints      INTEGER[]        -- INCLUDE-only LIST, batch path with growing
+#                                 child Vector
+#   triple    INTEGER[3]       -- INCLUDE-only fixed-size ARRAY
+#   pt        STRUCT(x INT, y INT)
+#                              -- INCLUDE-only STRUCT
+#   m         MAP(VARCHAR,INT) -- INCLUDE-only MAP (LIST of STRUCT<k,v>)
+#   nest      MAP(VARCHAR,
+#                 STRUCT(tags INTEGER[]))
+#                              -- INCLUDE-only deep nested (MAP<K,STRUCT<LIST>>)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wal_inc_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE wal_inc_t(
+  pk INTEGER PRIMARY KEY,
+  txt TEXT,
+  v BIGINT,
+  dual TEXT,
+  ints INTEGER[],
+  triple INTEGER[3],
+  pt STRUCT(x INTEGER, y INTEGER),
+  m MAP(VARCHAR, INTEGER),
+  nest MAP(VARCHAR, STRUCT(tags INTEGER[]))
+);
+
+statement ok
+INSERT INTO wal_inc_t VALUES (
+  1, 'alpha bravo charlie', 100, 'omega one',
+  [10, 20, 30], [1, 2, 3]::INTEGER[3],
+  {'x': 7, 'y': 8},
+  MAP {'k1': 11, 'k2': 22},
+  MAP {'a': {'tags': [101, 102]}}
+);
+
+statement ok
+CREATE INDEX wal_inc_idx ON wal_inc_t
+  USING inverted(txt wal_inc_dict, dual wal_inc_dict)
+  INCLUDE (pk, v, dual, ints, triple, pt, m, nest);
+
+statement ok
+VACUUM (UPDATE_INDEXES) wal_inc_t;
+
+# All projections served from the inverted index (cs for INCLUDE columns,
+# inverted-index for txt filter, RocksDB for nothing).
+query
+EXPLAIN SELECT pk, v, dual FROM wal_inc_idx WHERE txt @@ ts_phrase('alpha');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: wal_inc_idx    │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[txt(string) =  │
+│   <Term:alpha(0, 0); >]]  │
+│                           │
+│        Projections:       │
+│             pk            │
+│             v             │
+│            dual           │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+# Pre-crash row served from the .cs file.
+query
+SELECT pk, v, dual FROM wal_inc_idx WHERE txt @@ ts_phrase('alpha');
+----
+pk	v	dual
+1	100	omega one
+
+# Pre-crash composite reads (cs round-trip for LIST/ARRAY/STRUCT/MAP/nested).
+query
+SELECT pk, ints, triple FROM wal_inc_idx WHERE txt @@ ts_phrase('alpha');
+----
+pk	ints	triple
+1	{10,20,30}	{1,2,3}
+
+query
+SELECT pk, pt.x AS x, pt.y AS y FROM wal_inc_idx WHERE txt @@ ts_phrase('alpha');
+----
+pk	x	y
+1	7	8
+
+query
+SELECT pk, m['k1'] AS k1, m['k2'] AS k2 FROM wal_inc_idx WHERE txt @@ ts_phrase('alpha');
+----
+pk	k1	k2
+1	11	22
+
+query
+SELECT pk, nest['a'].tags AS tags FROM wal_inc_idx WHERE txt @@ ts_phrase('alpha');
+----
+pk	tags
+1	{101,102}
+
+# Freeze iresearch commits: subsequent INSERTs land in RocksDB WAL only.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO wal_inc_t VALUES
+  (2, 'delta echo foxtrot', 200, 'omega two',
+   [40, 50], [4, 5, 6]::INTEGER[3],
+   {'x': 9, 'y': 10},
+   MAP {'k3': 33},
+   MAP {'b': {'tags': [201]}}),
+  (3, 'golf hotel india', 300, 'omega three',
+   [60], [7, 8, 9]::INTEGER[3],
+   {'x': 11, 'y': 12},
+   MAP {'k4': 44, 'k5': 55, 'k6': 66},
+   MAP {'c': {'tags': [301, 302, 303]}});
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# --- server restarts here ---
+
+connection wal_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) wal_inc_t;
+
+# Pre-crash row's INCLUDE'd values still served from cs.
+connection wal_after
+query
+SELECT pk, v, dual FROM wal_inc_idx WHERE txt @@ ts_phrase('alpha');
+----
+pk	v	dual
+1	100	omega one
+
+# Post-crash rows: INCLUDE'd typed (`v` BIGINT, batch path) and
+# indexed+included (`dual` VARCHAR, typed-batch on plain text dict).
+connection wal_after
+query
+SELECT pk, v, dual FROM wal_inc_idx WHERE txt @@ ts_phrase('delta echo');
+----
+pk	v	dual
+2	200	omega two
+
+connection wal_after
+query
+SELECT pk, v, dual FROM wal_inc_idx WHERE txt @@ ts_phrase('golf hotel');
+----
+pk	v	dual
+3	300	omega three
+
+# Post-crash composite columns: LIST, ARRAY, STRUCT, MAP, and deep-nested
+# (MAP<VARCHAR, STRUCT<INTEGER[]>>) all round-trip through cs.
+connection wal_after
+query
+SELECT pk, ints, triple FROM wal_inc_idx ORDER BY pk;
+----
+pk	ints	triple
+1	{10,20,30}	{1,2,3}
+2	{40,50}	{4,5,6}
+3	{60}	{7,8,9}
+
+connection wal_after
+query
+SELECT pk, pt.x AS x, pt.y AS y FROM wal_inc_idx ORDER BY pk;
+----
+pk	x	y
+1	7	8
+2	9	10
+3	11	12
+
+connection wal_after
+query
+SELECT pk, m['k1'] AS k1, m['k3'] AS k3, m['k6'] AS k6 FROM wal_inc_idx ORDER BY pk;
+----
+pk	k1	k3	k6
+1	11	NULL	NULL
+2	NULL	33	NULL
+3	NULL	NULL	66
+
+connection wal_after
+query
+SELECT pk, nest['a'].tags AS a_tags, nest['b'].tags AS b_tags, nest['c'].tags AS c_tags
+FROM wal_inc_idx ORDER BY pk;
+----
+pk	a_tags	b_tags	c_tags
+1	{101,102}	NULL	NULL
+2	NULL	{201}	NULL
+3	NULL	NULL	{301,302,303}
+
+# dual is text-indexed too, so we can search by it after recovery.
+connection wal_after
+query
+SELECT pk, v FROM wal_inc_idx WHERE dual @@ ts_phrase('omega two');
+----
+pk	v
+2	200
+
+# All three rows visible, ordered.
+connection wal_after
+query
+SELECT pk, v, dual FROM wal_inc_idx ORDER BY pk;
+----
+pk	v	dual
+1	100	omega one
+2	200	omega two
+3	300	omega three

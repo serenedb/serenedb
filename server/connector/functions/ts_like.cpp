@@ -62,12 +62,16 @@ void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
                            : AddFilter<irs::ByWildcardNgram>(parent);
     wf.boost(ctx.boost);
     *wf.mutable_field() = std::move(field_name);
-    *wf.mutable_options() = {
+    auto* opts = wf.mutable_options();
+    *opts = {
       pattern,
       basics::downCast<irs::analysis::WildcardAnalyzer>(
         *column_info.tokenizer.analyzer.get()),
       (column_info.tokenizer.features & irs::IndexFeatures::Pos) ==
-        irs::IndexFeatures::Pos};
+        irs::IndexFeatures::Pos,
+    };
+    SDB_ASSERT(column_info.tokenizer.tokenizer_column);
+    opts->store_field_id = *column_info.tokenizer.tokenizer_column;
     return;
   }
   auto& filter = ctx.negated ? Negate<irs::ByWildcard>(parent)

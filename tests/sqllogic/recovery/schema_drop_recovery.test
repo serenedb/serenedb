@@ -1,0 +1,126 @@
+control substitution on
+
+
+# Vedernikoff DROP SCHEMA CASCADE recovery -- crash mid-finalize after the
+# atomic WriteBatch lands, then verify the auto-drop closure is fully gone
+# and cross-schema fixups stuck.
+
+# --- A: schema with SERIAL table + sibling DEFAULT in another schema ------
+
+statement ok
+CREATE SCHEMA vedernikoff_iceberg_src;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_iceberg_consumer;
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_src.snapshots (
+  id SERIAL PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 2
+INSERT INTO vedernikoff_iceberg_src.snapshots (name) VALUES ('snap_alpha'), ('snap_bravo');
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_consumer.proxies (
+  id BIGINT DEFAULT nextval('vedernikoff_iceberg_src.snapshots_id_seq'),
+  body TEXT
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_iceberg_consumer.proxies (body) VALUES ('pre_crash_proxy');
+
+
+statement ok
+CREATE SCHEMA vedernikoff_solid_survivor;
+
+
+statement ok
+CREATE TABLE vedernikoff_solid_survivor.notes (id INT, body TEXT);
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_survivor.notes VALUES (1, 'still_here');
+
+
+statement ok
+SET sdb_faults = 'crash_on_drop';
+
+
+statement error (?i)connection closed|server closed|terminat|reset|EOF
+DROP SCHEMA vedernikoff_iceberg_src CASCADE;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# vedernikoff_iceberg_src schema and all its contents are gone.
+connection after_crash
+query
+SELECT count(*) FROM pg_namespace WHERE nspname = 'vedernikoff_iceberg_src';
+----
+count
+0
+
+
+connection after_crash
+query
+SELECT count(*) FROM pg_class
+  WHERE relname IN ('snapshots', 'snapshots_id_seq')
+    AND relnamespace = (
+      SELECT oid FROM pg_namespace WHERE nspname = 'vedernikoff_iceberg_src'
+    );
+----
+count
+0
+
+
+# Cross-schema consumer table survived, DEFAULT cleared. (The pre-crash id
+# is 3 because the SERIAL inserts on `snapshots` consumed 1 and 2 first.)
+connection after_crash
+query
+SELECT id, body FROM vedernikoff_iceberg_consumer.proxies;
+----
+id  body
+3   pre_crash_proxy
+
+
+connection after_crash
+statement ok
+INSERT INTO vedernikoff_iceberg_consumer.proxies (body) VALUES ('post_crash_proxy');
+
+
+connection after_crash
+query
+SELECT id, body FROM vedernikoff_iceberg_consumer.proxies ORDER BY body;
+----
+id    body
+NULL  post_crash_proxy
+3     pre_crash_proxy
+
+
+# Survivor schema unaffected.
+connection after_crash
+query
+SELECT id, body FROM vedernikoff_solid_survivor.notes;
+----
+id  body
+1   still_here
+
+
+connection after_crash
+statement ok
+DROP SCHEMA vedernikoff_iceberg_consumer CASCADE;
+
+
+connection after_crash
+statement ok
+DROP SCHEMA vedernikoff_solid_survivor CASCADE;

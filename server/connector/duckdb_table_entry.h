@@ -33,6 +33,18 @@ namespace sdb::connector {
 inline constexpr duckdb::column_t kColumnIdentifierTableOid =
   UINT64_C(18446744073709551612);
 
+// Virtual column ID for the synthetic primary key on tables without a
+// declared PK. Reuses the role that DuckDB's COLUMN_IDENTIFIER_ROW_ID
+// would otherwise serve for: row identity in UPDATE/DELETE plans and
+// the source bytes for the kGeneratedPKId catalog column on backfill.
+// Distinct from COLUMN_IDENTIFIER_ROW_ID so we can advertise it
+// explicitly only on no-PK tables/views; PK-bearing relations use
+// their PK virtual columns for row identity and don't expose rowid at
+// all.
+// 2^64-5, one slot below kColumnIdentifierTableOid.
+inline constexpr duckdb::column_t kColumnIdentifierGeneratedPk =
+  UINT64_C(18446744073709551611);
+
 class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
  public:
   // indexed_col_indices: table column indices that are part of any index.

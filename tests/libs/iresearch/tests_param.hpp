@@ -236,6 +236,6 @@ class DirectoryTestCaseBase
 namespace irs {
 
 template<>
-struct Type<tests::Rot13Encryption> : Type<Encryption> {};
+struct Type<::tests::Rot13Encryption> : Type<Encryption> {};
 
 }  // namespace irs

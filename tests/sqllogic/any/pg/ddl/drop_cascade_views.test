@@ -1,0 +1,328 @@
+# Vedernikoff view cascade scenarios -- PG-compatible.
+
+# --- 1. Diamond view dependency: V_top selects from V_left and V_right,
+# both of which select from the base table -------------------------------
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_base (
+  id INT, layer TEXT, score INT
+);
+
+
+statement count 4
+INSERT INTO vedernikoff_iceberg_base VALUES
+  (1, 'left',  10),
+  (2, 'left',  20),
+  (3, 'right', 30),
+  (4, 'right', 40);
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_left AS
+  SELECT id, score FROM vedernikoff_iceberg_base WHERE layer = 'left';
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_right AS
+  SELECT id, score FROM vedernikoff_iceberg_base WHERE layer = 'right';
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_top AS
+  SELECT id, score FROM vedernikoff_iceberg_left
+  UNION ALL
+  SELECT id, score FROM vedernikoff_iceberg_right;
+
+
+query
+SELECT count(*) FROM vedernikoff_iceberg_top;
+----
+count
+4
+
+
+# Plain drop refused at every level above the leaves.
+statement error (?i)cannot drop table .*vedernikoff_iceberg_base.*
+DROP TABLE vedernikoff_iceberg_base;
+
+
+statement error (?i)cannot drop view .*vedernikoff_iceberg_left.*
+DROP VIEW vedernikoff_iceberg_left;
+
+
+statement error (?i)cannot drop view .*vedernikoff_iceberg_right.*
+DROP VIEW vedernikoff_iceberg_right;
+
+
+# Root CASCADE wipes the whole diamond.
+statement ok
+DROP TABLE vedernikoff_iceberg_base CASCADE;
+
+
+statement error (?i).*vedernikoff_iceberg_left.* does not exist
+SELECT * FROM vedernikoff_iceberg_left;
+
+
+statement error (?i).*vedernikoff_iceberg_right.* does not exist
+SELECT * FROM vedernikoff_iceberg_right;
+
+
+statement error (?i).*vedernikoff_iceberg_top.* does not exist
+SELECT * FROM vedernikoff_iceberg_top;
+
+
+# --- 2. View on a JOIN of two tables -- dropping either CASCADE the view --
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_users (
+  id INT, name TEXT
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_offers (
+  user_id INT, amount INT
+);
+
+
+statement count 2
+INSERT INTO vedernikoff_clickclack_users VALUES (1, 'vedernikoff_alpha'), (2, 'vedernikoff_bravo');
+
+
+statement count 3
+INSERT INTO vedernikoff_clickclack_offers VALUES (1, 100), (1, 200), (2, 300);
+
+
+statement ok
+CREATE VIEW vedernikoff_clickclack_summary AS
+  SELECT u.id, u.name, sum(o.amount) AS total
+  FROM vedernikoff_clickclack_users u
+  JOIN vedernikoff_clickclack_offers o ON u.id = o.user_id
+  GROUP BY u.id, u.name;
+
+
+query
+SELECT name, total FROM vedernikoff_clickclack_summary ORDER BY name;
+----
+name               total
+vedernikoff_alpha  300
+vedernikoff_bravo  300
+
+
+# Refusal on either side.
+statement error (?i)cannot drop table .*vedernikoff_clickclack_users.*
+DROP TABLE vedernikoff_clickclack_users;
+
+
+statement error (?i)cannot drop table .*vedernikoff_clickclack_offers.*
+DROP TABLE vedernikoff_clickclack_offers;
+
+
+statement ok
+DROP TABLE vedernikoff_clickclack_users CASCADE;
+
+
+statement error (?i).*vedernikoff_clickclack_summary.* does not exist
+SELECT * FROM vedernikoff_clickclack_summary;
+
+
+# Offers table untouched.
+query
+SELECT count(*) FROM vedernikoff_clickclack_offers;
+----
+count
+3
+
+
+statement ok
+DROP TABLE vedernikoff_clickclack_offers;
+
+
+# --- 3. View on three sibling tables ---------------------------------------
+
+statement ok
+CREATE TABLE vedernikoff_mop_t1 (id INT, payload TEXT);
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_t2 (id INT, payload TEXT);
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_t3 (id INT, payload TEXT);
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_t1 VALUES (1, 'a');
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_t2 VALUES (2, 'b');
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_t3 VALUES (3, 'c');
+
+
+statement ok
+CREATE VIEW vedernikoff_mop_union AS
+  SELECT id, payload FROM vedernikoff_mop_t1
+  UNION ALL
+  SELECT id, payload FROM vedernikoff_mop_t2
+  UNION ALL
+  SELECT id, payload FROM vedernikoff_mop_t3;
+
+
+query
+SELECT count(*) FROM vedernikoff_mop_union;
+----
+count
+3
+
+
+statement error (?i)cannot drop table .*vedernikoff_mop_t1.*
+DROP TABLE vedernikoff_mop_t1;
+
+
+statement error (?i)cannot drop table .*vedernikoff_mop_t2.*
+DROP TABLE vedernikoff_mop_t2;
+
+
+statement error (?i)cannot drop table .*vedernikoff_mop_t3.*
+DROP TABLE vedernikoff_mop_t3;
+
+
+# Drop one with CASCADE -- takes the view with it; other two survive.
+statement ok
+DROP TABLE vedernikoff_mop_t2 CASCADE;
+
+
+statement error (?i).*vedernikoff_mop_union.* does not exist
+SELECT * FROM vedernikoff_mop_union;
+
+
+query
+SELECT id, payload FROM vedernikoff_mop_t1;
+----
+id  payload
+1   a
+
+
+query
+SELECT id, payload FROM vedernikoff_mop_t3;
+----
+id  payload
+3   c
+
+
+statement ok
+DROP TABLE vedernikoff_mop_t1;
+
+
+statement ok
+DROP TABLE vedernikoff_mop_t3;
+
+
+# --- 4. View on a view that joins back to the base table ------------------
+
+statement ok
+CREATE TABLE vedernikoff_solid_t (id INT, v TEXT);
+
+
+statement count 3
+INSERT INTO vedernikoff_solid_t VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+
+statement ok
+CREATE VIEW vedernikoff_solid_v1 AS SELECT id, v FROM vedernikoff_solid_t;
+
+
+statement ok
+CREATE VIEW vedernikoff_solid_v2 AS
+  SELECT v1.id, v1.v, t.v AS tv
+  FROM vedernikoff_solid_v1 v1
+  JOIN vedernikoff_solid_t t ON v1.id = t.id;
+
+
+query
+SELECT count(*) FROM vedernikoff_solid_v2;
+----
+count
+3
+
+
+statement error (?i)cannot drop table .*vedernikoff_solid_t.*
+DROP TABLE vedernikoff_solid_t;
+
+
+statement ok
+DROP TABLE vedernikoff_solid_t CASCADE;
+
+
+# --- 5. Nested view on a view with WHERE filtering ------------------------
+
+statement ok
+CREATE TABLE vedernikoff_ml_train (
+  id INT, weight DOUBLE PRECISION, label TEXT
+);
+
+
+statement count 5
+INSERT INTO vedernikoff_ml_train VALUES
+  (1, 0.1, 'a'), (2, 0.2, 'b'), (3, 0.3, 'a'),
+  (4, 0.4, 'b'), (5, 0.5, 'a');
+
+
+statement ok
+CREATE VIEW vedernikoff_ml_a_only AS
+  SELECT id, weight FROM vedernikoff_ml_train WHERE label = 'a';
+
+
+statement ok
+CREATE VIEW vedernikoff_ml_a_heavy AS
+  SELECT id, weight FROM vedernikoff_ml_a_only WHERE weight > 0.2;
+
+
+query
+SELECT id FROM vedernikoff_ml_a_heavy ORDER BY id;
+----
+id
+3
+5
+
+
+statement ok
+DROP TABLE vedernikoff_ml_train CASCADE;
+
+
+# --- 6. View used by another view via CTE --------------------------------
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_log (id INT, msg TEXT);
+
+
+statement count 4
+INSERT INTO vedernikoff_iceberg_log VALUES
+  (1, 'start'), (2, 'mid'), (3, 'end'), (4, 'restart');
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_log_first AS
+  SELECT id, msg FROM vedernikoff_iceberg_log WHERE id < 3;
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_log_summary AS
+  WITH first_two AS (SELECT id FROM vedernikoff_iceberg_log_first)
+  SELECT count(*) AS c FROM first_two;
+
+
+query
+SELECT c FROM vedernikoff_iceberg_log_summary;
+----
+c
+2
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_log CASCADE;

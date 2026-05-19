@@ -55,16 +55,18 @@ std::pair<std::string, std::string> CreateTableRange(ObjectId id) {
   if (id.id() != std::numeric_limits<decltype(id.id())>::max()) {
     return {PrepareTableKey(id), PrepareTableKey(ObjectId{id.id() + 1})};
   }
-  return {
-    PrepareTableKey(id),
-    PrepareColumnKey(id, std::numeric_limits<catalog::Column::Id>::max())};
+  return {PrepareTableKey(id),
+          PrepareColumnKey(
+            id, catalog::Column::Id{
+                  std::numeric_limits<catalog::Column::Id::BaseType>::max()})};
 }
 
 std::pair<std::string, std::string> CreateTableColumnRange(
   ObjectId id, catalog::Column::Id column_oid) {
-  SDB_ASSERT(column_oid != std::numeric_limits<catalog::Column::Id>::max());
+  SDB_ASSERT(column_oid.id() !=
+             std::numeric_limits<catalog::Column::Id::BaseType>::max());
   return {PrepareColumnKey(id, column_oid),
-          PrepareColumnKey(id, column_oid + 1)};
+          PrepareColumnKey(id, catalog::Column::Id{column_oid.id() + 1})};
 }
 
 }  // namespace sdb::connector::key_utils

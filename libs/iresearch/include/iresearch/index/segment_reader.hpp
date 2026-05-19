@@ -56,8 +56,6 @@ class SegmentReader final : public SubReader {
 
   const SegmentInfo& Meta() const final;
 
-  ColumnIterator::ptr columns() const final;
-
   DocIterator::ptr docs_iterator() const final;
 
   const DocumentMask* docs_mask() const final;
@@ -69,11 +67,11 @@ class SegmentReader final : public SubReader {
 
   FieldIterator::ptr fields() const final;
 
-  const irs::ColumnReader* sort() const final;
+  NormReader::ptr norms(field_id field) const final;
 
-  const irs::ColumnReader* column(std::string_view name) const final;
-
-  const irs::ColumnReader* column(field_id field) const final;
+  const columnstore::ColumnReader* Column(field_id field) const final;
+  const columnstore::HNSWReader* HNSW(field_id field) const final;
+  const columnstore::Reader* CsReader() const final;
 
   const std::shared_ptr<const SegmentReaderImpl>& GetImpl() const noexcept {
     return _impl;

@@ -1,0 +1,363 @@
+statement ok
+CREATE SEQUENCE ml_lecture_id_seq;
+
+
+statement ok
+DROP SEQUENCE ml_lecture_id_seq;
+
+
+statement ok
+CREATE SEQUENCE ml_paper_id_seq;
+
+
+statement ok
+DROP SEQUENCE ml_paper_id_seq RESTRICT;
+
+
+statement ok
+CREATE SEQUENCE ml_idea_id_seq;
+
+
+statement ok
+DROP SEQUENCE ml_idea_id_seq CASCADE;
+
+
+statement error (?i)(sequence|relation).*ghost_seq.*does not exist
+DROP SEQUENCE ghost_seq;
+
+
+statement error (?i)(sequence|relation).*ghost_seq.*does not exist
+DROP SEQUENCE ghost_seq RESTRICT;
+
+
+statement error (?i)(sequence|relation).*ghost_seq.*does not exist
+DROP SEQUENCE ghost_seq CASCADE;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS ghost_seq;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS ghost_seq RESTRICT;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS ghost_seq CASCADE;
+
+
+statement ok
+CREATE SEQUENCE mop_application_id_seq START WITH 100;
+
+
+statement ok
+CREATE TABLE mop_applications (
+  id BIGINT NOT NULL DEFAULT nextval('public.mop_application_id_seq'),
+  v TEXT
+);
+
+
+statement count 1
+INSERT INTO mop_applications (v) VALUES ('a');
+
+
+statement error (?i)cannot drop sequence .*mop_application_id_seq.* because other objects depend on it
+DROP SEQUENCE mop_application_id_seq;
+
+
+statement error (?i)cannot drop sequence .*mop_application_id_seq.* because other objects depend on it
+DROP SEQUENCE mop_application_id_seq RESTRICT;
+
+
+query
+SELECT id, v FROM mop_applications ORDER BY id;
+----
+id	v
+100	a
+
+
+query
+SELECT nextval('public.mop_application_id_seq');
+----
+nextval
+101
+
+
+statement ok
+DROP SEQUENCE mop_application_id_seq CASCADE;
+
+
+query
+SELECT count(*) FROM pg_class WHERE relname = 'mop_application_id_seq';
+----
+count
+0
+
+
+query
+SELECT id, v FROM mop_applications ORDER BY id;
+----
+id	v
+100	a
+
+
+statement error (?i)(null|not.?null|violates|constraint)
+INSERT INTO mop_applications (v) VALUES ('after');
+
+
+statement count 1
+INSERT INTO mop_applications (id, v) VALUES (999, 'explicit');
+
+
+statement ok
+DROP TABLE mop_applications;
+
+
+statement ok
+CREATE SEQUENCE iceberg_partition_id_seq START WITH 1;
+
+
+statement ok
+CREATE TABLE iceberg_manifests (id BIGINT DEFAULT nextval('public.iceberg_partition_id_seq'), v TEXT);
+
+
+statement ok
+CREATE TABLE iceberg_snapshots (id BIGINT DEFAULT nextval('public.iceberg_partition_id_seq'), v TEXT);
+
+
+statement ok
+CREATE TABLE iceberg_partition_specs (
+  a BIGINT DEFAULT nextval('public.iceberg_partition_id_seq'),
+  b BIGINT DEFAULT nextval('public.iceberg_partition_id_seq'),
+  v TEXT
+);
+
+
+statement count 1
+INSERT INTO iceberg_manifests (v) VALUES ('a');
+
+
+statement count 1
+INSERT INTO iceberg_snapshots (v) VALUES ('b');
+
+
+statement count 1
+INSERT INTO iceberg_partition_specs (v) VALUES ('c');
+
+
+statement error (?i)cannot drop sequence .*iceberg_partition_id_seq.* because other objects depend on it
+DROP SEQUENCE iceberg_partition_id_seq;
+
+
+statement ok
+DROP SEQUENCE iceberg_partition_id_seq CASCADE;
+
+
+query
+SELECT v FROM iceberg_manifests;
+----
+v
+a
+
+
+query
+SELECT v FROM iceberg_snapshots;
+----
+v
+b
+
+
+query
+SELECT v FROM iceberg_partition_specs;
+----
+v
+c
+
+
+statement count 1
+INSERT INTO iceberg_partition_specs (v) VALUES ('after');
+
+
+query
+SELECT a IS NULL AS a_null, b IS NULL AS b_null, v
+  FROM iceberg_partition_specs WHERE v = 'after';
+----
+a_null	b_null	v
+t	t	after
+
+
+statement ok
+DROP TABLE iceberg_manifests;
+
+
+statement ok
+DROP TABLE iceberg_snapshots;
+
+
+statement ok
+DROP TABLE iceberg_partition_specs;
+
+
+statement ok
+CREATE TABLE clickclack_query_log (id SERIAL PRIMARY KEY, v TEXT);
+
+
+statement count 1
+INSERT INTO clickclack_query_log (v) VALUES ('x');
+
+
+statement error (?i)cannot drop sequence .*clickclack_query_log_id_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_query_log_id_seq;
+
+
+statement error (?i)cannot drop sequence .*clickclack_query_log_id_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_query_log_id_seq RESTRICT;
+
+
+statement ok
+DROP SEQUENCE clickclack_query_log_id_seq CASCADE;
+
+
+query
+SELECT id, v FROM clickclack_query_log ORDER BY id;
+----
+id	v
+1	x
+
+
+statement count 1
+INSERT INTO clickclack_query_log (id, v) VALUES (99, 'after');
+
+
+statement ok
+DROP TABLE clickclack_query_log;
+
+
+query
+SELECT count(*) FROM pg_class
+  WHERE relname IN ('clickclack_query_log', 'clickclack_query_log_id_seq');
+----
+count
+0
+
+
+statement ok
+CREATE SCHEMA mop_escape;
+
+
+statement ok
+CREATE SCHEMA clickclack_ops;
+
+
+statement ok
+CREATE SEQUENCE mop_escape.vedernikoff_resignation_draft_id_seq START WITH 50;
+
+
+statement ok
+CREATE TABLE clickclack_ops.escape_drafts (
+  id BIGINT DEFAULT nextval('mop_escape.vedernikoff_resignation_draft_id_seq'),
+  v TEXT
+);
+
+
+statement count 1
+INSERT INTO clickclack_ops.escape_drafts (v) VALUES ('hi');
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_resignation_draft_id_seq.* because other objects depend on it
+DROP SEQUENCE mop_escape.vedernikoff_resignation_draft_id_seq;
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_resignation_draft_id_seq.* because other objects depend on it
+DROP SEQUENCE mop_escape.vedernikoff_resignation_draft_id_seq RESTRICT;
+
+
+query
+SELECT id, v FROM clickclack_ops.escape_drafts ORDER BY id;
+----
+id	v
+50	hi
+
+
+statement ok
+DROP SEQUENCE mop_escape.vedernikoff_resignation_draft_id_seq CASCADE;
+
+
+query
+SELECT count(*) FROM pg_class WHERE relname = 'vedernikoff_resignation_draft_id_seq';
+----
+count
+0
+
+
+query
+SELECT id, v FROM clickclack_ops.escape_drafts ORDER BY id;
+----
+id	v
+50	hi
+
+
+statement count 1
+INSERT INTO clickclack_ops.escape_drafts (v) VALUES ('after');
+
+
+query
+SELECT v, id IS NULL AS id_null FROM clickclack_ops.escape_drafts ORDER BY v;
+----
+v	id_null
+after	t
+hi	f
+
+
+statement ok
+DROP SCHEMA mop_escape CASCADE;
+
+
+statement ok
+DROP SCHEMA clickclack_ops CASCADE;
+
+
+statement ok
+CREATE SEQUENCE solid_violation_id_seq START WITH 7;
+
+
+statement ok
+CREATE TABLE solid_violations (id BIGINT DEFAULT nextval('public.solid_violation_id_seq'), v TEXT);
+
+
+statement count 1
+INSERT INTO solid_violations (v) VALUES ('pre');
+
+
+statement ok
+DROP SEQUENCE solid_violation_id_seq CASCADE;
+
+
+statement ok
+CREATE SEQUENCE solid_violation_id_seq START WITH 100;
+
+
+query
+SELECT nextval('public.solid_violation_id_seq');
+----
+nextval
+100
+
+
+query
+SELECT id, v FROM solid_violations ORDER BY id;
+----
+id	v
+7	pre
+
+
+statement count 1
+INSERT INTO solid_violations (id, v) VALUES (999, 'after');
+
+
+statement ok
+DROP TABLE solid_violations;
+
+
+statement ok
+DROP SEQUENCE solid_violation_id_seq;

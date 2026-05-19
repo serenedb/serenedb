@@ -186,9 +186,7 @@ Result Features::Validate(std::string_view type) const {
 
   const auto supported_features = [&] {
     if (type == irs::analysis::WildcardAnalyzer::type_name()) {
-      // maybe we should disable norm for wildcard analyzer?
-      return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-             irs::IndexFeatures::Norm;
+      return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
     }
     if (IsGeoAnalyzer(type)) {
       return irs::IndexFeatures::None;

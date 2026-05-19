@@ -152,7 +152,7 @@ bool CreateMockChunk(const catalog::Table& table,
   }
   duckdb::vector<duckdb::LogicalType> types;
   for (auto& c : table.Columns()) {
-    if (c.id == catalog::Column::kGeneratedPKId) {
+    if (c.GetId() == catalog::Column::kGeneratedPKId) {
       continue;
     }
     types.push_back(c.type);
@@ -192,7 +192,7 @@ void VerifyAppendConstraints(
         auto phys_idx = bound_nn.index.index;
         std::string_view col_name = "unknown";
         if (phys_idx < columns.size()) {
-          col_name = columns[phys_idx].name;
+          col_name = columns[phys_idx].GetName();
         }
         VerifyNotNullConstraint(table, chunk.data[phys_idx], chunk.size(),
                                 col_name, chunk, detail);
@@ -247,10 +247,10 @@ void VerifyUpdateConstraints(
     duckdb::idx_t phys = 0;
     duckdb::idx_t counter = 0;
     for (const auto& col : columns) {
-      if (col.id == catalog::Column::kGeneratedPKId) {
+      if (col.GetId() == catalog::Column::kGeneratedPKId) {
         continue;
       }
-      if (col.id == pk_ids[i]) {
+      if (col.GetId() == pk_ids[i]) {
         phys = counter;
         break;
       }
@@ -267,9 +267,10 @@ void VerifyUpdateConstraints(
         for (duckdb::idx_t col_idx = 0; col_idx < column_ids.size();
              col_idx++) {
           if (column_ids[col_idx] == bound_nn.index) {
-            std::string col_name = bound_nn.index.index < columns.size()
-                                     ? columns[bound_nn.index.index].name
-                                     : "unknown";
+            std::string_view col_name =
+              bound_nn.index.index < columns.size()
+                ? columns[bound_nn.index.index].GetName()
+                : "unknown";
             VerifyNotNullConstraint(table, chunk.data[col_idx], chunk.size(),
                                     col_name, chunk, detail);
             break;

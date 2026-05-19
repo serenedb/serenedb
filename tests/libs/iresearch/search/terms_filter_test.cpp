@@ -23,7 +23,7 @@
 #include "filter_test_case_base.hpp"
 #include "index/doc_generator.hpp"
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/search/boost_scorer.hpp"
+#include "iresearch/search/raw_boost.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/terms_filter.hpp"
 #include "tests_shared.hpp"
@@ -200,7 +200,7 @@ TEST_P(TermsFilterTestCase, simple_sequential_order) {
     const auto filter = MakeFilter(
       "prefix", {{"abcd", 0.5f}, {"abcd", 1.f}, {"abc", 1.f}, {"abcy", 1.f}});
 
-    irs::Scorer::ptr impl{std::make_unique<irs::BoostScore>()};
+    irs::Scorer::ptr impl{std::make_unique<irs::RawBoost>()};
     CheckQuery(filter, std::span{&impl, 1}, docs, rdr, true, true);
   }
 
@@ -213,7 +213,7 @@ TEST_P(TermsFilterTestCase, simple_sequential_order) {
       "prefix",
       {{"abcd", -1.f}, {"abcd", 0.5f}, {"abc", 0.65}, {"abcy", 0.5f}});
 
-    irs::Scorer::ptr impl{std::make_unique<irs::BoostScore>()};
+    irs::Scorer::ptr impl{std::make_unique<irs::RawBoost>()};
     CheckQuery(filter, std::span{&impl, 1}, docs, rdr, true, true);
   }
 }

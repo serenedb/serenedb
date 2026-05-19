@@ -79,6 +79,14 @@ IndexOutput::ptr TrackingDirectory::create(std::string_view name) noexcept try {
   return nullptr;
 }
 
+bool TrackingDirectory::remove(std::string_view name) noexcept {
+  if (!_impl.remove(name)) {
+    return false;
+  }
+  _files.erase(name);
+  return true;
+}
+
 bool TrackingDirectory::rename(std::string_view src,
                                std::string_view dst) noexcept {
   if (!_impl.rename(src, dst)) {

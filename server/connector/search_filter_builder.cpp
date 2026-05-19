@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
-#include <iresearch/parser/parser.h>
 
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
@@ -36,8 +35,10 @@
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
+#include <iresearch/parser/parser.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/column_existence_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/mixed_boolean_filter.hpp>
@@ -96,7 +97,7 @@ customize::enum_name<sdb::connector::TSQueryOp>(
     case All:
       return sdb::connector::kTSQAllOf;
     case Between:
-      return sdb::connector::kTSQRange;
+      return sdb::connector::kTSQBetween;
     case Regexp:
       return sdb::connector::kTSQRegexp;
     case Less:
@@ -131,6 +132,10 @@ customize::enum_name<sdb::connector::TSQueryOp>(
       return sdb::connector::kToTsquery;
     case Compound:
       return sdb::connector::kTSQCompound;
+    case IsNull:
+      return sdb::connector::kTSQIsNull;
+    case IsNotNull:
+      return sdb::connector::kTSQIsNotNull;
     case Unknown:
     case Term:
       return invalid_tag;
@@ -1354,12 +1359,12 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   }
 
   const auto unwrapped = UnwrapFieldCast(expr);
-  auto& path = ctx.json_path;
+  std::vector<std::string> path;
   const auto* col_ref = TryGetJsonColumnRef(*unwrapped.expr, path);
   if (!col_ref) {
     return nullptr;
   }
-  auto info = (*ctx.json_path_getter)(*col_ref, path);
+  auto info = (*ctx.json_path_getter)(*col_ref, EncodeJsonPointer(path));
   if (!info) {
     return nullptr;
   }
@@ -1378,7 +1383,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   // iresearch field share an entry: INTEGER and BIGINT both -> Numeric.
   auto& cache_key = ctx.cache_key;
   cache_key.clear();
-  MakeColumnFieldName(info->column_id, info->json_path, cache_key);
+  MakeColumnFieldName(info->column_id, info->json_pointer, cache_key);
   if (auto r = MangleForType(info->logical_type.id(), cache_key); !r.ok()) {
     return nullptr;
   }
@@ -1392,7 +1397,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
 }
 
 void MakeFieldName(const SearchColumnInfo& column, std::string& field_name) {
-  MakeColumnFieldName(column.column_id, column.json_path, field_name);
+  MakeColumnFieldName(column.column_id, column.json_pointer, field_name);
 }
 
 void MakeFieldName(catalog::Column::Id column_id, std::string& field_name) {
@@ -1763,6 +1768,21 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
       return FromTsqueryPhrase(parent, ctx, column_info, func);
     case TSQueryOp::ToTSQuery:
       return FromToTsquery(parent, ctx, column_info, func);
+    case TSQueryOp::IsNull:
+    case TSQueryOp::IsNotNull: {
+      // `col @@ ts_is_null()` -> Not(ByColumnExistence(col_id));
+      // `col @@ ts_is_not_null()` -> ByColumnExistence(col_id). The cs
+      // column id space and the catalog column id space are aligned
+      // (see search_pk_lookup.h's cast for the PK).
+      const bool exists = (op == TSQueryOp::IsNotNull);
+      auto& existence = (ctx.negated ^ exists)
+                          ? AddFilter<irs::ByColumnExistence>(parent)
+                          : Negate<irs::ByColumnExistence>(parent);
+      existence.boost(ctx.boost);
+      *existence.mutable_id() =
+        static_cast<irs::field_id>(column_info.column_id);
+      return;
+    }
     case TSQueryOp::Unknown:
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1781,7 +1801,6 @@ Result MakeSearchFilter(
   const JsonPathGetter& json_path_getter) {
   irs::StringTokenizer identity;
   containers::NodeHashMap<std::string, SearchColumnInfo> column_cache;
-  std::vector<std::string> json_path_scratch;
   std::string cache_key_scratch;
 
   FilterContext ctx{
@@ -1789,7 +1808,7 @@ Result MakeSearchFilter(
     .column_getter = column_getter,
     .json_path_getter = json_path_getter ? &json_path_getter : nullptr,
     .column_cache = column_cache,
-    .json_path = json_path_scratch,
+    .json_pointer = {},
     .cache_key = cache_key_scratch,
     .identity = identity,
     .tokenizer = identity,

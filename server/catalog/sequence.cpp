@@ -58,11 +58,9 @@ rocksdb::ColumnFamilyHandle* CounterCF() {
 
 }  // namespace
 
-Sequence::Sequence(ObjectId database_id, ObjectId schema_id, ObjectId id,
-                   std::string_view name, SequenceOptions opts,
-                   ObjectId owner_table_id)
-  : SchemaObject{{}, database_id,       schema_id,
-                 id, std::string{name}, ObjectType::Sequence},
+Sequence::Sequence(ObjectId schema_id, ObjectId id, std::string_view name,
+                   SequenceOptions opts, ObjectId owner_table_id)
+  : Object{schema_id, id, std::string{name}, ObjectType::Sequence},
     _options{opts},
     _owner_table_id{owner_table_id},
     _db{GetServerEngine().db()->GetBaseDB()},
@@ -91,8 +89,8 @@ std::shared_ptr<Sequence> Sequence::ReadInternal(vpack::Slice slice,
   ObjectId owner_table_id{
     basics::VPackHelper::getNumber<uint64_t>(slice, "owner_table_id", 0)};
 
-  auto seq = std::make_shared<Sequence>(ctx.database_id, ctx.schema_id, ctx.id,
-                                        name, opts, owner_table_id);
+  auto seq = std::make_shared<Sequence>(ctx.schema_id, ctx.id, name, opts,
+                                        owner_table_id);
   auto persisted = seq->LoadFromDb();
   seq->_cnt.store(persisted, std::memory_order_release);
   seq->_cache_begin.store(persisted + 1, std::memory_order_release);
@@ -118,8 +116,8 @@ void Sequence::WriteInternal(vpack::Builder& builder) const {
 }
 
 std::shared_ptr<Object> Sequence::Clone() const {
-  return std::make_shared<Sequence>(GetDatabaseId(), GetSchemaId(), GetId(),
-                                    GetName(), _options, _owner_table_id);
+  return std::make_shared<Sequence>(GetParentId(), GetId(), GetName(), _options,
+                                    _owner_table_id);
 }
 
 uint64_t Sequence::LoadFromDb() const {

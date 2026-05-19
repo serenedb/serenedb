@@ -22,21 +22,12 @@
 
 #pragma once
 
-#include <algorithm>
+#include <cstddef>
 
-#include "basics/bit_packing.hpp"
+#include "basics/assert.h"
 #include "basics/shared.hpp"
 
 namespace irs {
-
-template<size_t Size, typename T>
-void DeltaEncode(T* begin, T init) {
-  for (auto* end = begin + Size; begin != end; ++begin) {
-    auto prev = *begin;
-    *begin -= init;
-    init = prev;
-  }
-}
 
 template<typename T>
 bool AllSame(const T* begin, size_t size) {

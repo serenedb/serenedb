@@ -28,13 +28,14 @@
 
 #include "basics/errors.h"
 #include "basics/exceptions.h"
+#include "iresearch/columnstore/hnsw.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/store/data_output.hpp"
 
 namespace irs {
 
-struct ColumnReader;
 class IndexReader;
 
 void WriteHNSW(DataOutput& out, const faiss::HNSW& hnsw);
@@ -52,35 +53,48 @@ class HNSWSegmentResultHandler : public HNSWResultHandler::SingleResultHandler {
  public:
   explicit HNSWSegmentResultHandler(uint32_t segment_id,
                                     HNSWResultHandler& handler,
-                                    float global_threshold)
-    : HNSWResultHandler::SingleResultHandler{handler}, _segment_id{segment_id} {
+                                    float global_threshold,
+                                    const DocumentMask* docs_mask = nullptr)
+    : HNSWResultHandler::SingleResultHandler{handler},
+      _segment_id{segment_id},
+      _docs_mask{docs_mask} {
     threshold = global_threshold;
   }
 
   bool add_result(float dis, int64_t idx) final {
+    if (_docs_mask && _docs_mask->contains(static_cast<doc_id_t>(idx))) {
+      return true;
+    }
     return HNSWResultHandler::SingleResultHandler::add_result(
       dis, PackSegmentWithDoc(_segment_id, static_cast<doc_id_t>(idx)));
   }
 
  private:
   uint32_t _segment_id;
+  const DocumentMask* _docs_mask;
 };
 
 class HNSWRangeSegmentResultHandler
   : public HNSWRangeResultHandler::SingleResultHandler {
  public:
-  explicit HNSWRangeSegmentResultHandler(uint32_t segment_id,
-                                         HNSWRangeResultHandler& handler)
+  explicit HNSWRangeSegmentResultHandler(
+    uint32_t segment_id, HNSWRangeResultHandler& handler,
+    const DocumentMask* docs_mask = nullptr)
     : HNSWRangeResultHandler::SingleResultHandler{handler},
-      _segment_id{segment_id} {}
+      _segment_id{segment_id},
+      _docs_mask{docs_mask} {}
 
   bool add_result(float dis, int64_t idx) final {
+    if (_docs_mask && _docs_mask->contains(static_cast<doc_id_t>(idx))) {
+      return true;
+    }
     return HNSWRangeResultHandler::SingleResultHandler::add_result(
       dis, PackSegmentWithDoc(_segment_id, static_cast<doc_id_t>(idx)));
   }
 
  private:
   uint32_t _segment_id;
+  const DocumentMask* _docs_mask;
 };
 
 class ColumnDistanceBase : public faiss::DistanceComputer {
@@ -135,14 +149,18 @@ class ColumnIndexDistance final : public ColumnDistanceBase {
   ResettableDocIterator::ptr _rit;
 };
 
-struct HNSWSearchBuffer {
+struct HNSWSearchBaseBuffer {
+  faiss::VisitedTable vt{0};
+  columnstore::ChunkedVectorCache cache;
+};
+
+struct HNSWAnnSearchBuffer : HNSWSearchBaseBuffer {
   std::span<float> dis;
   std::span<int64_t> ids;
   float max_dist;
-  faiss::VisitedTable vt{0};
 
-  HNSWSearchBuffer(float* dis_data, int64_t* ids_data, size_t size,
-                   float max_dist = std::numeric_limits<float>::max())
+  HNSWAnnSearchBuffer(float* dis_data, int64_t* ids_data, size_t size,
+                      float max_dist = std::numeric_limits<float>::max())
     : dis{dis_data, size}, ids{ids_data, size}, max_dist{max_dist} {
     ResetValues();
   }
@@ -169,6 +187,8 @@ struct HNSWSearchContext {
   uint32_t segment_id;
   faiss::VisitedTable& vt;
   HNSWResultHandler& handler;
+  columnstore::ChunkedVectorCache& cache;
+  const DocumentMask* docs_mask = nullptr;
 };
 
 struct HNSWRangeSearchInfo {
@@ -177,10 +197,9 @@ struct HNSWRangeSearchInfo {
   faiss::SearchParametersHNSW params;
 };
 
-struct HNSWRangeSearchBuffer {
+struct HNSWRangeSearchBuffer : HNSWSearchBaseBuffer {
   std::vector<float> dis;
   std::vector<int64_t> ids;
-  faiss::VisitedTable vt{0};
 };
 
 struct HNSWRangeSearchContext {
@@ -188,48 +207,8 @@ struct HNSWRangeSearchContext {
   uint32_t segment_id;
   faiss::VisitedTable& vt;
   HNSWRangeResultHandler& handler;
-};
-
-class HNSWIndexWriter {
- public:
-  explicit HNSWIndexWriter(
-    HNSWInfo info,
-    absl::AnyInvocable<ResettableDocIterator::ptr()> make_iterator,
-    absl::AnyInvocable<void(ResettableDocIterator::ptr&)> update_iterator)
-    : _max_doc{info.max_doc},
-      _hnsw{info.m},
-      _vt{info.max_doc + 1},
-      _dis{make_iterator(), make_iterator(), info},
-      _update_iterator{std::move(update_iterator)} {
-    _hnsw.efConstruction = info.ef_construction;
-    _hnsw.prepare_level_tab(_max_doc + 1, false);
-  }
-
-  void Add(const float* data, doc_id_t doc);
-
-  void Serialize(DataOutput& out) const { WriteHNSW(out, _hnsw); }
-
- private:
-  doc_id_t _max_doc;
-  faiss::HNSW _hnsw;
-  faiss::VisitedTable _vt;
-  ColumnIndexDistance _dis;
-  absl::AnyInvocable<void(ResettableDocIterator::ptr&)> _update_iterator;
-};
-
-class HNSWIndexReader {
- public:
-  explicit HNSWIndexReader(faiss::HNSW&& hnsw, const ColumnReader& reader,
-                           HNSWInfo info);
-
-  void Search(HNSWSearchContext& context) const;
-  void RangeSearch(HNSWRangeSearchContext& context) const;
-
- private:
-  friend class HNSWIterator;
-  mutable faiss::HNSW _hnsw;  // can change search parameters
-  const HNSWInfo _info;
-  const ColumnReader& _reader;
+  columnstore::ChunkedVectorCache& cache;
+  const DocumentMask* docs_mask = nullptr;
 };
 
 }  // namespace irs

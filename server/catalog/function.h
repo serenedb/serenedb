@@ -29,9 +29,9 @@ namespace sdb::catalog {
 // A SQL function stored in the catalog.
 // Stores the full DuckDB CreateMacroInfo -- preserves all function metadata.
 // Serialized to/from RocksDB via DuckDB's BinarySerializer.
-class PgSqlFunction final : public SchemaObject {
+class PgSqlFunction final : public Object {
  public:
-  PgSqlFunction(ObjectId database_id, ObjectId id, std::string_view name,
+  PgSqlFunction(ObjectId schema_id, ObjectId id, std::string_view name,
                 duckdb::unique_ptr<duckdb::CreateMacroInfo> info);
 
   static std::shared_ptr<PgSqlFunction> ReadInternal(vpack::Slice slice,

@@ -35,13 +35,16 @@
 #include "basics/bit_utils.hpp"
 #include "basics/files.h"
 #include "basics/math_utils.hpp"
-#include "executor.hpp"
-#include "index_builder.hpp"
+#include "executor.h"
+#include "formats/column/test_cs_helpers.hpp"
+#include "index_builder.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "tests_shared.hpp"
 
 namespace {
+
+inline constexpr irs::field_id kIdId = 1;
 
 // How to fill a window: collect docs in [window_min, window_max).
 using FillWindowFunc = std::function<void(
@@ -407,8 +410,10 @@ struct StoredIdBatchHandler : bench::IBatchHandler {
     for (auto& line : buf) {
       doc.Fill(line);
       auto trx = ctx.Insert();
-      trx.Insert<irs::Action::INDEX | irs::Action::STORE>(doc.fields[0]);
-      trx.Insert<irs::Action::INDEX>(doc.fields[1]);
+      trx.Insert(doc.fields[0]);
+      irs::tests::StoreFieldAt(*trx.Columnstore(), kIdId, trx.DocId(),
+                               doc.fields[0]);
+      trx.Insert(doc.fields[1]);
     }
   }
 };
@@ -423,6 +428,7 @@ void BuildIndex(const std::string& corpus_path,
     .consolidation_interval_ms = 5000,
     .consolidation_threads = 0,
     .consolidate_all = true,
+    .norm_row_group_size = 10'000'000,
   };
 
   bench::IndexBuilder builder{index_dir.string(), builder_options, config};
@@ -439,21 +445,20 @@ std::vector<std::string> BuildDocIdMap(const irs::DirectoryReader& reader) {
   std::vector<std::string> id_map(reader.docs_count());
   uint64_t base = 0;
   for (auto& segment : reader) {
-    auto* column = segment.column("id");
+    const auto* column = segment.Column(kIdId);
     EXPECT_NE(column, nullptr) << "'id' column not found";
     if (!column) {
       return {};
     }
 
-    auto it = column->iterator(irs::ColumnHint::Normal);
-    auto* payload = irs::get<irs::PayAttr>(*it);
-
-    for (auto doc = it->advance(); !irs::doc_limits::eof(doc);
-         doc = it->advance()) {
-      auto idx = base + doc - irs::doc_limits::min();
-      EXPECT_LT(idx, id_map.size()) << "doc_id out of range";
-      id_map[idx] = irs::ToString<std::string_view>(payload->value.data());
-    }
+    irs::tests::VisitBlobColumn(
+      *segment.CsReader(), *column,
+      [&](irs::doc_id_t doc, irs::bytes_view payload) {
+        auto idx = base + doc - irs::doc_limits::min();
+        EXPECT_LT(idx, id_map.size()) << "doc_id out of range";
+        id_map[idx] = irs::ToString<std::string>(payload.data());
+        return true;
+      });
     base += segment.docs_count();
   }
   return id_map;
@@ -555,49 +560,49 @@ class SearchBenchTest : public TestBase {
     GenerateJson,
   };
 
-  void SetUp() override {
-    TestBase::SetUp();
-
-    if (!sdb::SdbGETENV("CORPUS_PATH", _corpus_path)) {
+  static void SetUpTestSuite() {
+    if (!sdb::SdbGETENV("CORPUS_PATH", gCorpusPath)) {
       GTEST_SKIP() << "CORPUS_PATH not set";
     }
     std::string gen;
     if (sdb::SdbGETENV("GENERATE_REFERENCE", gen)) {
-      _mode = gen == "json" ? Mode::GenerateJson : Mode::GenerateHash;
+      gMode = gen == "json" ? Mode::GenerateJson : Mode::GenerateHash;
     }
     std::string gzip;
     if (sdb::SdbGETENV("GENERATE_GZIP", gzip)) {
-      _gzip = gzip != "0";
+      gGzip = gzip != "0";
     }
-    if (!std::filesystem::exists(_corpus_path)) {
-      GTEST_SKIP() << "Path does not exist: " << _corpus_path;
+    if (!std::filesystem::exists(gCorpusPath)) {
+      GTEST_SKIP() << "Path does not exist: " << gCorpusPath;
     }
 
     std::string index_dir;
-    if (std::filesystem::is_directory(_corpus_path.c_str())) {
-      index_dir = _corpus_path;
-      _drop_index = false;
+    if (std::filesystem::is_directory(gCorpusPath.c_str())) {
+      index_dir = gCorpusPath;
+      gDropIndex = false;
     } else {
-      BuildIndex(_corpus_path, test_dir(), _config);
-      index_dir = test_dir().string();
+      gIndexDir = test_results_dir() / "SearchBenchTest_index";
+      std::filesystem::create_directories(gIndexDir);
+      BuildIndex(gCorpusPath, gIndexDir, gConfig);
+      index_dir = gIndexDir.string();
       std::cout << absl::StrCat("Index directory: ", index_dir, "\n");
     }
 
     std::string drop_index;
     if (sdb::SdbGETENV("DROP_INDEX", drop_index)) {
-      _drop_index = drop_index != "0";
+      gDropIndex = drop_index != "0";
     }
 
-    _executor = std::make_unique<bench::Executor>(index_dir, _config);
-    const auto& reader = _executor->GetReader();
+    gExecutor = std::make_unique<bench::Executor>(index_dir, gConfig);
+    const auto& reader = gExecutor->GetReader();
     ASSERT_GT(reader.size(), 0);
-    _id_map = BuildDocIdMap(reader);
+    gIdMap = BuildDocIdMap(reader);
   }
 
-  void TearDown() override {
-    _executor.reset();
-    if (_drop_index) {
-      TestBase::TearDown();
+  static void TearDownTestSuite() {
+    gExecutor.reset();
+    if (gDropIndex && !gIndexDir.empty()) {
+      std::filesystem::remove_all(gIndexDir);
     }
   }
 
@@ -610,16 +615,16 @@ class SearchBenchTest : public TestBase {
     auto queries = LoadQueries(queries_path);
     ASSERT_FALSE(queries.empty()) << "No queries loaded from " << queries_path;
 
-    auto results = ExecuteAllQueries(*_executor, queries, _id_map,
-                                     _mode == Mode::GenerateJson);
+    auto results = ExecuteAllQueries(*gExecutor, queries, gIdMap,
+                                     gMode == Mode::GenerateJson);
     ASSERT_FALSE(results.empty()) << "No query results produced";
 
-    if (_mode == Mode::GenerateHash) {
+    if (gMode == Mode::GenerateHash) {
       HashResults(results);
     }
     auto json_output = SerializeResults(results);
 
-    if (_gzip) {
+    if (gGzip) {
       std::filesystem::create_directories(res_dir);
       auto gz_path = (res_dir / "reference.json.gz").string();
       gzFile gz = gzopen(gz_path.c_str(), "wb");
@@ -629,7 +634,7 @@ class SearchBenchTest : public TestBase {
       std::cout << absl::StrCat("Gzip written to \"", gz_path, "\"\n");
     }
 
-    if (_mode != Mode::Validate) {
+    if (gMode != Mode::Validate) {
       std::filesystem::create_directories(res_dir);
       auto json_path = (res_dir / "reference.json").string();
       std::ofstream out{json_path};
@@ -719,22 +724,23 @@ class SearchBenchTest : public TestBase {
     }
   }
 
-  bench::BenchConfig _config;
-  std::string _corpus_path;
-  std::unique_ptr<bench::Executor> _executor;
-  std::vector<std::string> _id_map;
-  Mode _mode = Mode::Validate;
-  bool _gzip = false;
-  bool _drop_index = true;
+  static inline bench::BenchConfig gConfig;
+  static inline std::string gCorpusPath;
+  static inline std::filesystem::path gIndexDir;
+  static inline std::unique_ptr<bench::Executor> gExecutor;
+  static inline std::vector<std::string> gIdMap;
+  static inline Mode gMode = Mode::Validate;
+  static inline bool gGzip = false;
+  static inline bool gDropIndex = true;
 };
 
 TEST_F(SearchBenchTest, WikiSmall) { RunAndValidate("wiki_small"); }
 
 TEST_F(SearchBenchTest, DisjunctionScoreAccuracy) {
-  const auto& reader = _executor->GetReader();
+  const auto& reader = gExecutor->GetReader();
   auto scorer_ptr =
-    irs::scorers::Get(_config.scorer, irs::Type<irs::text_format::Json>::get(),
-                      _config.scorer_options, false);
+    irs::scorers::Get(gConfig.scorer, irs::Type<irs::text_format::Json>::get(),
+                      gConfig.scorer_options, false);
   ASSERT_TRUE(scorer_ptr);
   const auto& scorer = *scorer_ptr;
 
@@ -786,7 +792,7 @@ TEST_F(SearchBenchTest, DisjunctionScoreAccuracy) {
     }
     ASSERT_GT(reference_scores.size(), 0u) << "No reference docs found";
 
-    auto filter = _executor->ParseFilter(std::string{query});
+    auto filter = gExecutor->ParseFilter(std::string{query});
     ASSERT_TRUE(filter);
 
     auto prepared = filter->prepare({.index = reader, .scorer = &scorer});
@@ -885,28 +891,28 @@ TEST_F(SearchBenchTest, DisjunctionScoreAccuracy) {
 }
 
 TEST_F(SearchBenchTest, AdvanceVsFillBlock) {
-  auto factories = MakeFactories(*_executor);
-  TestAdvanceVsFillBlock(_executor->GetReader(), factories, kWindowSizes);
+  auto factories = MakeFactories(*gExecutor);
+  TestAdvanceVsFillBlock(gExecutor->GetReader(), factories, kWindowSizes);
 }
 
 TEST_F(SearchBenchTest, SeekVsFillBlock) {
-  auto factories = MakeFactories(*_executor);
-  TestSeekVsFillBlock(_executor->GetReader(), factories, kWindowSizes);
+  auto factories = MakeFactories(*gExecutor);
+  TestSeekVsFillBlock(gExecutor->GetReader(), factories, kWindowSizes);
 }
 
 TEST_F(SearchBenchTest, InterleavedSeekFillBlock) {
-  auto factories = MakeFactories(*_executor);
-  TestInterleavedSeekFillBlock(_executor->GetReader(), factories, kWindowSizes);
+  auto factories = MakeFactories(*gExecutor);
+  TestInterleavedSeekFillBlock(gExecutor->GetReader(), factories, kWindowSizes);
 }
 
 TEST_F(SearchBenchTest, AdvanceSkipFillBlock) {
-  auto factories = MakeFactories(*_executor);
-  TestAdvanceSkipFillBlock(_executor->GetReader(), factories, kWindowSizes,
+  auto factories = MakeFactories(*gExecutor);
+  TestAdvanceSkipFillBlock(gExecutor->GetReader(), factories, kWindowSizes,
                            kAdvanceSkips);
 }
 
 TEST_F(SearchBenchTest, SeekSkipFillBlock) {
-  auto factories = MakeFactories(*_executor);
-  TestSeekSkipFillBlock(_executor->GetReader(), factories, kWindowSizes,
+  auto factories = MakeFactories(*gExecutor);
+  TestSeekSkipFillBlock(gExecutor->GetReader(), factories, kWindowSizes,
                         kSeekSkips);
 }

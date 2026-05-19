@@ -218,7 +218,7 @@ QUERY PLAN
 EXPLAIN ANALYZE CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
 ┌────────────────────────────────────────────────┐
 │┌──────────────────────────────────────────────┐│
-││              Total Time: <slt:ignore>        ││
+<slt:ignore>
 │└──────────────────────────────────────────────┘│
 └────────────────────────────────────────────────┘
 ┌───────────────────────────┐
@@ -229,14 +229,14 @@ EXPLAIN ANALYZE CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10)
 │    ────────────────────   │
 │                           │
 │           0 rows          │
-│           <slt:ignore>    │
+<slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         EXTENSION         │
 │    ────────────────────   │
 │                           │
 │           1 row           │
-│           <slt:ignore>    │
+<slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         TABLE_SCAN        │
@@ -247,7 +247,7 @@ EXPLAIN ANALYZE CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10)
 │                           │
 │                           │
 │          10 rows          │
-│           <slt:ignore>    │
+<slt:ignore>
 └───────────────────────────┘
 
 

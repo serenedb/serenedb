@@ -1,0 +1,541 @@
+# Vedernikoff cross-schema cascade -- pure SQL, PG-compatible.
+
+# --- 1. Sequence in one schema, DEFAULTs in two other schemas --------------
+
+statement ok
+CREATE SCHEMA vedernikoff_resumes;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_clickclack_team;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_mop_team;
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_resumes.shared_id_seq START 7000;
+
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_team.candidates (
+  id INT DEFAULT nextval('vedernikoff_resumes.shared_id_seq'),
+  note TEXT
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_team.candidates (
+  id INT DEFAULT nextval('vedernikoff_resumes.shared_id_seq'),
+  note TEXT
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_clickclack_team.candidates (note) VALUES ('cc_round1');
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_team.candidates (note) VALUES ('mop_round1');
+
+
+# Non-empty schema can't be dropped without CASCADE.
+statement error (?i)
+DROP SCHEMA vedernikoff_resumes;
+
+
+statement ok
+DROP SCHEMA vedernikoff_resumes CASCADE;
+
+
+# Cross-schema tables keep their data, lose their DEFAULTs.
+statement ok
+INSERT INTO vedernikoff_clickclack_team.candidates (note) VALUES ('cc_after');
+
+
+statement ok
+INSERT INTO vedernikoff_mop_team.candidates (note) VALUES ('mop_after');
+
+
+query
+SELECT id, note FROM vedernikoff_clickclack_team.candidates ORDER BY note;
+----
+id    note
+NULL  cc_after
+7000  cc_round1
+
+
+query
+SELECT id, note FROM vedernikoff_mop_team.candidates ORDER BY note;
+----
+id    note
+NULL  mop_after
+7001  mop_round1
+
+
+statement ok
+DROP SCHEMA vedernikoff_clickclack_team CASCADE;
+
+
+statement ok
+DROP SCHEMA vedernikoff_mop_team CASCADE;
+
+
+# --- 2. Cross-schema view body ---------------------------------------------
+
+statement ok
+CREATE SCHEMA vedernikoff_iceberg_source;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_iceberg_consumer;
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_source.manifests (
+  id INT,
+  name TEXT
+);
+
+
+statement count 3
+INSERT INTO vedernikoff_iceberg_source.manifests VALUES
+  (1, 'snap_alpha'), (2, 'snap_bravo'), (3, 'snap_charlie');
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_consumer.manifest_feed AS
+  SELECT id, name FROM vedernikoff_iceberg_source.manifests;
+
+
+query
+SELECT count(*) FROM vedernikoff_iceberg_consumer.manifest_feed;
+----
+count
+3
+
+
+statement error (?i)
+DROP SCHEMA vedernikoff_iceberg_source;
+
+
+statement ok
+DROP SCHEMA vedernikoff_iceberg_source CASCADE;
+
+
+statement error (?i).*manifest_feed.* does not exist
+SELECT * FROM vedernikoff_iceberg_consumer.manifest_feed;
+
+
+statement ok
+DROP SCHEMA vedernikoff_iceberg_consumer CASCADE;
+
+
+# --- 3. Cross-schema ENUM type -------------------------------------------
+
+statement ok
+CREATE SCHEMA vedernikoff_mop_types;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_mop_data;
+
+
+statement ok
+CREATE TYPE vedernikoff_mop_types.role_kind AS ENUM('ic','lead','manager','director');
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_data.candidates (
+  name TEXT,
+  role vedernikoff_mop_types.role_kind
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_data.candidates VALUES ('vedernikoff', 'ic');
+
+
+# CASCADE drops the type and the cross-schema column. (We don't assert the
+# non-CASCADE refusal here -- serenedb doesn't currently track the column-
+# type edge across schemas; PG does. The CASCADE path itself works on both.)
+statement ok
+DROP TYPE vedernikoff_mop_types.role_kind CASCADE;
+
+
+# Column dropped, but row count preserved.
+query
+SELECT name FROM vedernikoff_mop_data.candidates;
+----
+name
+vedernikoff
+
+
+statement ok
+DROP SCHEMA vedernikoff_mop_types CASCADE;
+
+
+statement ok
+DROP SCHEMA vedernikoff_mop_data CASCADE;
+
+
+# Now do it the other way: drop the schema containing the type with CASCADE.
+statement ok
+CREATE SCHEMA vedernikoff_mop_types;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_mop_data;
+
+
+statement ok
+CREATE TYPE vedernikoff_mop_types.priority_kind AS ENUM('low','mid','high');
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_data.tasks (
+  desc1 TEXT,
+  prio vedernikoff_mop_types.priority_kind
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_data.tasks VALUES ('shipping_iceberg', 'high');
+
+
+statement ok
+DROP SCHEMA vedernikoff_mop_types CASCADE;
+
+
+query
+SELECT desc1 FROM vedernikoff_mop_data.tasks;
+----
+desc1
+shipping_iceberg
+
+
+statement ok
+DROP SCHEMA vedernikoff_mop_data CASCADE;
+
+
+# --- 4. Multiple cross-schema referrers all at once -----------------------
+
+statement ok
+CREATE SCHEMA vedernikoff_solid_module;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_solid_alpha;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_solid_bravo;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_solid_charlie;
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_solid_module.review_id_seq START 50;
+
+
+statement ok
+CREATE TYPE vedernikoff_solid_module.review_state AS ENUM('open','review','merged');
+
+
+statement ok
+CREATE TABLE vedernikoff_solid_alpha.reviews (
+  id INT DEFAULT nextval('vedernikoff_solid_module.review_id_seq'),
+  state vedernikoff_solid_module.review_state
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_solid_bravo.reviews (
+  id INT DEFAULT nextval('vedernikoff_solid_module.review_id_seq'),
+  state vedernikoff_solid_module.review_state
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_solid_charlie.reviews (
+  id INT DEFAULT nextval('vedernikoff_solid_module.review_id_seq'),
+  state vedernikoff_solid_module.review_state
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_alpha.reviews (state) VALUES ('open');
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_bravo.reviews (state) VALUES ('review');
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_charlie.reviews (state) VALUES ('merged');
+
+
+# Drop the source schema; every cross-schema table needs DEFAULT cleared
+# and the state column dropped (since the ENUM type goes away).
+statement ok
+DROP SCHEMA vedernikoff_solid_module CASCADE;
+
+
+# Rows preserved.
+query
+SELECT id FROM vedernikoff_solid_alpha.reviews;
+----
+id
+50
+
+
+query
+SELECT id FROM vedernikoff_solid_bravo.reviews;
+----
+id
+51
+
+
+query
+SELECT id FROM vedernikoff_solid_charlie.reviews;
+----
+id
+52
+
+
+statement ok
+DROP SCHEMA vedernikoff_solid_alpha CASCADE;
+
+
+statement ok
+DROP SCHEMA vedernikoff_solid_bravo CASCADE;
+
+
+statement ok
+DROP SCHEMA vedernikoff_solid_charlie CASCADE;
+
+
+# --- 5. Cross-schema view chain ------------------------------------------
+
+statement ok
+CREATE SCHEMA vedernikoff_ml_paper_src;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_ml_paper_layer_1;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_ml_paper_layer_2;
+
+
+statement ok
+CREATE TABLE vedernikoff_ml_paper_src.data (
+  id INT, weight DOUBLE PRECISION
+);
+
+
+statement count 3
+INSERT INTO vedernikoff_ml_paper_src.data VALUES
+  (1, 0.5), (2, 0.25), (3, 0.125);
+
+
+statement ok
+CREATE VIEW vedernikoff_ml_paper_layer_1.weighted AS
+  SELECT id, weight FROM vedernikoff_ml_paper_src.data;
+
+
+statement ok
+CREATE VIEW vedernikoff_ml_paper_layer_2.aggregated AS
+  SELECT count(*) AS c, sum(weight) AS s
+  FROM vedernikoff_ml_paper_layer_1.weighted;
+
+
+query
+SELECT c FROM vedernikoff_ml_paper_layer_2.aggregated;
+----
+c
+3
+
+
+# DROP SCHEMA on the source must refuse (layer_1 view depends on it).
+statement error (?i)
+DROP SCHEMA vedernikoff_ml_paper_src;
+
+
+# Even the intermediate schema can't be dropped without CASCADE: layer_2
+# view references layer_1's view.
+statement error (?i)
+DROP SCHEMA vedernikoff_ml_paper_layer_1;
+
+
+statement ok
+DROP SCHEMA vedernikoff_ml_paper_src CASCADE;
+
+
+# layer_1 and layer_2 views are gone.
+statement error (?i).*weighted.* does not exist
+SELECT * FROM vedernikoff_ml_paper_layer_1.weighted;
+
+
+statement error (?i).*aggregated.* does not exist
+SELECT * FROM vedernikoff_ml_paper_layer_2.aggregated;
+
+
+statement ok
+DROP SCHEMA vedernikoff_ml_paper_layer_1 CASCADE;
+
+
+statement ok
+DROP SCHEMA vedernikoff_ml_paper_layer_2 CASCADE;
+
+
+# --- 6. Empty vs non-empty schema RESTRICT semantics ---------------------
+
+statement ok
+CREATE SCHEMA vedernikoff_clickclack_offsite;
+
+
+# Empty schema can be plain-dropped.
+statement ok
+DROP SCHEMA vedernikoff_clickclack_offsite;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_clickclack_offsite;
+
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_offsite.itinerary (id INT, slot TEXT);
+
+
+# Non-empty schema refuses plain / RESTRICT.
+statement error (?i)
+DROP SCHEMA vedernikoff_clickclack_offsite;
+
+
+statement error (?i)
+DROP SCHEMA vedernikoff_clickclack_offsite RESTRICT;
+
+
+statement ok
+DROP SCHEMA vedernikoff_clickclack_offsite CASCADE;
+
+
+# --- 7. Schema with only views, no cross-schema refs ----------------------
+
+statement ok
+CREATE SCHEMA vedernikoff_iceberg_inspect;
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_inspect.data (id INT);
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_inspect.data_view AS
+  SELECT id FROM vedernikoff_iceberg_inspect.data;
+
+
+# Plain DROP SCHEMA still refuses because the schema is non-empty.
+statement error (?i)
+DROP SCHEMA vedernikoff_iceberg_inspect;
+
+
+statement ok
+DROP SCHEMA vedernikoff_iceberg_inspect CASCADE;
+
+
+# --- 8. Heavy cross-schema: sequence + type + view across 4 schemas -----
+
+statement ok
+CREATE SCHEMA vedernikoff_x_core;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_x_alpha;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_x_bravo;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_x_charlie;
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_x_core.master_seq START 1;
+
+
+statement ok
+CREATE TYPE vedernikoff_x_core.color AS ENUM('red','green','blue');
+
+
+statement ok
+CREATE TABLE vedernikoff_x_alpha.records (
+  id INT DEFAULT nextval('vedernikoff_x_core.master_seq'),
+  c vedernikoff_x_core.color
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_x_bravo.records (
+  id INT DEFAULT nextval('vedernikoff_x_core.master_seq'),
+  c vedernikoff_x_core.color
+);
+
+
+statement ok
+CREATE VIEW vedernikoff_x_charlie.alpha_proxy AS
+  SELECT id, c FROM vedernikoff_x_alpha.records;
+
+
+statement ok
+CREATE VIEW vedernikoff_x_charlie.bravo_proxy AS
+  SELECT id, c FROM vedernikoff_x_bravo.records;
+
+
+statement count 1
+INSERT INTO vedernikoff_x_alpha.records (c) VALUES ('red');
+
+
+statement count 1
+INSERT INTO vedernikoff_x_bravo.records (c) VALUES ('green');
+
+
+query
+SELECT id, c FROM vedernikoff_x_charlie.alpha_proxy;
+----
+id  c
+1   red
+
+
+query
+SELECT id, c FROM vedernikoff_x_charlie.bravo_proxy;
+----
+id  c
+2   green
+
+
+# Drop the source schema; alpha/bravo tables survive (DEFAULT cleared, color
+# column dropped because the type is gone). charlie's views had referenced
+# alpha/bravo and the dropped column -- they get dropped on PG because the
+# columns they project disappear.
+statement ok
+DROP SCHEMA vedernikoff_x_core CASCADE;
+
+
+statement ok
+DROP SCHEMA vedernikoff_x_alpha CASCADE;
+
+
+statement ok
+DROP SCHEMA vedernikoff_x_bravo CASCADE;
+
+
+statement ok
+DROP SCHEMA vedernikoff_x_charlie CASCADE;

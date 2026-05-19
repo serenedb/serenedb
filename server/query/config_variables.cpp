@@ -27,6 +27,7 @@
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
+#include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 
@@ -268,6 +269,80 @@ constexpr std::pair<std::string_view, VariableDescription>
         "DESC LIMIT k` into the inverted-index scan, so WAND (Block-Max "
         "top-K) pruning never engages. Default: false (optimization on).",
         [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "row_group_size",
+      {
+        LogicalTypeId::UINTEGER,
+        "Default column row-group size for INCLUDEd in newly created inverted "
+        "indexes. "
+        "Per-column (row_group_size = ...) and per-index WITH (row_group_size "
+        "= ...) override. Reads from existing indexes are unaffected. "
+        "Default: 122'880.",
+        [] { return duckdb::Value::UINTEGER(DEFAULT_ROW_GROUP_SIZE); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          const auto n = value.GetValue<uint32_t>();
+          if (n == 0) {
+            throw duckdb::InvalidInputException{
+              "invalid value for parameter \"row_group_size\": \"%s\"",
+              value.ToString()};
+          }
+        },
+      },
+    },
+    {
+      "norm_row_group_size",
+      {
+        LogicalTypeId::UINTEGER,
+        "Default column row-group size for norm columns of text-indexed fields "
+        "(Norm feature) in newly created inverted indexes. "
+        "Per-column (row_group_size = ...) and per-index WITH (row_group_size "
+        "= ...) override. Reads from existing indexes are unaffected. "
+        "Default: 122'880.",
+        [] { return duckdb::Value::UINTEGER(122'880); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          const auto n = value.GetValue<uint32_t>();
+          if (n == 0) {
+            throw duckdb::InvalidInputException{
+              "invalid value for parameter \"norm_row_group_size\": \"%s\"",
+              value.ToString()};
+          }
+        },
+      },
+    },
+    {
+      "commit_interval",
+      {
+        LogicalTypeId::UINTEGER,
+        "Background commit interval (ms) for newly created inverted indexes. "
+        "Per-index WITH (commit_interval = ...) overrides. 0 disables the "
+        "commit task. Default: 1000.",
+        [] { return duckdb::Value::UINTEGER(1000); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "consolidation_interval",
+      {
+        LogicalTypeId::UINTEGER,
+        "Background consolidation interval (ms) for newly created inverted "
+        "indexes. Per-index WITH (consolidation_interval = ...) overrides. "
+        "0 disables the consolidation task. Default: 1000.",
+        [] { return duckdb::Value::UINTEGER(1000); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "cleanup_interval_step",
+      {
+        LogicalTypeId::UINTEGER,
+        "Number of commit ticks between background unreferenced-file cleanup "
+        "passes for newly created inverted indexes. Per-index WITH "
+        "(cleanup_interval_step = ...) overrides. 0 disables cleanup. "
+        "Default: 1.",
+        [] { return duckdb::Value::UINTEGER(1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
     },

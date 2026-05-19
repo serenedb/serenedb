@@ -27,12 +27,13 @@
 // list of statically loaded scorers via init()
 #include "basics/register.hpp"
 #include "bm25.hpp"
-#include "boost_scorer.hpp"
 #include "dfi.hpp"
 #include "indri_dirichlet.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "lm_dirichlet.hpp"
 #include "lm_jelinek_mercer.hpp"
+#include "raw_boost.hpp"
+#include "raw_dl.hpp"
 #include "raw_tf.hpp"
 #include "tfidf.hpp"
 
@@ -86,12 +87,13 @@ Scorer::ptr scorers::Get(std::string_view name, const TypeInfo& args_format,
 void scorers::Init() {
   BM25::init();
   TFIDF::init();
-  BoostScore::init();
-  RawTF::init();
   LMJelinekMercer::init();
   LMDirichlet::init();
   IndriDirichlet::init();
   DFI::init();
+  RawBoost::init();
+  RawTF::init();
+  RawDL::init();
 }
 
 void scorers::LoadAll(std::string_view path) {

@@ -62,6 +62,7 @@
 #include "connector/functions/ts_offsets.h"
 #include "connector/functions/vector.h"
 #include "connector/optimizer/flatten_projection_ids.h"
+#include "connector/search_field_name.hpp"
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_filter_printer.hpp"
 #include "pg/connection_context.h"
@@ -145,13 +146,6 @@ std::optional<ResolvedIresearch> ResolveIresearch(
 catalog::Column::Id ColumnIdByName(
   const connector::SereneDBScanBindData& bind_data, std::string_view name) {
   return bind_data.ColumnIdByName(name);
-}
-
-// 8 big-endian bytes, no Mangle suffix.
-std::string MakeHnswFieldName(catalog::Column::Id col_id) {
-  std::string name(sizeof(col_id), '\0');
-  absl::big_endian::Store(name.data(), col_id);
-  return name;
 }
 
 struct ExpectedHNSW {
@@ -353,9 +347,10 @@ struct SearchColumnContext {
   // Optional JSON-path tokenizer lookup: returns the per-path tokenizer
   // resolved against the catalog, or nullopt if the column is not
   // indexed at `path`.
-  std::function<std::optional<catalog::ColumnTokenizer>(
-    catalog::Column::Id, std::span<const std::string>)>
+  std::function<std::optional<catalog::ColumnTokenizer>(catalog::Column::Id,
+                                                        std::string_view)>
     json_path_tokenizer_provider;
+  std::function<bool(catalog::Column::Id)> has_postings_provider;
 };
 
 connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
@@ -368,10 +363,13 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
       return std::nullopt;
     }
     const auto col_id = ctx.projected_column_ids[ref.binding.column_index];
-    if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
+    if (col_id == catalog::Column::kInvalidId) {
       return std::nullopt;
     }
     if (!ctx.indexed_column_ids.contains(col_id)) {
+      return std::nullopt;
+    }
+    if (ctx.has_postings_provider && !ctx.has_postings_provider(col_id)) {
       return std::nullopt;
     }
     auto type_it = ctx.column_type_by_id.find(col_id);
@@ -388,7 +386,7 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
 
 connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx) {
   return [&ctx](const duckdb::BoundColumnRefExpression& ref,
-                std::span<const std::string> path)
+                std::string_view json_pointer)
            -> std::optional<connector::SearchColumnInfo> {
     if (ref.binding.table_index != ctx.table_index) {
       return std::nullopt;
@@ -397,32 +395,25 @@ connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx) {
       return std::nullopt;
     }
     const auto col_id = ctx.projected_column_ids[ref.binding.column_index];
-    if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
+    if (col_id == catalog::Column::kInvalidId) {
       return std::nullopt;
     }
     if (!ctx.json_path_tokenizer_provider) {
       return std::nullopt;
     }
-    auto tokenizer = ctx.json_path_tokenizer_provider(col_id, path);
+    auto tokenizer = ctx.json_path_tokenizer_provider(col_id, json_pointer);
     if (!tokenizer) {
       return std::nullopt;
     }
     connector::SearchColumnInfo info;
     info.column_id = col_id;
-    // The default leaf type is VARCHAR (the string-leaf path); the filter
-    // builder may override this when the user wraps the path in an
-    // explicit cast like `(content->>'val')::int`, so numeric/bool/null
-    // queries hit the right pre-emitted per-type field.
     info.logical_type = duckdb::LogicalType::VARCHAR;
     info.tokenizer = *std::move(tokenizer);
-    info.json_path.assign(path.begin(), path.end());
+    info.json_pointer = json_pointer;
     return info;
   };
 }
 
-// Builds a SearchColumnContext for a LogicalGet that produces the same
-// column-id space as the bind data; reused by TryAnnTopk / TryAnnRange to
-// drive iresearch text-filter pushdown.
 void InitSearchColumnContextForGet(
   SearchColumnContext& ctx,
   std::vector<catalog::Column::Id>& projected_ids_storage,
@@ -430,7 +421,7 @@ void InitSearchColumnContextForGet(
   const connector::SereneDBScanBindData& bind_data,
   const ResolvedIresearch& resolved,
   std::shared_ptr<const catalog::Snapshot> snapshot) {
-  constexpr auto kInvalidId = std::numeric_limits<catalog::Column::Id>::max();
+  constexpr auto kInvalidId = catalog::Column::kInvalidId;
   projected_ids_storage.clear();
   projected_ids_storage.reserve(get.GetColumnIds().size());
   for (const auto& ci : get.GetColumnIds()) {
@@ -455,26 +446,28 @@ void InitSearchColumnContextForGet(
   ctx.tokenizer_provider = [index_ptr, snapshot](catalog::Column::Id col_id) {
     return index_ptr->GetColumnTokenizer(snapshot, col_id);
   };
+  ctx.has_postings_provider = [index_ptr](catalog::Column::Id col_id) {
+    const auto* info = index_ptr->FindColumnInfo(col_id);
+    if (info == nullptr) {
+      return false;
+    }
+    return !info->store_values || info->text_dictionary.isSet() ||
+           !info->json_paths.empty();
+  };
   ctx.json_path_tokenizer_provider = [index_ptr, snapshot](
                                        catalog::Column::Id col_id,
-                                       std::span<const std::string> path) {
-    return index_ptr->GetJsonPathTokenizer(snapshot, col_id, path);
+                                       std::string_view json_pointer) {
+    return index_ptr->GetJsonPathTokenizer(snapshot, col_id, json_pointer);
   };
 }
 
-// Returns a column-name lookup suitable for `irs::ToStringDemangled`.
-// Falls back to "col<id>" for ids not known to the bind data; the
-// fallback string lives in a thread-local so the returned string_view
-// stays valid for the duration of one printer invocation.
 auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data) {
-  return [&bind_data](catalog::Column::Id col_id) -> std::string_view {
-    static thread_local std::string fallback;
+  return [&](catalog::Column::Id col_id) {
     auto name = bind_data.ColumnNameById(col_id);
     if (!name.empty()) {
-      return name;
+      return std::string{name};
     }
-    fallback = absl::StrCat("col", col_id);
-    return fallback;
+    return absl::StrCat("col", col_id);
   };
 }
 
@@ -593,7 +586,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     col_arg = args.col_arg;
   }
   auto col_id = ColumnIdByName(bind_data, col_arg->GetName());
-  if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
+  if (col_id == catalog::Column::kInvalidId) {
     return false;
   }
 
@@ -618,7 +611,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
 
   auto ann = std::make_unique<connector::ANNScan>();
   ann->index_id = resolved->index->GetId();
-  ann->field_name = MakeHnswFieldName(col_id);
+  ann->field_id = col_id;
   ann->query_vector = std::move(query_vector);
   ann->top_k = static_cast<size_t>(top_n.limit);
 
@@ -730,7 +723,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   float radius = 0.0f;
   bool radius_needs_square = false;
   std::vector<float> query_vector;
-  catalog::Column::Id col_id = std::numeric_limits<catalog::Column::Id>::max();
+  catalog::Column::Id col_id = catalog::Column::kInvalidId;
 
   for (duckdb::idx_t i = 0; i < filter.expressions.size(); ++i) {
     auto& expr = *filter.expressions[i];
@@ -807,7 +800,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
       col_expr = args.col_arg;
     }
     auto candidate_col_id = ColumnIdByName(bind_data, col_expr->GetName());
-    if (candidate_col_id == std::numeric_limits<catalog::Column::Id>::max()) {
+    if (candidate_col_id == catalog::Column::kInvalidId) {
       continue;
     }
     auto hnsw_info = resolved->index->GetColumnHNSWInfo(candidate_col_id);
@@ -841,7 +834,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
 
   auto rss = std::make_unique<connector::RangeSearchScan>();
   rss->index_id = resolved->index->GetId();
-  rss->field_name = MakeHnswFieldName(col_id);
+  rss->field_id = col_id;
   rss->query_vector = std::move(query_vector);
   rss->radius = radius;
   rss->effective_radius = radius_needs_square ? radius * radius : radius;
@@ -1028,7 +1021,7 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   // exactly once per execution, with the scorer if one ends up attached.
   search->filter_summary = std::move(filter_summary);
   if (resolved->index) {
-    search->wand_scorer = resolved->index->GetWandScorer();
+    search->topk_scorer = resolved->index->GetTopKScorer();
   }
   bind_data.scan_source = std::move(search);
   get.function = connector::CreateIResearchScanFunction();
@@ -1446,29 +1439,31 @@ catalog::Column::Id ResolveColumnId(
   const connector::SereneDBScanBindData& bind_data,
   const duckdb::LogicalGet& get) {
   if (binding.table_index != get.table_index) {
-    return std::numeric_limits<catalog::Column::Id>::max();
+    return catalog::Column::kInvalidId;
   }
   const auto col_idx = binding.column_index.GetIndex();
   const auto& column_ids = get.GetColumnIds();
   if (col_idx >= column_ids.size()) {
-    return std::numeric_limits<catalog::Column::Id>::max();
+    return catalog::Column::kInvalidId;
   }
   if (!column_ids[col_idx].HasPrimaryIndex()) {
-    return std::numeric_limits<catalog::Column::Id>::max();
+    return catalog::Column::kInvalidId;
   }
   const auto phys = column_ids[col_idx].GetPrimaryIndex();
   if (phys >= bind_data.column_ids.size()) {
-    return std::numeric_limits<catalog::Column::Id>::max();
+    return catalog::Column::kInvalidId;
   }
   return bind_data.column_ids[phys];
 }
 
 bool IsScorerFunctionName(std::string_view name) {
   using S = catalog::ScorerOptions;
+  // TODO(mbkkt) make TrivialBiSet?
   return name == S::Bm25::kName || name == S::Tfidf::kName ||
-         name == S::RawTf::kName || name == S::LmJm::kName ||
-         name == S::LmDirichlet::kName || name == S::IndriDirichlet::kName ||
-         name == S::Dfi::kName;
+         name == S::LmJm::kName || name == S::LmDirichlet::kName ||
+         name == S::IndriDirichlet::kName || name == S::Dfi::kName ||
+         name == S::RawBoost::kName || name == S::RawTf::kName ||
+         name == S::RawDL::kName;
 }
 
 // Returns false if args are non-constant (caller refuses to claim). Throws
@@ -1714,7 +1709,7 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
 
   const auto target_col_id =
     ResolveColumnId(resolved, *found->bind_data, *found->get);
-  if (target_col_id == std::numeric_limits<catalog::Column::Id>::max()) {
+  if (target_col_id == catalog::Column::kInvalidId) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_offsets(): column '", col_name, "' not found in table"));

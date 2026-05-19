@@ -23,6 +23,7 @@
 #pragma once
 
 #include "basics/shared.hpp"
+#include "iresearch/types.hpp"
 
 namespace irs {
 

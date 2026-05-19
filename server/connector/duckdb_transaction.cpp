@@ -20,6 +20,9 @@
 
 #include "connector/duckdb_transaction.h"
 
+#include "connector/duckdb_client_state.h"
+#include "pg/connection_context.h"
+
 namespace sdb::connector {
 
 SereneDBTransaction::SereneDBTransaction(duckdb::TransactionManager& manager,

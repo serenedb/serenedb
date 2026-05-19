@@ -61,8 +61,7 @@ struct SearchAnnScanGlobalState : public CommonScanGlobalState {
   std::atomic_size_t remained_segments = 0;
   std::atomic_uint32_t next_segment = 0;
 
-  // Reusable scratch for LookupSegmentsValues. ANN's MergeResult runs once,
-  // single-threaded, so a single global buffer is safe.
+  std::vector<SegDoc> merged_seg_docs;
   std::vector<uint32_t> lookup_scratch;
 
   duckdb::idx_t MaxThreads() const override {
@@ -73,7 +72,7 @@ struct SearchAnnScanGlobalState : public CommonScanGlobalState {
 struct SearchAnnScanLocalState : public CommonScanLocalState {
   SearchAnnScanLocalState(float* dis_data, int64_t* ids_data, size_t size)
     : buffer{dis_data, ids_data, size} {}
-  irs::HNSWSearchBuffer buffer;
+  irs::HNSWAnnSearchBuffer buffer;
   irs::Filter::Query::ptr text_filter_query;
 };
 
@@ -107,6 +106,7 @@ struct SearchRangeScanGlobalState : public CommonScanGlobalState {
 
 struct SearchRangeScanLocalState : public CommonScanLocalState {
   PrimaryKeyBatch pk_batch;
+  std::vector<SegDoc> seg_docs;
   size_t current_idx = 0;
   irs::HNSWRangeSearchBuffer range_buffer;
   std::vector<uint32_t> lookup_scratch;

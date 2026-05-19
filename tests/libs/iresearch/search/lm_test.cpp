@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <map>
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
@@ -184,7 +185,7 @@ void LMIndexTest::BuildFixture() {
                                           /*payload=*/false, extra),
               true, false);
 
-  irs::IndexWriterOptions opts;
+  auto opts = irs::tests::DefaultWriterOptions();
 
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
@@ -241,7 +242,7 @@ TEST_P(LMIndexTest, jm_scores_positive_and_ordered) {
   BuildFixture();
 
   auto impl = std::make_unique<irs::LMJelinekMercer>(0.1f);
-  auto index = open_reader();
+  auto index = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, index->size());
 
   auto seen = RunQuery(*index, *impl);
@@ -266,7 +267,7 @@ TEST_P(LMIndexTest, dirichlet_scores_nonnegative) {
 
   // Small mu for sharper separation on this toy corpus.
   auto impl = std::make_unique<irs::LMDirichlet>(10.f);
-  auto index = open_reader();
+  auto index = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, index->size());
 
   auto seen = RunQuery(*index, *impl);

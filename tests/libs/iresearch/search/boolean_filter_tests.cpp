@@ -1071,13 +1071,6 @@ struct SegmentReaderMock final : irs::SubReader {
   uint64_t CountMappedMemory() const final { return 0; }
   const irs::SegmentInfo& Meta() const final { return _meta; }
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
-  irs::ColumnIterator::ptr columns() const final {
-    return irs::ColumnIterator::empty();
-  }
-  const irs::ColumnReader* column(irs::field_id) const final { return nullptr; }
-  const irs::ColumnReader* column(std::string_view) const final {
-    return nullptr;
-  }
   irs::DocIterator::ptr docs_iterator() const final {
     return irs::DocIterator::empty();
   }
@@ -1085,7 +1078,7 @@ struct SegmentReaderMock final : irs::SubReader {
   irs::FieldIterator::ptr fields() const final {
     return irs::FieldIterator::empty();
   }
-  const irs::ColumnReader* sort() const final { return nullptr; }
+  irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
   irs::SegmentInfo _meta;
 };
 
@@ -14484,28 +14477,28 @@ TEST_P(BooleanFilterTestCase, or_sequential_multiple_segments) {
 
     auto writer = open_writer();
 
-    ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end(),
-                       doc1->stored.begin(), doc1->stored.end()));  // A
-    ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end(),
-                       doc2->stored.begin(), doc2->stored.end()));  // B
-    ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end(),
-                       doc3->stored.begin(), doc3->stored.end()));  // C
-    ASSERT_TRUE(Insert(*writer, doc4->indexed.begin(), doc4->indexed.end(),
-                       doc4->stored.begin(), doc4->stored.end()));  // D
+    ASSERT_TRUE(
+      Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));  // A
+    ASSERT_TRUE(
+      Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));  // B
+    ASSERT_TRUE(
+      Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));  // C
+    ASSERT_TRUE(
+      Insert(*writer, doc4->indexed.begin(), doc4->indexed.end()));  // D
     writer->Commit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(Insert(*writer, doc5->indexed.begin(), doc5->indexed.end(),
-                       doc5->stored.begin(), doc5->stored.end()));  // E
-    ASSERT_TRUE(Insert(*writer, doc6->indexed.begin(), doc6->indexed.end(),
-                       doc6->stored.begin(), doc6->stored.end()));  // F
-    ASSERT_TRUE(Insert(*writer, doc7->indexed.begin(), doc7->indexed.end(),
-                       doc7->stored.begin(), doc7->stored.end()));  // G
+    ASSERT_TRUE(
+      Insert(*writer, doc5->indexed.begin(), doc5->indexed.end()));  // E
+    ASSERT_TRUE(
+      Insert(*writer, doc6->indexed.begin(), doc6->indexed.end()));  // F
+    ASSERT_TRUE(
+      Insert(*writer, doc7->indexed.begin(), doc7->indexed.end()));  // G
     writer->Commit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(Insert(*writer, doc8->indexed.begin(), doc8->indexed.end(),
-                       doc8->stored.begin(), doc8->stored.end()));  // H
-    ASSERT_TRUE(Insert(*writer, doc9->indexed.begin(), doc9->indexed.end(),
-                       doc9->stored.begin(), doc9->stored.end()));  // I
+    ASSERT_TRUE(
+      Insert(*writer, doc8->indexed.begin(), doc8->indexed.end()));  // H
+    ASSERT_TRUE(
+      Insert(*writer, doc9->indexed.begin(), doc9->indexed.end()));  // I
     writer->Commit();
     AssertSnapshotEquality(*writer);
   }

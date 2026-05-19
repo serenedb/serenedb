@@ -25,31 +25,17 @@
 
 namespace sdb {
 
-struct SecondaryIndexShardOptions : public IndexShardOptions {
-  struct Base {
-    bool unique = false;
-  } base;
-};
-
 class SecondaryIndexShard : public IndexShard {
  public:
-  // Existing shard (loaded from catalog)
-  SecondaryIndexShard(ObjectId id, ObjectId index_id,
-                      SecondaryIndexShardOptions options)
-    : IndexShard{id, index_id, catalog::ObjectType::SecondaryIndexShard},
-      _options{std::move(options)} {}
+  // Existing shard (loaded from catalog at restart).
+  SecondaryIndexShard(ObjectId id, ObjectId index_id)
+    : IndexShard{id, index_id, catalog::ObjectType::SecondaryIndexShard} {}
 
-  // New shard
-  SecondaryIndexShard(ObjectId index_id, SecondaryIndexShardOptions options)
-    : IndexShard{index_id, catalog::ObjectType::SecondaryIndexShard},
-      _options{std::move(options)} {}
+  // New shard (CREATE INDEX).
+  explicit SecondaryIndexShard(ObjectId index_id)
+    : IndexShard{index_id, catalog::ObjectType::SecondaryIndexShard} {}
 
-  void WriteInternal(vpack::Builder& b) const final {
-    vpack::WriteTuple(b, _options.base);
-  }
-
- private:
-  SecondaryIndexShardOptions _options;
+  void WriteInternal(vpack::Builder& /*b*/) const final {}
 };
 
 }  // namespace sdb

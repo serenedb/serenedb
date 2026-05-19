@@ -117,7 +117,6 @@ class BasicDisjunction : public CompoundDocIterator<Adapter> {
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target >= this->value());
     // TODO: optimize
     return seek(target);
   }
@@ -255,7 +254,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
   }
 
   doc_id_t seek(doc_id_t target) final {
-    if (doc_limits::eof(this->_doc)) {
+    if (target <= this->_doc) [[unlikely]] {
       return this->_doc;
     }
 
@@ -286,7 +285,6 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target >= this->value());
     // TODO: optimize
     return seek(target);
   }
@@ -409,7 +407,7 @@ class Disjunction : public CompoundDocIterator<Adapter> {
   }
 
   doc_id_t seek(doc_id_t target) final {
-    if (doc_limits::eof(this->_doc)) {
+    if (target <= this->_doc) [[unlikely]] {
       return this->_doc;
     }
 
@@ -427,7 +425,6 @@ class Disjunction : public CompoundDocIterator<Adapter> {
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target >= this->value());
     // TODO: optimize
     return seek(target);
   }
@@ -744,7 +741,6 @@ class MinMatchDisjunction : public DocIterator {
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target >= value());
     // TODO: optimize
     return seek(target);
   }

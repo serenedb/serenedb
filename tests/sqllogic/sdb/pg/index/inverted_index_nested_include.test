@@ -1,0 +1,490 @@
+hash-threshold 100
+
+# End-to-end: deeply-nested INCLUDE'd columns round-trip through the new cs.
+# Each section exercises a different composition shape:
+#   1. LIST<ARRAY<INTEGER,2>>
+#   2. ARRAY<LIST<VARCHAR>,2>
+#   3. STRUCT<INTEGER, LIST<DOUBLE>, ARRAY<FLOAT,3>>
+#   4. MAP<VARCHAR, STRUCT<INTEGER, LIST<VARCHAR>>>
+#   5. STRUCT<STRUCT<...>, LIST<STRUCT<VARCHAR, ARRAY<INTEGER,2>>>>
+#   6. LIST<ARRAY<STRUCT<FLOAT, ARRAY<INTEGER,2>,
+#                       LIST<STRUCT<INTEGER, INTEGER>>>, 2>>
+# Every read goes through the iresearch index path -- the leading EXPLAIN
+# per section asserts the nested column is served by the columnstore
+# (annotated `(i)`), pk falls through to the rocksdb lookup `(l)`.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+# --- 1. LIST<ARRAY<INTEGER,2>> ------------------------------------------
+
+statement ok
+CREATE TABLE n1 (pk INTEGER PRIMARY KEY, t VARCHAR, v INTEGER[2][])
+
+
+statement ok
+CREATE INDEX n1_idx ON n1 USING inverted(pk, t en) INCLUDE (v)
+
+
+statement ok
+INSERT INTO n1 VALUES (1, 'one',   [[1,2],[3,4]])
+
+
+statement ok
+INSERT INTO n1 VALUES (2, 'two',   NULL)
+
+
+statement ok
+INSERT INTO n1 VALUES (3, 'three', [[7,8],[9,10],[11,12]])
+
+
+statement ok
+INSERT INTO n1 VALUES (4, 'four',  [])
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) n1
+
+
+query
+EXPLAIN SELECT pk, v FROM n1_idx WHERE t @@ ts_phrase('one');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: n1_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  AND[PHRASE[t(string) =   │
+│    <Term:one(0, 0); >]]   │
+│                           │
+│        Projections:       │
+│           pk (l)          │
+│           v (i)           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pk, v FROM n1_idx
+WHERE t @@ ts_phrase('one') OR t @@ ts_phrase('two')
+   OR t @@ ts_phrase('three') OR t @@ ts_phrase('four')
+ORDER BY pk;
+----
+pk	v
+1	{{1,2},{3,4}}
+2	NULL
+3	{{7,8},{9,10},{11,12}}
+4	{}
+
+
+# --- 2. ARRAY<LIST<VARCHAR>,2> ------------------------------------------
+
+skipif pg-wire-extended
+statement ok
+CREATE TABLE n2 (pk INTEGER PRIMARY KEY, t VARCHAR, v VARCHAR[][2])
+
+
+skipif pg-wire-extended
+statement ok
+CREATE INDEX n2_idx ON n2 USING inverted(pk, t en) INCLUDE (v)
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n2 VALUES (1, 'one',   [['a','b'],['c']])
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n2 VALUES (2, 'two',   NULL)
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n2 VALUES (3, 'three', [['x','y','z'],[]])
+
+
+skipif pg-wire-extended
+statement ok
+VACUUM (UPDATE_INDEXES) n2
+
+
+skipif pg-wire-extended
+query
+EXPLAIN SELECT pk, v FROM n2_idx WHERE t @@ ts_phrase('one');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: n2_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  AND[PHRASE[t(string) =   │
+│    <Term:one(0, 0); >]]   │
+│                           │
+│        Projections:       │
+│           pk (l)          │
+│           v (i)           │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
+
+skipif pg-wire-extended
+query
+SELECT pk, v FROM n2_idx
+WHERE t @@ ts_phrase('one') OR t @@ ts_phrase('two') OR t @@ ts_phrase('three')
+ORDER BY pk;
+----
+pk	v
+1	{{a,b},{c}}
+2	NULL
+3	{{x,y,z},{}}
+
+
+# --- 3. STRUCT<a INTEGER, b LIST<DOUBLE>, c ARRAY<FLOAT,3>> -------------
+
+skipif pg-wire-extended
+statement ok
+CREATE TABLE n3 (
+  pk INTEGER PRIMARY KEY,
+  t VARCHAR,
+  v STRUCT(a INTEGER, b DOUBLE[], c FLOAT[3])
+)
+
+
+skipif pg-wire-extended
+statement ok
+CREATE INDEX n3_idx ON n3 USING inverted(pk, t en) INCLUDE (v)
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n3 VALUES (1, 'one',   ROW(10, [1.5, 2.5], [3.0, 4.0, 5.0]))
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n3 VALUES (2, 'two',   NULL)
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n3 VALUES (3, 'three', ROW(NULL, [], NULL))
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n3 VALUES (4, 'four',  ROW(NULL, NULL, [10.0, 20.0, 30.0]))
+
+
+skipif pg-wire-extended
+statement ok
+VACUUM (UPDATE_INDEXES) n3
+
+
+skipif pg-wire-extended
+query
+EXPLAIN SELECT pk, v FROM n3_idx WHERE t @@ ts_phrase('one');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: n3_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  AND[PHRASE[t(string) =   │
+│    <Term:one(0, 0); >]]   │
+│                           │
+│        Projections:       │
+│           pk (l)          │
+│           v (i)           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+skipif pg-wire-extended
+query
+SELECT pk, v FROM n3_idx
+WHERE t @@ ts_phrase('one') OR t @@ ts_phrase('two')
+   OR t @@ ts_phrase('three') OR t @@ ts_phrase('four')
+ORDER BY pk;
+----
+pk	v
+1	(10,"{1.5,2.5}","{3,4,5}")
+2	NULL
+3	(,{},)
+4	(,,"{10,20,30}")
+
+
+# --- 4. MAP<VARCHAR, STRUCT<a INTEGER, b VARCHAR[]>> --------------------
+
+skipif pg-wire-extended
+statement ok
+CREATE TABLE n4 (
+  pk INTEGER PRIMARY KEY,
+  t VARCHAR,
+  v MAP(VARCHAR, STRUCT(a INTEGER, b VARCHAR[]))
+)
+
+
+skipif pg-wire-extended
+statement ok
+CREATE INDEX n4_idx ON n4 USING inverted(pk, t en) INCLUDE (v)
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n4 VALUES (1, 'one',   MAP {'k': ROW(7, ['a','b']), 'm': ROW(NULL, NULL)})
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n4 VALUES (2, 'two',   NULL)
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n4 VALUES (3, 'three', MAP {})
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n4 VALUES (4, 'four',  MAP {'p': NULL})
+
+
+skipif pg-wire-extended
+statement ok
+VACUUM (UPDATE_INDEXES) n4
+
+
+skipif pg-wire-extended
+query
+EXPLAIN SELECT pk, v FROM n4_idx WHERE t @@ ts_phrase('one');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: n4_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  AND[PHRASE[t(string) =   │
+│    <Term:one(0, 0); >]]   │
+│                           │
+│        Projections:       │
+│           pk (l)          │
+│           v (i)           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+skipif pg-wire-extended
+query
+SELECT pk, v FROM n4_idx
+WHERE t @@ ts_phrase('one') OR t @@ ts_phrase('two')
+   OR t @@ ts_phrase('three') OR t @@ ts_phrase('four')
+ORDER BY pk;
+----
+pk	v
+1	{"(k,\\"(7,\\"\\"{a,b}\\"\\")\\")","(m,\\"(,)\\")"}
+2	NULL
+3	{}
+4	{"(p,)"}
+
+
+# --- 5. STRUCT<STRUCT<...>, LIST<STRUCT<VARCHAR, INTEGER[2]>>> ----------
+
+skipif pg-wire-extended
+statement ok
+CREATE TABLE n5 (
+  pk INTEGER PRIMARY KEY,
+  t VARCHAR,
+  v STRUCT(
+    header STRUCT(name VARCHAR, version INTEGER),
+    payload STRUCT(key VARCHAR, items INTEGER[2])[]
+  )
+)
+
+
+skipif pg-wire-extended
+statement ok
+CREATE INDEX n5_idx ON n5 USING inverted(pk, t en) INCLUDE (v)
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n5 VALUES (1, 'one',   ROW(ROW('hdr1', 1), [ROW('k1', [10,20]), ROW('k2', [30,40])]))
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n5 VALUES (2, 'two',   NULL)
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n5 VALUES (3, 'three', ROW(ROW(NULL, 3), []))
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n5 VALUES (4, 'four',  ROW(NULL, [ROW('only', [99,100])]))
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n5 VALUES (5, 'five',  ROW(ROW('h5', NULL), [ROW(NULL, [7,8]), ROW('z', NULL)]))
+
+
+skipif pg-wire-extended
+statement ok
+VACUUM (UPDATE_INDEXES) n5
+
+
+skipif pg-wire-extended
+query
+EXPLAIN SELECT pk, v FROM n5_idx WHERE t @@ ts_phrase('one');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: n5_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  AND[PHRASE[t(string) =   │
+│    <Term:one(0, 0); >]]   │
+│                           │
+│        Projections:       │
+│           pk (l)          │
+│           v (i)           │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+skipif pg-wire-extended
+query
+SELECT pk, v FROM n5_idx
+WHERE t @@ ts_phrase('one') OR t @@ ts_phrase('two')
+   OR t @@ ts_phrase('three') OR t @@ ts_phrase('four')
+   OR t @@ ts_phrase('five')
+ORDER BY pk;
+----
+pk	v
+1	("(hdr1,1)","{""(k1,\\\\""{10,20}\\\\"")"",""(k2,\\\\""{30,40}\\\\"")""}")
+2	NULL
+3	("(,3)",{})
+4	(,"{""(only,\\\\""{99,100}\\\\"")""}")
+5	("(h5,)","{""(,\\\\""{7,8}\\\\"")"",""(z,)""}")
+
+
+# --- 6. LIST<ARRAY<STRUCT<f FLOAT,
+#                          a INTEGER[2],
+#                          l LIST<STRUCT<x INTEGER, y INTEGER>>>, 2>> -----
+
+skipif pg-wire-extended
+statement ok
+CREATE TABLE n6 (
+  pk INTEGER PRIMARY KEY,
+  t VARCHAR,
+  v STRUCT(
+    f FLOAT,
+    a INTEGER[2],
+    l STRUCT(x INTEGER, y INTEGER)[]
+  )[2][]
+)
+
+
+skipif pg-wire-extended
+statement ok
+CREATE INDEX n6_idx ON n6 USING inverted(pk, t en) INCLUDE (v)
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n6 VALUES (1, 'one', [
+  [ROW(1.5, [10,20], [ROW(100,200), ROW(300,400)]), ROW(2.5, [30,40], [])],
+  [ROW(NULL, [50,60], [ROW(NULL, 700)]),            ROW(4.5, NULL, NULL)]
+])
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n6 VALUES (2, 'two',   NULL)
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n6 VALUES (3, 'three', [])
+
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO n6 VALUES (4, 'four',  [
+  [NULL, ROW(9.0, [1,2], [])]
+])
+
+
+skipif pg-wire-extended
+statement ok
+VACUUM (UPDATE_INDEXES) n6
+
+
+skipif pg-wire-extended
+query
+EXPLAIN SELECT pk, v FROM n6_idx WHERE t @@ ts_phrase('one');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: n6_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  AND[PHRASE[t(string) =   │
+│    <Term:one(0, 0); >]]   │
+│                           │
+│        Projections:       │
+│           pk (l)          │
+│           v (i)           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+skipif pg-wire-extended
+query
+SELECT pk, v FROM n6_idx
+WHERE t @@ ts_phrase('one') OR t @@ ts_phrase('two')
+   OR t @@ ts_phrase('three') OR t @@ ts_phrase('four')
+ORDER BY pk;
+----
+pk	v
+1	{{"(1.5,\\"{10,20}\\",\\"{\\"\\"(100,200)\\"\\",\\"\\"(300,400)\\"\\"}\\")","(2.5,\\"{30,40}\\",{})"},{"(,\\"{50,60}\\",\\"{\\"\\"(,700)\\"\\"}\\")","(4.5,,)"}}
+2	NULL
+3	{}
+4	{{NULL,"(9,\\"{1,2}\\",{})"}}

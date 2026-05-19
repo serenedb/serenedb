@@ -1,0 +1,1312 @@
+# Vedernikoff's grand cascade saga: a battery of CASCADE / RESTRICT scenarios
+# exercising every meaningful dependency edge type and every reasonable mix
+# of intra-subtree and cross-schema fan-out.
+
+# --- 1. The clickclack interview chain -------------------------------------
+# Deep function call nesting. Each layer calls the previous one. Dropping
+# the root with CASCADE should walk the chain and drop everything depending
+# on it transitively.
+
+statement ok
+CREATE FUNCTION vedernikoff_clickclack_step1(x INT) AS x + 1;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_clickclack_step2(x INT)
+  AS vedernikoff_clickclack_step1(x) * 2;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_clickclack_step3(x INT)
+  AS vedernikoff_clickclack_step2(x) - 3;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_clickclack_step4(x INT)
+  AS vedernikoff_clickclack_step3(x) + 7;
+
+
+query
+SELECT vedernikoff_clickclack_step4(10);
+----
+vedernikoff_clickclack_step4
+26
+
+
+# Plain DROP at the root must be refused -- step2/3/4 still depend on it.
+statement error (?i)cannot drop function .*vedernikoff_clickclack_step1.* because other objects depend on it
+DROP FUNCTION vedernikoff_clickclack_step1(INT);
+
+
+statement error (?i)cannot drop function .*vedernikoff_clickclack_step1.* because other objects depend on it
+DROP FUNCTION vedernikoff_clickclack_step1(INT) RESTRICT;
+
+
+# CASCADE drops the entire chain in one shot.
+statement ok
+DROP FUNCTION vedernikoff_clickclack_step1(INT) CASCADE;
+
+
+statement error (?i)(macro|function).*vedernikoff_clickclack_step1.*does not exist
+SELECT vedernikoff_clickclack_step1(0);
+
+
+statement error (?i)(macro|function).*vedernikoff_clickclack_step2.*does not exist
+SELECT vedernikoff_clickclack_step2(0);
+
+
+statement error (?i)(macro|function).*vedernikoff_clickclack_step3.*does not exist
+SELECT vedernikoff_clickclack_step3(0);
+
+
+statement error (?i)(macro|function).*vedernikoff_clickclack_step4.*does not exist
+SELECT vedernikoff_clickclack_step4(0);
+
+
+# --- 2. Iceberg manifest tower: deep view-on-view chain --------------------
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_base (id INT, payload TEXT);
+
+
+statement count 3
+INSERT INTO vedernikoff_iceberg_base VALUES
+  (1, 'manifest_v1'), (2, 'manifest_v2'), (3, 'manifest_v3');
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_tower1 AS
+  SELECT id, payload FROM vedernikoff_iceberg_base WHERE id > 0;
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_tower2 AS
+  SELECT id FROM vedernikoff_iceberg_tower1 WHERE id > 1;
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_tower3 AS
+  SELECT id FROM vedernikoff_iceberg_tower2 WHERE id > 2;
+
+
+query
+SELECT id FROM vedernikoff_iceberg_tower3;
+----
+id
+3
+
+
+# Root-table drop without CASCADE is refused at every layer.
+statement error (?i)cannot drop table .*vedernikoff_iceberg_base.* because other objects depend on it
+DROP TABLE vedernikoff_iceberg_base;
+
+
+statement error (?i)cannot drop view .*vedernikoff_iceberg_tower1.* because other objects depend on it
+DROP VIEW vedernikoff_iceberg_tower1;
+
+
+statement error (?i)cannot drop view .*vedernikoff_iceberg_tower2.* because other objects depend on it
+DROP VIEW vedernikoff_iceberg_tower2;
+
+
+# Leaf is safe to drop, then next becomes leaf, ... incremental RESTRICT works too.
+statement ok
+DROP VIEW vedernikoff_iceberg_tower3;
+
+
+statement ok
+DROP VIEW vedernikoff_iceberg_tower2;
+
+
+statement ok
+DROP VIEW vedernikoff_iceberg_tower1;
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_base;
+
+
+# Same setup, but blow it all up at the root with CASCADE.
+statement ok
+CREATE TABLE vedernikoff_iceberg_base (id INT, payload TEXT);
+
+
+statement count 3
+INSERT INTO vedernikoff_iceberg_base VALUES
+  (1, 'manifest_v1'), (2, 'manifest_v2'), (3, 'manifest_v3');
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_tower1 AS
+  SELECT id, payload FROM vedernikoff_iceberg_base WHERE id > 0;
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_tower2 AS
+  SELECT id FROM vedernikoff_iceberg_tower1 WHERE id > 1;
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_tower3 AS
+  SELECT id FROM vedernikoff_iceberg_tower2 WHERE id > 2;
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_base CASCADE;
+
+
+statement error (?i)(table|view|relation).*vedernikoff_iceberg_tower3.*does not exist
+SELECT * FROM vedernikoff_iceberg_tower3;
+
+
+statement error (?i)(table|view|relation).*vedernikoff_iceberg_tower1.*does not exist
+SELECT * FROM vedernikoff_iceberg_tower1;
+
+
+# --- 3. MOP listing sequence shared across multiple tables -----------------
+# A single CREATE SEQUENCE used as DEFAULT in three different tables. CASCADE
+# must clear every DEFAULT, and the tables themselves must survive.
+
+statement ok
+CREATE SEQUENCE vedernikoff_mop_offer_seq START 100;
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_listings_a (
+  id INT DEFAULT nextval('vedernikoff_mop_offer_seq'),
+  tag TEXT
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_listings_b (
+  id INT DEFAULT nextval('vedernikoff_mop_offer_seq'),
+  tag TEXT
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_listings_c (
+  id INT DEFAULT nextval('vedernikoff_mop_offer_seq'),
+  tag TEXT
+);
+
+
+statement ok
+INSERT INTO vedernikoff_mop_listings_a (tag) VALUES ('outreach_a');
+
+
+statement ok
+INSERT INTO vedernikoff_mop_listings_b (tag) VALUES ('outreach_b');
+
+
+statement ok
+INSERT INTO vedernikoff_mop_listings_c (tag) VALUES ('outreach_c');
+
+
+query
+SELECT id, tag FROM vedernikoff_mop_listings_a;
+----
+id   tag
+100  outreach_a
+
+
+query
+SELECT id, tag FROM vedernikoff_mop_listings_b;
+----
+id   tag
+101  outreach_b
+
+
+query
+SELECT id, tag FROM vedernikoff_mop_listings_c;
+----
+id   tag
+102  outreach_c
+
+
+# Plain DROP must complain.
+statement error (?i)cannot drop sequence .*vedernikoff_mop_offer_seq.*
+DROP SEQUENCE vedernikoff_mop_offer_seq;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_mop_offer_seq CASCADE;
+
+
+# After CASCADE the tables survive but every DEFAULT is gone.
+statement ok
+INSERT INTO vedernikoff_mop_listings_a (tag) VALUES ('after_cascade_a');
+
+
+statement ok
+INSERT INTO vedernikoff_mop_listings_b (tag) VALUES ('after_cascade_b');
+
+
+statement ok
+INSERT INTO vedernikoff_mop_listings_c (tag) VALUES ('after_cascade_c');
+
+
+query
+SELECT id, tag FROM vedernikoff_mop_listings_a ORDER BY tag;
+----
+id    tag
+NULL  after_cascade_a
+100   outreach_a
+
+
+query
+SELECT id, tag FROM vedernikoff_mop_listings_b ORDER BY tag;
+----
+id    tag
+NULL  after_cascade_b
+101   outreach_b
+
+
+query
+SELECT id, tag FROM vedernikoff_mop_listings_c ORDER BY tag;
+----
+id    tag
+NULL  after_cascade_c
+102   outreach_c
+
+
+statement ok
+DROP TABLE vedernikoff_mop_listings_a;
+
+
+statement ok
+DROP TABLE vedernikoff_mop_listings_b;
+
+
+statement ok
+DROP TABLE vedernikoff_mop_listings_c;
+
+
+# --- 4. Cross-schema column DEFAULT cascade --------------------------------
+# A sequence in one schema, tables in TWO other schemas pointing at it.
+# Dropping the sequence schema must atomically clear DEFAULTs in both
+# cross-schema tables.
+
+statement ok
+CREATE SCHEMA vedernikoff_resumes;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_clickclack_team;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_mop_team;
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_resumes.shared_id_seq START 7000;
+
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_team.candidates (
+  id INT DEFAULT nextval('vedernikoff_resumes.shared_id_seq'),
+  note TEXT
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_team.candidates (
+  id INT DEFAULT nextval('vedernikoff_resumes.shared_id_seq'),
+  note TEXT
+);
+
+
+statement ok
+INSERT INTO vedernikoff_clickclack_team.candidates (note) VALUES ('cc_round1');
+
+
+statement ok
+INSERT INTO vedernikoff_mop_team.candidates (note) VALUES ('mop_round1');
+
+
+# Plain DROP SCHEMA on the resumes schema is refused (not empty).
+statement error (?i)
+DROP SCHEMA vedernikoff_resumes;
+
+
+statement ok
+DROP SCHEMA vedernikoff_resumes CASCADE;
+
+
+# Both cross-schema tables should keep their data but lose their DEFAULTs.
+statement ok
+INSERT INTO vedernikoff_clickclack_team.candidates (note) VALUES ('cc_after');
+
+
+statement ok
+INSERT INTO vedernikoff_mop_team.candidates (note) VALUES ('mop_after');
+
+
+query
+SELECT id, note FROM vedernikoff_clickclack_team.candidates ORDER BY note;
+----
+id    note
+NULL  cc_after
+7000  cc_round1
+
+
+query
+SELECT id, note FROM vedernikoff_mop_team.candidates ORDER BY note;
+----
+id    note
+NULL  mop_after
+7001  mop_round1
+
+
+statement ok
+DROP SCHEMA vedernikoff_clickclack_team CASCADE;
+
+
+statement ok
+DROP SCHEMA vedernikoff_mop_team CASCADE;
+
+
+# --- 5. Cross-schema CHECK constraint referencing a function ----------------
+# CHECK constraints can reach across schemas. CASCADE on the function schema
+# must rewrite the table definition to drop the CHECK while keeping the rest.
+
+statement ok
+CREATE SCHEMA vedernikoff_ml_paper;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_iceberg_audit;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_ml_paper.is_positive(x INT) AS x > 0;
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_audit.runs (
+  id INT,
+  score INT,
+  CONSTRAINT score_must_be_positive
+    CHECK (vedernikoff_ml_paper.is_positive(score))
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_iceberg_audit.runs VALUES (1, 42);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_iceberg_audit.runs VALUES (2, -5);
+
+
+# Plain DROP fails: the CHECK constraint depends on the function.
+statement error (?i)cannot drop function .*is_positive.* because other objects depend on it
+DROP FUNCTION vedernikoff_ml_paper.is_positive(INT);
+
+
+statement ok
+DROP FUNCTION vedernikoff_ml_paper.is_positive(INT) CASCADE;
+
+
+# Constraint should be cleared -- the previously rejected row now inserts.
+statement count 1
+INSERT INTO vedernikoff_iceberg_audit.runs VALUES (2, -5);
+
+
+query
+SELECT id, score FROM vedernikoff_iceberg_audit.runs ORDER BY id;
+----
+id  score
+1   42
+2   -5
+
+
+statement ok
+DROP SCHEMA vedernikoff_iceberg_audit CASCADE;
+
+
+statement ok
+DROP SCHEMA vedernikoff_ml_paper CASCADE;
+
+
+# --- 6. Function calling a sequence (cross-schema) -------------------------
+# Function body uses nextval() of a sequence in another schema. Drop the
+# schema with the sequence -> function should die too.
+
+statement ok
+CREATE SCHEMA vedernikoff_solid_module;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_mop_recruiting;
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_solid_module.token_seq;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_mop_recruiting.next_token()
+  AS nextval('vedernikoff_solid_module.token_seq');
+
+
+query
+SELECT vedernikoff_mop_recruiting.next_token();
+----
+next_token
+1
+
+
+# Refused without CASCADE: the function depends on the sequence schema.
+statement error (?i)
+DROP SCHEMA vedernikoff_solid_module;
+
+
+statement ok
+DROP SCHEMA vedernikoff_solid_module CASCADE;
+
+
+# Function in the other schema should be gone (cross-schema cascade drop).
+statement error (?i)(macro|function).*next_token.*does not exist
+SELECT vedernikoff_mop_recruiting.next_token();
+
+
+statement ok
+DROP SCHEMA vedernikoff_mop_recruiting CASCADE;
+
+
+# --- 7. View depending on a function depending on a sequence ---------------
+# Triple-chain cross-tree. Drop the bottom (sequence) and the whole tower
+# must come down: function, view both gone.
+
+statement ok
+CREATE SEQUENCE vedernikoff_iceberg_partition_seq;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_iceberg_next_partition()
+  AS nextval('vedernikoff_iceberg_partition_seq');
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_manifest_t (id INT);
+
+
+statement count 2
+INSERT INTO vedernikoff_iceberg_manifest_t VALUES (1), (2);
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_manifest_feed AS
+  SELECT vedernikoff_iceberg_next_partition() AS pid, id
+  FROM vedernikoff_iceberg_manifest_t;
+
+
+query
+SELECT count(*) FROM vedernikoff_iceberg_manifest_feed;
+----
+count
+2
+
+
+# Sequence drop must be refused (function and view transitively depend).
+statement error (?i)cannot drop sequence .*vedernikoff_iceberg_partition_seq.*
+DROP SEQUENCE vedernikoff_iceberg_partition_seq;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_iceberg_partition_seq CASCADE;
+
+
+statement error (?i)(macro|function).*vedernikoff_iceberg_next_partition.*does not exist
+SELECT vedernikoff_iceberg_next_partition();
+
+
+statement error (?i)(table|view|relation).*vedernikoff_iceberg_manifest_feed.*does not exist
+SELECT * FROM vedernikoff_iceberg_manifest_feed;
+
+
+# Underlying table is untouched.
+query
+SELECT count(*) FROM vedernikoff_iceberg_manifest_t;
+----
+count
+2
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_manifest_t;
+
+
+# --- 8. SERIAL table dropped without CASCADE while no cross-tree ref -------
+# Sanity check: a table with auto-PK owned sequence + an explicit index must
+# drop without CASCADE if nothing outside the table's composition subtree
+# references it.
+
+statement ok
+CREATE TABLE vedernikoff_solid_module_writeups (
+  id SERIAL PRIMARY KEY,
+  topic TEXT
+);
+
+
+statement ok
+CREATE INDEX vedernikoff_solid_topic_idx
+  ON vedernikoff_solid_module_writeups (topic);
+
+
+statement count 3
+INSERT INTO vedernikoff_solid_module_writeups (topic) VALUES
+  ('rust_lifetime'), ('iceberg_v2_spec'), ('mop_role_grading');
+
+
+# No cross-tree referrers -> plain DROP succeeds, taking the owned PK
+# sequence and the index with it (composition).
+statement ok
+DROP TABLE vedernikoff_solid_module_writeups;
+
+
+# --- 9. SERIAL sequence cross-referenced from sibling table ----------------
+# Two tables: A is SERIAL (owns its id_seq), B has a column DEFAULT pointing
+# at A's id_seq from outside A's composition subtree. Plain DROP TABLE A
+# must be refused -- A's owned seq has a cross-tree referrer.
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_owner (
+  id SERIAL PRIMARY KEY,
+  name TEXT
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_dashboard (
+  id BIGINT NOT NULL DEFAULT nextval('vedernikoff_clickclack_owner_id_seq'),
+  payload TEXT
+);
+
+
+statement ok
+INSERT INTO vedernikoff_clickclack_owner (name) VALUES ('first_owner');
+
+
+statement count 1
+INSERT INTO vedernikoff_clickclack_dashboard (payload) VALUES ('row1');
+
+
+# Plain DROP refused -- dashboard's DEFAULT depends on owner's owned seq.
+statement error (?i)cannot drop table .*vedernikoff_clickclack_owner.* because other objects depend on it
+DROP TABLE vedernikoff_clickclack_owner;
+
+
+statement error (?i)cannot drop table .*vedernikoff_clickclack_owner.* because other objects depend on it
+DROP TABLE vedernikoff_clickclack_owner RESTRICT;
+
+
+# But dashboard itself has no inbound deps, so plain DROP works on it.
+statement ok
+DROP TABLE vedernikoff_clickclack_dashboard;
+
+
+# And now owner is unencumbered too.
+statement ok
+DROP TABLE vedernikoff_clickclack_owner;
+
+
+# --- 10. Mixed cross-schema graph: type, function, sequence, view -----------
+# Maximum chaos: schemas A and B. A holds a type, function, sequence; B holds
+# a table using A's type, a column DEFAULT calling A's function, a view
+# selecting from the table, and a CHECK referencing A's sequence indirectly
+# through A's function. Drop A CASCADE -> the entire B side gets rewritten
+# or dropped consistently.
+
+statement ok
+CREATE SCHEMA vedernikoff_iceberg_layer_a;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_iceberg_layer_b;
+
+
+statement ok
+CREATE TYPE vedernikoff_iceberg_layer_a.mood AS ENUM('joyful','exhausted','iceberg');
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_iceberg_layer_a.run_seq;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_iceberg_layer_a.next_run()
+  AS nextval('vedernikoff_iceberg_layer_a.run_seq');
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_layer_b.entries (
+  id INT DEFAULT vedernikoff_iceberg_layer_a.next_run(),
+  feeling vedernikoff_iceberg_layer_a.mood,
+  CONSTRAINT positive_run
+    CHECK (vedernikoff_iceberg_layer_a.next_run() >= 0)
+);
+
+
+# Verify all the wiring works first.
+statement ok
+INSERT INTO vedernikoff_iceberg_layer_b.entries (feeling) VALUES ('joyful');
+
+
+query
+SELECT feeling FROM vedernikoff_iceberg_layer_b.entries;
+----
+feeling
+joyful
+
+
+# CASCADE the schema A -> table in B survives but its dependent column
+# DEFAULT, column TYPE, and CHECK are all torn down atomically.
+statement ok
+DROP SCHEMA vedernikoff_iceberg_layer_a CASCADE;
+
+
+# Pre-cascade row still present.
+query
+SELECT id FROM vedernikoff_iceberg_layer_b.entries;
+----
+id
+1
+
+
+# DEFAULT cleared (id NULL); CHECK cleared (no constraint error); column
+# 'feeling' got dropped because its type alias is gone.
+statement count 1
+INSERT INTO vedernikoff_iceberg_layer_b.entries (id) VALUES (NULL);
+
+
+statement ok
+DROP SCHEMA vedernikoff_iceberg_layer_b CASCADE;
+
+
+# --- 11. RESTRICT specifically blocks every external referrer kind ---------
+# One sequence with one of each: column DEFAULT, function ref, view ref,
+# CHECK ref. RESTRICT must reject the drop until everything that points at
+# the sequence is gone.
+
+statement ok
+CREATE SEQUENCE vedernikoff_mop_ats_seq;
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_ats_records (
+  id INT DEFAULT nextval('vedernikoff_mop_ats_seq'),
+  score INT,
+  CONSTRAINT score_caps CHECK (score < (nextval('vedernikoff_mop_ats_seq') + 1000000))
+);
+
+
+statement ok
+CREATE FUNCTION vedernikoff_mop_ats_next() AS nextval('vedernikoff_mop_ats_seq');
+
+
+statement ok
+CREATE VIEW vedernikoff_mop_ats_window AS
+  SELECT nextval('vedernikoff_mop_ats_seq') AS n;
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_mop_ats_seq.*
+DROP SEQUENCE vedernikoff_mop_ats_seq;
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_mop_ats_seq.*
+DROP SEQUENCE vedernikoff_mop_ats_seq RESTRICT;
+
+
+# CASCADE rips through all four edge kinds in one shot.
+statement ok
+DROP SEQUENCE vedernikoff_mop_ats_seq CASCADE;
+
+
+statement error (?i)(macro|function).*vedernikoff_mop_ats_next.*does not exist
+SELECT vedernikoff_mop_ats_next();
+
+
+statement error (?i)(table|view|relation).*vedernikoff_mop_ats_window.*does not exist
+SELECT * FROM vedernikoff_mop_ats_window;
+
+
+# Table survived; CHECK and DEFAULT both cleared.
+statement count 1
+INSERT INTO vedernikoff_mop_ats_records (score) VALUES (999999999);
+
+
+statement ok
+DROP TABLE vedernikoff_mop_ats_records;
+
+
+# --- 12. RESTRICT/CASCADE on a schema with mixed empty/non-empty contents --
+
+statement ok
+CREATE SCHEMA vedernikoff_clickclack_offsite;
+
+
+# Empty schema: plain DROP works (no contents, no need for CASCADE).
+statement ok
+DROP SCHEMA vedernikoff_clickclack_offsite;
+
+
+# Now build up contents and verify RESTRICT refuses while CASCADE wipes.
+statement ok
+CREATE SCHEMA vedernikoff_clickclack_offsite;
+
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_offsite.itinerary (id INT, slot TEXT);
+
+
+statement error (?i)
+DROP SCHEMA vedernikoff_clickclack_offsite;
+
+
+statement error (?i)
+DROP SCHEMA vedernikoff_clickclack_offsite RESTRICT;
+
+
+statement ok
+DROP SCHEMA vedernikoff_clickclack_offsite CASCADE;
+
+
+# --- 13. Idempotent drops -- IF EXISTS after CASCADE shouldn't error -------
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_audit_throwaway (id INT);
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_audit_throwaway;
+
+
+statement ok
+DROP TABLE IF EXISTS vedernikoff_iceberg_audit_throwaway;
+
+
+statement ok
+DROP TABLE IF EXISTS vedernikoff_iceberg_audit_never_existed;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS vedernikoff_mop_seq_never_existed;
+
+
+# --- 14. Function chain CASCADE leaves table side untouched ----------------
+# Function chain references a table only at the leaves; cascading the
+# function chain should drop the functions but leave the table alone.
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_partitions (id INT, label TEXT);
+
+
+statement count 2
+INSERT INTO vedernikoff_iceberg_partitions VALUES (1, 'p1'), (2, 'p2');
+
+
+statement ok
+CREATE FUNCTION vedernikoff_iceberg_partition_leaf()
+  AS (SELECT count(*) FROM vedernikoff_iceberg_partitions);
+
+
+statement ok
+CREATE FUNCTION vedernikoff_iceberg_partition_mid()
+  AS vedernikoff_iceberg_partition_leaf() + 100;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_iceberg_partition_top()
+  AS vedernikoff_iceberg_partition_mid() * 2;
+
+
+query
+SELECT vedernikoff_iceberg_partition_top();
+----
+vedernikoff_iceberg_partition_top
+204
+
+
+# Dropping the leaf function with CASCADE drops mid and top, but the table
+# remains intact.
+statement ok
+DROP FUNCTION vedernikoff_iceberg_partition_leaf() CASCADE;
+
+
+query
+SELECT count(*) FROM vedernikoff_iceberg_partitions;
+----
+count
+2
+
+
+statement error (?i)(macro|function).*vedernikoff_iceberg_partition_mid.*does not exist
+SELECT vedernikoff_iceberg_partition_mid();
+
+
+statement error (?i)(macro|function).*vedernikoff_iceberg_partition_top.*does not exist
+SELECT vedernikoff_iceberg_partition_top();
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_partitions;
+
+
+# --- 15. Owned sequence referenced from another table's CHECK constraint ---
+# Edge case: SERIAL on table A produces an owned sequence; table B has a
+# CHECK constraint that calls nextval() on A's owned seq. RESTRICT on A must
+# refuse (cross-tree CHECK referrer), CASCADE on A clears B's CHECK.
+
+statement ok
+CREATE TABLE vedernikoff_mop_offer_owner (id SERIAL PRIMARY KEY, name TEXT);
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_offer_check_user (
+  id INT,
+  budget INT,
+  CONSTRAINT under_offer_count
+    CHECK (budget > nextval('vedernikoff_mop_offer_owner_id_seq'))
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_offer_check_user VALUES (1, 1000000);
+
+
+statement error (?i)cannot drop table .*vedernikoff_mop_offer_owner.* because other objects depend on it
+DROP TABLE vedernikoff_mop_offer_owner;
+
+
+statement error (?i)cannot drop table .*vedernikoff_mop_offer_owner.* because other objects depend on it
+DROP TABLE vedernikoff_mop_offer_owner RESTRICT;
+
+
+statement ok
+DROP TABLE vedernikoff_mop_offer_owner CASCADE;
+
+
+# CHECK gone, smaller budget now allowed.
+statement count 1
+INSERT INTO vedernikoff_mop_offer_check_user VALUES (2, 1);
+
+
+statement ok
+DROP TABLE vedernikoff_mop_offer_check_user;
+
+
+# --- 16. CASCADE through a multi-schema function chain ---------------------
+# Schema D has a sequence; schema E has a function that calls D's sequence;
+# schema F has a table whose column DEFAULT calls E's function. Drop schema D
+# CASCADE -> E's function is dropped, F's column DEFAULT is cleared.
+
+statement ok
+CREATE SCHEMA vedernikoff_layer_d;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_layer_e;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_layer_f;
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_layer_d.iceberg_seq START 200;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_layer_e.iceberg_next()
+  AS nextval('vedernikoff_layer_d.iceberg_seq');
+
+
+statement ok
+CREATE TABLE vedernikoff_layer_f.consumer (
+  id INT DEFAULT vedernikoff_layer_e.iceberg_next(),
+  note TEXT
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_layer_f.consumer (note) VALUES ('captured');
+
+
+query
+SELECT id, note FROM vedernikoff_layer_f.consumer;
+----
+id   note
+200  captured
+
+
+# CASCADE the bottom layer; everything reachable should fall.
+statement ok
+DROP SCHEMA vedernikoff_layer_d CASCADE;
+
+
+# Function in E should be gone.
+statement error (?i)(macro|function).*iceberg_next.*does not exist
+SELECT vedernikoff_layer_e.iceberg_next();
+
+
+# Table in F survives, but its DEFAULT is cleared.
+statement count 1
+INSERT INTO vedernikoff_layer_f.consumer (note) VALUES ('after_cascade');
+
+
+query
+SELECT id, note FROM vedernikoff_layer_f.consumer ORDER BY note;
+----
+id    note
+NULL  after_cascade
+200   captured
+
+
+statement ok
+DROP SCHEMA vedernikoff_layer_e CASCADE;
+
+
+statement ok
+DROP SCHEMA vedernikoff_layer_f CASCADE;
+
+
+# --- 17. Self-overlapping cascade: same column DEFAULT and CHECK on one seq -
+# Single sequence, single table; the table uses the seq in BOTH column
+# DEFAULT and a CHECK constraint. CASCADE must clear both.
+
+statement ok
+CREATE SEQUENCE vedernikoff_solid_journal_seq;
+
+
+statement ok
+CREATE TABLE vedernikoff_solid_journal (
+  id INT DEFAULT nextval('vedernikoff_solid_journal_seq'),
+  body TEXT,
+  CONSTRAINT body_window
+    CHECK (length(body) < nextval('vedernikoff_solid_journal_seq') + 1000)
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_journal (body) VALUES ('entry_alpha');
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_solid_journal_seq.*
+DROP SEQUENCE vedernikoff_solid_journal_seq;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_solid_journal_seq CASCADE;
+
+
+# DEFAULT and CHECK both gone; insert with no id and arbitrarily long body works.
+statement count 1
+INSERT INTO vedernikoff_solid_journal (body) VALUES (repeat('z', 5000));
+
+
+query
+SELECT id, length(body) FROM vedernikoff_solid_journal ORDER BY length(body);
+----
+id    length
+1     11
+NULL  5000
+
+
+statement ok
+DROP TABLE vedernikoff_solid_journal;
+
+
+# --- 18. CASCADE on a function with multiple downstream CHECK constraints --
+# One function, used by CHECK on three different tables. Drop function
+# CASCADE must clear all three CHECKs and leave the tables in place.
+
+statement ok
+CREATE FUNCTION vedernikoff_iceberg_threshold(x INT) AS x BETWEEN 0 AND 100;
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_t_alpha (
+  v INT, CONSTRAINT ck_a CHECK (vedernikoff_iceberg_threshold(v))
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_t_beta (
+  v INT, CONSTRAINT ck_b CHECK (vedernikoff_iceberg_threshold(v))
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_t_gamma (
+  v INT, CONSTRAINT ck_g CHECK (vedernikoff_iceberg_threshold(v))
+);
+
+
+# Constraints are enforced.
+statement error (?i)
+INSERT INTO vedernikoff_iceberg_t_alpha VALUES (500);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_iceberg_t_beta VALUES (-1);
+
+
+statement error (?i)
+INSERT INTO vedernikoff_iceberg_t_gamma VALUES (10000);
+
+
+# RESTRICT refuses.
+statement error (?i)cannot drop function .*vedernikoff_iceberg_threshold.*
+DROP FUNCTION vedernikoff_iceberg_threshold(INT);
+
+
+statement ok
+DROP FUNCTION vedernikoff_iceberg_threshold(INT) CASCADE;
+
+
+# All three CHECKs gone -- previously rejected rows now accepted.
+statement count 1
+INSERT INTO vedernikoff_iceberg_t_alpha VALUES (500);
+
+
+statement count 1
+INSERT INTO vedernikoff_iceberg_t_beta VALUES (-1);
+
+
+statement count 1
+INSERT INTO vedernikoff_iceberg_t_gamma VALUES (10000);
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_t_alpha;
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_t_beta;
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_t_gamma;
+
+
+# --- 19. CASCADE across an enum type used by multiple tables ---------------
+# An ENUM type referenced by three sibling tables. DROP TYPE CASCADE must
+# delete the relevant column from each table (PgSqlTypeDep::column_types).
+
+statement ok
+CREATE TYPE vedernikoff_mop_stage AS ENUM('applied','screened','offer','hired');
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_pipeline_a (
+  candidate TEXT, stage vedernikoff_mop_stage
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_pipeline_b (
+  candidate TEXT, stage vedernikoff_mop_stage
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_pipeline_c (
+  candidate TEXT, stage vedernikoff_mop_stage
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_pipeline_a VALUES ('vedernikoff', 'screened');
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_pipeline_b VALUES ('vedernikoff', 'offer');
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_pipeline_c VALUES ('vedernikoff', 'hired');
+
+
+statement error (?i)cannot drop type .*vedernikoff_mop_stage.*
+DROP TYPE vedernikoff_mop_stage;
+
+
+statement ok
+DROP TYPE vedernikoff_mop_stage CASCADE;
+
+
+# 'stage' column gone from each table; only 'candidate' remains.
+query
+SELECT candidate FROM vedernikoff_mop_pipeline_a;
+----
+candidate
+vedernikoff
+
+
+query
+SELECT candidate FROM vedernikoff_mop_pipeline_b;
+----
+candidate
+vedernikoff
+
+
+query
+SELECT candidate FROM vedernikoff_mop_pipeline_c;
+----
+candidate
+vedernikoff
+
+
+statement ok
+DROP TABLE vedernikoff_mop_pipeline_a;
+
+
+statement ok
+DROP TABLE vedernikoff_mop_pipeline_b;
+
+
+statement ok
+DROP TABLE vedernikoff_mop_pipeline_c;
+
+
+# --- 20. Multiple seeds: CASCADE that fans out widely ----------------------
+# Build a graph with a sequence shared by a function, a view, several column
+# DEFAULTs, and a CHECK constraint. Drop the sequence with CASCADE and audit
+# the surviving objects.
+
+statement ok
+CREATE SEQUENCE vedernikoff_mop_iceberg_seq START 50;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_mop_iceberg_next()
+  AS nextval('vedernikoff_mop_iceberg_seq');
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_iceberg_authors (
+  id INT DEFAULT nextval('vedernikoff_mop_iceberg_seq'),
+  handle TEXT
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_iceberg_papers (
+  id INT DEFAULT vedernikoff_mop_iceberg_next(),
+  title TEXT,
+  CONSTRAINT title_short
+    CHECK (length(title) < nextval('vedernikoff_mop_iceberg_seq') + 100)
+);
+
+
+statement ok
+CREATE VIEW vedernikoff_mop_iceberg_feed AS
+  SELECT vedernikoff_mop_iceberg_next() AS n;
+
+
+statement ok
+INSERT INTO vedernikoff_mop_iceberg_authors (handle) VALUES ('a1');
+
+
+statement ok
+INSERT INTO vedernikoff_mop_iceberg_papers (title) VALUES ('p1');
+
+
+# CASCADE the sequence -- function, view, and both column DEFAULTs and the
+# CHECK all need rewiring atomically.
+statement ok
+DROP SEQUENCE vedernikoff_mop_iceberg_seq CASCADE;
+
+
+# Pre-cascade data preserved.
+query
+SELECT handle FROM vedernikoff_mop_iceberg_authors;
+----
+handle
+a1
+
+
+query
+SELECT title FROM vedernikoff_mop_iceberg_papers;
+----
+title
+p1
+
+
+# Function & view gone.
+statement error (?i)(macro|function).*vedernikoff_mop_iceberg_next.*does not exist
+SELECT vedernikoff_mop_iceberg_next();
+
+
+statement error (?i)(table|view|relation).*vedernikoff_mop_iceberg_feed.*does not exist
+SELECT * FROM vedernikoff_mop_iceberg_feed;
+
+
+# DEFAULTs cleared; previously-impossible-because-CHECK insert now works.
+statement ok
+INSERT INTO vedernikoff_mop_iceberg_authors (handle) VALUES ('a2');
+
+
+statement ok
+INSERT INTO vedernikoff_mop_iceberg_papers (title) VALUES (repeat('z', 10000));
+
+
+query
+SELECT id, handle FROM vedernikoff_mop_iceberg_authors ORDER BY handle;
+----
+id    handle
+50    a1
+NULL  a2
+
+
+statement ok
+DROP TABLE vedernikoff_mop_iceberg_authors;
+
+
+statement ok
+DROP TABLE vedernikoff_mop_iceberg_papers;
+
+
+# --- 21. CASCADE around a sequence with no in-table referrers --------------
+# A sequence used only by a function and a view (no table column DEFAULTs).
+# Sanity: CASCADE drops only the function and view, no table_rewrites needed.
+
+statement ok
+CREATE SEQUENCE vedernikoff_mop_dispatch_seq;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_mop_dispatch_next()
+  AS nextval('vedernikoff_mop_dispatch_seq');
+
+
+statement ok
+CREATE VIEW vedernikoff_mop_dispatch_view AS
+  SELECT vedernikoff_mop_dispatch_next() AS step;
+
+
+query
+SELECT step FROM vedernikoff_mop_dispatch_view;
+----
+step
+1
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_mop_dispatch_seq.*
+DROP SEQUENCE vedernikoff_mop_dispatch_seq;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_mop_dispatch_seq CASCADE;
+
+
+statement error (?i)(macro|function).*vedernikoff_mop_dispatch_next.*does not exist
+SELECT vedernikoff_mop_dispatch_next();
+
+
+statement error (?i)(table|view|relation).*vedernikoff_mop_dispatch_view.*does not exist
+SELECT * FROM vedernikoff_mop_dispatch_view;

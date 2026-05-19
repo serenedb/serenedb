@@ -23,6 +23,7 @@
 #include <functional>
 
 #include "filter_test_case_base.hpp"
+#include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
@@ -132,7 +133,7 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, rdr.size());
   auto& segment = rdr[0];
 
@@ -248,7 +249,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_1) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -301,7 +302,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_2) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -354,7 +355,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_3) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -407,7 +408,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_4) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -461,7 +462,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_5) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -512,7 +513,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_6) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -565,7 +566,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_7) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -618,7 +619,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_8) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -673,7 +674,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_9) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -725,7 +726,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -774,7 +775,7 @@ TEST_P(NGramSimilarityFilterTestCase, no_match_case) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -804,7 +805,7 @@ TEST_P(NGramSimilarityFilterTestCase, no_serial_match_case) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -833,7 +834,7 @@ TEST_P(NGramSimilarityFilterTestCase, one_match_case) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -872,7 +873,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_test) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -911,7 +912,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_test) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -950,7 +951,7 @@ TEST_P(NGramSimilarityFilterTestCase, not_miss_match_for_tail) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -989,7 +990,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle_test) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -1029,7 +1030,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle2_test) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -1069,7 +1070,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle3_test) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -1140,7 +1141,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   irs::ByNGramSimilarity filter =
     MakeFilter("field", {"at", "tl", "la", "as", "ll", "never_match"}, 0.5f);
@@ -1204,7 +1205,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   irs::ByNGramSimilarity filter =
     MakeFilter("field", {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
@@ -1263,7 +1264,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
 
 TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_norm_test) {
   {
-    irs::IndexWriterOptions opts;
+    auto opts = irs::tests::DefaultWriterOptions();
 
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
@@ -1271,7 +1272,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_norm_test) {
     add_segment(gen, irs::kOmCreate, opts);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   irs::ByNGramSimilarity filter =
     MakeFilter("field", {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
@@ -1285,7 +1286,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_norm_test) {
 
 TEST_P(NGramSimilarityFilterTestCase, all_match_ngram_score_test) {
   {
-    irs::IndexWriterOptions opts;
+    auto opts = irs::tests::DefaultWriterOptions();
 
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
@@ -1293,7 +1294,7 @@ TEST_P(NGramSimilarityFilterTestCase, all_match_ngram_score_test) {
     add_segment(gen, irs::kOmCreate, opts);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   irs::Scorer::ptr scorers[] = {
     std::make_unique<irs::TFIDF>(false),
@@ -1320,7 +1321,7 @@ TEST_P(NGramSimilarityFilterTestCase, all_match_ngram_score_test) {
 
 TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_test) {
   {
-    irs::IndexWriterOptions opts;
+    auto opts = irs::tests::DefaultWriterOptions();
 
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
@@ -1328,7 +1329,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_test) {
     add_segment(gen, irs::kOmCreate, opts);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   irs::ByNGramSimilarity filter =
     MakeFilter("field", {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
@@ -1342,7 +1343,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_test) {
 
 TEST_P(NGramSimilarityFilterTestCase, missed_first_bm25_test) {
   {
-    irs::IndexWriterOptions opts;
+    auto opts = irs::tests::DefaultWriterOptions();
 
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
@@ -1350,7 +1351,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_bm25_test) {
     add_segment(gen, irs::kOmCreate, opts);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   irs::ByNGramSimilarity filter =
     MakeFilter("field", {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
@@ -1364,7 +1365,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_bm25_test) {
 
 TEST_P(NGramSimilarityFilterTestCase, missed_first_bm15_test) {
   {
-    irs::IndexWriterOptions opts;
+    auto opts = irs::tests::DefaultWriterOptions();
 
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
@@ -1372,7 +1373,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_bm15_test) {
     add_segment(gen, irs::kOmCreate, opts);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   irs::ByNGramSimilarity filter =
     MakeFilter("field", {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
@@ -1391,7 +1392,7 @@ TEST_P(NGramSimilarityFilterTestCase, seek_next) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 
@@ -1437,7 +1438,7 @@ TEST_P(NGramSimilarityFilterTestCase, seek) {
     add_segment(gen);
   }
 
-  auto rdr = open_reader();
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   MaxMemoryCounter counter;
 

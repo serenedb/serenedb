@@ -212,7 +212,7 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
       return false;
     }
 
-    constexpr auto kInvalidId = std::numeric_limits<catalog::Column::Id>::max();
+    constexpr auto kInvalidId = catalog::Column::kInvalidId;
     std::vector<catalog::Column::Id> projected_column_ids;
     projected_column_ids.reserve(get.GetColumnIds().size());
     for (const auto& ci : get.GetColumnIds()) {

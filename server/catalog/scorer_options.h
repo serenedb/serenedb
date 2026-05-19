@@ -28,6 +28,8 @@
 #include <iresearch/search/indri_dirichlet.hpp>
 #include <iresearch/search/lm_dirichlet.hpp>
 #include <iresearch/search/lm_jelinek_mercer.hpp>
+#include <iresearch/search/raw_boost.hpp>
+#include <iresearch/search/raw_dl.hpp>
 #include <iresearch/search/raw_tf.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/tfidf.hpp>
@@ -66,10 +68,6 @@ struct ScorerOptions {
     bool with_norms = false;
     bool operator==(const Tfidf&) const = default;
   };
-  struct RawTf {
-    static constexpr std::string_view kName = irs::RawTF::type_name();
-    bool operator==(const RawTf&) const = default;
-  };
   struct LmJm {
     static constexpr std::string_view kName = irs::LMJelinekMercer::type_name();
     float lambda = 0.1f;
@@ -90,9 +88,21 @@ struct ScorerOptions {
     DfiMeasure measure = DfiMeasure::Standardized;
     bool operator==(const Dfi&) const = default;
   };
+  struct RawBoost {
+    static constexpr std::string_view kName = irs::RawBoost::type_name();
+    bool operator==(const RawBoost&) const = default;
+  };
+  struct RawTf {
+    static constexpr std::string_view kName = irs::RawTF::type_name();
+    bool operator==(const RawTf&) const = default;
+  };
+  struct RawDL {
+    static constexpr std::string_view kName = irs::RawDL::type_name();
+    bool operator==(const RawDL&) const = default;
+  };
 
-  using Params =
-    std::variant<Bm25, Tfidf, RawTf, LmJm, LmDirichlet, IndriDirichlet, Dfi>;
+  using Params = std::variant<Bm25, Tfidf, LmJm, LmDirichlet, IndriDirichlet,
+                              Dfi, RawBoost, RawTf, RawDL>;
 
   Params params;
 
@@ -151,8 +161,6 @@ void VPackRead(Context ctx, ScorerOptions& s) {
     s.params = ScorerOptions::Bm25{};
   } else if (name == ScorerOptions::Tfidf::kName) {
     s.params = ScorerOptions::Tfidf{};
-  } else if (name == ScorerOptions::RawTf::kName) {
-    s.params = ScorerOptions::RawTf{};
   } else if (name == ScorerOptions::LmJm::kName) {
     s.params = ScorerOptions::LmJm{};
   } else if (name == ScorerOptions::LmDirichlet::kName) {
@@ -161,6 +169,12 @@ void VPackRead(Context ctx, ScorerOptions& s) {
     s.params = ScorerOptions::IndriDirichlet{};
   } else if (name == ScorerOptions::Dfi::kName) {
     s.params = ScorerOptions::Dfi{};
+  } else if (name == ScorerOptions::RawBoost::kName) {
+    s.params = ScorerOptions::RawBoost{};
+  } else if (name == ScorerOptions::RawTf::kName) {
+    s.params = ScorerOptions::RawTf{};
+  } else if (name == ScorerOptions::RawDL::kName) {
+    s.params = ScorerOptions::RawDL{};
   } else {
     SDB_THROW(sdb::ERROR_BAD_PARAMETER, "Unknown 'scorer' name '", name, "'");
   }

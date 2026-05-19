@@ -199,7 +199,7 @@ QUERY PLAN
 
 
 # Mismatched scorer: index is BM25-WAND, ORDER BY uses TFIDF. Top-K still
-# pulls up but `WandEnabled()` is false (wand_scorer != scorer), so no
+# pulls up but `WandEnabled()` is false (topk_scorer != scorer), so no
 # `, optimized` suffix.
 
 query

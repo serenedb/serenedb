@@ -201,6 +201,9 @@ class BlockDisjunction : public DocIterator {
 
       _doc_base = block_base + block_offset * kBlockSize;
       _begin = _mask + block_offset + 1;
+      if constexpr (Traits::kMinMatch || kHasScore) {
+        _buf_offset = block_offset * kBlockSize;
+      }
 
       SDB_ASSERT(_begin > std::begin(_mask) && _begin <= std::end(_mask));
       _cur = _begin[-1] & ((~UINT64_C(0)) << target % kBlockSize);
@@ -281,7 +284,6 @@ class BlockDisjunction : public DocIterator {
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target >= value());
     // TODO(gnusi): Optimize
     return seek(target);
   }

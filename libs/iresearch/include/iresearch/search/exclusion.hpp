@@ -42,15 +42,17 @@ class Exclusion : public DocIterator {
   }
 
   doc_id_t seek(doc_id_t target) final {
-    if (const auto doc = value(); target <= doc) [[unlikely]] {
-      return doc;
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
     }
     const auto incl = _incl.seek(target);
     return converge(incl);
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target >= value());
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
+    }
     const auto doc = _incl.LazySeek(target);
     if (doc != target) {
       return doc;

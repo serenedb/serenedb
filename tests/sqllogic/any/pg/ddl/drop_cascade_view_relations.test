@@ -1,0 +1,572 @@
+statement ok
+CREATE TABLE iceberg_manifests (id INT, v TEXT);
+
+
+statement count 2
+INSERT INTO iceberg_manifests VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+CREATE VIEW v_iceberg_audit AS SELECT id, v FROM iceberg_manifests;
+
+
+query
+SELECT id, v FROM v_iceberg_audit ORDER BY id;
+----
+id	v
+1	a
+2	b
+
+
+statement error (?i)cannot drop table .*iceberg_manifests.* because other objects depend on it
+DROP TABLE iceberg_manifests;
+
+
+statement error (?i)cannot drop table .*iceberg_manifests.* because other objects depend on it
+DROP TABLE iceberg_manifests RESTRICT;
+
+
+query
+SELECT count(*) FROM iceberg_manifests;
+----
+count
+2
+
+
+statement ok
+DROP TABLE iceberg_manifests CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_iceberg_audit.*does not exist
+SELECT * FROM v_iceberg_audit;
+
+
+statement error (?i)(table|relation).*iceberg_manifests.*does not exist
+SELECT * FROM iceberg_manifests;
+
+
+statement ok
+CREATE TABLE iceberg_snapshots (id INT);
+
+
+statement count 2
+INSERT INTO iceberg_snapshots VALUES (10), (20);
+
+
+statement ok
+CREATE VIEW v_iceberg_snap1 AS SELECT id FROM iceberg_snapshots;
+
+
+statement ok
+CREATE VIEW v_iceberg_snap2 AS SELECT id FROM v_iceberg_snap1;
+
+
+query
+SELECT id FROM v_iceberg_snap2 ORDER BY id;
+----
+id
+10
+20
+
+
+statement error (?i)cannot drop view .*v_iceberg_snap1.* because other objects depend on it
+DROP VIEW v_iceberg_snap1;
+
+
+statement error (?i)cannot drop view .*v_iceberg_snap1.* because other objects depend on it
+DROP VIEW v_iceberg_snap1 RESTRICT;
+
+
+statement ok
+DROP VIEW v_iceberg_snap1 CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_iceberg_snap1.*does not exist
+SELECT * FROM v_iceberg_snap1;
+
+
+statement error (?i)(table|relation|view).*v_iceberg_snap2.*does not exist
+SELECT * FROM v_iceberg_snap2;
+
+
+query
+SELECT count(*) FROM iceberg_snapshots;
+----
+count
+2
+
+
+statement ok
+DROP TABLE iceberg_snapshots;
+
+
+statement ok
+CREATE TABLE iceberg_partitions (id INT, payload TEXT);
+
+
+statement count 3
+INSERT INTO iceberg_partitions VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+
+statement ok
+CREATE VIEW v_iceberg_part1 AS SELECT id FROM iceberg_partitions;
+
+
+statement ok
+CREATE VIEW v_iceberg_part2 AS SELECT payload FROM iceberg_partitions;
+
+
+statement ok
+CREATE VIEW v_iceberg_part3 AS SELECT id, payload FROM iceberg_partitions WHERE id > 1;
+
+
+query
+SELECT count(*) FROM v_iceberg_part1;
+----
+count
+3
+
+
+query
+SELECT count(*) FROM v_iceberg_part3;
+----
+count
+2
+
+
+statement error (?i)cannot drop table .*iceberg_partitions.* because other objects depend on it
+DROP TABLE iceberg_partitions;
+
+
+statement ok
+DROP TABLE iceberg_partitions CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_iceberg_part1.*does not exist
+SELECT * FROM v_iceberg_part1;
+
+
+statement error (?i)(table|relation|view).*v_iceberg_part2.*does not exist
+SELECT * FROM v_iceberg_part2;
+
+
+statement error (?i)(table|relation|view).*v_iceberg_part3.*does not exist
+SELECT * FROM v_iceberg_part3;
+
+
+statement ok
+CREATE TABLE iceberg_data_files (id INT, v_a TEXT);
+
+
+statement ok
+CREATE TABLE iceberg_delete_files (id INT, v_b TEXT);
+
+
+statement count 2
+INSERT INTO iceberg_data_files VALUES (1, 'x'), (2, 'y');
+
+
+statement count 2
+INSERT INTO iceberg_delete_files VALUES (1, 'X'), (2, 'Y');
+
+
+statement ok
+CREATE VIEW v_iceberg_files_join AS
+  SELECT a.id, a.v_a, b.v_b
+    FROM iceberg_data_files a JOIN iceberg_delete_files b ON a.id = b.id;
+
+
+query
+SELECT id, v_a, v_b FROM v_iceberg_files_join ORDER BY id;
+----
+id	v_a	v_b
+1	x	X
+2	y	Y
+
+
+statement error (?i)cannot drop table .*iceberg_data_files.* because other objects depend on it
+DROP TABLE iceberg_data_files;
+
+
+statement error (?i)cannot drop table .*iceberg_delete_files.* because other objects depend on it
+DROP TABLE iceberg_delete_files;
+
+
+statement ok
+DROP TABLE iceberg_data_files CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_iceberg_files_join.*does not exist
+SELECT * FROM v_iceberg_files_join;
+
+
+statement ok
+DROP TABLE iceberg_delete_files RESTRICT;
+
+
+statement ok
+CREATE TABLE iceberg_sub_base (id INT, v TEXT);
+
+
+statement count 2
+INSERT INTO iceberg_sub_base VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+CREATE VIEW v_iceberg_sub AS
+  SELECT * FROM (SELECT id, v FROM iceberg_sub_base) iceberg_inner;
+
+
+query
+SELECT count(*) FROM v_iceberg_sub;
+----
+count
+2
+
+
+statement error (?i)cannot drop table .*iceberg_sub_base.* because other objects depend on it
+DROP TABLE iceberg_sub_base;
+
+
+statement ok
+DROP TABLE iceberg_sub_base CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_iceberg_sub.*does not exist
+SELECT * FROM v_iceberg_sub;
+
+
+statement ok
+CREATE TABLE iceberg_cte_base (id INT, v TEXT);
+
+
+statement count 2
+INSERT INTO iceberg_cte_base VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+CREATE VIEW v_iceberg_cte AS
+  WITH iceberg_cte AS (SELECT id, v FROM iceberg_cte_base)
+  SELECT id, v FROM iceberg_cte;
+
+
+query
+SELECT count(*) FROM v_iceberg_cte;
+----
+count
+2
+
+
+statement error (?i)cannot drop table .*iceberg_cte_base.* because other objects depend on it
+DROP TABLE iceberg_cte_base;
+
+
+statement ok
+DROP TABLE iceberg_cte_base CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_iceberg_cte.*does not exist
+SELECT * FROM v_iceberg_cte;
+
+
+statement ok
+CREATE TABLE iceberg_union_a (id INT);
+
+
+statement ok
+CREATE TABLE iceberg_union_b (id INT);
+
+
+statement count 2
+INSERT INTO iceberg_union_a VALUES (1), (2);
+
+
+statement count 2
+INSERT INTO iceberg_union_b VALUES (3), (4);
+
+
+statement ok
+CREATE VIEW v_iceberg_union AS
+  SELECT id FROM iceberg_union_a
+  UNION ALL
+  SELECT id FROM iceberg_union_b;
+
+
+query
+SELECT count(*) FROM v_iceberg_union;
+----
+count
+4
+
+
+statement error (?i)cannot drop table .*iceberg_union_a.* because other objects depend on it
+DROP TABLE iceberg_union_a;
+
+
+statement error (?i)cannot drop table .*iceberg_union_b.* because other objects depend on it
+DROP TABLE iceberg_union_b;
+
+
+statement ok
+DROP TABLE iceberg_union_a CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_iceberg_union.*does not exist
+SELECT * FROM v_iceberg_union;
+
+
+statement ok
+DROP TABLE iceberg_union_b RESTRICT;
+
+
+statement ok
+CREATE TABLE iceberg_chain_t (id INT);
+
+
+statement count 2
+INSERT INTO iceberg_chain_t VALUES (1), (2);
+
+
+statement ok
+CREATE VIEW v_iceberg_chain1 AS SELECT id FROM iceberg_chain_t;
+
+
+statement ok
+CREATE VIEW v_iceberg_chain2 AS SELECT id FROM v_iceberg_chain1;
+
+
+statement ok
+CREATE VIEW v_iceberg_chain3 AS SELECT id FROM v_iceberg_chain2;
+
+
+query
+SELECT count(*) FROM v_iceberg_chain3;
+----
+count
+2
+
+
+statement error (?i)cannot drop table .*iceberg_chain_t.* because other objects depend on it
+DROP TABLE iceberg_chain_t;
+
+
+statement error (?i)cannot drop view .*v_iceberg_chain1.* because other objects depend on it
+DROP VIEW v_iceberg_chain1;
+
+
+statement error (?i)cannot drop view .*v_iceberg_chain2.* because other objects depend on it
+DROP VIEW v_iceberg_chain2;
+
+
+statement ok
+DROP VIEW v_iceberg_chain3;
+
+
+statement ok
+DROP VIEW v_iceberg_chain2;
+
+
+statement ok
+DROP VIEW v_iceberg_chain1;
+
+
+statement ok
+DROP TABLE iceberg_chain_t;
+
+
+statement ok
+CREATE TABLE iceberg_root_t (id INT);
+
+
+statement count 1
+INSERT INTO iceberg_root_t VALUES (1);
+
+
+statement ok
+CREATE VIEW v_iceberg_root1 AS SELECT id FROM iceberg_root_t;
+
+
+statement ok
+CREATE VIEW v_iceberg_root2 AS SELECT id FROM v_iceberg_root1;
+
+
+statement ok
+CREATE VIEW v_iceberg_root3 AS SELECT id FROM v_iceberg_root2;
+
+
+statement ok
+CREATE VIEW v_iceberg_root4 AS SELECT id FROM v_iceberg_root3;
+
+
+statement error (?i)cannot drop table .*iceberg_root_t.* because other objects depend on it
+DROP TABLE iceberg_root_t;
+
+
+statement ok
+DROP TABLE iceberg_root_t CASCADE;
+
+
+statement error (?i)(table|relation).*iceberg_root_t.*does not exist
+SELECT * FROM iceberg_root_t;
+
+
+statement error (?i)(table|relation|view).*v_iceberg_root1.*does not exist
+SELECT * FROM v_iceberg_root1;
+
+
+statement error (?i)(table|relation|view).*v_iceberg_root2.*does not exist
+SELECT * FROM v_iceberg_root2;
+
+
+statement error (?i)(table|relation|view).*v_iceberg_root3.*does not exist
+SELECT * FROM v_iceberg_root3;
+
+
+statement error (?i)(table|relation|view).*v_iceberg_root4.*does not exist
+SELECT * FROM v_iceberg_root4;
+
+
+statement ok
+CREATE SCHEMA iceberg_t_home;
+
+
+statement ok
+CREATE SCHEMA iceberg_v_home;
+
+
+statement ok
+CREATE TABLE iceberg_t_home.manifests_t (id INT, v TEXT);
+
+
+statement count 2
+INSERT INTO iceberg_t_home.manifests_t VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+CREATE VIEW iceberg_v_home.audit_v AS SELECT id, v FROM iceberg_t_home.manifests_t;
+
+
+query
+SELECT count(*) FROM iceberg_v_home.audit_v;
+----
+count
+2
+
+
+statement error (?i)cannot drop table .*manifests_t.* because other objects depend on it
+DROP TABLE iceberg_t_home.manifests_t;
+
+
+statement ok
+DROP TABLE iceberg_t_home.manifests_t CASCADE;
+
+
+statement error (?i)(table|relation|view).*audit_v.*does not exist
+SELECT * FROM iceberg_v_home.audit_v;
+
+
+statement ok
+DROP SCHEMA iceberg_t_home CASCADE;
+
+
+statement ok
+DROP SCHEMA iceberg_v_home CASCADE;
+
+
+statement ok
+CREATE TABLE iceberg_recycle_t (id INT);
+
+
+statement count 1
+INSERT INTO iceberg_recycle_t VALUES (1);
+
+
+statement ok
+CREATE VIEW v_iceberg_recycle AS SELECT id FROM iceberg_recycle_t;
+
+
+statement ok
+DROP TABLE iceberg_recycle_t CASCADE;
+
+
+statement ok
+CREATE TABLE iceberg_recycle_t (id INT);
+
+
+statement ok
+CREATE VIEW v_iceberg_recycle AS SELECT id FROM iceberg_recycle_t;
+
+
+query
+SELECT count(*) FROM v_iceberg_recycle;
+----
+count
+0
+
+
+statement ok
+DROP TABLE iceberg_recycle_t CASCADE;
+
+
+statement ok
+CREATE TABLE iceberg_keep_t (id INT, v TEXT);
+
+
+statement count 1
+INSERT INTO iceberg_keep_t VALUES (1, 'a');
+
+
+statement ok
+CREATE VIEW v_iceberg_keep AS SELECT id, v FROM iceberg_keep_t;
+
+
+statement ok
+DROP VIEW v_iceberg_keep;
+
+
+statement ok
+DROP TABLE iceberg_keep_t RESTRICT;
+
+
+statement ok
+CREATE SEQUENCE iceberg_both_seq;
+
+
+statement ok
+CREATE TABLE iceberg_both_t (id INT, v TEXT);
+
+
+statement count 2
+INSERT INTO iceberg_both_t VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+CREATE VIEW v_iceberg_both AS
+  SELECT id, v, nextval('public.iceberg_both_seq') AS n FROM iceberg_both_t;
+
+
+query
+SELECT count(*) FROM v_iceberg_both;
+----
+count
+2
+
+
+statement error (?i)cannot drop sequence .*iceberg_both_seq.* because other objects depend on it
+DROP SEQUENCE iceberg_both_seq;
+
+
+statement error (?i)cannot drop table .*iceberg_both_t.* because other objects depend on it
+DROP TABLE iceberg_both_t;
+
+
+statement ok
+DROP SEQUENCE iceberg_both_seq CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_iceberg_both.*does not exist
+SELECT * FROM v_iceberg_both;
+
+
+statement ok
+DROP TABLE iceberg_both_t RESTRICT;

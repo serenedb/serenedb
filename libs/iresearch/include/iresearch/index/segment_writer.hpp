@@ -24,50 +24,34 @@
 #pragma once
 
 #include "basics/containers/bitset.hpp"
-#include "basics/containers/node_hash_set.h"
 #include "basics/noncopyable.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/index/buffered_column.hpp"
-#include "iresearch/index/column_info.hpp"
+#include "iresearch/columnstore/format.hpp"
 #include "iresearch/index/field_data.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/utils/compression.hpp"
+#include "iresearch/index/norm_column_reader.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
+namespace duckdb {
+
+class DatabaseInstance;
+}
+
 namespace irs {
 
-class Comparer;
 struct SegmentMeta;
-
-// Defines how the inserting field should be processed
-enum class Action {
-  // Field should be indexed only
-  // Field must satisfy 'Field' concept
-  INDEX = 1,
-
-  // Field should be stored only
-  // Field must satisfy 'Attribute' concept
-  STORE = 2,
-
-  // Field should be stored in sorted order
-  // Field must satisfy 'Attribute' concept
-  StoreSorted = 4
-};
-
-ENABLE_BITMASK_ENUM(Action);
 
 struct DocsMask final {
   ManagedBitset set;
   uint32_t count{0};
 };
 
-// Interface for an index writer over a directory
-// an object that represents a single ongoing transaction
-// non-thread safe
-class SegmentWriter final : public ColumnProvider, util::Noncopyable {
+// Single-segment write transaction. Indexes terms (FieldsData), writes
+// posting lists at flush, and owns the segment's `<seg>.cs` columnstore
+// for norm columns.
+class SegmentWriter final : public NormProvider, util::Noncopyable {
  private:
-  // Disallow using public constructor
   struct ConstructToken final {
     explicit ConstructToken() = default;
   };
@@ -81,46 +65,27 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   static std::unique_ptr<SegmentWriter> make(
     Directory& dir, const SegmentWriterOptions& options);
 
-  // begin document-write transaction
-  // Return first doc_id_t in batch as per doc_limits
-  // TODO(Dronplane): does it make sense to have single doc version?
+  // Begin a batch. Returns first valid doc_id in the batch.
   doc_id_t begin(DocContext ctx, doc_id_t batch_size = 1);
 
-  void ResetNorms() noexcept {
-    _doc.clear();  // clear norm fields
-  }
+  void ResetNorms() noexcept { _doc.clear(); }
 
-  template<Action A, typename Field>
+  template<typename Field>
   bool insert(Field&& field) {
-    // user should check return of begin() != eof()
     SDB_ASSERT(LastDocId() < doc_limits::eof());
-    doc_id_t doc = LastDocId();
-    return insert<A>(std::forward<Field>(field), doc);
+    return insert(std::forward<Field>(field), LastDocId());
   }
 
-  template<Action A, typename Field>
+  template<typename Field>
   bool insert(Field&& field, doc_id_t doc) {
     if (!_valid) [[unlikely]] {
       return false;
     }
     SDB_ASSERT(doc <= LastDocId());
     SDB_ASSERT(doc >= _batch_first_doc_id);
-    if constexpr (Action::INDEX == A) {
-      return index(std::forward<Field>(field), doc);
-    } else if constexpr (Action::STORE == A) {
-      return store(std::forward<Field>(field), doc);
-    } else if constexpr (Action::StoreSorted == A) {
-      return store_sorted(std::forward<Field>(field), doc);
-    } else if constexpr ((Action::INDEX | Action::STORE) == A) {
-      return index_and_store<false>(std::forward<Field>(field), doc);
-    } else if constexpr ((Action::INDEX | Action::StoreSorted) == A) {
-      return index_and_store<true>(std::forward<Field>(field), doc);
-    } else {
-      static_assert(false);
-    }
+    return index(std::forward<Field>(field), doc);
   }
 
-  // Commit document-write transaction
   void commit() {
     if (_valid) {
       finish();
@@ -129,24 +94,14 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
     }
   }
 
-  // Return approximate amount of memory actively in-use by this instance
   size_t memory_active() const noexcept;
-
-  // Return approximate amount of memory reserved by this instance
   size_t memory_reserved() const noexcept;
 
-  // doc_id the document id as returned by begin(...)
-  // Return success
   bool remove(doc_id_t doc_id) noexcept;
 
-  // Rollback document-write transaction,
-  // implicitly noexcept since we reserve memory in 'begin'
   void rollback() noexcept {
-    // mark as removed since not fully inserted
     const auto batch_last_doc_id = LastDocId();
     for (auto id = _batch_first_doc_id; id <= batch_last_doc_id; ++id) {
-      // TODO(Dronplane): make remove also batch aware? But it is only for
-      // rollback so maybe ok as is
       remove(id);
     }
     _valid = false;
@@ -176,189 +131,62 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   SegmentWriter(ConstructToken, Directory& dir,
                 const SegmentWriterOptions& options) noexcept;
 
-  const ColumnReader* column(field_id id) const final {
-    const auto it = _column_ids.find(id);
-    if (it != _column_ids.end()) {
-      return it->second;
+  // FlushFields-time scorers (Wand / BM25 / TFIDF / LM-* / DFI / Indri)
+  // reach per-doc norms through this provider. flush() commits the
+  // columnstore first and opens `_cs_reader` on the just-written `.cs`
+  // before invoking FlushFields, so reads here go to disk -- no in-memory
+  // copy of the norm values is kept on the writer side. Returns null when
+  // the field has no norm column or the reader hasn't been opened yet
+  // (e.g. caller invokes norms() outside flush()).
+  NormReader::ptr norms(field_id id) const final {
+    if (_cs_reader == nullptr) {
+      return {};
     }
-    return nullptr;
+    const auto* col = _cs_reader->NormColumn(id);
+    if (col == nullptr) {
+      return {};
+    }
+    return MakePersistedNormReader(*col);
   }
+  columnstore::PreloadedHnswGraphs TakeBuiltHnswGraphs() noexcept {
+    return std::move(_built_hnsw_graphs);
+  }
+  columnstore::Writer* Columnstore() noexcept { return _columnstore.get(); }
 
  private:
-  struct StoredColumn : util::Noncopyable {
-    struct HashEq {
-      using is_transparent = void;
-
-      size_t operator()(const hashed_string_view& str) const {
-        return str.Hash();
-      }
-
-      size_t operator()(const StoredColumn& column) const {
-        return column.name_hash;
-      }
-
-      bool operator()(const StoredColumn& column,
-                      const hashed_string_view& str) const {
-        return column.name == str;
-      }
-
-      bool operator()(const StoredColumn& l, const StoredColumn& r) const {
-        return l.name == r.name;
-      }
-    };
-
-    StoredColumn(const hashed_string_view& name, ColumnstoreWriter& columnstore,
-                 IResourceManager& rm, const ColumnInfoProvider& column_info,
-                 std::deque<CachedColumn, ManagedTypedAllocator<CachedColumn>>&
-                   cached_columns,
-                 bool cache);
-
-    std::string name;
-    size_t name_hash;
-    ColumnOutput* writer{};
-    CachedColumn* cached{};
-    mutable field_id id{field_limits::invalid()};
-  };
-
-  // FIXME consider refactor this
-  // we can't use flat_hash_set as stored_column stores 'this' in non-cached
-  // case
-  using stored_columns =
-    sdb::containers::NodeHashSet<StoredColumn, StoredColumn::HashEq,
-                                 StoredColumn::HashEq,
-                                 ManagedTypedAllocator<StoredColumn>>;
-
-  struct SortedColumn : util::Noncopyable {
-    explicit SortedColumn(const ColumnInfoProvider& column_info,
-                          ColumnFinalizer finalizer,
-                          IResourceManager& rm) noexcept
-      : stream{column_info({}), rm},  // compression for sorted column
-        finalizer{std::move(finalizer)} {}
-
-    field_id id{field_limits::invalid()};
-    irs::BufferedColumn stream;
-    ColumnFinalizer finalizer;
-  };
-
   bool index(const hashed_string_view& name, doc_id_t doc,
              IndexFeatures index_features, Tokenizer& tokens);
-
-  template<typename Writer>
-  bool store_sorted(const doc_id_t doc, Writer& writer) {
-    SDB_ASSERT(doc < doc_limits::eof());
-
-    if (!_fields.comparator()) [[unlikely]] {
-      // can't store sorted field without a comparator
-      _valid = false;
-      return false;
-    }
-
-    auto& out = sorted_stream(doc);
-
-    if (writer.Write(out)) [[likely]] {
-      return true;
-    }
-
-    out.Reset();
-
-    _valid = false;
-    return false;
-  }
-
-  template<typename Writer>
-  bool store(const hashed_string_view& name, const doc_id_t doc,
-             Writer& writer) {
-    SDB_ASSERT(doc < doc_limits::eof());
-
-    auto& out = stream(name, doc);
-
-    if (writer.Write(out)) [[likely]] {
-      return true;
-    }
-
-    out.Reset();
-
-    _valid = false;
-    return false;
-  }
-
-  template<typename Field>
-  bool store(Field&& field, doc_id_t doc) {
-    const hashed_string_view field_name{
-      static_cast<std::string_view>(field.Name())};
-
-    return store(field_name, doc, field);
-  }
-
-  template<typename Field>
-  bool store_sorted(Field&& field, doc_id_t doc) {
-    return store_sorted(doc, field);
-  }
 
   template<typename Field>
   bool index(Field&& field, doc_id_t doc) {
     const hashed_string_view field_name{
       static_cast<std::string_view>(field.Name())};
-
     auto& tokens = static_cast<Tokenizer&>(field.GetTokens());
-    const IndexFeatures index_features = field.GetIndexFeatures();
-    return index(field_name, doc, index_features, tokens);
+    return index(field_name, doc, field.GetIndexFeatures(), tokens);
   }
 
-  template<bool Sorted, typename Field>
-  bool index_and_store(Field&& field, doc_id_t doc) {
-    const hashed_string_view field_name{
-      static_cast<std::string_view>(field.Name())};
+  void finish();
 
-    auto& tokens = static_cast<Tokenizer&>(field.GetTokens());
-    const IndexFeatures index_features = field.GetIndexFeatures();
-
-    if (!index(field_name, doc, index_features, tokens)) [[unlikely]] {
-      return false;  // indexing failed
-    }
-
-    if constexpr (Sorted) {
-      return store_sorted(doc, field);
-    }
-
-    return store(field_name, doc, field);
-  }
-
-  // Returns stream for storing attributes in sorted order
-  ColumnOutput& sorted_stream(const doc_id_t doc_id) {
-    _sort.stream.Prepare(doc_id);
-    return _sort.stream;
-  }
-
-  // Returns stream for storing attributes
-  ColumnOutput& stream(const hashed_string_view& name, const doc_id_t doc);
-
-  // Finishes document
-  void finish() {
-    for (const auto* field : _doc) {
-      field->compute_features();
-    }
-  }
-
-  // Flushes indexed fields to directory
   void FlushFields(FlushState& state);
 
   TrackingDirectory _dir;
   ScorerPtr _scorer;
-  std::deque<CachedColumn, ManagedTypedAllocator<CachedColumn>>
-    _cached_columns;  // pointers remain valid
-  absl::flat_hash_map<field_id, CachedColumn*> _column_ids;
-  SortedColumn _sort;
+  // Reader on the just-committed `.cs`. Set transiently by flush() between
+  // `_columnstore->Commit()` and `FlushFields`, so scorer norm reads land
+  // on the disk-backed norm readers. Cleared at end of flush().
+  std::unique_ptr<columnstore::Reader> _cs_reader;
   ManagedVector<DocContext> _docs_context;
-  // invalid/removed doc_ids (e.g. partially indexed due to indexing failure)
+  // Removed/invalid doc_ids (e.g. partial indexing failure).
   DocsMask _docs_mask;
   FieldsData _fields;
-  stored_columns _columns;
-  std::vector<const FieldData*> _doc;  // document fields
+  std::vector<const FieldData*> _doc;
   std::string _seg_name;
   FieldWriter::ptr _field_writer;
-  const ColumnInfoProvider* _column_info;
-  ColumnstoreWriter::ptr _col_writer;
+  duckdb::DatabaseInstance* _db = nullptr;
+  const ColumnOptionsProvider* _column_options = nullptr;
+  const NormColumnOptionsProvider* _norm_column_options = nullptr;
+  std::unique_ptr<columnstore::Writer> _columnstore;
+  columnstore::PreloadedHnswGraphs _built_hnsw_graphs;
   doc_id_t _batch_first_doc_id = doc_limits::eof();
   bool _initialized = false;
   bool _valid = true;

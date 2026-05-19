@@ -45,14 +45,11 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgNamespace>& values,
     .nspowner = id::kRootUser.id(),
   });
   for (const auto& schema : snapshot.GetSchemas(database_id)) {
-    auto owner = schema->GetOwnerId();
-    if (!owner) {
-      owner = id::kRootUser;
-    }
+    // RBAC isn't implemented yet -- every schema is rooted at kRootUser.
     values.push_back({
       .oid = schema->GetId().id(),
       .nspname = schema->GetName(),
-      .nspowner = owner.id(),
+      .nspowner = id::kRootUser.id(),
     });
   }
 }

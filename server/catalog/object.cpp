@@ -29,11 +29,11 @@ namespace sdb::catalog {
 
 Object::~Object() = default;
 
-Object::Object(ObjectId owner_id, ObjectId id, std::string_view name,
+Object::Object(ObjectId parent_id, ObjectId id, std::string_view name,
                ObjectType type)
   : _name{name},
     _id{id != id::kInvalid ? id : NextId()},
-    _owner_id{owner_id},
+    _parent_id{parent_id},
     _type{type} {
   UpdateTickServer(GetId().id());
 }

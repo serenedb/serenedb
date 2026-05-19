@@ -22,6 +22,7 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
@@ -106,195 +107,6 @@ class NormField final : public tests::Ifield {
   mutable Analyzer _analyzer;
 };
 
-void AssertNormHeader(irs::bytes_view header, uint32_t num_bytes, uint32_t min,
-                      uint32_t max) {
-  constexpr irs::NormVersion kVersion{irs::NormVersion::Min};
-
-  ASSERT_FALSE(irs::IsNull(header));
-  ASSERT_EQ(22, header.size());
-
-  auto* p = header.data();
-  const auto actual_verson = *p++;
-  const auto actual_num_bytes = *p++;
-  const auto actual_max = irs::read<uint32_t>(p);
-  [[maybe_unused]] const auto actual_sum = irs::read<uint64_t>(p);
-  [[maybe_unused]] const auto actual_non_zero_count = irs::read<uint64_t>(p);
-  ASSERT_EQ(p, header.data() + header.size());
-
-  ASSERT_EQ(static_cast<uint32_t>(kVersion), actual_verson);
-  ASSERT_EQ(num_bytes, actual_num_bytes);
-  ASSERT_EQ(max, actual_max);
-}
-
-TEST(NormHeaderTest, Construct) {
-  irs::NormHeader hdr{irs::NormEncoding::Int};
-  ASSERT_EQ(1, irs::NormHeader::MaxNumBytes(hdr.Max()));
-  ASSERT_EQ(sizeof(uint32_t), std::to_underlying(hdr.Encoding()));
-
-  irs::bstring buf;
-  irs::BytesOutput writer{buf};
-  irs::NormHeader::Write(hdr, writer);
-  buf = buf.substr(sizeof(uint32_t));  // skip size
-  AssertNormHeader(buf, sizeof(uint32_t), std::numeric_limits<uint32_t>::max(),
-                   std::numeric_limits<uint32_t>::min());
-}
-
-TEST(NormHeaderTest, ResetByValue) {
-  auto assert_num_bytes = [](auto value) {
-    using ValueType = decltype(value);
-
-    static_assert(std::is_same_v<ValueType, uint8_t> ||
-                  std::is_same_v<ValueType, uint16_t> ||
-                  std::is_same_v<ValueType, uint32_t>);
-
-    irs::NormEncoding encoding;
-    if constexpr (std::is_same_v<ValueType, uint8_t>) {
-      encoding = irs::NormEncoding::Byte;
-    } else if (std::is_same_v<ValueType, uint16_t>) {
-      encoding = irs::NormEncoding::Short;
-    } else if (std::is_same_v<ValueType, uint32_t>) {
-      encoding = irs::NormEncoding::Int;
-    }
-
-    irs::NormHeader hdr{encoding};
-    hdr.Reset(std::numeric_limits<ValueType>::max() - 2);
-    hdr.Reset(std::numeric_limits<ValueType>::max());
-    hdr.Reset(std::numeric_limits<ValueType>::max() - 1);
-    ASSERT_EQ(sizeof(ValueType), irs::NormHeader::MaxNumBytes(hdr.Max()));
-    ASSERT_EQ(sizeof(ValueType), std::to_underlying(hdr.Encoding()));
-
-    irs::bstring buf;
-    irs::BytesOutput writer{buf};
-    irs::NormHeader::Write(hdr, writer);
-    buf = buf.substr(sizeof(uint32_t));  // skip size
-    AssertNormHeader(buf, sizeof(ValueType),
-                     std::numeric_limits<ValueType>::max() - 2,
-                     std::numeric_limits<ValueType>::max());
-  };
-
-  assert_num_bytes(uint8_t{});   // 1-byte header
-  assert_num_bytes(uint16_t{});  // 2-byte header
-  assert_num_bytes(uint32_t{});  // 4-byte header
-}
-
-TEST(NormHeaderTest, ReadInvalid) {
-  ASSERT_FALSE(irs::NormHeader::Read(irs::bytes_view{}).has_value());
-  ASSERT_FALSE(
-    irs::NormHeader::Read(irs::kEmptyStringView<irs::byte_type>).has_value());
-
-  // Invalid size
-  {
-    constexpr irs::byte_type kBuf[3]{};
-    static_assert(sizeof kBuf != irs::NormHeader::ByteSize());
-    ASSERT_FALSE(irs::NormHeader::Read({kBuf, sizeof kBuf}).has_value());
-  }
-
-  // Invalid encoding
-  {
-    constexpr irs::byte_type kBuf[irs::NormHeader::ByteSize()]{};
-    ASSERT_FALSE(irs::NormHeader::Read({kBuf, sizeof kBuf}).has_value());
-  }
-
-  // Invalid encoding
-  {
-    constexpr irs::byte_type kBuf[irs::NormHeader::ByteSize()]{0, 3};
-    ASSERT_FALSE(irs::NormHeader::Read({kBuf, sizeof kBuf}).has_value());
-  }
-
-  // Invalid version
-  {
-    constexpr irs::byte_type kBuf[irs::NormHeader::ByteSize()]{42, 1};
-    ASSERT_FALSE(irs::NormHeader::Read({kBuf, sizeof kBuf}).has_value());
-  }
-}
-
-TEST(NormHeaderTest, ResetByPayload) {
-  auto write_header = [](auto value, irs::bstring& buf) {
-    using ValueType = decltype(value);
-
-    static_assert(std::is_same_v<ValueType, uint8_t> ||
-                  std::is_same_v<ValueType, uint16_t> ||
-                  std::is_same_v<ValueType, uint32_t>);
-
-    irs::NormEncoding encoding;
-    if constexpr (std::is_same_v<ValueType, uint8_t>) {
-      encoding = irs::NormEncoding::Byte;
-    } else if (std::is_same_v<ValueType, uint16_t>) {
-      encoding = irs::NormEncoding::Short;
-    } else if (std::is_same_v<ValueType, uint32_t>) {
-      encoding = irs::NormEncoding::Int;
-    }
-
-    irs::NormHeader hdr{encoding};
-    hdr.Reset(std::numeric_limits<ValueType>::max() - 2);
-    hdr.Reset(std::numeric_limits<ValueType>::max());
-    hdr.Reset(std::numeric_limits<ValueType>::max() - 1);
-    ASSERT_EQ(sizeof(ValueType), std::to_underlying(hdr.Encoding()));
-
-    buf.clear();
-    irs::BytesOutput writer{buf};
-    irs::NormHeader::Write(hdr, writer);
-    buf = buf.substr(sizeof(uint32_t));  // skip size
-    AssertNormHeader(buf, sizeof(ValueType),
-                     std::numeric_limits<ValueType>::max() - 2,
-                     std::numeric_limits<ValueType>::max());
-  };
-
-  // 1-byte header
-  {
-    irs::NormHeader acc{irs::NormEncoding::Byte};
-    irs::bstring buf;
-    write_header(uint8_t{}, buf);
-    auto hdr = irs::NormHeader::Read(buf);
-    ASSERT_TRUE(hdr.has_value());
-    acc.Reset(hdr->Max());
-    buf.clear();
-    irs::BytesOutput writer{buf};
-    irs::NormHeader::Write(acc, writer);
-    buf = buf.substr(sizeof(uint32_t));  // skip size
-
-    AssertNormHeader(buf, sizeof(uint8_t),
-                     std::numeric_limits<uint8_t>::max() - 2,
-                     std::numeric_limits<uint8_t>::max());
-  }
-
-  // 2-byte header
-  {
-    irs::NormHeader acc{irs::NormEncoding::Short};
-    irs::bstring buf;
-    write_header(uint16_t{}, buf);
-    auto hdr = irs::NormHeader::Read(buf);
-    ASSERT_TRUE(hdr.has_value());
-    acc.Reset(hdr->Max());
-    buf.clear();
-    irs::BytesOutput writer{buf};
-    irs::NormHeader::Write(acc, writer);
-    buf = buf.substr(sizeof(uint32_t));  // skip size
-
-    AssertNormHeader(buf, sizeof(uint16_t),
-                     std::numeric_limits<uint8_t>::max() - 2,
-                     std::numeric_limits<uint16_t>::max());
-  }
-
-  // 4-byte header
-  {
-    irs::NormHeader acc{irs::NormEncoding::Int};
-    irs::bstring buf;
-    write_header(uint32_t{}, buf);
-    auto hdr = irs::NormHeader::Read(buf);
-    ASSERT_TRUE(hdr.has_value());
-    acc.Reset(hdr->Max());
-    buf.clear();
-    irs::BytesOutput writer{buf};
-    irs::NormHeader::Write(acc, writer);
-    buf = buf.substr(sizeof(uint32_t));  // skip size
-
-    AssertNormHeader(buf, sizeof(uint32_t),
-                     std::numeric_limits<uint8_t>::max() - 2,
-                     std::numeric_limits<uint32_t>::max());
-  }
-}
-
 class NormTestCase : public tests::IndexTestBase {
  protected:
   void AssertIndex() {
@@ -305,7 +117,6 @@ class NormTestCase : public tests::IndexTestBase {
     IndexTestBase::assert_index(irs::IndexFeatures::Freq |
                                 irs::IndexFeatures::Pos |
                                 irs::IndexFeatures::Offs);
-    IndexTestBase::assert_columnstore();
   }
 
   template<typename T>
@@ -327,37 +138,20 @@ void NormTestCase::AssertNormColumn(
   ASSERT_EQ(name, meta.name);
   ASSERT_TRUE(irs::field_limits::valid(meta.norm));
 
-  auto* column = segment.column(meta.norm);
+  const auto* cs = segment.CsReader();
+  ASSERT_NE(nullptr, cs);
+  const auto* column = cs->NormColumn(meta.norm);
   ASSERT_NE(nullptr, column);
-  ASSERT_EQ(meta.norm, column->id());
-  ASSERT_TRUE(irs::IsNull(column->name()));
+  ASSERT_EQ(meta.norm, column->Id());
 
-  const auto min = std::min_element(
-    std::begin(expected_docs), std::end(expected_docs),
-    [](auto& lhs, auto& rhs) { return lhs.second < rhs.second; });
-  ASSERT_NE(std::end(expected_docs), min);
-  const auto max = std::max_element(
-    std::begin(expected_docs), std::end(expected_docs),
-    [](auto& lhs, auto& rhs) { return lhs.second < rhs.second; });
-  ASSERT_NE(std::end(expected_docs), max);
-  ASSERT_LE(*min, *max);
-  AssertNormHeader(column->payload(), sizeof(T), min->second, max->second);
-
-  auto values = column->iterator(irs::ColumnHint::Normal);
-  auto* cost = irs::get<irs::CostAttr>(*values);
-  ASSERT_NE(nullptr, cost);
-  ASSERT_EQ(cost->estimate(), expected_docs.size());
-  ASSERT_NE(nullptr, values);
-  auto* payload = irs::get<irs::PayAttr>(*values);
-  ASSERT_NE(nullptr, payload);
-
-  for (auto expected_doc = std::begin(expected_docs); values->next();
-       ++expected_doc) {
-    ASSERT_EQ(expected_doc->first, values->value());
-    ASSERT_EQ(sizeof(T), payload->value.size());
-
-    const auto value = irs::Norm::Read(payload->value);
-    ASSERT_EQ(expected_doc->second, value);
+  // Norm column storage is positional: writer row N holds the norm value
+  // of doc_id (N + doc_limits::min()), padded with zeros for docs that
+  // didn't have the field. Index by the doc_id from each expected pair,
+  // not by the pair's position in the vector.
+  for (const auto& [doc, value] : expected_docs) {
+    ASSERT_TRUE(irs::doc_limits::valid(doc));
+    const auto row = static_cast<uint64_t>(doc) - irs::doc_limits::min();
+    ASSERT_EQ(value, column->Get(row)) << "doc=" << doc;
   }
 }
 
@@ -396,19 +190,15 @@ TEST_P(NormTestCase, CheckNorms) {
   auto* doc2 = gen.next();  // name == 'C'
   auto* doc3 = gen.next();  // name == 'D'
 
-  irs::IndexWriterOptions opts;
+  auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
-  ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end(),
-                     doc0->stored.begin(), doc0->stored.end()));
-  ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end(),
-                     doc1->stored.begin(), doc1->stored.end()));
-  ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end(),
-                     doc2->stored.begin(), doc2->stored.end()));
-  ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end(),
-                     doc3->stored.begin(), doc3->stored.end()));
+  ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end()));
+  ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
+  ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
+  ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));
   writer->Commit();
   AssertSnapshotEquality(*writer);
 
@@ -425,7 +215,7 @@ TEST_P(NormTestCase, CheckNorms) {
                                doc3->stored.begin(), doc3->stored.end());
   AssertIndex();
 
-  auto reader = open_reader();
+  auto reader = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   auto& segment = reader[0];
   ASSERT_EQ(1, segment.size());
@@ -511,13 +301,14 @@ TEST_P(NormTestCase, CheckNormsBatched) {
   auto* doc2 = docs[2];
   auto* doc3 = docs[3];
 
-  irs::IndexWriterOptions opts;
+  auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
-  ASSERT_TRUE(
-    InsertStoreBatch(*writer, std::span<const tests::Document*>{docs}));
+  for (const auto* d : docs) {
+    ASSERT_TRUE(Insert(*writer, d->indexed.begin(), d->indexed.end()));
+  }
   writer->Commit();
   AssertSnapshotEquality(*writer);
 
@@ -534,7 +325,7 @@ TEST_P(NormTestCase, CheckNormsBatched) {
                                doc3->stored.begin(), doc3->stored.end());
   AssertIndex();
 
-  auto reader = open_reader();
+  auto reader = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   auto& segment = reader[0];
   ASSERT_EQ(1, segment.size());
@@ -617,27 +408,20 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
   auto* doc5 = gen.next();  // name == 'F'
   auto* doc6 = gen.next();  // name == 'G'
 
-  irs::IndexWriterOptions opts;
+  auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
-  ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end(),
-                     doc0->stored.begin(), doc0->stored.end()));
-  ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end(),
-                     doc1->stored.begin(), doc1->stored.end()));
-  ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end(),
-                     doc2->stored.begin(), doc2->stored.end()));
-  ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end(),
-                     doc3->stored.begin(), doc3->stored.end()));
+  ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end()));
+  ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
+  ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
+  ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));
   writer->Commit();
   AssertSnapshotEquality(*writer);
-  ASSERT_TRUE(Insert(*writer, doc4->indexed.begin(), doc4->indexed.end(),
-                     doc4->stored.begin(), doc4->stored.end()));
-  ASSERT_TRUE(Insert(*writer, doc5->indexed.begin(), doc5->indexed.end(),
-                     doc5->stored.begin(), doc5->stored.end()));
-  ASSERT_TRUE(Insert(*writer, doc6->indexed.begin(), doc6->indexed.end(),
-                     doc6->stored.begin(), doc6->stored.end()));
+  ASSERT_TRUE(Insert(*writer, doc4->indexed.begin(), doc4->indexed.end()));
+  ASSERT_TRUE(Insert(*writer, doc5->indexed.begin(), doc5->indexed.end()));
+  ASSERT_TRUE(Insert(*writer, doc6->indexed.begin(), doc6->indexed.end()));
   writer->Commit();
   AssertSnapshotEquality(*writer);
 
@@ -662,7 +446,7 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 
   AssertIndex();
 
-  auto reader = open_reader();
+  auto reader = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(2, reader.size());
 
   {
@@ -760,7 +544,6 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
     // Simulate consolidation
     index().clear();
     index().emplace_back();
-    auto& segment = index().back();
     expected_index.back().insert(doc0->indexed.begin(), doc0->indexed.end(),
                                  doc0->stored.begin(), doc0->stored.end());
     expected_index.back().insert(doc1->indexed.begin(), doc1->indexed.end(),
@@ -775,14 +558,11 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
                                  doc5->stored.begin(), doc5->stored.end());
     expected_index.back().insert(doc6->indexed.begin(), doc6->indexed.end(),
                                  doc6->stored.begin(), doc6->stored.end());
-    for (auto& column : segment.columns()) {
-      column.rewrite();
-    }
   }
 
   AssertIndex();
 
-  reader = open_reader();
+  reader = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
 
   {
@@ -879,27 +659,20 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
   auto* doc5 = gen.next();  // name == 'F'
   auto* doc6 = gen.next();  // name == 'G'
 
-  irs::IndexWriterOptions opts;
+  auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
-  ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end(),
-                     doc0->stored.begin(), doc0->stored.end()));
-  ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end(),
-                     doc1->stored.begin(), doc1->stored.end()));
-  ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end(),
-                     doc2->stored.begin(), doc2->stored.end()));
-  ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end(),
-                     doc3->stored.begin(), doc3->stored.end()));
+  ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end()));
+  ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
+  ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
+  ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));
   writer->Commit();
   AssertSnapshotEquality(*writer);
-  ASSERT_TRUE(Insert(*writer, doc4->indexed.begin(), doc4->indexed.end(),
-                     doc4->stored.begin(), doc4->stored.end()));
-  ASSERT_TRUE(Insert(*writer, doc5->indexed.begin(), doc5->indexed.end(),
-                     doc5->stored.begin(), doc5->stored.end()));
-  ASSERT_TRUE(Insert(*writer, doc6->indexed.begin(), doc6->indexed.end(),
-                     doc6->stored.begin(), doc6->stored.end()));
+  ASSERT_TRUE(Insert(*writer, doc4->indexed.begin(), doc4->indexed.end()));
+  ASSERT_TRUE(Insert(*writer, doc5->indexed.begin(), doc5->indexed.end()));
+  ASSERT_TRUE(Insert(*writer, doc6->indexed.begin(), doc6->indexed.end()));
   writer->Commit();
   AssertSnapshotEquality(*writer);
 
@@ -924,7 +697,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
   AssertIndex();
 
-  auto reader = open_reader();
+  auto reader = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(2, reader.size());
 
   {
@@ -1030,7 +803,6 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
     // Simulate consolidation
     index().clear();
     index().emplace_back();
-    auto& segment = index().back();
     expected_index.back().insert(doc0->indexed.begin(), doc0->indexed.end(),
                                  doc0->stored.begin(), doc0->stored.end());
     expected_index.back().insert(doc1->indexed.begin(), doc1->indexed.end(),
@@ -1043,15 +815,12 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
                                  doc5->stored.begin(), doc5->stored.end());
     expected_index.back().insert(doc6->indexed.begin(), doc6->indexed.end(),
                                  doc6->stored.begin(), doc6->stored.end());
-    for (auto& column : segment.columns()) {
-      column.rewrite();
-    }
   }
 
   // FIXME(gnusi)
   // AssertIndex();
 
-  reader = open_reader();
+  reader = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
 
   {
@@ -1108,8 +877,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
     }
   }
 
-  ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end(),
-                     doc0->stored.begin(), doc0->stored.end()));
+  ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end()));
   writer->Commit();
   AssertSnapshotEquality(*writer);
 
@@ -1122,7 +890,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
     AssertSnapshotEquality(*writer);
   }
 
-  reader = open_reader();
+  reader = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
 
   {

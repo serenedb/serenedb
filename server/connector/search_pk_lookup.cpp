@@ -20,25 +20,33 @@
 
 #include "connector/search_pk_lookup.h"
 
+#include <duckdb/common/vector/flat_vector.hpp>
+
+#include "basics/debugging.h"
+#include "basics/exceptions.h"
+
 namespace sdb::connector {
 
-bool OpenSegmentPkIterator(const irs::SubReader& segment,
-                           SegmentPkIterator& out) {
-  out.Reset();
-  const auto* pk_col = segment.column(kPkFieldName);
-  if (!pk_col) {
-    return false;
+void SegmentPkSequentialFetcher::Fetch(
+  std::span<const irs::doc_id_t> sorted_docs, duckdb::Vector& out,
+  duckdb::idx_t out_start) {
+  if (sorted_docs.empty()) {
+    return;
   }
-  out.iter = pk_col->iterator(irs::ColumnHint::Normal);
-  if (!out.iter) {
-    return false;
-  }
-  out.value = irs::get<irs::PayAttr>(*out.iter);
-  if (!out.value) {
-    out.iter.reset();
-    return false;
-  }
-  return true;
+  SDB_IF_FAILURE("SearchPkFetchFault") { SDB_THROW(ERROR_DEBUG); }
+  SDB_ASSERT(absl::c_is_sorted(sorted_docs));
+
+  struct RowView {
+    std::span<const irs::doc_id_t> docs;
+    size_t size() const noexcept { return docs.size(); }
+    uint64_t operator[](size_t i) const noexcept {
+      return static_cast<uint64_t>(docs[i]) -
+             static_cast<uint64_t>(irs::doc_limits::min());
+    }
+  };
+  irs::columnstore::ColumnReader::RangeScan range{*_pk_col, _ctx};
+  irs::columnstore::ColumnReader::ScanRowsBatched(range, RowView{sorted_docs},
+                                                  out, out_start);
 }
 
 }  // namespace sdb::connector

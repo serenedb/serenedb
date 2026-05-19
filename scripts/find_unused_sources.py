@@ -30,6 +30,8 @@ THIRD_PARTY = REPO_ROOT / "third_party"
 # looking for "project" sources. build*/, .cache/, generated output, Rust target
 # dirs, etc.
 EXCLUDED_ROOTS = {
+    REPO_ROOT / "build_perf",
+    REPO_ROOT / "build_clangd",
     REPO_ROOT / "third_party",
     REPO_ROOT / "build",
     REPO_ROOT / "build_clangd",

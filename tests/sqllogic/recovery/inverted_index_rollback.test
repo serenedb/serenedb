@@ -1,0 +1,298 @@
+control substitution on
+
+###############################################################################
+# Rollback / mid-commit recovery on an inverted index with INCLUDE'd cs
+# columns. Pins:
+#
+#   1. Explicit ROLLBACK: aborted INSERTs leave no rows visible, no orphan
+#      `.cs` (otherwise the next VACUUM would reject the segment list), and
+#      subsequent INSERTs into the same indexed table succeed.
+#
+#   2. Crash before RocksDB commit: server dies mid-COMMIT. The columnstore
+#      Writer never publishes its `.cs`; recovery sees row counts == pre-INSERT
+#      and the index is queryable.
+#
+#   3. Crash after RocksDB commit: data survives, the cs file is present and
+#      the index serves queries (including the INCLUDE'd cs columns).
+###############################################################################
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+###############################################################################
+# 1. Explicit ROLLBACK on indexed table
+###############################################################################
+
+statement ok
+CREATE TABLE doc_rb (
+  pk INTEGER PRIMARY KEY,
+  body VARCHAR,
+  label VARCHAR,
+  tag INTEGER
+)
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE INDEX doc_rb_idx ON doc_rb USING inverted(pk, body en) INCLUDE (label, tag)
+
+
+# Baseline commit -- one row that must survive every rollback below.
+statement ok
+INSERT INTO doc_rb VALUES (1, 'baseline alpha', 'a', 100)
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) doc_rb
+
+
+# Aborted txn: INSERTs go to the cs writer but ROLLBACK must drop the segment
+# (and remove the partial `.cs`).
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+statement ok
+INSERT INTO doc_rb VALUES (2, 'beta', 'b', 200), (3, 'gamma', 'c', 300)
+
+
+statement ok
+ROLLBACK;
+
+
+# Row count must reflect only the baseline.
+query
+SELECT count(*) AS cnt FROM doc_rb
+----
+cnt
+1
+
+
+query
+SELECT label, tag FROM doc_rb_idx ORDER BY pk
+----
+label	tag
+a	100
+
+
+# A second INSERT after rollback must succeed -- if the previous partial cs
+# leaked (orphan `.cs`), the next segment writer would refuse to create a
+# file at the same path or VACUUM would see ghost rows.
+statement ok
+INSERT INTO doc_rb VALUES (4, 'delta', 'd', 400)
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) doc_rb
+
+
+query
+SELECT pk, label, tag FROM doc_rb_idx ORDER BY pk
+----
+pk	label	tag
+1	a	100
+4	d	400
+
+
+statement ok
+DROP TABLE doc_rb;
+
+
+###############################################################################
+# 2. Crash before RocksDB commit on indexed table
+#    Server crashes during COMMIT, before RocksDB persists. Indexed data must
+#    NOT survive recovery; the index must still serve queries afterward.
+###############################################################################
+
+statement ok
+CREATE TABLE doc_pre (
+  pk INTEGER PRIMARY KEY,
+  body VARCHAR,
+  label VARCHAR,
+  tag INTEGER
+)
+
+
+statement ok
+CREATE INDEX doc_pre_idx ON doc_pre USING inverted(pk, body en) INCLUDE (label, tag)
+
+
+# Baseline row inside a committed txn so we have something to compare against
+# after recovery.
+statement ok
+INSERT INTO doc_pre VALUES (1, 'alpha one', 'a', 100)
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) doc_pre
+
+
+# Arm the crash: serened will exit(1) before RocksDB persists the next COMMIT.
+statement ok
+SET sdb_faults = 'crash_before_rocksdb_commit';
+
+
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+statement ok
+INSERT INTO doc_pre VALUES (2, 'beta two', 'b', 200), (3, 'gamma three', 'c', 300)
+
+
+statement error connection closed
+COMMIT;
+
+
+# Reconnect: only the baseline row must be visible -- the aborted txn's
+# cs segment must have been rolled back by recovery.
+connection pre_after
+query ok retry 20 backoff 500ms
+SELECT pk, body, label, tag FROM doc_pre ORDER BY pk
+----
+pk	body	label	tag
+1	alpha one	a	100
+
+
+# The index must still serve queries through the cs INCLUDE path.
+connection pre_after
+query
+SELECT label, tag FROM doc_pre_idx WHERE body @@ ts_phrase('alpha')
+ORDER BY label
+----
+label	tag
+a	100
+
+
+# Beta/gamma must not be reachable through the index either.
+connection pre_after
+query
+SELECT pk, label FROM doc_pre_idx WHERE body @@ ts_phrase('beta')
+----
+pk	label
+
+
+# A new INSERT must succeed after recovery (no orphan `.cs` blocking the
+# next segment).
+connection pre_after
+statement ok
+INSERT INTO doc_pre VALUES (4, 'delta four', 'd', 400)
+
+
+connection pre_after
+statement ok
+VACUUM (UPDATE_INDEXES) doc_pre
+
+
+connection pre_after
+query
+SELECT pk, label, tag FROM doc_pre_idx ORDER BY pk
+----
+pk	label	tag
+1	a	100
+4	d	400
+
+
+connection pre_after
+statement ok
+DROP TABLE doc_pre;
+
+
+###############################################################################
+# 3. Crash after RocksDB commit on indexed table
+#    Server crashes during COMMIT, after RocksDB persists. Indexed data MUST
+#    survive recovery and remain queryable through the index.
+###############################################################################
+
+connection pre_after
+statement ok
+RESET sdb_faults;
+
+
+connection pre_after
+statement ok
+CREATE TABLE doc_post (
+  pk INTEGER PRIMARY KEY,
+  body VARCHAR,
+  label VARCHAR,
+  tag INTEGER
+)
+
+
+connection pre_after
+statement ok
+CREATE INDEX doc_post_idx ON doc_post USING inverted(pk, body en) INCLUDE (label, tag)
+
+
+connection pre_after
+statement ok
+INSERT INTO doc_post VALUES (1, 'alpha one', 'a', 100)
+
+
+connection pre_after
+statement ok
+VACUUM (UPDATE_INDEXES) doc_post
+
+
+# Arm: crash *after* RocksDB commit -- the next COMMIT persists then dies.
+connection pre_after
+statement ok
+SET sdb_faults = 'crash_after_rocksdb_commit';
+
+
+connection pre_after
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection pre_after
+statement ok
+INSERT INTO doc_post VALUES (2, 'beta two', 'b', 200)
+
+
+connection pre_after
+statement error connection closed
+COMMIT;
+
+
+# Reconnect: pk=2 MUST be present (RocksDB committed before the crash).
+connection post_after
+query ok retry 20 backoff 500ms
+SELECT pk, body, label, tag FROM doc_post ORDER BY pk
+----
+pk	body	label	tag
+1	alpha one	a	100
+2	beta two	b	200
+
+
+# Index must serve a query that hits the post-recovery row (through cs
+# INCLUDE columns).
+connection post_after
+statement ok
+VACUUM (UPDATE_INDEXES) doc_post
+
+
+connection post_after
+query
+SELECT label, tag FROM doc_post_idx WHERE body @@ ts_phrase('beta')
+ORDER BY label
+----
+label	tag
+b	200
+
+
+connection post_after
+statement ok
+DROP TABLE doc_post;

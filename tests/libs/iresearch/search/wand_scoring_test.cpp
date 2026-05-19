@@ -34,7 +34,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
-#include "iresearch/parser/parser.h"
+#include "iresearch/parser/parser.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/doc_collector.hpp"

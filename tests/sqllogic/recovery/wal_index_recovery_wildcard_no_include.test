@@ -1,0 +1,140 @@
+control substitution on
+
+# WAL recovery for a wildcard-tokenized column WITHOUT INCLUDE.
+#
+# Counterpart to wal_index_recovery_wildcard.test: same indexing, but no
+# INCLUDE clause. The analyzer-output cs column (aux slot 0) is still
+# populated because the ts_like filter needs the n-gram pack; the
+# user-facing cs[user_id] slot is NOT populated. `SELECT b` falls back to
+# RocksDB which holds the original VARCHAR.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wal_wild_ni_dict(
+    template = 'wildcard',
+    ngramsize = 3,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+statement ok
+CREATE TABLE wal_wild_ni_t(pk INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+INSERT INTO wal_wild_ni_t VALUES (1, 'percent_alpha_one');
+
+statement ok
+CREATE INDEX wal_wild_ni_idx ON wal_wild_ni_t
+  USING inverted(b wal_wild_ni_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) wal_wild_ni_t;
+
+# Plan: ts_like filter consults analyzer-output cs aux column;
+# `b` projection falls back to RocksDB lookup (no INCLUDE).
+query
+EXPLAIN SELECT pk, b FROM wal_wild_ni_idx WHERE b @@ ts_like('percent_alpha_one');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│             b             │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      wal_wild_ni_idx      │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│    AND[WILDCARD_NGRAM[b   │
+│  (string), '', has_pos=0, │
+│  parts=[<Term:\\xffpe(0, 0)│
+│ ; Term:per(1, 1); Term:erc│
+│  (1, 1); Term:rce(1, 1);  │
+│  Term:cen(1, 1); Term:ent │
+│ (1, 1); >; <Term:alp(0, 0)│
+│ ; Term:lph(1, 1); Term:pha│
+│ (1, 1); >; <Term:one(0, 0)│
+│; Term:ne\\xff(1, 1); >; ]]]│
+│                           │
+│        Projections:       │
+│             b             │
+│             pk            │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+# Pre-crash row: wildcard query works.
+query
+SELECT pk FROM wal_wild_ni_idx WHERE b @@ ts_like('percent_alpha_one') ORDER BY pk;
+----
+pk
+1
+
+# Pre-crash row: SELECT b returns the raw VARCHAR (read from RocksDB).
+query
+SELECT pk, b FROM wal_wild_ni_idx
+WHERE b @@ ts_like('percent_alpha_one');
+----
+pk	b
+1	percent_alpha_one
+
+# Freeze iresearch commits before the post-crash batch.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO wal_wild_ni_t VALUES (2, 'percent_beta_two'),
+                                 (3, 'percent_gamma_three');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# --- server restarts here ---
+
+connection wal_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) wal_wild_ni_t;
+
+# Pre-crash row queryable.
+connection wal_after
+query
+SELECT pk FROM wal_wild_ni_idx WHERE b @@ ts_like('percent_alpha_one');
+----
+pk
+1
+
+# Post-crash rows: ts_like filter consults the aux cs column.
+connection wal_after
+query
+SELECT pk FROM wal_wild_ni_idx WHERE b @@ ts_like('percent_beta_two');
+----
+pk
+2
+
+connection wal_after
+query
+SELECT pk FROM wal_wild_ni_idx WHERE b @@ ts_like('percent_gamma_three');
+----
+pk
+3
+
+# All three rows visible and `b` returns the raw VARCHAR (via RocksDB).
+connection wal_after
+query
+SELECT pk, b FROM wal_wild_ni_idx ORDER BY pk;
+----
+pk	b
+1	percent_alpha_one
+2	percent_beta_two
+3	percent_gamma_three

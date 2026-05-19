@@ -1,0 +1,317 @@
+hash-threshold 100
+
+# Coverage for `MergeWriter::Flush` / `MergeInto` / `MergeNormColumnFromSources`
+# under all the shapes their code paths actually branch on:
+#
+#   - sources with no deletes (identity remap, all-ones in `DocRemap`),
+#   - sources with deletes (sparse remap via `id_map`, mask-filter on cs),
+#   - INCLUDE columns where some rows are NULL (validity bitmap merge),
+#   - norm columns where some sources DON'T have the field (zero-pad path),
+#   - segment sizes that cover the STANDARD_VECTOR_SIZE boundary (2048):
+#       * < 2048      -> single scan chunk, partial last word
+#       * == 2048     -> single scan chunk, full last word, no partial
+#       * >  2048     -> multi-chunk, both full and partial words
+#       * == 4096     -> two full chunks, no partial in either
+#       * boundary+/- 1 cases for off-by-one in tail-bit masking
+#
+# Driven via `PRAGMA serenedb_vacuum('compact_indexes', ...)` after several
+# VACUUM (UPDATE_INDEXES) segment-creating batches.
+
+statement ok
+CREATE TABLE m (
+  pk INTEGER PRIMARY KEY,
+  body VARCHAR,
+  tag INTEGER,
+  note VARCHAR
+)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+)
+
+
+# `body` text-indexed (drives norms, drives ColumnExistenceQuery
+# coverage via the dual column below); `note` INCLUDE-only (drives
+# zero-pad norm-merge path because no posting list); `body_dual` is the
+# dual-purpose column for ts_is_null pushdown.
+statement ok
+CREATE INDEX m_idx ON m
+  USING inverted(pk, body en)
+  INCLUDE (tag, note)
+
+
+# ---------------- Segment 1: tiny (< 2048), some NULL INCLUDEs ----------
+statement ok
+INSERT INTO m VALUES (1, 'alpha cat', 10, 'note-1')
+
+
+statement ok
+INSERT INTO m VALUES (2, 'beta dog', NULL, NULL)
+
+
+statement ok
+INSERT INTO m VALUES (3, 'gamma cat', 30, NULL)
+
+
+statement ok
+INSERT INTO m VALUES (4, 'delta', 40, 'note-4')
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) m
+
+
+# ---------------- Segment 2: exactly STANDARD_VECTOR_SIZE (== 2048) -----
+# Range [100, 2147] inclusive = 2048 rows. Every 7th row gets NULL in
+# `note` (sparse nulls) and every 3rd row gets NULL in `tag` so the cs
+# validity bitmap has a non-trivial shape inside the single chunk's
+# whole-word region (the "no partial-last-word" path).
+statement ok
+INSERT INTO m
+SELECT i,
+       CASE WHEN i % 5 = 0 THEN 'cat' ELSE 'fox' END,
+       CASE WHEN i % 3 = 0 THEN NULL ELSE i * 10 END,
+       CASE WHEN i % 7 = 0 THEN NULL ELSE 'note-' || i END
+FROM generate_series(100, 2147) AS s(i)
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) m
+
+
+# ---------------- Segment 3: 2048 + 1 (partial last word in last chunk) -
+# Range [3000, 5048] = 2049 rows. Last word in chunk-2 holds exactly 1
+# bit -- the tail-bit mask must clear the remaining 63 padding bits.
+statement ok
+INSERT INTO m
+SELECT i,
+       CASE WHEN i % 11 = 0 THEN 'cat' ELSE 'dog' END,
+       i,
+       CASE WHEN i % 13 = 0 THEN NULL ELSE 'tag-' || i END
+FROM generate_series(3000, 5048) AS s(i)
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) m
+
+
+# ---------------- Segment 4: 4096 rows == 2 * STANDARD_VECTOR_SIZE ------
+# No partial-last-word in either chunk. Mix sparse + dense NULLs.
+statement ok
+INSERT INTO m
+SELECT i,
+       CASE WHEN i % 2 = 0 THEN 'cat fox' ELSE 'dog' END,
+       CASE WHEN i % 2 = 0 THEN i * 100 ELSE NULL END,
+       'n' || (i % 16)
+FROM generate_series(10000, 14095) AS s(i)
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) m
+
+
+# ---------------- Segment 5: 2047 (single chunk, max-tail-mask) ---------
+# One bit short of the chunk boundary -- last word in chunk has 1 padding
+# bit at the top.
+statement ok
+INSERT INTO m
+SELECT i, 'fox', NULL, NULL
+FROM generate_series(20000, 22046) AS s(i)
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) m
+
+
+# ---------------- Removals: force the mask-filter / id_map paths --------
+# Delete some rows from each of the existing segments so the consolidation
+# pass sees sources with `live_docs_count < docs_count`. This exercises
+# `ComputeDocIds`, `DocRemap{mask, id_map}`, and the masked branch of
+# `MergeNormColumnFromSources`.
+statement ok
+DELETE FROM m WHERE pk = 2
+
+
+statement ok
+DELETE FROM m WHERE pk = 4
+
+
+statement ok
+DELETE FROM m WHERE pk IN (105, 222, 1500, 2147)
+
+
+statement ok
+DELETE FROM m WHERE pk IN (3001, 5048)
+
+
+statement ok
+DELETE FROM m WHERE pk IN (10000, 14000, 14095)
+
+
+statement ok
+DELETE FROM m WHERE pk IN (20000, 22046)
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) m
+
+
+# Snapshot the pre-merge state. After compact_indexes runs everything
+# below should still match exactly -- merging must not change query
+# results, only the segment shape.
+
+# Total live rows = (4 - 2) + (2048 - 4) + (2049 - 2) + (4096 - 3) + (2047 - 2)
+#                 =      2  +     2044  +     2047  +     4093  +     2045
+#                 = 10231
+query
+SELECT count(*) FROM m_idx WHERE body @@ ts_phrase('cat');
+----
+count
+2642
+
+
+query
+SELECT count(*) FROM m_idx WHERE body @@ ts_phrase('fox');
+----
+count
+5727
+
+
+query
+SELECT count(*) FROM m_idx WHERE body @@ ts_phrase('dog');
+----
+count
+3908
+
+
+# NULL distribution checks via ts_is_null on the dual case is gated on
+# indexed columns -- on INCLUDE-only `note` we exercise the residual
+# FILTER path (DuckDB-side) instead. Combined with a posting-list filter
+# so the rows actually flow through MergeInto's cs path.
+query
+SELECT count(*) FROM m_idx
+WHERE body @@ ts_phrase('cat') AND tag IS NULL;
+----
+count
+135
+
+
+query
+SELECT count(*) FROM m_idx
+WHERE body @@ ts_phrase('cat') AND note IS NULL;
+----
+count
+74
+
+
+# Spot-check a few PKs survive the merge with the right INCLUDE values.
+query
+SELECT pk, body, tag, note FROM m_idx
+WHERE body @@ ts_phrase('cat') AND pk IN (1, 105, 3003, 14000)
+ORDER BY pk;
+----
+pk	body	tag	note
+1	alpha cat	10	note-1
+3003	cat	3003	NULL
+
+
+query
+SELECT pk, body, tag, note FROM m_idx
+WHERE body @@ ts_phrase('dog') AND pk IN (3001, 5048, 20000)
+ORDER BY pk;
+----
+pk	body	tag	note
+
+
+# Norm-merge sanity: BM25 still positive across merged segments for a
+# text-indexed phrase. If `MergeNormColumnFromSources` lost or mis-aligned
+# any norms this would either crash or yield zeros.
+query
+SELECT count(*) FROM m_idx
+WHERE body @@ ts_phrase('cat') AND BM25(m_idx.tableoid) > 0;
+----
+count
+2642
+
+
+# Drive consolidation to a fixpoint. After this every source above
+# becomes one merged segment via MergeInto + MergeNormColumnFromSources.
+statement ok
+PRAGMA serenedb_vacuum('compact_indexes', 'm');
+
+
+# Same queries must give identical answers post-merge.
+query
+SELECT count(*) FROM m_idx WHERE body @@ ts_phrase('cat');
+----
+count
+2642
+
+
+query
+SELECT count(*) FROM m_idx WHERE body @@ ts_phrase('fox');
+----
+count
+5727
+
+
+query
+SELECT count(*) FROM m_idx WHERE body @@ ts_phrase('dog');
+----
+count
+3908
+
+
+query
+SELECT count(*) FROM m_idx
+WHERE body @@ ts_phrase('cat') AND tag IS NULL;
+----
+count
+135
+
+
+query
+SELECT count(*) FROM m_idx
+WHERE body @@ ts_phrase('cat') AND note IS NULL;
+----
+count
+74
+
+
+query
+SELECT pk, body, tag, note FROM m_idx
+WHERE body @@ ts_phrase('cat') AND pk IN (1, 105, 3003, 14000)
+ORDER BY pk;
+----
+pk	body	tag	note
+1	alpha cat	10	note-1
+3003	cat	3003	NULL
+
+
+query
+SELECT count(*) FROM m_idx
+WHERE body @@ ts_phrase('cat') AND BM25(m_idx.tableoid) > 0;
+----
+count
+2642
+
+
+# Re-compact: idempotent (no-op merge).
+statement ok
+PRAGMA serenedb_vacuum('compact_indexes', 'm');
+
+
+query
+SELECT count(*) FROM m_idx WHERE body @@ ts_phrase('cat');
+----
+count
+2642

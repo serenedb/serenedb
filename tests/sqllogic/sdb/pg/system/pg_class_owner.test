@@ -1,0 +1,95 @@
+# Verifies pg_class.relowner is the root user oid for every relkind and that
+# catalog views joining on relowner resolve to the root user name. RBAC isn't
+# implemented yet, so every relation is owned by kRootUser (oid 1000000,
+# rolname 'postgres'). These tests guard against accidental regressions where
+# relowner would carry a different id (e.g. GetParentId instead of an owner).
+
+statement ok
+CREATE TABLE vedernikoff_clickclack(id int)
+
+
+statement ok
+CREATE VIEW vedernikoff_view AS SELECT id FROM vedernikoff_clickclack
+
+
+statement ok
+CREATE INDEX vedernikoff_idx ON vedernikoff_clickclack(id)
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_seq
+
+
+# Root user lives at oid 1000000 with rolname 'postgres'.
+query
+SELECT oid, rolname FROM pg_authid WHERE rolname = 'postgres'
+----
+oid	rolname
+1000000	postgres
+
+
+# pg_class.relowner is kRootUser for every relkind (table, index, view).
+query
+SELECT relname, relowner FROM pg_class
+WHERE relname IN ('vedernikoff_clickclack', 'vedernikoff_idx', 'vedernikoff_view')
+ORDER BY relname
+----
+relname	relowner
+vedernikoff_clickclack	1000000
+vedernikoff_idx	1000000
+vedernikoff_view	1000000
+
+
+# pg_tables.tableowner = pg_get_userbyid(relowner) -> 'postgres'.
+query
+SELECT tableowner FROM pg_tables WHERE tablename = 'vedernikoff_clickclack'
+----
+tableowner
+postgres
+
+
+# pg_views.viewowner uses the same join.
+query
+SELECT viewowner FROM pg_views WHERE viewname = 'vedernikoff_view'
+----
+viewowner
+postgres
+
+
+# pg_indexes filters by pg_has_role(relowner, 'USAGE'). With kRootUser the
+# session user passes the check, so the index is visible.
+query
+SELECT indexname FROM pg_indexes WHERE indexname = 'vedernikoff_idx'
+----
+indexname
+vedernikoff_idx
+
+
+# information_schema.tables uses a role-grant filter on relowner via
+# pg_has_role(coalesce(c.relowner, t.typowner), 'USAGE').
+query
+SELECT table_name FROM information_schema.tables
+WHERE table_name = 'vedernikoff_clickclack'
+----
+table_name
+vedernikoff_clickclack
+
+
+# Known gap: sequences are not currently rendered into pg_class with
+# relkind='S', so pg_sequences (which joins pg_sequence with pg_class on
+# relkind='S') returns no rows for user-created sequences. When that gap is
+# closed, sequenceowner should be 'postgres' here -- update the expected
+# output accordingly.
+query
+SELECT sequencename, sequenceowner FROM pg_sequences
+WHERE sequencename = 'vedernikoff_seq'
+----
+sequencename	sequenceowner
+
+
+statement ok
+DROP TABLE vedernikoff_clickclack CASCADE
+
+
+statement ok
+DROP SEQUENCE vedernikoff_seq

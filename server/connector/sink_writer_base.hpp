@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "basics/containers/flat_hash_set.h"
 #include "catalog/table_options.h"
 #include "rocksdb/slice.h"
 

@@ -96,17 +96,17 @@ class ChildToParentJoin : public DocIterator, private Matcher {
   }
 
   doc_id_t seek(doc_id_t target) final {
-    if (const auto doc = value(); target <= doc) [[unlikely]] {
-      return doc;
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
     }
     const auto parent = _parent->seek(target);
     return _doc = SeekInternal(parent);
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    // TODO(mbkkt) should be SDB_ASSERT(target > value())
-    // but depends on underlying iterator implementation
-    SDB_ASSERT(target >= value());
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
+    }
     const auto parent = _parent->LazySeek(target);
     if (parent != target) {
       return parent;

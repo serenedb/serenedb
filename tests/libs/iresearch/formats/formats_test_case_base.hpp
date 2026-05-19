@@ -172,9 +172,6 @@ class FormatTestCase : public IndexTestBase {
     FormatTestCase::Position _pos;
   };
 
-  irs::ColumnInfo lz4_column_info() const noexcept;
-  irs::ColumnInfo none_column_info() const noexcept;
-
   bool supports_encryption() const noexcept { return true; }
 
   bool supports_columnstore_headers() const noexcept { return true; }
@@ -240,6 +237,6 @@ namespace irs {
 
 // use base irs::position type for ancestors
 template<>
-struct Type<tests::FormatTestCase::Position> : Type<irs::PosAttr> {};
+struct Type<::tests::FormatTestCase::Position> : Type<irs::PosAttr> {};
 
 }  // namespace irs

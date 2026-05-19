@@ -327,8 +327,10 @@ void ReadStoredFields(const irs::DirectoryReader& reader) {
       continue;
     }
 
-    auto title_cursor = title_col->NewPointCursor();
-    auto body_cursor = body_col->NewPointCursor();
+    irs::columnstore::ColumnReader::PointReader title_cursor{*cs_reader,
+                                                             *title_col};
+    irs::columnstore::ColumnReader::PointReader body_cursor{*cs_reader,
+                                                            *body_col};
     duckdb::Vector title_vec{duckdb::LogicalType::BLOB, 1};
     duckdb::Vector body_vec{duckdb::LogicalType::BLOB, 1};
 
@@ -412,9 +414,22 @@ int main() {
   irs::MemoryDirectory dir;
   // cs needs a DatabaseInstance plumbed through both the writer (for
   // OpenColumn) and the reader_options (for CsReader on the snapshot).
+  // Norm-featured fields additionally require a norm_column_options
+  // callback that allocates a (column id, row-group size) pair per field.
   irs::IndexWriterOptions options;
   options.db = &Db();
   options.reader_options.db = &Db();
+  options.column_options = [](irs::field_id) -> irs::ColumnOptions {
+    return {.row_group_size = DEFAULT_ROW_GROUP_SIZE};
+  };
+  options.norm_column_options =
+    [next = std::make_shared<std::atomic<irs::field_id>>(0)](
+      std::string_view) -> irs::NormColumnOptions {
+    return {
+      .id = next->fetch_add(1, std::memory_order_relaxed),
+      .row_group_size = DEFAULT_ROW_GROUP_SIZE,
+    };
+  };
   auto writer = irs::IndexWriter::Make(dir, format, irs::kOmCreate, options);
 
   BuildIndex(*writer);

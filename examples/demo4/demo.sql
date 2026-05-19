@@ -51,11 +51,6 @@ CREATE INDEX dbpedia_idx ON dbpedia USING inverted(
 -- reference embedding arrives as a PostgreSQL bind parameter ($1) via
 -- the extended protocol; the cast `$1::FLOAT[1536]` folds at plan time
 -- so the optimizer picks IRESEARCH_ANN_SCAN over the HNSW graph.
--- EXPLAIN SELECT title
--- FROM dbpedia_idx d
--- ORDER BY d.embedding <=> $1::FLOAT[1536]
--- LIMIT 5
--- \bind :qvec \g
 
 SELECT title
 FROM dbpedia_idx d
@@ -65,12 +60,6 @@ LIMIT 5
 
 -- Q2: Range search -- everything within cosine distance 0.3 of the
 -- reference embedding. Plans as IRESEARCH_ANN_RANGE_SCAN.
--- EXPLAIN SELECT d.title
--- FROM dbpedia_idx d
--- WHERE d.embedding <=> $1::FLOAT[1536] < 0.3
--- LIMIT 10
--- \bind :qvec \g
-
 SELECT d.title
 FROM dbpedia_idx d
 WHERE d.embedding <=> $1::FLOAT[1536] < 0.3
@@ -80,13 +69,6 @@ LIMIT 10
 -- Q3: Hybrid -- BM25 phrase filter + ANN order-by, both against the
 -- same index in one round-trip. EXPLAIN should show IRESEARCH_ANN_SCAN
 -- with the ts_any disjunction pushed in as a stored text filter.
--- EXPLAIN SELECT title, left(text, 80) AS snippet
--- FROM dbpedia_idx d
--- WHERE text @@ ts_any(['physicist', 'physics', 'scientist'])
--- ORDER BY d.embedding <=> $1::FLOAT[1536]
--- LIMIT 5
--- \bind :qvec \g
-
 SELECT title, left(text, 80) AS snippet
 FROM dbpedia_idx d
 WHERE text @@ ts_any(['physicist', 'physics', 'scientist'])

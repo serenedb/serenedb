@@ -33,22 +33,32 @@ LIMIT 5;
 -- Q2: hybrid. The user wants papers from a specific lab and describes
 -- what they care about separately. FTS scopes to the lab; ANN reranks
 -- by the property they actually want.
-\echo === [Q2] mentions OpenAI/GPT-4/ChatGPT ; intent: "evaluating frontier model limits" ===
+\echo === [Q2] frontier-lab paper (must mention a lab; should mention a model; not a survey) ; intent: "evaluating frontier model limits" ===
 SELECT title
 FROM arxiv_idx a
-WHERE abstract @@ ts_any(['OpenAI', 'GPT-4', 'ChatGPT'])
+WHERE abstract @@ ts_compound(
+        ts_any(['OpenAI', 'Anthropic', 'DeepMind', 'Google']),
+        ts_any(['survey', 'tutorial', 'workshop']),
+        [ts_starts_with('gpt') ^ 2.0,
+         ts_starts_with('claude'),
+         ts_starts_with('gemini'),
+         ts_levenshtein('chatgpt', 1)],
+        1)
 ORDER BY a.embedding <=> ai_embed(
            'evaluating frontier model limits',
            'gemini-embedding-001',
            'gemini')::FLOAT[3072]
 LIMIT 5;
 
--- Q3: phrase prune + semantic re-rank. User pins the source ("Google")
--- and asks for results about a separate property.
-\echo === [Q3] must mention "OpenAI" ; intent: "scaling laws for language models" ===
+-- Q3: prefix + proximity. "language model(s|ing)" via prefix,
+-- "scaling law(s)" via `##` so "scaling power law" still hits, and a
+-- regex catches the model-size shorthand 7B / 13B / 70B / 175B.
+\echo === [Q3] scaling laws near language models ; intent: "scaling laws for language models" ===
 SELECT title
 FROM arxiv_idx a
-WHERE abstract @@ ts_phrase('OpenAI')
+WHERE abstract @@ (('scaling' ## [0, 1] ## ts_starts_with('law'))
+                   && ('language' ## [0, 1] ## ts_starts_with('model')))
+   OR abstract @@ ts_regexp('[0-9]+b')
 ORDER BY a.embedding <=> ai_embed(
            'scaling laws for language models',
            'gemini-embedding-001',
@@ -71,11 +81,20 @@ WHERE a.embedding <=> ai_embed(
 ORDER BY dist
 LIMIT 5;
 
-\echo === [Q5] published 2023-07..2023-12 ; intent: "LLM agents using tools" ===
+-- Q5: structured filter on `published_date` composes with a compound
+-- BM25 query: agent/tool terminology required (any of), reasoning hint
+-- preferred (should), pure-RL / robotics papers demoted (must_not).
+\echo === [Q5] pre-2024 ; intent: "LLM agents using tools" ===
 SELECT published_date::DATE AS published, title
 FROM arxiv_idx a
 WHERE published_date <  TIMESTAMP '2024-01-01'
-AND abstract @@ ts_phrase('OpenAI')
+AND abstract @@ ts_compound(
+        ts_any([ts_starts_with('agent'), ts_starts_with('tool'), ts_phrase('function calling')]),
+        ts_any(['robotic', 'manipulation']),
+        [ts_phrase('chain of thought') ^ 1.5,
+         ts_phrase('react'),
+         ts_levenshtein('toolformer', 1)],
+        1)
 ORDER BY a.embedding <=> ai_embed(
            'LLM agents using tools',
            'gemini-embedding-001',

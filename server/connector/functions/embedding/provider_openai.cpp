@@ -33,61 +33,12 @@
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/system-compiler.h"
 
 namespace sdb::connector::embedding {
 namespace {
 
 constexpr const std::string_view kDefaultBaseUrl = "https://api.openai.com";
 constexpr const std::string_view kEmbeddingsPath = "/v1/embeddings";
-
-bool NeedsJsonEscape(unsigned char c) {
-  return c == '"' || c == '\\' || c == '\b' || c == '\f' || c == '\n' ||
-         c == '\r' || c == '\t';
-}
-
-void AppendJsonEscaped(std::string& out, std::string_view s) {
-  size_t i = 0;
-  while (i < s.size()) {
-    size_t j = i;
-    while (j < s.size() && !NeedsJsonEscape(static_cast<unsigned char>(s[j]))) {
-      j++;
-    }
-    if (j > i) {
-      out.append(s.data() + i, j - i);
-      i = j;
-    }
-    if (i >= s.size()) {
-      break;
-    }
-    unsigned char c = static_cast<unsigned char>(s[i++]);
-    switch (c) {
-      case '"':
-        out.append("\\\"");
-        break;
-      case '\\':
-        out.append("\\\\");
-        break;
-      case '\b':
-        out.append("\\b");
-        break;
-      case '\f':
-        out.append("\\f");
-        break;
-      case '\n':
-        out.append("\\n");
-        break;
-      case '\r':
-        out.append("\\r");
-        break;
-      case '\t':
-        out.append("\\t");
-        break;
-      default:
-        SDB_UNREACHABLE();
-    }
-  }
-}
 
 class OpenAIProvider final : public EmbeddingProvider {
  public:
@@ -109,7 +60,7 @@ class OpenAIProvider final : public EmbeddingProvider {
 
   void EmbedBatch(std::span<std::string_view> texts,
                   duckdb::Vector& result) const final {
-    constexpr size_t kMaxBatch = 256;
+    constexpr size_t kMaxBatch = 64;
     duckdb::idx_t next_row = 0;
     for (size_t start = 0; start < texts.size(); start += kMaxBatch) {
       size_t end = std::min(start + kMaxBatch, texts.size());
@@ -124,20 +75,26 @@ class OpenAIProvider final : public EmbeddingProvider {
     for (auto t : texts) {
       total += t.size() + 4;
     }
-    std::string body;
-    body.reserve(total);
-    body.append("{\"model\":\"");
-    AppendJsonEscaped(body, _cfg.model);
-    body.append("\",\"input\":[");
+    simdjson::builder::string_builder builder(total);
+    builder.start_object();
+    builder.append_raw("\"model\":");
+    builder.escape_and_append_with_quotes(_cfg.model);
+    builder.append_comma();
+    builder.append_raw("\"input\":");
+    builder.start_array();
     for (size_t i = 0; i < texts.size(); i++) {
       if (i > 0) {
-        body.push_back(',');
+        builder.append_comma();
       }
-      body.push_back('"');
-      AppendJsonEscaped(body, texts[i]);
-      body.push_back('"');
+      builder.escape_and_append_with_quotes(texts[i]);
     }
-    body.append("]}");
+    builder.end_array();
+    builder.end_object();
+    std::string_view body;
+    if (builder.view().get(body) != simdjson::SUCCESS) {
+      throw duckdb::IOException(
+        "failed to build OpenAI embeddings request body");
+    }
 
     const std::string url = _cfg.base_url + _cfg.embeddings_path;
 

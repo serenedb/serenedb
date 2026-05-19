@@ -67,20 +67,33 @@ WHERE d.embedding <=> $1::FLOAT[1536] < 0.3
 LIMIT 10
 \bind :qvec \g
 
--- Q3: Hybrid -- BM25 phrase filter + ANN order-by, both against the
--- same index in one round-trip. EXPLAIN should show IRESEARCH_ANN_SCAN
--- with the ts_any disjunction pushed in as a stored text filter.
+-- Q3: Hybrid -- ts_compound (must / must_not / should + min_should_match)
+-- composes the BM25 side: bias toward physicists, demote philosophy
+-- abstracts, and require any two of the boosted should-clauses. Boost
+-- (`^`) and prefix expansion are pushed into the same stored filter.
 SELECT title, left(text, 80) AS snippet
 FROM dbpedia_idx d
-WHERE text @@ ts_any(['physicist', 'physics', 'scientist'])
+WHERE text @@ ts_compound(
+        ts_phrase('physicist'),
+        ts_any(['philosopher', 'philosophy', 'theologian']),
+        [ts_phrase('quantum mechanics') ^ 2.0,
+         ts_phrase('general relativity') ^ 2.0,
+         ts_starts_with('relativ'),
+         ts_starts_with('particle')],
+        2)
 ORDER BY d.embedding <=> $1::FLOAT[1536]
 LIMIT 5
 \bind :qvec \g
 
--- Q4: Tighter phrase filter feeding the same ANN order-by.
+-- Q4: Proximity + fuzzy + regex. `##` allows up to a 2-token gap
+-- between "quantum" and "mechanics" (so "quantum wave mechanics" hits);
+-- ts_levenshtein catches "Schrodinger" / "Schroedinger" / "Schrödinger"
+-- with edit distance 2; ts_regexp restricts to Heisenberg / Heisenburg.
 SELECT title, left(text, 80) AS snippet
 FROM dbpedia_idx d
-WHERE text @@ ts_phrase('quantum mechanics')
+WHERE text @@ (('quantum' ## [0, 2] ## 'mechanics')
+               || ts_levenshtein('Schrodinger', 2)
+               || ts_regexp('heisen[bu]+rg'))
 ORDER BY d.embedding <=> $1::FLOAT[1536]
 LIMIT 5
 \bind :qvec \g

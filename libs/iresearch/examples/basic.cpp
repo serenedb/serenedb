@@ -328,9 +328,9 @@ void ReadStoredFields(const irs::DirectoryReader& reader) {
     }
 
     irs::columnstore::ColumnReader::PointReader title_cursor{*cs_reader,
-                                                              *title_col};
+                                                             *title_col};
     irs::columnstore::ColumnReader::PointReader body_cursor{*cs_reader,
-                                                             *body_col};
+                                                            *body_col};
     duckdb::Vector title_vec{duckdb::LogicalType::BLOB, 1};
     duckdb::Vector body_vec{duckdb::LogicalType::BLOB, 1};
 

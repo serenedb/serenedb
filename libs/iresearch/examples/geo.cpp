@@ -18,6 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <vpack/iterator.h>
+#include <vpack/parser.h>
+
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
 #include <iostream>
@@ -35,8 +38,6 @@
 #include <iresearch/utils/text_format.hpp>
 #include <iresearch/utils/vpack_utils.hpp>
 #include <memory>
-#include <vpack/iterator.h>
-#include <vpack/parser.h>
 
 #include "geo/shape_container.h"
 #include "s2/s2latlng.h"
@@ -159,8 +160,8 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
                                 std::shared_ptr<vpack::Builder> docs,
                                 std::vector<std::string>& names_out) {
   auto format = irs::formats::Get("1_5simd");
-  auto writer = irs::IndexWriter::Make(dir, format, irs::kOmCreate,
-                                       MakeWriterOptions());
+  auto writer =
+    irs::IndexWriter::Make(dir, format, irs::kOmCreate, MakeWriterOptions());
 
   GeoField geo;
   geo.name = "geometry";
@@ -169,8 +170,7 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
     auto trx = writer->GetBatch();
     irs::columnstore::ColumnWriter* geo_cw = nullptr;
     for (auto doc_slice : vpack::ArrayIterator(docs->slice())) {
-      names_out.emplace_back(
-        irs::slice_to_string_view(doc_slice.get("name")));
+      names_out.emplace_back(irs::slice_to_string_view(doc_slice.get("name")));
 
       geo.shape_slice = doc_slice.get("geometry");
       auto doc = trx.Insert();
@@ -211,7 +211,9 @@ void PrintHits(std::string_view label, const std::vector<std::string>& hits) {
   if (!hits.empty()) {
     std::cout << " -- {";
     for (size_t i = 0; i < hits.size(); ++i) {
-      if (i) std::cout << ", ";
+      if (i) {
+        std::cout << ", ";
+      }
       std::cout << hits[i];
     }
     std::cout << "}";

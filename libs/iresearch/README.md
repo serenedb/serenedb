@@ -12,7 +12,7 @@
 
 </div>
 
-IResearch is a high-performance C++ search engine library. It's up to [5× faster](#performance) than Lucene and Tantivy, runs without a JVM and has powered [production](#production-history) search since 2018.
+IResearch is a high-performance C++ search engine library. It's up to [5x faster](#performance) than Lucene and Tantivy, runs without a JVM and has powered [production](#production-history) search since 2018.
 
 ## Quickstart
 
@@ -35,7 +35,7 @@ target_link_libraries(my_app PRIVATE iresearch-static)
 
 - **Full-text search.** Phrase, boolean, prefix, wildcard, fuzzy (Levenshtein), n-gram, regex, range.
 - **Pluggable scoring.** BM25, TFIDF, LM-Dirichlet, DFI built-in; custom scorers supported.
-- **Vectorized scoring.** Block-at-a-time SIMD pipeline over posting lists; up to 5× throughput vs scalar loops.
+- **Vectorized scoring.** Block-at-a-time SIMD pipeline over posting lists; up to 5x throughput vs scalar loops.
 - **Lazy evaluation.** Non-lead iterators in conjunctions, exclusions and two-phase queries defer work.
 - **Columnar storage.** Modern column store with adaptive compression.
 - **Vector search.** Approximate nearest-neighbor (HNSW).
@@ -44,7 +44,7 @@ target_link_libraries(my_app PRIVATE iresearch-static)
 
 ## Performance
 
-IResearch is **up to 5× faster than Lucene and Tantivy** on the Tantivy team's [Search Benchmark, The Game](https://tantivy-search.github.io/bench/). The Tantivy maintainers validated and merged iresearch's [results](https://github.com/quickwit-oss/search-benchmark-game/commit/f4149454e8de6d97a0b5c1b4253db1a6e2c82622) themselves.
+IResearch is **up to 5x faster than Lucene and Tantivy** on the Tantivy team's [Search Benchmark, The Game](https://tantivy-search.github.io/bench/). The Tantivy maintainers validated and merged iresearch's [results](https://github.com/quickwit-oss/search-benchmark-game/commit/f4149454e8de6d97a0b5c1b4253db1a6e2c82622) themselves.
 
 * [Detailed per-query breakdown](https://serenedb.com/search-benchmark-game)
 * [Benchmark overview](https://blog.serenedb.com/search-benchmark-game-overview)
@@ -52,19 +52,19 @@ IResearch is **up to 5× faster than Lucene and Tantivy** on the Tantivy team's 
 ### Where the speed comes from
 
 The win is a result of specific optimizations. We wrote them up as a five-post technical retrospective called `Search Optimization Journey`:
-* [Collecting top-K candidates](https://blog.serenedb.com/search-optimization-1) 
-* [Block scoring](https://blog.serenedb.com/search-optimization-2) 
-* [Norm gathering](https://blog.serenedb.com/norm-gathering) 
-* [Lazy two-phase queries](https://blog.serenedb.com/search-optimization-4) 
-* [Adaptive posting list format](https://blog.serenedb.com/search-optimization-5) 
+* [Collecting top-K candidates](https://blog.serenedb.com/search-optimization-1)
+* [Block scoring](https://blog.serenedb.com/search-optimization-2)
+* [Norm gathering](https://blog.serenedb.com/norm-gathering)
+* [Lazy two-phase queries](https://blog.serenedb.com/search-optimization-4)
+* [Adaptive posting list format](https://blog.serenedb.com/search-optimization-5)
 
 ## Examples
 
 See the [examples](examples/) directory for complete programs covering the public API, all built and exercised in CI on every PR so they stay in sync:
 
-- [basic.cpp](examples/basic.cpp) — index documents, run term / phrase / boolean / prefix / fuzzy / top-K BM25 queries, read stored fields, delete documents, consolidate.
-- [text_filters.cpp](examples/text_filters.cpp) — phrase search, n-gram similarity matching, regular expressions, SQL-style wildcard patterns (`%` and `_`) and fuzzy term matching with a configurable edit distance, all shown side-by-side against the same small corpus.
-- [geo.cpp](examples/geo.cpp) — geospatial search over a GeoJSON-indexed point corpus: find everything within a radius of a center point, everything inside an annulus and everything that falls inside an arbitrary polygon.
+- [basic.cpp](examples/basic.cpp) -- index documents, run term / phrase / boolean / prefix / fuzzy / top-K BM25 queries, read stored fields, delete documents, consolidate.
+- [text_filters.cpp](examples/text_filters.cpp) -- phrase search, n-gram similarity matching, regular expressions, SQL-style wildcard patterns (`%` and `_`) and fuzzy term matching with a configurable edit distance, all shown side-by-side against the same small corpus.
+- [geo.cpp](examples/geo.cpp) -- geospatial search over a GeoJSON-indexed point corpus: find everything within a radius of a center point, everything inside an annulus and everything that falls inside an arbitrary polygon.
 
 ## Production history
 

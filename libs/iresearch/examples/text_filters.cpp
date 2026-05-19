@@ -25,19 +25,19 @@
 #include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/columnstore/format.hpp>
 #include <iresearch/formats/formats.hpp>
-#include <iresearch/search/scorers.hpp>
-#include <iresearch/utils/compression.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/regexp_filter.hpp>
+#include <iresearch/search/scorers.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/text_format.hpp>
+#include <iresearch/utils/compression.hpp>
 #include <iresearch/utils/string.hpp>
+#include <iresearch/utils/text_format.hpp>
 #include <memory>
 
 // This example shows direct construction of the advanced text filters:
@@ -119,8 +119,8 @@ irs::IndexWriterOptions MakeWriterOptions() {
 irs::DirectoryReader BuildIndex(irs::Directory& dir,
                                 std::vector<std::string>& names_out) {
   auto format = irs::formats::Get("1_5simd");
-  auto writer = irs::IndexWriter::Make(dir, format, irs::kOmCreate,
-                                       MakeWriterOptions());
+  auto writer =
+    irs::IndexWriter::Make(dir, format, irs::kOmCreate, MakeWriterOptions());
 
   TextField body;
   body.name = "body";
@@ -138,7 +138,8 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
   return writer->GetSnapshot();
 }
 
-// Run a prepared filter over all segments, collect doc names (kCorpus[i].first).
+// Run a prepared filter over all segments, collect doc names
+// (kCorpus[i].first).
 std::vector<std::string> RunFilter(const irs::DirectoryReader& reader,
                                    const irs::Filter& filter,
                                    const std::vector<std::string>& names) {
@@ -161,7 +162,9 @@ void PrintHits(std::string_view label, const std::vector<std::string>& hits) {
   if (!hits.empty()) {
     std::cout << " -- {";
     for (size_t i = 0; i < hits.size(); ++i) {
-      if (i) std::cout << ", ";
+      if (i) {
+        std::cout << ", ";
+      }
       std::cout << hits[i];
     }
     std::cout << "}";
@@ -243,8 +246,7 @@ int main() {
     irs::ByWildcard q;
     *q.mutable_field() = "body";
     q.mutable_options()->term = irs::bstring{Bytes("f_x")};
-    PrintHits("expect d0, d2, d5 (fox, fox, fix)",
-              RunFilter(reader, q, names));
+    PrintHits("expect d0, d2, d5 (fox, fox, fix)", RunFilter(reader, q, names));
   }
 
   // 5) Levenshtein (fuzzy term): edits up to max_distance. "fox" with

@@ -287,9 +287,9 @@ class BlockDisjunction : public DocIterator {
 
     if (target < _max) {
       const doc_id_t block_base = _max - kWindow;
-      const doc_id_t mask_target = target - block_base;
-      const doc_id_t block_offset = mask_target / kBlockSize;
-      const size_t bit_offset = mask_target % kBlockSize;
+      const doc_id_t block_target = target - block_base;
+      const doc_id_t block_offset = block_target / kBlockSize;
+      const size_t bit_offset = block_target % kBlockSize;
       const uint64_t bit = UINT64_C(1) << bit_offset;
       const uint64_t word = _mask[block_offset];
 

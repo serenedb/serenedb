@@ -1259,7 +1259,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
             duckdb::Value("rocksdb_rowid");
           break;
         default: {
-          SDB_ASSERT(vcols_opt.has_value(),
+          SDB_ASSERT(vcols_opt,
                      "view_fast_path set but vcols not populated -- the "
                      "two are produced together in the leaf-rewrite block");
           const auto& vcols = *vcols_opt;

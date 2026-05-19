@@ -123,7 +123,7 @@ jobs:
     with:
       LOCATION: linux-amd64
       DATASET: wiki_small
-      GTEST_FILTER: SearchBenchTest.WikiSmall
+      GTEST_FILTER: SearchBenchTest*
       DEV: true
       INSTRUMENTATION: none
       PR_SHA: ${{ inputs.PR_SHA }}

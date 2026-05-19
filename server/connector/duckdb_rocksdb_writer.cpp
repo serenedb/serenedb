@@ -24,6 +24,7 @@
 #include <rocksdb/utilities/transaction.h>
 
 #include <cmath>
+#include <iresearch/utils/bytes_utils.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 
 #include "basics/assert.h"
@@ -47,19 +48,6 @@ T GetVectorValue(const duckdb::UnifiedVectorFormat& fmt,
                  duckdb::idx_t row_idx) {
   return duckdb::UnifiedVectorFormat::GetData<T>(
     fmt)[fmt.sel->get_index(row_idx)];
-}
-
-std::string MergeSlices(const std::vector<rocksdb::Slice>& slices) {
-  size_t total = 0;
-  for (const auto& s : slices) {
-    total += s.size();
-  }
-  std::string merged;
-  merged.reserve(total);
-  for (const auto& s : slices) {
-    merged.append(s.data(), s.size());
-  }
-  return merged;
 }
 
 }  // namespace
@@ -263,6 +251,23 @@ template size_t DuckDBColumnSerializer::WritePrimitive<duckdb::date_t>(
 template size_t DuckDBColumnSerializer::WritePrimitive<duckdb::hugeint_t>(
   const duckdb::hugeint_t&);
 
+namespace {
+
+std::string MergeSlices(const std::vector<rocksdb::Slice>& slices) {
+  size_t total = 0;
+  for (const auto& s : slices) {
+    total += s.size();
+  }
+  std::string merged;
+  merged.reserve(total);
+  for (const auto& s : slices) {
+    merged.append(s.data(), s.size());
+  }
+  return merged;
+}
+
+}  // namespace
+
 DuckDBColumnSerializer::TxnWriter::TxnWriter(
   query::Transaction& sdb_txn, rocksdb::ColumnFamilyHandle* cf) noexcept
   : _sdb_txn{&sdb_txn}, _txn{&sdb_txn.GetRocksDBTransaction()}, _cf{cf} {}
@@ -336,14 +341,11 @@ void DuckDBColumnSerializer::SstWriter::WriteNull(std::string_view key) {
 
 template<typename Writer>
 void DuckDBColumnSerializer::WriteRowSlices(
-  Writer* writer, std::string_view key,
+  Writer& writer, std::string_view key,
   std::span<DuckDBSinkIndexWriter*> index_writers) {
   // Writer decides what "Write" means for the current column (regular Put,
-  // IndexOnly WAL marker, or Option-C silent skip on the SST path); nullptr
-  // means caller wants index_writers only.
-  if (writer) {
-    writer->Write(_row_slices, key);
-  }
+  // IndexOnly WAL marker, or Option-C silent skip on the SST path).
+  writer.Write(_row_slices, key);
   for (auto* iw : index_writers) {
     iw->Write(_row_slices, key);
   }
@@ -351,7 +353,7 @@ void DuckDBColumnSerializer::WriteRowSlices(
 
 template<typename Writer>
 void DuckDBColumnSerializer::WriteConstantColumn(
-  Writer* writer, const duckdb::Vector& vec, const duckdb::LogicalType& type,
+  Writer& writer, const duckdb::Vector& vec, const duckdb::LogicalType& type,
   duckdb::idx_t num_rows, std::vector<std::string>& row_keys,
   std::span<DuckDBSinkIndexWriter*> index_writers) {
   if (duckdb::ConstantVector::IsNull(vec)) {
@@ -359,9 +361,7 @@ void DuckDBColumnSerializer::WriteConstantColumn(
       if (row_keys[row].empty()) {
         continue;
       }
-      if (writer) {
-        writer->WriteNull(row_keys[row]);
-      }
+      writer.WriteNull(row_keys[row]);
       for (auto* iw : index_writers) {
         iw->Write({}, row_keys[row]);
       }
@@ -403,14 +403,12 @@ void DuckDBColumnSerializer::WriteConstantColumn(
 
 template<typename Writer>
 void DuckDBColumnSerializer::WriteUnifiedColumn(
-  Writer* writer, const duckdb::RecursiveUnifiedVectorFormat& rdata,
+  Writer& writer, const duckdb::RecursiveUnifiedVectorFormat& rdata,
   const duckdb::LogicalType& type, duckdb::idx_t num_rows,
   std::vector<std::string>& row_keys,
   std::span<DuckDBSinkIndexWriter*> index_writers) {
   auto write_null = [&](duckdb::idx_t row) {
-    if (writer) {
-      writer->WriteNull(row_keys[row]);
-    }
+    writer.WriteNull(row_keys[row]);
     for (auto* iw : index_writers) {
       iw->Write({}, row_keys[row]);
     }
@@ -526,24 +524,15 @@ void DuckDBColumnSerializer::WriteUnifiedColumn(
   }
 }
 
-template<typename Writer, typename Desc>
-void DuckDBColumnSerializer::WriteVector(
-  Writer* writer, const duckdb::Vector& vec, duckdb::idx_t num_rows,
+template<typename Writer>
+void DuckDBColumnSerializer::WriteColumn(
+  Writer& writer, const duckdb::Vector& vec, duckdb::idx_t num_rows,
   std::vector<std::string>& row_keys,
-  std::span<DuckDBSinkIndexWriter*> index_writers, const Desc& desc) {
-  if constexpr (std::is_same_v<Desc, ColumnDescriptor>) {
-    if (writer) {
-      writer->SwitchColumn(desc);
-    }
-  } else {
-    static_assert(std::is_same_v<Desc, ExpressionDescriptor>,
-                  "WriteVector descriptor must be ColumnDescriptor or "
-                  "ExpressionDescriptor");
-    SDB_ASSERT(writer == nullptr,
-               "Expression WriteVector requires nullptr rocksdb writer -- the "
-               "source column was already persisted");
-  }
-  const auto& type = desc.type;
+  std::span<DuckDBSinkIndexWriter*> index_writers, ColumnDescriptor col) {
+  // Tell the writer which column we're streaming so its Write/WriteNull
+  // can branch (regular Put vs IndexOnly WAL marker vs SST silent skip).
+  writer.SwitchColumn(col);
+  const auto& type = col.type;
   switch (vec.GetVectorType()) {
     case duckdb::VectorType::FLAT_VECTOR:
       break;
@@ -611,9 +600,7 @@ void DuckDBColumnSerializer::WriteVector(
           continue;
         }
         if (may_have_nulls && !validity.RowIsValid(row)) {
-          if (writer) {
-            writer->WriteNull(row_keys[row]);
-          }
+          writer.WriteNull(row_keys[row]);
           for (auto* iw : index_writers) {
             iw->Write({}, row_keys[row]);
           }
@@ -667,22 +654,22 @@ void DuckDBColumnSerializer::WriteVector(
   }
 }
 
-template void DuckDBColumnSerializer::WriteVector<
-  DuckDBColumnSerializer::TxnWriter, ColumnDescriptor>(
-  TxnWriter*, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
-  std::span<DuckDBSinkIndexWriter*>, const ColumnDescriptor&);
-template void DuckDBColumnSerializer::WriteVector<
-  DuckDBColumnSerializer::SstWriter, ColumnDescriptor>(
-  SstWriter*, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
-  std::span<DuckDBSinkIndexWriter*>, const ColumnDescriptor&);
-template void DuckDBColumnSerializer::WriteVector<
-  DuckDBColumnSerializer::TxnWriter, ExpressionDescriptor>(
-  TxnWriter*, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
-  std::span<DuckDBSinkIndexWriter*>, const ExpressionDescriptor&);
+template void
+DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::TxnWriter>(
+  TxnWriter&, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
+  std::span<DuckDBSinkIndexWriter*>, ColumnDescriptor);
+template void
+DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::SstWriter>(
+  SstWriter&, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
+  std::span<DuckDBSinkIndexWriter*>, ColumnDescriptor);
+template void
+DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::NoopWriter>(
+  NoopWriter&, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
+  std::span<DuckDBSinkIndexWriter*>, ColumnDescriptor);
 
 template<typename Writer, typename T>
 void DuckDBColumnSerializer::WriteFlatColumn(
-  Writer* writer, const duckdb::Vector& vec, duckdb::idx_t num_rows,
+  Writer& writer, const duckdb::Vector& vec, duckdb::idx_t num_rows,
   std::vector<std::string>& row_keys,
   std::span<DuckDBSinkIndexWriter*> index_writers) {
   auto* raw = duckdb::FlatVector::GetData<T>(vec);
@@ -694,9 +681,7 @@ void DuckDBColumnSerializer::WriteFlatColumn(
       continue;
     }
     if (may_have_nulls && !validity.RowIsValid(row)) {
-      if (writer) {
-        writer->WriteNull(row_keys[row]);
-      }
+      writer.WriteNull(row_keys[row]);
       const rocksdb::Slice null_slice;
       for (auto* iw : index_writers) {
         iw->Write({&null_slice, 1}, row_keys[row]);
@@ -711,7 +696,7 @@ void DuckDBColumnSerializer::WriteFlatColumn(
 
 template<typename Writer>
 void DuckDBColumnSerializer::WriteComplexColumn(
-  Writer* writer, const duckdb::Vector& vec, const duckdb::LogicalType& type,
+  Writer& writer, const duckdb::Vector& vec, const duckdb::LogicalType& type,
   duckdb::idx_t num_rows, std::vector<std::string>& row_keys,
   std::span<DuckDBSinkIndexWriter*> index_writers) {
   duckdb::RecursiveUnifiedVectorFormat rdata;
@@ -723,9 +708,7 @@ void DuckDBColumnSerializer::WriteComplexColumn(
     }
     auto idx = rdata.unified.sel->get_index(row);
     if (!rdata.unified.validity.RowIsValid(idx)) {
-      if (writer) {
-        writer->WriteNull(row_keys[row]);
-      }
+      writer.WriteNull(row_keys[row]);
       const rocksdb::Slice null_slice;
       for (auto* iw : index_writers) {
         iw->Write({&null_slice, 1}, row_keys[row]);

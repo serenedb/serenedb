@@ -47,7 +47,7 @@ catalog::MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
     PgDatabase row{
       .oid = db->GetId().id(),
       .datname = db->GetName(),
-      .datdba = db->GetOwnerId().id(),
+      .datdba = db->GetParentId().id(),
       .encoding = 6,  // UTF8
       .datlocprovider = PgDatabase::Datlocprovider::Libc,
       .datistemplate = false,

@@ -151,7 +151,6 @@ class PgSQLCommTaskBase : public rest::CommTask {
   duckdb::unique_ptr<duckdb::PendingQueryResult> PendingQueryEnsured(
     duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
     bool allow_stream_result);
-
   DuckDBPortal BindStatement(DuckDBStatement& stmt, DuckDBBindInfo bind_info);
   void BuildColumnSerializers(DuckDBPortal& portal);
   void DeallocateNamedStatement(std::string_view name);

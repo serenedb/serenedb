@@ -1,0 +1,267 @@
+statement ok
+CREATE SCHEMA mop_drafts_a;
+
+
+statement ok
+DROP SCHEMA mop_drafts_a;
+
+
+statement ok
+CREATE SCHEMA mop_drafts_b;
+
+
+statement ok
+DROP SCHEMA mop_drafts_b RESTRICT;
+
+
+statement ok
+CREATE SCHEMA mop_drafts_c;
+
+
+statement ok
+DROP SCHEMA mop_drafts_c CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS mop_drafts_a;
+
+
+statement ok
+DROP SCHEMA IF EXISTS mop_drafts_b RESTRICT;
+
+
+statement ok
+DROP SCHEMA IF EXISTS mop_drafts_c CASCADE;
+
+
+statement error (?i)(schema|namespace).*mop_dream_company.*does not exist
+DROP SCHEMA mop_dream_company;
+
+
+statement error (?i)(schema|namespace).*mop_dream_company.*does not exist
+DROP SCHEMA mop_dream_company RESTRICT;
+
+
+statement error (?i)(schema|namespace).*mop_dream_company.*does not exist
+DROP SCHEMA mop_dream_company CASCADE;
+
+
+statement ok
+CREATE SCHEMA clickclack_ops;
+
+
+statement ok
+CREATE TABLE clickclack_ops.query_plans (id INT, v TEXT);
+
+
+statement count 1
+INSERT INTO clickclack_ops.query_plans VALUES (1, 'x');
+
+
+statement error (?i)cannot drop schema .*clickclack_ops.* because other objects depend on it
+DROP SCHEMA clickclack_ops;
+
+
+statement error (?i)cannot drop schema .*clickclack_ops.* because other objects depend on it
+DROP SCHEMA clickclack_ops RESTRICT;
+
+
+query
+SELECT id, v FROM clickclack_ops.query_plans;
+----
+id	v
+1	x
+
+
+statement ok
+DROP SCHEMA clickclack_ops CASCADE;
+
+
+query
+SELECT count(*) FROM pg_namespace WHERE nspname = 'clickclack_ops';
+----
+count
+0
+
+
+statement ok
+CREATE SCHEMA iceberg_warehouse;
+
+
+statement ok
+CREATE TABLE iceberg_warehouse.manifests (id INT PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE INDEX iceberg_manifests_v_idx ON iceberg_warehouse.manifests(v);
+
+
+statement ok
+CREATE TABLE iceberg_warehouse.partitions (id BIGINT, payload TEXT);
+
+
+statement ok
+CREATE SEQUENCE iceberg_warehouse.snapshot_seq;
+
+
+statement ok
+CREATE VIEW iceberg_warehouse.audit_view AS SELECT id, v FROM iceberg_warehouse.manifests;
+
+
+statement count 1
+INSERT INTO iceberg_warehouse.manifests VALUES (1, 'one');
+
+
+statement count 1
+INSERT INTO iceberg_warehouse.partitions VALUES (10, 'p');
+
+
+statement error (?i)cannot drop schema .*iceberg_warehouse.* because other objects depend on it
+DROP SCHEMA iceberg_warehouse RESTRICT;
+
+
+statement ok
+DROP SCHEMA iceberg_warehouse CASCADE;
+
+
+query
+SELECT count(*) FROM pg_namespace WHERE nspname = 'iceberg_warehouse';
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_class
+  WHERE relname IN ('manifests', 'partitions', 'snapshot_seq', 'audit_view', 'iceberg_manifests_v_idx');
+----
+count
+0
+
+
+statement ok
+CREATE SCHEMA clickclack_team;
+
+
+statement ok
+CREATE TABLE clickclack_team.query_log (id SERIAL PRIMARY KEY, name TEXT);
+
+
+statement count 2
+INSERT INTO clickclack_team.query_log (name) VALUES ('a'), ('b');
+
+
+statement ok
+CREATE TABLE clickclack_team.dashboard (
+  id BIGINT NOT NULL DEFAULT nextval('clickclack_team.query_log_id_seq'),
+  payload TEXT
+);
+
+
+statement count 1
+INSERT INTO clickclack_team.dashboard (payload) VALUES ('first');
+
+
+statement error (?i)cannot drop schema .*clickclack_team.* because other objects depend on it
+DROP SCHEMA clickclack_team RESTRICT;
+
+
+statement ok
+DROP SCHEMA clickclack_team CASCADE;
+
+
+query
+SELECT count(*) FROM pg_namespace WHERE nspname = 'clickclack_team';
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_class
+  WHERE relname IN ('query_log', 'dashboard', 'query_log_id_seq');
+----
+count
+0
+
+
+statement ok
+CREATE SCHEMA solid_module;
+
+
+statement ok
+CREATE SEQUENCE solid_module.principle_seq START WITH 100;
+
+
+statement ok
+CREATE TABLE solid_module.violations_a (id BIGINT DEFAULT nextval('solid_module.principle_seq'), v TEXT);
+
+
+statement ok
+CREATE TABLE solid_module.violations_b (id BIGINT DEFAULT nextval('solid_module.principle_seq'), v TEXT);
+
+
+statement count 1
+INSERT INTO solid_module.violations_a (v) VALUES ('a');
+
+
+statement count 1
+INSERT INTO solid_module.violations_b (v) VALUES ('b');
+
+
+statement ok
+DROP SCHEMA solid_module CASCADE;
+
+
+query
+SELECT count(*) FROM pg_class WHERE relname IN ('principle_seq', 'violations_a', 'violations_b');
+----
+count
+0
+
+
+statement error (?i)cannot drop schema .*pg_catalog.* because it is required by the database
+DROP SCHEMA pg_catalog;
+
+
+statement error (?i)cannot drop schema .*pg_catalog.* because it is required by the database
+DROP SCHEMA pg_catalog CASCADE;
+
+
+statement error (?i)cannot drop schema .*information_schema.* because it is required by the database
+DROP SCHEMA information_schema;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_workspace;
+
+
+statement ok
+CREATE TABLE vedernikoff_workspace.notes (id INT);
+
+
+statement count 1
+INSERT INTO vedernikoff_workspace.notes VALUES (1);
+
+
+statement ok
+DROP SCHEMA vedernikoff_workspace CASCADE;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_workspace;
+
+
+statement ok
+CREATE TABLE vedernikoff_workspace.notes (id INT);
+
+
+query
+SELECT count(*) FROM vedernikoff_workspace.notes;
+----
+count
+0
+
+
+statement ok
+DROP SCHEMA vedernikoff_workspace CASCADE;

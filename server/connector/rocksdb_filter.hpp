@@ -363,8 +363,7 @@ struct ColumnResolver {
   duckdb::TableIndex table_index;
   std::span<const catalog::Column::Id> projected_column_ids;
 
-  // Returns std::numeric_limits<catalog::Column::Id>::max() if ref isn't a
-  // column of our scan.
+  // Returns catalog::Column::kInvalidId if ref isn't a column of our scan.
   [[nodiscard]] catalog::Column::Id Resolve(
     const duckdb::BoundColumnRefExpression& ref) const;
 };

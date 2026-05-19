@@ -74,11 +74,11 @@ void SereneDBPhysicalSSTInsert::SetupSSTState(SSTInsertGlobalState& state,
   const auto& columns = table.Columns();
   size_t input_idx = 0;
   for (const auto& col : columns) {
-    if (col.id == catalog::Column::kGeneratedPKId) {
+    if (col.GetId() == catalog::Column::kGeneratedPKId) {
       continue;
     }
     state.columns.push_back(SSTInsertColumnMeta{
-      .id = col.id,
+      .id = col.GetId(),
       .duckdb_type = col.type,
       .input_col_idx = input_idx,
       .store_mode = col.store_mode,
@@ -197,9 +197,8 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
     }
 
     DuckDBColumnSerializer::SstWriter sst_writer{gstate.writers[col].get()};
-    gstate.serializer->WriteVector(
-      &sst_writer, chunk.data[meta.input_col_idx], num_rows, gstate.row_keys,
-      {},
+    gstate.serializer->WriteColumn(
+      sst_writer, chunk.data[meta.input_col_idx], num_rows, gstate.row_keys, {},
       ColumnDescriptor{meta.id, meta.store_mode, meta.duckdb_type,
                        /*have_nulls=*/true});
   }
@@ -213,8 +212,9 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
     const ColumnDescriptor desc{meta.id, meta.store_mode, meta.duckdb_type,
                                 /*have_nulls=*/true};
     gstate.active_writers.clear();
+    auto& vec = chunk.data[meta.input_col_idx];
     for (auto& writer : gstate.index_writers) {
-      if (writer->SwitchColumn(desc)) {
+      if (writer->SwitchColumn(desc, vec, num_rows)) {
         gstate.active_writers.push_back(writer.get());
       }
     }
@@ -227,9 +227,10 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
       key_utils::SetupColumnForKey(gstate.row_keys[row], meta.id);
     }
 
-    gstate.serializer->WriteVectorIndexOnly(chunk.data[meta.input_col_idx],
-                                            num_rows, gstate.row_keys,
-                                            gstate.active_writers, desc);
+    DuckDBColumnSerializer::SstWriter noop{nullptr};
+    gstate.serializer->WriteColumn(noop, chunk.data[meta.input_col_idx],
+                                   num_rows, gstate.row_keys,
+                                   gstate.active_writers, desc);
   }
 
   for (auto& writer : gstate.index_writers) {

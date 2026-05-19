@@ -20,20 +20,43 @@
 
 #pragma once
 
-#include <cstring>
+#include <span>
 #include <string>
+#include <string_view>
 
 #include "basics/string_utils.h"
 #include "catalog/table_options.h"
 
 namespace sdb::connector {
 
+inline std::string EncodeJsonPointer(std::span<const std::string> path) {
+  std::string out;
+  for (const auto& key : path) {
+    out.push_back('/');
+    for (char c : key) {
+      if (c == '~') {
+        out.append("~0");
+      } else if (c == '/') {
+        out.append("~1");
+      } else {
+        out.push_back(c);
+      }
+    }
+  }
+  return out;
+}
+
 inline void MakeColumnFieldName(catalog::Column::Id column_id,
+                                std::string_view json_pointer,
                                 std::string& out) {
   basics::StrResize(out, sizeof(column_id));
   absl::big_endian::Store(out.data(), column_id);
+  out.append(json_pointer);
 }
 
+// Iresearch field-name prefix for an indexed expression. The bytes are the
+// canonical serialized form (`SerializeBoundExpression`); the field name is
+// then mangled by the caller (string/numeric/bool/null) on top.
 inline void MakeExpressionFieldName(std::string_view serialized_expr,
                                     std::string& out) {
   basics::StrResize(out, serialized_expr.size());

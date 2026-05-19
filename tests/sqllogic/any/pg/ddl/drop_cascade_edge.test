@@ -1,0 +1,303 @@
+statement ok
+CREATE TABLE clickclack_query_log (id SERIAL PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE clickclack_dashboard (id BIGINT DEFAULT nextval('public.clickclack_query_log_id_seq'), v TEXT);
+
+
+statement error (?i)cannot drop table .*clickclack_query_log.* because other objects depend on it
+DROP TABLE clickclack_query_log;
+
+
+statement error (?i)cannot drop table .*clickclack_query_log.* because other objects depend on it
+DROP TABLE clickclack_query_log RESTRICT;
+
+
+statement ok
+DROP TABLE clickclack_dashboard;
+
+
+statement ok
+DROP TABLE clickclack_query_log RESTRICT;
+
+
+statement ok
+DROP TABLE IF EXISTS mop_offer CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS mop_offer RESTRICT;
+
+
+statement ok
+DROP TABLE IF EXISTS mop_offer;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS mop_offer_s CASCADE;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS mop_offer_s RESTRICT;
+
+
+statement ok
+DROP SCHEMA IF EXISTS mop_companies CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS mop_companies RESTRICT;
+
+
+statement ok
+CREATE TABLE iceberg_snapshot (id SERIAL PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE iceberg_manifest (id BIGINT DEFAULT nextval('public.iceberg_snapshot_id_seq'), v TEXT);
+
+
+statement ok
+DROP TABLE iceberg_manifest;
+
+
+statement ok
+DROP TABLE iceberg_snapshot;
+
+
+statement ok
+CREATE SEQUENCE ml_loss_seq;
+
+
+statement ok
+CREATE TABLE ml_run_a (id BIGINT DEFAULT nextval('public.ml_loss_seq'));
+
+
+statement ok
+DROP TABLE ml_run_a;
+
+
+statement ok
+CREATE TABLE ml_run_b (id BIGINT DEFAULT nextval('public.ml_loss_seq'));
+
+
+statement ok
+DROP TABLE ml_run_b;
+
+
+statement ok
+CREATE TABLE ml_run_c (id BIGINT DEFAULT nextval('public.ml_loss_seq'));
+
+
+statement ok
+DROP TABLE ml_run_c;
+
+
+statement ok
+DROP SEQUENCE ml_loss_seq RESTRICT;
+
+
+statement ok
+CREATE SEQUENCE solid_principle_seq;
+
+
+statement ok
+CREATE TABLE solid_violations (
+  serial_col BIGINT DEFAULT nextval('public.solid_principle_seq'),
+  static_col INT DEFAULT 42,
+  text_col TEXT DEFAULT 'hello',
+  payload TEXT
+);
+
+
+statement count 1
+INSERT INTO solid_violations (payload) VALUES ('row1');
+
+
+query
+SELECT serial_col, static_col, text_col, payload FROM solid_violations;
+----
+serial_col	static_col	text_col	payload
+1	42	hello	row1
+
+
+statement ok
+DROP SEQUENCE solid_principle_seq CASCADE;
+
+
+statement count 1
+INSERT INTO solid_violations (payload) VALUES ('row2');
+
+
+query
+SELECT serial_col IS NULL AS s_null, static_col, text_col, payload
+  FROM solid_violations WHERE payload = 'row2';
+----
+s_null	static_col	text_col	payload
+t	42	hello	row2
+
+
+statement ok
+DROP TABLE solid_violations;
+
+
+statement ok
+CREATE TABLE clickclack_ingest_job (
+  a SERIAL,
+  b SERIAL,
+  c SERIAL,
+  payload TEXT
+);
+
+
+statement ok
+CREATE TABLE clickclack_ingest_log (id BIGINT DEFAULT nextval('public.clickclack_ingest_job_b_seq'), v TEXT);
+
+
+statement count 1
+INSERT INTO clickclack_ingest_log (v) VALUES ('r');
+
+
+statement error (?i)cannot drop table .*clickclack_ingest_job.* because other objects depend on it
+DROP TABLE clickclack_ingest_job RESTRICT;
+
+
+statement ok
+DROP TABLE clickclack_ingest_job CASCADE;
+
+
+query
+SELECT count(*) FROM pg_class
+  WHERE relname IN ('clickclack_ingest_job', 'clickclack_ingest_job_a_seq', 'clickclack_ingest_job_b_seq', 'clickclack_ingest_job_c_seq');
+----
+count
+0
+
+
+statement count 1
+INSERT INTO clickclack_ingest_log (v) VALUES ('after-cascade');
+
+
+query
+SELECT v, id IS NULL AS id_null FROM clickclack_ingest_log ORDER BY v;
+----
+v	id_null
+after-cascade	t
+r	f
+
+
+statement ok
+DROP TABLE clickclack_ingest_log;
+
+
+statement ok
+CREATE SEQUENCE mop_listing_seq;
+
+
+statement ok
+CREATE TABLE mop_application (id BIGINT DEFAULT nextval('public.mop_listing_seq'), v TEXT);
+
+
+statement count 1
+INSERT INTO mop_application (v) VALUES ('a');
+
+
+statement ok
+DROP SEQUENCE mop_listing_seq CASCADE;
+
+
+statement ok
+DROP TABLE mop_application RESTRICT;
+
+
+statement ok
+CREATE SCHEMA iceberg_audits;
+
+
+statement ok
+CREATE TABLE iceberg_audits.snapshots (id SERIAL PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE public.clickclack_audit_ref (
+  id BIGINT DEFAULT nextval('iceberg_audits.snapshots_id_seq'),
+  v TEXT
+);
+
+
+statement count 1
+INSERT INTO public.clickclack_audit_ref (v) VALUES ('cross');
+
+
+statement error (?i)cannot drop table .*snapshots.* because other objects depend on it
+DROP TABLE iceberg_audits.snapshots;
+
+
+statement ok
+DROP TABLE iceberg_audits.snapshots CASCADE;
+
+
+query
+SELECT v FROM public.clickclack_audit_ref;
+----
+v
+cross
+
+
+statement ok
+DROP TABLE public.clickclack_audit_ref;
+
+
+statement ok
+DROP SCHEMA iceberg_audits CASCADE;
+
+
+statement ok
+CREATE TABLE vedernikoff_diary (id SERIAL PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE vedernikoff_diary_index (id BIGINT DEFAULT nextval('public.vedernikoff_diary_id_seq'), v TEXT);
+
+
+statement count 1
+INSERT INTO vedernikoff_diary (v) VALUES ('before');
+
+
+statement ok
+DROP TABLE vedernikoff_diary CASCADE;
+
+
+statement ok
+CREATE TABLE vedernikoff_diary (id SERIAL PRIMARY KEY, v TEXT);
+
+
+statement count 1
+INSERT INTO vedernikoff_diary (v) VALUES ('after');
+
+
+query
+SELECT id, v FROM vedernikoff_diary;
+----
+id	v
+1	after
+
+
+statement count 1
+INSERT INTO vedernikoff_diary_index (id, v) VALUES (777, 'explicit');
+
+
+query
+SELECT v, id IS NULL AS id_null FROM vedernikoff_diary_index ORDER BY v;
+----
+v	id_null
+explicit	f
+
+
+statement ok
+DROP TABLE vedernikoff_diary;
+
+
+statement ok
+DROP TABLE vedernikoff_diary_index;

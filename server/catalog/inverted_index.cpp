@@ -26,6 +26,8 @@
 #include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 
+#include "absl/algorithm/container.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "search/inverted_index_shard.h"
@@ -35,36 +37,36 @@
 namespace sdb::catalog {
 namespace {
 
-// Builds a FieldTokenizer for either a whole-column or a expression
-ResultOr<FieldTokenizer> BuildTokenizer(
+// Builds a ColumnTokenizer for either a whole-column or a JSON-path entry.
+// `text_dictionary` may be unset, in which case a fresh StringTokenizer is
+// returned (the iresearch-side keyword analyser).
+ResultOr<ColumnTokenizer> BuildColumnTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot, ObjectId text_dictionary,
   search::Features features) {
   if (!text_dictionary.isSet()) {
     auto analyzer = std::make_unique<irs::StringTokenizer>();
-    return FieldTokenizer{.analyzer = Tokenizer::TokenizerWrapper{
-                            analyzer.release(), Tokenizer::Deleter{nullptr}}};
+    return ColumnTokenizer{.analyzer = Tokenizer::TokenizerWrapper{
+                             analyzer.release(), Tokenizer::Deleter{nullptr}}};
   }
   auto dict = snapshot->GetObject<Tokenizer>(text_dictionary);
   if (!dict) {
     return std::unexpected<Result>{std::in_place, ERROR_INTERNAL,
                                    "Dictionary for inverted index does not "
-                                   "exist"};
+                                   "exists"};
   }
   auto tokenizer = dict->GetTokenizer();
   if (!tokenizer) {
     return std::unexpected<Result>{std::move(tokenizer.error())};
   }
-  return FieldTokenizer{.analyzer = *std::move(tokenizer),
-                        .features = features.GetIndexFeatures()};
+  return ColumnTokenizer{.analyzer = *std::move(tokenizer),
+                         .features = features.GetIndexFeatures()};
 }
 
 }  // namespace
 
 ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
-  bool is_new, ObjectId id, IndexShardOptions& options) const {
-  auto& shard_options =
-    basics::downCast<search::InvertedIndexShardOptions>(options);
-  return search::InvertedIndexShard::Create(id, *this, shard_options, is_new);
+  bool is_new, ObjectId id) const {
+  return search::InvertedIndexShard::Create(id, *this, is_new);
 }
 
 std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
@@ -93,9 +95,9 @@ std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
     }
   }
 
-  std::optional<ScorerOptions> wand_scorer;
-  if (auto s = slice.get("wand_scorer"); !s.isNone()) {
-    if (auto r = vpack::ReadTupleNothrow(s, wand_scorer); !r.ok()) {
+  InvertedIndexOptions options;
+  if (auto s = slice.get("options"); !s.isNone()) {
+    if (auto r = vpack::ReadTupleNothrow(s, options); !r.ok()) {
       return nullptr;
     }
   }
@@ -103,7 +105,7 @@ std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
   return std::make_shared<InvertedIndex>(
     ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
     std::string{name_slice.stringView()}, std::move(column_ids),
-    std::move(columns), std::move(expressions), std::move(wand_scorer));
+    std::move(columns), std::move(expressions), std::move(options));
 }
 
 void InvertedIndex::WriteInternal(vpack::Builder& b) const {
@@ -117,10 +119,8 @@ void InvertedIndex::WriteInternal(vpack::Builder& b) const {
       b.add("expressions");
       vpack::WriteTuple(b, _expressions);
     }
-    if (_wand_scorer) {
-      b.add("wand_scorer");
-      vpack::WriteTuple(b, *_wand_scorer);
-    }
+    b.add("options");
+    vpack::WriteTuple(b, _options);
   });
   b.close();
 }
@@ -144,7 +144,22 @@ std::vector<Column::Id> InvertedIndex::GetReferencedColumnIds() const {
   return ids;
 }
 
-FieldTokenizer InvertedIndex::GetColumnTokenizer(
+const search::Features* InvertedIndex::FindSyntheticFeatures(
+  catalog::Column::Id synthetic_id) const noexcept {
+  for (const auto& [_, info] : _columns) {
+    if (info.synthetic_column == synthetic_id) {
+      return &info.features;
+    }
+    for (const auto& path_info : info.json_paths) {
+      if (path_info.synthetic_column == synthetic_id) {
+        return &path_info.features;
+      }
+    }
+  }
+  return nullptr;
+}
+
+ColumnTokenizer InvertedIndex::GetColumnTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot,
   catalog::Column::Id column_id) const {
   const auto* info = FindColumnInfo(column_id);
@@ -153,12 +168,40 @@ FieldTokenizer InvertedIndex::GetColumnTokenizer(
               " not found in the index definition");
   }
   auto tokenizer =
-    BuildTokenizer(snapshot, info->text_dictionary, info->features);
+    BuildColumnTokenizer(snapshot, info->text_dictionary, info->features);
   SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
+  if (!info->features.HasFeatures(irs::IndexFeatures::Norm)) {
+    tokenizer->tokenizer_column = info->synthetic_column;
+  }
   return *std::move(tokenizer);
 }
 
-FieldTokenizer InvertedIndex::GetExprTokenizer(
+std::optional<ColumnTokenizer> InvertedIndex::GetJsonPathTokenizer(
+  const std::shared_ptr<const Snapshot>& snapshot,
+  catalog::Column::Id column_id, std::string_view json_pointer) const {
+  const auto* info = FindColumnInfo(column_id);
+  if (!info) {
+    return std::nullopt;
+  }
+
+  if (auto it = absl::c_find_if(info->json_paths,
+                                [&](const auto& path_info) {
+                                  return path_info.json_pointer == json_pointer;
+                                });
+      it != info->json_paths.end()) {
+    auto tokenizer =
+      BuildColumnTokenizer(snapshot, it->text_dictionary, it->features);
+    SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
+    if (!it->features.HasFeatures(irs::IndexFeatures::Norm)) {
+      tokenizer->tokenizer_column = it->synthetic_column;
+    }
+    return *std::move(tokenizer);
+  }
+
+  return std::nullopt;
+}
+
+ColumnTokenizer InvertedIndex::GetExprTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot,
   std::string_view serialized_expr) const {
   auto it = _expressions.find(serialized_expr);
@@ -166,7 +209,8 @@ FieldTokenizer InvertedIndex::GetExprTokenizer(
     SDB_THROW(ERROR_INTERNAL,
               "Indexed expression not found in the index definition");
   }
-  auto tokenizer = BuildTokenizer(snapshot, it->text_dictionary, it->features);
+  auto tokenizer =
+    BuildColumnTokenizer(snapshot, it->text_dictionary, it->features);
   SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
   return *std::move(tokenizer);
 }
@@ -193,6 +237,11 @@ containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {
     if (col.second.text_dictionary.isSet()) {
       res.insert(col.second.text_dictionary);
     }
+    for (const auto& path_info : col.second.json_paths) {
+      if (path_info.text_dictionary.isSet()) {
+        res.insert(path_info.text_dictionary);
+      }
+    }
   }
   for (const auto& expr : _expressions) {
     if (expr.text_dictionary.isSet()) {
@@ -208,7 +257,7 @@ std::shared_ptr<Object> InvertedIndex::Clone() const {
   return ReadInternal(b.slice(), {
                                    .id = GetId(),
                                    .database_id = GetDatabaseId(),
-                                   .schema_id = GetSchemaId(),
+                                   .schema_id = GetParentId(),
                                    .relation_id = GetRelationId(),
                                  });
 }

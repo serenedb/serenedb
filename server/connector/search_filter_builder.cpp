@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
-#include <iresearch/parser/parser.h>
 
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
@@ -36,8 +35,10 @@
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
+#include <iresearch/parser/parser.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/column_existence_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/mixed_boolean_filter.hpp>
@@ -63,7 +64,7 @@
 #include "basics/errors.h"
 #include "basics/string_utils.h"
 #include "catalog/mangling.h"
-#include "connector/index_expression.hpp"
+#include "connector/json_extract_names.hpp"
 #include "connector/search_field_name.hpp"
 #include "functions/search.h"
 #include "functions/string.h"
@@ -96,7 +97,7 @@ customize::enum_name<sdb::connector::TSQueryOp>(
     case All:
       return sdb::connector::kTSQAllOf;
     case Between:
-      return sdb::connector::kTSQRange;
+      return sdb::connector::kTSQBetween;
     case Regexp:
       return sdb::connector::kTSQRegexp;
     case Less:
@@ -131,6 +132,10 @@ customize::enum_name<sdb::connector::TSQueryOp>(
       return sdb::connector::kToTsquery;
     case Compound:
       return sdb::connector::kTSQCompound;
+    case IsNull:
+      return sdb::connector::kTSQIsNull;
+    case IsNotNull:
+      return sdb::connector::kTSQIsNotNull;
     case Unknown:
     case Term:
       return invalid_tag;
@@ -392,6 +397,10 @@ Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
     }
   }
 
+  // Use the JSON-path-aware resolver so `(content->>'val')::int = 42` is
+  // claimed by the index: the cast is peeled and routed to the numeric-
+  // mangled field, so rows whose leaf isn't numeric simply aren't in the
+  // posting list (no runtime cast on incompatible rows).
   const auto* column_info = FindColumnInfoForExpr(ctx, left_expr);
   const auto* const_val = TryGetConstant(right_expr);
 
@@ -1103,13 +1112,12 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
 void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
                       const duckdb::Expression& lhs,
                       const duckdb::Expression& rhs) {
-  // `@@` accepts either a bare column reference or a expression
+  // `@@` accepts either a bare column reference or a JSON-path expression
   // (e.g. `content->>'host'`) on the field side. FindColumnInfoForExpr
   // handles both, peeling any cast wrappers; the TSQuery cast is peeled
   // up-front by UnwrapTSQueryCast.
   const auto* left_info = FindColumnInfoForExpr(ctx, UnwrapTSQueryCast(lhs));
   const auto* right_info = FindColumnInfoForExpr(ctx, UnwrapTSQueryCast(rhs));
-
   if (left_info && right_info) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1253,9 +1261,9 @@ const SearchColumnInfo* FindColumnRefInfo(
   }
 
   // The cache key is the un-mangled iresearch field name. For a bare column
-  // reference that is just [BE col_id].
+  // reference that is just [BE col_id] with no suffix.
   std::string cache_key;
-  MakeColumnFieldName(info->column_id, cache_key);
+  MakeColumnFieldName(info->column_id, {}, cache_key);
 
   auto cache_it = ctx.column_cache.find(cache_key);
   if (cache_it != ctx.column_cache.end()) {
@@ -1292,6 +1300,37 @@ bool IsNumericTypeId(duckdb::LogicalTypeId id) {
   }
 }
 
+const duckdb::BoundColumnRefExpression* TryGetJsonColumnRef(
+  const duckdb::Expression& expr, std::vector<std::string>& out_path) {
+  out_path.clear();
+  // Reject when outermost extraction does not return string.
+  if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION ||
+      !IsJsonExtractString(
+        expr.Cast<duckdb::BoundFunctionExpression>().function.name)) {
+    return nullptr;
+  }
+
+  // Walk the chain: every node must be some JSON-extract
+  // until we reach a column ref.
+  const duckdb::Expression* cur = &expr;
+  while (cur->expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
+    const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
+    // TODO(mkornaukhov) first must be extracting string,
+    // all the others should be extracing json
+    if (!IsJsonExtract(f.function.name) || f.children.size() != 2) {
+      return nullptr;
+    }
+    const auto* key_val = TryGetConstant(*f.children[1]);
+    if (!key_val || key_val->IsNull() ||
+        !AppendJsonPathKey(*key_val, out_path)) {
+      return nullptr;
+    }
+    cur = f.children[0].get();
+  }
+  absl::c_reverse(out_path);
+  return TryGetColumnRef(*cur);
+}
+
 struct UnwrappedField {
   const duckdb::Expression* expr;
   std::optional<duckdb::LogicalType> override_type;
@@ -1308,23 +1347,31 @@ UnwrappedField UnwrapFieldCast(const duckdb::Expression& expr) {
   return {c.child.get(), c.return_type};
 }
 
-// Bare column ref or indexed expression.
-// Returned pointer lives in ctx.column_cache.
+// Bare column ref, JSON-path extract (optionally cast-wrapped), or
+// arbitrary indexed expression. Returned pointer lives in ctx.column_cache.
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
                                               const duckdb::Expression& expr) {
   if (const auto* col_ref = TryGetColumnRef(expr)) {
     return FindColumnRefInfo(ctx, *col_ref);
   }
-  if (!ctx.expr_getter) {
-    return nullptr;
-  }
 
   const auto unwrapped = UnwrapFieldCast(expr);
-  auto info = (*ctx.expr_getter)(*unwrapped.expr);
+  std::optional<SearchColumnInfo> info;
+  if (ctx.json_path_getter) {
+    std::vector<std::string> path;
+    if (const auto* col_ref = TryGetJsonColumnRef(*unwrapped.expr, path)) {
+      info = (*ctx.json_path_getter)(*col_ref, EncodeJsonPointer(path));
+    }
+  }
+  if (!info && ctx.expr_getter) {
+    info = (*ctx.expr_getter)(*unwrapped.expr);
+  }
   if (!info) {
     return nullptr;
   }
 
+  // Cast overrides leaf type. Normalise numerics to DOUBLE -- writer side
+  // tokenises every JSON number through NumericTokenizer.reset(double).
   if (unwrapped.override_type.has_value()) {
     if (IsNumericTypeId(unwrapped.override_type->id())) {
       info->logical_type = duckdb::LogicalType::DOUBLE;
@@ -1337,7 +1384,11 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   // iresearch field share an entry: INTEGER and BIGINT both -> Numeric.
   auto& cache_key = ctx.cache_key;
   cache_key.clear();
-  MakeExpressionFieldName(info->serialized_expr, cache_key);
+  if (!info->serialized_expr.empty()) {
+    MakeExpressionFieldName(info->serialized_expr, cache_key);
+  } else {
+    MakeColumnFieldName(info->column_id, info->json_pointer, cache_key);
+  }
   if (auto r = MangleForType(info->logical_type.id(), cache_key); !r.ok()) {
     return nullptr;
   }
@@ -1351,15 +1402,15 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
 }
 
 void MakeFieldName(const SearchColumnInfo& column, std::string& field_name) {
-  if (column.serialized_expr.empty()) {
-    MakeColumnFieldName(column.column_id, field_name);
-  } else {
+  if (!column.serialized_expr.empty()) {
     MakeExpressionFieldName(column.serialized_expr, field_name);
+  } else {
+    MakeColumnFieldName(column.column_id, column.json_pointer, field_name);
   }
 }
 
 void MakeFieldName(catalog::Column::Id column_id, std::string& field_name) {
-  MakeColumnFieldName(column_id, field_name);
+  MakeColumnFieldName(column_id, {}, field_name);
 }
 
 Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name) {
@@ -1726,6 +1777,21 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
       return FromTsqueryPhrase(parent, ctx, column_info, func);
     case TSQueryOp::ToTSQuery:
       return FromToTsquery(parent, ctx, column_info, func);
+    case TSQueryOp::IsNull:
+    case TSQueryOp::IsNotNull: {
+      // `col @@ ts_is_null()` -> Not(ByColumnExistence(col_id));
+      // `col @@ ts_is_not_null()` -> ByColumnExistence(col_id). The cs
+      // column id space and the catalog column id space are aligned
+      // (see search_pk_lookup.h's cast for the PK).
+      const bool exists = (op == TSQueryOp::IsNotNull);
+      auto& existence = (ctx.negated ^ exists)
+                          ? AddFilter<irs::ByColumnExistence>(parent)
+                          : Negate<irs::ByColumnExistence>(parent);
+      existence.boost(ctx.boost);
+      *existence.mutable_id() =
+        static_cast<irs::field_id>(column_info.column_id);
+      return;
+    }
     case TSQueryOp::Unknown:
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1741,7 +1807,8 @@ Result MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, const SearchFilterOptions& options,
-  const ExpressionGetter& expression_getter) {
+  const JsonPathGetter& json_path_getter,
+  const ExpressionGetter& expr_getter) {
   irs::StringTokenizer identity;
   containers::NodeHashMap<std::string, SearchColumnInfo> column_cache;
   std::string cache_key_scratch;
@@ -1749,8 +1816,10 @@ Result MakeSearchFilter(
   FilterContext ctx{
     .negated = false,
     .column_getter = column_getter,
-    .expr_getter = expression_getter ? &expression_getter : nullptr,
+    .json_path_getter = json_path_getter ? &json_path_getter : nullptr,
+    .expr_getter = expr_getter ? &expr_getter : nullptr,
     .column_cache = column_cache,
+    .json_pointer = {},
     .cache_key = cache_key_scratch,
     .identity = identity,
     .tokenizer = identity,

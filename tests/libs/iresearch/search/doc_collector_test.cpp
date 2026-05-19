@@ -234,8 +234,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_multi_segment) {
     {
       gen.reset();
       while ((doc = gen.next())) {
-        ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end(),
-                           doc->stored.begin(), doc->stored.end()));
+        ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
         gen.next();  // skip 1 doc
       }
       writer->Commit();
@@ -247,8 +246,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_multi_segment) {
       gen.reset();
       gen.next();  // skip 1 doc
       while ((doc = gen.next())) {
-        ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end(),
-                           doc->stored.begin(), doc->stored.end()));
+        ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
         gen.next();  // skip 1 doc
       }
       writer->Commit();

@@ -410,7 +410,7 @@ std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
     result.reserve(pk_ids.size());
     for (auto pk_id : pk_ids) {
       for (size_t i = 0; i < base_cols.size(); ++i) {
-        if (base_cols[i].id == pk_id) {
+        if (base_cols[i].GetId() == pk_id) {
           result.push_back(static_cast<duckdb::column_t>(i));
           break;
         }
@@ -419,7 +419,7 @@ std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
     return result;
   }
   if (fp.pk_spec == catalog::PkSpec::RocksDBGeneratedRowId) {
-    return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
+    return {kColumnIdentifierGeneratedPk};
   }
   if (catalog::IsGlobPK(fp.pk_spec)) {
     return {duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX,

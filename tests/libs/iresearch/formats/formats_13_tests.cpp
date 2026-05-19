@@ -20,6 +20,9 @@
 /// @author Andrei Lobov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <unordered_set>
+
+#include "formats/column/test_cs_helpers.hpp"
 #include "formats_test_case_base.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/store/directory_attributes.hpp"
@@ -27,8 +30,26 @@
 
 namespace {
 
+inline constexpr irs::field_id kNameId = 1;
+
 using tests::FormatTestCase;
 using tests::FormatTestCaseWithEncryption;
+
+bool InsertWithName(irs::IndexWriter& writer, const tests::Document& doc) {
+  auto ctx = writer.GetBatch();
+  auto d = ctx.Insert();
+  if (!d.Insert(doc.indexed.begin(), doc.indexed.end())) {
+    return false;
+  }
+  const auto* name =
+    dynamic_cast<const tests::StringField*>(doc.indexed.get("name"));
+  if (name != nullptr) {
+    if (auto* cs = d.Columnstore(); cs != nullptr) {
+      irs::tests::StoreFieldAt(*cs, kNameId, d.DocId(), *name);
+    }
+  }
+  return true;
+}
 
 class Format13TestCase : public FormatTestCaseWithEncryption {};
 
@@ -42,11 +63,11 @@ TEST_P(Format13TestCase, open_10_with_13) {
   {
     auto codec = irs::formats::Get("1_5simd");
     ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmCreate);
+    auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
-    ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end(),
-                       doc1->stored.begin(), doc1->stored.end()));
+    ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
     writer->Commit();
     AssertSnapshotEquality(*writer);
@@ -55,7 +76,8 @@ TEST_P(Format13TestCase, open_10_with_13) {
   // check index
   auto codec = irs::formats::Get("1_5simd");
   ASSERT_NE(nullptr, codec);
-  auto index = irs::DirectoryReader(dir(), codec);
+  auto index =
+    irs::DirectoryReader(dir(), codec, irs::tests::DefaultReaderOptions());
   ASSERT_TRUE(index);
   ASSERT_EQ(1, index->size());
   ASSERT_EQ(1, index->docs_count());
@@ -69,12 +91,9 @@ TEST_P(Format13TestCase, open_10_with_13) {
     ASSERT_EQ(1, segment.live_docs_count());
 
     std::unordered_set<std::string_view> expected_name = {"A"};
-    const auto* column = segment.column("name");
+    const auto* column = segment.Column(kNameId);
     ASSERT_NE(nullptr, column);
-    auto values = column->iterator(irs::ColumnHint::Normal);
-    ASSERT_NE(nullptr, values);
-    auto* actual_value = irs::get<irs::PayAttr>(*values);
-    ASSERT_NE(nullptr, actual_value);
+    irs::tests::BlobPointReader values{segment, *column};
     ASSERT_EQ(expected_name.size(),
               segment.docs_count());  // total count of documents
     auto terms = segment.field("same");
@@ -84,9 +103,9 @@ TEST_P(Format13TestCase, open_10_with_13) {
 
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
          docs_itr->next();) {
-      ASSERT_EQ(docs_itr->value(), values->seek(docs_itr->value()));
-      ASSERT_EQ(1, expected_name.erase(irs::ToString<std::string_view>(
-                     actual_value->value.data())));
+      ASSERT_EQ(1,
+                expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
+                  values, docs_itr->value())));
     }
 
     ASSERT_TRUE(expected_name.empty());
@@ -104,11 +123,11 @@ TEST_P(Format13TestCase, formats_13) {
   {
     auto codec = irs::formats::Get("1_5simd");
     ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmCreate);
+    auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
-    ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end(),
-                       doc1->stored.begin(), doc1->stored.end()));
+    ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
     writer->Commit();
     AssertSnapshotEquality(*writer);
@@ -118,18 +137,19 @@ TEST_P(Format13TestCase, formats_13) {
   {
     auto codec = irs::formats::Get("1_5simd");
     ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmAppend);
+    auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmAppend,
+                                         irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
-    ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end(),
-                       doc2->stored.begin(), doc2->stored.end()));
+    ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
     writer->Commit();
     AssertSnapshotEquality(*writer);
   }
 
   // check index
-  auto index = irs::DirectoryReader(dir());
+  auto index =
+    irs::DirectoryReader(dir(), nullptr, irs::tests::DefaultReaderOptions());
   ASSERT_TRUE(index);
   ASSERT_EQ(2, index->size());
   ASSERT_EQ(2, index->docs_count());
@@ -143,12 +163,9 @@ TEST_P(Format13TestCase, formats_13) {
     ASSERT_EQ(1, segment.live_docs_count());
 
     std::unordered_set<std::string_view> expected_name = {"A"};
-    const auto* column = segment.column("name");
+    const auto* column = segment.Column(kNameId);
     ASSERT_NE(nullptr, column);
-    auto values = column->iterator(irs::ColumnHint::Normal);
-    ASSERT_NE(nullptr, values);
-    auto* actual_value = irs::get<irs::PayAttr>(*values);
-    ASSERT_NE(nullptr, actual_value);
+    irs::tests::BlobPointReader values{segment, *column};
     ASSERT_EQ(expected_name.size(),
               segment.docs_count());  // total count of documents
     auto terms = segment.field("same");
@@ -158,9 +175,9 @@ TEST_P(Format13TestCase, formats_13) {
 
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
          docs_itr->next();) {
-      ASSERT_EQ(docs_itr->value(), values->seek(docs_itr->value()));
-      ASSERT_EQ(1, expected_name.erase(irs::ToString<std::string_view>(
-                     actual_value->value.data())));
+      ASSERT_EQ(1,
+                expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
+                  values, docs_itr->value())));
     }
 
     ASSERT_TRUE(expected_name.empty());
@@ -174,12 +191,9 @@ TEST_P(Format13TestCase, formats_13) {
     ASSERT_EQ(1, segment.live_docs_count());
 
     std::unordered_set<std::string_view> expected_name = {"B"};
-    const auto* column = segment.column("name");
+    const auto* column = segment.Column(kNameId);
     ASSERT_NE(nullptr, column);
-    auto values = column->iterator(irs::ColumnHint::Normal);
-    ASSERT_NE(nullptr, values);
-    auto* actual_value = irs::get<irs::PayAttr>(*values);
-    ASSERT_NE(nullptr, actual_value);
+    irs::tests::BlobPointReader values{segment, *column};
     ASSERT_EQ(expected_name.size(),
               segment.docs_count());  // total count of documents
     auto terms = segment.field("same");
@@ -189,9 +203,9 @@ TEST_P(Format13TestCase, formats_13) {
 
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
          docs_itr->next();) {
-      ASSERT_EQ(docs_itr->value(), values->seek(docs_itr->value()));
-      ASSERT_EQ(1, expected_name.erase(irs::ToString<std::string_view>(
-                     actual_value->value.data())));
+      ASSERT_EQ(1,
+                expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
+                  values, docs_itr->value())));
     }
 
     ASSERT_TRUE(expected_name.empty());

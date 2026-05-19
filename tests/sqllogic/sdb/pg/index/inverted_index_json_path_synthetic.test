@@ -1,0 +1,200 @@
+# Exercises JSON-path entries with dictionaries that need a
+# catalog-reserved synthetic column id:
+#   - wildcard analyzer (StoreAttr -- tokenizer-output blob)
+#   - geojson analyzer (StoreAttr, no features)
+#   - text analyzer with norm = true (per-doc norm column)
+# Regression for the path where `JsonPathInfo::synthetic_column` is
+# reserved at CREATE INDEX and the cs writer's column/norm callbacks
+# resolve it via the `<col_id>/<json_pointer><mangle>` field name.
+
+hash-threshold 100
+
+
+# ---------------------------------------------------------------------------
+# Section 1: JSON path with wildcard tokenizer (StoreAttr, no norm).
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY js_wild(
+    template = 'wildcard',
+    ngramsize = 3,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+
+statement ok
+CREATE TABLE jp_wild (id INTEGER PRIMARY KEY, doc JSON);
+
+
+statement ok
+CREATE INDEX jp_wild_idx ON jp_wild
+    USING inverted(id, (doc->>'host') js_wild);
+
+
+statement count 1
+INSERT INTO jp_wild VALUES (1, '{"host":"server-01"}'::json);
+
+statement count 1
+INSERT INTO jp_wild VALUES (2, '{"host":"server-02"}'::json);
+
+statement count 1
+INSERT INTO jp_wild VALUES (3, '{"host":"router-15"}'::json);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) jp_wild;
+
+
+query
+SELECT id FROM jp_wild_idx WHERE doc->>'host' @@ ts_like('server-0_') ORDER BY id;
+----
+id
+1
+2
+
+
+# ---------------------------------------------------------------------------
+# Section 2: JSON path with geojson_shape (StoreAttr from geo analyzer).
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY js_geo(
+    template = 'geojson'
+);
+
+
+statement ok
+CREATE TABLE jp_geo (id INTEGER PRIMARY KEY, doc JSON);
+
+
+statement ok
+CREATE INDEX jp_geo_idx ON jp_geo
+    USING inverted(id, (doc->>'where') js_geo);
+
+
+statement count 1
+INSERT INTO jp_geo VALUES (1, '{"where":"{\"type\":\"Point\",\"coordinates\":[37.615895,55.703900]}"}'::json);
+
+statement count 1
+INSERT INTO jp_geo VALUES (2, '{"where":"{\"type\":\"Point\",\"coordinates\":[37.616297,55.704831]}"}'::json);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) jp_geo;
+
+
+# Just confirm the rows are reachable -- the geo predicate language
+# isn't the point here; the catalog-reservation path is.
+query
+SELECT count(*) FROM jp_geo_idx;
+----
+count
+2
+
+
+# ---------------------------------------------------------------------------
+# Section 3: JSON path with text-tokenizer-with-norm.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY js_norm(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true,
+    norm_row_group_size = 256
+);
+
+
+query error
+CREATE TEXT SEARCH DICTIONARY bad_norm(
+    template = 'text',
+    norm = true,
+    norm_row_group_size = 0
+);
+----
+db error: ERROR: "norm_row_group_size" must be a positive integer
+
+
+query error
+CREATE TEXT SEARCH DICTIONARY bad_norm(
+    template = 'text',
+    norm_row_group_size = 256
+);
+----
+db error: ERROR: norm_row_group_size requires norm = true
+HINT: Norm column row-group size for indexes that bind this dictionary with norm = true.
+
+
+query error
+CREATE TEXT SEARCH DICTIONARY bad_norm(
+    template = 'text',
+    norm = false,
+    norm_row_group_size = 256
+);
+----
+db error: ERROR: norm_row_group_size requires norm = true
+HINT: Norm column row-group size for indexes that bind this dictionary with norm = true.
+
+
+statement ok
+CREATE TABLE jp_norm (id INTEGER PRIMARY KEY, doc JSON);
+
+
+statement ok
+CREATE INDEX jp_norm_idx ON jp_norm
+    USING inverted(id, (doc->>'body') js_norm);
+
+
+statement count 1
+INSERT INTO jp_norm VALUES (1, '{"body":"alpha"}'::json);
+
+statement count 1
+INSERT INTO jp_norm VALUES (2, '{"body":"alpha beta gamma"}'::json);
+
+statement count 1
+INSERT INTO jp_norm VALUES (3, '{"body":"alpha"}'::json);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) jp_norm;
+
+
+# Norm-bearing dictionary should not crash the norm-callback path -- the
+# catalog reserves a `synthetic_column` per JsonPathInfo and the writer
+# byte-compares the JSON pointer to find it.
+query
+SELECT id FROM jp_norm_idx WHERE doc->>'body' @@ ts_phrase('alpha') ORDER BY id;
+----
+id
+1
+2
+3
+
+
+# ---------------------------------------------------------------------------
+# Cleanup
+# ---------------------------------------------------------------------------
+
+statement ok
+DROP TABLE jp_wild;
+
+statement ok
+DROP TABLE jp_geo;
+
+statement ok
+DROP TABLE jp_norm;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY js_wild;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY js_geo;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY js_norm;

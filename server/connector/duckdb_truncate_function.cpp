@@ -73,9 +73,8 @@ void TruncateResolvedTable(
   auto index_shards = snapshot->GetIndexShardsByRelation(table->GetId());
 
   // Phase 1: queue per-shard range deletes AND, for every inverted-index
-  // shard, lock its commit mutex via TruncateBegin -- mirrors the legacy
-  // r_idx->truncateBegin(batch) handshake. The batch is built but not yet
-  // written; the locks straddle db->Write so no concurrent search commit
+  // shard, lock its commit mutex via TruncateBegin. The batch is built but not
+  // yet written; the locks straddle db->Write so no concurrent search commit
   // can land between rocksdb's atomic write and the iresearch Clear.
   std::vector<std::pair<search::InvertedIndexShard*,
                         search::InvertedIndexShard::TruncateGuard>>

@@ -145,7 +145,8 @@ class Transaction : public Config {
       SDB_ASSERT(index);
 
       if constexpr (!std::is_same_v<std::decay_t<Filter>, std::nullptr_t>) {
-        if (!filter(index->GetReferencedColumnIds())) {
+        auto referenced = index->GetReferencedColumnIds();
+        if (!filter(referenced)) {
           continue;
         }
       }

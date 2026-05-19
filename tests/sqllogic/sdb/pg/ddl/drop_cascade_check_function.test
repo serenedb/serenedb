@@ -1,0 +1,217 @@
+statement ok
+CREATE FUNCTION iceberg_is_valid_snapshot_id(x INT) AS x > 0;
+
+
+statement ok
+CREATE TABLE iceberg_snapshots (id INT CHECK (iceberg_is_valid_snapshot_id(id)));
+
+
+statement count 1
+INSERT INTO iceberg_snapshots VALUES (1);
+
+
+statement error (?i)(check|constraint|violates)
+INSERT INTO iceberg_snapshots VALUES (-1);
+
+
+statement error (?i)cannot drop function .*iceberg_is_valid_snapshot_id.* because other objects depend on it
+DROP FUNCTION iceberg_is_valid_snapshot_id(INT);
+
+
+statement ok
+DROP FUNCTION iceberg_is_valid_snapshot_id(INT) CASCADE;
+
+
+query
+SELECT id FROM iceberg_snapshots;
+----
+id
+1
+
+
+statement count 1
+INSERT INTO iceberg_snapshots VALUES (-99);
+
+
+query
+SELECT id FROM iceberg_snapshots ORDER BY id;
+----
+id
+-99
+1
+
+
+statement ok
+DROP TABLE iceberg_snapshots;
+
+
+statement ok
+CREATE FUNCTION clickclack_nonzero_qps(x INT) AS x != 0;
+
+
+statement ok
+CREATE FUNCTION clickclack_small_qps(x INT) AS x < 100;
+
+
+statement ok
+CREATE TABLE clickclack_query_logs (
+  id INT CHECK (clickclack_nonzero_qps(id)) CHECK (clickclack_small_qps(id))
+);
+
+
+statement count 1
+INSERT INTO clickclack_query_logs VALUES (5);
+
+
+statement error (?i)(check|constraint|violates)
+INSERT INTO clickclack_query_logs VALUES (0);
+
+
+statement error (?i)(check|constraint|violates)
+INSERT INTO clickclack_query_logs VALUES (200);
+
+
+statement error (?i)cannot drop function .*clickclack_nonzero_qps.* because other objects depend on it
+DROP FUNCTION clickclack_nonzero_qps(INT);
+
+
+statement ok
+DROP FUNCTION clickclack_nonzero_qps(INT) CASCADE;
+
+
+statement count 1
+INSERT INTO clickclack_query_logs VALUES (0);
+
+
+statement error (?i)(check|constraint|violates)
+INSERT INTO clickclack_query_logs VALUES (200);
+
+
+statement ok
+DROP FUNCTION clickclack_small_qps(INT) CASCADE;
+
+
+statement count 1
+INSERT INTO clickclack_query_logs VALUES (200);
+
+
+query
+SELECT id FROM clickclack_query_logs ORDER BY id;
+----
+id
+0
+5
+200
+
+
+statement ok
+DROP TABLE clickclack_query_logs;
+
+
+statement ok
+CREATE SEQUENCE mop_application_seq;
+
+
+query
+SELECT nextval('public.mop_application_seq');
+----
+nextval
+1
+
+
+statement ok
+CREATE TABLE mop_applications (id INT CHECK (id <= currval('public.mop_application_seq')));
+
+
+statement count 1
+INSERT INTO mop_applications VALUES (1);
+
+
+statement error (?i)cannot drop sequence .*mop_application_seq.*
+DROP SEQUENCE mop_application_seq;
+
+
+statement ok
+DROP SEQUENCE mop_application_seq CASCADE;
+
+
+query
+SELECT id FROM mop_applications;
+----
+id
+1
+
+
+statement count 1
+INSERT INTO mop_applications VALUES (99999);
+
+
+query
+SELECT id FROM mop_applications ORDER BY id;
+----
+id
+1
+99999
+
+
+statement ok
+DROP TABLE mop_applications;
+
+
+statement ok
+CREATE FUNCTION solid_is_ok_violation_id(x INT) AS x BETWEEN 0 AND 9999;
+
+
+statement ok
+CREATE TABLE solid_violations (id INT CHECK (solid_is_ok_violation_id(id)));
+
+
+statement ok
+DROP TABLE solid_violations;
+
+
+statement ok
+DROP FUNCTION solid_is_ok_violation_id(INT) RESTRICT;
+
+
+statement ok
+CREATE FUNCTION ml_dbl_weights(x INT) AS x * 2;
+
+
+statement ok
+CREATE TABLE ml_papers (id INT CHECK (ml_dbl_weights(id) > 0));
+
+
+statement count 1
+INSERT INTO ml_papers VALUES (1);
+
+
+statement ok
+CREATE VIEW ml_papers_view AS SELECT ml_dbl_weights(id) AS d FROM ml_papers;
+
+
+statement error (?i)cannot drop function .*ml_dbl_weights.*
+DROP FUNCTION ml_dbl_weights(INT);
+
+
+statement ok
+DROP FUNCTION ml_dbl_weights(INT) CASCADE;
+
+
+query
+SELECT id FROM ml_papers;
+----
+id
+1
+
+
+statement error (?i)(table|relation|view).*ml_papers_view.*does not exist
+SELECT * FROM ml_papers_view;
+
+
+statement count 1
+INSERT INTO ml_papers VALUES (-5);
+
+
+statement ok
+DROP TABLE ml_papers;

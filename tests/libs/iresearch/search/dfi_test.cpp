@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <map>
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
@@ -109,7 +110,7 @@ void DFIIndexTest::BuildFixture() {
                                           false, extra),
               true, false);
 
-  irs::IndexWriterOptions opts;
+  auto opts = irs::tests::DefaultWriterOptions();
 
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
@@ -124,7 +125,7 @@ TEST_P(DFIIndexTest, scores_nonnegative_and_only_fire_above_expected) {
 
   auto impl = std::make_unique<irs::DFI>(irs::DFIMeasure::Standardized);
 
-  auto index = open_reader();
+  auto index = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, index->size());
   auto& segment = *(index.begin());
 

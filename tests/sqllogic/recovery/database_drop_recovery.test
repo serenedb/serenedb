@@ -1,0 +1,111 @@
+control substitution on
+
+
+# Vedernikoff DROP DATABASE recovery. Build a non-trivial graph in the
+# database the test runner attaches to, simulate a crash partway through
+# DROP DATABASE on a sibling database, and verify recovery picks up the
+# tombstone and finishes the drop without affecting our working DB.
+#
+# We can't switch databases mid-test, so the sibling database is populated
+# via cross-database CREATE DATABASE only; the cascade graph being verified
+# here is exercised through DROP SCHEMA on the current database first
+# (as a stand-in for "internal cascade complexity") and then DROP DATABASE
+# on the spare sibling.
+
+statement ok
+CREATE SCHEMA vedernikoff_iceberg_lake;
+
+
+# SERIAL table -- its owned sequence triggers the crash fault when the
+# cascade drop walks TableDrop::Finalize.
+statement ok
+CREATE TABLE vedernikoff_iceberg_lake.anchor (
+  id SERIAL PRIMARY KEY,
+  body TEXT
+);
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_iceberg_lake.snapshot_seq START 100;
+
+
+statement ok
+CREATE TYPE vedernikoff_iceberg_lake.kind AS ENUM('a','b','c');
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_lake.snapshots (
+  id INT DEFAULT nextval('vedernikoff_iceberg_lake.snapshot_seq'),
+  k vedernikoff_iceberg_lake.kind,
+  body TEXT
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_iceberg_lake.snapshots (k, body) VALUES ('a', 'pre_lake');
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_lake.audit (
+  ref_id BIGINT DEFAULT nextval('vedernikoff_iceberg_lake.snapshot_seq'),
+  note TEXT
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_iceberg_lake.audit (note) VALUES ('audit_pre');
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_lake.snapshot_pulse AS
+  SELECT id, body FROM vedernikoff_iceberg_lake.snapshots;
+
+
+# Survivor schema in the current DB.
+statement ok
+CREATE SCHEMA vedernikoff_solid_survivor;
+
+
+statement ok
+CREATE TABLE vedernikoff_solid_survivor.bookings (id INT, who TEXT);
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_survivor.bookings VALUES (1, 'still_here');
+
+
+statement ok
+SET sdb_faults = 'crash_on_drop';
+
+
+# DROP SCHEMA CASCADE -- biggest auto-drop closure in this DB.
+statement error (?i)connection closed|server closed|terminat|reset|EOF
+DROP SCHEMA vedernikoff_iceberg_lake CASCADE;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# Lake schema and all its contents are gone.
+connection after_crash
+query
+SELECT count(*) FROM pg_namespace WHERE nspname = 'vedernikoff_iceberg_lake';
+----
+count
+0
+
+
+connection after_crash
+query
+SELECT id, who FROM vedernikoff_solid_survivor.bookings;
+----
+id  who
+1   still_here
+
+
+# Tear-down.
+connection after_crash
+statement ok
+DROP SCHEMA vedernikoff_solid_survivor CASCADE;

@@ -18,20 +18,49 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "index_builder.hpp"
+#include "index_builder.h"
 
+#include <atomic>
+#include <duckdb/main/database.hpp>
 #include <iostream>
+#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <memory>
 
 namespace bench {
 
+duckdb::DatabaseInstance& CsDb() {
+  static std::unique_ptr<duckdb::DuckDB> kDb = [] {
+    duckdb::DBConfig cfg;
+    cfg.options.access_mode = duckdb::AccessMode::AUTOMATIC;
+    return std::make_unique<duckdb::DuckDB>(":memory:", &cfg);
+  }();
+  return *kDb->instance;
+}
+
 static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
                                                  size_t segment_pool_size,
-                                                 size_t segment_mem_max) {
+                                                 size_t segment_mem_max,
+                                                 uint32_t row_group_size,
+                                                 uint32_t norm_row_group_size) {
   irs::IndexWriterOptions writer_opts;
   writer_opts.reader_options.scorer = scorer_ptr;
   writer_opts.segment_pool_size = segment_pool_size;
   writer_opts.segment_memory_max = segment_mem_max;
+  writer_opts.db = &CsDb();
+  writer_opts.reader_options.db = &CsDb();
+  writer_opts.column_options =
+    [row_group_size](irs::field_id id) -> irs::ColumnOptions {
+    return {.row_group_size = row_group_size};
+  };
+  writer_opts.norm_column_options =
+    [norm_row_group_size, next = std::make_shared<std::atomic<irs::field_id>>(
+                            0)](std::string_view) -> irs::NormColumnOptions {
+    return {
+      .id = next->fetch_add(1, std::memory_order_relaxed),
+      .row_group_size = norm_row_group_size,
+    };
+  };
   return writer_opts;
 }
 
@@ -47,7 +76,8 @@ IndexBuilder::IndexBuilder(std::string_view path,
     _writer{irs::IndexWriter::Make(
       _dir, _format, irs::kOmCreate,
       MakeWriterOptions(_scorer_ptr, opts.indexer_threads,
-                        config.segment_mem_max))} {}
+                        config.segment_mem_max, opts.row_group_size,
+                        opts.norm_row_group_size))} {}
 
 void IndexBuilder::IndexFromStream(std::istream& input,
                                    BatchHandlerFactory factory) {

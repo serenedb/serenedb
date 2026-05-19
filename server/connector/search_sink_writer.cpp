@@ -20,8 +20,6 @@
 
 #include "search_sink_writer.hpp"
 
-#include <simdjson.h>
-
 #include <duckdb/common/enum_util.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
@@ -48,6 +46,11 @@ irs::UnboundedObjectPool<search::AnalyzerImpl::Builder> gBoolStreamPool(
   kDefaultPoolSize);
 irs::UnboundedObjectPool<search::AnalyzerImpl::Builder> gNullStreamPool(
   kDefaultPoolSize);
+
+void SetNameToBuffer(std::string& name_buffer, catalog::Column::Id column_id) {
+  SDB_ASSERT(name_buffer.size() >= sizeof(column_id));
+  absl::big_endian::Store(name_buffer.data(), column_id);
+}
 
 // TODO(Dronplane): most likely will need this in filter builder.
 //  Move to some shared place if it would be the case.
@@ -111,238 +114,362 @@ inline constexpr bool kIsNumericKind =
   Kind == duckdb::LogicalTypeId::TIMESTAMP ||
   Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ;
 
-std::string_view ExtractRawString(std::span<const rocksdb::Slice> cell_slices) {
-  SDB_ASSERT(!cell_slices.empty() && cell_slices.size() <= 2);
-  const auto& first = cell_slices.front();
-  if (!first.starts_with(kStringPrefix)) {
-    return {first.data(), first.size()};
-  }
-  if (cell_slices.size() == 1) {
-    return {first.data() + 1, first.size() - 1};
-  }
-  return {cell_slices[1].data(), cell_slices[1].size()};
-}
-
 }  // namespace
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
-  irs::IndexWriter::Transaction& trx,
-  ColumnTokenizerProvider&& tokenizer_provider,
+  irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
+  JsonPathsProvider&& json_paths_provider,
+  StoreValuesProvider&& store_values_provider,
+  IsTextIndexedProvider&& is_text_indexed_provider,
+  HNSWInfoProvider&& hnsw_info_provider,
   std::span<const catalog::Column::Id> columns,
-  ExpressionTokenizerProvider&& subexpr_tokenizer_provider,
-  std::vector<IndexedExpression>&& subexprs)
+  ExpressionTokenizerProvider&& expr_tokenizer_provider,
+  std::vector<IndexedExpression>&& indexed_exprs)
   : ColumnSinkWriterImplBase{columns},
     _tokenizer_provider{std::move(tokenizer_provider)},
-    _subexpr_tokenizer_provider{std::move(subexpr_tokenizer_provider)},
-    _trx{trx},
-    _indexed_expressions{std::move(subexprs)} {
+    _json_paths_provider{std::move(json_paths_provider)},
+    _store_values_provider{std::move(store_values_provider)},
+    _is_text_indexed_provider{std::move(is_text_indexed_provider)},
+    _hnsw_info_provider{std::move(hnsw_info_provider)},
+    _subexpr_tokenizer_provider{std::move(expr_tokenizer_provider)},
+    _indexed_expressions{std::move(indexed_exprs)},
+    _trx{trx} {
   _pk_field.PrepareForVerbatimStringValue();
   _pk_field.name = kPkFieldName;
-
-  SDB_ASSERT(absl::c_all_of(_indexed_expressions, [](const auto& e) {
-    return static_cast<bool>(e.normalized_expr);
-  }));
 }
 
-bool SearchSinkInsertBaseImpl::SetupTypedWriter(catalog::Column::Id column_id,
-                                                const duckdb::LogicalType& type,
-                                                bool have_nulls,
-                                                std::string_view name_suffix) {
-  switch (type.id()) {
-    case duckdb::LogicalTypeId::SQLNULL:
-      SetupColumnWriter<duckdb::LogicalTypeId::SQLNULL>(column_id, false,
-                                                        name_suffix);
-      return true;
-    case duckdb::LogicalTypeId::VARCHAR:
-      SetupColumnWriter<duckdb::LogicalTypeId::VARCHAR>(column_id, have_nulls,
-                                                        name_suffix);
-      return true;
-    case duckdb::LogicalTypeId::BLOB:
-      SetupColumnWriter<duckdb::LogicalTypeId::BLOB>(column_id, have_nulls,
-                                                     name_suffix);
-      return true;
-    case duckdb::LogicalTypeId::BOOLEAN:
-      SetupColumnWriter<duckdb::LogicalTypeId::BOOLEAN>(column_id, have_nulls,
-                                                        name_suffix);
-      return true;
-    case duckdb::LogicalTypeId::TINYINT:
-      SetupColumnWriter<duckdb::LogicalTypeId::TINYINT>(column_id, have_nulls,
-                                                        name_suffix);
-      return true;
-    case duckdb::LogicalTypeId::SMALLINT:
-      SetupColumnWriter<duckdb::LogicalTypeId::SMALLINT>(column_id, have_nulls,
-                                                         name_suffix);
-      return true;
-    case duckdb::LogicalTypeId::INTEGER:
-      SetupColumnWriter<duckdb::LogicalTypeId::INTEGER>(column_id, have_nulls,
-                                                        name_suffix);
-      return true;
-    case duckdb::LogicalTypeId::BIGINT:
-      SetupColumnWriter<duckdb::LogicalTypeId::BIGINT>(column_id, have_nulls,
-                                                       name_suffix);
-      return true;
-    case duckdb::LogicalTypeId::FLOAT:
-      SetupColumnWriter<duckdb::LogicalTypeId::FLOAT>(column_id, have_nulls,
-                                                      name_suffix);
-      return true;
-    case duckdb::LogicalTypeId::DOUBLE:
-      SetupColumnWriter<duckdb::LogicalTypeId::DOUBLE>(column_id, have_nulls,
-                                                       name_suffix);
-      return true;
-    case duckdb::LogicalTypeId::DATE:
-      SetupColumnWriter<duckdb::LogicalTypeId::DATE>(column_id, have_nulls,
-                                                     name_suffix);
-      return true;
-    case duckdb::LogicalTypeId::TIMESTAMP:
-      SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP>(column_id, have_nulls,
-                                                          name_suffix);
-      return true;
-    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
-      SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP_TZ>(
-        column_id, have_nulls, name_suffix);
-      return true;
-    case duckdb::LogicalTypeId::ARRAY:
-      SetupColumnWriter<duckdb::LogicalTypeId::ARRAY>(column_id, have_nulls,
-                                                      name_suffix);
-      return true;
-    case duckdb::LogicalTypeId::GEOMETRY:
-      SetupColumnWriter<duckdb::LogicalTypeId::GEOMETRY>(column_id, have_nulls,
-                                                         name_suffix);
-      return true;
-    default:
-      return false;
-  }
-}
-
-bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col) {
+bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col,
+                                                const duckdb::Vector& vec,
+                                                duckdb::idx_t count) {
   const auto column_id = col.id;
+  const auto& type = col.type;
+  const auto have_nulls = col.have_nulls;
+  _active_column_id = column_id;
+  _active_column_type = type;
+  _active_columnstore_writer = nullptr;
+  std::optional<irs::HNSWInfo> hnsw_info;
+  if (_hnsw_info_provider) {
+    hnsw_info = _hnsw_info_provider(column_id);
+  }
+  const bool wants_columnstore =
+    (_store_values_provider && _store_values_provider(column_id)) || hnsw_info;
+  auto open_typed_batch_cs = [&] {
+    if (!_document) {
+      return;
+    }
+    auto* doc_columnstore = _document->Columnstore();
+    if (!doc_columnstore) {
+      return;
+    }
+    auto [it, inserted] = _columnstore_writers.try_emplace(column_id, nullptr);
+    if (inserted) {
+      it->second = &doc_columnstore->OpenColumn(
+        static_cast<irs::field_id>(column_id), type);
+    }
+    _active_columnstore_writer = it->second;
+    _document->NextFieldBatch();
+    const uint64_t start_row = _document->DocId() - irs::doc_limits::min();
+    _active_columnstore_writer->Append(start_row, vec, count);
+  };
+
+  const bool text_indexed =
+    _is_text_indexed_provider && _is_text_indexed_provider(column_id);
+  const bool has_json_paths =
+    _json_paths_provider && !_json_paths_provider(column_id).empty();
+
   if (!IsIndexed(column_id)) {
 #ifdef SDB_DEV
     _current_writer = nullptr;
 #endif
     return false;
   }
-  if (!SetupTypedWriter(column_id, col.type, col.have_nulls, {})) {
+  if (wants_columnstore && !text_indexed && !has_json_paths && !hnsw_info) {
+    open_typed_batch_cs();
+#ifdef SDB_DEV
     _current_writer = nullptr;
+#endif
     return false;
   }
-  SDB_ASSERT(_document.has_value());
+  if (wants_columnstore && hnsw_info) {
+    open_typed_batch_cs();
+  }
+  if (_json_paths_provider) {
+    if (auto paths = _json_paths_provider(column_id); !paths.empty()) {
+      SetupJsonColumnWriter(column_id, std::move(paths));
+      SDB_ASSERT(_document);
+      _document->NextFieldBatch();
+      return true;
+    }
+  }
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::SQLNULL:
+      SetupColumnWriter<duckdb::LogicalTypeId::SQLNULL>(column_id, false);
+      break;
+    case duckdb::LogicalTypeId::VARCHAR:
+      SetupColumnWriter<duckdb::LogicalTypeId::VARCHAR>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::BLOB:
+      SetupColumnWriter<duckdb::LogicalTypeId::BLOB>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::BOOLEAN:
+      SetupColumnWriter<duckdb::LogicalTypeId::BOOLEAN>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::TINYINT:
+      SetupColumnWriter<duckdb::LogicalTypeId::TINYINT>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::SMALLINT:
+      SetupColumnWriter<duckdb::LogicalTypeId::SMALLINT>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::INTEGER:
+      SetupColumnWriter<duckdb::LogicalTypeId::INTEGER>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::BIGINT:
+      SetupColumnWriter<duckdb::LogicalTypeId::BIGINT>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::FLOAT:
+      SetupColumnWriter<duckdb::LogicalTypeId::FLOAT>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::DOUBLE:
+      SetupColumnWriter<duckdb::LogicalTypeId::DOUBLE>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::DATE:
+      SetupColumnWriter<duckdb::LogicalTypeId::DATE>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::TIMESTAMP:
+      SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP>(column_id,
+                                                          have_nulls);
+      break;
+    // TODO(Dronplane): other timestamp derived types could be handled same way
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+      SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP_TZ>(column_id,
+                                                             have_nulls);
+      break;
+    case duckdb::LogicalTypeId::ARRAY: {
+      SetupColumnWriter<duckdb::LogicalTypeId::ARRAY>(column_id, have_nulls);
+      break;
+    }
+    case duckdb::LogicalTypeId::GEOMETRY: {
+      SetupColumnWriter<duckdb::LogicalTypeId::GEOMETRY>(column_id, have_nulls);
+      break;
+    }
+    default:
+      // Unsupported type for inverted index (e.g. INTEGER without opclass).
+      // Skip this column rather than crashing in WriteImpl.
+      _current_writer = nullptr;
+      return false;
+  }
+  SDB_ASSERT(_document);
   _document->NextFieldBatch();
+  if (wants_columnstore && !_active_columnstore_writer) {
+    open_typed_batch_cs();
+  }
   return true;
 }
 
 bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
-  const ExpressionDescriptor& expr_desc) {
-  const auto& return_type = expr_desc.type;
-  const auto have_nulls = expr_desc.have_nulls;
-  const auto serialized_expr = expr_desc.serialized_expr;
-  // column_id is unused on the expression path: SetupColumnWriter routes
-  // through MakeExpressionFieldName + _subexpr_tokenizer_provider whenever
-  // name_suffix (serialized_expr) is non-empty.
-  constexpr catalog::Column::Id kUnusedColumnId{};
-  if (return_type.IsJSONType()) {
-    SetupColumnWriter<duckdb::LogicalTypeId::VARCHAR>(
-      kUnusedColumnId, have_nulls, serialized_expr);
-    SetupExprAuxTypedFields(kUnusedColumnId, serialized_expr);
-  } else if (!SetupTypedWriter(kUnusedColumnId, return_type, have_nulls,
-                               serialized_expr)) {
+  const ExpressionDescriptor& expr_desc, const duckdb::Vector& vec,
+  duckdb::idx_t count) {
+  (void)vec;
+  (void)count;
+  if (!_subexpr_tokenizer_provider) {
     _current_writer = nullptr;
     return false;
   }
-  SDB_ASSERT(_document.has_value());
+  const auto have_nulls = expr_desc.have_nulls;
+  const auto serialized_expr = expr_desc.serialized_expr;
+  const auto kind = expr_desc.type.id();
+
+  MakeExpressionFieldName(serialized_expr, _name_buffer);
+  if (have_nulls || kind == duckdb::LogicalTypeId::SQLNULL) {
+    MakeExpressionFieldName(serialized_expr, _null_name_buffer);
+    search::mangling::MangleNull(_null_name_buffer);
+    _null_field.name = _null_name_buffer;
+    if (!_null_field.analyzer) {
+      _null_field.PrepareForNullValue();
+    }
+  }
+
+  auto make_nullable =
+    [&]<typename WriteFunc>(WriteFunc&& write_func) {
+      return
+        [&, write_func = std::forward<WriteFunc>(write_func)](
+          std::string_view full_key,
+          std::span<const rocksdb::Slice> cell_slices, Field& field) -> Field& {
+          if (cell_slices.size() == 1 && cell_slices.front().empty()) {
+            _null_field.SetNullValue();
+            return _null_field;
+          }
+          return write_func(full_key, cell_slices, field);
+        };
+    };
+
+  switch (kind) {
+    case duckdb::LogicalTypeId::SQLNULL:
+      _current_writer = MakeIndexWriter(
+        [&](std::string_view, std::span<const rocksdb::Slice>,
+            Field&) -> Field& {
+          _null_field.SetNullValue();
+          return _null_field;
+        });
+      break;
+    case duckdb::LogicalTypeId::VARCHAR: {
+      search::mangling::MangleString(_name_buffer);
+      auto tokenizer = _subexpr_tokenizer_provider(serialized_expr);
+      _field.PrepareForStringValue(std::move(tokenizer));
+      _current_writer =
+        have_nulls ? MakeIndexWriter(make_nullable(&WriteStringValue))
+                   : MakeIndexWriter(&WriteStringValue);
+      break;
+    }
+    case duckdb::LogicalTypeId::BOOLEAN:
+      search::mangling::MangleBool(_name_buffer);
+      _field.PrepareForBooleanValue();
+      _current_writer =
+        have_nulls ? MakeIndexWriter(make_nullable(&WriteBooleanValue))
+                   : MakeIndexWriter(&WriteBooleanValue);
+      break;
+    case duckdb::LogicalTypeId::TINYINT:
+    case duckdb::LogicalTypeId::SMALLINT:
+    case duckdb::LogicalTypeId::INTEGER:
+    case duckdb::LogicalTypeId::BIGINT:
+    case duckdb::LogicalTypeId::FLOAT:
+    case duckdb::LogicalTypeId::DOUBLE:
+    case duckdb::LogicalTypeId::DATE:
+    case duckdb::LogicalTypeId::TIMESTAMP:
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ: {
+      search::mangling::MangleNumeric(_name_buffer);
+      _field.PrepareForNumericValue();
+      // WriteNumericValue<T> reinterprets the slice as a T*. T must match
+      // the serializer's per-kind output exactly (see NumericSliceType).
+      auto numeric_writer = [&]() -> Writer {
+        switch (kind) {
+          case duckdb::LogicalTypeId::TINYINT:
+            return have_nulls
+                     ? MakeIndexWriter(make_nullable(&WriteNumericValue<int8_t>))
+                     : MakeIndexWriter(&WriteNumericValue<int8_t>);
+          case duckdb::LogicalTypeId::SMALLINT:
+            return have_nulls
+                     ? MakeIndexWriter(make_nullable(&WriteNumericValue<int16_t>))
+                     : MakeIndexWriter(&WriteNumericValue<int16_t>);
+          case duckdb::LogicalTypeId::INTEGER:
+          case duckdb::LogicalTypeId::DATE:
+            return have_nulls
+                     ? MakeIndexWriter(make_nullable(&WriteNumericValue<int32_t>))
+                     : MakeIndexWriter(&WriteNumericValue<int32_t>);
+          case duckdb::LogicalTypeId::BIGINT:
+          case duckdb::LogicalTypeId::TIMESTAMP:
+          case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+            return have_nulls
+                     ? MakeIndexWriter(make_nullable(&WriteNumericValue<int64_t>))
+                     : MakeIndexWriter(&WriteNumericValue<int64_t>);
+          case duckdb::LogicalTypeId::FLOAT:
+            return have_nulls
+                     ? MakeIndexWriter(make_nullable(&WriteNumericValue<float>))
+                     : MakeIndexWriter(&WriteNumericValue<float>);
+          case duckdb::LogicalTypeId::DOUBLE:
+            return have_nulls
+                     ? MakeIndexWriter(make_nullable(&WriteNumericValue<double>))
+                     : MakeIndexWriter(&WriteNumericValue<double>);
+          default:
+            SDB_UNREACHABLE();
+        }
+      }();
+      _current_writer = std::move(numeric_writer);
+      break;
+    }
+    default:
+      _current_writer = nullptr;
+      return false;
+  }
+  _field.name = _name_buffer;
+  SDB_ASSERT(_document);
   _document->NextFieldBatch();
   return true;
 }
 
-void SearchSinkInsertBaseImpl::SetupExprAuxTypedFields(
-  catalog::Column::Id column_id, std::string_view name_suffix) {
-  // Build the numeric-mangled field name and analyzer.
-  MakeExpressionFieldName(name_suffix, _aux_numeric_name_buffer);
-  search::mangling::MangleNumeric(_aux_numeric_name_buffer);
-  _aux_numeric_field.PrepareForNumericValue();
-  _aux_numeric_field.name = _aux_numeric_name_buffer;
-  _aux_numeric_field.store_attr = nullptr;
-
-  // Build the bool-mangled field name and analyzer.
-  MakeExpressionFieldName(name_suffix, _aux_bool_name_buffer);
-  search::mangling::MangleBool(_aux_bool_name_buffer);
-  _aux_bool_field.PrepareForBooleanValue();
-  _aux_bool_field.name = _aux_bool_name_buffer;
-  _aux_bool_field.store_attr = nullptr;
-
-  _current_writer = [this, string_writer = std::move(_current_writer)](
-                      std::string_view full_key,
-                      std::span<const rocksdb::Slice> cell_slices) {
-    if (cell_slices.empty() ||
-        (cell_slices.size() == 1 && cell_slices.front().empty())) {
-      string_writer(full_key, cell_slices);
-      return;
-    }
-    auto raw = ExtractRawString(cell_slices);
-    if (raw.empty()) {
-      string_writer(full_key, cell_slices);
-      return;
-    }
-    // DOM: ondemand mis-classifies top-level scalars from the first byte.
-    simdjson::dom::parser dom_parser;
-    simdjson::dom::element doc;
-    if (dom_parser.parse(raw.data(), raw.size()).get(doc) !=
-        simdjson::SUCCESS) {
-      SDB_THROW(ERROR_INTERNAL,
-                "Invalid JSON leaf for indexed expression: ", raw);
-    }
-    if (doc.is_number()) {
-      _aux_numeric_field.SetNumericValue(double(doc.get_double()));
-      const bool ok =
-        _document->template Insert<irs::Action::INDEX>(&_aux_numeric_field);
-      if (!ok) {
-        SDB_THROW(ERROR_INTERNAL,
-                  "Failed to insert expression numeric variant into "
-                  "IResearch document");
-      }
-      return;
-    }
-    if (doc.is_bool()) {
-      _aux_bool_field.SetBooleanValue(bool(doc.get_bool()));
-      const bool ok =
-        _document->template Insert<irs::Action::INDEX>(&_aux_bool_field);
-      if (!ok) {
-        SDB_THROW(ERROR_INTERNAL,
-                  "Failed to insert expression bool variant into "
-                  "IResearch document");
-      }
-      return;
-    }
-    string_writer(full_key, cell_slices);
-  };
+void SearchSinkInsertBaseImpl::AppendCsContinuation(
+  const duckdb::Vector& vec, duckdb::idx_t count,
+  duckdb::idx_t row_offset_from_first_doc) {
+  if (!_active_columnstore_writer) {
+    return;
+  }
+  SDB_ASSERT(_document);
+  const uint64_t start_row =
+    (_document->DocId() - irs::doc_limits::min()) + row_offset_from_first_doc;
+  _active_columnstore_writer->Append(start_row, vec, count);
 }
 
 void SearchSinkInsertBaseImpl::WriteImpl(
   std::span<const rocksdb::Slice> cell_slices, std::string_view full_key) {
   SDB_ASSERT(_current_writer);
-  SDB_ASSERT(_document.has_value());
+  SDB_ASSERT(_document);
   _current_writer(full_key, cell_slices);
   _document->NextDocument();
 }
 
-void SearchSinkInsertBaseImpl::FinishImpl() { _document.reset(); }
+void SearchSinkInsertBaseImpl::FinishImpl() {
+  _columnstore_writers.clear();
+  _per_row_blob_writers.clear();
+  _active_columnstore_writer = nullptr;
+  _document.reset();
+}
+
+irs::columnstore::ColumnWriter*
+SearchSinkInsertBaseImpl::EnsurePerRowBlobWriter(
+  catalog::Column::Id column_id) {
+  auto* doc_columnstore = _document ? _document->Columnstore() : nullptr;
+  if (!doc_columnstore) {
+    return nullptr;
+  }
+  auto [it, inserted] = _per_row_blob_writers.try_emplace(column_id, nullptr);
+  if (!it->second) {
+    it->second = &doc_columnstore->OpenColumn(
+      static_cast<irs::field_id>(column_id), duckdb::LogicalType::BLOB);
+  }
+  return it->second;
+}
+
+void SearchSinkInsertBaseImpl::AppendPerRowBlob(catalog::Column::Id column_id,
+                                                irs::bytes_view bytes) {
+  auto* writer = EnsurePerRowBlobWriter(column_id);
+  if (!writer) {
+    return;
+  }
+  _row_buffer.Initialize(duckdb::VectorDataInitialization::ZERO_INITIALIZE, 1);
+  auto* slots =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(_row_buffer);
+  slots[0] = duckdb::StringVector::AddStringOrBlob(
+    _row_buffer, reinterpret_cast<const char*>(bytes.data()), bytes.size());
+  const uint64_t row = _document->DocId() - irs::doc_limits::min();
+  writer->Append(row, _row_buffer, 1);
+}
+
+void SearchSinkInsertBaseImpl::AppendPerRowBlobNull(
+  catalog::Column::Id column_id) {
+  auto it = _per_row_blob_writers.find(column_id);
+  if (it == _per_row_blob_writers.end() || !it->second) {
+    return;
+  }
+  _row_buffer.Initialize(duckdb::VectorDataInitialization::ZERO_INITIALIZE, 1);
+  const uint64_t row = _document->DocId() - irs::doc_limits::min();
+  it->second->Append(row, _row_buffer, 1);
+}
+
+void SearchSinkInsertBaseImpl::AppendPerRowPrimaryKey(
+  std::string_view row_key) {
+  AppendPerRowBlob(catalog::Column::kGeneratedPKId,
+                   irs::ViewCast<irs::byte_type>(row_key));
+}
 
 template<duckdb::LogicalTypeId Kind>
 void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
-                                                 bool have_nulls,
-                                                 std::string_view name_suffix) {
-  if (name_suffix.empty()) {
-    MakeColumnFieldName(column_id, _name_buffer);
-  } else {
-    MakeExpressionFieldName(name_suffix, _name_buffer);
-  }
+                                                 bool have_nulls) {
+  basics::StrResize(_name_buffer, sizeof(column_id));
+  SetNameToBuffer(_name_buffer, column_id);
 
   if (have_nulls || Kind == duckdb::LogicalTypeId::SQLNULL) {
-    if (name_suffix.empty()) {
-      MakeColumnFieldName(column_id, _null_name_buffer);
-    } else {
-      MakeExpressionFieldName(name_suffix, _null_name_buffer);
-    }
+    basics::StrResize(_null_name_buffer, sizeof(column_id));
+    SetNameToBuffer(_null_name_buffer, column_id);
     search::mangling::MangleNull(_null_name_buffer);
     _null_field.name = _null_name_buffer;
     if (!_null_field.analyzer) {
@@ -357,11 +484,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
         [&, write_func = std::forward<WriteFunc>(write_func)](
           std::string_view full_key,
           std::span<const rocksdb::Slice> cell_slices, Field& field) -> Field& {
-          // Two shapes mean "null": size 1 with empty front (WriteFlatColumn
-          // path) and size 0 (WriteUnifiedColumn / WriteConstantColumn path
-          // for null rows).
-          if (cell_slices.empty() ||
-              (cell_slices.size() == 1 && cell_slices.front().empty())) {
+          if (cell_slices.size() == 1 && cell_slices.front().empty()) {
             _null_field.SetNullValue();
             return _null_field;
           }
@@ -381,17 +504,39 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   } else if constexpr (Kind == duckdb::LogicalTypeId::VARCHAR ||
                        Kind == duckdb::LogicalTypeId::BLOB) {
     search::mangling::MangleString(_name_buffer);
-    // A non-empty `name_suffix` indicates an expression field
-    auto tokenizer = name_suffix.empty()
-                       ? _tokenizer_provider(column_id)
-                       : _subexpr_tokenizer_provider(name_suffix);
-    _field.PrepareForStringValue(std::move(tokenizer));
+    auto column_tokenizer = _tokenizer_provider(column_id);
+    const auto tokenizer_column = column_tokenizer.tokenizer_column;
+    _field.PrepareForStringValue(std::move(column_tokenizer));
     const bool has_store = _field.store_attr != nullptr;
     if (has_store) {
-      _current_writer =
-        have_nulls
-          ? MakeIndexStoreWriter(make_nullable_writer_func(&WriteStringValue))
-          : MakeIndexStoreWriter(&WriteStringValue);
+      SDB_ASSERT(tokenizer_column,
+                 "tokenizer registers StoreAttr but catalog has no tokenizer "
+                 "column allocated for column ",
+                 column_id);
+      const auto tokenizer_column_id = *tokenizer_column;
+      EnsurePerRowBlobWriter(tokenizer_column_id);
+      _current_writer = [&, tokenizer_column_id, have_nulls](
+                          std::string_view full_key,
+                          std::span<const rocksdb::Slice> cell_slices) {
+        Field* field = nullptr;
+        const bool is_null =
+          have_nulls && cell_slices.size() == 1 && cell_slices.front().empty();
+        if (is_null) {
+          _null_field.SetNullValue();
+          field = &_null_field;
+        } else {
+          field = &WriteStringValue(full_key, cell_slices, _field);
+        }
+        if (!_document->Insert(field)) {
+          SDB_THROW(ERROR_INTERNAL,
+                    "Failed to insert field into IResearch document");
+        }
+        if (is_null || !field->store_attr) {
+          AppendPerRowBlobNull(tokenizer_column_id);
+        } else {
+          AppendPerRowBlob(tokenizer_column_id, field->store_attr->value);
+        }
+      };
     } else {
       _current_writer =
         have_nulls
@@ -418,48 +563,56 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       _current_writer = MakeIndexWriter(&WriteNumericValue<T>);
     }
   } else if constexpr (Kind == duckdb::LogicalTypeId::ARRAY) {
-    // HNSW vector field: non-null rows STORE raw float32 bytes (no inverted
-    // index); null rows fall through to INDEX-only via the null-stream
-    // analyzer so IS NULL queries still work.
-    // No name mangling: the field name is the raw big-endian column ID,
-    // matching the column_info key registered in InvertedIndexShard.
-    _field.PrepareForVectorValue();
-    if (have_nulls) {
-      _current_writer =
-        MakeStoreWriter(make_nullable_writer_func(&WriteVectorValue));
-    } else {
-      _current_writer = MakeStoreWriter(&WriteVectorValue);
-    }
+    _current_writer = [](std::string_view, std::span<const rocksdb::Slice>) {};
   } else if constexpr (Kind == duckdb::LogicalTypeId::GEOMETRY) {
-    // GEOMETRY column: WKB bytes arrive in cell_slices and go straight to
-    // the geo analyzer via resetWKB. The analyzer parses internally, which
-    // lets future LatLng-coding work fuse the WKB read with the encoder
-    // write without changing this call site.
     search::mangling::MangleString(_name_buffer);
-    _field.PrepareForStringValue(_tokenizer_provider(column_id));
+    auto column_tokenizer = _tokenizer_provider(column_id);
+    const auto tokenizer_column = column_tokenizer.tokenizer_column;
+    _field.PrepareForStringValue(std::move(column_tokenizer));
     const bool has_store = _field.store_attr != nullptr;
     auto geo_writer = [](std::string_view,
                          std::span<const rocksdb::Slice> cell_slices,
                          Field& field) -> Field& {
       SDB_ASSERT(!cell_slices.empty());
-      // Raw WKB: last slice (row-prefix serialization may prepend other
-      // slices, so use back()).
       const auto& slice = cell_slices.back();
       const irs::bytes_view wkb{
         reinterpret_cast<const irs::byte_type*>(slice.data()), slice.size()};
       auto& geo =
         basics::downCast<irs::analysis::GeoAnalyzer>(*field.string_analyzer);
-      // Parse failure is treated silently (option A from the port plan): the
-      // analyzer keeps whatever state it had, which at worst means this row
-      // contributes no new terms. Matches the VARCHAR path behavior on bad
-      // input.
-      (void)geo.resetWKB(wkb);
+      // TODO(Dronplane) Should be similar to CSV ignore_errors behavior
+      // Same for VARCHAR
+      std::ignore = geo.resetWKB(wkb);
       return field;
     };
     if (has_store) {
-      _current_writer =
-        have_nulls ? MakeIndexStoreWriter(make_nullable_writer_func(geo_writer))
-                   : MakeIndexStoreWriter(geo_writer);
+      SDB_ASSERT(tokenizer_column,
+                 "geo tokenizer registers StoreAttr but catalog has no "
+                 "tokenizer column allocated for column ",
+                 column_id);
+      const auto tokenizer_column_id = *tokenizer_column;
+      EnsurePerRowBlobWriter(tokenizer_column_id);
+      _current_writer = [&, geo_writer, tokenizer_column_id, have_nulls](
+                          std::string_view full_key,
+                          std::span<const rocksdb::Slice> cell_slices) {
+        Field* field = nullptr;
+        const bool is_null =
+          have_nulls && cell_slices.size() == 1 && cell_slices.front().empty();
+        if (is_null) {
+          _null_field.SetNullValue();
+          field = &_null_field;
+        } else {
+          field = &geo_writer(full_key, cell_slices, _field);
+        }
+        if (!_document->Insert(field)) {
+          SDB_THROW(ERROR_INTERNAL,
+                    "Failed to insert field into IResearch document");
+        }
+        if (is_null || !field->store_attr) {
+          AppendPerRowBlobNull(tokenizer_column_id);
+        } else {
+          AppendPerRowBlob(tokenizer_column_id, field->store_attr->value);
+        }
+      };
     } else {
       _current_writer =
         have_nulls ? MakeIndexWriter(make_nullable_writer_func(geo_writer))
@@ -482,43 +635,217 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
                         std::string_view full_key,
                         std::span<const rocksdb::Slice> cell_slices) {
       auto row_key = key_utils::ExtractRowKey(full_key);
-      _pk_field.own_store.value = irs::ViewCast<irs::byte_type>(row_key);
       _pk_field.SetStringValue(row_key);
-      // We need indexed PK for removes
-      const bool r =
-        _document->template Insert<irs::Action::INDEX | irs::Action::STORE>(
-          _pk_field);
+      const bool r = _document->Insert(_pk_field);
       if (!r) {
         SDB_THROW(ERROR_INTERNAL,
                   "Failed to insert PK field into IResearch document");
       }
+      AppendPerRowPrimaryKey(row_key);
       data_writer(full_key, cell_slices);
     };
     _emit_pk = false;
   }
 }
 
-template<bool HasStore, irs::Action NonNullAction, typename WriteFunc>
-SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeWriterImpl(
+void SearchSinkInsertBaseImpl::JsonPathField::Init(
+  catalog::Column::Id column_id, std::string_view json_pointer,
+  catalog::ColumnTokenizer string_analyzer) {
+  // Common prefix: [BE col_id]<json_pointer> -- no mangle byte yet.
+  std::string prefix;
+  MakeColumnFieldName(column_id, json_pointer, prefix);
+  const size_t prefix_size = prefix.size();
+
+  tokenizer_column = string_analyzer.tokenizer_column;
+  string_name = prefix;
+  search::mangling::MangleString(string_name);
+  string_field.PrepareForStringValue(std::move(string_analyzer));
+  string_field.name = string_name;
+
+  numeric_name = prefix;
+  search::mangling::MangleNumeric(numeric_name);
+  numeric_field.PrepareForNumericValue();
+  numeric_field.name = numeric_name;
+
+  bool_name = prefix;
+  search::mangling::MangleBool(bool_name);
+  bool_field.PrepareForBooleanValue();
+  bool_field.name = bool_name;
+
+  null_name = std::move(prefix);
+  search::mangling::MangleNull(null_name);
+  null_field.PrepareForNullValue();
+  null_field.name = null_name;
+
+  // The pointer view is shared across every type's name -- they all have
+  // the same bytes for the prefix, so any buffer's data() works.
+  constexpr size_t kColIdSize = sizeof(catalog::Column::Id);
+  pointer =
+    std::string_view{string_name.data() + kColIdSize, prefix_size - kColIdSize};
+}
+
+void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
+  catalog::Column::Id column_id, std::vector<JsonPathSinkConfig> paths) {
+  SDB_ASSERT(!paths.empty());
+
+  // Build per-path Field instances for every primitive leaf type. Each
+  // leaf type goes to a distinct iresearch field via the mangle byte, so
+  // different-typed values at the same path don't collide.
+  _json_fields.clear();
+  _json_fields.reserve(paths.size());
+  for (auto& p : paths) {
+    _json_fields.emplace_back().Init(column_id, p.json_pointer,
+                                     std::move(p.tokenizer));
+  }
+  for (const auto& jpf : _json_fields) {
+    if (jpf.tokenizer_column) {
+      EnsurePerRowBlobWriter(*jpf.tokenizer_column);
+    }
+  }
+
+  // TODO(mkornaukhov): index SQL-NULL cells and missing keys into every
+  // configured path's null_field so `WHERE col->>'path' IS NULL` finds them
+  // through the index. Now only the JSON `null` leaf is indexed; SQL NULL
+  // cells and missing keys are silently skipped, producing index/scan
+  // divergence on IS NULL.
+  _current_writer = [this](std::string_view /*full_key*/,
+                           std::span<const rocksdb::Slice> cell_slices) {
+    if (cell_slices.size() == 1 && cell_slices.front().empty()) {
+      for (const auto& jpf : _json_fields) {
+        if (jpf.tokenizer_column) {
+          AppendPerRowBlobNull(*jpf.tokenizer_column);
+        }
+      }
+      return;
+    }
+    // Reconstruct the JSON string. For VARCHAR storage the layout can be
+    // [prefix][data] (fresh insert) or [data] (re-index); WriteStringValue
+    // has the same logic.
+    std::string_view json_str;
+    if (cell_slices.size() == 1) {
+      auto s = cell_slices.front();
+      if (!s.starts_with(kStringPrefix)) {
+        json_str = {s.data(), s.size()};
+      } else {
+        json_str = {s.data() + 1, s.size() - 1};
+      }
+    } else {
+      SDB_ASSERT(cell_slices.size() == 2);
+      json_str = {cell_slices[1].data(), cell_slices[1].size()};
+    }
+    if (json_str.empty()) {
+      return;
+    }
+
+    _json_buffer.assign(json_str);
+    _json_buffer.append(simdjson::SIMDJSON_PADDING, '\0');
+    simdjson::padded_string_view padded_view{
+      _json_buffer.data(), json_str.size(), _json_buffer.size()};
+
+    // DuckDB validates JSON at cast time; failure here is an upstream bug.
+    simdjson::ondemand::document doc;
+    auto res = _json_parser.iterate(padded_view).get(doc);
+    SDB_ASSERT(res == simdjson::SUCCESS);
+
+    auto insert_field = [this](Field& field) {
+      const bool ok = _document->Insert(&field);
+      if (!ok) {
+        SDB_THROW(ERROR_INTERNAL,
+                  "Failed to insert JSON path field into IResearch document");
+      }
+    };
+
+    for (auto& jpf : _json_fields) {
+      bool wrote_string_blob = false;
+      simdjson::ondemand::value val;
+      const bool found =
+        doc.at_pointer(jpf.pointer).get(val) == simdjson::SUCCESS;
+      simdjson::ondemand::json_type t{};
+      const bool typed = found && val.type().get(t) == simdjson::SUCCESS;
+      if (typed) {
+        switch (t) {
+          case simdjson::ondemand::json_type::string: {
+            auto s = val.get_string();
+            if (s.error() == simdjson::SUCCESS) {
+              jpf.string_field.SetStringValue(s.value_unsafe());
+              insert_field(jpf.string_field);
+              if (jpf.tokenizer_column && jpf.string_field.store_attr) {
+                AppendPerRowBlob(*jpf.tokenizer_column,
+                                 jpf.string_field.store_attr->value);
+                wrote_string_blob = true;
+              }
+            }
+            break;
+          }
+          case simdjson::ondemand::json_type::number: {
+            // Always as double. JSON has only one number type, so picking
+            // the int-vs-float encoding per row would split the same field
+            // into incompatible term sets; double is a safe superset for
+            // values up to 2^53.
+            double d;
+            if (val.get_double().get(d) == simdjson::SUCCESS) {
+              jpf.numeric_field.SetNumericValue(d);
+              insert_field(jpf.numeric_field);
+            }
+            break;
+          }
+          case simdjson::ondemand::json_type::boolean: {
+            bool b;
+            if (val.get_bool().get(b) == simdjson::SUCCESS) {
+              jpf.bool_field.SetBooleanValue(b);
+              insert_field(jpf.bool_field);
+            }
+            break;
+          }
+          case simdjson::ondemand::json_type::null: {
+            jpf.null_field.SetNullValue();
+            insert_field(jpf.null_field);
+            break;
+          }
+          case simdjson::ondemand::json_type::object:
+          case simdjson::ondemand::json_type::array:
+            SDB_THROW(ERROR_BAD_PARAMETER,
+                      "JSON path indexed by an inverted index must point to a "
+                      "primitive (string/number/boolean/null) leaf; got an "
+                      "object or array");
+          default:
+            // simdjson::ondemand::json_type has an `unknown` sentinel; treat
+            // it the same as a missing leaf.
+            break;
+        }
+      }
+      if (jpf.tokenizer_column && !wrote_string_blob) {
+        AppendPerRowBlobNull(*jpf.tokenizer_column);
+      }
+    }
+  };
+
+  if (_emit_pk) {
+    _current_writer = [this, data_writer = std::move(_current_writer)](
+                        std::string_view full_key,
+                        std::span<const rocksdb::Slice> cell_slices) {
+      auto row_key = key_utils::ExtractRowKey(full_key);
+      _pk_field.SetStringValue(row_key);
+      const bool r = _document->Insert(_pk_field);
+      if (!r) {
+        SDB_THROW(ERROR_INTERNAL,
+                  "Failed to insert PK field into IResearch document");
+      }
+      AppendPerRowPrimaryKey(row_key);
+      data_writer(full_key, cell_slices);
+    };
+    _emit_pk = false;
+  }
+}
+
+template<typename WriteFunc>
+SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeIndexWriter(
   WriteFunc&& write_func) {
   return
     [&, func = std::forward<WriteFunc>(write_func)](
       std::string_view full_key, std::span<const rocksdb::Slice> cell_slices) {
       auto& field = func(full_key, cell_slices, _field);
-      bool r;
-      if constexpr (HasStore) {
-        // Force INDEX only for NULLs so
-        // IS NULL queries find them via the null-stream tokens.
-        r = field.store_attr
-              ? _document->template Insert<NonNullAction>(&field)
-              : _document->template Insert<irs::Action::INDEX>(&field);
-      } else {
-        // Column never stores -- skip the per-row check.
-        static_assert(NonNullAction == irs::Action::INDEX,
-                      "No-store action should be only INDEX");
-        r = _document->template Insert<NonNullAction>(&field);
-      }
-      if (!r) {
+      if (!_document->Insert(&field)) {
         SDB_THROW(ERROR_INTERNAL,
                   "Failed to insert field into IResearch document");
       }
@@ -558,21 +885,6 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteStringValue(
   return field;
 }
 
-SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteVectorValue(
-  std::string_view full_key, std::span<const rocksdb::Slice> cell_slices,
-  SearchSinkInsertBaseImpl::Field& field) {
-  // _row_slices layout from WriteFlatSubVector<float>:
-  //   [0] header  (varint(count) + ValueFlags)
-  //   [1] null bitmap  (only when have_nulls)
-  //   [last] raw float data  (count * sizeof(float) bytes)
-  // Always use the last slice to get the actual float bytes.
-  SDB_ASSERT(!cell_slices.empty());
-  field.own_store.value = irs::bytes_view{
-    reinterpret_cast<const irs::byte_type*>(cell_slices.back().data()),
-    cell_slices.back().size()};
-  return field;
-}
-
 template<typename T>
 SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteNumericValue(
   std::string_view, std::span<const rocksdb::Slice> cell_slices,
@@ -609,16 +921,6 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteBooleanValue(
   return field;
 }
 
-void SearchSinkInsertBaseImpl::Field::PrepareForVectorValue() {
-  // HNSW vector fields are stored via Action::STORE only (no inverted index).
-  // No tokenizer is needed: Action::STORE does not call GetTokens().
-  string_analyzer.reset();
-  analyzer.reset();
-  index_features = irs::IndexFeatures::None;
-  own_store.value = {};
-  store_attr = &own_store;
-}
-
 void SearchSinkInsertBaseImpl::Field::PrepareForVerbatimStringValue() {
   string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
@@ -628,7 +930,7 @@ void SearchSinkInsertBaseImpl::Field::PrepareForVerbatimStringValue() {
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
-  catalog::FieldTokenizer&& column_analyzer) {
+  catalog::ColumnTokenizer&& column_analyzer) {
   index_features = column_analyzer.features;
   SDB_ASSERT(column_analyzer.analyzer);
   analyzer.reset();

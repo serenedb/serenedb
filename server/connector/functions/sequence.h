@@ -20,14 +20,22 @@
 
 #pragma once
 
+#include <array>
 #include <duckdb/main/database.hpp>
+#include <string_view>
 
 namespace sdb::connector {
 
-// Registers nextval / currval / setval scalar functions backed by
-// catalog::Sequence (Definitions CF) and per-sequence counters in the
-// Sequences CF (RocksDBSequenceManager). These shadow DuckDB's built-in
-// in-memory sequence functions.
+inline constexpr std::string_view kNextval = "nextval";
+inline constexpr std::string_view kCurrval = "currval";
+inline constexpr std::string_view kSetval = "setval";
+
+inline constexpr std::array<std::string_view, 3> kSequenceFunctionNames = {
+  kNextval,
+  kCurrval,
+  kSetval,
+};
+
 void RegisterSequenceFunctions(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::connector

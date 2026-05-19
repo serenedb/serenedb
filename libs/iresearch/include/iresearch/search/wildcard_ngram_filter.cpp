@@ -23,8 +23,17 @@
 
 #include "iresearch/search/wildcard_ngram_filter.hpp"
 
+#include <absl/base/internal/endian.h>
+
+#include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
+
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/wildcard_analyzer.hpp"
+#include "iresearch/columnstore/column_reader.hpp"
+#include "iresearch/columnstore/format.hpp"
+#include "iresearch/columnstore/read_context.hpp"
+#include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
@@ -78,15 +87,18 @@ class WildcardIterator : public DocIterator {
   // Takes shared ownership of the RE2 matcher to guarantee it outlives the
   // iterator. RE2 is immutable and thread-safe for concurrent matching, so
   // no per-iterator clone is needed (unlike icu::RegexMatcher).
+  //
+  // Stored term list lives in the columnstore as a BLOB column; the
+  // BlobPointReader owns its own scratch + ReadContext and returns a
+  // bytes_view per doc that the varint-parsing loop below walks.
   WildcardIterator(std::shared_ptr<RE2> matcher, DocIterator::ptr&& approx,
-                   DocIterator::ptr&& column_it)
+                   const columnstore::ColumnReader& stored_field,
+                   const columnstore::Reader& cs_reader)
     : _matcher{std::move(matcher)},
       _approx{std::move(approx)},
-      _column_it{std::move(column_it)} {
+      _cursor{cs_reader, stored_field} {
     SDB_ASSERT(_approx);
-    SDB_ASSERT(_column_it);
     SDB_ASSERT(_matcher);
-    _stored = irs::get<PayAttr>(*_column_it);
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -111,13 +123,16 @@ class WildcardIterator : public DocIterator {
   }
 
  private:
-  bool Check(doc_id_t doc) const {
-    if (_column_it->seek(doc) != doc) {
+  bool Check(doc_id_t doc) {
+    // Per-doc point fetch via cached cursor; cursor reuses its open
+    // ColumnSegment across consecutive docs in the same row group.
+    // Empty span = null OR analyzer stored zero bytes -- either way skip.
+    const auto value = _cursor.FetchDoc(doc);
+    if (value.empty()) {
       return false;
     }
-
-    auto* terms_begin = _stored->value.data();
-    auto* terms_end = terms_begin + _stored->value.size();
+    auto* terms_begin = value.data();
+    auto* terms_end = terms_begin + value.size();
     while (terms_begin != terms_end) {
       auto size = vread<uint32_t>(terms_begin);
       ++terms_begin;  // skip begin marker
@@ -136,15 +151,16 @@ class WildcardIterator : public DocIterator {
 
   std::shared_ptr<RE2> _matcher;
   DocIterator::ptr _approx;
-  DocIterator::ptr _column_it;
-  const PayAttr* _stored{};
+  columnstore::ColumnReader::BlobPointReader _cursor;
 };
 
 class WildcardQuery : public Filter::Query {
  public:
-  WildcardQuery(std::shared_ptr<RE2> matcher, std::string_view field,
-                Query::ptr&& approx)
-    : _matcher{std::move(matcher)}, _field{field}, _approx{std::move(approx)} {
+  WildcardQuery(std::shared_ptr<RE2> matcher, Query::ptr&& approx,
+                field_id store_field_id)
+    : _matcher{std::move(matcher)},
+      _approx{std::move(approx)},
+      _store_field_id{store_field_id} {
     SDB_ASSERT(_approx);
   }
 
@@ -153,13 +169,17 @@ class WildcardQuery : public Filter::Query {
     if (!_matcher || approx == DocIterator::empty()) {
       return approx;
     }
-    auto* column = ctx.segment.column(_field);
+    SDB_ASSERT(_store_field_id != 0);
+    const auto* cs_reader = ctx.segment.CsReader();
+    if (!cs_reader) {
+      return DocIterator::empty();
+    }
+    const auto* column = cs_reader->Column(_store_field_id);
     if (column == nullptr) {
       return DocIterator::empty();
     }
-    auto column_it = column->iterator(ColumnHint::Normal);
     return memory::make_managed<WildcardIterator>(_matcher, std::move(approx),
-                                                  std::move(column_it));
+                                                  *column, *cs_reader);
   }
 
   void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {}
@@ -168,8 +188,8 @@ class WildcardQuery : public Filter::Query {
 
  private:
   std::shared_ptr<RE2> _matcher;
-  std::string _field;
   Query::ptr _approx;
+  field_id _store_field_id;
 };
 
 constexpr size_t kDefaultScoredTermsLimit = 1024;
@@ -202,7 +222,7 @@ Filter::Query::ptr ByWildcardNgram::Prepare(
       return p;
     }
     return memory::make_tracked<WildcardQuery>(
-      ctx.memory, opts.matcher, std::string_view{field}, std::move(p));
+      ctx.memory, opts.matcher, std::move(p), opts.store_field_id);
   }
 
   AndQuery::queries_t queries{{ctx.memory}};
@@ -231,7 +251,7 @@ Filter::Query::ptr ByWildcardNgram::Prepare(
   auto conjunction = memory::make_tracked<AndQuery>(ctx.memory);
   conjunction->prepare(ctx, ScoreMergeType::Sum, std::move(queries), size);
   return memory::make_tracked<WildcardQuery>(
-    ctx.memory, opts.matcher, std::string_view{field}, std::move(conjunction));
+    ctx.memory, opts.matcher, std::move(conjunction), opts.store_field_id);
 }
 
 ByWildcardNgramOptions::ByWildcardNgramOptions(

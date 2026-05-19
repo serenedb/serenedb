@@ -35,12 +35,21 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkInsertBaseImpl {
  public:
   DuckDBSearchSinkInsertWriter(
-    irs::IndexWriter::Transaction& trx,
-    ColumnTokenizerProvider&& tokenizer_provider,
+    irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     std::span<const catalog::Column::Id> columns,
+    JsonPathsProvider&& json_paths_provider = NoJsonPaths(),
+    StoreValuesProvider&& store_values_provider = NoStoreValues(),
+    IsTextIndexedProvider&& is_text_indexed_provider = AllTextIndexed(),
+    HNSWInfoProvider&& hnsw_info_provider = NoHNSW(),
     ExpressionTokenizerProvider&& expr_tokenizer_provider = {},
     std::vector<IndexedExpression>&& indexed_exprs = {})
-    : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider), columns,
+    : SearchSinkInsertBaseImpl{trx,
+                               std::move(tokenizer_provider),
+                               std::move(json_paths_provider),
+                               std::move(store_values_provider),
+                               std::move(is_text_indexed_provider),
+                               std::move(hnsw_info_provider),
+                               columns,
                                std::move(expr_tokenizer_provider),
                                std::move(indexed_exprs)} {}
 
@@ -48,10 +57,15 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
     InitImpl(batch_size);
   }
 
-  bool SwitchColumn(const ColumnDescriptor& col) final;
+  bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
+                    duckdb::idx_t count) final;
 
   bool SwitchExpression(const ExpressionDescriptor& expr_desc) final {
-    return SwitchExpressionImpl(expr_desc);
+    // No batch Vector at the public seam -- the per-row write pipeline is
+    // driven by the serializer in EvaluateAndWriteIndexedExpressions; the
+    // impl ignores the unused vec/count.
+    static const duckdb::Vector kNoVec{duckdb::LogicalType::SQLNULL};
+    return SwitchExpressionImpl(expr_desc, kNoVec, 0);
   }
 
   std::span<const IndexedExpression> IndexedExpressions() const final {
@@ -92,12 +106,21 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkDeleteBaseImpl {
  public:
   DuckDBSearchSinkUpdateWriter(
-    irs::IndexWriter::Transaction& trx,
-    ColumnTokenizerProvider&& tokenizer_provider,
+    irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     std::span<const catalog::Column::Id> columns,
+    JsonPathsProvider&& json_paths_provider = NoJsonPaths(),
+    StoreValuesProvider&& store_values_provider = NoStoreValues(),
+    IsTextIndexedProvider&& is_text_indexed_provider = AllTextIndexed(),
+    HNSWInfoProvider&& hnsw_info_provider = NoHNSW(),
     ExpressionTokenizerProvider&& expr_tokenizer_provider = {},
     std::vector<IndexedExpression>&& indexed_exprs = {})
-    : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider), columns,
+    : SearchSinkInsertBaseImpl{trx,
+                               std::move(tokenizer_provider),
+                               std::move(json_paths_provider),
+                               std::move(store_values_provider),
+                               std::move(is_text_indexed_provider),
+                               std::move(hnsw_info_provider),
+                               columns,
                                std::move(expr_tokenizer_provider),
                                std::move(indexed_exprs)},
       SearchSinkDeleteBaseImpl{trx} {}
@@ -107,14 +130,16 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
     SearchSinkDeleteBaseImpl::InitImpl(batch_size);
   }
 
-  bool SwitchColumn(const ColumnDescriptor& col) final;
+  bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
+                    duckdb::idx_t count) final;
 
   bool SwitchExpression(const ExpressionDescriptor& expr_desc) final {
-    return SwitchExpressionImpl(expr_desc);
+    static const duckdb::Vector kNoVec{duckdb::LogicalType::SQLNULL};
+    return SearchSinkInsertBaseImpl::SwitchExpressionImpl(expr_desc, kNoVec, 0);
   }
 
   std::span<const IndexedExpression> IndexedExpressions() const final {
-    return IndexedExpressionImpl();
+    return SearchSinkInsertBaseImpl::IndexedExpressionImpl();
   }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,

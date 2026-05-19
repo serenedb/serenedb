@@ -112,8 +112,8 @@ void ApplyColumnModes(
     return;
   }
   for (auto& name : ExtractColumnList(kIndexOnlyKey, *it->second)) {
-    auto col_it =
-      absl::c_find_if(columns, [&](const auto& c) { return c.name == name; });
+    auto col_it = absl::c_find_if(
+      columns, [&](const auto& c) { return c.GetName() == name; });
     if (col_it == columns.end()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                       ERR_MSG("WITH option \"", kIndexOnlyKey,
@@ -236,7 +236,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
       return;
     }
     has_not_null[col_idx] = true;
-    auto& col_name = options.columns[col_idx].name;
+    std::string col_name{options.columns[col_idx].GetName()};
     auto col_ref = duckdb::make_uniq<duckdb::ColumnRefExpression>(col_name);
     auto is_not_null = duckdb::make_uniq<duckdb::OperatorExpression>(
       duckdb::ExpressionType::OPERATOR_IS_NOT_NULL, std::move(col_ref));
@@ -247,24 +247,11 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     });
   };
 
-  auto append_pk = [&](catalog::Column::Id col_id) {
-    if (absl::c_linear_search(options.pk_columns, col_id)) {
-      throw duckdb::CatalogException(
-        "column \"%s\" appears twice in primary key constraint",
-        options.columns[col_id].name);
-    }
-    append_not_null(col_id);  // PK implies NOT NULL
-    options.pk_columns.push_back(col_id);
-  };
-
   // SERIAL expands to base int + nextval default + NOT NULL. The sequence
   // name and nextval default are resolved by LocalCatalog under its mutex.
-  catalog::Column::Id next_col_id = 0;
   for (auto& col : table_info.columns.Logical()) {
-    auto& sdb_col = options.columns.emplace_back();
-    sdb_col.id = next_col_id++;
-    sdb_col.name = col.Name();
-    sdb_col.type = col.Type();
+    auto& sdb_col = options.columns.emplace_back(ObjectId{}, catalog::NextId(),
+                                                 col.Name(), col.Type());
 
     bool is_smallserial = pg::IsSmallserial(sdb_col.type);
     bool is_serial = pg::IsSerial(sdb_col.type);
@@ -280,7 +267,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
         seq_opts.max_value = std::numeric_limits<int64_t>::max();
       }
       sdb_col.type = duckdb::LogicalType{sdb_col.type.id()};
-      options.sequences.emplace_back(sdb_col.id, seq_opts);
+      options.sequences.emplace_back(sdb_col.GetId(), seq_opts);
       append_not_null(options.columns.size() - 1);
     } else if (col.Generated()) {
       sdb_col.generated_type = catalog::Column::GeneratedType::kStored;
@@ -290,6 +277,27 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
       sdb_col.expr = std::make_shared<ColumnExpr>(col.DefaultValue().Copy());
     }
   }
+
+  containers::FlatHashMap<catalog::Column::Id, size_t> col_idx_by_id;
+  col_idx_by_id.reserve(options.columns.size());
+  for (size_t i = 0; i < options.columns.size(); ++i) {
+    col_idx_by_id.emplace(options.columns[i].GetId(), i);
+  }
+  auto find_column_idx = [&](catalog::Column::Id col_id) -> size_t {
+    auto it = col_idx_by_id.find(col_id);
+    SDB_ASSERT(it != col_idx_by_id.end());
+    return it->second;
+  };
+  auto append_pk = [&](catalog::Column::Id col_id) {
+    if (absl::c_contains(options.pk_columns, col_id)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+        ERR_MSG("column \"", options.columns[find_column_idx(col_id)].GetName(),
+                "\" appears twice in primary key constraint"));
+    }
+    append_not_null(find_column_idx(col_id));  // PK implies NOT NULL
+    options.pk_columns.push_back(col_id);
+  };
 
   for (auto& constraint : table_info.constraints) {
     switch (constraint->type) {
@@ -301,17 +309,17 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
         if (unique.HasIndex()) {
           auto idx = unique.GetIndex().index;
           SDB_ASSERT(idx < options.columns.size());
-          append_pk(options.columns[idx].id);
+          append_pk(options.columns[idx].GetId());
         } else {
           for (auto& pk_name : unique.GetColumnNames()) {
             auto it = absl::c_find_if(options.columns, [&](const auto& col) {
-              return col.name == pk_name;
+              return col.GetName() == pk_name;
             });
             if (it == options.columns.end()) {
               throw duckdb::CatalogException(
                 "column \"%s\" named in key does not exist", pk_name);
             }
-            append_pk(it->id);
+            append_pk(it->GetId());
           }
         }
         break;
@@ -410,7 +418,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       auto col_name = col_ref.GetColumnName();
       const catalog::Column* cat_col = nullptr;
       for (const auto& col : columns) {
-        if (col.name == col_name) {
+        if (col.GetName() == col_name) {
           cat_col = &col;
           break;
         }
@@ -420,8 +428,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
                                        col_name);
       }
       idx_columns.push_back(catalog::CreateIndexColumn{
-        .data = catalog::ColumnRefData{.catalog_column = cat_col,
-                                       .name = cat_col->name},
+        .catalog_column = cat_col,
+        .name = cat_col->GetName(),
       });
     } else {
       throw duckdb::CatalogException(
@@ -434,32 +442,35 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
 
   Result create_result;
   if (index_type == catalog::ObjectType::InvertedIndex) {
-    search::InvertedIndexShardOptions shard_options;
-    auto it = info.options.find("commit_interval");
-    if (it != info.options.end()) {
-      shard_options.base.commit_interval_ms = it->second.GetValue<int64_t>();
-    }
-    it = info.options.find("consolidation_interval");
-    if (it != info.options.end()) {
-      shard_options.base.consolidation_interval_ms =
-        it->second.GetValue<int64_t>();
-    }
-    it = info.options.find("cleanup_interval_step");
-    if (it != info.options.end()) {
-      shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
-    }
-    std::optional<catalog::ScorerOptions> wand_scorer;
-    it = info.options.find("optimize_top_k");
-    if (it != info.options.end()) {
-      auto value = it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
-                     .GetValue<std::string>();
-      wand_scorer =
-        catalog::ParseScorerExpression(transaction.GetContext(), value);
+    auto& context = transaction.GetContext();
+    auto find_with = [&](std::string_view key) -> const duckdb::Value* {
+      auto it = info.options.find(key);
+      return it != info.options.end() ? &it->second : nullptr;
+    };
+    auto resolve_uint = [&](std::string_view key) -> uint32_t {
+      if (auto* v = find_with(key)) {
+        return v->GetValue<uint32_t>();
+      }
+      duckdb::Value v;
+      auto r = context.TryGetCurrentSetting(std::string{key}, v);
+      SDB_ASSERT(r, "missing DB-level default for setting '", key, "'");
+      return v.GetValue<uint32_t>();
+    };
+    catalog::InvertedIndexOptions options{
+      .row_group_size = resolve_uint("row_group_size"),
+      .norm_row_group_size = resolve_uint("norm_row_group_size"),
+      .commit_interval_ms = resolve_uint("commit_interval"),
+      .consolidation_interval_ms = resolve_uint("consolidation_interval"),
+      .cleanup_interval_step = resolve_uint("cleanup_interval_step"),
+    };
+    if (auto* v = find_with("optimize_top_k")) {
+      auto value =
+        v->DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>();
+      options.topk_scorer = catalog::ParseScorerExpression(context, value);
     }
     create_result = catalog_impl.CreateInvertedIndex(
       database_id, name, sdb_table->GetName(), info.index_name,
-      std::move(idx_columns), shard_options, /*operation_options=*/{},
-      std::move(wand_scorer));
+      std::move(idx_columns), std::move(options), /*operation_options=*/{});
   } else {
     bool unique = (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
@@ -496,21 +507,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   return nullptr;
 }
 
-// Returns true if two MacroFunction parameter signatures are identical
-// (same number of params, same types in order).
-static bool MacroSignatureMatches(const duckdb::MacroFunction& a,
-                                  const duckdb::MacroFunction& b) {
-  if (a.types.size() != b.types.size()) {
-    return false;
-  }
-  for (size_t i = 0; i < a.types.size(); ++i) {
-    if (a.types[i] != b.types[i]) {
-      return false;
-    }
-  }
-  return true;
-}
-
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   duckdb::CatalogTransaction transaction, duckdb::CreateFunctionInfo& info) {
   auto& catalog_feature =
@@ -543,7 +539,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
       // Find an existing overload with the same parameter signature.
       bool found = false;
       for (size_t i = 0; i < merged_info->macros.size(); ++i) {
-        if (MacroSignatureMatches(*merged_info->macros[i], *new_macro)) {
+        if (merged_info->macros[i]->types == new_macro->types) {
           if (!replace) {
             // Plain CREATE FUNCTION: duplicate signature is an error.
             throw duckdb::CatalogException(
@@ -567,7 +563,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
     // orphaned in the snapshot objects map (harmless, gets GC'd on
     // next snapshot rotation).
     auto function = std::make_shared<catalog::PgSqlFunction>(
-      database_id, ObjectId{}, info.name, std::move(merged_info));
+      ObjectId{}, ObjectId{}, info.name, std::move(merged_info));
     // Always replace=true for the catalog layer since we're replacing
     // the whole PgSqlFunction with the merged version.
     auto r = catalog_impl.CreateFunction(database_id, name, function, true);
@@ -579,7 +575,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
 
   // No existing function -- create new.
   auto function = std::make_shared<catalog::PgSqlFunction>(
-    database_id, ObjectId{}, info.name, std::move(new_macro_info));
+    ObjectId{}, ObjectId{}, info.name, std::move(new_macro_info));
   auto r = catalog_impl.CreateFunction(database_id, name, function, false);
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
@@ -605,7 +601,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
       info.Copy());
   auto view = std::make_shared<catalog::PgSqlView>(
-    database_id, ObjectId{}, info.view_name, std::move(view_info));
+    ObjectId{}, ObjectId{}, info.view_name, std::move(view_info));
 
   bool replace =
     info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
@@ -660,7 +656,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
   auto sequence = std::make_shared<catalog::Sequence>(
-    database_id, ObjectId{}, ObjectId{}, info.name, opts, ObjectId{});
+    ObjectId{}, ObjectId{}, info.name, opts, ObjectId{});
 
   auto& catalog_impl =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
@@ -713,7 +709,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTypeInfo>(
       info.Copy());
   auto type = std::make_shared<catalog::PgSqlType>(
-    database_id, ObjectId{}, info.name, std::move(type_info));
+    ObjectId{}, ObjectId{}, info.name, std::move(type_info));
   auto r = catalog_impl.CreateType(database_id, name, type);
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
@@ -835,7 +831,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         db, name, table_name,
         [&](const catalog::Table& table,
             std::shared_ptr<catalog::Table>& updated) {
-          return table.DropConstraint(updated, drop_info.constraint_name);
+          return table.DropCheckConstraint(updated, drop_info.constraint_name);
         });
 
       if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {

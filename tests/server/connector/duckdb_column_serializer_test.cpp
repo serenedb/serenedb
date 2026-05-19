@@ -160,7 +160,8 @@ class DuckDBColumnSerializerTest : public ::testing::Test {
   // Uses col_id=0. Each test uses a fresh DB (SetUp/TearDown), so col_ids
   // don't collide between tests.
   void CheckColumn(const duckdb::Vector& vec, const duckdb::LogicalType& type,
-                   duckdb::idx_t num_rows, catalog::Column::Id col_id = 0) {
+                   duckdb::idx_t num_rows,
+                   catalog::Column::Id col_id = catalog::Column::Id{0}) {
     auto& pk_chunk = MakePKChunk(num_rows);
     auto row_keys = BuildRowKeys(pk_chunk);
 
@@ -1010,19 +1011,22 @@ TEST_F(DuckDBColumnSerializerTest, MulticolumnScalar) {
   ASSERT_NE(txn, nullptr);
   query::Transaction sdb_txn{*_conn.context, std::move(txn)};
 
-  WriteColumn(sdb_txn, row_keys, 0, int_vec, duckdb::LogicalType::INTEGER,
-              kRows);
-  WriteColumn(sdb_txn, row_keys, 1, bool_vec, duckdb::LogicalType::BOOLEAN,
-              kRows);
-  WriteColumn(sdb_txn, row_keys, 2, varchar_vec, duckdb::LogicalType::VARCHAR,
-              kRows);
+  WriteColumn(sdb_txn, row_keys, catalog::Column::Id{0}, int_vec,
+              duckdb::LogicalType::INTEGER, kRows);
+  WriteColumn(sdb_txn, row_keys, catalog::Column::Id{1}, bool_vec,
+              duckdb::LogicalType::BOOLEAN, kRows);
+  WriteColumn(sdb_txn, row_keys, catalog::Column::Id{2}, varchar_vec,
+              duckdb::LogicalType::VARCHAR, kRows);
   ASSERT_TRUE(sdb_txn.GetRocksDBTransaction().Commit().ok());
   sdb_txn.Destroy();
 
   // Verify each column independently
-  auto int_out = ReadColumn(duckdb::LogicalType::INTEGER, kRows, 0);
-  auto bool_out = ReadColumn(duckdb::LogicalType::BOOLEAN, kRows, 1);
-  auto varchar_out = ReadColumn(duckdb::LogicalType::VARCHAR, kRows, 2);
+  auto int_out =
+    ReadColumn(duckdb::LogicalType::INTEGER, kRows, catalog::Column::Id{0});
+  auto bool_out =
+    ReadColumn(duckdb::LogicalType::BOOLEAN, kRows, catalog::Column::Id{1});
+  auto varchar_out =
+    ReadColumn(duckdb::LogicalType::VARCHAR, kRows, catalog::Column::Id{2});
 
   for (duckdb::idx_t i = 0; i < kRows; ++i) {
     SCOPED_TRACE(testing::Message("row ") << i);

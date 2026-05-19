@@ -22,8 +22,8 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/timer_utils.hpp>
 
-#include "executor.hpp"
-#include "index_builder.hpp"
+#include "executor.h"
+#include "index_builder.h"
 
 int main(int argc, const char* argv[]) {
   irs::timer_utils::InitStats(true);
@@ -60,7 +60,7 @@ int main(int argc, const char* argv[]) {
       for (auto& line : buf) {
         doc.Fill(line);
         auto trx = ctx.Insert();
-        trx.Insert<irs::Action::INDEX>(doc.fields.begin(), doc.fields.end());
+        trx.Insert(doc.fields.begin(), doc.fields.end());
       }
     }
   };
@@ -73,6 +73,7 @@ int main(int argc, const char* argv[]) {
     .consolidation_interval_ms = 5000,
     .consolidation_threads = 0,
     .consolidate_all = true,
+    .norm_row_group_size = 10'000'000,
   };
 
   bench::IndexBuilder builder{"idx", builder_options, config};

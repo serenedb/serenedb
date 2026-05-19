@@ -30,9 +30,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/execution/expression_executor.hpp>
-#include <duckdb/main/connection.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
 
@@ -47,14 +44,9 @@
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "connector/duckdb_index_utils.h"
-#include "connector/duckdb_rocksdb_writer.h"
-#include "connector/duckdb_search_sink_writer.h"
-#include "connector/index_expression.hpp"
+#include "connector/duckdb_rocksdb_reader.h"
 #include "connector/indexonly_marker.h"
-#include "connector/key_utils.hpp"
 #include "connector/search_sink_writer.hpp"
-#include "query/duckdb_engine.h"
 #include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -138,12 +130,12 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
     return false;
   }
 
-  auto column_ids = inverted->GetReferencedColumnIds();
+  auto column_ids = inverted->GetColumnIds();
   if (column_ids.empty()) {
     return false;
   }
 
-  s.indexed_column_ids = std::move(column_ids);
+  s.indexed_column_ids.assign(column_ids.begin(), column_ids.end());
   s.col2index.reserve(s.indexed_column_ids.size());
   for (size_t i = 0; i < s.indexed_column_ids.size(); ++i) {
     s.col2index.emplace(s.indexed_column_ids[i], i);
@@ -152,8 +144,9 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
   s.indexed_columns.reserve(s.indexed_column_ids.size());
   const auto& table_columns = table->Columns();
   for (auto col_id : s.indexed_column_ids) {
-    auto it = absl::c_find_if(
-      table_columns, [col_id](const auto& col) { return col.id == col_id; });
+    auto it = absl::c_find_if(table_columns, [col_id](const auto& col) {
+      return col.GetId() == col_id;
+    });
     if (it == table_columns.end()) {
       return false;
     }
@@ -169,65 +162,10 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
   return true;
 }
 
-// Runs each expression against a DataChunk built from
-// `resolved_cells` and writes the results back into
-// `sink` under the original row keys.
-void ReplayIndexedExpressions(
-  connector::DuckDBSearchSinkInsertWriter& sink,
-  std::span<const connector::IndexedExpression> indexed_exprs,
-  std::span<const ShardState::IndexedColumn> indexed_columns,
-  std::span<const std::vector<std::string_view>> resolved_cells,
-  std::span<const Row*> insert_entries, ObjectId table_object_id,
-  duckdb::ClientContext& client_context) {
-  const auto num_rows = insert_entries.size();
-
-  duckdb::vector<duckdb::LogicalType> chunk_types;
-  chunk_types.reserve(indexed_columns.size());
-  for (const auto& col : indexed_columns) {
-    chunk_types.push_back(col.type);
-  }
-  duckdb::DataChunk chunk;
-  chunk.Initialize(duckdb::Allocator::DefaultAllocator(), chunk_types,
-                   num_rows);
-  chunk.SetCardinality(num_rows);
-  for (size_t col_idx = 0; col_idx < indexed_columns.size(); ++col_idx) {
-    if (indexed_columns[col_idx].type.id() != duckdb::LogicalTypeId::VARCHAR) {
-      continue;
-    }
-    auto& v = chunk.data[col_idx];
-    auto* data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v);
-    for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-      std::string_view cell = resolved_cells[col_idx][row_idx];
-      // Strip the optional kStringPrefix that VARCHAR storage may carry.
-      if (cell.starts_with(connector::kStringPrefix)) {
-        cell = cell.substr(connector::kStringPrefix.size());
-      }
-      data[row_idx] =
-        duckdb::StringVector::AddString(v, cell.data(), cell.size());
-    }
-  }
-
-  std::vector<std::string> row_keys;
-  row_keys.reserve(num_rows);
-  for (const auto* row : insert_entries) {
-    row_keys.emplace_back(row->full_key);
-  }
-  connector::DuckDBColumnSerializer serializer{
-    duckdb::Allocator::DefaultAllocator()};
-  std::vector<catalog::Column::Id> slot_to_col_id;
-  slot_to_col_id.reserve(indexed_columns.size());
-  for (const auto& col : indexed_columns) {
-    slot_to_col_id.push_back(col.id);
-  }
-  connector::EvaluateAndWriteIndexedExpressions(
-    sink, indexed_exprs, chunk, table_object_id, slot_to_col_id, client_context,
-    num_rows, row_keys, serializer);
-}
-
 void FlushShard(ShardState& s,
                 const std::shared_ptr<const catalog::Snapshot>& snapshot,
-                duckdb::ClientContext& client_context, rocksdb::DB& db,
-                rocksdb::ColumnFamilyHandle& cf, Tick last_tick) {
+                rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
+                Tick last_tick) {
   if (s.pk2row.empty()) {
     return;
   }
@@ -250,15 +188,22 @@ void FlushShard(ShardState& s,
 
   auto trx = s.shard->GetTransaction();
   auto tokenizer_provider =
-    connector::MakeColumnTokenizerProvider(snapshot, *s.index);
-  auto expr_tokenizer_provider =
-    connector::MakeExpressionTokenizerProvider(snapshot, *s.index);
-  auto indexed_exprs =
-    connector::MakeIndexedExpressions(*s.index, client_context);
-
-  connector::DuckDBSearchSinkInsertWriter insert_sink{
-    trx, std::move(tokenizer_provider), s.index->GetColumnIds(),
-    std::move(expr_tokenizer_provider), std::move(indexed_exprs)};
+    connector::MakeTokenizerProvider(snapshot, *s.index);
+  auto json_paths_provider =
+    connector::MakeJsonPathsProvider(snapshot, *s.index);
+  auto store_values_provider = connector::MakeStoreValuesProvider(*s.index);
+  auto is_text_indexed_provider =
+    connector::MakeIsTextIndexedProvider(*s.index);
+  auto hnsw_info_provider = connector::MakeHNSWInfoProvider(*s.index);
+  connector::SearchSinkInsertBaseImpl insert_sink{
+    trx,
+    std::move(tokenizer_provider),
+    std::move(json_paths_provider),
+    std::move(store_values_provider),
+    std::move(is_text_indexed_provider),
+    std::move(hnsw_info_provider),
+    s.indexed_column_ids,
+  };
   connector::SearchSinkDeleteBaseImpl delete_sink{trx};
 
   delete_sink.InitImpl(s.pk2row.size());
@@ -270,69 +215,74 @@ void FlushShard(ShardState& s,
 
   if (!insert_entries.empty()) {
     auto& sink = insert_sink;
-    const auto num_rows = insert_entries.size();
-    sink.Init(num_rows, /*chunk=*/{});
+    sink.InitImpl(insert_entries.size());
     auto& get_key_buffer = s.full_key_prefix;
     rocksdb::ReadOptions read_opts;
-
-    // For every indexed column, materialise per-row bytes so we can both
-    // (a) write the column for regular columns
-    // (b) build a DataChunk for executor-driven indexed expressions.
-    // resolved_cells[col_idx][row_idx] = bytes for that cell (either from
-    // WAL or fetched from rocksdb if the WAL entry was a partial UPDATE).
-    std::vector<std::vector<rocksdb::PinnableSlice>> rocksdb_buffers(
-      s.indexed_columns.size());
-    std::vector<std::vector<std::string_view>> resolved_cells(
-      s.indexed_columns.size());
-
+    rocksdb::PinnableSlice value_buffer;
+    auto resolve_cell = [&](const Row& row,
+                            size_t col_idx) -> std::string_view {
+      std::string_view cell = row.indexed_cols[col_idx];
+      if (!cell.empty()) {
+        return cell;
+      }
+      std::string_view pk = row.full_key.substr(kKeyPrefixSize);
+      get_key_buffer.resize(kKeyPrefixSize);
+      get_key_buffer.append(pk.data(), pk.size());
+      value_buffer.Reset();
+      auto status = db.Get(read_opts, &cf, get_key_buffer, &value_buffer);
+      SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
+                   "WAL recovery: rocksdb Get failed for index '",
+                   s.shard->GetId().id(),
+                   "' col=", s.indexed_columns[col_idx].id, ": ",
+                   status.ToString(), kSkipHint);
+      return std::string_view{value_buffer.data(), value_buffer.size()};
+    };
     for (size_t col_idx = 0; col_idx < s.indexed_columns.size(); ++col_idx) {
       const auto& col = s.indexed_columns[col_idx];
-      auto& cells = resolved_cells[col_idx];
-      auto& bufs = rocksdb_buffers[col_idx];
-      cells.reserve(num_rows);
-      bufs.reserve(num_rows);
       absl::big_endian::Store(get_key_buffer.data() + sizeof(ObjectId), col.id);
-      for (const auto* row : insert_entries) {
-        std::string_view cell = row->indexed_cols[col_idx];
-        if (!cell.empty()) {
-          cells.push_back(cell);
-          bufs.emplace_back();
+      const connector::ColumnDescriptor desc{col.id, col.store_mode, col.type,
+                                             /*have_nulls=*/true};
+      const auto* info = s.index->FindColumnInfo(col.id);
+      const bool wants_cs = info != nullptr && info->store_values;
+      const bool has_hnsw = info && info->hnsw_config;
+      // HNSW columns have wants_cs=false in the catalog (the hnsw opclass
+      // setter does both); still feed cs via the typed-batch path.
+      const bool wants_cs_batch = wants_cs || has_hnsw;
+      const auto count = static_cast<duckdb::idx_t>(insert_entries.size());
+      if (wants_cs_batch) {
+        bool switched_for_inverted = false;
+        for (duckdb::idx_t emitted = 0; emitted < count;) {
+          const auto chunk =
+            std::min<duckdb::idx_t>(count - emitted, STANDARD_VECTOR_SIZE);
+          duckdb::Vector vec{col.type, chunk};
+          duckdb::FlatVector::ValidityMutable(vec).SetAllValid(chunk);
+          for (duckdb::idx_t i = 0; i < chunk; ++i) {
+            connector::DeserializeValueIntoDuckDB(
+              resolve_cell(*insert_entries[emitted + i], col_idx), vec,
+              col.type, i);
+          }
+          if (emitted == 0) {
+            switched_for_inverted = sink.SwitchColumnImpl(desc, vec, chunk);
+          } else {
+            sink.AppendCsContinuation(vec, chunk, emitted);
+          }
+          emitted += chunk;
+        }
+        if (!switched_for_inverted) {
           continue;
         }
-        // PATCH semantics: missing WAL cell -> fetch from rocksdb.
-        std::string_view pk = row->full_key.substr(kKeyPrefixSize);
-        get_key_buffer.resize(kKeyPrefixSize);
-        get_key_buffer.append(pk.data(), pk.size());
-        auto& buf = bufs.emplace_back();
-        auto status = db.Get(read_opts, &cf, get_key_buffer, &buf);
-        SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
-                     "WAL recovery: rocksdb Get failed for index '",
-                     s.shard->GetId().id(), "' col=", col.id, ": ",
-                     status.ToString(), kSkipHint);
-        cells.emplace_back(buf.data(), buf.size());
+      } else {
+        duckdb::Vector unused{col.type, nullptr, 0};
+        const bool switched = sink.SwitchColumnImpl(desc, unused, /*count=*/0);
+        SDB_ASSERT(switched);
+      }
+      for (const auto* row : insert_entries) {
+        std::string_view cell = resolve_cell(*row, col_idx);
+        rocksdb::Slice slice{cell.data(), cell.size()};
+        sink.WriteImpl(std::span{&slice, 1}, row->full_key);
       }
     }
-
-    for (size_t col_idx = 0; col_idx < s.indexed_columns.size(); ++col_idx) {
-      const auto& col = s.indexed_columns[col_idx];
-      if (!sink.SwitchColumn(connector::ColumnDescriptor{
-            col.id, col.store_mode, col.type, /*have_nulls=*/true})) {
-        continue;
-      }
-      for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-        rocksdb::Slice slice{resolved_cells[col_idx][row_idx].data(),
-                             resolved_cells[col_idx][row_idx].size()};
-        sink.Write(std::span{&slice, 1}, insert_entries[row_idx]->full_key);
-      }
-    }
-
-    if (const auto indexed_exprs = sink.IndexedExpressions();
-        !indexed_exprs.empty()) {
-      ReplayIndexedExpressions(sink, indexed_exprs, s.indexed_columns,
-                               resolved_cells, insert_entries,
-                               s.table_object_id, client_context);
-    }
-    sink.Finish();
+    sink.FinishImpl();
   }
 
   s.total_inserted += insert_entries.size();
@@ -556,14 +506,13 @@ class WalBatchReplay final : public rocksdb::WriteBatch::Handler {
 
 void RunWalRecovery(std::vector<ShardState>& shards,
                     const std::shared_ptr<const catalog::Snapshot>& snapshot,
-                    duckdb::ClientContext& client_context, rocksdb::DB& db,
-                    Tick min_start_tick, Tick end_tick) {
+                    rocksdb::DB& db, Tick min_start_tick, Tick end_tick) {
   TableToShards table2shards;
   for (auto& s : shards) {
     table2shards[s.table_object_id].shards.emplace_back(&s);
   }
   for (auto& [_, shards] : table2shards) {
-    std::ranges::sort(shards.shards, ShardState::ByStartTick());
+    absl::c_sort(shards.shards, ShardState::ByStartTick());
   }
 
   auto* default_cf = RocksDBColumnFamilyManager::get(
@@ -587,7 +536,7 @@ void RunWalRecovery(std::vector<ShardState>& shards,
   Tick latest_seq = 0;
   auto flush_all = [&] {
     for (auto& shard : shards) {
-      FlushShard(shard, snapshot, client_context, db, *default_cf, latest_seq);
+      FlushShard(shard, snapshot, db, *default_cf, latest_seq);
     }
     live_batches.clear();
   };
@@ -715,13 +664,7 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
 
   auto* db = rdb.db();
   SDB_ASSERT(db);
-
-  auto recovery_conn = query::DuckDBEngine::Instance().CreateConnection();
-  recovery_conn->BeginTransaction();
-  auto& client_context = *recovery_conn->context;
-  RunWalRecovery(recovery_shards, snapshot, client_context, *db, min_start_tick,
-                 end_tick);
-  recovery_conn->Commit();
+  RunWalRecovery(recovery_shards, snapshot, *db, min_start_tick, end_tick);
 
   const auto duration =
     absl::FromChrono(std::chrono::steady_clock::now() - begin);

@@ -82,6 +82,17 @@ class DuckDBColumnSerializer {
     ColumnDescriptor _cur_col{};
   };
 
+  // No-op writer for paths that only want the per-row slice pipeline to
+  // light up the inverted-index sink (e.g. indexed-expression eval). The
+  // serializer's WriteColumn template duck-types this; SwitchColumn /
+  // Write / WriteNull are all silent.
+  class NoopWriter {
+   public:
+    void SwitchColumn(const ColumnDescriptor&) noexcept {}
+    void Write(const std::vector<rocksdb::Slice>&, std::string_view) noexcept {}
+    void WriteNull(std::string_view) noexcept {}
+  };
+
   // Writes column cells into an SST file. IndexOnly columns are skipped
   // silently -- bulk ingest has no marker channel; durability of the value
   // depends on the inverted index's own commit.
@@ -106,26 +117,16 @@ class DuckDBColumnSerializer {
 
   explicit DuckDBColumnSerializer(duckdb::Allocator& allocator);
 
-  // Empty row_keys[i] = skip row i. `desc` is either a `ColumnDescriptor`
-  // (real catalog column) or a `ExpressionDescriptor`.
-  // For ColumnDescriptor the writer's `SwitchColumn(desc)` is
-  // invoked so per-row helpers can branch on column-level attributes
-  // (IndexOnly, etc.). For ExpressionDescriptor `writer` must be nullptr.
-  template<typename Writer, typename Desc>
-  void WriteVector(Writer* writer, const duckdb::Vector& vec,
+  // Empty row_keys[i] = skip row i. `col` describes the catalog column being
+  // serialized; stashed on the serializer so the per-row helpers
+  // (WriteRowSlices, WriteConstantColumn, ...) can branch on column-level
+  // attributes without threading the descriptor through every recursive call.
+  // `col.type` is the column's logical type used for the dispatch.
+  template<typename Writer>
+  void WriteColumn(Writer& writer, const duckdb::Vector& vec,
                    duckdb::idx_t num_rows, std::vector<std::string>& row_keys,
                    std::span<DuckDBSinkIndexWriter*> index_writers,
-                   const Desc& desc);
-
-  // Source row already persisted in rocksdb; notify index_writers only.
-  template<typename Desc>
-  void WriteVectorIndexOnly(const duckdb::Vector& vec, duckdb::idx_t num_rows,
-                            std::vector<std::string>& row_keys,
-                            std::span<DuckDBSinkIndexWriter*> index_writers,
-                            const Desc& desc) {
-    WriteVector<TxnWriter, Desc>(nullptr, vec, num_rows, row_keys,
-                                 index_writers, desc);
-  }
+                   ColumnDescriptor col);
 
   size_t WriteSubVector(const duckdb::RecursiveUnifiedVectorFormat& rdata,
                         duckdb::idx_t offset, duckdb::idx_t count,
@@ -196,20 +197,20 @@ class DuckDBColumnSerializer {
                          duckdb::idx_t offset, duckdb::idx_t count);
 
   template<typename Writer, typename T>
-  void WriteFlatColumn(Writer* writer, const duckdb::Vector& vec,
+  void WriteFlatColumn(Writer& writer, const duckdb::Vector& vec,
                        duckdb::idx_t num_rows,
                        std::vector<std::string>& row_keys,
                        std::span<DuckDBSinkIndexWriter*> index_writers);
 
   template<typename Writer>
-  void WriteConstantColumn(Writer* writer, const duckdb::Vector& vec,
+  void WriteConstantColumn(Writer& writer, const duckdb::Vector& vec,
                            const duckdb::LogicalType& type,
                            duckdb::idx_t num_rows,
                            std::vector<std::string>& row_keys,
                            std::span<DuckDBSinkIndexWriter*> index_writers);
 
   template<typename Writer>
-  void WriteUnifiedColumn(Writer* writer,
+  void WriteUnifiedColumn(Writer& writer,
                           const duckdb::RecursiveUnifiedVectorFormat& rdata,
                           const duckdb::LogicalType& type,
                           duckdb::idx_t num_rows,
@@ -217,14 +218,14 @@ class DuckDBColumnSerializer {
                           std::span<DuckDBSinkIndexWriter*> index_writers);
 
   template<typename Writer>
-  void WriteComplexColumn(Writer* writer, const duckdb::Vector& vec,
+  void WriteComplexColumn(Writer& writer, const duckdb::Vector& vec,
                           const duckdb::LogicalType& type,
                           duckdb::idx_t num_rows,
                           std::vector<std::string>& row_keys,
                           std::span<DuckDBSinkIndexWriter*> index_writers);
 
   template<typename Writer>
-  void WriteRowSlices(Writer* writer, std::string_view key,
+  void WriteRowSlices(Writer& writer, std::string_view key,
                       std::span<DuckDBSinkIndexWriter*> index_writers);
   duckdb::ArenaAllocator _arena;
   std::vector<rocksdb::Slice> _row_slices;

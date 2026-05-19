@@ -56,7 +56,7 @@ std::vector<duckdb_secondary_key::SKColumn> BuildSKColumns(
     bool found = false;
 
     for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == col_id) {
+      if (columns[i].GetId() == col_id) {
         type = columns[i].type;
         if (!col_id_to_chunk_pos.empty()) {
           auto it = col_id_to_chunk_pos.find(col_id);
@@ -105,20 +105,28 @@ std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSecondaryWriter(
 
 std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSearchWriter(
   DuckDBWriteKind kind, irs::IndexWriter::Transaction& trx,
-  ColumnTokenizerProvider&& tokenizer_provider,
+  TokenizerProvider&& tokenizer_provider,
+  JsonPathsProvider&& json_paths_provider,
+  StoreValuesProvider&& store_values_provider,
+  IsTextIndexedProvider&& is_text_indexed_provider,
+  HNSWInfoProvider&& hnsw_info_provider,
+  std::span<const catalog::Column::Id> columns,
   ExpressionTokenizerProvider&& expr_tokenizer_provider,
-  std::vector<IndexedExpression>&& indexed_exprs,
-  std::span<const catalog::Column::Id> columns) {
+  std::vector<IndexedExpression>&& indexed_exprs) {
   switch (kind) {
     case DuckDBWriteKind::Insert:
       return std::make_unique<DuckDBSearchSinkInsertWriter>(
         trx, std::move(tokenizer_provider), columns,
+        std::move(json_paths_provider), std::move(store_values_provider),
+        std::move(is_text_indexed_provider), std::move(hnsw_info_provider),
         std::move(expr_tokenizer_provider), std::move(indexed_exprs));
     case DuckDBWriteKind::Delete:
       return std::make_unique<DuckDBSearchSinkDeleteWriter>(trx);
     case DuckDBWriteKind::Update:
       return std::make_unique<DuckDBSearchSinkUpdateWriter>(
         trx, std::move(tokenizer_provider), columns,
+        std::move(json_paths_provider), std::move(store_values_provider),
+        std::move(is_text_indexed_provider), std::move(hnsw_info_provider),
         std::move(expr_tokenizer_provider), std::move(indexed_exprs));
   }
   SDB_ASSERT(false, "Unknown DuckDBWriteKind");
@@ -175,17 +183,23 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
       // Inverted/search index
       auto& inverted_index =
         basics::downCast<const catalog::InvertedIndex>(index);
-      auto tokenizer_provider =
-        MakeColumnTokenizerProvider(snapshot, inverted_index);
+      auto tokenizer_provider = MakeTokenizerProvider(snapshot, inverted_index);
+      auto json_paths_provider =
+        MakeJsonPathsProvider(snapshot, inverted_index);
+      auto store_values_provider = MakeStoreValuesProvider(inverted_index);
+      auto is_text_indexed_provider = MakeIsTextIndexedProvider(inverted_index);
+      auto hnsw_info_provider = MakeHNSWInfoProvider(inverted_index);
       auto expr_tokenizer_provider =
         MakeExpressionTokenizerProvider(snapshot, inverted_index);
       auto indexed_exprs =
         MakeIndexedExpressions(inverted_index, conn_ctx.GetClientContext());
 
-      writers.push_back(
-        MakeDuckDBSearchWriter(Kind, index_txn, std::move(tokenizer_provider),
-                               std::move(expr_tokenizer_provider),
-                               std::move(indexed_exprs), index.GetColumnIds()));
+      writers.push_back(MakeDuckDBSearchWriter(
+        Kind, index_txn, std::move(tokenizer_provider),
+        std::move(json_paths_provider), std::move(store_values_provider),
+        std::move(is_text_indexed_provider), std::move(hnsw_info_provider),
+        index.GetColumnIds(), std::move(expr_tokenizer_provider),
+        std::move(indexed_exprs)));
     }
   };
 
@@ -240,9 +254,9 @@ bool NeedsRowDeleteMarkers(
       continue;
     }
     bool all_indexonly = true;
-    for (auto col_id : index->GetReferencedColumnIds()) {
-      auto it =
-        absl::c_find_if(columns, [&](const auto& c) { return c.id == col_id; });
+    for (auto col_id : index->GetColumnIds()) {
+      auto it = absl::c_find_if(
+        columns, [&](const auto& c) { return c.GetId() == col_id; });
       SDB_ASSERT(it != columns.end(),
                  "inverted index references unknown column id ", col_id);
       if (it->store_mode != catalog::ColumnStoreMode::kIndexOnly) {
@@ -273,7 +287,7 @@ std::vector<size_t> BuildCreateIndexProjection(
   }
   for (auto pk_id : pk_column_ids) {
     for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == pk_id) {
+      if (columns[i].GetId() == pk_id) {
         projection.push_back(i);
         break;
       }
@@ -300,11 +314,21 @@ void EvaluateAndWriteIndexedExpressions(
     const ExpressionDescriptor expr_desc{result.GetType(), /*have_nulls=*/true,
                                          indexed_expr.serialized};
     const bool switched = sink.SwitchExpression(expr_desc);
-    SDB_ASSERT(switched, "Cannot switch to indexed expression");
+    if (!switched) {
+      continue;
+    }
 
     DuckDBSinkIndexWriter* writer_ptr = &sink;
-    serializer.WriteVectorIndexOnly(result, num_rows, row_keys,
-                                    {&writer_ptr, 1}, expr_desc);
+    // Drive the result Vector through the per-row slice pipeline. The
+    // serializer only reads `.type` for dispatch; the sink writer's
+    // SwitchExpression has already staged the field/analyzer keyed by
+    // the expression bytes.
+    ColumnDescriptor desc{catalog::Column::kInvalidId,
+                          catalog::ColumnStoreMode::kNormal, result.GetType(),
+                          /*have_nulls=*/true};
+    DuckDBColumnSerializer::NoopWriter noop_writer{};
+    serializer.WriteColumn(noop_writer, result, num_rows, row_keys,
+                           {&writer_ptr, 1}, desc);
   }
 }
 

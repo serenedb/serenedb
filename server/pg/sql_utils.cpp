@@ -20,8 +20,6 @@
 
 #include "sql_utils.h"
 
-#include "pg/sql_collector.h"
-
 namespace sdb::pg {
 
 std::string_view ToPgObjectTypeName(duckdb::CatalogType t) noexcept {
@@ -45,8 +43,8 @@ std::string_view ToPgObjectTypeName(duckdb::CatalogType t) noexcept {
   }
 }
 
-Objects::ObjectName ParseObjectName(std::string_view name,
-                                    std::string_view default_schema) {
+ObjectName ParseObjectName(std::string_view name,
+                           std::string_view default_schema) {
   const auto pos = name.find('.');
   auto schema_name =
     pos == std::string_view::npos ? default_schema : name.substr(0, pos);

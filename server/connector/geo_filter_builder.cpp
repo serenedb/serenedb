@@ -20,13 +20,13 @@
 
 #include "geo_filter_builder.hpp"
 
-#include <iresearch/search/geo_filter.h>
 #include <vpack/parser.h>
 
 #include <duckdb/common/types/geometry_crs.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
+#include <iresearch/search/geo_filter.hpp>
 
 #include "basics/assert.h"
 #include "basics/errors.h"
@@ -204,6 +204,8 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
       r.fail()) {
     return std::unexpected<Result>(std::move(r));
   }
+  SDB_ASSERT(column_info->tokenizer.tokenizer_column);
+  options->store_field_id = *column_info->tokenizer.tokenizer_column;
 
   sdb::geo::ShapeContainer centroid_shape;
   if (auto r = ParseGeoConstant(*centroid_val, options->coding, centroid_shape);
@@ -306,6 +308,8 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
       r.fail()) {
     return r;
   }
+  SDB_ASSERT(column_info->tokenizer.tokenizer_column);
+  options->store_field_id = *column_info->tokenizer.tokenizer_column;
 
   sdb::geo::ShapeContainer centroid_shape;
   if (auto r = ParseGeoConstant(*centroid_val, options->coding, centroid_shape);
@@ -390,6 +394,8 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
       r.fail()) {
     return r;
   }
+  SDB_ASSERT(column_info->tokenizer.tokenizer_column);
+  options->store_field_id = *column_info->tokenizer.tokenizer_column;
 
   sdb::geo::ShapeContainer shape;
   if (auto r = ParseGeoConstant(*shape_val, options->coding, shape); r.fail()) {

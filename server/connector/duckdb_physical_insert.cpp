@@ -24,7 +24,6 @@
 
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
-#include <duckdb/execution/expression_executor.hpp>
 #include <shared_mutex>
 
 #include "basics/assert.h"
@@ -36,7 +35,6 @@
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_table_entry.h"
-#include "connector/index_expression.hpp"
 #include "connector/key_utils.hpp"
 #include "pg/connection_context.h"
 #include "rocksdb/utilities/transaction_db.h"
@@ -66,8 +64,6 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   std::vector<InsertColumnMeta> columns;  // non-generated-PK columns
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
   std::vector<std::string> pk_col_names;
-
-  std::vector<catalog::Column::Id> slot_to_col_id;
 
   // RocksDB handles
   rocksdb::ColumnFamilyHandle* cf = nullptr;
@@ -134,19 +130,15 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
   const auto& columns = _table->Columns();
   size_t input_idx = 0;
   for (size_t i = 0; i < columns.size(); ++i) {
-    if (columns[i].id == catalog::Column::kGeneratedPKId) {
+    if (columns[i].GetId() == catalog::Column::kGeneratedPKId) {
       continue;
     }
     state->columns.push_back(InsertColumnMeta{
-      .id = columns[i].id,
+      .id = columns[i].GetId(),
       .duckdb_type = columns[i].type,
       .input_col_idx = input_idx++,
       .store_mode = columns[i].store_mode,
     });
-  }
-  state->slot_to_col_id.assign(state->columns.size(), catalog::Column::Id{});
-  for (const auto& col : state->columns) {
-    state->slot_to_col_id[col.input_col_idx] = col.id;
   }
 
   // PK column mappings
@@ -154,8 +146,8 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
   state->table_name = _table->GetName();
   for (auto pk_id : _table->PKColumns()) {
     for (const auto& col : columns) {
-      if (col.id == pk_id) {
-        state->pk_col_names.push_back(col.name);
+      if (col.GetId() == pk_id) {
+        state->pk_col_names.emplace_back(col.GetName());
         break;
       }
     }
@@ -239,6 +231,18 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     writer->Init(affected_rows, chunk);
   }
 
+  duckdb::SelectionVector survivor_sel;
+  const bool need_filter = (rows_skipped > 0);
+  if (need_filter) {
+    survivor_sel.Initialize(affected_rows);
+    duckdb::idx_t k = 0;
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      if (!gstate.row_keys[row].empty()) {
+        survivor_sel.set_index(k++, row);
+      }
+    }
+  }
+
   // 4. Write each column via DuckDBColumnSerializer
   DuckDBColumnSerializer::TxnWriter txn_writer{*gstate.sdb_txn, gstate.cf};
 
@@ -254,9 +258,16 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
                                 may_have_nulls};
 
+    duckdb::Vector cs_vec{vec.GetType(), affected_rows};
+    if (need_filter) {
+      cs_vec.Slice(vec, survivor_sel, affected_rows);
+    }
+    duckdb::Vector& cs_input = need_filter ? cs_vec : vec;
+    const duckdb::idx_t cs_count = need_filter ? affected_rows : num_rows;
+
     gstate.active_writers.clear();
     for (auto& writer : gstate.index_writers) {
-      if (writer->SwitchColumn(desc)) {
+      if (writer->SwitchColumn(desc, cs_input, cs_count)) {
         gstate.active_writers.push_back(writer.get());
       }
     }
@@ -268,17 +279,27 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
       }
     }
 
-    gstate.serializer->WriteVector(&txn_writer, vec, num_rows, gstate.row_keys,
+    gstate.serializer->WriteColumn(txn_writer, vec, num_rows, gstate.row_keys,
                                    gstate.active_writers, desc);
   }
 
-  // 4b. Evaluate per-writer indexed expressions and
-  // write them as virtual columns.
+  // 4b. Evaluate every indexed expression and route results through the
+  // inverted-index writers. Each writer reports its own expression set so
+  // an index with no expressions is a no-op.
+  std::vector<catalog::Column::Id> slot_to_col_id;
+  slot_to_col_id.reserve(gstate.columns.size());
+  for (const auto& col : gstate.columns) {
+    slot_to_col_id.push_back(col.id);
+  }
   for (auto& writer : gstate.index_writers) {
-    EvaluateAndWriteIndexedExpressions(
-      *writer, writer->IndexedExpressions(), chunk, gstate.table_id,
-      gstate.slot_to_col_id, context.client, num_rows, gstate.row_keys,
-      *gstate.serializer);
+    auto exprs = writer->IndexedExpressions();
+    if (exprs.empty()) {
+      continue;
+    }
+    EvaluateAndWriteIndexedExpressions(*writer, exprs, chunk, gstate.table_id,
+                                       slot_to_col_id, context.client,
+                                       num_rows, gstate.row_keys,
+                                       *gstate.serializer);
   }
 
   // 5. Finish index writers
@@ -289,8 +310,6 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   gstate.insert_count += affected_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
-
-// --- Finalize ---
 
 duckdb::SinkFinalizeType SereneDBPhysicalInsert::Finalize(
   duckdb::Pipeline& pipeline, duckdb::Event& event,
@@ -303,8 +322,6 @@ duckdb::SinkFinalizeType SereneDBPhysicalInsert::Finalize(
   }
   return duckdb::SinkFinalizeType::READY;
 }
-
-// --- Source (returns insert count) ---
 
 duckdb::unique_ptr<duckdb::GlobalSourceState>
 SereneDBPhysicalInsert::GetGlobalSourceState(

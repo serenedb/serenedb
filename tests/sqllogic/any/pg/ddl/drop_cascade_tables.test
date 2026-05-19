@@ -1,0 +1,611 @@
+# Vedernikoff cascade scenarios -- pure SQL (no custom function bodies) so the
+# test file runs verbatim on real PG too. Tables, sequences, views, types,
+# schemas, CHECK constraints, column DEFAULTs.
+
+# --- 1. View tower on a single table ---------------------------------------
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_base (id INT, payload TEXT);
+
+
+statement count 3
+INSERT INTO vedernikoff_iceberg_base VALUES
+  (1, 'manifest_alpha'), (2, 'manifest_bravo'), (3, 'manifest_charlie');
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_tower1 AS
+  SELECT id, payload FROM vedernikoff_iceberg_base WHERE id > 0;
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_tower2 AS
+  SELECT id FROM vedernikoff_iceberg_tower1 WHERE id > 1;
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_tower3 AS
+  SELECT id FROM vedernikoff_iceberg_tower2 WHERE id > 2;
+
+
+query
+SELECT id FROM vedernikoff_iceberg_tower3;
+----
+id
+3
+
+
+statement error (?i)cannot drop table .*vedernikoff_iceberg_base.*
+DROP TABLE vedernikoff_iceberg_base;
+
+
+statement error (?i)cannot drop table .*vedernikoff_iceberg_base.*
+DROP TABLE vedernikoff_iceberg_base RESTRICT;
+
+
+statement error (?i)cannot drop view .*vedernikoff_iceberg_tower1.*
+DROP VIEW vedernikoff_iceberg_tower1;
+
+
+statement error (?i)cannot drop view .*vedernikoff_iceberg_tower2.*
+DROP VIEW vedernikoff_iceberg_tower2;
+
+
+# Leaf-up is fine.
+statement ok
+DROP VIEW vedernikoff_iceberg_tower3;
+
+
+statement ok
+DROP VIEW vedernikoff_iceberg_tower2;
+
+
+statement ok
+DROP VIEW vedernikoff_iceberg_tower1;
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_base;
+
+
+# Same tower, but blow up the root with CASCADE.
+statement ok
+CREATE TABLE vedernikoff_iceberg_base (id INT, payload TEXT);
+
+
+statement count 3
+INSERT INTO vedernikoff_iceberg_base VALUES
+  (1, 'manifest_alpha'), (2, 'manifest_bravo'), (3, 'manifest_charlie');
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_tower1 AS
+  SELECT id, payload FROM vedernikoff_iceberg_base;
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_tower2 AS
+  SELECT id FROM vedernikoff_iceberg_tower1;
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_tower3 AS
+  SELECT id FROM vedernikoff_iceberg_tower2;
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_base CASCADE;
+
+
+statement error (?i).*vedernikoff_iceberg_tower1.* does not exist
+SELECT * FROM vedernikoff_iceberg_tower1;
+
+
+statement error (?i).*vedernikoff_iceberg_tower2.* does not exist
+SELECT * FROM vedernikoff_iceberg_tower2;
+
+
+statement error (?i).*vedernikoff_iceberg_tower3.* does not exist
+SELECT * FROM vedernikoff_iceberg_tower3;
+
+
+# --- 2. Sequence DEFAULT shared across three tables ------------------------
+
+statement ok
+CREATE SEQUENCE vedernikoff_mop_offer_seq START 100;
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_listings_alpha (
+  id INT DEFAULT nextval('vedernikoff_mop_offer_seq'),
+  tag TEXT
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_listings_bravo (
+  id INT DEFAULT nextval('vedernikoff_mop_offer_seq'),
+  tag TEXT
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_listings_charlie (
+  id INT DEFAULT nextval('vedernikoff_mop_offer_seq'),
+  tag TEXT
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_listings_alpha (tag) VALUES ('outreach_a');
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_listings_bravo (tag) VALUES ('outreach_b');
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_listings_charlie (tag) VALUES ('outreach_c');
+
+
+query
+SELECT id, tag FROM vedernikoff_mop_listings_alpha;
+----
+id   tag
+100  outreach_a
+
+
+query
+SELECT id, tag FROM vedernikoff_mop_listings_bravo;
+----
+id   tag
+101  outreach_b
+
+
+query
+SELECT id, tag FROM vedernikoff_mop_listings_charlie;
+----
+id   tag
+102  outreach_c
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_mop_offer_seq.*
+DROP SEQUENCE vedernikoff_mop_offer_seq;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_mop_offer_seq CASCADE;
+
+
+# All three DEFAULTs cleared.
+statement ok
+INSERT INTO vedernikoff_mop_listings_alpha (tag) VALUES ('after_a');
+
+
+statement ok
+INSERT INTO vedernikoff_mop_listings_bravo (tag) VALUES ('after_b');
+
+
+statement ok
+INSERT INTO vedernikoff_mop_listings_charlie (tag) VALUES ('after_c');
+
+
+query
+SELECT id, tag FROM vedernikoff_mop_listings_alpha ORDER BY tag;
+----
+id    tag
+NULL  after_a
+100   outreach_a
+
+
+query
+SELECT id, tag FROM vedernikoff_mop_listings_bravo ORDER BY tag;
+----
+id    tag
+NULL  after_b
+101   outreach_b
+
+
+query
+SELECT id, tag FROM vedernikoff_mop_listings_charlie ORDER BY tag;
+----
+id    tag
+NULL  after_c
+102   outreach_c
+
+
+statement ok
+DROP TABLE vedernikoff_mop_listings_alpha;
+
+
+statement ok
+DROP TABLE vedernikoff_mop_listings_bravo;
+
+
+statement ok
+DROP TABLE vedernikoff_mop_listings_charlie;
+
+
+# --- 3. SERIAL primary keys: clean drop sanity -----------------------------
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_writeups (
+  id SERIAL PRIMARY KEY,
+  topic TEXT
+);
+
+
+statement count 3
+INSERT INTO vedernikoff_clickclack_writeups (topic) VALUES
+  ('rust_lifetimes'), ('iceberg_v2_spec'), ('mop_role_grading');
+
+
+statement ok
+DROP TABLE vedernikoff_clickclack_writeups;
+
+
+# Recreate, then a sibling references the auto-PK seq.
+statement ok
+CREATE TABLE vedernikoff_clickclack_owner (
+  id SERIAL PRIMARY KEY,
+  name TEXT
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_dashboard (
+  id BIGINT NOT NULL DEFAULT nextval('vedernikoff_clickclack_owner_id_seq'),
+  payload TEXT
+);
+
+
+statement ok
+INSERT INTO vedernikoff_clickclack_owner (name) VALUES ('first_owner');
+
+
+statement count 1
+INSERT INTO vedernikoff_clickclack_dashboard (payload) VALUES ('row1');
+
+
+statement error (?i)cannot drop table .*vedernikoff_clickclack_owner.*
+DROP TABLE vedernikoff_clickclack_owner;
+
+
+statement error (?i)cannot drop table .*vedernikoff_clickclack_owner.*
+DROP TABLE vedernikoff_clickclack_owner RESTRICT;
+
+
+statement ok
+DROP TABLE vedernikoff_clickclack_dashboard;
+
+
+statement ok
+DROP TABLE vedernikoff_clickclack_owner;
+
+
+# Same but resolved via CASCADE.
+statement ok
+CREATE TABLE vedernikoff_clickclack_owner (
+  id SERIAL PRIMARY KEY,
+  name TEXT
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_dashboard (
+  id BIGINT DEFAULT nextval('vedernikoff_clickclack_owner_id_seq'),
+  payload TEXT
+);
+
+
+statement ok
+DROP TABLE vedernikoff_clickclack_owner CASCADE;
+
+
+statement count 1
+INSERT INTO vedernikoff_clickclack_dashboard (payload) VALUES ('post_cascade');
+
+
+query
+SELECT id, payload FROM vedernikoff_clickclack_dashboard;
+----
+id    payload
+NULL  post_cascade
+
+
+statement ok
+DROP TABLE vedernikoff_clickclack_dashboard;
+
+
+# --- 4. View on a sequence: nextval() in body ------------------------------
+
+statement ok
+CREATE SEQUENCE vedernikoff_iceberg_audit_seq;
+
+
+statement ok
+CREATE VIEW vedernikoff_iceberg_audit_pulse AS
+  SELECT nextval('vedernikoff_iceberg_audit_seq') AS pulse;
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_iceberg_audit_seq.*
+DROP SEQUENCE vedernikoff_iceberg_audit_seq;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_iceberg_audit_seq CASCADE;
+
+
+statement error (?i).*vedernikoff_iceberg_audit_pulse.* does not exist
+SELECT * FROM vedernikoff_iceberg_audit_pulse;
+
+
+# --- 5. View chain on a sequence -------------------------------------------
+
+statement ok
+CREATE SEQUENCE vedernikoff_solid_review_seq;
+
+
+statement ok
+CREATE VIEW vedernikoff_solid_review_p1 AS
+  SELECT nextval('vedernikoff_solid_review_seq') AS n;
+
+
+statement ok
+CREATE VIEW vedernikoff_solid_review_p2 AS
+  SELECT n FROM vedernikoff_solid_review_p1;
+
+
+statement ok
+CREATE VIEW vedernikoff_solid_review_p3 AS
+  SELECT n FROM vedernikoff_solid_review_p2;
+
+
+statement error (?i)cannot drop sequence .*vedernikoff_solid_review_seq.*
+DROP SEQUENCE vedernikoff_solid_review_seq;
+
+
+statement error (?i)cannot drop view .*vedernikoff_solid_review_p1.*
+DROP VIEW vedernikoff_solid_review_p1;
+
+
+statement error (?i)cannot drop view .*vedernikoff_solid_review_p2.*
+DROP VIEW vedernikoff_solid_review_p2;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_solid_review_seq CASCADE;
+
+
+statement error (?i).*vedernikoff_solid_review_p1.* does not exist
+SELECT * FROM vedernikoff_solid_review_p1;
+
+
+statement error (?i).*vedernikoff_solid_review_p2.* does not exist
+SELECT * FROM vedernikoff_solid_review_p2;
+
+
+statement error (?i).*vedernikoff_solid_review_p3.* does not exist
+SELECT * FROM vedernikoff_solid_review_p3;
+
+
+# --- 6. ENUM TYPE shared by three sibling tables ---------------------------
+
+statement ok
+CREATE TYPE vedernikoff_mop_stage AS ENUM('applied','screened','offer','hired');
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_pipeline_a (
+  candidate TEXT, stage vedernikoff_mop_stage
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_pipeline_b (
+  candidate TEXT, stage vedernikoff_mop_stage
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_mop_pipeline_c (
+  candidate TEXT, stage vedernikoff_mop_stage
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_pipeline_a VALUES ('vedernikoff', 'screened');
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_pipeline_b VALUES ('vedernikoff', 'offer');
+
+
+statement count 1
+INSERT INTO vedernikoff_mop_pipeline_c VALUES ('vedernikoff', 'hired');
+
+
+statement error (?i)cannot drop type .*vedernikoff_mop_stage.*
+DROP TYPE vedernikoff_mop_stage;
+
+
+statement ok
+DROP TYPE vedernikoff_mop_stage CASCADE;
+
+
+query
+SELECT candidate FROM vedernikoff_mop_pipeline_a;
+----
+candidate
+vedernikoff
+
+
+query
+SELECT candidate FROM vedernikoff_mop_pipeline_b;
+----
+candidate
+vedernikoff
+
+
+query
+SELECT candidate FROM vedernikoff_mop_pipeline_c;
+----
+candidate
+vedernikoff
+
+
+statement ok
+DROP TABLE vedernikoff_mop_pipeline_a;
+
+
+statement ok
+DROP TABLE vedernikoff_mop_pipeline_b;
+
+
+statement ok
+DROP TABLE vedernikoff_mop_pipeline_c;
+
+
+# --- 7. CHECK constraint with a sequence subquery is unusual -- skip and
+# rely on the function-based variants in the sdb tree.
+
+# --- 8. IF EXISTS idempotency ---------------------------------------------
+
+statement ok
+CREATE TABLE vedernikoff_mop_throwaway (id INT);
+
+
+statement ok
+DROP TABLE vedernikoff_mop_throwaway;
+
+
+statement ok
+DROP TABLE IF EXISTS vedernikoff_mop_throwaway;
+
+
+statement ok
+DROP TABLE IF EXISTS vedernikoff_mop_never_existed;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS vedernikoff_mop_seq_never_existed;
+
+
+statement ok
+DROP VIEW IF EXISTS vedernikoff_mop_view_never_existed;
+
+
+statement ok
+DROP TYPE IF EXISTS vedernikoff_mop_type_never_existed;
+
+
+# --- 9. Two tables, two views, criss-cross fan-in to one sequence ---------
+
+statement ok
+CREATE SEQUENCE vedernikoff_solid_ticket_seq START 1000;
+
+
+statement ok
+CREATE TABLE vedernikoff_solid_a (
+  id INT DEFAULT nextval('vedernikoff_solid_ticket_seq'),
+  msg TEXT
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_solid_b (
+  id INT DEFAULT nextval('vedernikoff_solid_ticket_seq'),
+  msg TEXT
+);
+
+
+statement ok
+CREATE VIEW vedernikoff_solid_view_x AS
+  SELECT id, msg FROM vedernikoff_solid_a;
+
+
+statement ok
+CREATE VIEW vedernikoff_solid_view_y AS
+  SELECT nextval('vedernikoff_solid_ticket_seq') AS n;
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_a (msg) VALUES ('one');
+
+
+statement count 1
+INSERT INTO vedernikoff_solid_b (msg) VALUES ('two');
+
+
+# Plain DROP sequence is refused (two DEFAULTs + one view body reference).
+statement error (?i)cannot drop sequence .*vedernikoff_solid_ticket_seq.*
+DROP SEQUENCE vedernikoff_solid_ticket_seq;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_solid_ticket_seq CASCADE;
+
+
+# View_x (only references the table, not the seq) survives. View_y (uses seq)
+# is gone.
+query
+SELECT msg FROM vedernikoff_solid_view_x ORDER BY msg;
+----
+msg
+one
+
+
+statement error (?i).*vedernikoff_solid_view_y.* does not exist
+SELECT * FROM vedernikoff_solid_view_y;
+
+
+# Both DEFAULTs cleared.
+statement ok
+INSERT INTO vedernikoff_solid_a (msg) VALUES ('three');
+
+
+statement ok
+INSERT INTO vedernikoff_solid_b (msg) VALUES ('four');
+
+
+query
+SELECT id, msg FROM vedernikoff_solid_a ORDER BY msg;
+----
+id    msg
+1000  one
+NULL  three
+
+
+statement ok
+DROP VIEW vedernikoff_solid_view_x;
+
+
+statement ok
+DROP TABLE vedernikoff_solid_a;
+
+
+statement ok
+DROP TABLE vedernikoff_solid_b;
+
+
+# --- 10. SERIAL primary key with auto-pk dropped via CASCADE ---------------
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_runs (
+  id SERIAL PRIMARY KEY,
+  note TEXT
+);
+
+
+statement count 4
+INSERT INTO vedernikoff_iceberg_runs (note) VALUES
+  ('snapshot_a'), ('snapshot_b'), ('snapshot_c'), ('snapshot_d');
+
+
+statement ok
+DROP TABLE vedernikoff_iceberg_runs CASCADE;
+
+
+# Auto-pk sequence is gone too.
+statement error (?i).*vedernikoff_iceberg_runs_id_seq.* does not exist
+SELECT nextval('vedernikoff_iceberg_runs_id_seq');

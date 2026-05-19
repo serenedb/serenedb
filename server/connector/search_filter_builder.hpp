@@ -27,8 +27,10 @@
 #include <optional>
 #include <span>
 
+#include "basics/containers/flat_hash_map.h"
 #include "basics/result.h"
 #include "catalog/inverted_index.h"
+#include "catalog/table.h"
 
 namespace sdb::connector {
 
@@ -36,14 +38,21 @@ namespace sdb::connector {
 // `logical_type` is the DuckDB column type (what the filter value will
 // coerce to); `tokenizer` is the catalog-supplied column tokenizer
 // (op-class determines tokenizer choice for text columns -- non-text
-// columns get a null tokenizer here). If serialized_expr is non-empty ->
-// indexing expression.
+// columns get a null tokenizer here).
+//
+// For JSON-path indexed fields (e.g. `TERM_LIKE(content->'host', ...)`)
+// `json_pointer` is non-empty and holds the JSON pointer (pre-encoded,
+// see `EncodeJsonPointer`); `logical_type` is the DuckDB type of the
+// indexed leaf (VARCHAR for the string-leaf MVP, or the cast target
+// type for numeric/bool/null lookups).
 struct SearchColumnInfo {
   catalog::Column::Id column_id{};
   duckdb::LogicalType logical_type;
-  catalog::FieldTokenizer tokenizer;
-  // Canonical form of the indexed expression, empty for bare columns.
-  // This is the on-disk identity used to build iresearch field names.
+  catalog::ColumnTokenizer tokenizer;
+  std::string json_pointer;
+  // Canonical bytes of an indexed expression (matching the catalog). Empty
+  // for bare-column / JSON-path entries; set when the filter builder
+  // resolved a `(expr) @@ …` predicate against a CREATE INDEX (…) entry.
   std::string serialized_expr;
 };
 
@@ -55,6 +64,14 @@ struct SearchColumnInfo {
 // implementation (typically captures bind data + InvertedIndex).
 using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::BoundColumnRefExpression&) const>;
+
+// Resolves a JSON pointer (e.g. "/host") on an already-known base column
+// to a SearchColumnInfo carrying the per-path analyzer. Returns nullopt
+// if no indexed path matches. The pointer is RFC-6901 encoded (see
+// `EncodeJsonPointer`), matching the form stored on
+// `InvertedIndexColumnInfo::json_paths[*].json_pointer`.
+using JsonPathGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
+  const duckdb::BoundColumnRefExpression&, std::string_view) const>;
 
 // Resolves an arbitrary expression to a SearchColumnInfo carrying the
 // per-expression analyzer. The implementation normalises `expr` (via
@@ -103,6 +120,7 @@ Result MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, const SearchFilterOptions& options,
+  const JsonPathGetter& json_path_getter = {},
   const ExpressionGetter& expr_getter = {});
 
 }  // namespace sdb::connector

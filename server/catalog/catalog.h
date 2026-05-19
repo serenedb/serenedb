@@ -108,7 +108,7 @@ struct Snapshot {
   virtual std::vector<std::shared_ptr<Database>> GetDatabases() const = 0;
   virtual std::vector<std::shared_ptr<Schema>> GetSchemas(
     ObjectId database) const = 0;
-  virtual std::vector<std::shared_ptr<SchemaObject>> GetRelations(
+  virtual std::vector<std::shared_ptr<Object>> GetRelations(
     ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<Table>> GetTables(
     ObjectId database, std::string_view schema) const = 0;
@@ -127,7 +127,7 @@ struct Snapshot {
   // can process each item inline and only needs to buffer the misses.
   virtual void VisitRelations(
     ObjectId database, std::string_view schema,
-    absl::FunctionRef<void(const SchemaObject&)> visitor) const = 0;
+    absl::FunctionRef<void(const Object&)> visitor) const = 0;
   virtual void VisitViews(
     ObjectId database, std::string_view schema,
     absl::FunctionRef<void(const PgSqlView&)> visitor) const = 0;
@@ -144,9 +144,9 @@ struct Snapshot {
   virtual std::shared_ptr<Database> GetDatabase(ObjectId database) const = 0;
   virtual std::shared_ptr<Schema> GetSchema(ObjectId database,
                                             std::string_view schema) const = 0;
-  virtual std::shared_ptr<SchemaObject> GetRelation(
-    ObjectId database, std::string_view schema,
-    std::string_view name) const = 0;
+  virtual std::shared_ptr<Object> GetRelation(ObjectId database,
+                                              std::string_view schema,
+                                              std::string_view name) const = 0;
   virtual std::shared_ptr<PgSqlFunction> GetFunction(
     ObjectId database, std::string_view schema,
     std::string_view name) const = 0;
@@ -164,6 +164,23 @@ struct Snapshot {
 
   virtual bool HasIndexes(ObjectId relation_id) const = 0;
   virtual std::shared_ptr<Object> GetObject(ObjectId id) const = 0;
+
+  ObjectId GetDatabaseId(const Object& obj) const {
+    if (obj.GetType() == ObjectType::Database) {
+      return obj.GetId();
+    }
+    for (auto cur = obj.GetParentId(); cur.isSet();) {
+      auto parent = GetObject(cur);
+      if (!parent) {
+        return {};
+      }
+      if (parent->GetType() == ObjectType::Database) {
+        return cur;
+      }
+      cur = parent->GetParentId();
+    }
+    return {};
+  }
 
   virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
   virtual std::vector<std::shared_ptr<IndexShard>> GetIndexShardsByRelation(
@@ -215,7 +232,7 @@ void VisitTableShards(const Snapshot& snapshot, ObjectId database_id,
 }
 
 using IndexFactory =
-  absl::FunctionRef<ResultOr<std::shared_ptr<Index>>(const SchemaObject*)>;
+  absl::FunctionRef<ResultOr<std::shared_ptr<Index>>(const Object*)>;
 
 struct LogicalCatalog {
   virtual ~LogicalCatalog() = default;
@@ -272,9 +289,8 @@ struct LogicalCatalog {
   virtual Result CreateInvertedIndex(
     ObjectId database_id, std::string_view schema, std::string_view relation,
     std::string name, std::vector<CreateIndexColumn>&& columns,
-    IndexShardOptions& shard_options,
-    CreateIndexOperationOptions operation_options,
-    std::optional<ScorerOptions> wand_scorer) = 0;
+    InvertedIndexOptions options,
+    CreateIndexOperationOptions operation_options) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,
@@ -306,22 +322,22 @@ struct LogicalCatalog {
   virtual Result DropSchema(std::string_view database, std::string_view name,
                             bool cascade) = 0;
   virtual Result DropFunction(std::string_view database,
-                              std::string_view schema,
-                              std::string_view name) = 0;
+                              std::string_view schema, std::string_view name,
+                              bool cascade) = 0;
   virtual Result DropTokenizer(std::string_view database,
-                               std::string_view schema,
-                               std::string_view name) = 0;
+                               std::string_view schema, std::string_view name,
+                               bool cascade) = 0;
   virtual Result DropView(std::string_view database, std::string_view schema,
-                          std::string_view name) = 0;
+                          std::string_view name, bool cascade) = 0;
   virtual Result DropSequence(std::string_view database,
                               std::string_view schema, std::string_view name,
-                              bool if_exists) = 0;
+                              bool if_exists, bool cascade) = 0;
   virtual Result DropType(std::string_view database, std::string_view schema,
-                          std::string_view name) = 0;
+                          std::string_view name, bool cascade) = 0;
   virtual Result DropTable(std::string_view database, std::string_view schema,
-                           std::string_view name) = 0;
+                           std::string_view name, bool cascade) = 0;
   virtual Result DropIndex(std::string_view database, std::string_view schema,
-                           std::string_view name) = 0;
+                           std::string_view name, bool cascade) = 0;
 
   virtual Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                                  std::string_view name) = 0;

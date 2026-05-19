@@ -25,12 +25,11 @@
 namespace sdb::catalog {
 
 struct SchemaOptions {
-  ObjectId owner_id;
   ObjectId id;
   std::string name;
 };
 
-class Schema : public DatabaseObject {
+class Schema : public Object {
  public:
   Schema(ObjectId database_id, SchemaOptions options);
 

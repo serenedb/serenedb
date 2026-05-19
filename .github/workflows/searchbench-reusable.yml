@@ -17,7 +17,7 @@ on:
         description: "gtest filter for SearchBenchTest"
         type: string
         required: false
-        default: "SearchBenchTest.WikiSmall"
+        default: "SearchBenchTest*"
       DEV:
         description: "Enable assertions (SDB_DEV)"
         type: boolean

@@ -81,7 +81,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -116,7 +116,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -159,7 +159,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -168,13 +168,6 @@ EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM2
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │           #1 ASC          │
@@ -198,7 +191,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -227,7 +220,7 @@ QUERY PLAN
 │          TopK: 3          │
 │      Projections: id      │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -279,7 +272,7 @@ QUERY PLAN
 │             id            ││             id            │
 │  sdb_inverted_index_score ││  sdb_inverted_index_score │
 │                           ││                           │
-│          ~5 rows          ││          ~5 rows          │
+│           ~1 row          ││           ~1 row          │
 └───────────────────────────┘└───────────────────────────┘
 
 
@@ -319,7 +312,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 

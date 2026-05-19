@@ -20,28 +20,29 @@
 
 #pragma once
 
+#include <duckdb/common/vector.hpp>
+#include <duckdb/planner/expression.hpp>
+
 namespace duckdb {
 
-class DatabaseInstance;
-}
+class ClientContext;
+class LogicalGet;
+class FunctionData;
 
+}  // namespace duckdb
 namespace sdb::optimizer {
 
-// Registers the rocksdb_plan optimizer rule with DuckDB.
-//
-// Detects PK and SK predicate patterns above a `serenedb_scan` LogicalGet
-// and swaps the LogicalGet's function to a more specialised scan that uses
-// RocksDB MultiGet (point lookups) or a bounded prefix iterator (range
-// scans). On match, claimed filter expressions are removed from the
-// surrounding LogicalFilter (the operator is dropped if it becomes empty).
-//
-// Initial scope: PK equality / IN-list (point lookup). PK range and SK
-// variants land in subsequent phases.
-//
-// Order of registration: this rule runs after the iresearch_plan rule so
-// iresearch-only predicates always win. Mutation subtrees (DELETE /
-// UPDATE / MERGE) are not skipped by this rule; rocksdb-backed scans are
-// safe to drive mutations.
-void RegisterRocksDBPlanOptimizer(duckdb::DatabaseInstance& db);
+// pushdown_complex_filter callback for SereneDB FullTable / SK-Fullscan
+// table functions. Detects PK and SK predicate patterns on the
+// conjunctive filter list above the LogicalGet, picks the best index,
+// and swaps the GET's function + bind_data.scan_source to a specialised
+// scan (pk_points / pk_ranges / sk_points / sk_ranges /
+// secondary_index). Claimed predicates are removed from `filters`;
+// remaining ones are re-wrapped by DuckDB as a LogicalFilter above the
+// GET.
+void RocksDBPushdownComplexFilter(
+  duckdb::ClientContext& context, duckdb::LogicalGet& get,
+  duckdb::FunctionData* bind_data,
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters);
 
 }  // namespace sdb::optimizer

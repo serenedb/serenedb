@@ -30,6 +30,7 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
+#include <iresearch/search/all_filter.hpp>
 
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
@@ -47,6 +48,8 @@
 #include "connector/duckdb_sk_point_lookup.hpp"
 #include "connector/duckdb_sk_range_scan.hpp"
 #include "connector/duckdb_table_entry.h"
+#include "connector/optimizer/iresearch_plan.h"
+#include "connector/optimizer/rocksdb_plan.h"
 #include "connector/rocksdb_filter.hpp"
 #include "connector/search_filter_printer.hpp"
 #include "functions/search.h"
@@ -84,14 +87,30 @@ std::shared_ptr<search::InvertedIndexShard> ResolveInvertedIndexShard(
   return nullptr;
 }
 
+uint64_t EstimateFilterMatchCount(const irs::Filter& filter,
+                                  uint64_t live_docs) {
+  const auto type = filter.type();
+  if (type == irs::Type<irs::All>::id()) {
+    return live_docs;
+  }
+  if (type == irs::Type<irs::Empty>::id()) {
+    return 0;
+  }
+  // DuckDB's RelationStatisticsHelper::DEFAULT_SELECTIVITY
+  constexpr double kDefaultFilterSelectivity = 0.2;
+  return std::max<uint64_t>(live_docs * kDefaultFilterSelectivity, 1U);
+}
+
 duckdb::unique_ptr<duckdb::NodeStatistics> InvertedIndexCardinality(
   duckdb::ClientContext& context, const SereneDBScanBindData& bind) {
   if (bind.scan_source && bind.scan_source->Kind() == ScanSourceKind::Search) {
     const auto& ss = bind.scan_source->Cast<SearchScan>();
     if (ss.snapshot) {
-      const auto rows =
-        static_cast<duckdb::idx_t>(ss.snapshot->reader.live_docs_count());
-      return duckdb::make_uniq<duckdb::NodeStatistics>(rows, rows);
+      const auto live = ss.snapshot->reader.live_docs_count();
+      const auto estimate =
+        ss.stored_filter ? EstimateFilterMatchCount(*ss.stored_filter, live)
+                         : live;
+      return duckdb::make_uniq<duckdb::NodeStatistics>(estimate, live);
     }
   }
   auto shard = ResolveInvertedIndexShard(context, bind);
@@ -102,9 +121,8 @@ duckdb::unique_ptr<duckdb::NodeStatistics> InvertedIndexCardinality(
   if (!idx_snapshot || !idx_snapshot->reader) {
     return nullptr;
   }
-  const auto rows =
-    static_cast<duckdb::idx_t>(idx_snapshot->reader->live_docs_count());
-  return duckdb::make_uniq<duckdb::NodeStatistics>(rows, rows);
+  const auto live = idx_snapshot->reader->live_docs_count();
+  return duckdb::make_uniq<duckdb::NodeStatistics>(live, live);
 }
 
 }  // namespace
@@ -127,6 +145,9 @@ bool TableScanBindData::Equals(const duckdb::FunctionData& other) const {
 
 duckdb::unique_ptr<duckdb::NodeStatistics> TableScanBindData::Cardinality(
   duckdb::ClientContext& context) const {
+  if (scan_source && scan_source->Kind() == ScanSourceKind::Search) {
+    return InvertedIndexCardinality(context, *this);
+  }
   auto& conn_ctx = GetSereneDBContext(context);
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
   auto shard = snapshot->GetTableShard(table->GetId());
@@ -134,8 +155,26 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TableScanBindData::Cardinality(
     return nullptr;
   }
   auto stats = shard->GetTableStats();
-  const auto rows = static_cast<duckdb::idx_t>(stats.num_rows);
-  return duckdb::make_uniq<duckdb::NodeStatistics>(rows, rows);
+  const auto num_rows = static_cast<duckdb::idx_t>(stats.num_rows);
+  if (scan_source) {
+    switch (scan_source->Kind()) {
+      case ScanSourceKind::PkPoint: {
+        const auto& pk = scan_source->Cast<PkPointScan>();
+        const auto n = std::min<duckdb::idx_t>(pk.points.size(), num_rows);
+        return duckdb::make_uniq<duckdb::NodeStatistics>(n, n);
+      }
+      case ScanSourceKind::SkPoint: {
+        const auto& sk = scan_source->Cast<SkPointScan>();
+        if (sk.is_unique) {
+          const auto n = std::min<duckdb::idx_t>(sk.points.size(), num_rows);
+          return duckdb::make_uniq<duckdb::NodeStatistics>(n, n);
+        }
+      } break;
+      default:
+        break;
+    }
+  }
+  return duckdb::make_uniq<duckdb::NodeStatistics>(num_rows, num_rows);
 }
 
 ObjectId TableScanBindData::RelationId() const { return table->GetId(); }
@@ -664,10 +703,6 @@ static void SetCommonCallbacks(duckdb::TableFunction& func) {
   // TODO: Better cardinality estimates
   func.cardinality = SereneDBScanCardinality;
   func.rows_scanned = CommonScanRowsScanned;
-  // TODO: Use pushdown_complex_filter instead of RBO approach for
-  // indexes/primary keys
-  // TODO: Use pushdown_expression this instead of RBO approach for
-  // scoring/offsets
   func.to_string = SereneDBScanToString;
   // TODO: Implement dynamic_to_string
   // TODO: Implement table_scan_progress
@@ -706,6 +741,7 @@ duckdb::TableFunction CreateTableFullscanFunction() {
     PKFullScanInitGlobal,
   };
   SetCommonCallbacks(func);
+  func.pushdown_complex_filter = &optimizer::RocksDBPushdownComplexFilter;
   return func;
 }
 
@@ -733,6 +769,7 @@ duckdb::TableFunction CreateSKFullscanFunction() {
     SKFullScanInitGlobal,
   };
   SetCommonCallbacks(func);
+  func.pushdown_complex_filter = &optimizer::RocksDBPushdownComplexFilter;
   return func;
 }
 
@@ -760,6 +797,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
     SearchFullScanInitGlobal,
   };
   SetCommonCallbacks(func);
+  func.pushdown_complex_filter = &optimizer::IresearchPushdownComplexFilter;
   return func;
 }
 

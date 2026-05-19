@@ -903,7 +903,7 @@ QUERY PLAN
 │                           │
 │       Projections: a      │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 # Reject distance < 1 (PG's `<0>` is invalid, `<1>` is adjacent).

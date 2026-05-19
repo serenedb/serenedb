@@ -68,9 +68,9 @@ on:
         default: ""
     secrets:
       SEARCHBENCH_S3_KEY_ID:
-        required: true
+        required: false
       SEARCHBENCH_S3_SECRET:
-        required: true
+        required: false
 
 env:
   WORKSPACE: ${{ github.workspace }}

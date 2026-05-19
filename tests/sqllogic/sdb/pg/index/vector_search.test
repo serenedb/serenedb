@@ -320,9 +320,15 @@ QUERY PLAN
 │           TOP_N           │
 │    ────────────────────   │
 │           Top: 5          │
+│      Order By: #1 ASC     │
 │                           │
-│         Order By:         │
-│  l2_distance(emb, emb) ASC│
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│   l2_distance(emb, emb)   │
 │                           │
 │          ~4 rows          │
 └─────────────┬─────────────┘
@@ -333,8 +339,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
-│             id            │
-│            emb            │
+│           id (l)          │
+│          emb (i)          │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘
@@ -347,15 +353,15 @@ QUERY PLAN
 ┌───────────────────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│             id            │
+│             #1            │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
 │    ────────────────────   │
-│ (l2_distance(emb, emb) <  │
-│           0.7)            │
+│ (l2_distance(emb, emb) < 0│
+│            .7)            │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
@@ -366,8 +372,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
-│             id            │
-│            emb            │
+│          emb (i)          │
+│           id (l)          │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘
@@ -376,7 +382,7 @@ QUERY PLAN
 query
 SELECT count(*) FROM l2_index WHERE l2_distance(emb, emb) < 0.0001;
 ----
-count_star()
+count
 4
 
 

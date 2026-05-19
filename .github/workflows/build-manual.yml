@@ -36,7 +36,7 @@ on:
         type: boolean
         default: true
       ENABLE_SEARCHBENCH:
-        description: 'Run SearchBench validation (wiki_small)'
+        description: 'Run SearchBench validation'
         type: boolean
         default: true
       PR_SHA:

@@ -20,7 +20,6 @@
 
 #include "connector/functions/embedding/embedding.h"
 
-#include <cstring>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -139,7 +138,7 @@ struct EmbeddingBindData final : public duckdb::FunctionData {
   }
 };
 
-duckdb::unique_ptr<duckdb::FunctionData> GenerateEmbeddingBind(
+duckdb::unique_ptr<duckdb::FunctionData> AIEmbedBind(
   duckdb::BindScalarFunctionInput& input) {
   auto& context = input.GetClientContext();
   auto& args = input.GetArguments();
@@ -156,9 +155,8 @@ duckdb::unique_ptr<duckdb::FunctionData> GenerateEmbeddingBind(
   return bind;
 }
 
-void GenerateEmbeddingFunction(duckdb::DataChunk& args,
-                               duckdb::ExpressionState& state,
-                               duckdb::Vector& result) {
+void AIEmbedFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+                     duckdb::Vector& result) {
   const auto& bind = state.expr.Cast<duckdb::BoundFunctionExpression>()
                        .bind_info->Cast<EmbeddingBindData>();
   const auto& provider = *bind.provider;
@@ -176,45 +174,19 @@ void GenerateEmbeddingFunction(duckdb::DataChunk& args,
   auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
 
   std::vector<std::string_view> batch_texts;
-  std::vector<duckdb::idx_t> batch_rows;
   batch_texts.reserve(count);
-  batch_rows.reserve(count);
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto idx = text_format.sel->get_index(i);
     if (!text_format.validity.RowIsValid(idx)) {
       result_validity.SetInvalid(i);
+      list_entries[i] = {0, 0};
       continue;
     }
     auto text = text_data[idx];
     batch_texts.emplace_back(text.GetData(), text.GetSize());
-    batch_rows.push_back(i);
   }
 
-  auto batch = provider.EmbedBatch(batch_texts);
-
-  duckdb::idx_t total_floats = 0;
-  for (size_t k = 0; k < batch_rows.size(); k++) {
-    auto row = batch_rows[k];
-    auto dim = batch[k].size();
-    list_entries[row] = {total_floats, dim};
-    total_floats += dim;
-  }
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    if (!result_validity.RowIsValid(i)) {
-      list_entries[i] = {total_floats, 0};
-    }
-  }
-
-  duckdb::ListVector::Reserve(result, total_floats);
-  duckdb::ListVector::SetListSize(result, total_floats);
-  auto& child = duckdb::ListVector::GetEntry(result);
-  auto* child_data = duckdb::FlatVector::GetDataMutable<float>(child);
-  for (size_t k = 0; k < batch_rows.size(); k++) {
-    auto row = batch_rows[k];
-    const auto& vec = batch[k];
-    std::memcpy(child_data + list_entries[row].offset, vec.data(),
-                vec.size() * sizeof(float));
-  }
+  provider.EmbedBatch(batch_texts, result);
 }
 
 }  // namespace
@@ -229,8 +201,8 @@ void RegisterEmbeddingFunctions(duckdb::DatabaseInstance& db) {
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
      duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::LIST(duckdb::LogicalType::FLOAT),
-    GenerateEmbeddingFunction,
-    GenerateEmbeddingBind,
+    AIEmbedFunction,
+    AIEmbedBind,
   };
   loader.RegisterFunction(ai_embed);
 }

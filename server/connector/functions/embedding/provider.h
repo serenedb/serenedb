@@ -20,10 +20,11 @@
 
 #pragma once
 
+#include <duckdb/common/types/vector.hpp>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace duckdb {
 
@@ -35,16 +36,8 @@ namespace sdb::connector::embedding {
 class EmbeddingProvider {
  public:
   virtual ~EmbeddingProvider() = default;
-  virtual std::vector<float> Embed(std::string_view text) const = 0;
-  virtual std::vector<std::vector<float>> EmbedBatch(
-    const std::vector<std::string_view>& texts) const {
-    std::vector<std::vector<float>> out;
-    out.reserve(texts.size());
-    for (auto t : texts) {
-      out.push_back(Embed(t));
-    }
-    return out;
-  }
+  virtual void EmbedBatch(std::span<std::string_view> texts,
+                          duckdb::Vector& result) const = 0;
 };
 
 struct ProviderConfig {

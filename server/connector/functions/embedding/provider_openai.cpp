@@ -26,10 +26,13 @@
 #include <cstdio>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/http_util.hpp>
+#include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension_helper.hpp>
 #include <string_view>
 #include <utility>
+
+#include "basics/assert.h"
 
 namespace sdb::connector::embedding {
 namespace {
@@ -96,35 +99,24 @@ class OpenAIProvider final : public EmbeddingProvider {
     duckdb::ExtensionHelper::TryAutoLoadExtension(_db, "httpfs");
   }
 
-  std::vector<float> Embed(std::string_view text) const override {
-    std::vector<std::string_view> one{text};
-    auto out = EmbedBatch(one);
-    return std::move(out[0]);
-  }
-
-  std::vector<std::vector<float>> EmbedBatch(
-    const std::vector<std::string_view>& texts) const override {
-    std::vector<std::vector<float>> result;
-    result.reserve(texts.size());
+  void EmbedBatch(std::span<std::string_view> texts,
+                  duckdb::Vector& result) const final {
     constexpr size_t kMaxBatch = 96;
+    duckdb::idx_t next_row = 0;
     for (size_t start = 0; start < texts.size(); start += kMaxBatch) {
       size_t end = std::min(start + kMaxBatch, texts.size());
-      auto chunk = EmbedChunk(texts.data() + start, end - start);
-      for (auto& v : chunk) {
-        result.push_back(std::move(v));
-      }
+      EmbedChunk(texts.subspan(start, end - start), result, next_row);
     }
-    return result;
   }
 
  private:
-  std::vector<std::vector<float>> EmbedChunk(const std::string_view* texts,
-                                             size_t n) const {
+  void EmbedChunk(std::span<std::string_view> texts, duckdb::Vector& result,
+                  duckdb::idx_t& next_row) const {
     std::string body;
     body.append("{\"model\":\"");
     AppendJsonEscaped(body, _cfg.model);
     body.append("\",\"input\":[");
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < texts.size(); i++) {
       if (i > 0) {
         body.push_back(',');
       }
@@ -161,11 +153,12 @@ class OpenAIProvider final : public EmbeddingProvider {
                                 static_cast<int>(response->status),
                                 post_request.buffer_out);
     }
-    return ParseEmbeddings(post_request.buffer_out, n);
+    return ParseEmbeddings(post_request.buffer_out, texts.size(), result,
+                           next_row);
   }
 
-  static std::vector<std::vector<float>> ParseEmbeddings(
-    const std::string& body, size_t expected) {
+  static void ParseEmbeddings(std::string_view body, size_t expected,
+                              duckdb::Vector& result, duckdb::idx_t& next_row) {
     simdjson::padded_string padded{body};
     simdjson::ondemand::parser parser;
     simdjson::ondemand::document doc;
@@ -180,41 +173,58 @@ class OpenAIProvider final : public EmbeddingProvider {
         "OpenAI response missing 'data' array: %s", body);
     }
 
-    std::vector<std::vector<float>> out;
-    out.reserve(expected);
+    SDB_ASSERT(result.GetVectorType() == duckdb::VectorType::FLAT_VECTOR);
+    auto* list_entries =
+      duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
+    const auto& validity = duckdb::FlatVector::Validity(result);
+
+    size_t parsed = 0;
+    size_t size = duckdb::ListVector::GetListSize(result);
     for (auto item : data) {
+      if (parsed >= expected) {
+        throw duckdb::InvalidInputException(
+          "OpenAI returned more embeddings than expected (%d): %s", expected,
+          body);
+      }
+      while (!validity.RowIsValid(next_row)) {
+        next_row++;
+      }
       simdjson::ondemand::value v;
       if (item.get(v) != simdjson::SUCCESS) {
         throw duckdb::InvalidInputException(
-          "OpenAI response 'data[%d]' unreadable: %s", (int)out.size(), body);
+          "OpenAI response 'data[%d]' unreadable: %s", parsed, body);
       }
       simdjson::ondemand::array values;
       if (v["embedding"].get_array().get(values) != simdjson::SUCCESS) {
         throw duckdb::InvalidInputException(
-          "OpenAI response 'data[%d].embedding' is not an array: %s",
-          (int)out.size(), body);
+          "OpenAI response 'data[%d].embedding' is not an array: %s", parsed,
+          body);
       }
-      std::vector<float> vec;
-      for (auto x : values) {
+      size_t values_size = values.count_elements();
+      values.reset();
+      duckdb::ListVector::Reserve(result, size + values_size);
+      duckdb::ListVector::SetListSize(result, size + values_size);
+      auto& child = duckdb::ListVector::GetEntry(result);
+      auto writer = duckdb::FlatVector::Writer<float>(child);
+
+      list_entries[next_row] = {size, values_size};
+
+      for (auto val : values) {
         double d = 0.0;
-        if (x.get_double().get(d) != simdjson::SUCCESS) {
+        if (val.get_double().get(d) != simdjson::SUCCESS) {
           throw duckdb::InvalidInputException(
             "OpenAI embedding contains non-numeric value: %s", body);
         }
-        vec.push_back(static_cast<float>(d));
+        writer[size++] = static_cast<float>(d);
       }
-      if (vec.empty()) {
-        throw duckdb::InvalidInputException(
-          "OpenAI returned empty embedding vector: %s", body);
-      }
-      out.push_back(std::move(vec));
+      parsed++;
+      next_row++;
     }
-    if (out.size() != expected) {
+    if (parsed != expected) {
       throw duckdb::InvalidInputException(
-        "OpenAI returned %d embeddings, expected %d: %s", (int)out.size(),
-        (int)expected, body);
+        "OpenAI returned %d embeddings, expected %d: %s", parsed, expected,
+        body);
     }
-    return out;
   }
 
   duckdb::DatabaseInstance& _db;

@@ -561,9 +561,9 @@ std::vector<duckdb::idx_t> ComputeKeptViewPositions(
 }
 
 // Wrap `plan` in a LogicalProjection that enumerates only the kept view
-// columns + PK plumbing. Optimizer rule RemoveUnusedColumns then treats this projection
-// as a scope boundary and prunes the chain below to match. Need this as
-// CREATE INDEX itself is not a prune boundary.
+// columns + PK plumbing. Optimizer rule RemoveUnusedColumns then treats this
+// projection as a scope boundary and prunes the chain below to match. Need this
+// as CREATE INDEX itself is not a prune boundary.
 duckdb::unique_ptr<duckdb::LogicalOperator> InsertBackfillFilterProjection(
   duckdb::unique_ptr<duckdb::LogicalOperator> plan,
   const std::vector<duckdb::idx_t>& kept_view, duckdb::idx_t view_decl_size,
@@ -1153,7 +1153,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                               "\" must be bound before it can be indexed"));
     }
     if (kept_view_positions) {
-
       rel_columns.reserve(kept_view_positions->size());
       for (auto p : *kept_view_positions) {
         rel_columns.emplace_back(column_info->names[p], column_info->types[p]);

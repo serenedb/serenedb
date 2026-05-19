@@ -53,7 +53,7 @@ on:
       GTEST_FILTER:
         type: string
         required: false
-        default: "SearchBenchTest.WikiSmall"
+        default: "SearchBenchTest*"
       DEV:
         type: boolean
         required: false

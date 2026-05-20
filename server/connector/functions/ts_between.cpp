@@ -151,8 +151,9 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (col_type == duckdb::LogicalTypeId::VARCHAR ||
       col_type == duckdb::LogicalTypeId::BLOB) {
     // VARCHAR / BLOB: tokenise the bound through the ambient analyzer; the
-    // (single) token becomes the bound's bytes. BLOB shares PhysicalType::VARCHAR
-    // storage, so GetValue<string>() returns the raw bytes either way.
+    // (single) token becomes the bound's bytes. BLOB shares
+    // PhysicalType::VARCHAR storage, so GetValue<string>() returns the raw
+    // bytes either way.
     auto text = duckdb::StringValue::Get(*bound_val);
     auto& analyzer = ctx.tokenizer;
     if (!analyzer.reset(std::string_view{text})) {

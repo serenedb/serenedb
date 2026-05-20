@@ -20,6 +20,9 @@
 
 #include "connector/optimizer/rocksdb_plan.h"
 
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
+
 #include <duckdb/main/config.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/optimizer/remove_unused_columns.hpp>
@@ -32,10 +35,12 @@
 #include "catalog/catalog.h"
 #include "catalog/secondary_index.h"
 #include "catalog/table.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/optimizer/flatten_projection_ids.h"
 #include "connector/rocksdb_filter.hpp"
+#include "pg/connection_context.h"
 
 namespace sdb::optimizer {
 namespace {
@@ -75,14 +80,16 @@ struct IndexCandidate {
 }
 
 [[nodiscard]] std::vector<IndexCandidate> BuildIndexesCandidates(
-  const connector::SereneDBScanBindData& bind_data) {
+  const connector::SereneDBScanBindData& bind_data,
+  duckdb::ClientContext& context) {
   std::vector<IndexCandidate> out;
   if (!bind_data.table_entry) {
     return out;
   }
   const auto& tbd = bind_data.As<connector::TableScanBindData>();
 
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  auto snapshot =
+    connector::GetSereneDBContext(context).EnsureCatalogSnapshot();
   const auto table_id = tbd.table->GetId();
 
   if (bind_data.entry_kind == connector::ScanEntryKind::SecondaryIndex) {
@@ -179,7 +186,7 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
  public:
   RocksDBPlanOptimizer() { optimize_function = Optimize; }
 
-  static bool TryOptimize(duckdb::ClientContext& /*context*/,
+  static bool TryOptimize(duckdb::ClientContext& context,
                           duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     if (plan->type != duckdb::LogicalOperatorType::LOGICAL_FILTER) {
       return false;
@@ -207,7 +214,7 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
       return false;
     }
 
-    auto indexes = BuildIndexesCandidates(bind_data);
+    auto indexes = BuildIndexesCandidates(bind_data, context);
     if (indexes.empty()) {
       return false;
     }
@@ -354,6 +361,9 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
 
   static void Optimize(duckdb::OptimizerExtensionInput& input,
                        duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+    SDB_IF_FAILURE("slow_rocksdb_optimize") {
+      absl::SleepFor(absl::Seconds(2));
+    }
     bool changed = OptimizeChildren(input.context, plan);
     if (changed) {
       FlattenSwappedGets(*plan, plan);

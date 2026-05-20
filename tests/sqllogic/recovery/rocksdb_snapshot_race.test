@@ -1,0 +1,51 @@
+control substitution on
+control max-async-connections 3
+
+
+# Regression test: RocksDBPlanOptimizer::BuildIndexesCandidates used to
+# fetch a fresh global catalog snapshot, bypassing the statement-pinned
+# one. A concurrent DROP TABLE between bind and optimize would publish a
+# new snapshot missing the relation, and GetIndexesByRelation(table_id)
+# would trip an SDB_ASSERT on the dependency map (object_dependency.h:97).
+#
+# This path runs on every filtered SereneDB scan (not just ANN), so the
+# blast radius is wider than the iresearch case -- guard it explicitly.
+
+
+statement ok
+CREATE TABLE t (id INT PRIMARY KEY, name TEXT);
+
+
+statement ok
+INSERT INTO t VALUES (1, 'alice'), (2, 'bob');
+
+
+statement ok
+SET sdb_faults = 'slow_rocksdb_optimize';
+
+
+# Binds against the current snapshot (table t present), then parks in
+# RocksDBPlanOptimizer::Optimize. Pre-fix this crashed once the DROP
+# below landed; post-fix it resolves against the pinned snapshot.
+#
+# `upper(name)` keeps a LogicalFilter above the LogicalGet -- a bare
+# `WHERE id = 1` would be folded into the get's table_filters and the
+# vulnerable BuildIndexesCandidates call would never run.
+query async
+SELECT name FROM t WHERE upper(name) = 'ALICE';
+----
+name
+alice
+
+
+connection drop_conn
+statement ok
+DROP TABLE t;
+
+
+wait
+
+
+connection drop_conn
+statement ok
+RESET sdb_faults;

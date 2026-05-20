@@ -1,0 +1,56 @@
+control substitution on
+control max-async-connections 3
+
+
+# Regression test: IresearchPlanOptimizer used to fetch a fresh global
+# catalog snapshot inside Optimize, bypassing the statement-pinned one.
+# A concurrent DROP TABLE between bind and optimize would publish a new
+# snapshot missing the relation, and GetIndexesByRelation(table_id) would
+# trip an SDB_ASSERT on the dependency map (object_dependency.h:97).
+#
+# The slow_iresearch_optimize failure point parks Optimize for 2s so the
+# DROP on another connection can land in that window deterministically.
+
+
+statement ok
+CREATE TABLE t (id INT, v FLOAT[4]);
+
+
+statement ok
+INSERT INTO t VALUES (1, [1.0, 0.0, 0.0, 0.0]::FLOAT[4]),
+                    (2, [0.0, 1.0, 0.0, 0.0]::FLOAT[4]);
+
+
+statement ok
+CREATE INDEX t_hnsw ON t USING inverted(v hnsw (metric = 'l2', m = 16, ef_construction = 64));
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t;
+
+
+statement ok
+SET sdb_faults = 'slow_iresearch_optimize';
+
+
+# Binds against the current snapshot (table t present), then parks in
+# IresearchPlanOptimizer::Optimize. Pre-fix this crashed once the DROP
+# below landed; post-fix it resolves against the pinned snapshot.
+query async
+SELECT id FROM t_hnsw ORDER BY v <-> [1.0, 0.0, 0.0, 0.0]::FLOAT[4] LIMIT 1;
+----
+id
+1
+
+
+connection drop_conn
+statement ok
+DROP TABLE t;
+
+
+wait
+
+
+connection drop_conn
+statement ok
+RESET sdb_faults;

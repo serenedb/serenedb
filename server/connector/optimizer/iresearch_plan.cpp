@@ -21,6 +21,8 @@
 #include "connector/optimizer/iresearch_plan.h"
 
 #include <absl/base/internal/endian.h>
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 
 #include <duckdb/function/aggregate/distributive_functions.hpp>
 #include <duckdb/function/function_binder.hpp>
@@ -88,6 +90,12 @@ duckdb::unique_ptr<duckdb::Expression> CombineFilterExpressions(
     conj->children.push_back(std::move(e));
   }
   return conj;
+}
+
+std::shared_ptr<const catalog::Snapshot> PinnedSnapshot(
+  const connector::SearchFilterOptions& options) {
+  return connector::GetSereneDBContext(options.client_context)
+    .EnsureCatalogSnapshot();
 }
 
 bool IsMutationOp(duckdb::LogicalOperatorType type) {
@@ -562,7 +570,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     return false;
   }
 
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  auto snapshot = PinnedSnapshot(options);
   auto resolved = ResolveIresearch(bind_data, *snapshot);
   if (!resolved) {
     return false;
@@ -685,7 +693,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     return false;
   }
 
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  auto snapshot = PinnedSnapshot(options);
   auto resolved = ResolveIresearch(bind_data, *snapshot);
   if (!resolved) {
     return false;
@@ -905,7 +913,7 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     return false;
   }
 
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  auto snapshot = PinnedSnapshot(options);
   auto resolved = ResolveIresearch(bind_data, *snapshot);
   if (!resolved) {
     return false;
@@ -1928,7 +1936,8 @@ bool IsCountStarLikeAggregate(const duckdb::Expression& expr) {
 }
 
 bool TryConvertAggregateToCount(
-  duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+  duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+  const connector::SearchFilterOptions& options) {
   if (plan->type !=
       duckdb::LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
     return false;
@@ -1985,7 +1994,7 @@ bool TryConvertAggregateToCount(
       if (!bind_data.IsInvertedIndexEntry()) {
         return false;
       }
-      auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+      auto snapshot = PinnedSnapshot(options);
       auto resolved = ResolveIresearch(bind_data, *snapshot);
       if (!resolved) {
         return false;
@@ -2110,7 +2119,7 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
     }
     if (plan->type ==
         duckdb::LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
-      return TryConvertAggregateToCount(plan);
+      return TryConvertAggregateToCount(plan, options);
     }
     return false;
   }
@@ -2181,6 +2190,9 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
 
   static void Optimize(duckdb::OptimizerExtensionInput& input,
                        duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+    SDB_IF_FAILURE("slow_iresearch_optimize") {
+      absl::SleepFor(absl::Seconds(2));
+    }
     // Pass 1: attach search filters, detect BM25/TFIDF in projections,
     // rewrite their expressions, and attach scorer to bind_data.
     // Pass 2: pull top-K limits (now scorer is set) and rewrite

@@ -36,14 +36,9 @@ LIMIT 5;
 \echo === [Q2] frontier-lab paper (must mention a lab; should mention a model; not a survey) ; intent: "evaluating frontier model limits" ===
 SELECT title
 FROM arxiv_idx a
-WHERE abstract @@ ts_compound(
-        ts_any(['OpenAI', 'Anthropic', 'DeepMind', 'Google']),
-        ts_any(['survey', 'tutorial', 'workshop']),
-        [ts_starts_with('gpt') ^ 2.0,
-         ts_starts_with('claude'),
-         ts_starts_with('gemini'),
-         ts_levenshtein('chatgpt', 1)],
-        1)
+WHERE abstract @@ (ts_phrase('OpenAI')
+                   && !!ts_phrase('survey')
+                   && (ts_starts_with('gpt') || ts_starts_with('gemini')))
 ORDER BY a.embedding <=> ai_embed(
            'evaluating frontier model limits',
            'gemini-embedding-001',
@@ -57,13 +52,9 @@ LIMIT 5;
 SELECT published_date::DATE AS published, title
 FROM arxiv_idx a
 WHERE published_date <  TIMESTAMP '2024-01-01'
-AND abstract @@ ts_compound(
-        ts_any([ts_starts_with('agent'), ts_starts_with('tool'), ts_phrase('function calling')]),
-        ts_any(['robotic', 'manipulation']),
-        [ts_phrase('chain of thought') ^ 1.5,
-         ts_phrase('react'),
-         ts_levenshtein('toolformer', 1)],
-        1)
+AND abstract @@ ((ts_starts_with('agent') || ts_starts_with('tool'))
+                  && !!ts_phrase('robotic')
+                  && ts_phrase('chain of thought'))
 ORDER BY a.embedding <=> ai_embed(
            'LLM agents using tools',
            'gemini-embedding-001',

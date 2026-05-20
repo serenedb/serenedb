@@ -50,37 +50,6 @@ ORDER BY a.embedding <=> ai_embed(
            'gemini')::FLOAT[3072]
 LIMIT 5;
 
--- Q3: prefix + proximity. "language model(s|ing)" via prefix,
--- "scaling law(s)" via `##` so "scaling power law" still hits, and a
--- regex catches the model-size shorthand 7B / 13B / 70B / 175B.
-\echo === [Q3] scaling laws near language models ; intent: "scaling laws for language models" ===
-SELECT title
-FROM arxiv_idx a
-WHERE abstract @@ (('scaling' ## [0, 1] ## ts_starts_with('law'))
-                   && ('language' ## [0, 1] ## ts_starts_with('model')))
-   OR abstract @@ ts_regexp('[0-9]+b')
-ORDER BY a.embedding <=> ai_embed(
-           'scaling laws for language models',
-           'gemini-embedding-001',
-           'gemini')::FLOAT[3072]
-LIMIT 5;
-
--- Q4: "show me everything related to X" -- cosine-distance range search
--- for survey-style browsing. Returns the cluster and its tightness.
-\echo === [Q4] cluster around: "LoRA fine-tuning" (dist < 0.35) ===
-SELECT round((a.embedding <=> ai_embed(
-        'LoRA fine-tuning',
-        'gemini-embedding-001',
-        'gemini')::FLOAT[3072])::numeric, 3) AS dist,
-       title
-FROM arxiv_idx a
-WHERE a.embedding <=> ai_embed(
-        'LoRA fine-tuning',
-        'gemini-embedding-001',
-        'gemini')::FLOAT[3072] < 0.35
-ORDER BY dist
-LIMIT 5;
-
 -- Q5: structured filter on `published_date` composes with a compound
 -- BM25 query: agent/tool terminology required (any of), reasoning hint
 -- preferred (should), pure-RL / robotics papers demoted (must_not).

@@ -116,3 +116,36 @@ SELECT ai_embed('x', '${OLLAMA_MODEL}', 'does_not_exist');
 
 query error
 SELECT ai_embed('x', 'definitely-not-a-real-model', 'ollama_${__DATABASE__}');
+
+
+statement ok
+CREATE OR REPLACE SECRET ollama_bad_key_${__DATABASE__} (
+  TYPE openai,
+  api_key 'not-a-real-key',
+  base_url 'http://${OLLAMA_HOST}:${OLLAMA_PORT}',
+  embeddings_path '/v1/embeddings'
+);
+
+
+statement ok
+CREATE OR REPLACE SECRET ollama_no_url_${__DATABASE__} (
+  TYPE openai,
+  api_key 'not-a-real-key'
+);
+
+
+query error
+SELECT ai_embed('x', '${OLLAMA_MODEL}', 'ollama_no_url_${__DATABASE__}');
+
+
+statement ok
+CREATE OR REPLACE SECRET ollama_bad_url_${__DATABASE__} (
+  TYPE openai,
+  api_key 'not-a-real-key',
+  base_url 'http://127.0.0.1:1',
+  embeddings_path '/v1/embeddings'
+);
+
+
+query error
+SELECT ai_embed('x', '${OLLAMA_MODEL}', 'ollama_bad_url_${__DATABASE__}');

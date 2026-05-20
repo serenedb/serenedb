@@ -45,6 +45,16 @@ on:
         type: string
         required: false
         default: ""
+      FUZZ_QUERIES:
+        description: "sqlsmith --max-queries per instance (empty = runner default)"
+        type: string
+        required: false
+        default: ""
+      FUZZ_PARALLEL:
+        description: "sqlsmith concurrent instances (empty = runner default)"
+        type: string
+        required: false
+        default: ""
   workflow_call:
     inputs:
       LOCATION:
@@ -79,6 +89,14 @@ on:
         default: ""
       PR_SHA:
         description: "Commit SHA to checkout (fork PR support; empty = workflow ref)"
+        type: string
+        required: false
+        default: ""
+      FUZZ_QUERIES:
+        type: string
+        required: false
+        default: ""
+      FUZZ_PARALLEL:
         type: string
         required: false
         default: ""
@@ -193,6 +211,9 @@ jobs:
         run: ./scripts/ci/steps/01-ci-set-sanitizer-options.bash
 
       - name: Build Docker environment file
+        env:
+          SDB_FUZZ_QUERIES: ${{ inputs.FUZZ_QUERIES }}
+          SDB_FUZZ_PARALLEL: ${{ inputs.FUZZ_PARALLEL }}
         run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash
 
       # One-time setup required on each CI machine:

@@ -27,7 +27,7 @@ declare -A defaults=(
 	[port]='5432'
 	[database]='postgres'
 	[user]='postgres'
-	[lang]='python,java,js,go,rust,php,csharp,c,ruby,r'
+	[lang]='python,java,js,go,rust,php,csharp,c,ruby,r,sqlsmith'
 	[driver]=''
 	[protocols]='simple,extended-noparam,extended-text,extended-binary'
 	[types]='.*'
@@ -174,6 +174,7 @@ declare -A lang_runner=(
 	[c]="${SCRIPT_DIR}/c/run.sh"
 	[ruby]="${SCRIPT_DIR}/ruby/run.sh"
 	[r]="${SCRIPT_DIR}/r/run.sh"
+	[sqlsmith]="${SCRIPT_DIR}/sqlsmith/run.sh"
 )
 
 IFS=',' read -ra langs <<<"${args[lang]}"

@@ -812,7 +812,7 @@ struct FormatTraits128 {
       case e_pfor: {
         uint8_t control = in.ReadByte();
         const auto exception_count = control >> 5;
-        const auto bits = control & 31;
+        const uint32_t bits = control & 31;
         const auto for_size = FromBits<byte_type>(doc_limits::kBlockSize * bits);
         const auto* data = ReadDataImpl(for_size + exception_count * 2, in, buf);
 
@@ -822,7 +822,8 @@ struct FormatTraits128 {
         for (size_t i = 0; i < exception_count; ++i) {
           auto curr_idx = *data;
           ++data;
-          out[curr_idx] |= *data << bits;
+          uint32_t value = *data;
+          out[curr_idx] |= value << bits;
           ++data;
         }
       } break;

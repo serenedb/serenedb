@@ -85,13 +85,13 @@ ORDER BY d.embedding <=> $1::FLOAT[1536]
 LIMIT 5
 \bind :qvec \g
 
--- Q4: Proximity + fuzzy + regex. `##` allows up to a 2-token gap
--- between "quantum" and "mechanics" (so "quantum wave mechanics" hits);
--- ts_levenshtein catches "Schrodinger" / "Schroedinger" / "Schrödinger"
--- with edit distance 2; ts_regexp restricts to Heisenberg / Heisenburg.
+-- Q4: Proximity + fuzzy + regex. `##` matches "quantum" next to
+-- "mechanics"; ts_levenshtein catches "Schrodinger" / "Schroedinger" /
+-- "Schrödinger" with edit distance 2; ts_regexp restricts to
+-- Heisenberg / Heisenburg.
 SELECT title, left(text, 80) AS snippet
 FROM dbpedia_idx d
-WHERE text @@ (('quantum' ## [0, 2] ## 'mechanics')
+WHERE text @@ (('quantum' ## 'mechanics')
                || ts_levenshtein('Schrodinger', 2)
                || ts_regexp('heisen[bu]+rg'))
 ORDER BY d.embedding <=> $1::FLOAT[1536]

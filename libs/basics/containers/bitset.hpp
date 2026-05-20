@@ -77,7 +77,18 @@ class DynamicBitset {
       _words{std::exchange(rhs._words, 0)},
       _bits{std::exchange(rhs._bits, 0)} {}
 
-  DynamicBitset& operator=(DynamicBitset&& rhs) noexcept {
+  DynamicBitset(const DynamicBitset& rhs)
+    : _data{nullptr, word_ptr_deleter_t{rhs._data.get_deleter().alloc(), 0}},
+      _words{rhs._words},
+      _bits{rhs._bits} {
+    reset(rhs._bits);
+    SDB_ASSERT((data() == nullptr) == (rhs.data() == nullptr));
+    if (rhs.data()) {
+      std::memcpy(_data.get(), rhs.data(), _words * sizeof(word_t));
+    }
+  }
+
+  DynamicBitset& operator=(DynamicBitset rhs) noexcept {
     if (this != &rhs) {
       _data = std::move(rhs._data);
       _words = std::exchange(rhs._words, 0);

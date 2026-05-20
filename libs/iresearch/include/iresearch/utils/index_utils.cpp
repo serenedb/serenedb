@@ -428,9 +428,9 @@ void FlushIndexSegment(Directory& dir, IndexSegment& segment,
 
   meta.live_docs_count = meta.docs_count;
   if (const auto& docs_mask = meta.docs_mask; docs_mask) {
-    SDB_ASSERT(!docs_mask->empty());
-    SDB_ASSERT(docs_mask->size() < meta.docs_count);
-    meta.live_docs_count -= static_cast<doc_id_t>(meta.docs_mask->size());
+    SDB_ASSERT(!docs_mask->IsEmpty());
+    SDB_ASSERT(docs_mask->DeletedDocCount() < meta.docs_count);
+    meta.live_docs_count -= static_cast<doc_id_t>(docs_mask->DeletedDocCount());
     meta.version += uint64_t{increment_version};
   }
 

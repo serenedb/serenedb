@@ -71,8 +71,8 @@ class SearchRemoveFilterBase : public irs::Filter,
   }
 
   mutable const irs::SubReader* _segment{};
-  mutable const irs::DocumentMask* _pending_mask{};
-  mutable const irs::DocumentMask* _segment_mask{};
+  mutable irs::DocumentMaskView _pending_mask{};
+  mutable irs::DocumentMaskView _segment_mask{};
   mutable const irs::TermReader* _pk_field{};
   mutable size_t _pos{0};
   // TODO(Dronplane) use persistent duckdb memory pool for proper memory

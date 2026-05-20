@@ -50,25 +50,105 @@ inline std::vector<std::string> ReadStrings(DataInput& in) {
   return strings;
 }
 
-inline std::pair<const std::shared_ptr<DocumentMask>, uint64_t>
-ReadDocumentMask(DataInput& in, IResourceManager& rm) {
+inline std::pair<std::shared_ptr<DocumentMask>, uint64_t>
+ReadDocumentMaskV0(DataInput& in, IResourceManager& rm, size_t live_docs_count) {
   auto count = in.ReadV32();
 
   if (!count) {
     return {};
   }
 
-  auto docs_mask = std::make_shared<DocumentMask>(rm);
-  docs_mask->reserve(count);
+  auto docs_mask = std::make_shared<DocumentDeletedHashMask>(rm, live_docs_count + count, count);
 
   const auto pos = in.Position();
   while (count--) {
     static_assert(sizeof(doc_id_t) == sizeof(decltype(in.ReadV32())));
 
-    docs_mask->insert(in.ReadV32());
+    docs_mask->Store(in.ReadV32());
   }
 
   return {std::move(docs_mask), in.Position() - pos};
+}
+
+inline std::pair<std::shared_ptr<DocumentMask>, uint64_t>
+ReadDocumentMaskDeletedVarintList(DataInput& in, IResourceManager& rm,
+                                  size_t doc_count, size_t deleted_doc_count) {
+  auto pos = in.Position();
+  DocumentDeletedHashMask docs_mask(rm, doc_count, deleted_doc_count);
+  while (deleted_doc_count--) {
+    static_assert(sizeof(doc_id_t) == sizeof(decltype(in.ReadV32())));
+    docs_mask.Store(in.ReadV32());
+  }
+  return {std::make_shared<DocumentDeletedHashMask>(std::move(docs_mask)),
+          in.Position() - pos};
+}
+
+inline std::pair<std::shared_ptr<DocumentMask>, uint64_t>
+ReadDocumentMaskAliveVarintList(DataInput& in, IResourceManager& rm,
+                                size_t doc_count, size_t deleted_doc_count) {
+  auto pos = in.Position();
+  DocumentAliveHashMask docs_mask(rm, doc_count, deleted_doc_count);
+  auto alive_doc_count = doc_count - deleted_doc_count;
+  while (alive_doc_count--) {
+    static_assert(sizeof(doc_id_t) == sizeof(decltype(in.ReadV32())));
+    docs_mask.Store(in.ReadV32());
+  }
+  return {std::make_shared<DocumentAliveHashMask>(std::move(docs_mask)),
+          in.Position() - pos};
+}
+
+inline std::pair<std::shared_ptr<DocumentMask>, uint64_t>
+ReadDocumentMaskDenseBitset(DataInput& in, IResourceManager& rm,
+                            size_t doc_count, size_t deleted_doc_count) {
+  auto pos = in.Position();
+  DocumentBitMask bitset(rm, doc_count, deleted_doc_count);
+  auto byte_count =
+    ManagedBitset::bits_to_words(doc_count) * sizeof(ManagedBitset::word_t);
+  for (size_t i = 0; i < byte_count; i++) {
+    auto b = in.ReadByte();
+    for (size_t j = 0; j < BitsRequired<decltype(b)>(); j++) {
+      if ((b >> j) & 1) {
+        bitset.MarkDeleted(i * BitsRequired<decltype(b)>() + j +
+                           doc_limits::min());
+      }
+    }
+  }
+  return {std::make_shared<DocumentBitMask>(std::move(bitset)),
+          in.Position() - pos};
+}
+
+inline std::pair<std::shared_ptr<DocumentMask>, uint64_t> ReadDocumentMask(
+  DataInput& in, IResourceManager& rm) {
+  auto doc_count = in.ReadV32();
+  auto deleted_doc_count = in.ReadV32();
+  if (!deleted_doc_count) {
+    return {};
+  }
+  auto format = in.ReadV32();
+  SDB_ASSERT(deleted_doc_count <= doc_count);
+  auto chosen_kind =
+    ChooseImmutableRepresentation(doc_count, deleted_doc_count);
+
+  std::shared_ptr<DocumentMask> docs_mask;
+  uint64_t mask_size;
+
+  switch (format) {
+    case DocumentMaskOnDiskFormat::DeletedVarintList:
+      std::tie(docs_mask, mask_size) =
+        ReadDocumentMaskDeletedVarintList(in, rm, doc_count, deleted_doc_count);
+      break;
+    case DocumentMaskOnDiskFormat::DeletedDenseBitset:
+      std::tie(docs_mask, mask_size) =
+        ReadDocumentMaskDenseBitset(in, rm, doc_count, deleted_doc_count);
+      break;
+    case DocumentMaskOnDiskFormat::AliveVarintList:
+      std::tie(docs_mask, mask_size) =
+        ReadDocumentMaskAliveVarintList(in, rm, doc_count, deleted_doc_count);
+      break;
+    default:
+      throw IndexError{absl::StrCat("Unknown document mask format: ", format)};
+  }
+  return {MakeDocumentMask(rm, chosen_kind, std::move(*docs_mask)), mask_size};
 }
 
 inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
@@ -85,16 +165,21 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
 
   const auto checksum = format_utils::Checksum(*in);
 
-  std::ignore = format_utils::CheckHeader(
+  const auto format_version = format_utils::CheckHeader(
     *in, SegmentMetaWriterImpl::kFormatName, SegmentMetaWriterImpl::kFormatMin,
     SegmentMetaWriterImpl::kFormatMax);
   auto name = ReadString<std::string>(*in);
   const auto segment_version = in->ReadV64();
   const auto live_docs_count = in->ReadV32();
-  auto [docs_mask, docs_mask_size] =
-    ReadDocumentMask(*in, *dir.ResourceManager().readers);
+  auto [docs_mask, docs_mask_size] = [&]() {
+    if (format_version == 0) {
+      return ReadDocumentMaskV0(*in, *dir.ResourceManager().readers, live_docs_count);
+    } else {
+      return ReadDocumentMask(*in, *dir.ResourceManager().readers);
+    }
+  }();
   const auto docs_count =
-    live_docs_count + static_cast<doc_id_t>(docs_mask ? docs_mask->size() : 0);
+    live_docs_count + static_cast<doc_id_t>(docs_mask ? docs_mask->DeletedDocCount() : 0);
   const auto size = in->ReadV64();
   auto files = ReadStrings(*in);
   format_utils::CheckFooter(*in, checksum);

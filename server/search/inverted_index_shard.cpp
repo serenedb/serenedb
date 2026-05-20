@@ -225,8 +225,6 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
     const auto raw =
       static_cast<uint64_t>(absl::big_endian::Load64(name.data()));
     if (raw == kExprSentinel) {
-      // Expression field: [0xFF..0xFF (8 bytes)][BE field_id (8
-      // bytes)][mangle].
       SDB_ASSERT(name.size() == kColumnIdSize + sizeof(irs::field_id) + 1);
       const auto field_id = static_cast<irs::field_id>(
         absl::big_endian::Load64(name.data() + kColumnIdSize));

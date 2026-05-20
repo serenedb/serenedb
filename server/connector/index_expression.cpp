@@ -55,18 +55,15 @@
 namespace sdb::connector {
 namespace {
 
-// Recognises the names of every registered JSON-extract scalar function in
-// this codebase (operator forms `->` / `->>` / `#>` / `#>>`, plus the
-// spelled-out aliases kept for PG and DuckDB compatibility -- see
-// server/connector/functions/json.cpp). `IsJsonExtractString` matches the
-// text-out leaves; `IsJsonExtract` matches both text-out and JSON-out.
+// JSON-extract scalar function names registered in
+// server/connector/functions/json.cpp.
 bool IsJsonExtractString(std::string_view name) noexcept {
   return name == "->>" || name == "#>>" ||     //
          name == "json_extract_field_text" ||  //
          name == "json_extract_index_text" ||  //
          name == "json_extract_path_text" ||   //
-         name == "json_extract_string" ||      // DuckDB ->> alias
-         name == "pg_json_extract_path_text";  // backs #>>
+         name == "json_extract_string" ||      //
+         name == "pg_json_extract_path_text";
 }
 
 bool IsJsonExtract(std::string_view name) noexcept {
@@ -78,11 +75,9 @@ bool IsJsonExtract(std::string_view name) noexcept {
          name == "json_extract_field" ||  //
          name == "json_extract_index" ||  //
          name == "json_extract_path" ||   //
-         name == "pg_json_extract_path";  // backs #>
+         name == "pg_json_extract_path";
 }
 
-// ColumnBindingResolver that uses caller-supplied bindings/types instead of
-// building them from a LogicalOperator tree.
 class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
  public:
   ChunkBindingResolver(duckdb::vector<duckdb::ColumnBinding> b,
@@ -95,7 +90,6 @@ class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
   }
 };
 
-// Primitive key types accepted in a `->` / `->>` / `json_extract_*` chain.
 bool IsValidKey(const duckdb::Value& v) {
   switch (v.type().id()) {
     case duckdb::LogicalTypeId::VARCHAR:
@@ -109,8 +103,6 @@ bool IsValidKey(const duckdb::Value& v) {
   }
 }
 
-// `#>` / `#>>` pass a single text[] argument (LIST of VARCHAR). Each child
-// element must be a non-null primitive key for the chain to be indexable.
 bool IsValidPathList(const duckdb::Value& v) {
   if (v.type().id() != duckdb::LogicalTypeId::LIST) {
     return false;
@@ -127,11 +119,7 @@ bool IsValidPathList(const duckdb::Value& v) {
   return true;
 }
 
-// Fold `BoundCast(BoundConstant)` -> `BoundConstant(cast(value))`. The
-// IndexBinder leaves these in place where the query binder folds them;
-// matching the bytes requires us to fold here too.
-// TODO(mkornaukhov): run the regular constant-folding optimizer on the
-// IndexBinder output so this hand-rolled fold can go away.
+// TODO(mkornaukhov): replace with the regular constant-folding optimizer.
 duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
   duckdb::unique_ptr<duckdb::Expression> expr, duckdb::ClientContext& context) {
   duckdb::ExpressionIterator::EnumerateChildren(
@@ -148,8 +136,6 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
         return duckdb::make_uniq<duckdb::BoundConstantExpression>(
           std::move(folded));
       } catch (const std::exception& e) {
-        // Falling back to the un-folded cast would diverge from the
-        // SELECT-side bytes and silently break index matching.
         SDB_THROW(
           ERROR_INTERNAL,
           "Failed to fold constant cast for inverted index: ", e.what());
@@ -162,9 +148,6 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
 }  // namespace
 
 std::string SerializeBoundExpression(const duckdb::Expression& expr) {
-  // Caller is responsible for `NormalizeBoundExpression`-ing the input when
-  // bytes will be compared cross-context (CREATE INDEX vs SELECT). The
-  // helper itself is now context-free.
   duckdb::MemoryStream stream;
   duckdb::BinarySerializer::Serialize(expr, stream);
   return std::string(reinterpret_cast<const char*>(stream.GetData()),
@@ -194,9 +177,6 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
       const auto idx = cref.binding.column_index.GetIndex();
       SDB_ASSERT(idx < col_index_to_id.size());
       const auto col_id = col_index_to_id[idx];
-      // Stuff stable catalog ids into the binding fields the binary
-      // serialiser already writes -- no alias gymnastics, no extra bytes.
-      // Two `(table_id, col_id)` agree across binders by construction.
       cref.binding = duckdb::ColumnBinding(
         duckdb::TableIndex(table_id.id()),
         duckdb::ProjectionIndex(static_cast<duckdb::idx_t>(col_id)));
@@ -213,8 +193,6 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
 
 const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
   const duckdb::Expression& expr) {
-  // Outermost must be text-returning: we only index JSON paths whose
-  // result is a string scalar. JSON-out ops (`->`, `#>`) are rejected here.
   if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION ||
       !IsJsonExtractString(
         expr.Cast<duckdb::BoundFunctionExpression>().function.name)) {
@@ -223,9 +201,6 @@ const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
   const duckdb::Expression* cur = &expr;
   while (cur->expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
-    // Accept any json-extract shape: `->` / `->>` (2 children: json, key),
-    // variadic `json_extract_path[_text]` (2+ children: json, key, key...),
-    // and `#>` / `#>>` (2 children: json, text[] list of keys).
     if (!IsJsonExtract(f.function.name) || f.children.size() < 2) {
       return nullptr;
     }
@@ -278,13 +253,8 @@ void RejectUserDefinedFunctions(const duckdb::Expression& expr,
       const auto& f = node.Cast<duckdb::BoundFunctionExpression>();
       const auto& schema = f.function.schema_name;
       const auto& cat = f.function.catalog_name;
-      // Built-in scalar functions live in the SYSTEM catalog by default;
-      // anything outside SYSTEM is user-defined regardless of name.
       bool is_user_defined = !cat.empty() && cat != SYSTEM_CATALOG;
       if (!is_user_defined) {
-        // Catalog/schema may be empty when the binder didn't qualify the
-        // function (the common case for built-ins). Look it up in the
-        // system catalog and consult the entry's `internal` flag.
         auto& sys = duckdb::Catalog::GetSystemCatalog(context);
         auto entry = sys.GetEntry<duckdb::ScalarFunctionCatalogEntry>(
           context, schema.empty() ? std::string{DEFAULT_SCHEMA} : schema,
@@ -318,10 +288,6 @@ void RejectUserDefinedFunctions(const duckdb::ParsedExpression& expr,
           "user-defined functions in indexed expressions are not supported "
           "yet");
       };
-      // Walk every catalog reachable from the current ClientContext (system
-      // + attached catalogs). A FunctionExpression that resolves to either a
-      // macro (always user-defined) or a non-internal scalar function is
-      // rejected.
       const auto schema =
         f.schema.empty() ? std::string{DEFAULT_SCHEMA} : f.schema;
       auto check_catalog = [&](duckdb::Catalog& cat) {
@@ -347,9 +313,6 @@ void RejectUserDefinedFunctions(const duckdb::ParsedExpression& expr,
           check_catalog(*cat);
         }
       } else {
-        // Probe each attached catalog in turn. The system catalog only
-        // holds internal entries, so a macro/UDF will surface from a user
-        // catalog if present.
         for (auto& cat_ref :
              duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
           check_catalog(cat_ref.get()->GetCatalog());
@@ -371,8 +334,7 @@ void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
   result.ToUnifiedFormat(num_rows, fmt);
   const auto* data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
-  // DOM (eager): ondemand::iterate() is lazy and would mis-classify
-  // `{not json}` as an object on the first character alone.
+  // ondemand is lazy; DOM rejects malformed input up front.
   simdjson::dom::parser dom_parser;
   for (duckdb::idx_t i = 0; i < num_rows; ++i) {
     const auto idx = fmt.sel->get_index(i);
@@ -420,10 +382,6 @@ duckdb::Vector EvaluateExprOverChunk(
 duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
   const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id) {
-  // Build bindings that match the leaves' normalized
-  // (TableIndex(table_id.id()), ProjectionIndex(Column::Id)) shape, paired
-  // 1:1 with the chunk's column types so the resolver can emit
-  // BoundReferenceExpression(slot, chunk_types[slot]).
   duckdb::vector<duckdb::ColumnBinding> bindings;
   duckdb::vector<duckdb::LogicalType> types;
   SDB_ASSERT(chunk.ColumnCount() >= slot_to_col_id.size());

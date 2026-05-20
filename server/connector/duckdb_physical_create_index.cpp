@@ -261,9 +261,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       opclass_options = _info->column_opclass_options[i];
     }
 
-    // Reject macros and other user-defined functions before the binder
-    // inlines them -- once inlined the bound tree is indistinguishable from
-    // a built-in expression.
+    // Pre-bind check: macros inline at bind, so the bound tree wouldn't see
+    // them.
     RejectUserDefinedFunctions(*expr, context);
 
     if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
@@ -283,8 +282,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       continue;
     }
 
-    // Arbitrary indexed expression: normalise + serialise the IndexBinder's
-    // output so the bytes are stable across re-binds at query time.
     SDB_ASSERT(i < _bound_expressions.size() && _bound_expressions[i],
                "bound expression is missing for inverted index expression");
     const auto& bound_expr = _bound_expressions[i];

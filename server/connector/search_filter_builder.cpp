@@ -1260,8 +1260,6 @@ const SearchColumnInfo* FindColumnRefInfo(
     return nullptr;
   }
 
-  // The cache key is the un-mangled iresearch field name. For a bare column
-  // reference that is just [BE col_id] with no suffix.
   std::string cache_key;
   MakeColumnFieldName(info->column_id, cache_key);
 
@@ -1316,8 +1314,6 @@ UnwrappedField UnwrapFieldCast(const duckdb::Expression& expr) {
   return {c.child.get(), c.return_type};
 }
 
-// Bare column ref or arbitrary indexed expression (optionally cast-wrapped).
-// Returned pointer lives in ctx.column_cache.
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
                                               const duckdb::Expression& expr) {
   if (const auto* col_ref = TryGetColumnRef(expr)) {
@@ -1333,8 +1329,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
     return nullptr;
   }
 
-  // Cast overrides leaf type. Normalise numerics to DOUBLE -- writer side
-  // tokenises every JSON number through NumericTokenizer.reset(double).
+  // Numerics fold to DOUBLE: writer tokenises JSON numbers via reset(double).
   if (unwrapped.override_type.has_value()) {
     if (IsNumericTypeId(unwrapped.override_type->id())) {
       info->logical_type = duckdb::LogicalType::DOUBLE;
@@ -1343,8 +1338,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
     }
   }
 
-  // Key by mangle byte (not LogicalTypeId) so types that fold to the same
-  // iresearch field share an entry: INTEGER and BIGINT both -> Numeric.
+  // Key by mangle byte: INTEGER and BIGINT both fold to Numeric.
   auto& cache_key = ctx.cache_key;
   cache_key.clear();
   if (info->field_id != 0) {

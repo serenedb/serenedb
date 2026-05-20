@@ -283,9 +283,7 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
                                    gstate.active_writers, desc);
   }
 
-  // 4b. Evaluate every indexed expression and route results through the
-  // inverted-index writers. Each writer reports its own expression set so
-  // an index with no expressions is a no-op.
+  // 4b. Indexed expressions.
   std::vector<catalog::Column::Id> slot_to_col_id;
   slot_to_col_id.reserve(gstate.columns.size());
   for (const auto& col : gstate.columns) {

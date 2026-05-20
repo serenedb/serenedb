@@ -368,8 +368,6 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
     case duckdb::LogicalTypeId::TIMESTAMP_TZ: {
       search::mangling::MangleNumeric(_name_buffer);
       _field.PrepareForNumericValue();
-      // WriteNumericValue<T> reinterprets the slice as a T*. T must match
-      // the serializer's per-kind output exactly (see NumericSliceType).
       auto numeric_writer = [&]() -> Writer {
         switch (kind) {
           case duckdb::LogicalTypeId::TINYINT:

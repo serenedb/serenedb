@@ -32,8 +32,6 @@
 
 namespace sdb::connector {
 
-// Bound + canonical-bytes + dep cols + catalog field_id for one configured
-// indexed expression. Owns the expression tree and the serialized bytes.
 struct IndexedExpression {
   duckdb::unique_ptr<duckdb::Expression> normalized_expr;
   std::string serialized;
@@ -41,97 +39,41 @@ struct IndexedExpression {
   irs::field_id field_id = 0;
 };
 
-// Walks a JSON-extract chain and validates every step: outermost must be
-// text-returning (`->>`, `#>>`, `json_extract_path_text`), inner ops may be
-// any JSON-extract with constant keys, bottoming out at a
-// BoundColumnRef. Returns the leaf column ref on success, nullptr otherwise.
 const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
   const duckdb::Expression& expr);
 
 std::vector<catalog::Column::Id> CollectDependentColumns(
   const duckdb::Expression& expr);
 
-// Serialise a bound expression to an opaque byte buffer suitable for
-// catalog persistence and cross-context byte-comparison. The caller is
-// responsible for passing a `NormalizeBoundExpression`-normalized tree
-// when the bytes will be compared across binding contexts.
 std::string SerializeBoundExpression(const duckdb::Expression& expr);
 
-// Reverse of `SerializeBoundExpression`. Requires a ClientContext because
-// DuckDB's Expression::Deserialize resolves catalog references (e.g. scalar
-// functions) against the live database state.
 duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
   std::string_view bytes, duckdb::ClientContext& context);
 
-// Returns a copy of `expr` whose binder-state noise has been replaced with
-// stable catalog identities so `SerializeBoundExpression` of the result
-// produces byte-identical output across binding contexts (CREATE INDEX vs
-// SELECT vs INSERT etc.). Specifically:
-//   * Every node has its `alias` cleared and `query_location` reset.
-//   * BoundFunctionExpression::is_operator is forced to `false`
-//     (`->>` parses as operator on one side, function on the other).
-//   * Every BoundColumnRefExpression's `binding` is rewritten to encode
-//     stable catalog ids: `table_index` <- `table_id.id()`,
-//     `column_index` <- `col_index_to_id[old_column_index]` so the same
-//     base-table column produces the same bytes regardless of which
-//     binder allocated the original `(table_index, column_index)` pair.
-//
-// `col_index_to_id` MUST cover every `column_index` referenced by `expr`'s
-// leaves; the function asserts in debug if a leaf points past the end.
+// Rewrites binder-state noise so bytes match across binding contexts:
+// alias/query_location cleared, is_operator=false, column refs keyed by
+// stable catalog (table_id, col_id) instead of binder-allocated indices.
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, ObjectId table_id,
   std::span<const catalog::Column::Id> col_index_to_id,
   duckdb::ClientContext& context);
 
-// Returns a copy of `expr` whose BoundColumnRefExpression leaves have been
-// rewritten to BoundReferenceExpression(slot, type) so the expression can
-// be fed directly to ExpressionExecutor against `chunk`.
-//
-// The caller passes:
-//   * `table_id`         -- base relation's ObjectId. Must match the
-//                           `TableIndex` baked into the normalized leaves.
-//   * `slot_to_col_id`   -- chunk-slot -> Column::Id map. The resolver
-//                           builds reverse bindings so a normalized leaf
-//                           `BoundColumnRef(TableIndex(table_id),
-//                            ProjectionIndex(col_id))` is replaced with
-//                           `BoundReferenceExpression(slot,
-//                           chunk_types[slot])`.
+// Rewrites BoundColumnRef leaves to BoundReferenceExpression for
+// ExpressionExecutor against `chunk`.
 duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
   const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id);
 
-// Walks `expr` and throws a `BinderException` if any BoundFunctionExpression
-// names a user-defined (non-internal) function. `context` is required to
-// look up each function by its `(catalog_name, schema_name, name)` triple
-// against the system catalog. Built-in DuckDB functions and SereneDB
-// extension functions registered with `internal = true` are accepted.
 void RejectUserDefinedFunctions(const duckdb::Expression& expr,
                                 duckdb::ClientContext& context);
 
-// Pre-bind variant: walks the *parsed* expression tree. Used at CREATE
-// INDEX time to reject calls to user-defined scalar macros and functions
-// before the binder inlines them -- once inlined, the macro's body is
-// indistinguishable from a built-in expression on the bound side, so the
-// gate has to live here. Rejects any FunctionExpression whose name
-// resolves to a `ScalarMacroCatalogEntry` (any schema) or to a
-// `ScalarFunctionCatalogEntry` whose `internal` flag is false.
+// Pre-bind variant: walks parsed tree to reject macros (which inline at bind).
 void RejectUserDefinedFunctions(const duckdb::ParsedExpression& expr,
                                 duckdb::ClientContext& context);
 
-// Rejects an INSERT/UPDATE/backfill row when its JSON-extract result is the
-// stringified form of an object or array (`{...}` / `[...]`). DuckDB's
-// json_extract_string emits objects and arrays verbatim as JSON text; the
-// inverted index requires primitive leaves, so we surface a hard error
-// instead of silently tokenising the JSON braces as text. Expects `result`
-// to be a VARCHAR vector with cardinality `num_rows`.
 void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
                                  duckdb::idx_t num_rows);
 
-// One-shot helper used by INSERT, UPDATE, CREATE INDEX backfill, and WAL
-// recovery: resolves the catalog-keyed `bound_expr` to chunk-relative slots
-// (via ResolveBoundColumnRefsForChunk), evaluates it with ExpressionExecutor
-// against `chunk`, and rejects object/array leaves. The returned Vector has
-// the resolved expression's return type and cardinality `chunk.size()`.
 duckdb::Vector EvaluateExprOverChunk(
   const duckdb::Expression& bound_expr, duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id,

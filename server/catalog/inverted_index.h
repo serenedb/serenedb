@@ -45,12 +45,6 @@ struct HNSWColumnConfig {
   irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
 };
 
-// One indexed expression (`CREATE INDEX ... inverted((expr) opclass)`),
-// flattened to its canonical serialized form. Looked up by serialized bytes
-// at filter-build / write time; `dependent_columns` lets DML decide which
-// indexes a write must trigger. `field_id` is the catalog-allocated id used
-// to derive iresearch field names -- one base id per expression, with JSON-
-// typed expressions emitting auxiliary per-leaf-type fields derived from it.
 struct ExpressionInfo {
   std::string serialized_expr;
   std::vector<Column::Id> dependent_columns;
@@ -58,9 +52,6 @@ struct ExpressionInfo {
   ObjectId text_dictionary = ObjectId::none();
   search::Features features;
   irs::field_id field_id = 0;
-  // Reserved synthetic column id for analyzers that own a per-row blob
-  // (wildcard ngram, geo) or a norm column. Mirrors the same idea as
-  // `InvertedIndexColumnInfo::synthetic_column`.
   std::optional<Column::Id> synthetic_column;
   uint32_t norm_row_group_size = 0;
 
@@ -134,9 +125,6 @@ class InvertedIndex final : public Index {
   const search::Features* FindSyntheticFeatures(
     catalog::Column::Id synthetic_id) const noexcept;
 
-  // Union of `_column_ids` and the dependent columns of every indexed
-  // expression. DML/WAL/entry-cache use this to project the chunk so the
-  // sink can re-evaluate indexed expressions on each row.
   std::vector<Column::Id> GetReferencedColumnIds() const final;
 
   const ExpressionOptions& GetExpressions() const noexcept {
@@ -151,7 +139,6 @@ class InvertedIndex final : public Index {
     const std::shared_ptr<const Snapshot>& snapshot,
     std::string_view serialized_expr) const;
 
-  // Same as GetExprTokenizer, keyed by the catalog-allocated field_id.
   ColumnTokenizer GetExprTokenizerByFieldId(
     const std::shared_ptr<const Snapshot>& snapshot,
     irs::field_id field_id) const;

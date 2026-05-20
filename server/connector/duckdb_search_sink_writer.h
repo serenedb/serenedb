@@ -59,9 +59,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                     duckdb::idx_t count) final;
 
   bool SwitchExpression(const ExpressionDescriptor& expr_desc) final {
-    // No batch Vector at the public seam -- the per-row write pipeline is
-    // driven by the serializer in EvaluateAndWriteIndexedExpressions; the
-    // impl ignores the unused vec/count.
+    // Impl ignores vec/count; the per-row pipeline is serializer-driven.
     static const duckdb::Vector kNoVec{duckdb::LogicalType::SQLNULL};
     return SwitchExpressionImpl(expr_desc, kNoVec, 0);
   }

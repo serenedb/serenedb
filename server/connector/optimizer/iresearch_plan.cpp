@@ -320,11 +320,6 @@ struct SearchColumnContext {
   containers::FlatHashMap<catalog::Column::Id, duckdb::LogicalType>
     column_type_by_id;
   containers::FlatHashSet<catalog::Column::Id> indexed_column_ids;
-  // Per-expression metadata used by `MakeExpressionGetter`. Keyed by
-  // serialized bytes (matching `ExpressionInfo::serialized_expr` in the
-  // catalog); carries the expression's catalog-assigned `field_id` plus
-  // its return type, populated from `InvertedIndex::GetExpressions()` at
-  // init.
   struct IndexedExpressionMeta {
     duckdb::LogicalType return_type;
     irs::field_id field_id = 0;
@@ -370,10 +365,7 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
   };
 }
 
-// Walk an expression tree and verify every BoundColumnRefExpression binds
-// to `table_index`. Returns true iff at least one column ref was found and
-// all of them belong to the expected table -- so an expression that mixes
-// columns from another join input cannot be misidentified as ours.
+// True iff at least one column ref was found and all bind to `table_index`.
 bool AllColumnRefsBindTo(const duckdb::Expression& expr,
                          duckdb::TableIndex table_index, bool& any_seen) {
   if (expr.expression_class == duckdb::ExpressionClass::BOUND_COLUMN_REF) {

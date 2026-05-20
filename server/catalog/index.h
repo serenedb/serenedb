@@ -48,13 +48,7 @@ struct InvertedIndexOptions {
   std::optional<ScorerOptions> topk_scorer;
 };
 
-// Carried on a `CreateIndexColumn` whose source SQL was a parenthesised
-// expression instead of a bare column reference. The expression has already
-// been normalised and serialised by the IndexBinder; `dependent_columns`
-// is the set of base-table columns the expression reads from, used by the
-// sink to project the chunk and by DML to decide which indexes a write
-// must touch. `pretty_printed` is captured at CREATE INDEX time for
-// diagnostics so we don't need a ClientContext to display the expression.
+// Set when CreateIndexColumn's source was `(expr)` rather than a column ref.
 struct IndexedExpressionData {
   std::string serialized;
   std::string pretty_printed;
@@ -62,13 +56,6 @@ struct IndexedExpressionData {
   duckdb::LogicalType return_type;
 };
 
-// Aggregated info about column for index creation.
-// Filled on different levels during creaton to gather all
-// necessary info for building and validating new index.
-//
-// `indexed_expr` is set iff the source was `(expr)` rather than a column
-// reference; `catalog_column`/`name` are unused in that case and
-// `IsIndexedExpression()` returns true. The two arms are mutually exclusive.
 struct CreateIndexColumn {
   const catalog::Column* catalog_column{nullptr};
   std::string_view name;
@@ -109,10 +96,6 @@ class Index : public Object {
     return _column_ids;
   }
 
-  // Returns _column_ids by default; InvertedIndex overrides to also include
-  // base-table columns referenced only by indexed expressions, so that DML
-  // routing and chunk projection see the full set of columns the index
-  // depends on.
   virtual std::vector<Column::Id> GetReferencedColumnIds() const {
     return std::vector<Column::Id>(_column_ids.begin(), _column_ids.end());
   }

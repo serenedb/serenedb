@@ -135,10 +135,6 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
     return false;
   }
 
-  // Use the referenced set so dependent columns of indexed expressions
-  // (e.g. base columns of `(a + b) verbatim_dict` or `(content->>'host')`)
-  // are tracked too -- the chunk we build below feeds the expression
-  // evaluator, so its slots must cover every BoundColumnRef.
   auto column_ids = inverted->GetReferencedColumnIds();
   if (column_ids.empty()) {
     return false;
@@ -202,12 +198,7 @@ void FlushShard(ShardState& s,
   auto is_text_indexed_provider =
     connector::MakeIsTextIndexedProvider(*s.index);
   auto hnsw_info_provider = connector::MakeHNSWInfoProvider(*s.index);
-  // Expression replay needs a ClientContext with an active transaction --
-  // both DeserializeBoundExpression and ExpressionExecutor reach into the
-  // TransactionContext. Recovery runs outside of any pg request, so we
-  // spin up a private connection and explicitly begin a transaction; the
-  // `Finally` rolls it back when we leave (we never need to commit it --
-  // expression evaluation is read-only here).
+  // Private read-only txn: expression deserialise + execute need one.
   auto conn = query::DuckDBEngine::Instance().CreateConnection();
   conn->BeginTransaction();
   irs::Finally rollback_on_exit = [&]() noexcept {
@@ -221,9 +212,6 @@ void FlushShard(ShardState& s,
     connector::MakeExpressionTokenizerProvider(snapshot, *s.index);
   auto indexed_exprs =
     connector::MakeIndexedExpressions(*s.index, client_context);
-  // `columns` for IsIndexed (per-row inverted side) is the *directly*
-  // indexed set; expression-dep columns live in `s.indexed_columns` only
-  // to back the chunk we feed the expression evaluator below.
   auto direct_column_ids = s.index->GetColumnIds();
   connector::DuckDBSearchSinkInsertWriter insert_sink{
     trx,
@@ -304,11 +292,7 @@ void FlushShard(ShardState& s,
         }
       } else {
         duckdb::Vector unused{col.type, nullptr, 0};
-        // SwitchColumnImpl returns false when the column is in
-        // `s.indexed_columns` only because it's an expression dependency
-        // (not itself directly indexed). In that case the per-row
-        // inverted write is a no-op -- the column will be projected as
-        // part of the chunk we feed the expression evaluator below.
+        // Dep-only columns: skip per-row inverted write; chunk feeds expr eval.
         if (!sink.SwitchColumnImpl(desc, unused, /*count=*/0)) {
           continue;
         }
@@ -320,11 +304,6 @@ void FlushShard(ShardState& s,
       }
     }
 
-    // Replay every indexed expression: build a DataChunk from the per-row
-    // cells (which the loop above just resolved -- either from the WAL
-    // payload or by `db.Get`), evaluate each expression once across the
-    // chunk, and drive the result through the inverted-index sink's
-    // SwitchExpression+Write pipeline (same path the DML hot path uses).
     auto indexed_exprs = insert_sink.IndexedExpressions();
     if (!indexed_exprs.empty()) {
       duckdb::vector<duckdb::LogicalType> types;

@@ -34,15 +34,7 @@
 
 namespace sdb::connector {
 
-// Info describing how to build iresearch terms for a referenced column.
-// `logical_type` is the DuckDB column type (what the filter value will
-// coerce to); `tokenizer` is the catalog-supplied column tokenizer
-// (op-class determines tokenizer choice for text columns -- non-text
-// columns get a null tokenizer here).
-//
-// For an indexed expression `field_id` is the catalog-allocated id
-// (non-zero) and `column_id` is unused; for a bare-column entry
-// `field_id` is zero and `column_id` holds the base column.
+// Indexed expression: field_id != 0, column_id unused. Bare column: vice versa.
 struct SearchColumnInfo {
   catalog::Column::Id column_id{};
   duckdb::LogicalType logical_type;
@@ -59,11 +51,6 @@ struct SearchColumnInfo {
 using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::BoundColumnRefExpression&) const>;
 
-// Resolves an arbitrary expression to a SearchColumnInfo carrying the
-// per-expression analyzer. The implementation normalises `expr` (via
-// `NormalizeBoundExpression`) and serialises it to bytes that match what
-// CREATE INDEX persisted in the catalog; it also validates that any
-// referenced columns belong to the inverted-indexed scan being filtered.
 using ExpressionGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::Expression&) const>;
 

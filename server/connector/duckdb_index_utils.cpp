@@ -315,10 +315,6 @@ void EvaluateAndWriteIndexedExpressions(
     }
 
     DuckDBSinkIndexWriter* writer_ptr = &sink;
-    // Drive the result Vector through the per-row slice pipeline. The
-    // serializer only reads `.type` for dispatch; the sink writer's
-    // SwitchExpression has already staged the field/analyzer keyed by
-    // the expression bytes.
     ColumnDescriptor desc{catalog::Column::kInvalidId,
                           catalog::ColumnStoreMode::kNormal, result.GetType(),
                           /*have_nulls=*/true};

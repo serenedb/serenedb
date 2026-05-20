@@ -51,9 +51,6 @@ class SearchRemoveFilterBase;
 using TokenizerProvider =
   absl::AnyInvocable<catalog::ColumnTokenizer(catalog::Column::Id)>;
 
-// Resolves an indexed-expression's catalog-allocated field_id to its
-// tokenizer. Used by the sink to look up the analyzer for every row of
-// an indexed expression.
 using ExpressionTokenizerProvider =
   absl::AnyInvocable<catalog::ColumnTokenizer(irs::field_id)>;
 
@@ -74,9 +71,6 @@ inline ExpressionTokenizerProvider MakeExpressionTokenizerProvider(
   };
 }
 
-// Deserialises every indexed expression on `index` into a runtime
-// `IndexedExpression` (bound expr + serialized bytes + dep cols). Used by the
-// sink to evaluate each expression per row.
 inline std::vector<IndexedExpression> MakeIndexedExpressions(
   const catalog::InvertedIndex& index, duckdb::ClientContext& client_context) {
   std::vector<IndexedExpression> entries;
@@ -177,12 +171,6 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   bool SwitchColumnImpl(const ColumnDescriptor& col, const duckdb::Vector& vec,
                         duckdb::idx_t count);
 
-  // Switches to an indexed expression. The `vec` is the pre-evaluated batch
-  // of expression values for `count` rows; the sink stages a Field/analyzer
-  // keyed by the expression's serialized bytes and the subsequent
-  // `WriteImpl(cell_slices, key)` calls index each row's value. Returns
-  // false when there is no per-expression tokenizer (sink wasn't built
-  // with one).
   bool SwitchExpressionImpl(const ExpressionDescriptor& expr_desc,
                             const duckdb::Vector& vec, duckdb::idx_t count);
 
@@ -286,21 +274,16 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
   void AppendPerRowPrimaryKey(std::string_view row_key);
 
-  // Per-leaf-type Field set for one indexed expression. JSON-typed
-  // expressions emit into all four (string/numeric/bool/null) under
-  // distinct mangle bytes; non-JSON expressions use only the one matching
-  // their return type.
+  // Per-leaf-type Field set for one JSON-typed indexed expression.
   struct JsonPathField {
     std::string string_name;
     std::string numeric_name;
     std::string bool_name;
     std::string null_name;
-    Field string_field;   // user's configured analyzer
-    Field numeric_field;  // built-in NumericTokenizer
-    Field bool_field;     // built-in BooleanTokenizer
-    Field null_field;     // built-in NullTokenizer
-    // Per-row StoreAttr-blob column for analyzers that register a StoreAttr
-    // (wildcard ngram, geo). nullopt for plain text analyzers.
+    Field string_field;
+    Field numeric_field;
+    Field bool_field;
+    Field null_field;
     std::optional<catalog::Column::Id> tokenizer_column;
 
     void InitForExpression(irs::field_id field_id,

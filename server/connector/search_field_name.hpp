@@ -36,11 +36,7 @@ inline void MakeColumnFieldName(catalog::Column::Id column_id,
   absl::big_endian::Store(out.data(), column_id);
 }
 
-// Iresearch field-name prefix for an indexed expression. The catalog
-// assigns one `irs::field_id` per expression at CREATE INDEX time; the
-// prefix encodes a sentinel column id (uint64 max), so it cannot collide
-// with any real column field name, followed by the BE-encoded field_id.
-// The caller still mangles the result (string/numeric/bool/null) on top.
+// [8 bytes 0xFF sentinel col_id][8 bytes BE field_id]; caller mangles after.
 inline void MakeExpressionFieldName(irs::field_id field_id, std::string& out) {
   constexpr size_t kColIdSize = sizeof(catalog::Column::Id);
   basics::StrResize(out, kColIdSize + sizeof(irs::field_id));

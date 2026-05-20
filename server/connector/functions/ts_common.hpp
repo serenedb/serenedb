@@ -56,13 +56,8 @@ struct FilterContext {
   bool negated = false;
   irs::score_t boost = irs::kNoBoost;
   const ColumnGetter& column_getter;
-  // Optional resolver for arbitrary indexed expressions (CREATE INDEX
-  // (...expr...)). nullptr = expression lookups disabled.
   const ExpressionGetter* expr_getter = nullptr;
-  // Memo of resolved (column, mangle) -> SearchColumnInfo. Key is
-  // the iresearch field name. NodeHashMap so refs survive insertions.
   containers::NodeHashMap<std::string, SearchColumnInfo>& column_cache;
-  // Scratch buffer reused across FindColumnInfoForExpr calls.
   std::string& cache_key;
   irs::analysis::Analyzer& identity;
   irs::analysis::Analyzer& tokenizer;

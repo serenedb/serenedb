@@ -47,8 +47,8 @@ HOST="${SDB_DRV_HOST:-localhost}"
 PORT="${SDB_DRV_PORT:-7890}"
 DB="${SDB_DRV_DATABASE:-postgres}"
 DB_USER="${SDB_DRV_USER:-postgres}"
-MAX_QUERIES="${SDB_FUZZ_QUERIES:-2000}"
-PARALLEL="${SDB_FUZZ_PARALLEL:-1}"
+MAX_QUERIES="${SDB_FUZZ_QUERIES:-5000}"
+PARALLEL="${SDB_FUZZ_PARALLEL:-2}"
 # sqlsmith parses --seed via std::stoi (signed 32-bit int), so keep the value
 # under INT_MAX (2^31 - 1). $RANDOM is bash's 15-bit RNG; two of them combined
 # with a 15-bit shift give a 30-bit unsigned seed safely below the limit.

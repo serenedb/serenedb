@@ -1,0 +1,140 @@
+control substitution on
+
+
+# ERROR CASES
+
+# --- Invalid template value ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY eng_err_bad_template(
+    template = 'edge_ngram_typo',
+    mingram = 2,
+    maxgram = 3
+)
+----
+db error: ERROR: Invalid type of text search dictionary
+
+
+# --- Option not applicable (locale belongs to text/stem/...) ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY eng_err_locale(
+    template = 'ngram',
+    mode = 'only_prefix',
+    locale = 'en_US.UTF-8',
+    mingram = 2,
+    maxgram = 3
+)
+----
+db error: ERROR: option "locale" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+# --- Basic mingram / maxgram ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY edge_ngram_basic(
+    template = 'ngram',
+    mode = 'only_prefix',
+    mingram = 2,
+    maxgram = 4
+)
+
+
+query
+SELECT ts_lexize('edge_ngram_basic', 'hello');
+----
+ts_lexize
+{he,hel,hell}
+
+
+# --- Basic mingram / maxgram all ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY edge_ngram_basic_all(
+    template = 'ngram',
+    mode = 'all',
+    mingram = 2,
+    maxgram = 4
+)
+
+
+query
+SELECT ts_lexize('edge_ngram_basic_all', 'hello');
+----
+ts_lexize
+{he,hel,hell,el,ell,ello,ll,llo,lo}
+
+
+# --- Case preserved ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY edge_ngram_case_preserved(
+    template = 'ngram',
+    mode = 'only_prefix',
+    mingram = 2,
+    maxgram = 3
+)
+
+
+query
+SELECT ts_lexize('edge_ngram_case_preserved', 'HeLLo');
+----
+ts_lexize
+{He,HeL}
+
+
+# --- preserveoriginal: emit full input after max-length prefixes ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY edge_ngram_preserve_original(
+    template = 'ngram',
+    mode = 'only_prefix',
+    mingram = 1,
+    maxgram = 2,
+    preserveoriginal = true
+)
+
+
+query
+SELECT ts_lexize('edge_ngram_preserve_original', 'abcd');
+----
+ts_lexize
+{a,ab,abcd}
+
+
+# --- only suffix ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY edge_ngram_only_suffix(
+    template = 'ngram',
+    mode = 'only_suffix',
+    mingram = 1,
+    maxgram = 2,
+    preserveoriginal = true
+)
+
+
+query
+SELECT ts_lexize('edge_ngram_only_suffix', 'abcd');
+----
+ts_lexize
+{d,cd,abcd}
+
+# --- only_prefix_and_suffix ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY edge_ngram_only_prefix_and_suffix(
+    template = 'ngram',
+    mode = 'only_prefix_and_suffix',
+    mingram = 1,
+    maxgram = 2,
+    preserveoriginal = true
+)
+
+
+query
+SELECT ts_lexize('edge_ngram_only_prefix_and_suffix', 'abcd');
+----
+ts_lexize
+{a,ab,d,cd,abcd}

@@ -61,8 +61,8 @@ class StemmingTokenizer final : public TypedAnalyzer<StemmingTokenizer>,
 
   attributes _attrs;
   OptionsT _options;
-  std::string _buf;
   stemmer_ptr _stemmer;
+  bool _stemmer_initialized = false;
   bool _term_eof = true;
 };
 

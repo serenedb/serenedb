@@ -130,7 +130,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 

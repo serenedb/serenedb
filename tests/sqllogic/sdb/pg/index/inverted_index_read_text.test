@@ -1,0 +1,824 @@
+hash-threshold 100
+control substitution on
+
+# View-backed and table-backed inverted indexes over read_text. read_text is
+# DuckDB's built-in (one row per file: filename, content, size, last_modified);
+# this test exercises the per-file lookup TF wired into view_fast_path.cpp via
+# MakeTextLookupTableFunction.
+#
+# Fast path:
+#   read_text('/tmp/x.md')   -> FileRowNumber PK (single file, row=0)
+#   read_text('/tmp/*.md')   -> FileIndexPlusRowNumber pair PK (file_idx, 0)
+#
+# Per-file dispatch contract (glob mode): MaterializeByPkGlob walks the bound
+# MultiFileList, groups by file_index (row is always 0), dispatches the lookup
+# TF once per file -- which opens the file and emits the matching row at the
+# requested output slot.
+#
+# Notes:
+#   * `system ok` does not substitute ${VAR} (only $VAR). Use $__DATABASE__-NAME
+#     so the per-test prefix separates from the fixture suffix.
+#   * Expected-output blocks are NOT substituted. Project a stable slug
+#     (regexp_extract on the suffix) instead of the full path for assertions.
+
+
+# Stage three text fixtures with overlapping vocabulary so BM25 ordering and
+# term frequency are exercised. Files are written server-side via COPY (CSV
+# without quoting collapses to per-row lines) -- in a docker-compose CI the
+# tests runner and serened sit in separate containers and don't share /tmp,
+# so writing from a `system` block wouldn't reach the server's filesystem.
+statement ok
+COPY (VALUES
+  ('# Inverted Index Primer'),
+  ('The inverted index is a fundamental structure in information retrieval.'),
+  ('It maps each term to a posting list of documents that contain the term.'),
+  ('Modern analyzers normalize text and lowercase tokens.'))
+TO '/tmp/${__DATABASE__}-alpha.md' (FORMAT csv, HEADER false);
+
+statement ok
+COPY (VALUES
+  ('# BM25 Explained'),
+  ('BM25 scores documents against a query by combining term frequency.'),
+  ('Inverse document frequency and document length normalization apply.'),
+  ('It is a probabilistic ranking function descended from Robertson analyzer work.'))
+TO '/tmp/${__DATABASE__}-bravo.md' (FORMAT csv, HEADER false);
+
+statement ok
+COPY (VALUES
+  ('Highlighting picks short snippets around matched terms.'),
+  ('A common approach is sentence-aware passage extraction using a break iterator.'),
+  ('Many systems retokenize the source at query time to produce snippets.'))
+TO '/tmp/${__DATABASE__}-charlie.txt' (FORMAT csv, HEADER false);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY read_text_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true,
+    offset = true
+);
+
+
+# ============================================================================
+# Bare scan -- DuckDB built-in row shape (filename, content, size, last_modified)
+# ============================================================================
+
+query
+SELECT count(*) FROM read_text('/tmp/$__DATABASE__-alpha.md');
+----
+count
+1
+
+query
+SELECT count(*) FROM read_text('/tmp/$__DATABASE__-*');
+----
+count
+3
+
+# Empty glob: ALLOW_EMPTY -> zero rows, no error.
+query
+SELECT count(*) FROM read_text('/tmp/$__DATABASE__-no_such_*');
+----
+count
+0
+
+
+# ============================================================================
+# read_blob -- binary sibling of read_text. Shares DirectFileReader machinery.
+# ============================================================================
+
+# Same UTF-8 fixtures: read_blob returns BLOB-typed content, octet_length matches file size.
+query
+SELECT count(*) FROM read_blob('/tmp/$__DATABASE__-*');
+----
+count
+3
+
+query
+SELECT DISTINCT typeof(content) FROM read_blob('/tmp/$__DATABASE__-*');
+----
+typeof
+BLOB
+
+# Stage a non-UTF8 fixture by writing a parquet file (its magic + compressed
+# payload aren't valid UTF-8) and confirm the read_text/read_blob asymmetry.
+# Uses a distinct prefix so the later '/tmp/${__DATABASE__}-*' glob (over the
+# .md / .txt fixtures) doesn't pick it up.
+statement ok
+COPY (SELECT 1 AS x) TO '/tmp/binfix_${__DATABASE__}.parquet' (FORMAT parquet);
+
+# read_blob succeeds on binary content.
+query
+SELECT octet_length(content) > 0 AS has_bytes,
+       typeof(content) AS t
+FROM read_blob('/tmp/binfix_${__DATABASE__}.parquet');
+----
+has_bytes	t
+t	BLOB
+
+# read_text on the same file fails at the UTF-8 validation step when content is
+# actually projected (count(*) alone wouldn't trigger the read).
+statement error read_text: could not read content of file .* as valid UTF-8
+SELECT content FROM read_text('/tmp/binfix_${__DATABASE__}.parquet');
+
+
+# ============================================================================
+# Inverted index over a BLOB column (read_blob -> pattern analyzer, no decode).
+#
+# BLOB shares PhysicalType::VARCHAR storage so the search layer (mangling, term
+# filter, ts_phrase/ts_like/ts_levenshtein/ts_ngram) treats VARCHAR + BLOB
+# identically -- the same raw bytes are tokenized either way.
+# A pattern tokenizer extracts only tokens matching its regex; useful for
+# selective indexing of arbitrary byte payloads (extract printable runs from
+# binaries, capitalized identifiers, etc.).
+# ============================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pat_caps(
+    template = 'pattern',
+    pattern = '[A-Z][A-Za-z0-9]{2,}',
+    group = 0,
+    frequency = true,
+    position = true
+);
+
+
+# Materialized BLOB column straight from read_blob -- no decode/cast.
+statement ok
+CREATE TABLE blob_docs AS
+  SELECT filename AS path, content AS body
+  FROM read_blob('/tmp/$__DATABASE__-*');
+
+
+query
+SELECT typeof(body) FROM blob_docs LIMIT 1;
+----
+typeof
+BLOB
+
+
+statement ok
+CREATE INDEX blob_docs_idx ON blob_docs USING inverted(body pat_caps);
+
+
+# Pattern extracts capitalized identifiers. "Robertson" only appears in bravo.md.
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_docs_idx WHERE body @@ 'Robertson' ORDER BY slug;
+----
+slug
+bravo
+
+
+# "BM25" also satisfies the pattern (starts uppercase, 4 chars).
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_docs_idx WHERE body @@ 'BM25' ORDER BY slug;
+----
+slug
+bravo
+
+
+# ts_phrase works on the BLOB column directly.
+query
+SELECT count(*) > 0 AS has_match FROM blob_docs_idx WHERE body @@ ts_phrase('Robertson');
+----
+has_match
+t
+
+
+# ts_like wildcard over BLOB.
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_docs_idx WHERE body @@ ts_like('Rob%') ORDER BY slug;
+----
+slug
+bravo
+
+
+# ts_starts_with prefix match over BLOB.
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_docs_idx WHERE body @@ ts_starts_with('Rob') ORDER BY slug;
+----
+slug
+bravo
+
+
+# ts_regexp pattern match over BLOB ('Rob.*on' matches "Robertson").
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_docs_idx WHERE body @@ ts_regexp('Rob.*on') ORDER BY slug;
+----
+slug
+bravo
+
+
+# ts_levenshtein fuzzy match over BLOB (distance 1 from "Robertson").
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_docs_idx WHERE body @@ ts_levenshtein('Robertsen', 1) ORDER BY slug;
+----
+slug
+bravo
+
+
+# ts_ngram similarity match over BLOB. Need an ngram-tokenized column for this;
+# we add a second pattern-extracted-string-then-3gram setup. Build a small
+# trigram dict and a fresh BLOB table where the body is the file content.
+statement ok
+CREATE TEXT SEARCH DICTIONARY blob_ng (
+    template = 'ngram',
+    mingram = 3,
+    maxgram = 3,
+    preserveoriginal = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE blob_ng_docs AS
+  SELECT filename AS path, content AS body
+  FROM read_blob('/tmp/$__DATABASE__-*');
+
+statement ok
+CREATE INDEX blob_ng_docs_idx ON blob_ng_docs USING inverted(body blob_ng);
+
+# ts_ngram fuzzy similarity over BLOB. Trigrams of "Robertson" overlap with the
+# trigrams indexed from bravo.md's body. Threshold 0.3 keeps the match loose.
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_ng_docs_idx WHERE body @@ ts_ngram('Robertson', 0.3) ORDER BY slug;
+----
+slug
+bravo
+
+
+# ============================================================================
+# Range ops on BLOB (ts_lt / ts_le / ts_gt / ts_ge / ts_between).
+#
+# Range bounds must be analyzable as a single token. We use the keyword
+# analyzer (one token = the whole input) on a fresh BLOB column so bounds
+# like 'b' or 'd' tokenize cleanly.
+# ============================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY blob_kw (template = 'keyword', frequency = true, position = true);
+
+statement ok
+CREATE TABLE blob_kw_docs (id INTEGER, term BLOB);
+
+statement ok
+INSERT INTO blob_kw_docs VALUES
+  (1, 'apple'),
+  (2, 'banana'),
+  (3, 'cherry'),
+  (4, 'durian');
+
+statement ok
+CREATE INDEX blob_kw_docs_idx ON blob_kw_docs USING inverted(term blob_kw);
+
+
+# Single-bound ops route through ts_between.cpp's single-bound helper, which
+# accepts any analyzer. Bound tokenizes as itself under the keyword analyzer.
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_lt('c') ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_le('cherry') ORDER BY id;
+----
+id
+1
+2
+3
+
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_gt('b') ORDER BY id;
+----
+id
+2
+3
+4
+
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_ge('cherry') ORDER BY id;
+----
+id
+3
+4
+
+
+# Two-bound ts_between requires the keyword analyzer (asserted at ts_between.cpp:263).
+query
+SELECT id FROM blob_kw_docs_idx
+WHERE term @@ ts_between('a', 'c', true, false) ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM blob_kw_docs_idx
+WHERE term @@ ts_between('b', 'd', false, true) ORDER BY id;
+----
+id
+2
+3
+
+
+# ::BLOB cast for every search-term arg.
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_phrase('banana'::BLOB);
+----
+id
+2
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_starts_with('ba'::BLOB);
+----
+id
+2
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_like('ba%'::BLOB);
+----
+id
+2
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_regexp('ban.*'::BLOB);
+----
+id
+2
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_levenshtein('banaba'::BLOB, 1);
+----
+id
+2
+
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_ng_docs_idx WHERE body @@ ts_ngram('Robertson'::BLOB, 0.3) ORDER BY slug;
+----
+slug
+bravo
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_lt('c'::BLOB) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_le('cherry'::BLOB) ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_gt('b'::BLOB) ORDER BY id;
+----
+id
+2
+3
+4
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_ge('cherry'::BLOB) ORDER BY id;
+----
+id
+3
+4
+
+query
+SELECT id FROM blob_kw_docs_idx
+WHERE term @@ ts_between('a'::BLOB, 'c'::BLOB, true, false) ORDER BY id;
+----
+id
+1
+2
+
+# ts_between enforces same-type bounds; mixing VARCHAR + BLOB is rejected.
+statement error ts_between bounds have mismatched types
+SELECT id FROM blob_kw_docs_idx
+WHERE term @@ ts_between('a', 'c'::BLOB, true, false) ORDER BY id;
+
+# Multi-piece ts_phrase with BLOB literals on a multi-token column.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY blob_words (
+    template = 'delimiter', delimiter = ' ', frequency = true, position = true
+);
+
+statement ok
+CREATE TABLE blob_text (id INTEGER, body BLOB);
+
+statement ok
+INSERT INTO blob_text VALUES (1, 'alpha bravo charlie'), (2, 'bravo only');
+
+statement ok
+CREATE INDEX blob_text_idx ON blob_text USING inverted(body blob_words);
+
+# Adjacent terms.
+query
+SELECT id FROM blob_text_idx WHERE body @@ ts_phrase('alpha'::BLOB, 'bravo'::BLOB);
+----
+id
+1
+
+# Mixed VARCHAR + BLOB phrase pieces.
+query
+SELECT id FROM blob_text_idx WHERE body @@ ts_phrase('alpha', 'bravo'::BLOB);
+----
+id
+1
+
+# Phrase with explicit gap, BLOB pieces around it.
+query
+SELECT id FROM blob_text_idx WHERE body @@ ts_phrase('alpha'::BLOB, 1, 'charlie'::BLOB);
+----
+id
+1
+
+# ts_tokenize with BLOB literal (1-arg + 2-arg with named analyzer).
+query
+SELECT id FROM blob_text_idx WHERE body @@ ts_tokenize('bravo'::BLOB);
+----
+id
+1
+2
+
+query
+SELECT id FROM blob_text_idx WHERE body @@ ts_tokenize('alpha bravo'::BLOB, 'blob_words') ORDER BY id;
+----
+id
+1
+2
+
+# ::tokenize(<name>) BLOB inner value.
+query
+SELECT id FROM blob_text_idx WHERE body @@ 'bravo'::BLOB::tokenize(NULL);
+----
+id
+1
+2
+
+# Boolean combinations of BLOB-arg TSQUERY expressions.
+query
+SELECT id FROM blob_text_idx
+WHERE body @@ (ts_phrase('alpha'::BLOB) && ts_phrase('bravo'::BLOB)) ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM blob_text_idx
+WHERE body @@ (ts_phrase('alpha'::BLOB) || ts_phrase('only'::BLOB)) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM blob_text_idx
+WHERE body @@ (ts_phrase('bravo'::BLOB) && !!ts_phrase('alpha'::BLOB));
+----
+id
+2
+
+
+# ============================================================================
+# Mode A: view + inverted index. Lookup TF fires for highlight/materialization.
+# ============================================================================
+
+statement ok
+CREATE VIEW v_text AS
+  SELECT filename AS path, content
+  FROM read_text('/tmp/$__DATABASE__-*');
+
+statement ok
+CREATE INDEX v_text_idx ON v_text USING inverted(content read_text_en);
+
+
+query
+SELECT count(*) FROM v_text_idx;
+----
+count
+3
+
+
+# Single-document match: only bravo.md mentions "ranking".
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM v_text_idx WHERE content @@ 'ranking' ORDER BY slug;
+----
+slug
+bravo
+
+
+# Multi-document match: "term" appears in alpha + bravo.
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM v_text_idx WHERE content @@ 'term' ORDER BY slug;
+----
+slug
+alpha
+bravo
+
+
+# BM25 ranking over multi-doc match.
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug,
+       BM25(v_text_idx.tableoid) > 0 AS has_score
+FROM v_text_idx
+WHERE content @@ 'term'
+ORDER BY BM25(v_text_idx.tableoid) DESC, slug;
+----
+slug	has_score
+alpha	t
+bravo	t
+
+
+# ts_highlight via lookup TF + ts_offsets: index returns byte offsets, lookup
+# TF fetches content from disk, highlight wraps the matched token.
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug,
+       ts_highlight(content, ts_offsets(content)) AS snippet
+FROM v_text_idx
+WHERE content @@ 'ranking'
+ORDER BY slug;
+----
+slug	snippet
+bravo	It is a probabilistic <b>ranking</b> function descended from Robertson analyzer work
+
+
+# ============================================================================
+# Mode A: complex search conditions. Exercises the per-file lookup TF under
+# phrase / boolean / wildcard / fuzzy / regex / prefix / NOT.
+# ============================================================================
+
+# Phrase across adjacent terms (bravo has "term frequency" verbatim).
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM v_text_idx WHERE content @@ ts_phrase('term', 'frequency') ORDER BY slug;
+----
+slug
+bravo
+
+
+# Boolean AND: documents containing both "term" and "analyzer". Only bravo
+# has both literally (alpha has "analyzers" plural).
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM v_text_idx
+WHERE content @@ (ts_phrase('term') && ts_phrase('analyzer'))
+ORDER BY slug;
+----
+slug
+bravo
+
+
+# Boolean OR: alpha mentions "inverted", charlie mentions "highlighting".
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM v_text_idx
+WHERE content @@ (ts_phrase('inverted') || ts_phrase('highlighting'))
+ORDER BY slug;
+----
+slug
+alpha
+charlie
+
+
+# Wildcard via ts_like: matches both "analyzers" (alpha) and "analyzer" (bravo).
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM v_text_idx WHERE content @@ ts_like('analyz%') ORDER BY slug;
+----
+slug
+alpha
+bravo
+
+
+# Fuzzy via ts_levenshtein: "analyer" -> "analyzer" is distance 1 (bravo);
+# "analyer" -> "analyzers" is distance 2, so alpha doesn't match at distance 1.
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM v_text_idx
+WHERE content @@ ts_levenshtein('analyer', 1)
+ORDER BY slug;
+----
+slug
+bravo
+
+
+# Distance 2 picks up both: "analyzer" (bravo, distance 1) and "analyzers"
+# (alpha, distance 2).
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM v_text_idx
+WHERE content @@ ts_levenshtein('analyer', 2)
+ORDER BY slug;
+----
+slug
+alpha
+bravo
+
+
+# Regex via ts_regexp: 'rank.*g' matches "ranking" in bravo only.
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM v_text_idx WHERE content @@ ts_regexp('rank.*g') ORDER BY slug;
+----
+slug
+bravo
+
+
+# Prefix via ts_starts_with: any token starting with "snip" -> charlie's "snippets".
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM v_text_idx WHERE content @@ ts_starts_with('snip') ORDER BY slug;
+----
+slug
+charlie
+
+
+# Boolean with NOT (!!): document mentioning 'term' but NOT 'ranking' -> alpha only.
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM v_text_idx
+WHERE content @@ (ts_phrase('term') && !!ts_phrase('ranking'))
+ORDER BY slug;
+----
+slug
+alpha
+
+
+# BM25 ranking with a mix of operators: alpha + charlie both match, alpha has
+# higher term density on 'index', charlie wins on 'highlighting'.
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug,
+       BM25(v_text_idx.tableoid) > 0 AS has_score
+FROM v_text_idx
+WHERE content @@ (ts_phrase('index') || ts_phrase('highlighting'))
+ORDER BY BM25(v_text_idx.tableoid) DESC, slug;
+----
+slug	has_score
+alpha	t
+charlie	t
+
+
+# Highlight from a multi-term phrase match.
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug,
+       ts_highlight(content, ts_offsets(content)) AS snippet
+FROM v_text_idx
+WHERE content @@ ts_phrase('passage', 'extraction')
+ORDER BY slug;
+----
+slug	snippet
+charlie	A common approach is sentence-aware <b>passage extraction</b> using a break iterator
+
+
+# ============================================================================
+# Mode B: materialized table from read_text. Lookup TF not used at query time
+# (content is a real column); verifies output parity with Mode A.
+# ============================================================================
+
+statement ok
+CREATE TABLE t_text AS
+  SELECT filename AS path, content
+  FROM read_text('/tmp/$__DATABASE__-*');
+
+statement ok
+CREATE INDEX t_text_idx ON t_text USING inverted(content read_text_en);
+
+
+query
+SELECT count(*) FROM t_text;
+----
+count
+3
+
+
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM t_text_idx WHERE content @@ 'ranking' ORDER BY slug;
+----
+slug
+bravo
+
+
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM t_text_idx WHERE content @@ 'term' ORDER BY slug;
+----
+slug
+alpha
+bravo
+
+
+# ============================================================================
+# Vanished file -- queries that hit only the inverted index keep working;
+# queries that project content trigger the lookup TF which opens the file at
+# query time and fails when the file is gone.
+# ============================================================================
+
+statement ok
+COPY (VALUES ('Disappearing payload mentions the unique token gargantuanpixie.'))
+TO '/tmp/${__DATABASE__}-vanish.txt' (FORMAT csv, HEADER false);
+
+statement ok
+CREATE VIEW v_vanish AS
+  SELECT filename AS path, content
+  FROM read_text('/tmp/${__DATABASE__}-vanish.txt');
+
+statement ok
+CREATE INDEX v_vanish_idx ON v_vanish USING inverted(content read_text_en);
+
+# Sanity: while file holds the indexed term, both no-content and content
+# projections work.
+query
+SELECT count(*) FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
+----
+count
+1
+
+query
+SELECT ts_highlight(content, ts_offsets(content))
+FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
+----
+ts_highlight
+Disappearing payload mentions the unique token <b>gargantuanpixie</b>
+
+# Phase 1 -- overwrite with empty text. File still exists and is valid UTF-8,
+# so the lookup TF can still open it (just returns empty content).
+# (Direct file deletion via `system rm` doesn't work in docker-compose CI where
+# the test runner and serened sit in separate containers; we use server-side
+# COPY to mutate the file.)
+statement ok
+COPY (SELECT '' AS x)
+TO '/tmp/${__DATABASE__}-vanish.txt' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+# Posting lists are independent of the source: the index still returns 1 row.
+query
+SELECT count(*) FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
+----
+count
+1
+
+# A fresh read_text of the now-empty file no longer contains the token.
+query
+SELECT count(*) FROM read_text('/tmp/${__DATABASE__}-vanish.txt')
+WHERE content LIKE '%gargantuanpixie%';
+----
+count
+0
+
+# Phase 2 -- overwrite the same path with parquet bytes so read_text can no
+# longer decode it. count(*) via the index still works (no file open); any
+# query that projects content forces the lookup TF to read the file and the
+# UTF-8 validation step errors.
+statement ok
+COPY (SELECT 1 AS x) TO '/tmp/${__DATABASE__}-vanish.txt' (FORMAT parquet);
+
+query
+SELECT count(*) FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
+----
+count
+1
+
+statement error read_text: could not read content of file .* as valid UTF-8
+SELECT ts_highlight(content, ts_offsets(content))
+FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
+
+statement error read_text: could not read content of file .* as valid UTF-8
+SELECT content FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
+
+# A path that was never written surfaces as zero rows via the bare scan: the
+# MultiFileList resolves the literal to an empty set, ALLOW_EMPTY swallows it,
+# and no lookup TF ever runs.
+query
+SELECT count(*) FROM read_text('/tmp/${__DATABASE__}-never_existed.txt');
+----
+count
+0

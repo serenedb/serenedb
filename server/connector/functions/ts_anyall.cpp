@@ -138,7 +138,8 @@ void FromTokenizeListInAnyAllOf(
   // -- they contribute no terms.
   auto* analyzer = override_wrapper ? override_wrapper.get() : &ctx.tokenizer;
   if (!use_identity &&
-      column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+      column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+      column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_tokenize array form requires a VARCHAR-indexed "
                             "column"),
@@ -152,10 +153,11 @@ void FromTokenizeListInAnyAllOf(
     if (elem.IsNull()) {
       continue;
     }
-    if (elem.type().id() != duckdb::LogicalTypeId::VARCHAR) {
+    if (elem.type().id() != duckdb::LogicalTypeId::VARCHAR &&
+        elem.type().id() != duckdb::LogicalTypeId::BLOB) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("ts_tokenize text array elements must be VARCHAR, got ",
+        ERR_MSG("ts_tokenize text array elements must be VARCHAR or BLOB, got ",
                 elem.type().ToString()),
         ERR_HINT(kSyntaxHint));
     }

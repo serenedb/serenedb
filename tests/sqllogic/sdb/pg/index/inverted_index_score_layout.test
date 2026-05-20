@@ -57,10 +57,10 @@ SELECT id, BM25(one_seg_idx.tableoid) as d FROM one_seg_idx
 WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
 ORDER BY d DESC, id;
 ----
-id  d
-1 0.9808291
-2 0.9808291
-3 0.9808291
+id	d
+1	0.9808291
+2	0.9808291
+3	0.9808291
 
 
 # =====================================================================
@@ -99,10 +99,10 @@ SELECT id, BM25(three_segs_idx.tableoid) as d FROM three_segs_idx
 WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
 ORDER BY d DESC, id;
 ----
-id  d
-1 0.9808291
-2 0.9808291
-3 0.9808291
+id	d
+1	0.9808291
+2	0.9808291
+3	0.9808291
 
 
 # =====================================================================
@@ -140,10 +140,10 @@ SELECT id, BM25(split_idx.tableoid) as d FROM split_idx
 WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
 ORDER BY d DESC, id;
 ----
-id  d
-1 0.9808291
-2 0.9808291
-3 0.9808291
+id	d
+1	0.9808291
+2	0.9808291
+3	0.9808291
 
 
 # =====================================================================
@@ -180,10 +180,10 @@ SELECT id, BM25(split2_idx.tableoid) as d FROM split2_idx
 WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
 ORDER BY d DESC, id;
 ----
-id  d
-1 0.9808291
-2 0.9808291
-3 0.9808291
+id	d
+1	0.9808291
+2	0.9808291
+3	0.9808291
 
 
 # =====================================================================
@@ -226,10 +226,10 @@ SELECT id, BM25(consolidated_idx.tableoid) as d FROM consolidated_idx
 WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
 ORDER BY d DESC, id;
 ----
-id  d
-1 0.9808291
-2 0.9808291
-3 0.9808291
+id	d
+1	0.9808291
+2	0.9808291
+3	0.9808291
 
 
 # =====================================================================

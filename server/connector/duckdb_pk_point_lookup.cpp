@@ -130,10 +130,12 @@ void PKPointLookupFunction(duckdb::ClientContext& /*context*/,
     found_count = static_cast<duckdb::idx_t>(found_idx);
   } else {
     // No real column projected (rowid/tableoid only): probe first bind column
-    // to determine which points exist.
+    // to determine which points exist. The deserialized value is discarded;
+    // only collector.PresentRows() is consumed downstream.
     SDB_ASSERT(!bind_data.column_ids.empty());
-    duckdb::Vector dummy{duckdb::LogicalType::BIGINT};
-    collector.Init(duckdb::LogicalType::BIGINT, batch_size, dummy);
+    const auto& probe_type = bind_data.column_types[0];
+    duckdb::Vector dummy{probe_type};
+    collector.Init(probe_type, batch_size, dummy);
     auto slices = builder.BuildKeys(bind_data.column_ids[0], points,
                                     batch_start, batch_size);
     size_t found_idx = 0;

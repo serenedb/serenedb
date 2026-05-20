@@ -40,20 +40,14 @@ namespace sdb::connector {
 // (op-class determines tokenizer choice for text columns -- non-text
 // columns get a null tokenizer here).
 //
-// For JSON-path indexed fields (e.g. `TERM_LIKE(content->'host', ...)`)
-// `json_pointer` is non-empty and holds the JSON pointer (pre-encoded,
-// see `EncodeJsonPointer`); `logical_type` is the DuckDB type of the
-// indexed leaf (VARCHAR for the string-leaf MVP, or the cast target
-// type for numeric/bool/null lookups).
+// For an indexed expression `field_id` is the catalog-allocated id
+// (non-zero) and `column_id` is unused; for a bare-column entry
+// `field_id` is zero and `column_id` holds the base column.
 struct SearchColumnInfo {
   catalog::Column::Id column_id{};
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
-  std::string json_pointer;
-  // Canonical bytes of an indexed expression (matching the catalog). Empty
-  // for bare-column / JSON-path entries; set when the filter builder
-  // resolved a `(expr) @@ ...` predicate against a CREATE INDEX (...) entry.
-  std::string serialized_expr;
+  irs::field_id field_id = 0;
 };
 
 // Resolves a DuckDB bound column reference (by table_index + column_index,
@@ -64,14 +58,6 @@ struct SearchColumnInfo {
 // implementation (typically captures bind data + InvertedIndex).
 using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::BoundColumnRefExpression&) const>;
-
-// Resolves a JSON pointer (e.g. "/host") on an already-known base column
-// to a SearchColumnInfo carrying the per-path analyzer. Returns nullopt
-// if no indexed path matches. The pointer is RFC-6901 encoded (see
-// `EncodeJsonPointer`), matching the form stored on
-// `InvertedIndexColumnInfo::json_paths[*].json_pointer`.
-using JsonPathGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
-  const duckdb::BoundColumnRefExpression&, std::string_view) const>;
 
 // Resolves an arbitrary expression to a SearchColumnInfo carrying the
 // per-expression analyzer. The implementation normalises `expr` (via
@@ -120,7 +106,6 @@ Result MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, const SearchFilterOptions& options,
-  const JsonPathGetter& json_path_getter = {},
   const ExpressionGetter& expr_getter = {});
 
 }  // namespace sdb::connector

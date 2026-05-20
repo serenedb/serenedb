@@ -51,30 +51,11 @@ class SearchRemoveFilterBase;
 using TokenizerProvider =
   absl::AnyInvocable<catalog::ColumnTokenizer(catalog::Column::Id)>;
 
-// Resolves an indexed-expression's canonical bytes (the same form
-// `SerializeBoundExpression` produces and the catalog stores) to its
-// tokenizer. Used by the sink to look up the analyzer for every row of an
-// indexed expression.
+// Resolves an indexed-expression's catalog-allocated field_id to its
+// tokenizer. Used by the sink to look up the analyzer for every row of
+// an indexed expression.
 using ExpressionTokenizerProvider =
-  absl::AnyInvocable<catalog::ColumnTokenizer(std::string_view)>;
-
-// One JSON path's worth of indexing config, resolved against the catalog.
-// `json_pointer` is the pre-encoded RFC-6901 form (`/k1/k2/...`) -- see
-// `connector::EncodeJsonPointer`. Borrowed; lifetime is the catalog
-// `InvertedIndex` whose snapshot the writer ran against.
-struct JsonPathSinkConfig {
-  std::string_view json_pointer;
-  catalog::ColumnTokenizer tokenizer;
-};
-
-using JsonPathsProvider =
-  absl::AnyInvocable<std::vector<JsonPathSinkConfig>(catalog::Column::Id)>;
-
-// A JsonPathsProvider that returns an empty vector for every column. Useful
-// for code paths that do not yet support path-based JSON indexing.
-inline JsonPathsProvider NoJsonPaths() {
-  return [](catalog::Column::Id) { return std::vector<JsonPathSinkConfig>{}; };
-}
+  absl::AnyInvocable<catalog::ColumnTokenizer(irs::field_id)>;
 
 inline TokenizerProvider MakeTokenizerProvider(
   const std::shared_ptr<const catalog::Snapshot>& snapshot,
@@ -87,9 +68,9 @@ inline TokenizerProvider MakeTokenizerProvider(
 inline ExpressionTokenizerProvider MakeExpressionTokenizerProvider(
   std::shared_ptr<const catalog::Snapshot> snapshot,
   const catalog::InvertedIndex& index) {
-  return [snapshot = std::move(snapshot), &index](
-           std::string_view serialized_expr) -> catalog::ColumnTokenizer {
-    return index.GetExprTokenizer(snapshot, serialized_expr);
+  return [snapshot = std::move(snapshot),
+          &index](irs::field_id field_id) -> catalog::ColumnTokenizer {
+    return index.GetExprTokenizerByFieldId(snapshot, field_id);
   };
 }
 
@@ -103,37 +84,13 @@ inline std::vector<IndexedExpression> MakeIndexedExpressions(
   for (const auto& expr_info : index.GetExpressions()) {
     SDB_ASSERT(!expr_info.serialized_expr.empty());
     SDB_ASSERT(!expr_info.dependent_columns.empty());
+    SDB_ASSERT(expr_info.field_id != 0);
     auto bound =
       DeserializeBoundExpression(expr_info.serialized_expr, client_context);
     entries.push_back({std::move(bound), expr_info.serialized_expr,
-                       expr_info.dependent_columns});
+                       expr_info.dependent_columns, expr_info.field_id});
   }
   return entries;
-}
-
-// Resolves every configured JSON path for `column_id` against the catalog.
-// Returns an empty vector for columns without path-based indexing.
-inline JsonPathsProvider MakeJsonPathsProvider(
-  std::shared_ptr<const catalog::Snapshot> snapshot,
-  const catalog::InvertedIndex& index) {
-  return [snapshot = std::move(snapshot), &index](
-           catalog::Column::Id column_id) -> std::vector<JsonPathSinkConfig> {
-    const auto* col = index.FindColumnInfo(column_id);
-    if (!col) {
-      return {};
-    }
-    std::vector<JsonPathSinkConfig> out;
-    out.reserve(col->json_paths.size());
-    for (const auto& p : col->json_paths) {
-      auto analyzer =
-        index.GetJsonPathTokenizer(snapshot, column_id, p.json_pointer);
-      if (!analyzer) {
-        continue;
-      }
-      out.emplace_back(p.json_pointer, *std::move(analyzer));
-    }
-    return out;
-  };
 }
 
 // Returns true if values for `column_id` should be written into the new
@@ -200,7 +157,6 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
  public:
   SearchSinkInsertBaseImpl(
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-    JsonPathsProvider&& json_paths_provider,
     StoreValuesProvider&& store_values_provider,
     IsTextIndexedProvider&& is_text_indexed_provider,
     HNSWInfoProvider&& hnsw_info_provider,
@@ -323,12 +279,6 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   template<duckdb::LogicalTypeId Kind>
   void SetupColumnWriter(catalog::Column::Id column_id, bool have_nulls);
 
-  // Setup the writer for a JSON column with one or more configured paths.
-  // Each path becomes a distinct iresearch field named
-  // [8 bytes BE column_id] + "." + key1 + "." + key2 + ... + <MangleString>.
-  void SetupJsonColumnWriter(catalog::Column::Id column_id,
-                             std::vector<JsonPathSinkConfig> paths);
-
   irs::columnstore::ColumnWriter* EnsurePerRowBlobWriter(
     catalog::Column::Id column_id);
   void AppendPerRowBlob(catalog::Column::Id column_id, irs::bytes_view bytes);
@@ -336,9 +286,11 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
   void AppendPerRowPrimaryKey(std::string_view row_key);
 
+  // Per-leaf-type Field set for one indexed expression. JSON-typed
+  // expressions emit into all four (string/numeric/bool/null) under
+  // distinct mangle bytes; non-JSON expressions use only the one matching
+  // their return type.
   struct JsonPathField {
-    // Backing storage for each per-type field name; Field::name is a
-    // string_view into the corresponding buffer.
     std::string string_name;
     std::string numeric_name;
     std::string bool_name;
@@ -347,23 +299,18 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     Field numeric_field;  // built-in NumericTokenizer
     Field bool_field;     // built-in BooleanTokenizer
     Field null_field;     // built-in NullTokenizer
-    // JSON Pointer view inside one of the name buffers.
-    std::string_view pointer;
     // Per-row StoreAttr-blob column for analyzers that register a StoreAttr
     // (wildcard ngram, geo). nullopt for plain text analyzers.
     std::optional<catalog::Column::Id> tokenizer_column;
 
-    void Init(catalog::Column::Id column_id, std::string_view json_pointer,
-              catalog::ColumnTokenizer string_analyzer);
-    void InitForExpression(std::string_view serialized_expr,
+    void InitForExpression(irs::field_id field_id,
                            catalog::ColumnTokenizer string_analyzer);
   };
 
-  void SetupJsonExpressionWriter(std::string_view serialized_expr,
+  void SetupJsonExpressionWriter(irs::field_id field_id,
                                  catalog::ColumnTokenizer string_analyzer);
 
   TokenizerProvider _tokenizer_provider;
-  JsonPathsProvider _json_paths_provider;
   StoreValuesProvider _store_values_provider;
   IsTextIndexedProvider _is_text_indexed_provider;
   HNSWInfoProvider _hnsw_info_provider;

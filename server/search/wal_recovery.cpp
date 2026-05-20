@@ -189,8 +189,6 @@ void FlushShard(ShardState& s,
   auto trx = s.shard->GetTransaction();
   auto tokenizer_provider =
     connector::MakeTokenizerProvider(snapshot, *s.index);
-  auto json_paths_provider =
-    connector::MakeJsonPathsProvider(snapshot, *s.index);
   auto store_values_provider = connector::MakeStoreValuesProvider(*s.index);
   auto is_text_indexed_provider =
     connector::MakeIsTextIndexedProvider(*s.index);
@@ -198,7 +196,6 @@ void FlushShard(ShardState& s,
   connector::SearchSinkInsertBaseImpl insert_sink{
     trx,
     std::move(tokenizer_provider),
-    std::move(json_paths_provider),
     std::move(store_values_provider),
     std::move(is_text_indexed_provider),
     std::move(hnsw_info_provider),

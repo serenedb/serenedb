@@ -67,14 +67,12 @@ struct IndexedExpressionData {
 // necessary info for building and validating new index.
 //
 // `indexed_expr` is set iff the source was `(expr)` rather than a column
-// reference; `catalog_column`/`name`/`json_pointer` are unused in that case
-// and `IsIndexedExpression()` returns true. The two arms are mutually
-// exclusive.
+// reference; `catalog_column`/`name` are unused in that case and
+// `IsIndexedExpression()` returns true. The two arms are mutually exclusive.
 struct CreateIndexColumn {
   const catalog::Column* catalog_column{nullptr};
   std::string_view name;
   std::string opclass;
-  std::string json_pointer;
   std::optional<IndexedExpressionData> indexed_expr;
   // nullopt = no parentheses in source SQL; an (empty or non-empty) map means
   // parens were present, distinguishing `col opclass` from `col opclass ()`.

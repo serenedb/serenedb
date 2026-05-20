@@ -45,25 +45,24 @@ struct HNSWColumnConfig {
   irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
 };
 
-// One configured JSON path inside a JSON-typed column of an inverted index.
-struct JsonPathInfo {
-  std::string json_pointer;
-  ObjectId text_dictionary = ObjectId::none();
-  search::Features features;
-  std::optional<Column::Id> synthetic_column;
-  uint32_t norm_row_group_size = 0;
-};
-
 // One indexed expression (`CREATE INDEX ... inverted((expr) opclass)`),
 // flattened to its canonical serialized form. Looked up by serialized bytes
 // at filter-build / write time; `dependent_columns` lets DML decide which
-// indexes a write must trigger.
+// indexes a write must trigger. `field_id` is the catalog-allocated id used
+// to derive iresearch field names -- one base id per expression, with JSON-
+// typed expressions emitting auxiliary per-leaf-type fields derived from it.
 struct ExpressionInfo {
   std::string serialized_expr;
   std::vector<Column::Id> dependent_columns;
   duckdb::LogicalType return_type;
   ObjectId text_dictionary = ObjectId::none();
   search::Features features;
+  irs::field_id field_id = 0;
+  // Reserved synthetic column id for analyzers that own a per-row blob
+  // (wildcard ngram, geo) or a norm column. Mirrors the same idea as
+  // `InvertedIndexColumnInfo::synthetic_column`.
+  std::optional<Column::Id> synthetic_column;
+  uint32_t norm_row_group_size = 0;
 
   struct HasherBySerialized {
     using is_transparent = void;
@@ -89,7 +88,6 @@ struct InvertedIndexColumnInfo {
     duckdb::CompressionType::COMPRESSION_AUTO;
   search::Features features;
   std::optional<HNSWColumnConfig> hnsw_config;
-  std::vector<JsonPathInfo> json_paths;
   std::optional<Column::Id> synthetic_column;
   uint32_t row_group_size = 0;
   uint32_t norm_row_group_size = 0;
@@ -149,13 +147,14 @@ class InvertedIndex final : public Index {
     const std::shared_ptr<const Snapshot>& snapshot,
     catalog::Column::Id columnd_id) const;
 
-  std::optional<ColumnTokenizer> GetJsonPathTokenizer(
-    const std::shared_ptr<const Snapshot>& snapshot,
-    catalog::Column::Id column_id, std::string_view json_pointer) const;
-
   ColumnTokenizer GetExprTokenizer(
     const std::shared_ptr<const Snapshot>& snapshot,
     std::string_view serialized_expr) const;
+
+  // Same as GetExprTokenizer, keyed by the catalog-allocated field_id.
+  ColumnTokenizer GetExprTokenizerByFieldId(
+    const std::shared_ptr<const Snapshot>& snapshot,
+    irs::field_id field_id) const;
 
   std::optional<irs::HNSWInfo> GetColumnHNSWInfo(
     catalog::Column::Id column_id) const;

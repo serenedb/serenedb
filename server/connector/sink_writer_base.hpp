@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <iresearch/types.hpp>
+
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/table_options.h"
 
@@ -39,7 +41,7 @@ struct ColumnDescriptor {
 struct ExpressionDescriptor {
   duckdb::LogicalType type;
   bool have_nulls;
-  std::string_view serialized_expr;
+  irs::field_id field_id = 0;
 };
 
 // Base implementation of column centric index writers

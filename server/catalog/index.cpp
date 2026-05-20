@@ -31,6 +31,7 @@
 #include <duckdb/main/config.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/types.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
 #include <limits>
 #include <string>
@@ -387,13 +388,6 @@ Result ValidateInvertedIndexColumns(
     }
     SDB_ASSERT(c.catalog_column);
     const auto kind = c.catalog_column->type.id();
-    if (!c.json_pointer.empty()) {
-      if (kind != duckdb::LogicalTypeId::VARCHAR) {
-        return {ERROR_BAD_PARAMETER, "Column ", c.name,
-                " must be a JSON/VARCHAR column to be indexed by path"};
-      }
-      continue;
-    }
     if (c.opclass == kIncludedKind) {
       // TODO(mbkkt) List of supported instead of list of unsupported
       const bool unsupported =
@@ -592,7 +586,8 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   };
 
   InvertedIndex::ColumnOptions inverted_columns;
-  InvertedIndex::ExpressionOptions inverted_expressions;
+  std::vector<ExpressionInfo> pending_expressions;
+  irs::field_id next_expr_field_id = 1;
   for (const auto& c : columns) {
     if (c.IsIndexedExpression()) {
       if (c.opclass_options.has_value()) {
@@ -605,31 +600,10 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         .serialized_expr = expr_data.serialized,
         .dependent_columns = expr_data.dependent_columns,
         .return_type = expr_data.return_type,
+        .field_id = next_expr_field_id++,
       };
       if (!c.opclass.empty()) {
         auto dict = resolve_dict(expr_data.pretty_printed, c.opclass);
-        if (!dict) {
-          return std::unexpected<Result>{std::move(dict.error())};
-        }
-        expr_info.text_dictionary = (*dict)->GetId();
-        expr_info.features = (*dict)->GetFeatures();
-      }
-      inverted_expressions.emplace(std::move(expr_info));
-      continue;
-    }
-    auto& index_col = inverted_columns[c.catalog_column->GetId()];
-
-    if (!c.json_pointer.empty()) {
-      if (c.opclass_options) {
-        return std::unexpected<Result>{
-          std::in_place, ERROR_BAD_PARAMETER,
-          "JSON-path index entries do not accept opclass options (used on "
-          "column '",
-          c.name, "')"};
-      }
-      JsonPathInfo path_info{.json_pointer = c.json_pointer};
-      if (!c.opclass.empty()) {
-        auto dict = resolve_dict(c.name, c.opclass);
         if (!dict) {
           return std::unexpected<Result>{std::move(dict.error())};
         }
@@ -642,24 +616,25 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
                                          "' failed to instantiate: ",
                                          tokenizer.error().errorMessage()};
         }
-        path_info.text_dictionary = (*dict)->GetId();
-        path_info.features = (*dict)->GetFeatures();
+        expr_info.text_dictionary = (*dict)->GetId();
+        expr_info.features = (*dict)->GetFeatures();
         const bool wants_store =
           irs::get<irs::StoreAttr>(**tokenizer) != nullptr;
         const bool wants_norm =
-          path_info.features.HasFeatures(irs::IndexFeatures::Norm);
+          expr_info.features.HasFeatures(irs::IndexFeatures::Norm);
         SDB_ASSERT(!(wants_store && wants_norm),
                    "tokenizer-store and norm should be mutually exclusive");
         if (wants_store || wants_norm) {
-          path_info.synthetic_column.emplace();  // sentinel: assign below
+          expr_info.synthetic_column.emplace();  // sentinel: assign below
         }
         if (wants_norm) {
-          path_info.norm_row_group_size = (*dict)->GetNormRowGroupSize();
+          expr_info.norm_row_group_size = (*dict)->GetNormRowGroupSize();
         }
       }
-      index_col.json_paths.emplace_back(std::move(path_info));
+      pending_expressions.push_back(std::move(expr_info));
       continue;
     }
+    auto& index_col = inverted_columns[c.catalog_column->GetId()];
 
     if (!c.opclass.empty()) {
       const bool has_parens = c.opclass_options.has_value();
@@ -807,10 +782,10 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       if (column_info.synthetic_column) {
         column_info.synthetic_column = Column::Id{--next};
       }
-      for (auto& path_info : column_info.json_paths) {
-        if (path_info.synthetic_column) {
-          path_info.synthetic_column = Column::Id{--next};
-        }
+    }
+    for (auto& expr_info : pending_expressions) {
+      if (expr_info.synthetic_column) {
+        expr_info.synthetic_column = Column::Id{--next};
       }
     }
   }
@@ -821,11 +796,16 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     if (info.norm_row_group_size == 0) {
       info.norm_row_group_size = options.norm_row_group_size;
     }
-    for (auto& path_info : info.json_paths) {
-      if (path_info.norm_row_group_size == 0) {
-        path_info.norm_row_group_size = options.norm_row_group_size;
-      }
+  }
+  for (auto& expr_info : pending_expressions) {
+    if (expr_info.norm_row_group_size == 0) {
+      expr_info.norm_row_group_size = options.norm_row_group_size;
     }
+  }
+  InvertedIndex::ExpressionOptions inverted_expressions;
+  inverted_expressions.reserve(pending_expressions.size());
+  for (auto& expr_info : pending_expressions) {
+    inverted_expressions.emplace(std::move(expr_info));
   }
   return std::make_shared<InvertedIndex>(
     database_id, schema_id, id, relation_id, std::move(name),

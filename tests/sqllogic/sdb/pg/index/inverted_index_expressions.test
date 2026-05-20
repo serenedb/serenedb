@@ -893,3 +893,140 @@ QUERY PLAN
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
+
+
+# --- INCLUDE columns alongside an indexed expression ---------------------
+# The inverted index pushes the (a+b)=N filter through the expression
+# field, then the INCLUDE-only `payload` column is retrieved from the
+# index for projection. INCLUDE columns must not affect the expression
+# write path or the filter dispatch.
+
+statement ok
+CREATE TABLE inc_expr(id INT PRIMARY KEY, a INT, b INT, payload VARCHAR);
+
+statement ok
+INSERT INTO inc_expr VALUES (1, 10, 20, 'r1'), (2, 5, 5, 'r2'), (3, 100, 1, 'r3');
+
+statement ok
+CREATE INDEX inc_expr_idx ON inc_expr
+  USING inverted(id, (a + b) verbatim_dict)
+  INCLUDE (payload);
+
+statement ok
+VACUUM (UPDATE_INDEXES) inc_expr;
+
+query
+SELECT id, payload FROM inc_expr_idx WHERE a + b = 30 ORDER BY id;
+----
+id	payload
+1	r1
+
+query
+SELECT id, payload FROM inc_expr_idx WHERE a + b = 10 ORDER BY id;
+----
+id	payload
+2	r2
+
+query
+SELECT id, payload FROM inc_expr_idx WHERE a + b = 101 ORDER BY id;
+----
+id	payload
+3	r3
+
+
+# INCLUDE column with an explicit `included` opclass + compression option.
+statement ok
+CREATE TABLE inc_expr2(id INT PRIMARY KEY, a INT, b INT, big BIGINT);
+
+statement ok
+INSERT INTO inc_expr2 VALUES (1, 1, 2, 1000), (2, 2, 2, 2000), (3, 5, 5, 3000);
+
+statement ok
+CREATE INDEX inc_expr2_idx ON inc_expr2
+  USING inverted(id, (a + b) verbatim_dict)
+  INCLUDE (big included (compression = 'uncompressed'));
+
+statement ok
+VACUUM (UPDATE_INDEXES) inc_expr2;
+
+query
+SELECT id, big FROM inc_expr2_idx WHERE a + b = 4 ORDER BY id;
+----
+id	big
+2	2000
+
+query
+SELECT id, big FROM inc_expr2_idx WHERE a + b = 10 ORDER BY id;
+----
+id	big
+3	3000
+
+
+# Multi-column expression + INCLUDE on a wider table.
+statement ok
+CREATE TABLE inc_expr3(id INT PRIMARY KEY, s1 VARCHAR, s2 VARCHAR, label VARCHAR);
+
+statement ok
+INSERT INTO inc_expr3 VALUES (1, 'foo', 'bar', 'L1'), (2, 'baz', 'qux', 'L2'), (3, 'foo', 'qux', 'L3');
+
+statement ok
+CREATE INDEX inc_expr3_idx ON inc_expr3
+  USING inverted(id, (s1 || s2) verbatim_dict)
+  INCLUDE (label);
+
+statement ok
+VACUUM (UPDATE_INDEXES) inc_expr3;
+
+query
+SELECT id, label FROM inc_expr3_idx WHERE s1 || s2 = 'fooqux' ORDER BY id;
+----
+id	label
+3	L3
+
+
+# --- User-defined functions in indexed expressions -----------------------
+# SereneDB rejects user-defined scalar functions in indexed expressions.
+# The check runs on the parsed expression tree before the binder inlines
+# any macros, so `CREATE MACRO` / `CREATE FUNCTION ... AS <expr>` calls
+# are caught even when their body would have reduced to a built-in
+# expression after inlining.
+
+statement ok
+CREATE TABLE udf_t(id INT PRIMARY KEY, a INT, b INT);
+
+statement ok
+INSERT INTO udf_t VALUES (1, 10, 20), (2, 5, 5);
+
+statement ok
+CREATE MACRO add_one(x) AS x + 1;
+
+statement error
+CREATE INDEX udf_macro_idx ON udf_t USING inverted(id, (add_one(a)) verbatim_dict);
+----
+db error: ERROR: user-defined functions in indexed expressions are not supported yet
+
+
+# Function-form macro syntax is also a macro: same rejection.
+statement ok
+CREATE FUNCTION inc_by_two(x) AS x + 2;
+
+statement error
+CREATE INDEX udf_fn_idx ON udf_t USING inverted(id, (inc_by_two(b)) verbatim_dict);
+----
+db error: ERROR: user-defined functions in indexed expressions are not supported yet
+
+
+# The macro check runs even when the macro is buried inside a built-in
+# call: `add_one(a) + b` is rejected.
+statement error
+CREATE INDEX udf_nested_idx ON udf_t USING inverted(id, (add_one(a) + b) verbatim_dict);
+----
+db error: ERROR: user-defined functions in indexed expressions are not supported yet
+
+
+# Built-in operators in the same place are still accepted.
+statement ok
+CREATE TABLE udf_ok(id INT PRIMARY KEY, a INT, b INT);
+
+statement ok
+CREATE INDEX udf_ok_idx ON udf_ok USING inverted(id, (a + b) verbatim_dict);

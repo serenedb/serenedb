@@ -24,6 +24,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <duckdb/planner/expression.hpp>
+#include <iresearch/types.hpp>
 #include <span>
 #include <string>
 
@@ -31,12 +32,13 @@
 
 namespace sdb::connector {
 
-// Bound + canonical-bytes + column id for one configured indexed expression.
-// Owns the expression tree and the serialized bytes.
+// Bound + canonical-bytes + dep cols + catalog field_id for one configured
+// indexed expression. Owns the expression tree and the serialized bytes.
 struct IndexedExpression {
   duckdb::unique_ptr<duckdb::Expression> normalized_expr;
   std::string serialized;
   std::vector<catalog::Column::Id> dependent_columns;
+  irs::field_id field_id = 0;
 };
 
 // Walks a JSON-extract chain and validates every step: outermost must be
@@ -97,6 +99,24 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
 duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
   const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id);
+
+// Walks `expr` and throws a `BinderException` if any BoundFunctionExpression
+// names a user-defined (non-internal) function. `context` is required to
+// look up each function by its `(catalog_name, schema_name, name)` triple
+// against the system catalog. Built-in DuckDB functions and SereneDB
+// extension functions registered with `internal = true` are accepted.
+void RejectUserDefinedFunctions(const duckdb::Expression& expr,
+                                duckdb::ClientContext& context);
+
+// Pre-bind variant: walks the *parsed* expression tree. Used at CREATE
+// INDEX time to reject calls to user-defined scalar macros and functions
+// before the binder inlines them -- once inlined, the macro's body is
+// indistinguishable from a built-in expression on the bound side, so the
+// gate has to live here. Rejects any FunctionExpression whose name
+// resolves to a `ScalarMacroCatalogEntry` (any schema) or to a
+// `ScalarFunctionCatalogEntry` whose `internal` flag is false.
+void RejectUserDefinedFunctions(const duckdb::ParsedExpression& expr,
+                                duckdb::ClientContext& context);
 
 // Rejects an INSERT/UPDATE/backfill row when its JSON-extract result is the
 // stringified form of an object or array (`{...}` / `[...]`). DuckDB's

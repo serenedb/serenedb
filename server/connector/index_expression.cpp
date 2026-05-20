@@ -24,15 +24,22 @@
 #include <absl/strings/str_cat.h>
 #include <simdjson.h>
 
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
+#include <duckdb/common/constants.hpp>
+#include <duckdb/common/exception.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/execution/column_binding_resolver.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/expression/lambda_expression.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/planner/bound_parameter_map.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -262,6 +269,97 @@ std::vector<catalog::Column::Id> CollectDependentColumns(
   };
   visit(visit, expr);
   return ordered;
+}
+
+void RejectUserDefinedFunctions(const duckdb::Expression& expr,
+                                duckdb::ClientContext& context) {
+  auto visit = [&](auto& self, const duckdb::Expression& node) -> void {
+    if (node.expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
+      const auto& f = node.Cast<duckdb::BoundFunctionExpression>();
+      const auto& schema = f.function.schema_name;
+      const auto& cat = f.function.catalog_name;
+      // Built-in scalar functions live in the SYSTEM catalog by default;
+      // anything outside SYSTEM is user-defined regardless of name.
+      bool is_user_defined = !cat.empty() && cat != SYSTEM_CATALOG;
+      if (!is_user_defined) {
+        // Catalog/schema may be empty when the binder didn't qualify the
+        // function (the common case for built-ins). Look it up in the
+        // system catalog and consult the entry's `internal` flag.
+        auto& sys = duckdb::Catalog::GetSystemCatalog(context);
+        auto entry = sys.GetEntry<duckdb::ScalarFunctionCatalogEntry>(
+          context, schema.empty() ? std::string{DEFAULT_SCHEMA} : schema,
+          f.function.name, duckdb::OnEntryNotFound::RETURN_NULL);
+        if (!entry) {
+          is_user_defined = true;
+        } else if (!entry->internal) {
+          is_user_defined = true;
+        }
+      }
+      if (is_user_defined) {
+        throw duckdb::BinderException(
+          "user-defined functions in indexed expressions are not supported "
+          "yet (function: %s)",
+          f.function.name);
+      }
+    }
+    duckdb::ExpressionIterator::EnumerateChildren(
+      node, [&](const duckdb::Expression& child) { self(self, child); });
+  };
+  visit(visit, expr);
+}
+
+void RejectUserDefinedFunctions(const duckdb::ParsedExpression& expr,
+                                duckdb::ClientContext& context) {
+  auto visit = [&](auto& self, const duckdb::ParsedExpression& node) -> void {
+    if (node.GetExpressionClass() == duckdb::ExpressionClass::FUNCTION) {
+      const auto& f = node.Cast<duckdb::FunctionExpression>();
+      auto fail = [&] {
+        throw duckdb::BinderException(
+          "user-defined functions in indexed expressions are not supported "
+          "yet");
+      };
+      // Walk every catalog reachable from the current ClientContext (system
+      // + attached catalogs). A FunctionExpression that resolves to either a
+      // macro (always user-defined) or a non-internal scalar function is
+      // rejected.
+      const auto schema =
+        f.schema.empty() ? std::string{DEFAULT_SCHEMA} : f.schema;
+      auto check_catalog = [&](duckdb::Catalog& cat) {
+        for (auto type : {duckdb::CatalogType::MACRO_ENTRY,
+                          duckdb::CatalogType::SCALAR_FUNCTION_ENTRY}) {
+          auto entry = cat.GetEntry(context, type, schema, f.function_name,
+                                    duckdb::OnEntryNotFound::RETURN_NULL);
+          if (!entry) {
+            continue;
+          }
+          if (entry->type == duckdb::CatalogType::MACRO_ENTRY) {
+            fail();
+          }
+          if (entry->type == duckdb::CatalogType::SCALAR_FUNCTION_ENTRY &&
+              !entry->internal) {
+            fail();
+          }
+        }
+      };
+      if (!f.catalog.empty()) {
+        auto cat = duckdb::Catalog::GetCatalogEntry(context, f.catalog);
+        if (cat) {
+          check_catalog(*cat);
+        }
+      } else {
+        // Probe each attached catalog in turn. The system catalog only
+        // holds internal entries, so a macro/UDF will surface from a user
+        // catalog if present.
+        for (auto& cat_ref :
+             duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
+          check_catalog(cat_ref.get()->GetCatalog());
+        }
+      }
+    }
+    duckdb::ParsedExpressionIterator::EnumerateChildren(
+      node, [&](const duckdb::ParsedExpression& child) { self(self, child); });
+  };
+  visit(visit, expr);
 }
 
 void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,

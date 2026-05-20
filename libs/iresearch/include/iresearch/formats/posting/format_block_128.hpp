@@ -23,7 +23,10 @@
 #include <simdintegratedbitpacking.h>
 #include <streamvbyte.h>
 #include <streamvbytedelta.h>
+#include <simdfor.h>
 
+#include <bit>
+#include <cstdint>
 #include <string_view>
 
 #include "basics/bit_utils.hpp"
@@ -250,12 +253,21 @@ struct FormatTraits128 {
                                          uint32_t* in, uint32_t* buf) {
     SDB_ASSERT(1 <= len);
     SDB_ASSERT(len <= doc_limits::kBlockSize);
+    // Checking correct aligning for __m128i
+    SDB_ASSERT(reinterpret_cast<uint64_t>(buf) % 16 == 0);
+    SDB_ASSERT(reinterpret_cast<uint64_t>(in) % 16 == 0);
     byte_type best_encoding = e_values;
     uint32_t best_size = len * sizeof(uint32_t);
 
     bool all_same = true;
 
     uint32_t max = in[0];
+    uint32_t min = in[0];
+    uint32_t min_byte_size = 0;
+    std::array<uint8_t, 33> hist; hist.fill(0);
+    int32_t max_bit_size = 0;
+    uint32_t patched_bit_required = 0;
+    uint32_t exception_count = 0;
 
     [&] IRS_FORCE_INLINE {
       const uint32_t streamvbyte_groups = (len + 3) / 4;
@@ -266,6 +278,12 @@ struct FormatTraits128 {
 
         all_same &= max == value;
         max = std::max(max, value);
+        min = std::min(min, value);
+
+        auto curr_bit_width = std::bit_width(value);
+        curr_bit_width += (curr_bit_width == 0);
+        ++hist[curr_bit_width];
+        max_bit_size = std::max(max_bit_size, curr_bit_width);
 
         size_streamvbyte1234 += ByteSize1234(value);
       }
@@ -298,6 +316,44 @@ struct FormatTraits128 {
           SDB_ASSERT(bits <= 31);
           best_encoding = e_bitpack_01 + (bits - 1);
           best_size = size;
+        }
+
+        // pfor
+        {
+          int32_t min_bits_count = std::max(0, max_bit_size - 8);
+          exception_count = 0;
+          patched_bit_required = max_bit_size;
+
+          for (; patched_bit_required > min_bits_count && exception_count + hist[patched_bit_required] <= 7; --patched_bit_required) {
+            exception_count += hist[patched_bit_required];
+          }
+          SDB_ASSERT(patched_bit_required > 0);
+
+          uint32_t patched_mask = (1 << patched_bit_required) - 1;
+          uint32_t new_min = in[0] & patched_mask;
+          for (size_t i = 1; i < len; ++i) {
+            new_min = std::min(new_min, in[i] & patched_mask);
+          }
+
+          const auto size = 1 + FromBits<byte_type>(doc_limits::kBlockSize * patched_bit_required) + 2 * exception_count;
+          if (size < best_size) {
+            SDB_ASSERT(bits <= 31);
+            best_encoding = e_pfor;
+            best_size = size;
+          }
+        }
+
+        {
+          const auto bits = std::bit_width(max - min);
+          SDB_ASSERT(bits >= 1); // if max == min, then all_same would be choosen.
+
+          min_byte_size = ByteSize124(min);
+          const auto size = FromBits<byte_type>(doc_limits::kBlockSize * bits) + min_byte_size;
+          if (size < best_size) {
+            std::array<byte_type, 5> to_choose = {0, e_for1_bitpack_01, e_for2_bitpack_01, 0, e_for4_bitpack_01};
+            best_encoding = to_choose[min_byte_size] + (bits - 1);
+            best_size = size;
+          }
         }
       }
 
@@ -371,6 +427,126 @@ struct FormatTraits128 {
         // TODO: Avoid additional switch
         simdpackwithoutmask(in, reinterpret_cast<__m128i*>(buf), bits);
         out.WriteBytes(reinterpret_cast<byte_type*>(buf), best_size);
+      } break;
+
+      case e_for1_bitpack_01:
+      case e_for1_bitpack_02:
+      case e_for1_bitpack_03:
+      case e_for1_bitpack_04:
+      case e_for1_bitpack_05:
+      case e_for1_bitpack_06:
+      case e_for1_bitpack_07:
+      case e_for1_bitpack_08:
+      case e_for1_bitpack_09:
+      case e_for1_bitpack_10:
+      case e_for1_bitpack_11:
+      case e_for1_bitpack_12:
+      case e_for1_bitpack_13:
+      case e_for1_bitpack_14:
+      case e_for1_bitpack_15:
+      case e_for1_bitpack_16:
+      case e_for1_bitpack_17:
+      case e_for1_bitpack_18:
+      case e_for1_bitpack_19:
+      case e_for1_bitpack_20:
+      case e_for1_bitpack_21:
+      case e_for1_bitpack_22:
+      case e_for1_bitpack_23:
+      case e_for1_bitpack_24:
+      case e_for1_bitpack_25:
+      case e_for1_bitpack_26:
+      case e_for1_bitpack_27:
+      case e_for1_bitpack_28:
+      case e_for1_bitpack_29:
+      case e_for1_bitpack_30:
+      case e_for1_bitpack_31:
+      case e_for2_bitpack_01:
+      case e_for2_bitpack_02:
+      case e_for2_bitpack_03:
+      case e_for2_bitpack_04:
+      case e_for2_bitpack_05:
+      case e_for2_bitpack_06:
+      case e_for2_bitpack_07:
+      case e_for2_bitpack_08:
+      case e_for2_bitpack_09:
+      case e_for2_bitpack_10:
+      case e_for2_bitpack_11:
+      case e_for2_bitpack_12:
+      case e_for2_bitpack_13:
+      case e_for2_bitpack_14:
+      case e_for2_bitpack_15:
+      case e_for2_bitpack_16:
+      case e_for2_bitpack_17:
+      case e_for2_bitpack_18:
+      case e_for2_bitpack_19:
+      case e_for2_bitpack_20:
+      case e_for2_bitpack_21:
+      case e_for2_bitpack_22:
+      case e_for2_bitpack_23:
+      case e_for2_bitpack_24:
+      case e_for2_bitpack_25:
+      case e_for2_bitpack_26:
+      case e_for2_bitpack_27:
+      case e_for2_bitpack_28:
+      case e_for2_bitpack_29:
+      case e_for2_bitpack_30:
+      case e_for2_bitpack_31:
+      case e_for4_bitpack_01:
+      case e_for4_bitpack_02:
+      case e_for4_bitpack_03:
+      case e_for4_bitpack_04:
+      case e_for4_bitpack_05:
+      case e_for4_bitpack_06:
+      case e_for4_bitpack_07:
+      case e_for4_bitpack_08:
+      case e_for4_bitpack_09:
+      case e_for4_bitpack_10:
+      case e_for4_bitpack_11:
+      case e_for4_bitpack_12:
+      case e_for4_bitpack_13:
+      case e_for4_bitpack_14:
+      case e_for4_bitpack_15:
+      case e_for4_bitpack_16:
+      case e_for4_bitpack_17:
+      case e_for4_bitpack_18:
+      case e_for4_bitpack_19:
+      case e_for4_bitpack_20:
+      case e_for4_bitpack_21:
+      case e_for4_bitpack_22:
+      case e_for4_bitpack_23:
+      case e_for4_bitpack_24:
+      case e_for4_bitpack_25:
+      case e_for4_bitpack_26:
+      case e_for4_bitpack_27:
+      case e_for4_bitpack_28:
+      case e_for4_bitpack_29:
+      case e_for4_bitpack_30:
+      case e_for4_bitpack_31: {
+        MakeBlockFromTail(in, len);
+        simdpackFOR(min, in, reinterpret_cast<__m128i*>(buf), std::bit_width(max - min));
+        Serialize124(min_byte_size, min, out);
+        out.WriteBytes(reinterpret_cast<byte_type*>(buf), best_size - min_byte_size);
+      } break;
+
+      case e_pfor: {
+        SDB_ASSERT(len == doc_limits::kBlockSize);
+        SDB_ASSERT(exception_count != 0);
+        uint32_t patched_mask = (1 << patched_bit_required) - 1;
+        std::array<uint8_t, 14> exceptions{};
+        uint32_t exp_i = 0;
+        for (size_t i = 0; i < doc_limits::kBlockSize; ++i) {
+          if (in[i] > patched_mask) {
+            exceptions[2 * exp_i] = i;
+            exceptions[2 * exp_i + 1] = in[i] >> patched_bit_required;
+            ++exp_i;
+            in[i] = in[i] & patched_mask;
+          }
+        }
+
+        out.WriteByte((exception_count << 5) | patched_bit_required);
+        simdpackwithoutmask(in, reinterpret_cast<__m128i*>(buf), patched_bit_required);
+        out.WriteBytes(reinterpret_cast<byte_type*>(buf), FromBits<byte_type>(doc_limits::kBlockSize * patched_bit_required));
+        out.WriteBytes(exceptions.data(), 2 * exception_count);
       } break;
 
       default:
@@ -569,6 +745,10 @@ struct FormatTraits128 {
                                         uint32_t* buf, uint32_t* out) {
     SDB_ASSERT(1 <= len);
     SDB_ASSERT(len <= doc_limits::kBlockSize);
+    // Checking correct aligning for __m128i
+    SDB_ASSERT(reinterpret_cast<uint64_t>(buf) % 16 == 0);
+    SDB_ASSERT(reinterpret_cast<uint64_t>(out) % 16 == 0);
+
     const auto type = static_cast<Encoding>(in.ReadByte());
     auto* const begin = out + (doc_limits::kBlockSize - len);
     switch (type) {
@@ -628,6 +808,142 @@ struct FormatTraits128 {
         const auto bits = (type - e_bitpack_01) + 1;
         // TODO: Avoid additional switch
         simdunpack(reinterpret_cast<const __m128i*>(data), out, bits);
+      } break;
+
+      case e_pfor: {
+        uint8_t control = in.ReadByte();
+        const uint32_t exception_count = control >> 5;
+        const uint32_t bits = control & 31;
+        const auto for_size = FromBits<byte_type>(doc_limits::kBlockSize * bits);
+        const auto* data = ReadDataImpl(for_size + exception_count * 2, in, buf);
+
+        simdunpack(reinterpret_cast<const __m128i*>(data), out, bits);
+        data += for_size;
+
+        for (size_t i = 0; i < exception_count; ++i) {
+          uint32_t curr_idx = *data;
+          ++data;
+          uint32_t value = *data;
+          out[curr_idx] |= value << bits;
+          ++data;
+        }
+      } break;
+
+      case e_for1_bitpack_01:
+      case e_for1_bitpack_02:
+      case e_for1_bitpack_03:
+      case e_for1_bitpack_04:
+      case e_for1_bitpack_05:
+      case e_for1_bitpack_06:
+      case e_for1_bitpack_07:
+      case e_for1_bitpack_08:
+      case e_for1_bitpack_09:
+      case e_for1_bitpack_10:
+      case e_for1_bitpack_11:
+      case e_for1_bitpack_12:
+      case e_for1_bitpack_13:
+      case e_for1_bitpack_14:
+      case e_for1_bitpack_15:
+      case e_for1_bitpack_16:
+      case e_for1_bitpack_17:
+      case e_for1_bitpack_18:
+      case e_for1_bitpack_19:
+      case e_for1_bitpack_20:
+      case e_for1_bitpack_21:
+      case e_for1_bitpack_22:
+      case e_for1_bitpack_23:
+      case e_for1_bitpack_24:
+      case e_for1_bitpack_25:
+      case e_for1_bitpack_26:
+      case e_for1_bitpack_27:
+      case e_for1_bitpack_28:
+      case e_for1_bitpack_29:
+      case e_for1_bitpack_30:
+      case e_for1_bitpack_31: {
+        const auto bits = (type - e_for1_bitpack_01) + 1;
+        const auto size = Size(0, type, in);
+        uint32_t min = static_cast<uint32_t>(in.ReadByte());
+        [[maybe_unused]] const auto read = in.ReadBytes(reinterpret_cast<byte_type*>(buf), size - 1);
+        SDB_ASSERT(read == size - 1);
+        simdunpackFOR(min, reinterpret_cast<const __m128i*>(buf), out, bits);
+      } break;
+
+      case e_for2_bitpack_01:
+      case e_for2_bitpack_02:
+      case e_for2_bitpack_03:
+      case e_for2_bitpack_04:
+      case e_for2_bitpack_05:
+      case e_for2_bitpack_06:
+      case e_for2_bitpack_07:
+      case e_for2_bitpack_08:
+      case e_for2_bitpack_09:
+      case e_for2_bitpack_10:
+      case e_for2_bitpack_11:
+      case e_for2_bitpack_12:
+      case e_for2_bitpack_13:
+      case e_for2_bitpack_14:
+      case e_for2_bitpack_15:
+      case e_for2_bitpack_16:
+      case e_for2_bitpack_17:
+      case e_for2_bitpack_18:
+      case e_for2_bitpack_19:
+      case e_for2_bitpack_20:
+      case e_for2_bitpack_21:
+      case e_for2_bitpack_22:
+      case e_for2_bitpack_23:
+      case e_for2_bitpack_24:
+      case e_for2_bitpack_25:
+      case e_for2_bitpack_26:
+      case e_for2_bitpack_27:
+      case e_for2_bitpack_28:
+      case e_for2_bitpack_29:
+      case e_for2_bitpack_30:
+      case e_for2_bitpack_31: {
+        const auto bits = (type - e_for2_bitpack_01) + 1;
+        const auto size = Size(0, type, in);
+        uint32_t min = static_cast<uint16_t>(in.ReadI16());
+        [[maybe_unused]] const auto read = in.ReadBytes(reinterpret_cast<byte_type*>(buf), size - 2);
+        SDB_ASSERT(read == size - 2);
+        simdunpackFOR(min, reinterpret_cast<const __m128i*>(buf), out, bits);
+      } break;
+
+      case e_for4_bitpack_01:
+      case e_for4_bitpack_02:
+      case e_for4_bitpack_03:
+      case e_for4_bitpack_04:
+      case e_for4_bitpack_05:
+      case e_for4_bitpack_06:
+      case e_for4_bitpack_07:
+      case e_for4_bitpack_08:
+      case e_for4_bitpack_09:
+      case e_for4_bitpack_10:
+      case e_for4_bitpack_11:
+      case e_for4_bitpack_12:
+      case e_for4_bitpack_13:
+      case e_for4_bitpack_14:
+      case e_for4_bitpack_15:
+      case e_for4_bitpack_16:
+      case e_for4_bitpack_17:
+      case e_for4_bitpack_18:
+      case e_for4_bitpack_19:
+      case e_for4_bitpack_20:
+      case e_for4_bitpack_21:
+      case e_for4_bitpack_22:
+      case e_for4_bitpack_23:
+      case e_for4_bitpack_24:
+      case e_for4_bitpack_25:
+      case e_for4_bitpack_26:
+      case e_for4_bitpack_27:
+      case e_for4_bitpack_28:
+      case e_for4_bitpack_29:
+      case e_for4_bitpack_30:
+      case e_for4_bitpack_31: {
+        const auto bits = (type - e_for4_bitpack_01) + 1;
+        const auto size = Size(0, type, in);
+        uint32_t min = static_cast<uint32_t>(in.ReadI32());
+        [[maybe_unused]] const auto read = in.ReadBytes(reinterpret_cast<byte_type*>(buf), size - 4);
+        SDB_ASSERT(read == size - 4);
+        simdunpackFOR(min, reinterpret_cast<const __m128i*>(buf), out, bits);
       } break;
 
       default:
@@ -767,6 +1083,104 @@ struct FormatTraits128 {
     e_bitpack_31,
     // e_bitpack_32,  // covered by e_values
 
+    e_for1_bitpack_01,
+    e_for1_bitpack_02,
+    e_for1_bitpack_03,
+    e_for1_bitpack_04,
+    e_for1_bitpack_05,
+    e_for1_bitpack_06,
+    e_for1_bitpack_07,
+    e_for1_bitpack_08,
+    e_for1_bitpack_09,
+    e_for1_bitpack_10,
+    e_for1_bitpack_11,
+    e_for1_bitpack_12,
+    e_for1_bitpack_13,
+    e_for1_bitpack_14,
+    e_for1_bitpack_15,
+    e_for1_bitpack_16,
+    e_for1_bitpack_17,
+    e_for1_bitpack_18,
+    e_for1_bitpack_19,
+    e_for1_bitpack_20,
+    e_for1_bitpack_21,
+    e_for1_bitpack_22,
+    e_for1_bitpack_23,
+    e_for1_bitpack_24,
+    e_for1_bitpack_25,
+    e_for1_bitpack_26,
+    e_for1_bitpack_27,
+    e_for1_bitpack_28,
+    e_for1_bitpack_29,
+    e_for1_bitpack_30,
+    e_for1_bitpack_31,
+
+    e_for2_bitpack_01,
+    e_for2_bitpack_02,
+    e_for2_bitpack_03,
+    e_for2_bitpack_04,
+    e_for2_bitpack_05,
+    e_for2_bitpack_06,
+    e_for2_bitpack_07,
+    e_for2_bitpack_08,
+    e_for2_bitpack_09,
+    e_for2_bitpack_10,
+    e_for2_bitpack_11,
+    e_for2_bitpack_12,
+    e_for2_bitpack_13,
+    e_for2_bitpack_14,
+    e_for2_bitpack_15,
+    e_for2_bitpack_16,
+    e_for2_bitpack_17,
+    e_for2_bitpack_18,
+    e_for2_bitpack_19,
+    e_for2_bitpack_20,
+    e_for2_bitpack_21,
+    e_for2_bitpack_22,
+    e_for2_bitpack_23,
+    e_for2_bitpack_24,
+    e_for2_bitpack_25,
+    e_for2_bitpack_26,
+    e_for2_bitpack_27,
+    e_for2_bitpack_28,
+    e_for2_bitpack_29,
+    e_for2_bitpack_30,
+    e_for2_bitpack_31,
+
+    e_for4_bitpack_01,
+    e_for4_bitpack_02,
+    e_for4_bitpack_03,
+    e_for4_bitpack_04,
+    e_for4_bitpack_05,
+    e_for4_bitpack_06,
+    e_for4_bitpack_07,
+    e_for4_bitpack_08,
+    e_for4_bitpack_09,
+    e_for4_bitpack_10,
+    e_for4_bitpack_11,
+    e_for4_bitpack_12,
+    e_for4_bitpack_13,
+    e_for4_bitpack_14,
+    e_for4_bitpack_15,
+    e_for4_bitpack_16,
+    e_for4_bitpack_17,
+    e_for4_bitpack_18,
+    e_for4_bitpack_19,
+    e_for4_bitpack_20,
+    e_for4_bitpack_21,
+    e_for4_bitpack_22,
+    e_for4_bitpack_23,
+    e_for4_bitpack_24,
+    e_for4_bitpack_25,
+    e_for4_bitpack_26,
+    e_for4_bitpack_27,
+    e_for4_bitpack_28,
+    e_for4_bitpack_29,
+    e_for4_bitpack_30,
+    e_for4_bitpack_31,
+
+    e_pfor
+
     // NOLINTEND
   };
 
@@ -805,6 +1219,29 @@ struct FormatTraits128 {
       return 2;
     }
     return 4;
+  }
+
+  static constexpr uint32_t ByteSize124(uint32_t value) {
+    if (value < (uint32_t{1} << 8)) {
+      return 1;
+    }
+    if (value < (uint32_t{1} << 16)) {
+      return 2;
+    }
+    return 4;
+  }
+
+  static constexpr void Serialize124(uint32_t count_bytes, uint32_t value, BufferedOutput& out) {
+    switch (count_bytes) {
+      case 1:
+        return out.WriteByte(value);
+      case 2:
+        return out.WriteU16(value);
+      case 4:
+        return out.WriteU32(value);
+      default:
+        SDB_UNREACHABLE();
+    }
   }
 
   template<typename T>
@@ -944,6 +1381,114 @@ struct FormatTraits128 {
       case e_bitpack_31:
         return ((type - e_bitpack_01) + 1) *
                (doc_limits::kBlockSize / BitsRequired<byte_type>());
+      
+      case e_pfor: {
+        uint32_t control = in.ReadByte();
+        return FromBits<byte_type>(doc_limits::kBlockSize * (control & 31)) + (control >> 5) * 2;
+      }
+
+
+      case e_for1_bitpack_01:
+      case e_for1_bitpack_02:
+      case e_for1_bitpack_03:
+      case e_for1_bitpack_04:
+      case e_for1_bitpack_05:
+      case e_for1_bitpack_06:
+      case e_for1_bitpack_07:
+      case e_for1_bitpack_08:
+      case e_for1_bitpack_09:
+      case e_for1_bitpack_10:
+      case e_for1_bitpack_11:
+      case e_for1_bitpack_12:
+      case e_for1_bitpack_13:
+      case e_for1_bitpack_14:
+      case e_for1_bitpack_15:
+      case e_for1_bitpack_16:
+      case e_for1_bitpack_17:
+      case e_for1_bitpack_18:
+      case e_for1_bitpack_19:
+      case e_for1_bitpack_20:
+      case e_for1_bitpack_21:
+      case e_for1_bitpack_22:
+      case e_for1_bitpack_23:
+      case e_for1_bitpack_24:
+      case e_for1_bitpack_25:
+      case e_for1_bitpack_26:
+      case e_for1_bitpack_27:
+      case e_for1_bitpack_28:
+      case e_for1_bitpack_29:
+      case e_for1_bitpack_30:
+      case e_for1_bitpack_31:
+        return ((type - e_for1_bitpack_01) + 1) *
+               (doc_limits::kBlockSize / BitsRequired<byte_type>()) + 1;
+
+      case e_for2_bitpack_01:
+      case e_for2_bitpack_02:
+      case e_for2_bitpack_03:
+      case e_for2_bitpack_04:
+      case e_for2_bitpack_05:
+      case e_for2_bitpack_06:
+      case e_for2_bitpack_07:
+      case e_for2_bitpack_08:
+      case e_for2_bitpack_09:
+      case e_for2_bitpack_10:
+      case e_for2_bitpack_11:
+      case e_for2_bitpack_12:
+      case e_for2_bitpack_13:
+      case e_for2_bitpack_14:
+      case e_for2_bitpack_15:
+      case e_for2_bitpack_16:
+      case e_for2_bitpack_17:
+      case e_for2_bitpack_18:
+      case e_for2_bitpack_19:
+      case e_for2_bitpack_20:
+      case e_for2_bitpack_21:
+      case e_for2_bitpack_22:
+      case e_for2_bitpack_23:
+      case e_for2_bitpack_24:
+      case e_for2_bitpack_25:
+      case e_for2_bitpack_26:
+      case e_for2_bitpack_27:
+      case e_for2_bitpack_28:
+      case e_for2_bitpack_29:
+      case e_for2_bitpack_30:
+      case e_for2_bitpack_31:
+        return ((type - e_for2_bitpack_01) + 1) *
+               (doc_limits::kBlockSize / BitsRequired<byte_type>()) + 2;
+
+      case e_for4_bitpack_01:
+      case e_for4_bitpack_02:
+      case e_for4_bitpack_03:
+      case e_for4_bitpack_04:
+      case e_for4_bitpack_05:
+      case e_for4_bitpack_06:
+      case e_for4_bitpack_07:
+      case e_for4_bitpack_08:
+      case e_for4_bitpack_09:
+      case e_for4_bitpack_10:
+      case e_for4_bitpack_11:
+      case e_for4_bitpack_12:
+      case e_for4_bitpack_13:
+      case e_for4_bitpack_14:
+      case e_for4_bitpack_15:
+      case e_for4_bitpack_16:
+      case e_for4_bitpack_17:
+      case e_for4_bitpack_18:
+      case e_for4_bitpack_19:
+      case e_for4_bitpack_20:
+      case e_for4_bitpack_21:
+      case e_for4_bitpack_22:
+      case e_for4_bitpack_23:
+      case e_for4_bitpack_24:
+      case e_for4_bitpack_25:
+      case e_for4_bitpack_26:
+      case e_for4_bitpack_27:
+      case e_for4_bitpack_28:
+      case e_for4_bitpack_29:
+      case e_for4_bitpack_30:
+      case e_for4_bitpack_31:
+        return ((type - e_for4_bitpack_01) + 1) *
+               (doc_limits::kBlockSize / BitsRequired<byte_type>()) + 4;
 
       default:
         SDB_UNREACHABLE();

@@ -32,6 +32,8 @@ services:
       - "${WORKSPACE}/logs:/logs"
     depends_on:
       - serenedb-single
+    env_file:
+      - "${WORKSPACE}/docker.env"
     environment:
       - HOME=/tmp/home
       - LOG_DIR=/logs

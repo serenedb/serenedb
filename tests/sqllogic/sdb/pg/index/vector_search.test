@@ -270,6 +270,122 @@ id
 3
 
 
+
+query
+EXPLAIN SELECT id FROM l2_index WHERE emb <-> '[0, 0, 0]'::FLOAT[3] < (0.5 + 0.2);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│      Radius: 0.700000     │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM l2_index ORDER BY l2_distance(emb, [0, 0, 0]::FLOAT[3]) LIMIT 10;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│          TopK: 10         │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM l2_index ORDER BY l2_distance(emb, emb) LIMIT 5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 5          │
+│      Order By: #1 ASC     │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│   l2_distance(emb, emb)   │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│                           │
+│        Projections:       │
+│           id (l)          │
+│          emb (i)          │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM l2_index WHERE l2_distance(emb, emb) < 0.7;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (l2_distance(emb, emb) < 0│
+│            .7)            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│                           │
+│        Projections:       │
+│          emb (i)          │
+│           id (l)          │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT count(*) FROM l2_index WHERE l2_distance(emb, emb) < 0.0001;
+----
+count
+4
+
+
 statement ok
 CREATE TABLE t_l2 (id INT, emb FLOAT[3]);
 

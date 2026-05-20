@@ -735,13 +735,21 @@ static void SetCommonCallbacks(duckdb::TableFunction& func) {
   // global_initialization, but why?
 }
 
+void FullTablePushdownComplexFilter(
+  duckdb::ClientContext& context, duckdb::LogicalGet& get,
+  duckdb::FunctionData* bind_data,
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters) {
+  optimizer::IresearchPushdownComplexFilter(context, get, bind_data, filters);
+  optimizer::RocksDBPushdownComplexFilter(context, get, bind_data, filters);
+}
+
 duckdb::TableFunction CreateTableFullscanFunction() {
   duckdb::TableFunction func{
     "rocksdb_table_fullscan", {}, PKFullScanFunction, SereneDBScanBind,
     PKFullScanInitGlobal,
   };
   SetCommonCallbacks(func);
-  func.pushdown_complex_filter = &optimizer::RocksDBPushdownComplexFilter;
+  func.pushdown_complex_filter = &FullTablePushdownComplexFilter;
   return func;
 }
 

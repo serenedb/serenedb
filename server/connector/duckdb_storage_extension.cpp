@@ -19,7 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "connector/duckdb_storage_extension.h"
-#include "connector/optimizer/iresearch_plan.h"
 
 #include <duckdb/main/config.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
@@ -32,6 +31,7 @@
 #include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_transaction.h"
+#include "connector/optimizer/iresearch_plan.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"

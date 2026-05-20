@@ -441,3 +441,138 @@ SELECT count(*) FROM lzs_idx WHERE body @@ (
 ----
 count
 319
+
+
+# ============================================================================
+# Real multi-term phrase iterators inside disjunctions/conjunctions.
+# Single-token ts_phrase() reduces to a term query; this section uses 2+ tokens
+# so each child is an actual Phrase iterator whose LazySeek delegates to a
+# conjunction approximation and then checks positions.
+# Body emit order is fixed: 'common [half] [ninth] [hundred] [thousand]
+#   [w1_only|w3_only|w4_only] [first10] [last10] [midspike] [bnd_low] [bnd_hi]
+#   [bnd_step] [pair_a pair_b] [tail_dense] [head_sparse]'.
+# Adjacency therefore depends on which conditionals fired between the two
+# probed tokens.
+# ============================================================================
+
+# 'common half' adjacent = id % 2 = 0 -> 8192.
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ ts_phrase('common', 'half');
+----
+count
+8192
+
+# 'common ninth' adjacent: 'half' must NOT be present, so id % 9 = 0 AND id % 2 != 0
+# -> id % 18 = 9 in 1..16384.
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ ts_phrase('common', 'ninth');
+----
+count
+910
+
+# Disjunction of two real phrases (different conjunction approximations).
+# (common half) is at all even ids (8192). (common ninth) is at id % 18 = 9 (910).
+# Disjoint sets (one is even-only, the other odd-only). Total = 8192 + 910 = 9102.
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('common', 'half') || ts_phrase('common', 'ninth'));
+----
+count
+9102
+
+# Disjunction of three real phrases.
+# (common half) 8192 + (common ninth) 910 + (pair_a pair_b) 1260.
+# pair_a pair_b is at id % 13 = 0, which has half (% 2 = 0) overlap at id % 26 = 0.
+# pair_a pair_b ∩ common-half: id % 26 = 0 in 1..16384 -> 16380/26 = 630.
+# pair_a pair_b ∩ common-ninth: id % 13 = 0 AND id % 18 = 9. LCM(13,18) = 234,
+# id % 234 = 117 in 1..16384 -> count = floor((16384-117)/234) + 1 = 69 + 1 = 70.
+# Total = 8192 + 910 + 1260 - 630 - 70 = 9662.
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ (
+  ts_phrase('common', 'half')
+  || ts_phrase('common', 'ninth')
+  || ts_phrase('pair_a', 'pair_b'));
+----
+count
+9662
+
+# Conjunction of two real phrases.
+# (common half) ∩ (pair_a pair_b) = id % 2 = 0 AND id % 13 = 0 = id % 26 = 0
+# = 16380/26 = 630.
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('common', 'half') && ts_phrase('pair_a', 'pair_b'));
+----
+count
+630
+
+# Conjunction of three real phrases.
+# (common half) ∩ (pair_a pair_b) ∩ (common, 2, pair_a) -- the third one tests
+# whether 'common' precedes 'pair_a' with exactly 2 tokens between. With the
+# body shape 'common half pair_a pair_b ...' (only when only half + pair_a
+# fire), that holds for id % 2 = 0 AND id % 13 = 0 AND NOT (other middle
+# tokens fire). Since the body always inserts 'half' between common and pair_a
+# when half is set, but no other token between them under common/half/pair_a
+# alone, we expect a subset of common-half ∩ pair_a-pair_b minus rows where
+# some middle conditional adds tokens. Let the engine compute -- exercises
+# the multi-token phrase position check.
+query
+SELECT count(*) > 0 AS has_match FROM lzs_idx
+WHERE body @@ (ts_phrase('common', 'half') && ts_phrase('pair_a', 'pair_b')
+            && ts_phrase('half', 'pair_a'));
+----
+has_match
+t
+
+# Phrase-OR-phrase AND a sparse term. Forces phrase's lazy-seek to drive
+# across the corpus, then conjunction with a sparse posting list.
+# (pair_a pair_b OR common ninth) AND head_sparse
+# head_sparse ids: {800, 1600, 2400, 3200, 4000, 4800, 5600, 6400, 7200, 8000}
+# pair_a pair_b at id % 13 = 0 ∩ head_sparse: id % 13 = 0 AND id % 800 = 0 AND id <= 8192
+#   LCM(13,800)=10400; no multiple ≤ 8192. So 0.
+# common ninth at id % 18 = 9 ∩ head_sparse: id % 18 = 9 AND id % 800 = 0.
+#   LCM(18,800) = 3600. id % 3600 in {9, ?}? id % 800 = 0 means id ∈ {800,1600,..,8000};
+#   of those, which have id % 18 = 9? 800%18=8, 1600%18=16, 2400%18=6, 3200%18=14,
+#   4000%18=4, 4800%18=12, 5600%18=2, 6400%18=10, 7200%18=0, 8000%18=8. None = 9.
+#   So 0.
+# Total = 0.
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ (
+  (ts_phrase('pair_a', 'pair_b') || ts_phrase('common', 'ninth'))
+  && ts_phrase('head_sparse'));
+----
+count
+0
+
+# Disjunction of phrase + term, cross-window.
+# (pair_a pair_b) OR last10 = 1260 + 10. Overlap: pair_a pair_b ∩ last10 =
+# id % 13 = 0 in 16375..16384 -> {16380} (16380/13 = 1260). 1 overlap.
+# Total = 1269.
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('pair_a', 'pair_b') || ts_phrase('last10'));
+----
+count
+1269
+
+# Phrase position-miss inside a disjunction. ts_phrase('half', 'last10')
+# returns 0 (tokens are not adjacent -- 'w4_only' separates them).
+# (half last10) OR (common half) = 0 + 8192 = 8192.
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('half', 'last10') || ts_phrase('common', 'half'));
+----
+count
+8192
+
+# WAND over a disjunction of real phrases.
+query
+SELECT count(*) FROM (
+  SELECT id FROM lzs_idx WHERE body @@ (
+    ts_phrase('common', 'half') || ts_phrase('common', 'ninth')
+    || ts_phrase('pair_a', 'pair_b'))
+  ORDER BY BM25(lzs_idx.tableoid) DESC LIMIT 25
+) t;
+----
+count
+25

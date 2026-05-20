@@ -86,6 +86,118 @@ count
 
 
 # ============================================================================
+# read_blob -- binary sibling of read_text. Shares DirectFileReader machinery.
+# ============================================================================
+
+# Same UTF-8 fixtures: read_blob returns BLOB-typed content, octet_length matches file size.
+query
+SELECT count(*) FROM read_blob('/tmp/$__DATABASE__-*');
+----
+count
+3
+
+query
+SELECT DISTINCT typeof(content) FROM read_blob('/tmp/$__DATABASE__-*');
+----
+typeof
+BLOB
+
+# Stage a non-UTF8 binary fixture and verify the read_text/read_blob asymmetry.
+system ok
+printf '\x00\xff\xfe\x80\xc0\x01' > /tmp/$__DATABASE__-binary.bin
+
+# read_blob succeeds on binary content.
+query
+SELECT octet_length(content) > 0 AS has_bytes,
+       typeof(content) AS t
+FROM read_blob('/tmp/$__DATABASE__-binary.bin');
+----
+has_bytes	t
+t	BLOB
+
+# read_text on the same file fails at the UTF-8 validation step when content is
+# actually projected (count(*) alone wouldn't trigger the read).
+statement error read_text: could not read content of file .* as valid UTF-8
+SELECT content FROM read_text('/tmp/$__DATABASE__-binary.bin');
+
+
+# Cleanup the binary fixture (the .md/.txt are cleaned at the end of the test).
+system ok
+rm -f /tmp/$__DATABASE__-binary.bin
+
+
+# ============================================================================
+# Inverted index over a BLOB column (read_blob -> decode -> pattern analyzer).
+#
+# FTS query layer (@@, ts_phrase, ts_like) requires VARCHAR. decode() converts
+# the BLOB bytes to VARCHAR (errors on non-UTF8; pass 'replace'/'ignore' for
+# binary). With a pattern tokenizer we get full control over what gets indexed
+# -- handy for selectively extracting tokens that match a regex from arbitrary
+# byte payloads.
+# ============================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pat_caps(
+    template = 'pattern',
+    pattern = '[A-Z][A-Za-z0-9]{2,}',
+    group = 0,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE blob_docs AS
+  SELECT filename AS path, decode(content) AS body
+  FROM read_blob('/tmp/$__DATABASE__-*');
+
+
+query
+SELECT typeof(body) FROM blob_docs LIMIT 1;
+----
+typeof
+VARCHAR
+
+
+statement ok
+CREATE INDEX blob_docs_idx ON blob_docs USING inverted(body pat_caps);
+
+
+# Pattern extracts capitalized identifiers. "Robertson" only appears in bravo.md.
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_docs_idx WHERE body @@ 'Robertson' ORDER BY slug;
+----
+slug
+bravo
+
+
+# "BM25" also satisfies the pattern (starts uppercase, 4 chars).
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_docs_idx WHERE body @@ 'BM25' ORDER BY slug;
+----
+slug
+bravo
+
+
+# ts_phrase + ts_like work since the column is VARCHAR with the right features.
+query
+SELECT count(*) > 0 AS has_match FROM blob_docs_idx WHERE body @@ ts_phrase('Robertson');
+----
+has_match
+t
+
+
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_docs_idx WHERE body @@ ts_like('Rob%') ORDER BY slug;
+----
+slug
+bravo
+
+
+# ============================================================================
 # Mode A: view + inverted index. Lookup TF fires for highlight/materialization.
 # ============================================================================
 

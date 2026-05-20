@@ -44,9 +44,14 @@
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_rocksdb_reader.h"
+#include "connector/duckdb_rocksdb_writer.h"
+#include "connector/duckdb_search_sink_writer.h"
 #include "connector/indexonly_marker.h"
+#include "connector/key_utils.hpp"
 #include "connector/search_sink_writer.hpp"
+#include "query/duckdb_engine.h"
 #include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -130,7 +135,11 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
     return false;
   }
 
-  auto column_ids = inverted->GetColumnIds();
+  // Use the referenced set so dependent columns of indexed expressions
+  // (e.g. base columns of `(a + b) verbatim_dict` or `(content->>'host')`)
+  // are tracked too -- the chunk we build below feeds the expression
+  // evaluator, so its slots must cover every BoundColumnRef.
+  auto column_ids = inverted->GetReferencedColumnIds();
   if (column_ids.empty()) {
     return false;
   }
@@ -193,13 +202,38 @@ void FlushShard(ShardState& s,
   auto is_text_indexed_provider =
     connector::MakeIsTextIndexedProvider(*s.index);
   auto hnsw_info_provider = connector::MakeHNSWInfoProvider(*s.index);
-  connector::SearchSinkInsertBaseImpl insert_sink{
+  // Expression replay needs a ClientContext with an active transaction --
+  // both DeserializeBoundExpression and ExpressionExecutor reach into the
+  // TransactionContext. Recovery runs outside of any pg request, so we
+  // spin up a private connection and explicitly begin a transaction; the
+  // `Finally` rolls it back when we leave (we never need to commit it --
+  // expression evaluation is read-only here).
+  auto conn = query::DuckDBEngine::Instance().CreateConnection();
+  conn->BeginTransaction();
+  irs::Finally rollback_on_exit = [&]() noexcept {
+    try {
+      conn->Rollback();
+    } catch (...) {  // NOLINT(bugprone-empty-catch)
+    }
+  };
+  auto& client_context = *conn->context;
+  auto expr_tokenizer_provider =
+    connector::MakeExpressionTokenizerProvider(snapshot, *s.index);
+  auto indexed_exprs =
+    connector::MakeIndexedExpressions(*s.index, client_context);
+  // `columns` for IsIndexed (per-row inverted side) is the *directly*
+  // indexed set; expression-dep columns live in `s.indexed_columns` only
+  // to back the chunk we feed the expression evaluator below.
+  auto direct_column_ids = s.index->GetColumnIds();
+  connector::DuckDBSearchSinkInsertWriter insert_sink{
     trx,
     std::move(tokenizer_provider),
+    direct_column_ids,
     std::move(store_values_provider),
     std::move(is_text_indexed_provider),
     std::move(hnsw_info_provider),
-    s.indexed_column_ids,
+    std::move(expr_tokenizer_provider),
+    std::move(indexed_exprs),
   };
   connector::SearchSinkDeleteBaseImpl delete_sink{trx};
 
@@ -270,13 +304,66 @@ void FlushShard(ShardState& s,
         }
       } else {
         duckdb::Vector unused{col.type, nullptr, 0};
-        const bool switched = sink.SwitchColumnImpl(desc, unused, /*count=*/0);
-        SDB_ASSERT(switched);
+        // SwitchColumnImpl returns false when the column is in
+        // `s.indexed_columns` only because it's an expression dependency
+        // (not itself directly indexed). In that case the per-row
+        // inverted write is a no-op -- the column will be projected as
+        // part of the chunk we feed the expression evaluator below.
+        if (!sink.SwitchColumnImpl(desc, unused, /*count=*/0)) {
+          continue;
+        }
       }
       for (const auto* row : insert_entries) {
         std::string_view cell = resolve_cell(*row, col_idx);
         rocksdb::Slice slice{cell.data(), cell.size()};
         sink.WriteImpl(std::span{&slice, 1}, row->full_key);
+      }
+    }
+
+    // Replay every indexed expression: build a DataChunk from the per-row
+    // cells (which the loop above just resolved -- either from the WAL
+    // payload or by `db.Get`), evaluate each expression once across the
+    // chunk, and drive the result through the inverted-index sink's
+    // SwitchExpression+Write pipeline (same path the DML hot path uses).
+    auto indexed_exprs = insert_sink.IndexedExpressions();
+    if (!indexed_exprs.empty()) {
+      duckdb::vector<duckdb::LogicalType> types;
+      std::vector<catalog::Column::Id> slot_to_col_id;
+      types.reserve(s.indexed_columns.size());
+      slot_to_col_id.reserve(s.indexed_columns.size());
+      for (const auto& col : s.indexed_columns) {
+        types.push_back(col.type);
+        slot_to_col_id.push_back(col.id);
+      }
+      connector::DuckDBColumnSerializer serializer{
+        duckdb::Allocator::DefaultAllocator()};
+      std::vector<std::string> row_keys;
+      const size_t total = insert_entries.size();
+      for (size_t off = 0; off < total;) {
+        const auto count = std::min<size_t>(total - off, STANDARD_VECTOR_SIZE);
+        duckdb::DataChunk chunk;
+        chunk.Initialize(duckdb::Allocator::DefaultAllocator(), types, count);
+        chunk.SetCardinality(count);
+        for (size_t slot = 0; slot < s.indexed_columns.size(); ++slot) {
+          const auto& col = s.indexed_columns[slot];
+          absl::big_endian::Store(get_key_buffer.data() + sizeof(ObjectId),
+                                  col.id);
+          auto& vec = chunk.data[slot];
+          duckdb::FlatVector::ValidityMutable(vec).SetAllValid(count);
+          for (size_t i = 0; i < count; ++i) {
+            connector::DeserializeValueIntoDuckDB(
+              resolve_cell(*insert_entries[off + i], slot), vec, col.type, i);
+          }
+        }
+        row_keys.clear();
+        row_keys.reserve(count);
+        for (size_t i = 0; i < count; ++i) {
+          row_keys.emplace_back(insert_entries[off + i]->full_key);
+        }
+        connector::EvaluateAndWriteIndexedExpressions(
+          insert_sink, indexed_exprs, chunk, s.table_object_id, slot_to_col_id,
+          client_context, count, row_keys, serializer);
+        off += count;
       }
     }
     sink.FinishImpl();

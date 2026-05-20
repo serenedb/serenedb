@@ -267,7 +267,7 @@ QUERY PLAN
 │          Output:          │
 │       row-count only      │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -693,7 +693,7 @@ QUERY PLAN
 │             a             │
 │  sdb_inverted_index_score │
 │                           │
-│          ~3 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -1006,7 +1006,7 @@ QUERY PLAN
 │             b             │
 │             a             │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 

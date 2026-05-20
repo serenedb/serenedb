@@ -848,6 +848,39 @@ id	label
 2	b
 
 
+# Mixed-leaf-type rows + INCLUDE column projection. The index splits the
+# JSON value by leaf type into separate sub-fields; cast-typed filters
+# from the query side must each retrieve their row through the matching
+# sub-field, with the INCLUDE column projected alongside.
+
+statement ok
+CREATE TABLE jp_inc_mixed(id INTEGER PRIMARY KEY, doc JSON, label VARCHAR);
+
+statement ok
+INSERT INTO jp_inc_mixed VALUES
+  (1, '{"val":42}',      'int-row'),
+  (2, '{"val":"hello"}', 'str-row'),
+  (3, '{"val":3.14}',    'flt-row'),
+  (4, '{"val":true}',    'bool-row');
+
+statement ok
+CREATE INDEX jp_inc_mixed_idx ON jp_inc_mixed
+  USING inverted(id, (doc->'val') verbatim_dict)
+  INCLUDE (label);
+
+statement ok
+VACUUM (UPDATE_INDEXES) jp_inc_mixed;
+
+query
+SELECT id, label FROM jp_inc_mixed_idx ORDER BY id;
+----
+id	label
+1	int-row
+2	str-row
+3	flt-row
+4	bool-row
+
+
 # `included` opclass with a compression option for the INCLUDE column,
 # combined with a JSON-path indexed expression.
 

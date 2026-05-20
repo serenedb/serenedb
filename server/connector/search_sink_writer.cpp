@@ -675,7 +675,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   }
 }
 
-void SearchSinkInsertBaseImpl::JsonPathField::InitForExpression(
+void SearchSinkInsertBaseImpl::JsonExpressionFields::InitForExpression(
   irs::field_id field_id, catalog::ColumnTokenizer string_analyzer) {
   std::string prefix;
   MakeExpressionFieldName(field_id, prefix);

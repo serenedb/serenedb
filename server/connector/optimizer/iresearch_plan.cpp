@@ -52,6 +52,7 @@
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/functions/search.h"
@@ -60,6 +61,7 @@
 #include "connector/search_field_name.hpp"
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_filter_printer.hpp"
+#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_shard.h"
@@ -2012,6 +2014,10 @@ void IresearchPushdownComplexFilter(
   duckdb::FunctionData* bind_data_ptr,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters) {
   if (filters.empty() || bind_data_ptr == nullptr) {
+    return;
+  }
+  auto& conn_ctx = connector::GetSereneDBContext(context);
+  if (conn_ctx.GetReadYourOwnWrites() && conn_ctx.HasRocksDBTransaction()) {
     return;
   }
   auto& bind_data = bind_data_ptr->Cast<connector::SereneDBScanBindData>();

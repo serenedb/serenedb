@@ -127,13 +127,14 @@ rm -f /tmp/$__DATABASE__-binary.bin
 
 
 # ============================================================================
-# Inverted index over a BLOB column (read_blob -> decode -> pattern analyzer).
+# Inverted index over a BLOB column (read_blob -> pattern analyzer, no decode).
 #
-# FTS query layer (@@, ts_phrase, ts_like) requires VARCHAR. decode() converts
-# the BLOB bytes to VARCHAR (errors on non-UTF8; pass 'replace'/'ignore' for
-# binary). With a pattern tokenizer we get full control over what gets indexed
-# -- handy for selectively extracting tokens that match a regex from arbitrary
-# byte payloads.
+# BLOB shares PhysicalType::VARCHAR storage so the search layer (mangling, term
+# filter, ts_phrase/ts_like/ts_levenshtein/ts_ngram) treats VARCHAR + BLOB
+# identically -- the same raw bytes are tokenized either way.
+# A pattern tokenizer extracts only tokens matching its regex; useful for
+# selective indexing of arbitrary byte payloads (extract printable runs from
+# binaries, capitalized identifiers, etc.).
 # ============================================================================
 
 statement ok
@@ -146,9 +147,10 @@ CREATE TEXT SEARCH DICTIONARY pat_caps(
 );
 
 
+# Materialized BLOB column straight from read_blob -- no decode/cast.
 statement ok
 CREATE TABLE blob_docs AS
-  SELECT filename AS path, decode(content) AS body
+  SELECT filename AS path, content AS body
   FROM read_blob('/tmp/$__DATABASE__-*');
 
 
@@ -156,7 +158,7 @@ query
 SELECT typeof(body) FROM blob_docs LIMIT 1;
 ----
 typeof
-VARCHAR
+BLOB
 
 
 statement ok
@@ -181,7 +183,7 @@ slug
 bravo
 
 
-# ts_phrase + ts_like work since the column is VARCHAR with the right features.
+# ts_phrase works on the BLOB column directly.
 query
 SELECT count(*) > 0 AS has_match FROM blob_docs_idx WHERE body @@ ts_phrase('Robertson');
 ----
@@ -189,12 +191,317 @@ has_match
 t
 
 
+# ts_like wildcard over BLOB.
 query
 SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
 FROM blob_docs_idx WHERE body @@ ts_like('Rob%') ORDER BY slug;
 ----
 slug
 bravo
+
+
+# ts_starts_with prefix match over BLOB.
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_docs_idx WHERE body @@ ts_starts_with('Rob') ORDER BY slug;
+----
+slug
+bravo
+
+
+# ts_regexp pattern match over BLOB ('Rob.*on' matches "Robertson").
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_docs_idx WHERE body @@ ts_regexp('Rob.*on') ORDER BY slug;
+----
+slug
+bravo
+
+
+# ts_levenshtein fuzzy match over BLOB (distance 1 from "Robertson").
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_docs_idx WHERE body @@ ts_levenshtein('Robertsen', 1) ORDER BY slug;
+----
+slug
+bravo
+
+
+# ts_ngram similarity match over BLOB. Need an ngram-tokenized column for this;
+# we add a second pattern-extracted-string-then-3gram setup. Build a small
+# trigram dict and a fresh BLOB table where the body is the file content.
+statement ok
+CREATE TEXT SEARCH DICTIONARY blob_ng (
+    template = 'ngram',
+    mingram = 3,
+    maxgram = 3,
+    preserveoriginal = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE blob_ng_docs AS
+  SELECT filename AS path, content AS body
+  FROM read_blob('/tmp/$__DATABASE__-*');
+
+statement ok
+CREATE INDEX blob_ng_docs_idx ON blob_ng_docs USING inverted(body blob_ng);
+
+# ts_ngram fuzzy similarity over BLOB. Trigrams of "Robertson" overlap with the
+# trigrams indexed from bravo.md's body. Threshold 0.3 keeps the match loose.
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_ng_docs_idx WHERE body @@ ts_ngram('Robertson', 0.3) ORDER BY slug;
+----
+slug
+bravo
+
+
+# ============================================================================
+# Range ops on BLOB (ts_lt / ts_le / ts_gt / ts_ge / ts_between).
+#
+# Range bounds must be analyzable as a single token. We use the keyword
+# analyzer (one token = the whole input) on a fresh BLOB column so bounds
+# like 'b' or 'd' tokenize cleanly.
+# ============================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY blob_kw (template = 'keyword', frequency = true, position = true);
+
+statement ok
+CREATE TABLE blob_kw_docs (id INTEGER, term BLOB);
+
+statement ok
+INSERT INTO blob_kw_docs VALUES
+  (1, 'apple'),
+  (2, 'banana'),
+  (3, 'cherry'),
+  (4, 'durian');
+
+statement ok
+CREATE INDEX blob_kw_docs_idx ON blob_kw_docs USING inverted(term blob_kw);
+
+
+# Single-bound ops route through ts_between.cpp's single-bound helper, which
+# accepts any analyzer. Bound tokenizes as itself under the keyword analyzer.
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_lt('c') ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_le('cherry') ORDER BY id;
+----
+id
+1
+2
+3
+
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_gt('b') ORDER BY id;
+----
+id
+2
+3
+4
+
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_ge('cherry') ORDER BY id;
+----
+id
+3
+4
+
+
+# Two-bound ts_between requires the keyword analyzer (asserted at ts_between.cpp:263).
+query
+SELECT id FROM blob_kw_docs_idx
+WHERE term @@ ts_between('a', 'c', true, false) ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM blob_kw_docs_idx
+WHERE term @@ ts_between('b', 'd', false, true) ORDER BY id;
+----
+id
+2
+3
+
+
+# ::BLOB cast for every search-term arg.
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_phrase('banana'::BLOB);
+----
+id
+2
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_starts_with('ba'::BLOB);
+----
+id
+2
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_like('ba%'::BLOB);
+----
+id
+2
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_regexp('ban.*'::BLOB);
+----
+id
+2
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_levenshtein('banaba'::BLOB, 1);
+----
+id
+2
+
+query
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+FROM blob_ng_docs_idx WHERE body @@ ts_ngram('Robertson'::BLOB, 0.3) ORDER BY slug;
+----
+slug
+bravo
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_lt('c'::BLOB) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_le('cherry'::BLOB) ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_gt('b'::BLOB) ORDER BY id;
+----
+id
+2
+3
+4
+
+query
+SELECT id FROM blob_kw_docs_idx WHERE term @@ ts_ge('cherry'::BLOB) ORDER BY id;
+----
+id
+3
+4
+
+query
+SELECT id FROM blob_kw_docs_idx
+WHERE term @@ ts_between('a'::BLOB, 'c'::BLOB, true, false) ORDER BY id;
+----
+id
+1
+2
+
+# ts_between enforces same-type bounds; mixing VARCHAR + BLOB is rejected.
+statement error ts_between bounds have mismatched types
+SELECT id FROM blob_kw_docs_idx
+WHERE term @@ ts_between('a', 'c'::BLOB, true, false) ORDER BY id;
+
+# Multi-piece ts_phrase with BLOB literals on a multi-token column.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY blob_words (
+    template = 'delimiter', delimiter = ' ', frequency = true, position = true
+);
+
+statement ok
+CREATE TABLE blob_text (id INTEGER, body BLOB);
+
+statement ok
+INSERT INTO blob_text VALUES (1, 'alpha bravo charlie'), (2, 'bravo only');
+
+statement ok
+CREATE INDEX blob_text_idx ON blob_text USING inverted(body blob_words);
+
+# Adjacent terms.
+query
+SELECT id FROM blob_text_idx WHERE body @@ ts_phrase('alpha'::BLOB, 'bravo'::BLOB);
+----
+id
+1
+
+# Mixed VARCHAR + BLOB phrase pieces.
+query
+SELECT id FROM blob_text_idx WHERE body @@ ts_phrase('alpha', 'bravo'::BLOB);
+----
+id
+1
+
+# Phrase with explicit gap, BLOB pieces around it.
+query
+SELECT id FROM blob_text_idx WHERE body @@ ts_phrase('alpha'::BLOB, 1, 'charlie'::BLOB);
+----
+id
+1
+
+# ts_tokenize with BLOB literal (1-arg + 2-arg with named analyzer).
+query
+SELECT id FROM blob_text_idx WHERE body @@ ts_tokenize('bravo'::BLOB);
+----
+id
+1
+2
+
+query
+SELECT id FROM blob_text_idx WHERE body @@ ts_tokenize('alpha bravo'::BLOB, 'blob_words') ORDER BY id;
+----
+id
+1
+2
+
+# ::tokenize(<name>) BLOB inner value.
+query
+SELECT id FROM blob_text_idx WHERE body @@ 'bravo'::BLOB::tokenize(NULL);
+----
+id
+1
+2
+
+# Boolean combinations of BLOB-arg TSQUERY expressions.
+query
+SELECT id FROM blob_text_idx
+WHERE body @@ (ts_phrase('alpha'::BLOB) && ts_phrase('bravo'::BLOB)) ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM blob_text_idx
+WHERE body @@ (ts_phrase('alpha'::BLOB) || ts_phrase('only'::BLOB)) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM blob_text_idx
+WHERE body @@ (ts_phrase('bravo'::BLOB) && !!ts_phrase('alpha'::BLOB));
+----
+id
+2
 
 
 # ============================================================================

@@ -23,28 +23,32 @@ control substitution on
 
 
 # Stage three text fixtures with overlapping vocabulary so BM25 ordering and
-# term frequency are exercised.
-system ok
-printf '%s\n' '# Inverted Index Primer' \
-              '' \
-              'The inverted index is a fundamental structure in information retrieval.' \
-              'It maps each term to a posting list of documents that contain the term.' \
-              'Modern analyzers normalize text and lowercase tokens.' \
-              > /tmp/$__DATABASE__-alpha.md
+# term frequency are exercised. Files are written server-side via COPY (CSV
+# without quoting collapses to per-row lines) -- in a docker-compose CI the
+# tests runner and serened sit in separate containers and don't share /tmp,
+# so writing from a `system` block wouldn't reach the server's filesystem.
+statement ok
+COPY (VALUES
+  ('# Inverted Index Primer'),
+  ('The inverted index is a fundamental structure in information retrieval.'),
+  ('It maps each term to a posting list of documents that contain the term.'),
+  ('Modern analyzers normalize text and lowercase tokens.'))
+TO '/tmp/${__DATABASE__}-alpha.md' (FORMAT csv, HEADER false);
 
-system ok
-printf '%s\n' '# BM25 Explained' \
-              '' \
-              'BM25 scores documents against a query by combining term frequency,' \
-              'inverse document frequency, and document length normalization.' \
-              'It is a probabilistic ranking function descended from Robertson analyzer work.' \
-              > /tmp/$__DATABASE__-bravo.md
+statement ok
+COPY (VALUES
+  ('# BM25 Explained'),
+  ('BM25 scores documents against a query by combining term frequency.'),
+  ('Inverse document frequency and document length normalization apply.'),
+  ('It is a probabilistic ranking function descended from Robertson analyzer work.'))
+TO '/tmp/${__DATABASE__}-bravo.md' (FORMAT csv, HEADER false);
 
-system ok
-printf '%s\n' 'Highlighting picks short snippets around matched terms.' \
-              'A common approach is sentence-aware passage extraction using a break iterator.' \
-              'Many systems retokenize the source at query time to produce snippets.' \
-              > /tmp/$__DATABASE__-charlie.txt
+statement ok
+COPY (VALUES
+  ('Highlighting picks short snippets around matched terms.'),
+  ('A common approach is sentence-aware passage extraction using a break iterator.'),
+  ('Many systems retokenize the source at query time to produce snippets.'))
+TO '/tmp/${__DATABASE__}-charlie.txt' (FORMAT csv, HEADER false);
 
 
 statement ok
@@ -102,15 +106,18 @@ SELECT DISTINCT typeof(content) FROM read_blob('/tmp/$__DATABASE__-*');
 typeof
 BLOB
 
-# Stage a non-UTF8 binary fixture and verify the read_text/read_blob asymmetry.
-system ok
-printf '\x00\xff\xfe\x80\xc0\x01' > /tmp/$__DATABASE__-binary.bin
+# Stage a non-UTF8 fixture by writing a parquet file (its magic + compressed
+# payload aren't valid UTF-8) and confirm the read_text/read_blob asymmetry.
+# Uses a distinct prefix so the later '/tmp/${__DATABASE__}-*' glob (over the
+# .md / .txt fixtures) doesn't pick it up.
+statement ok
+COPY (SELECT 1 AS x) TO '/tmp/binfix_${__DATABASE__}.parquet' (FORMAT parquet);
 
 # read_blob succeeds on binary content.
 query
 SELECT octet_length(content) > 0 AS has_bytes,
        typeof(content) AS t
-FROM read_blob('/tmp/$__DATABASE__-binary.bin');
+FROM read_blob('/tmp/binfix_${__DATABASE__}.parquet');
 ----
 has_bytes	t
 t	BLOB
@@ -118,12 +125,7 @@ t	BLOB
 # read_text on the same file fails at the UTF-8 validation step when content is
 # actually projected (count(*) alone wouldn't trigger the read).
 statement error read_text: could not read content of file .* as valid UTF-8
-SELECT content FROM read_text('/tmp/$__DATABASE__-binary.bin');
-
-
-# Cleanup the binary fixture (the .md/.txt are cleaned at the end of the test).
-system ok
-rm -f /tmp/$__DATABASE__-binary.bin
+SELECT content FROM read_text('/tmp/binfix_${__DATABASE__}.parquet');
 
 
 # ============================================================================
@@ -741,19 +743,20 @@ bravo
 # query time and fails when the file is gone.
 # ============================================================================
 
-system ok
-printf '%s\n' 'Disappearing payload mentions the unique token gargantuanpixie.' \
-              > /tmp/$__DATABASE__-vanish.txt
+statement ok
+COPY (VALUES ('Disappearing payload mentions the unique token gargantuanpixie.'))
+TO '/tmp/${__DATABASE__}-vanish.txt' (FORMAT csv, HEADER false);
 
 statement ok
 CREATE VIEW v_vanish AS
   SELECT filename AS path, content
-  FROM read_text('/tmp/$__DATABASE__-vanish.txt');
+  FROM read_text('/tmp/${__DATABASE__}-vanish.txt');
 
 statement ok
 CREATE INDEX v_vanish_idx ON v_vanish USING inverted(content read_text_en);
 
-# Sanity: while file exists, both no-content and content projections work.
+# Sanity: while file holds the indexed term, both no-content and content
+# projections work.
 query
 SELECT count(*) FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
 ----
@@ -767,33 +770,55 @@ FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
 ts_highlight
 Disappearing payload mentions the unique token <b>gargantuanpixie</b>
 
-system ok
-rm /tmp/$__DATABASE__-vanish.txt
+# Phase 1 -- overwrite with empty text. File still exists and is valid UTF-8,
+# so the lookup TF can still open it (just returns empty content).
+# (Direct file deletion via `system rm` doesn't work in docker-compose CI where
+# the test runner and serened sit in separate containers; we use server-side
+# COPY to mutate the file.)
+statement ok
+COPY (SELECT '' AS x)
+TO '/tmp/${__DATABASE__}-vanish.txt' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
 
-# Posting lists are independent of the source file; counting via the index
-# does not invoke the lookup TF.
+# Posting lists are independent of the source: the index still returns 1 row.
 query
 SELECT count(*) FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
 ----
 count
 1
 
-# Projecting content forces a per-file open; the lookup TF surfaces an IO error.
-statement error
-SELECT ts_highlight(content, ts_offsets(content))
-FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
-
-statement error
-SELECT content FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
-
-# Bare scan re-enumerates the path; with the file gone, the list is empty.
+# A fresh read_text of the now-empty file no longer contains the token.
 query
-SELECT count(*) FROM read_text('/tmp/$__DATABASE__-vanish.txt');
+SELECT count(*) FROM read_text('/tmp/${__DATABASE__}-vanish.txt')
+WHERE content LIKE '%gargantuanpixie%';
 ----
 count
 0
 
+# Phase 2 -- overwrite the same path with parquet bytes so read_text can no
+# longer decode it. count(*) via the index still works (no file open); any
+# query that projects content forces the lookup TF to read the file and the
+# UTF-8 validation step errors.
+statement ok
+COPY (SELECT 1 AS x) TO '/tmp/${__DATABASE__}-vanish.txt' (FORMAT parquet);
 
-# Cleanup fixtures.
-system ok
-rm -f /tmp/$__DATABASE__-alpha.md /tmp/$__DATABASE__-bravo.md /tmp/$__DATABASE__-charlie.txt
+query
+SELECT count(*) FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
+----
+count
+1
+
+statement error read_text: could not read content of file .* as valid UTF-8
+SELECT ts_highlight(content, ts_offsets(content))
+FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
+
+statement error read_text: could not read content of file .* as valid UTF-8
+SELECT content FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
+
+# A path that was never written surfaces as zero rows via the bare scan: the
+# MultiFileList resolves the literal to an empty set, ALLOW_EMPTY swallows it,
+# and no lookup TF ever runs.
+query
+SELECT count(*) FROM read_text('/tmp/${__DATABASE__}-never_existed.txt');
+----
+count
+0

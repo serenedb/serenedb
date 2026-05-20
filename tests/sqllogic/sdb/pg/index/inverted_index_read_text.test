@@ -735,6 +735,65 @@ alpha
 bravo
 
 
+# ============================================================================
+# Vanished file -- queries that hit only the inverted index keep working;
+# queries that project content trigger the lookup TF which opens the file at
+# query time and fails when the file is gone.
+# ============================================================================
+
+system ok
+printf '%s\n' 'Disappearing payload mentions the unique token gargantuanpixie.' \
+              > /tmp/$__DATABASE__-vanish.txt
+
+statement ok
+CREATE VIEW v_vanish AS
+  SELECT filename AS path, content
+  FROM read_text('/tmp/$__DATABASE__-vanish.txt');
+
+statement ok
+CREATE INDEX v_vanish_idx ON v_vanish USING inverted(content read_text_en);
+
+# Sanity: while file exists, both no-content and content projections work.
+query
+SELECT count(*) FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
+----
+count
+1
+
+query
+SELECT ts_highlight(content, ts_offsets(content))
+FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
+----
+ts_highlight
+Disappearing payload mentions the unique token <b>gargantuanpixie</b>
+
+system ok
+rm /tmp/$__DATABASE__-vanish.txt
+
+# Posting lists are independent of the source file; counting via the index
+# does not invoke the lookup TF.
+query
+SELECT count(*) FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
+----
+count
+1
+
+# Projecting content forces a per-file open; the lookup TF surfaces an IO error.
+statement error
+SELECT ts_highlight(content, ts_offsets(content))
+FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
+
+statement error
+SELECT content FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
+
+# Bare scan re-enumerates the path; with the file gone, the list is empty.
+query
+SELECT count(*) FROM read_text('/tmp/$__DATABASE__-vanish.txt');
+----
+count
+0
+
+
 # Cleanup fixtures.
 system ok
 rm -f /tmp/$__DATABASE__-alpha.md /tmp/$__DATABASE__-bravo.md /tmp/$__DATABASE__-charlie.txt

@@ -101,7 +101,8 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
     "INTEGER / INTEGER[] gap allowed between text args.";
   SDB_ASSERT(!func.children.empty());
 
-  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+      column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_phrase field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
@@ -139,8 +140,9 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
                       ERR_MSG("ts_phrase argument ", i, " must be a constant"),
                       ERR_HINT(kSyntaxHint));
     }
-    if (const_val->type().id() == duckdb::LogicalTypeId::VARCHAR) {
-      auto text = const_val->GetValue<std::string>();
+    if (const_val->type().id() == duckdb::LogicalTypeId::VARCHAR ||
+        const_val->type().id() == duckdb::LogicalTypeId::BLOB) {
+      auto text = duckdb::StringValue::Get(*const_val);
       analyzer.reset(std::string_view{text});
       while (analyzer.next()) {
         if (pending_gap) {
@@ -219,7 +221,8 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
 void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info,
                     std::string_view text) {
-  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+      column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_phrase field is not VARCHAR"));
   }
@@ -411,7 +414,8 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
                             "part"),
                     ERR_HINT(kSyntaxHint));
   }
-  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+      column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("## field is not VARCHAR"), ERR_HINT(kSyntaxHint));
   }
@@ -456,12 +460,13 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         duckdb::ExpressionClass::BOUND_CONSTANT) {
       const auto& val =
         part_expr_ref.Cast<duckdb::BoundConstantExpression>().value;
-      if (val.IsNull() || val.type().id() != duckdb::LogicalTypeId::VARCHAR) {
+      if (val.IsNull() || (val.type().id() != duckdb::LogicalTypeId::VARCHAR &&
+                           val.type().id() != duckdb::LogicalTypeId::BLOB)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("## part must be a VARCHAR constant"),
                         ERR_HINT(kSyntaxHint));
       }
-      bare_text = val.GetValue<std::string>();
+      bare_text = duckdb::StringValue::Get(val);
       leaf_op = TSQueryOp::Term;
     } else if (part_expr_ref.expression_class ==
                duckdb::ExpressionClass::BOUND_FUNCTION) {
@@ -598,9 +603,11 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         // target separate fields) make no sense at a phrase position.
         auto args = ParseRangeArgs(*f);
         if ((args.min &&
-             args.min->type().id() != duckdb::LogicalTypeId::VARCHAR) ||
+             args.min->type().id() != duckdb::LogicalTypeId::VARCHAR &&
+             args.min->type().id() != duckdb::LogicalTypeId::BLOB) ||
             (args.max &&
-             args.max->type().id() != duckdb::LogicalTypeId::VARCHAR)) {
+             args.max->type().id() != duckdb::LogicalTypeId::VARCHAR &&
+             args.max->type().id() != duckdb::LogicalTypeId::BLOB)) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
             ERR_MSG("## ts_between phrase part requires VARCHAR bounds"),

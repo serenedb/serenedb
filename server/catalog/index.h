@@ -48,17 +48,44 @@ struct InvertedIndexOptions {
   std::optional<ScorerOptions> topk_scorer;
 };
 
-// Aggregated info about column for index creation.
-// Filled on different levels during creaton to gather all
-// necessary info for building and validating new index.
+// Set when CreateIndexColumn's source was `(expr)` rather than a column ref.
+struct IndexedExpressionData {
+  std::string serialized;
+  std::string pretty_printed;
+  std::vector<Column::Id> dependent_columns;
+  duckdb::LogicalType return_type;
+};
+
 struct CreateIndexColumn {
   const catalog::Column* catalog_column{nullptr};
   std::string_view name;
   std::string opclass;
-  std::string json_pointer;
+  std::optional<IndexedExpressionData> indexed_expr;
   // nullopt = no parentheses in source SQL; an (empty or non-empty) map means
   // parens were present, distinguishing `col opclass` from `col opclass ()`.
   std::optional<duckdb::case_insensitive_map_t<duckdb::Value>> opclass_options;
+
+  bool IsIndexedExpression() const noexcept { return indexed_expr.has_value(); }
+
+  const IndexedExpressionData& GetIndexedExpression() const {
+    SDB_ASSERT(IsIndexedExpression());
+    return *indexed_expr;
+  }
+
+  const catalog::Column* GetCatalogColumn() const noexcept {
+    SDB_ASSERT(!IsIndexedExpression());
+    return catalog_column;
+  }
+
+  void SetCatalogColumn(const catalog::Column* col) noexcept {
+    SDB_ASSERT(!IsIndexedExpression());
+    catalog_column = col;
+  }
+
+  std::string_view ColumnName() const noexcept {
+    SDB_ASSERT(!IsIndexedExpression());
+    return name;
+  }
 };
 
 class Index : public Object {
@@ -67,6 +94,10 @@ class Index : public Object {
   auto GetRelationId() const noexcept { return _relation_id; }
   std::span<const Column::Id> GetColumnIds() const noexcept {
     return _column_ids;
+  }
+
+  virtual std::vector<Column::Id> GetReferencedColumnIds() const {
+    return std::vector<Column::Id>(_column_ids.begin(), _column_ids.end());
   }
 
   virtual containers::FlatHashSet<ObjectId> GetTokenizers() const { return {}; }

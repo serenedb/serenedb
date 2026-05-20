@@ -427,7 +427,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
         throw duckdb::CatalogException("column \"%s\" not found in table",
                                        col_name);
       }
-      idx_columns.push_back(catalog::CreateIndexColumn{
+      idx_columns.emplace_back(catalog::CreateIndexColumn{
         .catalog_column = cat_col,
         .name = cat_col->GetName(),
       });

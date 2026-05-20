@@ -25,6 +25,7 @@
 
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/table_options.h"
+#include "connector/index_expression.hpp"
 #include "connector/sink_writer_base.hpp"
 #include "rocksdb/slice.h"
 
@@ -52,6 +53,16 @@ class DuckDBSinkIndexWriter {
                             const duckdb::Vector& vec, duckdb::idx_t count) {
     SDB_ASSERT(false, "SwitchColumn call not implemented");
     return false;
+  }
+
+  // Switch to an indexed expression.
+  // The base writer only matters for the search-index path.
+  virtual bool SwitchExpression(const ExpressionDescriptor& expr_desc) {
+    return false;
+  }
+
+  virtual std::span<const IndexedExpression> IndexedExpressions() const {
+    return {};
   }
 
   // Writes a value of cell in column switched to by previous call to

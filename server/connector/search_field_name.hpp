@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <iresearch/types.hpp>
 #include <span>
 #include <string>
 #include <string_view>
@@ -29,29 +30,18 @@
 
 namespace sdb::connector {
 
-inline std::string EncodeJsonPointer(std::span<const std::string> path) {
-  std::string out;
-  for (const auto& key : path) {
-    out.push_back('/');
-    for (char c : key) {
-      if (c == '~') {
-        out.append("~0");
-      } else if (c == '/') {
-        out.append("~1");
-      } else {
-        out.push_back(c);
-      }
-    }
-  }
-  return out;
-}
-
 inline void MakeColumnFieldName(catalog::Column::Id column_id,
-                                std::string_view json_pointer,
                                 std::string& out) {
   basics::StrResize(out, sizeof(column_id));
   absl::big_endian::Store(out.data(), column_id);
-  out.append(json_pointer);
+}
+
+// [8 bytes 0xFF sentinel col_id][8 bytes BE field_id]; caller mangles after.
+inline void MakeExpressionFieldName(irs::field_id field_id, std::string& out) {
+  constexpr size_t kColIdSize = sizeof(catalog::Column::Id);
+  basics::StrResize(out, kColIdSize + sizeof(irs::field_id));
+  std::memset(out.data(), 0xFF, kColIdSize);
+  absl::big_endian::Store(out.data() + kColIdSize, field_id);
 }
 
 }  // namespace sdb::connector

@@ -1260,10 +1260,8 @@ const SearchColumnInfo* FindColumnRefInfo(
     return nullptr;
   }
 
-  // The cache key is the un-mangled iresearch field name. For a bare column
-  // reference that is just [BE col_id] with no suffix.
   std::string cache_key;
-  MakeColumnFieldName(info->column_id, {}, cache_key);
+  MakeColumnFieldName(info->column_id, cache_key);
 
   auto cache_it = ctx.column_cache.find(cache_key);
   if (cache_it != ctx.column_cache.end()) {
@@ -1300,37 +1298,6 @@ bool IsNumericTypeId(duckdb::LogicalTypeId id) {
   }
 }
 
-const duckdb::BoundColumnRefExpression* TryGetJsonColumnRef(
-  const duckdb::Expression& expr, std::vector<std::string>& out_path) {
-  out_path.clear();
-  // Reject when outermost extraction does not return string.
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION ||
-      !IsJsonExtractString(
-        expr.Cast<duckdb::BoundFunctionExpression>().function.name)) {
-    return nullptr;
-  }
-
-  // Walk the chain: every node must be some JSON-extract
-  // until we reach a column ref.
-  const duckdb::Expression* cur = &expr;
-  while (cur->expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
-    const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
-    // TODO(mkornaukhov) first must be extracting string,
-    // all the others should be extracing json
-    if (!IsJsonExtract(f.function.name) || f.children.size() != 2) {
-      return nullptr;
-    }
-    const auto* key_val = TryGetConstant(*f.children[1]);
-    if (!key_val || key_val->IsNull() ||
-        !AppendJsonPathKey(*key_val, out_path)) {
-      return nullptr;
-    }
-    cur = f.children[0].get();
-  }
-  absl::c_reverse(out_path);
-  return TryGetColumnRef(*cur);
-}
-
 struct UnwrappedField {
   const duckdb::Expression* expr;
   std::optional<duckdb::LogicalType> override_type;
@@ -1347,30 +1314,22 @@ UnwrappedField UnwrapFieldCast(const duckdb::Expression& expr) {
   return {c.child.get(), c.return_type};
 }
 
-// Bare column ref or JSON-path extract (optionally cast-wrapped).
-// Returned pointer lives in ctx.column_cache.
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
                                               const duckdb::Expression& expr) {
   if (const auto* col_ref = TryGetColumnRef(expr)) {
     return FindColumnRefInfo(ctx, *col_ref);
   }
-  if (!ctx.json_path_getter) {
-    return nullptr;
-  }
 
   const auto unwrapped = UnwrapFieldCast(expr);
-  std::vector<std::string> path;
-  const auto* col_ref = TryGetJsonColumnRef(*unwrapped.expr, path);
-  if (!col_ref) {
-    return nullptr;
+  std::optional<SearchColumnInfo> info;
+  if (ctx.expr_getter) {
+    info = (*ctx.expr_getter)(*unwrapped.expr);
   }
-  auto info = (*ctx.json_path_getter)(*col_ref, EncodeJsonPointer(path));
   if (!info) {
     return nullptr;
   }
 
-  // Cast overrides leaf type. Normalise numerics to DOUBLE -- writer side
-  // tokenises every JSON number through NumericTokenizer.reset(double).
+  // Numerics fold to DOUBLE: writer tokenises JSON numbers via reset(double).
   if (unwrapped.override_type.has_value()) {
     if (IsNumericTypeId(unwrapped.override_type->id())) {
       info->logical_type = duckdb::LogicalType::DOUBLE;
@@ -1379,11 +1338,14 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
     }
   }
 
-  // Key by mangle byte (not LogicalTypeId) so types that fold to the same
-  // iresearch field share an entry: INTEGER and BIGINT both -> Numeric.
+  // Key by mangle byte: INTEGER and BIGINT both fold to Numeric.
   auto& cache_key = ctx.cache_key;
   cache_key.clear();
-  MakeColumnFieldName(info->column_id, info->json_pointer, cache_key);
+  if (info->field_id != 0) {
+    MakeExpressionFieldName(info->field_id, cache_key);
+  } else {
+    MakeColumnFieldName(info->column_id, cache_key);
+  }
   if (auto r = MangleForType(info->logical_type.id(), cache_key); !r.ok()) {
     return nullptr;
   }
@@ -1397,11 +1359,15 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
 }
 
 void MakeFieldName(const SearchColumnInfo& column, std::string& field_name) {
-  MakeColumnFieldName(column.column_id, column.json_pointer, field_name);
+  if (column.field_id != 0) {
+    MakeExpressionFieldName(column.field_id, field_name);
+  } else {
+    MakeColumnFieldName(column.column_id, field_name);
+  }
 }
 
 void MakeFieldName(catalog::Column::Id column_id, std::string& field_name) {
-  MakeColumnFieldName(column_id, {}, field_name);
+  MakeColumnFieldName(column_id, field_name);
 }
 
 Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name) {
@@ -1798,7 +1764,7 @@ Result MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, const SearchFilterOptions& options,
-  const JsonPathGetter& json_path_getter) {
+  const ExpressionGetter& expr_getter) {
   irs::StringTokenizer identity;
   containers::NodeHashMap<std::string, SearchColumnInfo> column_cache;
   std::string cache_key_scratch;
@@ -1806,9 +1772,8 @@ Result MakeSearchFilter(
   FilterContext ctx{
     .negated = false,
     .column_getter = column_getter,
-    .json_path_getter = json_path_getter ? &json_path_getter : nullptr,
+    .expr_getter = expr_getter ? &expr_getter : nullptr,
     .column_cache = column_cache,
-    .json_pointer = {},
     .cache_key = cache_key_scratch,
     .identity = identity,
     .tokenizer = identity,

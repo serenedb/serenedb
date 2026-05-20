@@ -155,6 +155,10 @@ class JsonParser {
       if (value.type() == simdjson::ondemand::json_type::string) {
         return value.get_string().value();
       }
+      // json_extract_text* cast JSON-null into SQL-null
+      if (value.type() == simdjson::ondemand::json_type::null) {
+        return {};
+      }
     }
     std::string_view str;
     if (simdjson::to_json_string(value).get(str)) {

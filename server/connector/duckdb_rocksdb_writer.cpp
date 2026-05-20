@@ -662,6 +662,10 @@ template void
 DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::SstWriter>(
   SstWriter&, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
   std::span<DuckDBSinkIndexWriter*>, ColumnDescriptor);
+template void
+DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::NoopWriter>(
+  NoopWriter&, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
+  std::span<DuckDBSinkIndexWriter*>, ColumnDescriptor);
 
 template<typename Writer, typename T>
 void DuckDBColumnSerializer::WriteFlatColumn(

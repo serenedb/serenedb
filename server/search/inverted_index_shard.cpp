@@ -219,44 +219,48 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   writer_options.norm_column_options =
     [&](std::string_view name) -> irs::NormColumnOptions {
     static constexpr size_t kColumnIdSize = sizeof(catalog::Column::Id);
+    static constexpr uint64_t kExprSentinel =
+      std::numeric_limits<uint64_t>::max();
     SDB_ASSERT(name.size() > kColumnIdSize);
-    const auto column_id =
-      static_cast<catalog::Column::Id>(absl::big_endian::Load64(name.data()));
+    const auto raw =
+      static_cast<uint64_t>(absl::big_endian::Load64(name.data()));
+    if (raw == kExprSentinel) {
+      SDB_ASSERT(name.size() == kColumnIdSize + sizeof(irs::field_id) + 1);
+      const auto field_id = static_cast<irs::field_id>(
+        absl::big_endian::Load64(name.data() + kColumnIdSize));
+      for (const auto& expr : index.GetExpressions()) {
+        if (expr.field_id == field_id) {
+          SDB_ASSERT(expr.synthetic_column,
+                     "expression norm callback fired without a catalog "
+                     "reservation; field_id: ",
+                     field_id);
+          SDB_ASSERT(expr.features.HasFeatures(irs::IndexFeatures::Norm),
+                     "expression norm callback fired but catalog features "
+                     "lack Norm; field_id: ",
+                     field_id);
+          return {.id = static_cast<irs::field_id>(*expr.synthetic_column),
+                  .row_group_size = expr.norm_row_group_size};
+        }
+      }
+      SDB_ENSURE(false, ERROR_INTERNAL,
+                 "norm callback for unknown expression field_id: ", field_id);
+    }
+    const auto column_id = static_cast<catalog::Column::Id>(raw);
     const auto* column_info = index.FindColumnInfo(column_id);
     SDB_ASSERT(column_info, "norm callback for unknown col_id: ", column_id);
-    if (name.size() == kColumnIdSize + 1) {
-      SDB_ASSERT(column_info->synthetic_column,
-                 "whole-column norm callback fired without a catalog "
-                 "reservation for column: ",
-                 column_id);
-      SDB_ASSERT(column_info->features.HasFeatures(irs::IndexFeatures::Norm),
-                 "whole-column norm callback fired but catalog features lack "
-                 "Norm for column: ",
-                 column_id);
-      return {
-        .id = static_cast<irs::field_id>(*column_info->synthetic_column),
-        .row_group_size = column_info->norm_row_group_size,
-      };
-    }
-    const auto json_pointer =
-      name.substr(kColumnIdSize, name.size() - kColumnIdSize - 1);
-    for (const auto& path_info : column_info->json_paths) {
-      if (json_pointer == path_info.json_pointer) {
-        SDB_ASSERT(path_info.synthetic_column,
-                   "JSON-path norm callback fired without a catalog "
-                   "reservation; col_id: ",
-                   column_id, ", pointer: ", json_pointer);
-        SDB_ASSERT(path_info.features.HasFeatures(irs::IndexFeatures::Norm),
-                   "JSON-path norm callback fired but catalog features lack "
-                   "Norm; col_id: ",
-                   column_id, ", pointer: ", json_pointer);
-        return {.id = static_cast<irs::field_id>(*path_info.synthetic_column),
-                .row_group_size = path_info.norm_row_group_size};
-      }
-    }
-    SDB_ENSURE(false, ERROR_INTERNAL,
-               "norm callback for unknown JSON path; col_id: ", column_id,
-               ", pointer: ", json_pointer);
+    SDB_ASSERT(name.size() == kColumnIdSize + 1);
+    SDB_ASSERT(column_info->synthetic_column,
+               "whole-column norm callback fired without a catalog "
+               "reservation for column: ",
+               column_id);
+    SDB_ASSERT(column_info->features.HasFeatures(irs::IndexFeatures::Norm),
+               "whole-column norm callback fired but catalog features lack "
+               "Norm for column: ",
+               column_id);
+    return {
+      .id = static_cast<irs::field_id>(*column_info->synthetic_column),
+      .row_group_size = column_info->norm_row_group_size,
+    };
   };
 
   if (const auto& options = index.GetTopKScorer()) {

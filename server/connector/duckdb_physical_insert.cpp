@@ -283,6 +283,22 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
                                    gstate.active_writers, desc);
   }
 
+  // 4b. Indexed expressions.
+  std::vector<catalog::Column::Id> slot_to_col_id;
+  slot_to_col_id.reserve(gstate.columns.size());
+  for (const auto& col : gstate.columns) {
+    slot_to_col_id.push_back(col.id);
+  }
+  for (auto& writer : gstate.index_writers) {
+    auto exprs = writer->IndexedExpressions();
+    if (exprs.empty()) {
+      continue;
+    }
+    EvaluateAndWriteIndexedExpressions(*writer, exprs, chunk, gstate.table_id,
+                                       slot_to_col_id, context.client, num_rows,
+                                       gstate.row_keys, *gstate.serializer);
+  }
+
   // 5. Finish index writers
   for (auto& writer : gstate.index_writers) {
     writer->Finish();

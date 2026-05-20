@@ -38,6 +38,7 @@
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/expression_binder/index_binder.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_create_table.hpp>
@@ -1237,12 +1238,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     create_index_info->names = get.names;
     create_index_info->schema = resolved_table->schema.name;
     create_index_info->catalog = resolved_table->catalog.GetName();
-    // expressions[] mirrors the projection: ProjectionIndex must match
-    // position in get.GetColumnIds(), which now follows `projection`.
-    for (size_t pos = 0; pos < projection.size(); ++pos) {
-      expressions.push_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-        rel_columns[projection[pos]].second,
-        duckdb::ColumnBinding(get.table_index, duckdb::ProjectionIndex(pos))));
+
+    duckdb::IndexBinder index_binder(binder, binder.context, resolved_table,
+                                     create_index_info.get());
+    for (auto& parsed : create_index_info->expressions) {
+      expressions.emplace_back(index_binder.Bind(parsed));
     }
   } else {
     create_index_info->names.assign_range(rel_columns | std::views::keys);

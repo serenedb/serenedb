@@ -207,7 +207,7 @@ void RemoveFromExistingSegment(DocumentBitMask& deleted_docs,
     return;  // skip invalid iterators
   }
 
-  const DocumentMaskView docs_mask_view(reader.docs_mask());
+  DocumentMaskView docs_mask_view(reader.docs_mask());
   while (itr->next()) {
     const auto doc_id = itr->value();
 
@@ -447,7 +447,7 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       if (!current_itr->next()) {
         do {
           SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->value()));
-          docs_mask.MarkDeleted(merge_ctx.doc_map(merged_itr->value()));
+          docs_mask.MarkDeleted(merge_ctx.remap.Remap(merged_itr->value()));
         } while (merged_itr->next());
 
         continue;  // continue wih next mapping
@@ -458,7 +458,7 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       for (;;) {
         while (merged_itr->value() < current_itr->value()) {
           SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->value()));
-          docs_mask.MarkDeleted(merge_ctx.doc_map(merged_itr->value()));
+          docs_mask.MarkDeleted(merge_ctx.remap.Remap(merged_itr->value()));
 
           if (!merged_itr->next()) {
             SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
@@ -506,7 +506,7 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
         if (!current_itr->next()) {
           do {
             SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->value()));
-            docs_mask.MarkDeleted(merge_ctx.doc_map(merged_itr->value()));
+            docs_mask.MarkDeleted(merge_ctx.remap.Remap(merged_itr->value()));
           } while (merged_itr->next());
 
           break;  // continue wih next mapping

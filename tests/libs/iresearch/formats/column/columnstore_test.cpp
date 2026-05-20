@@ -1089,11 +1089,11 @@ TEST_F(IRSColumnstoreTest, MergeIntoTwoSegmentsNoDeletes) {
     irs::columnstore::MergeSource sources[2] = {
       {.reader = nullptr,
        .cs_reader = &ra,
-       .mask = nullptr,
+       .mask = irs::DocumentMaskView{},
        .alive_count = kRowsA},
       {.reader = nullptr,
        .cs_reader = &rb,
-       .mask = nullptr,
+       .mask = irs::DocumentMaskView{},
        .alive_count = kRowsB},
     };
     irs::columnstore::MergeInto(sources, w, /*column_options=*/nullptr);
@@ -1155,27 +1155,27 @@ TEST_F(IRSColumnstoreTest, MergeIntoTwoSegmentsWithDeletes) {
   // Mask the odd-offset source docs in each segment. `DocumentMask`'s
   // `ManagedTypedAllocator` defaults to `gForbidden` under SDB_DEV, so
   // we plumb a noop manager explicitly.
-  irs::DocumentMask mask_a{{irs::IResourceManager::gNoop}};
+  irs::DocumentDeletedHashMask mask_a(irs::IResourceManager::gNoop, kRowsA, 0);
   for (uint64_t off = 1; off < kRowsA; off += 2) {
-    mask_a.insert(static_cast<irs::doc_id_t>(irs::doc_limits::min() + off));
+    mask_a.Store(static_cast<irs::doc_id_t>(irs::doc_limits::min() + off));
   }
-  irs::DocumentMask mask_b{{irs::IResourceManager::gNoop}};
+  irs::DocumentDeletedHashMask mask_b(irs::IResourceManager::gNoop, kRowsB, 0);
   for (uint64_t off = 1; off < kRowsB; off += 2) {
-    mask_b.insert(static_cast<irs::doc_id_t>(irs::doc_limits::min() + off));
+    mask_b.Store(static_cast<irs::doc_id_t>(irs::doc_limits::min() + off));
   }
-  const uint64_t alive_a = kRowsA - mask_a.size();
-  const uint64_t alive_b = kRowsB - mask_b.size();
+  const uint64_t alive_a = kRowsA - mask_a.DeletedDocCount();
+  const uint64_t alive_b = kRowsB - mask_b.DeletedDocCount();
 
   {
     irs::columnstore::Writer w{dir, "merged", Db()};
     irs::columnstore::MergeSource sources[2] = {
       {.reader = nullptr,
        .cs_reader = &ra,
-       .mask = &mask_a,
+       .mask = irs::DocumentMaskView{&mask_a},
        .alive_count = alive_a},
       {.reader = nullptr,
        .cs_reader = &rb,
-       .mask = &mask_b,
+       .mask = irs::DocumentMaskView{&mask_b},
        .alive_count = alive_b},
     };
     irs::columnstore::MergeInto(sources, w, /*column_options=*/nullptr);
@@ -1257,11 +1257,11 @@ TEST_F(IRSColumnstoreTest, MergeIntoUsesCallbackRowGroupSize) {
     irs::columnstore::MergeSource sources[2] = {
       {.reader = nullptr,
        .cs_reader = &ra,
-       .mask = nullptr,
+       .mask = irs::DocumentMaskView{},
        .alive_count = kRowsA},
       {.reader = nullptr,
        .cs_reader = &rb,
-       .mask = nullptr,
+       .mask = irs::DocumentMaskView{},
        .alive_count = kRowsB},
     };
     irs::columnstore::MergeInto(sources, w, &column_options);

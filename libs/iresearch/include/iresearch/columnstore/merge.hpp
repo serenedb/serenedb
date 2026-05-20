@@ -44,7 +44,7 @@ class Writer;
 struct MergeSource {
   const SubReader* reader;
   const Reader* cs_reader;
-  const DocumentMask* mask;
+  DocumentMaskView mask;
   uint64_t alive_count;
 };
 

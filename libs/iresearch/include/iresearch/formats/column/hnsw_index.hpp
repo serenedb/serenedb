@@ -62,7 +62,7 @@ class HNSWSegmentResultHandler : public HNSWResultHandler::SingleResultHandler {
   }
 
   bool add_result(float dis, int64_t idx) final {
-    if (_docs_mask && _docs_mask->contains(static_cast<doc_id_t>(idx))) {
+    if (_docs_mask.IsDeleted(static_cast<doc_id_t>(idx))) {
       return true;
     }
     return HNSWResultHandler::SingleResultHandler::add_result(
@@ -71,7 +71,7 @@ class HNSWSegmentResultHandler : public HNSWResultHandler::SingleResultHandler {
 
  private:
   uint32_t _segment_id;
-  const DocumentMask* _docs_mask;
+  DocumentMaskView _docs_mask;
 };
 
 class HNSWRangeSegmentResultHandler
@@ -85,7 +85,7 @@ class HNSWRangeSegmentResultHandler
       _docs_mask{docs_mask} {}
 
   bool add_result(float dis, int64_t idx) final {
-    if (_docs_mask && _docs_mask->contains(static_cast<doc_id_t>(idx))) {
+    if (_docs_mask.IsDeleted(static_cast<doc_id_t>(idx))) {
       return true;
     }
     return HNSWRangeResultHandler::SingleResultHandler::add_result(
@@ -94,7 +94,7 @@ class HNSWRangeSegmentResultHandler
 
  private:
   uint32_t _segment_id;
-  const DocumentMask* _docs_mask;
+  DocumentMaskView _docs_mask;
 };
 
 class ColumnDistanceBase : public faiss::DistanceComputer {

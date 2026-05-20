@@ -286,11 +286,10 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
                "bound expression is missing for inverted index expression");
     const auto& bound_expr = _bound_expressions[i];
 
-    std::vector<catalog::Column::Id> col_index_to_id;
-    col_index_to_id.reserve(columns.size());
-    for (const auto& c : columns) {
-      col_index_to_id.push_back(c.GetId());
-    }
+    auto col_index_to_id = columns                                           //
+                           | std::views::transform(&catalog::Column::GetId)  //
+                           |
+                           std::ranges::to<std::vector<catalog::Column::Id>>();
     auto* table_ptr_local = TableOrNull();
     auto relation_id =
       table_ptr_local ? table_ptr_local->GetId() : _relation->GetId();

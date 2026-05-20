@@ -95,6 +95,29 @@ id
 3
 
 
+# Default opclass (no dictionary spelled out) -- same as verbatim_dict for
+# non-text return types: keyword analyzer + null tokenizer.
+
+statement ok
+CREATE TABLE b1d(id INTEGER PRIMARY KEY, x INTEGER);
+
+statement ok
+CREATE INDEX b1d_idx ON b1d USING inverted(id, (x > 0));
+
+statement ok
+INSERT INTO b1d VALUES (1, 5), (2, -3), (3, 0), (4, 7);
+
+statement ok
+VACUUM (UPDATE_INDEXES) b1d;
+
+query
+SELECT id FROM b1d_idx WHERE (x > 0) = true ORDER BY id;
+----
+id
+1
+4
+
+
 # --- 2 columns, numeric return ---------------------------------------------
 
 statement ok
@@ -295,6 +318,24 @@ SELECT id FROM mix_idx WHERE a || b = 'foobar';
 id
 1
 
+query ??
+EXPLAIN SELECT id FROM mix_idx WHERE a || b = 'foobar';
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: mix_idx      │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+<slt:ignore>
+│                           │
+│      Projections: id      │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
 query
 SELECT id FROM mix_idx WHERE a || b = 'helloworld';
 ----
@@ -306,6 +347,24 @@ SELECT id FROM mix_idx WHERE a = 'foo' AND a || b = 'foobaz';
 ----
 id
 3
+
+query ??
+EXPLAIN SELECT id FROM mix_idx WHERE a = 'foo' AND a || b = 'foobaz';
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: mix_idx      │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+<slt:ignore>
+│                           │
+│      Projections: id      │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 
 # --- DML re-indexes the expression -----------------------------------------
@@ -893,6 +952,36 @@ QUERY PLAN
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
+
+
+# Strange cases: outer CAST inside the indexed expression. `(a + b)::json`
+# pins the return type to JSON, so the index goes through the JSON multi-
+# field aux dispatch and downstream cast-to-int filters still match.
+
+statement ok
+CREATE TABLE strange_json(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX strange_json_idx ON strange_json
+USING inverted(id, ((a + b)::json) verbatim_dict);
+
+statement ok
+INSERT INTO strange_json VALUES (1, 10, 20), (2, 5, 5), (3, 7, 8);
+
+statement ok
+VACUUM (UPDATE_INDEXES) strange_json;
+
+query
+SELECT id FROM strange_json_idx WHERE ((a + b)::json)::int = 30;
+----
+id
+1
+
+query
+SELECT id FROM strange_json_idx WHERE ((a + b)::json)::int = 10;
+----
+id
+2
 
 
 # --- INCLUDE columns alongside an indexed expression ---------------------

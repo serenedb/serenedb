@@ -50,7 +50,9 @@
 #include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_set.h"
+#include "connector/common.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -130,16 +132,12 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
     auto& cast = expr->Cast<duckdb::BoundCastExpression>();
     if (cast.child && cast.child->expression_class ==
                         duckdb::ExpressionClass::BOUND_CONSTANT) {
-      try {
-        auto folded =
-          duckdb::ExpressionExecutor::EvaluateScalar(context, *expr);
-        return duckdb::make_uniq<duckdb::BoundConstantExpression>(
-          std::move(folded));
-      } catch (const std::exception& e) {
-        SDB_THROW(
-          ERROR_INTERNAL,
-          "Failed to fold constant cast for inverted index: ", e.what());
-      }
+      duckdb::Value folded;
+      SDB_ENSURE(
+        duckdb::ExpressionExecutor::TryEvaluateScalar(context, *expr, folded),
+        ERROR_INTERNAL, "Failed to fold constant cast for inverted index");
+      return duckdb::make_uniq<duckdb::BoundConstantExpression>(
+        std::move(folded));
     }
   }
   return expr;
@@ -150,8 +148,8 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
 std::string SerializeBoundExpression(const duckdb::Expression& expr) {
   duckdb::MemoryStream stream;
   duckdb::BinarySerializer::Serialize(expr, stream);
-  return std::string(reinterpret_cast<const char*>(stream.GetData()),
-                     stream.GetPosition());
+  return std::string{reinterpret_cast<const char*>(stream.GetData()),
+                     stream.GetPosition()};
 }
 
 duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
@@ -171,7 +169,7 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   auto copy = FoldConstantCasts(expr.Copy(), context);
   auto visit = [&](auto& self, duckdb::Expression& e) -> void {
     e.SetAlias("");
-    e.SetQueryLocation(duckdb::optional_idx());
+    e.SetQueryLocation(duckdb::optional_idx{});
     if (e.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
       auto& cref = e.Cast<duckdb::BoundColumnRefExpression>();
       const auto idx = cref.binding.column_index.GetIndex();
@@ -228,22 +226,21 @@ const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
 
 std::vector<catalog::Column::Id> CollectDependentColumns(
   const duckdb::Expression& expr) {
-  containers::FlatHashSet<catalog::Column::Id> seen;
-  std::vector<catalog::Column::Id> ordered;
+  std::vector<catalog::Column::Id> out;
+  out.reserve(8);
   auto visit = [&](auto& self, const duckdb::Expression& node) -> void {
     if (node.expression_class == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-      auto col_id = static_cast<catalog::Column::Id>(
+      out.push_back(static_cast<catalog::Column::Id>(
         node.Cast<duckdb::BoundColumnRefExpression>()
-          .binding.column_index.GetIndex());
-      if (seen.insert(col_id).second) {
-        ordered.push_back(col_id);
-      }
+          .binding.column_index.GetIndex()));
     }
     duckdb::ExpressionIterator::EnumerateChildren(
       node, [&](const duckdb::Expression& child) { self(self, child); });
   };
   visit(visit, expr);
-  return ordered;
+  std::ranges::sort(out);
+  out.erase(std::ranges::unique(out).begin(), out.end());
+  return out;
 }
 
 void RejectUserDefinedFunctions(const duckdb::Expression& expr,
@@ -341,8 +338,7 @@ void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
     if (!fmt.validity.RowIsValid(idx)) {
       continue;
     }
-    const auto& s = data[idx];
-    const std::string_view view{s.GetData(), s.GetSize()};
+    const auto view = AsView(data[idx]);
     const auto first = view.find_first_not_of(" \t\n\r");
     if (first == std::string_view::npos) {
       continue;
@@ -357,10 +353,11 @@ void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
       continue;
     }
     if (doc.is_object() || doc.is_array()) {
-      throw duckdb::InvalidInputException(
-        "JSON expression indexed by an inverted index must point to a "
-        "primitive "
-        "(string/number/boolean/null) leaf; got an object or array");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("JSON expression indexed by an inverted index must point to "
+                "a primitive (string/number/boolean/null) leaf; got an "
+                "object or array"));
     }
   }
 }

@@ -48,10 +48,6 @@ struct Snapshot;
 }  // namespace sdb::catalog
 namespace sdb::connector {
 
-inline std::string_view AsView(const duckdb::string_t& s) noexcept {
-  return {s.GetData(), s.GetSize()};
-}
-
 struct FilterContext {
   bool negated = false;
   irs::score_t boost = irs::kNoBoost;

@@ -423,6 +423,79 @@ count
 41
 
 
+# Real multi-term phrase iterators - exercise Phrase::LazySeek (conjunction
+# approximation + position check), not the single-token degenerate path.
+
+query
+SELECT count(*) FROM lz_idx WHERE body @@ ts_phrase('every', 'dense');
+----
+count
+100
+
+query
+SELECT count(*) FROM lz_idx WHERE body @@ ts_phrase('every', 'third');
+----
+count
+33
+
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('every', 'dense') || ts_phrase('every', 'third'));
+----
+count
+133
+
+query
+SELECT count(*) FROM lz_idx WHERE body @@ (
+  ts_phrase('every', 'dense')
+  || ts_phrase('every', 'third')
+  || ts_phrase('pair_a', 'pair_b'));
+----
+count
+142
+
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('every', 'dense') && ts_phrase('pair_a', 'pair_b'));
+----
+count
+14
+
+# 'pair_a' sits between 'every' and 'pair_b' at every x%7=0 doc, so the
+# conjunction approximation finds 28 candidates but the position check rejects
+# all of them; combined with (every dense) -> 100.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('every', 'pair_b') || ts_phrase('every', 'dense'));
+----
+count
+100
+
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('pair_a', 'pair_b') || ts_phrase('lonely'));
+----
+count
+29
+
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('every', 'dense') && !!ts_phrase('pair_a', 'pair_b'));
+----
+count
+86
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM lz_idx WHERE body @@ (
+    ts_phrase('every', 'dense') || ts_phrase('pair_a', 'pair_b'))
+  ORDER BY BM25(lz_idx.tableoid) DESC LIMIT 10
+) t;
+----
+count
+10
+
+
 # ============================================================================
 # Repeated seek to same target / backward seek (no-op semantics).
 # Both expressed via OR'ing the same phrase twice and combining with AND.

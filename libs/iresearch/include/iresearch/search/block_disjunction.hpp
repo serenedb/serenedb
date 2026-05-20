@@ -269,13 +269,10 @@ class BlockDisjunction : public DocIterator {
         _doc_base = _doc;
 
         for (auto [it, scorer] : std::views::zip(_itrs, _scorers)) {
-          if (scorer.IsDefault() || it.value() != _doc) {
+          if (it.value() != _doc) {
             continue;
           }
-
-          it.FetchScoreArgs(0);
-          const auto sub_score = scorer.Score();
-          Merge<MergeType>(_score_buf.score_window[0], sub_score);
+          MergeSubScore(it, scorer);
         }
       }
 
@@ -284,8 +281,89 @@ class BlockDisjunction : public DocIterator {
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    // TODO(gnusi): Optimize
-    return seek(target);
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
+    }
+
+    if (target < _max) {
+      const doc_id_t block_base = _max - kWindow;
+      const doc_id_t block_target = target - block_base;
+      const doc_id_t block_offset = block_target / kBlockSize;
+      const size_t bit_offset = block_target % kBlockSize;
+      const uint64_t bit = UINT64_C(1) << bit_offset;
+      const uint64_t word = _mask[block_offset];
+
+      if (word & bit) {
+        _doc_base = block_base + block_offset * kBlockSize;
+        _begin = _mask + block_offset + 1;
+        _cur = (word ^ bit) & ((~UINT64_C(0)) << bit_offset);
+        if constexpr (Traits::kMinMatch || kHasScore) {
+          _buf_offset = block_offset * kBlockSize;
+        }
+        if constexpr (Traits::kMinMatch) {
+          _match_count = _match_buf.match_count(_buf_offset + bit_offset);
+          SDB_ASSERT(_match_count >= _match_buf.min_match_count());
+        }
+        return _doc = target;
+      }
+      return target + 1;
+    }
+
+    size_t matches = 0;
+    if constexpr (kHasScore) {
+      _score_buf.score_window[0] = 0;
+    }
+
+    VisitAndPurge([&](auto v) {
+      auto& [it, scorer] = v;
+      const auto value = it.LazySeek(target);
+      if (doc_limits::eof(value)) {
+        return false;  // purge exhausted sub.
+      }
+      if (value == target) {
+        if constexpr (!Traits::kMinMatch) {
+          matches = 1;
+          MergeSubScore(it, scorer);
+        } else {
+          ++matches;
+        }
+      }
+      return true;
+    });
+
+    if (_itrs.empty()) {
+      if constexpr (Traits::kMinMatch) {
+        _match_count = 0;
+      }
+      return _doc = doc_limits::eof();
+    }
+
+    if constexpr (Traits::kMinMatch) {
+      if (matches < _match_buf.min_match_count()) {
+        return target + 1;
+      }
+      if constexpr (kHasScore) {
+        for (auto [it, scorer] : std::views::zip(_itrs, _scorers)) {
+          if (it.value() != target) {
+            continue;
+          }
+          MergeSubScore(it, scorer);
+        }
+      }
+    } else if (matches == 0) {
+      return target + 1;
+    }
+
+    _begin = std::end(_mask);
+    _cur = 0;
+    _max = target;
+    _min = target + 1;
+    _doc_base = target;
+    _buf_offset = 0;
+    if constexpr (Traits::kMinMatch) {
+      _match_count = matches;
+    }
+    return _doc = target;
   }
 
   uint32_t count() final {
@@ -356,6 +434,18 @@ class BlockDisjunction : public DocIterator {
   using Attributes = std::tuple<CostAttr>;
 
   struct ResolveOverloadTag {};
+
+  template<typename It, typename Scorer>
+  IRS_FORCE_INLINE void MergeSubScore(It& it, Scorer& scorer) {
+    if constexpr (kHasScore) {
+      if (scorer.IsDefault()) {
+        return;
+      }
+      it.FetchScoreArgs(0);
+      const auto sub_score = scorer.Score();
+      Merge<MergeType>(_score_buf.score_window[0], sub_score);
+    }
+  }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {

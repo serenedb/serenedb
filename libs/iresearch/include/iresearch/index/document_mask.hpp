@@ -75,7 +75,8 @@ class DocumentHashMask final : public DocumentMask {
     }
   }
   IRS_FORCE_INLINE bool IsDeleted(doc_id_t doc_id) const override {
-    return stored_docs_.contains(doc_id) == StoreDeleted;
+    return doc_limits::min() <= doc_id && doc_id <= doc_count_ &&
+           stored_docs_.contains(doc_id) == StoreDeleted;
   }
   size_t DeletedDocCount() const override {
     return StoreDeleted ? stored_docs_.size()
@@ -156,7 +157,8 @@ class DocumentBitMask final : public DocumentMask {
   }
 
   IRS_FORCE_INLINE bool IsDeleted(doc_id_t doc_id) const override {
-    return is_deleted_.test(doc_id - doc_limits::min());
+    const auto idx = doc_id - doc_limits::min();
+    return 0 <= idx && idx < is_deleted_.size() && is_deleted_.test(idx);
   }
   size_t DeletedDocCount() const override { return deleted_doc_count_; }
   size_t DocCount() const override { return is_deleted_.size(); }

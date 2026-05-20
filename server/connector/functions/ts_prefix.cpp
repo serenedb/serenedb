@@ -41,7 +41,8 @@ void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
                     ERR_MSG(r.errorMessage()),
                     ERR_HINT("Example: ts_starts_with('pre')."));
   }
-  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+      column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_starts_with field is not VARCHAR"),
                     ERR_HINT("Example: ts_starts_with('pre'). ts_starts_with "

@@ -84,7 +84,8 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
     }
     syntax = *parsed;
   }
-  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+      column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     throw duckdb::InvalidInputException("ts_regexp field is not VARCHAR");
   }
   std::string field_name;

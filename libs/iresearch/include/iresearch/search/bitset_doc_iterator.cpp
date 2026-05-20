@@ -22,6 +22,7 @@
 
 #include "bitset_doc_iterator.hpp"
 
+#include "basics/bit_utils.hpp"
 #include "basics/math_utils.hpp"
 
 namespace irs {
@@ -94,7 +95,34 @@ doc_id_t BitsetDocIterator::seek(doc_id_t target) {
   return advance();
 }
 
-doc_id_t BitsetDocIterator::LazySeek(doc_id_t target) { return seek(target); }
+doc_id_t BitsetDocIterator::LazySeek(doc_id_t target) {
+  if (target <= _doc) [[unlikely]] {
+    return _doc;
+  }
+
+  const doc_id_t word_idx = target / BitsRequired<word_t>();
+  const word_t* word_ptr;
+  while (1) {
+    word_ptr = _begin + word_idx;
+    if (word_ptr < _end) {
+      break;
+    }
+    if (!refill(&_begin, &_end)) {
+      _word = 0;
+      return _doc = doc_limits::eof();
+    }
+  }
+
+  const doc_id_t bit_idx = target % BitsRequired<word_t>();
+  if (!CheckBit(*word_ptr, bit_idx)) {
+    return target + 1;
+  }
+
+  _base = word_idx * BitsRequired<word_t>();
+  _next = word_ptr + 1;
+  _word = ((*word_ptr) >> bit_idx) >> 1;
+  return _doc = target;
+}
 
 uint32_t BitsetDocIterator::count() {
   uint32_t count = 0;

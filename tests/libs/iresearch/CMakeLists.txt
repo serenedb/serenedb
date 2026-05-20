@@ -89,7 +89,6 @@ set(iresearch-tests_sources
     ./search/block_scoring_test.cpp
     ./search/boost_query_test.cpp
     ./search/wand_scoring_test.cpp
-    ./search/search_bench_test.cpp
     ./utils/async_utils_tests.cpp
     ./utils/wkb_parser_test.cpp
     ./utils/automaton_test.cpp
@@ -185,6 +184,42 @@ target_include_directories(
 )
 target_include_directories(
     iresearch-tests
+    SYSTEM
+    PRIVATE
+        ${Fasttext_INCLUDE_DIR}
+        ${Boost_INCLUDE_DIRS}
+        ${FROZEN_INCLUDE_DIR}
+        $<TARGET_PROPERTY:iresearch-cmdline,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:iresearch-utfcpp,INTERFACE_INCLUDE_DIRECTORIES>
+)
+
+# Standalone SearchBench binary -- split out so CI doesn't have to compile and
+# link the full iresearch-tests just to run the corpus-driven validation.
+add_executable(
+    iresearch-searchbench-tests
+    ./search/search_bench_test.cpp
+    ./formats/column/test_cs_helpers.cpp
+    ./tests_param.cpp
+    ./tests_main.cpp
+)
+
+target_link_libraries(
+    iresearch-searchbench-tests
+    serene_base
+    iresearch-static
+    search-benchmark-common
+    gtest
+    rapidjson
+    simdjson
+)
+
+target_include_directories(
+    iresearch-searchbench-tests
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}
+)
+target_include_directories(
+    iresearch-searchbench-tests
     SYSTEM
     PRIVATE
         ${Fasttext_INCLUDE_DIR}

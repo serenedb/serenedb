@@ -7217,6 +7217,70 @@ TEST_P(PhraseFilterTestCase, regexp_part_syntax) {
   }
 }
 
+// Regression: NOT(ByPhrase) used to trip the `target >= value()`
+// assertion in PostingIteratorBase::LazySeek. Not::prepare wraps the
+// phrase as the excl side of an AndQuery over All; Exclusion::converge
+// then re-reads value() from the PhraseIterator (and its inner
+// Conjunction) between LazySeek calls. The bail-out paths in those
+// iterators previously returned the advanced position without
+// updating _doc, so the next LazySeek seeded a target that was
+// behind some leaf's current position.
+TEST_P(PhraseFilterTestCase, sequential_negation_regression) {
+  {
+    tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
+                                &tests::AnalyzedJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+
+  irs::ByPhrase phrase;
+  *phrase.mutable_field() = "phrase_anl";
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view("brown"));
+
+  auto collect = [&](const irs::Filter& filter) {
+    std::vector<irs::doc_id_t> out;
+    auto prepared = filter.prepare({.index = rdr});
+    for (const auto& sub : rdr) {
+      auto docs = prepared->execute({.segment = sub});
+      while (docs->next()) {
+        out.push_back(docs->value());
+      }
+    }
+    return out;
+  };
+
+  const auto phrase_hits = collect(phrase);
+  ASSERT_FALSE(phrase_hits.empty());
+
+  irs::Not not_phrase;
+  not_phrase.filter<irs::ByPhrase>() = phrase;
+  const auto not_hits = collect(not_phrase);
+
+  // Complement must be non-empty and disjoint from the positive hits.
+  ASSERT_FALSE(not_hits.empty());
+  for (auto doc : phrase_hits) {
+    EXPECT_EQ(not_hits.end(), std::find(not_hits.begin(), not_hits.end(), doc));
+  }
+
+  // Drive seek() across positive hits too -- that's the path that
+  // surfaced the crash from the SQL side via Exclusion::converge.
+  auto prepared = not_phrase.prepare({.index = rdr});
+  for (const auto& sub : rdr) {
+    auto docs = prepared->execute({.segment = sub});
+    for (auto doc : phrase_hits) {
+      const auto target = doc + 1;
+      const auto landed = docs->seek(target);
+      EXPECT_GE(landed, target);
+      if (irs::doc_limits::eof(landed)) {
+        break;
+      }
+    }
+  }
+}
+
 TEST(by_phrase_test, equal_regexp_part_syntax_differs) {
   // ByRegexpOptions::syntax must propagate through variant equality
   auto make = [](irs::RegexpSyntax syntax) {

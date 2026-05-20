@@ -38,6 +38,7 @@ jobs:
               '- [ ] ASAN',
               '- [ ] TSAN',
               '- [ ] MSAN',
+              '- [x] SearchBench',
               '',
               '---',
               '- [ ] **Trigger Jobs**',
@@ -104,6 +105,7 @@ jobs:
             const enableAsan = isChecked('ASAN');
             const enableTsan = isChecked('TSAN');
             const enableMsan = isChecked('MSAN');
+            const enableSearchbench = isChecked('SearchBench');
 
             const { owner, repo } = context.repo;
             const statusContext = 'serenedb | build & test';
@@ -149,6 +151,7 @@ jobs:
                 ENABLE_ASAN: enableAsan.toString(),
                 ENABLE_TSAN: enableTsan.toString(),
                 ENABLE_MSAN: enableMsan.toString(),
+                ENABLE_SEARCHBENCH: enableSearchbench.toString(),
                 VALIDATE_PG_TESTS: 'true',
                 PR_SHA: sha,
                 BUILD_CONFIG: JSON.stringify({
@@ -187,6 +190,7 @@ jobs:
               enableAsan && 'asan',
               enableTsan && 'tsan',
               enableMsan && 'msan',
+              enableSearchbench && 'searchbench',
               allArch && 'all arch',
             ].filter(Boolean);
             const optsStr = opts.length > 0 ? opts.join(', ') : 'default';

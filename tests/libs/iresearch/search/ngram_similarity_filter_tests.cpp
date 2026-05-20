@@ -28,6 +28,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/bm25.hpp"
+#include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/ngram_similarity_filter.hpp"
 #include "iresearch/search/ngram_similarity_query.hpp"
 #include "iresearch/search/score_function.hpp"
@@ -1473,6 +1474,65 @@ TEST_P(NGramSimilarityFilterTestCase, seek) {
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
   counter.Reset();
+}
+
+// Regression: NOT(ByNGramSimilarity) used to trip the
+// `target >= value()` assertion in PostingIteratorBase::LazySeek.
+// NGramSimilarityDocIterator's LazySeek bail-out paths returned the
+// advanced position without updating _doc, so when Not::prepare hoists
+// the ngram into the excl side of an AndQuery over All,
+// Exclusion::converge re-read a stale value() and seeded the next
+// LazySeek with a target behind some leaf's position.
+TEST_P(NGramSimilarityFilterTestCase, negation_regression) {
+  {
+    tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+
+  irs::ByNGramSimilarity ngram =
+    MakeFilter("field", {"at", "tl", "la", "as"}, 0.5f);
+
+  auto collect = [&](const irs::Filter& filter) {
+    std::vector<irs::doc_id_t> out;
+    auto prepared = filter.prepare({.index = rdr});
+    for (const auto& sub : rdr) {
+      auto docs = prepared->execute({.segment = sub});
+      while (docs->next()) {
+        out.push_back(docs->value());
+      }
+    }
+    return out;
+  };
+
+  const auto ngram_hits = collect(ngram);
+  ASSERT_FALSE(ngram_hits.empty());
+
+  irs::Not not_ngram;
+  not_ngram.filter<irs::ByNGramSimilarity>() = ngram;
+  const auto not_hits = collect(not_ngram);
+
+  // Complement must be non-empty and disjoint from the positive hits.
+  ASSERT_FALSE(not_hits.empty());
+  for (auto doc : ngram_hits) {
+    EXPECT_EQ(not_hits.end(), std::find(not_hits.begin(), not_hits.end(), doc));
+  }
+
+  // Drive seek() across positive hits -- mirrors the path that
+  // surfaced the crash from the SQL side via Exclusion::converge.
+  auto prepared = not_ngram.prepare({.index = rdr});
+  for (const auto& sub : rdr) {
+    auto docs = prepared->execute({.segment = sub});
+    for (auto doc : ngram_hits) {
+      const auto target = doc + 1;
+      const auto landed = docs->seek(target);
+      EXPECT_GE(landed, target);
+      if (irs::doc_limits::eof(landed)) {
+        break;
+      }
+    }
+  }
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

@@ -286,9 +286,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
                "bound expression is missing for inverted index expression");
     const auto& bound_expr = _bound_expressions[i];
 
-    auto col_index_to_id = columns                                           //
-                           | std::views::transform(&catalog::Column::GetId)  //
-                           |
+    auto col_index_to_id = columns |
+                           std::views::transform(&catalog::Column::GetId) |
                            std::ranges::to<std::vector<catalog::Column::Id>>();
     auto* table_ptr_local = TableOrNull();
     auto relation_id =
@@ -303,17 +302,15 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         "indexed expression must reference at least one base table column");
     }
     auto return_type = normalized->return_type;
-    idx_columns.emplace_back(catalog::CreateIndexColumn{
-      .opclass = std::move(opclass),
-      .indexed_expr =
-        catalog::IndexedExpressionData{
-          .serialized = std::move(serialized),
-          .pretty_printed = expr->ToString(),
-          .dependent_columns = std::move(dependent_columns),
-          .return_type = std::move(return_type),
-        },
-      .opclass_options = std::move(opclass_options),
-    });
+    idx_columns.emplace_back(
+      nullptr, "", std::move(opclass),
+      catalog::IndexedExpressionData{
+        .serialized = std::move(serialized),
+        .pretty_printed = expr->ToString(),
+        .dependent_columns = std::move(dependent_columns),
+        .return_type = std::move(return_type),
+      },
+      std::move(opclass_options));
   }
 
   bool if_not_exists =

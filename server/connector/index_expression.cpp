@@ -226,8 +226,9 @@ const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
 
 std::vector<catalog::Column::Id> CollectDependentColumns(
   const duckdb::Expression& expr) {
+  constexpr size_t kReserved = 8;
   std::vector<catalog::Column::Id> out;
-  out.reserve(8);
+  out.reserve(kReserved);
   auto visit = [&](auto& self, const duckdb::Expression& node) -> void {
     if (node.expression_class == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
       out.push_back(static_cast<catalog::Column::Id>(

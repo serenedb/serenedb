@@ -24,7 +24,6 @@ add_executable(
     size_limited_string_test.cpp
     string_utf8_normalize_test.cpp
     string_utf8_test.cpp
-    attribute_name_parser_test.cpp
     cpu_usage_snapshot_test.cpp
     encoding_utils_test.cpp
     endpoint_test.cpp

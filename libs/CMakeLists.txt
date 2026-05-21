@@ -46,9 +46,7 @@ add_library(
     basics/hashes.cpp
     basics/read_write_spin_lock.cpp
     basics/utf8_helper.cpp
-    basics/attribute_name_parser.cpp
     basics/cpu_usage_snapshot.cpp
-    basics/debug_race_controller.cpp
     basics/file_descriptors.cpp
     basics/global_resource_monitor.cpp
     basics/hybrid_logical_clock.cpp

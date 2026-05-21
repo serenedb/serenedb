@@ -103,7 +103,9 @@ TEST_P(ConcurrentConnectionF, ApiVersionParallel) {
   ASSERT_TRUE(wg.WaitFor(std::chrono::seconds(300)));
 
   // wait for all threads to end
-  for (auto& t : joins) t.join();
+  for (auto& t : joins) {
+    t.join();
+  }
 
   ASSERT_EQ(repeat() * threads(), counter);
 }
@@ -166,7 +168,9 @@ TEST_P(ConcurrentConnectionF, CreateDocumentsParallel) {
   // if the requests reach the server or if fuerte deadlocks internally.
 
   // wait for all threads to end
-  for (auto& t : joins) t.join();
+  for (auto& t : joins) {
+    t.join();
+  }
 
   ASSERT_EQ(repeat() * threads(), counter);
 }

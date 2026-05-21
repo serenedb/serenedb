@@ -59,8 +59,6 @@ bool ExpectResponseBody(int status_code) {
 }
 
 }  // namespace
-
-
 namespace sdb::rest {
 
 struct H2Response : public HttpResponse {

@@ -142,7 +142,9 @@ TEST(RecursiveLockerTest, testRecursiveWriteLockMultiThreaded) {
     });
   }
 
-  for (auto& t : threads) t.join();
+  for (auto& t : threads) {
+    t.join();
+  }
 
   ASSERT_EQ(kN * kIterations, total);
   ASSERT_EQ(kN * kIterations * 2, x);

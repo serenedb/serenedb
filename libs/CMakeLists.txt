@@ -198,13 +198,6 @@ add_library(
     endpoint/endpoint_ip_v4.cpp
     endpoint/endpoint_ip_v6.cpp
     endpoint/endpoint_list.cpp
-    maskings/attribute_masking.cpp
-    maskings/collection.cpp
-    maskings/masking_function.cpp
-    maskings/maskings.cpp
-    maskings/path.cpp
-    maskings/random_mask.cpp
-    maskings/random_string_mask.cpp
     rest/common_defines.cpp
     rest/general_request.cpp
     rest/general_response.cpp

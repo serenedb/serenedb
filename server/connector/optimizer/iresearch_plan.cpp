@@ -363,7 +363,7 @@ bool AllColumnRefsBindTo(const duckdb::Expression& expr,
   }
   bool ok = true;
   duckdb::ExpressionIterator::EnumerateChildren(
-    const_cast<duckdb::Expression&>(expr), [&](duckdb::Expression& child) {
+    expr, [&](const duckdb::Expression& child) {
       if (ok && !AllColumnRefsBindTo(child, table_index, any_seen)) {
         ok = false;
       }
@@ -453,11 +453,18 @@ void InitSearchColumnContextForGet(
   ctx.indexed_expressions.insert(exprs_view.begin(), exprs_view.end());
 }
 
-auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data) {
+auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data,
+                          const catalog::InvertedIndex& index) {
   return [&](catalog::Column::Id col_id) {
     auto name = bind_data.ColumnNameById(col_id);
     if (!name.empty()) {
       return std::string{name};
+    }
+    const auto field_id = static_cast<irs::field_id>(col_id);
+    for (const auto& expr : index.GetExpressions()) {
+      if (expr.field_id == field_id && !expr.pretty_printed.empty()) {
+        return expr.pretty_printed;
+      }
     }
     return absl::StrCat("col", col_id);
   };
@@ -917,7 +924,7 @@ bool TryClaimSearchFilter(
 
   // Capture summary BEFORE preparing -- prepare consumes the tree.
   std::string filter_summary =
-    irs::ToStringDemangled(*root, MakeColumnNameLookup(bind_data));
+    irs::ToStringDemangled(*root, MakeColumnNameLookup(bind_data, *resolved.index));
 
   auto search = std::make_unique<connector::SearchScan>();
   search->snapshot = resolved.shard->GetInvertedIndexSnapshot();

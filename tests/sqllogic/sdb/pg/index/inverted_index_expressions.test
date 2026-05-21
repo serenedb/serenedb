@@ -329,11 +329,12 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-<slt:ignore>
+│ AND[Term((a || b)(string) │
+│         =foobar)]         │
 │                           │
 │      Projections: id      │
 │                           │
-│ <slt:ignore> row          │
+│           ~1 row          │
 └───────────────────────────┘
 
 query
@@ -359,11 +360,13 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-<slt:ignore>
+│ AND[Term(a(string)=foo) &&│
+│    Term((a || b)(string)  │
+│         =foobaz)]         │
 │                           │
 │      Projections: id      │
 │                           │
-│ <slt:ignore> row          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -910,11 +913,12 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-<slt:ignore>
+│ AND[Term((a + b)(numeric)=│
+│    \\x0\\x80\\x0\\x0\\x1e)]    │
 │                           │
 │      Projections: id      │
 │                           │
-│ <slt:ignore> row          │
+│           ~1 row          │
 └───────────────────────────┘
 
 query
@@ -928,7 +932,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-<slt:ignore>
+│ AND[Term((s1 || s2)(string│
+│         )=foobar)]        │
 │                           │
 │      Projections: id      │
 │                           │
@@ -946,7 +951,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-<slt:ignore>
+│  AND[Term((a > b)(bool)=  │
+│           \\xff)]          │
 │                           │
 │      Projections: id      │
 │                           │

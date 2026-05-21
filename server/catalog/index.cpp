@@ -604,6 +604,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         .dependent_columns = expr_data.dependent_columns,
         .return_type = expr_data.return_type,
         .field_id = next_expr_field_id++,
+        .pretty_printed = expr_data.pretty_printed,
       };
       if (!c.opclass.empty()) {
         auto dict = resolve_dict(expr_data.pretty_printed, c.opclass);

@@ -54,6 +54,7 @@ struct ExpressionInfo {
   irs::field_id field_id = 0;
   std::optional<Column::Id> synthetic_column;
   uint32_t norm_row_group_size = 0;
+  std::string pretty_printed;
 
   struct HasherBySerialized {
     using is_transparent = void;

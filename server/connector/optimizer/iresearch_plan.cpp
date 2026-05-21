@@ -95,6 +95,12 @@ std::shared_ptr<const catalog::Snapshot> PinnedSnapshot(
     .EnsureCatalogSnapshot();
 }
 
+search::InvertedIndexSnapshotPtr PinnedSearchSnapshot(
+  const connector::SearchFilterOptions& options, ObjectId index_id) {
+  return connector::GetSereneDBContext(options.client_context)
+    .EnsureSearchSnapshot(index_id);
+}
+
 bool IsMutationOp(duckdb::LogicalOperatorType type) {
   switch (type) {
     case duckdb::LogicalOperatorType::LOGICAL_DELETE:
@@ -612,8 +618,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   }
 
   auto ann = std::make_unique<connector::ANNScan>();
-  ann->snapshot = connector::GetSereneDBContext(options.client_context)
-                    .EnsureSearchSnapshot(resolved->index->GetId());
+  ann->snapshot = PinnedSearchSnapshot(options, resolved->index->GetId());
   ann->field_id = col_id;
   ann->query_vector = std::move(query_vector);
   ann->top_k = limit;
@@ -805,8 +810,7 @@ bool TryClaimAnnRange(
   }
 
   auto rss = std::make_unique<connector::RangeSearchScan>();
-  rss->snapshot = connector::GetSereneDBContext(options.client_context)
-                    .EnsureSearchSnapshot(resolved.index->GetId());
+  rss->snapshot = PinnedSearchSnapshot(options, resolved.index->GetId());
   rss->field_id = col_id;
   rss->query_vector = std::move(query_vector);
   rss->radius = radius;
@@ -896,8 +900,7 @@ bool TryClaimSearchFilter(
     irs::ToStringDemangled(*root, MakeColumnNameLookup(bind_data));
 
   auto search = std::make_unique<connector::SearchScan>();
-  search->snapshot = connector::GetSereneDBContext(options.client_context)
-                       .EnsureSearchSnapshot(resolved.index->GetId());
+  search->snapshot = PinnedSearchSnapshot(options, resolved.index->GetId());
   search->stored_filter = root;
   search->filter_summary = std::move(filter_summary);
   if (resolved.index) {
@@ -1823,8 +1826,7 @@ bool TryConvertAggregateToCount(
         return false;
       }
       count_scan->snapshot =
-        connector::GetSereneDBContext(options.client_context)
-          .EnsureSearchSnapshot(resolved->index->GetId());
+        PinnedSearchSnapshot(options, resolved->index->GetId());
       break;
     }
     default:

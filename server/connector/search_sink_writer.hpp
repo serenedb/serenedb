@@ -91,35 +91,29 @@ inline std::vector<IndexedExpression> MakeIndexedExpressions(
   return entries;
 }
 
-// Returns true if values for `column_id` should be written into the new
-// columnstore (catalog store_values=true). Provided by callers so the
-// sink does not depend on catalog::InvertedIndex directly.
-using StoreValuesProvider = std::function<bool(catalog::Column::Id)>;
+using StoreValuesProvider = std::function<bool(irs::field_id)>;
 
 inline StoreValuesProvider MakeStoreValuesProvider(
   const catalog::InvertedIndex& index) {
-  return [&index](catalog::Column::Id column_id) {
-    const auto* col = index.FindColumnInfo(column_id);
-    return col != nullptr && col->store_values;
+  return [&index](irs::field_id field_id) {
+    const auto* entry = index.FindEntry(field_id);
+    return entry != nullptr && entry->store_values;
   };
 }
 
 inline StoreValuesProvider NoStoreValues() {
-  return [](catalog::Column::Id) { return false; };
+  return [](irs::field_id) { return false; };
 }
 
-// Returns true if `column_id` is configured for text-style inverted indexing
-// (i.e. has a text_dictionary in the catalog). INCLUDE-only columns return
-// false -- the sink then skips the per-row tokenize+postings-insert path
-// that BuildColumnTokenizer's keyword-fallback would otherwise execute for
-// every row, which dominates create_index CPU on wide tables.
-using IsTextIndexedProvider = std::function<bool(catalog::Column::Id)>;
+// Lets the sink skip the per-row tokenize+postings path for INCLUDE-only
+// entries.
+using IsTextIndexedProvider = std::function<bool(irs::field_id)>;
 
 inline IsTextIndexedProvider MakeIsTextIndexedProvider(
   const catalog::InvertedIndex& index) {
-  return [&index](catalog::Column::Id column_id) {
-    const auto* col = index.FindColumnInfo(column_id);
-    return col != nullptr && col->text_dictionary.isSet();
+  return [&index](irs::field_id field_id) {
+    const auto* entry = index.FindEntry(field_id);
+    return entry != nullptr && entry->text_dictionary.isSet();
   };
 }
 
@@ -127,7 +121,7 @@ inline IsTextIndexedProvider MakeIsTextIndexedProvider(
 // pre-INCLUDE behaviour for code paths and tests that don't yet thread a
 // real provider through.
 inline IsTextIndexedProvider AllTextIndexed() {
-  return [](catalog::Column::Id) { return true; };
+  return [](irs::field_id) { return true; };
 }
 
 // Returns the per-column HNSW configuration when the column is an HNSW
@@ -276,6 +270,12 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   void AppendPerRowBlob(catalog::Column::Id column_id, irs::bytes_view bytes);
   void AppendPerRowBlobNull(catalog::Column::Id column_id);
 
+  // Opens-once and bulk-appends `vec` to the typed columnstore writer for
+  // `field_id`.
+  void BulkAppendToColumnstore(irs::field_id field_id,
+                               const duckdb::LogicalType& type,
+                               const duckdb::Vector& vec, duckdb::idx_t count);
+
   void AppendPerRowPrimaryKey(std::string_view row_key);
 
   // Per-leaf-type Field set for one JSON-typed indexed expression.
@@ -314,7 +314,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   Writer _current_writer;
   bool _emit_pk = true;
 
-  containers::FlatHashMap<catalog::Column::Id, irs::columnstore::ColumnWriter*>
+  containers::FlatHashMap<irs::field_id, irs::columnstore::ColumnWriter*>
     _columnstore_writers;
   irs::columnstore::ColumnWriter* _active_columnstore_writer = nullptr;
   catalog::Column::Id _active_column_id{};

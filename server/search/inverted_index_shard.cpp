@@ -194,11 +194,12 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   writer_options.reader_options.db = writer_options.db;
   writer_options.column_options = [&](irs::field_id id) -> irs::ColumnOptions {
     const auto column_id = static_cast<catalog::Column::Id>(id);
-    if (const auto* column_info = index.FindColumnInfo(column_id)) {
+    if (const auto* entry = index.FindEntry(id)) {
       return {
-        .row_group_size = column_info->row_group_size,
-        .compression = column_info->compression,
-        .hnsw_info = index.GetColumnHNSWInfo(column_id),
+        .row_group_size = entry->row_group_size,
+        .compression = entry->compression,
+        .hnsw_info = entry->IsColumn() ? index.GetColumnHNSWInfo(column_id)
+                                       : std::optional<irs::HNSWInfo>{},
       };
     }
     if (column_id == catalog::Column::kGeneratedPKId) {
@@ -228,8 +229,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
     SDB_ASSERT(entry->synthetic_column,
                "norm callback fired without a catalog reservation; id: ", raw);
     SDB_ASSERT(entry->features.HasFeatures(irs::IndexFeatures::Norm),
-               "norm callback fired but catalog features lack Norm; id: ",
-               raw);
+               "norm callback fired but catalog features lack Norm; id: ", raw);
     return {
       .id = static_cast<irs::field_id>(*entry->synthetic_column),
       .row_group_size = entry->norm_row_group_size,

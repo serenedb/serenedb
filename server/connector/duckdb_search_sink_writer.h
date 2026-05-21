@@ -58,10 +58,9 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
   bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
                     duckdb::idx_t count) final;
 
-  bool SwitchExpression(const ExpressionDescriptor& expr_desc) final {
-    // Impl ignores vec/count; the per-row pipeline is serializer-driven.
-    static const duckdb::Vector kNoVec{duckdb::LogicalType::SQLNULL};
-    return SwitchExpressionImpl(expr_desc, kNoVec, 0);
+  bool SwitchExpression(const ExpressionDescriptor& expr_desc,
+                        const duckdb::Vector& vec, duckdb::idx_t count) final {
+    return SwitchExpressionImpl(expr_desc, vec, count);
   }
 
   std::span<const IndexedExpression> IndexedExpressions() const final {
@@ -127,9 +126,10 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
   bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
                     duckdb::idx_t count) final;
 
-  bool SwitchExpression(const ExpressionDescriptor& expr_desc) final {
-    static const duckdb::Vector kNoVec{duckdb::LogicalType::SQLNULL};
-    return SearchSinkInsertBaseImpl::SwitchExpressionImpl(expr_desc, kNoVec, 0);
+  bool SwitchExpression(const ExpressionDescriptor& expr_desc,
+                        const duckdb::Vector& vec, duckdb::idx_t count) final {
+    return SearchSinkInsertBaseImpl::SwitchExpressionImpl(expr_desc, vec,
+                                                          count);
   }
 
   std::span<const IndexedExpression> IndexedExpressions() const final {

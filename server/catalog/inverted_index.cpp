@@ -109,7 +109,8 @@ struct ExpressionSerialized {
   };
 };
 
-using ColumnSerializedMap = containers::NodeHashMap<Column::Id, ColumnSerialized>;
+using ColumnSerializedMap =
+  containers::NodeHashMap<Column::Id, ColumnSerialized>;
 using ExpressionSerializedSet =
   containers::NodeHashSet<ExpressionSerialized,
                           ExpressionSerialized::HasherBySerialized,

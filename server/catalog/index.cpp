@@ -585,6 +585,50 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     return dict;
   };
 
+  // Parses `(compression='...', row_group_size='...')` options for the
+  // `included` opclass and applies them to `entry`. Shared by column and
+  // indexed-expression branches.
+  auto apply_included_options =
+    [](std::string_view owner_label, const duckdb::LogicalType& value_type,
+       const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
+       InvertedIndexEntryInfo& entry) -> Result {
+    if (!opts) {
+      return {};
+    }
+    for (const auto& [key, raw_val] : *opts) {
+      if (key == kCompressionField) {
+        auto str =
+          GetIndexStringOption(kIncludedKind, owner_label, key, raw_val);
+        if (!str) {
+          return std::move(str).error();
+        }
+        auto parsed = ParseCompressionName(owner_label, *str);
+        if (!parsed) {
+          return std::move(parsed).error();
+        }
+        if (auto r =
+              ValidateColumnCompression(owner_label, *parsed, value_type);
+            r.fail()) {
+          return r;
+        }
+        entry.compression = *parsed;
+      } else if (key == kRowGroupSizeField) {
+        auto parsed =
+          ParseRowGroupSize(kIncludedKind, owner_label, key, raw_val);
+        if (!parsed) {
+          return std::move(parsed).error();
+        }
+        entry.row_group_size = *parsed;
+      } else {
+        return {ERROR_BAD_PARAMETER, owner_label, ": unknown included option '",
+                key,
+                "'. Accepted options: compression (string, default 'auto'), "
+                "row_group_size (int >= 1)"};
+      }
+    }
+    return {};
+  };
+
   InvertedIndex::Entries entries;
   std::vector<irs::field_id> column_field_ids;
   std::vector<irs::field_id> expression_field_ids;
@@ -594,11 +638,6 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     expressions_cnt > 0 ? NextNIds(expressions_cnt).id() : 0;
   for (const auto& c : columns) {
     if (c.IsIndexedExpression()) {
-      if (c.opclass_options.has_value()) {
-        return std::unexpected<Result>{
-          std::in_place, ERROR_BAD_PARAMETER,
-          "indexed expression does not accept opclass options"};
-      }
       const auto& expr_data = c.GetIndexedExpression();
       const auto field_id = next_expr_field_id++;
       InvertedIndexEntryInfo expr_info;
@@ -608,7 +647,23 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         .return_type = expr_data.return_type,
         .pretty_printed = expr_data.pretty_printed,
       };
-      if (!c.opclass.empty()) {
+      const bool is_included_opclass = c.opclass == kIncludedKind;
+      if (c.opclass_options.has_value() && !is_included_opclass) {
+        return std::unexpected<Result>{
+          std::in_place, ERROR_BAD_PARAMETER, "indexed expression '",
+          expr_data.pretty_printed,
+          "': only the 'included' built-in opclass accepts options"};
+      }
+      if (is_included_opclass) {
+        const auto label =
+          absl::StrCat("indexed expression '", expr_data.pretty_printed, "'");
+        if (auto r = apply_included_options(label, expr_data.return_type,
+                                            c.opclass_options, expr_info);
+            r.fail()) {
+          return std::unexpected<Result>(std::move(r));
+        }
+        expr_info.store_values = true;
+      } else if (!c.opclass.empty()) {
         auto dict = resolve_dict(expr_data.pretty_printed, c.opclass);
         if (!dict) {
           return std::unexpected<Result>{std::move(dict.error())};
@@ -710,43 +765,11 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         index_col.row_group_size = row_group_size;
         index_col.store_values = true;
       } else if (c.opclass == kIncludedKind) {
-        if (c.opclass_options) {
-          for (const auto& [key, raw_val] : *c.opclass_options) {
-            if (key == kCompressionField) {
-              auto str =
-                GetIndexStringOption(kIncludedKind, c.name, key, raw_val);
-              if (!str) {
-                return std::unexpected<Result>(std::move(str).error());
-              }
-              auto parsed = ParseCompressionName(c.name, *str);
-              if (!parsed) {
-                return std::unexpected<Result>(std::move(parsed).error());
-              }
-              if (auto r = ValidateColumnCompression(c.name, *parsed,
-                                                     c.catalog_column->type);
-                  r.fail()) {
-                return std::unexpected<Result>(std::move(r));
-              }
-              index_col.compression = *parsed;
-            } else if (key == kRowGroupSizeField) {
-              auto parsed =
-                ParseRowGroupSize(kIncludedKind, c.name, key, raw_val);
-              if (!parsed) {
-                return std::unexpected<Result>(std::move(parsed).error());
-              }
-              index_col.row_group_size = *parsed;
-            } else {
-              return std::unexpected<Result>{
-                std::in_place,
-                ERROR_BAD_PARAMETER,
-                "Column '",
-                c.name,
-                "': unknown included option '",
-                key,
-                "'. Accepted options: compression (string, default 'auto'), "
-                "row_group_size (int >= 1)"};
-            }
-          }
+        const auto label = absl::StrCat("Column '", c.name, "'");
+        if (auto r = apply_included_options(label, c.catalog_column->type,
+                                            c.opclass_options, index_col);
+            r.fail()) {
+          return std::unexpected<Result>(std::move(r));
         }
         index_col.store_values = true;
       } else {
@@ -814,6 +837,9 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   }
   for (auto field_id : expression_field_ids) {
     auto& entry = entries[field_id];
+    if (entry.row_group_size == 0) {
+      entry.row_group_size = options.row_group_size;
+    }
     if (entry.norm_row_group_size == 0) {
       entry.norm_row_group_size = options.norm_row_group_size;
     }

@@ -482,12 +482,11 @@ void InitSearchColumnContextForGet(
     if (expr == nullptr) {
       continue;
     }
-    ctx.indexed_expressions.emplace(
-      expr->serialized_expr,
-      SearchColumnContext::IndexedExpressionMeta{
-        .return_type = expr->return_type,
-        .field_id = field_id,
-      });
+    ctx.indexed_expressions.emplace(expr->serialized_expr,
+                                    SearchColumnContext::IndexedExpressionMeta{
+                                      .return_type = expr->return_type,
+                                      .field_id = field_id,
+                                    });
   }
 }
 

@@ -1121,6 +1121,127 @@ id
 2
 
 
+# --- INCLUDE-style storage on an indexed expression: `(expr) included` persists the evaluated value in the columnstore.
+
+statement ok
+CREATE TABLE inc_e_num(id INT PRIMARY KEY, a INT, b INT);
+
+statement ok
+CREATE INDEX inc_e_num_idx ON inc_e_num USING inverted(id, (a + b) included);
+
+statement ok
+INSERT INTO inc_e_num VALUES (1, 10, 20), (2, 5, 5), (3, 100, 1);
+
+statement ok
+VACUUM (UPDATE_INDEXES) inc_e_num;
+
+query
+SELECT id, a + b AS s FROM inc_e_num_idx WHERE id = 1;
+----
+id    s
+1     30
+
+query
+SELECT id, a + b AS s FROM inc_e_num_idx ORDER BY id;
+----
+id    s
+1     30
+2     10
+3     101
+
+
+statement ok
+UPDATE inc_e_num SET a = 50 WHERE id = 1;
+
+statement ok
+VACUUM (UPDATE_INDEXES) inc_e_num;
+
+query
+SELECT id, a + b AS s FROM inc_e_num_idx ORDER BY id;
+----
+id    s
+1     70
+2     10
+3     101
+
+
+statement ok
+CREATE TABLE inc_e_str(id INT PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement ok
+CREATE INDEX inc_e_str_idx ON inc_e_str USING inverted(
+    id, (LOWER(a) || '-' || LOWER(b)) included);
+
+statement ok
+INSERT INTO inc_e_str VALUES (1, 'FOO', 'Bar'), (2, 'X', 'Y');
+
+statement ok
+VACUUM (UPDATE_INDEXES) inc_e_str;
+
+query
+SELECT id, LOWER(a) || '-' || LOWER(b) AS s FROM inc_e_str_idx ORDER BY id;
+----
+id    s
+1     foo-bar
+2     x-y
+
+
+statement ok
+CREATE TABLE inc_e_zstd(id INT PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement ok
+CREATE INDEX inc_e_zstd_idx ON inc_e_zstd USING inverted(
+    id, (a || b) included (compression='zstd'));
+
+statement ok
+INSERT INTO inc_e_zstd VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
+
+statement ok
+VACUUM (UPDATE_INDEXES) inc_e_zstd;
+
+query
+SELECT id, a || b AS s FROM inc_e_zstd_idx ORDER BY id;
+----
+id    s
+1     foobar
+2     bazqux
+
+statement error compression 'ZSTD' is not supported for type INTEGER
+CREATE INDEX inc_e_zstd_bad ON inc_e_num USING inverted(
+    id, (a + b) included (compression='zstd'));
+
+
+statement ok
+CREATE TABLE inc_e_rgs(id INT PRIMARY KEY, a INT);
+
+statement ok
+CREATE INDEX inc_e_rgs_idx ON inc_e_rgs USING inverted(
+    id, (a * 2) included (compression='bitpacking', row_group_size='8'));
+
+statement ok
+INSERT INTO inc_e_rgs VALUES (1, 1), (2, 5), (3, 12);
+
+statement ok
+VACUUM (UPDATE_INDEXES) inc_e_rgs;
+
+query
+SELECT id, a * 2 AS s FROM inc_e_rgs_idx ORDER BY id;
+----
+id    s
+1     2
+2     10
+3     24
+
+
+statement error unknown included option
+CREATE INDEX inc_e_bad ON inc_e_num USING inverted(
+    id, (a + b) included (bogus='value'));
+
+statement error only the 'included' built-in opclass accepts options
+CREATE INDEX inc_e_dict_with_opts ON inc_e_num USING inverted(
+    id, (a + b) verbatim_dict (compression='zstd'));
+
+
 # --- INCLUDE columns alongside an indexed expression ---------------------
 # The inverted index pushes the (a+b)=N filter through the expression
 # field, then the INCLUDE-only `payload` column is retrieved from the

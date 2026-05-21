@@ -79,7 +79,8 @@ struct ColumnTokenizer {
 
 class InvertedIndex final : public Index {
  public:
-  using Entries = containers::NodeHashMap<irs::field_id, InvertedIndexEntryInfo>;
+  using Entries =
+    containers::NodeHashMap<irs::field_id, InvertedIndexEntryInfo>;
 
   InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
                 ObjectId relation_id, std::string name,
@@ -145,8 +146,7 @@ class InvertedIndex final : public Index {
   Entries _entries;
   // Reverse map: serialized expression text -> field_id. Views point into
   // the durable storage in `_entries` (NodeHashMap has stable references).
-  containers::FlatHashMap<std::string_view, irs::field_id>
-    _expr_by_serialized;
+  containers::FlatHashMap<std::string_view, irs::field_id> _expr_by_serialized;
   InvertedIndexOptions _options;
 };
 

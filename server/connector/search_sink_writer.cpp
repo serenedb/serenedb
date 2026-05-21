@@ -152,22 +152,8 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col,
   const bool wants_columnstore =
     (_store_values_provider && _store_values_provider(column_id)) || hnsw_info;
   auto open_typed_batch_cs = [&] {
-    if (!_document) {
-      return;
-    }
-    auto* doc_columnstore = _document->Columnstore();
-    if (!doc_columnstore) {
-      return;
-    }
-    auto [it, inserted] = _columnstore_writers.try_emplace(column_id, nullptr);
-    if (inserted) {
-      it->second = &doc_columnstore->OpenColumn(
-        static_cast<irs::field_id>(column_id), type);
-    }
-    _active_columnstore_writer = it->second;
-    _document->NextFieldBatch();
-    const uint64_t start_row = _document->DocId() - irs::doc_limits::min();
-    _active_columnstore_writer->Append(start_row, vec, count);
+    BulkAppendToColumnstore(static_cast<irs::field_id>(column_id), type, vec,
+                            count);
   };
 
   const bool text_indexed =
@@ -257,8 +243,6 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col,
 bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
   const ExpressionDescriptor& expr_desc, const duckdb::Vector& vec,
   duckdb::idx_t count) {
-  (void)vec;
-  (void)count;
   if (!_subexpr_tokenizer_provider) {
     _current_writer = nullptr;
     return false;
@@ -267,6 +251,20 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
   const auto field_id = expr_desc.field_id;
   const auto kind = expr_desc.type.id();
   SDB_ASSERT(field_id != 0);
+
+  // store_values: bulk-append once; with no posting list, skip the per-row
+  // pipeline.
+  const bool wants_columnstore =
+    _store_values_provider && _store_values_provider(field_id);
+  const bool text_indexed =
+    _is_text_indexed_provider && _is_text_indexed_provider(field_id);
+  if (wants_columnstore) {
+    BulkAppendToColumnstore(field_id, expr_desc.type, vec, count);
+  }
+  if (wants_columnstore && !text_indexed) {
+    _current_writer = nullptr;
+    return false;
+  }
 
   if (expr_desc.type.IsJSONType()) {
     auto tokenizer = _subexpr_tokenizer_provider(field_id);
@@ -440,6 +438,26 @@ void SearchSinkInsertBaseImpl::FinishImpl() {
   _per_row_blob_writers.clear();
   _active_columnstore_writer = nullptr;
   _document.reset();
+}
+
+void SearchSinkInsertBaseImpl::BulkAppendToColumnstore(
+  irs::field_id field_id, const duckdb::LogicalType& type,
+  const duckdb::Vector& vec, duckdb::idx_t count) {
+  if (!_document) {
+    return;
+  }
+  auto* doc_columnstore = _document->Columnstore();
+  if (!doc_columnstore) {
+    return;
+  }
+  auto [it, inserted] = _columnstore_writers.try_emplace(field_id, nullptr);
+  if (inserted) {
+    it->second = &doc_columnstore->OpenColumn(field_id, type);
+  }
+  _active_columnstore_writer = it->second;
+  _document->NextFieldBatch();
+  const uint64_t start_row = _document->DocId() - irs::doc_limits::min();
+  _active_columnstore_writer->Append(start_row, vec, count);
 }
 
 irs::columnstore::ColumnWriter*

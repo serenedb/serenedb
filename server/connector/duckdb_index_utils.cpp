@@ -309,7 +309,7 @@ void EvaluateAndWriteIndexedExpressions(
 
     const ExpressionDescriptor expr_desc{result.GetType(), /*have_nulls=*/true,
                                          indexed_expr.field_id};
-    const bool switched = sink.SwitchExpression(expr_desc);
+    const bool switched = sink.SwitchExpression(expr_desc, result, num_rows);
     if (!switched) {
       continue;
     }

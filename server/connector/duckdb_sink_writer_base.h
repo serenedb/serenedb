@@ -55,9 +55,11 @@ class DuckDBSinkIndexWriter {
     return false;
   }
 
-  // Switch to an indexed expression.
-  // The base writer only matters for the search-index path.
-  virtual bool SwitchExpression(const ExpressionDescriptor& expr_desc) {
+  // `vec`/`count` carry the evaluated value so INCLUDE-stored entries can
+  // bulk-append into the columnstore.
+  virtual bool SwitchExpression(const ExpressionDescriptor& expr_desc,
+                                const duckdb::Vector& /*vec*/,
+                                duckdb::idx_t /*count*/) {
     return false;
   }
 

@@ -20,6 +20,8 @@
 
 #include "connector/functions/embedding/embedding.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -33,20 +35,20 @@
 #include <duckdb/main/secret/secret.hpp>
 #include <duckdb/main/secret/secret_manager.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
-#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "basics/down_cast.h"
 #include "connector/functions/embedding/provider.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
 
-using embedding::EmbeddingProvider;
-using embedding::MakeEmbeddingProvider;
 using embedding::ProviderConfig;
+using embedding::ProviderType;
 
 constexpr const char* kOpenAIType = "openai";
 
@@ -87,13 +89,15 @@ void RegisterEmbeddingSecretTypes(duckdb::ExtensionLoader& loader) {
 std::string FoldVarchar(duckdb::ClientContext& context,
                         duckdb::Expression& expr, const char* arg_label) {
   if (!expr.IsFoldable()) {
-    throw duckdb::BinderException(
-      "ai_embed: '%s' argument must be a constant expression", arg_label);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("ai_embed: '", arg_label,
+                            "' argument must be a constant expression"));
   }
   auto val = duckdb::ExpressionExecutor::EvaluateScalar(context, expr);
   if (val.IsNull()) {
-    throw duckdb::BinderException("ai_embed: '%s' argument must not be NULL",
-                                  arg_label);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ai_embed: '", arg_label, "' argument must not be NULL"));
   }
   return duckdb::StringValue::Get(val);
 }
@@ -105,14 +109,14 @@ ProviderConfig LoadProviderConfig(duckdb::ClientContext& context,
   auto txn = duckdb::CatalogTransaction::GetSystemCatalogTransaction(context);
   auto entry = secret_manager.GetSecretByName(txn, secret_name);
   if (!entry || !entry->secret) {
-    throw duckdb::BinderException("ai_embed: secret '%s' not found",
-                                  secret_name);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("ai_embed: secret '", secret_name, "' not found"));
   }
   const auto& kv =
     basics::downCast<const duckdb::KeyValueSecret>(*entry->secret);
 
   ProviderConfig cfg;
-  cfg.protocol = entry->secret->GetType();
+  cfg.type = embedding::ResolveProviderType(entry->secret->GetType());
   cfg.model = std::move(model);
   duckdb::Value v;
   if (kv.TryGetValue("api_key", v) && !v.IsNull()) {
@@ -128,15 +132,21 @@ ProviderConfig LoadProviderConfig(duckdb::ClientContext& context,
 }
 
 struct EmbeddingBindData final : public duckdb::FunctionData {
-  std::shared_ptr<EmbeddingProvider> provider;
+  duckdb::DatabaseInstance* db = nullptr;
+  ProviderConfig cfg;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     auto out = duckdb::make_uniq<EmbeddingBindData>();
-    out->provider = provider;
+    out->db = db;
+    out->cfg = cfg;
     return out;
   }
   bool Equals(const duckdb::FunctionData& other) const final {
-    return provider.get() == other.Cast<EmbeddingBindData>().provider.get();
+    const auto& o = other.Cast<EmbeddingBindData>();
+    return cfg.type == o.cfg.type && cfg.model == o.cfg.model &&
+           cfg.base_url == o.cfg.base_url &&
+           cfg.embeddings_path == o.cfg.embeddings_path &&
+           cfg.api_key == o.cfg.api_key;
   }
 };
 
@@ -145,15 +155,18 @@ duckdb::unique_ptr<duckdb::FunctionData> AIEmbedBind(
   auto& context = input.GetClientContext();
   auto& args = input.GetArguments();
   if (args.size() != 3) {
-    throw duckdb::BinderException(
-      "ai_embed expects 3 arguments: (text, model, secret_name)");
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ai_embed expects 3 arguments: (text, model, secret_name)"));
   }
   auto model = FoldVarchar(context, *args[1], "model");
   auto secret_name = FoldVarchar(context, *args[2], "secret_name");
 
   auto cfg = LoadProviderConfig(context, std::move(model), secret_name);
+  embedding::NormalizeProviderConfig(*context.db, cfg);
   auto bind = duckdb::make_uniq<EmbeddingBindData>();
-  bind->provider = MakeEmbeddingProvider(*context.db, std::move(cfg));
+  bind->db = context.db.get();
+  bind->cfg = std::move(cfg);
   return bind;
 }
 
@@ -161,7 +174,6 @@ void AIEmbedFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      duckdb::Vector& result) {
   const auto& bind = state.expr.Cast<duckdb::BoundFunctionExpression>()
                        .bind_info->Cast<EmbeddingBindData>();
-  const auto& provider = *bind.provider;
   const auto count = args.size();
 
   duckdb::UnifiedVectorFormat text_format;
@@ -189,7 +201,7 @@ void AIEmbedFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   }
 
   if (!batch_texts.empty()) {
-    provider.EmbedBatch(batch_texts, result);
+    embedding::EmbedBatch(*bind.db, bind.cfg, batch_texts, result);
   }
 }
 

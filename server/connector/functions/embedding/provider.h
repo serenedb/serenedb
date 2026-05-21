@@ -21,7 +21,6 @@
 #pragma once
 
 #include <duckdb/common/types/vector.hpp>
-#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -33,22 +32,24 @@ class DatabaseInstance;
 
 namespace sdb::connector::embedding {
 
-class EmbeddingProvider {
- public:
-  virtual ~EmbeddingProvider() = default;
-  virtual void EmbedBatch(std::span<std::string_view> texts,
-                          duckdb::Vector& result) const = 0;
+enum class ProviderType {
+  OpenAI,
 };
 
 struct ProviderConfig {
-  std::string protocol;
+  ProviderType type = ProviderType::OpenAI;
   std::string model;
   std::string api_key;
   std::string base_url;
   std::string embeddings_path;
+  std::string auth_header;
 };
 
-std::unique_ptr<EmbeddingProvider> MakeEmbeddingProvider(
-  duckdb::DatabaseInstance& db, ProviderConfig cfg);
+ProviderType ResolveProviderType(std::string_view protocol);
+
+void NormalizeProviderConfig(duckdb::DatabaseInstance& db, ProviderConfig& cfg);
+
+void EmbedBatch(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
+                std::span<std::string_view> texts, duckdb::Vector& result);
 
 }  // namespace sdb::connector::embedding

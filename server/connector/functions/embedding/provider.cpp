@@ -20,20 +20,43 @@
 
 #include "connector/functions/embedding/provider.h"
 
-#include <duckdb/common/exception.hpp>
-#include <utility>
+#include <absl/strings/str_cat.h>
 
 #include "connector/functions/embedding/provider_openai.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector::embedding {
 
-std::unique_ptr<EmbeddingProvider> MakeEmbeddingProvider(
-  duckdb::DatabaseInstance& db, ProviderConfig cfg) {
-  if (cfg.protocol == "openai") {
-    return MakeOpenAIProvider(db, std::move(cfg));
+ProviderType ResolveProviderType(std::string_view protocol) {
+  if (protocol == "openai") {
+    return ProviderType::OpenAI;
   }
-  throw duckdb::InvalidInputException(
-    "Unknown embedding protocol '%s' (supported: openai)", cfg.protocol);
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("Unknown embedding protocol '", protocol, "' (supported: openai)"));
+}
+
+void NormalizeProviderConfig(duckdb::DatabaseInstance& db,
+                             ProviderConfig& cfg) {
+  switch (cfg.type) {
+    case ProviderType::OpenAI:
+      NormalizeOpenAIConfig(db, cfg);
+      break;
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+void EmbedBatch(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
+                std::span<std::string_view> texts, duckdb::Vector& result) {
+  switch (cfg.type) {
+    case ProviderType::OpenAI:
+      EmbedBatchOpenAI(db, cfg, texts, result);
+      break;
+    default:
+      SDB_UNREACHABLE();
+  }
 }
 
 }  // namespace sdb::connector::embedding

@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <memory>
-
 #include "connector/functions/embedding/provider.h"
 
 namespace duckdb {
@@ -31,7 +29,10 @@ class DatabaseInstance;
 
 namespace sdb::connector::embedding {
 
-std::unique_ptr<EmbeddingProvider> MakeOpenAIProvider(
-  duckdb::DatabaseInstance& db, ProviderConfig cfg);
+void NormalizeOpenAIConfig(duckdb::DatabaseInstance& db, ProviderConfig& cfg);
+
+void EmbedBatchOpenAI(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
+                      std::span<std::string_view> texts,
+                      duckdb::Vector& result);
 
 }  // namespace sdb::connector::embedding

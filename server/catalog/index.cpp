@@ -366,18 +366,26 @@ Result ValidateInvertedIndexColumns(
     if (c.IsIndexedExpression()) {
       // Expressions are validated by the IndexBinder / physical CREATE INDEX
       // path; here we only sanity-check the return type fits the index.
-      const auto kind = c.GetIndexedExpression().return_type.id();
-      const bool supported = kind == duckdb::LogicalTypeId::SQLNULL ||
-                             kind == duckdb::LogicalTypeId::VARCHAR ||
-                             kind == duckdb::LogicalTypeId::BOOLEAN ||
-                             kind == duckdb::LogicalTypeId::TINYINT ||
-                             kind == duckdb::LogicalTypeId::SMALLINT ||
-                             kind == duckdb::LogicalTypeId::INTEGER ||
-                             kind == duckdb::LogicalTypeId::BIGINT ||
-                             kind == duckdb::LogicalTypeId::FLOAT ||
-                             kind == duckdb::LogicalTypeId::DOUBLE ||
-                             kind == duckdb::LogicalTypeId::DATE ||
-                             kind == duckdb::LogicalTypeId::TIMESTAMP_TZ;
+      const auto& expr_type = c.GetIndexedExpression().return_type;
+      const auto kind = expr_type.id();
+      bool supported = kind == duckdb::LogicalTypeId::SQLNULL ||
+                       kind == duckdb::LogicalTypeId::VARCHAR ||
+                       kind == duckdb::LogicalTypeId::BOOLEAN ||
+                       kind == duckdb::LogicalTypeId::TINYINT ||
+                       kind == duckdb::LogicalTypeId::SMALLINT ||
+                       kind == duckdb::LogicalTypeId::INTEGER ||
+                       kind == duckdb::LogicalTypeId::BIGINT ||
+                       kind == duckdb::LogicalTypeId::FLOAT ||
+                       kind == duckdb::LogicalTypeId::DOUBLE ||
+                       kind == duckdb::LogicalTypeId::DATE ||
+                       kind == duckdb::LogicalTypeId::TIMESTAMP_TZ;
+      // ARRAY(FLOAT, N) is accepted only when the user picked the hnsw opclass.
+      if (!supported && kind == duckdb::LogicalTypeId::ARRAY &&
+          c.opclass == kHNSWKind &&
+          duckdb::ArrayType::GetChildType(expr_type).id() ==
+            duckdb::LogicalTypeId::FLOAT) {
+        supported = true;
+      }
       if (!supported) {
         return {ERROR_BAD_PARAMETER, "Indexed expression ",
                 c.GetIndexedExpression().pretty_printed,
@@ -629,6 +637,47 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     return {};
   };
 
+  // Parses `hnsw(...)` options and validates ARRAY(FLOAT, N). Shared by column
+  // and expression branches.
+  auto apply_hnsw_opclass =
+    [](std::string_view owner_label, const duckdb::LogicalType& value_type,
+       const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
+       InvertedIndexEntryInfo& entry) -> Result {
+    if (value_type.id() != duckdb::LogicalTypeId::ARRAY) {
+      return {ERROR_BAD_PARAMETER, owner_label,
+              " must be an ARRAY type to use the 'hnsw' opclass"};
+    }
+    if (duckdb::ArrayType::GetChildType(value_type).id() !=
+        duckdb::LogicalTypeId::FLOAT) {
+      return {ERROR_BAD_PARAMETER, owner_label,
+              " must be ARRAY(FLOAT, N) to use the 'hnsw' opclass"};
+    }
+    if (!opts) {
+      return {ERROR_BAD_PARAMETER, "Built-in opclass 'hnsw' on ", owner_label,
+              " requires options; use 'hnsw (...)'"};
+    }
+    HNSWColumnConfig cfg{
+      .d = static_cast<int>(duckdb::ArrayType::GetSize(value_type)),
+    };
+    auto compression = duckdb::CompressionType::COMPRESSION_AUTO;
+    uint32_t row_group_size = 0;
+    if (auto r = ApplyHNSWOptions(owner_label, *opts, cfg, compression,
+                                  row_group_size);
+        r.fail()) {
+      return r;
+    }
+    if (auto r =
+          ValidateColumnCompression(owner_label, compression, value_type);
+        r.fail()) {
+      return r;
+    }
+    entry.hnsw_config = cfg;
+    entry.compression = compression;
+    entry.row_group_size = row_group_size;
+    entry.store_values = true;
+    return {};
+  };
+
   InvertedIndex::Entries entries;
   std::vector<irs::field_id> column_field_ids;
   std::vector<irs::field_id> expression_field_ids;
@@ -648,21 +697,30 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         .pretty_printed = expr_data.pretty_printed,
       };
       const bool is_included_opclass = c.opclass == kIncludedKind;
-      if (c.opclass_options.has_value() && !is_included_opclass) {
-        return std::unexpected<Result>{
-          std::in_place, ERROR_BAD_PARAMETER, "indexed expression '",
-          expr_data.pretty_printed,
-          "': only the 'included' built-in opclass accepts options"};
+      const bool is_hnsw_opclass = c.opclass == kHNSWKind;
+      const bool accepts_options = is_included_opclass || is_hnsw_opclass;
+      if (c.opclass_options.has_value() && !accepts_options) {
+        return std::unexpected<Result>{std::in_place, ERROR_BAD_PARAMETER,
+                                       "indexed expression '",
+                                       expr_data.pretty_printed,
+                                       "': only the 'included' and 'hnsw' "
+                                       "built-in opclasses accept options"};
       }
+      const auto expr_label =
+        absl::StrCat("indexed expression '", expr_data.pretty_printed, "'");
       if (is_included_opclass) {
-        const auto label =
-          absl::StrCat("indexed expression '", expr_data.pretty_printed, "'");
-        if (auto r = apply_included_options(label, expr_data.return_type,
+        if (auto r = apply_included_options(expr_label, expr_data.return_type,
                                             c.opclass_options, expr_info);
             r.fail()) {
           return std::unexpected<Result>(std::move(r));
         }
         expr_info.store_values = true;
+      } else if (is_hnsw_opclass) {
+        if (auto r = apply_hnsw_opclass(expr_label, expr_data.return_type,
+                                        c.opclass_options, expr_info);
+            r.fail()) {
+          return std::unexpected<Result>(std::move(r));
+        }
       } else if (!c.opclass.empty()) {
         auto dict = resolve_dict(expr_data.pretty_printed, c.opclass);
         if (!dict) {
@@ -732,38 +790,12 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
                                        ")"};
       }
       if (c.opclass == kHNSWKind) {
-        // "hnsw" is a built-in opclass for vector (ARRAY(FLOAT, N)) columns.
-        const auto& col_type = c.catalog_column->type;
-        if (col_type.id() != duckdb::LogicalTypeId::ARRAY) {
-          return std::unexpected<Result>{
-            std::in_place, ERROR_BAD_PARAMETER, "Column '", c.name,
-            "' must be an ARRAY type to use the 'hnsw' opclass"};
-        }
-        const auto& child_type = duckdb::ArrayType::GetChildType(col_type);
-        if (child_type.id() != duckdb::LogicalTypeId::FLOAT) {
-          return std::unexpected<Result>{
-            std::in_place, ERROR_BAD_PARAMETER, "Column '", c.name,
-            "' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass"};
-        }
-        HNSWColumnConfig cfg{
-          .d = static_cast<int>(duckdb::ArrayType::GetSize(col_type)),
-        };
-        auto compression = duckdb::CompressionType::COMPRESSION_AUTO;
-        uint32_t row_group_size = 0;
-        if (auto r = ApplyHNSWOptions(c.name, *c.opclass_options, cfg,
-                                      compression, row_group_size);
+        const auto label = absl::StrCat("Column '", c.name, "'");
+        if (auto r = apply_hnsw_opclass(label, c.catalog_column->type,
+                                        c.opclass_options, index_col);
             r.fail()) {
           return std::unexpected<Result>(std::move(r));
         }
-        if (auto r = ValidateColumnCompression(c.name, compression,
-                                               c.catalog_column->type);
-            r.fail()) {
-          return std::unexpected<Result>(std::move(r));
-        }
-        index_col.hnsw_config = cfg;
-        index_col.compression = compression;
-        index_col.row_group_size = row_group_size;
-        index_col.store_values = true;
       } else if (c.opclass == kIncludedKind) {
         const auto label = absl::StrCat("Column '", c.name, "'");
         if (auto r = apply_included_options(label, c.catalog_column->type,

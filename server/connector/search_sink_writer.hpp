@@ -124,25 +124,19 @@ inline IsTextIndexedProvider AllTextIndexed() {
   return [](irs::field_id) { return true; };
 }
 
-// Returns the per-column HNSW configuration when the column is an HNSW
-// vector column, otherwise std::nullopt. The sink uses this both to set
-// up the new cs ARRAY ColumnWriter for the vectors AND to attach an
-// HNSWWriter so the faiss graph is built+serialized into the .cs
-// footer side-payload.
+// Per-entry HNSW config (columns and expressions share the field_id namespace).
 using HNSWInfoProvider =
-  std::function<std::optional<irs::HNSWInfo>(catalog::Column::Id)>;
+  std::function<std::optional<irs::HNSWInfo>(irs::field_id)>;
 
 inline HNSWInfoProvider MakeHNSWInfoProvider(
   const catalog::InvertedIndex& index) {
-  return [&index](catalog::Column::Id column_id) {
-    return index.GetColumnHNSWInfo(column_id);
-  };
+  return
+    [&index](irs::field_id field_id) { return index.GetHNSWInfo(field_id); };
 }
 
 inline HNSWInfoProvider NoHNSW() {
-  return [](catalog::Column::Id) -> std::optional<irs::HNSWInfo> {
-    return std::nullopt;
-  };
+  return
+    [](irs::field_id) -> std::optional<irs::HNSWInfo> { return std::nullopt; };
 }
 
 class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {

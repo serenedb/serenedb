@@ -198,8 +198,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
       return {
         .row_group_size = entry->row_group_size,
         .compression = entry->compression,
-        .hnsw_info = entry->IsColumn() ? index.GetColumnHNSWInfo(column_id)
-                                       : std::optional<irs::HNSWInfo>{},
+        .hnsw_info = index.GetHNSWInfo(id),
       };
     }
     if (column_id == catalog::Column::kGeneratedPKId) {

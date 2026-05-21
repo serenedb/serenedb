@@ -242,11 +242,11 @@ void InvertedIndex::WriteInternal(vpack::Builder& b) const {
 }
 
 void InvertedIndex::BuildSerializedExprIndex() {
-  _expr_by_serialized.clear();
-  _expr_by_serialized.reserve(_entries.size());
+  _expr_to_field.clear();
+  _expr_to_field.reserve(_entries.size());
   for (const auto& [field_id, entry] : _entries) {
     if (const auto* expr = entry.GetExpressionSpecific()) {
-      _expr_by_serialized.emplace(expr->serialized_expr, field_id);
+      _expr_to_field.emplace(expr->serialized_expr, field_id);
     }
   }
 }
@@ -308,8 +308,8 @@ ColumnTokenizer InvertedIndex::GetColumnTokenizer(
 ColumnTokenizer InvertedIndex::GetExprTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot,
   std::string_view serialized_expr) const {
-  auto it = _expr_by_serialized.find(serialized_expr);
-  if (it == _expr_by_serialized.end()) {
+  auto it = _expr_to_field.find(serialized_expr);
+  if (it == _expr_to_field.end()) {
     SDB_THROW(ERROR_INTERNAL,
               "Indexed expression not found in the index definition");
   }
@@ -333,13 +333,22 @@ ColumnTokenizer InvertedIndex::GetExprTokenizerByFieldId(
   return *std::move(tokenizer);
 }
 
-std::optional<irs::HNSWInfo> InvertedIndex::GetColumnHNSWInfo(
-  catalog::Column::Id column_id) const {
-  const auto* info = FindColumnInfo(column_id);
-  if (!info || !info->hnsw_config) {
+std::optional<irs::field_id> InvertedIndex::FindFieldIdBySerialized(
+  std::string_view serialized_expr) const noexcept {
+  auto it = _expr_to_field.find(serialized_expr);
+  if (it == _expr_to_field.end()) {
     return std::nullopt;
   }
-  const auto& cfg = *info->hnsw_config;
+  return it->second;
+}
+
+std::optional<irs::HNSWInfo> InvertedIndex::GetHNSWInfo(
+  irs::field_id field_id) const {
+  const auto* entry = FindEntry(field_id);
+  if (!entry || !entry->hnsw_config) {
+    return std::nullopt;
+  }
+  const auto& cfg = *entry->hnsw_config;
   return irs::HNSWInfo{
     .max_doc = 0,
     .d = cfg.d,

@@ -256,16 +256,13 @@ DistanceArgs ExtractDistanceArgs(duckdb::BoundFunctionExpression& func_expr) {
   if (func_expr.children.size() != 2) {
     return out;
   }
-  auto is_col = [](const duckdb::Expression& e) {
-    return e.expression_class == duckdb::ExpressionClass::BOUND_COLUMN_REF ||
-           e.expression_class == duckdb::ExpressionClass::BOUND_REF;
-  };
   auto& lhs = func_expr.children[0];
   auto& rhs = func_expr.children[1];
-  if (is_col(*lhs) && !is_col(*rhs)) {
+  // Foldable means can be evaluated at plan time, for example a constant
+  if (!lhs->IsFoldable() && rhs->IsFoldable()) {
     out.col_arg = lhs.get();
     out.value_arg = rhs.get();
-  } else if (!is_col(*lhs) && is_col(*rhs)) {
+  } else if (lhs->IsFoldable() && !rhs->IsFoldable()) {
     out.col_arg = rhs.get();
     out.value_arg = lhs.get();
   }
@@ -405,6 +402,41 @@ bool AllColumnRefsBindTo(const duckdb::Expression& expr,
       }
     });
   return ok;
+}
+
+irs::field_id ResolveAnnTargetFieldId(
+  const duckdb::Expression& col_arg, const duckdb::LogicalGet& get,
+  const connector::SereneDBScanBindData& bind_data,
+  const catalog::InvertedIndex& index, duckdb::ClientContext& client_context) {
+  if (col_arg.expression_class == duckdb::ExpressionClass::BOUND_COLUMN_REF ||
+      col_arg.expression_class == duckdb::ExpressionClass::BOUND_REF) {
+    if (const auto id = ColumnIdByName(bind_data, col_arg.GetName());
+        id != catalog::Column::kInvalidId) {
+      return static_cast<irs::field_id>(id);
+    }
+  }
+  bool any_ref_seen = false;
+  if (!AllColumnRefsBindTo(col_arg, get.table_index, any_ref_seen) ||
+      !any_ref_seen) {
+    return 0;
+  }
+  constexpr auto kInvalidId = catalog::Column::kInvalidId;
+  std::vector<catalog::Column::Id> projected_ids;
+  projected_ids.reserve(get.GetColumnIds().size());
+  for (const auto& ci : get.GetColumnIds()) {
+    if (!ci.HasPrimaryIndex()) {
+      projected_ids.push_back(kInvalidId);
+      continue;
+    }
+    const auto phys = ci.GetPrimaryIndex();
+    projected_ids.push_back(phys < bind_data.column_ids.size()
+                              ? bind_data.column_ids[phys]
+                              : kInvalidId);
+  }
+  auto normalized = connector::NormalizeBoundExpression(
+    col_arg, index.GetRelationId(), projected_ids, client_context);
+  auto serialized = connector::SerializeBoundExpression(*normalized);
+  return index.FindFieldIdBySerialized(serialized).value_or(0);
 }
 
 connector::ExpressionGetter MakeExpressionGetter(SearchColumnContext& ctx) {
@@ -638,8 +670,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   std::vector<float> query_vector;
   if (is_norm) {
     auto* child = func_expr.children[0].get();
-    if (child->expression_class != duckdb::ExpressionClass::BOUND_COLUMN_REF &&
-        child->expression_class != duckdb::ExpressionClass::BOUND_REF) {
+    if (child->IsFoldable()) {
       return false;
     }
     col_arg = child;
@@ -657,10 +688,6 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     }
     col_arg = args.col_arg;
   }
-  auto col_id = ColumnIdByName(bind_data, col_arg->GetName());
-  if (col_id == catalog::Column::kInvalidId) {
-    return false;
-  }
 
   auto snapshot = PinnedSnapshot(options);
   auto resolved = ResolveIresearch(bind_data, *snapshot);
@@ -668,7 +695,13 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     return false;
   }
 
-  auto hnsw_info = resolved->index->GetColumnHNSWInfo(col_id);
+  const auto field_id = ResolveAnnTargetFieldId(
+    *col_arg, get, bind_data, *resolved->index, options.client_context);
+  if (field_id == 0) {
+    return false;
+  }
+
+  auto hnsw_info = resolved->index->GetHNSWInfo(field_id);
   if (!hnsw_info || hnsw_info->metric != expected_func->metric) {
     return false;
   }
@@ -683,7 +716,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
 
   auto ann = std::make_unique<connector::ANNScan>();
   ann->snapshot = PinnedSearchSnapshot(options, resolved->index->GetId());
-  ann->field_id = col_id;
+  ann->field_id = field_id;
   ann->query_vector = std::move(query_vector);
   ann->top_k = limit;
 
@@ -768,7 +801,7 @@ bool TryClaimAnnRange(
   float radius = 0.0f;
   bool radius_needs_square = false;
   std::vector<float> query_vector;
-  catalog::Column::Id col_id = catalog::Column::kInvalidId;
+  irs::field_id field_id = 0;
 
   for (duckdb::idx_t i = 0; i < filters.size(); ++i) {
     auto& expr = *filters[i];
@@ -824,9 +857,7 @@ bool TryClaimAnnRange(
     std::vector<float> candidate_vector;
     if (is_norm) {
       auto* child = func.children[0].get();
-      if (child->expression_class !=
-            duckdb::ExpressionClass::BOUND_COLUMN_REF &&
-          child->expression_class != duckdb::ExpressionClass::BOUND_REF) {
+      if (child->IsFoldable()) {
         continue;
       }
       col_expr = child;
@@ -844,11 +875,12 @@ bool TryClaimAnnRange(
       }
       col_expr = args.col_arg;
     }
-    auto candidate_col_id = ColumnIdByName(bind_data, col_expr->GetName());
-    if (candidate_col_id == catalog::Column::kInvalidId) {
+    const auto candidate_field_id = ResolveAnnTargetFieldId(
+      *col_expr, get, bind_data, *resolved.index, options.client_context);
+    if (candidate_field_id == 0) {
       continue;
     }
-    auto hnsw_info = resolved.index->GetColumnHNSWInfo(candidate_col_id);
+    auto hnsw_info = resolved.index->GetHNSWInfo(candidate_field_id);
     if (!hnsw_info || hnsw_info->metric != expected_current->metric) {
       continue;
     }
@@ -865,7 +897,7 @@ bool TryClaimAnnRange(
                           func.function.name == connector::kL2DistanceOp ||
                           func.function.name == connector::kL2Norm;
     query_vector = std::move(candidate_vector);
-    col_id = candidate_col_id;
+    field_id = candidate_field_id;
     match_idx = i;
     break;
   }
@@ -876,7 +908,7 @@ bool TryClaimAnnRange(
 
   auto rss = std::make_unique<connector::RangeSearchScan>();
   rss->snapshot = PinnedSearchSnapshot(options, resolved.index->GetId());
-  rss->field_id = col_id;
+  rss->field_id = field_id;
   rss->query_vector = std::move(query_vector);
   rss->radius = radius;
   rss->effective_radius = radius_needs_square ? radius * radius : radius;

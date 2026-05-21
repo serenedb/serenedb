@@ -129,8 +129,10 @@ class InvertedIndex final : public Index {
     const std::shared_ptr<const Snapshot>& snapshot,
     irs::field_id field_id) const;
 
-  std::optional<irs::HNSWInfo> GetColumnHNSWInfo(
-    catalog::Column::Id column_id) const;
+  std::optional<irs::field_id> FindFieldIdBySerialized(
+    std::string_view serialized_expr) const noexcept;
+
+  std::optional<irs::HNSWInfo> GetHNSWInfo(irs::field_id field_id) const;
 
   const InvertedIndexOptions& GetOptions() const noexcept { return _options; }
 
@@ -144,9 +146,9 @@ class InvertedIndex final : public Index {
   void BuildSerializedExprIndex();
 
   Entries _entries;
-  // Reverse map: serialized expression text -> field_id. Views point into
-  // the durable storage in `_entries` (NodeHashMap has stable references).
-  containers::FlatHashMap<std::string_view, irs::field_id> _expr_by_serialized;
+  // Reverse map: serialized expression -> field_id.
+  // Views point into the durable storage in entries
+  containers::FlatHashMap<std::string_view, irs::field_id> _expr_to_field;
   InvertedIndexOptions _options;
 };
 

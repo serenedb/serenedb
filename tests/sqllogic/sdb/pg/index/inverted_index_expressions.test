@@ -1237,9 +1237,91 @@ statement error unknown included option
 CREATE INDEX inc_e_bad ON inc_e_num USING inverted(
     id, (a + b) included (bogus='value'));
 
-statement error only the 'included' built-in opclass accepts options
+statement error built-in opclass
 CREATE INDEX inc_e_dict_with_opts ON inc_e_num USING inverted(
     id, (a + b) verbatim_dict (compression='zstd'));
+
+
+# --- HNSW on an indexed expression: `(expr) hnsw(metric='l2', m=..., ef_construction=...)` builds an ANN graph over the expression's value.
+
+statement ok
+CREATE TABLE hnsw_e(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
+
+statement ok
+CREATE INDEX hnsw_e_idx ON hnsw_e USING inverted(
+    id,
+    (array_value(x, y, z)) hnsw(metric='l2', m=8, ef_construction=16));
+
+statement ok
+INSERT INTO hnsw_e VALUES
+    (1, 1, 2, 3),
+    (2, 10, 10, 10),
+    (3, 5, 5, 5),
+    (4, 0, 0, 0);
+
+statement ok
+VACUUM (UPDATE_INDEXES) hnsw_e;
+
+query
+SELECT id FROM hnsw_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
+----
+id
+1
+4
+
+query
+EXPLAIN SELECT id FROM hnsw_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: hnsw_e_idx    │
+│      Lookup: rocksdb      │
+│          TopK: 2          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+# Wrong dimensionality of the query vector should disqualify the ANN scan
+# (validator inside TryAnnTopk). The query still returns correct results.
+
+statement ok
+CREATE TABLE hnsw_e2(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
+
+statement ok
+CREATE INDEX hnsw_e2_idx ON hnsw_e2 USING inverted(
+    id, (array_value(x, y, z)) hnsw(metric='l2', m=8, ef_construction=16));
+
+statement ok
+INSERT INTO hnsw_e2 VALUES (1, 1, 0, 0), (2, 0, 1, 0), (3, 0, 0, 1);
+
+statement ok
+VACUUM (UPDATE_INDEXES) hnsw_e2;
+
+# `hnsw` requires options.
+
+statement error 'hnsw' on indexed expression
+CREATE INDEX hnsw_e_no_opts ON hnsw_e USING inverted(
+    id, (array_value(x, y, z)) hnsw);
+
+# ARRAY of non-FLOAT child type is rejected.
+
+statement ok
+CREATE TABLE hnsw_e3(id INT PRIMARY KEY, a INT, b INT, c INT);
+
+statement error unsupported return kind ARRAY
+CREATE INDEX hnsw_e3_idx ON hnsw_e3 USING inverted(
+    id, (array_value(a, b, c)) hnsw(metric='l2', m=8, ef_construction=16));
+
+# Non-ARRAY return type rejected when hnsw is requested.
+
+statement error must be an ARRAY type
+CREATE INDEX hnsw_e_scalar ON hnsw_e USING inverted(
+    id, (x + y + z) hnsw(metric='l2', m=8, ef_construction=16));
 
 
 # --- INCLUDE columns alongside an indexed expression ---------------------

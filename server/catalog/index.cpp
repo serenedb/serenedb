@@ -585,8 +585,9 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     return dict;
   };
 
-  InvertedIndex::ColumnOptions inverted_columns;
-  std::vector<ExpressionInfo> pending_expressions;
+  InvertedIndex::Entries entries;
+  std::vector<irs::field_id> column_field_ids;
+  std::vector<irs::field_id> expression_field_ids;
   const uint64_t expressions_cnt = std::ranges::count_if(
     columns, [](const auto& c) { return c.IsIndexedExpression(); });
   irs::field_id next_expr_field_id =
@@ -599,11 +600,12 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
           "indexed expression does not accept opclass options"};
       }
       const auto& expr_data = c.GetIndexedExpression();
-      ExpressionInfo expr_info{
+      const auto field_id = next_expr_field_id++;
+      InvertedIndexEntryInfo expr_info;
+      expr_info.expression = ExpressionSpecific{
         .serialized_expr = expr_data.serialized,
         .dependent_columns = expr_data.dependent_columns,
         .return_type = expr_data.return_type,
-        .field_id = next_expr_field_id++,
         .pretty_printed = expr_data.pretty_printed,
       };
       if (!c.opclass.empty()) {
@@ -635,10 +637,18 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
           expr_info.norm_row_group_size = (*dict)->GetNormRowGroupSize();
         }
       }
-      pending_expressions.push_back(std::move(expr_info));
+      entries.emplace(field_id, std::move(expr_info));
+      expression_field_ids.push_back(field_id);
       continue;
     }
-    auto& index_col = inverted_columns[c.catalog_column->GetId()];
+    const auto col_field_id =
+      static_cast<irs::field_id>(c.catalog_column->GetId());
+    auto [it, inserted] =
+      entries.try_emplace(col_field_id, InvertedIndexEntryInfo{});
+    if (inserted) {
+      column_field_ids.push_back(col_field_id);
+    }
+    auto& index_col = it->second;
 
     if (!c.opclass.empty()) {
       const bool has_parens = c.opclass_options.has_value();
@@ -777,44 +787,40 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     }
   }
   {
-    auto sorted_col_ids =
-      inverted_columns | std::views::keys | std::ranges::to<std::vector>();
-    absl::c_sort(sorted_col_ids);
+    // Sort column field ids for deterministic synthetic id assignment.
+    absl::c_sort(column_field_ids);
     uint64_t next = Column::kMaxRealIdValue;
-    for (auto col_id : sorted_col_ids) {
-      auto& column_info = inverted_columns[col_id];
-      if (column_info.synthetic_column) {
-        column_info.synthetic_column = Column::Id{--next};
+    for (auto field_id : column_field_ids) {
+      auto& entry = entries[field_id];
+      if (entry.synthetic_column) {
+        entry.synthetic_column = Column::Id{--next};
       }
     }
-    for (auto& expr_info : pending_expressions) {
-      if (expr_info.synthetic_column) {
-        expr_info.synthetic_column = Column::Id{--next};
+    for (auto field_id : expression_field_ids) {
+      auto& entry = entries[field_id];
+      if (entry.synthetic_column) {
+        entry.synthetic_column = Column::Id{--next};
       }
     }
   }
-  for (auto& [_, info] : inverted_columns) {
-    if (info.row_group_size == 0) {
-      info.row_group_size = options.row_group_size;
+  for (auto field_id : column_field_ids) {
+    auto& entry = entries[field_id];
+    if (entry.row_group_size == 0) {
+      entry.row_group_size = options.row_group_size;
     }
-    if (info.norm_row_group_size == 0) {
-      info.norm_row_group_size = options.norm_row_group_size;
-    }
-  }
-  for (auto& expr_info : pending_expressions) {
-    if (expr_info.norm_row_group_size == 0) {
-      expr_info.norm_row_group_size = options.norm_row_group_size;
+    if (entry.norm_row_group_size == 0) {
+      entry.norm_row_group_size = options.norm_row_group_size;
     }
   }
-  InvertedIndex::ExpressionOptions inverted_expressions;
-  inverted_expressions.reserve(pending_expressions.size());
-  for (auto& expr_info : pending_expressions) {
-    inverted_expressions.emplace(std::move(expr_info));
+  for (auto field_id : expression_field_ids) {
+    auto& entry = entries[field_id];
+    if (entry.norm_row_group_size == 0) {
+      entry.norm_row_group_size = options.norm_row_group_size;
+    }
   }
   return std::make_shared<InvertedIndex>(
     database_id, schema_id, id, relation_id, std::move(name),
-    ExtractColumnIds(columns), std::move(inverted_columns),
-    std::move(inverted_expressions), std::move(options));
+    ExtractColumnIds(columns), std::move(entries), std::move(options));
 }
 
 Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,

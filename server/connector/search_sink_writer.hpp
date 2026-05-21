@@ -74,15 +74,19 @@ inline ExpressionTokenizerProvider MakeExpressionTokenizerProvider(
 inline std::vector<IndexedExpression> MakeIndexedExpressions(
   const catalog::InvertedIndex& index, duckdb::ClientContext& client_context) {
   std::vector<IndexedExpression> entries;
-  entries.reserve(index.GetExpressions().size());
-  for (const auto& expr_info : index.GetExpressions()) {
-    SDB_ASSERT(!expr_info.serialized_expr.empty());
-    SDB_ASSERT(!expr_info.dependent_columns.empty());
-    SDB_ASSERT(expr_info.field_id != 0);
+  entries.reserve(index.GetEntries().size());
+  for (const auto& [field_id, entry] : index.GetEntries()) {
+    const auto* expr = entry.GetExpressionSpecific();
+    if (expr == nullptr) {
+      continue;
+    }
+    SDB_ASSERT(!expr->serialized_expr.empty());
+    SDB_ASSERT(!expr->dependent_columns.empty());
+    SDB_ASSERT(field_id != 0);
     auto bound =
-      DeserializeBoundExpression(expr_info.serialized_expr, client_context);
-    entries.push_back({std::move(bound), expr_info.serialized_expr,
-                       expr_info.dependent_columns, expr_info.field_id});
+      DeserializeBoundExpression(expr->serialized_expr, client_context);
+    entries.push_back({std::move(bound), expr->serialized_expr,
+                       expr->dependent_columns, field_id});
   }
   return entries;
 }

@@ -24,12 +24,11 @@
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <optional>
-#include <span>
 #include <string>
 #include <vector>
 
+#include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
-#include "basics/containers/node_hash_set.h"
 #include "catalog/index.h"
 #include "catalog/scorer_options.h"
 #include "catalog/search_analyzer_impl.h"
@@ -45,44 +44,31 @@ struct HNSWColumnConfig {
   irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
 };
 
-struct ExpressionInfo {
+struct ExpressionSpecific {
   std::string serialized_expr;
   std::vector<Column::Id> dependent_columns;
   duckdb::LogicalType return_type;
-  ObjectId text_dictionary = ObjectId::none();
-  search::Features features;
-  irs::field_id field_id = 0;
-  std::optional<Column::Id> synthetic_column;
-  uint32_t norm_row_group_size = 0;
   std::string pretty_printed;
-
-  struct HasherBySerialized {
-    using is_transparent = void;
-
-    size_t operator()(std::string_view sv) const { return absl::HashOf(sv); }
-    size_t operator()(const ExpressionInfo& info) const {
-      return (*this)(info.serialized_expr);
-    }
-
-    bool operator()(const ExpressionInfo& a, std::string_view b) const {
-      return a.serialized_expr == b;
-    }
-    bool operator()(const ExpressionInfo& a, const ExpressionInfo& b) const {
-      return a.serialized_expr == b.serialized_expr;
-    }
-  };
 };
 
-struct InvertedIndexColumnInfo {
+struct InvertedIndexEntryInfo {
   ObjectId text_dictionary = ObjectId::none();
+  search::Features features;
+  std::optional<Column::Id> synthetic_column;
+  uint32_t norm_row_group_size = 0;
   bool store_values = false;
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
-  search::Features features;
   std::optional<HNSWColumnConfig> hnsw_config;
-  std::optional<Column::Id> synthetic_column;
   uint32_t row_group_size = 0;
-  uint32_t norm_row_group_size = 0;
+
+  std::optional<ExpressionSpecific> expression;
+
+  bool IsExpression() const noexcept { return expression.has_value(); }
+  bool IsColumn() const noexcept { return !expression.has_value(); }
+  const ExpressionSpecific* GetExpressionSpecific() const noexcept {
+    return expression ? &*expression : nullptr;
+  }
 };
 
 struct ColumnTokenizer {
@@ -93,16 +79,12 @@ struct ColumnTokenizer {
 
 class InvertedIndex final : public Index {
  public:
-  using ColumnOptions =
-    containers::NodeHashMap<Column::Id, InvertedIndexColumnInfo>;
-  using ExpressionOptions =
-    containers::NodeHashSet<ExpressionInfo, ExpressionInfo::HasherBySerialized,
-                            ExpressionInfo::HasherBySerialized>;
+  using Entries = containers::NodeHashMap<irs::field_id, InvertedIndexEntryInfo>;
 
   InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
                 ObjectId relation_id, std::string name,
-                std::vector<Column::Id> column_ids, ColumnOptions columns,
-                ExpressionOptions expressions, InvertedIndexOptions options)
+                std::vector<Column::Id> column_ids, Entries entries,
+                InvertedIndexOptions options)
     : Index{database_id,
             schema_id,
             id,
@@ -110,9 +92,10 @@ class InvertedIndex final : public Index {
             std::move(name),
             std::move(column_ids),
             ObjectType::InvertedIndex},
-      _columns{std::move(columns)},
-      _expressions{std::move(expressions)},
-      _options{std::move(options)} {}
+      _entries{std::move(entries)},
+      _options{std::move(options)} {
+    BuildSerializedExprIndex();
+  }
 
   static std::shared_ptr<InvertedIndex> ReadInternal(vpack::Slice slice,
                                                      ReadContext ctx);
@@ -121,16 +104,17 @@ class InvertedIndex final : public Index {
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
     bool is_new, ObjectId id) const final;
 
-  const InvertedIndexColumnInfo* FindColumnInfo(
+  const InvertedIndexEntryInfo* FindEntry(irs::field_id id) const noexcept;
+  // Convenience: returns the entry only if it is a plain column (not an
+  // indexed expression). Use when the caller knows column id semantics.
+  const InvertedIndexEntryInfo* FindColumnInfo(
     catalog::Column::Id column_id) const noexcept;
   const search::Features* FindSyntheticFeatures(
     catalog::Column::Id synthetic_id) const noexcept;
 
   std::vector<Column::Id> GetReferencedColumnIds() const final;
 
-  const ExpressionOptions& GetExpressions() const noexcept {
-    return _expressions;
-  }
+  const Entries& GetEntries() const noexcept { return _entries; }
 
   ColumnTokenizer GetColumnTokenizer(
     const std::shared_ptr<const Snapshot>& snapshot,
@@ -156,8 +140,13 @@ class InvertedIndex final : public Index {
   containers::FlatHashSet<ObjectId> GetTokenizers() const final;
 
  private:
-  ColumnOptions _columns;
-  ExpressionOptions _expressions;
+  void BuildSerializedExprIndex();
+
+  Entries _entries;
+  // Reverse map: serialized expression text -> field_id. Views point into
+  // the durable storage in `_entries` (NodeHashMap has stable references).
+  containers::FlatHashMap<std::string_view, irs::field_id>
+    _expr_by_serialized;
   InvertedIndexOptions _options;
 };
 

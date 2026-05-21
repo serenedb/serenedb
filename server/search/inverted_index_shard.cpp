@@ -222,37 +222,18 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
     SDB_ASSERT(name.size() == kIdSize + 1);
     const auto raw =
       static_cast<uint64_t>(absl::big_endian::Load64(name.data()));
-    if (const auto* column_info =
-          index.FindColumnInfo(catalog::Column::Id{raw})) {
-      SDB_ASSERT(column_info->synthetic_column,
-                 "whole-column norm callback fired without a catalog "
-                 "reservation for column: ",
-                 raw);
-      SDB_ASSERT(column_info->features.HasFeatures(irs::IndexFeatures::Norm),
-                 "whole-column norm callback fired but catalog features lack "
-                 "Norm for column: ",
-                 raw);
-      return {
-        .id = static_cast<irs::field_id>(*column_info->synthetic_column),
-        .row_group_size = column_info->norm_row_group_size,
-      };
-    }
-    const auto field_id = static_cast<irs::field_id>(raw);
-    for (const auto& expr : index.GetExpressions()) {
-      if (expr.field_id == field_id) {
-        SDB_ASSERT(expr.synthetic_column,
-                   "expression norm callback fired without a catalog "
-                   "reservation; field_id: ",
-                   field_id);
-        SDB_ASSERT(expr.features.HasFeatures(irs::IndexFeatures::Norm),
-                   "expression norm callback fired but catalog features "
-                   "lack Norm; field_id: ",
-                   field_id);
-        return {.id = static_cast<irs::field_id>(*expr.synthetic_column),
-                .row_group_size = expr.norm_row_group_size};
-      }
-    }
-    SDB_ENSURE(false, ERROR_INTERNAL, "norm callback for unknown id: ", raw);
+    const auto* entry = index.FindEntry(static_cast<irs::field_id>(raw));
+    SDB_ENSURE(entry != nullptr, ERROR_INTERNAL,
+               "norm callback for unknown id: ", raw);
+    SDB_ASSERT(entry->synthetic_column,
+               "norm callback fired without a catalog reservation; id: ", raw);
+    SDB_ASSERT(entry->features.HasFeatures(irs::IndexFeatures::Norm),
+               "norm callback fired but catalog features lack Norm; id: ",
+               raw);
+    return {
+      .id = static_cast<irs::field_id>(*entry->synthetic_column),
+      .row_group_size = entry->norm_row_group_size,
+    };
   };
 
   if (const auto& options = index.GetTopKScorer()) {

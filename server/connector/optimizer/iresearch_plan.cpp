@@ -358,7 +358,7 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
       return std::nullopt;
     }
     connector::SearchColumnInfo info;
-    info.column_id = col_id;
+    info.field_id = static_cast<irs::field_id>(col_id);
     info.logical_type = type_it->second;
     info.tokenizer = ctx.tokenizer_provider(col_id);
     return info;
@@ -453,16 +453,18 @@ void InitSearchColumnContextForGet(
                                  snapshot](std::string_view serialized_expr) {
     return index_ptr->GetExprTokenizer(snapshot, serialized_expr);
   };
-  auto exprs_view =
-    resolved.index->GetExpressions() | std::views::transform([](const auto& e) {
-      return std::pair<std::string_view,
-                       SearchColumnContext::IndexedExpressionMeta>{
-        e.serialized_expr, SearchColumnContext::IndexedExpressionMeta{
-                             .return_type = e.return_type,
-                             .field_id = e.field_id,
-                           }};
-    });
-  ctx.indexed_expressions.insert(exprs_view.begin(), exprs_view.end());
+  for (const auto& [field_id, entry] : resolved.index->GetEntries()) {
+    const auto* expr = entry.GetExpressionSpecific();
+    if (expr == nullptr) {
+      continue;
+    }
+    ctx.indexed_expressions.emplace(
+      expr->serialized_expr,
+      SearchColumnContext::IndexedExpressionMeta{
+        .return_type = expr->return_type,
+        .field_id = field_id,
+      });
+  }
 }
 
 auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data,
@@ -472,10 +474,12 @@ auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data,
     if (!name.empty()) {
       return std::string{name};
     }
-    const auto field_id = static_cast<irs::field_id>(col_id);
-    for (const auto& expr : index.GetExpressions()) {
-      if (expr.field_id == field_id && !expr.pretty_printed.empty()) {
-        return expr.pretty_printed;
+    if (const auto* entry =
+          index.FindEntry(static_cast<irs::field_id>(col_id))) {
+      if (const auto* expr = entry->GetExpressionSpecific()) {
+        if (!expr->pretty_printed.empty()) {
+          return expr->pretty_printed;
+        }
       }
     }
     return absl::StrCat("col", col_id);

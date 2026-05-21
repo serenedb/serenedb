@@ -262,7 +262,7 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
       return std::nullopt;
     }
     SearchColumnInfo info;
-    info.column_id = column_id;
+    info.field_id = static_cast<irs::field_id>(column_id);
     info.logical_type = duckdb::LogicalType::VARCHAR;
     info.tokenizer.analyzer = std::move(*wrapper_or);
     info.tokenizer.features = irs::IndexFeatures::Freq |

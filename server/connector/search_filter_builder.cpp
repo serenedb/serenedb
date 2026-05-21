@@ -373,7 +373,7 @@ Result FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
             "IS NULL input is not a reference to an indexed column"};
   }
   std::string field_name;
-  MakeFieldName(*column_info, field_name);
+  MakeFieldName(column_info->field_id, field_name);
   search::mangling::MangleNull(field_name);
   auto& term_filter =
     ctx.negated ? Negate<irs::ByTerm>(filter) : AddFilter<irs::ByTerm>(filter);
@@ -433,7 +433,7 @@ Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
 
   term_filter.boost(ctx.boost);
   std::string field_name;
-  MakeFieldName(*column_info, field_name);
+  MakeFieldName(column_info->field_id, field_name);
   return SetupTermFilter(term_filter, field_name, *column_info, *const_val);
 }
 
@@ -480,7 +480,7 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(*column_info, field_name);
+  MakeFieldName(column_info->field_id, field_name);
 
   auto type_id = column_info->logical_type.id();
 
@@ -634,7 +634,7 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(*column_info, field_name);
+  MakeFieldName(column_info->field_id, field_name);
 
   auto type_id = column_info->logical_type.id();
   auto r = MangleForType(type_id, field_name);
@@ -1263,7 +1263,7 @@ const SearchColumnInfo* FindColumnRefInfo(
   }
 
   std::string cache_key;
-  MakeColumnFieldName(info->column_id, cache_key);
+  MakeFieldName(info->field_id, cache_key);
 
   auto cache_it = ctx.column_cache.find(cache_key);
   if (cache_it != ctx.column_cache.end()) {
@@ -1343,11 +1343,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   // Key by mangle byte: INTEGER and BIGINT both fold to Numeric.
   auto& cache_key = ctx.cache_key;
   cache_key.clear();
-  if (info->field_id != 0) {
-    MakeExpressionFieldName(info->field_id, cache_key);
-  } else {
-    MakeColumnFieldName(info->column_id, cache_key);
-  }
+  MakeFieldName(info->field_id, cache_key);
   if (auto r = MangleForType(info->logical_type.id(), cache_key); !r.ok()) {
     return nullptr;
   }
@@ -1358,18 +1354,6 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
 
   return &ctx.column_cache.emplace(cache_key, std::move(info.value()))
             .first->second;
-}
-
-void MakeFieldName(const SearchColumnInfo& column, std::string& field_name) {
-  if (column.field_id != 0) {
-    MakeExpressionFieldName(column.field_id, field_name);
-  } else {
-    MakeColumnFieldName(column.column_id, field_name);
-  }
-}
-
-void MakeFieldName(catalog::Column::Id column_id, std::string& field_name) {
-  MakeColumnFieldName(column_id, field_name);
 }
 
 Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name) {
@@ -1753,8 +1737,7 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
                           ? AddFilter<irs::ByColumnExistence>(parent)
                           : Negate<irs::ByColumnExistence>(parent);
       existence.boost(ctx.boost);
-      *existence.mutable_id() =
-        static_cast<irs::field_id>(column_info.column_id);
+      *existence.mutable_id() = column_info.field_id;
       return;
     }
     case TSQueryOp::Unknown:

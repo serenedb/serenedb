@@ -21,22 +21,16 @@
 #pragma once
 
 #include <iresearch/types.hpp>
-#include <span>
 #include <string>
-#include <string_view>
 
 #include "basics/string_utils.h"
-#include "catalog/table_options.h"
 
 namespace sdb::connector {
 
-inline void MakeColumnFieldName(catalog::Column::Id column_id,
-                                std::string& out) {
-  basics::StrResize(out, sizeof(column_id));
-  absl::big_endian::Store(out.data(), column_id);
-}
-
-inline void MakeExpressionFieldName(irs::field_id field_id, std::string& out) {
+// Encodes a unified iresearch field id (covers both columns and expressions;
+// see `SearchColumnInfo::field_id`) as an 8-byte big-endian string. Caller
+// mangles the result for the target value kind.
+inline void MakeFieldName(irs::field_id field_id, std::string& out) {
   basics::StrResize(out, sizeof(field_id));
   absl::big_endian::Store(out.data(), field_id);
 }

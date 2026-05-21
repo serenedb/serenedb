@@ -31,15 +31,19 @@
 #include "basics/result.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
+#include "connector/search_field_name.hpp"
 
 namespace sdb::connector {
 
-// Indexed expression: field_id != 0, column_id unused. Bare column: vice versa.
+// `field_id` is the unified iresearch field id: both a plain indexed column's
+// id (`catalog::Column::Id`) and an indexed expression's id come from
+// `catalog::NextId()` / `NextNIds()` (single global tick allocator), so a
+// single uint64 fits both. Disambiguate via catalog lookup when the kind
+// matters; the writer/printer paths don't need to.
 struct SearchColumnInfo {
-  catalog::Column::Id column_id{};
+  irs::field_id field_id = 0;
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
-  irs::field_id field_id = 0;
 };
 
 // Resolves a DuckDB bound column reference (by table_index + column_index,
@@ -53,12 +57,6 @@ using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
 
 using ExpressionGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::Expression&) const>;
-
-// Encodes column_id as an 8-byte big-endian binary string into
-// field_name. Before being used as an iresearch field name, the result
-// still needs mangling (MangleString / MangleBool / MangleNumeric /
-// MangleNull) based on what the caller is querying.
-void MakeFieldName(catalog::Column::Id column_id, std::string& field_name);
 
 // Builds iresearch filters into `root` from an implicit-AND list of
 // DuckDB bound filter expressions (as found in a LogicalFilter). Each

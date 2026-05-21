@@ -276,9 +276,9 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
     return true;
   }
 
-  MakeExpressionFieldName(field_id, _name_buffer);
+  MakeFieldName(field_id, _name_buffer);
   if (have_nulls || kind == duckdb::LogicalTypeId::SQLNULL) {
-    MakeExpressionFieldName(field_id, _null_name_buffer);
+    MakeFieldName(field_id, _null_name_buffer);
     search::mangling::MangleNull(_null_name_buffer);
     _null_field.name = _null_name_buffer;
     if (!_null_field.analyzer) {
@@ -677,7 +677,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
 void SearchSinkInsertBaseImpl::JsonExpressionFields::InitForExpression(
   irs::field_id field_id, catalog::ColumnTokenizer string_analyzer) {
   std::string prefix;
-  MakeExpressionFieldName(field_id, prefix);
+  MakeFieldName(field_id, prefix);
 
   tokenizer_column = string_analyzer.tokenizer_column;
   string_name = prefix;

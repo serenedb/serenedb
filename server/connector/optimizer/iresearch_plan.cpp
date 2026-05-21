@@ -935,8 +935,8 @@ bool TryClaimSearchFilter(
   }
 
   // Capture summary BEFORE preparing -- prepare consumes the tree.
-  std::string filter_summary =
-    irs::ToStringDemangled(*root, MakeColumnNameLookup(bind_data, *resolved.index));
+  std::string filter_summary = irs::ToStringDemangled(
+    *root, MakeColumnNameLookup(bind_data, *resolved.index));
 
   auto search = std::make_unique<connector::SearchScan>();
   search->snapshot = PinnedSearchSnapshot(options, resolved.index->GetId());

@@ -30,7 +30,6 @@
 #include "app/app_server.h"
 #include "auth/token_cache.h"
 #include "basics/debugging.h"
-#include "basics/dtrace-wrapper.h"
 #include "basics/logger/logger.h"
 #include "basics/recursive_locker.h"
 #include "catalog/identifiers/transaction_id.h"
@@ -463,7 +462,6 @@ bool RestHandler::wakeupHandler() {
 }
 
 void RestHandler::executeEngine(bool is_continue) {
-  DTRACE_PROBE1(serened, RestHandlerExecuteEngine, this);
   try {
     RestStatus result = RestStatus::Done;
     if (is_continue) {

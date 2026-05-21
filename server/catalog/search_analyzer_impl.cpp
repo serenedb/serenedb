@@ -30,7 +30,6 @@
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/index/norm.hpp>
 
-#include "app/name_validator.h"
 #include "basics/containers/trivial_map.h"
 #include "basics/down_cast.h"
 #include "basics/logger/logger.h"

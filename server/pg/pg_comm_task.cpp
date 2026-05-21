@@ -52,7 +52,6 @@
 #include "basics/dtoa.h"
 #include "basics/endian.h"
 #include "basics/exceptions.h"
-#include "basics/global_resource_monitor.h"
 #include "basics/logger/logger.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"

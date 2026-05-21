@@ -116,7 +116,7 @@ jobs:
         with:
           ref: ${{ inputs.PR_SHA || github.sha }}
           fetch-depth: 1
-          submodules: true
+          submodules: recursive
           clean: true
 
       - name: Set sanitizer options

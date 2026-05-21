@@ -16,6 +16,8 @@ RECOVERY_RC=0
 RECOVERY_TIME=0
 DRIVER_RC=0
 DRIVER_TIME=0
+EXTENSION_RC=0
+EXTENSION_TIME=0
 
 if [[ "${SQLLOGIC_TESTS:-true}" == "true" ]]; then
 	SQLLOGIC_START=$(date +%s)
@@ -33,6 +35,12 @@ if [[ $SQLLOGIC_RC -eq 0 && $RECOVERY_RC -eq 0 && "${DRIVER_TESTS:-true}" == "tr
 	DRIVER_START=$(date +%s)
 	BUILD_DIR="$BUILD_DIR" ./scripts/ci/steps/047-ci-in-docker-run-driver-tests.bash || DRIVER_RC=$?
 	DRIVER_TIME=$(($(date +%s) - DRIVER_START))
+fi
+
+if [[ $SQLLOGIC_RC -eq 0 && $RECOVERY_RC -eq 0 && $DRIVER_RC -eq 0 && "${EXTENSION_TESTS:-true}" == "true" ]]; then
+	EXTENSION_START=$(date +%s)
+	BUILD_DIR="$BUILD_DIR" ./scripts/ci/steps/048-ci-in-docker-run-extension-tests.bash || EXTENSION_RC=$?
+	EXTENSION_TIME=$(($(date +%s) - EXTENSION_START))
 fi
 
 # Print summary
@@ -67,7 +75,20 @@ if [[ "${DRIVER_TESTS:-true}" == "true" ]]; then
 		echo "  FAILED  driver-tests (${DRIVER_TIME}s, exit code ${DRIVER_RC})"
 	fi
 fi
-if [[ $SQLLOGIC_RC -ne 0 || $RECOVERY_RC -ne 0 || $DRIVER_RC -ne 0 ]]; then
+if [[ "${EXTENSION_TESTS:-true}" == "true" ]]; then
+	if [[ $SQLLOGIC_RC -ne 0 ]]; then
+		echo "  SKIPPED extension-tests (sqllogic failed)"
+	elif [[ $RECOVERY_RC -ne 0 ]]; then
+		echo "  SKIPPED extension-tests (recovery failed)"
+	elif [[ $DRIVER_RC -ne 0 ]]; then
+		echo "  SKIPPED extension-tests (driver failed)"
+	elif [[ $EXTENSION_RC -eq 0 ]]; then
+		echo "  PASSED  extension-tests (${EXTENSION_TIME}s)"
+	else
+		echo "  FAILED  extension-tests (${EXTENSION_TIME}s, exit code ${EXTENSION_RC})"
+	fi
+fi
+if [[ $SQLLOGIC_RC -ne 0 || $RECOVERY_RC -ne 0 || $DRIVER_RC -ne 0 || $EXTENSION_RC -ne 0 ]]; then
 	echo "========================================"
 	echo "  SOME INTEGRATION TESTS FAILED"
 	echo "========================================"

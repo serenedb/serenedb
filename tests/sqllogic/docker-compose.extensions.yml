@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:18.3
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: postgres
+      # Keep collation byte-wise (C.UTF-8) -- DuckDB's LIKE-to-prefix-range
+      # pushdown emits collation-unsafe upper bounds (e.g. `'foo:'` as the
+      # successor of `'foo9'`). In en_US.utf8 (postgres:18.3's default) `:`
+      # sorts before `9`, so the resulting range excludes valid rows.
+      # Mirrors tests/postgres_scanner/docker-compose.yml for the local
+      # `--docker` runner. See attach_like.test for the canary.
+      POSTGRES_INITDB_ARGS: "--locale=C.UTF-8"
+      LANG: C.UTF-8
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    networks:
+      - test-network
+
+  tests:
+    image: ${BUILD_IMAGE}
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    volumes:
+      - "${WORKSPACE}:/serenedb"
+      - "${WORKSPACE}/logs:/logs"
+    env_file:
+      - "${WORKSPACE}/docker.env"
+    environment:
+      - BUILD_DIR
+      - HOME=/serenedb
+      - LOG_DIR=/logs
+      - REPORTS_DIR=/serenedb/tests/sqllogic
+      - PGHOST=postgres
+      - PGPORT=5432
+      - PGUSER=postgres
+      - PGDATABASE=postgres
+    networks:
+      - test-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c '
+        cd /serenedb &&
+        exec ./tests/postgres_scanner/run.sh --use-existing
+      '
+
+networks:
+  test-network:
+    driver: bridge
+    name: ${COMPOSE_PROJECT_NAME}_test-network

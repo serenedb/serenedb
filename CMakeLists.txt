@@ -33,7 +33,7 @@ option(VERBOSE "be verbose about flags used" OFF)
 # treat warnings as errors on some platforms
 option(USE_FAIL_ON_WARNINGS "treat warnings as errors" ON)
 
-option(AUTO_UPDATE_MODULES "automatically update git modules" ON)
+option(AUTO_UPDATE_MODULES "automatically update git modules" OFF)
 
 option(SDB_IOURING "allow to use iouring" ON)
 

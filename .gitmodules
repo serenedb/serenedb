@@ -201,3 +201,7 @@
 	path = third_party/duckdb_iceberg
 	url = https://github.com/serenedb/duckdb-iceberg.git
 	shallow = true
+[submodule "third_party/duckdb_postgres"]
+	path = third_party/duckdb_postgres
+	url = https://github.com/serenedb/duckdb-postgres.git
+	branch = v2026.05.19

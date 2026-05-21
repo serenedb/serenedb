@@ -1,0 +1,133 @@
+control substitution on
+
+hash-threshold 100
+
+# Inverted index built directly on a VIEW over an ATTACH'd postgres table.
+#
+# Partial support today:
+#   - CREATE INDEX succeeds (iresearch ingests rows at create time).
+#   - count(*) and BM25 score queries work (served from iresearch alone).
+#   - Selecting real source columns fails with the documented
+#     "not yet supported" error -- postgres_scan isn't in the fast-path
+#     registry yet (see server/connector/view_fast_path.cpp, the
+#     `// TODO: read_avro, postgres_scan / postgres_query` comment).
+#
+# When postgres_scan joins the fast-path registry, flip the `statement error`
+# block to `query` with the expected rows.
+
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CREATE SCHEMA pg_${__DATABASE__}.${__DATABASE__}_docs;
+
+
+statement ok
+CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_docs.articles (
+  id    INTEGER PRIMARY KEY,
+  body  TEXT,
+  tag   TEXT,
+  views INTEGER
+);
+
+
+statement count 5
+INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_docs.articles VALUES
+  (1, 'pudge goes mid and dominates the lane', 'gameplay', 1200),
+  (2, 'anchin reads manga every weekend',      'reading',  340),
+  (3, 'pudge plays again in a ranked match',   'gameplay', 870),
+  (4, 'krivda writes sql for the new feature', 'work',     55),
+  (5, 'mom reviews pudge highlight reel',      'family',   12);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pg_en_${__DATABASE__}(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE VIEW pg_articles_v_${__DATABASE__} AS
+  SELECT id, body, tag, views
+  FROM pg_${__DATABASE__}.${__DATABASE__}_docs.articles;
+
+
+statement ok
+CREATE INDEX pg_articles_v_idx_${__DATABASE__}
+  ON pg_articles_v_${__DATABASE__}
+  USING inverted(id, body pg_en_${__DATABASE__})
+  INCLUDE (tag, views)
+  WITH (pk = 'id');
+
+
+# count(*) over the view-backed index -- flows from iresearch, no source touch.
+query
+SELECT count(*)
+FROM pg_articles_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge');
+----
+count
+3
+
+
+# BM25 score from iresearch (virtual column).
+query
+SELECT BM25(pg_articles_v_idx_${__DATABASE__}.tableoid) > 0 AS has_score
+FROM pg_articles_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge')
+ORDER BY BM25(pg_articles_v_idx_${__DATABASE__}.tableoid) DESC
+LIMIT 1;
+----
+has_score
+t
+
+
+# INCLUDE'd columns (tag, views) are stored in the iresearch columnstore at
+# CREATE INDEX time, so projections over them don't need source-row
+# materialisation. They work today even though postgres_scan isn't a
+# fast-path source.
+query
+SELECT tag, views FROM pg_articles_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge')
+ORDER BY views DESC;
+----
+tag	views
+gameplay	1200
+gameplay	870
+family	12
+
+
+# Aggregation over an INCLUDE'd column -- also columnstore-only.
+query
+SELECT SUM(views) FROM pg_articles_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge');
+----
+sum
+2082
+
+
+# Selecting real (non-indexed, non-INCLUDE'd) source columns fails because
+# postgres_scan isn't a fast-path source. Pin the documented error so
+# flipping the behaviour requires touching this assertion.
+statement error materialising real columns from this view-backed inverted index is not yet supported
+SELECT id, body FROM pg_articles_v_idx_${__DATABASE__} WHERE body @@ ts_phrase('pudge');
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.${__DATABASE__}_docs.articles;
+
+
+statement ok
+DROP SCHEMA pg_${__DATABASE__}.${__DATABASE__}_docs;
+
+
+statement ok
+DETACH pg_${__DATABASE__};

@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:18.3
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: postgres
+      # DuckDB's LIKE-to-prefix-range pushdown (filter_combiner.cpp:TryPushdownLikeFilter)
+      # increments the last byte of the prefix to compute the upper bound -- e.g.
+      # `col LIKE 'foo9%'` becomes `col >= 'foo9' AND col < 'foo:'`. That is correct
+      # under bytewise comparison but wrong under collation-aware comparison in many
+      # locales (en_US.utf8 sorts `:` before `9`, so `'foo:' < 'foo9bar'` and the
+      # range excludes the very rows it should match). Upstream's CI runs postgres
+      # natively on a C.UTF-8 runner where this isn't a problem; the postgres docker
+      # image otherwise initdbs with en_US.utf8. Pin the locale to C.UTF-8 to match.
+      POSTGRES_INITDB_ARGS: "--locale=C.UTF-8"
+      LANG: C.UTF-8
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    # Some upstream tests run COPY ... FROM '/path/on/host.bin' through
+    # postgres_execute(), which means the postgres backend must be able to
+    # read files at host paths. Bind-mount the workspace at the same path
+    # so test-generated files (in third_party/duckdb_postgres/duckdb_unittest_tempdir)
+    # are reachable.
+    volumes:
+      - "${SDB_WORKSPACE_DIR:-/serenedb}:${SDB_WORKSPACE_DIR:-/serenedb}:ro"

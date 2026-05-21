@@ -1,0 +1,46 @@
+hash-threshold 100
+
+# Inverted index over a TEMPORARY table. DuckDB's TEMP tables live in the
+# in-memory catalog (the `memory` database, `temp` schema) — separate from
+# the regular rocksdb-backed catalog where persistent tables live. Test
+# that serenedb can build an inverted index on such a table and query it
+# end-to-end, including INCLUDE'd columns.
+
+
+statement ok
+CREATE TEMPORARY TABLE temp_docs (
+  id    INTEGER PRIMARY KEY,
+  body  TEXT,
+  tag   TEXT,
+  views INTEGER
+);
+
+
+statement count 5
+INSERT INTO temp_docs VALUES
+  (1, 'pudge goes mid and dominates the lane', 'gameplay', 1200),
+  (2, 'anchin reads manga every weekend',      'reading',  340),
+  (3, 'pudge plays again in a ranked match',   'gameplay', 870),
+  (4, 'krivda writes sql for the new feature', 'work',     55),
+  (5, 'mom reviews pudge highlight reel',      'family',   12);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY temp_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+# TEMP tables live in DuckDB's in-memory catalog, which serenedb's
+# CREATE INDEX implementation doesn't support today (serenedb's
+# inverted/secondary indexes assume a SereneDB-managed catalog with
+# rocksdb-backed storage). Reject with a clean error rather than
+# triggering an internal assertion.
+statement error cannot CREATE INDEX on temp\.temp_docs: its catalog differs from the current one
+CREATE INDEX temp_idx ON temp_docs USING inverted(body temp_en) INCLUDE (tag, views);

@@ -117,7 +117,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
-          submodules: true
+          submodules: recursive
           clean: true
 
       - name: Build Docker environment file

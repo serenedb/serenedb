@@ -781,7 +781,16 @@ set(AWSSDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/aws-cmake" CACHE PATH "" FORCE)
 ################################################################################
 
 set(BUILD_SHELL FALSE CACHE BOOL "" FORCE)
-set(BUILD_UNITTESTS FALSE CACHE BOOL "" FORCE)
+# DuckDB's `unittest` binary drives the vendored extension test suites
+# (third_party/duckdb_postgres/test/, etc.). On by default so
+# tests/postgres_scanner/run.sh works out of a vanilla build; opt out with
+# -DSDB_BUILD_DUCKDB_UNITTESTS=OFF if you want to skip the (~1GB) binary.
+option(
+    SDB_BUILD_DUCKDB_UNITTESTS
+    "Build DuckDB's unittest binary for vendored-extension test suites"
+    ON
+)
+set(BUILD_UNITTESTS ${SDB_BUILD_DUCKDB_UNITTESTS} CACHE BOOL "" FORCE)
 set(ENABLE_UNITTEST_CPP_TESTS FALSE CACHE BOOL "" FORCE)
 set(BUILD_BENCHMARKS FALSE CACHE BOOL "" FORCE)
 set(BUILD_COMPLETE_EXTENSION_SET FALSE CACHE BOOL "" FORCE)
@@ -795,8 +804,12 @@ set(ENABLE_UBSAN FALSE CACHE BOOL "" FORCE)
 set(ENABLE_THREAD_SANITIZER FALSE CACHE BOOL "" FORCE)
 set(EXPORT_DLL_SYMBOLS FALSE CACHE BOOL "" FORCE)
 set(DUCKDB_SKIP_INSTALL TRUE CACHE BOOL "" FORCE)
+# Suppress the per-extension "vcpkg.json present but VCPKG_BUILD not set" warning.
+# We satisfy postgres_scanner's openssl dependency via the vendored third_party/openssl
+# pre-seeded above; vcpkg is not used in this build.
+set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg"
+    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner"
     CACHE STRING
     ""
     FORCE
@@ -806,6 +819,8 @@ sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_httpfs" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_avro" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
 add_subdirectory(duckdb)
 
 target_include_directories(
@@ -827,6 +842,7 @@ target_link_libraries(
         httpfs_extension
         avro_extension
         iceberg_extension
+        postgres_scanner_extension
 )
 
 # !!! KEEP THIS LAST !!!

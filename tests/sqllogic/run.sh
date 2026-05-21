@@ -63,6 +63,8 @@ ICEBERG_REST_CONTAINER_NAME=""
 ICEBERG_REST_LOG_FILE=""
 OLLAMA_CONTAINER_NAME=""
 OLLAMA_LOG_FILE=""
+POSTGRES_CONTAINER_NAME=""
+POSTGRES_LOG_FILE=""
 TEST_NETWORK=""
 cancel_pid=""
 
@@ -125,10 +127,24 @@ cleanup_ollama() {
 	fi
 }
 
+cleanup_postgres() {
+	if [[ -n "$POSTGRES_CONTAINER_NAME" ]]; then
+		local name="$POSTGRES_CONTAINER_NAME"
+		POSTGRES_CONTAINER_NAME=""
+		if [[ -n "$POSTGRES_LOG_FILE" ]]; then
+			echo "Saving postgres logs to ${POSTGRES_LOG_FILE}..."
+			docker logs "$name" >"${POSTGRES_LOG_FILE}" 2>&1 || true
+		fi
+		echo "Stopping postgres container..."
+		docker rm -fv "$name" >/dev/null 2>&1 || true
+	fi
+}
+
 cleanup_all() {
 	cleanup_cancel_pid
 	cleanup_iceberg_rest
 	cleanup_ollama
+	cleanup_postgres
 	cleanup_minio
 	cleanup_test_network
 }
@@ -314,9 +330,63 @@ launch_ollama() {
 	echo
 }
 
+# Launches a postgres 16 container, used by tests that ATTACH a real postgres
+# via the postgres_scanner DuckDB extension (filename suffix `_pgscan.`). Trust
+# auth + a single postgres role; per-test database scoping is the test's
+# responsibility (`CREATE DATABASE` / `ATTACH ... TYPE postgres`).
+launch_postgres() {
+	local prefix
+	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
+	POSTGRES_CONTAINER_NAME="${prefix}-serenedb-test-postgres-$$"
+	POSTGRES_LOG_FILE="${LOG_DIR:-/tmp}/${POSTGRES_CONTAINER_NAME}.log"
+
+	local network_args=()
+	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
+		network_args=(--network "$COMPOSE_NETWORK")
+		export PGHOST="$POSTGRES_CONTAINER_NAME"
+		export PGPORT=5432
+	else
+		if [[ -z "$TEST_NETWORK" ]]; then
+			TEST_NETWORK="${prefix}-serenedb-test-net-$$"
+			docker network create "$TEST_NETWORK" >/dev/null
+		fi
+		PGPORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+		network_args=(--network "$TEST_NETWORK" -p "$PGPORT:5432")
+		export PGHOST="localhost"
+		export PGPORT
+	fi
+	export PGUSER=postgres
+	export PGDATABASE=postgres
+
+	echo "Starting postgres (host=$PGHOST, port=$PGPORT)..."
+	docker run -d \
+		--name "$POSTGRES_CONTAINER_NAME" \
+		"${network_args[@]}" \
+		-e POSTGRES_HOST_AUTH_METHOD=trust \
+		-e POSTGRES_DB=postgres \
+		postgres:18.3
+
+	echo "Waiting for postgres to be ready..."
+	for i in $(seq 1 60); do
+		if docker exec "$POSTGRES_CONTAINER_NAME" \
+			pg_isready -U postgres >/dev/null 2>&1; then
+			echo "postgres is ready."
+			break
+		fi
+		if [[ $i -eq 60 ]]; then
+			echo "ERROR: postgres failed to start within 60 seconds"
+			exit 1
+		fi
+		sleep 1
+	done
+
+	echo "postgres running (host=$PGHOST, port=$PGPORT)."
+	echo
+}
+
 launch_external() {
 	shopt -s globstar
-	local pattern test_files needs_s3=false needs_iceberg=false needs_ollama=false
+	local pattern test_files needs_s3=false needs_iceberg=false needs_ollama=false needs_postgres=false
 	for pattern in "${tests[@]}"; do
 		test_files=$(compgen -G "$pattern" 2>/dev/null || true)
 		if echo "$test_files" | grep -q '_s3\.'; then
@@ -327,6 +397,9 @@ launch_external() {
 		fi
 		if echo "$test_files" | grep -q '_ollama\.'; then
 			needs_ollama=true
+		fi
+		if echo "$test_files" | grep -q '_pgscan\.'; then
+			needs_postgres=true
 		fi
 	done
 	shopt -u globstar
@@ -355,6 +428,9 @@ launch_external() {
 	fi
 	if [[ "$needs_ollama" == "true" ]]; then
 		launch_ollama
+	fi
+	if [[ "$needs_postgres" == "true" ]]; then
+		launch_postgres
 	fi
 }
 

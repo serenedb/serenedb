@@ -11,7 +11,7 @@
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_EXE_LINKER_FLAGS": "-fuse-ld=lld",
         "CMAKE_SHARED_LINKER_FLAGS": "-fuse-ld=lld",
-        "AUTO_UPDATE_MODULES": "On",
+        "AUTO_UPDATE_MODULES": "Off",
         "USE_DEBUG_INFO": "LLDB",
         "SDB_SANITIZE": "",
         "SDB_FAULT_INJECTION": "On",

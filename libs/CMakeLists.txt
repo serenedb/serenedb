@@ -27,7 +27,6 @@ add_library(
     basics/string_utils.cpp
     basics/thread.cpp
     basics/static_strings.cpp
-    basics/unshackled_mutex.cpp
     basics/application-exit.cpp
     basics/debugging.cpp
     basics/error.cpp
@@ -40,17 +39,13 @@ add_library(
     basics/terminal-utils-posix.cpp
     basics/threads-posix.cpp
     basics/strings.cpp
-    basics/csv.cpp
     basics/zip.cpp
     basics/datetime.cpp
     basics/hashes.cpp
-    basics/read_write_spin_lock.cpp
     basics/utf8_helper.cpp
     basics/cpu_usage_snapshot.cpp
     basics/file_descriptors.cpp
-    basics/global_resource_monitor.cpp
     basics/hybrid_logical_clock.cpp
-    basics/resource_usage.cpp
     basics/socket-utils.cpp
     basics/terminal-utils.cpp
     basics/thread_utils.cpp
@@ -216,9 +211,6 @@ target_include_directories(serene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(serene PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 
 target_include_directories(serene SYSTEM PUBLIC ${OPENSSL_INCLUDE_DIR})
-if(USE_DTRACE)
-    target_include_directories(serene SYSTEM PUBLIC ${SDT_INCLUDE_DIR})
-endif()
 
 target_link_libraries(serene PUBLIC rocksdb_interface)
 

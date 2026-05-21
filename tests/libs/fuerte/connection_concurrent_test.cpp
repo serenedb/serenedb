@@ -24,9 +24,9 @@
 #include <fuerte/loop.h>
 
 #include <thread>
+#include <vector>
 #include <yaclib/algo/wait_group.hpp>
 
-#include "basics/thread_guard.h"
 #include "connection_test.h"
 #include "gtest/gtest.h"
 
@@ -82,11 +82,12 @@ TEST_P(ConcurrentConnectionF, ApiVersionParallel) {
     }
   };
 
-  auto joins = ThreadGuard(threads());
+  std::vector<std::thread> joins;
+  joins.reserve(threads());
 
   wg.Add(threads() * repeat());
   for (size_t t = 0; t < threads(); t++) {
-    joins.emplace([&] {
+    joins.emplace_back([&] {
       for (size_t i = 0; i < repeat(); i++) {
         auto request = fu::CreateRequest(fu::RestVerb::Get, "/_api/version");
         auto& conn = *connections[i % connections.size()];
@@ -102,7 +103,7 @@ TEST_P(ConcurrentConnectionF, ApiVersionParallel) {
   ASSERT_TRUE(wg.WaitFor(std::chrono::seconds(300)));
 
   // wait for all threads to end
-  joins.joinAll();
+  for (auto& t : joins) t.join();
 
   ASSERT_EQ(repeat() * threads(), counter);
 }
@@ -141,11 +142,12 @@ TEST_P(ConcurrentConnectionF, CreateDocumentsParallel) {
     }
   };
 
-  auto joins = ThreadGuard(threads());
+  std::vector<std::thread> joins;
+  joins.reserve(threads());
 
   wg.Add(threads() * repeat());
   for (size_t t = 0; t < threads(); t++) {
-    joins.emplace([=, this] {
+    joins.emplace_back([=, this] {
       for (size_t i = 0; i < repeat(); i++) {
         auto request =
           fu::CreateRequest(fu::RestVerb::Post, "/_api/document/concurrent");
@@ -164,7 +166,7 @@ TEST_P(ConcurrentConnectionF, CreateDocumentsParallel) {
   // if the requests reach the server or if fuerte deadlocks internally.
 
   // wait for all threads to end
-  joins.joinAll();
+  for (auto& t : joins) t.join();
 
   ASSERT_EQ(repeat() * threads(), counter);
 }

@@ -1,0 +1,51 @@
+# DuckDB VARIANT type: cast from JSON, name lookup, wire-format output, and
+# CREATE TABLE / INSERT round-trip through the RocksDB storage path.
+
+query
+SELECT '{"a": 42}'::json::variant;
+----
+variant
+{"a":42}
+
+
+query
+SELECT pg_typeof('{"a": 42}'::json::variant);
+----
+pg_typeof
+variant
+
+
+query
+SELECT 'variant'::regtype;
+----
+regtype
+variant
+
+
+statement ok
+CREATE TABLE variant_values(id INTEGER, x VARIANT);
+
+
+statement ok
+INSERT INTO variant_values VALUES
+  (1, 42::variant),
+  (2, 'hello'::variant),
+  (3, true::variant),
+  (4, '{"a": 42}'::json::variant);
+
+
+query
+SELECT id, x FROM variant_values ORDER BY id;
+----
+id	x
+1	42
+2	"hello"
+3	true
+4	{"a":42}
+
+
+query
+SELECT pg_typeof(x) FROM variant_values WHERE id = 1;
+----
+pg_typeof
+variant

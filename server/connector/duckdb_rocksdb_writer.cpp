@@ -551,7 +551,8 @@ void DuckDBColumnSerializer::WriteColumn(
   if (type.id() == duckdb::LogicalTypeId::LIST ||
       type.id() == duckdb::LogicalTypeId::MAP ||
       type.id() == duckdb::LogicalTypeId::STRUCT ||
-      type.id() == duckdb::LogicalTypeId::ARRAY) {
+      type.id() == duckdb::LogicalTypeId::ARRAY ||
+      type.id() == duckdb::LogicalTypeId::VARIANT) {
     WriteComplexColumn(writer, vec, type, num_rows, row_keys, index_writers);
     return;
   }
@@ -914,6 +915,14 @@ size_t DuckDBColumnSerializer::WriteSubVector(
       return WriteSubVectorPrimitive<int32_t>(rdata.unified, offset, count);
     case duckdb::LogicalTypeId::BIGINT:
       return WriteSubVectorPrimitive<int64_t>(rdata.unified, offset, count);
+    case duckdb::LogicalTypeId::UTINYINT:
+      return WriteSubVectorPrimitive<uint8_t>(rdata.unified, offset, count);
+    case duckdb::LogicalTypeId::USMALLINT:
+      return WriteSubVectorPrimitive<uint16_t>(rdata.unified, offset, count);
+    case duckdb::LogicalTypeId::UINTEGER:
+      return WriteSubVectorPrimitive<uint32_t>(rdata.unified, offset, count);
+    case duckdb::LogicalTypeId::UBIGINT:
+      return WriteSubVectorPrimitive<uint64_t>(rdata.unified, offset, count);
     case duckdb::LogicalTypeId::FLOAT:
       return WriteSubVectorPrimitive<float>(rdata.unified, offset, count);
     case duckdb::LogicalTypeId::DOUBLE:
@@ -959,6 +968,8 @@ size_t DuckDBColumnSerializer::WriteSubVector(
       }
       return bytes;
     }
+    // VARIANT's physical layout is the same STRUCT as in LogicalType::VARIANT.
+    case duckdb::LogicalTypeId::VARIANT:
     case duckdb::LogicalTypeId::STRUCT:
       return WriteStructSubVector(rdata, offset, count, type);
     case duckdb::LogicalTypeId::ARRAY: {
@@ -1141,6 +1152,7 @@ static bool IsNestedType(const duckdb::LogicalType& type) {
     case duckdb::LogicalTypeId::MAP:
     case duckdb::LogicalTypeId::STRUCT:
     case duckdb::LogicalTypeId::ARRAY:
+    case duckdb::LogicalTypeId::VARIANT:
       return true;
     default:
       return false;
@@ -1169,6 +1181,14 @@ size_t DuckDBColumnSerializer::WriteScalarValue(
       return WriteScalarField<int32_t>(fmt, row_idx);
     case duckdb::LogicalTypeId::BIGINT:
       return WriteScalarField<int64_t>(fmt, row_idx);
+    case duckdb::LogicalTypeId::UTINYINT:
+      return WriteScalarField<uint8_t>(fmt, row_idx);
+    case duckdb::LogicalTypeId::USMALLINT:
+      return WriteScalarField<uint16_t>(fmt, row_idx);
+    case duckdb::LogicalTypeId::UINTEGER:
+      return WriteScalarField<uint32_t>(fmt, row_idx);
+    case duckdb::LogicalTypeId::UBIGINT:
+      return WriteScalarField<uint64_t>(fmt, row_idx);
     case duckdb::LogicalTypeId::FLOAT:
       return WriteScalarField<float>(fmt, row_idx);
     case duckdb::LogicalTypeId::DOUBLE:
@@ -1224,6 +1244,7 @@ size_t DuckDBColumnSerializer::WriteComplexValue(
       return WriteListValue(rdata, row_idx, type);
     case duckdb::LogicalTypeId::MAP:
       return WriteMapValue(rdata, row_idx, type);
+    case duckdb::LogicalTypeId::VARIANT:
     case duckdb::LogicalTypeId::STRUCT:
       return WriteStructValue(rdata, row_idx, type);
     case duckdb::LogicalTypeId::ARRAY:

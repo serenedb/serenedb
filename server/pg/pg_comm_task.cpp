@@ -29,6 +29,7 @@
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types.hpp>
+#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
@@ -1173,8 +1174,13 @@ void PgSQLCommTaskBase::BuildColumnSerializers(DuckDBPortal& portal) {
 
   for (uint16_t i = 0; i < columns_count; ++i) {
     const auto format = i < formats.size() ? formats[i] : default_format;
+    // VARIANT is wire-serialized after a per-batch cast to JSON; build the
+    // serializer for the JSON shape we will actually emit.
+    const auto& effective_type = types[i].id() == duckdb::LogicalTypeId::VARIANT
+                                   ? duckdb::LogicalType::JSON()
+                                   : types[i];
     portal.columns_serializers.push_back(
-      GetSerialization(types[i], format, portal.serialization_context));
+      GetSerialization(effective_type, format, portal.serialization_context));
   }
 }
 
@@ -1205,11 +1211,29 @@ void PgSQLCommTaskBase::SendBatch(const duckdb::DataChunk& chunk) {
 
   SDB_ASSERT(batch_columns == portal.columns_serializers.size());
 
+  // VARIANT has no PG wire encoding of its own, so cast affected columns to
+  // JSON before unifying; the configured serializer expects the JSON shape.
+  std::vector<duckdb::Vector> variant_json_columns;
+  for (uint16_t i = 0; i < batch_columns; ++i) {
+    if (chunk.data[i].GetType().id() == duckdb::LogicalTypeId::VARIANT) {
+      variant_json_columns.emplace_back(duckdb::LogicalType::JSON(),
+                                        batch_rows);
+      duckdb::VectorOperations::DefaultCast(
+        const_cast<duckdb::Vector&>(chunk.data[i]), variant_json_columns.back(),
+        batch_rows);
+    }
+  }
+
   // Convert columns to RecursiveUnifiedVectorFormat (like Velox DecodedVector)
   std::vector<duckdb::RecursiveUnifiedVectorFormat> decoded_columns(
     batch_columns);
+  size_t variant_idx = 0;
   for (uint16_t i = 0; i < batch_columns; ++i) {
-    duckdb::Vector::RecursiveToUnifiedFormat(chunk.data[i], batch_rows,
+    const auto& column =
+      chunk.data[i].GetType().id() == duckdb::LogicalTypeId::VARIANT
+        ? variant_json_columns[variant_idx++]
+        : chunk.data[i];
+    duckdb::Vector::RecursiveToUnifiedFormat(column, batch_rows,
                                              decoded_columns[i]);
   }
 

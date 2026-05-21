@@ -343,8 +343,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
     gstate->filter_ctx, context, gstate->scan->filter_expression.get(),
     gstate->scan->filter_column_ids, gstate->snapshot, bind_data);
 
-  auto& snapshot =
-    GetSereneDBContext(context).GetSearchSnapshot(gstate->scan->index_id);
+  SDB_ASSERT(gstate->scan->snapshot);
+  auto& snapshot = *gstate->scan->snapshot;
   gstate->reader = &snapshot.reader;
   gstate->total_segments = snapshot.reader.size();
 
@@ -442,8 +442,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(
     gstate->filter_ctx, context, gstate->scan->filter_expression.get(),
     gstate->scan->filter_column_ids, gstate->snapshot, bind_data);
 
-  auto& snapshot =
-    GetSereneDBContext(context).GetSearchSnapshot(gstate->scan->index_id);
+  SDB_ASSERT(gstate->scan->snapshot);
+  auto& snapshot = *gstate->scan->snapshot;
   gstate->reader = &snapshot.reader;
   gstate->total_segments = snapshot.reader.size();
   return gstate;

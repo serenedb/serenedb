@@ -88,6 +88,18 @@ duckdb::unique_ptr<duckdb::Expression> CombineFilterExpressions(
   return conj;
 }
 
+std::shared_ptr<const catalog::Snapshot> PinnedSnapshot(
+  const connector::SearchFilterOptions& options) {
+  return connector::GetSereneDBContext(options.client_context)
+    .EnsureCatalogSnapshot();
+}
+
+search::InvertedIndexSnapshotPtr PinnedSearchSnapshot(
+  const connector::SearchFilterOptions& options, ObjectId index_id) {
+  return connector::GetSereneDBContext(options.client_context)
+    .EnsureSearchSnapshot(index_id);
+}
+
 bool IsMutationOp(duckdb::LogicalOperatorType type) {
   switch (type) {
     case duckdb::LogicalOperatorType::LOGICAL_DELETE:
@@ -619,7 +631,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     return false;
   }
 
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  auto snapshot = PinnedSnapshot(options);
   auto resolved = ResolveIresearch(bind_data, *snapshot);
   if (!resolved) {
     return false;
@@ -639,7 +651,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   }
 
   auto ann = std::make_unique<connector::ANNScan>();
-  ann->index_id = resolved->index->GetId();
+  ann->snapshot = PinnedSearchSnapshot(options, resolved->index->GetId());
   ann->field_id = col_id;
   ann->query_vector = std::move(query_vector);
   ann->top_k = limit;
@@ -833,7 +845,7 @@ bool TryClaimAnnRange(
   }
 
   auto rss = std::make_unique<connector::RangeSearchScan>();
-  rss->index_id = resolved.index->GetId();
+  rss->snapshot = PinnedSearchSnapshot(options, resolved.index->GetId());
   rss->field_id = col_id;
   rss->query_vector = std::move(query_vector);
   rss->radius = radius;
@@ -927,7 +939,7 @@ bool TryClaimSearchFilter(
     irs::ToStringDemangled(*root, MakeColumnNameLookup(bind_data, *resolved.index));
 
   auto search = std::make_unique<connector::SearchScan>();
-  search->snapshot = resolved.shard->GetInvertedIndexSnapshot();
+  search->snapshot = PinnedSearchSnapshot(options, resolved.index->GetId());
   search->stored_filter = root;
   search->filter_summary = std::move(filter_summary);
   if (resolved.index) {
@@ -1791,7 +1803,8 @@ bool IsCountStarLikeAggregate(const duckdb::Expression& expr) {
 }
 
 bool TryConvertAggregateToCount(
-  duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+  duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+  const connector::SearchFilterOptions& options) {
   if (plan->type !=
       duckdb::LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
     return false;
@@ -1846,12 +1859,13 @@ bool TryConvertAggregateToCount(
       if (!bind_data.IsInvertedIndexEntry()) {
         return false;
       }
-      auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+      auto snapshot = PinnedSnapshot(options);
       auto resolved = ResolveIresearch(bind_data, *snapshot);
       if (!resolved) {
         return false;
       }
-      count_scan->snapshot = resolved->shard->GetInvertedIndexSnapshot();
+      count_scan->snapshot =
+        PinnedSearchSnapshot(options, resolved->index->GetId());
       break;
     }
     default:
@@ -1995,7 +2009,7 @@ void LowerToSearchScan(duckdb::OptimizerExtensionInput& input,
       TryAttachScoreTopK(node, options);
     } else if (node->type ==
                duckdb::LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
-      TryConvertAggregateToCount(node);
+      TryConvertAggregateToCount(node, options);
     }
   });
 }
@@ -2065,7 +2079,7 @@ void IresearchPushdownComplexFilter(
   if (bind_data.scan_source->Kind() != connector::ScanSourceKind::FullTable) {
     return;
   }
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
   auto resolved = ResolveIresearch(bind_data, *snapshot);
   if (!resolved) {
     return;

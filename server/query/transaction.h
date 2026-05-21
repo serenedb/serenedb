@@ -105,14 +105,7 @@ class Transaction : public Config {
   void EnsureRocksDBTransaction();
   void EnsureRocksDBSnapshot();
 
-  const search::InvertedIndexSnapshot& EnsureSearchSnapshot(ObjectId index_id);
-
-  const search::InvertedIndexSnapshot& GetSearchSnapshot(
-    ObjectId index_id) const noexcept {
-    auto it = _search_snapshots.find(index_id);
-    SDB_ASSERT(it != _search_snapshots.end());
-    return *it->second;
-  }
+  search::InvertedIndexSnapshotPtr EnsureSearchSnapshot(ObjectId index_id);
 
   void EraseSearchTransaction(ObjectId shard_id) noexcept {
     _search_transactions.erase(shard_id);

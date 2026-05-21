@@ -1,7 +1,3 @@
-control substitution on
-control max-async-connections 3
-
-
 statement ok
 CREATE TABLE t (id INT PRIMARY KEY, name TEXT);
 
@@ -10,24 +6,32 @@ statement ok
 INSERT INTO t VALUES (1, 'alice'), (2, 'bob');
 
 
+connection reader
 statement ok
-SET sdb_faults = 'slow_rocksdb_optimize';
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
 
-query async
+
+connection reader
+query
 SELECT name FROM t WHERE upper(name) = 'ALICE';
 ----
 name
 alice
 
 
-connection drop_conn
+connection writer
 statement ok
 DROP TABLE t;
 
 
-wait
+connection reader
+query
+SELECT name FROM t WHERE upper(name) = 'ALICE';
+----
+name
+alice
 
 
-connection drop_conn
+connection reader
 statement ok
-RESET sdb_faults;
+COMMIT;

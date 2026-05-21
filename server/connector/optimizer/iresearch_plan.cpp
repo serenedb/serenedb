@@ -21,8 +21,6 @@
 #include "connector/optimizer/iresearch_plan.h"
 
 #include <absl/base/internal/endian.h>
-#include <absl/time/clock.h>
-#include <absl/time/time.h>
 
 #include <duckdb/function/aggregate/distributive_functions.hpp>
 #include <duckdb/main/config.hpp>
@@ -1940,9 +1938,6 @@ void Walk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan, bool in_mutation,
 
 void PushdownAnnTopK(duckdb::OptimizerExtensionInput& input,
                      duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
-  SDB_IF_FAILURE("slow_iresearch_optimize") {
-    absl::SleepFor(absl::Seconds(2));
-  }
   auto options = BuildOptions(input.context);
   Walk<WalkOrder::TopDown>(plan, /*in_mutation=*/false, [&](auto& node) {
     if (node->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N ||
@@ -2032,9 +2027,6 @@ void IresearchPushdownComplexFilter(
   duckdb::ClientContext& context, duckdb::LogicalGet& get,
   duckdb::FunctionData* bind_data_ptr,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters) {
-  SDB_IF_FAILURE("slow_iresearch_optimize") {
-    absl::SleepFor(absl::Seconds(2));
-  }
   if (filters.empty() || bind_data_ptr == nullptr) {
     return;
   }

@@ -7,11 +7,9 @@ add_executable(
     conversions_test.cpp
     escaper_test.cpp
     endian_test.cpp
-    connection_cache_test.cpp
     connection_pool_test.cpp
     inifile_parser_test.cpp
     parameters_test.cpp
-    http_response_checker_test.cpp
     assertions_tests.cpp
     http_request_test.cpp
     csv_test.cpp

@@ -204,13 +204,6 @@ add_library(
     rest/http_request.cpp
     rest/http_response.cpp
     rest/version.cpp
-    http_client/client_connection.cpp
-    http_client/connection_cache.cpp
-    http_client/general_client_connection.cpp
-    http_client/http_response_checker.cpp
-    http_client/http_client.cpp
-    http_client/http_result.cpp
-    http_client/ssl_client_connection.cpp
 )
 
 target_link_libraries(

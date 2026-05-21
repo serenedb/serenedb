@@ -366,8 +366,12 @@ Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::PgSqlFunction,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto function = catalog::PgSqlFunction::ReadInternal(
-        slice, {.id = key.GetObjectId(), .database_id = db_id});
+      auto function =
+        catalog::PgSqlFunction::ReadInternal(slice, {
+                                                      .id = key.GetObjectId(),
+                                                      .database_id = db_id,
+                                                      .schema_id = schema_id,
+                                                    });
       if (!function) {
         return ErrorMeta(ERROR_INTERNAL, "function",
                          "Failed to read function definition", slice);
@@ -380,8 +384,11 @@ Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::Tokenizer,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto tokenizer =
-        Tokenizer::ReadInternal(slice, {.id = key.GetObjectId()});
+      auto tokenizer = Tokenizer::ReadInternal(slice, {
+                                                        .id = key.GetObjectId(),
+                                                        .database_id = db_id,
+                                                        .schema_id = schema_id,
+                                                      });
       if (!tokenizer) {
         return ErrorMeta(ERROR_INTERNAL, "tokenizer",
                          "Failed to read tokenizer definition", slice);
@@ -395,8 +402,8 @@ Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
     schema_id, ObjectType::PgSqlView,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto view_id = key.GetObjectId();
-      auto view =
-        PgSqlView::ReadInternal(slice, {.id = view_id, .database_id = db_id});
+      auto view = PgSqlView::ReadInternal(
+        slice, {.id = view_id, .database_id = db_id, .schema_id = schema_id});
       if (!view) {
         return ErrorMeta(ERROR_INTERNAL, "view",
                          "Failed to read view definition", slice);
@@ -417,9 +424,11 @@ Result OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id,
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::Sequence,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto seq = Sequence::ReadInternal(slice, {.id = key.GetObjectId(),
-                                                .database_id = db_id,
-                                                .schema_id = schema_id});
+      auto seq = Sequence::ReadInternal(slice, {
+                                                 .id = key.GetObjectId(),
+                                                 .database_id = db_id,
+                                                 .schema_id = schema_id,
+                                               });
       if (!seq) {
         return ErrorMeta(ERROR_INTERNAL, "sequence",
                          "Failed to read sequence definition", slice);
@@ -440,8 +449,11 @@ Result OpenDatabase::RegisterTypes(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::PgSqlType,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto type = PgSqlType::ReadInternal(
-        slice, {.id = key.GetObjectId(), .database_id = db_id});
+      auto type = PgSqlType::ReadInternal(slice, {
+                                                   .id = key.GetObjectId(),
+                                                   .database_id = db_id,
+                                                   .schema_id = schema_id,
+                                                 });
       if (!type) {
         return ErrorMeta(ERROR_INTERNAL, "type",
                          "Failed to read type definition", slice);

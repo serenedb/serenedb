@@ -28,9 +28,11 @@
 #include "catalog/catalog.h"
 #include "catalog/secondary_index.h"
 #include "catalog/table.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/rocksdb_filter.hpp"
+#include "pg/connection_context.h"
 
 namespace sdb::optimizer {
 namespace {
@@ -65,14 +67,16 @@ struct IndexCandidate {
 }
 
 [[nodiscard]] std::vector<IndexCandidate> BuildIndexesCandidates(
-  const connector::SereneDBScanBindData& bind_data) {
+  const connector::SereneDBScanBindData& bind_data,
+  duckdb::ClientContext& context) {
   std::vector<IndexCandidate> out;
   if (!bind_data.table_entry) {
     return out;
   }
   const auto& tbd = bind_data.As<connector::TableScanBindData>();
 
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  auto snapshot =
+    connector::GetSereneDBContext(context).EnsureCatalogSnapshot();
   const auto table_id = tbd.table->GetId();
 
   if (bind_data.entry_kind == connector::ScanEntryKind::SecondaryIndex) {
@@ -168,7 +172,7 @@ struct PhysicalScanCandidate {
 }  // namespace
 
 void RocksDBPushdownComplexFilter(
-  duckdb::ClientContext& /*context*/, duckdb::LogicalGet& get,
+  duckdb::ClientContext& context, duckdb::LogicalGet& get,
   duckdb::FunctionData* bind_data_ptr,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters) {
   if (filters.empty() || bind_data_ptr == nullptr) {
@@ -185,7 +189,7 @@ void RocksDBPushdownComplexFilter(
     return;
   }
 
-  auto indexes = BuildIndexesCandidates(bind_data);
+  auto indexes = BuildIndexesCandidates(bind_data, context);
   if (indexes.empty()) {
     return;
   }

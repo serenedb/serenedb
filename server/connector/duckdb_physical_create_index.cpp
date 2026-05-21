@@ -261,8 +261,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       opclass_options = _info->column_opclass_options[i];
     }
 
-    // Pre-bind check: macros inline at bind, so the bound tree wouldn't see
-    // them.
+    // Pre-bind: macros inline at bind, so the bound tree wouldn't see them.
     RejectUserDefinedFunctions(*expr, context);
 
     if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {

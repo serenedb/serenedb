@@ -57,8 +57,6 @@
 namespace sdb::connector {
 namespace {
 
-// JSON-extract scalar function names registered in
-// server/connector/functions/json.cpp.
 bool IsJsonExtractString(std::string_view name) noexcept {
   return name == "->>" || name == "#>>" ||     //
          name == "json_extract_field_text" ||  //

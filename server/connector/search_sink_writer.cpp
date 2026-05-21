@@ -252,8 +252,6 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
   const auto kind = expr_desc.type.id();
   SDB_ASSERT(field_id != 0);
 
-  // store_values: bulk-append once; with no posting list, skip the per-row
-  // pipeline.
   const bool wants_columnstore =
     _store_values_provider && _store_values_provider(field_id);
   const bool text_indexed =

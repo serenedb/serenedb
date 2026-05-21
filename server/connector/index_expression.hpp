@@ -58,8 +58,6 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   std::span<const catalog::Column::Id> col_index_to_id,
   duckdb::ClientContext& context);
 
-// Rewrites BoundColumnRef leaves to BoundReferenceExpression for
-// ExpressionExecutor against `chunk`.
 duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
   const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id);

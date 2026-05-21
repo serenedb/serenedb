@@ -364,8 +364,6 @@ Result ValidateInvertedIndexColumns(
   std::span<CreateIndexColumn> indexed_columns) {
   for (const auto& c : indexed_columns) {
     if (c.IsIndexedExpression()) {
-      // Expressions are validated by the IndexBinder / physical CREATE INDEX
-      // path; here we only sanity-check the return type fits the index.
       const auto& expr_type = c.GetIndexedExpression().return_type;
       const auto kind = expr_type.id();
       bool supported = kind == duckdb::LogicalTypeId::SQLNULL ||
@@ -379,7 +377,6 @@ Result ValidateInvertedIndexColumns(
                        kind == duckdb::LogicalTypeId::DOUBLE ||
                        kind == duckdb::LogicalTypeId::DATE ||
                        kind == duckdb::LogicalTypeId::TIMESTAMP_TZ;
-      // ARRAY(FLOAT, N) is accepted only when the user picked the hnsw opclass.
       if (!supported && kind == duckdb::LogicalTypeId::ARRAY &&
           c.opclass == kHNSWKind &&
           duckdb::ArrayType::GetChildType(expr_type).id() ==
@@ -593,9 +590,6 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     return dict;
   };
 
-  // Parses `(compression='...', row_group_size='...')` options for the
-  // `included` opclass and applies them to `entry`. Shared by column and
-  // indexed-expression branches.
   auto apply_included_options =
     [](std::string_view owner_label, const duckdb::LogicalType& value_type,
        const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
@@ -637,8 +631,6 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     return {};
   };
 
-  // Parses `hnsw(...)` options and validates ARRAY(FLOAT, N). Shared by column
-  // and expression branches.
   auto apply_hnsw_opclass =
     [](std::string_view owner_label, const duckdb::LogicalType& value_type,
        const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
@@ -842,7 +834,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     }
   }
   {
-    // Sort column field ids for deterministic synthetic id assignment.
+    // Deterministic synthetic id assignment.
     absl::c_sort(column_field_ids);
     uint64_t next = Column::kMaxRealIdValue;
     for (auto field_id : column_field_ids) {

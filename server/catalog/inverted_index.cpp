@@ -39,9 +39,6 @@
 namespace sdb::catalog {
 namespace {
 
-// Builds a ColumnTokenizer for either a whole-column or a JSON-path entry.
-// `text_dictionary` may be unset, in which case a fresh StringTokenizer is
-// returned (the iresearch-side keyword analyser).
 ResultOr<ColumnTokenizer> BuildColumnTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot, ObjectId text_dictionary,
   search::Features features) {
@@ -64,9 +61,7 @@ ResultOr<ColumnTokenizer> BuildColumnTokenizer(
                          .features = features.GetIndexFeatures()};
 }
 
-// On-disk shape for a per-column entry. Mirrors the layout we used before the
-// unified Entries refactor; kept as a private serialization helper so the
-// persisted format stays unchanged.
+// Persisted shape kept stable across the unified Entries refactor.
 struct ColumnSerialized {
   ObjectId text_dictionary = ObjectId::none();
   bool store_values = false;
@@ -79,7 +74,6 @@ struct ColumnSerialized {
   uint32_t norm_row_group_size = 0;
 };
 
-// On-disk shape for an indexed-expression entry.
 struct ExpressionSerialized {
   std::string serialized_expr;
   std::vector<Column::Id> dependent_columns;
@@ -142,7 +136,7 @@ std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
     return nullptr;
   }
 
-  ExpressionSerializedSet expressions;
+  std::vector<ExpressionSerialized> expressions;
   if (auto s = slice.get("expressions"); !s.isNone()) {
     if (auto r = vpack::ReadTupleNothrow(s, expressions); !r.ok()) {
       return nullptr;
@@ -176,15 +170,11 @@ std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
     entry.features = expr.features;
     entry.synthetic_column = expr.synthetic_column;
     entry.norm_row_group_size = expr.norm_row_group_size;
-    // Move out via const_cast since NodeHashSet only exposes const iterators
-    // but the set is going out of scope; safe because no further lookups
-    // depend on the moved-from element's hash.
-    auto& mutable_expr = const_cast<ExpressionSerialized&>(expr);
     entry.expression = ExpressionSpecific{
-      .serialized_expr = std::move(mutable_expr.serialized_expr),
-      .dependent_columns = std::move(mutable_expr.dependent_columns),
-      .return_type = std::move(mutable_expr.return_type),
-      .pretty_printed = std::move(mutable_expr.pretty_printed),
+      .serialized_expr = std::move(expr.serialized_expr),
+      .dependent_columns = std::move(expr.dependent_columns),
+      .return_type = std::move(expr.return_type),
+      .pretty_printed = std::move(expr.pretty_printed),
     };
     entries.emplace(expr.field_id, std::move(entry));
   }

@@ -272,7 +272,6 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
   void AppendPerRowPrimaryKey(std::string_view row_key);
 
-  // Per-leaf-type Field set for one JSON-typed indexed expression.
   struct JsonExpressionFields {
     std::string string_name;
     std::string numeric_name;
@@ -319,8 +318,6 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   duckdb::Vector _row_buffer{duckdb::LogicalType::BLOB, 1,
                              duckdb::VectorDataInitialization::UNINITIALIZED};
 
-  // State for the currently active JSON column (empty when the column is not
-  // path-indexed). Rebuilt on every SwitchColumn.
   std::vector<JsonExpressionFields> _json_fields;
   simdjson::ondemand::parser _json_parser;
   std::string _json_buffer;

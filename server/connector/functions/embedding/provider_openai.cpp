@@ -23,6 +23,7 @@
 #include <absl/strings/str_cat.h>
 #include <simdjson.h>
 
+#include <array>
 #include <duckdb/common/http_util.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/main/database.hpp>
@@ -115,17 +116,15 @@ void ParseEmbeddings(std::string_view body, size_t expected,
 
 void EmbedChunk(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
                 const std::string& url,
-                std::span<const duckdb::string_t> text_data,
-                const duckdb::ValidityMask& validity,
-                duckdb::idx_t chunk_offset, duckdb::Vector& result,
-                duckdb::idx_t& next_row) {
+                std::span<const duckdb::string_t* const> texts,
+                duckdb::Vector& result, duckdb::idx_t& next_row) {
   size_t total = 32 + cfg.model.size();
   size_t valid_count = 0;
-  for (size_t k = 0; k < text_data.size(); k++) {
-    if (!validity.RowIsValid(chunk_offset + k)) {
+  for (const auto* s : texts) {
+    if (s == nullptr) {
       continue;
     }
-    total += text_data[k].GetSize() + 4;
+    total += s->GetSize() + 4;
     valid_count++;
   }
   simdjson::builder::string_builder builder(total);
@@ -136,17 +135,16 @@ void EmbedChunk(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
   builder.append_raw("\"input\":");
   builder.start_array();
   bool first = true;
-  for (size_t k = 0; k < text_data.size(); k++) {
-    if (!validity.RowIsValid(chunk_offset + k)) {
+  for (const auto* s : texts) {
+    if (s == nullptr) {
       continue;
     }
     if (!first) {
       builder.append_comma();
     }
     first = false;
-    const auto& s = text_data[k];
     builder.escape_and_append_with_quotes(
-      std::string_view{s.GetData(), s.GetSize()});
+      std::string_view{s->GetData(), s->GetSize()});
   }
   builder.end_array();
   builder.end_object();
@@ -211,43 +209,46 @@ void NormalizeOpenAIConfig(duckdb::DatabaseInstance& db, ProviderConfig& cfg) {
 void EmbedBatchOpenAI(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
                       duckdb::Vector& texts, duckdb::idx_t count,
                       duckdb::Vector& result) {
-  std::span<const duckdb::string_t> text_data{
-    duckdb::FlatVector::GetData<duckdb::string_t>(texts), count};
-  const auto& validity = duckdb::FlatVector::Validity(texts);
+  duckdb::UnifiedVectorFormat text_format;
+  texts.ToUnifiedFormat(count, text_format);
+  const auto* text_data =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(text_format);
 
   auto* list_entries =
     duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
   auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    if (!validity.RowIsValid(i)) {
-      result_validity.SetInvalid(i);
-      list_entries[i] = {0, 0};
-    }
-  }
 
   const std::string url = cfg.base_url + cfg.embeddings_path;
   duckdb::idx_t next_row = 0;
-  duckdb::idx_t chunk_start = 0;
-  size_t valid_in_chunk = 0;
-  auto flush = [&](duckdb::idx_t end) {
-    if (valid_in_chunk == 0) {
+  std::array<const duckdb::string_t*, kMaxBatch> batch{};
+  size_t batch_n = 0;
+  size_t valid_in_batch = 0;
+  auto flush = [&]() {
+    if (valid_in_batch == 0) {
+      batch_n = 0;
       return;
     }
-    EmbedChunk(db, cfg, url, text_data.subspan(chunk_start, end - chunk_start),
-               validity, chunk_start, result, next_row);
-    chunk_start = end;
-    valid_in_chunk = 0;
+    EmbedChunk(db, cfg, url,
+               std::span<const duckdb::string_t* const>{batch.data(), batch_n},
+               result, next_row);
+    batch_n = 0;
+    valid_in_batch = 0;
   };
   for (duckdb::idx_t i = 0; i < count; i++) {
-    if (!validity.RowIsValid(i)) {
-      continue;
+    auto idx = text_format.sel->get_index(i);
+    if (!text_format.validity.RowIsValid(idx)) {
+      result_validity.SetInvalid(i);
+      list_entries[i] = {0, 0};
+      batch[batch_n++] = nullptr;
+    } else {
+      batch[batch_n++] = &text_data[idx];
+      valid_in_batch++;
     }
-    valid_in_chunk++;
-    if (valid_in_chunk == kMaxBatch) {
-      flush(i + 1);
+    if (valid_in_batch == kMaxBatch) {
+      flush();
     }
   }
-  flush(count);
+  flush();
 }
 
 }  // namespace sdb::connector::embedding

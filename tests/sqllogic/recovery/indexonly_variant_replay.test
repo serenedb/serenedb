@@ -1,11 +1,4 @@
 ## VARIANT survives WAL replay through the sdb_indexonly + INCLUDE path.
-##
-## With `payload` declared sdb_indexonly + INCLUDE in the inverted index,
-## INSERTs write their VARIANT bytes only as PutLogData [CP] markers in the
-## WAL (no main-storage cells). If the process crashes after the rocksdb
-## commit but before iresearch absorbs the segment, wal_recovery must
-## replay the markers so the VARIANT values reappear in the index
-## columnstore on restart.
 
 control substitution on
 
@@ -36,8 +29,6 @@ CREATE INDEX variant_replay_idx
   INCLUDE (payload);
 
 
-# Arm the failpoint: the next rocksdb commit succeeds (WAL fsynced) but the
-# server aborts before iresearch's per-shard Commit can run.
 statement ok
 SET sdb_faults = 'crash_after_rocksdb_commit';
 
@@ -50,8 +41,6 @@ INSERT INTO variant_replay VALUES
   (4, 'delta horse', '{"k": 7}'::json::variant);
 
 
-# Server restarted. wal_recovery replays the [CP] markers carrying VARIANT
-# bytes back into the inverted index columnstore.
 connection after_replay
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 RESET sdb_faults;
@@ -62,7 +51,6 @@ statement ok
 VACUUM (UPDATE_INDEXES) variant_replay;
 
 
-# Each VARIANT shape comes back intact: int, varchar, bool, and json.
 connection after_replay
 query
 SELECT id, payload FROM variant_replay_idx

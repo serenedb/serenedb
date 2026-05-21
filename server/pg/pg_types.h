@@ -241,7 +241,6 @@ enum PgTypeOID : int32_t {
   kAnycompatiblemultirange = 4538,
   kPgBrinBloomSummary = 4600,
   kPgBrinMinmaxMultiSummary = 4601,
-  // DuckDB VARIANT has no Postgres counterpart; reserve a private OID.
   kVariant = 5500,
   kVariantArray = 5501,
 };

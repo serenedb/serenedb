@@ -968,7 +968,6 @@ size_t DuckDBColumnSerializer::WriteSubVector(
       }
       return bytes;
     }
-    // VARIANT's physical layout is the same STRUCT as in LogicalType::VARIANT.
     case duckdb::LogicalTypeId::VARIANT:
     case duckdb::LogicalTypeId::STRUCT:
       return WriteStructSubVector(rdata, offset, count, type);

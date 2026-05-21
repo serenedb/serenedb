@@ -266,7 +266,6 @@ duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
       return ReadListColumn(it, output, type, max_rows);
     case duckdb::LogicalTypeId::MAP:
       return ReadMapColumn(it, output, type, max_rows);
-    // VARIANT has the same physical struct layout as LogicalType::VARIANT().
     case duckdb::LogicalTypeId::VARIANT:
     case duckdb::LogicalTypeId::STRUCT:
       return ReadStructColumn(it, output, type, max_rows);

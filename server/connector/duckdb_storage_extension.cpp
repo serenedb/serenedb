@@ -32,6 +32,7 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_transaction.h"
 #include "connector/optimizer/iresearch_plan.h"
+#include "connector/optimizer/wrap_unsupported_types.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -141,6 +142,7 @@ void RegisterSereneDBStorage(duckdb::DBConfig& config) {
 
 void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {
   optimizer::RegisterIresearchPlanOptimizer(db);
+  optimizer::RegisterWrapUnsupportedTypesExtension(db);
 }
 
 }  // namespace sdb::connector

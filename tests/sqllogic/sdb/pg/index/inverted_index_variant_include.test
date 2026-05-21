@@ -1,15 +1,5 @@
 hash-threshold 100
 
-# End-to-end: INCLUDE'd VARIANT column round-trips through new cs.
-# Exercises the iresearch columnstore writer/reader VARIANT path (which
-# mirrors the STRUCT path -- VARIANT's physical layout is a STRUCT).
-#
-# `payload` is declared sdb_indexonly so the column has no main-storage
-# data; its bytes flow through the WAL [CP] marker and into the inverted
-# index columnstore. The read-side check in duckdb_scan_base permits the
-# projection when the scan goes through an inverted-index entry and the
-# column has store_values=true.
-
 statement ok
 CREATE TABLE variant_inc (
   id INTEGER NOT NULL,
@@ -48,7 +38,6 @@ statement ok
 VACUUM (UPDATE_INDEXES) variant_inc;
 
 
-# Single match: int variant.
 query
 SELECT id, payload FROM variant_inc_idx WHERE body @@ ts_phrase('alpha')
 ORDER BY id;
@@ -57,7 +46,6 @@ id	payload
 1	42
 
 
-# Two matches: bool and int variants returned through the index cs.
 query
 SELECT id, payload FROM variant_inc_idx WHERE body @@ ts_phrase('cat')
 ORDER BY id;
@@ -67,7 +55,6 @@ id	payload
 3	true
 
 
-# JSON-shaped variant round-trips.
 query
 SELECT id, payload FROM variant_inc_idx WHERE body @@ ts_phrase('delta')
 ORDER BY id;
@@ -76,8 +63,6 @@ id	payload
 4	{"a":42}
 
 
-# Direct projection from the base table is still rejected -- payload has
-# no main-storage source.
 statement error
 SELECT payload FROM variant_inc;
 ----

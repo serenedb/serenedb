@@ -587,7 +587,10 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
 
   InvertedIndex::ColumnOptions inverted_columns;
   std::vector<ExpressionInfo> pending_expressions;
-  irs::field_id next_expr_field_id = 1;
+  const uint64_t expressions_cnt = std::ranges::count_if(
+    columns, [](const auto& c) { return c.IsIndexedExpression(); });
+  irs::field_id next_expr_field_id =
+    expressions_cnt > 0 ? NextNIds(expressions_cnt).id() : 0;
   for (const auto& c : columns) {
     if (c.IsIndexedExpression()) {
       if (c.opclass_options.has_value()) {

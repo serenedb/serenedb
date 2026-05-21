@@ -36,12 +36,9 @@ inline void MakeColumnFieldName(catalog::Column::Id column_id,
   absl::big_endian::Store(out.data(), column_id);
 }
 
-// [8 bytes 0xFF sentinel col_id][8 bytes BE field_id]; caller mangles after.
 inline void MakeExpressionFieldName(irs::field_id field_id, std::string& out) {
-  constexpr size_t kColIdSize = sizeof(catalog::Column::Id);
-  basics::StrResize(out, kColIdSize + sizeof(irs::field_id));
-  std::memset(out.data(), 0xFF, kColIdSize);
-  absl::big_endian::Store(out.data() + kColIdSize, field_id);
+  basics::StrResize(out, sizeof(field_id));
+  absl::big_endian::Store(out.data(), field_id);
 }
 
 }  // namespace sdb::connector

@@ -218,49 +218,41 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   };
   writer_options.norm_column_options =
     [&](std::string_view name) -> irs::NormColumnOptions {
-    static constexpr size_t kColumnIdSize = sizeof(catalog::Column::Id);
-    static constexpr uint64_t kExprSentinel =
-      std::numeric_limits<uint64_t>::max();
-    SDB_ASSERT(name.size() > kColumnIdSize);
+    static constexpr size_t kIdSize = sizeof(uint64_t);
+    SDB_ASSERT(name.size() == kIdSize + 1);
     const auto raw =
       static_cast<uint64_t>(absl::big_endian::Load64(name.data()));
-    if (raw == kExprSentinel) {
-      SDB_ASSERT(name.size() == kColumnIdSize + sizeof(irs::field_id) + 1);
-      const auto field_id = static_cast<irs::field_id>(
-        absl::big_endian::Load64(name.data() + kColumnIdSize));
-      for (const auto& expr : index.GetExpressions()) {
-        if (expr.field_id == field_id) {
-          SDB_ASSERT(expr.synthetic_column,
-                     "expression norm callback fired without a catalog "
-                     "reservation; field_id: ",
-                     field_id);
-          SDB_ASSERT(expr.features.HasFeatures(irs::IndexFeatures::Norm),
-                     "expression norm callback fired but catalog features "
-                     "lack Norm; field_id: ",
-                     field_id);
-          return {.id = static_cast<irs::field_id>(*expr.synthetic_column),
-                  .row_group_size = expr.norm_row_group_size};
-        }
-      }
-      SDB_ENSURE(false, ERROR_INTERNAL,
-                 "norm callback for unknown expression field_id: ", field_id);
+    if (const auto* column_info =
+          index.FindColumnInfo(catalog::Column::Id{raw})) {
+      SDB_ASSERT(column_info->synthetic_column,
+                 "whole-column norm callback fired without a catalog "
+                 "reservation for column: ",
+                 raw);
+      SDB_ASSERT(column_info->features.HasFeatures(irs::IndexFeatures::Norm),
+                 "whole-column norm callback fired but catalog features lack "
+                 "Norm for column: ",
+                 raw);
+      return {
+        .id = static_cast<irs::field_id>(*column_info->synthetic_column),
+        .row_group_size = column_info->norm_row_group_size,
+      };
     }
-    const auto column_id = static_cast<catalog::Column::Id>(raw);
-    const auto* column_info = index.FindColumnInfo(column_id);
-    SDB_ASSERT(column_info, "norm callback for unknown col_id: ", column_id);
-    SDB_ASSERT(name.size() == kColumnIdSize + 1);
-    SDB_ASSERT(column_info->synthetic_column,
-               "whole-column norm callback fired without a catalog "
-               "reservation for column: ",
-               column_id);
-    SDB_ASSERT(column_info->features.HasFeatures(irs::IndexFeatures::Norm),
-               "whole-column norm callback fired but catalog features lack "
-               "Norm for column: ",
-               column_id);
-    return {
-      .id = static_cast<irs::field_id>(*column_info->synthetic_column),
-      .row_group_size = column_info->norm_row_group_size,
-    };
+    const auto field_id = static_cast<irs::field_id>(raw);
+    for (const auto& expr : index.GetExpressions()) {
+      if (expr.field_id == field_id) {
+        SDB_ASSERT(expr.synthetic_column,
+                   "expression norm callback fired without a catalog "
+                   "reservation; field_id: ",
+                   field_id);
+        SDB_ASSERT(expr.features.HasFeatures(irs::IndexFeatures::Norm),
+                   "expression norm callback fired but catalog features "
+                   "lack Norm; field_id: ",
+                   field_id);
+        return {.id = static_cast<irs::field_id>(*expr.synthetic_column),
+                .row_group_size = expr.norm_row_group_size};
+      }
+    }
+    SDB_ENSURE(false, ERROR_INTERNAL, "norm callback for unknown id: ", raw);
   };
 
   if (const auto& options = index.GetTopKScorer()) {

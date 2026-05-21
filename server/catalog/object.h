@@ -182,6 +182,8 @@ class Object {
 
 ObjectId NextId();
 
+ObjectId NextNIds(uint64_t n);
+
 struct ReadContext {
   ObjectId id;
   ObjectId database_id;

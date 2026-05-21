@@ -441,13 +441,16 @@ void InitSearchColumnContextForGet(
                                  snapshot](std::string_view serialized_expr) {
     return index_ptr->GetExprTokenizer(snapshot, serialized_expr);
   };
-  for (const auto& expr_info : resolved.index->GetExpressions()) {
-    ctx.indexed_expressions.emplace(expr_info.serialized_expr,
-                                    SearchColumnContext::IndexedExpressionMeta{
-                                      .return_type = expr_info.return_type,
-                                      .field_id = expr_info.field_id,
-                                    });
-  }
+  auto exprs_view =
+    resolved.index->GetExpressions() | std::views::transform([](const auto& e) {
+      return std::pair<std::string_view,
+                       SearchColumnContext::IndexedExpressionMeta>{
+        e.serialized_expr, SearchColumnContext::IndexedExpressionMeta{
+                             .return_type = e.return_type,
+                             .field_id = e.field_id,
+                           }};
+    });
+  ctx.indexed_expressions.insert(exprs_view.begin(), exprs_view.end());
 }
 
 auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data) {
@@ -848,8 +851,8 @@ bool TryClaimAnnRange(
   std::vector<bool> claimed(filters.size(), false);
   bool any_claimed = false;
   for (size_t i = 0; i < filters.size(); ++i) {
-    if (TryClaimIresearchConjunct(and_root, filters[i], getter,
-                                  expr_getter, options)) {
+    if (TryClaimIresearchConjunct(and_root, filters[i], getter, expr_getter,
+                                  options)) {
       claimed[i] = true;
       any_claimed = true;
     }

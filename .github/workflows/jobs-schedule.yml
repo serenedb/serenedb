@@ -22,6 +22,8 @@ jobs:
       KIND: both
       DEV: true
       INSTRUMENTATION: coverage
+      FUZZ_QUERIES: "10000"
+      FUZZ_PARALLEL: "4"
 
 
   release-check:
@@ -51,6 +53,8 @@ jobs:
       KIND: functional
       DEV: true
       INSTRUMENTATION: msan
+      FUZZ_QUERIES: "10000"
+      FUZZ_PARALLEL: "4"
 
 
   asan-unit:
@@ -71,6 +75,8 @@ jobs:
       KIND: functional
       DEV: true
       INSTRUMENTATION: asan
+      FUZZ_QUERIES: "10000"
+      FUZZ_PARALLEL: "4"
 
 
   ubsan-unit:
@@ -91,6 +97,8 @@ jobs:
       KIND: functional
       DEV: true
       INSTRUMENTATION: ubsan
+      FUZZ_QUERIES: "10000"
+      FUZZ_PARALLEL: "4"
 
 
   tsan-unit:
@@ -111,10 +119,24 @@ jobs:
       KIND: functional
       DEV: true
       INSTRUMENTATION: tsan
+      FUZZ_QUERIES: "10000"
+      FUZZ_PARALLEL: "4"
+
+
+  searchbench:
+    if: github.event.schedule == '0 5 * * *'
+    uses: ./.github/workflows/searchbench-reusable.yml
+    with:
+      LOCATION: linux-amd64
+      DATASET: wiki_small
+      GTEST_FILTER: SearchBenchTest*
+      DEV: true
+      INSTRUMENTATION: none
+    secrets: inherit
 
 
   notify:
-    needs: [coverage, release-check, msan-unit, msan-functional, asan-unit, asan-functional, ubsan-unit, ubsan-functional, tsan-unit, tsan-functional]
+    needs: [coverage, release-check, msan-unit, msan-functional, asan-unit, asan-functional, ubsan-unit, ubsan-functional, tsan-unit, tsan-functional, searchbench]
     if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:

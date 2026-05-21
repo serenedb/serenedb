@@ -688,7 +688,7 @@ QUERY PLAN
 │ sdb_inverted_index_offsets│
 <slt:ignore>
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 # Virtual-column 2-arg form with MaxOffsets in the options string. The
@@ -735,7 +735,7 @@ QUERY PLAN
 │ sdb_inverted_index_offsets│
 <slt:ignore>
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 # --- ts_highlight MaxOffsets behaviour ---
@@ -843,7 +843,7 @@ QUERY PLAN
 │ sdb_inverted_index_offsets│
 <slt:ignore>
 │                           │
-│          ~2 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 # Multi-field render with MaxOffsets on one column only. Title renders

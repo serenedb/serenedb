@@ -44,7 +44,8 @@ RUN \
       dotnet-sdk-8.0 \
       libpq-dev pkg-config \
       ruby-full \
-      r-base-core && \
+      r-base-core \
+      sqlsmith && \
   ARCH=$(uname -m) && \
   case "$ARCH" in \
     x86_64)  GOARCH=amd64 ;; \

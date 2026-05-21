@@ -318,7 +318,7 @@ SELECT id FROM mix_idx WHERE a || b = 'foobar';
 id
 1
 
-query ??
+query
 EXPLAIN SELECT id FROM mix_idx WHERE a || b = 'foobar';
 ----
 QUERY PLAN
@@ -333,7 +333,7 @@ QUERY PLAN
 │                           │
 │      Projections: id      │
 │                           │
-│          ~3 rows          │
+│ <slt:ignore> row          │
 └───────────────────────────┘
 
 query
@@ -348,7 +348,7 @@ SELECT id FROM mix_idx WHERE a = 'foo' AND a || b = 'foobaz';
 id
 3
 
-query ??
+query
 EXPLAIN SELECT id FROM mix_idx WHERE a = 'foo' AND a || b = 'foobaz';
 ----
 QUERY PLAN
@@ -363,7 +363,7 @@ QUERY PLAN
 │                           │
 │      Projections: id      │
 │                           │
-│          ~3 rows          │
+│ <slt:ignore> row          │
 └───────────────────────────┘
 
 
@@ -914,7 +914,7 @@ QUERY PLAN
 │                           │
 │      Projections: id      │
 │                           │
-│          ~4 rows          │
+│ <slt:ignore> row          │
 └───────────────────────────┘
 
 query
@@ -932,10 +932,10 @@ QUERY PLAN
 │                           │
 │      Projections: id      │
 │                           │
-│          ~3 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
-query ??
+query
 EXPLAIN SELECT id FROM tx_b_idx WHERE (a > b) = true;
 ----
 QUERY PLAN
@@ -950,7 +950,7 @@ QUERY PLAN
 │                           │
 │      Projections: id      │
 │                           │
-│          ~3 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 

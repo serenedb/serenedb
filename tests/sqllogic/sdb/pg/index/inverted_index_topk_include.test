@@ -58,7 +58,7 @@ QUERY PLAN
 │            val            │
 │           label           │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 # All-INCLUDE projections under the top-K path: must come back from

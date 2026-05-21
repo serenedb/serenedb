@@ -117,7 +117,8 @@ void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
     "If distance is omitted (ts_levenshtein('test')), it is picked "
     "automatically from the term length (0 for <=2 chars, 1 for 3-5, "
     "2 for >=6).";
-  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+      column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_levenshtein field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));

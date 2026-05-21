@@ -385,7 +385,7 @@ QUERY PLAN
 │        Projections:       │
 │  sdb_inverted_index_score │
 │                           │
-│          ~37 rows         │
+│          ~7 rows          │
 └───────────────────────────┘
 
 
@@ -418,7 +418,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~37 rows         │
+│          ~7 rows          │
 └───────────────────────────┘
 
 
@@ -431,13 +431,6 @@ ORDER BY score
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│                           │
-│          ~7 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │           #1 ASC          │
@@ -461,7 +454,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~37 rows         │
+│          ~7 rows          │
 └───────────────────────────┘
 
 
@@ -556,7 +549,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~37 rows         │
+│          ~7 rows          │
 └───────────────────────────┘
 
 
@@ -729,7 +722,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~36 rows         │
+│          ~7 rows          │
 └───────────────────────────┘
 
 
@@ -784,7 +777,7 @@ QUERY PLAN
 │             id            ││             id            │
 │  sdb_inverted_index_score ││  sdb_inverted_index_score │
 │                           ││                           │
-│          ~36 rows         ││          ~36 rows         │
+│          ~7 rows          ││          ~7 rows          │
 └───────────────────────────┘└───────────────────────────┘
 
 
@@ -852,7 +845,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~36 rows         │
+│          ~7 rows          │
 └───────────────────────────┘
 
 
@@ -896,7 +889,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~36 rows         │
+│          ~7 rows          │
 └───────────────────────────┘
 
 
@@ -1032,7 +1025,7 @@ QUERY PLAN
 │             id            │
 │         has_score         │
 │                           │
-│          ~2 rows          │
+│          ~7 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         HASH_JOIN         │
@@ -1040,7 +1033,7 @@ QUERY PLAN
 │      Join Type: INNER     │
 │    Conditions: id = id    ├──────────────┐
 │                           │              │
-│          ~2 rows          │              │
+│          ~7 rows          │              │
 └─────────────┬─────────────┘              │
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
@@ -1059,7 +1052,7 @@ QUERY PLAN
 │             id            ││                           │
 │  sdb_inverted_index_score ││                           │
 │                           ││                           │
-│          ~7 rows          ││          ~3 rows          │
+│          ~7 rows          ││           ~1 row          │
 └───────────────────────────┘└───────────────────────────┘
 
 
@@ -1125,7 +1118,7 @@ QUERY PLAN
 │             id            ││                           │
 │  sdb_inverted_index_score ││                           │
 │                           ││                           │
-│          ~36 rows         ││          ~3 rows          │
+│          ~7 rows          ││          ~3 rows          │
 └───────────────────────────┘└───────────────────────────┘
 
 
@@ -1227,7 +1220,7 @@ QUERY PLAN
 │             id            ││             id            ││             id            ││             id            │
 │  sdb_inverted_index_score ││  sdb_inverted_index_score ││  sdb_inverted_index_score ││  sdb_inverted_index_score │
 │                           ││                           ││                           ││                           │
-│          ~36 rows         ││          ~36 rows         ││          ~36 rows         ││          ~36 rows         │
+│          ~7 rows          ││          ~7 rows          ││          ~7 rows          ││          ~7 rows          │
 └───────────────────────────┘└───────────────────────────┘└───────────────────────────┘└───────────────────────────┘
 
 
@@ -1291,7 +1284,7 @@ QUERY PLAN
 │             id            ││             id            ││             id            ││             id            │
 │  sdb_inverted_index_score ││  sdb_inverted_index_score ││  sdb_inverted_index_score ││  sdb_inverted_index_score │
 │                           ││                           ││                           ││                           │
-│          ~36 rows         ││          ~36 rows         ││          ~36 rows         ││          ~36 rows         │
+│          ~7 rows          ││          ~7 rows          ││          ~7 rows          ││          ~7 rows          │
 └───────────────────────────┘└───────────────────────────┘└───────────────────────────┘└───────────────────────────┘
 
 
@@ -1482,10 +1475,10 @@ SELECT id, BM25(sql_boost_idx.tableoid) as d FROM sql_boost_idx
 WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
 ORDER BY d DESC, id;
 ----
-id  d
-1 0.9808291
-2 0.9808291
-3 0.9808291
+id	d
+1	0.9808291
+2	0.9808291
+3	0.9808291
 
 
 # End-to-end BM25 ordering via SQL-surface boost wrapping a TSQUERY

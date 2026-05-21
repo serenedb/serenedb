@@ -180,7 +180,8 @@ Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
     return r;
   }
 
-  if (type_id == duckdb::LogicalTypeId::VARCHAR) {
+  if (type_id == duckdb::LogicalTypeId::VARCHAR ||
+      type_id == duckdb::LogicalTypeId::BLOB) {
     filter.mutable_options()->term.assign(AsRawBytes(value));
   } else if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
     filter.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(
@@ -1095,12 +1096,13 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
   if (val) {
     // Don't recurse on a folded constant: its type still carries the
     // modifier and would re-enter this branch.
-    if (val->IsNull() || val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
+    if (val->IsNull() || (val->type().id() != duckdb::LogicalTypeId::VARCHAR &&
+                          val->type().id() != duckdb::LogicalTypeId::BLOB)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("::tokenize(<name>): inner value must be "
-                              "VARCHAR"));
+                              "VARCHAR or BLOB"));
     }
-    BuildFtsTokens(parent, sub_ctx, column_info, val->GetValue<std::string>(),
+    BuildFtsTokens(parent, sub_ctx, column_info, duckdb::StringValue::Get(*val),
                    /*require_all=*/false);
     return true;
   }
@@ -1373,6 +1375,7 @@ void MakeFieldName(catalog::Column::Id column_id, std::string& field_name) {
 Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name) {
   switch (type_id) {
     case duckdb::LogicalTypeId::VARCHAR:
+    case duckdb::LogicalTypeId::BLOB:
       search::mangling::MangleString(field_name);
       return {};
     case duckdb::LogicalTypeId::BOOLEAN:
@@ -1482,6 +1485,10 @@ Result GetVarcharArg(const duckdb::Expression& expr, std::string_view label,
   const auto* val = TryGetConstant(unwrapped);
   if (!val || val->IsNull()) {
     return {ERROR_BAD_PARAMETER, label, " must be a non-null VARCHAR constant"};
+  }
+  if (val->type().id() == duckdb::LogicalTypeId::BLOB) {
+    out = duckdb::StringValue::Get(*val);
+    return {};
   }
   if (!TryCoerce(*val, duckdb::LogicalTypeId::VARCHAR, out)) {
     return {ERROR_BAD_PARAMETER, label, " must be a VARCHAR constant"};
@@ -1655,8 +1662,9 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
       AddFilter<irs::Empty>(parent);
       return;
     }
-    if (val.type().id() == duckdb::LogicalTypeId::VARCHAR) {
-      BuildFtsTokens(parent, ctx, column_info, val.GetValue<std::string>(),
+    if (val.type().id() == duckdb::LogicalTypeId::VARCHAR ||
+        val.type().id() == duckdb::LogicalTypeId::BLOB) {
+      BuildFtsTokens(parent, ctx, column_info, duckdb::StringValue::Get(val),
                      /*require_all=*/false);
       return;
     }

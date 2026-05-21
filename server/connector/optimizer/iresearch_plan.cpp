@@ -590,7 +590,8 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   }
 
   auto ann = std::make_unique<connector::ANNScan>();
-  ann->index_id = resolved->index->GetId();
+  ann->snapshot = connector::GetSereneDBContext(options.client_context)
+                    .EnsureSearchSnapshot(resolved->index->GetId());
   ann->field_id = col_id;
   ann->query_vector = std::move(query_vector);
   ann->top_k = static_cast<size_t>(top_n.limit);
@@ -814,7 +815,8 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   }
 
   auto rss = std::make_unique<connector::RangeSearchScan>();
-  rss->index_id = resolved->index->GetId();
+  rss->snapshot = connector::GetSereneDBContext(options.client_context)
+                    .EnsureSearchSnapshot(resolved->index->GetId());
   rss->field_id = col_id;
   rss->query_vector = std::move(query_vector);
   rss->radius = radius;
@@ -996,7 +998,8 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     irs::ToStringDemangled(*root, MakeColumnNameLookup(bind_data));
 
   auto search = std::make_unique<connector::SearchScan>();
-  search->snapshot = resolved->shard->GetInvertedIndexSnapshot();
+  search->snapshot = connector::GetSereneDBContext(options.client_context)
+                       .EnsureSearchSnapshot(resolved->index->GetId());
   search->stored_filter = root;
   // `Query` is built lazily in SearchFullScanInitGlobal so prepare runs
   // exactly once per execution, with the scorer if one ends up attached.
@@ -1999,7 +2002,9 @@ bool TryConvertAggregateToCount(
       if (!resolved) {
         return false;
       }
-      count_scan->snapshot = resolved->shard->GetInvertedIndexSnapshot();
+      count_scan->snapshot =
+        connector::GetSereneDBContext(options.client_context)
+          .EnsureSearchSnapshot(resolved->index->GetId());
       break;
     }
     default:

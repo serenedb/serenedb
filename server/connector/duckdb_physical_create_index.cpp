@@ -738,6 +738,16 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 
+duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
+  duckdb::ExecutionContext& /*context*/,
+  duckdb::OperatorSinkCombineInput& input) const {
+  if (auto* lstate = dynamic_cast<CreateIndexLocalState*>(&input.local_state)) {
+    lstate->writer.reset();
+    lstate->search_trx.reset();
+  }
+  return duckdb::SinkCombineResultType::FINISHED;
+}
+
 duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   duckdb::Pipeline& pipeline, duckdb::Event& event,
   duckdb::ClientContext& context,

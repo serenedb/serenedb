@@ -21,7 +21,6 @@
 #pragma once
 
 #include <duckdb/common/types/vector.hpp>
-#include <span>
 #include <string>
 #include <string_view>
 
@@ -50,6 +49,7 @@ ProviderType ResolveProviderType(std::string_view protocol);
 void NormalizeProviderConfig(duckdb::DatabaseInstance& db, ProviderConfig& cfg);
 
 void EmbedBatch(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
-                std::span<std::string_view> texts, duckdb::Vector& result);
+                duckdb::Vector& texts, duckdb::idx_t count,
+                duckdb::Vector& result);
 
 }  // namespace sdb::connector::embedding

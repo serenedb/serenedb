@@ -37,7 +37,6 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "basics/down_cast.h"
 #include "connector/functions/embedding/provider.h"
@@ -176,33 +175,10 @@ void AIEmbedFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                        .bind_info->Cast<EmbeddingBindData>();
   const auto count = args.size();
 
-  duckdb::UnifiedVectorFormat text_format;
-  args.data[0].ToUnifiedFormat(count, text_format);
-  const auto* text_data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(text_format);
-
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   duckdb::ListVector::SetListSize(result, 0);
-  auto* list_entries =
-    duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
-  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
 
-  std::vector<std::string_view> batch_texts;
-  batch_texts.reserve(count);
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    auto idx = text_format.sel->get_index(i);
-    if (!text_format.validity.RowIsValid(idx)) {
-      result_validity.SetInvalid(i);
-      list_entries[i] = {0, 0};
-      continue;
-    }
-    const auto& text = text_data[idx];
-    batch_texts.emplace_back(text.GetData(), text.GetSize());
-  }
-
-  if (!batch_texts.empty()) {
-    embedding::EmbedBatch(*bind.db, bind.cfg, batch_texts, result);
-  }
+  embedding::EmbedBatch(*bind.db, bind.cfg, args.data[0], count, result);
 }
 
 }  // namespace

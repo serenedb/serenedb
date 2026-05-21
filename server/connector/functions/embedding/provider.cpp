@@ -49,10 +49,11 @@ void NormalizeProviderConfig(duckdb::DatabaseInstance& db,
 }
 
 void EmbedBatch(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
-                std::span<std::string_view> texts, duckdb::Vector& result) {
+                duckdb::Vector& texts, duckdb::idx_t count,
+                duckdb::Vector& result) {
   switch (cfg.type) {
     case ProviderType::OpenAI:
-      EmbedBatchOpenAI(db, cfg, texts, result);
+      EmbedBatchOpenAI(db, cfg, texts, count, result);
       break;
     default:
       SDB_UNREACHABLE();

@@ -32,7 +32,7 @@ namespace sdb::connector::embedding {
 void NormalizeOpenAIConfig(duckdb::DatabaseInstance& db, ProviderConfig& cfg);
 
 void EmbedBatchOpenAI(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
-                      std::span<std::string_view> texts,
+                      duckdb::Vector& texts, duckdb::idx_t count,
                       duckdb::Vector& result);
 
 }  // namespace sdb::connector::embedding

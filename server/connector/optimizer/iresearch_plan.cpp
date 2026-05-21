@@ -22,6 +22,7 @@
 
 #include <absl/base/internal/endian.h>
 
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/aggregate/distributive_functions.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
@@ -212,14 +213,17 @@ std::optional<ExpectedHNSW> ExpectedHNSWForFunction(
   return result;
 }
 
-// Pull a flat float vector from a constant ARRAY Value. Rejects mixed /
-// non-float / null elements.
 bool TryExtractQueryVector(const duckdb::Value& val, std::vector<float>& out) {
   using duckdb::LogicalTypeId;
-  if (val.type().id() != LogicalTypeId::ARRAY) {
+  const std::vector<duckdb::Value>* children_ptr = nullptr;
+  if (val.type().id() == LogicalTypeId::ARRAY) {
+    children_ptr = &duckdb::ArrayValue::GetChildren(val);
+  } else if (val.type().id() == LogicalTypeId::LIST) {
+    children_ptr = &duckdb::ListValue::GetChildren(val);
+  } else {
     return false;
   }
-  const auto& children = duckdb::ArrayValue::GetChildren(val);
+  const auto& children = *children_ptr;
   if (children.empty()) {
     return false;
   }
@@ -242,24 +246,44 @@ bool TryExtractQueryVector(const duckdb::Value& val, std::vector<float>& out) {
   return true;
 }
 
-// Identify column + constant inside a distance call: distance(col, vec)
-// or distance(vec, col). Returns nullptr on shape mismatch.
 struct DistanceArgs {
   duckdb::Expression* col_arg = nullptr;
-  duckdb::BoundConstantExpression* const_arg = nullptr;
+  duckdb::Expression* value_arg = nullptr;
 };
 DistanceArgs ExtractDistanceArgs(duckdb::BoundFunctionExpression& func_expr) {
   DistanceArgs out;
-  for (auto& child : func_expr.children) {
-    if (child->expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
-      out.const_arg = &child->Cast<duckdb::BoundConstantExpression>();
-    } else if (child->expression_class ==
-                 duckdb::ExpressionClass::BOUND_COLUMN_REF ||
-               child->expression_class == duckdb::ExpressionClass::BOUND_REF) {
-      out.col_arg = child.get();
-    }
+  if (func_expr.children.size() != 2) {
+    return out;
+  }
+  auto is_col = [](const duckdb::Expression& e) {
+    return e.expression_class == duckdb::ExpressionClass::BOUND_COLUMN_REF ||
+           e.expression_class == duckdb::ExpressionClass::BOUND_REF;
+  };
+  auto& lhs = func_expr.children[0];
+  auto& rhs = func_expr.children[1];
+  if (is_col(*lhs) && !is_col(*rhs)) {
+    out.col_arg = lhs.get();
+    out.value_arg = rhs.get();
+  } else if (!is_col(*lhs) && is_col(*rhs)) {
+    out.col_arg = rhs.get();
+    out.value_arg = lhs.get();
   }
   return out;
+}
+
+bool TryFoldExpression(duckdb::ClientContext& context, duckdb::Expression& expr,
+                       duckdb::Value& out) {
+  if (expr.expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
+    out = expr.Cast<duckdb::BoundConstantExpression>().value;
+    return !out.IsNull();
+  }
+  if (!expr.IsFoldable()) {
+    return false;
+  }
+  if (!duckdb::ExpressionExecutor::TryEvaluateScalar(context, expr, out)) {
+    return false;
+  }
+  return !out.IsNull();
 }
 
 bool RewriteFilterColumnRefs(
@@ -583,10 +607,14 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     col_arg = child;
   } else {
     auto args = ExtractDistanceArgs(func_expr);
-    if (!args.col_arg || !args.const_arg) {
+    if (!args.col_arg || !args.value_arg) {
       return false;
     }
-    if (!TryExtractQueryVector(args.const_arg->value, query_vector)) {
+    duckdb::Value folded;
+    if (!TryFoldExpression(options.client_context, *args.value_arg, folded)) {
+      return false;
+    }
+    if (!TryExtractQueryVector(folded, query_vector)) {
       return false;
     }
     col_arg = args.col_arg;
@@ -737,22 +765,17 @@ bool TryClaimAnnRange(
     if (expected_current->order != duckdb::OrderType::ASCENDING) {
       continue;
     }
-    if (const_side->expression_class !=
-        duckdb::ExpressionClass::BOUND_CONSTANT) {
-      continue;
-    }
-    auto& const_expr = const_side->Cast<duckdb::BoundConstantExpression>();
-    if (const_expr.value.IsNull()) {
+    duckdb::Value radius_value;
+    if (!TryFoldExpression(options.client_context, *const_side, radius_value)) {
       continue;
     }
     float candidate_radius = 0.0f;
-    switch (const_expr.value.type().id()) {
+    switch (radius_value.type().id()) {
       case duckdb::LogicalTypeId::FLOAT:
-        candidate_radius = const_expr.value.GetValue<float>();
+        candidate_radius = radius_value.GetValue<float>();
         break;
       case duckdb::LogicalTypeId::DOUBLE:
-        candidate_radius =
-          static_cast<float>(const_expr.value.GetValue<double>());
+        candidate_radius = static_cast<float>(radius_value.GetValue<double>());
         break;
       default:
         continue;
@@ -769,10 +792,14 @@ bool TryClaimAnnRange(
       col_expr = child;
     } else {
       auto args = ExtractDistanceArgs(func);
-      if (!args.col_arg || !args.const_arg) {
+      if (!args.col_arg || !args.value_arg) {
         continue;
       }
-      if (!TryExtractQueryVector(args.const_arg->value, candidate_vector)) {
+      duckdb::Value folded;
+      if (!TryFoldExpression(options.client_context, *args.value_arg, folded)) {
+        continue;
+      }
+      if (!TryExtractQueryVector(folded, candidate_vector)) {
         continue;
       }
       col_expr = args.col_arg;

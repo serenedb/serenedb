@@ -109,6 +109,7 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
                                        std::move(node.child_columns.front()));
       break;
     }
+    case duckdb::LogicalTypeId::VARIANT:
     case duckdb::LogicalTypeId::STRUCT: {
       struct_children.reserve(node.child_columns.size());
       for (auto& cn : node.child_columns) {

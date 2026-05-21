@@ -455,6 +455,8 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
                 /*skip_validity=*/false, forced);
       return;
     }
+    // VARIANT's physical layout is the same STRUCT children as STRUCT.
+    case duckdb::LogicalTypeId::VARIANT:
     case duckdb::LogicalTypeId::STRUCT: {
       // STRUCT has no top-level data of its own -- just parent validity and
       // per-field children. Matches duckdb::StructColumnData::Append.

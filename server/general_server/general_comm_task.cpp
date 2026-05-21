@@ -23,7 +23,6 @@
 
 #include "app/app_server.h"
 #include "auth/role_utils.h"
-#include "basics/dtrace-wrapper.h"
 #include "basics/encoding_utils.h"
 #include "basics/hybrid_logical_clock.h"
 #include "basics/logger/logger.h"
@@ -383,8 +382,6 @@ void GeneralCommTask<T>::ExecuteRequest(
     SDB_THROW(ERROR_INTERNAL, "invalid object setup for ExecuteRequest");
   }
 
-  DTRACE_PROBE1(serened, CommTaskExecuteRequest, this);
-
   response->setContentTypeRequested(request->contentTypeResponse());
   response->setGenerateBody(request->requestType() != RequestType::Head);
 
@@ -501,8 +498,6 @@ template<SocketType T>
 Flow GeneralCommTask<T>::PrepareExecution(
   const auth::TokenCache::Entry& auth_token, GeneralRequest& req,
   ServerState::Mode mode) {
-  DTRACE_PROBE1(serened, CommTaskPrepareExecution, this);
-
   // Step 1: In the shutdown phase we simply return 503:
   if (this->_server.server().isStopping()) {
     this->SendErrorResponse(ResponseCode::ServiceUnavailable,
@@ -797,8 +792,6 @@ void GeneralCommTask<T>::HandleRequestStartup(
 template<SocketType T>
 void GeneralCommTask<T>::HandleRequestSync(
   std::shared_ptr<RestHandler> handler) {
-  DTRACE_PROBE2(serened, CommTaskHandleRequestSync, this, handler.get());
-
   RequestLane lane = handler->determineRequestLane();
   handler->trackQueueStart();
   // We just injected the request pointer before calling this method

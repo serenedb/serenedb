@@ -31,7 +31,6 @@
 
 #include "app/app_server.h"
 #include "basics/asio_ns.h"
-#include "basics/dtrace-wrapper.h"
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
 #include "basics/string_buffer.h"
@@ -61,14 +60,6 @@ bool ExpectResponseBody(int status_code) {
 
 }  // namespace
 
-#ifdef USE_DTRACE
-// Moved out to avoid duplication by templates.
-static void __attribute__((noinline)) DTraceH2CommTaskSendResponse(size_t th) {
-  DTRACE_PROBE1(serened, H2CommTaskSendResponse, th);
-}
-#else
-static void DTraceH2CommTaskSendResponse(size_t) {}
-#endif
 
 namespace sdb::rest {
 
@@ -543,15 +534,6 @@ void H2CommTask<T>::SetIOTimeout() {
     });
 }
 
-#ifdef USE_DTRACE
-// Moved out to avoid duplication by templates.
-static void __attribute__((noinline)) DTraceH2CommTaskProcessStream(size_t th) {
-  DTRACE_PROBE1(serened, H2CommTaskProcessStream, th);
-}
-#else
-static void DTraceH2CommTaskProcessStream(size_t) {}
-#endif
-
 template<SocketType T>
 std::string H2CommTask<T>::url(const HttpRequest* req) const {
   if (req != nullptr) {
@@ -567,8 +549,6 @@ std::string H2CommTask<T>::url(const HttpRequest* req) const {
 
 template<SocketType T>
 void H2CommTask<T>::ProcessStream(Stream& stream) {
-  DTraceH2CommTaskProcessStream((size_t)this);
-
   if (!stream.request->header("x-omit-www-authenticate").empty()) {
     stream.must_send_auth_header = false;
   } else {
@@ -675,8 +655,6 @@ void H2CommTask<T>::ProcessRequest(Stream& stream,
 template<SocketType T>
 void H2CommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> res,
                                  RequestStatistics::Item stat) {
-  DTraceH2CommTaskSendResponse((size_t)this);
-
   unsigned n = _num_processing.fetch_sub(1, std::memory_order_relaxed);
   SDB_ASSERT(n > 0);
 
@@ -914,21 +892,6 @@ void H2CommTask<T>::QueueHttp2Responses() {
   }
 }
 
-#ifdef USE_DTRACE
-// Moved out to avoid duplication by templates.
-static void __attribute__((noinline)) DTraceH2CommTaskBeforeAsyncWrite(
-  size_t th) {
-  DTRACE_PROBE1(serened, H2CommTaskBeforeAsyncWrite, th);
-}
-static void __attribute__((noinline)) DTraceH2CommTaskAfterAsyncWrite(
-  size_t th) {
-  DTRACE_PROBE1(serened, H2CommTaskAfterAsyncWrite, th);
-}
-#else
-static void DTraceH2CommTaskBeforeAsyncWrite(size_t) {}
-static void DTraceH2CommTaskAfterAsyncWrite(size_t) {}
-#endif
-
 // called on IO context thread
 template<SocketType T>
 void H2CommTask<T>::DoWrite() {
@@ -983,7 +946,6 @@ void H2CommTask<T>::DoWrite() {
   // something, it does not expect timeout while doing it.
   SetIOTimeout();
 
-  DTraceH2CommTaskBeforeAsyncWrite((size_t)this);
   asio_ns::async_write(this->_protocol->socket, out_buffers,
                        [self = this->shared_from_this()](
                          const asio_ns::error_code& ec, size_t nwrite) {
@@ -993,8 +955,6 @@ void H2CommTask<T>::DoWrite() {
                            me.Close(ec);
                            return;
                          }
-
-                         DTraceH2CommTaskAfterAsyncWrite((size_t)self.get());
 
                          me.DoWrite();
                        });

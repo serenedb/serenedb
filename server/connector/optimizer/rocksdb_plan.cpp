@@ -178,9 +178,7 @@ void RocksDBPushdownComplexFilter(
   duckdb::ClientContext& context, duckdb::LogicalGet& get,
   duckdb::FunctionData* bind_data_ptr,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters) {
-  SDB_IF_FAILURE("slow_rocksdb_optimize") {
-    absl::SleepFor(absl::Seconds(2));
-  }
+  SDB_IF_FAILURE("slow_rocksdb_optimize") { absl::SleepFor(absl::Seconds(2)); }
   if (filters.empty() || bind_data_ptr == nullptr) {
     return;
   }

@@ -70,6 +70,9 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
                               duckdb::DataChunk& chunk,
                               duckdb::OperatorSinkInput& input) const final;
+  duckdb::SinkCombineResultType Combine(
+    duckdb::ExecutionContext& context,
+    duckdb::OperatorSinkCombineInput& input) const final;
   duckdb::SinkFinalizeType Finalize(
     duckdb::Pipeline& pipeline, duckdb::Event& event,
     duckdb::ClientContext& context,

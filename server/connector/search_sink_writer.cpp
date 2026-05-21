@@ -739,7 +739,9 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size) {
 SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteStringValue(
   std::string_view, std::span<const rocksdb::Slice> cell_slices,
   SearchSinkInsertBaseImpl::Field& field) {
-  SDB_ASSERT(!cell_slices.empty());
+  if (cell_slices.size() == 0) {
+    SDB_ASSERT(!cell_slices.empty());
+  }
   // if string is prefixed during Insert - two slices will be present
   // one is prefix, second is actual string data
   // But if we are re-indexing from existing data (Update operation) - only one

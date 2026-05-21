@@ -291,7 +291,8 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
       [&, write_func = std::forward<WriteFunc>(write_func)](
         std::string_view full_key, std::span<const rocksdb::Slice> cell_slices,
         Field& field) -> Field& {
-        if (cell_slices.size() == 1 && cell_slices.front().empty()) {
+        if (cell_slices.empty() ||
+            (cell_slices.size() == 1 && cell_slices.front().empty())) {
           _null_field.SetNullValue();
           return _null_field;
         }
@@ -511,7 +512,8 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
         [&, write_func = std::forward<WriteFunc>(write_func)](
           std::string_view full_key,
           std::span<const rocksdb::Slice> cell_slices, Field& field) -> Field& {
-          if (cell_slices.size() == 1 && cell_slices.front().empty()) {
+          if (cell_slices.empty() ||
+              (cell_slices.size() == 1 && cell_slices.front().empty())) {
             _null_field.SetNullValue();
             return _null_field;
           }
@@ -521,10 +523,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
 
   if constexpr (Kind == duckdb::LogicalTypeId::SQLNULL) {
     _current_writer = MakeIndexWriter(
-      [&](std::string_view full_key,
-          std::span<const rocksdb::Slice> cell_slices, Field&) -> Field& {
-        SDB_ASSERT(cell_slices.size() == 1);
-        SDB_ASSERT(cell_slices.front().empty());
+      [&](std::string_view, std::span<const rocksdb::Slice>, Field&) -> Field& {
         _null_field.SetNullValue();
         return _null_field;
       });

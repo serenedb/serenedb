@@ -978,15 +978,146 @@ statement ok
 VACUUM (UPDATE_INDEXES) strange_json;
 
 query
-SELECT id FROM strange_json_idx WHERE ((a + b)::json)::int = 30;
+SELECT id FROM strange_json_idx WHERE ((a + b)::json) = '30'::json;
 ----
 id
 1
 
 query
-SELECT id FROM strange_json_idx WHERE ((a + b)::json)::int = 10;
+SELECT id FROM strange_json_idx WHERE ((a + b)::json) = '10'::json;
 ----
 id
+2
+
+
+# --- Smoke: one indexed expression per supported return type. INTEGER,
+# VARCHAR and BOOLEAN are exercised above; this section covers the
+# remaining types in the ValidateInvertedIndexColumns allow-list:
+# TINYINT, SMALLINT, BIGINT, FLOAT, DOUBLE, DATE, TIMESTAMP_TZ.
+
+statement ok
+CREATE TABLE types_smoke(id INTEGER PRIMARY KEY, a INTEGER);
+
+statement ok
+CREATE INDEX types_smoke_idx ON types_smoke USING inverted(
+    id,
+    ((a + 1)::TINYINT) verbatim_dict,
+    ((a + 1)::SMALLINT) verbatim_dict,
+    ((a + 1)::BIGINT) verbatim_dict,
+    ((a + 1)::FLOAT) verbatim_dict,
+    ((a + 1)::DOUBLE) verbatim_dict,
+    (DATE '2020-01-01' + (a + 1)) verbatim_dict,
+    (to_timestamp(a + 1)) verbatim_dict);
+
+statement ok
+INSERT INTO types_smoke VALUES (1, 1), (2, 2);
+
+statement ok
+VACUUM (UPDATE_INDEXES) types_smoke;
+
+query
+SELECT id FROM types_smoke_idx WHERE (a + 1)::TINYINT = 2::TINYINT;
+----
+id
+1
+
+query
+SELECT id FROM types_smoke_idx WHERE (a + 1)::SMALLINT = 3::SMALLINT;
+----
+id
+2
+
+query
+SELECT id FROM types_smoke_idx WHERE (a + 1)::BIGINT = 2::BIGINT;
+----
+id
+1
+
+query
+SELECT id FROM types_smoke_idx WHERE (a + 1)::FLOAT = 3::FLOAT;
+----
+id
+2
+
+query
+SELECT id FROM types_smoke_idx WHERE (a + 1)::DOUBLE = 2::DOUBLE;
+----
+id
+1
+
+query
+SELECT id FROM types_smoke_idx WHERE DATE '2020-01-01' + (a + 1) = DATE '2020-01-04';
+----
+id
+2
+
+query
+SELECT id FROM types_smoke_idx WHERE to_timestamp(a + 1) = to_timestamp(2);
+----
+id
+1
+
+
+# --- SQLNULL-typed indexed expression: every row's value is NULL by
+# construction. The writer must short-circuit to the null field instead
+# of asserting on a missing payload.
+
+statement ok
+CREATE TABLE null_expr(id INT PRIMARY KEY, a INT);
+
+statement ok
+CREATE INDEX null_expr_idx ON null_expr USING inverted(
+    id, (CASE WHEN a > 0 THEN NULL ELSE NULL END) verbatim_dict);
+
+statement ok
+INSERT INTO null_expr VALUES (1, 1), (2, -1);
+
+statement ok
+VACUUM (UPDATE_INDEXES) null_expr;
+
+query
+SELECT id FROM null_expr_idx ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM null_expr_idx
+WHERE (CASE WHEN a > 0 THEN NULL ELSE NULL END) IS NULL ORDER BY id;
+----
+id
+1
+2
+
+
+# --- SQLNULL-typed indexed column: column's declared type is NULL, so
+# every value is structurally NULL. Same writer short-circuit.
+
+statement ok
+CREATE TABLE null_col(id INT PRIMARY KEY, a "NULL");
+
+statement ok
+CREATE INDEX null_col_idx ON null_col USING inverted(id, a verbatim_dict);
+
+statement ok
+INSERT INTO null_col VALUES (1, NULL), (2, NULL);
+
+statement ok
+VACUUM (UPDATE_INDEXES) null_col;
+
+query
+SELECT id FROM null_col_idx ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM null_col_idx WHERE a IS NULL ORDER BY id;
+----
+id
+1
 2
 
 

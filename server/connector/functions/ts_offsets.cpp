@@ -37,12 +37,14 @@
 #include "catalog/catalog.h"
 #include "catalog/mangling.h"
 #include "catalog/table_options.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/functions/search.h"
 #include "connector/highlight/highlight_types.h"
 #include "connector/highlight/memory_index.h"
 #include "connector/offsets_collector.hpp"
 #include "connector/offsets_writer.hpp"
 #include "connector/search_filter_builder.hpp"
+#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 
@@ -90,7 +92,8 @@ struct OffsetsLocalState final : duckdb::FunctionLocalState {
   IndexField field;
 };
 
-auto& EnsureField(OffsetsLocalState& local_state, const OffsetsBindData& bind) {
+auto& EnsureField(duckdb::ClientContext& context,
+                  OffsetsLocalState& local_state, const OffsetsBindData& bind) {
   if (!local_state.field.tokenizer) {
     if (bind.IsStandalone()) {
       auto wrapper_or = bind.dict_tokenizer->GetTokenizer();
@@ -98,7 +101,7 @@ auto& EnsureField(OffsetsLocalState& local_state, const OffsetsBindData& bind) {
       local_state.field.Reset(kStandaloneSyntheticColumnId,
                               std::move(*wrapper_or));
     } else {
-      auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+      auto snapshot = GetSereneDBContext(context).EnsureCatalogSnapshot();
       auto column_tokenizer =
         bind.inverted_index->GetColumnTokenizer(snapshot, bind.column_id);
       local_state.field.Reset(bind.column_id,
@@ -147,7 +150,7 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     return;
   }
 
-  auto& field = EnsureField(local_state, bind);
+  auto& field = EnsureField(state.GetContext(), local_state, bind);
 
   SDB_ASSERT(args.ColumnCount() >= 2);
   auto& body = args.data[1];

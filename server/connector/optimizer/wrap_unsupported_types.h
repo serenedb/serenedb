@@ -21,9 +21,10 @@
 #pragma once
 
 namespace duckdb {
-class DatabaseInstance;
-}  // namespace duckdb
 
+class DatabaseInstance;
+
+}  // namespace duckdb
 namespace sdb::optimizer {
 
 void RegisterWrapUnsupportedTypesExtension(duckdb::DatabaseInstance& db);

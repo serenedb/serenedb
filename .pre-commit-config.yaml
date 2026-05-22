@@ -77,6 +77,11 @@ repos:
         language: python
         entry: python3 scripts/check_no_fault_injection_outside_recovery.py
         files: \.test
+      - id: check-substitution-directive
+        name: Check sqllogic substitution directive
+        language: python
+        entry: python3 scripts/check_substitution_directive.py
+        files: ^tests/sqllogic/.*\.test
       - id: check-snake-case-filenames
         name: Check C++ filenames are snake_case
         language: python

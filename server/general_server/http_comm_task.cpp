@@ -27,7 +27,6 @@
 
 #include "app/app_server.h"
 #include "basics/asio_ns.h"
-#include "basics/dtrace-wrapper.h"
 #include "basics/logger/logger.h"
 #include "basics/string_buffer.h"
 #include "general_server/general_server.h"
@@ -442,16 +441,6 @@ void HttpCommTask<T>::CheckProtocolUpgrade() {
                       std::move(cb));
 }
 
-#ifdef USE_DTRACE
-// Moved here to prevent multiplicity by template
-static void __attribute__((noinline)) DTraceHttpCommTaskProcessRequest(
-  size_t th) {
-  DTRACE_PROBE1(serened, HttpCommTaskProcessRequest, th);
-}
-#else
-static void DTraceHttpCommTaskProcessRequest(size_t) {}
-#endif
-
 template<SocketType T>
 std::string HttpCommTask<T>::url() const {
   if (_request != nullptr) {
@@ -467,8 +456,6 @@ std::string HttpCommTask<T>::url() const {
 
 template<SocketType T>
 void HttpCommTask<T>::ProcessRequest() {
-  DTraceHttpCommTaskProcessRequest((size_t)this);
-
   SDB_ASSERT(_request);
   auto msg_id = _request->messageId();
   auto resp_content_type = _request->contentTypeResponse();
@@ -577,24 +564,12 @@ void HttpCommTask<T>::DoProcessRequest() {
   this->ExecuteRequest(std::move(_request), std::move(resp), mode);
 }
 
-#ifdef USE_DTRACE
-// Moved here to prevent multiplicity by template
-static void __attribute__((noinline)) DTraceHttpCommTaskSendResponse(
-  size_t th) {
-  DTRACE_PROBE1(serened, HttpCommTaskSendResponse, th);
-}
-#else
-static void DTraceHttpCommTaskSendResponse(size_t) {}
-#endif
-
 template<SocketType T>
 void HttpCommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> base_res,
                                    RequestStatistics::Item stat) {
   if (this->Stopped()) {
     return;
   }
-
-  DTraceHttpCommTaskSendResponse((size_t)this);
 
 #ifdef SDB_DEV
   HttpResponse& response = dynamic_cast<HttpResponse&>(*base_res);
@@ -754,26 +729,9 @@ void HttpCommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> base_res,
     });
 }
 
-#ifdef USE_DTRACE
-// Moved here to prevent multiplicity by template
-static void __attribute__((noinline)) DTraceHttpCommTaskWriteResponse(
-  size_t th) {
-  DTRACE_PROBE1(serened, HttpCommTaskWriteResponse, th);
-}
-static void __attribute__((noinline)) DTraceHttpCommTaskResponseWritten(
-  size_t th) {
-  DTRACE_PROBE1(serened, HttpCommTaskResponseWritten, th);
-}
-#else
-static void DTraceHttpCommTaskWriteResponse(size_t) {}
-static void DTraceHttpCommTaskResponseWritten(size_t) {}
-#endif
-
 // called on IO context thread
 template<SocketType T>
 void HttpCommTask<T>::WriteResponse(RequestStatistics::Item stat) {
-  DTraceHttpCommTaskWriteResponse((size_t)this);
-
   SDB_ASSERT(!_header.empty());
 
   stat.SET_WRITE_START();
@@ -789,8 +747,6 @@ void HttpCommTask<T>::WriteResponse(RequestStatistics::Item stat) {
     this->_protocol->socket, buffers,
     [self = this->shared_from_this(), stat = std::move(stat)](
       asio_ns::error_code ec, size_t nwrite) {
-      DTraceHttpCommTaskResponseWritten((size_t)self.get());
-
       auto& me = static_cast<HttpCommTask<T>&>(*self);
       me._writing = false;
 

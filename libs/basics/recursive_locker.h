@@ -25,38 +25,9 @@
 #include <thread>
 
 #include "basics/debugging.h"
-#include "read_locker.h"
 #include "write_locker.h"
 
 namespace sdb {
-
-template<typename T>
-class RecursiveReadLocker {
- public:
-  RecursiveReadLocker(T& mutex, std::atomic<std::thread::id>& owner,
-                      const char* file, int line)
-    : _locker(&mutex, basics::LockerType::TRY, false, file,
-              line) {  // does not lock yet
-    if (owner.load() != std::this_thread::get_id()) {
-      // only try to lock if we don't already have the read-lock
-      _locker.lock();
-    }
-  }
-
-  RecursiveReadLocker(RecursiveReadLocker&& other) = default;
-  RecursiveReadLocker(const RecursiveReadLocker&) = delete;
-  RecursiveReadLocker& operator=(const RecursiveReadLocker&) = delete;
-  RecursiveReadLocker& operator=(RecursiveReadLocker&&) = delete;
-
-  void unlock() {
-    if (_locker.isLocked()) {
-      _locker.unlock();
-    }
-  }
-
- private:
-  basics::ReadLocker<T> _locker;
-};
 
 template<typename T>
 class RecursiveWriteLocker {
@@ -113,9 +84,6 @@ class RecursiveWriteLocker {
 #define NAME_IMPL(name, line) name##line
 #define NAME_EXPANDER(name, line) NAME_IMPL(name, line)
 #define NAME(name) NAME_EXPANDER(name, __LINE__)
-#define RECURSIVE_READ_LOCKER(lock, owner)                                  \
-  sdb::RecursiveReadLocker<typename std::decay<decltype(lock)>::type> NAME( \
-    RecursiveLocker)(lock, owner, __FILE__, __LINE__)
 #define RECURSIVE_WRITE_LOCKER_NAMED(name, lock, owner, acquire)             \
   sdb::RecursiveWriteLocker<typename std::decay<decltype(lock)>::type> name( \
     lock, owner, sdb::basics::LockerType::BLOCKING, acquire, __FILE__,       \

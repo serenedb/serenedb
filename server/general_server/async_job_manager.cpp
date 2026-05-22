@@ -25,7 +25,6 @@
 
 #include "basics/errors.h"
 #include "basics/logger/logger.h"
-#include "basics/read_locker.h"
 #include "basics/system-functions.h"
 #include "basics/write_locker.h"
 #include "general_server/rest_handler.h"

@@ -31,7 +31,6 @@
 #include "auth/token_cache.h"
 #include "basics/containers/small_vector.h"
 #include "basics/logger/logger.h"
-#include "basics/read_locker.h"
 #include "basics/write_locker.h"
 #include "general_server/authentication_feature.h"
 #include "metrics/counter_builder.h"

@@ -123,12 +123,6 @@ set(CMAKE_COLOR_DIAGNOSTICS ON)
 add_definitions(-DABSL_MAX_VLOG_VERBOSITY=-1)
 add_definitions(-DABSL_MIN_LOG_LEVEL=3)
 
-# enable dtrace
-option(USE_DTRACE "enable dtrace probes" OFF)
-if(USE_DTRACE)
-    add_definitions("-DUSE_DTRACE=1")
-endif()
-
 if(SDB_GEN_PGO)
     # TODO(mbkkt) Does it make sense to use -ftemporal-profile ?
     add_compile_options(-fprofile-generate)

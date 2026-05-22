@@ -33,6 +33,7 @@
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/array.h"
 #include "connector/functions/cast.h"
+#include "connector/functions/embedding/embedding.h"
 #include "connector/functions/inout.h"
 #include "connector/functions/json.h"
 #include "connector/functions/math.h"
@@ -243,6 +244,8 @@ void DuckDBEngine::Initialize() {
   connector::RegisterSearchFunctions(*_db->instance);
 
   connector::RegisterVectorFunctions(*_db->instance);
+
+  connector::RegisterEmbeddingFunctions(*_db->instance);
 
   connector::RegisterSereneDBOptimizers(*_db->instance);
 

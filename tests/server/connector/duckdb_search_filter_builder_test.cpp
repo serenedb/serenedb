@@ -639,7 +639,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
       const auto local = ref.binding.column_index.GetIndexUnsafe();
       const auto phys = projected[local].GetPrimaryIndex();
       return SearchColumnInfo{
-        .column_id = catalog::Column::Id{columns[phys].id},
+        .field_id = static_cast<irs::field_id>(columns[phys].id),
         .logical_type = columns[phys].type,
         .tokenizer = analyzer_provider(columns[phys].id)};
     };

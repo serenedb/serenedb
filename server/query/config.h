@@ -81,6 +81,10 @@ class Config {
   explicit Config(duckdb::ClientContext& client_ctx)
     : _client_ctx{client_ctx} {}
 
+  duckdb::ClientContext& GetClientContext() const noexcept {
+    return _client_ctx;
+  }
+
   std::vector<std::string> GetSearchPath() const;
   int8_t GetExtraFloatDigits() const;
   ByteaOutput GetByteaOutput() const;

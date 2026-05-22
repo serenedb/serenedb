@@ -35,6 +35,7 @@
 
 #include "catalog/catalog.h"
 #include "catalog/tokenizer.h"
+#include "connector/common.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/ts_common.hpp"
 #include "pg/connection_context.h"

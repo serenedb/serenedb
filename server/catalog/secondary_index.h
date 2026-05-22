@@ -46,6 +46,11 @@ class SecondaryIndex : public Index {
     return std::make_shared<SecondaryIndexShard>(id, GetId());
   }
 
+  std::vector<Column::Id> GetReferencedColumnIds() const final {
+    const auto ids = GetColumnIds();
+    return {ids.begin(), ids.end()};
+  }
+
  private:
   bool _unique;
 };

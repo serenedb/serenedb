@@ -191,7 +191,7 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
   }
 
   std::string field_name;
-  MakeFieldName(column_info->column_id, field_name);
+  MakeFieldName(column_info->field_id, field_name);
   search::mangling::MangleString(field_name);
 
   auto& geo_filter = ctx.negated ? Negate<irs::GeoDistanceFilter>(parent)
@@ -295,7 +295,7 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(column_info->column_id, field_name);
+  MakeFieldName(column_info->field_id, field_name);
   search::mangling::MangleString(field_name);
 
   auto& geo_filter = ctx.negated ? Negate<irs::GeoDistanceFilter>(filter)
@@ -381,7 +381,7 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(column_info->column_id, field_name);
+  MakeFieldName(column_info->field_id, field_name);
   search::mangling::MangleString(field_name);
 
   auto& geo_filter = ctx.negated ? Negate<irs::GeoFilter>(filter)

@@ -27,7 +27,6 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
-#include "basics/memory_types.h"
 #include "basics/message_buffer.h"
 #include "catalog/database.h"
 #include "general_server/asio_socket.h"

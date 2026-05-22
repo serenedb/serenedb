@@ -48,24 +48,12 @@ struct Snapshot;
 }  // namespace sdb::catalog
 namespace sdb::connector {
 
-inline std::string_view AsView(const duckdb::string_t& s) noexcept {
-  return {s.GetData(), s.GetSize()};
-}
-
 struct FilterContext {
   bool negated = false;
   irs::score_t boost = irs::kNoBoost;
   const ColumnGetter& column_getter;
-  // Optional resolver for JSON-path expressions (`content->>'host'`).
-  // nullptr = JSON-path lookups are disabled for this filter pass.
-  const JsonPathGetter* json_path_getter = nullptr;
-  // Memo of resolved (column, path, mangle) -> SearchColumnInfo. Key is
-  // the iresearch field name. NodeHashMap so refs survive insertions.
+  const ExpressionGetter* expr_getter = nullptr;
   containers::NodeHashMap<std::string, SearchColumnInfo>& column_cache;
-  // JSON pointer (pre-encoded, see `EncodeJsonPointer`) for the current
-  // expression being resolved; empty when no JSON-path scoping applies.
-  std::string_view json_pointer;
-  // Scratch buffer reused across FindColumnInfoForExpr calls.
   std::string& cache_key;
   irs::analysis::Analyzer& identity;
   irs::analysis::Analyzer& tokenizer;
@@ -77,9 +65,8 @@ struct FilterContext {
       .negated = negated,
       .boost = boost,
       .column_getter = column_getter,
-      .json_path_getter = json_path_getter,
+      .expr_getter = expr_getter,
       .column_cache = column_cache,
-      .json_pointer = json_pointer,
       .cache_key = cache_key,
       .identity = identity,
       .tokenizer = tokenizer,
@@ -93,9 +80,8 @@ struct FilterContext {
       .negated = negated,
       .boost = boost * factor,
       .column_getter = column_getter,
-      .json_path_getter = json_path_getter,
+      .expr_getter = expr_getter,
       .column_cache = column_cache,
-      .json_pointer = json_pointer,
       .cache_key = cache_key,
       .identity = identity,
       .tokenizer = tokenizer,

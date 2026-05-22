@@ -1,0 +1,62 @@
+hash-threshold 100
+
+control substitution on
+
+statement ok
+CREATE TABLE variant_src(id INTEGER, x VARIANT);
+
+
+statement count 4
+INSERT INTO variant_src VALUES
+  (1, 42::variant),
+  (2, 'hello'::variant),
+  (3, true::variant),
+  (4, '{"a": 42}'::json::variant);
+
+
+statement count 4
+COPY variant_src TO '/tmp/${__DATABASE__}_variant.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE TABLE variant_pq(id INTEGER, x VARIANT);
+
+
+statement count 4
+COPY variant_pq FROM '/tmp/${__DATABASE__}_variant.parquet' (FORMAT PARQUET);
+
+
+query
+SELECT id, x FROM variant_pq ORDER BY id;
+----
+id	x
+1	42
+2	"hello"
+3	true
+4	{"a":42}
+
+
+statement count 4
+COPY variant_src TO '/tmp/${__DATABASE__}_variant.csv' (FORMAT CSV, HEADER TRUE);
+
+
+statement count 4
+COPY (SELECT * FROM variant_src ORDER BY id) TO '/tmp/${__DATABASE__}_variant_subq.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE TABLE variant_pq2(id INTEGER, x VARIANT);
+
+
+statement count 4
+COPY variant_pq2 FROM '/tmp/${__DATABASE__}_variant_subq.parquet' (FORMAT PARQUET);
+
+
+query
+SELECT id, x FROM variant_pq2 ORDER BY id;
+----
+id	x
+1	42
+2	"hello"
+3	true
+4	{"a":42}

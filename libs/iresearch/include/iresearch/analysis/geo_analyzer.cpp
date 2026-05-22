@@ -40,7 +40,7 @@
 #include "geo/geo_params.h"
 #include "geo/wkb.h"
 #include "iresearch/analysis/analyzers.hpp"
-#include "iresearch/search/geo_filter.h"
+#include "iresearch/search/geo_filter.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 
 namespace magic_enum {

@@ -878,9 +878,9 @@ WHERE body @@ 'cafe'
   AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
 ORDER  BY  id
 ----
-id has_score
-1 t
-2 t
+id	has_score
+1	t
+2	t
 
 
 # --- TSQUERY `^` boost composed with geo AND ---
@@ -1135,7 +1135,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~7 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -1156,13 +1156,6 @@ ORDER BY BM25(places_idx.tableoid) DESC, id;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │          #1 DESC          │
@@ -1177,11 +1170,10 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│    AND[GEO_DISTANCE[geo   │
-│  (string), *, <500] && OR │
-│  [Term(body(string)=blue) │
-│  || Term(body(string)=red)│
-│             ]]            │
+│  AND[OR[Term(body(string) │
+│ =blue) || Term(body(string│
+│  )=red)] && GEO_DISTANCE  │
+│  [geo(string), *, <500]]  │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -1190,7 +1182,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~7 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 

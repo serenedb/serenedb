@@ -22,27 +22,15 @@
 
 #include <span>
 #include <string>
+#include <string_view>
 
 #include "basics/string_utils.h"
 #include "catalog/table_options.h"
 
 namespace sdb::connector {
 
-// Builds the iresearch field name for a column, optionally qualified by a
-// JSON path.
-//
-// Layout:
-//   [8 bytes BE column_id]      -- fixed-width column identifier
-//   [JSON Pointer (RFC 6901)]   -- empty when no path; "/k1/k2/..." otherwise
-//   [type mangle byte]          -- caller-applied
-//
-// Caller is expected to apply the appropriate `search::mangling::Mangle*` on
-// the result before using it as an iresearch field name.
-inline void MakeColumnFieldName(catalog::Column::Id column_id,
-                                std::span<const std::string> path,
-                                std::string& out) {
-  basics::StrResize(out, sizeof(column_id));
-  absl::big_endian::Store(out.data(), column_id);
+inline std::string EncodeJsonPointer(std::span<const std::string> path) {
+  std::string out;
   for (const auto& key : path) {
     out.push_back('/');
     for (char c : key) {
@@ -55,6 +43,15 @@ inline void MakeColumnFieldName(catalog::Column::Id column_id,
       }
     }
   }
+  return out;
+}
+
+inline void MakeColumnFieldName(catalog::Column::Id column_id,
+                                std::string_view json_pointer,
+                                std::string& out) {
+  basics::StrResize(out, sizeof(column_id));
+  absl::big_endian::Store(out.data(), column_id);
+  out.append(json_pointer);
 }
 
 }  // namespace sdb::connector

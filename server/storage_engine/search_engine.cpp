@@ -49,7 +49,7 @@
 #include "rest_server/database_path_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
-#include "search/resource_manager.hpp"
+#include "search/resource_manager.h"
 #include "search/wal_recovery.h"
 #include "storage_engine/search_engine.h"
 

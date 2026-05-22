@@ -1,0 +1,205 @@
+# Codec coverage: drives the iresearch typed columnstore through multiple
+# codec paths. Each scenario writes a row group whose data shape steers the
+# DuckDB analyze/final_analyze pipeline toward a specific codec, then reads
+# the values back and checks correctness end-to-end.
+
+hash-threshold 1000
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY codec_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+# --- 1. Constant-valued INCLUDE columns -----------------------------------
+# All rows share the same value for `flag` and `marker` so the analyze
+# pipeline picks COMPRESSION_CONSTANT (or RLE collapsing to one run); the
+# reader path takes the INVALID_BLOCK branch.
+statement ok
+CREATE TABLE codec_const (
+  pk INTEGER PRIMARY KEY,
+  flag BOOLEAN,
+  marker INTEGER,
+  txt VARCHAR
+);
+
+statement ok
+INSERT INTO codec_const VALUES
+  (1, TRUE, 42, 'alpha'),
+  (2, TRUE, 42, 'bravo'),
+  (3, TRUE, 42, 'charlie'),
+  (4, TRUE, 42, 'delta');
+
+statement ok
+CREATE INDEX codec_const_idx ON codec_const USING inverted(txt codec_english)
+  INCLUDE (pk, flag, marker);
+
+query
+SELECT pk, flag, marker FROM codec_const_idx ORDER BY pk;
+----
+pk	flag	marker
+1	t	42
+2	t	42
+3	t	42
+4	t	42
+
+query
+SELECT pk, flag, marker FROM codec_const_idx WHERE txt @@ ts_phrase('charlie');
+----
+pk	flag	marker
+3	t	42
+
+# --- 2. Low-cardinality VARCHAR (DICTIONARY / DICT_FSST candidate) --------
+statement ok
+CREATE TABLE codec_dict (
+  pk INTEGER PRIMARY KEY,
+  category VARCHAR,
+  txt VARCHAR
+);
+
+# Only three distinct categories spread across many rows -- dict-style codecs
+# should win the analyze contest.
+statement ok
+INSERT INTO codec_dict VALUES
+  (1, 'alpha', 'lookup one'),   (2, 'beta',  'lookup two'),
+  (3, 'alpha', 'lookup three'), (4, 'gamma', 'lookup four'),
+  (5, 'beta',  'lookup five'),  (6, 'alpha', 'lookup six'),
+  (7, 'gamma', 'lookup seven'), (8, 'beta',  'lookup eight');
+
+statement ok
+CREATE INDEX codec_dict_idx ON codec_dict USING inverted(txt codec_english)
+  INCLUDE (pk, category);
+
+query
+SELECT pk, category FROM codec_dict_idx ORDER BY pk;
+----
+pk	category
+1	alpha
+2	beta
+3	alpha
+4	gamma
+5	beta
+6	alpha
+7	gamma
+8	beta
+
+query
+SELECT pk, category FROM codec_dict_idx WHERE txt @@ ts_phrase('seven');
+----
+pk	category
+7	gamma
+
+# --- 3. Sparse / null-heavy column ----------------------------------------
+statement ok
+CREATE TABLE codec_sparse (
+  pk INTEGER PRIMARY KEY,
+  maybe_int BIGINT,
+  txt VARCHAR
+);
+
+# Most rows have NULL maybe_int -- exercises the validity codec path
+# (ROARING/VALIDITY/EMPTY) on a nearly-empty bitmap.
+statement ok
+INSERT INTO codec_sparse VALUES
+  (1, NULL,  'one'),   (2, NULL,  'two'),
+  (3, 99,    'three'), (4, NULL,  'four'),
+  (5, NULL,  'five'),  (6, NULL,  'six'),
+  (7, 12345, 'seven'), (8, NULL,  'eight');
+
+statement ok
+CREATE INDEX codec_sparse_idx ON codec_sparse USING inverted(txt codec_english)
+  INCLUDE (pk, maybe_int);
+
+query
+SELECT pk, maybe_int FROM codec_sparse_idx ORDER BY pk;
+----
+pk	maybe_int
+1	NULL
+2	NULL
+3	99
+4	NULL
+5	NULL
+6	NULL
+7	12345
+8	NULL
+
+query
+SELECT pk, maybe_int FROM codec_sparse_idx
+WHERE txt @@ ts_phrase('three') OR txt @@ ts_phrase('seven') ORDER BY pk;
+----
+pk	maybe_int
+3	99
+7	12345
+
+# --- 4. Sequential integers (BITPACKING / FOR candidate) ------------------
+statement ok
+CREATE TABLE codec_seq (
+  pk INTEGER PRIMARY KEY,
+  seq_int BIGINT,
+  step_int INTEGER,
+  txt VARCHAR
+);
+
+statement ok
+INSERT INTO codec_seq VALUES
+  (1, 1000, 10, 'word one'),   (2, 1001, 20, 'word two'),
+  (3, 1002, 30, 'word three'), (4, 1003, 40, 'word four'),
+  (5, 1004, 50, 'word five'),  (6, 1005, 60, 'word six'),
+  (7, 1006, 70, 'word seven'), (8, 1007, 80, 'word eight');
+
+statement ok
+CREATE INDEX codec_seq_idx ON codec_seq USING inverted(txt codec_english)
+  INCLUDE (pk, seq_int, step_int);
+
+query
+SELECT pk, seq_int, step_int FROM codec_seq_idx ORDER BY pk;
+----
+pk	seq_int	step_int
+1	1000	10
+2	1001	20
+3	1002	30
+4	1003	40
+5	1004	50
+6	1005	60
+7	1006	70
+8	1007	80
+
+query
+SELECT seq_int, step_int FROM codec_seq_idx WHERE txt @@ ts_phrase('five');
+----
+seq_int	step_int
+1004	50
+
+# --- 5. Insert + VACUUM-driven consolidation across codec mixes -----------
+# Forces a merge that has to bring together row groups whose chosen codec
+# differs (constant marker vs. mixed marker). The merged segment must read
+# back identical values.
+statement ok
+INSERT INTO codec_const VALUES
+  (5, FALSE, 7, 'epsilon'),
+  (6, TRUE,  9, 'zeta');
+
+statement ok
+VACUUM (UPDATE_INDEXES) codec_const;
+
+query
+SELECT pk, flag, marker FROM codec_const_idx ORDER BY pk;
+----
+pk	flag	marker
+1	t	42
+2	t	42
+3	t	42
+4	t	42
+5	f	7
+6	t	9
+
+query
+SELECT pk, flag, marker FROM codec_const_idx WHERE txt @@ ts_phrase('zeta');
+----
+pk	flag	marker
+6	t	9

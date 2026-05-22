@@ -22,7 +22,7 @@
 
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
-#include "iresearch/parser/parser.h"
+#include "iresearch/parser/parser.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/doc_collector.hpp"
@@ -96,7 +96,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
       f.value(content);
       auto batch = writer->GetBatch();
       auto d = batch.Insert();
-      EXPECT_TRUE(d.Insert<irs::Action::INDEX>(f));
+      EXPECT_TRUE(d.Insert(f));
     };
 
     insert("open");

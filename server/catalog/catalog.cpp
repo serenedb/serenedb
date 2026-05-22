@@ -259,7 +259,11 @@ class OpenDatabase {
   Result RegisterFunctions(ObjectId database_id, ObjectId schema_id);
   Result RegisterTokenizers(ObjectId database_id, ObjectId schema_id);
   Result RegisterViews(ObjectId database_id, ObjectId schema_id);
-  Result RegisterSequences(ObjectId database_id, ObjectId schema_id);
+  // Sequences load in two passes: standalone before tables/views (so refs
+  // to them resolve at the referrer's own registration), owned after
+  // tables.
+  Result RegisterSequences(ObjectId database_id, ObjectId schema_id,
+                           bool owned);
   Result RegisterTypes(ObjectId database_id, ObjectId schema_id);
   Result RegisterTableShard(ObjectId table_id);
   Result RegisterTables(ObjectId database_id, ObjectId schema_id);
@@ -362,8 +366,12 @@ Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::PgSqlFunction,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto function = catalog::PgSqlFunction::ReadInternal(
-        slice, {.id = key.GetObjectId(), .database_id = db_id});
+      auto function =
+        catalog::PgSqlFunction::ReadInternal(slice, {
+                                                      .id = key.GetObjectId(),
+                                                      .database_id = db_id,
+                                                      .schema_id = schema_id,
+                                                    });
       if (!function) {
         return ErrorMeta(ERROR_INTERNAL, "function",
                          "Failed to read function definition", slice);
@@ -376,8 +384,11 @@ Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::Tokenizer,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto tokenizer =
-        Tokenizer::ReadInternal(slice, {.id = key.GetObjectId()});
+      auto tokenizer = Tokenizer::ReadInternal(slice, {
+                                                        .id = key.GetObjectId(),
+                                                        .database_id = db_id,
+                                                        .schema_id = schema_id,
+                                                      });
       if (!tokenizer) {
         return ErrorMeta(ERROR_INTERNAL, "tokenizer",
                          "Failed to read tokenizer definition", slice);
@@ -391,8 +402,8 @@ Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
     schema_id, ObjectType::PgSqlView,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto view_id = key.GetObjectId();
-      auto view =
-        PgSqlView::ReadInternal(slice, {.id = view_id, .database_id = db_id});
+      auto view = PgSqlView::ReadInternal(
+        slice, {.id = view_id, .database_id = db_id, .schema_id = schema_id});
       if (!view) {
         return ErrorMeta(ERROR_INTERNAL, "view",
                          "Failed to read view definition", slice);
@@ -408,17 +419,24 @@ Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
     });
 }
 
-Result OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id) {
+Result OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id,
+                                       bool owned) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::Sequence,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto seq = Sequence::ReadInternal(slice, {.id = key.GetObjectId(),
-                                                .database_id = db_id,
-                                                .schema_id = schema_id});
+      auto seq = Sequence::ReadInternal(slice, {
+                                                 .id = key.GetObjectId(),
+                                                 .database_id = db_id,
+                                                 .schema_id = schema_id,
+                                               });
       if (!seq) {
         return ErrorMeta(ERROR_INTERNAL, "sequence",
                          "Failed to read sequence definition", slice);
       }
+      if (seq->GetOwnerTableId().isSet() != owned) {
+        return Result{};
+      }
+      // Owner table is tombstoned -> skip; its DropTask will clean the seq.
       if (auto owner = seq->GetOwnerTableId();
           owner.isSet() && IsDeleted(owner, DeletedScope::Schema)) {
         return {};
@@ -431,8 +449,11 @@ Result OpenDatabase::RegisterTypes(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::PgSqlType,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto type = PgSqlType::ReadInternal(
-        slice, {.id = key.GetObjectId(), .database_id = db_id});
+      auto type = PgSqlType::ReadInternal(slice, {
+                                                   .id = key.GetObjectId(),
+                                                   .database_id = db_id,
+                                                   .schema_id = schema_id,
+                                                 });
       if (!type) {
         return ErrorMeta(ERROR_INTERNAL, "type",
                          "Failed to read type definition", slice);
@@ -485,31 +506,15 @@ Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
 }
 
 Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
-  auto load_shard = [&]<typename Options>(DefinitionKey key,
-                                          vpack::Slice slice) -> Result {
-    Options options;
-    if (auto r = vpack::ReadTupleNothrow(slice, options.base); !r.ok()) {
-      return r;
-    }
-    auto shard = index->CreateIndexShard(false, key.GetObjectId(), options);
-    if (!shard) {
-      return std::move(shard.error());
-    }
-    SDB_ASSERT(*shard);
-    return _catalog.RegisterIndexShard(std::move(*shard));
-  };
-
-  auto is_inverted = index->GetType() == ObjectType::InvertedIndex;
-  auto shard_type = IndexShardType(index->GetType());
-
   return GetServerEngine().VisitDefinitions(
-    index->GetId(), shard_type,
-    [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      if (is_inverted) {
-        return load_shard.operator()<search::InvertedIndexShardOptions>(key,
-                                                                        slice);
+    index->GetId(), IndexShardType(index->GetType()),
+    [&](DefinitionKey key, vpack::Slice /*slice*/) -> Result {
+      auto shard = index->CreateIndexShard(false, key.GetObjectId());
+      if (!shard) {
+        return std::move(shard.error());
       }
-      return load_shard.operator()<SecondaryIndexShardOptions>(key, slice);
+      SDB_ASSERT(*shard);
+      return _catalog.RegisterIndexShard(std::move(*shard));
     });
 }
 
@@ -644,19 +649,19 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
   if (auto r = RegisterTypes(db_id, schema_id); !r.ok()) {
     return r;
   }
+  if (auto r = RegisterSequences(db_id, schema_id, false); !r.ok()) {
+    return r;
+  }
   if (auto r = RegisterFunctions(db_id, schema_id); !r.ok()) {
+    return r;
+  }
+  if (auto r = RegisterTables(db_id, schema_id); !r.ok()) {
     return r;
   }
   if (auto r = RegisterViews(db_id, schema_id); !r.ok()) {
     return r;
   }
-  // Tables must register before Sequences: owned (SERIAL / auto-PK)
-  // sequences look up their owner Table's TableDependency in the dep map
-  // when registered, so the Table needs to be there first.
-  if (auto r = RegisterTables(db_id, schema_id); !r.ok()) {
-    return r;
-  }
-  if (auto r = RegisterSequences(db_id, schema_id); !r.ok()) {
+  if (auto r = RegisterSequences(db_id, schema_id, true); !r.ok()) {
     return r;
   }
   return {};

@@ -228,10 +228,10 @@ class RocksDBEngineCatalog {
     void PutDefinition(ObjectId parent_id, catalog::ObjectType type,
                        ObjectId id, vpack::Slice def);
     void PutSequence(ObjectId sequence_id, uint64_t value);
-
     void DropDefinition(ObjectId parent_id, catalog::ObjectType type,
                         ObjectId id);
     void DropSequence(ObjectId sequence_id);
+    void WriteTombstone(ObjectId parent_id, ObjectId id);
 
    private:
     friend class RocksDBEngineCatalog;

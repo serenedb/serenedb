@@ -60,7 +60,7 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
         conkey.reserve(pk_columns.size());
         for (auto pk_id : pk_columns) {
           for (size_t i = 0; i < columns.size(); ++i) {
-            if (columns[i].id == pk_id) {
+            if (columns[i].GetId() == pk_id) {
               conkey.push_back(static_cast<int16_t>(i + 1));
               break;
             }

@@ -39,12 +39,11 @@ class SecondaryIndex : public Index {
   bool IsUnique() const noexcept { return _unique; }
 
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool is_new, ObjectId id, IndexShardOptions& options) const final {
-    auto& opts = basics::downCast<SecondaryIndexShardOptions>(options);
+    bool is_new, ObjectId id) const final {
     if (is_new) {
-      return std::make_shared<SecondaryIndexShard>(GetId(), std::move(opts));
+      return std::make_shared<SecondaryIndexShard>(GetId());
     }
-    return std::make_shared<SecondaryIndexShard>(id, GetId(), std::move(opts));
+    return std::make_shared<SecondaryIndexShard>(id, GetId());
   }
 
  private:

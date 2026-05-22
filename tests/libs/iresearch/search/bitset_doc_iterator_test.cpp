@@ -760,3 +760,277 @@ TEST(bitset_iterator_test, seek_next) {
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 }
+
+// LazySeek probes target's specific bit:
+//   * hit  -> state advances to target, returns target.
+//   * miss -> value() unchanged, returns target + 1.
+// Contrast with seek(), which always positions at the next doc >= target.
+TEST(bitset_iterator_test, lazy_seek) {
+  using word_t = irs::bitset::word_t;
+  constexpr auto kBits = irs::BitsRequired<word_t>();
+  static_assert(kBits == 64, "test expectations assume 64-bit words");
+
+  // (1) Empty bitset: any positive target collapses to eof.
+  {
+    irs::BitsetDocIterator it(nullptr, nullptr);
+    ASSERT_EQ(irs::doc_limits::eof(), it.LazySeek(1));
+    ASSERT_TRUE(irs::doc_limits::eof(it.value()));
+    ASSERT_EQ(irs::doc_limits::eof(), it.LazySeek(100));
+    ASSERT_FALSE(it.next());
+  }
+
+  // (2) Single-bit hit, then drain via advance().
+  {
+    irs::bitset bs(128);
+    bs.set(7);
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    ASSERT_EQ(7u, it.LazySeek(7));
+    ASSERT_EQ(7u, it.value());
+    ASSERT_FALSE(it.next());
+    ASSERT_TRUE(irs::doc_limits::eof(it.value()));
+  }
+
+  // (3) In-word miss leaves value() and _word untouched. A follow-up
+  //     advance() resumes from the *prior* hit, not from the miss target.
+  {
+    irs::bitset bs(128);
+    for (size_t d : {3u, 7u, 13u, 30u}) {
+      bs.set(d);
+    }
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    ASSERT_EQ(7u, it.LazySeek(7));
+    ASSERT_EQ(7u, it.value());
+    ASSERT_EQ(9u, it.LazySeek(8));  // miss: bit 8 unset
+    ASSERT_EQ(7u, it.value());      // value() unchanged
+    ASSERT_TRUE(it.next());
+    ASSERT_EQ(13u, it.value());  // advance from prior hit
+  }
+
+  // (4) Stay clause: target <= value() short-circuits to value().
+  {
+    irs::bitset bs(128);
+    for (size_t d : {1u, 5u, 17u}) {
+      bs.set(d);
+    }
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    ASSERT_EQ(5u, it.LazySeek(5));
+    for (int i = 0; i < 8; ++i) {
+      ASSERT_EQ(5u, it.LazySeek(5));
+      ASSERT_EQ(5u, it.value());
+    }
+    ASSERT_EQ(5u, it.LazySeek(3));  // lower target -> stay
+    ASSERT_EQ(5u, it.value());
+    ASSERT_EQ(17u, it.LazySeek(17));  // forward progress resumes
+  }
+
+  // (5) Bit-0 of word 1 (doc 64): widest possible shift mask in the hit
+  //     path; `_word` should hold every higher bit of the word.
+  {
+    irs::bitset bs(192);
+    for (size_t d : {1u, 64u, 65u, 90u}) {
+      bs.set(d);
+    }
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    ASSERT_EQ(1u, it.LazySeek(1));
+    ASSERT_EQ(64u, it.LazySeek(64));
+    ASSERT_EQ(64u, it.value());
+    ASSERT_TRUE(it.next());
+    ASSERT_EQ(65u, it.value());
+    ASSERT_TRUE(it.next());
+    ASSERT_EQ(90u, it.value());
+    ASSERT_FALSE(it.next());
+  }
+
+  // (6) Bit-63 of word 0: shift `>> 63 >> 1` must zero _word (UB-free
+  //     replacement for `>> 64`). Next advance() must cross into word 1.
+  {
+    irs::bitset bs(192);
+    for (size_t d : {1u, 63u, 64u, 65u}) {
+      bs.set(d);
+    }
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    ASSERT_EQ(1u, it.LazySeek(1));
+    ASSERT_EQ(63u, it.LazySeek(63));
+    ASSERT_EQ(63u, it.value());
+    ASSERT_TRUE(it.next());
+    ASSERT_EQ(64u, it.value());  // crossed into word 1
+    ASSERT_TRUE(it.next());
+    ASSERT_EQ(65u, it.value());
+    ASSERT_FALSE(it.next());
+  }
+
+  // (7) Bit-63 miss: bit 63 unset, target+1 returned.
+  {
+    irs::bitset bs(192);
+    for (size_t d : {1u, 60u, 64u}) {
+      bs.set(d);
+    }
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    ASSERT_EQ(60u, it.LazySeek(60));
+    ASSERT_EQ(64u, it.LazySeek(63));  // miss at bit 63 -> target+1
+    ASSERT_EQ(60u, it.value());
+  }
+
+  // (8) Consecutive LazySeek hits in the same word -- no advance()
+  //     between them.
+  {
+    irs::bitset bs(128);
+    for (size_t d : {5u, 12u, 13u, 25u}) {
+      bs.set(d);
+    }
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    ASSERT_EQ(5u, it.LazySeek(5));
+    ASSERT_EQ(12u, it.LazySeek(12));
+    ASSERT_EQ(13u, it.LazySeek(13));
+    ASSERT_EQ(25u, it.LazySeek(25));
+    ASSERT_EQ(25u, it.value());
+    ASSERT_FALSE(it.next());
+  }
+
+  // (9) Consecutive misses leave value() pinned to the prior hit.
+  {
+    irs::bitset bs(128);
+    for (size_t d : {1u, 10u, 50u}) {
+      bs.set(d);
+    }
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    ASSERT_EQ(1u, it.LazySeek(1));
+    ASSERT_EQ(21u, it.LazySeek(20));
+    ASSERT_EQ(31u, it.LazySeek(30));
+    ASSERT_EQ(1u, it.value());
+    ASSERT_EQ(50u, it.LazySeek(50));
+  }
+
+  // (10) Miss at bit i, hit at adjacent bit i+1.
+  {
+    irs::bitset bs(128);
+    for (size_t d : {1u, 5u, 6u, 50u}) {
+      bs.set(d);
+    }
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    ASSERT_EQ(1u, it.LazySeek(1));
+    ASSERT_EQ(5u, it.LazySeek(4));  // miss at 4 -> target+1
+    ASSERT_EQ(1u, it.value());
+    ASSERT_EQ(5u, it.LazySeek(5));
+    ASSERT_EQ(6u, it.LazySeek(6));  // adjacent bit
+    ASSERT_EQ(6u, it.value());
+    ASSERT_EQ(50u, it.LazySeek(50));
+  }
+
+  // (11) Cross-word forward walk: LazySeek + advance never re-emits a doc.
+  {
+    irs::bitset bs(192);
+    const std::vector<size_t> docs{1, 5, 9, 13, 64, 68, 100, 127, 130, 180};
+    for (size_t d : docs) {
+      bs.set(d);
+    }
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    std::vector<irs::doc_id_t> seen;
+    auto r = it.LazySeek(docs.front());
+    while (!irs::doc_limits::eof(r)) {
+      seen.push_back(it.value());
+      r = it.next() ? it.value() : irs::doc_limits::eof();
+    }
+    std::vector<irs::doc_id_t> expected(docs.begin(), docs.end());
+    ASSERT_EQ(expected, seen);
+  }
+
+  // (12) Cross-word hit: target in word 2.
+  {
+    irs::bitset bs(256);
+    for (size_t d : {3u, 130u, 200u}) {
+      bs.set(d);
+    }
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    ASSERT_EQ(3u, it.LazySeek(3));
+    ASSERT_EQ(130u, it.LazySeek(130));
+    ASSERT_EQ(130u, it.value());
+    ASSERT_TRUE(it.next());
+    ASSERT_EQ(200u, it.value());
+    ASSERT_FALSE(it.next());
+  }
+
+  // (13) Cross-word miss: target in word 1 where no bits are set.
+  {
+    irs::bitset bs(256);
+    for (size_t d : {3u, 200u}) {
+      bs.set(d);  // word 1 is empty
+    }
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    ASSERT_EQ(3u, it.LazySeek(3));
+    ASSERT_EQ(100u + 1, it.LazySeek(100));  // bit 100 unset -> target+1
+    ASSERT_EQ(3u, it.value());
+    ASSERT_EQ(200u, it.LazySeek(200));
+  }
+
+  // (14) Target past every set bit -> eof.
+  {
+    irs::bitset bs(128);
+    for (size_t d : {1u, 50u, 90u}) {
+      bs.set(d);
+    }
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    ASSERT_EQ(90u, it.LazySeek(90));
+    // 91..127 in this bitset are all unset; the in-word probe just
+    // misses, then `target+1` for each subsequent call until target
+    // exceeds the bitset and a refill (returning false) drives eof.
+    ASSERT_EQ(92u, it.LazySeek(91));
+    ASSERT_EQ(101u, it.LazySeek(100));
+    ASSERT_EQ(irs::doc_limits::eof(),
+              it.LazySeek(static_cast<irs::doc_id_t>(1000)));
+    ASSERT_TRUE(irs::doc_limits::eof(it.value()));
+  }
+
+  // (15) LazySeek interleaved with seek() and advance().
+  {
+    irs::bitset bs(128);
+    for (size_t d : {1u, 3u, 7u, 11u, 15u, 30u}) {
+      bs.set(d);
+    }
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    ASSERT_EQ(7u, it.seek(7));        // seek positions at 7
+    ASSERT_EQ(11u, it.LazySeek(11));  // forward LazySeek
+    ASSERT_EQ(13u, it.LazySeek(12));  // miss -> target+1
+    ASSERT_EQ(11u, it.value());
+    ASSERT_TRUE(it.next());
+    ASSERT_EQ(15u, it.value());  // advance from 11
+    ASSERT_EQ(30u, it.LazySeek(30));
+    ASSERT_FALSE(it.next());
+  }
+
+  // (16) Dense word (all 64 bits set): every LazySeek in the word hits.
+  {
+    irs::bitset bs(128);
+    word_t all{};
+    all = ~all;  // 0xffff...
+    bs.memset(&all, sizeof(all));
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    for (size_t t = 1; t < kBits; ++t) {
+      const irs::doc_id_t prev = it.value();
+      const auto r = it.LazySeek(static_cast<irs::doc_id_t>(t));
+      if (t <= prev) {
+        ASSERT_EQ(prev, r);  // stay clause
+      } else {
+        ASSERT_EQ(t, r);
+        ASSERT_EQ(t, it.value());
+      }
+    }
+  }
+
+  // (17) Sparse word (every second bit set): even targets hit, odd miss.
+  {
+    irs::bitset bs(128);
+    for (size_t i = 0; i < 128; i += 2) {
+      bs.set(i);
+    }
+    irs::BitsetDocIterator it(bs.begin(), bs.end());
+    ASSERT_EQ(2u, it.LazySeek(2));
+    ASSERT_EQ(4u, it.LazySeek(3));  // odd -> miss -> target+1
+    ASSERT_EQ(2u, it.value());
+    ASSERT_EQ(4u, it.LazySeek(4));
+    ASSERT_EQ(6u, it.LazySeek(5));  // miss
+    ASSERT_EQ(4u, it.value());
+    ASSERT_EQ(64u, it.LazySeek(64));  // hop into word 1
+    ASSERT_EQ(66u, it.LazySeek(66));
+  }
+}

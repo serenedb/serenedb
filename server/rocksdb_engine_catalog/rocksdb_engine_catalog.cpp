@@ -1330,6 +1330,18 @@ void RocksDBEngineCatalog::CatalogWriteContext::DropSequence(
                 key);
 }
 
+void RocksDBEngineCatalog::CatalogWriteContext::WriteTombstone(
+  ObjectId parent_id, ObjectId id) {
+  RocksDBKeyWithBuffer<DefinitionKey> key{parent_id,
+                                          catalog::ObjectType::Tombstone, id};
+  auto v = vpack::Slice::emptyStringSlice();
+  _batch.Put(
+    RocksDBColumnFamilyManager::get(
+      RocksDBColumnFamilyManager::Family::Definitions),
+    key.GetBuffer(),
+    std::string_view{reinterpret_cast<const char*>(v.start()), v.byteSize()});
+}
+
 Result RocksDBEngineCatalog::Write(
   absl::FunctionRef<void(CatalogWriteContext&)> fill) {
   rocksdb::WriteBatch batch;

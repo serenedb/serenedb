@@ -1,0 +1,64 @@
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_wand_seek(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+statement ok
+CREATE TABLE wand_seek (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+INSERT INTO wand_seek SELECT i, CASE
+    WHEN i = 200  THEN 'r1 filler filler filler filler'
+    WHEN i = 400  THEN 'r2 gate filler filler filler filler'
+    WHEN i = 800  THEN 'r3 gate filler filler filler filler'
+    WHEN i % 400 = 0 THEN 'gate filler filler filler'
+    ELSE 'filler'
+  END
+  FROM generate_series(1, 4500) AS s(i);
+
+statement ok
+CREATE INDEX wand_seek_idx ON wand_seek USING inverted(id, body en_wand_seek)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+statement ok
+VACUUM (UPDATE_INDEXES) wand_seek;
+
+query I
+SELECT count(*) FROM wand_seek_idx
+WHERE body @@ ts_phrase('gate')
+  AND body @@ ts_any(['r1', 'r2', 'r3']);
+----
+count
+2
+
+query I
+WITH disj AS (
+  SELECT id, BM25(wand_seek_idx.tableoid) AS s FROM wand_seek_idx
+  WHERE body @@ ts_phrase('gate')
+    AND body @@ ts_any(['r1', 'r2', 'r3'])
+),
+single AS (
+  SELECT id, BM25(wand_seek_idx.tableoid) AS s FROM wand_seek_idx
+  WHERE body @@ ts_phrase('gate') AND body @@ ts_phrase('r1')
+  UNION ALL
+  SELECT id, BM25(wand_seek_idx.tableoid) AS s FROM wand_seek_idx
+  WHERE body @@ ts_phrase('gate') AND body @@ ts_phrase('r2')
+  UNION ALL
+  SELECT id, BM25(wand_seek_idx.tableoid) AS s FROM wand_seek_idx
+  WHERE body @@ ts_phrase('gate') AND body @@ ts_phrase('r3')
+)
+SELECT COUNT(*) FROM disj d
+  JOIN single s ON d.id = s.id
+  WHERE abs(d.s - s.s) > 1e-4;
+----
+count
+0

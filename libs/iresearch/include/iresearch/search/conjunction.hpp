@@ -275,9 +275,9 @@ class Conjunction : public ConjunctionBase<Adapter> {
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    // TODO(mbkkt) should be SDB_ASSERT(target > value())
-    // but depends on underlying iterator implementation
-    SDB_ASSERT(target >= this->value());
+    if (target <= this->_doc) [[unlikely]] {
+      return this->_doc;
+    }
     for (auto& it : this->_itrs) {
       const auto doc = it.LazySeek(target);
       if (doc != target) {

@@ -1,0 +1,227 @@
+statement ok
+CREATE SEQUENCE iceberg_snapshot_seq;
+
+
+statement ok
+CREATE FUNCTION iceberg_next_snapshot() AS nextval('public.iceberg_snapshot_seq');
+
+
+query
+SELECT iceberg_next_snapshot();
+----
+iceberg_next_snapshot
+1
+
+
+statement error (?i)cannot drop sequence .*iceberg_snapshot_seq.*
+DROP SEQUENCE iceberg_snapshot_seq;
+
+
+statement ok
+DROP SEQUENCE iceberg_snapshot_seq CASCADE;
+
+
+statement error (?i)(macro|function).*iceberg_next_snapshot.*does not exist
+SELECT iceberg_next_snapshot();
+
+
+statement ok
+CREATE FUNCTION clickclack_inner_plan(x INT) AS x + 1;
+
+
+statement ok
+CREATE FUNCTION clickclack_outer_plan(x INT) AS clickclack_inner_plan(x) * 2;
+
+
+query
+SELECT clickclack_outer_plan(5);
+----
+clickclack_outer_plan
+12
+
+
+statement error (?i)cannot drop function .*clickclack_inner_plan.* because other objects depend on it
+DROP FUNCTION clickclack_inner_plan(INT);
+
+
+statement ok
+DROP FUNCTION clickclack_inner_plan(INT) CASCADE;
+
+
+statement error (?i)(macro|function).*clickclack_inner_plan.*does not exist
+SELECT clickclack_inner_plan(1);
+
+
+statement error (?i)(macro|function).*clickclack_outer_plan.*does not exist
+SELECT clickclack_outer_plan(1);
+
+
+statement ok
+CREATE FUNCTION iceberg_unmarshal_v1(x INT) AS x + 1;
+
+
+statement ok
+CREATE FUNCTION iceberg_unmarshal_v2(x INT) AS iceberg_unmarshal_v1(x) + 10;
+
+
+statement ok
+CREATE FUNCTION iceberg_unmarshal_v3(x INT) AS iceberg_unmarshal_v2(x) + 100;
+
+
+query
+SELECT iceberg_unmarshal_v3(0);
+----
+iceberg_unmarshal_v3
+111
+
+
+statement error (?i)cannot drop function .*iceberg_unmarshal_v1.* because other objects depend on it
+DROP FUNCTION iceberg_unmarshal_v1(INT);
+
+
+statement error (?i)cannot drop function .*iceberg_unmarshal_v2.* because other objects depend on it
+DROP FUNCTION iceberg_unmarshal_v2(INT);
+
+
+statement ok
+DROP FUNCTION iceberg_unmarshal_v3(INT);
+
+
+statement ok
+DROP FUNCTION iceberg_unmarshal_v2(INT);
+
+
+statement ok
+DROP FUNCTION iceberg_unmarshal_v1(INT);
+
+
+statement ok
+CREATE FUNCTION iceberg_unmarshal_v1(x INT) AS x + 1;
+
+
+statement ok
+CREATE FUNCTION iceberg_unmarshal_v2(x INT) AS iceberg_unmarshal_v1(x) + 10;
+
+
+statement ok
+CREATE FUNCTION iceberg_unmarshal_v3(x INT) AS iceberg_unmarshal_v2(x) + 100;
+
+
+statement ok
+DROP FUNCTION iceberg_unmarshal_v1(INT) CASCADE;
+
+
+statement error (?i)(macro|function).*iceberg_unmarshal_v1.*does not exist
+SELECT iceberg_unmarshal_v1(0);
+
+
+statement error (?i)(macro|function).*iceberg_unmarshal_v2.*does not exist
+SELECT iceberg_unmarshal_v2(0);
+
+
+statement error (?i)(macro|function).*iceberg_unmarshal_v3.*does not exist
+SELECT iceberg_unmarshal_v3(0);
+
+
+statement ok
+CREATE SEQUENCE mop_listing_seq;
+
+
+statement ok
+CREATE FUNCTION mop_use_listing() AS nextval('public.mop_listing_seq');
+
+
+statement ok
+CREATE TABLE mop_listings (id INT);
+
+
+statement count 1
+INSERT INTO mop_listings VALUES (1);
+
+
+statement ok
+CREATE VIEW mop_listings_feed AS SELECT mop_use_listing() AS n FROM mop_listings;
+
+
+statement error (?i)cannot drop sequence .*mop_listing_seq.*
+DROP SEQUENCE mop_listing_seq;
+
+
+statement ok
+DROP SEQUENCE mop_listing_seq CASCADE;
+
+
+statement error (?i)(macro|function).*mop_use_listing.*does not exist
+SELECT mop_use_listing();
+
+
+statement error (?i)(table|view|relation).*mop_listings_feed.*does not exist
+SELECT * FROM mop_listings_feed;
+
+
+query
+SELECT count(*) FROM mop_listings;
+----
+count
+1
+
+
+statement ok
+DROP TABLE mop_listings;
+
+
+# --- column DEFAULT calling a user function ---------------------------------
+
+statement ok
+CREATE SEQUENCE ml_paper_seq;
+
+
+statement ok
+CREATE FUNCTION ml_paper_default_id() AS nextval('ml_paper_seq') + 1000;
+
+
+statement ok
+CREATE TABLE ml_paper_runs (id INT DEFAULT ml_paper_default_id(), tag TEXT);
+
+
+statement ok
+INSERT INTO ml_paper_runs (tag) VALUES ('vedernikoff_run1');
+
+
+query
+SELECT id, tag FROM ml_paper_runs;
+----
+id    tag
+1001  vedernikoff_run1
+
+
+# Plain DROP FUNCTION must be refused -- ml_paper_runs.id's DEFAULT
+# references it.
+statement error (?i)cannot drop function .*ml_paper_default_id.* because other objects depend on it
+DROP FUNCTION ml_paper_default_id();
+
+
+# CASCADE clears the DEFAULT on the column without dropping the table.
+statement ok
+DROP FUNCTION ml_paper_default_id() CASCADE;
+
+
+# After the DEFAULT is cleared, INSERT without explicit id should write NULL.
+statement ok
+INSERT INTO ml_paper_runs (tag) VALUES ('vedernikoff_run2');
+
+
+query
+SELECT id, tag FROM ml_paper_runs ORDER BY tag;
+----
+id    tag
+1001  vedernikoff_run1
+NULL  vedernikoff_run2
+
+
+statement ok
+DROP TABLE ml_paper_runs;
+
+
+statement ok
+DROP SEQUENCE ml_paper_seq;

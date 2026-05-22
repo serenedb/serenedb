@@ -28,8 +28,6 @@
 namespace sdb {
 namespace app {
 
-class CommunicationFeaturePhase;
-
 template<typename Features>
 class AppServerImpl;
 
@@ -119,7 +117,6 @@ using SerenedFeaturesList = type::List<
   EngineFeature,
   ServerIdFeature,
   CheckVersionFeature,
-  app::CommunicationFeaturePhase,
   FlushFeature,
   LockfileFeature,
   RocksDBRecoveryManager,

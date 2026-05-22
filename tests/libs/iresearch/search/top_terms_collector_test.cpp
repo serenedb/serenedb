@@ -200,13 +200,6 @@ struct SubReader final : irs::SubReader {
 
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
 
-  irs::ColumnIterator::ptr columns() const final {
-    return irs::ColumnIterator::empty();
-  }
-  const irs::ColumnReader* column(irs::field_id) const final { return nullptr; }
-  const irs::ColumnReader* column(std::string_view) const final {
-    return nullptr;
-  }
   irs::DocIterator::ptr docs_iterator() const final {
     return irs::DocIterator::empty();
   }
@@ -214,7 +207,7 @@ struct SubReader final : irs::SubReader {
   irs::FieldIterator::ptr fields() const final {
     return irs::FieldIterator::empty();
   }
-  const irs::ColumnReader* sort() const final { return nullptr; }
+  irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
 
   irs::SegmentInfo info;
 };

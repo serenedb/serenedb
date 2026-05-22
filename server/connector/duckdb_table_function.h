@@ -86,13 +86,13 @@ struct ScanSource {
            _kind == ScanSourceKind::SkPoint || _kind == ScanSourceKind::SkRange;
   }
 
-  template<class T>
+  template<typename T>
   const T& Cast() const {
     auto* p = basics::downCast<T>(this);
     SDB_ASSERT(p != nullptr, "ScanSource::Cast: null result");
     return *p;
   }
-  template<class T>
+  template<typename T>
   T& Cast() {
     auto* p = basics::downCast<T>(this);
     SDB_ASSERT(p != nullptr, "ScanSource::Cast: null result");
@@ -124,29 +124,29 @@ struct SearchScan : ScanSource {
   search::InvertedIndexSnapshotPtr snapshot;
   // Empty when the filter is trivial.
   std::string filter_summary;
+  // True when stored_filter is the trivial match-all (irs::All). The
+  // bulk-scan shortcut keys on this rather than string-comparing
+  // filter_summary.
+  bool match_all = false;
 
   // Scorer parsed from `ORDER BY BM25(idx.tableoid, ...)` / `TFIDF(...)`
   // / etc. Empty when the query has no scoring projection.
   std::optional<catalog::ScorerOptions> scorer;
   std::optional<size_t> score_top_k;
 
-  // Catalog-side wand scorer carried verbatim from the InvertedIndex. WAND
+  // Catalog-side topk scorer carried verbatim from the InvertedIndex. WAND
   // pruning is engaged at runtime iff this matches `scorer`.
-  std::optional<catalog::ScorerOptions> wand_scorer;
+  std::optional<catalog::ScorerOptions> topk_scorer;
 
-  // Optional: positions/offsets output. Each entry records the catalog
-  // column whose offsets will be emitted, and a per-doc limit on the
-  // number of offset pairs. The runtime produces one
-  // LIST(BIGINT) output column per entry, in this vector's order.
-  // Empty when no OFFSETS() projection was claimed.
   struct OffsetsRequest {
     catalog::Column::Id column_id;
-    size_t limit = 0;
+    size_t limit = std::numeric_limits<size_t>::max();
+    duckdb::idx_t get_col_idx = 0;
   };
   std::vector<OffsetsRequest> offsets;
 
   bool EmitOffsets() const { return !offsets.empty(); }
-  bool WandEnabled() const { return wand_scorer && wand_scorer == scorer; }
+  bool WandEnabled() const { return topk_scorer && topk_scorer == scorer; }
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
@@ -192,8 +192,8 @@ struct SecondaryIndexScan : ScanSource {
 struct VectorSearchScan : ScanSource {
   VectorSearchScan(ScanSourceKind kind) : ScanSource{kind} {}
 
-  ObjectId index_id;
-  std::string field_name;
+  search::InvertedIndexSnapshotPtr snapshot;
+  catalog::Column::Id field_id{};
   std::vector<float> query_vector;
   duckdb::unique_ptr<duckdb::Expression> filter_expression;
   std::vector<catalog::Column::Id> filter_column_ids;
@@ -288,8 +288,7 @@ enum class ScanEntryKind : uint8_t {
   SecondaryIndex,
 };
 
-constexpr catalog::Column::Id kInvalidColumnId =
-  std::numeric_limits<catalog::Column::Id>::max();
+constexpr catalog::Column::Id kInvalidColumnId = catalog::Column::kInvalidId;
 
 struct SereneDBScanBindData : public duckdb::FunctionData {
   enum class Kind : uint8_t { Table, View };
@@ -323,11 +322,11 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
     return entry_kind == ScanEntryKind::SecondaryIndex;
   }
 
-  template<class T>
+  template<typename T>
   T& As() & {
     return basics::downCast<T>(*this);
   }
-  template<class T>
+  template<typename T>
   const T& As() const& {
     return basics::downCast<const T>(*this);
   }

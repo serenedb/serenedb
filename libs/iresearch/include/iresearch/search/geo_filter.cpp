@@ -19,11 +19,15 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/geo_filter.h"
+#include "iresearch/search/geo_filter.hpp"
 
+#include <absl/base/internal/endian.h>
 #include <s2/s2cap.h>
 #include <s2/s2earth.h>
 #include <s2/s2point_region.h>
+
+#include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
 
 #include "basics/down_cast.h"
 #include "basics/errors.h"
@@ -31,13 +35,15 @@
 #include "basics/memory.hpp"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
+#include "iresearch/columnstore/column_reader.hpp"
+#include "iresearch/columnstore/format.hpp"
+#include "iresearch/columnstore/read_context.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/column_existence_filter.hpp"
 #include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/score_function.hpp"
@@ -55,13 +61,12 @@ constexpr auto kSingletonCapEps = 2 * std::numeric_limits<double>::epsilon();
 
 using Disjunction = DisjunctionIterator<ScoreAdapter, ScoreMergeType::Noop>;
 
-// Return a filter matching all documents with a given geo field
-Filter::Query::ptr MatchAll(const PrepareContext& ctx, std::string_view field) {
-  // Return everything we've stored
-  ByColumnExistence filter;
-  *filter.mutable_field() = field;
-
-  return filter.prepare(ctx);
+// Bound covers the entire sphere. Used to be
+// `ByColumnExistence(store_field_id)` so rows that never wrote a geo value were
+// excluded; that gate is gone -- a full-cap match means every doc in the
+// segment matches.
+Filter::Query::ptr MatchAll(const PrepareContext& ctx) {
+  return irs::All{}.prepare(ctx);
 }
 
 // Returns singleton S2Cap that tolerates precision errors
@@ -82,15 +87,21 @@ class GeoIterator : public DocIterator {
   static constexpr CostAttr::Type kExtraCost = 2;
 
  public:
-  GeoIterator(DocIterator::ptr&& approx, DocIterator::ptr&& column_it,
-              Parser& parser, Acceptor& acceptor, FieldProperties field,
+  // Stored geo bytes now live in the columnstore as a typed BLOB column. The
+  // iterator owns a BlobPointReader (per-doc fetch with row-group caching)
+  // plus a one-row Vector<BLOB> that FetchRow lands the value into. The
+  // existing parser API still expects bytes_view, so Accept() reads the
+  // resulting string_t and forwards its bytes unchanged.
+  GeoIterator(DocIterator::ptr&& approx,
+              const columnstore::ColumnReader& stored_field,
+              const columnstore::Reader& cs_reader, Parser& parser,
+              Acceptor& acceptor, FieldProperties field,
               const byte_type* query_stats, score_t boost)
     : _stats{query_stats},
       _boost{boost},
       _field{field},
       _approx{std::move(approx)},
-      _column_it{std::move(column_it)},
-      _stored_value{get<PayAttr>(*_column_it)},
+      _cursor{cs_reader, stored_field},
       _acceptor{acceptor},
       _parser{parser} {
     std::get<CostAttr>(_attrs).reset(
@@ -140,8 +151,8 @@ class GeoIterator : public DocIterator {
   }
 
   doc_id_t seek(doc_id_t target) final {
-    if (const auto doc = value(); target <= doc) [[unlikely]] {
-      return doc;
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
     }
     const auto doc = _approx->seek(target);
     if (doc_limits::eof(doc) || Accept(doc)) {
@@ -151,9 +162,9 @@ class GeoIterator : public DocIterator {
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    // TODO(mbkkt) should be SDB_ASSERT(target > value())
-    // but depends on underlying iterator implementation
-    SDB_ASSERT(target >= value());
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
+    }
     const auto doc = _approx->LazySeek(target);
     if (target != doc) {
       return doc;
@@ -168,13 +179,17 @@ class GeoIterator : public DocIterator {
 
  private:
   bool Accept(doc_id_t doc) {
-    SDB_ASSERT(_column_it->value() < doc);
-    if (doc != _column_it->LazySeek(doc) || _stored_value->value.empty()) {
+    // Per-doc point fetch via cached cursor: same row group as the
+    // previous doc reuses its pinned ColumnSegment + ColumnFetchState.
+    // Empty span = row stored as null (analyzer didn't populate StoreAttr)
+    // OR analyzer wrote zero bytes -- either way nothing to match.
+    const auto bytes = _cursor.FetchDoc(doc);
+    if (bytes.empty()) {
       SDB_DEBUG("xxxxx", sdb::Logger::IRESEARCH,
                 "Missing stored geo value, doc='", doc, "'");
       return false;
     }
-    return _parser(_stored_value->value, _shape) && _acceptor(_shape);
+    return _parser(bytes, _shape) && _acceptor(_shape);
   }
 
   using Attributes = std::tuple<CostAttr>;
@@ -185,8 +200,7 @@ class GeoIterator : public DocIterator {
 
   ShapeContainer _shape;
   DocIterator::ptr _approx;
-  DocIterator::ptr _column_it;
-  const PayAttr* _stored_value;
+  columnstore::ColumnReader::BlobPointReader _cursor;
   Attributes _attrs;
   Acceptor& _acceptor;
   [[no_unique_address]] Parser _parser;
@@ -194,11 +208,12 @@ class GeoIterator : public DocIterator {
 
 template<typename Parser, typename Acceptor>
 DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
-                              DocIterator::ptr&& column_it,
+                              const columnstore::ColumnReader& stored_field,
+                              const columnstore::Reader& cs_reader,
                               const SubReader& reader, const TermReader& field,
                               const byte_type* query_stats, score_t boost,
                               Parser& parser, Acceptor& acceptor) {
-  if (itrs.empty() || !column_it) [[unlikely]] {
+  if (itrs.empty()) [[unlikely]] {
     return DocIterator::empty();
   }
 
@@ -206,15 +221,18 @@ DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
     // TODO(mbkkt) by_terms? LazyBitsetIterator faster than disjunction
     MakeDisjunction<Disjunction>(
       {}, static_cast<irs::doc_id_t>(reader.docs_count()), std::move(itrs)),
-    std::move(column_it), parser, acceptor, field.meta(), query_stats, boost);
+    stored_field, cs_reader, parser, acceptor, field.meta(), query_stats,
+    boost);
 }
 
 // Cached per reader query state
 struct GeoState {
   explicit GeoState(IResourceManager& memory) noexcept : states{{memory}} {}
 
-  // Corresponding stored field
-  const ColumnReader* stored_field{};
+  // Columnstore reader for the BLOB column carrying the analyzer's per-doc
+  // StoreAttr bytes. Resolved per-segment in PrepareStates via
+  // SubReader::Column.
+  const columnstore::ColumnReader* stored_field{};
 
   // Reader using for iterate over the terms
   const TermReader* reader{};
@@ -248,6 +266,11 @@ class GeoQuery : public Filter::Query {
     auto* field = state->reader;
     SDB_ASSERT(field);
 
+    const auto* cs_reader = segment.CsReader();
+    if (!cs_reader) {
+      return DocIterator::empty();
+    }
+
     typename Disjunction::Adapters itrs;
     itrs.reserve(state->states.size());
 
@@ -260,11 +283,9 @@ class GeoQuery : public Filter::Query {
       itrs.emplace_back(std::move(it));
     }
 
-    auto column_it = state->stored_field->iterator(ColumnHint::Normal);
-
-    return MakeIterator(std::move(itrs), std::move(column_it), segment,
-                        *state->reader, _stats.c_str(), Boost(), _parser,
-                        _acceptor);
+    return MakeIterator(std::move(itrs), *state->stored_field, *cs_reader,
+                        segment, *state->reader, _stats.c_str(), Boost(),
+                        _parser, _acceptor);
   }
 
   void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {}
@@ -371,12 +392,12 @@ Filter::Query::ptr MakeQuery(IResourceManager& manager, GeoStates&& states,
 
 std::pair<GeoStates, bstring> PrepareStates(
   const PrepareContext& ctx, std::span<const std::string> geo_terms,
-  std::string_view field) {
+  std::string_view field, field_id store_field_id) {
   SDB_ASSERT(!geo_terms.empty());
 
   std::vector<std::string_view> sorted_terms(geo_terms.begin(),
                                              geo_terms.end());
-  std::sort(sorted_terms.begin(), sorted_terms.end());
+  absl::c_sort(sorted_terms);
   SDB_ASSERT(std::unique(sorted_terms.begin(), sorted_terms.end()) ==
              sorted_terms.end());
 
@@ -389,12 +410,13 @@ std::pair<GeoStates, bstring> PrepareStates(
   FieldCollectors field_stats{ctx.scorer};
   ManagedVector<SeekCookie::ptr> term_states{{ctx.memory}};
 
+  SDB_ASSERT(store_field_id != 0);
   for (const auto& segment : ctx.index) {
     const auto* reader = segment.field(field);
     if (!reader) {
       continue;
     }
-    const auto* stored_field = segment.column(field);
+    const auto* stored_field = segment.Column(store_field_id);
     if (!stored_field) {
       continue;
     }
@@ -474,22 +496,18 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
         break;
       case BoundType::Exclusive:
         if (greater) {
-          // a full cap without a center
+          // dist > 0: full cap minus the singleton center. Used to AND in
+          // a ByColumnExistence gate on store_field_id; that's gone, so
+          // rows without a stored geo value pass the Not-singleton check.
           And root;
-          {
-            auto& column = root.add<ByColumnExistence>();
-            *column.mutable_field() = field;
-          }
-          {
-            auto& excl = root.add<Not>().filter<GeoDistanceFilter>();
-            *excl.mutable_field() = field;
-            auto& opts = *excl.mutable_options();
-            opts = options;
-            opts.range.min = 0;
-            opts.range.min_type = BoundType::Inclusive;
-            opts.range.max = 0;
-            opts.range.max_type = BoundType::Inclusive;
-          }
+          auto& excl = root.add<Not>().filter<GeoDistanceFilter>();
+          *excl.mutable_field() = field;
+          auto& opts = *excl.mutable_options();
+          opts = options;
+          opts.range.min = 0;
+          opts.range.min_type = BoundType::Inclusive;
+          opts.range.max = 0;
+          opts.range.max_type = BoundType::Inclusive;
 
           return root.prepare(ctx);
         } else {
@@ -514,7 +532,7 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
   SDB_ASSERT(bound.is_valid());
 
   if (bound.is_full()) {
-    return MatchAll(ctx, field);
+    return MatchAll(ctx);
   }
 
   if (bound.is_empty()) {
@@ -529,7 +547,8 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
     return Filter::Query::empty();
   }
 
-  auto [states, stats] = PrepareStates(ctx, geo_terms, field);
+  auto [states, stats] =
+    PrepareStates(ctx, geo_terms, field, options.store_field_id);
 
   if (incl) {
     return MakeQuery(ctx.memory, std::move(states), std::move(stats), ctx.boost,
@@ -577,7 +596,8 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
       return Filter::Query::empty();
     }
 
-    auto [states, stats] = PrepareStates(ctx, geo_terms, field);
+    auto [states, stats] =
+      PrepareStates(ctx, geo_terms, field, options.store_field_id);
 
     return MakeQuery(ctx.memory, std::move(states), std::move(stats), ctx.boost,
                      options,
@@ -611,7 +631,8 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
     return Filter::Query::empty();
   }
 
-  auto [states, stats] = PrepareStates(ctx, geo_terms, field);
+  auto [states, stats] =
+    PrepareStates(ctx, geo_terms, field, options.store_field_id);
 
   switch (size_t(min_incl) + 2 * size_t(max_incl)) {
     case 0:
@@ -668,7 +689,8 @@ Filter::Query::ptr GeoFilter::prepare(const PrepareContext& ctx) const {
     return Filter::Query::empty();
   }
 
-  auto [states, stats] = PrepareStates(ctx, geo_terms, field());
+  auto [states, stats] =
+    PrepareStates(ctx, geo_terms, field(), options.store_field_id);
 
   const auto boost = ctx.boost * this->Boost();
 
@@ -705,7 +727,7 @@ Filter::Query::ptr GeoDistanceFilter::prepare(const PrepareContext& ctx) const {
   auto sub_ctx = ctx.Boost(Boost());
 
   if (!lower_bound && !upper_bound) {
-    return MatchAll(sub_ctx, field());
+    return MatchAll(sub_ctx);
   }
   if (lower_bound && upper_bound) {
     return PrepareInterval(sub_ctx, field(), options);

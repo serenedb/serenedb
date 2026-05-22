@@ -1,0 +1,661 @@
+statement ok
+CREATE SEQUENCE clickclack_query_id_seq;
+
+
+statement ok
+CREATE VIEW v_clickclack_load AS SELECT nextval('public.clickclack_query_id_seq') AS x, 'hello'::TEXT AS payload;
+
+
+query
+SELECT x, payload FROM v_clickclack_load;
+----
+x	payload
+1	hello
+
+
+statement error (?i)cannot drop sequence .*clickclack_query_id_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_query_id_seq;
+
+
+statement error (?i)cannot drop sequence .*clickclack_query_id_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_query_id_seq RESTRICT;
+
+
+query
+SELECT nextval('public.clickclack_query_id_seq');
+----
+nextval
+2
+
+
+statement ok
+DROP SEQUENCE clickclack_query_id_seq CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_load.*does not exist
+SELECT * FROM v_clickclack_load;
+
+
+statement error (?i)(sequence|relation).*clickclack_query_id_seq.*does not exist
+SELECT nextval('public.clickclack_query_id_seq');
+
+
+statement ok
+CREATE SEQUENCE clickclack_cv_seq;
+
+
+query
+SELECT nextval('public.clickclack_cv_seq');
+----
+nextval
+1
+
+
+statement ok
+CREATE VIEW v_clickclack_cv AS SELECT currval('public.clickclack_cv_seq') AS x;
+
+
+query
+SELECT x FROM v_clickclack_cv;
+----
+x
+1
+
+
+statement error (?i)cannot drop sequence .*clickclack_cv_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_cv_seq;
+
+
+statement ok
+DROP SEQUENCE clickclack_cv_seq CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_cv.*does not exist
+SELECT * FROM v_clickclack_cv;
+
+
+statement ok
+CREATE SEQUENCE clickclack_sv_seq;
+
+
+statement ok
+CREATE VIEW v_clickclack_sv AS SELECT setval('public.clickclack_sv_seq', 42) AS x;
+
+
+query
+SELECT x FROM v_clickclack_sv;
+----
+x
+42
+
+
+statement error (?i)cannot drop sequence .*clickclack_sv_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_sv_seq RESTRICT;
+
+
+statement ok
+DROP SEQUENCE clickclack_sv_seq CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_sv.*does not exist
+SELECT * FROM v_clickclack_sv;
+
+
+statement ok
+CREATE SEQUENCE clickclack_shared_seq;
+
+
+statement ok
+CREATE VIEW v_clickclack_a AS SELECT nextval('public.clickclack_shared_seq') AS n;
+
+
+statement ok
+CREATE VIEW v_clickclack_b AS SELECT nextval('public.clickclack_shared_seq') + 100 AS n;
+
+
+statement ok
+CREATE VIEW v_clickclack_c AS SELECT currval('public.clickclack_shared_seq') AS n;
+
+
+query
+SELECT n FROM v_clickclack_a;
+----
+n
+1
+
+
+query
+SELECT n FROM v_clickclack_b;
+----
+n
+102
+
+
+query
+SELECT n FROM v_clickclack_c;
+----
+n
+2
+
+
+statement error (?i)cannot drop sequence .*clickclack_shared_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_shared_seq;
+
+
+statement ok
+DROP SEQUENCE clickclack_shared_seq CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_a.*does not exist
+SELECT * FROM v_clickclack_a;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_b.*does not exist
+SELECT * FROM v_clickclack_b;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_c.*does not exist
+SELECT * FROM v_clickclack_c;
+
+
+statement ok
+CREATE SCHEMA iceberg_seq_home;
+
+
+statement ok
+CREATE SCHEMA iceberg_view_home;
+
+
+statement ok
+CREATE SEQUENCE iceberg_seq_home.partition_seq START WITH 10;
+
+
+statement ok
+CREATE VIEW iceberg_view_home.audit_v AS SELECT nextval('iceberg_seq_home.partition_seq') AS n;
+
+
+query
+SELECT n FROM iceberg_view_home.audit_v;
+----
+n
+10
+
+
+statement error (?i)cannot drop sequence .*partition_seq.* because other objects depend on it
+DROP SEQUENCE iceberg_seq_home.partition_seq;
+
+
+statement ok
+DROP SEQUENCE iceberg_seq_home.partition_seq CASCADE;
+
+
+statement error (?i)(table|relation|view).*audit_v.*does not exist
+SELECT * FROM iceberg_view_home.audit_v;
+
+
+statement ok
+DROP SCHEMA iceberg_seq_home CASCADE;
+
+
+statement ok
+DROP SCHEMA iceberg_view_home CASCADE;
+
+
+statement ok
+CREATE SEQUENCE clickclack_dead_seq;
+
+
+statement ok
+CREATE VIEW v_clickclack_dead AS SELECT nextval('public.clickclack_dead_seq') AS n;
+
+
+statement ok
+DROP VIEW v_clickclack_dead;
+
+
+statement ok
+DROP SEQUENCE clickclack_dead_seq RESTRICT;
+
+
+statement ok
+CREATE SEQUENCE clickclack_mix_seq;
+
+
+statement ok
+CREATE TABLE clickclack_mix_t (id BIGINT DEFAULT nextval('public.clickclack_mix_seq'), v TEXT);
+
+
+statement ok
+CREATE VIEW v_clickclack_mix AS SELECT nextval('public.clickclack_mix_seq') AS extra, 'tag'::TEXT AS t;
+
+
+statement count 1
+INSERT INTO clickclack_mix_t (v) VALUES ('row');
+
+
+statement error (?i)cannot drop sequence .*clickclack_mix_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_mix_seq;
+
+
+statement error (?i)cannot drop sequence .*clickclack_mix_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_mix_seq RESTRICT;
+
+
+statement ok
+DROP SEQUENCE clickclack_mix_seq CASCADE;
+
+
+query
+SELECT v FROM clickclack_mix_t;
+----
+v
+row
+
+
+statement count 1
+INSERT INTO clickclack_mix_t (v) VALUES ('after');
+
+
+query
+SELECT v, id IS NULL AS id_null FROM clickclack_mix_t ORDER BY v;
+----
+v	id_null
+after	t
+row	f
+
+
+statement error (?i)(table|relation|view).*v_clickclack_mix.*does not exist
+SELECT * FROM v_clickclack_mix;
+
+
+statement ok
+DROP TABLE clickclack_mix_t;
+
+
+statement ok
+CREATE SEQUENCE clickclack_chain_seq;
+
+
+statement ok
+CREATE VIEW v_clickclack_chain1 AS SELECT nextval('public.clickclack_chain_seq') AS a;
+
+
+statement ok
+CREATE VIEW v_clickclack_chain2 AS SELECT nextval('public.clickclack_chain_seq') + 1000 AS b;
+
+
+statement error (?i)cannot drop sequence .*clickclack_chain_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_chain_seq;
+
+
+statement ok
+DROP SEQUENCE clickclack_chain_seq CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_chain1.*does not exist
+SELECT * FROM v_clickclack_chain1;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_chain2.*does not exist
+SELECT * FROM v_clickclack_chain2;
+
+
+statement ok
+CREATE SEQUENCE clickclack_all3_seq;
+
+
+query
+SELECT nextval('public.clickclack_all3_seq');
+----
+nextval
+1
+
+
+statement ok
+CREATE VIEW v_clickclack_all3 AS
+  SELECT nextval('public.clickclack_all3_seq') AS a,
+         currval('public.clickclack_all3_seq') AS b,
+         setval('public.clickclack_all3_seq', 50) AS c;
+
+
+statement error (?i)cannot drop sequence .*clickclack_all3_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_all3_seq;
+
+
+statement ok
+DROP SEQUENCE clickclack_all3_seq CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_all3.*does not exist
+SELECT * FROM v_clickclack_all3;
+
+
+statement ok
+CREATE SEQUENCE clickclack_pair1_seq;
+
+
+statement ok
+CREATE SEQUENCE clickclack_pair2_seq;
+
+
+statement ok
+CREATE VIEW v_clickclack_pair AS
+  SELECT nextval('public.clickclack_pair1_seq') AS a,
+         nextval('public.clickclack_pair2_seq') AS b;
+
+
+statement error (?i)cannot drop sequence .*clickclack_pair1_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_pair1_seq;
+
+
+statement error (?i)cannot drop sequence .*clickclack_pair2_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_pair2_seq;
+
+
+statement ok
+DROP SEQUENCE clickclack_pair1_seq CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_pair.*does not exist
+SELECT * FROM v_clickclack_pair;
+
+
+statement ok
+DROP SEQUENCE clickclack_pair2_seq RESTRICT;
+
+
+statement ok
+CREATE SEQUENCE clickclack_d1_seq;
+
+
+statement ok
+CREATE SEQUENCE clickclack_d2_seq;
+
+
+statement ok
+CREATE VIEW v_clickclack_dva AS
+  SELECT nextval('public.clickclack_d1_seq') AS x, nextval('public.clickclack_d2_seq') AS y;
+
+
+statement ok
+CREATE VIEW v_clickclack_dvb AS
+  SELECT nextval('public.clickclack_d2_seq') AS y, nextval('public.clickclack_d1_seq') AS x;
+
+
+statement error (?i)cannot drop sequence .*clickclack_d1_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_d1_seq;
+
+
+statement ok
+DROP SEQUENCE clickclack_d1_seq CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_dva.*does not exist
+SELECT * FROM v_clickclack_dva;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_dvb.*does not exist
+SELECT * FROM v_clickclack_dvb;
+
+
+statement ok
+DROP SEQUENCE clickclack_d2_seq RESTRICT;
+
+
+statement ok
+CREATE SCHEMA clickclack_sch;
+
+
+statement ok
+CREATE SEQUENCE clickclack_sch.dashboard_seq;
+
+
+statement ok
+CREATE VIEW clickclack_sch.v_dashboard_a AS SELECT nextval('clickclack_sch.dashboard_seq') AS n;
+
+
+statement ok
+CREATE VIEW clickclack_sch.v_dashboard_b AS SELECT nextval('clickclack_sch.dashboard_seq') AS n;
+
+
+statement error (?i)cannot drop schema .*clickclack_sch.* because other objects depend on it
+DROP SCHEMA clickclack_sch RESTRICT;
+
+
+statement ok
+DROP SCHEMA clickclack_sch CASCADE;
+
+
+query
+SELECT count(*) FROM pg_namespace WHERE nspname = 'clickclack_sch';
+----
+count
+0
+
+
+statement ok
+CREATE TABLE clickclack_owner_t (id SERIAL PRIMARY KEY, payload TEXT);
+
+
+statement count 1
+INSERT INTO clickclack_owner_t (payload) VALUES ('p');
+
+
+statement ok
+CREATE VIEW v_clickclack_uses_serial AS
+  SELECT nextval('public.clickclack_owner_t_id_seq') AS next_id;
+
+
+statement error (?i)cannot drop table .*clickclack_owner_t.* because other objects depend on it
+DROP TABLE clickclack_owner_t;
+
+
+statement ok
+DROP TABLE clickclack_owner_t CASCADE;
+
+
+query
+SELECT count(*) FROM pg_class
+  WHERE relname IN ('clickclack_owner_t', 'clickclack_owner_t_id_seq');
+----
+count
+0
+
+
+statement error (?i)(table|relation|view).*v_clickclack_uses_serial.*does not exist
+SELECT * FROM v_clickclack_uses_serial;
+
+
+statement ok
+CREATE SEQUENCE clickclack_recycle_seq;
+
+
+statement ok
+CREATE VIEW v_clickclack_recycle AS SELECT nextval('public.clickclack_recycle_seq') AS n;
+
+
+statement ok
+DROP SEQUENCE clickclack_recycle_seq CASCADE;
+
+
+statement ok
+CREATE SEQUENCE clickclack_recycle_seq;
+
+
+statement ok
+CREATE VIEW v_clickclack_recycle AS SELECT nextval('public.clickclack_recycle_seq') AS n;
+
+
+query
+SELECT n FROM v_clickclack_recycle;
+----
+n
+1
+
+
+statement ok
+DROP SEQUENCE clickclack_recycle_seq CASCADE;
+
+
+statement ok
+CREATE SEQUENCE clickclack_sub_seq;
+
+
+statement ok
+CREATE VIEW v_clickclack_sub AS
+  SELECT (SELECT nextval('public.clickclack_sub_seq')) AS n_in_subquery,
+         'tag'::TEXT AS t;
+
+
+query
+SELECT n_in_subquery, t FROM v_clickclack_sub;
+----
+n_in_subquery	t
+1	tag
+
+
+statement error (?i)cannot drop sequence .*clickclack_sub_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_sub_seq;
+
+
+statement ok
+DROP SEQUENCE clickclack_sub_seq CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_sub.*does not exist
+SELECT * FROM v_clickclack_sub;
+
+
+statement ok
+CREATE SEQUENCE clickclack_cte_seq;
+
+
+statement ok
+CREATE VIEW v_clickclack_cte AS
+  WITH clickclack_cte AS (SELECT nextval('public.clickclack_cte_seq') AS n)
+  SELECT n FROM clickclack_cte;
+
+
+query
+SELECT n FROM v_clickclack_cte;
+----
+n
+1
+
+
+statement error (?i)cannot drop sequence .*clickclack_cte_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_cte_seq;
+
+
+statement ok
+DROP SEQUENCE clickclack_cte_seq CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_cte.*does not exist
+SELECT * FROM v_clickclack_cte;
+
+
+statement ok
+CREATE SEQUENCE clickclack_union_seq;
+
+
+statement ok
+CREATE VIEW v_clickclack_union AS
+  SELECT nextval('public.clickclack_union_seq') AS n
+  UNION ALL
+  SELECT nextval('public.clickclack_union_seq') AS n;
+
+
+query
+SELECT count(*) FROM v_clickclack_union;
+----
+count
+2
+
+
+statement error (?i)cannot drop sequence .*clickclack_union_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_union_seq;
+
+
+statement ok
+DROP SEQUENCE clickclack_union_seq CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_union.*does not exist
+SELECT * FROM v_clickclack_union;
+
+
+statement ok
+CREATE SEQUENCE clickclack_where_seq;
+
+
+statement ok
+CREATE TABLE clickclack_where_base (v INT);
+
+
+statement ok
+INSERT INTO clickclack_where_base VALUES (1), (2), (3);
+
+
+statement ok
+CREATE VIEW v_clickclack_where AS
+  SELECT v FROM clickclack_where_base WHERE v < nextval('public.clickclack_where_seq') + 100;
+
+
+statement error (?i)cannot drop sequence .*clickclack_where_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_where_seq;
+
+
+statement ok
+DROP SEQUENCE clickclack_where_seq CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_clickclack_where.*does not exist
+SELECT * FROM v_clickclack_where;
+
+
+statement ok
+DROP TABLE clickclack_where_base;
+
+
+statement ok
+CREATE SEQUENCE clickclack_loop_seq;
+
+
+statement ok
+CREATE VIEW v_clickclack_loop AS SELECT nextval('public.clickclack_loop_seq') AS n;
+
+
+statement ok
+DROP SEQUENCE clickclack_loop_seq CASCADE;
+
+
+statement ok
+CREATE SEQUENCE clickclack_loop_seq;
+
+
+statement ok
+CREATE VIEW v_clickclack_loop AS SELECT nextval('public.clickclack_loop_seq') AS n;
+
+
+statement ok
+DROP SEQUENCE clickclack_loop_seq CASCADE;
+
+
+statement ok
+CREATE SEQUENCE clickclack_loop_seq;
+
+
+statement ok
+CREATE VIEW v_clickclack_loop AS SELECT nextval('public.clickclack_loop_seq') AS n;
+
+
+query
+SELECT n FROM v_clickclack_loop;
+----
+n
+1
+
+
+statement ok
+DROP SEQUENCE clickclack_loop_seq CASCADE;

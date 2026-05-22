@@ -30,6 +30,7 @@ extern "C" {
 #include <array>
 #include <unordered_set>
 
+#include "basics/bit_packing.hpp"
 #include "iresearch/store/store_avg_utils.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/bytes_output.hpp"

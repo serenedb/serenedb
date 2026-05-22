@@ -23,17 +23,19 @@
 
 #include <set>
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "geo/geo_json.h"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
-#include "iresearch/search/geo_filter.h"
+#include "iresearch/search/geo_filter.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/store_utils.hpp"
 #include "s2/s2point_region.h"
 #include "s2/s2polygon.h"
-#include "search_fields.h"
+#include "search_fields.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -41,6 +43,9 @@ namespace {
 using namespace sdb::geo;
 using namespace irs;
 using namespace irs::tests;
+
+inline constexpr irs::field_id kName = 1;
+inline constexpr irs::field_id kGeo = 2;
 
 struct CustomSort final : public irs::ScorerBase<void> {
   static constexpr std::string_view type_name() noexcept {
@@ -123,7 +128,7 @@ struct CustomSort final : public irs::ScorerBase<void> {
 
     const irs::AttributeProvider& document_attrs;
     const irs::byte_type* stats;
-    const irs::ColumnProvider& segment_reader;
+    const irs::NormProvider& segment_reader;
     const CustomSort& sort;
   };
 
@@ -275,6 +280,7 @@ TEST(GeoFilterTest, boost) {
       std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
       ShapeContainer::Type::S2Point);
     *q.mutable_field() = "field";
+    q.mutable_options()->store_field_id = kGeo;
 
     auto prepared = q.prepare({.index = irs::SubReader::empty()});
     ASSERT_EQ(irs::kNoBoost, prepared->Boost());
@@ -289,6 +295,7 @@ TEST(GeoFilterTest, boost) {
       std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
       ShapeContainer::Type::S2Point);
     *q.mutable_field() = "field";
+    q.mutable_options()->store_field_id = kGeo;
     q.boost(boost);
 
     auto prepared = q.prepare({.index = irs::SubReader::empty()});
@@ -336,7 +343,8 @@ TEST(GeoFilterTest, query) {
     constexpr auto kFormatId = "1_5simd";
     auto codec = irs::formats::Get(kFormatId);
     ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate);
+    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
@@ -352,10 +360,12 @@ TEST(GeoFilterTest, query) {
           name_field.value = slice_to_string_view(doc_slice.get("name"));
 
           auto doc = (i++ % 2 ? segment0 : segment1).Insert();
-          ASSERT_TRUE(
-            doc.Insert<(irs::Action::INDEX | irs::Action::STORE)>(name_field));
-          ASSERT_TRUE(
-            doc.Insert<(irs::Action::INDEX | irs::Action::STORE)>(geo_field));
+          ASSERT_TRUE(doc.Insert(name_field));
+          ASSERT_TRUE(doc.Insert(geo_field));
+          irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(),
+                                   name_field);
+          irs::tests::StoreFieldAt(*doc.Columnstore(), kGeo, doc.DocId(),
+                                   geo_field);
         }
       }
     }
@@ -398,12 +408,9 @@ TEST(GeoFilterTest, query) {
     EXPECT_NE(nullptr, prepared);
     auto expected_cost = costs.begin();
     for (auto& segment : *reader) {
-      auto column = segment.column("name");
+      const auto* column = segment.Column(kName);
       EXPECT_NE(nullptr, column);
-      auto values = column->iterator(irs::ColumnHint::Normal);
-      EXPECT_NE(nullptr, values);
-      auto* value = irs::get<irs::PayAttr>(*values);
-      EXPECT_NE(nullptr, value);
+      irs::tests::BlobPointReader values{segment, *column};
       auto it = prepared->execute({.segment = segment});
       EXPECT_NE(nullptr, it);
       auto seek_it = prepared->execute({.segment = segment});
@@ -424,10 +431,10 @@ TEST(GeoFilterTest, query) {
         auto doc_id = it->value();
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
-        EXPECT_EQ(doc_id, values->seek(doc_id));
-        EXPECT_FALSE(irs::IsNull(value->value));
+        EXPECT_FALSE(values.IsNull(doc_id));
 
-        actual_results.emplace(irs::ToString<std::string>(value->value.data()));
+        actual_results.emplace(
+          irs::tests::ReadStoredStr<std::string>(values, doc_id));
       }
       EXPECT_TRUE(irs::doc_limits::eof(it->value()));
       EXPECT_TRUE(irs::doc_limits::eof(seek_it->seek(it->value())));
@@ -440,17 +447,13 @@ TEST(GeoFilterTest, query) {
           const auto doc_id = it->value();
           auto seek_it = prepared->execute({.segment = segment});
           EXPECT_NE(nullptr, seek_it);
-          auto column_it = column->iterator(irs::ColumnHint::Normal);
-          EXPECT_NE(nullptr, column_it);
-          auto* payload = irs::get<irs::PayAttr>(*column_it);
-          EXPECT_NE(nullptr, payload);
           EXPECT_EQ(doc_id, seek_it->seek(doc_id));
           do {
-            EXPECT_EQ(seek_it->value(), column_it->seek(seek_it->value()));
-            if (!irs::doc_limits::eof(column_it->value())) {
-              EXPECT_NE(actual_results.end(),
-                        actual_results.find(
-                          irs::ToString<std::string>(payload->value.data())));
+            if (!values.IsNull(seek_it->value())) {
+              EXPECT_NE(
+                actual_results.end(),
+                actual_results.find(irs::tests::ReadStoredStr<std::string>(
+                  values, seek_it->value())));
             }
           } while (seek_it->next());
           EXPECT_TRUE(irs::doc_limits::eof(seek_it->value()));
@@ -481,6 +484,7 @@ TEST(GeoFilterTest, query) {
       json::ParseRegion(json->slice(), q.mutable_options()->shape).ok());
     ASSERT_EQ(ShapeContainer::Type::S2Point, q.mutable_options()->shape.type());
     *q.mutable_field() = "geometry";
+    q.mutable_options()->store_field_id = kGeo;
 
     ASSERT_EQ(expected, execute_query(q, {2, 0}));
   }
@@ -508,6 +512,7 @@ TEST(GeoFilterTest, query) {
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field() = "geometry";
+    q.mutable_options()->store_field_id = kGeo;
 
     ASSERT_EQ(expected, execute_query(q, {2, 2}));
   }
@@ -518,6 +523,7 @@ TEST(GeoFilterTest, query) {
 
     GeoFilter q;
     *q.mutable_field() = "geometry";
+    q.mutable_options()->store_field_id = kGeo;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
       origin.get("geometry"), q.mutable_options()->shape, cache,
@@ -534,6 +540,7 @@ TEST(GeoFilterTest, query) {
 
     GeoFilter q;
     *q.mutable_field() = "geometry";
+    q.mutable_options()->store_field_id = kGeo;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
       origin.get("geometry"), q.mutable_options()->shape, cache,
@@ -550,6 +557,7 @@ TEST(GeoFilterTest, query) {
 
     GeoFilter q;
     *q.mutable_field() = "geometry";
+    q.mutable_options()->store_field_id = kGeo;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
       origin.get("geometry"), q.mutable_options()->shape, cache,
@@ -596,6 +604,7 @@ TEST(GeoFilterTest, query) {
 
     GeoFilter q;
     *q.mutable_field() = "geometry";
+    q.mutable_options()->store_field_id = kGeo;
     ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
       shape_json->slice(), q.mutable_options()->shape, cache,
       coding::Options::Invalid, nullptr));
@@ -641,6 +650,7 @@ TEST(GeoFilterTest, query) {
 
     GeoFilter q;
     *q.mutable_field() = "geometry";
+    q.mutable_options()->store_field_id = kGeo;
     ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
       shape_json->slice(), q.mutable_options()->shape, cache,
       coding::Options::Invalid, nullptr));
@@ -670,6 +680,7 @@ TEST(GeoFilterTest, query) {
 
     GeoFilter q;
     *q.mutable_field() = "geometry";
+    q.mutable_options()->store_field_id = kGeo;
     ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
       shape_json->slice(), q.mutable_options()->shape, cache,
       coding::Options::Invalid, nullptr));
@@ -719,7 +730,8 @@ TEST(GeoFilterTest, checkScorer) {
     constexpr auto kFormatId = "1_5simd";
     auto codec = irs::formats::Get(kFormatId);
     ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate);
+    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
@@ -735,10 +747,12 @@ TEST(GeoFilterTest, checkScorer) {
           name_field.value = slice_to_string_view(doc_slice.get("name"));
 
           auto doc = (i++ % 2 ? segment0 : segment1).Insert();
-          ASSERT_TRUE(
-            doc.Insert<(irs::Action::INDEX | irs::Action::STORE)>(name_field));
-          ASSERT_TRUE(
-            doc.Insert<(irs::Action::INDEX | irs::Action::STORE)>(geo_field));
+          ASSERT_TRUE(doc.Insert(name_field));
+          ASSERT_TRUE(doc.Insert(geo_field));
+          irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(),
+                                   name_field);
+          irs::tests::StoreFieldAt(*doc.Columnstore(), kGeo, doc.DocId(),
+                                   geo_field);
         }
       }
     }
@@ -758,12 +772,9 @@ TEST(GeoFilterTest, checkScorer) {
     auto prepared = q.prepare({.index = *reader, .scorer = &ord});
     EXPECT_NE(nullptr, prepared);
     for (auto& segment : *reader) {
-      auto column = segment.column("name");
+      const auto* column = segment.Column(kName);
       EXPECT_NE(nullptr, column);
-      auto column_it = column->iterator(irs::ColumnHint::Normal);
-      EXPECT_NE(nullptr, column_it);
-      auto* payload = irs::get<irs::PayAttr>(*column_it);
-      EXPECT_NE(nullptr, payload);
+      irs::tests::BlobPointReader values{segment, *column};
       auto it = prepared->execute({.segment = segment, .scorer = &ord});
       EXPECT_NE(nullptr, it);
       auto seek_it = prepared->execute({.segment = segment});
@@ -787,14 +798,13 @@ TEST(GeoFilterTest, checkScorer) {
         const auto doc_id = it->value();
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
-        EXPECT_EQ(doc_id, column_it->seek(doc_id));
-        EXPECT_FALSE(irs::IsNull(payload->value));
+        EXPECT_FALSE(values.IsNull(doc_id));
 
         irs::score_t score_value;
         score.Score(&score_value, 1);
 
         actual_results.emplace(
-          irs::ToString<std::string>(payload->value.data()),
+          irs::tests::ReadStoredStr<std::string>(values, doc_id),
           std::move(score_value));
       }
       EXPECT_TRUE(irs::doc_limits::eof(it->value()));
@@ -808,17 +818,13 @@ TEST(GeoFilterTest, checkScorer) {
           const auto doc_id = it->value();
           auto seek_it = prepared->execute({.segment = segment});
           EXPECT_NE(nullptr, seek_it);
-          auto column_it = column->iterator(irs::ColumnHint::Normal);
-          EXPECT_NE(nullptr, column_it);
-          auto* payload = irs::get<irs::PayAttr>(*column_it);
-          EXPECT_NE(nullptr, payload);
           EXPECT_EQ(doc_id, seek_it->seek(doc_id));
           do {
-            EXPECT_EQ(seek_it->value(), column_it->seek(seek_it->value()));
-            if (!irs::doc_limits::eof(column_it->value())) {
-              EXPECT_NE(actual_results.end(),
-                        actual_results.find(
-                          irs::ToString<std::string>(payload->value.data())));
+            if (!values.IsNull(seek_it->value())) {
+              EXPECT_NE(
+                actual_results.end(),
+                actual_results.find(irs::tests::ReadStoredStr<std::string>(
+                  values, seek_it->value())));
             }
           } while (seek_it->next());
           EXPECT_TRUE(irs::doc_limits::eof(seek_it->value()));
@@ -851,6 +857,7 @@ TEST(GeoFilterTest, checkScorer) {
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field() = "geometry";
+    q.mutable_options()->store_field_id = kGeo;
 
     size_t collector_collect_field_count = 0;
     size_t collector_collect_term_count = 0;
@@ -921,6 +928,7 @@ TEST(GeoFilterTest, checkScorer) {
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field() = "geometry";
+    q.mutable_options()->store_field_id = kGeo;
 
     size_t collector_collect_field_count = 0;
     size_t collector_collect_term_count = 0;

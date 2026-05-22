@@ -29,6 +29,7 @@
 #include <memory>
 #include <optional>
 
+#include "catalog/table_options.h"
 #include "connector/index_source.h"
 #include "connector/search_pk_lookup.h"
 
@@ -61,7 +62,7 @@ class ANNFilter {
  public:
   ANNFilter(const ANNFilterContext& ctx);
 
-  void Reset(const irs::SubReader& segment);
+  void Reset(const irs::IndexReader& reader, size_t seg_idx);
   bool Accept(faiss::idx_t id) const;
 
  private:
@@ -72,13 +73,15 @@ class ANNFilter {
 
   mutable PrimaryKeyBatch _pk_batch;
   mutable std::shared_ptr<IndexSource> _index_source;
-  mutable SegmentPkIterator _it;
+  // Owns the per-(query, segment) ReadContext for the PK column. Reset()
+  // per segment.
+  mutable irs::columnstore::ColumnReader::BlobPointReader _pk_cursor;
 };
 
 void InitAnnFilterContext(
   std::unique_ptr<ANNFilterContext>& filter, duckdb::ClientContext& context,
   const duckdb::Expression* filter_expression,
-  const std::vector<catalog::Column::Id>& filter_column_ids, ObjectId index_id,
+  const std::vector<catalog::Column::Id>& filter_column_ids,
   const rocksdb::Snapshot* rocks_snapshot,
   const SereneDBScanBindData& bind_data);
 
@@ -105,7 +108,7 @@ class CompositeScanFilter final : public faiss::IDSelector {
 
   bool is_member(faiss::idx_t id) const final;
 
-  void Reset(const irs::SubReader& reader);
+  void Reset(const irs::IndexReader& reader, size_t seg_idx);
 
  private:
   std::optional<TextScanFilter> _text;

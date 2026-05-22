@@ -61,6 +61,8 @@ MINIO_CONTAINER_NAME=""
 MINIO_LOG_FILE=""
 ICEBERG_REST_CONTAINER_NAME=""
 ICEBERG_REST_LOG_FILE=""
+OLLAMA_CONTAINER_NAME=""
+OLLAMA_LOG_FILE=""
 TEST_NETWORK=""
 cancel_pid=""
 
@@ -110,9 +112,23 @@ cleanup_cancel_pid() {
 	fi
 }
 
+cleanup_ollama() {
+	if [[ -n "$OLLAMA_CONTAINER_NAME" ]]; then
+		local name="$OLLAMA_CONTAINER_NAME"
+		OLLAMA_CONTAINER_NAME=""
+		if [[ -n "$OLLAMA_LOG_FILE" ]]; then
+			echo "Saving Ollama logs to ${OLLAMA_LOG_FILE}..."
+			docker logs "$name" >"${OLLAMA_LOG_FILE}" 2>&1 || true
+		fi
+		echo "Stopping Ollama container..."
+		docker rm -fv "$name" >/dev/null 2>&1 || true
+	fi
+}
+
 cleanup_all() {
 	cleanup_cancel_pid
 	cleanup_iceberg_rest
+	cleanup_ollama
 	cleanup_minio
 	cleanup_test_network
 }
@@ -243,9 +259,64 @@ launch_iceberg_rest() {
 	echo
 }
 
+# Launches an Ollama server and pulls a small embedding model. Ollama exposes
+# an OpenAI-compatible API at /v1/embeddings on port 11434, which ai_embed()
+# targets via a SECRET of TYPE openai with a custom base_url. The pulled
+# model determines the embedding dimension; pick the smallest one that's
+# still useful so the first run stays under ~30s in CI.
+launch_ollama() {
+	local prefix
+	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
+	OLLAMA_CONTAINER_NAME="${prefix}-serenedb-test-ollama-$$"
+	OLLAMA_LOG_FILE="${LOG_DIR:-/tmp}/${OLLAMA_CONTAINER_NAME}.log"
+	export OLLAMA_MODEL="${OLLAMA_MODEL:-all-minilm}"
+
+	local network_args=()
+	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
+		network_args=(--network "$COMPOSE_NETWORK")
+		export OLLAMA_HOST="$OLLAMA_CONTAINER_NAME"
+		export OLLAMA_PORT=11434
+	else
+		if [[ -z "$TEST_NETWORK" ]]; then
+			TEST_NETWORK="${prefix}-serenedb-test-net-$$"
+			docker network create "$TEST_NETWORK" >/dev/null
+		fi
+		OLLAMA_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+		network_args=(--network "$TEST_NETWORK" -p "$OLLAMA_PORT:11434")
+		export OLLAMA_HOST="localhost"
+		export OLLAMA_PORT
+	fi
+
+	echo "Starting Ollama (host=$OLLAMA_HOST, port=$OLLAMA_PORT)..."
+	docker run -d \
+		--name "$OLLAMA_CONTAINER_NAME" \
+		"${network_args[@]}" \
+		ollama/ollama:latest
+
+	echo "Waiting for Ollama to be ready..."
+	for i in $(seq 1 60); do
+		if docker exec "$OLLAMA_CONTAINER_NAME" \
+			ollama list >/dev/null 2>&1; then
+			echo "Ollama is ready."
+			break
+		fi
+		if [[ $i -eq 60 ]]; then
+			echo "ERROR: Ollama failed to start within 60 seconds"
+			exit 1
+		fi
+		sleep 1
+	done
+
+	echo "Pulling model '$OLLAMA_MODEL'..."
+	docker exec "$OLLAMA_CONTAINER_NAME" ollama pull "$OLLAMA_MODEL"
+
+	echo "Ollama running (host=$OLLAMA_HOST, port=$OLLAMA_PORT, model=$OLLAMA_MODEL)."
+	echo
+}
+
 launch_external() {
 	shopt -s globstar
-	local pattern test_files needs_s3=false needs_iceberg=false
+	local pattern test_files needs_s3=false needs_iceberg=false needs_ollama=false
 	for pattern in "${tests[@]}"; do
 		test_files=$(compgen -G "$pattern" 2>/dev/null || true)
 		if echo "$test_files" | grep -q '_s3\.'; then
@@ -253,6 +324,9 @@ launch_external() {
 		fi
 		if echo "$test_files" | grep -q 'iceberg'; then
 			needs_iceberg=true
+		fi
+		if echo "$test_files" | grep -q '_ollama\.'; then
+			needs_ollama=true
 		fi
 	done
 	shopt -u globstar
@@ -278,6 +352,9 @@ launch_external() {
 	fi
 	if [[ "$needs_iceberg" == "true" ]]; then
 		launch_iceberg_rest
+	fi
+	if [[ "$needs_ollama" == "true" ]]; then
+		launch_ollama
 	fi
 }
 
@@ -453,6 +530,9 @@ run_tests() {
 	if [[ -n "$skip" ]]; then
 		skip_opt="--skip $skip"
 	fi
+
+	# TODO(Misha) move this to sqllogictest-rs
+	mkdir -p "$(dirname -- "$junit-$engine")"
 
 	sqllogictest "${tests[@]}" \
 		--host "$host" --port "$port" --engine "$engine" \

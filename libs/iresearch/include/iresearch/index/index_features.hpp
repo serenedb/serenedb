@@ -22,18 +22,9 @@
 
 #pragma once
 
-#include <map>
-#include <set>
-#include <span>
-
 #include "basics/bit_utils.hpp"
-#include "iresearch/store/data_output.hpp"
-#include "iresearch/utils/type_info.hpp"
 
 namespace irs {
-
-struct FieldStats;
-struct ColumnOutput;
 
 // Represents a set of features that can be stored in the index
 enum class IndexFeatures : uint8_t {
@@ -71,19 +62,5 @@ IRS_FORCE_INLINE constexpr bool IsSubsetOf(IndexFeatures lhs,
                                            IndexFeatures rhs) noexcept {
   return lhs == (lhs & rhs);
 }
-
-struct FeatureWriter : memory::Managed {
-  using ptr = memory::managed_ptr<FeatureWriter>;
-
-  virtual void write(const FieldStats& stats, doc_id_t doc,
-                     ColumnOutput& writer) = 0;
-
-  virtual void write(DataOutput& out, bytes_view value) = 0;
-
-  virtual void finish(DataOutput& out) = 0;
-};
-
-using FeatureWriterFactory =
-  FeatureWriter::ptr (*)(std::span<const bytes_view>);
 
 }  // namespace irs

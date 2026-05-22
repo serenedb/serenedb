@@ -56,43 +56,4 @@ struct TableNameValidator {
   [[nodiscard]] static bool isAllowedName(std::string_view name) noexcept;
 };
 
-struct ViewNameValidator {
-  /// maximal view name length, in bytes
-  static constexpr size_t kMaxNameLength = 256;
-
-  static Result validateName(std::string_view name);
-
- private:
-  /// checks if a view name is allowed in the given context.
-  /// returns true if the name is allowed and false otherwise
-  /// does not check for proper UTF-8 NFC normalization.
-  [[nodiscard]] static bool isAllowedName(std::string_view name) noexcept;
-};
-
-struct IndexNameValidator {
-  /// maximal index name length, in bytes
-  static constexpr size_t kMaxNameLength = 256;
-
-  static Result validateName(std::string_view name);
-
- private:
-  /// checks if a index name is allowed in the given context.
-  /// returns true if the name is allowed and false otherwise
-  /// does not check for proper UTF-8 NFC normalization.
-  [[nodiscard]] static bool isAllowedName(std::string_view name) noexcept;
-};
-
-struct AnalyzerNameValidator {
-  /// maximal analyzer name length, in bytes
-  static constexpr size_t kMaxNameLength = 64;
-
-  static Result validateName(std::string_view name);
-
- private:
-  /// checks if an analyzer name is allowed in the given context.
-  /// returns true if the name is allowed and false otherwise
-  /// does not check for proper UTF-8 NFC normalization.
-  [[nodiscard]] static bool isAllowedName(std::string_view name) noexcept;
-};
-
 }  // namespace sdb

@@ -1,0 +1,326 @@
+statement ok
+CREATE TYPE iceberg_partition_kind AS ENUM ('red', 'green', 'blue');
+
+
+statement ok
+CREATE TABLE iceberg_manifests (id INT, c iceberg_partition_kind);
+
+
+statement count 2
+INSERT INTO iceberg_manifests VALUES (1, 'red'), (2, 'green');
+
+
+query
+SELECT id, c FROM iceberg_manifests ORDER BY id;
+----
+id	c
+1	red
+2	green
+
+
+statement error (?i)cannot drop type .*iceberg_partition_kind.* because other objects depend on it
+DROP TYPE iceberg_partition_kind;
+
+
+statement error (?i)cannot drop type .*iceberg_partition_kind.* because other objects depend on it
+DROP TYPE iceberg_partition_kind RESTRICT;
+
+
+query
+SELECT count(*) FROM iceberg_manifests;
+----
+count
+2
+
+
+statement ok
+DROP TYPE iceberg_partition_kind CASCADE;
+
+
+query
+SELECT count(*) FROM iceberg_manifests;
+----
+count
+2
+
+
+statement error (?i)(column|referenced).*c.*
+SELECT c FROM iceberg_manifests;
+
+
+query
+SELECT id FROM iceberg_manifests ORDER BY id;
+----
+id
+1
+2
+
+
+statement ok
+DROP TABLE iceberg_manifests;
+
+
+statement ok
+CREATE TYPE clickclack_node_state AS ENUM ('on','off');
+
+
+statement ok
+CREATE TABLE clickclack_workers (id INT, s1 clickclack_node_state, s2 clickclack_node_state, label TEXT);
+
+
+statement count 1
+INSERT INTO clickclack_workers VALUES (1, 'on', 'off', 'lamp');
+
+
+statement error (?i)cannot drop type .*clickclack_node_state.* because other objects depend on it
+DROP TYPE clickclack_node_state;
+
+
+statement ok
+DROP TYPE clickclack_node_state CASCADE;
+
+
+query
+SELECT id, label FROM clickclack_workers;
+----
+id	label
+1	lamp
+
+
+statement error (?i)(column|referenced).*s1.*
+SELECT s1 FROM clickclack_workers;
+
+
+statement error (?i)(column|referenced).*s2.*
+SELECT s2 FROM clickclack_workers;
+
+
+statement ok
+DROP TABLE clickclack_workers;
+
+
+statement ok
+CREATE TYPE mop_application_priority AS ENUM ('low','high');
+
+
+statement ok
+CREATE TABLE mop_applications (id INT, p mop_application_priority);
+
+
+statement ok
+CREATE TABLE mop_recruiter_calls (id INT, p mop_application_priority);
+
+
+statement count 1
+INSERT INTO mop_applications VALUES (1, 'high');
+
+
+statement count 1
+INSERT INTO mop_recruiter_calls VALUES (1, 'low');
+
+
+statement error (?i)cannot drop type .*mop_application_priority.* because other objects depend on it
+DROP TYPE mop_application_priority;
+
+
+statement ok
+DROP TYPE mop_application_priority CASCADE;
+
+
+query
+SELECT id FROM mop_applications;
+----
+id
+1
+
+
+query
+SELECT id FROM mop_recruiter_calls;
+----
+id
+1
+
+
+statement error (?i)(column|referenced).*p.*
+SELECT p FROM mop_applications;
+
+
+statement error (?i)(column|referenced).*p.*
+SELECT p FROM mop_recruiter_calls;
+
+
+statement ok
+DROP TABLE mop_applications;
+
+
+statement ok
+DROP TABLE mop_recruiter_calls;
+
+
+statement ok
+CREATE TYPE solid_principle_flag AS ENUM ('a','b');
+
+
+statement ok
+CREATE TABLE solid_violations (id INT, f solid_principle_flag);
+
+
+statement ok
+DROP TABLE solid_violations;
+
+
+statement ok
+DROP TYPE solid_principle_flag RESTRICT;
+
+
+statement ok
+CREATE TYPE ml_loss_mood AS ENUM ('happy','sad');
+
+
+statement ok
+CREATE TABLE ml_lectures (id INT, m ml_loss_mood);
+
+
+statement count 1
+INSERT INTO ml_lectures VALUES (1, 'happy');
+
+
+statement ok
+DROP TYPE ml_loss_mood CASCADE;
+
+
+statement ok
+CREATE TYPE ml_loss_mood AS ENUM ('happy','sad','meh');
+
+
+query
+SELECT id FROM ml_lectures;
+----
+id
+1
+
+
+statement ok
+DROP TABLE ml_lectures;
+
+
+statement ok
+DROP TYPE ml_loss_mood;
+
+
+# --- Column->index cascade. DROP TYPE removes a column; PG drops any index
+# --- covering that column (single-col or compound), keeps unrelated indexes.
+
+statement ok
+CREATE TYPE vedernikoff_iceberg_state AS ENUM ('open','closed','pending');
+
+
+statement ok
+CREATE TABLE vedernikoff_manifests (
+  id INT PRIMARY KEY,
+  body TEXT,
+  state vedernikoff_iceberg_state
+);
+
+
+statement ok
+CREATE INDEX ix_state ON vedernikoff_manifests(state);
+
+
+statement ok
+CREATE INDEX ix_body ON vedernikoff_manifests(body);
+
+
+statement ok
+CREATE INDEX ix_state_body ON vedernikoff_manifests(state, body);
+
+
+query
+SELECT indexname FROM pg_indexes
+  WHERE tablename = 'vedernikoff_manifests' ORDER BY indexname;
+----
+indexname
+ix_body
+ix_state
+ix_state_body
+vedernikoff_manifests_pkey
+
+
+statement ok
+DROP TYPE vedernikoff_iceberg_state CASCADE;
+
+
+# Indexes covering the dropped `state` column are gone (single + compound).
+# Index on unrelated `body` survives. PK on `id` survives.
+query
+SELECT indexname FROM pg_indexes
+  WHERE tablename = 'vedernikoff_manifests' ORDER BY indexname;
+----
+indexname
+ix_body
+vedernikoff_manifests_pkey
+
+
+# Table itself + remaining columns still queryable.
+query
+SELECT id, body FROM vedernikoff_manifests;
+----
+id	body
+
+
+statement ok
+DROP TABLE vedernikoff_manifests;
+
+
+# --- Cross-schema variant: type in schema A, table in schema B, index in B.
+
+statement ok
+CREATE SCHEMA vedernikoff_clickclack_types;
+
+
+statement ok
+CREATE SCHEMA vedernikoff_clickclack_data;
+
+
+statement ok
+CREATE TYPE vedernikoff_clickclack_types.priority AS ENUM ('low','high');
+
+
+statement ok
+CREATE TABLE vedernikoff_clickclack_data.jobs (
+  id INT,
+  p vedernikoff_clickclack_types.priority,
+  label TEXT
+);
+
+
+statement ok
+CREATE INDEX ix_jobs_p ON vedernikoff_clickclack_data.jobs(p);
+
+
+statement ok
+CREATE INDEX ix_jobs_label ON vedernikoff_clickclack_data.jobs(label);
+
+
+statement error (?i)cannot drop type .*priority.* because other objects depend on it
+DROP TYPE vedernikoff_clickclack_types.priority;
+
+
+statement ok
+DROP TYPE vedernikoff_clickclack_types.priority CASCADE;
+
+
+query
+SELECT indexname FROM pg_indexes
+  WHERE schemaname = 'vedernikoff_clickclack_data' ORDER BY indexname;
+----
+indexname
+ix_jobs_label
+
+
+statement ok
+DROP SCHEMA vedernikoff_clickclack_data CASCADE;
+
+
+statement ok
+DROP SCHEMA vedernikoff_clickclack_types;

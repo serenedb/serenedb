@@ -51,19 +51,14 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // when `relation` is a view (Tables expose Columns() directly); ignored
   // for tables.
   SereneDBPhysicalCreateIndex(duckdb::PhysicalPlan& plan,
-                              std::shared_ptr<catalog::SchemaObject> relation,
+                              std::shared_ptr<catalog::Object> relation,
                               std::vector<catalog::Column> view_columns,
                               ObjectId database_id,
                               duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
                               SereneDBSchemaEntry& schema_entry,
                               duckdb::idx_t estimated_cardinality);
 
-  // Sink interface
   bool IsSink() const final { return true; }
-  // Parallel Sink for inverted indexes (each thread builds its own segment
-  // via its own iresearch IndexWriter::Transaction). Secondary indexes stay
-  // serial because they share a per-connection RocksDB transaction that
-  // isn't safe to drive from N threads.
   bool ParallelSink() const final;
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
     duckdb::ClientContext& context) const final;
@@ -72,6 +67,9 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
                               duckdb::DataChunk& chunk,
                               duckdb::OperatorSinkInput& input) const final;
+  duckdb::SinkCombineResultType Combine(
+    duckdb::ExecutionContext& context,
+    duckdb::OperatorSinkCombineInput& input) const final;
   duckdb::SinkFinalizeType Finalize(
     duckdb::Pipeline& pipeline, duckdb::Event& event,
     duckdb::ClientContext& context,
@@ -94,7 +92,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // Returns the `_relation` cast to a Table when it is one; nullptr for views.
   catalog::Table* TableOrNull() const noexcept;
 
-  std::shared_ptr<catalog::SchemaObject> _relation;
+  std::shared_ptr<catalog::Object> _relation;
   // Empty when `_relation` is a Table (use Columns()); populated when view.
   std::vector<catalog::Column> _view_columns;
   ObjectId _database_id;

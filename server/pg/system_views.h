@@ -3755,7 +3755,7 @@ inline constexpr SystemView kExternalViews[] = {
              CAST(null AS cardinal_number) AS maximum_cardinality,
              CAST('a' || CAST(x.objdtdid AS text) AS sql_identifier) AS dtd_identifier
 
-      FROM pg_namespace n, pg_type att, pg_namespace nbt, pg_type bt,
+      FROM pg_namespace n, pg_type at, pg_namespace nbt, pg_type bt,
            (
              /* information_schema.columns, information_schema.attributes */
              SELECT c.relnamespace, CAST(c.relname AS sql_identifier),
@@ -3800,9 +3800,9 @@ inline constexpr SystemView kExternalViews[] = {
              ON x.objcollation = co.oid AND (nco.nspname, co.collname) <> ('pg_catalog', 'default')
 
       WHERE n.oid = x.objschema
-            AND att.oid = x.objtypeid
-            AND (att.typelem <> 0 AND att.typlen = -1)
-            AND att.typelem = bt.oid
+            AND at.oid = x.objtypeid
+            AND (at.typelem <> 0 AND at.typlen = -1)
+            AND at.typelem = bt.oid
             AND nbt.oid = bt.typnamespace
 
             AND (n.nspname, x.objname, x.objtype, CAST(x.objdtdid AS sql_identifier)) IN

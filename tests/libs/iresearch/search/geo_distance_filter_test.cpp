@@ -23,19 +23,21 @@
 
 #include <set>
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
-#include "iresearch/search/geo_filter.h"
+#include "iresearch/search/geo_filter.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 #include "s2/s2point_region.h"
 #include "s2/s2polygon.h"
-#include "search_fields.h"
+#include "search_fields.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -43,6 +45,9 @@ namespace {
 using namespace sdb::geo;
 using namespace irs;
 using namespace irs::tests;
+
+inline constexpr irs::field_id kName = 1;
+inline constexpr irs::field_id kGeo = 2;
 
 struct CustomSort final : public irs::ScorerBase<void> {
   static constexpr std::string_view type_name() noexcept {
@@ -124,7 +129,7 @@ struct CustomSort final : public irs::ScorerBase<void> {
 
     const irs::AttributeProvider& document_attrs;
     const irs::byte_type* stats;
-    const irs::ColumnProvider& segment_reader;
+    const irs::NormProvider& segment_reader;
     const CustomSort& sort;
   };
 
@@ -329,6 +334,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->options.set_max_cells(50);
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     *q.mutable_field() = "field";
+    q.mutable_options()->store_field_id = kGeo;
 
     auto prepared = q.prepare({.index = irs::SubReader::empty()});
     ASSERT_EQ(irs::kNoBoost, prepared->Boost());
@@ -345,6 +351,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->range.max = 5500.;
     q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
     *q.mutable_field() = "field";
+    q.mutable_options()->store_field_id = kGeo;
 
     auto prepared = q.prepare({.index = irs::SubReader::empty()});
     ASSERT_EQ(irs::kNoBoost, prepared->Boost());
@@ -359,6 +366,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->options.set_max_cells(50);
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     *q.mutable_field() = "field";
+    q.mutable_options()->store_field_id = kGeo;
     q.boost(boost);
 
     auto prepared = q.prepare({.index = irs::SubReader::empty()});
@@ -377,6 +385,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->range.max = 6000.;
     q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
     *q.mutable_field() = "field";
+    q.mutable_options()->store_field_id = kGeo;
     q.boost(boost);
 
     auto prepared = q.prepare({.index = irs::SubReader::empty()});
@@ -424,7 +433,8 @@ TEST(GeoDistanceFilterTest, query) {
     constexpr auto kFormatId = "1_5simd";
     auto codec = irs::formats::Get(kFormatId);
     ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate);
+    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
@@ -440,10 +450,12 @@ TEST(GeoDistanceFilterTest, query) {
           name_field.value = slice_to_string_view(doc_slice.get("name"));
 
           auto doc = (i++ % 2 ? segment0 : segment1).Insert();
-          ASSERT_TRUE(
-            doc.Insert<(irs::Action::INDEX | irs::Action::STORE)>(name_field));
-          ASSERT_TRUE(
-            doc.Insert<(irs::Action::INDEX | irs::Action::STORE)>(geo_field));
+          ASSERT_TRUE(doc.Insert(name_field));
+          ASSERT_TRUE(doc.Insert(geo_field));
+          irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(),
+                                   name_field);
+          irs::tests::StoreFieldAt(*doc.Columnstore(), kGeo, doc.DocId(),
+                                   geo_field);
         }
       }
     }
@@ -486,12 +498,9 @@ TEST(GeoDistanceFilterTest, query) {
     EXPECT_NE(nullptr, prepared);
     auto expected_cost = costs.begin();
     for (auto& segment : *reader) {
-      auto column = segment.column("name");
+      const auto* column = segment.Column(kName);
       EXPECT_NE(nullptr, column);
-      auto values = column->iterator(irs::ColumnHint::Normal);
-      EXPECT_NE(nullptr, values);
-      auto* value = irs::get<irs::PayAttr>(*values);
-      EXPECT_NE(nullptr, value);
+      irs::tests::BlobPointReader values{segment, *column};
       auto it = prepared->execute({.segment = segment});
       EXPECT_NE(nullptr, it);
       auto seek_it = prepared->execute({.segment = segment});
@@ -512,10 +521,10 @@ TEST(GeoDistanceFilterTest, query) {
         auto doc_id = it->value();
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
-        EXPECT_EQ(doc_id, values->seek(doc_id));
-        EXPECT_FALSE(irs::IsNull(value->value));
+        EXPECT_FALSE(values.IsNull(doc_id));
 
-        actual_results.emplace(irs::ToString<std::string>(value->value.data()));
+        actual_results.emplace(
+          irs::tests::ReadStoredStr<std::string>(values, doc_id));
       }
       EXPECT_TRUE(irs::doc_limits::eof(it->value()));
       EXPECT_TRUE(irs::doc_limits::eof(seek_it->seek(it->value())));
@@ -528,17 +537,13 @@ TEST(GeoDistanceFilterTest, query) {
           const auto doc_id = it->value();
           auto seek_it = prepared->execute({.segment = segment});
           EXPECT_NE(nullptr, seek_it);
-          auto column_it = column->iterator(irs::ColumnHint::Normal);
-          EXPECT_NE(nullptr, column_it);
-          auto* payload = irs::get<irs::PayAttr>(*column_it);
-          EXPECT_NE(nullptr, payload);
           EXPECT_EQ(doc_id, seek_it->seek(doc_id));
           do {
-            EXPECT_EQ(seek_it->value(), column_it->seek(seek_it->value()));
-            if (!irs::doc_limits::eof(column_it->value())) {
-              EXPECT_NE(actual_results.end(),
-                        actual_results.find(
-                          irs::ToString<std::string>(payload->value.data())));
+            if (!values.IsNull(seek_it->value())) {
+              EXPECT_NE(
+                actual_results.end(),
+                actual_results.find(irs::tests::ReadStoredStr<std::string>(
+                  values, seek_it->value())));
             }
           } while (seek_it->next());
           EXPECT_TRUE(irs::doc_limits::eof(seek_it->value()));
@@ -559,6 +564,7 @@ TEST(GeoDistanceFilterTest, query) {
     const std::set<std::string> expected{"Q", "R"};
 
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70892, 37.607768).ToPoint();
@@ -573,6 +579,7 @@ TEST(GeoDistanceFilterTest, query) {
     const std::set<std::string> expected{"Q"};
 
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
@@ -589,6 +596,7 @@ TEST(GeoDistanceFilterTest, query) {
     const std::set<std::string> expected{};
 
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
@@ -605,6 +613,7 @@ TEST(GeoDistanceFilterTest, query) {
     const std::set<std::string> expected{};
 
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
@@ -621,6 +630,7 @@ TEST(GeoDistanceFilterTest, query) {
     const std::set<std::string> expected{};
 
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
@@ -642,6 +652,7 @@ TEST(GeoDistanceFilterTest, query) {
     }
 
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
@@ -668,6 +679,7 @@ TEST(GeoDistanceFilterTest, query) {
     }
 
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
@@ -703,6 +715,7 @@ TEST(GeoDistanceFilterTest, query) {
     }
 
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
@@ -739,6 +752,7 @@ TEST(GeoDistanceFilterTest, query) {
     }
 
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
@@ -755,6 +769,7 @@ TEST(GeoDistanceFilterTest, query) {
     std::set<std::string> expected;
 
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
@@ -771,6 +786,7 @@ TEST(GeoDistanceFilterTest, query) {
     std::set<std::string> expected;
 
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
@@ -794,6 +810,7 @@ TEST(GeoDistanceFilterTest, query) {
     }
 
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
@@ -814,6 +831,7 @@ TEST(GeoDistanceFilterTest, query) {
     }
 
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
@@ -830,6 +848,7 @@ TEST(GeoDistanceFilterTest, query) {
     std::set<std::string> expected;
 
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
@@ -866,6 +885,7 @@ TEST(GeoDistanceFilterTest, query) {
     }
 
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
@@ -881,6 +901,7 @@ TEST(GeoDistanceFilterTest, query) {
   {
     std::set<std::string> expected;
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
@@ -896,6 +917,7 @@ TEST(GeoDistanceFilterTest, query) {
   {
     std::set<std::string> expected;
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
@@ -949,7 +971,8 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     constexpr auto kFormatId = "1_5simd";
     auto codec = irs::formats::Get(kFormatId);
     ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate);
+    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
@@ -965,10 +988,12 @@ TEST(GeoDistanceFilterTest, checkScorer) {
           name_field.value = slice_to_string_view(doc_slice.get("name"));
 
           auto doc = (i++ % 2 ? segment0 : segment1).Insert();
-          ASSERT_TRUE(
-            doc.Insert<(irs::Action::INDEX | irs::Action::STORE)>(name_field));
-          ASSERT_TRUE(
-            doc.Insert<(irs::Action::INDEX | irs::Action::STORE)>(geo_field));
+          ASSERT_TRUE(doc.Insert(name_field));
+          ASSERT_TRUE(doc.Insert(geo_field));
+          irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(),
+                                   name_field);
+          irs::tests::StoreFieldAt(*doc.Columnstore(), kGeo, doc.DocId(),
+                                   geo_field);
         }
       }
     }
@@ -988,12 +1013,9 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     auto prepared = q.prepare({.index = *reader, .scorer = &ord});
     EXPECT_NE(nullptr, prepared);
     for (auto& segment : *reader) {
-      auto column = segment.column("name");
+      const auto* column = segment.Column(kName);
       EXPECT_NE(nullptr, column);
-      auto column_it = column->iterator(irs::ColumnHint::Normal);
-      EXPECT_NE(nullptr, column_it);
-      auto* payload = irs::get<irs::PayAttr>(*column_it);
-      EXPECT_NE(nullptr, payload);
+      irs::tests::BlobPointReader values{segment, *column};
       auto it = prepared->execute({.segment = segment, .scorer = &ord});
       EXPECT_NE(nullptr, it);
       auto seek_it = prepared->execute({.segment = segment, .scorer = &ord});
@@ -1022,8 +1044,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
       while (it->next()) {
         const auto doc_id = it->value();
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
-        EXPECT_EQ(doc_id, column_it->seek(doc_id));
-        EXPECT_FALSE(irs::IsNull(payload->value));
+        EXPECT_FALSE(values.IsNull(doc_id));
 
         irs::score_t score_value;
         score.Score(&score_value, 1);
@@ -1033,7 +1054,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
         EXPECT_EQ(score_value, seek_score_value);
 
         actual_results.emplace(
-          irs::ToString<std::string>(payload->value.data()),
+          irs::tests::ReadStoredStr<std::string>(values, doc_id),
           std::move(score_value));
       }
       EXPECT_TRUE(irs::doc_limits::eof(it->value()));
@@ -1048,17 +1069,13 @@ TEST(GeoDistanceFilterTest, checkScorer) {
           auto seek_it =
             prepared->execute({.segment = segment, .scorer = &ord});
           EXPECT_NE(nullptr, seek_it);
-          auto column_it = column->iterator(irs::ColumnHint::Normal);
-          EXPECT_NE(nullptr, column_it);
-          auto* payload = irs::get<irs::PayAttr>(*column_it);
-          EXPECT_NE(nullptr, payload);
           EXPECT_EQ(doc_id, seek_it->seek(doc_id));
           do {
-            EXPECT_EQ(seek_it->value(), column_it->seek(seek_it->value()));
-            if (!irs::doc_limits::eof(column_it->value())) {
-              EXPECT_NE(actual_results.end(),
-                        actual_results.find(
-                          irs::ToString<std::string>(payload->value.data())));
+            if (!values.IsNull(seek_it->value())) {
+              EXPECT_NE(
+                actual_results.end(),
+                actual_results.find(irs::tests::ReadStoredStr<std::string>(
+                  values, seek_it->value())));
             }
           } while (seek_it->next());
           EXPECT_TRUE(irs::doc_limits::eof(seek_it->value()));
@@ -1072,6 +1089,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
 
   {
     GeoDistanceFilter q;
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70892, 37.607768).ToPoint();
@@ -1128,6 +1146,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
   {
     GeoDistanceFilter q;
     q.boost(1.5f);
+    q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field() = "geometry";
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70892, 37.607768).ToPoint();

@@ -1,0 +1,353 @@
+hash-threshold 100
+
+# Validity must round-trip through the cs segment merge for INCLUDE'd
+# composite types. We force the index into a multi-segment shape by
+# inserting in two batches separated by VACUUM (UPDATE_INDEXES) -- each
+# VACUUM commits a fresh segment -- then drive consolidation via
+# PRAGMA serenedb_vacuum('compact_indexes', ...) and re-run the same
+# projection. The post-merge projection must match the pre-merge one,
+# including NULL rows and (for MAP) empty-vs-NULL distinction.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+# --- ARRAY -------------------------------------------------------------
+
+statement ok
+CREATE TABLE arr_c (pk INTEGER PRIMARY KEY, body VARCHAR, vec FLOAT[3])
+
+
+statement ok
+CREATE INDEX arr_c_idx ON arr_c USING inverted(pk, body en) INCLUDE (vec)
+
+
+# Segment A includes a whole-row NULL.
+statement ok
+INSERT INTO arr_c VALUES (1, 'alpha one', [1.0, 2.0, 3.0])
+
+
+statement ok
+INSERT INTO arr_c VALUES (2, 'alpha two', NULL)
+
+
+statement ok
+INSERT INTO arr_c VALUES (3, 'alpha three', [-1.0, 0.0, 1.0])
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) arr_c
+
+
+# Segment B: all non-null.
+statement ok
+INSERT INTO arr_c VALUES (4, 'beta one', [4.0, 5.0, 6.0])
+
+
+statement ok
+INSERT INTO arr_c VALUES (5, 'beta two', [7.0, 8.0, 9.0])
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) arr_c
+
+
+# Baseline projection across both pre-merge segments.
+query
+SELECT pk, vec FROM arr_c_idx
+WHERE body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta')
+ORDER BY pk;
+----
+pk	vec
+1	{1,2,3}
+2	NULL
+3	{-1,0,1}
+4	{4,5,6}
+5	{7,8,9}
+
+
+statement ok
+PRAGMA serenedb_vacuum('compact_indexes', 'arr_c')
+
+
+# After merge: the NULL row must survive.
+query
+SELECT pk, vec FROM arr_c_idx
+WHERE body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta')
+ORDER BY pk;
+----
+pk	vec
+1	{1,2,3}
+2	NULL
+3	{-1,0,1}
+4	{4,5,6}
+5	{7,8,9}
+
+
+query
+SELECT pk FROM arr_c_idx
+WHERE (body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta'))
+  AND vec IS NULL
+ORDER BY pk;
+----
+pk
+2
+
+
+query
+SELECT pk, vec FROM arr_c_idx
+WHERE (body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta'))
+  AND vec IS NOT NULL
+ORDER BY pk;
+----
+pk	vec
+1	{1,2,3}
+3	{-1,0,1}
+4	{4,5,6}
+5	{7,8,9}
+
+
+# Idempotency: a second compact pass on the already-merged segment must
+# keep the validity bitmap intact.
+statement ok
+PRAGMA serenedb_vacuum('compact_indexes', 'arr_c')
+
+
+query
+SELECT pk, vec FROM arr_c_idx WHERE body @@ ts_phrase('alpha') ORDER BY pk;
+----
+pk	vec
+1	{1,2,3}
+2	NULL
+3	{-1,0,1}
+
+
+# --- STRUCT ------------------------------------------------------------
+
+statement ok
+CREATE TABLE struct_c (
+  pk INTEGER PRIMARY KEY,
+  body VARCHAR,
+  payload STRUCT(name VARCHAR, score INTEGER)
+)
+
+
+statement ok
+CREATE INDEX struct_c_idx ON struct_c USING inverted(pk, body en) INCLUDE (payload)
+
+
+# Segment A: whole-struct NULL plus a NULL field inside a non-null
+# struct -- both validity tiers must survive the merge.
+statement ok
+INSERT INTO struct_c VALUES (1, 'alpha one', ROW('alpha', 10))
+
+
+statement ok
+INSERT INTO struct_c VALUES (2, 'alpha two', NULL)
+
+
+statement ok
+INSERT INTO struct_c VALUES (3, 'alpha three', ROW(NULL, 30))
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) struct_c
+
+
+# Segment B: also exercises a NULL field on the second slot.
+statement ok
+INSERT INTO struct_c VALUES (4, 'beta one', ROW('delta', NULL))
+
+
+statement ok
+INSERT INTO struct_c VALUES (5, 'beta two', ROW('epsilon', 50))
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) struct_c
+
+
+query
+SELECT pk, payload FROM struct_c_idx
+WHERE body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta')
+ORDER BY pk;
+----
+pk	payload
+1	(alpha,10)
+2	NULL
+3	(,30)
+4	(delta,)
+5	(epsilon,50)
+
+
+statement ok
+PRAGMA serenedb_vacuum('compact_indexes', 'struct_c')
+
+
+query
+SELECT pk, payload FROM struct_c_idx
+WHERE body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta')
+ORDER BY pk;
+----
+pk	payload
+1	(alpha,10)
+2	NULL
+3	(,30)
+4	(delta,)
+5	(epsilon,50)
+
+
+query
+SELECT pk FROM struct_c_idx
+WHERE (body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta'))
+  AND payload IS NULL
+ORDER BY pk;
+----
+pk
+2
+
+
+query
+SELECT pk, payload FROM struct_c_idx
+WHERE (body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta'))
+  AND payload IS NOT NULL
+ORDER BY pk;
+----
+pk	payload
+1	(alpha,10)
+3	(,30)
+4	(delta,)
+5	(epsilon,50)
+
+
+statement ok
+PRAGMA serenedb_vacuum('compact_indexes', 'struct_c')
+
+
+query
+SELECT pk, payload FROM struct_c_idx WHERE body @@ ts_phrase('alpha') ORDER BY pk;
+----
+pk	payload
+1	(alpha,10)
+2	NULL
+3	(,30)
+
+
+# --- MAP ---------------------------------------------------------------
+
+statement ok
+CREATE TABLE map_c (
+  pk INTEGER PRIMARY KEY,
+  body VARCHAR,
+  attrs MAP(VARCHAR, INTEGER)
+)
+
+
+statement ok
+CREATE INDEX map_c_idx ON map_c USING inverted(pk, body en) INCLUDE (attrs)
+
+
+# Segment A: whole-row NULL plus an empty map (which must stay distinct
+# from NULL through the merge).
+statement ok
+INSERT INTO map_c VALUES (1, 'alpha one', MAP {'a': 1, 'b': 2})
+
+
+statement ok
+INSERT INTO map_c VALUES (2, 'alpha two', NULL)
+
+
+statement ok
+INSERT INTO map_c VALUES (3, 'alpha three', MAP {})
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) map_c
+
+
+# Segment B: also exercises a NULL value inside a non-null map.
+statement ok
+INSERT INTO map_c VALUES (4, 'beta one', MAP {'c': 3, 'd': 4})
+
+
+statement ok
+INSERT INTO map_c VALUES (5, 'beta two', MAP {'e': NULL, 'f': 5})
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) map_c
+
+
+query
+SELECT pk, attrs FROM map_c_idx
+WHERE body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta')
+ORDER BY pk;
+----
+pk	attrs
+1	{"(a,1)","(b,2)"}
+2	NULL
+3	{}
+4	{"(c,3)","(d,4)"}
+5	{"(e,)","(f,5)"}
+
+
+statement ok
+PRAGMA serenedb_vacuum('compact_indexes', 'map_c')
+
+
+query
+SELECT pk, attrs FROM map_c_idx
+WHERE body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta')
+ORDER BY pk;
+----
+pk	attrs
+1	{"(a,1)","(b,2)"}
+2	NULL
+3	{}
+4	{"(c,3)","(d,4)"}
+5	{"(e,)","(f,5)"}
+
+
+# Empty map (pk=3) must remain NOT NULL; only pk=2 is whole-row NULL.
+query
+SELECT pk FROM map_c_idx
+WHERE (body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta'))
+  AND attrs IS NULL
+ORDER BY pk;
+----
+pk
+2
+
+
+query
+SELECT pk, attrs FROM map_c_idx
+WHERE (body @@ ts_phrase('alpha') OR body @@ ts_phrase('beta'))
+  AND attrs IS NOT NULL
+ORDER BY pk;
+----
+pk	attrs
+1	{"(a,1)","(b,2)"}
+3	{}
+4	{"(c,3)","(d,4)"}
+5	{"(e,)","(f,5)"}
+
+
+statement ok
+PRAGMA serenedb_vacuum('compact_indexes', 'map_c')
+
+
+query
+SELECT pk, attrs FROM map_c_idx WHERE body @@ ts_phrase('alpha') ORDER BY pk;
+----
+pk	attrs
+1	{"(a,1)","(b,2)"}
+2	NULL
+3	{}

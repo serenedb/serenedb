@@ -20,41 +20,44 @@
 
 #pragma once
 
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/index/index_features.hpp>
+#include <duckdb/common/types.hpp>
 #include <iresearch/index/iterators.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/ngram_similarity_query.hpp>
-#include <iresearch/search/phrase_query.hpp>
 #include <iresearch/search/prepared_state_visitor.hpp>
-#include <iresearch/search/states/multiterm_state.hpp>
-#include <iresearch/search/states/ngram_state.hpp>
-#include <iresearch/search/states/phrase_state.hpp>
-#include <iresearch/search/states/term_state.hpp>
 #include <span>
 #include <string>
 #include <variant>
 #include <vector>
 
+#include "connector/highlight/highlight_types.h"
+
+namespace irs {
+
+class FixedPhraseQuery;
+class VariadicPhraseQuery;
+class NGramSimilarityQuery;
+struct PosAttr;
+struct OffsAttr;
+struct SeekCookie;
+struct SubReader;
+struct TermReader;
+
+}  // namespace irs
 namespace sdb::connector {
 
-// A single sub-filter that contributes offsets for a field.
-// For term/multiterm: holds the SeekCookie pointer (reader->Iterator is used).
-// For phrase/ngram: holds the query pointer (ExecuteWithOffsets is used).
 struct FilterEntry {
   std::variant<const irs::SeekCookie*, const irs::FixedPhraseQuery*,
                const irs::VariadicPhraseQuery*,
                const irs::NGramSimilarityQuery*>
     filter;
+
   // Lazy: null until first use in a segment, then reused for all docs.
-  irs::DocIterator::ptr docs{};
+  irs::DocIterator::ptr docs;
   irs::PosAttr* pos = nullptr;
   const irs::OffsAttr* offs = nullptr;
 };
 
 // Per-field state, rebuilt on each segment transition.
-struct PerFieldState {
+struct FieldState {
   const irs::TermReader* reader = nullptr;
   std::vector<FilterEntry> entries;
   containers::FlatHashSet<const irs::SeekCookie*> seen_cookies;
@@ -66,102 +69,44 @@ struct PerFieldState {
   }
 };
 
-// Visits a prepared filter tree and collects per-field offset state.
-// field_names[i] must be the 8-byte big-endian encoding of the catalog column
-// ID for state[i].
+struct FieldEntry {
+  duckdb::idx_t output_idx = 0;
+  std::string name;
+  FieldState state;
+};
+
+void PrepareFilterEntry(FilterEntry& entry, const irs::TermReader* reader,
+                        const irs::SubReader& segment);
+
+void FillRowOffsets(FieldState& state, const irs::SubReader& segment,
+                    irs::doc_id_t doc_id, size_t max_pairs,
+                    std::vector<highlight::HitRange>& hits);
+
 class OffsetsCollector final : public irs::PreparedStateVisitor {
  public:
-  OffsetsCollector(std::span<const std::string> field_names,
-                   std::vector<PerFieldState>& state) noexcept
-    : _field_names{field_names}, _state{state} {}
+  explicit OffsetsCollector(std::span<FieldEntry> entries) noexcept
+    : _entries{entries} {}
 
   bool Visit(const irs::BooleanQuery&, irs::score_t) final { return true; }
   bool Visit(const irs::ByNestedQuery&, irs::score_t) final { return false; }
-
   bool Visit(const irs::TermQuery&, const irs::TermState& state,
-             irs::score_t) final {
-    const auto fi = FindField(state.reader);
-    if (fi < 0) {
-      return true;
-    }
-    auto& fs = _state[fi];
-    if (fs.seen_cookies.insert(state.cookie.get()).second) {
-      fs.reader = state.reader;
-      fs.entries.push_back({state.cookie.get()});
-    }
-    return true;
-  }
-
+             irs::score_t) final;
   bool Visit(const irs::MultiTermQuery&, const irs::MultiTermState& state,
-             irs::score_t) final {
-    const auto fi = FindField(state.reader);
-    if (fi < 0) {
-      return true;
-    }
-    auto& fs = _state[fi];
-    fs.reader = state.reader;
-    for (const auto& ts : state.scored_states) {
-      if (fs.seen_cookies.insert(ts.cookie.get()).second) {
-        fs.entries.push_back({ts.cookie.get()});
-      }
-    }
-    for (const auto& ts : state.unscored_states) {
-      if (fs.seen_cookies.insert(ts.get()).second) {
-        fs.entries.push_back({ts.get()});
-      }
-    }
-    return true;
-  }
-
+             irs::score_t) final;
   bool Visit(const irs::FixedPhraseQuery& query,
-             const irs::FixedPhraseState& state, irs::score_t) final {
-    const auto fi = FindField(state.reader);
-    if (fi < 0) {
-      return true;
-    }
-    _state[fi].reader = state.reader;
-    _state[fi].entries.push_back({&query});
-    return true;
-  }
-
+             const irs::FixedPhraseState& state, irs::score_t) final;
   bool Visit(const irs::VariadicPhraseQuery& query,
-             const irs::VariadicPhraseState& state, irs::score_t) final {
-    const auto fi = FindField(state.reader);
-    if (fi < 0) {
-      return true;
-    }
-    _state[fi].reader = state.reader;
-    _state[fi].entries.push_back({&query});
-    return true;
-  }
-
+             const irs::VariadicPhraseState& state, irs::score_t) final;
   bool Visit(const irs::NGramSimilarityQuery& query,
-             const irs::NGramState& state, irs::score_t) final {
-    const auto fi = FindField(state.reader);
-    if (fi < 0) {
-      return true;
-    }
-    _state[fi].reader = state.reader;
-    _state[fi].entries.push_back({&query});
-    return true;
-  }
+             const irs::NGramState& state, irs::score_t) final;
 
  private:
-  int FindField(const irs::TermReader* reader) const noexcept {
-    if (!reader) {
-      return -1;
-    }
-    const auto& name = reader->meta().name;
-    for (size_t i = 0; i < _field_names.size(); ++i) {
-      if (name == _field_names[i]) {
-        return static_cast<int>(i);
-      }
-    }
-    return -1;
-  }
+  FieldState* FindFieldState(const irs::TermReader* reader) noexcept;
 
-  std::span<const std::string> _field_names;
-  std::vector<PerFieldState>& _state;
+  template<typename Q>
+  void RecordQuery(const Q& query, const irs::TermReader* reader);
+
+  std::span<FieldEntry> _entries;
 };
 
 }  // namespace sdb::connector

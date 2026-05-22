@@ -1,0 +1,205 @@
+statement ok
+CREATE TABLE clickclack_dashboards (id SERIAL PRIMARY KEY, name TEXT);
+
+
+statement count 2
+INSERT INTO clickclack_dashboards (name) VALUES ('a'), ('b');
+
+
+statement ok
+CREATE TABLE clickclack_dashboards_audit (
+  id BIGINT NOT NULL DEFAULT nextval('public.clickclack_dashboards_id_seq'),
+  payload TEXT
+);
+
+
+statement count 1
+INSERT INTO clickclack_dashboards_audit (payload) VALUES ('first');
+
+
+query
+SELECT id, payload FROM clickclack_dashboards_audit ORDER BY id;
+----
+id	payload
+3	first
+
+
+statement error (?i)cannot drop table .*clickclack_dashboards.* because other objects depend on it
+DROP TABLE clickclack_dashboards;
+
+
+statement error (?i)cannot drop table .*clickclack_dashboards.* because other objects depend on it
+DROP TABLE clickclack_dashboards RESTRICT;
+
+
+query
+SELECT id, name FROM clickclack_dashboards ORDER BY id;
+----
+id	name
+1	a
+2	b
+
+
+statement count 1
+INSERT INTO clickclack_dashboards_audit (payload) VALUES ('still-works');
+
+
+query
+SELECT id, payload FROM clickclack_dashboards_audit ORDER BY id;
+----
+id	payload
+3	first
+4	still-works
+
+
+statement error (?i)cannot drop sequence .*clickclack_dashboards_id_seq.* because other objects depend on it
+DROP SEQUENCE clickclack_dashboards_id_seq;
+
+
+statement ok
+DROP TABLE clickclack_dashboards CASCADE;
+
+
+statement error (?i)(table|relation).*clickclack_dashboards.*does not exist
+SELECT * FROM clickclack_dashboards;
+
+
+statement error (?i)(sequence|relation).*clickclack_dashboards_id_seq.*does not exist
+SELECT nextval('clickclack_dashboards_id_seq');
+
+
+query
+SELECT id, payload FROM clickclack_dashboards_audit ORDER BY id;
+----
+id	payload
+3	first
+4	still-works
+
+
+statement count 1
+INSERT INTO clickclack_dashboards_audit (id, payload) VALUES (100, 'explicit');
+
+
+statement error (?i)(null|not.?null|violates|constraint)
+INSERT INTO clickclack_dashboards_audit (payload) VALUES ('would-have-been-default');
+
+
+statement ok
+DROP TABLE clickclack_dashboards_audit;
+
+
+statement ok
+CREATE SEQUENCE iceberg_manifest_seq START WITH 10;
+
+
+statement ok
+CREATE TABLE iceberg_partitions (
+  id BIGINT NOT NULL DEFAULT nextval('public.iceberg_manifest_seq'),
+  v TEXT
+);
+
+
+statement ok
+CREATE TABLE iceberg_audits (
+  id BIGINT NOT NULL DEFAULT nextval('public.iceberg_manifest_seq'),
+  v TEXT
+);
+
+
+statement count 1
+INSERT INTO iceberg_partitions (v) VALUES ('iceberg_partitions-row');
+
+
+statement count 1
+INSERT INTO iceberg_audits (v) VALUES ('iceberg_audits-row');
+
+
+statement error (?i)cannot drop sequence .*iceberg_manifest_seq.* because other objects depend on it
+DROP SEQUENCE iceberg_manifest_seq;
+
+
+statement error (?i)cannot drop sequence .*iceberg_manifest_seq.* because other objects depend on it
+DROP SEQUENCE iceberg_manifest_seq RESTRICT;
+
+
+query
+SELECT nextval('iceberg_manifest_seq');
+----
+nextval
+12
+
+
+statement ok
+DROP SEQUENCE iceberg_manifest_seq CASCADE;
+
+
+statement error (?i)(sequence|relation).*iceberg_manifest_seq.*does not exist
+SELECT nextval('iceberg_manifest_seq');
+
+
+query
+SELECT id, v FROM iceberg_partitions ORDER BY id;
+----
+id	v
+10	iceberg_partitions-row
+
+
+query
+SELECT id, v FROM iceberg_audits ORDER BY id;
+----
+id	v
+11	iceberg_audits-row
+
+
+statement count 1
+INSERT INTO iceberg_partitions (id, v) VALUES (500, 'explicit-iceberg_partitions');
+
+
+statement error (?i)(null|not.?null|violates|constraint)
+INSERT INTO iceberg_partitions (v) VALUES ('omitted');
+
+
+statement count 1
+INSERT INTO iceberg_audits (id, v) VALUES (501, 'explicit-iceberg_audits');
+
+
+statement error (?i)(null|not.?null|violates|constraint)
+INSERT INTO iceberg_audits (v) VALUES ('omitted');
+
+
+statement ok
+DROP TABLE iceberg_partitions;
+
+
+statement ok
+DROP TABLE iceberg_audits;
+
+
+statement ok
+CREATE SEQUENCE ml_paper_seq;
+
+
+statement ok
+CREATE TABLE ml_papers (
+  id BIGINT NOT NULL DEFAULT nextval('public.ml_paper_seq'),
+  v TEXT
+);
+
+
+statement count 1
+INSERT INTO ml_papers (v) VALUES ('x');
+
+
+statement ok
+DROP TABLE ml_papers;
+
+
+query
+SELECT nextval('ml_paper_seq');
+----
+nextval
+2
+
+
+statement ok
+DROP SEQUENCE ml_paper_seq;

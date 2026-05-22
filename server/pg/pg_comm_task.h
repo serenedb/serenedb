@@ -27,7 +27,6 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
-#include "basics/memory_types.h"
 #include "basics/message_buffer.h"
 #include "catalog/database.h"
 #include "general_server/asio_socket.h"
@@ -151,7 +150,6 @@ class PgSQLCommTaskBase : public rest::CommTask {
   duckdb::unique_ptr<duckdb::PendingQueryResult> PendingQueryEnsured(
     duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
     bool allow_stream_result);
-
   DuckDBPortal BindStatement(DuckDBStatement& stmt, DuckDBBindInfo bind_info);
   void BuildColumnSerializers(DuckDBPortal& portal);
   void DeallocateNamedStatement(std::string_view name);

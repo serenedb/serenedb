@@ -22,12 +22,32 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "filter_test_case_base.hpp"
+#include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/search/same_position_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "tests_shared.hpp"
+
+namespace {
+
+inline constexpr irs::field_id kIdId = 1;
+
+void StoreId(irs::IndexWriter::Document& doc, const tests::Document& src) {
+  auto* cs = doc.Columnstore();
+  if (cs == nullptr) {
+    return;
+  }
+  const auto* field =
+    dynamic_cast<const tests::LongField*>(src.indexed.get("_id"));
+  if (field == nullptr) {
+    return;
+  }
+  irs::tests::StoreFieldAt(*cs, kIdId, doc.DocId(), *field);
+}
+
+}  // namespace
 
 class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
  protected:
@@ -205,15 +225,16 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
           field.value(l_value);
         }
       });
-    add_segment(gen);
+    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+                &StoreId);
 
     // read segment
-    auto index = open_reader();
+    auto index = open_reader(irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, index.size());
     auto& segment = *(index.begin());
 
     irs::BytesViewInput in;
-    auto column = segment.column("_id");
+    const auto* column = segment.Column(kIdId);
     ASSERT_NE(nullptr, column);
 
     // empty query
@@ -281,20 +302,15 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
 
       // next
       {
-        auto values = column->iterator(irs::ColumnHint::Normal);
-        ASSERT_NE(nullptr, values);
-        auto* actual_value = irs::get<irs::PayAttr>(*values);
-        ASSERT_NE(nullptr, actual_value);
+        irs::tests::BlobPointReader values{segment, *column};
 
         auto docs = prepared->execute({.segment = segment});
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(6, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(27, irs::ReadZV64(in));
         ASSERT_FALSE(docs->next());
         ASSERT_EQ(irs::doc_limits::eof(), docs->value());
@@ -302,21 +318,16 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
 
       // seek
       {
-        auto values = column->iterator(irs::ColumnHint::Normal);
-        ASSERT_NE(nullptr, values);
-        auto* actual_value = irs::get<irs::PayAttr>(*values);
-        ASSERT_NE(nullptr, actual_value);
+        irs::tests::BlobPointReader values{segment, *column};
 
         auto docs = prepared->execute({.segment = segment});
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_EQ((irs::doc_limits::min)() + 6,
                   docs->seek((irs::doc_limits::min)()));
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(6, irs::ReadZV64(in));
         ASSERT_EQ((irs::doc_limits::min)() + 27, docs->seek(27));
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(27, irs::ReadZV64(in));
         ASSERT_EQ((irs::doc_limits::min)() + 27,
                   docs->seek(8));  // seek backwards
@@ -341,20 +352,15 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
 
       // next
       {
-        auto values = column->iterator(irs::ColumnHint::Normal);
-        ASSERT_NE(nullptr, values);
-        auto* actual_value = irs::get<irs::PayAttr>(*values);
-        ASSERT_NE(nullptr, actual_value);
+        irs::tests::BlobPointReader values{segment, *column};
 
         auto docs = prepared->execute({.segment = segment});
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(14, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(91, irs::ReadZV64(in));
         ASSERT_FALSE(docs->next());
         ASSERT_EQ(irs::doc_limits::eof(), docs->value());
@@ -362,16 +368,12 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
 
       // seek
       {
-        auto values = column->iterator(irs::ColumnHint::Normal);
-        ASSERT_NE(nullptr, values);
-        auto* actual_value = irs::get<irs::PayAttr>(*values);
-        ASSERT_NE(nullptr, actual_value);
+        irs::tests::BlobPointReader values{segment, *column};
 
         auto docs = prepared->execute({.segment = segment});
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_EQ((irs::doc_limits::min)() + 91, docs->seek(27));
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(91, irs::ReadZV64(in));
         ASSERT_EQ((irs::doc_limits::min)() + 91,
                   docs->seek(8));  // seek backwards
@@ -394,64 +396,48 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
 
       // next
       {
-        auto values = column->iterator(irs::ColumnHint::Normal);
-        ASSERT_NE(nullptr, values);
-        auto* actual_value = irs::get<irs::PayAttr>(*values);
-        ASSERT_NE(nullptr, actual_value);
+        irs::tests::BlobPointReader values{segment, *column};
 
         auto docs = prepared->execute({.segment = segment});
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(1, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(6, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(11, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(17, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(18, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(23, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(24, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(28, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(38, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(51, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(66, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(79, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(89, irs::ReadZV64(in));
         ASSERT_FALSE(docs->next());
         ASSERT_EQ(irs::doc_limits::eof(), docs->value());
@@ -459,41 +445,31 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
 
       // seek + next
       {
-        auto values = column->iterator(irs::ColumnHint::Normal);
-        ASSERT_NE(nullptr, values);
-        auto* actual_value = irs::get<irs::PayAttr>(*values);
-        ASSERT_NE(nullptr, actual_value);
+        irs::tests::BlobPointReader values{segment, *column};
 
         auto docs = prepared->execute({.segment = segment});
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(1, irs::ReadZV64(in));
         ASSERT_EQ((irs::doc_limits::min)() + 28,
                   docs->seek((irs::doc_limits::min)() + 28));
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(28, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(38, irs::ReadZV64(in));
         ASSERT_EQ((irs::doc_limits::min)() + 51, docs->seek(45));
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(51, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(66, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(79, irs::ReadZV64(in));
         ASSERT_TRUE(docs->next());
-        ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        in.reset(actual_value->value);
+        in.reset(values.Get(docs->value()));
         ASSERT_EQ(89, irs::ReadZV64(in));
         ASSERT_FALSE(docs->next());
         ASSERT_EQ(irs::doc_limits::eof(), docs->value());

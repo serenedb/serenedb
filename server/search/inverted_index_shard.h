@@ -47,20 +47,6 @@ namespace sdb::search {
 
 class InvertedIndexShard;
 
-struct InvertedIndexShardOptions : public IndexShardOptions {
-  struct Base {
-    // Default 1000 ms for both intervals so newly created indexes are
-    // searchable promptly without requiring explicit WITH (commit_interval)
-    // / WITH (consolidation_interval) on CREATE INDEX. Setting to 0
-    // disables the background task (see CommitTask).
-    size_t commit_interval_ms = 1000;
-    size_t consolidation_interval_ms = 1000;
-    size_t cleanup_interval_step = 1;
-  };
-
-  Base base;
-};
-
 struct ThreadPoolState {
   std::atomic_size_t pending_commits{0};
   std::atomic_size_t non_empty_commits{0};
@@ -158,17 +144,14 @@ class InvertedIndexShard final
   };
 
   InvertedIndexShard(ObjectId id, const catalog::InvertedIndex& index,
-                     InvertedIndexShardOptions options, bool is_new);
+                     bool is_new);
 
-  static std::filesystem::path GetPath(ObjectId db_id,
-                                       ObjectId schema_id = ObjectId{0},
-                                       ObjectId table_id = ObjectId{0},
-                                       ObjectId index_id = ObjectId{0},
-                                       ObjectId shard_id = ObjectId{0});
+  static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
+                                       ObjectId table_id, ObjectId index_id,
+                                       ObjectId shard_id);
 
   static std::shared_ptr<InvertedIndexShard> Create(
-    ObjectId id, const catalog::InvertedIndex& index,
-    InvertedIndexShardOptions options, bool is_new);
+    ObjectId id, const catalog::InvertedIndex& index, bool is_new);
 
   void WriteInternal(vpack::Builder& builder) const final;
 
@@ -257,6 +240,7 @@ class InvertedIndexShard final
   };
 
   void StartRecovery() noexcept {
+    std::lock_guard lock{_commit_mutex};
     SDB_ASSERT(_phase == Phase::Creating);
     _phase = Phase::Recovering;
   }
@@ -280,8 +264,7 @@ class InvertedIndexShard final
   std::shared_ptr<ThreadPoolState> _state;
   InvertedIndexSnapshotPtr _snapshot;
   std::unique_ptr<irs::Directory> _dir;
-  InvertedIndexShardOptions _options;
-  std::unique_ptr<irs::Scorer> _wand_scorer;
+  std::unique_ptr<irs::Scorer> _topk_scorer;
   std::shared_ptr<irs::IndexWriter> _writer;
   TasksSettings _tasks_settings;
   absl::Mutex _mutex;

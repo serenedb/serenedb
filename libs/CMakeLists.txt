@@ -27,7 +27,6 @@ add_library(
     basics/string_utils.cpp
     basics/thread.cpp
     basics/static_strings.cpp
-    basics/unshackled_mutex.cpp
     basics/application-exit.cpp
     basics/debugging.cpp
     basics/error.cpp
@@ -40,19 +39,13 @@ add_library(
     basics/terminal-utils-posix.cpp
     basics/threads-posix.cpp
     basics/strings.cpp
-    basics/csv.cpp
     basics/zip.cpp
     basics/datetime.cpp
     basics/hashes.cpp
-    basics/read_write_spin_lock.cpp
     basics/utf8_helper.cpp
-    basics/attribute_name_parser.cpp
     basics/cpu_usage_snapshot.cpp
-    basics/debug_race_controller.cpp
     basics/file_descriptors.cpp
-    basics/global_resource_monitor.cpp
     basics/hybrid_logical_clock.cpp
-    basics/resource_usage.cpp
     basics/socket-utils.cpp
     basics/terminal-utils.cpp
     basics/thread_utils.cpp
@@ -198,26 +191,12 @@ add_library(
     endpoint/endpoint_ip_v4.cpp
     endpoint/endpoint_ip_v6.cpp
     endpoint/endpoint_list.cpp
-    maskings/attribute_masking.cpp
-    maskings/collection.cpp
-    maskings/masking_function.cpp
-    maskings/maskings.cpp
-    maskings/path.cpp
-    maskings/random_mask.cpp
-    maskings/random_string_mask.cpp
     rest/common_defines.cpp
     rest/general_request.cpp
     rest/general_response.cpp
     rest/http_request.cpp
     rest/http_response.cpp
     rest/version.cpp
-    http_client/client_connection.cpp
-    http_client/connection_cache.cpp
-    http_client/general_client_connection.cpp
-    http_client/http_response_checker.cpp
-    http_client/http_client.cpp
-    http_client/http_result.cpp
-    http_client/ssl_client_connection.cpp
 )
 
 target_link_libraries(
@@ -232,9 +211,6 @@ target_include_directories(serene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(serene PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 
 target_include_directories(serene SYSTEM PUBLIC ${OPENSSL_INCLUDE_DIR})
-if(USE_DTRACE)
-    target_include_directories(serene SYSTEM PUBLIC ${SDT_INCLUDE_DIR})
-endif()
 
 target_link_libraries(serene PUBLIC rocksdb_interface)
 

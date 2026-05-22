@@ -1,0 +1,106 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE iceberg_manifest (id SERIAL PRIMARY KEY, name TEXT);
+
+
+statement count 2
+INSERT INTO iceberg_manifest (name) VALUES ('a'), ('b');
+
+
+statement ok
+CREATE TABLE iceberg_partition (
+  id BIGINT NOT NULL DEFAULT nextval('public.iceberg_manifest_id_seq'),
+  payload TEXT
+);
+
+
+statement count 1
+INSERT INTO iceberg_partition (payload) VALUES ('pre-crash');
+
+
+query
+SELECT id, payload FROM iceberg_partition ORDER BY id;
+----
+id	payload
+3	pre-crash
+
+
+statement ok
+SET sdb_faults = 'crash_on_drop';
+
+
+statement error (?i)connection closed|server closed|terminat|reset|EOF
+DROP TABLE iceberg_manifest CASCADE;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT id, payload FROM iceberg_partition ORDER BY id;
+----
+id	payload
+3	pre-crash
+
+
+connection after_crash
+statement ok
+CREATE TABLE iceberg_audit_probe (
+  seq_alive BOOL NOT NULL,
+  default_alive BOOL NOT NULL
+);
+
+
+connection after_crash
+statement ok
+INSERT INTO iceberg_audit_probe (seq_alive, default_alive)
+SELECT
+  EXISTS(SELECT 1 FROM pg_class WHERE relname = 'iceberg_manifest_id_seq') AS seq_alive,
+  EXISTS(SELECT 1 FROM pg_class WHERE relname = 'iceberg_manifest') AS default_alive;
+
+
+connection after_crash
+query
+SELECT seq_alive = default_alive FROM iceberg_audit_probe;
+----
+?column?
+t
+
+
+connection after_crash
+statement ok
+DROP TABLE iceberg_audit_probe;
+
+
+connection after_crash
+statement count 1
+INSERT INTO iceberg_partition (id, payload) VALUES (500, 'after-crash-explicit');
+
+
+connection after_crash
+query
+SELECT id, payload FROM iceberg_partition WHERE id IN (3, 500) ORDER BY id;
+----
+id	payload
+3	pre-crash
+500	after-crash-explicit
+
+
+connection after_crash
+statement ok
+DROP TABLE IF EXISTS iceberg_partition;
+
+
+connection after_crash
+statement ok
+DROP TABLE IF EXISTS iceberg_manifest CASCADE;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE IF EXISTS iceberg_manifest_id_seq;

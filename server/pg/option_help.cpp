@@ -25,7 +25,25 @@
 
 #include <variant>
 
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
+
 namespace sdb::pg {
+
+void CheckPositiveInt(std::string_view name, int value) {
+  if (value <= 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("\"", name, "\" must be a positive integer"));
+  }
+}
+
+void CheckNonNegativeInt(std::string_view name, int value) {
+  if (value < 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("\"", name, "\" must be a non-negative integer"));
+  }
+}
+
 namespace {
 
 void FormatGroup(std::string& out, const OptionGroup& group, int indent) {

@@ -29,7 +29,6 @@
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types.hpp>
-#include <duckdb/execution/executor.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
@@ -53,7 +52,6 @@
 #include "basics/dtoa.h"
 #include "basics/endian.h"
 #include "basics/exceptions.h"
-#include "basics/global_resource_monitor.h"
 #include "basics/logger/logger.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
@@ -1083,25 +1081,6 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
   _success_packet = true;
 }
 
-duckdb::unique_ptr<duckdb::PendingQueryResult>
-PgSQLCommTaskBase::PendingQueryEnsured(duckdb::PreparedStatement& prepared,
-                                       duckdb::vector<duckdb::Value>& values,
-                                       bool allow_stream_result) {
-  const auto& props = prepared.GetStatementProperties();
-  const auto db_name = DatabaseName();
-  _connection_ctx->EnsureCatalogSnapshot();
-  if (props.modified_databases.contains(db_name)) {
-    _connection_ctx->EnsureRocksDBTransaction();
-    _connection_ctx->EnsureRocksDBSnapshot();
-  } else if (props.read_databases.contains(db_name)) {
-    if (_connection_ctx->IsExplicitTransaction()) {
-      _connection_ctx->EnsureRocksDBTransaction();
-    }
-    _connection_ctx->EnsureRocksDBSnapshot();
-  }
-  return prepared.PendingQuery(values, allow_stream_result);
-}
-
 void PgSQLCommTaskBase::ExecutePortal(DuckDBPortal& portal) {
   SDB_ASSERT(_pop_packet);
   SDB_ASSERT(portal.stmt);
@@ -1123,6 +1102,25 @@ void PgSQLCommTaskBase::ExecutePortal(DuckDBPortal& portal) {
     state = ProcessQueryResult();
   } while (state == ProcessState::More);
   _pop_packet = state == ProcessState::DonePacket;
+}
+
+duckdb::unique_ptr<duckdb::PendingQueryResult>
+PgSQLCommTaskBase::PendingQueryEnsured(duckdb::PreparedStatement& prepared,
+                                       duckdb::vector<duckdb::Value>& values,
+                                       bool allow_stream_result) {
+  const auto& props = prepared.GetStatementProperties();
+  const auto db_name = DatabaseName();
+  _connection_ctx->EnsureCatalogSnapshot();
+  if (props.modified_databases.contains(db_name)) {
+    _connection_ctx->EnsureRocksDBTransaction();
+    _connection_ctx->EnsureRocksDBSnapshot();
+  } else if (props.read_databases.contains(db_name)) {
+    if (_connection_ctx->IsExplicitTransaction()) {
+      _connection_ctx->EnsureRocksDBTransaction();
+    }
+    _connection_ctx->EnsureRocksDBSnapshot();
+  }
+  return prepared.PendingQuery(values, allow_stream_result);
 }
 
 auto PgSQLCommTaskBase::BindStatement(DuckDBStatement& stmt,

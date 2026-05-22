@@ -54,7 +54,7 @@ void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
                "analyzer."));
   }
   std::string field_name;
-  MakeFieldName(column_info, field_name);
+  MakeFieldName(column_info.field_id, field_name);
   search::mangling::MangleString(field_name);
 
   if (column_info.tokenizer.analyzer->type() ==

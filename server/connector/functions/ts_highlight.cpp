@@ -44,6 +44,7 @@
 #include <span>
 
 #include "basics/assert.h"
+#include "connector/common.h"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/highlight/highlight_options.h"

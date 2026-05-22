@@ -53,6 +53,7 @@
 #include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
 #include "connector/columnstore_materializer.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/index_source.h"
@@ -64,6 +65,7 @@
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_pk_lookup.h"
 #include "connector/search_remove_filter.hpp"
+#include "pg/connection_context.h"
 #include "query/duckdb_engine.h"
 #include "rocksdb/db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
@@ -172,31 +174,19 @@ static void WriteTopkOffsets(SearchFullScanGlobalState& gstate,
 // scan_source -- promote it to a match-all SearchScan so the rest of init
 // can assume a SearchScan. Optimizer rewrites for filtered/scored queries
 // install a more specific SearchScan before init runs.
-static void EnsureDefaultMatchAllSearchScan(SereneDBScanBindData& bind_data) {
+static void EnsureDefaultMatchAllSearchScan(duckdb::ClientContext& context,
+                                            SereneDBScanBindData& bind_data) {
   if (bind_data.scan_source->Kind() == ScanSourceKind::Search) {
     return;
   }
   SDB_ASSERT(bind_data.IsInvertedIndexEntry());
   SDB_ASSERT(bind_data.inverted_index);
 
-  auto cat_snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  std::shared_ptr<search::InvertedIndexShard> shard;
-  for (auto& s : cat_snapshot->GetIndexShardsByRelation(
-         bind_data.inverted_index->GetRelationId())) {
-    if (s->GetIndexId() == bind_data.inverted_index->GetId() &&
-        s->GetType() == catalog::ObjectType::InvertedIndexShard) {
-      shard = basics::downCast<search::InvertedIndexShard>(std::move(s));
-      break;
-    }
-  }
-  SDB_ASSERT(shard);
-  auto idx_snapshot = shard->GetInvertedIndexSnapshot();
-  SDB_ASSERT(idx_snapshot);
-
   auto root = std::make_shared<irs::And>();
   root->add<irs::All>();
   auto search = std::make_unique<SearchScan>();
-  search->snapshot = std::move(idx_snapshot);
+  search->snapshot = GetSereneDBContext(context).EnsureSearchSnapshot(
+    bind_data.inverted_index->GetId());
   search->stored_filter = root;
   // `Query` is built lazily in SearchFullScanInitGlobal -- single
   // prepare site per execution.
@@ -209,7 +199,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto& bind_data = const_cast<SereneDBScanBindData&>(
     input.bind_data->Cast<SereneDBScanBindData>());
-  EnsureDefaultMatchAllSearchScan(bind_data);
+  EnsureDefaultMatchAllSearchScan(context, bind_data);
   auto state = duckdb::make_uniq<SearchFullScanGlobalState>(
     duckdb::DatabaseInstance::GetDatabase(context));
 

@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/types/string_type.hpp>
 #include <span>
 #include <string_view>
 
@@ -28,6 +29,10 @@
 #include "catalog/table_options.h"
 
 namespace sdb::connector {
+
+inline std::string_view AsView(const duckdb::string_t& s) noexcept {
+  return {s.GetData(), s.GetSize()};
+}
 
 struct ColumnInfo {
   catalog::Column::Id id;

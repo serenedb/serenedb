@@ -317,7 +317,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
                                                            pk_col_ids.end());
     containers::FlatHashSet<catalog::Column::Id> indexed_col_ids;
     for (auto& index : indexes) {
-      for (auto col_id : index->GetColumnIds()) {
+      for (auto col_id : index->GetReferencedColumnIds()) {
         if (!pk_id_set.contains(col_id)) {
           indexed_col_ids.insert(col_id);
         }
@@ -705,6 +705,34 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
                                       num_rows, gstate.row_keys,
                                       gstate.active_writers, desc);
       }
+    }
+
+    // Re-index every catalog-registered expression for each row. Build a
+    // slot_to_col_id mapping that matches the chunk layout we've fed
+    // through above so EvaluateExprOverChunk can resolve dep-column refs.
+    std::vector<catalog::Column::Id> slot_to_col_id;
+    slot_to_col_id.reserve(gstate.update_columns.size() +
+                           gstate.non_update_idx_cols.size());
+    for (const auto& col : gstate.update_columns) {
+      slot_to_col_id.push_back(col.id);
+    }
+    // Non-update cols sit at their `chunk_idx`; pad slot_to_col_id with
+    // kInvalidId so direct indexing into chunk.data[chunk_idx] resolves
+    // to the right Column::Id at that slot.
+    for (const auto& col : gstate.non_update_idx_cols) {
+      while (slot_to_col_id.size() <= col.chunk_idx) {
+        slot_to_col_id.push_back(catalog::Column::kInvalidId);
+      }
+      slot_to_col_id[col.chunk_idx] = col.id;
+    }
+    for (auto& writer : gstate.index_writers) {
+      auto exprs = writer->IndexedExpressions();
+      if (exprs.empty()) {
+        continue;
+      }
+      EvaluateAndWriteIndexedExpressions(
+        *writer, exprs, chunk, gstate.table_id, slot_to_col_id, context.client,
+        num_rows, gstate.row_keys, gstate.serializer);
     }
   }
 

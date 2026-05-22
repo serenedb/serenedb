@@ -20,9 +20,10 @@
 
 #pragma once
 
+#include <iresearch/types.hpp>
+
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/table_options.h"
-#include "rocksdb/slice.h"
 
 namespace sdb::connector {
 
@@ -35,6 +36,12 @@ struct ColumnDescriptor {
   catalog::ColumnStoreMode store_mode;
   duckdb::LogicalType type;
   bool have_nulls;
+};
+
+struct ExpressionDescriptor {
+  duckdb::LogicalType type;
+  bool have_nulls;
+  irs::field_id field_id = 0;
 };
 
 // Base implementation of column centric index writers

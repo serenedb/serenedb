@@ -193,7 +193,7 @@ struct VectorSearchScan : ScanSource {
   VectorSearchScan(ScanSourceKind kind) : ScanSource{kind} {}
 
   search::InvertedIndexSnapshotPtr snapshot;
-  catalog::Column::Id field_id{};
+  irs::field_id field_id{};
   std::vector<float> query_vector;
   duckdb::unique_ptr<duckdb::Expression> filter_expression;
   std::vector<catalog::Column::Id> filter_column_ids;

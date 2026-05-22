@@ -27,6 +27,7 @@
 #include "catalog/inverted_index.h"
 #include "catalog/secondary_index.h"
 #include "connector/duckdb_rocksdb_reader.h"
+#include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_search_sink_writer.h"
 #include "connector/duckdb_secondary_sink_writer.h"
 #include "connector/duckdb_table_entry.h"
@@ -105,24 +106,27 @@ std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSecondaryWriter(
 std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSearchWriter(
   DuckDBWriteKind kind, irs::IndexWriter::Transaction& trx,
   TokenizerProvider&& tokenizer_provider,
-  JsonPathsProvider&& json_paths_provider,
   StoreValuesProvider&& store_values_provider,
   IsTextIndexedProvider&& is_text_indexed_provider,
   HNSWInfoProvider&& hnsw_info_provider,
-  std::span<const catalog::Column::Id> columns) {
+  std::span<const catalog::Column::Id> columns,
+  ExpressionTokenizerProvider&& expr_tokenizer_provider,
+  std::vector<IndexedExpression>&& indexed_exprs) {
   switch (kind) {
     case DuckDBWriteKind::Insert:
       return std::make_unique<DuckDBSearchSinkInsertWriter>(
         trx, std::move(tokenizer_provider), columns,
-        std::move(json_paths_provider), std::move(store_values_provider),
-        std::move(is_text_indexed_provider), std::move(hnsw_info_provider));
+        std::move(store_values_provider), std::move(is_text_indexed_provider),
+        std::move(hnsw_info_provider), std::move(expr_tokenizer_provider),
+        std::move(indexed_exprs));
     case DuckDBWriteKind::Delete:
       return std::make_unique<DuckDBSearchSinkDeleteWriter>(trx);
     case DuckDBWriteKind::Update:
       return std::make_unique<DuckDBSearchSinkUpdateWriter>(
         trx, std::move(tokenizer_provider), columns,
-        std::move(json_paths_provider), std::move(store_values_provider),
-        std::move(is_text_indexed_provider), std::move(hnsw_info_provider));
+        std::move(store_values_provider), std::move(is_text_indexed_provider),
+        std::move(hnsw_info_provider), std::move(expr_tokenizer_provider),
+        std::move(indexed_exprs));
   }
   SDB_ASSERT(false, "Unknown DuckDBWriteKind");
   return nullptr;
@@ -179,17 +183,19 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
       auto& inverted_index =
         basics::downCast<const catalog::InvertedIndex>(index);
       auto tokenizer_provider = MakeTokenizerProvider(snapshot, inverted_index);
-      auto json_paths_provider =
-        MakeJsonPathsProvider(snapshot, inverted_index);
       auto store_values_provider = MakeStoreValuesProvider(inverted_index);
       auto is_text_indexed_provider = MakeIsTextIndexedProvider(inverted_index);
       auto hnsw_info_provider = MakeHNSWInfoProvider(inverted_index);
+      auto expr_tokenizer_provider =
+        MakeExpressionTokenizerProvider(snapshot, inverted_index);
+      auto indexed_exprs =
+        MakeIndexedExpressions(inverted_index, conn_ctx.GetClientContext());
 
       writers.push_back(MakeDuckDBSearchWriter(
         Kind, index_txn, std::move(tokenizer_provider),
-        std::move(json_paths_provider), std::move(store_values_provider),
-        std::move(is_text_indexed_provider), std::move(hnsw_info_provider),
-        index.GetColumnIds()));
+        std::move(store_values_provider), std::move(is_text_indexed_provider),
+        std::move(hnsw_info_provider), index.GetColumnIds(),
+        std::move(expr_tokenizer_provider), std::move(indexed_exprs)));
     }
   };
 
@@ -287,6 +293,35 @@ std::vector<size_t> BuildCreateIndexProjection(
   projection.erase(std::unique(projection.begin(), projection.end()),
                    projection.end());
   return projection;
+}
+
+void EvaluateAndWriteIndexedExpressions(
+  DuckDBSinkIndexWriter& sink, std::span<const IndexedExpression> indexed_exprs,
+  duckdb::DataChunk& chunk, ObjectId table_id,
+  std::span<const catalog::Column::Id> slot_to_col_id,
+  duckdb::ClientContext& client_context, duckdb::idx_t num_rows,
+  std::vector<std::string>& row_keys, DuckDBColumnSerializer& serializer) {
+  for (const auto& indexed_expr : indexed_exprs) {
+    SDB_ASSERT(indexed_expr.normalized_expr);
+    auto result =
+      EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk, table_id,
+                            slot_to_col_id, client_context);
+
+    const ExpressionDescriptor expr_desc{result.GetType(), /*have_nulls=*/true,
+                                         indexed_expr.field_id};
+    const bool switched = sink.SwitchExpression(expr_desc, result, num_rows);
+    if (!switched) {
+      continue;
+    }
+
+    DuckDBSinkIndexWriter* writer_ptr = &sink;
+    ColumnDescriptor desc{catalog::Column::kInvalidId,
+                          catalog::ColumnStoreMode::kNormal, result.GetType(),
+                          /*have_nulls=*/true};
+    DuckDBColumnSerializer::NoopWriter noop_writer{};
+    serializer.WriteColumn(noop_writer, result, num_rows, row_keys,
+                           {&writer_ptr, 1}, desc);
+  }
 }
 
 }  // namespace sdb::connector

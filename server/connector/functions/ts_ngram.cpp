@@ -80,7 +80,7 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(column_info, field_name);
+  MakeFieldName(column_info.field_id, field_name);
   search::mangling::MangleString(field_name);
 
   auto& ngram = ctx.negated ? Negate<irs::ByNGramSimilarity>(filter)

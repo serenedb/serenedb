@@ -59,6 +59,7 @@
 #include "connector/functions/search.h"
 #include "connector/functions/ts_offsets.h"
 #include "connector/functions/vector.h"
+#include "connector/index_expression.hpp"
 #include "connector/search_field_name.hpp"
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_filter_printer.hpp"
@@ -255,16 +256,13 @@ DistanceArgs ExtractDistanceArgs(duckdb::BoundFunctionExpression& func_expr) {
   if (func_expr.children.size() != 2) {
     return out;
   }
-  auto is_col = [](const duckdb::Expression& e) {
-    return e.expression_class == duckdb::ExpressionClass::BOUND_COLUMN_REF ||
-           e.expression_class == duckdb::ExpressionClass::BOUND_REF;
-  };
   auto& lhs = func_expr.children[0];
   auto& rhs = func_expr.children[1];
-  if (is_col(*lhs) && !is_col(*rhs)) {
+  // Foldable means can be evaluated at plan time, for example a constant
+  if (!lhs->IsFoldable() && rhs->IsFoldable()) {
     out.col_arg = lhs.get();
     out.value_arg = rhs.get();
-  } else if (!is_col(*lhs) && is_col(*rhs)) {
+  } else if (lhs->IsFoldable() && !rhs->IsFoldable()) {
     out.col_arg = rhs.get();
     out.value_arg = lhs.get();
   }
@@ -338,19 +336,23 @@ bool RewriteFilterColumnRefs(
 
 struct SearchColumnContext {
   duckdb::TableIndex table_index;
+  duckdb::ClientContext* client_context = nullptr;
   std::span<const catalog::Column::Id> projected_column_ids;
   containers::FlatHashMap<catalog::Column::Id, duckdb::LogicalType>
     column_type_by_id;
   containers::FlatHashSet<catalog::Column::Id> indexed_column_ids;
+  struct IndexedExpressionMeta {
+    duckdb::LogicalType return_type;
+    irs::field_id field_id = 0;
+  };
+  containers::FlatHashMap<std::string_view, IndexedExpressionMeta>
+    indexed_expressions;
   std::function<catalog::ColumnTokenizer(catalog::Column::Id)>
     tokenizer_provider;
-  // Optional JSON-path tokenizer lookup: returns the per-path tokenizer
-  // resolved against the catalog, or nullopt if the column is not
-  // indexed at `path`.
-  std::function<std::optional<catalog::ColumnTokenizer>(catalog::Column::Id,
-                                                        std::string_view)>
-    json_path_tokenizer_provider;
+  std::function<catalog::ColumnTokenizer(std::string_view)>
+    expr_tokenizer_provider;
   std::function<bool(catalog::Column::Id)> has_postings_provider;
+  ObjectId relation_id;
 };
 
 connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
@@ -377,39 +379,88 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
       return std::nullopt;
     }
     connector::SearchColumnInfo info;
-    info.column_id = col_id;
+    info.field_id = static_cast<irs::field_id>(col_id);
     info.logical_type = type_it->second;
     info.tokenizer = ctx.tokenizer_provider(col_id);
     return info;
   };
 }
 
-connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx) {
-  return [&ctx](const duckdb::BoundColumnRefExpression& ref,
-                std::string_view json_pointer)
+// True iff at least one column ref was found and all bind to `table_index`.
+bool AllColumnRefsBindTo(const duckdb::Expression& expr,
+                         duckdb::TableIndex table_index, bool& any_seen) {
+  if (expr.expression_class == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+    any_seen = true;
+    return expr.Cast<duckdb::BoundColumnRefExpression>().binding.table_index ==
+           table_index;
+  }
+  bool ok = true;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      if (ok && !AllColumnRefsBindTo(child, table_index, any_seen)) {
+        ok = false;
+      }
+    });
+  return ok;
+}
+
+irs::field_id ResolveAnnTargetFieldId(
+  const duckdb::Expression& col_arg, const duckdb::LogicalGet& get,
+  const connector::SereneDBScanBindData& bind_data,
+  const catalog::InvertedIndex& index, duckdb::ClientContext& client_context) {
+  if (col_arg.expression_class == duckdb::ExpressionClass::BOUND_COLUMN_REF ||
+      col_arg.expression_class == duckdb::ExpressionClass::BOUND_REF) {
+    if (const auto id = ColumnIdByName(bind_data, col_arg.GetName());
+        id != catalog::Column::kInvalidId) {
+      return static_cast<irs::field_id>(id);
+    }
+  }
+  bool any_ref_seen = false;
+  if (!AllColumnRefsBindTo(col_arg, get.table_index, any_ref_seen) ||
+      !any_ref_seen) {
+    return 0;
+  }
+  constexpr auto kInvalidId = catalog::Column::kInvalidId;
+  std::vector<catalog::Column::Id> projected_ids;
+  projected_ids.reserve(get.GetColumnIds().size());
+  for (const auto& ci : get.GetColumnIds()) {
+    if (!ci.HasPrimaryIndex()) {
+      projected_ids.push_back(kInvalidId);
+      continue;
+    }
+    const auto phys = ci.GetPrimaryIndex();
+    projected_ids.push_back(phys < bind_data.column_ids.size()
+                              ? bind_data.column_ids[phys]
+                              : kInvalidId);
+  }
+  auto normalized = connector::NormalizeBoundExpression(
+    col_arg, index.GetRelationId(), projected_ids, client_context);
+  auto serialized = connector::SerializeBoundExpression(*normalized);
+  return index.FindFieldIdBySerialized(serialized).value_or(0);
+}
+
+connector::ExpressionGetter MakeExpressionGetter(SearchColumnContext& ctx) {
+  return [&ctx](const duckdb::Expression& expr)
            -> std::optional<connector::SearchColumnInfo> {
-    if (ref.binding.table_index != ctx.table_index) {
+    if (!ctx.expr_tokenizer_provider || ctx.client_context == nullptr) {
       return std::nullopt;
     }
-    if (ref.binding.column_index >= ctx.projected_column_ids.size()) {
+    bool any_ref_seen = false;
+    if (!AllColumnRefsBindTo(expr, ctx.table_index, any_ref_seen) ||
+        !any_ref_seen) {
       return std::nullopt;
     }
-    const auto col_id = ctx.projected_column_ids[ref.binding.column_index];
-    if (col_id == catalog::Column::kInvalidId) {
-      return std::nullopt;
-    }
-    if (!ctx.json_path_tokenizer_provider) {
-      return std::nullopt;
-    }
-    auto tokenizer = ctx.json_path_tokenizer_provider(col_id, json_pointer);
-    if (!tokenizer) {
+    auto normalized = connector::NormalizeBoundExpression(
+      expr, ctx.relation_id, ctx.projected_column_ids, *ctx.client_context);
+    auto serialized = connector::SerializeBoundExpression(*normalized);
+    auto entry = ctx.indexed_expressions.find(serialized);
+    if (entry == ctx.indexed_expressions.end()) {
       return std::nullopt;
     }
     connector::SearchColumnInfo info;
-    info.column_id = col_id;
-    info.logical_type = duckdb::LogicalType::VARCHAR;
-    info.tokenizer = *std::move(tokenizer);
-    info.json_pointer = json_pointer;
+    info.field_id = entry->second.field_id;
+    info.logical_type = entry->second.return_type;
+    info.tokenizer = ctx.expr_tokenizer_provider(serialized);
     return info;
   };
 }
@@ -435,6 +486,7 @@ void InitSearchColumnContextForGet(
                                       : kInvalidId);
   }
   ctx.table_index = get.table_index;
+  ctx.relation_id = resolved.index->GetRelationId();
   ctx.projected_column_ids = projected_ids_storage;
   bind_data.IterateColumns(
     [&](catalog::Column::Id id, const duckdb::LogicalType& type) {
@@ -451,21 +503,39 @@ void InitSearchColumnContextForGet(
     if (info == nullptr) {
       return false;
     }
-    return !info->store_values || info->text_dictionary.isSet() ||
-           !info->json_paths.empty();
+    return !info->store_values || info->text_dictionary.isSet();
   };
-  ctx.json_path_tokenizer_provider = [index_ptr, snapshot](
-                                       catalog::Column::Id col_id,
-                                       std::string_view json_pointer) {
-    return index_ptr->GetJsonPathTokenizer(snapshot, col_id, json_pointer);
+  ctx.expr_tokenizer_provider = [index_ptr,
+                                 snapshot](std::string_view serialized_expr) {
+    return index_ptr->GetExprTokenizer(snapshot, serialized_expr);
   };
+  for (const auto& [field_id, entry] : resolved.index->GetEntries()) {
+    const auto* expr = entry.GetExpressionData();
+    if (!expr) {
+      continue;
+    }
+    ctx.indexed_expressions.emplace(expr->serialized_expr,
+                                    SearchColumnContext::IndexedExpressionMeta{
+                                      .return_type = expr->return_type,
+                                      .field_id = field_id,
+                                    });
+  }
 }
 
-auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data) {
+auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data,
+                          const catalog::InvertedIndex& index) {
   return [&](catalog::Column::Id col_id) {
     auto name = bind_data.ColumnNameById(col_id);
     if (!name.empty()) {
       return std::string{name};
+    }
+    if (const auto* entry =
+          index.FindEntry(static_cast<irs::field_id>(col_id))) {
+      if (const auto* expr = entry->GetExpressionData()) {
+        if (!expr->pretty_printed.empty()) {
+          return expr->pretty_printed;
+        }
+      }
     }
     return absl::StrCat("col", col_id);
   };
@@ -476,12 +546,12 @@ auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data) {
 bool TryClaimIresearchConjunct(
   irs::And& and_root, const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
-  const connector::JsonPathGetter& json_getter,
+  const connector::ExpressionGetter& expr_getter,
   const connector::SearchFilterOptions& options) {
   const auto before = and_root.size();
   std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&conjunct, 1};
   auto r =
-    connector::MakeSearchFilter(and_root, single, getter, options, json_getter);
+    connector::MakeSearchFilter(and_root, single, getter, options, expr_getter);
   if (r.ok() && and_root.size() > before) {
     return true;
   }
@@ -600,8 +670,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   std::vector<float> query_vector;
   if (is_norm) {
     auto* child = func_expr.children[0].get();
-    if (child->expression_class != duckdb::ExpressionClass::BOUND_COLUMN_REF &&
-        child->expression_class != duckdb::ExpressionClass::BOUND_REF) {
+    if (child->IsFoldable()) {
       return false;
     }
     col_arg = child;
@@ -619,10 +688,6 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     }
     col_arg = args.col_arg;
   }
-  auto col_id = ColumnIdByName(bind_data, col_arg->GetName());
-  if (col_id == catalog::Column::kInvalidId) {
-    return false;
-  }
 
   auto snapshot = PinnedSnapshot(options);
   auto resolved = ResolveIresearch(bind_data, *snapshot);
@@ -630,7 +695,13 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     return false;
   }
 
-  auto hnsw_info = resolved->index->GetColumnHNSWInfo(col_id);
+  const auto field_id = ResolveAnnTargetFieldId(
+    *col_arg, get, bind_data, *resolved->index, options.client_context);
+  if (field_id == 0) {
+    return false;
+  }
+
+  auto hnsw_info = resolved->index->GetHNSWInfo(field_id);
   if (!hnsw_info || hnsw_info->metric != expected_func->metric) {
     return false;
   }
@@ -645,7 +716,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
 
   auto ann = std::make_unique<connector::ANNScan>();
   ann->snapshot = PinnedSearchSnapshot(options, resolved->index->GetId());
-  ann->field_id = col_id;
+  ann->field_id = field_id;
   ann->query_vector = std::move(query_vector);
   ann->top_k = limit;
 
@@ -654,8 +725,10 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   std::vector<catalog::Column::Id> proj_ids_storage;
   InitSearchColumnContextForGet(sctx, proj_ids_storage, get, bind_data,
                                 *resolved, snapshot);
+  sctx.client_context = &options.client_context;
   auto getter = MakeColumnGetter(sctx);
-  auto json_getter = MakeJsonPathGetter(sctx);
+
+  auto expr_getter = MakeExpressionGetter(sctx);
 
   auto proxy = std::make_unique<irs::ProxyFilter>();
   auto [and_root, cache] =
@@ -668,7 +741,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     std::vector<bool> claimed(f->expressions.size(), false);
     for (size_t i = 0; i < f->expressions.size(); ++i) {
       if (TryClaimIresearchConjunct(and_root, f->expressions[i], getter,
-                                    json_getter, options)) {
+                                    expr_getter, options)) {
         claimed[i] = true;
         any_claimed = true;
       }
@@ -728,7 +801,7 @@ bool TryClaimAnnRange(
   float radius = 0.0f;
   bool radius_needs_square = false;
   std::vector<float> query_vector;
-  catalog::Column::Id col_id = catalog::Column::kInvalidId;
+  irs::field_id field_id = 0;
 
   for (duckdb::idx_t i = 0; i < filters.size(); ++i) {
     auto& expr = *filters[i];
@@ -784,9 +857,7 @@ bool TryClaimAnnRange(
     std::vector<float> candidate_vector;
     if (is_norm) {
       auto* child = func.children[0].get();
-      if (child->expression_class !=
-            duckdb::ExpressionClass::BOUND_COLUMN_REF &&
-          child->expression_class != duckdb::ExpressionClass::BOUND_REF) {
+      if (child->IsFoldable()) {
         continue;
       }
       col_expr = child;
@@ -804,11 +875,12 @@ bool TryClaimAnnRange(
       }
       col_expr = args.col_arg;
     }
-    auto candidate_col_id = ColumnIdByName(bind_data, col_expr->GetName());
-    if (candidate_col_id == catalog::Column::kInvalidId) {
+    const auto candidate_field_id = ResolveAnnTargetFieldId(
+      *col_expr, get, bind_data, *resolved.index, options.client_context);
+    if (candidate_field_id == 0) {
       continue;
     }
-    auto hnsw_info = resolved.index->GetColumnHNSWInfo(candidate_col_id);
+    auto hnsw_info = resolved.index->GetHNSWInfo(candidate_field_id);
     if (!hnsw_info || hnsw_info->metric != expected_current->metric) {
       continue;
     }
@@ -825,7 +897,7 @@ bool TryClaimAnnRange(
                           func.function.name == connector::kL2DistanceOp ||
                           func.function.name == connector::kL2Norm;
     query_vector = std::move(candidate_vector);
-    col_id = candidate_col_id;
+    field_id = candidate_field_id;
     match_idx = i;
     break;
   }
@@ -836,7 +908,7 @@ bool TryClaimAnnRange(
 
   auto rss = std::make_unique<connector::RangeSearchScan>();
   rss->snapshot = PinnedSearchSnapshot(options, resolved.index->GetId());
-  rss->field_id = col_id;
+  rss->field_id = field_id;
   rss->query_vector = std::move(query_vector);
   rss->radius = radius;
   rss->effective_radius = radius_needs_square ? radius * radius : radius;
@@ -848,8 +920,10 @@ bool TryClaimAnnRange(
   std::vector<catalog::Column::Id> proj_ids_storage;
   InitSearchColumnContextForGet(sctx, proj_ids_storage, get, bind_data,
                                 resolved, snapshot);
+  sctx.client_context = &options.client_context;
   auto getter = MakeColumnGetter(sctx);
-  auto json_getter = MakeJsonPathGetter(sctx);
+
+  auto expr_getter = MakeExpressionGetter(sctx);
 
   auto proxy = std::make_unique<irs::ProxyFilter>();
   auto [and_root, cache] =
@@ -858,7 +932,7 @@ bool TryClaimAnnRange(
   std::vector<bool> claimed(filters.size(), false);
   bool any_claimed = false;
   for (size_t i = 0; i < filters.size(); ++i) {
-    if (TryClaimIresearchConjunct(and_root, filters[i], getter, json_getter,
+    if (TryClaimIresearchConjunct(and_root, filters[i], getter, expr_getter,
                                   options)) {
       claimed[i] = true;
       any_claimed = true;
@@ -905,13 +979,15 @@ bool TryClaimSearchFilter(
   std::vector<catalog::Column::Id> projected_ids;
   InitSearchColumnContextForGet(ctx, projected_ids, get, bind_data, resolved,
                                 snapshot);
+  ctx.client_context = &options.client_context;
   auto getter = MakeColumnGetter(ctx);
-  auto json_getter = MakeJsonPathGetter(ctx);
+
+  auto expr_getter = MakeExpressionGetter(ctx);
 
   auto root = std::make_shared<irs::And>();
   std::vector<size_t> claimed_indices;
   for (size_t i = 0; i < filters.size(); ++i) {
-    if (TryClaimIresearchConjunct(*root, filters[i], getter, json_getter,
+    if (TryClaimIresearchConjunct(*root, filters[i], getter, expr_getter,
                                   options)) {
       claimed_indices.push_back(i);
     }
@@ -921,8 +997,8 @@ bool TryClaimSearchFilter(
   }
 
   // Capture summary BEFORE preparing -- prepare consumes the tree.
-  std::string filter_summary =
-    irs::ToStringDemangled(*root, MakeColumnNameLookup(bind_data));
+  std::string filter_summary = irs::ToStringDemangled(
+    *root, MakeColumnNameLookup(bind_data, *resolved.index));
 
   auto search = std::make_unique<connector::SearchScan>();
   search->snapshot = PinnedSearchSnapshot(options, resolved.index->GetId());

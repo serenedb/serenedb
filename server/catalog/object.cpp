@@ -40,4 +40,6 @@ Object::Object(ObjectId parent_id, ObjectId id, std::string_view name,
 
 ObjectId NextId() { return ObjectId{NewTickServer()}; }
 
+ObjectId NextNIds(uint64_t n) { return ObjectId{NewTickServer(n)}; }
+
 }  // namespace sdb::catalog

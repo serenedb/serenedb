@@ -185,7 +185,7 @@ void FromTokenizeListInAnyAllOf(
   }
 
   std::string field_name;
-  MakeFieldName(column_info, field_name);
+  MakeFieldName(column_info.field_id, field_name);
   search::mangling::MangleString(field_name);
 
   // Single-token short-circuit -> ByTerm.

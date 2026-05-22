@@ -49,7 +49,7 @@ void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
                              "requires a VARCHAR column."));
   }
   std::string field_name;
-  MakeFieldName(column_info, field_name);
+  MakeFieldName(column_info.field_id, field_name);
   search::mangling::MangleString(field_name);
   auto& filter = ctx.negated ? Negate<irs::ByPrefix>(parent)
                              : AddFilter<irs::ByPrefix>(parent);

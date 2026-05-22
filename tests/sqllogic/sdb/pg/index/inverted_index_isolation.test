@@ -108,3 +108,42 @@ id
 connection reader_rc
 statement ok
 COMMIT;
+
+connection reader_bare
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+
+connection reader_bare
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection reader_bare
+query
+SELECT id FROM t_idx ORDER BY id;
+----
+id
+1
+2
+3
+
+
+connection writer
+statement ok
+DROP TABLE t;
+
+
+connection reader_bare
+query
+SELECT id FROM t_idx ORDER BY id;
+----
+id
+1
+2
+3
+
+
+connection reader_bare
+statement ok
+COMMIT;

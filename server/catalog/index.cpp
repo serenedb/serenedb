@@ -517,6 +517,82 @@ std::vector<Column::Id> ExtractColumnIds(
   return ids;
 }
 
+Result ApplyIncludedOpclass(
+  std::string_view owner_label, const duckdb::LogicalType& value_type,
+  const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
+  InvertedIndexEntryInfo& entry) {
+  if (!opts) {
+    return {};
+  }
+  for (const auto& [key, raw_val] : *opts) {
+    if (key == kCompressionField) {
+      auto str = GetIndexStringOption(kIncludedKind, owner_label, key, raw_val);
+      if (!str) {
+        return std::move(str).error();
+      }
+      auto parsed = ParseCompressionName(owner_label, *str);
+      if (!parsed) {
+        return std::move(parsed).error();
+      }
+      if (auto r = ValidateColumnCompression(owner_label, *parsed, value_type);
+          r.fail()) {
+        return r;
+      }
+      entry.compression = *parsed;
+    } else if (key == kRowGroupSizeField) {
+      auto parsed = ParseRowGroupSize(kIncludedKind, owner_label, key, raw_val);
+      if (!parsed) {
+        return std::move(parsed).error();
+      }
+      entry.row_group_size = *parsed;
+    } else {
+      return {ERROR_BAD_PARAMETER, owner_label, ": unknown included option '",
+              key,
+              "'. Accepted options: compression (string, default 'auto'), "
+              "row_group_size (int >= 1)"};
+    }
+  }
+  return {};
+}
+
+Result ApplyHNSWOpclass(
+  std::string_view owner_label, const duckdb::LogicalType& value_type,
+  const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
+  InvertedIndexEntryInfo& entry) {
+  if (value_type.id() != duckdb::LogicalTypeId::ARRAY) {
+    return {ERROR_BAD_PARAMETER, owner_label,
+            " must be an ARRAY type to use the 'hnsw' opclass"};
+  }
+  if (duckdb::ArrayType::GetChildType(value_type).id() !=
+      duckdb::LogicalTypeId::FLOAT) {
+    return {ERROR_BAD_PARAMETER, owner_label,
+            " must be ARRAY(FLOAT, N) to use the 'hnsw' opclass"};
+  }
+  if (!opts) {
+    return {ERROR_BAD_PARAMETER, "Built-in opclass 'hnsw' on ", owner_label,
+            " requires options; use 'hnsw (...)'"};
+  }
+  HNSWColumnConfig cfg{
+    .d = static_cast<int>(duckdb::ArrayType::GetSize(value_type)),
+  };
+  auto compression = duckdb::CompressionType::COMPRESSION_AUTO;
+  uint32_t row_group_size = 0;
+  if (auto r =
+        ApplyHNSWOptions(owner_label, *opts, cfg, compression, row_group_size);
+      r.fail()) {
+    return r;
+  }
+  if (auto r = ValidateColumnCompression(owner_label, compression, value_type);
+      r.fail()) {
+    return r;
+  }
+  entry.hnsw_config = cfg;
+  entry.compression = compression;
+  entry.row_group_size = row_group_size;
+  entry.store_values = true;
+  return {};
+}
+
 }  // namespace
 
 ResultOr<std::shared_ptr<SecondaryIndex>> CreateSecondaryIndex(
@@ -590,89 +666,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     return dict;
   };
 
-  auto apply_included_options =
-    [](std::string_view owner_label, const duckdb::LogicalType& value_type,
-       const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
-       InvertedIndexEntryInfo& entry) -> Result {
-    if (!opts) {
-      return {};
-    }
-    for (const auto& [key, raw_val] : *opts) {
-      if (key == kCompressionField) {
-        auto str =
-          GetIndexStringOption(kIncludedKind, owner_label, key, raw_val);
-        if (!str) {
-          return std::move(str).error();
-        }
-        auto parsed = ParseCompressionName(owner_label, *str);
-        if (!parsed) {
-          return std::move(parsed).error();
-        }
-        if (auto r =
-              ValidateColumnCompression(owner_label, *parsed, value_type);
-            r.fail()) {
-          return r;
-        }
-        entry.compression = *parsed;
-      } else if (key == kRowGroupSizeField) {
-        auto parsed =
-          ParseRowGroupSize(kIncludedKind, owner_label, key, raw_val);
-        if (!parsed) {
-          return std::move(parsed).error();
-        }
-        entry.row_group_size = *parsed;
-      } else {
-        return {ERROR_BAD_PARAMETER, owner_label, ": unknown included option '",
-                key,
-                "'. Accepted options: compression (string, default 'auto'), "
-                "row_group_size (int >= 1)"};
-      }
-    }
-    return {};
-  };
-
-  auto apply_hnsw_opclass =
-    [](std::string_view owner_label, const duckdb::LogicalType& value_type,
-       const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
-       InvertedIndexEntryInfo& entry) -> Result {
-    if (value_type.id() != duckdb::LogicalTypeId::ARRAY) {
-      return {ERROR_BAD_PARAMETER, owner_label,
-              " must be an ARRAY type to use the 'hnsw' opclass"};
-    }
-    if (duckdb::ArrayType::GetChildType(value_type).id() !=
-        duckdb::LogicalTypeId::FLOAT) {
-      return {ERROR_BAD_PARAMETER, owner_label,
-              " must be ARRAY(FLOAT, N) to use the 'hnsw' opclass"};
-    }
-    if (!opts) {
-      return {ERROR_BAD_PARAMETER, "Built-in opclass 'hnsw' on ", owner_label,
-              " requires options; use 'hnsw (...)'"};
-    }
-    HNSWColumnConfig cfg{
-      .d = static_cast<int>(duckdb::ArrayType::GetSize(value_type)),
-    };
-    auto compression = duckdb::CompressionType::COMPRESSION_AUTO;
-    uint32_t row_group_size = 0;
-    if (auto r = ApplyHNSWOptions(owner_label, *opts, cfg, compression,
-                                  row_group_size);
-        r.fail()) {
-      return r;
-    }
-    if (auto r =
-          ValidateColumnCompression(owner_label, compression, value_type);
-        r.fail()) {
-      return r;
-    }
-    entry.hnsw_config = cfg;
-    entry.compression = compression;
-    entry.row_group_size = row_group_size;
-    entry.store_values = true;
-    return {};
-  };
-
   InvertedIndex::Entries entries;
-  std::vector<irs::field_id> column_field_ids;
-  std::vector<irs::field_id> expression_field_ids;
   const uint64_t expressions_cnt = std::ranges::count_if(
     columns, [](const auto& c) { return c.IsIndexedExpression(); });
   irs::field_id next_expr_field_id =
@@ -682,12 +676,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       const auto& expr_data = c.GetIndexedExpression();
       const auto field_id = next_expr_field_id++;
       InvertedIndexEntryInfo expr_info;
-      expr_info.expression = ExpressionSpecific{
-        .serialized_expr = expr_data.serialized,
-        .dependent_columns = expr_data.dependent_columns,
-        .return_type = expr_data.return_type,
-        .pretty_printed = expr_data.pretty_printed,
-      };
+      expr_info.expression = expr_data;
       const bool is_included_opclass = c.opclass == kIncludedKind;
       const bool is_hnsw_opclass = c.opclass == kHNSWKind;
       const bool accepts_options = is_included_opclass || is_hnsw_opclass;
@@ -701,15 +690,15 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       const auto expr_label =
         absl::StrCat("indexed expression '", expr_data.pretty_printed, "'");
       if (is_included_opclass) {
-        if (auto r = apply_included_options(expr_label, expr_data.return_type,
-                                            c.opclass_options, expr_info);
+        if (auto r = ApplyIncludedOpclass(expr_label, expr_data.return_type,
+                                          c.opclass_options, expr_info);
             r.fail()) {
           return std::unexpected<Result>(std::move(r));
         }
         expr_info.store_values = true;
       } else if (is_hnsw_opclass) {
-        if (auto r = apply_hnsw_opclass(expr_label, expr_data.return_type,
-                                        c.opclass_options, expr_info);
+        if (auto r = ApplyHNSWOpclass(expr_label, expr_data.return_type,
+                                      c.opclass_options, expr_info);
             r.fail()) {
           return std::unexpected<Result>(std::move(r));
         }
@@ -736,24 +725,19 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         SDB_ASSERT(!(wants_store && wants_norm),
                    "tokenizer-store and norm should be mutually exclusive");
         if (wants_store || wants_norm) {
-          expr_info.synthetic_column.emplace();  // sentinel: assign below
+          expr_info.synthetic_column = Column::Id{NextId()};
         }
         if (wants_norm) {
           expr_info.norm_row_group_size = (*dict)->GetNormRowGroupSize();
         }
       }
       entries.emplace(field_id, std::move(expr_info));
-      expression_field_ids.push_back(field_id);
       continue;
     }
     const auto col_field_id =
       static_cast<irs::field_id>(c.catalog_column->GetId());
-    auto [it, inserted] =
-      entries.try_emplace(col_field_id, InvertedIndexEntryInfo{});
-    if (inserted) {
-      column_field_ids.push_back(col_field_id);
-    }
-    auto& index_col = it->second;
+    auto& index_col =
+      entries.try_emplace(col_field_id, InvertedIndexEntryInfo{}).first->second;
 
     if (!c.opclass.empty()) {
       const bool has_parens = c.opclass_options.has_value();
@@ -783,15 +767,15 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       }
       if (c.opclass == kHNSWKind) {
         const auto label = absl::StrCat("Column '", c.name, "'");
-        if (auto r = apply_hnsw_opclass(label, c.catalog_column->type,
-                                        c.opclass_options, index_col);
+        if (auto r = ApplyHNSWOpclass(label, c.catalog_column->type,
+                                      c.opclass_options, index_col);
             r.fail()) {
           return std::unexpected<Result>(std::move(r));
         }
       } else if (c.opclass == kIncludedKind) {
         const auto label = absl::StrCat("Column '", c.name, "'");
-        if (auto r = apply_included_options(label, c.catalog_column->type,
-                                            c.opclass_options, index_col);
+        if (auto r = ApplyIncludedOpclass(label, c.catalog_column->type,
+                                          c.opclass_options, index_col);
             r.fail()) {
           return std::unexpected<Result>(std::move(r));
         }
@@ -825,7 +809,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         SDB_ASSERT(!(wants_store && wants_norm),
                    "tokenizer-store and norm should be mutually exclusive");
         if (wants_store || wants_norm) {
-          index_col.synthetic_column.emplace();  // sentinel: assign below
+          index_col.synthetic_column = Column::Id{NextId()};
         }
         if (wants_norm) {
           index_col.norm_row_group_size = (*dict)->GetNormRowGroupSize();
@@ -833,34 +817,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       }
     }
   }
-  {
-    // Deterministic synthetic id assignment.
-    absl::c_sort(column_field_ids);
-    uint64_t next = Column::kMaxRealIdValue;
-    for (auto field_id : column_field_ids) {
-      auto& entry = entries[field_id];
-      if (entry.synthetic_column) {
-        entry.synthetic_column = Column::Id{--next};
-      }
-    }
-    for (auto field_id : expression_field_ids) {
-      auto& entry = entries[field_id];
-      if (entry.synthetic_column) {
-        entry.synthetic_column = Column::Id{--next};
-      }
-    }
-  }
-  for (auto field_id : column_field_ids) {
-    auto& entry = entries[field_id];
-    if (entry.row_group_size == 0) {
-      entry.row_group_size = options.row_group_size;
-    }
-    if (entry.norm_row_group_size == 0) {
-      entry.norm_row_group_size = options.norm_row_group_size;
-    }
-  }
-  for (auto field_id : expression_field_ids) {
-    auto& entry = entries[field_id];
+  for (auto& [_, entry] : entries) {
     if (entry.row_group_size == 0) {
       entry.row_group_size = options.row_group_size;
     }

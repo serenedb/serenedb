@@ -303,11 +303,11 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     auto return_type = normalized->return_type;
     idx_columns.emplace_back(
       nullptr, "", std::move(opclass),
-      catalog::IndexedExpressionData{
-        .serialized = std::move(serialized),
-        .pretty_printed = expr->ToString(),
+      catalog::ExpressionData{
+        .serialized_expr = std::move(serialized),
         .dependent_columns = std::move(dependent_columns),
         .return_type = std::move(return_type),
+        .pretty_printed = expr->ToString(),
       },
       std::move(opclass_options));
   }

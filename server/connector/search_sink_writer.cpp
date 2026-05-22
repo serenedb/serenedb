@@ -345,8 +345,7 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
                             ? MakeIndexWriter(make_nullable(&WriteStringValue))
                             : MakeIndexWriter(&WriteStringValue);
       }
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::BOOLEAN:
       search::mangling::MangleBool(_name_buffer);
       _field.PrepareForBooleanValue();

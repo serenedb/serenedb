@@ -28,6 +28,7 @@
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/storage/arena_allocator.hpp>
+#include <span>
 #include <string>
 
 #include "connector/common.h"
@@ -89,7 +90,7 @@ class DuckDBColumnSerializer {
   class NoopWriter {
    public:
     void SwitchColumn(const ColumnDescriptor&) noexcept {}
-    void Write(const std::vector<rocksdb::Slice>&, std::string_view) noexcept {}
+    void Write(std::span<const rocksdb::Slice>, std::string_view) noexcept {}
     void WriteNull(std::string_view) noexcept {}
   };
 

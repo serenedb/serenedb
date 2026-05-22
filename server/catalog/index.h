@@ -48,26 +48,25 @@ struct InvertedIndexOptions {
   std::optional<ScorerOptions> topk_scorer;
 };
 
-// Set when CreateIndexColumn's source was `(expr)` rather than a column ref.
-struct IndexedExpressionData {
-  std::string serialized;
-  std::string pretty_printed;
+struct ExpressionData {
+  std::string serialized_expr;
   std::vector<Column::Id> dependent_columns;
   duckdb::LogicalType return_type;
+  std::string pretty_printed;
 };
 
 struct CreateIndexColumn {
   const catalog::Column* catalog_column{nullptr};
   std::string_view name;
   std::string opclass;
-  std::optional<IndexedExpressionData> indexed_expr;
+  std::optional<ExpressionData> indexed_expr;
   // nullopt = no parentheses in source SQL; an (empty or non-empty) map means
   // parens were present, distinguishing `col opclass` from `col opclass ()`.
   std::optional<duckdb::case_insensitive_map_t<duckdb::Value>> opclass_options;
 
   bool IsIndexedExpression() const noexcept { return indexed_expr.has_value(); }
 
-  const IndexedExpressionData& GetIndexedExpression() const {
+  const ExpressionData& GetIndexedExpression() const {
     SDB_ASSERT(IsIndexedExpression());
     return *indexed_expr;
   }

@@ -510,8 +510,8 @@ void InitSearchColumnContextForGet(
     return index_ptr->GetExprTokenizer(snapshot, serialized_expr);
   };
   for (const auto& [field_id, entry] : resolved.index->GetEntries()) {
-    const auto* expr = entry.GetExpressionSpecific();
-    if (expr == nullptr) {
+    const auto* expr = entry.GetExpressionData();
+    if (!expr) {
       continue;
     }
     ctx.indexed_expressions.emplace(expr->serialized_expr,
@@ -531,7 +531,7 @@ auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data,
     }
     if (const auto* entry =
           index.FindEntry(static_cast<irs::field_id>(col_id))) {
-      if (const auto* expr = entry->GetExpressionSpecific()) {
+      if (const auto* expr = entry->GetExpressionData()) {
         if (!expr->pretty_printed.empty()) {
           return expr->pretty_printed;
         }

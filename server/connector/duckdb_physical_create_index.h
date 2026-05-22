@@ -52,8 +52,8 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // for tables.
   // `bound_expressions` carries the IndexBinder's output (one per
   // `info->parsed_expressions`). For a bare column ref the slot is set but
-  // unused; for an arbitrary expression we normalise + serialise it via
-  // connector/index_expression.hpp helpers to emit `IndexedExpressionData`.
+  // unused; for an arbitrary expression we normalise + serialise
+  // it via helpers to emit `ExpressionSpecific`.
   SereneDBPhysicalCreateIndex(
     duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Object> relation,
     std::vector<catalog::Column> view_columns, ObjectId database_id,

@@ -76,8 +76,8 @@ inline std::vector<IndexedExpression> MakeIndexedExpressions(
   std::vector<IndexedExpression> entries;
   entries.reserve(index.GetEntries().size());
   for (const auto& [field_id, entry] : index.GetEntries()) {
-    const auto* expr = entry.GetExpressionSpecific();
-    if (expr == nullptr) {
+    const auto* expr = entry.GetExpressionData();
+    if (!expr) {
       continue;
     }
     SDB_ASSERT(!expr->serialized_expr.empty());
@@ -85,8 +85,8 @@ inline std::vector<IndexedExpression> MakeIndexedExpressions(
     SDB_ASSERT(field_id != 0);
     auto bound =
       DeserializeBoundExpression(expr->serialized_expr, client_context);
-    entries.push_back({std::move(bound), expr->serialized_expr,
-                       expr->dependent_columns, field_id});
+    entries.emplace_back(std::move(bound), expr->serialized_expr,
+                         expr->dependent_columns, field_id);
   }
   return entries;
 }

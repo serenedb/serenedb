@@ -427,10 +427,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
         throw duckdb::CatalogException("column \"%s\" not found in table",
                                        col_name);
       }
-      idx_columns.emplace_back(catalog::CreateIndexColumn{
-        .catalog_column = cat_col,
-        .name = cat_col->GetName(),
-      });
+      idx_columns.emplace_back(cat_col, cat_col->GetName());
     } else {
       throw duckdb::CatalogException(
         "Expression-based index columns are not supported");

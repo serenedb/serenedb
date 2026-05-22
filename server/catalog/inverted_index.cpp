@@ -32,6 +32,7 @@
 #include "basics/containers/node_hash_set.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "database/ticks.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
 #include "utils/velox_vpack.h"
@@ -170,7 +171,7 @@ std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
     entry.features = expr.features;
     entry.synthetic_column = expr.synthetic_column;
     entry.norm_row_group_size = expr.norm_row_group_size;
-    entry.expression = ExpressionSpecific{
+    entry.expression = ExpressionData{
       .serialized_expr = std::move(expr.serialized_expr),
       .dependent_columns = std::move(expr.dependent_columns),
       .return_type = std::move(expr.return_type),
@@ -189,7 +190,7 @@ void InvertedIndex::WriteInternal(vpack::Builder& b) const {
   ColumnSerializedMap columns;
   ExpressionSerializedSet expressions;
   for (const auto& [field_id, entry] : _entries) {
-    if (const auto* expr = entry.GetExpressionSpecific()) {
+    if (const auto* expr = entry.GetExpressionData()) {
       ExpressionSerialized out;
       out.serialized_expr = expr->serialized_expr;
       out.dependent_columns = expr->dependent_columns;
@@ -235,8 +236,19 @@ void InvertedIndex::BuildSerializedExprIndex() {
   _expr_to_field.clear();
   _expr_to_field.reserve(_entries.size());
   for (const auto& [field_id, entry] : _entries) {
-    if (const auto* expr = entry.GetExpressionSpecific()) {
+    if (const auto* expr = entry.GetExpressionData()) {
       _expr_to_field.emplace(expr->serialized_expr, field_id);
+    }
+  }
+}
+
+void InvertedIndex::BumpTickServerForEntryIds() {
+  for (const auto& [field_id, entry] : _entries) {
+    if (entry.IsExpression()) {
+      UpdateTickServer(field_id);
+    }
+    if (entry.synthetic_column) {
+      UpdateTickServer(entry.synthetic_column->id());
     }
   }
 }
@@ -257,7 +269,7 @@ std::vector<Column::Id> InvertedIndex::GetReferencedColumnIds() const {
   std::vector<Column::Id> ids(_column_ids.begin(), _column_ids.end());
   containers::FlatHashSet<Column::Id> seen(ids.begin(), ids.end());
   for (const auto& [_, entry] : _entries) {
-    if (const auto* expr = entry.GetExpressionSpecific()) {
+    if (const auto* expr = entry.GetExpressionData()) {
       for (auto id : expr->dependent_columns) {
         if (seen.insert(id).second) {
           ids.push_back(id);

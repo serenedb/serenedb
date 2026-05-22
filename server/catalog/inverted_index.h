@@ -44,13 +44,6 @@ struct HNSWColumnConfig {
   irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
 };
 
-struct ExpressionSpecific {
-  std::string serialized_expr;
-  std::vector<Column::Id> dependent_columns;
-  duckdb::LogicalType return_type;
-  std::string pretty_printed;
-};
-
 struct InvertedIndexEntryInfo {
   ObjectId text_dictionary = ObjectId::none();
   search::Features features;
@@ -62,11 +55,11 @@ struct InvertedIndexEntryInfo {
   std::optional<HNSWColumnConfig> hnsw_config;
   uint32_t row_group_size = 0;
 
-  std::optional<ExpressionSpecific> expression;
+  std::optional<ExpressionData> expression;
 
   bool IsExpression() const noexcept { return expression.has_value(); }
   bool IsColumn() const noexcept { return !expression.has_value(); }
-  const ExpressionSpecific* GetExpressionSpecific() const noexcept {
+  const ExpressionData* GetExpressionData() const noexcept {
     return expression ? &*expression : nullptr;
   }
 };
@@ -96,6 +89,7 @@ class InvertedIndex final : public Index {
       _entries{std::move(entries)},
       _options{std::move(options)} {
     BuildSerializedExprIndex();
+    BumpTickServerForEntryIds();
   }
 
   static std::shared_ptr<InvertedIndex> ReadInternal(vpack::Slice slice,
@@ -144,6 +138,7 @@ class InvertedIndex final : public Index {
 
  private:
   void BuildSerializedExprIndex();
+  void BumpTickServerForEntryIds();
 
   Entries _entries;
   // Reverse map: serialized expression -> field_id.

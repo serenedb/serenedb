@@ -821,7 +821,8 @@ DROP INDEX m_real_real;
 statement error
 CREATE INDEX m_real_bare ON t_err USING inverted(emb hnsw);
 ----
-db error: ERROR: Failed to create index: Built-in opclass 'hnsw' on column 'emb' requires options; use 'hnsw (...)'
+db error: ERROR: Unknown opclass 'hnsw' on column 'emb': no text dictionary by that name in schema 'public'
+HINT: 'hnsw' is a built-in opclass; use the options form 'hnsw (...)'
 
 
 statement error

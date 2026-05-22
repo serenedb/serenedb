@@ -66,6 +66,8 @@ struct CreateIndexColumn {
 
   bool IsIndexedExpression() const noexcept { return indexed_expr.has_value(); }
 
+  bool HasParentheses() const noexcept { return opclass_options.has_value(); }
+
   const ExpressionData& GetIndexedExpression() const {
     SDB_ASSERT(IsIndexedExpression());
     return *indexed_expr;

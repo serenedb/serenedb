@@ -82,22 +82,10 @@ class GeoFilter final : public FilterWithField<GeoFilterOptions> {
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
   std::unique_ptr<PrepareBuffer> CreateBuffer(
-    const PrepareContext& ctx) const final {
-    return std::make_unique<LazyQueryBuffer>(
-      [ctx, this](const PrepareContext&) { return prepare(ctx); });
-  }
+    const PrepareContext& ctx) const final;
 
 #ifdef SDB_DEV
  private:
-  // Tracks whether prepare() has already been called on this instance.
-  // GeoFilter::prepare moves shape state into the returned Query, so a
-  // second prepare on the same filter would silently produce an empty
-  // query. The optimizer used to drive this misuse via an eager prepare
-  // (iresearch_plan.cpp) followed by a scorer-aware re-prepare from
-  // duckdb_search_full_scan.cpp; both paths now collapse to a single
-  // execution-time prepare. The flag stays as a regression guard so any
-  // future caller that re-introduces the second prepare surfaces here
-  // instead of silently returning zero rows.
   mutable std::atomic<bool> _prepared{false};
 #endif
 };
@@ -121,10 +109,7 @@ class GeoDistanceFilter final
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
   std::unique_ptr<PrepareBuffer> CreateBuffer(
-    const PrepareContext& ctx) const final {
-    return std::make_unique<LazyQueryBuffer>(
-      [ctx, this](const PrepareContext&) { return prepare(ctx); });
-  }
+    const PrepareContext& ctx) const final;
 };
 
 }  // namespace irs

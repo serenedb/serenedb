@@ -286,8 +286,7 @@ class ColumnExistenceQuery : public Filter::Query {
 
 class Buffer final : public Filter::PrepareBuffer {
  public:
-  Buffer(std::string_view field, ColumnAcceptor acceptor)
-    : _field{field}, _acceptor{acceptor} {}
+  explicit Buffer(field_id id) noexcept : _id{id} {}
 
   void PrepareSegment(const SubReader&) final {}
 
@@ -298,31 +297,23 @@ class Buffer final : public Filter::PrepareBuffer {
   bool Empty() const noexcept final { return false; }
 
   Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
-    return _acceptor ? memory::make_tracked<ColumnPrefixExistenceQuery>(
-                         ctx.memory, _field, _acceptor, ctx.boost)
-                     : memory::make_tracked<ColumnExistenceQuery>(
-                         ctx.memory, _field, ctx.boost);
+    return memory::make_tracked<ColumnExistenceQuery>(ctx.memory, _id,
+                                                      ctx.boost);
   }
 
  private:
-  std::string_view _field;
-  ColumnAcceptor _acceptor;
+  field_id _id;
 };
 
 }  // namespace
 
 std::unique_ptr<Filter::PrepareBuffer> ByColumnExistence::CreateBuffer(
   const PrepareContext& /*ctx*/) const {
-  return std::make_unique<Buffer>(field(), options().acceptor);
+  return std::make_unique<Buffer>(id());
 }
 
 Filter::Query::ptr ByColumnExistence::prepare(const PrepareContext& ctx) const {
-  // skip field-level/term-level statistics because there are no explicit
-  // fields/terms, but still collect index-level statistics
-  // i.e. all fields and terms implicitly match
-  auto sub_ctx = ctx;
-  sub_ctx.boost *= Boost();
-  return DefaultPrepare(sub_ctx);
+  return DefaultPrepare(ctx);
 }
 
 }  // namespace irs

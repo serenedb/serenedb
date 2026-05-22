@@ -20,9 +20,71 @@
 
 #include "mixed_boolean_filter.hpp"
 
+#include "basics/down_cast.h"
 #include "iresearch/search/boolean_query.hpp"
 
 namespace irs {
+
+class MixedBooleanFilter::Buffer final : public Filter::PrepareBuffer {
+ public:
+  Buffer(const PrepareContext& ctx, const And& and_filter, const Or& or_filter)
+    : _req_ctx{ctx.Boost(and_filter.Boost())},
+      _opt_ctx{ctx.Boost(or_filter.Boost())},
+      _req{and_filter.CreateChildBuffer(ctx)} {
+    _opt.reserve(or_filter.size());
+    for (const auto& f : or_filter) {
+      _opt.emplace_back(f->CreateChildBuffer(_opt_ctx));
+    }
+  }
+
+  void PrepareSegment(const SubReader& segment) final {
+    _req->PrepareSegment(segment);
+    for (auto& b : _opt) {
+      b->PrepareSegment(segment);
+    }
+  }
+
+  void Merge(PrepareBuffer&& other) final {
+    auto& rhs = sdb::basics::downCast<Buffer>(other);
+    _req->Merge(std::move(*rhs._req));
+    SDB_ASSERT(_opt.size() == rhs._opt.size());
+    for (size_t i = 0; i < _opt.size(); ++i) {
+      _opt[i]->Merge(std::move(*rhs._opt[i]));
+    }
+  }
+
+  bool Empty() const noexcept final { return _req->Empty(); }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    auto req = std::move(*_req).Compile(_req_ctx);
+    std::vector<Query::ptr> opts;
+    opts.reserve(_opt.size());
+    for (auto& b : _opt) {
+      opts.emplace_back(b->Empty() ? Filter::Query::empty()
+                                   : std::move(*b).Compile(_opt_ctx));
+    }
+    auto q = memory::make_tracked<BoostQuery>(ctx.memory);
+    q->PrepareFromQueries(std::move(req), std::move(opts));
+    return q;
+  }
+
+ private:
+  PrepareContext _req_ctx;
+  PrepareContext _opt_ctx;
+  std::unique_ptr<PrepareBuffer> _req;
+  std::vector<std::unique_ptr<PrepareBuffer>> _opt;
+};
+
+std::unique_ptr<Filter::PrepareBuffer> MixedBooleanFilter::CreateBuffer(
+  const PrepareContext& ctx) const {
+  if (_and->empty()) {
+    return _or->CreateBuffer(ctx);
+  }
+  if (_or->empty()) {
+    return _and->CreateBuffer(ctx);
+  }
+  return std::make_unique<Buffer>(ctx, *_and, *_or);
+}
 
 Filter::Query::ptr MixedBooleanFilter::prepare(
   const PrepareContext& ctx) const {

@@ -92,6 +92,7 @@ class ByWildcardNgram final : public FilterWithField<ByWildcardNgramOptions> {
    private:
     std::string_view _field;
     std::shared_ptr<RE2> _matcher;
+    field_id _store_field_id{0};
     std::vector<std::unique_ptr<PrepareBuffer>> _children;
     // true when the result is a single sub-filter wrapped in WildcardQuery;
     // false when result is an AndQuery of all children wrapped in

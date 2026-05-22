@@ -54,15 +54,29 @@ class SearchRemoveFilterBase : public irs::Filter,
     return irs::memory::to_managed<const irs::Filter::Query>(*this);
   }
 
+  class Buffer final : public irs::Filter::PrepareBuffer {
+   public:
+    explicit Buffer(const SearchRemoveFilterBase& filter) noexcept
+      : _filter{&filter} {}
+
+    void PrepareSegment(const irs::SubReader&) final {}
+    void Merge(PrepareBuffer&&) final {}
+    bool Empty() const noexcept final { return false; }
+
+    irs::Filter::Query::ptr Compile(const irs::PrepareContext&) && final {
+      return irs::memory::to_managed<const irs::Filter::Query>(*_filter);
+    }
+
+   private:
+    const SearchRemoveFilterBase* _filter;
+  };
+
   std::unique_ptr<irs::Filter::PrepareBuffer> CreateBuffer(
     const irs::PrepareContext&) const final {
     if (_pks.empty()) {
       return std::make_unique<irs::Filter::EmptyBuffer>();
     }
-    return std::make_unique<irs::Filter::LazyQueryBuffer>(
-      [this](const irs::PrepareContext&) {
-        return irs::memory::to_managed<const irs::Filter::Query>(*this);
-      });
+    return std::make_unique<Buffer>(*this);
   }
 
   irs::DocIterator::ptr execute(const irs::ExecutionContext& ctx) const final;

@@ -23,12 +23,12 @@
 
 #include "iresearch/search/wildcard_ngram_filter.hpp"
 
-#include "basics/down_cast.h"
 #include <absl/base/internal/endian.h>
 
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 
+#include "basics/down_cast.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/wildcard_analyzer.hpp"
 #include "iresearch/columnstore/column_reader.hpp"
@@ -200,7 +200,9 @@ constexpr size_t kDefaultScoredTermsLimit = 1024;
 ByWildcardNgram::Buffer::Buffer(const PrepareContext& ctx,
                                 std::string_view field,
                                 const ByWildcardNgramOptions& opts)
-  : _field{field}, _matcher{opts.matcher} {
+  : _field{field},
+    _matcher{opts.matcher},
+    _store_field_id{opts.store_field_id} {
   auto& parts = opts.parts;
   const auto size = parts.size();
 
@@ -269,8 +271,8 @@ Filter::Query::ptr ByWildcardNgram::Buffer::Compile(
   if (_single) {
     auto child = std::move(_children.front());
     auto inner = std::move(*child).Compile(ctx);
-    return memory::make_tracked<WildcardQuery>(ctx.memory, std::move(_matcher),
-                                               _field, std::move(inner));
+    return memory::make_tracked<WildcardQuery>(
+      ctx.memory, std::move(_matcher), std::move(inner), _store_field_id);
   }
 
   AndQuery::queries_t queries{{ctx.memory}};
@@ -283,8 +285,8 @@ Filter::Query::ptr ByWildcardNgram::Buffer::Compile(
   auto conjunction = memory::make_tracked<AndQuery>(ctx.memory);
   conjunction->prepare(ctx, ScoreMergeType::Sum, std::move(queries),
                        excl_start);
-  return memory::make_tracked<WildcardQuery>(ctx.memory, std::move(_matcher),
-                                             _field, std::move(conjunction));
+  return memory::make_tracked<WildcardQuery>(
+    ctx.memory, std::move(_matcher), std::move(conjunction), _store_field_id);
 }
 
 Filter::Query::ptr ByWildcardNgram::Prepare(

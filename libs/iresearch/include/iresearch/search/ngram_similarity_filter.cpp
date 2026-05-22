@@ -39,6 +39,67 @@ size_t ComputeMinMatch(size_t terms_count, float_t threshold) {
                     size_t{1}, terms_count);
 }
 
+class ByTermsAdapterBuffer final : public Filter::PrepareBuffer {
+ public:
+  ByTermsAdapterBuffer(const PrepareContext& ctx, std::string_view field,
+                       const std::vector<bstring>& ngrams) {
+    for (const auto& term : ngrams) {
+      _options.terms.emplace(term, kNoBoost);
+    }
+    _inner = ByTerms::CreateBuffer(ctx, field, _options);
+  }
+
+  void PrepareSegment(const SubReader& segment) final {
+    _inner->PrepareSegment(segment);
+  }
+
+  void Merge(PrepareBuffer&& other) final {
+    auto& rhs = sdb::basics::downCast<ByTermsAdapterBuffer>(other);
+    _inner->Merge(std::move(*rhs._inner));
+  }
+
+  bool Empty() const noexcept final { return _inner->Empty(); }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    return std::move(*_inner).Compile(ctx);
+  }
+
+ private:
+  ByTermsOptions _options;
+  std::unique_ptr<PrepareBuffer> _inner;
+};
+
+class ByPhraseAdapterBuffer final : public Filter::PrepareBuffer {
+ public:
+  ByPhraseAdapterBuffer(const PrepareContext& ctx, std::string_view field,
+                        const std::vector<bstring>& ngrams) {
+    for (const auto& ngram : ngrams) {
+      _options.push_back(ByTermOptions{ngram});
+    }
+    SDB_ASSERT(_options.simple());
+    _inner = ByPhrase::CreateFixedBuffer(ctx, field, _options);
+  }
+
+  void PrepareSegment(const SubReader& segment) final {
+    _inner->PrepareSegment(segment);
+  }
+
+  void Merge(PrepareBuffer&& other) final {
+    auto& rhs = sdb::basics::downCast<ByPhraseAdapterBuffer>(other);
+    _inner->Merge(std::move(*rhs._inner));
+  }
+
+  bool Empty() const noexcept final { return _inner->Empty(); }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    return std::move(*_inner).Compile(ctx);
+  }
+
+ private:
+  ByPhraseOptions _options;
+  std::unique_ptr<PrepareBuffer> _inner;
+};
+
 }  // namespace
 
 void ByNGramSimilarity::Buffer::PrepareSegment(const SubReader& segment) {
@@ -113,27 +174,13 @@ std::unique_ptr<Filter::PrepareBuffer> ByNGramSimilarity::CreateBuffer(
     ComputeMinMatch(terms_count, options().threshold);
 
   if (!ctx.scorer && 1 == min_match_count) {
-    return std::make_unique<LazyQueryBuffer>(
-      [ctx, field_name = std::string{field()},
-       ngrams = options().ngrams](const PrepareContext&) {
-        irs::ByTermsOptions opts;
-        for (const auto& term : ngrams) {
-          opts.terms.emplace(term, irs::kNoBoost);
-        }
-        return ByTerms::Prepare(ctx, field_name, opts);
-      });
+    return std::make_unique<ByTermsAdapterBuffer>(ctx, field(),
+                                                  options().ngrams);
   }
 
   if (options().allow_phrase && min_match_count == terms_count) {
-    return std::make_unique<LazyQueryBuffer>(
-      [ctx, field_name = std::string{field()},
-       ngrams = options().ngrams](const PrepareContext&) {
-        irs::ByPhraseOptions opts;
-        for (const auto& ngram : ngrams) {
-          opts.push_back(ByTermOptions{ngram});
-        }
-        return ByPhrase::Prepare(ctx, field_name, opts);
-      });
+    return std::make_unique<ByPhraseAdapterBuffer>(ctx, field(),
+                                                   options().ngrams);
   }
 
   return std::make_unique<Buffer>(ctx, field(), options().ngrams,

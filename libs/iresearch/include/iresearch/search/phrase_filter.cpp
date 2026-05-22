@@ -32,6 +32,7 @@
 #include "iresearch/search/prepared_state_visitor.hpp"
 #include "iresearch/search/states/phrase_state.hpp"
 #include "iresearch/search/states_cache.hpp"
+#include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/top_terms_collector.hpp"
 
 namespace irs {
@@ -541,17 +542,19 @@ std::unique_ptr<Filter::PrepareBuffer> ByPhrase::CreateBuffer(
     return std::make_unique<EmptyBuffer>();
   }
 
-  if (options().size() == 1 || !options().simple()) {
-    // Single-part shortcut delegates to underlying filter; variadic case has
-    // cross-segment top-terms collection. Both fall back to sequential prepare.
-    return std::make_unique<LazyQueryBuffer>(
-      [ctx, field_name = std::string{field()},
-       opts = options()](const PrepareContext&) {
-        return ByPhrase::Prepare(ctx, field_name, opts);
-      });
+  if (options().simple()) {
+    if (options().size() == 1) {
+      const auto& term = std::get<ByTermOptions>(options().begin()->part).term;
+      return std::make_unique<ByTerm::Buffer>(ctx, field(), term);
+    }
+    return std::make_unique<FixedPhraseBuffer>(ctx, field(), options());
   }
 
-  return std::make_unique<FixedPhraseBuffer>(ctx, field(), options());
+  return std::make_unique<LazyQueryBuffer>(
+    [ctx, field_name = std::string{field()},
+     opts = options()](const PrepareContext&) {
+      return ByPhrase::Prepare(ctx, field_name, opts);
+    });
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByPhrase::CreateFixedBuffer(

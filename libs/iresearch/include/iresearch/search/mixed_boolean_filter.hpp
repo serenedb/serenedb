@@ -39,12 +39,11 @@ class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
   std::unique_ptr<PrepareBuffer> CreateBuffer(
-    const PrepareContext& ctx) const final {
-    return std::make_unique<LazyQueryBuffer>(
-      [ctx, this](const PrepareContext&) { return prepare(ctx); });
-  }
+    const PrepareContext& ctx) const final;
 
  private:
+  class Buffer;
+
   bool equals(const Filter& rhs) const noexcept final;
 
   And _root;

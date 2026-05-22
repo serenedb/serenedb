@@ -142,6 +142,24 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(
+  const PrepareContext& ctx, std::string_view field,
+  const ByTermsOptions& options) {
+  const auto& [terms, min_match, merge_type] = options;
+  const size_t size = terms.size();
+  if (0 == size || min_match > size) {
+    return std::make_unique<Filter::EmptyBuffer>();
+  }
+  SDB_ASSERT(min_match != 0);
+  if (1 == size) {
+    const auto term = std::begin(terms);
+    auto sub_ctx = ctx;
+    sub_ctx.boost = ctx.boost * term->boost;
+    return std::make_unique<ByTerm::Buffer>(sub_ctx, field, term->term);
+  }
+  return std::make_unique<Buffer>(ctx, field, options);
+}
+
+std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(
   const PrepareContext& ctx) const {
   return std::make_unique<Buffer>(ctx, field(), options());
 }

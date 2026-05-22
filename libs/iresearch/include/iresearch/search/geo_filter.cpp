@@ -61,14 +61,6 @@ constexpr auto kSingletonCapEps = 2 * std::numeric_limits<double>::epsilon();
 
 using Disjunction = DisjunctionIterator<ScoreAdapter, ScoreMergeType::Noop>;
 
-// Bound covers the entire sphere. Used to be
-// `ByColumnExistence(store_field_id)` so rows that never wrote a geo value were
-// excluded; that gate is gone -- a full-cap match means every doc in the
-// segment matches.
-Filter::Query::ptr MatchAll(const PrepareContext& ctx) {
-  return irs::All{}.prepare(ctx);
-}
-
 // Returns singleton S2Cap that tolerates precision errors
 // TODO(mbkkt) Probably remove it
 inline S2Cap FromPoint(const S2Point& origin) noexcept {
@@ -390,67 +382,124 @@ Filter::Query::ptr MakeQuery(IResourceManager& manager, GeoStates&& states,
   return Filter::Query::empty();
 }
 
-std::pair<GeoStates, bstring> PrepareStates(
-  const PrepareContext& ctx, std::span<const std::string> geo_terms,
-  std::string_view field, field_id store_field_id) {
-  SDB_ASSERT(!geo_terms.empty());
+template<typename Options, typename Acceptor>
+class GeoBufferImpl final : public Filter::PrepareBuffer {
+ public:
+  GeoBufferImpl(const PrepareContext& ctx, std::string_view field,
+                const Options& options, std::vector<std::string> geo_terms,
+                Acceptor acceptor, score_t boost)
+    : _field{field},
+      _store_field_id{options.store_field_id},
+      _options{&options},
+      _boost{boost},
+      _acceptor{std::move(acceptor)},
+      _memory{&ctx.memory},
+      _field_stats{ctx.scorer},
+      _states{ctx.memory, ctx.index.size()},
+      _stats(GetStatsSize(ctx.scorer), 0),
+      _sorted_terms{std::move(geo_terms)} {
+    absl::c_sort(_sorted_terms);
+    SDB_ASSERT(std::unique(_sorted_terms.begin(), _sorted_terms.end()) ==
+               _sorted_terms.end());
+    SDB_ASSERT(_store_field_id != 0);
+  }
 
-  std::vector<std::string_view> sorted_terms(geo_terms.begin(),
-                                             geo_terms.end());
-  absl::c_sort(sorted_terms);
-  SDB_ASSERT(std::unique(sorted_terms.begin(), sorted_terms.end()) ==
-             sorted_terms.end());
-
-  std::pair<GeoStates, bstring> res{
-    std::piecewise_construct,
-    std::forward_as_tuple(ctx.memory, ctx.index.size()),
-    std::forward_as_tuple(GetStatsSize(ctx.scorer), 0)};
-
-  const auto size = sorted_terms.size();
-  FieldCollectors field_stats{ctx.scorer};
-  ManagedVector<SeekCookie::ptr> term_states{{ctx.memory}};
-
-  SDB_ASSERT(store_field_id != 0);
-  for (const auto& segment : ctx.index) {
-    const auto* reader = segment.field(field);
+  void PrepareSegment(const SubReader& segment) final {
+    const auto* reader = segment.field(_field);
     if (!reader) {
-      continue;
+      return;
     }
-    const auto* stored_field = segment.Column(store_field_id);
+    const auto* stored_field = segment.Column(_store_field_id);
     if (!stored_field) {
-      continue;
+      return;
     }
     auto terms = reader->iterator(SeekMode::NORMAL);
     if (!terms) [[unlikely]] {
-      continue;
+      return;
     }
 
-    field_stats.collect(segment, *reader);
-    term_states.reserve(size);
+    _field_stats.collect(segment, *reader);
 
-    for (const auto term : sorted_terms) {
-      if (!terms->seek(ViewCast<byte_type>(term))) {
+    ManagedVector<SeekCookie::ptr> term_states{{*_memory}};
+    term_states.reserve(_sorted_terms.size());
+    for (const auto& term : _sorted_terms) {
+      if (!terms->seek(ViewCast<byte_type>(std::string_view{term}))) {
         continue;
       }
       terms->read();
       term_states.emplace_back(terms->cookie());
     }
-
     if (term_states.empty()) {
-      continue;
+      return;
     }
 
-    auto& state = res.first.insert(segment);
+    auto& state = _states.insert(segment);
     state.reader = reader;
     state.states = std::move(term_states);
     state.stored_field = stored_field;
-    term_states.clear();
   }
 
-  field_stats.finish(const_cast<byte_type*>(res.second.data()));
+  void Merge(PrepareBuffer&& other) final {
+    auto& rhs = sdb::basics::downCast<GeoBufferImpl>(other);
+    _field_stats.collect(std::move(rhs._field_stats));
+    _states.Merge(std::move(rhs._states));
+  }
 
-  return res;
+  bool Empty() const noexcept final { return _states.empty(); }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    _field_stats.finish(_stats.data());
+    return MakeQuery(ctx.memory, std::move(_states), std::move(_stats), _boost,
+                     *_options, std::move(_acceptor));
+  }
+
+ private:
+  std::string_view _field;
+  field_id _store_field_id;
+  const Options* _options;
+  score_t _boost;
+  Acceptor _acceptor;
+  IResourceManager* _memory;
+  FieldCollectors _field_stats;
+  GeoStates _states;
+  bstring _stats;
+  std::vector<std::string> _sorted_terms;
+};
+
+template<typename Options, typename Acceptor>
+std::unique_ptr<Filter::PrepareBuffer> MakeGeoBuffer(
+  const PrepareContext& ctx, std::string_view field, const Options& options,
+  std::vector<std::string> geo_terms, Acceptor&& acceptor, score_t boost) {
+  return std::make_unique<GeoBufferImpl<Options, std::decay_t<Acceptor>>>(
+    ctx, field, options, std::move(geo_terms), std::forward<Acceptor>(acceptor),
+    boost);
 }
+
+class OwnedFilterBuffer final : public Filter::PrepareBuffer {
+ public:
+  OwnedFilterBuffer(const PrepareContext& ctx, std::unique_ptr<Filter> inner)
+    : _inner_filter{std::move(inner)},
+      _inner_buffer{_inner_filter->CreateBuffer(ctx)} {}
+
+  void PrepareSegment(const SubReader& segment) final {
+    _inner_buffer->PrepareSegment(segment);
+  }
+
+  void Merge(PrepareBuffer&& other) final {
+    auto& rhs = sdb::basics::downCast<OwnedFilterBuffer>(other);
+    _inner_buffer->Merge(std::move(*rhs._inner_buffer));
+  }
+
+  bool Empty() const noexcept final { return _inner_buffer->Empty(); }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    return std::move(*_inner_buffer).Compile(ctx);
+  }
+
+ private:
+  std::unique_ptr<Filter> _inner_filter;
+  std::unique_ptr<PrepareBuffer> _inner_buffer;
+};
 
 std::pair<S2Cap, bool> GetBound(BoundType type, S2Point origin,
                                 double distance) {
@@ -462,10 +511,9 @@ std::pair<S2Cap, bool> GetBound(BoundType type, S2Point origin,
           BoundType::Inclusive == type};
 }
 
-Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
-                                       std::string_view field,
-                                       const GeoDistanceFilterOptions& options,
-                                       bool greater) {
+std::unique_ptr<Filter::PrepareBuffer> CreateOpenIntervalBuffer(
+  const PrepareContext& ctx, std::string_view field,
+  const GeoDistanceFilterOptions& options, bool greater) {
   const auto& range = options.range;
   const auto& origin = options.origin;
 
@@ -489,18 +537,15 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
         bound = greater ? S2Cap::Full() : FromPoint(origin);
 
         if (!bound.is_valid()) {
-          return Filter::Query::empty();
+          return std::make_unique<Filter::EmptyBuffer>();
         }
 
         incl = true;
         break;
       case BoundType::Exclusive:
         if (greater) {
-          // dist > 0: full cap minus the singleton center. Used to AND in
-          // a ByColumnExistence gate on store_field_id; that's gone, so
-          // rows without a stored geo value pass the Not-singleton check.
-          And root;
-          auto& excl = root.add<Not>().filter<GeoDistanceFilter>();
+          auto root = std::make_unique<And>();
+          auto& excl = root->add<Not>().filter<GeoDistanceFilter>();
           *excl.mutable_field() = field;
           auto& opts = *excl.mutable_options();
           opts = options;
@@ -509,7 +554,7 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
           opts.range.max = 0;
           opts.range.max_type = BoundType::Inclusive;
 
-          return root.prepare(ctx);
+          return std::make_unique<OwnedFilterBuffer>(ctx, std::move(root));
         } else {
           bound = S2Cap::Empty();
         }
@@ -521,7 +566,7 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
     std::tie(bound, incl) = GetBound(type, origin, dist);
 
     if (!bound.is_valid()) {
-      return Filter::Query::empty();
+      return std::make_unique<Filter::EmptyBuffer>();
     }
 
     if (greater) {
@@ -532,44 +577,41 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
   SDB_ASSERT(bound.is_valid());
 
   if (bound.is_full()) {
-    return MatchAll(ctx);
+    return All{}.CreateBuffer(ctx);
   }
 
   if (bound.is_empty()) {
-    return Filter::Query::empty();
+    return std::make_unique<Filter::EmptyBuffer>();
   }
 
   S2RegionTermIndexer indexer(options.options);
 
-  const auto geo_terms = indexer.GetQueryTerms(bound, options.prefix);
+  auto geo_terms = indexer.GetQueryTerms(bound, options.prefix);
 
   if (geo_terms.empty()) {
-    return Filter::Query::empty();
+    return std::make_unique<Filter::EmptyBuffer>();
   }
 
-  auto [states, stats] =
-    PrepareStates(ctx, geo_terms, field, options.store_field_id);
-
   if (incl) {
-    return MakeQuery(ctx.memory, std::move(states), std::move(stats), ctx.boost,
-                     options, GeoDistanceAcceptor<true>{bound});
+    return MakeGeoBuffer(ctx, field, options, std::move(geo_terms),
+                         GeoDistanceAcceptor<true>{bound}, ctx.boost);
   } else {
-    return MakeQuery(ctx.memory, std::move(states), std::move(stats), ctx.boost,
-                     options, GeoDistanceAcceptor<false>{bound});
+    return MakeGeoBuffer(ctx, field, options, std::move(geo_terms),
+                         GeoDistanceAcceptor<false>{bound}, ctx.boost);
   }
 }
 
-Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
-                                   std::string_view field,
-                                   const GeoDistanceFilterOptions& options) {
+std::unique_ptr<Filter::PrepareBuffer> CreateIntervalBuffer(
+  const PrepareContext& ctx, std::string_view field,
+  const GeoDistanceFilterOptions& options) {
   const auto& range = options.range;
   SDB_ASSERT(BoundType::Unbounded != range.min_type);
   SDB_ASSERT(BoundType::Unbounded != range.max_type);
 
   if (range.max < 0.) {
-    return Filter::Query::empty();
+    return std::make_unique<Filter::EmptyBuffer>();
   } else if (range.min < 0.) {
-    return PrepareOpenInterval(ctx, field, options, false);
+    return CreateOpenIntervalBuffer(ctx, field, options, false);
   }
 
   const bool min_incl = range.min_type == BoundType::Inclusive;
@@ -577,10 +619,10 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
 
   if (math::ApproxEquals(range.min, range.max)) {
     if (!min_incl || !max_incl) {
-      return Filter::Query::empty();
+      return std::make_unique<Filter::EmptyBuffer>();
     }
   } else if (range.min > range.max) {
-    return Filter::Query::empty();
+    return std::make_unique<Filter::EmptyBuffer>();
   }
 
   const auto& origin = options.origin;
@@ -590,27 +632,25 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
     SDB_ASSERT(max_incl);
 
     S2RegionTermIndexer indexer(options.options);
-    const auto geo_terms = indexer.GetQueryTerms(origin, options.prefix);
+    auto geo_terms = indexer.GetQueryTerms(origin, options.prefix);
 
     if (geo_terms.empty()) {
-      return Filter::Query::empty();
+      return std::make_unique<Filter::EmptyBuffer>();
     }
 
-    auto [states, stats] =
-      PrepareStates(ctx, geo_terms, field, options.store_field_id);
-
-    return MakeQuery(ctx.memory, std::move(states), std::move(stats), ctx.boost,
-                     options,
-                     [bound = FromPoint(origin)](const ShapeContainer& shape) {
-                       return bound.InteriorContains(shape.centroid());
-                     });
+    return MakeGeoBuffer(
+      ctx, field, options, std::move(geo_terms),
+      [bound = FromPoint(origin)](const ShapeContainer& shape) {
+        return bound.InteriorContains(shape.centroid());
+      },
+      ctx.boost);
   }
 
   auto min_bound = FromPoint(origin, range.min);
   auto max_bound = FromPoint(origin, range.max);
 
   if (!min_bound.is_valid() || !max_bound.is_valid()) {
-    return Filter::Query::empty();
+    return std::make_unique<Filter::EmptyBuffer>();
   }
 
   S2RegionTermIndexer indexer(options.options);
@@ -621,56 +661,46 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
 
   const auto ring = coverer.GetCovering(max_bound).Difference(
     coverer.GetInteriorCovering(min_bound));
-  // S2CellUnion::Difference has no level cap: GetDifferenceInternal recurses
-  // until cells are disjoint or fully contained, so `ring` can have cells
-  // beyond options.max_level. Re-cover through GetQueryTerms so the coverer
-  // enforces min/max level before GetQueryTermsForCanonicalCovering runs.
-  const auto geo_terms = indexer.GetQueryTerms(ring, options.prefix);
+  auto geo_terms = indexer.GetQueryTerms(ring, options.prefix);
 
   if (geo_terms.empty()) {
-    return Filter::Query::empty();
+    return std::make_unique<Filter::EmptyBuffer>();
   }
-
-  auto [states, stats] =
-    PrepareStates(ctx, geo_terms, field, options.store_field_id);
 
   switch (size_t(min_incl) + 2 * size_t(max_incl)) {
     case 0:
-      return MakeQuery(
-        ctx.memory, std::move(states), std::move(stats), ctx.boost, options,
-        GeoDistanceRangeAcceptor<false, false>{min_bound, max_bound});
+      return MakeGeoBuffer(
+        ctx, field, options, std::move(geo_terms),
+        GeoDistanceRangeAcceptor<false, false>{min_bound, max_bound},
+        ctx.boost);
     case 1:
-      return MakeQuery(
-        ctx.memory, std::move(states), std::move(stats), ctx.boost, options,
-        GeoDistanceRangeAcceptor<true, false>{min_bound, max_bound});
+      return MakeGeoBuffer(
+        ctx, field, options, std::move(geo_terms),
+        GeoDistanceRangeAcceptor<true, false>{min_bound, max_bound}, ctx.boost);
     case 2:
-      return MakeQuery(
-        ctx.memory, std::move(states), std::move(stats), ctx.boost, options,
-        GeoDistanceRangeAcceptor<false, true>{min_bound, max_bound});
+      return MakeGeoBuffer(
+        ctx, field, options, std::move(geo_terms),
+        GeoDistanceRangeAcceptor<false, true>{min_bound, max_bound}, ctx.boost);
     case 3:
-      return MakeQuery(
-        ctx.memory, std::move(states), std::move(stats), ctx.boost, options,
-        GeoDistanceRangeAcceptor<true, true>{min_bound, max_bound});
+      return MakeGeoBuffer(
+        ctx, field, options, std::move(geo_terms),
+        GeoDistanceRangeAcceptor<true, true>{min_bound, max_bound}, ctx.boost);
     default:
       SDB_ASSERT(false);
-      return Filter::Query::empty();
+      return std::make_unique<Filter::EmptyBuffer>();
   }
 }
 
 }  // namespace
 
-Filter::Query::ptr GeoFilter::prepare(const PrepareContext& ctx) const {
+std::unique_ptr<Filter::PrepareBuffer> GeoFilter::CreateBuffer(
+  const PrepareContext& ctx) const {
 #ifdef SDB_DEV
-  // Single-prepare guard. GeoFilter::prepare moves shape state into the
-  // returned Query, so a second prepare on the same filter would silently
-  // produce Query::empty() and the surrounding bool-filter would collapse
-  // to no rows. Surface that misuse loudly here.
-  SDB_ASSERT(!_prepared.exchange(true, std::memory_order_relaxed) &&
-             "GeoFilter::prepare() called more than once on the same instance");
+  SDB_ASSERT(!_prepared.exchange(true, std::memory_order_relaxed));
 #endif
   auto& shape = const_cast<ShapeContainer&>(options().shape);
   if (shape.empty()) {
-    return Filter::Query::empty();
+    return std::make_unique<EmptyBuffer>();
   }
 
   const auto& options = this->options();
@@ -686,54 +716,58 @@ Filter::Query::ptr GeoFilter::prepare(const PrepareContext& ctx) const {
   }
 
   if (geo_terms.empty()) {
-    return Filter::Query::empty();
+    return std::make_unique<EmptyBuffer>();
   }
-
-  auto [states, stats] =
-    PrepareStates(ctx, geo_terms, field(), options.store_field_id);
-
-  const auto boost = ctx.boost * this->Boost();
 
   switch (options.type) {
     case GeoFilterType::Intersects:
-      return MakeQuery(
-        ctx.memory, std::move(states), std::move(stats), boost, options,
+      return MakeGeoBuffer(
+        ctx, field(), options, std::move(geo_terms),
         [filter_shape = std::move(shape)](const ShapeContainer& indexed_shape) {
           return filter_shape.intersects(indexed_shape);
-        });
+        },
+        ctx.boost);
     case GeoFilterType::Contains:
-      return MakeQuery(
-        ctx.memory, std::move(states), std::move(stats), boost, options,
+      return MakeGeoBuffer(
+        ctx, field(), options, std::move(geo_terms),
         [filter_shape = std::move(shape)](const ShapeContainer& indexed_shape) {
           return filter_shape.contains(indexed_shape);
-        });
+        },
+        ctx.boost);
     case GeoFilterType::IsContained:
-      return MakeQuery(
-        ctx.memory, std::move(states), std::move(stats), boost, options,
+      return MakeGeoBuffer(
+        ctx, field(), options, std::move(geo_terms),
         [filter_shape = std::move(shape)](const ShapeContainer& indexed_shape) {
           return indexed_shape.contains(filter_shape);
-        });
+        },
+        ctx.boost);
   }
   SDB_ASSERT(false);
-  return Filter::Query::empty();
+  return std::make_unique<EmptyBuffer>();
 }
 
-Filter::Query::ptr GeoDistanceFilter::prepare(const PrepareContext& ctx) const {
+Filter::Query::ptr GeoFilter::prepare(const PrepareContext& ctx) const {
+  return DefaultPrepare(ctx);
+}
+
+std::unique_ptr<Filter::PrepareBuffer> GeoDistanceFilter::CreateBuffer(
+  const PrepareContext& ctx) const {
   const auto& options = this->options();
   const auto& range = options.range;
   const auto lower_bound = BoundType::Unbounded != range.min_type;
   const auto upper_bound = BoundType::Unbounded != range.max_type;
 
-  auto sub_ctx = ctx.Boost(Boost());
-
   if (!lower_bound && !upper_bound) {
-    return MatchAll(sub_ctx);
+    return All{}.CreateBuffer(ctx);
   }
   if (lower_bound && upper_bound) {
-    return PrepareInterval(sub_ctx, field(), options);
-  } else {
-    return PrepareOpenInterval(sub_ctx, field(), options, lower_bound);
+    return CreateIntervalBuffer(ctx, field(), options);
   }
+  return CreateOpenIntervalBuffer(ctx, field(), options, lower_bound);
+}
+
+Filter::Query::ptr GeoDistanceFilter::prepare(const PrepareContext& ctx) const {
+  return DefaultPrepare(ctx);
 }
 
 }  // namespace irs

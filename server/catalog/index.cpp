@@ -546,7 +546,10 @@ Result ApplyIncludedOpclass(
       }
       entry.row_group_size = *parsed;
     } else {
-      return {ERROR_BAD_PARAMETER, owner_label, ": unknown included option '",
+      return {ERROR_BAD_PARAMETER,
+              "Column '",
+              owner_label,
+              "': unknown included option '",
               key,
               "'. Accepted options: compression (string, default 'auto'), "
               "row_group_size (int >= 1)"};
@@ -560,17 +563,17 @@ Result ApplyHNSWOpclass(
   const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
   InvertedIndexEntryInfo& entry) {
   if (value_type.id() != duckdb::LogicalTypeId::ARRAY) {
-    return {ERROR_BAD_PARAMETER, owner_label,
-            " must be an ARRAY type to use the 'hnsw' opclass"};
+    return {ERROR_BAD_PARAMETER, "Column '", owner_label,
+            "' must be an ARRAY type to use the 'hnsw' opclass"};
   }
   if (duckdb::ArrayType::GetChildType(value_type).id() !=
       duckdb::LogicalTypeId::FLOAT) {
-    return {ERROR_BAD_PARAMETER, owner_label,
-            " must be ARRAY(FLOAT, N) to use the 'hnsw' opclass"};
+    return {ERROR_BAD_PARAMETER, "Column '", owner_label,
+            "' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass"};
   }
   if (!opts) {
-    return {ERROR_BAD_PARAMETER, "Built-in opclass 'hnsw' on ", owner_label,
-            " requires options; use 'hnsw (...)'"};
+    return {ERROR_BAD_PARAMETER, "Built-in opclass 'hnsw' on column '",
+            owner_label, "' requires options; use 'hnsw (...)'"};
   }
   HNSWColumnConfig cfg{
     .d = static_cast<int>(duckdb::ArrayType::GetSize(value_type)),
@@ -687,18 +690,18 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
                                        "': only the 'included' and 'hnsw' "
                                        "built-in opclasses accept options"};
       }
-      const auto expr_label =
-        absl::StrCat("indexed expression '", expr_data.pretty_printed, "'");
       if (is_included_opclass) {
-        if (auto r = ApplyIncludedOpclass(expr_label, expr_data.return_type,
+        if (auto r = ApplyIncludedOpclass(expr_data.pretty_printed,
+                                          expr_data.return_type,
                                           c.opclass_options, expr_info);
             r.fail()) {
           return std::unexpected<Result>(std::move(r));
         }
         expr_info.store_values = true;
       } else if (is_hnsw_opclass) {
-        if (auto r = ApplyHNSWOpclass(expr_label, expr_data.return_type,
-                                      c.opclass_options, expr_info);
+        if (auto r =
+              ApplyHNSWOpclass(expr_data.pretty_printed, expr_data.return_type,
+                               c.opclass_options, expr_info);
             r.fail()) {
           return std::unexpected<Result>(std::move(r));
         }
@@ -766,15 +769,13 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
                                        ")"};
       }
       if (c.opclass == kHNSWKind) {
-        const auto label = absl::StrCat("Column '", c.name, "'");
-        if (auto r = ApplyHNSWOpclass(label, c.catalog_column->type,
+        if (auto r = ApplyHNSWOpclass(c.name, c.catalog_column->type,
                                       c.opclass_options, index_col);
             r.fail()) {
           return std::unexpected<Result>(std::move(r));
         }
       } else if (c.opclass == kIncludedKind) {
-        const auto label = absl::StrCat("Column '", c.name, "'");
-        if (auto r = ApplyIncludedOpclass(label, c.catalog_column->type,
+        if (auto r = ApplyIncludedOpclass(c.name, c.catalog_column->type,
                                           c.opclass_options, index_col);
             r.fail()) {
           return std::unexpected<Result>(std::move(r));

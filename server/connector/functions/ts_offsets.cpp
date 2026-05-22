@@ -37,7 +37,7 @@
 #include "catalog/catalog.h"
 #include "catalog/mangling.h"
 #include "catalog/table_options.h"
- #include "connector/duckdb_client_state.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/functions/search.h"
 #include "connector/highlight/highlight_types.h"
 #include "connector/highlight/memory_index.h"

@@ -458,23 +458,22 @@ void SearchSinkInsertBaseImpl::BulkAppendToColumnstore(
 }
 
 irs::columnstore::ColumnWriter*
-SearchSinkInsertBaseImpl::EnsurePerRowBlobWriter(
-  catalog::Column::Id column_id) {
+SearchSinkInsertBaseImpl::EnsurePerRowBlobWriter(irs::field_id field_id) {
   auto* doc_columnstore = _document ? _document->Columnstore() : nullptr;
   if (!doc_columnstore) {
     return nullptr;
   }
-  auto [it, inserted] = _per_row_blob_writers.try_emplace(column_id, nullptr);
+  auto [it, inserted] = _per_row_blob_writers.try_emplace(field_id, nullptr);
   if (!it->second) {
-    it->second = &doc_columnstore->OpenColumn(
-      static_cast<irs::field_id>(column_id), duckdb::LogicalType::BLOB);
+    it->second =
+      &doc_columnstore->OpenColumn(field_id, duckdb::LogicalType::BLOB);
   }
   return it->second;
 }
 
-void SearchSinkInsertBaseImpl::AppendPerRowBlob(catalog::Column::Id column_id,
+void SearchSinkInsertBaseImpl::AppendPerRowBlob(irs::field_id field_id,
                                                 irs::bytes_view bytes) {
-  auto* writer = EnsurePerRowBlobWriter(column_id);
+  auto* writer = EnsurePerRowBlobWriter(field_id);
   if (!writer) {
     return;
   }
@@ -487,9 +486,8 @@ void SearchSinkInsertBaseImpl::AppendPerRowBlob(catalog::Column::Id column_id,
   writer->Append(row, _row_buffer, 1);
 }
 
-void SearchSinkInsertBaseImpl::AppendPerRowBlobNull(
-  catalog::Column::Id column_id) {
-  auto it = _per_row_blob_writers.find(column_id);
+void SearchSinkInsertBaseImpl::AppendPerRowBlobNull(irs::field_id field_id) {
+  auto it = _per_row_blob_writers.find(field_id);
   if (it == _per_row_blob_writers.end() || !it->second) {
     return;
   }
@@ -500,7 +498,7 @@ void SearchSinkInsertBaseImpl::AppendPerRowBlobNull(
 
 void SearchSinkInsertBaseImpl::AppendPerRowPrimaryKey(
   std::string_view row_key) {
-  AppendPerRowBlob(catalog::Column::kGeneratedPKId,
+  AppendPerRowBlob(static_cast<irs::field_id>(catalog::Column::kGeneratedPKId),
                    irs::ViewCast<irs::byte_type>(row_key));
 }
 

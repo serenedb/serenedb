@@ -70,7 +70,7 @@ struct ColumnSerialized {
     duckdb::CompressionType::COMPRESSION_AUTO;
   search::Features features;
   std::optional<HNSWColumnConfig> hnsw_config;
-  std::optional<Column::Id> synthetic_column;
+  std::optional<irs::field_id> synthetic_column;
   uint32_t row_group_size = 0;
   uint32_t norm_row_group_size = 0;
 };
@@ -82,7 +82,7 @@ struct ExpressionSerialized {
   ObjectId text_dictionary = ObjectId::none();
   search::Features features;
   irs::field_id field_id = 0;
-  std::optional<Column::Id> synthetic_column;
+  std::optional<irs::field_id> synthetic_column;
   uint32_t norm_row_group_size = 0;
   std::string pretty_printed;
 
@@ -248,7 +248,7 @@ void InvertedIndex::BumpTickServerForEntryIds() {
       UpdateTickServer(field_id);
     }
     if (entry.synthetic_column) {
-      UpdateTickServer(entry.synthetic_column->id());
+      UpdateTickServer(*entry.synthetic_column);
     }
   }
 }
@@ -280,14 +280,33 @@ std::vector<Column::Id> InvertedIndex::GetReferencedColumnIds() const {
   return ids;
 }
 
-const search::Features* InvertedIndex::FindSyntheticFeatures(
-  catalog::Column::Id synthetic_id) const noexcept {
-  for (const auto& [_, entry] : _entries) {
-    if (entry.synthetic_column == synthetic_id) {
-      return &entry.features;
+void InvertedIndex::BuildSyntheticFeaturesIndex() {
+  _synthetic_to_features.clear();
+  for (const auto& [field_id, entry] : _entries) {
+    if (entry.synthetic_column) {
+      _synthetic_to_features.emplace(*entry.synthetic_column, entry.features);
     }
   }
-  return nullptr;
+}
+
+const search::Features* InvertedIndex::FindSyntheticFeatures(
+  irs::field_id synthetic_id) const noexcept {
+  auto it = _synthetic_to_features.find(synthetic_id);
+  const search::Features* result =
+    it == _synthetic_to_features.end() ? nullptr : &it->second;
+#ifdef SDB_DEV
+  const search::Features* fallback = nullptr;
+  for (const auto& [_, entry] : _entries) {
+    if (entry.synthetic_column == synthetic_id) {
+      fallback = &entry.features;
+      break;
+    }
+  }
+  SDB_ASSERT(static_cast<bool>(result) == static_cast<bool>(fallback));
+  SDB_ASSERT(!result ||
+             result->GetIndexFeatures() == fallback->GetIndexFeatures());
+#endif
+  return result;
 }
 
 ColumnTokenizer InvertedIndex::GetColumnTokenizer(

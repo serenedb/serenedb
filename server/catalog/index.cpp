@@ -725,7 +725,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         SDB_ASSERT(!(wants_store && wants_norm),
                    "tokenizer-store and norm should be mutually exclusive");
         if (wants_store || wants_norm) {
-          expr_info.synthetic_column = Column::Id{NextId()};
+          expr_info.synthetic_column = static_cast<irs::field_id>(NextId());
         }
         if (wants_norm) {
           expr_info.norm_row_group_size = (*dict)->GetNormRowGroupSize();
@@ -809,7 +809,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         SDB_ASSERT(!(wants_store && wants_norm),
                    "tokenizer-store and norm should be mutually exclusive");
         if (wants_store || wants_norm) {
-          index_col.synthetic_column = Column::Id{NextId()};
+          index_col.synthetic_column = static_cast<irs::field_id>(NextId());
         }
         if (wants_norm) {
           index_col.norm_row_group_size = (*dict)->GetNormRowGroupSize();

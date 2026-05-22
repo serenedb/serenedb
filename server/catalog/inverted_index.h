@@ -47,7 +47,7 @@ struct HNSWColumnConfig {
 struct InvertedIndexEntryInfo {
   ObjectId text_dictionary = ObjectId::none();
   search::Features features;
-  std::optional<Column::Id> synthetic_column;
+  std::optional<irs::field_id> synthetic_column;
   uint32_t norm_row_group_size = 0;
   bool store_values = false;
   duckdb::CompressionType compression =
@@ -67,7 +67,7 @@ struct InvertedIndexEntryInfo {
 struct ColumnTokenizer {
   Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
-  std::optional<Column::Id> tokenizer_column;
+  std::optional<irs::field_id> tokenizer_column;
 };
 
 class InvertedIndex final : public Index {
@@ -89,6 +89,7 @@ class InvertedIndex final : public Index {
       _entries{std::move(entries)},
       _options{std::move(options)} {
     BuildSerializedExprIndex();
+    BuildSyntheticFeaturesIndex();
     BumpTickServerForEntryIds();
   }
 
@@ -105,7 +106,7 @@ class InvertedIndex final : public Index {
   const InvertedIndexEntryInfo* FindColumnInfo(
     catalog::Column::Id column_id) const noexcept;
   const search::Features* FindSyntheticFeatures(
-    catalog::Column::Id synthetic_id) const noexcept;
+    irs::field_id synthetic_id) const noexcept;
 
   std::vector<Column::Id> GetReferencedColumnIds() const final;
 
@@ -138,12 +139,16 @@ class InvertedIndex final : public Index {
 
  private:
   void BuildSerializedExprIndex();
+  void BuildSyntheticFeaturesIndex();
   void BumpTickServerForEntryIds();
 
   Entries _entries;
   // Reverse map: serialized expression -> field_id.
   // Views point into the durable storage in entries
   containers::FlatHashMap<std::string_view, irs::field_id> _expr_to_field;
+  // Reverse map: synthetic field_id -> owner entry's features.
+  containers::FlatHashMap<irs::field_id, search::Features>
+    _synthetic_to_features;
   InvertedIndexOptions _options;
 };
 

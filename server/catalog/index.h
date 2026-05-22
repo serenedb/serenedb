@@ -95,9 +95,7 @@ class Index : public Object {
     return _column_ids;
   }
 
-  virtual std::vector<Column::Id> GetReferencedColumnIds() const {
-    return std::vector<Column::Id>(_column_ids.begin(), _column_ids.end());
-  }
+  virtual std::vector<Column::Id> GetReferencedColumnIds() const = 0;
 
   virtual containers::FlatHashSet<ObjectId> GetTokenizers() const { return {}; }
 

@@ -260,9 +260,9 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   void SetupColumnWriter(catalog::Column::Id column_id, bool have_nulls);
 
   irs::columnstore::ColumnWriter* EnsurePerRowBlobWriter(
-    catalog::Column::Id column_id);
-  void AppendPerRowBlob(catalog::Column::Id column_id, irs::bytes_view bytes);
-  void AppendPerRowBlobNull(catalog::Column::Id column_id);
+    irs::field_id field_id);
+  void AppendPerRowBlob(irs::field_id field_id, irs::bytes_view bytes);
+  void AppendPerRowBlobNull(irs::field_id field_id);
 
   // Opens-once and bulk-appends `vec` to the typed columnstore writer for
   // `field_id`.
@@ -281,7 +281,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     Field numeric_field;
     Field bool_field;
     Field null_field;
-    std::optional<catalog::Column::Id> tokenizer_column;
+    std::optional<irs::field_id> tokenizer_column;
 
     void InitForExpression(irs::field_id field_id,
                            catalog::ColumnTokenizer string_analyzer);
@@ -313,7 +313,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   catalog::Column::Id _active_column_id{};
   duckdb::LogicalType _active_column_type;
 
-  containers::FlatHashMap<catalog::Column::Id, irs::columnstore::ColumnWriter*>
+  containers::FlatHashMap<irs::field_id, irs::columnstore::ColumnWriter*>
     _per_row_blob_writers;
   duckdb::Vector _row_buffer{duckdb::LogicalType::BLOB, 1,
                              duckdb::VectorDataInitialization::UNINITIALIZED};

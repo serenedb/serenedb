@@ -193,7 +193,6 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   writer_options.db = query::DuckDBEngine::Instance().GetDB().instance.get();
   writer_options.reader_options.db = writer_options.db;
   writer_options.column_options = [&](irs::field_id id) -> irs::ColumnOptions {
-    const auto column_id = static_cast<catalog::Column::Id>(id);
     if (const auto* entry = index.FindEntry(id)) {
       return {
         .row_group_size = entry->row_group_size,
@@ -201,13 +200,14 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
         .hnsw_info = index.GetHNSWInfo(id),
       };
     }
-    if (column_id == catalog::Column::kGeneratedPKId) {
+    if (static_cast<catalog::Column::Id>(id) ==
+        catalog::Column::kGeneratedPKId) {
       return {
         .skip_validity = true,
         .row_group_size = index.GetOptions().row_group_size,
       };
     }
-    const auto* features = index.FindSyntheticFeatures(column_id);
+    const auto* features = index.FindSyntheticFeatures(id);
     SDB_ASSERT(features, "column callback for unknown column: ", id);
     SDB_ASSERT(!features->HasFeatures(irs::IndexFeatures::Norm),
                "norm-role synthetic id must not reach column callback: ", id);
@@ -223,14 +223,14 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
     const auto raw =
       static_cast<uint64_t>(absl::big_endian::Load64(name.data()));
     const auto* entry = index.FindEntry(static_cast<irs::field_id>(raw));
-    SDB_ENSURE(entry != nullptr, ERROR_INTERNAL,
+    SDB_ASSERT(entry != nullptr, ERROR_INTERNAL,
                "norm callback for unknown id: ", raw);
     SDB_ASSERT(entry->synthetic_column,
                "norm callback fired without a catalog reservation; id: ", raw);
     SDB_ASSERT(entry->features.HasFeatures(irs::IndexFeatures::Norm),
                "norm callback fired but catalog features lack Norm; id: ", raw);
     return {
-      .id = static_cast<irs::field_id>(*entry->synthetic_column),
+      .id = *entry->synthetic_column,
       .row_group_size = entry->norm_row_group_size,
     };
   };

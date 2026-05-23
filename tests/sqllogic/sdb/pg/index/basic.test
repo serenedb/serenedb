@@ -144,7 +144,7 @@ CREATE TABLE test(i int);
 statement error
 CREATE INDEX test_index ON test USING inverted (invalid);
 ----
-db error: ERROR: Table "test" does not have a column named "invalid"
+db error: ERROR: Referenced column "invalid" not found in FROM clause!
 Candidate bindings: "i"
 
 

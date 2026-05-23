@@ -545,7 +545,7 @@ CREATE TABLE empty_soul();
 statement error
 CREATE INDEX empty_index ON empty_soul USING inverted(a);
 ----
-db error: ERROR: Table "empty_soul" does not have a column named "a"
+db error: ERROR: Referenced column "a" was not found because the FROM clause is missing
 
 
 statement ok

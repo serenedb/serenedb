@@ -59,7 +59,7 @@ struct Posting {
     : term{data, size} {}
 
   bytes_view term;
-  uint64_t doc_code;
+  uint64_t doc_code{0};
   // ...........................................................................
   // store pointers to data in the following way:
   // [0] - pointer to freq stream end
@@ -67,10 +67,10 @@ struct Posting {
   // [2] - pointer to freq stream begin
   // [3] - pointer to prox stream begin
   // ...........................................................................
-  size_t int_start;
+  size_t int_start{0};
   doc_id_t doc{doc_limits::invalid()};
-  uint32_t freq;
-  uint32_t pos;
+  uint32_t freq{0};
+  uint32_t pos{0};
   uint32_t offs{0};
   doc_id_t size{1};  // length of postings
 };

@@ -530,7 +530,7 @@ QUERY PLAN
 │    ────────────────────   │
 │      docs_idx.id ASC      │
 │                           │
-│          ~0 rows          │
+│          ~7 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
@@ -659,8 +659,8 @@ SELECT TFIDF();
 ----
 db error: ERROR: No function matches the given name and argument types 'tfidf()'. You might need to add explicit type casts.
 	Candidate functions:
-	tfidf(BIGINT) -> FLOAT
-	tfidf(BIGINT, BOOLEAN) -> FLOAT
+	tfidf(col BIGINT) -> FLOAT
+	tfidf(col BIGINT, col2 BOOLEAN) -> FLOAT
 
 
 # Error: BM25(docs_idx.tableoid, 1) — must be 0 or 2 arguments
@@ -669,8 +669,8 @@ SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND BM25(docs_idx.tableoi
 ----
 db error: ERROR: No function matches the given name and argument types 'bm25(BIGINT, DECIMAL(2,1))'. You might need to add explicit type casts.
 	Candidate functions:
-	bm25(BIGINT) -> FLOAT
-	bm25(BIGINT, DOUBLE, DOUBLE) -> FLOAT
+	bm25(col BIGINT) -> FLOAT
+	bm25(col BIGINT, col2 DOUBLE, col3 DOUBLE) -> FLOAT
 
 
 # Error: BM25(docs_idx.tableoid, k1, b, extra) — too many arguments
@@ -679,8 +679,8 @@ SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND BM25(docs_idx.tableoi
 ----
 db error: ERROR: No function matches the given name and argument types 'bm25(BIGINT, DECIMAL(2,1), DECIMAL(3,2), DECIMAL(2,1))'. You might need to add explicit type casts.
 	Candidate functions:
-	bm25(BIGINT) -> FLOAT
-	bm25(BIGINT, DOUBLE, DOUBLE) -> FLOAT
+	bm25(col BIGINT) -> FLOAT
+	bm25(col BIGINT, col2 DOUBLE, col3 DOUBLE) -> FLOAT
 
 
 # Error: BM25(docs.tableoid) with plain table in FROM (no inverted index scan)
@@ -748,7 +748,7 @@ QUERY PLAN
 │    ────────────────────   │
 │           id ASC          │
 │                           │
-│          ~0 rows          │
+│          ~4 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           UNION           ├──────────────┐
@@ -1017,13 +1017,21 @@ QUERY PLAN
 │    ────────────────────   │
 │          a.id ASC         │
 │                           │
-│          ~0 rows          │
+│          ~7 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
 │             id            │
 │         has_score         │
+│                           │
+│          ~7 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│  sdb_inverted_index_score │
 │                           │
 │          ~7 rows          │
 └─────────────┬─────────────┘
@@ -1082,7 +1090,7 @@ QUERY PLAN
 │    ────────────────────   │
 │      docs_idx.id ASC      │
 │                           │
-│          ~0 rows          │
+│          ~7 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
@@ -1194,34 +1202,53 @@ QUERY PLAN
 │          ~6 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           UNION           ├──────────────┬────────────────────────────┬────────────────────────────┐
-└─────────────┬─────────────┘              │                            │                            │
+│           UNION           ├──────────────┬────────────────────────────┐
+└─────────────┬─────────────┘              │                            │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│      STREAMING_LIMIT      ││      STREAMING_LIMIT      ││           UNION           │
+│    ────────────────────   ││    ────────────────────   ││                           │
+│          Limit: 2         ││          Limit: 2         ││                           ├──────────────┐
+│                           ││                           ││                           │              │
+│          ~2 rows          ││          ~2 rows          ││                           │              │
+└─────────────┬─────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘              │
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│      STREAMING_LIMIT      ││      STREAMING_LIMIT      ││      STREAMING_LIMIT      ││      STREAMING_LIMIT      │
+│       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││      STREAMING_LIMIT      ││      STREAMING_LIMIT      │
 │    ────────────────────   ││    ────────────────────   ││    ────────────────────   ││    ────────────────────   │
-│          Limit: 2         ││          Limit: 2         ││          Limit: 2         ││          Limit: 2         │
+│      Index: docs_idx      ││      Index: docs_idx      ││          Limit: 2         ││          Limit: 2         │
+│      Lookup: rocksdb      ││      Lookup: rocksdb      ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│          ~2 rows          ││          ~2 rows          ││          ~2 rows          ││          ~2 rows          │
-└─────────────┬─────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘
-┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
-│    ────────────────────   ││    ────────────────────   ││    ────────────────────   ││    ────────────────────   │
-│      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      │
-│      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      │
+│          Filter:          ││          Filter:          ││                           ││                           │
+│ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││                           ││                           │
+│    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│          Filter:          ││          Filter:          ││          Filter:          ││          Filter:          │
-│ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   ││    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   │
+│           Score:          ││           Score:          ││                           ││                           │
+│    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│           Score:          ││           Score:          ││           Score:          ││           Score:          │
-│    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   │
+│        Projections:       ││        Projections:       ││                           ││                           │
+│             id            ││             id            ││                           ││                           │
+│  sdb_inverted_index_score ││  sdb_inverted_index_score ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│        Projections:       ││        Projections:       ││        Projections:       ││        Projections:       │
-│             id            ││             id            ││             id            ││             id            │
-│  sdb_inverted_index_score ││  sdb_inverted_index_score ││  sdb_inverted_index_score ││  sdb_inverted_index_score │
-│                           ││                           ││                           ││                           │
-│          ~7 rows          ││          ~7 rows          ││          ~7 rows          ││          ~7 rows          │
-└───────────────────────────┘└───────────────────────────┘└───────────────────────────┘└───────────────────────────┘
+│          ~7 rows          ││          ~7 rows          ││          ~2 rows          ││          ~2 rows          │
+└───────────────────────────┘└───────────────────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘
+                                                          ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+                                                          │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
+                                                          │    ────────────────────   ││    ────────────────────   │
+                                                          │      Index: docs_idx      ││      Index: docs_idx      │
+                                                          │      Lookup: rocksdb      ││      Lookup: rocksdb      │
+                                                          │                           ││                           │
+                                                          │          Filter:          ││          Filter:          │
+                                                          │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
+                                                          │    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   │
+                                                          │                           ││                           │
+                                                          │           Score:          ││           Score:          │
+                                                          │    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   │
+                                                          │                           ││                           │
+                                                          │        Projections:       ││        Projections:       │
+                                                          │             id            ││             id            │
+                                                          │  sdb_inverted_index_score ││  sdb_inverted_index_score │
+                                                          │                           ││                           │
+                                                          │          ~7 rows          ││          ~7 rows          │
+                                                          └───────────────────────────┘└───────────────────────────┘
 
 
 query error
@@ -1258,34 +1285,53 @@ QUERY PLAN
 │          ~6 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           UNION           ├──────────────┬────────────────────────────┬────────────────────────────┐
-└─────────────┬─────────────┘              │                            │                            │
+│           UNION           ├──────────────┬────────────────────────────┐
+└─────────────┬─────────────┘              │                            │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│      STREAMING_LIMIT      ││      STREAMING_LIMIT      ││           UNION           │
+│    ────────────────────   ││    ────────────────────   ││                           │
+│          Limit: 2         ││          Limit: 2         ││                           ├──────────────┐
+│                           ││                           ││                           │              │
+│          ~2 rows          ││          ~2 rows          ││                           │              │
+└─────────────┬─────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘              │
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│      STREAMING_LIMIT      ││      STREAMING_LIMIT      ││      STREAMING_LIMIT      ││      STREAMING_LIMIT      │
+│       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││      STREAMING_LIMIT      ││      STREAMING_LIMIT      │
 │    ────────────────────   ││    ────────────────────   ││    ────────────────────   ││    ────────────────────   │
-│          Limit: 2         ││          Limit: 2         ││          Limit: 2         ││          Limit: 2         │
+│      Index: docs_idx      ││      Index: docs_idx      ││          Limit: 2         ││          Limit: 2         │
+│      Lookup: rocksdb      ││      Lookup: rocksdb      ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│          ~2 rows          ││          ~2 rows          ││          ~2 rows          ││          ~2 rows          │
-└─────────────┬─────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘
-┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
-│    ────────────────────   ││    ────────────────────   ││    ────────────────────   ││    ────────────────────   │
-│      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      │
-│      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      │
+│          Filter:          ││          Filter:          ││                           ││                           │
+│ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││                           ││                           │
+│    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│          Filter:          ││          Filter:          ││          Filter:          ││          Filter:          │
-│ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   ││    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   │
+│           Score:          ││           Score:          ││                           ││                           │
+│    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│           Score:          ││           Score:          ││           Score:          ││           Score:          │
-│    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   │
+│        Projections:       ││        Projections:       ││                           ││                           │
+│             id            ││             id            ││                           ││                           │
+│  sdb_inverted_index_score ││  sdb_inverted_index_score ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│        Projections:       ││        Projections:       ││        Projections:       ││        Projections:       │
-│             id            ││             id            ││             id            ││             id            │
-│  sdb_inverted_index_score ││  sdb_inverted_index_score ││  sdb_inverted_index_score ││  sdb_inverted_index_score │
-│                           ││                           ││                           ││                           │
-│          ~7 rows          ││          ~7 rows          ││          ~7 rows          ││          ~7 rows          │
-└───────────────────────────┘└───────────────────────────┘└───────────────────────────┘└───────────────────────────┘
+│          ~7 rows          ││          ~7 rows          ││          ~2 rows          ││          ~2 rows          │
+└───────────────────────────┘└───────────────────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘
+                                                          ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+                                                          │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
+                                                          │    ────────────────────   ││    ────────────────────   │
+                                                          │      Index: docs_idx      ││      Index: docs_idx      │
+                                                          │      Lookup: rocksdb      ││      Lookup: rocksdb      │
+                                                          │                           ││                           │
+                                                          │          Filter:          ││          Filter:          │
+                                                          │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
+                                                          │    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   │
+                                                          │                           ││                           │
+                                                          │           Score:          ││           Score:          │
+                                                          │    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   │
+                                                          │                           ││                           │
+                                                          │        Projections:       ││        Projections:       │
+                                                          │             id            ││             id            │
+                                                          │  sdb_inverted_index_score ││  sdb_inverted_index_score │
+                                                          │                           ││                           │
+                                                          │          ~7 rows          ││          ~7 rows          │
+                                                          └───────────────────────────┘└───────────────────────────┘
 
 
 

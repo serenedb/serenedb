@@ -301,7 +301,7 @@ PhraseGap ParseTsqueryPhraseDistance(const duckdb::Expression& expr) {
 }
 
 bool IsPhraseSeqGapType(const duckdb::Expression& expr) {
-  const auto& type = expr.return_type;
+  const auto& type = expr.GetReturnType();
   const auto id = type.id();
   return type.IsNumeric() || id == duckdb::LogicalTypeId::LIST ||
          id == duckdb::LogicalTypeId::ARRAY;
@@ -309,12 +309,13 @@ bool IsPhraseSeqGapType(const duckdb::Expression& expr) {
 
 bool IsPhraseSeqNode(const duckdb::Expression& expr) {
   const auto& unwrapped = UnwrapTSQueryCast(expr);
-  if (unwrapped.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
+  if (unwrapped.GetExpressionClass() !=
+      duckdb::ExpressionClass::BOUND_FUNCTION) {
     return false;
   }
   const auto& f = unwrapped.Cast<duckdb::BoundFunctionExpression>();
-  return f.function.name == kTSQueryPhraseSeq ||
-         f.function.name == kTsqueryPhrase;
+  return f.function.GetName() == kTSQueryPhraseSeq ||
+         f.function.GetName() == kTsqueryPhrase;
 }
 
 }  // namespace
@@ -363,7 +364,7 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
     return;
   }
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
-  if (func.function.name == kTsqueryPhrase) {
+  if (func.function.GetName() == kTsqueryPhrase) {
     SDB_ASSERT(func.children.size() == 2 || func.children.size() == 3);
     FlattenPhraseSeq(*func.children[0], seq);
     if (func.children.size() == 3) {
@@ -380,7 +381,7 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
     return;
   }
   // `##` operator: left-associative binary tree.
-  SDB_ASSERT(func.function.name == kTSQueryPhraseSeq);
+  SDB_ASSERT(func.function.GetName() == kTSQueryPhraseSeq);
   SDB_ASSERT(func.children.size() == 2);
   FlattenPhraseSeq(*func.children[0], seq);
   const auto& right = *func.children[1];
@@ -456,7 +457,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
     TSQueryOp leaf_op;
     const duckdb::BoundFunctionExpression* f = nullptr;
     std::string bare_text;
-    if (part_expr_ref.expression_class ==
+    if (part_expr_ref.GetExpressionClass() ==
         duckdb::ExpressionClass::BOUND_CONSTANT) {
       const auto& val =
         part_expr_ref.Cast<duckdb::BoundConstantExpression>().value;
@@ -468,15 +469,16 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
       }
       bare_text = duckdb::StringValue::Get(val);
       leaf_op = TSQueryOp::Term;
-    } else if (part_expr_ref.expression_class ==
+    } else if (part_expr_ref.GetExpressionClass() ==
                duckdb::ExpressionClass::BOUND_FUNCTION) {
       f = &part_expr_ref.Cast<duckdb::BoundFunctionExpression>();
-      leaf_op = ClassifyTSQueryFunction(f->function.name);
+      leaf_op = ClassifyTSQueryFunction(f->function.GetName());
     } else {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("## part expression class: ",
-                              static_cast<int>(part_expr_ref.expression_class)),
-                      ERR_HINT(kSyntaxHint));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("## part expression class: ",
+                static_cast<int>(part_expr_ref.GetExpressionClass())),
+        ERR_HINT(kSyntaxHint));
     }
 
     auto get_text_arg = [&] {
@@ -488,7 +490,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
       if (f->children.size() != 1) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("## ", f->function.name,
+          ERR_MSG("## ", f->function.GetName(),
                   " phrase part expects 1 argument, got ", f->children.size()),
           ERR_HINT(kSyntaxHint));
       }
@@ -622,7 +624,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("## part type not supported yet: ",
-                  f ? f->function.name : "<bare-const>"),
+                  f ? f->function.GetName() : "<bare-const>"),
           ERR_HINT("Supported phrase parts: bare 'word', ts_starts_with, "
                    "ts_like, ts_levenshtein, ts_phrase, ts_any, ts_between."));
     }

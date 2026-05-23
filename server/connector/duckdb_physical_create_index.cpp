@@ -20,7 +20,6 @@
 
 #include "connector/duckdb_physical_create_index.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 
 #include <atomic>
@@ -300,7 +299,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       throw duckdb::CatalogException(
         "indexed expression must reference at least one base table column");
     }
-    auto return_type = normalized->return_type;
+    auto return_type = normalized->GetReturnType();
     idx_columns.emplace_back(
       nullptr, "", std::move(opclass),
       catalog::ExpressionData{

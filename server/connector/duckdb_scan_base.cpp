@@ -337,10 +337,10 @@ duckdb::idx_t ReadGeneratedPKFromKeys(rocksdb::Iterator& it,
   return count;
 }
 
-duckdb::idx_t CommonScanRowsScanned(duckdb::GlobalTableFunctionState& gstate_p,
-                                    duckdb::LocalTableFunctionState&) {
-  auto& gstate = gstate_p.Cast<CommonScanGlobalState>();
-  return gstate.produced_rows.load(std::memory_order_relaxed);
+void CommonScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {
+  auto& gstate = input.global_state->Cast<CommonScanGlobalState>();
+  input.operator_metrics.rows_scanned =
+    gstate.produced_rows.load(std::memory_order_relaxed);
 }
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> CommonScanInitLocal(
@@ -481,10 +481,10 @@ void PKScanFunctionImpl(
 
   if (gstate.scan_tableoid) {
     output.data[gstate.tableoid_output_idx].Reference(
-      duckdb::Value::BIGINT(gstate.tableoid_value));
+      duckdb::Value::BIGINT(gstate.tableoid_value), duckdb::count_t(count));
   }
 
-  output.SetCardinality(count);
+  output.SetChildCardinality(count);
   if (count > 0) {
     gstate.produced_rows.fetch_add(count, std::memory_order_relaxed);
   }

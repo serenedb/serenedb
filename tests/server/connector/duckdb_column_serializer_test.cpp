@@ -304,22 +304,23 @@ TEST_F(DuckDBColumnSerializerTest, FlatTimestampNulls) {
 
 TEST_F(DuckDBColumnSerializerTest, ConstantInt) {
   // Constant vector: every row has the same value 42
-  duckdb::Vector vec(duckdb::Value::INTEGER(42));
   const duckdb::idx_t num_rows = 8;
+  duckdb::Vector vec(duckdb::Value::INTEGER(42), duckdb::count_t(num_rows));
   CheckColumn(vec, duckdb::LogicalType::INTEGER, num_rows);
 }
 
 TEST_F(DuckDBColumnSerializerTest, NullConstant) {
   // Null constant: all rows are null (use named variable to avoid vexing parse)
   auto null_val = duckdb::Value(duckdb::LogicalType::INTEGER);
-  duckdb::Vector vec(null_val);
   const duckdb::idx_t num_rows = 8;
+  duckdb::Vector vec(null_val, duckdb::count_t(num_rows));
   CheckColumn(vec, duckdb::LogicalType::INTEGER, num_rows);
 }
 
 TEST_F(DuckDBColumnSerializerTest, ConstantVarchar) {
-  duckdb::Vector vec(duckdb::Value("hello constant"));
   const duckdb::idx_t num_rows = 5;
+  duckdb::Vector vec(duckdb::Value("hello constant"),
+                     duckdb::count_t(num_rows));
   CheckColumn(vec, duckdb::LogicalType::VARCHAR, num_rows);
 }
 
@@ -912,7 +913,7 @@ TEST_F(DuckDBColumnSerializerTest, FlatGeometryNulls) {
 }
 
 TEST_F(DuckDBColumnSerializerTest, ConstantGeometry) {
-  duckdb::Vector vec(WkbPointValue(6.5, 50.3));
+  duckdb::Vector vec(WkbPointValue(6.5, 50.3), duckdb::count_t(6));
   CheckColumn(vec, duckdb::LogicalType::GEOMETRY(), 6);
 }
 

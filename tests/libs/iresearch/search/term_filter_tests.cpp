@@ -633,9 +633,6 @@ TEST_P(TermFilterTestCase, by_term_boost) { ByTermSequentialBoost(); }
 TEST_P(TermFilterTestCase, by_term_cost) { ByTermSequentialCost(); }
 
 TEST_P(TermFilterTestCase, by_term_parallel_prepare_parity) {
-  // Build a multi-segment index so the parallel path is exercised against
-  // more than one SubReader. Two add_segment calls = two Commits = two
-  // segments (add_segments collapses to one Commit and one segment).
   {
     auto writer = open_writer(irs::kOmCreate);
     tests::JsonDocGenerator gen_a(resource("simple_sequential.json"),
@@ -649,57 +646,16 @@ TEST_P(TermFilterTestCase, by_term_parallel_prepare_parity) {
   auto rdr = open_reader();
   ASSERT_GE(rdr.size(), 2u);
 
-  std::vector<const irs::SubReader*> segments;
-  segments.reserve(rdr.size());
-  for (const auto& s : rdr) {
-    segments.push_back(&s);
-  }
-
-  auto run = [&](const irs::ByTerm& filter) {
-    MaxMemoryCounter counter;
-    const irs::PrepareContext ctx{.index = rdr, .memory = counter};
-
-    auto seq = filter.prepare(ctx);
-    ASSERT_NE(nullptr, seq);
-
-    auto buf_lhs = filter.CreateBuffer(ctx);
-    auto buf_rhs = filter.CreateBuffer(ctx);
-    ASSERT_NE(nullptr, buf_lhs);
-    ASSERT_NE(nullptr, buf_rhs);
-
-    for (size_t i = 0; i < segments.size(); ++i) {
-      auto& buf = (i & 1u) ? *buf_rhs : *buf_lhs;
-      buf.PrepareSegment(*segments[i]);
-    }
-    buf_lhs->Merge(std::move(*buf_rhs));
-    auto par = std::move(*buf_lhs).Compile(ctx);
-    ASSERT_NE(nullptr, par);
-
-    ASSERT_EQ(seq->Boost(), par->Boost());
-
-    for (const auto* segment : segments) {
-      auto docs_seq = seq->execute({.segment = *segment});
-      auto docs_par = par->execute({.segment = *segment});
-      while (true) {
-        const bool has_seq = docs_seq->next();
-        const bool has_par = docs_par->next();
-        ASSERT_EQ(has_seq, has_par);
-        if (!has_seq) {
-          break;
-        }
-        ASSERT_EQ(docs_seq->value(), docs_par->value());
-      }
-    }
-  };
-
   auto with_boost = [](irs::ByTerm q, irs::score_t b) {
     q.boost(b);
     return q;
   };
 
-  run(MakeFilter("same", "xyz"));
-  run(with_boost(MakeFilter("same", "xyz"), 2.5f));
-  run(with_boost(MakeFilter("same", "xyz"), 0.5f));
+  tests::RunParallelPrepareParity(MakeFilter("same", "xyz"), rdr);
+  tests::RunParallelPrepareParity(with_boost(MakeFilter("same", "xyz"), 2.5f),
+                                  rdr);
+  tests::RunParallelPrepareParity(with_boost(MakeFilter("same", "xyz"), 0.5f),
+                                  rdr);
 }
 
 TEST_P(TermFilterTestCase, visit) {

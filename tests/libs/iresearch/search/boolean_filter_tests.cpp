@@ -15462,40 +15462,11 @@ TEST_P(BooleanFilterTestCase, and_create_buffer_parity) {
   auto rdr = open_reader();
   ASSERT_NE(0u, rdr.size());
 
-  // Multi-field And: two ByTerms on different fields -- bypasses ByTerm
-  // coalescing and exercises the CompoundBuffer code path.
   irs::And root;
   Append<irs::ByTerm>(root, "duplicated", "abcd");
   Append<irs::ByTerm>(root, "same", "xyz");
 
-  MaxMemoryCounter counter;
-  const irs::PrepareContext ctx{.index = rdr, .memory = counter};
-
-  auto seq = root.prepare(ctx);
-  ASSERT_NE(nullptr, seq);
-
-  auto buf = root.CreateBuffer(ctx);
-  ASSERT_NE(nullptr, buf);
-  for (const auto& segment : rdr) {
-    buf->PrepareSegment(segment);
-  }
-  ASSERT_FALSE(buf->Empty());
-  auto par = std::move(*buf).Compile(ctx);
-  ASSERT_NE(nullptr, par);
-
-  for (const auto& segment : rdr) {
-    auto docs_seq = seq->execute({.segment = segment});
-    auto docs_par = par->execute({.segment = segment});
-    while (true) {
-      const bool has_seq = docs_seq->next();
-      const bool has_par = docs_par->next();
-      ASSERT_EQ(has_seq, has_par);
-      if (!has_seq) {
-        break;
-      }
-      ASSERT_EQ(docs_seq->value(), docs_par->value());
-    }
-  }
+  tests::RunParallelPrepareParity(root, rdr);
 }
 
 TEST_P(BooleanFilterTestCase, boolean_parallel_prepare_parity) {
@@ -15511,50 +15482,10 @@ TEST_P(BooleanFilterTestCase, boolean_parallel_prepare_parity) {
   auto rdr = open_reader();
   ASSERT_GE(rdr.size(), 2u);
 
-  std::vector<const irs::SubReader*> segments;
-  segments.reserve(rdr.size());
-  for (const auto& s : rdr) {
-    segments.push_back(&s);
-  }
-
-  auto run = [&](const irs::Filter& filter) {
-    MaxMemoryCounter counter;
-    const irs::PrepareContext ctx{.index = rdr, .memory = counter};
-
-    auto seq = filter.prepare(ctx);
-    ASSERT_NE(nullptr, seq);
-
-    auto buf_lhs = filter.CreateBuffer(ctx);
-    auto buf_rhs = filter.CreateBuffer(ctx);
-    ASSERT_NE(nullptr, buf_lhs);
-    ASSERT_NE(nullptr, buf_rhs);
-
-    for (size_t i = 0; i < segments.size(); ++i) {
-      auto& buf = (i & 1u) ? *buf_rhs : *buf_lhs;
-      buf.PrepareSegment(*segments[i]);
-    }
-    buf_lhs->Merge(std::move(*buf_rhs));
-    auto par = std::move(*buf_lhs).Compile(ctx);
-    ASSERT_NE(nullptr, par);
-
-    ASSERT_EQ(seq->Boost(), par->Boost());
-
-    for (const auto* segment : segments) {
-      auto docs_seq = seq->execute({.segment = *segment});
-      auto docs_par = par->execute({.segment = *segment});
-      while (true) {
-        const bool has_seq = docs_seq->next();
-        const bool has_par = docs_par->next();
-        ASSERT_EQ(has_seq, has_par);
-        if (!has_seq) {
-          break;
-        }
-        ASSERT_EQ(docs_seq->value(), docs_par->value());
-      }
-    }
+  auto run = [&](const irs::Filter& f) {
+    tests::RunParallelPrepareParity(f, rdr);
   };
 
-  // Multi-field And (two ByTerms on different fields).
   {
     irs::And root;
     Append<irs::ByTerm>(root, "duplicated", "abcd");
@@ -15569,7 +15500,6 @@ TEST_P(BooleanFilterTestCase, boolean_parallel_prepare_parity) {
     run(root);
   }
 
-  // Multi-field Or.
   {
     irs::Or root;
     Append<irs::ByTerm>(root, "duplicated", "abcd");
@@ -15584,7 +15514,6 @@ TEST_P(BooleanFilterTestCase, boolean_parallel_prepare_parity) {
     run(root);
   }
 
-  // And containing a Not -- exercises the Not exclusion path inside And.
   {
     irs::And root;
     Append<irs::ByTerm>(root, "duplicated", "abcd");
@@ -15607,7 +15536,6 @@ TEST_P(BooleanFilterTestCase, boolean_parallel_prepare_parity) {
     run(root);
   }
 
-  // Stand-alone Not.
   {
     irs::Not root;
     auto& term = root.filter<irs::ByTerm>();

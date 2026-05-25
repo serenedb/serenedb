@@ -129,6 +129,7 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   ObjectId table_id, uint64_t cols, bool is_root = false) {
   ObjectId shard_id;
   uint64_t table_size = std::numeric_limits<uint64_t>::max();
+  StorageKind shard_storage = StorageKind::kRocksDB;
 
   auto r = engine.VisitDefinitions(
     table_id, ObjectType::TableShard,
@@ -136,7 +137,8 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
       SDB_ASSERT(!shard_id.isSet());
       shard_id = key.GetObjectId();
       TableStats stats;
-      if (auto r = vpack::ReadTupleNothrow(slice, stats); !r.ok()) {
+      auto tup = std::tie(shard_storage, stats);
+      if (auto r = vpack::ReadTupleNothrow(slice, tup); !r.ok()) {
         return r;
       }
       table_size = stats.num_rows * cols;
@@ -183,7 +185,7 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   }
   return std::make_shared<TableDrop>(
     table_id, shard_id, table_size, std::move(indexes),
-    std::move(owned_sequences), schema_id, is_root);
+    std::move(owned_sequences), schema_id, shard_storage, is_root);
 }
 
 ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
@@ -496,10 +498,16 @@ Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       ObjectId shard_id = key.GetObjectId();
       SDB_ASSERT(!IsDeleted(shard_id, DeletedScope::Relation));
+      StorageKind kind = StorageKind::kRocksDB;
       TableStats stats;
-      if (auto r = vpack::ReadTupleNothrow(slice, stats); !r.ok()) {
+      auto tup = std::tie(kind, stats);
+      if (auto r = vpack::ReadTupleNothrow(slice, tup); !r.ok()) {
         return r;
       }
+      // Defensive: SearchTableShard does not exist yet (lands in a later PR).
+      // Until then any non-RocksDB kind on disk is corruption / a
+      // future-version payload we cannot interpret.
+      SDB_ASSERT(kind == StorageKind::kRocksDB);
       auto shard = std::make_shared<TableShard>(shard_id, table_id, stats);
       return _catalog.RegisterTableShard(std::move(shard));
     });

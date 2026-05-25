@@ -24,7 +24,9 @@
 #include <rocksdb/types.h>
 
 #include <atomic>
+#include <cstdint>
 #include <shared_mutex>
+#include <tuple>
 
 #include "catalog/fwd.h"
 #include "catalog/object.h"
@@ -49,6 +51,13 @@ class DocumentIterator;
 struct OperationOptions;
 class Result;
 
+// Selects the physical backend for a TableShard's row store. Persisted in
+// the shard's vpack payload so recovery can construct the right subclass.
+enum class StorageKind : uint8_t {
+  kRocksDB = 0,  // default -- RocksDB row store, what every existing table uses
+  kSearch = 1,   // iresearch columnstore + RocksDB WAL markers
+};
+
 class TableShard : public catalog::Object {
  public:
   static constexpr double kDefaultLockTimeout = 10.0 * 60.0;
@@ -57,6 +66,8 @@ class TableShard : public catalog::Object {
   std::shared_ptr<Object> Clone() const final { return nullptr; }
 
   auto GetTableId() const noexcept { return _table_id; }
+
+  StorageKind GetStorage() const noexcept { return _storage; }
 
   auto& GetTableLock() noexcept { return _table_lock; }
 
@@ -69,8 +80,26 @@ class TableShard : public catalog::Object {
   }
 
   void WriteInternal(vpack::Builder& b) const final {
-    vpack::WriteTuple(b, GetTableStats());
+    vpack::WriteTuple(b, std::forward_as_tuple(GetStorage(), GetTableStats()));
   }
+
+  // Remove a shard's on-disk artifacts. Static and kind-dispatched: callable
+  // *without* a live shard instance (the drop task runs after the shard's
+  // shared_ptr count has hit zero -- see DropTask::ExecuteTask). Used in two
+  // situations:
+  //   1. Normal drop -- the shard's destructor handles live-state cleanup
+  //      (e.g. SearchTableShard closes its iresearch writer in its dtor),
+  //      then this static helper removes the on-disk files.
+  //   2. Cleanup-after-error / recovery -- caller may not even be able to
+  //      construct a live shard from this state; static cleanup is the
+  //      only option.
+  //
+  // For kRocksDB: rocksdb range delete on the table's key range.
+  // For kSearch (when implemented): remove the iresearch directory derived
+  // from (table_id, shard_id).
+  static Result DropArtifacts(StorageKind kind, ObjectId table_id,
+                              ObjectId shard_id, uint64_t size);
+
   // New table shard ctor
   explicit TableShard(ObjectId table_id, const catalog::TableStats& stats);
 
@@ -90,6 +119,9 @@ class TableShard : public catalog::Object {
   // may be destroyed on a different thread than they were created on (e.g.
   // during query cancellation), and absl::Mutex forbids cross-thread unlock.
   std::shared_mutex _table_lock;
+  // Set by subclasses in their constructor; default RocksDB matches every
+  // existing call site that constructs bare TableShard.
+  StorageKind _storage = StorageKind::kRocksDB;
 };
 
 }  // namespace sdb

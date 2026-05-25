@@ -30,8 +30,14 @@
 #include <atomic>
 #include <yaclib/async/make.hpp>
 
+#include "basics/errors.h"
 #include "catalog/object.h"
 #include "catalog/table.h"
+#include "connector/key_utils.hpp"
+#include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
+#include "rocksdb_engine_catalog/rocksdb_common.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "storage_engine/engine_feature.h"
 
 namespace sdb {
 
@@ -46,5 +52,30 @@ TableShard::TableShard(ObjectId table_id, const catalog::TableStats& stats)
                     catalog::ObjectType::TableShard},
     _table_id{table_id},
     _num_rows{stats.num_rows} {}
+
+Result TableShard::DropArtifacts(StorageKind kind, ObjectId table_id,
+                                 ObjectId /*shard_id*/, uint64_t size) {
+  switch (kind) {
+    case StorageKind::kRocksDB: {
+      auto& server = GetServerEngine();
+      auto [start, end] = connector::key_utils::CreateTableRange(table_id);
+      auto* cf = RocksDBColumnFamilyManager::get(
+        RocksDBColumnFamilyManager::Family::Default);
+      // TODO(codeworse): add some parameter for large range(not just >= 1000)
+      return rocksutils::RemoveLargeRange(server.db(), rocksdb::Slice{start},
+                                          rocksdb::Slice{end}, cf, true,
+                                          (size >= 1000));
+    }
+    case StorageKind::kSearch:
+      // SearchTableShard is not implemented yet (lands in M2). When it
+      // does, this case computes the iresearch directory path from
+      // (table_id, shard_id) and removes it. Until then, reaching this
+      // case means corruption -- a kSearch shard payload exists on disk
+      // but the code that handles it doesn't.
+      SDB_ASSERT(false, "DropArtifacts(kSearch) not yet implemented");
+      return Result{ERROR_NOT_IMPLEMENTED};
+  }
+  SDB_UNREACHABLE();
+}
 
 }  // namespace sdb

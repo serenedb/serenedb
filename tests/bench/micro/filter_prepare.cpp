@@ -152,9 +152,7 @@ class FilterPrepareFixture : public benchmark::Fixture {
                 irs::score_t boost) {
     Filter f;
     setup(f);
-    if (boost != irs::kNoBoost) {
-      f.boost(boost);
-    }
+    f.boost(boost);
     for (auto _ : s) {
       auto q = f.prepare({.index = _reader, .scorer = scorer});
       benchmark::DoNotOptimize(q);
@@ -166,8 +164,8 @@ class FilterPrepareFixture : public benchmark::Fixture {
   irs::Format::ptr _codec;
   irs::DirectoryReader _reader;
 
-  irs::BM25 _bm25{};
-  irs::TFIDF _tfidf{};
+  irs::BM25 _bm25;
+  irs::TFIDF _tfidf;
 
   std::vector<std::string> _term_pool;
 };

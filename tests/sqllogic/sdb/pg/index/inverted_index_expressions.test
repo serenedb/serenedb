@@ -1315,7 +1315,7 @@ statement error
 CREATE INDEX hnsw_e_no_opts ON hnsw_e USING inverted(
     id, (array_value(x, y, z)) hnsw);
 ----
-db error: ERROR: Failed to create index: Column 'array_value(x, y, z)' has unsupported type FLOAT[3]; ARRAY values can only be indexed with the built-in 'hnsw' opclass; use 'hnsw (...)'
+db error: ERROR: Failed to create index: Column 'array_value(x, y, z)' has unsupported type FLOAT[3]
 
 
 # ARRAY of non-FLOAT child type is rejected.

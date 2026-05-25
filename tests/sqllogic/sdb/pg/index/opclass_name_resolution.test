@@ -146,8 +146,8 @@ VACUUM (UPDATE_INDEXES) parens_inc_col;
 query
 SELECT id, s FROM parens_inc_col_idx WHERE id = 1;
 ----
-id    s
-1     foo
+id	s
+1	foo
 
 
 # 'hnsw (...)' on an indexed expression: built-in HNSW.
@@ -207,7 +207,7 @@ statement error
 CREATE INDEX bad_shadow_hnsw_int_arr_col_idx ON shadow_hnsw_int_arr_col USING inverted(
     id, emb hnsw);
 ----
-db error: ERROR: Failed to create index: Column 'emb' has unsupported type INTEGER[3]; ARRAY values can only be indexed with the built-in 'hnsw' opclass; use 'hnsw (...)'
+db error: ERROR: Failed to create index: Column 'emb' has unsupported type INTEGER[3]
 
 
 statement ok
@@ -217,7 +217,7 @@ statement error
 CREATE INDEX bad_shadow_hnsw_float_arr_col_idx ON shadow_hnsw_float_arr_col USING inverted(
     id, emb hnsw);
 ----
-db error: ERROR: Failed to create index: Column 'emb' has unsupported type FLOAT[3]; ARRAY values can only be indexed with the built-in 'hnsw' opclass; use 'hnsw (...)'
+db error: ERROR: Failed to create index: Column 'emb' has unsupported type FLOAT[3]
 
 
 statement ok
@@ -227,7 +227,7 @@ statement error
 CREATE INDEX bad_shadow_hnsw_arr_expr_idx ON shadow_hnsw_arr_expr USING inverted(
     id, (array_value(x, y, z)) hnsw);
 ----
-db error: ERROR: Failed to create index: Column 'array_value(x, y, z)' has unsupported type FLOAT[3]; ARRAY values can only be indexed with the built-in 'hnsw' opclass; use 'hnsw (...)'
+db error: ERROR: Failed to create index: Column 'array_value(x, y, z)' has unsupported type FLOAT[3]
 
 
 # The parens form selects the built-in HNSW even with the shadowing dict

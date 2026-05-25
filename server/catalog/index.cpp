@@ -392,8 +392,8 @@ Result ValidateInvertedIndexColumns(
         return {ERROR_BAD_PARAMETER,
                 "Column '",
                 label,
-                "' has kind ",
-                duckdb::EnumUtil::ToString(kind),
+                "' has type ",
+                value_type.ToString(),
                 " which is not supported in INCLUDE"};
       }
       continue;
@@ -425,13 +425,8 @@ Result ValidateInvertedIndexColumns(
     }
 
     if (kind == duckdb::LogicalTypeId::ARRAY) {
-      return {ERROR_BAD_PARAMETER,
-              "Column '",
-              label,
-              "' has unsupported type ",
-              value_type.ToString(),
-              "; ARRAY values can only be indexed with the built-in 'hnsw' "
-              "opclass; use 'hnsw (...)'"};
+      return {ERROR_BAD_PARAMETER, "Column '", label, "' has unsupported type ",
+              value_type.ToString()};
     }
 
     const bool supported = kind == duckdb::LogicalTypeId::SQLNULL ||

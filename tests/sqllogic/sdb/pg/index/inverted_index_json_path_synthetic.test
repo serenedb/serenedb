@@ -185,10 +185,16 @@ statement ok
 DROP TABLE jp_wild;
 
 statement ok
+DROP TABLE jp_geo;
+
+statement ok
 DROP TABLE jp_norm;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY js_wild;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY js_geo;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY js_norm;

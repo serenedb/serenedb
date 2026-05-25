@@ -147,18 +147,6 @@ class FilterPrepareFixture : public benchmark::Fixture {
  protected:
   void BuildIndex(size_t num_segments);
 
-  template<typename Filter, typename Setup>
-  void RunBench(benchmark::State& s, Setup setup, const irs::Scorer* scorer,
-                irs::score_t boost) {
-    Filter f;
-    setup(f);
-    f.boost(boost);
-    for (auto _ : s) {
-      auto q = f.prepare({.index = _reader, .scorer = scorer});
-      benchmark::DoNotOptimize(q);
-    }
-  }
-
   std::unique_ptr<irs::MMapDirectory> _dir;
   std::filesystem::path _dir_path;
   irs::Format::ptr _codec;
@@ -168,6 +156,22 @@ class FilterPrepareFixture : public benchmark::Fixture {
   irs::TFIDF _tfidf;
 
   std::vector<std::string> _term_pool;
+};
+
+template<typename Filter, void (*Configure)(Filter&), bool Boosted = false>
+class FilterPrepareFixtureT : public FilterPrepareFixture {
+ public:
+  void SetUp(const ::benchmark::State& state) override {
+    FilterPrepareFixture::SetUp(state);
+    _filter = Filter{};
+    Configure(_filter);
+    if constexpr (Boosted) {
+      _filter.boost(kBoostValue);
+    }
+  }
+
+ protected:
+  Filter _filter;
 };
 
 void FilterPrepareFixture::BuildIndex(size_t num_segments) {
@@ -315,26 +319,51 @@ void SetUpNot(irs::Not& n) {
 
 }  // namespace
 
-#define DEFINE_FILTER_VARIANTS(Tag, Filter, Setup)                            \
-  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_NoScorer)                    \
-  (benchmark::State & s) {                                                    \
-    RunBench<Filter>(s, Setup, nullptr, irs::kNoBoost);                       \
-  }                                                                           \
-  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_NoScorer)                  \
-    ->Apply(ApplyArgs);                                                       \
-  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_Bm25)                        \
-  (benchmark::State & s) {                                                    \
-    RunBench<Filter>(s, Setup, &_bm25, irs::kNoBoost);                        \
-  }                                                                           \
-  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_Bm25)->Apply(ApplyArgs);   \
-  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_Tfidf)                       \
-  (benchmark::State & s) {                                                    \
-    RunBench<Filter>(s, Setup, &_tfidf, irs::kNoBoost);                       \
-  }                                                                           \
-  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_Tfidf)->Apply(ApplyArgs);  \
-  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_Bm25_Boost)                  \
-  (benchmark::State & s) { RunBench<Filter>(s, Setup, &_bm25, kBoostValue); } \
-  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_Bm25_Boost)->Apply(ApplyArgs)
+#define DEFINE_FILTER_VARIANTS(Tag, Filter, Setup)                             \
+  BENCHMARK_TEMPLATE_DEFINE_F(FilterPrepareFixtureT, Tag##_NoScorer, Filter,   \
+                              Setup)                                           \
+  (benchmark::State & s) {                                                     \
+    for (auto _ : s) {                                                         \
+      auto q = _filter.prepare({.index = _reader});                            \
+      benchmark::DoNotOptimize(q);                                             \
+    }                                                                          \
+  }                                                                            \
+  BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_NoScorer)                  \
+    ->Name("FilterPrepareFixture/" #Tag "_NoScorer")                           \
+    ->Apply(ApplyArgs);                                                        \
+  BENCHMARK_TEMPLATE_DEFINE_F(FilterPrepareFixtureT, Tag##_Bm25, Filter,       \
+                              Setup)                                           \
+  (benchmark::State & s) {                                                     \
+    for (auto _ : s) {                                                         \
+      auto q = _filter.prepare({.index = _reader, .scorer = &_bm25});          \
+      benchmark::DoNotOptimize(q);                                             \
+    }                                                                          \
+  }                                                                            \
+  BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_Bm25)                      \
+    ->Name("FilterPrepareFixture/" #Tag "_Bm25")                               \
+    ->Apply(ApplyArgs);                                                        \
+  BENCHMARK_TEMPLATE_DEFINE_F(FilterPrepareFixtureT, Tag##_Tfidf, Filter,      \
+                              Setup)                                           \
+  (benchmark::State & s) {                                                     \
+    for (auto _ : s) {                                                         \
+      auto q = _filter.prepare({.index = _reader, .scorer = &_tfidf});         \
+      benchmark::DoNotOptimize(q);                                             \
+    }                                                                          \
+  }                                                                            \
+  BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_Tfidf)                     \
+    ->Name("FilterPrepareFixture/" #Tag "_Tfidf")                              \
+    ->Apply(ApplyArgs);                                                        \
+  BENCHMARK_TEMPLATE_DEFINE_F(FilterPrepareFixtureT, Tag##_Bm25_Boost, Filter, \
+                              Setup, true)                                     \
+  (benchmark::State & s) {                                                     \
+    for (auto _ : s) {                                                         \
+      auto q = _filter.prepare({.index = _reader, .scorer = &_bm25});          \
+      benchmark::DoNotOptimize(q);                                             \
+    }                                                                          \
+  }                                                                            \
+  BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_Bm25_Boost)                \
+    ->Name("FilterPrepareFixture/" #Tag "_Bm25_Boost")                         \
+    ->Apply(ApplyArgs)
 
 DEFINE_FILTER_VARIANTS(ByTerm, irs::ByTerm, SetUpTerm);
 DEFINE_FILTER_VARIANTS(ByPrefix, irs::ByPrefix, SetUpPrefix);

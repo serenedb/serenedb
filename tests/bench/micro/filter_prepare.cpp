@@ -17,25 +17,11 @@
 ///
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
-//
-// Filter `prepare()` micro benchmark.
-//
-// Builds a small in-memory index with a configurable number of segments and
-// measures Filter::prepare() for every supported filter kind, crossed with
-// {nullptr, BM25, TFIDF} scorers and a boosted BM25 variant.
-//
-// state.range(0) controls the segment count of the index built in SetUp().
-//
-// Examples:
-//   ./serenedb-bench-micro-filter_prepare --benchmark_min_time=0.3s
-//   ./serenedb-bench-micro-filter_prepare \
-//       --benchmark_filter='ByTerm_.*/4$' --benchmark_min_time=0.5s
-//
 
+#include <absl/strings/str_format.h>
 #include <benchmark/benchmark.h>
 
 #include <array>
-#include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -71,8 +57,6 @@ constexpr size_t kDocsPerSegment = 256;
 constexpr size_t kTermPoolSize = 512;
 constexpr irs::score_t kBoostValue = 2.5f;
 
-// Keyword field: one token per value, indexed with Freq|Norm so it is usable
-// against BM25 / TFIDF scorers.
 struct KeywordField {
   std::string_view Name() const noexcept { return name; }
 
@@ -92,7 +76,6 @@ struct KeywordField {
   mutable irs::StringTokenizer stream;
 };
 
-// Text field: segmentation-tokenised. Used by phrase cases (requires Pos).
 struct TextField {
   std::string_view Name() const noexcept { return name; }
 
@@ -114,20 +97,15 @@ struct TextField {
     "segmentation", irs::Type<irs::text_format::Json>::get(), "{}");
 };
 
-// Half the pool uses `term_NNNN` (underscore in the value); the other half uses
-// `kwNNNN` (no underscore). The second half lets the wildcard "Term" classifier
-// path hit a real dictionary entry -- its pattern can't contain `_` or `%`.
 std::vector<std::string> MakeTermPool() {
   std::vector<std::string> v;
   v.reserve(kTermPoolSize);
-  char buf[16];
   for (size_t i = 0; i < kTermPoolSize; ++i) {
     if (i % 2 == 0) {
-      std::snprintf(buf, sizeof(buf), "term_%04zu", i);
+      v.emplace_back(absl::StrFormat("term_%04d", i));
     } else {
-      std::snprintf(buf, sizeof(buf), "kw%04zu", i);
+      v.emplace_back(absl::StrFormat("kw%04d", i));
     }
-    v.emplace_back(buf);
   }
   return v;
 }
@@ -150,10 +128,6 @@ inline irs::bytes_view AsBytes(std::string_view s) noexcept {
 class FilterPrepareFixture : public benchmark::Fixture {
  public:
   void SetUp(const ::benchmark::State& state) override {
-    // Lazy-initialise registry-backed handles. The fixture is constructed
-    // at static-init time (BENCHMARK_REGISTER_F instantiates one per
-    // benchmark), before main() has called formats::Init() et al -- so
-    // anything that calls `...::Get(name)` has to wait until SetUp.
     if (!_codec) {
       _codec = irs::formats::Get("1_5simd");
       _term_pool = MakeTermPool();
@@ -174,7 +148,6 @@ class FilterPrepareFixture : public benchmark::Fixture {
  protected:
   void BuildIndex(size_t num_segments);
 
-  // Construction + setup + boost happen once; only `prepare()` is timed.
   template<typename Filter, typename Setup>
   void RunBench(benchmark::State& s, Setup setup, const irs::Scorer* scorer,
                 std::optional<irs::score_t> boost) {
@@ -189,9 +162,6 @@ class FilterPrepareFixture : public benchmark::Fixture {
     }
   }
 
-  // MMapDirectory is Noncopyable + non-movable; hold by unique_ptr so we can
-  // re-create it on every SetUp (the fixture is reused across state.range(0)
-  // values).
   std::unique_ptr<irs::MMapDirectory> _dir;
   std::filesystem::path _dir_path;
   irs::Format::ptr _codec;
@@ -239,7 +209,6 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
   _reader = irs::DirectoryReader{*_dir, _codec};
 }
 
-// Common segment-count grid for every case.
 void ApplyArgs(benchmark::internal::Benchmark* b) {
   b->Arg(1)->Arg(4)->Arg(16)->Arg(64)->Unit(benchmark::kMicrosecond);
 }
@@ -292,9 +261,8 @@ void SetUpTerms(irs::ByTerms& f) {
   *f.mutable_field() = "kw";
   auto& opts = *f.mutable_options();
   for (size_t i = 0; i < 8; ++i) {
-    char buf[16];
-    std::snprintf(buf, sizeof(buf), "term_%04zu", i * 37);  // spread
-    opts.terms.emplace(irs::bstring{AsBytes(std::string_view(buf))});
+    const std::string term = absl::StrFormat("term_%04d", i * 37);
+    opts.terms.emplace(irs::bstring{AsBytes(term)});
   }
 }
 
@@ -390,10 +358,6 @@ DEFINE_FILTER_VARIANTS(Not, irs::Not, SetUpNot);
 #undef DEFINE_FILTER_VARIANTS
 
 int main(int argc, char** argv) {
-  // Statically-linked plugin registries need explicit initialisation; without
-  // these calls `formats::Get` / `scorers::Get` / `analyzers::Get` fall
-  // through to a dynamic-load path that spams "load failed" errors and
-  // returns null.
   irs::analysis::analyzers::Init();
   irs::formats::Init();
   irs::scorers::Init();

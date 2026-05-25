@@ -7298,6 +7298,102 @@ TEST(by_phrase_test, equal_regexp_part_syntax_differs) {
   ASSERT_NE(make(irs::RegexpSyntax::Perl), make(irs::RegexpSyntax::PosixEre));
 }
 
+TEST_P(PhraseFilterTestCase, parallel_prepare_parity) {
+  {
+    auto writer = open_writer(irs::kOmCreate);
+    tests::JsonDocGenerator gen_a(resource("phrase_sequential.json"),
+                                  &tests::AnalyzedJsonFieldFactory);
+    tests::JsonDocGenerator gen_b(resource("phrase_sequential.json"),
+                                  &tests::AnalyzedJsonFieldFactory);
+    add_segment(*writer, gen_a);
+    add_segment(*writer, gen_b);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_GE(rdr.size(), 2u);
+
+  std::vector<const irs::SubReader*> segments;
+  segments.reserve(rdr.size());
+  for (const auto& s : rdr) {
+    segments.push_back(&s);
+  }
+
+  auto run = [&](const irs::ByPhrase& filter) {
+    MaxMemoryCounter counter;
+    const irs::PrepareContext ctx{.index = rdr, .memory = counter};
+
+    auto seq = filter.prepare(ctx);
+    ASSERT_NE(nullptr, seq);
+
+    auto buf_lhs = filter.CreateBuffer(ctx);
+    auto buf_rhs = filter.CreateBuffer(ctx);
+    ASSERT_NE(nullptr, buf_lhs);
+    ASSERT_NE(nullptr, buf_rhs);
+
+    for (size_t i = 0; i < segments.size(); ++i) {
+      auto& buf = (i & 1u) ? *buf_rhs : *buf_lhs;
+      buf.PrepareSegment(*segments[i]);
+    }
+    buf_lhs->Merge(std::move(*buf_rhs));
+    auto par = std::move(*buf_lhs).Compile(ctx);
+    ASSERT_NE(nullptr, par);
+
+    ASSERT_EQ(seq->Boost(), par->Boost());
+
+    for (const auto* segment : segments) {
+      auto docs_seq = seq->execute({.segment = *segment});
+      auto docs_par = par->execute({.segment = *segment});
+      while (true) {
+        const bool has_seq = docs_seq->next();
+        const bool has_par = docs_par->next();
+        ASSERT_EQ(has_seq, has_par);
+        if (!has_seq) {
+          break;
+        }
+        ASSERT_EQ(docs_seq->value(), docs_par->value());
+      }
+    }
+  };
+
+  auto fixed_two_terms = [](irs::score_t boost) {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("brown"));
+    q.boost(boost);
+    return q;
+  };
+
+  auto single_term = [](irs::score_t boost) {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("fox"));
+    q.boost(boost);
+    return q;
+  };
+
+  auto variadic_prefix = [](irs::score_t boost) {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+    q.mutable_options()->push_back<irs::ByPrefixOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("bro"));
+    q.boost(boost);
+    return q;
+  };
+
+  run(fixed_two_terms(irs::kNoBoost));
+  run(fixed_two_terms(2.5f));
+  run(single_term(irs::kNoBoost));
+  run(single_term(0.5f));
+  run(variadic_prefix(irs::kNoBoost));
+  run(variadic_prefix(1.75f));
+}
+
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(phrase_filter_test, PhraseFilterTestCase,

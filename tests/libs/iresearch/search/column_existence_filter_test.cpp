@@ -332,6 +332,73 @@ TEST_P(ColumnExistenceFilterTestCase, exact_match) {
   SimpleSequentialOrder();
 }
 
+TEST_P(ColumnExistenceFilterTestCase, parallel_prepare_parity) {
+  {
+    auto writer = open_writer(irs::kOmCreate);
+    tests::JsonDocGenerator gen_a(resource("simple_sequential.json"),
+                                  &tests::GenericJsonFieldFactory);
+    tests::JsonDocGenerator gen_b(resource("simple_sequential.json"),
+                                  &tests::GenericJsonFieldFactory);
+    add_segment(*writer, gen_a, MakeStoreHook());
+    add_segment(*writer, gen_b, MakeStoreHook());
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+  ASSERT_GE(rdr->size(), 2u);
+
+  std::vector<const irs::SubReader*> segments;
+  segments.reserve(rdr->size());
+  for (const auto& s : *rdr) {
+    segments.push_back(&s);
+  }
+
+  auto run = [&](const irs::ByColumnExistence& filter) {
+    MaxMemoryCounter counter;
+    const irs::PrepareContext ctx{.index = *rdr, .memory = counter};
+
+    auto seq = filter.prepare(ctx);
+    ASSERT_NE(nullptr, seq);
+
+    auto buf_lhs = filter.CreateBuffer(ctx);
+    auto buf_rhs = filter.CreateBuffer(ctx);
+    ASSERT_NE(nullptr, buf_lhs);
+    ASSERT_NE(nullptr, buf_rhs);
+
+    for (size_t i = 0; i < segments.size(); ++i) {
+      auto& buf = (i & 1u) ? *buf_rhs : *buf_lhs;
+      buf.PrepareSegment(*segments[i]);
+    }
+    buf_lhs->Merge(std::move(*buf_rhs));
+    auto par = std::move(*buf_lhs).Compile(ctx);
+    ASSERT_NE(nullptr, par);
+
+    ASSERT_EQ(seq->Boost(), par->Boost());
+
+    for (const auto* segment : segments) {
+      auto docs_seq = seq->execute({.segment = *segment});
+      auto docs_par = par->execute({.segment = *segment});
+      while (true) {
+        const bool has_seq = docs_seq->next();
+        const bool has_par = docs_par->next();
+        ASSERT_EQ(has_seq, has_par);
+        if (!has_seq) {
+          break;
+        }
+        ASSERT_EQ(docs_seq->value(), docs_par->value());
+      }
+    }
+  };
+
+  auto with_boost = [](irs::ByColumnExistence q, irs::score_t b) {
+    q.boost(b);
+    return q;
+  };
+
+  run(MakeFilter(kName));
+  run(with_boost(MakeFilter(kName), 2.5f));
+  run(with_boost(MakeFilter(kName), 0.5f));
+}
+
 TEST(by_column_existence, options) {
   irs::ByColumnExistenceOptions opts;
   ASSERT_EQ(irs::ByColumnExistenceOptions{}, opts);

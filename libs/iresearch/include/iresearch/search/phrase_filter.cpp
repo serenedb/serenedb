@@ -452,13 +452,14 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
 class FixedPhraseBuffer final : public Filter::PrepareBuffer {
  public:
   FixedPhraseBuffer(const PrepareContext& ctx, std::string_view field,
-                    const ByPhraseOptions& options)
+                    const ByPhraseOptions& options, score_t boost = kNoBoost)
     : _field{field},
       _options{&options},
       _memory{&ctx.memory},
       _field_stats{ctx.scorer},
       _term_stats{ctx.scorer, options.size()},
-      _states{ctx.memory, ctx.index.size()} {}
+      _states{ctx.memory, ctx.index.size()},
+      _boost{boost} {}
 
   void PrepareSegment(const SubReader& segment) final {
     const auto* reader = segment.field(_field);
@@ -522,7 +523,7 @@ class FixedPhraseBuffer final : public Filter::PrepareBuffer {
 
     return memory::make_tracked<FixedPhraseQuery>(
       ctx.memory, std::move(_states), std::move(positions), std::move(stats),
-      ctx.boost);
+      ctx.boost * _boost);
   }
 
  private:
@@ -532,6 +533,7 @@ class FixedPhraseBuffer final : public Filter::PrepareBuffer {
   FieldCollectors _field_stats;
   TermCollectors _term_stats;
   FixedPhraseQuery::states_t _states;
+  score_t _boost;
 };
 
 }  // namespace
@@ -545,15 +547,16 @@ std::unique_ptr<Filter::PrepareBuffer> ByPhrase::CreateBuffer(
   if (options().simple()) {
     if (options().size() == 1) {
       const auto& term = std::get<ByTermOptions>(options().begin()->part).term;
-      return std::make_unique<ByTerm::Buffer>(ctx, field(), term);
+      return std::make_unique<ByTerm::Buffer>(ctx, field(), term, Boost());
     }
-    return std::make_unique<FixedPhraseBuffer>(ctx, field(), options());
+    return std::make_unique<FixedPhraseBuffer>(ctx, field(), options(),
+                                               Boost());
   }
 
   return std::make_unique<LazyQueryBuffer>(
-    [ctx, field_name = std::string{field()},
-     opts = options()](const PrepareContext&) {
-      return ByPhrase::Prepare(ctx, field_name, opts);
+    [boost = Boost(), field_name = std::string{field()},
+     opts = options()](const PrepareContext& sub_ctx) {
+      return ByPhrase::Prepare(sub_ctx.Boost(boost), field_name, opts);
     });
 }
 

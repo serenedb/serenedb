@@ -228,8 +228,9 @@ std::unique_ptr<LevenshteinSpec> MakeSpec(bytes_view prefix, bytes_view term,
 class AllTermsBuffer final : public MultiTermQuery::BufferBase {
  public:
   AllTermsBuffer(const PrepareContext& ctx, std::string_view field,
-                 std::unique_ptr<LevenshteinSpec> spec)
-    : BufferBase{ctx, 1, ScoreMergeType::Max, 1},
+                 std::unique_ptr<LevenshteinSpec> spec,
+                 score_t boost = kNoBoost)
+    : BufferBase{ctx, 1, ScoreMergeType::Max, 1, boost},
       _field{field},
       _spec{std::move(spec)},
       _collector{_states, _field_stats, _term_stats} {
@@ -252,8 +253,9 @@ class AllTermsBuffer final : public MultiTermQuery::BufferBase {
 class TopTermsBuffer final : public MultiTermQuery::BufferBase {
  public:
   TopTermsBuffer(const PrepareContext& ctx, std::string_view field,
-                 std::unique_ptr<LevenshteinSpec> spec, size_t terms_limit)
-    : BufferBase{ctx, 1, ScoreMergeType::Max, 1},
+                 std::unique_ptr<LevenshteinSpec> spec, size_t terms_limit,
+                 score_t boost = kNoBoost)
+    : BufferBase{ctx, 1, ScoreMergeType::Max, 1, boost},
       _field{field},
       _spec{std::move(spec)},
       _collector{terms_limit, _field_stats} {}
@@ -364,8 +366,7 @@ field_visitor ByEditDistance::visitor(const ByEditDistanceAllOptions& opts) {
 
 std::unique_ptr<Filter::PrepareBuffer> ByEditDistance::CreateBuffer(
   const PrepareContext& ctx) const {
-  auto sub_ctx = ctx;
-  sub_ctx.boost *= Boost();
+  const score_t boost = Boost();
   const auto& opts = options();
   return ExecuteLevenshtein(
     opts.max_distance, opts.provider, opts.with_transpositions, opts.prefix,
@@ -385,7 +386,7 @@ std::unique_ptr<Filter::PrepareBuffer> ByEditDistance::CreateBuffer(
         target =
           opts.prefix.empty() ? bytes_view{opts.term} : bytes_view{opts.prefix};
       }
-      return std::make_unique<ByTerm::Buffer>(sub_ctx, field(), target);
+      return std::make_unique<ByTerm::Buffer>(ctx, field(), target, boost);
     },
     [&](const ParametricDescription& d, const bytes_view prefix,
         const bytes_view term) -> std::unique_ptr<PrepareBuffer> {
@@ -394,11 +395,11 @@ std::unique_ptr<Filter::PrepareBuffer> ByEditDistance::CreateBuffer(
         return std::make_unique<EmptyBuffer>();
       }
       if (!opts.max_terms) {
-        return std::make_unique<AllTermsBuffer>(sub_ctx, field(),
-                                                std::move(spec));
+        return std::make_unique<AllTermsBuffer>(ctx, field(), std::move(spec),
+                                                boost);
       }
-      return std::make_unique<TopTermsBuffer>(sub_ctx, field(), std::move(spec),
-                                              opts.max_terms);
+      return std::make_unique<TopTermsBuffer>(ctx, field(), std::move(spec),
+                                              opts.max_terms, boost);
     });
 }
 

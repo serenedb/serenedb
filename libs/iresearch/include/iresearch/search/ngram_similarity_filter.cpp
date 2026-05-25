@@ -42,7 +42,9 @@ size_t ComputeMinMatch(size_t terms_count, float_t threshold) {
 class ByTermsAdapterBuffer final : public Filter::PrepareBuffer {
  public:
   ByTermsAdapterBuffer(const PrepareContext& ctx, std::string_view field,
-                       const std::vector<bstring>& ngrams) {
+                       const std::vector<bstring>& ngrams,
+                       score_t boost = kNoBoost)
+    : _boost{boost} {
     for (const auto& term : ngrams) {
       _options.terms.emplace(term, kNoBoost);
     }
@@ -61,18 +63,21 @@ class ByTermsAdapterBuffer final : public Filter::PrepareBuffer {
   bool Empty() const noexcept final { return _inner->Empty(); }
 
   Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
-    return std::move(*_inner).Compile(ctx);
+    return std::move(*_inner).Compile(ctx.Boost(_boost));
   }
 
  private:
   ByTermsOptions _options;
   std::unique_ptr<PrepareBuffer> _inner;
+  score_t _boost;
 };
 
 class ByPhraseAdapterBuffer final : public Filter::PrepareBuffer {
  public:
   ByPhraseAdapterBuffer(const PrepareContext& ctx, std::string_view field,
-                        const std::vector<bstring>& ngrams) {
+                        const std::vector<bstring>& ngrams,
+                        score_t boost = kNoBoost)
+    : _boost{boost} {
     for (const auto& ngram : ngrams) {
       _options.push_back(ByTermOptions{ngram});
     }
@@ -92,12 +97,13 @@ class ByPhraseAdapterBuffer final : public Filter::PrepareBuffer {
   bool Empty() const noexcept final { return _inner->Empty(); }
 
   Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
-    return std::move(*_inner).Compile(ctx);
+    return std::move(*_inner).Compile(ctx.Boost(_boost));
   }
 
  private:
   ByPhraseOptions _options;
   std::unique_ptr<PrepareBuffer> _inner;
+  score_t _boost;
 };
 
 }  // namespace
@@ -160,7 +166,7 @@ Filter::Query::ptr ByNGramSimilarity::Buffer::Compile(
 
   return memory::make_tracked<NGramSimilarityQuery>(
     ctx.memory, _min_match_count, std::move(_states), std::move(stats),
-    ctx.boost);
+    ctx.boost * _boost);
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByNGramSimilarity::CreateBuffer(
@@ -175,16 +181,16 @@ std::unique_ptr<Filter::PrepareBuffer> ByNGramSimilarity::CreateBuffer(
 
   if (!ctx.scorer && 1 == min_match_count) {
     return std::make_unique<ByTermsAdapterBuffer>(ctx, field(),
-                                                  options().ngrams);
+                                                  options().ngrams, Boost());
   }
 
   if (options().allow_phrase && min_match_count == terms_count) {
     return std::make_unique<ByPhraseAdapterBuffer>(ctx, field(),
-                                                   options().ngrams);
+                                                   options().ngrams, Boost());
   }
 
   return std::make_unique<Buffer>(ctx, field(), options().ngrams,
-                                  min_match_count);
+                                  min_match_count, Boost());
 }
 
 Filter::Query::ptr ByNGramSimilarity::Prepare(

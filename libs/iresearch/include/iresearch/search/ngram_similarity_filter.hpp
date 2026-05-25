@@ -53,14 +53,16 @@ class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
   class Buffer final : public PrepareBuffer {
    public:
     Buffer(const PrepareContext& ctx, std::string_view field,
-           const std::vector<bstring>& ngrams, size_t min_match_count)
+           const std::vector<bstring>& ngrams, size_t min_match_count,
+           score_t boost = kNoBoost)
       : _field{field},
         _ngrams{&ngrams},
         _min_match_count{min_match_count},
         _memory{&ctx.memory},
         _field_stats{ctx.scorer},
         _term_stats{ctx.scorer, ngrams.size()},
-        _states{ctx.memory, ctx.index.size()} {}
+        _states{ctx.memory, ctx.index.size()},
+        _boost{boost} {}
 
     void PrepareSegment(const SubReader& segment) final;
     void Merge(PrepareBuffer&& other) final;
@@ -75,6 +77,7 @@ class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
     FieldCollectors _field_stats;
     TermCollectors _term_stats;
     NGramStates _states;
+    score_t _boost;
   };
 
   static Query::ptr Prepare(const PrepareContext& ctx,
@@ -86,7 +89,8 @@ class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
     const PrepareContext& ctx) const final;
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
-    return DefaultPrepare(ctx);
+    return Prepare(ctx.Boost(Boost()), field(), options().ngrams,
+                   options().threshold, options().allow_phrase);
   }
 };
 

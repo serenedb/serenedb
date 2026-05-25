@@ -1551,8 +1551,7 @@ TEST_P(Bm25TestCase, test_collector_merge) {
     auto writer = open_writer(irs::kOmCreate);
     const Document* doc;
     while ((doc = gen.next())) {
-      ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end(),
-                         doc->stored.begin(), doc->stored.end()));
+      ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
     }
     writer->Commit();
     AssertSnapshotEquality(*writer);

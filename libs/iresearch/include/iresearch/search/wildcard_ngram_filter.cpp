@@ -199,10 +199,12 @@ constexpr size_t kDefaultScoredTermsLimit = 1024;
 
 ByWildcardNgram::Buffer::Buffer(const PrepareContext& ctx,
                                 std::string_view field,
-                                const ByWildcardNgramOptions& opts)
+                                const ByWildcardNgramOptions& opts,
+                                score_t boost)
   : _field{field},
     _matcher{opts.matcher},
-    _store_field_id{opts.store_field_id} {
+    _store_field_id{opts.store_field_id},
+    _boost{boost} {
   auto& parts = opts.parts;
   const auto size = parts.size();
 
@@ -268,9 +270,10 @@ bool ByWildcardNgram::Buffer::Empty() const noexcept {
 
 Filter::Query::ptr ByWildcardNgram::Buffer::Compile(
   const PrepareContext& ctx) && {
+  auto sub_ctx = ctx.Boost(_boost);
   if (_single) {
     auto child = std::move(_children.front());
-    auto inner = std::move(*child).Compile(ctx);
+    auto inner = std::move(*child).Compile(sub_ctx);
     return memory::make_tracked<WildcardQuery>(
       ctx.memory, std::move(_matcher), std::move(inner), _store_field_id);
   }
@@ -279,11 +282,11 @@ Filter::Query::ptr ByWildcardNgram::Buffer::Compile(
   queries.reserve(_children.size());
   for (auto& cbuf : _children) {
     auto child = std::move(cbuf);
-    queries.emplace_back(std::move(*child).Compile(ctx));
+    queries.emplace_back(std::move(*child).Compile(sub_ctx));
   }
   const auto excl_start = queries.size();
   auto conjunction = memory::make_tracked<AndQuery>(ctx.memory);
-  conjunction->prepare(ctx, ScoreMergeType::Sum, std::move(queries),
+  conjunction->prepare(sub_ctx, ScoreMergeType::Sum, std::move(queries),
                        excl_start);
   return memory::make_tracked<WildcardQuery>(
     ctx.memory, std::move(_matcher), std::move(conjunction), _store_field_id);

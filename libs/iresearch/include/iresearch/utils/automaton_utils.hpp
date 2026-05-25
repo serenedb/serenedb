@@ -466,6 +466,6 @@ Filter::Query::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
 // callers should treat that as the empty filter.
 std::unique_ptr<Filter::PrepareBuffer> MakeAutomatonBuffer(
   const PrepareContext& ctx, std::string_view field, automaton&& acceptor,
-  size_t scored_terms_limit);
+  size_t scored_terms_limit, score_t boost = kNoBoost);
 
 }  // namespace irs

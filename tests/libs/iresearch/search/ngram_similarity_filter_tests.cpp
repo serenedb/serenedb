@@ -1535,6 +1535,84 @@ TEST_P(NGramSimilarityFilterTestCase, negation_regression) {
   }
 }
 
+TEST_P(NGramSimilarityFilterTestCase, parallel_prepare_parity) {
+  {
+    auto writer = open_writer(irs::kOmCreate);
+    tests::JsonDocGenerator gen_a(
+      R"([{ "field": [ "1", "3", "4", "5", "6", "7", "2"] },
+          { "field": [ "1", "2", "3", "4"] },
+          { "field": [ "2", "9", "9", "9", "1"] }])",
+      &tests::GenericJsonFieldFactory);
+    tests::JsonDocGenerator gen_b(
+      R"([{ "field": [ "1", "2", "3", "4"] },
+          { "field": [ "5", "6", "7", "8"] }])",
+      &tests::GenericJsonFieldFactory);
+    add_segment(*writer, gen_a);
+    add_segment(*writer, gen_b);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_GE(rdr.size(), 2u);
+
+  std::vector<const irs::SubReader*> segments;
+  segments.reserve(rdr.size());
+  for (const auto& s : rdr) {
+    segments.push_back(&s);
+  }
+
+  auto run = [&](const irs::ByNGramSimilarity& filter) {
+    MaxMemoryCounter counter;
+    const irs::PrepareContext ctx{.index = rdr, .memory = counter};
+
+    auto seq = filter.prepare(ctx);
+    ASSERT_NE(nullptr, seq);
+
+    auto buf_lhs = filter.CreateBuffer(ctx);
+    auto buf_rhs = filter.CreateBuffer(ctx);
+    ASSERT_NE(nullptr, buf_lhs);
+    ASSERT_NE(nullptr, buf_rhs);
+
+    for (size_t i = 0; i < segments.size(); ++i) {
+      auto& buf = (i & 1u) ? *buf_rhs : *buf_lhs;
+      buf.PrepareSegment(*segments[i]);
+    }
+    buf_lhs->Merge(std::move(*buf_rhs));
+    auto par = std::move(*buf_lhs).Compile(ctx);
+    ASSERT_NE(nullptr, par);
+
+    ASSERT_EQ(seq->Boost(), par->Boost());
+
+    for (const auto* segment : segments) {
+      auto docs_seq = seq->execute({.segment = *segment});
+      auto docs_par = par->execute({.segment = *segment});
+      while (true) {
+        const bool has_seq = docs_seq->next();
+        const bool has_par = docs_par->next();
+        ASSERT_EQ(has_seq, has_par);
+        if (!has_seq) {
+          break;
+        }
+        ASSERT_EQ(docs_seq->value(), docs_par->value());
+      }
+    }
+  };
+
+  auto with_boost = [](irs::ByNGramSimilarity q, irs::score_t b) {
+    q.boost(b);
+    return q;
+  };
+
+  // disjunction (min_match == 1, no scorer) -> ByTermsAdapterBuffer
+  run(MakeFilter("field", {"1", "2"}, 0.5f));
+  run(with_boost(MakeFilter("field", {"1", "2"}, 0.5f), 2.5f));
+  // exact match (min_match == terms, allow_phrase) -> ByPhraseAdapterBuffer
+  run(MakeFilter("field", {"1", "2"}, 1.f));
+  run(with_boost(MakeFilter("field", {"1", "2"}, 1.f), 0.5f));
+  // intermediate min_match -> general Buffer
+  run(MakeFilter("field", {"1", "2", "3", "4"}, 0.5f));
+  run(with_boost(MakeFilter("field", {"1", "2", "3", "4"}, 0.5f), 1.75f));
+}
+
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(ngram_similarity_test, NGramSimilarityFilterTestCase,

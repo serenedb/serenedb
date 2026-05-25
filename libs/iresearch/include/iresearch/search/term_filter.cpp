@@ -75,7 +75,7 @@ Filter::Query::ptr ByTerm::Buffer::Compile(const PrepareContext& ctx) && {
   bstring stats(GetStatsSize(ctx.scorer), 0);
   _term_stats.finish(stats.data(), 0, _field_stats, ctx.index);
   return memory::make_tracked<TermQuery>(ctx.memory, std::move(_states),
-                                         std::move(stats), ctx.boost);
+                                         std::move(stats), ctx.boost * _boost);
 }
 
 Filter::Query::ptr ByTerm::prepare(const PrepareContext& ctx,

@@ -70,8 +70,8 @@ class ByPrefix : public FilterWithField<ByPrefixOptions> {
   class Buffer final : public SampledMultiTermBuffer {
    public:
     Buffer(const PrepareContext& ctx, std::string_view field, bytes_view prefix,
-           size_t scored_terms_limit)
-      : SampledMultiTermBuffer{ctx, scored_terms_limit},
+           size_t scored_terms_limit, score_t boost = kNoBoost)
+      : SampledMultiTermBuffer{ctx, scored_terms_limit, boost},
         _field{field},
         _prefix{prefix} {}
 

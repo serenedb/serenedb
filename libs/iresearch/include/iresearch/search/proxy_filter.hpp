@@ -45,9 +45,9 @@ class ProxyFilter final : public Filter {
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
   std::unique_ptr<PrepareBuffer> CreateBuffer(
-    const PrepareContext& ctx) const final {
+    const PrepareContext&) const final {
     return std::make_unique<LazyQueryBuffer>(
-      [ctx, this](const PrepareContext&) { return prepare(ctx); });
+      [this](const PrepareContext& ctx) { return prepare(ctx); });
   }
 
   template<typename Impl, typename Base = Impl, typename... Args>

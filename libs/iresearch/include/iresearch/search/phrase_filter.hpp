@@ -146,7 +146,7 @@ class ByPhrase : public FilterWithField<ByPhraseOptions> {
     const PrepareContext& ctx) const final;
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
-    return DefaultPrepare(ctx);
+    return Prepare(ctx.Boost(Boost()), field(), options());
   }
 };
 

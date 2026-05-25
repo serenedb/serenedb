@@ -58,12 +58,14 @@ class BySamePosition : public FilterWithOptions<BySamePositionOptions> {
   class Buffer final : public PrepareBuffer {
    public:
     Buffer(const PrepareContext& ctx,
-           const BySamePositionOptions::search_terms& terms)
+           const BySamePositionOptions::search_terms& terms,
+           score_t boost = kNoBoost)
       : _terms{&terms},
         _memory{&ctx.memory},
         _field_stats{ctx.scorer},
         _term_stats{ctx.scorer, terms.size()},
-        _states{ctx.memory, ctx.index.size()} {}
+        _states{ctx.memory, ctx.index.size()},
+        _boost{boost} {}
 
     void PrepareSegment(const SubReader& segment) final;
     void Merge(PrepareBuffer&& other) final;
@@ -76,6 +78,7 @@ class BySamePosition : public FilterWithOptions<BySamePositionOptions> {
     FieldCollectors _field_stats;
     TermCollectors _term_stats;
     StatesT _states;
+    score_t _boost;
   };
 
   std::unique_ptr<PrepareBuffer> CreateBuffer(
@@ -83,11 +86,18 @@ class BySamePosition : public FilterWithOptions<BySamePositionOptions> {
     if (options().terms.empty()) {
       return std::make_unique<EmptyBuffer>();
     }
-    return std::make_unique<Buffer>(ctx, options().terms);
+    return std::make_unique<Buffer>(ctx, options().terms, Boost());
   }
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
-    return DefaultPrepare(ctx);
+    auto buf = CreateBuffer(ctx);
+    for (const auto& segment : ctx.index) {
+      buf->PrepareSegment(segment);
+    }
+    if (buf->Empty()) {
+      return Query::empty();
+    }
+    return std::move(*buf).Compile(ctx);
   }
 };
 

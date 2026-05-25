@@ -46,12 +46,14 @@ class ByTerm : public FilterWithField<ByTermOptions> {
  public:
   class Buffer final : public PrepareBuffer {
    public:
-    Buffer(const PrepareContext& ctx, std::string_view field, bytes_view term)
+    Buffer(const PrepareContext& ctx, std::string_view field, bytes_view term,
+           score_t boost = kNoBoost)
       : _field{field},
         _term{term},
         _field_stats{ctx.scorer},
         _term_stats{ctx.scorer, 1},
-        _states{ctx.memory, ctx.index.size()} {}
+        _states{ctx.memory, ctx.index.size()},
+        _boost{boost} {}
 
     void PrepareSegment(const SubReader& segment) final;
     void Merge(PrepareBuffer&& other) final;
@@ -64,6 +66,7 @@ class ByTerm : public FilterWithField<ByTermOptions> {
     FieldCollectors _field_stats;
     TermCollectors _term_stats;
     TermQuery::States _states;
+    score_t _boost;
   };
 
   static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
@@ -74,7 +77,7 @@ class ByTerm : public FilterWithField<ByTermOptions> {
 
   std::unique_ptr<PrepareBuffer> CreateBuffer(
     const PrepareContext& ctx) const final {
-    return std::make_unique<Buffer>(ctx, field(), options().term);
+    return std::make_unique<Buffer>(ctx, field(), options().term, Boost());
   }
 
   Query::ptr prepare(const PrepareContext& ctx) const final {

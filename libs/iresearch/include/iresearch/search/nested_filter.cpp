@@ -651,15 +651,16 @@ namespace {
 
 class NestedBuffer final : public Filter::PrepareBuffer {
  public:
-  NestedBuffer(const PrepareContext& ctx, const ByNestedOptions& opts)
+  NestedBuffer(const PrepareContext& ctx, const ByNestedOptions& opts,
+               score_t boost = kNoBoost)
     : _parent{opts.parent},
       _match{opts.match},
       _merge_type{opts.merge_type},
-      _none_boost{ctx.boost},
+      _none_boost{ctx.boost * boost},
       _child_ctx{[&] {
         auto c = ctx;
         c.scorer = GetOrder(opts.match, ctx.scorer);
-        c.boost *= opts.child->BoostImpl();
+        c.boost *= boost;
         return c;
       }()},
       _child{opts.child->CreateBuffer(_child_ctx)} {}
@@ -703,7 +704,7 @@ std::unique_ptr<Filter::PrepareBuffer> ByNestedFilter::CreateBuffer(
   if (!opts.parent || !opts.child || !IsValid(opts.match)) {
     return std::make_unique<EmptyBuffer>();
   }
-  return std::make_unique<NestedBuffer>(ctx, opts);
+  return std::make_unique<NestedBuffer>(ctx, opts, Boost());
 }
 
 Filter::Query::ptr ByNestedFilter::prepare(const PrepareContext& ctx) const {

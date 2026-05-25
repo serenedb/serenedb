@@ -84,9 +84,9 @@ class TermsVisitor {
 class Buffer final : public MultiTermQuery::BufferBase {
  public:
   Buffer(const PrepareContext& ctx, std::string_view field,
-         const ByTermsOptions& options)
+         const ByTermsOptions& options, score_t boost = kNoBoost)
     : BufferBase{ctx, options.terms.size(), options.merge_type,
-                 options.min_match},
+                 options.min_match, boost},
       _field{field},
       _terms{&options.terms},
       _collector{_states, _field_stats, _term_stats},
@@ -152,16 +152,19 @@ std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(
   SDB_ASSERT(min_match != 0);
   if (1 == size) {
     const auto term = std::begin(terms);
-    auto sub_ctx = ctx;
-    sub_ctx.boost = ctx.boost * term->boost;
-    return std::make_unique<ByTerm::Buffer>(sub_ctx, field, term->term);
+    return std::make_unique<ByTerm::Buffer>(ctx, field, term->term,
+                                            term->boost);
   }
   return std::make_unique<Buffer>(ctx, field, options);
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(
   const PrepareContext& ctx) const {
-  return std::make_unique<Buffer>(ctx, field(), options());
+  if (!options().terms.empty() && options().min_match == 0) {
+    return std::make_unique<LazyQueryBuffer>(
+      [this](const PrepareContext& ctx) { return prepare(ctx); });
+  }
+  return std::make_unique<Buffer>(ctx, field(), options(), Boost());
 }
 
 Filter::Query::ptr ByTerms::prepare(const PrepareContext& ctx) const {

@@ -141,22 +141,21 @@ Filter::Query::ptr ByWildcard::Prepare(const PrepareContext& ctx,
 
 std::unique_ptr<Filter::PrepareBuffer> ByWildcard::CreateBuffer(
   const PrepareContext& ctx) const {
-  auto sub_ctx = ctx;
-  sub_ctx.boost *= Boost();
+  const score_t boost = Boost();
   bstring buf;
   return ExecuteWildcard(
     buf, options().term,
     [&](bytes_view term) -> std::unique_ptr<PrepareBuffer> {
-      return std::make_unique<ByTerm::Buffer>(sub_ctx, field(), term);
+      return std::make_unique<ByTerm::Buffer>(ctx, field(), term, boost);
     },
     [&](bytes_view term) -> std::unique_ptr<PrepareBuffer> {
-      return std::make_unique<ByPrefix::Buffer>(sub_ctx, field(), term,
-                                                options().scored_terms_limit);
+      return std::make_unique<ByPrefix::Buffer>(
+        ctx, field(), term, options().scored_terms_limit, boost);
     },
     [&](bytes_view term) -> std::unique_ptr<PrepareBuffer> {
       auto acceptor = FromWildcard(term);
-      if (auto b = MakeAutomatonBuffer(sub_ctx, field(), std::move(acceptor),
-                                       options().scored_terms_limit)) {
+      if (auto b = MakeAutomatonBuffer(ctx, field(), std::move(acceptor),
+                                       options().scored_terms_limit, boost)) {
         return b;
       }
       return std::make_unique<EmptyBuffer>();

@@ -28,12 +28,10 @@ namespace irs {
 class MixedBooleanFilter::Buffer final : public Filter::PrepareBuffer {
  public:
   Buffer(const PrepareContext& ctx, const And& and_filter, const Or& or_filter)
-    : _req_ctx{ctx.Boost(and_filter.Boost())},
-      _opt_ctx{ctx.Boost(or_filter.Boost())},
-      _req{and_filter.CreateChildBuffer(ctx)} {
+    : _ctx{ctx}, _req{and_filter.CreateChildBuffer(ctx)} {
     _opt.reserve(or_filter.size());
     for (const auto& f : or_filter) {
-      _opt.emplace_back(f->CreateChildBuffer(_opt_ctx));
+      _opt.emplace_back(f->CreateChildBuffer(ctx));
     }
   }
 
@@ -53,15 +51,15 @@ class MixedBooleanFilter::Buffer final : public Filter::PrepareBuffer {
     }
   }
 
-  bool Empty() const noexcept final { return _req->Empty(); }
+  bool Empty() const noexcept final { return false; }
 
   Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
-    auto req = std::move(*_req).Compile(_req_ctx);
+    auto req = std::move(*_req).Compile(_ctx);
     std::vector<Query::ptr> opts;
     opts.reserve(_opt.size());
     for (auto& b : _opt) {
       opts.emplace_back(b->Empty() ? Filter::Query::empty()
-                                   : std::move(*b).Compile(_opt_ctx));
+                                   : std::move(*b).Compile(_ctx));
     }
     auto q = memory::make_tracked<BoostQuery>(ctx.memory);
     q->PrepareFromQueries(std::move(req), std::move(opts));
@@ -69,8 +67,7 @@ class MixedBooleanFilter::Buffer final : public Filter::PrepareBuffer {
   }
 
  private:
-  PrepareContext _req_ctx;
-  PrepareContext _opt_ctx;
+  PrepareContext _ctx;
   std::unique_ptr<PrepareBuffer> _req;
   std::vector<std::unique_ptr<PrepareBuffer>> _opt;
 };

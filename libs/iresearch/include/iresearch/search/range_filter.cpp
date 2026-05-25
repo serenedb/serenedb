@@ -113,8 +113,9 @@ namespace {
 class Buffer final : public SampledMultiTermBuffer {
  public:
   Buffer(const PrepareContext& ctx, std::string_view field,
-         const ByRangeOptions::range_type& rng, size_t scored_terms_limit)
-    : SampledMultiTermBuffer{ctx, scored_terms_limit},
+         const ByRangeOptions::range_type& rng, size_t scored_terms_limit,
+         score_t boost = kNoBoost)
+    : SampledMultiTermBuffer{ctx, scored_terms_limit, boost},
       _field{field},
       _rng{&rng} {}
 
@@ -161,8 +162,17 @@ Filter::Query::ptr ByRange::Prepare(const PrepareContext& ctx,
 
 std::unique_ptr<Filter::PrepareBuffer> ByRange::CreateBuffer(
   const PrepareContext& ctx) const {
+  const auto& rng = options().range;
+  if (rng.min_type != BoundType::Unbounded &&
+      rng.max_type != BoundType::Unbounded && rng.min == rng.max) {
+    if (rng.min_type == BoundType::Inclusive &&
+        rng.max_type == BoundType::Inclusive) {
+      return std::make_unique<ByTerm::Buffer>(ctx, field(), rng.min, Boost());
+    }
+    return std::make_unique<EmptyBuffer>();
+  }
   return std::make_unique<Buffer>(ctx, field(), options().range,
-                                  options().scored_terms_limit);
+                                  options().scored_terms_limit, Boost());
 }
 
 void ByRange::visit(const SubReader& segment, const TermReader& reader,

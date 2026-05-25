@@ -286,7 +286,7 @@ class ColumnExistenceQuery : public Filter::Query {
 
 class Buffer final : public Filter::PrepareBuffer {
  public:
-  explicit Buffer(field_id id) noexcept : _id{id} {}
+  Buffer(field_id id, score_t boost) noexcept : _id{id}, _boost{boost} {}
 
   void PrepareSegment(const SubReader&) final {}
 
@@ -298,22 +298,24 @@ class Buffer final : public Filter::PrepareBuffer {
 
   Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
     return memory::make_tracked<ColumnExistenceQuery>(ctx.memory, _id,
-                                                      ctx.boost);
+                                                      ctx.boost * _boost);
   }
 
  private:
   field_id _id;
+  score_t _boost;
 };
 
 }  // namespace
 
 std::unique_ptr<Filter::PrepareBuffer> ByColumnExistence::CreateBuffer(
   const PrepareContext& /*ctx*/) const {
-  return std::make_unique<Buffer>(id());
+  return std::make_unique<Buffer>(id(), Boost());
 }
 
 Filter::Query::ptr ByColumnExistence::prepare(const PrepareContext& ctx) const {
-  return DefaultPrepare(ctx);
+  return memory::make_tracked<ColumnExistenceQuery>(ctx.memory, _id,
+                                                    ctx.boost * Boost());
 }
 
 }  // namespace irs

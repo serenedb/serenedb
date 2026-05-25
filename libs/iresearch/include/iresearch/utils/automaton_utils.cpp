@@ -211,8 +211,9 @@ namespace {
 class AutomatonBuffer final : public SampledMultiTermBuffer {
  public:
   AutomatonBuffer(const PrepareContext& ctx, std::string_view field,
-                  automaton&& acceptor, size_t scored_terms_limit)
-    : SampledMultiTermBuffer{ctx, scored_terms_limit},
+                  automaton&& acceptor, size_t scored_terms_limit,
+                  score_t boost = kNoBoost)
+    : SampledMultiTermBuffer{ctx, scored_terms_limit, boost},
       _field{field},
       _acceptor{std::make_unique<automaton>(std::move(acceptor))},
       _matcher{MakeAutomatonMatcher(*_acceptor)} {}
@@ -235,9 +236,9 @@ class AutomatonBuffer final : public SampledMultiTermBuffer {
 
 std::unique_ptr<Filter::PrepareBuffer> MakeAutomatonBuffer(
   const PrepareContext& ctx, std::string_view field, automaton&& acceptor,
-  size_t scored_terms_limit) {
+  size_t scored_terms_limit, score_t boost) {
   auto buf = std::make_unique<AutomatonBuffer>(ctx, field, std::move(acceptor),
-                                               scored_terms_limit);
+                                               scored_terms_limit, boost);
   if (fst::kError == buf->matcher().Properties(0)) {
     SDB_ERROR(
       "xxxxx", sdb::Logger::IRESEARCH,

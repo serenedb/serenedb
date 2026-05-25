@@ -52,6 +52,8 @@ namespace {
 
 class Buffer final : public Filter::PrepareBuffer {
  public:
+  explicit Buffer(score_t boost = kNoBoost) noexcept : _boost{boost} {}
+
   void PrepareSegment(const SubReader&) final {}
 
   void Merge(PrepareBuffer&& other) final {
@@ -66,21 +68,27 @@ class Buffer final : public Filter::PrepareBuffer {
       ctx.scorer->collect(stats.data(), nullptr, nullptr);
     }
     return memory::make_tracked<AllQuery>(ctx.memory, std::move(stats),
-                                          ctx.boost);
+                                          ctx.boost * _boost);
   }
+
+ private:
+  score_t _boost;
 };
 
 }  // namespace
 
 std::unique_ptr<Filter::PrepareBuffer> All::CreateBuffer(
   const PrepareContext& /*ctx*/) const {
-  return std::make_unique<Buffer>();
+  return std::make_unique<Buffer>(Boost());
 }
 
 Filter::Query::ptr All::prepare(const PrepareContext& ctx) const {
-  auto sub_ctx = ctx;
-  sub_ctx.boost *= Boost();
-  return DefaultPrepare(sub_ctx);
+  bstring stats(GetStatsSize(ctx.scorer), 0);
+  if (ctx.scorer) {
+    ctx.scorer->collect(stats.data(), nullptr, nullptr);
+  }
+  return memory::make_tracked<AllQuery>(ctx.memory, std::move(stats),
+                                        ctx.boost * Boost());
 }
 
 }  // namespace irs

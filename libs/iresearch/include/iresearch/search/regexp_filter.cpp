@@ -144,30 +144,29 @@ Filter::Query::ptr ByRegexp::Prepare(const PrepareContext& ctx,
 
 std::unique_ptr<Filter::PrepareBuffer> ByRegexp::CreateBuffer(
   const PrepareContext& ctx) const {
-  auto sub_ctx = ctx;
-  sub_ctx.boost *= Boost();
+  const score_t boost = Boost();
   const auto type = ComputeRegexpType(options().pattern);
 
   switch (type) {
     case RegexpType::LiteralEscaped: {
       bstring unescaped;
       UnescapeRegexp(options().pattern, unescaped);
-      return std::make_unique<ByTerm::Buffer>(sub_ctx, field(), unescaped);
+      return std::make_unique<ByTerm::Buffer>(ctx, field(), unescaped, boost);
     }
     case RegexpType::Literal:
-      return std::make_unique<ByTerm::Buffer>(sub_ctx, field(),
-                                              options().pattern);
+      return std::make_unique<ByTerm::Buffer>(ctx, field(), options().pattern,
+                                              boost);
     case RegexpType::PrefixEscaped: {
       auto raw_prefix = ExtractRegexpPrefix(options().pattern);
       bstring unescaped;
       UnescapeRegexp(raw_prefix, unescaped);
-      return std::make_unique<ByPrefix::Buffer>(sub_ctx, field(), unescaped,
-                                                options().scored_terms_limit);
+      return std::make_unique<ByPrefix::Buffer>(
+        ctx, field(), unescaped, options().scored_terms_limit, boost);
     }
     case RegexpType::Prefix: {
       auto prefix = ExtractRegexpPrefix(options().pattern);
-      return std::make_unique<ByPrefix::Buffer>(sub_ctx, field(), prefix,
-                                                options().scored_terms_limit);
+      return std::make_unique<ByPrefix::Buffer>(
+        ctx, field(), prefix, options().scored_terms_limit, boost);
     }
     case RegexpType::Complex: {
       auto acceptor =
@@ -175,8 +174,8 @@ std::unique_ptr<Filter::PrepareBuffer> ByRegexp::CreateBuffer(
       if (!Validate(acceptor)) {
         return std::make_unique<EmptyBuffer>();
       }
-      if (auto buf = MakeAutomatonBuffer(sub_ctx, field(), std::move(acceptor),
-                                         options().scored_terms_limit)) {
+      if (auto buf = MakeAutomatonBuffer(ctx, field(), std::move(acceptor),
+                                         options().scored_terms_limit, boost)) {
         return buf;
       }
       return std::make_unique<EmptyBuffer>();

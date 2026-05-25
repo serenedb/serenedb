@@ -89,7 +89,7 @@ Filter::Query::ptr ByPrefix::Prepare(const PrepareContext& ctx,
 std::unique_ptr<Filter::PrepareBuffer> ByPrefix::CreateBuffer(
   const PrepareContext& ctx) const {
   return std::make_unique<Buffer>(ctx, field(), options().term,
-                                  options().scored_terms_limit);
+                                  options().scored_terms_limit, Boost());
 }
 
 void ByPrefix::visit(const SubReader& segment, const TermReader& reader,

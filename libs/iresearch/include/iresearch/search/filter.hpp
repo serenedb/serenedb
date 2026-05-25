@@ -147,9 +147,9 @@ class Filter {
   // its own Boost(). Filters with a real per-segment Buffer override this to
   // pre-fold their own Boost() into ctx and route to CreateBuffer.
   virtual std::unique_ptr<PrepareBuffer> CreateChildBuffer(
-    const PrepareContext& ctx) const {
+    const PrepareContext&) const {
     return std::make_unique<LazyQueryBuffer>(
-      [ctx, this](const PrepareContext&) { return this->prepare(ctx); });
+      [this](const PrepareContext& ctx) { return this->prepare(ctx); });
   }
 
   virtual Query::ptr prepare(const PrepareContext& ctx) const = 0;

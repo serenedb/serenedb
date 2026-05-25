@@ -252,8 +252,8 @@ Filter::Query::ptr BySamePosition::Buffer::Compile(
     _term_stats.finish(stat.data(), term_idx++, _field_stats, ctx.index);
   }
 
-  return memory::make_tracked<SamePositionQuery>(ctx.memory, std::move(_states),
-                                                 std::move(stats), ctx.boost);
+  return memory::make_tracked<SamePositionQuery>(
+    ctx.memory, std::move(_states), std::move(stats), ctx.boost * _boost);
 }
 
 }  // namespace irs

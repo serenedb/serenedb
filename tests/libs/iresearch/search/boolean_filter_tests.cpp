@@ -15498,6 +15498,127 @@ TEST_P(BooleanFilterTestCase, and_create_buffer_parity) {
   }
 }
 
+TEST_P(BooleanFilterTestCase, boolean_parallel_prepare_parity) {
+  {
+    auto writer = open_writer(irs::kOmCreate);
+    tests::JsonDocGenerator gen_a(resource("simple_sequential.json"),
+                                  &tests::GenericJsonFieldFactory);
+    tests::JsonDocGenerator gen_b(resource("simple_sequential.json"),
+                                  &tests::GenericJsonFieldFactory);
+    add_segment(*writer, gen_a);
+    add_segment(*writer, gen_b);
+  }
+  auto rdr = open_reader();
+  ASSERT_GE(rdr.size(), 2u);
+
+  std::vector<const irs::SubReader*> segments;
+  segments.reserve(rdr.size());
+  for (const auto& s : rdr) {
+    segments.push_back(&s);
+  }
+
+  auto run = [&](const irs::Filter& filter) {
+    MaxMemoryCounter counter;
+    const irs::PrepareContext ctx{.index = rdr, .memory = counter};
+
+    auto seq = filter.prepare(ctx);
+    ASSERT_NE(nullptr, seq);
+
+    auto buf_lhs = filter.CreateBuffer(ctx);
+    auto buf_rhs = filter.CreateBuffer(ctx);
+    ASSERT_NE(nullptr, buf_lhs);
+    ASSERT_NE(nullptr, buf_rhs);
+
+    for (size_t i = 0; i < segments.size(); ++i) {
+      auto& buf = (i & 1u) ? *buf_rhs : *buf_lhs;
+      buf.PrepareSegment(*segments[i]);
+    }
+    buf_lhs->Merge(std::move(*buf_rhs));
+    auto par = std::move(*buf_lhs).Compile(ctx);
+    ASSERT_NE(nullptr, par);
+
+    ASSERT_EQ(seq->Boost(), par->Boost());
+
+    for (const auto* segment : segments) {
+      auto docs_seq = seq->execute({.segment = *segment});
+      auto docs_par = par->execute({.segment = *segment});
+      while (true) {
+        const bool has_seq = docs_seq->next();
+        const bool has_par = docs_par->next();
+        ASSERT_EQ(has_seq, has_par);
+        if (!has_seq) {
+          break;
+        }
+        ASSERT_EQ(docs_seq->value(), docs_par->value());
+      }
+    }
+  };
+
+  // Multi-field And (two ByTerms on different fields).
+  {
+    irs::And root;
+    Append<irs::ByTerm>(root, "duplicated", "abcd");
+    Append<irs::ByTerm>(root, "same", "xyz");
+    run(root);
+  }
+  {
+    irs::And root;
+    root.boost(2.5f);
+    Append<irs::ByTerm>(root, "duplicated", "abcd");
+    Append<irs::ByTerm>(root, "same", "xyz");
+    run(root);
+  }
+
+  // Multi-field Or.
+  {
+    irs::Or root;
+    Append<irs::ByTerm>(root, "duplicated", "abcd");
+    Append<irs::ByTerm>(root, "duplicated", "vczc");
+    run(root);
+  }
+  {
+    irs::Or root;
+    root.boost(0.5f);
+    Append<irs::ByTerm>(root, "duplicated", "abcd");
+    Append<irs::ByTerm>(root, "duplicated", "vczc");
+    run(root);
+  }
+
+  // And containing a Not -- exercises the Not exclusion path inside And.
+  {
+    irs::And root;
+    Append<irs::ByTerm>(root, "duplicated", "abcd");
+    auto& neg = root.add<irs::Not>();
+    auto& term = neg.filter<irs::ByTerm>();
+    *term.mutable_field() = "same";
+    term.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("xyz"));
+    run(root);
+  }
+  {
+    irs::And root;
+    root.boost(1.75f);
+    Append<irs::ByTerm>(root, "duplicated", "abcd");
+    auto& neg = root.add<irs::Not>();
+    auto& term = neg.filter<irs::ByTerm>();
+    *term.mutable_field() = "same";
+    term.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("xyz"));
+    run(root);
+  }
+
+  // Stand-alone Not.
+  {
+    irs::Not root;
+    auto& term = root.filter<irs::ByTerm>();
+    *term.mutable_field() = "same";
+    term.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("xyz"));
+    term.boost(2.0f);
+    run(root);
+  }
+}
+
 TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
   // add segment
   {

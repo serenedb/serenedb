@@ -449,8 +449,8 @@ class GeoBufferImpl final : public Filter::PrepareBuffer {
 
   Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
     _field_stats.finish(_stats.data());
-    return MakeQuery(ctx.memory, std::move(_states), std::move(_stats), _boost,
-                     *_options, std::move(_acceptor));
+    return MakeQuery(ctx.memory, std::move(_states), std::move(_stats),
+                     ctx.boost * _boost, *_options, std::move(_acceptor));
   }
 
  private:
@@ -513,7 +513,7 @@ std::pair<S2Cap, bool> GetBound(BoundType type, S2Point origin,
 
 std::unique_ptr<Filter::PrepareBuffer> CreateOpenIntervalBuffer(
   const PrepareContext& ctx, std::string_view field,
-  const GeoDistanceFilterOptions& options, bool greater) {
+  const GeoDistanceFilterOptions& options, bool greater, score_t boost) {
   const auto& range = options.range;
   const auto& origin = options.origin;
 
@@ -545,6 +545,7 @@ std::unique_ptr<Filter::PrepareBuffer> CreateOpenIntervalBuffer(
       case BoundType::Exclusive:
         if (greater) {
           auto root = std::make_unique<And>();
+          root->boost(boost);
           auto& excl = root->add<Not>().filter<GeoDistanceFilter>();
           *excl.mutable_field() = field;
           auto& opts = *excl.mutable_options();
@@ -577,7 +578,9 @@ std::unique_ptr<Filter::PrepareBuffer> CreateOpenIntervalBuffer(
   SDB_ASSERT(bound.is_valid());
 
   if (bound.is_full()) {
-    return All{}.CreateBuffer(ctx);
+    All all;
+    all.boost(boost);
+    return all.CreateBuffer(ctx);
   }
 
   if (bound.is_empty()) {
@@ -594,16 +597,16 @@ std::unique_ptr<Filter::PrepareBuffer> CreateOpenIntervalBuffer(
 
   if (incl) {
     return MakeGeoBuffer(ctx, field, options, std::move(geo_terms),
-                         GeoDistanceAcceptor<true>{bound}, ctx.boost);
+                         GeoDistanceAcceptor<true>{bound}, boost);
   } else {
     return MakeGeoBuffer(ctx, field, options, std::move(geo_terms),
-                         GeoDistanceAcceptor<false>{bound}, ctx.boost);
+                         GeoDistanceAcceptor<false>{bound}, boost);
   }
 }
 
 std::unique_ptr<Filter::PrepareBuffer> CreateIntervalBuffer(
   const PrepareContext& ctx, std::string_view field,
-  const GeoDistanceFilterOptions& options) {
+  const GeoDistanceFilterOptions& options, score_t boost) {
   const auto& range = options.range;
   SDB_ASSERT(BoundType::Unbounded != range.min_type);
   SDB_ASSERT(BoundType::Unbounded != range.max_type);
@@ -611,7 +614,7 @@ std::unique_ptr<Filter::PrepareBuffer> CreateIntervalBuffer(
   if (range.max < 0.) {
     return std::make_unique<Filter::EmptyBuffer>();
   } else if (range.min < 0.) {
-    return CreateOpenIntervalBuffer(ctx, field, options, false);
+    return CreateOpenIntervalBuffer(ctx, field, options, false, boost);
   }
 
   const bool min_incl = range.min_type == BoundType::Inclusive;
@@ -643,7 +646,7 @@ std::unique_ptr<Filter::PrepareBuffer> CreateIntervalBuffer(
       [bound = FromPoint(origin)](const ShapeContainer& shape) {
         return bound.InteriorContains(shape.centroid());
       },
-      ctx.boost);
+      boost);
   }
 
   auto min_bound = FromPoint(origin, range.min);
@@ -671,20 +674,19 @@ std::unique_ptr<Filter::PrepareBuffer> CreateIntervalBuffer(
     case 0:
       return MakeGeoBuffer(
         ctx, field, options, std::move(geo_terms),
-        GeoDistanceRangeAcceptor<false, false>{min_bound, max_bound},
-        ctx.boost);
+        GeoDistanceRangeAcceptor<false, false>{min_bound, max_bound}, boost);
     case 1:
       return MakeGeoBuffer(
         ctx, field, options, std::move(geo_terms),
-        GeoDistanceRangeAcceptor<true, false>{min_bound, max_bound}, ctx.boost);
+        GeoDistanceRangeAcceptor<true, false>{min_bound, max_bound}, boost);
     case 2:
       return MakeGeoBuffer(
         ctx, field, options, std::move(geo_terms),
-        GeoDistanceRangeAcceptor<false, true>{min_bound, max_bound}, ctx.boost);
+        GeoDistanceRangeAcceptor<false, true>{min_bound, max_bound}, boost);
     case 3:
       return MakeGeoBuffer(
         ctx, field, options, std::move(geo_terms),
-        GeoDistanceRangeAcceptor<true, true>{min_bound, max_bound}, ctx.boost);
+        GeoDistanceRangeAcceptor<true, true>{min_bound, max_bound}, boost);
     default:
       SDB_ASSERT(false);
       return std::make_unique<Filter::EmptyBuffer>();
@@ -726,28 +728,35 @@ std::unique_ptr<Filter::PrepareBuffer> GeoFilter::CreateBuffer(
         [filter_shape = std::move(shape)](const ShapeContainer& indexed_shape) {
           return filter_shape.intersects(indexed_shape);
         },
-        ctx.boost);
+        Boost());
     case GeoFilterType::Contains:
       return MakeGeoBuffer(
         ctx, field(), options, std::move(geo_terms),
         [filter_shape = std::move(shape)](const ShapeContainer& indexed_shape) {
           return filter_shape.contains(indexed_shape);
         },
-        ctx.boost);
+        Boost());
     case GeoFilterType::IsContained:
       return MakeGeoBuffer(
         ctx, field(), options, std::move(geo_terms),
         [filter_shape = std::move(shape)](const ShapeContainer& indexed_shape) {
           return indexed_shape.contains(filter_shape);
         },
-        ctx.boost);
+        Boost());
   }
   SDB_ASSERT(false);
   return std::make_unique<EmptyBuffer>();
 }
 
 Filter::Query::ptr GeoFilter::prepare(const PrepareContext& ctx) const {
-  return DefaultPrepare(ctx);
+  auto buf = CreateBuffer(ctx);
+  for (const auto& segment : ctx.index) {
+    buf->PrepareSegment(segment);
+  }
+  if (buf->Empty()) {
+    return Query::empty();
+  }
+  return std::move(*buf).Compile(ctx);
 }
 
 std::unique_ptr<Filter::PrepareBuffer> GeoDistanceFilter::CreateBuffer(
@@ -758,16 +767,25 @@ std::unique_ptr<Filter::PrepareBuffer> GeoDistanceFilter::CreateBuffer(
   const auto upper_bound = BoundType::Unbounded != range.max_type;
 
   if (!lower_bound && !upper_bound) {
-    return All{}.CreateBuffer(ctx);
+    All all;
+    all.boost(Boost());
+    return all.CreateBuffer(ctx);
   }
   if (lower_bound && upper_bound) {
-    return CreateIntervalBuffer(ctx, field(), options);
+    return CreateIntervalBuffer(ctx, field(), options, Boost());
   }
-  return CreateOpenIntervalBuffer(ctx, field(), options, lower_bound);
+  return CreateOpenIntervalBuffer(ctx, field(), options, lower_bound, Boost());
 }
 
 Filter::Query::ptr GeoDistanceFilter::prepare(const PrepareContext& ctx) const {
-  return DefaultPrepare(ctx);
+  auto buf = CreateBuffer(ctx);
+  for (const auto& segment : ctx.index) {
+    buf->PrepareSegment(segment);
+  }
+  if (buf->Empty()) {
+    return Query::empty();
+  }
+  return std::move(*buf).Compile(ctx);
 }
 
 }  // namespace irs

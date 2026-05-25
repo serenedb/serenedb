@@ -552,8 +552,8 @@ namespace {
 class Buffer final : public SampledMultiTermBuffer {
  public:
   Buffer(const PrepareContext& ctx, std::string_view field,
-         const ByGranularRangeOptions& options)
-    : SampledMultiTermBuffer{ctx, options.scored_terms_limit},
+         const ByGranularRangeOptions& options, score_t boost = kNoBoost)
+    : SampledMultiTermBuffer{ctx, options.scored_terms_limit, boost},
       _field{field},
       _options{&options} {}
 
@@ -600,7 +600,17 @@ Filter::Query::ptr ByGranularRange::Prepare(const PrepareContext& ctx,
 
 std::unique_ptr<Filter::PrepareBuffer> ByGranularRange::CreateBuffer(
   const PrepareContext& ctx) const {
-  return std::make_unique<Buffer>(ctx, field(), options());
+  const auto& rng = options().range;
+  if (!rng.min.empty() && !rng.max.empty() &&
+      rng.min.front() == rng.max.front()) {
+    if (rng.min_type == BoundType::Inclusive &&
+        rng.max_type == BoundType::Inclusive) {
+      return std::make_unique<ByTerm::Buffer>(ctx, field(), rng.min.front(),
+                                              Boost());
+    }
+    return std::make_unique<EmptyBuffer>();
+  }
+  return std::make_unique<Buffer>(ctx, field(), options(), Boost());
 }
 
 void ByGranularRange::visit(const SubReader& segment, const TermReader& reader,

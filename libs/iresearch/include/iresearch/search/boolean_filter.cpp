@@ -119,10 +119,8 @@ class CompoundBuffer final : public Filter::PrepareBuffer {
 
 CompoundBuffer::ChildEntry MakeChildEntry(const Filter& filter,
                                           const PrepareContext& parent_ctx) {
-  auto compile_ctx = parent_ctx;
-  compile_ctx.boost *= filter.BoostImpl();
   auto buf = filter.CreateChildBuffer(parent_ctx);
-  return {std::move(buf), compile_ctx};
+  return {std::move(buf), parent_ctx};
 }
 
 std::pair<const Filter*, bool> OptimizeNot(const Not& node) {
@@ -483,9 +481,7 @@ std::unique_ptr<Filter::PrepareBuffer> Not::CreateBuffer(
   auto all_docs = MakeAllDocsFilter(kNoBoost);
   compound->AddIncl(MakeChildEntry(*all_docs, bool_ctx));
 
-  PrepareContext excl_raw{
-    .index = ctx.index, .memory = ctx.memory, .ctx = ctx.ctx};
-  compound->AddExcl(MakeChildEntry(*res.first, excl_raw));
+  compound->AddExcl(MakeChildEntry(*res.first, bool_ctx));
 
   compound->AddOwned(std::move(all_docs));
   return compound;
@@ -506,7 +502,7 @@ std::unique_ptr<Filter::PrepareBuffer> BooleanFilter::CreateBuffer(
 
   auto fallback = [&]() -> std::unique_ptr<PrepareBuffer> {
     return std::make_unique<LazyQueryBuffer>(
-      [ctx, this](const PrepareContext&) { return prepare(ctx); });
+      [this](const PrepareContext& ctx) { return prepare(ctx); });
   };
 
   // Single-child collapse / ByTerm coalescing / All-folding / Empty handling

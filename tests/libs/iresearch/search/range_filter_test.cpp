@@ -1232,6 +1232,98 @@ TEST_P(RangeFilterTestCase, visit) {
   visitor.reset();
 }
 
+TEST_P(RangeFilterTestCase, parallel_prepare_parity) {
+  {
+    auto writer = open_writer(irs::kOmCreate);
+    tests::JsonDocGenerator gen_a(resource("simple_sequential.json"),
+                                  &tests::GenericJsonFieldFactory);
+    tests::JsonDocGenerator gen_b(resource("simple_sequential.json"),
+                                  &tests::GenericJsonFieldFactory);
+    add_segment(*writer, gen_a);
+    add_segment(*writer, gen_b);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_GE(rdr.size(), 2u);
+
+  std::vector<const irs::SubReader*> segments;
+  segments.reserve(rdr.size());
+  for (const auto& s : rdr) {
+    segments.push_back(&s);
+  }
+
+  auto run = [&](const irs::ByRange& filter) {
+    MaxMemoryCounter counter;
+    const irs::PrepareContext ctx{.index = rdr, .memory = counter};
+
+    auto seq = filter.prepare(ctx);
+    ASSERT_NE(nullptr, seq);
+
+    auto buf_lhs = filter.CreateBuffer(ctx);
+    auto buf_rhs = filter.CreateBuffer(ctx);
+    ASSERT_NE(nullptr, buf_lhs);
+    ASSERT_NE(nullptr, buf_rhs);
+
+    for (size_t i = 0; i < segments.size(); ++i) {
+      auto& buf = (i & 1u) ? *buf_rhs : *buf_lhs;
+      buf.PrepareSegment(*segments[i]);
+    }
+    buf_lhs->Merge(std::move(*buf_rhs));
+    auto par = std::move(*buf_lhs).Compile(ctx);
+    ASSERT_NE(nullptr, par);
+
+    ASSERT_EQ(seq->Boost(), par->Boost());
+
+    for (const auto* segment : segments) {
+      auto docs_seq = seq->execute({.segment = *segment});
+      auto docs_par = par->execute({.segment = *segment});
+      while (true) {
+        const bool has_seq = docs_seq->next();
+        const bool has_par = docs_par->next();
+        ASSERT_EQ(has_seq, has_par);
+        if (!has_seq) {
+          break;
+        }
+        ASSERT_EQ(docs_seq->value(), docs_par->value());
+      }
+    }
+  };
+
+  const auto min = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
+  const auto max = irs::ViewCast<irs::byte_type>(std::string_view("abcd"));
+
+  run(MakeFilter("prefix", min, irs::BoundType::Inclusive, max,
+                 irs::BoundType::Inclusive));
+
+  {
+    auto f = MakeFilter("prefix", min, irs::BoundType::Inclusive, max,
+                        irs::BoundType::Inclusive);
+    f.boost(2.5f);
+    run(f);
+  }
+
+  {
+    auto f = MakeFilter("prefix", min, irs::BoundType::Exclusive, max,
+                        irs::BoundType::Exclusive);
+    f.boost(0.5f);
+    run(f);
+  }
+
+  // Degenerate min == max, Inclusive/Inclusive -> ByTerm shortcut.
+  run(MakeFilter("prefix", min, irs::BoundType::Inclusive, min,
+                 irs::BoundType::Inclusive));
+  {
+    auto f = MakeFilter("prefix", min, irs::BoundType::Inclusive, min,
+                        irs::BoundType::Inclusive);
+    f.boost(1.75f);
+    run(f);
+  }
+
+  // Degenerate min == max, Exclusive -> empty.
+  run(MakeFilter("prefix", min, irs::BoundType::Exclusive, min,
+                 irs::BoundType::Exclusive));
+}
+
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(range_filter_test, RangeFilterTestCase,

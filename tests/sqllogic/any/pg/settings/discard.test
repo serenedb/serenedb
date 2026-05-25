@@ -52,11 +52,12 @@ DISCARD ALL;
 statement error
 EXECUTE drv_discard_test;
 ----
-db error: ERROR: Prepared statement "drv_discard_test" does not exist<slt:ignore>
+db error: ERROR: prepared statement "drv_discard_test" does not exist<slt:ignore>
 
 
 # DISCARD PLANS / SEQUENCES / TEMP also clear prepared statements in SereneDB
-# (same physical-drop path, since the underlying state is the same).
+# (same physical-drop path, since the underlying state is the same). PG keeps
+# the prepared statement -- DISCARD PLANS only releases its cached plan.
 statement ok
 PREPARE drv_discard_test AS SELECT 2;
 
@@ -65,10 +66,18 @@ statement ok
 DISCARD PLANS;
 
 
+skipif postgres
 statement error
 EXECUTE drv_discard_test;
 ----
-db error: ERROR: Prepared statement "drv_discard_test" does not exist<slt:ignore>
+db error: ERROR: prepared statement "drv_discard_test" does not exist<slt:ignore>
+
+
+# DEALLOCATE ALL is PG-only here -- serenedb already cleared the prepared
+# statement via DISCARD PLANS above, while PG kept it cached.
+onlyif postgres
+statement ok
+DEALLOCATE ALL;
 
 
 # Unknown DISCARD target is a syntax error.

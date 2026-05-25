@@ -156,18 +156,49 @@ SET TimeZone = 'Etc/UTC';
 query
 SHOW TIME ZONE;
 ----
-timezone
+TimeZone
 Etc/UTC
 
 
 query
 SHOW timezone;
 ----
-timezone
+TimeZone
 Etc/UTC
 
 
+# PG canonical column headers for the other CamelCase outlier GUCs.
+query
+SHOW DateStyle;
+----
+DateStyle
+ISO, MDY
+
+
+query
+SHOW datestyle;
+----
+DateStyle
+ISO, MDY
+
+
+query
+SHOW IntervalStyle;
+----
+IntervalStyle
+postgres
+
+
+query
+SHOW intervalstyle;
+----
+IntervalStyle
+postgres
+
+
 # DESCRIBE / DESC accept the same aliases (mirrors the regular SHOW <name> branch).
+# PG has no DESCRIBE/DESC keyword, so this branch is serenedb-only.
+skipif postgres
 query
 DESCRIBE TRANSACTION ISOLATION LEVEL;
 ----
@@ -175,10 +206,11 @@ transaction_isolation
 <slt:ignore>
 
 
+skipif postgres
 query
 DESC TIME ZONE;
 ----
-timezone
+TimeZone
 Etc/UTC
 
 

@@ -753,9 +753,6 @@ Filter::Query::ptr GeoFilter::prepare(const PrepareContext& ctx) const {
   for (const auto& segment : ctx.index) {
     buf->PrepareSegment(segment);
   }
-  if (buf->Empty()) {
-    return Query::empty();
-  }
   return std::move(*buf).Compile(ctx);
 }
 
@@ -781,9 +778,6 @@ Filter::Query::ptr GeoDistanceFilter::prepare(const PrepareContext& ctx) const {
   auto buf = CreateBuffer(ctx);
   for (const auto& segment : ctx.index) {
     buf->PrepareSegment(segment);
-  }
-  if (buf->Empty()) {
-    return Query::empty();
   }
   return std::move(*buf).Compile(ctx);
 }

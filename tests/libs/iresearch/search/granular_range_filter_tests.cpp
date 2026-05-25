@@ -1712,7 +1712,7 @@ TEST(by_granular_range_test, boost) {
     q.boost(boost);
 
     auto prepared = q.prepare({.index = irs::SubReader::empty()});
-    ASSERT_EQ(irs::kNoBoost, prepared->Boost());
+    ASSERT_EQ(boost, prepared->Boost());
   }
 }
 

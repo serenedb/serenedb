@@ -94,9 +94,6 @@ class BySamePosition : public FilterWithOptions<BySamePositionOptions> {
     for (const auto& segment : ctx.index) {
       buf->PrepareSegment(segment);
     }
-    if (buf->Empty()) {
-      return Query::empty();
-    }
     return std::move(*buf).Compile(ctx);
   }
 };

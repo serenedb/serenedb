@@ -133,7 +133,7 @@ QUERY PLAN
 │  sdb_inverted_index_score │
 │            DESC           │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │

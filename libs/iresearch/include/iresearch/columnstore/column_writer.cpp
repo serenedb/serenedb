@@ -176,13 +176,13 @@ void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
     return;
   }
 
-  duckdb::DataPointer ptr{segment.stats.statistics.Copy()};
+  duckdb::DataPointer ptr{segment.GetStats().Copy()};
   ptr.row_start = running_row_start;
   ptr.tuple_count = tuple_count;
   const auto& codec = segment.GetCompressionFunction();
   ptr.compression_type = codec.type;
 
-  if (segment.stats.statistics.IsConstant() || !bytes || segment_size == 0) {
+  if (segment.GetStats().IsConstant() || !bytes || segment_size == 0) {
     ptr.compression_type = duckdb::CompressionType::COMPRESSION_CONSTANT;
     ptr.block_pointer.block_id = INVALID_BLOCK;
     ptr.block_pointer.offset = 0;
@@ -234,7 +234,7 @@ PickedCodec PickCodec(WriteContext& write_ctx,
   }
 
   duckdb::CompressionAnalyzeContext ctx{write_ctx, db,
-                                        duckdb::VERSION_NUMBER_UPPER};
+                                        duckdb::StorageVersion::V2_0_0};
   std::vector<duckdb::unique_ptr<duckdb::AnalyzeState>> states(
     candidates.size());
   for (size_t i = 0; i < candidates.size(); ++i) {
@@ -249,8 +249,9 @@ PickedCodec PickCodec(WriteContext& write_ctx,
     const auto take =
       std::min<duckdb::idx_t>(row_count - consumed, STANDARD_VECTOR_SIZE);
     CopySlice(slice, staging, consumed, take);
+    duckdb::FlatVector::SetSize(slice, take);
     for (size_t i = 0; i < candidates.size(); ++i) {
-      if (states[i] && !candidates[i].get().analyze(*states[i], slice, take)) {
+      if (states[i] && !candidates[i].get().analyze(*states[i], slice)) {
         states[i].reset();
       }
     }
@@ -331,13 +332,13 @@ void CompressColumn(WriteContext& write_ctx,
                        running_row_start, sink);
         return;
       }
-      if (!segment->block) {
+      if (!segment->GetBlockHandle()) {
         CaptureSegment(*segment, segment_size, nullptr, out, running_row_start,
                        sink);
         return;
       }
       auto& bm = duckdb::BufferManager::GetBufferManager(db);
-      auto repinned = bm.Pin(segment->block);
+      auto repinned = bm.Pin(segment->GetBlockHandle());
       CaptureSegment(*segment, segment_size,
                      reinterpret_cast<const byte_type*>(repinned.Ptr()), out,
                      running_row_start, sink);
@@ -347,13 +348,13 @@ void CompressColumn(WriteContext& write_ctx,
     flush_segment_internal_fn =
       [&](duckdb::unique_ptr<duckdb::ColumnSegment> segment,
           duckdb::idx_t segment_size) {
-        if (segment_size == 0 || !segment->block) {
+        if (segment_size == 0 || !segment->GetBlockHandle()) {
           CaptureSegment(*segment, segment_size, nullptr, out,
                          running_row_start, sink);
           return;
         }
         auto& bm = duckdb::BufferManager::GetBufferManager(db);
-        auto handle = bm.Pin(segment->block);
+        auto handle = bm.Pin(segment->GetBlockHandle());
         CaptureSegment(*segment, segment_size,
                        reinterpret_cast<const byte_type*>(handle.Ptr()), out,
                        running_row_start, sink);
@@ -362,7 +363,7 @@ void CompressColumn(WriteContext& write_ctx,
   duckdb::ColumnDataCheckpointData ckp{
     codec_type,
     db,
-    duckdb::VERSION_NUMBER_UPPER,
+    duckdb::StorageVersion::V2_0_0,
     std::move(overflow_writer_factory),
     std::move(flush_segment_fn),
     std::move(flush_segment_internal_fn),
@@ -378,7 +379,8 @@ void CompressColumn(WriteContext& write_ctx,
     const auto take =
       std::min<duckdb::idx_t>(row_count - consumed, STANDARD_VECTOR_SIZE);
     CopySlice(slice, staging, consumed, take);
-    picked.function->compress(*comp_state, slice, take);
+    duckdb::FlatVector::SetSize(slice, take);
+    picked.function->compress(*comp_state, slice);
     consumed += take;
   }
   picked.function->compress_finalize(*comp_state);

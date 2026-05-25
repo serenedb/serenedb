@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# Format third_party/duckdb C/C++ files with clang-format 11.0.1 (the version
+# Format third_party/duckdb*/ C/C++ files with clang-format 11.0.1 (the version
 # duckdb's own scripts/format.py enforces) inside a docker container, so no
 # local clang-format-11 install is required.
 #
+# Covered submodules: duckdb, duckdb_avro, duckdb_httpfs, duckdb_iceberg.
+#
 # Usage:
-#   scripts/format_duckdb.sh                # format files changed vs origin/main
+#   scripts/format_duckdb.sh                # format files changed vs each
+#                                             submodule's origin/HEAD
 #   scripts/format_duckdb.sh --base <ref>   # format files changed vs <ref>
+#                                             (applied to every submodule)
 #   scripts/format_duckdb.sh --files f1 f2  # format an explicit list (paths
-#                                             relative to third_party/duckdb)
+#                                             relative to third_party/, e.g.
+#                                             'duckdb/src/foo.cpp')
 #   scripts/format_duckdb.sh --check        # report diffs only, do not write
 #
 # Scoping rules (mirrors third_party/duckdb/scripts/format.py):
@@ -21,15 +26,22 @@
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-DUCKDB_DIR="$REPO_ROOT/third_party/duckdb"
-IMAGE="python:3.11-slim"
+THIRD_PARTY="$REPO_ROOT/third_party"
+SUBMODULES=(duckdb duckdb_avro duckdb_httpfs duckdb_iceberg)
+# Track duckdb's own CI (CheckIssueForCodeFormatting.yml uses Python 3.12).
+IMAGE="python:3.12-slim"
 
-if [[ ! -d "$DUCKDB_DIR/.git" && ! -f "$DUCKDB_DIR/.git" ]]; then
-	echo "error: $DUCKDB_DIR is not a git checkout" >&2
-	exit 1
-fi
+for sm in "${SUBMODULES[@]}"; do
+	sm_dir="$THIRD_PARTY/$sm"
+	if [[ ! -d "$sm_dir/.git" && ! -f "$sm_dir/.git" ]]; then
+		echo "error: $sm_dir is not a git checkout" >&2
+		exit 1
+	fi
+done
 
-BASE_REF="origin/main"
+# Empty default means "use each submodule's origin/HEAD" (duckdb_iceberg's
+# default branch is not 'main', so a single hardcoded ref wouldn't work).
+BASE_REF=""
 CHECK_ONLY=0
 EXPLICIT_FILES=()
 
@@ -51,7 +63,7 @@ while [[ $# -gt 0 ]]; do
 		done
 		;;
 	-h | --help)
-		sed -n '2,20p' "$0"
+		sed -n '2,26p' "$0"
 		exit 0
 		;;
 	*)
@@ -61,70 +73,102 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-FILES_TO_FORMAT="$(mktemp)"
-trap 'rm -f "$FILES_TO_FORMAT"' EXIT
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+FILES_TO_FORMAT="$TMP_DIR/files.txt"
+INNER_SCRIPT="$TMP_DIR/run.sh"
 
-# --- collect candidate files ------------------------------------------------
-if [[ ${#EXPLICIT_FILES[@]} -gt 0 ]]; then
-	printf '%s\n' "${EXPLICIT_FILES[@]}" >"$FILES_TO_FORMAT.raw"
-else
-	git -C "$DUCKDB_DIR" diff --name-only "${BASE_REF}...HEAD" >"$FILES_TO_FORMAT.raw"
-fi
-
-# --- filter: extension, formatted_directories, ignored_files ---------------
+# --- filters shared by every submodule -------------------------------------
 ALLOWED_DIRS_RE='^(src|benchmark|test|tools|examples|extension|scripts)/'
 EXT_RE='\.(cpp|hpp|h|c|cc|hh|ipp)$'
 
-# duckdb's ignored_files (from scripts/format.py)
-IGNORED_FILES_RE='(^|/)(tpch_constants|tpcds_constants|test_csv_header|duckdb|json|sqlite3|shell|termcolor|httplib|os_win|glob|printf|helper|single_thread_ptr|types|default_views|default_functions|release|genrand|address|visualizer_constants|icu-collate|yyjson|duckdb_pdqsort|pdqsort|stubdata|nf_calendar|nf_localedata|nf_zformat|expr|function_list|inlined_grammar)\.(cpp|hpp|h|c|cc|hh|ipp)$'
+# duckdb's ignored_files (from scripts/format.py file_is_ignored: exact-basename
+# match; the script there does `os.path.basename(p) in ignored_files`). So each
+# entry must keep its specific extension -- 'types.hpp' is ignored, 'types.cpp'
+# is not. The .test entry (test_insert_invalid.test) is omitted because EXT_RE
+# already excludes test files.
+IGNORED_FILES_RE='(^|/)(tpch_constants\.hpp|tpcds_constants\.hpp|test_csv_header\.hpp|duckdb\.cpp|duckdb\.hpp|json\.hpp|sqlite3\.h|shell\.c|termcolor\.hpp|httplib\.hpp|os_win\.c|glob\.c|printf\.c|helper\.hpp|single_thread_ptr\.hpp|types\.hpp|default_views\.cpp|default_functions\.cpp|release\.h|genrand\.cpp|address\.cpp|visualizer_constants\.hpp|icu-collate\.cpp|icu-collate\.hpp|yyjson\.cpp|yyjson\.hpp|duckdb_pdqsort\.hpp|pdqsort\.h|stubdata\.cpp|nf_calendar\.cpp|nf_calendar\.h|nf_localedata\.cpp|nf_localedata\.h|nf_zformat\.cpp|nf_zformat\.h|expr\.cc|function_list\.cpp|inlined_grammar\.hpp)$'
 
-# duckdb's ignored_directories
-IGNORED_DIRS_RE='(/_generated/|^_generated/|tools/rpkg/src/duckdb/|tools/rpkg/inst/include/cpp11/|extension/tpcds/dsdgen/|extension/jemalloc/jemalloc/|extension/icu/third_party/|tools/nodejs/src/duckdb/|/\.eggs/|/__pycache__/|/dbgen/)'
+# duckdb's ignored_directories (mirrors scripts/format.py).
+IGNORED_DIRS_RE='(/_generated/|^_generated/|tools/rpkg/src/duckdb/|tools/rpkg/inst/include/cpp11/|extension/external/|extension/tpcds/dsdgen/|extension/icu/third_party/|tools/nodejs/src/duckdb/|/\.eggs/|/__pycache__/|/dbgen/)'
 
 # Team-local exclusions: files whose branch-side edits don't round-trip cleanly
 # through clang-format-11 and that we don't want auto-reformatted on every run.
-# Format with full-path-prefix matching, anchored at the duckdb-root.
+# Format with full-path-prefix matching, anchored at each submodule's root.
 LOCAL_IGNORED_PATHS_RE='^(src/catalog/default/default_types\.cpp)$'
 
-grep -E "$EXT_RE" "$FILES_TO_FORMAT.raw" 2>/dev/null |
-	grep -E "$ALLOWED_DIRS_RE" |
-	grep -vE "$IGNORED_FILES_RE" |
-	grep -vE "$IGNORED_DIRS_RE" |
-	grep -vE "$LOCAL_IGNORED_PATHS_RE" \
-		>"$FILES_TO_FORMAT.candidates" || true
-
-# Skip auto-generated files (matches duckdb's format.py file_is_generated check):
-# any file whose first 2KB contains "// This file is automatically generated by scripts/".
+# --- collect candidates per submodule, into one consolidated list ----------
+# Output paths in $FILES_TO_FORMAT are relative to $THIRD_PARTY (e.g. duckdb/src/foo.cpp)
 : >"$FILES_TO_FORMAT"
-while IFS= read -r f; do
-	full="$DUCKDB_DIR/$f"
-	[[ -f "$full" ]] || continue
-	if head -c 2048 "$full" | grep -q '// This file is automatically generated by scripts/'; then
-		continue
+TOTAL=0
+for sm in "${SUBMODULES[@]}"; do
+	sm_dir="$THIRD_PARTY/$sm"
+	raw="$TMP_DIR/$sm.raw"
+	cand="$TMP_DIR/$sm.cand"
+
+	if [[ ${#EXPLICIT_FILES[@]} -gt 0 ]]; then
+		: >"$raw"
+		for f in "${EXPLICIT_FILES[@]}"; do
+			if [[ "$f" == "$sm/"* ]]; then
+				printf '%s\n' "${f#"$sm/"}" >>"$raw"
+			fi
+		done
+	else
+		git -C "$sm_dir" diff --name-only "${BASE_REF:-origin/HEAD}...HEAD" >"$raw"
 	fi
-	printf '%s\n' "$f" >>"$FILES_TO_FORMAT"
-done <"$FILES_TO_FORMAT.candidates"
 
-rm -f "$FILES_TO_FORMAT.raw" "$FILES_TO_FORMAT.candidates"
+	grep -E "$EXT_RE" "$raw" 2>/dev/null |
+		grep -E "$ALLOWED_DIRS_RE" |
+		grep -vE "$IGNORED_FILES_RE" |
+		grep -vE "$IGNORED_DIRS_RE" |
+		grep -vE "$LOCAL_IGNORED_PATHS_RE" \
+			>"$cand" || true
 
-COUNT=$(wc -l <"$FILES_TO_FORMAT" | tr -d ' ')
-if [[ "$COUNT" -eq 0 ]]; then
-	echo "no files to format (base=$BASE_REF)"
+	sm_count=0
+	while IFS= read -r f; do
+		full="$sm_dir/$f"
+		[[ -f "$full" ]] || continue
+		# Auto-generated content marker check. We scan the whole file (not
+		# just the first 2KB) because some files mix handwritten and
+		# generated sections, e.g. peg_transformer.hpp has 'START GENERATED
+		# RULES' at line ~1225. Patterns observed across submodules:
+		#   - '// This file is automatically generated by scripts/...'
+		#       (duckdb canonical marker -- enum_util, serialize_*, etc.)
+		#   - '// This file is automatically generated ...'
+		#       (iceberg list.hpp -- variant without 'scripts/')
+		#   - '// AUTO-GENERATED by scripts/...'
+		#       (transform_generated.cpp -- gen_transformer_v2.py)
+		#   - '// This code is autogenerated from ...scripts/...'
+		#       (autogenerated_settings.cpp)
+		#   - '// START GENERATED ...'  (peg_transformer.hpp's partial
+		#       blocks; presence of this marker means the file is at least
+		#       partially generated -- safer to skip the whole file)
+		# This is intentionally stricter than duckdb's format.py, which
+		# only catches the first pattern.
+		if grep -qE 'automatically generated|AUTO-GENERATED|autogenerated from|START GENERATED' "$full"; then
+			continue
+		fi
+		printf '%s/%s\n' "$sm" "$f" >>"$FILES_TO_FORMAT"
+		sm_count=$((sm_count + 1))
+	done <"$cand"
+	echo "$sm: $sm_count file(s)"
+	TOTAL=$((TOTAL + sm_count))
+done
+
+if [[ "$TOTAL" -eq 0 ]]; then
+	echo "no files to format (base=${BASE_REF:-origin/HEAD})"
 	exit 0
 fi
-echo "scope: $COUNT file(s)"
+echo "total scope: $TOTAL file(s)"
 
 # --- inner script that runs inside the container ---------------------------
-INNER_SCRIPT="$(mktemp)"
-trap 'rm -f "$FILES_TO_FORMAT" "$INNER_SCRIPT"' EXIT
-
 CHECK_FLAG=""
 [[ "$CHECK_ONLY" -eq 1 ]] && CHECK_FLAG="--dry-run --Werror"
 
 cat >"$INNER_SCRIPT" <<INNER
 #!/bin/sh
 set -e
-pip install --quiet --root-user-action=ignore --no-warn-script-location clang_format==11.0.1
+pip install --quiet --disable-pip-version-check --root-user-action=ignore --no-warn-script-location clang_format==11.0.1
 export PATH="/tmp/.local/bin:\$PATH"
 cd /work
 echo "clang-format: \$(clang-format --version)"
@@ -132,9 +176,11 @@ xargs -a /tmp/files.txt -n 50 -P 4 clang-format -i --style=file --sort-includes=
 INNER
 
 # --- run --------------------------------------------------------------------
+# Mount third_party/ as /work so paths like duckdb/src/foo.cpp resolve and
+# clang-format finds each submodule's own .clang-format via parent lookup.
 docker run --rm \
 	-u "$(id -u):$(id -g)" \
-	-v "$DUCKDB_DIR":/work \
+	-v "$THIRD_PARTY":/work \
 	-v "$FILES_TO_FORMAT":/tmp/files.txt:ro \
 	-v "$INNER_SCRIPT":/tmp/run.sh:ro \
 	-e HOME=/tmp \
@@ -144,6 +190,8 @@ docker run --rm \
 if [[ "$CHECK_ONLY" -eq 1 ]]; then
 	echo "check passed."
 else
-	MODIFIED=$(git -C "$DUCKDB_DIR" diff --name-only | wc -l | tr -d ' ')
-	echo "done. $MODIFIED file(s) modified in $DUCKDB_DIR (review with 'git -C third_party/duckdb diff')"
+	for sm in "${SUBMODULES[@]}"; do
+		modified=$(git -C "$THIRD_PARTY/$sm" diff --name-only | wc -l | tr -d ' ')
+		echo "$sm: $modified file(s) modified (review with 'git -C third_party/$sm diff')"
+	done
 fi

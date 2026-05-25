@@ -702,7 +702,7 @@ static void SetCommonCallbacks(duckdb::TableFunction& func) {
   // TODO: Provide statistics
   // TODO: Better cardinality estimates
   func.cardinality = SereneDBScanCardinality;
-  func.rows_scanned = CommonScanRowsScanned;
+  func.get_metrics = CommonScanGetMetrics;
   func.to_string = SereneDBScanToString;
   // TODO: Implement dynamic_to_string
   // TODO: Implement table_scan_progress

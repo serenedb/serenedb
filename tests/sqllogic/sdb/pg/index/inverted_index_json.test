@@ -225,12 +225,12 @@ SELECT id FROM jonly_idx WHERE content->'host' @@ ts_like('server-0_') ORDER BY 
 ----
 db error: ERROR: No function matches the given name and argument types 'json_extract(JSON, BOOLEAN)'. You might need to add explicit type casts.
 	Candidate functions:
-	json_extract(VARCHAR, BIGINT) -> JSON
-	json_extract(VARCHAR, VARCHAR) -> JSON
-	json_extract(VARCHAR, VARCHAR[]) -> JSON[]
-	json_extract(JSON, BIGINT) -> JSON
-	json_extract(JSON, VARCHAR) -> JSON
-	json_extract(JSON, VARCHAR[]) -> JSON[]
+	json_extract(col VARCHAR, col2 BIGINT) -> JSON
+	json_extract(col VARCHAR, col2 VARCHAR) -> JSON
+	json_extract(col VARCHAR, col2 VARCHAR[]) -> JSON[]
+	json_extract(col JSON, col2 BIGINT) -> JSON
+	json_extract(col JSON, col2 VARCHAR) -> JSON
+	json_extract(col JSON, col2 VARCHAR[]) -> JSON[]
 
 
 # `->` (JSON-typed leaf) is accepted as an indexed expression; the sink emits

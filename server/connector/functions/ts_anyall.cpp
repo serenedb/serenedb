@@ -38,15 +38,15 @@ bool IsTSQueryType(const duckdb::LogicalType& type) {
 }
 
 bool IsTokenizeListCall(const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return false;
   }
   const auto& f = expr.Cast<duckdb::BoundFunctionExpression>();
-  if (f.function.name != kTSQTokenize) {
+  if (f.function.GetName() != kTSQTokenize) {
     return false;
   }
-  return f.return_type.id() == duckdb::LogicalTypeId::LIST &&
-         IsTSQueryType(duckdb::ListType::GetChildType(f.return_type));
+  return f.GetReturnType().id() == duckdb::LogicalTypeId::LIST &&
+         IsTSQueryType(duckdb::ListType::GetChildType(f.GetReturnType()));
 }
 
 void FromTokenizeListInAnyAllOf(
@@ -241,7 +241,7 @@ void ExtractAnyAllOfArgs(
   // synthesised BoundConstantExpression wrappers per child Value in the
   // folded case, raw child expression pointers otherwise.
   const auto& list_expr = *func.children[0];
-  const auto list_type_id = list_expr.return_type.id();
+  const auto list_type_id = list_expr.GetReturnType().id();
   if (list_type_id != duckdb::LogicalTypeId::LIST &&
       list_type_id != duckdb::LogicalTypeId::ARRAY) {
     THROW_SQL_ERROR(
@@ -249,7 +249,8 @@ void ExtractAnyAllOfArgs(
       ERR_MSG("ts_any/ts_all first argument must be a list or array"),
       ERR_HINT(kSyntaxHint));
   }
-  if (list_expr.expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
+  if (list_expr.GetExpressionClass() ==
+      duckdb::ExpressionClass::BOUND_CONSTANT) {
     const auto& val = list_expr.Cast<duckdb::BoundConstantExpression>().value;
     if (val.IsNull()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -264,14 +265,14 @@ void ExtractAnyAllOfArgs(
         duckdb::make_uniq<duckdb::BoundConstantExpression>(child_val));
       args.push_back(synthesised.back().get());
     }
-  } else if (list_expr.expression_class ==
+  } else if (list_expr.GetExpressionClass() ==
              duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& list_fn = list_expr.Cast<duckdb::BoundFunctionExpression>();
-    if (list_fn.function.name != "list_value" &&
-        list_fn.function.name != "array_value") {
+    if (list_fn.function.GetName() != "list_value" &&
+        list_fn.function.GetName() != "array_value") {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("list arg must be a literal list or array (got: ",
-                              list_fn.function.name, ")"),
+                              list_fn.function.GetName(), ")"),
                       ERR_HINT(kSyntaxHint));
     }
     for (const auto& e : list_fn.children) {

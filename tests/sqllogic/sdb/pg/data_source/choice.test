@@ -47,7 +47,7 @@ QUERY PLAN
 │    ────────────────────   │
 │      t_choice.id ASC      │
 │                           │
-│          ~0 rows          │
+│          ~3 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_TABLE_FULLSCAN  │
@@ -193,7 +193,7 @@ QUERY PLAN
 │    ────────────────────   │
 │     t_choice_cpk.b ASC    │
 │                           │
-│          ~0 rows          │
+│          ~3 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -221,7 +221,7 @@ QUERY PLAN
 │    ────────────────────   │
 │     t_choice_cpk.a ASC    │
 │                           │
-│          ~0 rows          │
+│          ~3 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_TABLE_FULLSCAN  │
@@ -273,7 +273,7 @@ QUERY PLAN
 │     t_choice_cpk.a ASC    │
 │     t_choice_cpk.b ASC    │
 │                           │
-│          ~0 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │  ROCKSDB_PK_POINTS_LOOKUP │
@@ -310,7 +310,7 @@ QUERY PLAN
 │     t_choice_cpk.a ASC    │
 │     t_choice_cpk.b ASC    │
 │                           │
-│          ~0 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │  ROCKSDB_PK_POINTS_LOOKUP │
@@ -354,7 +354,7 @@ QUERY PLAN
 │     t_choice_cpk.a ASC    │
 │     t_choice_cpk.b ASC    │
 │                           │
-│          ~0 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │  ROCKSDB_PK_POINTS_LOOKUP │
@@ -388,7 +388,7 @@ QUERY PLAN
 │     t_choice_cpk.a ASC    │
 │     t_choice_cpk.b ASC    │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -423,7 +423,7 @@ QUERY PLAN
 │     t_choice_cpk.a ASC    │
 │     t_choice_cpk.b ASC    │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -459,7 +459,7 @@ QUERY PLAN
 │     t_choice_cpk.a ASC    │
 │     t_choice_cpk.b ASC    │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │  ROCKSDB_PK_POINTS_LOOKUP │
@@ -498,7 +498,7 @@ QUERY PLAN
 │     t_choice_cpk.a ASC    │
 │     t_choice_cpk.b ASC    │
 │                           │
-│          ~0 rows          │
+│          ~4 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │  ROCKSDB_PK_POINTS_LOOKUP │
@@ -785,7 +785,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   t_choice_nulls.id ASC   │
 │                           │
-│          ~0 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │  ROCKSDB_PK_POINTS_LOOKUP │
@@ -987,7 +987,7 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range1.a ASC      │
 │                           │
-│          ~0 rows          │
+│          ~7 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1026,7 +1026,7 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range1.a ASC      │
 │                           │
-│          ~0 rows          │
+│          ~7 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1061,7 +1061,7 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range1.a ASC      │
 │                           │
-│          ~0 rows          │
+│          ~7 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1095,7 +1095,7 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range1.a ASC      │
 │                           │
-│          ~0 rows          │
+│          ~7 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1130,7 +1130,7 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range1.a ASC      │
 │                           │
-│          ~0 rows          │
+│          ~7 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1184,7 +1184,7 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~13 rows         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1221,7 +1221,7 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~13 rows         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1258,7 +1258,7 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~13 rows         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1295,7 +1295,7 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~13 rows         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1332,7 +1332,7 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~13 rows         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1370,7 +1370,7 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~13 rows         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1410,7 +1410,7 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~13 rows         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1448,7 +1448,7 @@ QUERY PLAN
 │       t_range.a ASC       │
 │       t_range.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~13 rows         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1493,7 +1493,7 @@ QUERY PLAN
 │       t_range.a ASC       │
 │       t_range.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~13 rows         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1533,7 +1533,7 @@ QUERY PLAN
 │       t_range.a ASC       │
 │       t_range.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~13 rows         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1574,7 +1574,7 @@ QUERY PLAN
 │       t_range.a ASC       │
 │       t_range.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
@@ -1631,7 +1631,7 @@ QUERY PLAN
 │       t_range.a ASC       │
 │       t_range.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -1675,7 +1675,7 @@ QUERY PLAN
 │       t_range.a ASC       │
 │       t_range.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -1762,7 +1762,7 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -1864,7 +1864,7 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~8 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1903,7 +1903,7 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~8 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -1940,7 +1940,7 @@ QUERY PLAN
 │       t_range3.b ASC      │
 │       t_range3.c ASC      │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
@@ -1994,7 +1994,7 @@ QUERY PLAN
 │       t_range3.b ASC      │
 │       t_range3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~8 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2031,7 +2031,7 @@ QUERY PLAN
 │       t_range3.b ASC      │
 │       t_range3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~8 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2075,7 +2075,7 @@ QUERY PLAN
 │       t_range3.b ASC      │
 │       t_range3.c ASC      │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -2131,7 +2131,7 @@ QUERY PLAN
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2164,7 +2164,7 @@ QUERY PLAN
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2198,7 +2198,7 @@ QUERY PLAN
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2231,7 +2231,7 @@ QUERY PLAN
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2264,7 +2264,7 @@ QUERY PLAN
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2299,7 +2299,7 @@ QUERY PLAN
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2336,7 +2336,7 @@ QUERY PLAN
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2371,7 +2371,7 @@ QUERY PLAN
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2408,7 +2408,7 @@ QUERY PLAN
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2458,7 +2458,7 @@ QUERY PLAN
 │        t_not2.a ASC       │
 │        t_not2.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~6 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2492,7 +2492,7 @@ QUERY PLAN
 │        t_not2.a ASC       │
 │        t_not2.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~6 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2529,7 +2529,7 @@ QUERY PLAN
 │        t_not2.a ASC       │
 │        t_not2.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~6 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2566,7 +2566,7 @@ QUERY PLAN
 │        t_not2.a ASC       │
 │        t_not2.b ASC       │
 │                           │
-│          ~0 rows          │
+│          ~6 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2607,7 +2607,7 @@ QUERY PLAN
 │        t_not2.a ASC       │
 │        t_not2.b ASC       │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -2701,7 +2701,7 @@ QUERY PLAN
 │    ────────────────────   │
 │    t_complex."name" ASC   │
 │                           │
-│          ~0 rows          │
+│          ~8 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2740,7 +2740,7 @@ QUERY PLAN
 │   t_complex.priority ASC  │
 │    t_complex."name" ASC   │
 │                           │
-│          ~0 rows          │
+│          ~8 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2784,7 +2784,7 @@ QUERY PLAN
 │   t_complex.priority ASC  │
 │    t_complex."name" ASC   │
 │                           │
-│          ~0 rows          │
+│          ~8 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2829,7 +2829,7 @@ QUERY PLAN
 │   t_complex.priority ASC  │
 │    t_complex."name" ASC   │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -2877,7 +2877,7 @@ QUERY PLAN
 │   t_complex.priority ASC  │
 │    t_complex."name" ASC   │
 │                           │
-│          ~0 rows          │
+│          ~8 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2914,7 +2914,7 @@ QUERY PLAN
 │   t_complex.priority ASC  │
 │    t_complex."name" ASC   │
 │                           │
-│          ~0 rows          │
+│          ~8 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -2955,7 +2955,7 @@ QUERY PLAN
 │   t_complex.priority ASC  │
 │    t_complex."name" ASC   │
 │                           │
-│          ~0 rows          │
+│          ~8 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -3494,7 +3494,7 @@ QUERY PLAN
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │  ROCKSDB_PK_POINTS_LOOKUP │
@@ -3538,7 +3538,7 @@ QUERY PLAN
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │  ROCKSDB_PK_POINTS_LOOKUP │
@@ -3625,7 +3625,7 @@ QUERY PLAN
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -3725,7 +3725,7 @@ QUERY PLAN
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~27 rows         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │   ROCKSDB_PK_RANGES_SCAN  │
@@ -3774,7 +3774,7 @@ QUERY PLAN
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │  ROCKSDB_PK_POINTS_LOOKUP │
@@ -3827,7 +3827,7 @@ QUERY PLAN
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -3885,7 +3885,7 @@ QUERY PLAN
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -3941,7 +3941,7 @@ QUERY PLAN
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -4005,7 +4005,7 @@ QUERY PLAN
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -4061,7 +4061,7 @@ QUERY PLAN
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -4165,7 +4165,7 @@ QUERY PLAN
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~4 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │  ROCKSDB_PK_POINTS_LOOKUP │
@@ -4218,7 +4218,7 @@ QUERY PLAN
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -4274,7 +4274,7 @@ QUERY PLAN
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~0 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
@@ -5320,7 +5320,7 @@ QUERY PLAN
 │    ────────────────────   │
 │    choices_array.a ASC    │
 │                           │
-│          ~0 rows          │
+│          ~4 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │  ROCKSDB_PK_POINTS_LOOKUP │

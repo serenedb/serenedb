@@ -85,8 +85,10 @@ inline std::vector<IndexedExpression> MakeIndexedExpressions(
     SDB_ASSERT(field_id != 0);
     auto bound =
       DeserializeBoundExpression(expr->serialized_expr, client_context);
+    const bool is_geojson =
+      expr->return_type.IsJSONType() && entry.synthetic_column.has_value();
     entries.emplace_back(std::move(bound), expr->serialized_expr,
-                         expr->dependent_columns, field_id);
+                         expr->dependent_columns, field_id, is_geojson);
   }
   return entries;
 }

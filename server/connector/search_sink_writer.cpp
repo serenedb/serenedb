@@ -266,6 +266,38 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
 
   if (expr_desc.type.IsJSONType()) {
     auto tokenizer = _subexpr_tokenizer_provider(field_id);
+    if (irs::get<irs::StoreAttr>(*tokenizer.analyzer) != nullptr) {
+      MakeFieldName(field_id, _name_buffer);
+      search::mangling::MangleString(_name_buffer);
+      const auto tokenizer_column = tokenizer.tokenizer_column;
+      _field.PrepareForStringValue(std::move(tokenizer));
+      SDB_ASSERT(_field.store_attr != nullptr);
+      SDB_ASSERT(tokenizer_column);
+      const auto tokenizer_column_id = *tokenizer_column;
+      EnsurePerRowBlobWriter(tokenizer_column_id);
+      _current_writer = [&, tokenizer_column_id, have_nulls](
+                          std::string_view full_key,
+                          std::span<const rocksdb::Slice> cell_slices) {
+        const bool is_null =
+          have_nulls && cell_slices.size() == 1 && cell_slices.front().empty();
+        Field* field = is_null
+                         ? (_null_field.SetNullValue(), &_null_field)
+                         : &WriteStringValue(full_key, cell_slices, _field);
+        if (!_document->Insert(field)) {
+          SDB_THROW(ERROR_INTERNAL,
+                    "Failed to insert field into IResearch document");
+        }
+        if (is_null || !field->store_attr) {
+          AppendPerRowBlobNull(tokenizer_column_id);
+        } else {
+          AppendPerRowBlob(tokenizer_column_id, field->store_attr->value);
+        }
+      };
+      _field.name = _name_buffer;
+      SDB_ASSERT(_document);
+      _document->NextFieldBatch();
+      return true;
+    }
     SetupJsonExpressionWriter(field_id, std::move(tokenizer));
     SDB_ASSERT(_document);
     _document->NextFieldBatch();

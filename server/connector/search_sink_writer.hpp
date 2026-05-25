@@ -241,6 +241,10 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   template<typename WriteFunc>
   Writer MakeIndexWriter(WriteFunc&& write_func);
 
+  template<typename WriteFunc>
+  Writer MakeStoreAttrWriter(irs::field_id tokenizer_column_id, bool have_nulls,
+                             WriteFunc&& write_func);
+
   // Actual value processors. It is set to write executor (see MakeIndexWriter)
   // as a template. This methods are responsible for extracting value from
   // rocksdb slices and setting it to Field structure accordingly.

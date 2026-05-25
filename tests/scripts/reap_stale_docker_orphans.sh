@@ -48,8 +48,15 @@ reap_stale_docker_orphans() {
 			>/dev/null 2>&1 || true
 		# Fallback if the compose file path didn't match anything in the project
 		# (different test kind, different cwd, etc): force-remove by labels.
+		# `-v` is critical -- it strips anonymous volumes the images carry via
+		# VOLUME directives (postgres /var/lib/postgresql/data is the common
+		# one); without -v they linger and accumulate hundreds of MB.
 		docker ps -aq --filter "label=com.docker.compose.project=${prj}" 2>/dev/null \
-			| xargs -r docker rm -f >/dev/null 2>&1 || true
+			| xargs -r docker rm -fv >/dev/null 2>&1 || true
+		# Compose-project named volumes get cleaned by `compose down --volumes`.
+		# But the label-based fallback above doesn't, so sweep them here too.
+		docker volume ls -q --filter "label=com.docker.compose.project=${prj}" 2>/dev/null \
+			| xargs -r docker volume rm >/dev/null 2>&1 || true
 	done
 
 	# Pass 2: standalone test deps spawned with mounted docker socket from
@@ -61,13 +68,16 @@ reap_stale_docker_orphans() {
 		[[ -z "$name" ]] && continue
 		# Non-Up containers are unambiguous orphans -- standalone deps are
 		# never restarted between runs.
+		# `-v` strips anonymous volumes the underlying image carries
+		# (MinIO /data, etc) -- without it the volumes leak and add up to
+		# 100s of MB per orphan.
 		if [[ "$status" != Up* ]]; then
-			docker rm -f "$name" >/dev/null 2>&1 || true
+			docker rm -fv "$name" >/dev/null 2>&1 || true
 			continue
 		fi
 		# Up but older than the cutoff: SIGKILL escapee.
 		if [[ -n "$created_ts" && "$created_ts" -lt "$cutoff" ]]; then
-			docker rm -f "$name" >/dev/null 2>&1 || true
+			docker rm -fv "$name" >/dev/null 2>&1 || true
 		fi
 	done < <(docker ps -a \
 		--format '{{.Names}}{{"\t"}}{{.Status}}{{"\t"}}{{.CreatedAt}}' 2>/dev/null \

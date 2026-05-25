@@ -22,6 +22,7 @@
 
 #include <absl/base/internal/endian.h>
 
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/aggregate/distributive_functions.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
@@ -58,6 +59,7 @@
 #include "connector/functions/search.h"
 #include "connector/functions/ts_offsets.h"
 #include "connector/functions/vector.h"
+#include "connector/index_expression.hpp"
 #include "connector/search_field_name.hpp"
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_filter_printer.hpp"
@@ -85,6 +87,18 @@ duckdb::unique_ptr<duckdb::Expression> CombineFilterExpressions(
     conj->children.push_back(std::move(e));
   }
   return conj;
+}
+
+std::shared_ptr<const catalog::Snapshot> PinnedSnapshot(
+  const connector::SearchFilterOptions& options) {
+  return connector::GetSereneDBContext(options.client_context)
+    .EnsureCatalogSnapshot();
+}
+
+search::InvertedIndexSnapshotPtr PinnedSearchSnapshot(
+  const connector::SearchFilterOptions& options, ObjectId index_id) {
+  return connector::GetSereneDBContext(options.client_context)
+    .EnsureSearchSnapshot(index_id);
 }
 
 bool IsMutationOp(duckdb::LogicalOperatorType type) {
@@ -154,7 +168,7 @@ struct ExpectedHNSW {
 // in search.cpp; an ARRAY child[0] proves the vector overload.
 std::optional<ExpectedHNSW> ExpectedHNSWForFunction(
   const duckdb::BoundFunctionExpression& func) {
-  const auto& name = func.function.name;
+  const auto& name = func.function.GetName();
   ExpectedHNSW result;
   if (name == connector::kL2Distance || name == connector::kL2DistanceOp ||
       name == connector::kL2SqrDistance) {
@@ -183,7 +197,7 @@ std::optional<ExpectedHNSW> ExpectedHNSWForFunction(
   if (result.is_norm ? func.children.size() != 1 : func.children.size() < 2) {
     return std::nullopt;
   }
-  const auto& arg_type = func.children[0]->return_type;
+  const auto& arg_type = func.children[0]->GetReturnType();
   duckdb::LogicalTypeId element_id;
   if (arg_type.id() == duckdb::LogicalTypeId::ARRAY) {
     element_id = duckdb::ArrayType::GetChildType(arg_type).id();
@@ -200,14 +214,17 @@ std::optional<ExpectedHNSW> ExpectedHNSWForFunction(
   return result;
 }
 
-// Pull a flat float vector from a constant ARRAY Value. Rejects mixed /
-// non-float / null elements.
 bool TryExtractQueryVector(const duckdb::Value& val, std::vector<float>& out) {
   using duckdb::LogicalTypeId;
-  if (val.type().id() != LogicalTypeId::ARRAY) {
+  const std::vector<duckdb::Value>* children_ptr = nullptr;
+  if (val.type().id() == LogicalTypeId::ARRAY) {
+    children_ptr = &duckdb::ArrayValue::GetChildren(val);
+  } else if (val.type().id() == LogicalTypeId::LIST) {
+    children_ptr = &duckdb::ListValue::GetChildren(val);
+  } else {
     return false;
   }
-  const auto& children = duckdb::ArrayValue::GetChildren(val);
+  const auto& children = *children_ptr;
   if (children.empty()) {
     return false;
   }
@@ -230,24 +247,41 @@ bool TryExtractQueryVector(const duckdb::Value& val, std::vector<float>& out) {
   return true;
 }
 
-// Identify column + constant inside a distance call: distance(col, vec)
-// or distance(vec, col). Returns nullptr on shape mismatch.
 struct DistanceArgs {
   duckdb::Expression* col_arg = nullptr;
-  duckdb::BoundConstantExpression* const_arg = nullptr;
+  duckdb::Expression* value_arg = nullptr;
 };
 DistanceArgs ExtractDistanceArgs(duckdb::BoundFunctionExpression& func_expr) {
   DistanceArgs out;
-  for (auto& child : func_expr.children) {
-    if (child->expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
-      out.const_arg = &child->Cast<duckdb::BoundConstantExpression>();
-    } else if (child->expression_class ==
-                 duckdb::ExpressionClass::BOUND_COLUMN_REF ||
-               child->expression_class == duckdb::ExpressionClass::BOUND_REF) {
-      out.col_arg = child.get();
-    }
+  if (func_expr.children.size() != 2) {
+    return out;
+  }
+  auto& lhs = func_expr.children[0];
+  auto& rhs = func_expr.children[1];
+  // Foldable means can be evaluated at plan time, for example a constant
+  if (!lhs->IsFoldable() && rhs->IsFoldable()) {
+    out.col_arg = lhs.get();
+    out.value_arg = rhs.get();
+  } else if (lhs->IsFoldable() && !rhs->IsFoldable()) {
+    out.col_arg = rhs.get();
+    out.value_arg = lhs.get();
   }
   return out;
+}
+
+bool TryFoldExpression(duckdb::ClientContext& context, duckdb::Expression& expr,
+                       duckdb::Value& out) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
+    out = expr.Cast<duckdb::BoundConstantExpression>().value;
+    return !out.IsNull();
+  }
+  if (!expr.IsFoldable()) {
+    return false;
+  }
+  if (!duckdb::ExpressionExecutor::TryEvaluateScalar(context, expr, out)) {
+    return false;
+  }
+  return !out.IsNull();
 }
 
 bool RewriteFilterColumnRefs(
@@ -260,7 +294,7 @@ bool RewriteFilterColumnRefs(
       if (!ok) {
         return;
       }
-      if (child->expression_class ==
+      if (child->GetExpressionClass() ==
           duckdb::ExpressionClass::BOUND_COLUMN_REF) {
         auto& ref = child->Cast<duckdb::BoundColumnRefExpression>();
         if (ref.binding.table_index != get.table_index) {
@@ -289,7 +323,7 @@ bool RewriteFilterColumnRefs(
           referenced_col_ids.push_back(cat_id);
         }
         child = duckdb::make_uniq<duckdb::BoundReferenceExpression>(
-          ref.return_type, slot);
+          ref.GetReturnType(), slot);
         return;
       }
       if (!RewriteFilterColumnRefs(*child, get, bind_data,
@@ -302,19 +336,23 @@ bool RewriteFilterColumnRefs(
 
 struct SearchColumnContext {
   duckdb::TableIndex table_index;
+  duckdb::ClientContext* client_context = nullptr;
   std::span<const catalog::Column::Id> projected_column_ids;
   containers::FlatHashMap<catalog::Column::Id, duckdb::LogicalType>
     column_type_by_id;
   containers::FlatHashSet<catalog::Column::Id> indexed_column_ids;
+  struct IndexedExpressionMeta {
+    duckdb::LogicalType return_type;
+    irs::field_id field_id = 0;
+  };
+  containers::FlatHashMap<std::string_view, IndexedExpressionMeta>
+    indexed_expressions;
   std::function<catalog::ColumnTokenizer(catalog::Column::Id)>
     tokenizer_provider;
-  // Optional JSON-path tokenizer lookup: returns the per-path tokenizer
-  // resolved against the catalog, or nullopt if the column is not
-  // indexed at `path`.
-  std::function<std::optional<catalog::ColumnTokenizer>(catalog::Column::Id,
-                                                        std::string_view)>
-    json_path_tokenizer_provider;
+  std::function<catalog::ColumnTokenizer(std::string_view)>
+    expr_tokenizer_provider;
   std::function<bool(catalog::Column::Id)> has_postings_provider;
+  ObjectId relation_id;
 };
 
 connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
@@ -341,39 +379,89 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
       return std::nullopt;
     }
     connector::SearchColumnInfo info;
-    info.column_id = col_id;
+    info.field_id = static_cast<irs::field_id>(col_id);
     info.logical_type = type_it->second;
     info.tokenizer = ctx.tokenizer_provider(col_id);
     return info;
   };
 }
 
-connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx) {
-  return [&ctx](const duckdb::BoundColumnRefExpression& ref,
-                std::string_view json_pointer)
+// True iff at least one column ref was found and all bind to `table_index`.
+bool AllColumnRefsBindTo(const duckdb::Expression& expr,
+                         duckdb::TableIndex table_index, bool& any_seen) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+    any_seen = true;
+    return expr.Cast<duckdb::BoundColumnRefExpression>().binding.table_index ==
+           table_index;
+  }
+  bool ok = true;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      if (ok && !AllColumnRefsBindTo(child, table_index, any_seen)) {
+        ok = false;
+      }
+    });
+  return ok;
+}
+
+irs::field_id ResolveAnnTargetFieldId(
+  const duckdb::Expression& col_arg, const duckdb::LogicalGet& get,
+  const connector::SereneDBScanBindData& bind_data,
+  const catalog::InvertedIndex& index, duckdb::ClientContext& client_context) {
+  if (col_arg.GetExpressionClass() ==
+        duckdb::ExpressionClass::BOUND_COLUMN_REF ||
+      col_arg.GetExpressionClass() == duckdb::ExpressionClass::BOUND_REF) {
+    if (const auto id = ColumnIdByName(bind_data, col_arg.GetName());
+        id != catalog::Column::kInvalidId) {
+      return static_cast<irs::field_id>(id);
+    }
+  }
+  bool any_ref_seen = false;
+  if (!AllColumnRefsBindTo(col_arg, get.table_index, any_ref_seen) ||
+      !any_ref_seen) {
+    return 0;
+  }
+  constexpr auto kInvalidId = catalog::Column::kInvalidId;
+  std::vector<catalog::Column::Id> projected_ids;
+  projected_ids.reserve(get.GetColumnIds().size());
+  for (const auto& ci : get.GetColumnIds()) {
+    if (!ci.HasPrimaryIndex()) {
+      projected_ids.push_back(kInvalidId);
+      continue;
+    }
+    const auto phys = ci.GetPrimaryIndex();
+    projected_ids.push_back(phys < bind_data.column_ids.size()
+                              ? bind_data.column_ids[phys]
+                              : kInvalidId);
+  }
+  auto normalized = connector::NormalizeBoundExpression(
+    col_arg, index.GetRelationId(), projected_ids, client_context);
+  auto serialized = connector::SerializeBoundExpression(*normalized);
+  return index.FindFieldIdBySerialized(serialized).value_or(0);
+}
+
+connector::ExpressionGetter MakeExpressionGetter(SearchColumnContext& ctx) {
+  return [&ctx](const duckdb::Expression& expr)
            -> std::optional<connector::SearchColumnInfo> {
-    if (ref.binding.table_index != ctx.table_index) {
+    if (!ctx.expr_tokenizer_provider || ctx.client_context == nullptr) {
       return std::nullopt;
     }
-    if (ref.binding.column_index >= ctx.projected_column_ids.size()) {
+    bool any_ref_seen = false;
+    if (!AllColumnRefsBindTo(expr, ctx.table_index, any_ref_seen) ||
+        !any_ref_seen) {
       return std::nullopt;
     }
-    const auto col_id = ctx.projected_column_ids[ref.binding.column_index];
-    if (col_id == catalog::Column::kInvalidId) {
-      return std::nullopt;
-    }
-    if (!ctx.json_path_tokenizer_provider) {
-      return std::nullopt;
-    }
-    auto tokenizer = ctx.json_path_tokenizer_provider(col_id, json_pointer);
-    if (!tokenizer) {
+    auto normalized = connector::NormalizeBoundExpression(
+      expr, ctx.relation_id, ctx.projected_column_ids, *ctx.client_context);
+    auto serialized = connector::SerializeBoundExpression(*normalized);
+    auto entry = ctx.indexed_expressions.find(serialized);
+    if (entry == ctx.indexed_expressions.end()) {
       return std::nullopt;
     }
     connector::SearchColumnInfo info;
-    info.column_id = col_id;
-    info.logical_type = duckdb::LogicalType::VARCHAR;
-    info.tokenizer = *std::move(tokenizer);
-    info.json_pointer = json_pointer;
+    info.field_id = entry->second.field_id;
+    info.logical_type = entry->second.return_type;
+    info.tokenizer = ctx.expr_tokenizer_provider(serialized);
     return info;
   };
 }
@@ -399,6 +487,7 @@ void InitSearchColumnContextForGet(
                                       : kInvalidId);
   }
   ctx.table_index = get.table_index;
+  ctx.relation_id = resolved.index->GetRelationId();
   ctx.projected_column_ids = projected_ids_storage;
   bind_data.IterateColumns(
     [&](catalog::Column::Id id, const duckdb::LogicalType& type) {
@@ -415,21 +504,39 @@ void InitSearchColumnContextForGet(
     if (info == nullptr) {
       return false;
     }
-    return !info->store_values || info->text_dictionary.isSet() ||
-           !info->json_paths.empty();
+    return !info->store_values || info->text_dictionary.isSet();
   };
-  ctx.json_path_tokenizer_provider = [index_ptr, snapshot](
-                                       catalog::Column::Id col_id,
-                                       std::string_view json_pointer) {
-    return index_ptr->GetJsonPathTokenizer(snapshot, col_id, json_pointer);
+  ctx.expr_tokenizer_provider = [index_ptr,
+                                 snapshot](std::string_view serialized_expr) {
+    return index_ptr->GetExprTokenizer(snapshot, serialized_expr);
   };
+  for (const auto& [field_id, entry] : resolved.index->GetEntries()) {
+    const auto* expr = entry.GetExpressionData();
+    if (!expr) {
+      continue;
+    }
+    ctx.indexed_expressions.emplace(expr->serialized_expr,
+                                    SearchColumnContext::IndexedExpressionMeta{
+                                      .return_type = expr->return_type,
+                                      .field_id = field_id,
+                                    });
+  }
 }
 
-auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data) {
+auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data,
+                          const catalog::InvertedIndex& index) {
   return [&](catalog::Column::Id col_id) {
     auto name = bind_data.ColumnNameById(col_id);
     if (!name.empty()) {
       return std::string{name};
+    }
+    if (const auto* entry =
+          index.FindEntry(static_cast<irs::field_id>(col_id))) {
+      if (const auto* expr = entry->GetExpressionData()) {
+        if (!expr->pretty_printed.empty()) {
+          return expr->pretty_printed;
+        }
+      }
     }
     return absl::StrCat("col", col_id);
   };
@@ -440,12 +547,12 @@ auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data) {
 bool TryClaimIresearchConjunct(
   irs::And& and_root, const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
-  const connector::JsonPathGetter& json_getter,
+  const connector::ExpressionGetter& expr_getter,
   const connector::SearchFilterOptions& options) {
   const auto before = and_root.size();
   std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&conjunct, 1};
   auto r =
-    connector::MakeSearchFilter(and_root, single, getter, options, json_getter);
+    connector::MakeSearchFilter(and_root, single, getter, options, expr_getter);
   if (r.ok() && and_root.size() > before) {
     return true;
   }
@@ -510,7 +617,8 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     return false;
   }
 
-  if (order_expr->type != duckdb::ExpressionType::BOUND_COLUMN_REF) {
+  if (order_expr->GetExpressionType() !=
+      duckdb::ExpressionType::BOUND_COLUMN_REF) {
     return false;
   }
   auto& order_col_ref = order_expr->Cast<duckdb::BoundColumnRefExpression>();
@@ -525,7 +633,8 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     return false;
   }
   auto& dist_expr = *projection.expressions[proj_col_idx];
-  if (dist_expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
+  if (dist_expr.GetExpressionClass() !=
+      duckdb::ExpressionClass::BOUND_FUNCTION) {
     return false;
   }
   auto& func_expr = dist_expr.Cast<duckdb::BoundFunctionExpression>();
@@ -564,33 +673,38 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   std::vector<float> query_vector;
   if (is_norm) {
     auto* child = func_expr.children[0].get();
-    if (child->expression_class != duckdb::ExpressionClass::BOUND_COLUMN_REF &&
-        child->expression_class != duckdb::ExpressionClass::BOUND_REF) {
+    if (child->IsFoldable()) {
       return false;
     }
     col_arg = child;
   } else {
     auto args = ExtractDistanceArgs(func_expr);
-    if (!args.col_arg || !args.const_arg) {
+    if (!args.col_arg || !args.value_arg) {
       return false;
     }
-    if (!TryExtractQueryVector(args.const_arg->value, query_vector)) {
+    duckdb::Value folded;
+    if (!TryFoldExpression(options.client_context, *args.value_arg, folded)) {
+      return false;
+    }
+    if (!TryExtractQueryVector(folded, query_vector)) {
       return false;
     }
     col_arg = args.col_arg;
   }
-  auto col_id = ColumnIdByName(bind_data, col_arg->GetName());
-  if (col_id == catalog::Column::kInvalidId) {
-    return false;
-  }
 
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  auto snapshot = PinnedSnapshot(options);
   auto resolved = ResolveIresearch(bind_data, *snapshot);
   if (!resolved) {
     return false;
   }
 
-  auto hnsw_info = resolved->index->GetColumnHNSWInfo(col_id);
+  const auto field_id = ResolveAnnTargetFieldId(
+    *col_arg, get, bind_data, *resolved->index, options.client_context);
+  if (field_id == 0) {
+    return false;
+  }
+
+  auto hnsw_info = resolved->index->GetHNSWInfo(field_id);
   if (!hnsw_info || hnsw_info->metric != expected_func->metric) {
     return false;
   }
@@ -604,8 +718,8 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   }
 
   auto ann = std::make_unique<connector::ANNScan>();
-  ann->index_id = resolved->index->GetId();
-  ann->field_id = col_id;
+  ann->snapshot = PinnedSearchSnapshot(options, resolved->index->GetId());
+  ann->field_id = field_id;
   ann->query_vector = std::move(query_vector);
   ann->top_k = limit;
 
@@ -614,8 +728,10 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   std::vector<catalog::Column::Id> proj_ids_storage;
   InitSearchColumnContextForGet(sctx, proj_ids_storage, get, bind_data,
                                 *resolved, snapshot);
+  sctx.client_context = &options.client_context;
   auto getter = MakeColumnGetter(sctx);
-  auto json_getter = MakeJsonPathGetter(sctx);
+
+  auto expr_getter = MakeExpressionGetter(sctx);
 
   auto proxy = std::make_unique<irs::ProxyFilter>();
   auto [and_root, cache] =
@@ -628,7 +744,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     std::vector<bool> claimed(f->expressions.size(), false);
     for (size_t i = 0; i < f->expressions.size(); ++i) {
       if (TryClaimIresearchConjunct(and_root, f->expressions[i], getter,
-                                    json_getter, options)) {
+                                    expr_getter, options)) {
         claimed[i] = true;
         any_claimed = true;
       }
@@ -688,31 +804,33 @@ bool TryClaimAnnRange(
   float radius = 0.0f;
   bool radius_needs_square = false;
   std::vector<float> query_vector;
-  catalog::Column::Id col_id = catalog::Column::kInvalidId;
+  irs::field_id field_id = 0;
 
   for (duckdb::idx_t i = 0; i < filters.size(); ++i) {
     auto& expr = *filters[i];
-    if (expr.expression_class != duckdb::ExpressionClass::BOUND_COMPARISON) {
+    if (!duckdb::BoundComparisonExpression::IsComparison(expr)) {
       continue;
     }
-    auto& cmp = expr.Cast<duckdb::BoundComparisonExpression>();
+    auto& cmp = expr.Cast<duckdb::BoundFunctionExpression>();
+    auto& cmp_left = duckdb::BoundComparisonExpression::LeftMutable(cmp);
+    auto& cmp_right = duckdb::BoundComparisonExpression::RightMutable(cmp);
     duckdb::Expression* func_side = nullptr;
     duckdb::Expression* const_side = nullptr;
-    switch (cmp.type) {
+    switch (cmp.GetExpressionType()) {
       case duckdb::ExpressionType::COMPARE_LESSTHAN:
       case duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
-        func_side = cmp.left.get();
-        const_side = cmp.right.get();
+        func_side = cmp_left.get();
+        const_side = cmp_right.get();
         break;
       case duckdb::ExpressionType::COMPARE_GREATERTHAN:
       case duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO:
-        func_side = cmp.right.get();
-        const_side = cmp.left.get();
+        func_side = cmp_right.get();
+        const_side = cmp_left.get();
         break;
       default:
         continue;
     }
-    if (func_side->expression_class !=
+    if (func_side->GetExpressionClass() !=
         duckdb::ExpressionClass::BOUND_FUNCTION) {
       continue;
     }
@@ -725,22 +843,17 @@ bool TryClaimAnnRange(
     if (expected_current->order != duckdb::OrderType::ASCENDING) {
       continue;
     }
-    if (const_side->expression_class !=
-        duckdb::ExpressionClass::BOUND_CONSTANT) {
-      continue;
-    }
-    auto& const_expr = const_side->Cast<duckdb::BoundConstantExpression>();
-    if (const_expr.value.IsNull()) {
+    duckdb::Value radius_value;
+    if (!TryFoldExpression(options.client_context, *const_side, radius_value)) {
       continue;
     }
     float candidate_radius = 0.0f;
-    switch (const_expr.value.type().id()) {
+    switch (radius_value.type().id()) {
       case duckdb::LogicalTypeId::FLOAT:
-        candidate_radius = const_expr.value.GetValue<float>();
+        candidate_radius = radius_value.GetValue<float>();
         break;
       case duckdb::LogicalTypeId::DOUBLE:
-        candidate_radius =
-          static_cast<float>(const_expr.value.GetValue<double>());
+        candidate_radius = static_cast<float>(radius_value.GetValue<double>());
         break;
       default:
         continue;
@@ -749,27 +862,30 @@ bool TryClaimAnnRange(
     std::vector<float> candidate_vector;
     if (is_norm) {
       auto* child = func.children[0].get();
-      if (child->expression_class !=
-            duckdb::ExpressionClass::BOUND_COLUMN_REF &&
-          child->expression_class != duckdb::ExpressionClass::BOUND_REF) {
+      if (child->IsFoldable()) {
         continue;
       }
       col_expr = child;
     } else {
       auto args = ExtractDistanceArgs(func);
-      if (!args.col_arg || !args.const_arg) {
+      if (!args.col_arg || !args.value_arg) {
         continue;
       }
-      if (!TryExtractQueryVector(args.const_arg->value, candidate_vector)) {
+      duckdb::Value folded;
+      if (!TryFoldExpression(options.client_context, *args.value_arg, folded)) {
+        continue;
+      }
+      if (!TryExtractQueryVector(folded, candidate_vector)) {
         continue;
       }
       col_expr = args.col_arg;
     }
-    auto candidate_col_id = ColumnIdByName(bind_data, col_expr->GetName());
-    if (candidate_col_id == catalog::Column::kInvalidId) {
+    const auto candidate_field_id = ResolveAnnTargetFieldId(
+      *col_expr, get, bind_data, *resolved.index, options.client_context);
+    if (candidate_field_id == 0) {
       continue;
     }
-    auto hnsw_info = resolved.index->GetColumnHNSWInfo(candidate_col_id);
+    auto hnsw_info = resolved.index->GetHNSWInfo(candidate_field_id);
     if (!hnsw_info || hnsw_info->metric != expected_current->metric) {
       continue;
     }
@@ -782,11 +898,11 @@ bool TryClaimAnnRange(
     radius = candidate_radius;
     // Index stores L2-squared. l2_distance / `<->` / l2_norm callers need
     // the radius pre-squared; l2_sqr_distance and other metrics don't.
-    radius_needs_square = func.function.name == connector::kL2Distance ||
-                          func.function.name == connector::kL2DistanceOp ||
-                          func.function.name == connector::kL2Norm;
+    radius_needs_square = func.function.GetName() == connector::kL2Distance ||
+                          func.function.GetName() == connector::kL2DistanceOp ||
+                          func.function.GetName() == connector::kL2Norm;
     query_vector = std::move(candidate_vector);
-    col_id = candidate_col_id;
+    field_id = candidate_field_id;
     match_idx = i;
     break;
   }
@@ -796,8 +912,8 @@ bool TryClaimAnnRange(
   }
 
   auto rss = std::make_unique<connector::RangeSearchScan>();
-  rss->index_id = resolved.index->GetId();
-  rss->field_id = col_id;
+  rss->snapshot = PinnedSearchSnapshot(options, resolved.index->GetId());
+  rss->field_id = field_id;
   rss->query_vector = std::move(query_vector);
   rss->radius = radius;
   rss->effective_radius = radius_needs_square ? radius * radius : radius;
@@ -809,8 +925,10 @@ bool TryClaimAnnRange(
   std::vector<catalog::Column::Id> proj_ids_storage;
   InitSearchColumnContextForGet(sctx, proj_ids_storage, get, bind_data,
                                 resolved, snapshot);
+  sctx.client_context = &options.client_context;
   auto getter = MakeColumnGetter(sctx);
-  auto json_getter = MakeJsonPathGetter(sctx);
+
+  auto expr_getter = MakeExpressionGetter(sctx);
 
   auto proxy = std::make_unique<irs::ProxyFilter>();
   auto [and_root, cache] =
@@ -819,7 +937,7 @@ bool TryClaimAnnRange(
   std::vector<bool> claimed(filters.size(), false);
   bool any_claimed = false;
   for (size_t i = 0; i < filters.size(); ++i) {
-    if (TryClaimIresearchConjunct(and_root, filters[i], getter, json_getter,
+    if (TryClaimIresearchConjunct(and_root, filters[i], getter, expr_getter,
                                   options)) {
       claimed[i] = true;
       any_claimed = true;
@@ -866,13 +984,15 @@ bool TryClaimSearchFilter(
   std::vector<catalog::Column::Id> projected_ids;
   InitSearchColumnContextForGet(ctx, projected_ids, get, bind_data, resolved,
                                 snapshot);
+  ctx.client_context = &options.client_context;
   auto getter = MakeColumnGetter(ctx);
-  auto json_getter = MakeJsonPathGetter(ctx);
+
+  auto expr_getter = MakeExpressionGetter(ctx);
 
   auto root = std::make_shared<irs::And>();
   std::vector<size_t> claimed_indices;
   for (size_t i = 0; i < filters.size(); ++i) {
-    if (TryClaimIresearchConjunct(*root, filters[i], getter, json_getter,
+    if (TryClaimIresearchConjunct(*root, filters[i], getter, expr_getter,
                                   options)) {
       claimed_indices.push_back(i);
     }
@@ -882,11 +1002,11 @@ bool TryClaimSearchFilter(
   }
 
   // Capture summary BEFORE preparing -- prepare consumes the tree.
-  std::string filter_summary =
-    irs::ToStringDemangled(*root, MakeColumnNameLookup(bind_data));
+  std::string filter_summary = irs::ToStringDemangled(
+    *root, MakeColumnNameLookup(bind_data, *resolved.index));
 
   auto search = std::make_unique<connector::SearchScan>();
-  search->snapshot = resolved.shard->GetInvertedIndexSnapshot();
+  search->snapshot = PinnedSearchSnapshot(options, resolved.index->GetId());
   search->stored_filter = root;
   search->filter_summary = std::move(filter_summary);
   if (resolved.index) {
@@ -1003,7 +1123,7 @@ duckdb::ColumnBinding ExposeGetColumnAt(duckdb::LogicalOperator& root,
   }
   for (duckdb::idx_t i = 0; i < proj->expressions.size(); ++i) {
     auto& e = *proj->expressions[i];
-    if (e.type != duckdb::ExpressionType::BOUND_COLUMN_REF) {
+    if (e.GetExpressionType() != duckdb::ExpressionType::BOUND_COLUMN_REF) {
       continue;
     }
     auto& ref = e.Cast<duckdb::BoundColumnRefExpression>();
@@ -1054,7 +1174,7 @@ bool BindingIsScoreColumn(duckdb::LogicalOperator& op,
         return false;
       }
       auto& e = *proj.expressions[col_idx];
-      if (e.type != duckdb::ExpressionType::BOUND_COLUMN_REF) {
+      if (e.GetExpressionType() != duckdb::ExpressionType::BOUND_COLUMN_REF) {
         return false;
       }
       auto inner = e.Cast<duckdb::BoundColumnRefExpression>().binding;
@@ -1125,7 +1245,7 @@ void RewriteScoreCallInChildren(duckdb::unique_ptr<duckdb::Expression>& expr,
   if (!expr) {
     return;
   }
-  switch (expr->expression_class) {
+  switch (expr->GetExpressionClass()) {
     case EC::BOUND_FUNCTION: {
       auto& f = expr->Cast<duckdb::BoundFunctionExpression>();
       for (auto& c : f.children) {
@@ -1133,18 +1253,6 @@ void RewriteScoreCallInChildren(duckdb::unique_ptr<duckdb::Expression>& expr,
         if (r) {
           c = std::move(r);
         }
-      }
-      break;
-    }
-    case EC::BOUND_COMPARISON: {
-      auto& cmp = expr->Cast<duckdb::BoundComparisonExpression>();
-      auto l = RewriteScoreCallInExpr(cmp.left, root, changed, set_scorer);
-      if (l) {
-        cmp.left = std::move(l);
-      }
-      auto r = RewriteScoreCallInExpr(cmp.right, root, changed, set_scorer);
-      if (r) {
-        cmp.right = std::move(r);
       }
       break;
     }
@@ -1207,12 +1315,14 @@ duckdb::unique_ptr<duckdb::Expression> RewriteScoreCallInExpr(
   if (!expr) {
     return nullptr;
   }
-  if (expr->expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
-    if (expr->expression_class == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+  if (expr->GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
+    if (expr->GetExpressionClass() ==
+        duckdb::ExpressionClass::BOUND_COLUMN_REF) {
       auto& ref = expr->Cast<duckdb::BoundColumnRefExpression>();
-      if (!ref.alias.empty() && ref.alias != catalog::Column::kScoreName &&
+      if (!ref.GetAlias().empty() &&
+          ref.GetAlias() != catalog::Column::kScoreName &&
           BindingIsScoreColumn(root, ref.binding)) {
-        ref.alias = catalog::Column::kScoreName;
+        ref.SetAlias(std::string{catalog::Column::kScoreName});
         changed = true;
       }
     }
@@ -1220,12 +1330,13 @@ duckdb::unique_ptr<duckdb::Expression> RewriteScoreCallInExpr(
     return nullptr;
   }
   auto& func = expr->Cast<duckdb::BoundFunctionExpression>();
-  const auto& name = func.function.name;
+  const auto& name = func.function.GetName();
   if (!IsScorerFunctionName(name)) {
     RewriteScoreCallInChildren(expr, root, changed, set_scorer);
     return nullptr;
   }
-  if (func.children.empty() || func.children[0]->expression_class !=
+  // Scorer call -- check tableoid argument.
+  if (func.children.empty() || func.children[0]->GetExpressionClass() !=
                                  duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     return nullptr;
   }
@@ -1316,15 +1427,15 @@ bool TrySetScorer(std::optional<catalog::ScorerOptions>& scorer,
 // argument is a BoundColumnRef anchored on a SearchScan reachable from `root`.
 bool IsScorerCallAnchoredOnSearchScan(duckdb::LogicalOperator& root,
                                       const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return false;
   }
   const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
-  const auto& name = func.function.name;
+  const auto& name = func.function.GetName();
   if (!IsScorerFunctionName(name)) {
     return false;
   }
-  if (func.children.empty() || func.children[0]->expression_class !=
+  if (func.children.empty() || func.children[0]->GetExpressionClass() !=
                                  duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     return false;
   }
@@ -1344,10 +1455,12 @@ bool SimplifyScoreGtZero(duckdb::LogicalOperator& root,
   }
   using EC = duckdb::ExpressionClass;
   bool changed = false;
-  if (expr->expression_class == EC::BOUND_COMPARISON) {
-    auto& cmp = expr->Cast<duckdb::BoundComparisonExpression>();
+  if (duckdb::BoundComparisonExpression::IsComparison(*expr)) {
+    auto& cmp = expr->Cast<duckdb::BoundFunctionExpression>();
+    auto& cmp_left = duckdb::BoundComparisonExpression::LeftMutable(cmp);
+    auto& cmp_right = duckdb::BoundComparisonExpression::RightMutable(cmp);
     auto is_zero = [](const duckdb::Expression& e) {
-      if (e.expression_class != EC::BOUND_CONSTANT) {
+      if (e.GetExpressionClass() != EC::BOUND_CONSTANT) {
         return false;
       }
       const auto& v = e.Cast<duckdb::BoundConstantExpression>().value;
@@ -1360,18 +1473,19 @@ bool SimplifyScoreGtZero(duckdb::LogicalOperator& root,
         return false;
       }
     };
+    const auto cmp_type = cmp.GetExpressionType();
     // Matches `score > 0`, `score >= 0` (non-negative comparisons).
     const bool is_gt_zero_shape =
-      (cmp.type == duckdb::ExpressionType::COMPARE_GREATERTHAN ||
-       cmp.type == duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO) &&
-      cmp.left && cmp.right && is_zero(*cmp.right) &&
-      IsScorerCallAnchoredOnSearchScan(root, *cmp.left);
+      (cmp_type == duckdb::ExpressionType::COMPARE_GREATERTHAN ||
+       cmp_type == duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO) &&
+      cmp_left && cmp_right && is_zero(*cmp_right) &&
+      IsScorerCallAnchoredOnSearchScan(root, *cmp_left);
     // Matches `0 < score`.
     const bool is_zero_lt_shape =
-      (cmp.type == duckdb::ExpressionType::COMPARE_LESSTHAN ||
-       cmp.type == duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO) &&
-      cmp.left && cmp.right && is_zero(*cmp.left) &&
-      IsScorerCallAnchoredOnSearchScan(root, *cmp.right);
+      (cmp_type == duckdb::ExpressionType::COMPARE_LESSTHAN ||
+       cmp_type == duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO) &&
+      cmp_left && cmp_right && is_zero(*cmp_left) &&
+      IsScorerCallAnchoredOnSearchScan(root, *cmp_right);
     if (is_gt_zero_shape || is_zero_lt_shape) {
       expr = duckdb::make_uniq<duckdb::BoundConstantExpression>(
         duckdb::Value::BOOLEAN(true));
@@ -1379,7 +1493,7 @@ bool SimplifyScoreGtZero(duckdb::LogicalOperator& root,
     }
   }
   // Recurse into structural children so nested filter predicates are caught.
-  switch (expr->expression_class) {
+  switch (expr->GetExpressionClass()) {
     case EC::BOUND_OPERATOR: {
       auto& op = expr->Cast<duckdb::BoundOperatorExpression>();
       for (auto& c : op.children) {
@@ -1390,12 +1504,6 @@ bool SimplifyScoreGtZero(duckdb::LogicalOperator& root,
     case EC::BOUND_CAST: {
       auto& c = expr->Cast<duckdb::BoundCastExpression>();
       changed |= SimplifyScoreGtZero(root, c.child);
-      break;
-    }
-    case EC::BOUND_COMPARISON: {
-      auto& cmp = expr->Cast<duckdb::BoundComparisonExpression>();
-      changed |= SimplifyScoreGtZero(root, cmp.left);
-      changed |= SimplifyScoreGtZero(root, cmp.right);
       break;
     }
     case EC::BOUND_FUNCTION: {
@@ -1467,7 +1575,8 @@ duckdb::ColumnBinding ResolveBindingToGet(duckdb::LogicalOperator& root,
       break;
     }
     auto& forwarded = *proj->expressions[idx];
-    if (forwarded.type != duckdb::ExpressionType::BOUND_COLUMN_REF) {
+    if (forwarded.GetExpressionType() !=
+        duckdb::ExpressionType::BOUND_COLUMN_REF) {
       break;
     }
     binding = forwarded.Cast<duckdb::BoundColumnRefExpression>().binding;
@@ -1477,7 +1586,7 @@ duckdb::ColumnBinding ResolveBindingToGet(duckdb::LogicalOperator& root,
 
 ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
                                    duckdb::LogicalOperator& root) {
-  if (func.children[0]->expression_class !=
+  if (func.children[0]->GetExpressionClass() !=
       duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1492,7 +1601,7 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
   size_t limit = kDefaultOffsetsLimit;
   if (func.children.size() == 2) {
     auto& arg1 = *func.children[1];
-    if (arg1.expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
+    if (arg1.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("ts_offsets() second argument must be an integer literal"));
@@ -1514,13 +1623,14 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_offsets(",
-              OffsetsColumnName(resolved, col_ref.alias, nullptr),
+              OffsetsColumnName(resolved, col_ref.GetAlias(), nullptr),
               ") requires an inverted index scan in the same sub-query"));
   }
 
   // Require FROM <idx_name>. ts_offsets() on a base-table scan that was
   // opportunistically promoted to a SearchScan is not supported.
-  const auto col_name = OffsetsColumnName(resolved, col_ref.alias, found->get);
+  const auto col_name =
+    OffsetsColumnName(resolved, col_ref.GetAlias(), found->get);
   if (!found->bind_data->IsInvertedIndexEntry()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1552,11 +1662,11 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
 
 duckdb::unique_ptr<duckdb::Expression> RewriteOffsetsCall(
   duckdb::Expression& expr, duckdb::LogicalOperator& root) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return nullptr;
   }
   auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
-  if (func.function.name != connector::kOffsets) {
+  if (func.function.GetName() != connector::kOffsets) {
     return nullptr;
   }
   if (func.children.size() != 1 && func.children.size() != 2) {
@@ -1578,7 +1688,7 @@ duckdb::unique_ptr<duckdb::Expression> RewriteOffsetsCall(
     bind->limit = parsed.limit;
     bind->stored_filter = parsed.scan.search_scan->stored_filter;
     func.bind_info = std::move(bind);
-    func.function.function = connector::OffsetsScalarFn;
+    func.function.SetFunctionCallback(connector::OffsetsScalarFn);
     auto body_expr = std::move(func.children[0]);
     func.children.clear();
     func.children.emplace_back(
@@ -1620,7 +1730,7 @@ duckdb::unique_ptr<duckdb::Expression> RewriteOffsetsCall(
                       get_col_idx, col_name, col_type);
   auto col = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
     col_name, col_type, binding);
-  col->alias = expr.alias;
+  col->SetAlias(expr.GetAlias());
   return col;
 }
 
@@ -1722,7 +1832,7 @@ bool TryAttachScoreTopK(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   if (search_scan->score_top_k) {
     return false;  // Already pulled.
   }
-  if (order_node->expression->type !=
+  if (order_node->expression->GetExpressionType() !=
       duckdb::ExpressionType::BOUND_COLUMN_REF) {
     return false;
   }
@@ -1745,12 +1855,13 @@ bool IsCountStarLikeAggregate(const duckdb::Expression& expr) {
   if (agg.IsDistinct() || agg.filter || agg.order_bys) {
     return false;
   }
-  return agg.function.name == duckdb::CountFun::Name ||
-         agg.function.name == duckdb::CountStarFun::Name;
+  return agg.function.GetName() == duckdb::CountFun::Name ||
+         agg.function.GetName() == duckdb::CountStarFun::Name;
 }
 
 bool TryConvertAggregateToCount(
-  duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+  duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+  const connector::SearchFilterOptions& options) {
   if (plan->type !=
       duckdb::LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
     return false;
@@ -1805,12 +1916,13 @@ bool TryConvertAggregateToCount(
       if (!bind_data.IsInvertedIndexEntry()) {
         return false;
       }
-      auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+      auto snapshot = PinnedSnapshot(options);
       auto resolved = ResolveIresearch(bind_data, *snapshot);
       if (!resolved) {
         return false;
       }
-      count_scan->snapshot = resolved->shard->GetInvertedIndexSnapshot();
+      count_scan->snapshot =
+        PinnedSearchSnapshot(options, resolved->index->GetId());
       break;
     }
     default:
@@ -1954,7 +2066,7 @@ void LowerToSearchScan(duckdb::OptimizerExtensionInput& input,
       TryAttachScoreTopK(node, options);
     } else if (node->type ==
                duckdb::LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
-      TryConvertAggregateToCount(node);
+      TryConvertAggregateToCount(node, options);
     }
   });
 }
@@ -2024,7 +2136,7 @@ void IresearchPushdownComplexFilter(
   if (bind_data.scan_source->Kind() != connector::ScanSourceKind::FullTable) {
     return;
   }
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
   auto resolved = ResolveIresearch(bind_data, *snapshot);
   if (!resolved) {
     return;

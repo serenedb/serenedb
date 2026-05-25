@@ -105,14 +105,7 @@ class Transaction : public Config {
   void EnsureRocksDBTransaction();
   void EnsureRocksDBSnapshot();
 
-  const search::InvertedIndexSnapshot& EnsureSearchSnapshot(ObjectId index_id);
-
-  const search::InvertedIndexSnapshot& GetSearchSnapshot(
-    ObjectId index_id) const noexcept {
-    auto it = _search_snapshots.find(index_id);
-    SDB_ASSERT(it != _search_snapshots.end());
-    return *it->second;
-  }
+  search::InvertedIndexSnapshotPtr EnsureSearchSnapshot(ObjectId index_id);
 
   void EraseSearchTransaction(ObjectId shard_id) noexcept {
     _search_transactions.erase(shard_id);
@@ -145,7 +138,8 @@ class Transaction : public Config {
       SDB_ASSERT(index);
 
       if constexpr (!std::is_same_v<std::decay_t<Filter>, std::nullptr_t>) {
-        if (!filter(index->GetColumnIds())) {
+        auto referenced = index->GetReferencedColumnIds();
+        if (!filter(referenced)) {
           continue;
         }
       }

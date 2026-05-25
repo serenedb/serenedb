@@ -144,7 +144,8 @@ CREATE TABLE test(i int);
 statement error
 CREATE INDEX test_index ON test USING inverted (invalid);
 ----
-db error: ERROR: CREATE INDEX does not refer to any columns in the base table!
+db error: ERROR: Referenced column "invalid" not found in FROM clause!
+Candidate bindings: "i"
 
 
 statement ok
@@ -267,7 +268,7 @@ db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english'
 statement error
 CREATE INDEX index_ts on tstest USING inverted(ts_lexize('test_english', c));
 ----
-db error: ERROR: CREATE INDEX does not refer to any columns in the base table!
+db error: ERROR: text search dictionary "test_english" does not exist
 
 
 statement ok
@@ -544,7 +545,7 @@ CREATE TABLE empty_soul();
 statement error
 CREATE INDEX empty_index ON empty_soul USING inverted(a);
 ----
-db error: ERROR: CREATE INDEX does not refer to any columns in the base table!
+db error: ERROR: Referenced column "a" was not found because the FROM clause is missing
 
 
 statement ok

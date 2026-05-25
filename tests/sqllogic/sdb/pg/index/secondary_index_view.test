@@ -1,3 +1,5 @@
+control substitution on
+
 hash-threshold 100
 
 # Secondary indexes on views. Static: DML on the source does not refresh

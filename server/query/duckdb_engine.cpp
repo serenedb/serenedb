@@ -33,6 +33,7 @@
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/array.h"
 #include "connector/functions/cast.h"
+#include "connector/functions/embedding/embedding.h"
 #include "connector/functions/inout.h"
 #include "connector/functions/json.h"
 #include "connector/functions/math.h"
@@ -193,6 +194,12 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
       sdb::pg::SMALLSERIAL(),
       nullptr,
     },
+    // PG pseudo-type used in RETURNS VOID; backed by SQLNULL.
+    {
+      "void",
+      sdb::pg::VOID(),
+      nullptr,
+    },
   };
   *count = std::size(kExternalTypes);
   return kExternalTypes;
@@ -211,6 +218,10 @@ void DuckDBEngine::Initialize() {
   // PG folds unquoted identifiers to lowercase
   config.SetOptionByName("preserve_identifier_case", duckdb::Value{false});
   config.SetOptionByName("disable_database_invalidation", duckdb::Value{true});
+  // Existing serenedb code (array_remove etc.) uses the single-arrow lambda
+  // syntax (`x -> ...`) which duckdb now warns about by default. Keep it
+  // enabled until callers migrate to the new `lambda x: ...` form.
+  config.SetOptionByName("lambda_syntax", duckdb::Value{"ENABLE_SINGLE_ARROW"});
 
   connector::RegisterSereneDBStorage(config);
 
@@ -243,6 +254,8 @@ void DuckDBEngine::Initialize() {
   connector::RegisterSearchFunctions(*_db->instance);
 
   connector::RegisterVectorFunctions(*_db->instance);
+
+  connector::RegisterEmbeddingFunctions(*_db->instance);
 
   connector::RegisterSereneDBOptimizers(*_db->instance);
 

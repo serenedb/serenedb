@@ -158,10 +158,10 @@ void SKPointLookupFunction(duckdb::ClientContext& context,
 
   if (gstate.scan_tableoid) {
     output.data[gstate.tableoid_output_idx].Reference(
-      duckdb::Value::BIGINT(gstate.tableoid_value));
+      duckdb::Value::BIGINT(gstate.tableoid_value), duckdb::count_t(row_count));
   }
 
-  output.SetCardinality(static_cast<duckdb::idx_t>(row_count));
+  output.SetChildCardinality(static_cast<duckdb::idx_t>(row_count));
   gstate.produced_rows.fetch_add(row_count, std::memory_order_relaxed);
 }
 

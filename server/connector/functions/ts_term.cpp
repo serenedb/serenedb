@@ -45,7 +45,7 @@ void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
     ctx.negated ? Negate<irs::ByTerm>(parent) : AddFilter<irs::ByTerm>(parent);
   term.boost(ctx.boost);
   std::string field_name;
-  MakeFieldName(column_info, field_name);
+  MakeFieldName(column_info.field_id, field_name);
   if (auto r = SetupTermFilter(term, field_name, column_info, value); !r.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE), ERR_MSG(r.errorMessage()),
@@ -74,7 +74,7 @@ void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(column_info, field_name);
+  MakeFieldName(column_info.field_id, field_name);
   search::mangling::MangleString(field_name);
 
   if (tokens.empty()) {

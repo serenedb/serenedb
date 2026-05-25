@@ -31,7 +31,6 @@
 
 #include "auth/role_utils.h"
 #include "basics/logger/logger.h"
-#include "basics/read_locker.h"
 #include "basics/ssl/ssl_interface.h"
 #include "basics/string_utils.h"
 #include "basics/write_locker.h"

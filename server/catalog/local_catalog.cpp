@@ -1791,6 +1791,9 @@ Result LocalCatalog::CreateInvertedIndex(
     return std::move(resolved).error();
   }
   for (auto& c : columns) {
+    if (c.IsIndexedExpression()) {
+      continue;
+    }
     auto it = absl::c_find_if(resolved->columns, [&](const Column& col) {
       return col.GetName() == c.name;
     });

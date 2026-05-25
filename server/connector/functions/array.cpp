@@ -59,7 +59,7 @@ struct ArrayNdimsBindData : public duckdb::FunctionData {
 
 duckdb::unique_ptr<duckdb::FunctionData> ArrayNdimsBind(
   duckdb::BindScalarFunctionInput& input) {
-  auto& type = input.GetArguments()[0]->return_type;
+  const auto& type = input.GetArguments()[0]->GetReturnType();
   return duckdb::make_uniq<ArrayNdimsBindData>(CountListDepth(type));
 }
 
@@ -111,7 +111,7 @@ struct ArrayDimsBindData : public duckdb::FunctionData {
 
 duckdb::unique_ptr<duckdb::FunctionData> ArrayDimsBind(
   duckdb::BindScalarFunctionInput& input) {
-  auto& type = input.GetArguments()[0]->return_type;
+  const auto& type = input.GetArguments()[0]->GetReturnType();
   return duckdb::make_uniq<ArrayDimsBindData>(CountListDepth(type));
 }
 

@@ -21,24 +21,9 @@
 #pragma once
 
 #include "basics/resource_manager.hpp"
-#include "basics/resource_usage.h"
 #include "metrics/gauge.h"
 
 namespace sdb::search {
-
-struct ResourceManager final : metrics::Gauge<uint64_t>, irs::IResourceManager {
-  using Value = uint64_t;
-  using metrics::Gauge<uint64_t>::Gauge;
-
-  void Increase(size_t v) noexcept final {
-    fetch_add(v);  //
-  }
-
-  void Decrease(size_t v) noexcept final {
-    [[maybe_unused]] const auto was = fetch_sub(v);
-    SDB_ASSERT(v <= was);
-  }
-};
 
 struct LimitedResourceManager final : metrics::Gauge<uint64_t>,
                                       irs::IResourceManager {
@@ -60,21 +45,6 @@ struct LimitedResourceManager final : metrics::Gauge<uint64_t>,
   }
 
   uint64_t limit{0};
-};
-
-struct MonitorManager final : irs::IResourceManager {
-  explicit MonitorManager(ResourceMonitor& monitor) noexcept
-    : monitor{monitor} {}
-
-  void Increase(size_t bytes) final {
-    monitor.increaseMemoryUsage(bytes);  //
-  }
-
-  void Decrease(size_t bytes) noexcept final {
-    monitor.decreaseMemoryUsage(bytes);
-  }
-
-  ResourceMonitor& monitor;
 };
 
 }  // namespace sdb::search

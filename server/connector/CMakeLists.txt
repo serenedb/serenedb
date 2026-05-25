@@ -8,6 +8,7 @@ add_library(
     search_remove_filter.cpp
     duckdb_storage_extension.cpp
     rocksdb_filter.cpp
+    index_expression.cpp
     search_filter_builder.cpp
     geo_filter_builder.cpp
     search_filter_printer.cpp

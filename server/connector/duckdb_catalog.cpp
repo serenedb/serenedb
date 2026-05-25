@@ -38,6 +38,7 @@
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/expression_binder/index_binder.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_create_table.hpp>
@@ -823,10 +824,10 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     if (t == duckdb::ExpressionType::VALUE_DEFAULT) {
       auto phys = op.columns[i].index;
       SDB_ASSERT(phys < op.bound_defaults.size());
-      proj_types.push_back(op.bound_defaults[phys]->return_type);
+      proj_types.push_back(op.bound_defaults[phys]->GetReturnType());
       proj_exprs.push_back(op.bound_defaults[phys]->Copy());
     } else if (t == duckdb::ExpressionType::BOUND_REF) {
-      proj_types.push_back(expr->return_type);
+      proj_types.push_back(expr->GetReturnType());
       proj_exprs.push_back(expr->Copy());
     } else {
       // STORED gen-col recompute: placeholder from BindUpdateConstraints;
@@ -844,7 +845,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
           SDB_ASSERT(it != dep_source.end());
           e = it->second->Copy();
         });
-      proj_types.push_back(bound_copy->return_type);
+      proj_types.push_back(bound_copy->GetReturnType());
       proj_exprs.push_back(std::move(bound_copy));
     }
   }
@@ -1237,12 +1238,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     create_index_info->names = get.names;
     create_index_info->schema = resolved_table->schema.name;
     create_index_info->catalog = resolved_table->catalog.GetName();
-    // expressions[] mirrors the projection: ProjectionIndex must match
-    // position in get.GetColumnIds(), which now follows `projection`.
-    for (size_t pos = 0; pos < projection.size(); ++pos) {
-      expressions.push_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-        rel_columns[projection[pos]].second,
-        duckdb::ColumnBinding(get.table_index, duckdb::ProjectionIndex(pos))));
+
+    duckdb::IndexBinder index_binder(binder, binder.context, resolved_table,
+                                     create_index_info.get());
+    for (auto& parsed : create_index_info->expressions) {
+      expressions.emplace_back(index_binder.Bind(parsed));
     }
   } else {
     create_index_info->names.assign_range(rel_columns | std::views::keys);

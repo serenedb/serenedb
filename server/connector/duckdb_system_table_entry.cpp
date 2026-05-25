@@ -104,13 +104,14 @@ void SystemTableScan(duckdb::ClientContext& context,
     auto data_col = state.column_mapping[col];
     if (data_col == duckdb::DConstants::INVALID_INDEX) {
       // tableoid -- constant vector with the table's OID
-      output.data[col].Reference(duckdb::Value::BIGINT(state.tableoid));
+      output.data[col].Reference(duckdb::Value::BIGINT(state.tableoid),
+                                 duckdb::count_t(count));
     } else {
       output.data[col].Slice(state.data->columns[data_col], state.offset,
                              state.offset + count);
     }
   }
-  output.SetCardinality(count);
+  output.SetChildCardinality(count);
   state.offset += count;
 }
 

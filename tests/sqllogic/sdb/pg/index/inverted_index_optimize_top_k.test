@@ -390,7 +390,7 @@ QUERY PLAN
 │  sdb_inverted_index_score │
 │            DESC           │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
@@ -618,7 +618,10 @@ CREATE INDEX docs_default_bad_bare ON docs_default
 
 # DuckDB's CREATE INDEX grammar still rejects non-constant values like the
 # bare `true` keyword.
-statement error db error: ERROR: Create index option must be a constant value
+statement error
 CREATE INDEX docs_default_bad_keyword ON docs_default
   USING inverted(id, body en_wand)
   WITH (optimize_top_k = true);
+----
+db error: ERROR: 'optimize_top_k' expects a scorer function call, got 'true'
+HINT: Use e.g. 'tfidf()' or 'bm25(1.2, 0.75)'

@@ -44,9 +44,14 @@
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_rocksdb_reader.h"
+#include "connector/duckdb_rocksdb_writer.h"
+#include "connector/duckdb_search_sink_writer.h"
 #include "connector/indexonly_marker.h"
+#include "connector/key_utils.hpp"
 #include "connector/search_sink_writer.hpp"
+#include "query/duckdb_engine.h"
 #include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -130,7 +135,7 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
     return false;
   }
 
-  auto column_ids = inverted->GetColumnIds();
+  auto column_ids = inverted->GetReferencedColumnIds();
   if (column_ids.empty()) {
     return false;
   }
@@ -189,20 +194,34 @@ void FlushShard(ShardState& s,
   auto trx = s.shard->GetTransaction();
   auto tokenizer_provider =
     connector::MakeTokenizerProvider(snapshot, *s.index);
-  auto json_paths_provider =
-    connector::MakeJsonPathsProvider(snapshot, *s.index);
   auto store_values_provider = connector::MakeStoreValuesProvider(*s.index);
   auto is_text_indexed_provider =
     connector::MakeIsTextIndexedProvider(*s.index);
   auto hnsw_info_provider = connector::MakeHNSWInfoProvider(*s.index);
-  connector::SearchSinkInsertBaseImpl insert_sink{
+  // Private read-only txn: expression deserialise + execute need one.
+  auto conn = query::DuckDBEngine::Instance().CreateConnection();
+  conn->BeginTransaction();
+  irs::Finally rollback_on_exit = [&]() noexcept {
+    try {
+      conn->Rollback();
+    } catch (...) {  // NOLINT(bugprone-empty-catch)
+    }
+  };
+  auto& client_context = *conn->context;
+  auto expr_tokenizer_provider =
+    connector::MakeExpressionTokenizerProvider(snapshot, *s.index);
+  auto indexed_exprs =
+    connector::MakeIndexedExpressions(*s.index, client_context);
+  auto direct_column_ids = s.index->GetColumnIds();
+  connector::DuckDBSearchSinkInsertWriter insert_sink{
     trx,
     std::move(tokenizer_provider),
-    std::move(json_paths_provider),
+    direct_column_ids,
     std::move(store_values_provider),
     std::move(is_text_indexed_provider),
     std::move(hnsw_info_provider),
-    s.indexed_column_ids,
+    std::move(expr_tokenizer_provider),
+    std::move(indexed_exprs),
   };
   connector::SearchSinkDeleteBaseImpl delete_sink{trx};
 
@@ -273,13 +292,57 @@ void FlushShard(ShardState& s,
         }
       } else {
         duckdb::Vector unused{col.type, nullptr, 0};
-        const bool switched = sink.SwitchColumnImpl(desc, unused, /*count=*/0);
-        SDB_ASSERT(switched);
+        // Dep-only columns: skip per-row inverted write; chunk feeds expr eval.
+        if (!sink.SwitchColumnImpl(desc, unused, /*count=*/0)) {
+          continue;
+        }
       }
       for (const auto* row : insert_entries) {
         std::string_view cell = resolve_cell(*row, col_idx);
         rocksdb::Slice slice{cell.data(), cell.size()};
         sink.WriteImpl(std::span{&slice, 1}, row->full_key);
+      }
+    }
+
+    auto indexed_exprs = insert_sink.IndexedExpressions();
+    if (!indexed_exprs.empty()) {
+      duckdb::vector<duckdb::LogicalType> types;
+      std::vector<catalog::Column::Id> slot_to_col_id;
+      types.reserve(s.indexed_columns.size());
+      slot_to_col_id.reserve(s.indexed_columns.size());
+      for (const auto& col : s.indexed_columns) {
+        types.push_back(col.type);
+        slot_to_col_id.push_back(col.id);
+      }
+      connector::DuckDBColumnSerializer serializer{
+        duckdb::Allocator::DefaultAllocator()};
+      std::vector<std::string> row_keys;
+      const size_t total = insert_entries.size();
+      for (size_t off = 0; off < total;) {
+        const auto count = std::min<size_t>(total - off, STANDARD_VECTOR_SIZE);
+        duckdb::DataChunk chunk;
+        chunk.Initialize(duckdb::Allocator::DefaultAllocator(), types, count);
+        chunk.SetCardinality(count);
+        for (size_t slot = 0; slot < s.indexed_columns.size(); ++slot) {
+          const auto& col = s.indexed_columns[slot];
+          absl::big_endian::Store(get_key_buffer.data() + sizeof(ObjectId),
+                                  col.id);
+          auto& vec = chunk.data[slot];
+          duckdb::FlatVector::ValidityMutable(vec).SetAllValid(count);
+          for (size_t i = 0; i < count; ++i) {
+            connector::DeserializeValueIntoDuckDB(
+              resolve_cell(*insert_entries[off + i], slot), vec, col.type, i);
+          }
+        }
+        row_keys.clear();
+        row_keys.reserve(count);
+        for (size_t i = 0; i < count; ++i) {
+          row_keys.emplace_back(insert_entries[off + i]->full_key);
+        }
+        connector::EvaluateAndWriteIndexedExpressions(
+          insert_sink, indexed_exprs, chunk, s.table_object_id, slot_to_col_id,
+          client_context, count, row_keys, serializer);
+        off += count;
       }
     }
     sink.FinishImpl();

@@ -48,17 +48,43 @@ struct InvertedIndexOptions {
   std::optional<ScorerOptions> topk_scorer;
 };
 
-// Aggregated info about column for index creation.
-// Filled on different levels during creaton to gather all
-// necessary info for building and validating new index.
+struct ExpressionData {
+  std::string serialized_expr;
+  std::vector<Column::Id> dependent_columns;
+  duckdb::LogicalType return_type;
+  std::string pretty_printed;
+};
+
 struct CreateIndexColumn {
   const catalog::Column* catalog_column{nullptr};
   std::string_view name;
   std::string opclass;
-  std::string json_pointer;
+  std::optional<ExpressionData> indexed_expr;
   // nullopt = no parentheses in source SQL; an (empty or non-empty) map means
   // parens were present, distinguishing `col opclass` from `col opclass ()`.
   std::optional<duckdb::case_insensitive_map_t<duckdb::Value>> opclass_options;
+
+  bool IsIndexedExpression() const noexcept { return indexed_expr.has_value(); }
+
+  const ExpressionData& GetIndexedExpression() const {
+    SDB_ASSERT(IsIndexedExpression());
+    return *indexed_expr;
+  }
+
+  const catalog::Column* GetCatalogColumn() const noexcept {
+    SDB_ASSERT(!IsIndexedExpression());
+    return catalog_column;
+  }
+
+  void SetCatalogColumn(const catalog::Column* col) noexcept {
+    SDB_ASSERT(!IsIndexedExpression());
+    catalog_column = col;
+  }
+
+  std::string_view ColumnName() const noexcept {
+    SDB_ASSERT(!IsIndexedExpression());
+    return name;
+  }
 };
 
 class Index : public Object {
@@ -68,6 +94,8 @@ class Index : public Object {
   std::span<const Column::Id> GetColumnIds() const noexcept {
     return _column_ids;
   }
+
+  virtual std::vector<Column::Id> GetReferencedColumnIds() const = 0;
 
   virtual containers::FlatHashSet<ObjectId> GetTokenizers() const { return {}; }
 

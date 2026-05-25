@@ -31,25 +31,19 @@
 #include "basics/result.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
+#include "connector/search_field_name.hpp"
 
 namespace sdb::connector {
 
-// Info describing how to build iresearch terms for a referenced column.
-// `logical_type` is the DuckDB column type (what the filter value will
-// coerce to); `tokenizer` is the catalog-supplied column tokenizer
-// (op-class determines tokenizer choice for text columns -- non-text
-// columns get a null tokenizer here).
-//
-// For JSON-path indexed fields (e.g. `TERM_LIKE(content->'host', ...)`)
-// `json_pointer` is non-empty and holds the JSON pointer (pre-encoded,
-// see `EncodeJsonPointer`); `logical_type` is the DuckDB type of the
-// indexed leaf (VARCHAR for the string-leaf MVP, or the cast target
-// type for numeric/bool/null lookups).
+// `field_id` is the unified iresearch field id: both a plain indexed column's
+// id (`catalog::Column::Id`) and an indexed expression's id come from
+// `catalog::NextId()` / `NextNIds()` (single global tick allocator), so a
+// single uint64 fits both. Disambiguate via catalog lookup when the kind
+// matters; the writer/printer paths don't need to.
 struct SearchColumnInfo {
-  catalog::Column::Id column_id{};
+  irs::field_id field_id = 0;
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
-  std::string json_pointer;
 };
 
 // Resolves a DuckDB bound column reference (by table_index + column_index,
@@ -61,19 +55,8 @@ struct SearchColumnInfo {
 using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::BoundColumnRefExpression&) const>;
 
-// Resolves a JSON pointer (e.g. "/host") on an already-known base column
-// to a SearchColumnInfo carrying the per-path analyzer. Returns nullopt
-// if no indexed path matches. The pointer is RFC-6901 encoded (see
-// `EncodeJsonPointer`), matching the form stored on
-// `InvertedIndexColumnInfo::json_paths[*].json_pointer`.
-using JsonPathGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
-  const duckdb::BoundColumnRefExpression&, std::string_view) const>;
-
-// Encodes column_id as an 8-byte big-endian binary string into
-// field_name. Before being used as an iresearch field name, the result
-// still needs mangling (MangleString / MangleBool / MangleNumeric /
-// MangleNull) based on what the caller is querying.
-void MakeFieldName(catalog::Column::Id column_id, std::string& field_name);
+using ExpressionGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
+  const duckdb::Expression&) const>;
 
 // Builds iresearch filters into `root` from an implicit-AND list of
 // DuckDB bound filter expressions (as found in a LogicalFilter). Each
@@ -108,6 +91,6 @@ Result MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, const SearchFilterOptions& options,
-  const JsonPathGetter& json_path_getter = {});
+  const ExpressionGetter& expr_getter = {});
 
 }  // namespace sdb::connector

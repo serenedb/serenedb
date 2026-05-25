@@ -28,6 +28,7 @@
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/storage/arena_allocator.hpp>
+#include <span>
 #include <string>
 
 #include "connector/common.h"
@@ -80,6 +81,17 @@ class DuckDBColumnSerializer {
     rocksdb::Transaction* _txn;
     rocksdb::ColumnFamilyHandle* _cf;
     ColumnDescriptor _cur_col{};
+  };
+
+  // No-op writer for paths that only want the per-row slice pipeline to
+  // light up the inverted-index sink (e.g. indexed-expression eval). The
+  // serializer's WriteColumn template duck-types this; SwitchColumn /
+  // Write / WriteNull are all silent.
+  class NoopWriter {
+   public:
+    void SwitchColumn(const ColumnDescriptor&) noexcept {}
+    void Write(std::span<const rocksdb::Slice>, std::string_view) noexcept {}
+    void WriteNull(std::string_view) noexcept {}
   };
 
   // Writes column cells into an SST file. IndexOnly columns are skipped

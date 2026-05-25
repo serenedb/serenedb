@@ -105,10 +105,10 @@ class CommitTask : public Task {
     CommitResult res);
 
  private:
-  absl::Duration _commit_interval_msec;
-  absl::Duration _consolidation_interval_msec;
-  size_t _cleanup_interval_step;
-  size_t _cleanup_interval_count;
+  absl::Duration _commit_interval_msec{};
+  absl::Duration _consolidation_interval_msec{};
+  size_t _cleanup_interval_step{0};
+  size_t _cleanup_interval_count{0};
   bool _wait;
 };
 

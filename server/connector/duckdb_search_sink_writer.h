@@ -37,17 +37,19 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
   DuckDBSearchSinkInsertWriter(
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     std::span<const catalog::Column::Id> columns,
-    JsonPathsProvider&& json_paths_provider = NoJsonPaths(),
     StoreValuesProvider&& store_values_provider = NoStoreValues(),
     IsTextIndexedProvider&& is_text_indexed_provider = AllTextIndexed(),
-    HNSWInfoProvider&& hnsw_info_provider = NoHNSW())
+    HNSWInfoProvider&& hnsw_info_provider = NoHNSW(),
+    ExpressionTokenizerProvider&& expr_tokenizer_provider = {},
+    std::vector<IndexedExpression>&& indexed_exprs = {})
     : SearchSinkInsertBaseImpl{trx,
                                std::move(tokenizer_provider),
-                               std::move(json_paths_provider),
                                std::move(store_values_provider),
                                std::move(is_text_indexed_provider),
                                std::move(hnsw_info_provider),
-                               columns} {}
+                               columns,
+                               std::move(expr_tokenizer_provider),
+                               std::move(indexed_exprs)} {}
 
   void Init(duckdb::idx_t batch_size, const duckdb::DataChunk&) final {
     InitImpl(batch_size);
@@ -55,6 +57,15 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
 
   bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
                     duckdb::idx_t count) final;
+
+  bool SwitchExpression(const ExpressionDescriptor& expr_desc,
+                        const duckdb::Vector& vec, duckdb::idx_t count) final {
+    return SwitchExpressionImpl(expr_desc, vec, count);
+  }
+
+  std::span<const IndexedExpression> IndexedExpressions() const final {
+    return IndexedExpressionImpl();
+  }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {
@@ -92,17 +103,19 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
   DuckDBSearchSinkUpdateWriter(
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     std::span<const catalog::Column::Id> columns,
-    JsonPathsProvider&& json_paths_provider = NoJsonPaths(),
     StoreValuesProvider&& store_values_provider = NoStoreValues(),
     IsTextIndexedProvider&& is_text_indexed_provider = AllTextIndexed(),
-    HNSWInfoProvider&& hnsw_info_provider = NoHNSW())
+    HNSWInfoProvider&& hnsw_info_provider = NoHNSW(),
+    ExpressionTokenizerProvider&& expr_tokenizer_provider = {},
+    std::vector<IndexedExpression>&& indexed_exprs = {})
     : SearchSinkInsertBaseImpl{trx,
                                std::move(tokenizer_provider),
-                               std::move(json_paths_provider),
                                std::move(store_values_provider),
                                std::move(is_text_indexed_provider),
                                std::move(hnsw_info_provider),
-                               columns},
+                               columns,
+                               std::move(expr_tokenizer_provider),
+                               std::move(indexed_exprs)},
       SearchSinkDeleteBaseImpl{trx} {}
 
   void Init(duckdb::idx_t batch_size, const duckdb::DataChunk&) final {
@@ -112,6 +125,16 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
 
   bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
                     duckdb::idx_t count) final;
+
+  bool SwitchExpression(const ExpressionDescriptor& expr_desc,
+                        const duckdb::Vector& vec, duckdb::idx_t count) final {
+    return SearchSinkInsertBaseImpl::SwitchExpressionImpl(expr_desc, vec,
+                                                          count);
+  }
+
+  std::span<const IndexedExpression> IndexedExpressions() const final {
+    return SearchSinkInsertBaseImpl::IndexedExpressionImpl();
+  }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {

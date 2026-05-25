@@ -35,30 +35,79 @@
 namespace sdb::optimizer {
 namespace {
 
+// Returns true iff `type` is VARIANT or contains a VARIANT anywhere in its
+// nested structure (LIST/ARRAY element, STRUCT field, MAP key or value).
 bool NeedsClientCast(const duckdb::LogicalType& type) {
-  return type.id() == duckdb::LogicalTypeId::VARIANT;
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::VARIANT:
+      return true;
+    case duckdb::LogicalTypeId::LIST:
+      return NeedsClientCast(duckdb::ListType::GetChildType(type));
+    case duckdb::LogicalTypeId::ARRAY:
+      return NeedsClientCast(duckdb::ArrayType::GetChildType(type));
+    case duckdb::LogicalTypeId::STRUCT:
+      for (const auto& [_, field] : duckdb::StructType::GetChildTypes(type)) {
+        if (NeedsClientCast(field)) {
+          return true;
+        }
+      }
+      return false;
+    case duckdb::LogicalTypeId::MAP:
+      return NeedsClientCast(duckdb::MapType::KeyType(type)) ||
+             NeedsClientCast(duckdb::MapType::ValueType(type));
+    default:
+      return false;
+  }
 }
 
+// Builds a type that mirrors `type` with every nested VARIANT replaced by
+// JSON. The composite cast against this target lets DuckDB recurse into
+// nested types and apply VARIANT->JSON at every leaf.
 duckdb::LogicalType ClientCastTarget(const duckdb::LogicalType& type) {
-  SDB_ASSERT(type.id() == duckdb::LogicalTypeId::VARIANT);
-  return duckdb::LogicalType::JSON();
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::VARIANT:
+      return duckdb::LogicalType::JSON();
+    case duckdb::LogicalTypeId::LIST:
+      return duckdb::LogicalType::LIST(
+        ClientCastTarget(duckdb::ListType::GetChildType(type)));
+    case duckdb::LogicalTypeId::ARRAY:
+      return duckdb::LogicalType::ARRAY(
+        ClientCastTarget(duckdb::ArrayType::GetChildType(type)),
+        duckdb::ArrayType::GetSize(type));
+    case duckdb::LogicalTypeId::STRUCT: {
+      duckdb::child_list_t<duckdb::LogicalType> children;
+      for (const auto& [name, field] :
+           duckdb::StructType::GetChildTypes(type)) {
+        children.emplace_back(name, ClientCastTarget(field));
+      }
+      return duckdb::LogicalType::STRUCT(std::move(children));
+    }
+    case duckdb::LogicalTypeId::MAP:
+      return duckdb::LogicalType::MAP(
+        ClientCastTarget(duckdb::MapType::KeyType(type)),
+        ClientCastTarget(duckdb::MapType::ValueType(type)));
+    default:
+      return type;
+  }
+}
+
+bool AnyNeedsClientCast(const duckdb::vector<duckdb::LogicalType>& types) {
+  for (const auto& t : types) {
+    if (NeedsClientCast(t)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 duckdb::unique_ptr<duckdb::LogicalOperator> WrapPlan(
   duckdb::ClientContext& context, duckdb::Binder& binder,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
   plan->ResolveOperatorTypes();
-  const auto& plan_types = plan->types;
-  bool any = false;
-  for (const auto& t : plan_types) {
-    if (NeedsClientCast(t)) {
-      any = true;
-      break;
-    }
-  }
-  if (!any) {
+  if (!AnyNeedsClientCast(plan->types)) {
     return plan;
   }
+  const auto& plan_types = plan->types;
   const auto plan_bindings = plan->GetColumnBindings();
   SDB_ASSERT(plan_bindings.size() == plan_types.size());
 
@@ -89,20 +138,17 @@ void WrapVariantOutputs(duckdb::PlannerExtensionInput& input,
   if (statement.plan->type == duckdb::LogicalOperatorType::LOGICAL_EXPLAIN) {
     auto& explain = statement.plan->Cast<duckdb::LogicalExplain>();
     SDB_ASSERT(!explain.children.empty());
+    explain.children[0]->ResolveOperatorTypes();
+    if (!AnyNeedsClientCast(explain.children[0]->types)) {
+      return;
+    }
     explain.children[0] =
       WrapPlan(input.context, input.binder, std::move(explain.children[0]));
     explain.logical_plan_unopt =
       explain.children[0]->ToString(explain.explain_format);
     return;
   }
-  bool any = false;
-  for (const auto& t : statement.types) {
-    if (NeedsClientCast(t)) {
-      any = true;
-      break;
-    }
-  }
-  if (!any) {
+  if (!AnyNeedsClientCast(statement.types)) {
     return;
   }
   auto wrapped =

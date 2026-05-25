@@ -1,0 +1,55 @@
+# Round-trip tests for unsigned integer types inside nested columns. The
+# unsigned-int branches added to the RocksDB writer/reader alongside VARIANT
+# support live on the sub-vector / scalar-value paths -- so they are exercised
+# when unsigned ints appear inside LIST or STRUCT columns. Top-level scalar
+# columns of type U{TINY,SMALL,INTE,BIG}INT are still not supported.
+
+statement ok
+CREATE TABLE u_list(
+  id INTEGER PRIMARY KEY,
+  l8  UTINYINT[],
+  l16 USMALLINT[],
+  l32 UINTEGER[],
+  l64 UBIGINT[]
+);
+
+
+statement ok
+INSERT INTO u_list VALUES
+  (1, [0::utinyint, 1::utinyint, 255::utinyint],
+      [0::usmallint, 1::usmallint, 65535::usmallint],
+      [0::uinteger, 1::uinteger, 4294967295::uinteger],
+      [0::ubigint, 1::ubigint, 18446744073709551615::ubigint]),
+  (2, []::utinyint[], []::usmallint[], []::uinteger[], []::ubigint[]),
+  (3, [42::utinyint], [42::usmallint], [42::uinteger], [42::ubigint]);
+
+
+query
+SELECT id, l8, l16, l32, l64 FROM u_list ORDER BY id;
+----
+id	l8	l16	l32	l64
+1	{0,1,255}	{0,1,65535}	{0,1,4294967295}	{0,1,18446744073709551615}
+2	{}	{}	{}	{}
+3	{42}	{42}	{42}	{42}
+
+
+statement ok
+CREATE TABLE u_struct(
+  id INTEGER PRIMARY KEY,
+  s STRUCT(a UTINYINT, b USMALLINT, c UINTEGER, d UBIGINT)
+);
+
+
+statement ok
+INSERT INTO u_struct VALUES
+  (1, ROW(0::utinyint, 0::usmallint, 0::uinteger, 0::ubigint)),
+  (2, ROW(255::utinyint, 65535::usmallint, 4294967295::uinteger,
+          18446744073709551615::ubigint));
+
+
+query
+SELECT id, s FROM u_struct ORDER BY id;
+----
+id	s
+1	(0,0,0,0)
+2	(255,65535,4294967295,18446744073709551615)

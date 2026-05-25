@@ -241,8 +241,12 @@ enum PgTypeOID : int32_t {
   kAnycompatiblemultirange = 4538,
   kPgBrinBloomSummary = 4600,
   kPgBrinMinmaxMultiSummary = 4601,
-  kVariant = 5500,
-  kVariantArray = 5501,
+  // SereneDB types that have no PostgreSQL built-in counterpart use OIDs in
+  // the 90000+ band. PG built-in OIDs grow with each release (currently up
+  // to ~8500 in PG 18), and SereneDB user-object OIDs are tick-allocated
+  // above kMaxSystem (2000000), so this band stays clear of both.
+  kVariant = 90000,
+  kVariantArray = 90001,
 };
 
 int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array = false);

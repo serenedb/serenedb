@@ -37,8 +37,8 @@ reap_stale_docker_orphans() {
 
 	# Pass 1: orphan docker-compose projects with our PREFIX shape.
 	local prj
-	for prj in $(docker ps -a --format '{{.Label "com.docker.compose.project"}}' 2>/dev/null \
-		| sort -u | grep -E '^[a-z0-9]{4}$'); do
+	for prj in $(docker ps -a --format '{{.Label "com.docker.compose.project"}}' 2>/dev/null |
+		sort -u | grep -E '^[a-z0-9]{4}$'); do
 		# Skip projects with a live `docker compose ... -p <prj>` parent process.
 		if pgrep -af "docker[- ]compose([[:space:]]+-[a-zA-Z-]+[[:space:]]+[^[:space:]]+)*[[:space:]]+-p[[:space:]]+${prj}\b" \
 			>/dev/null 2>&1; then
@@ -51,18 +51,18 @@ reap_stale_docker_orphans() {
 		# `-v` is critical -- it strips anonymous volumes the images carry via
 		# VOLUME directives (postgres /var/lib/postgresql/data is the common
 		# one); without -v they linger and accumulate hundreds of MB.
-		docker ps -aq --filter "label=com.docker.compose.project=${prj}" 2>/dev/null \
-			| xargs -r docker rm -fv >/dev/null 2>&1 || true
+		docker ps -aq --filter "label=com.docker.compose.project=${prj}" 2>/dev/null |
+			xargs -r docker rm -fv >/dev/null 2>&1 || true
 		# Compose-project named volumes get cleaned by `compose down --volumes`.
 		# But the label-based fallback above doesn't, so sweep them here too.
-		docker volume ls -q --filter "label=com.docker.compose.project=${prj}" 2>/dev/null \
-			| xargs -r docker volume rm >/dev/null 2>&1 || true
+		docker volume ls -q --filter "label=com.docker.compose.project=${prj}" 2>/dev/null |
+			xargs -r docker volume rm >/dev/null 2>&1 || true
 	done
 
 	# Pass 2: standalone test deps spawned with mounted docker socket from
 	# inside the tests container. Names follow:
 	#   <4char>-serenedb-test-(minio|iceberg-rest|ollama)-<pid>
-	local cutoff=$(( $(date +%s) - REAP_STALE_AGE_HOURS * 3600 ))
+	local cutoff=$(($(date +%s) - REAP_STALE_AGE_HOURS * 3600))
 	local name status created_ts
 	while IFS=$'\t' read -r name status created_ts; do
 		[[ -z "$name" ]] && continue
@@ -80,9 +80,9 @@ reap_stale_docker_orphans() {
 			docker rm -fv "$name" >/dev/null 2>&1 || true
 		fi
 	done < <(docker ps -a \
-		--format '{{.Names}}{{"\t"}}{{.Status}}{{"\t"}}{{.CreatedAt}}' 2>/dev/null \
-		| grep -E '^[a-z0-9]{4}-serenedb-test-(minio|iceberg-rest|ollama)-[0-9]+\b' \
-		| awk -F'\t' 'BEGIN{OFS="\t"} {
+		--format '{{.Names}}{{"\t"}}{{.Status}}{{"\t"}}{{.CreatedAt}}' 2>/dev/null |
+		grep -E '^[a-z0-9]{4}-serenedb-test-(minio|iceberg-rest|ollama)-[0-9]+\b' |
+		awk -F'\t' 'BEGIN{OFS="\t"} {
 			cmd="date -d \""$3"\" +%s 2>/dev/null"
 			cmd | getline ts
 			close(cmd)
@@ -93,8 +93,8 @@ reap_stale_docker_orphans() {
 	# its own; standalone-spawned networks (sqllogic local-network mode)
 	# linger if their pass-2 owner died.
 	local net
-	for net in $(docker network ls --format '{{.Name}}' 2>/dev/null \
-		| grep -E '^([a-z0-9]{4}_test-network|[a-z0-9]{4}-serenedb-test-net-[0-9]+)$'); do
+	for net in $(docker network ls --format '{{.Name}}' 2>/dev/null |
+		grep -E '^([a-z0-9]{4}_test-network|[a-z0-9]{4}-serenedb-test-net-[0-9]+)$'); do
 		if [[ -z "$(docker network inspect "$net" --format '{{range .Containers}}x{{end}}' 2>/dev/null)" ]]; then
 			docker network rm "$net" >/dev/null 2>&1 || true
 		fi

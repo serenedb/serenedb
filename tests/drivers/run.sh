@@ -150,13 +150,13 @@ export SDB_DRV_SPEC="${SCRIPT_DIR}/spec"
 
 # Silence per-tool first-run / update-check banners so the suite output
 # is just test results. Each is a no-op when the driver tool isn't used.
-export DOTNET_NOLOGO=1                # "Welcome to .NET 8.0!" banner
-export DOTNET_CLI_TELEMETRY_OPTOUT=1  # telemetry first-run prompt
-export NO_UPDATE_NOTIFIER=1           # "npm notice New major version..."
+export DOTNET_NOLOGO=1               # "Welcome to .NET 8.0!" banner
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 # telemetry first-run prompt
+export NO_UPDATE_NOTIFIER=1          # "npm notice New major version..."
 export NPM_CONFIG_UPDATE_NOTIFIER=false
 export NPM_CONFIG_FUND=false
 export NPM_CONFIG_AUDIT=false
-export CARGO_TERM_QUIET=true          # cargo's "Downloading" + "Compiling"
+export CARGO_TERM_QUIET=true # cargo's "Downloading" + "Compiling"
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 
 echo "[drivers] host=${args[host]} port=${args[port]} db=${args[database]} run_id=${args[run_id]}"
@@ -261,7 +261,7 @@ while [[ ${#remaining[@]} -gt 0 ]]; do
 		log="${pid_log[$pid]}"
 		rc=0
 		wait "$pid" 2>/dev/null || rc=$?
-		secs=$(( $(date +%s) - pid_started[$pid] ))
+		secs=$(($(date +%s) - pid_started[$pid]))
 		lang_rc[$lang]=$rc
 		lang_secs[$lang]=$secs
 		status=$([[ $rc -eq 0 ]] && echo PASS || echo "FAIL rc=$rc")
@@ -324,13 +324,17 @@ count_junit_glob() {
 	shopt -u nullglob
 	local f t fl er line
 	for f in "${files[@]}"; do
-		t=""; fl=""; er=""
+		t=""
+		fl=""
+		er=""
 		# Pass 1: <testsuites> (plural) wrapper.
 		while IFS= read -r line; do
 			if [[ "$line" =~ tests=\"([0-9]+)\" ]]; then
-				t=${BASH_REMATCH[1]}; fl=0; er=0
+				t=${BASH_REMATCH[1]}
+				fl=0
+				er=0
 				[[ "$line" =~ failures=\"([0-9]+)\" ]] && fl=${BASH_REMATCH[1]}
-				[[ "$line" =~ errors=\"([0-9]+)\" ]]   && er=${BASH_REMATCH[1]}
+				[[ "$line" =~ errors=\"([0-9]+)\" ]] && er=${BASH_REMATCH[1]}
 				break
 			fi
 		done < <(grep -hE '<testsuites\b' "$f" 2>/dev/null)
@@ -338,18 +342,23 @@ count_junit_glob() {
 		if [[ -z "$t" ]]; then
 			while IFS= read -r line; do
 				if [[ "$line" =~ tests=\"([0-9]+)\" ]]; then
-					t=${BASH_REMATCH[1]}; fl=0; er=0
+					t=${BASH_REMATCH[1]}
+					fl=0
+					er=0
 					[[ "$line" =~ failures=\"([0-9]+)\" ]] && fl=${BASH_REMATCH[1]}
-					[[ "$line" =~ errors=\"([0-9]+)\" ]]   && er=${BASH_REMATCH[1]}
+					[[ "$line" =~ errors=\"([0-9]+)\" ]] && er=${BASH_REMATCH[1]}
 					break
 				fi
 			done < <(grep -hE '<testsuite[ />]' "$f" 2>/dev/null)
 		fi
 		# Pass 3: count <testcase> elements.
 		if [[ -z "$t" ]]; then
-			t=$(grep -c '<testcase\b' "$f" 2>/dev/null); t=${t:-0}
-			fl=$(grep -c '<failure\b' "$f" 2>/dev/null); fl=${fl:-0}
-			er=$(grep -c '<error\b'   "$f" 2>/dev/null); er=${er:-0}
+			t=$(grep -c '<testcase\b' "$f" 2>/dev/null)
+			t=${t:-0}
+			fl=$(grep -c '<failure\b' "$f" 2>/dev/null)
+			fl=${fl:-0}
+			er=$(grep -c '<error\b' "$f" 2>/dev/null)
+			er=${er:-0}
 		fi
 		total_t=$((total_t + t))
 		total_f=$((total_f + fl))
@@ -362,7 +371,10 @@ count_junit_glob() {
 # "test result: ok. N passed; M failed" lines and sum.
 count_rust_log() {
 	local log="$1"
-	[[ -f "$log" ]] || { echo "0 0 0"; return; }
+	[[ -f "$log" ]] || {
+		echo "0 0 0"
+		return
+	}
 	local t=0 fl=0
 	local line
 	while IFS= read -r line; do
@@ -373,7 +385,7 @@ count_rust_log() {
 			t=$((t + ${BASH_REMATCH[1]}))
 			fl=$((fl + ${BASH_REMATCH[2]}))
 		fi
-	done < "$log"
+	done <"$log"
 	echo "$t $fl 0"
 }
 

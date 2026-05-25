@@ -113,3 +113,78 @@ SHOW standard_conforming_strings;
 ----
 standard_conforming_strings
 on
+
+
+# ----------------------------------------------------------------------
+# PG-compat: SHOW <multi-word alias> resolves to the same underlying
+# variable as SHOW <varname>. Real drivers issue these forms on startup
+# (r2dbc, pgjdbc, Npgsql), so the parser must accept them verbatim.
+# ----------------------------------------------------------------------
+
+query
+SHOW TRANSACTION ISOLATION LEVEL;
+----
+transaction_isolation
+repeatable read
+
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+
+query
+SHOW SESSION AUTHORIZATION;
+----
+session_authorization
+postgres
+
+
+query
+SHOW session_authorization;
+----
+session_authorization
+postgres
+
+
+statement ok
+SET TimeZone = 'Etc/UTC';
+
+
+query
+SHOW TIME ZONE;
+----
+timezone
+Etc/UTC
+
+
+query
+SHOW timezone;
+----
+timezone
+Etc/UTC
+
+
+# DESCRIBE / DESC accept the same aliases (mirrors the regular SHOW <name> branch).
+query
+DESCRIBE TRANSACTION ISOLATION LEVEL;
+----
+transaction_isolation
+repeatable read
+
+
+query
+DESC TIME ZONE;
+----
+timezone
+Etc/UTC
+
+
+# Aliases survive case variation -- keywords are case-insensitive.
+query
+show transaction isolation level;
+----
+transaction_isolation
+repeatable read

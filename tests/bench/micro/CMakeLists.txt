@@ -38,9 +38,7 @@ target_include_directories(
 add_executable(vector-distances-bench vector_distances.cpp)
 target_compile_options(
     vector-distances-bench
-    PRIVATE
-        -fassociative-math
-        -fno-signed-zeros
+    PRIVATE -fassociative-math -fno-signed-zeros
 )
 
 target_link_libraries(vector-distances-bench PRIVATE sereneserver benchmark)

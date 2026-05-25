@@ -247,10 +247,10 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
 
   duckdb::ScalarFunction at_at(std::string{kTSQueryMatch}, {},
                                duckdb::LogicalType::BOOLEAN, nullptr);
+  duckdb::BoundScalarFunction bound_at_at(at_at);
+  bound_at_at.SetName(std::string{kTSQueryMatch});
   auto match_expr = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
-    duckdb::LogicalType::BOOLEAN, std::move(at_at), std::move(at_at_children),
-    nullptr);
-  match_expr->function.name = std::string{kTSQueryMatch};
+    std::move(bound_at_at), std::move(at_at_children), nullptr);
 
   auto column_getter =
     [column_id, dict_tokenizer](const duckdb::BoundColumnRefExpression& ref)

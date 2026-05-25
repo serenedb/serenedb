@@ -1,4 +1,4 @@
-hash-threshold 100
+hash-threshold 200
 
 statement ok
 CREATE TABLE foo (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);
@@ -406,7 +406,11 @@ EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b tes
 │└──────────────────────────────────────────────┘│
 └────────────────────────────────────────────────┘
 ┌───────────────────────────┐
-│           QUERY           │
+│      RESULT_COLLECTOR     │
+│    ────────────────────   │
+│                           │
+│           0 rows          │
+<slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │      EXPLAIN_ANALYZE      │
@@ -664,7 +668,7 @@ QUERY PLAN
 │    ────────────────────   │
 │  score_parquet_idx.a ASC  │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
@@ -981,7 +985,7 @@ QUERY PLAN
 │    ────────────────────   │
 │    dense_csv_idx.a ASC    │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │

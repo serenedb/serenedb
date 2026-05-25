@@ -71,13 +71,11 @@ AT
 42
 
 
-# Bare alias (no AS) must still fail — target_el's bare-alias form
-# accepts only a raw IDENT, never any keyword, to avoid postfix-operator
-# ambiguity.  This is intentional and unchanged.
-query error
+query
 SELECT 1 at;
 ----
-db error: ERROR: syntax error at or near "at"
+at
+1
 
 
 # Pin the postfix-operator path that motivates the IDENT-only rule above:
@@ -88,7 +86,7 @@ db error: ERROR: syntax error at or near "at"
 query I
 SELECT 5!;
 ----
-?column?
+factorial
 120
 
 

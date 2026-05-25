@@ -46,6 +46,13 @@ enum class ColumnStoreMode : uint8_t {
   kIndexOnly = 1,
 };
 
+// Selects the physical backend for a TableShard's row store. Persisted in
+// the shard's vpack payload so recovery can construct the right subclass.
+enum class StorageKind : uint8_t {
+  kRocksDB = 0,  // default -- RocksDB row store, what every existing table uses
+  kSearch = 1,   // iresearch columnstore + RocksDB WAL markers
+};
+
 class Column final : public Object {
  public:
   enum GeneratedType : uint8_t {
@@ -161,6 +168,7 @@ struct CreateTableOptions {
   std::vector<Column::Id> pk_columns;
   std::vector<CheckConstraint> check_constraints;
   std::vector<SerialSequenceOption> sequences;
+  StorageKind storage = StorageKind::kRocksDB;
 };
 // NOLINTEND
 

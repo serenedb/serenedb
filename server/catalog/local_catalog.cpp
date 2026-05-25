@@ -2000,7 +2000,11 @@ Result LocalCatalog::CreateTable(
   if (operation_options.create_with_tombstone) {
     table->SetTombstoned(true);
   }
-  auto shard = std::make_shared<TableShard>(table->GetId(), TableStats{});
+  auto shard_or = MakeTableShard(options.storage, table->GetId(), TableStats{});
+  if (!shard_or) {
+    return std::move(shard_or.error());
+  }
+  auto shard = *std::move(shard_or);
 
   return Apply(
     _snapshot,
@@ -2047,7 +2051,22 @@ Result LocalCatalog::CreateTable(
         }
       });
     },
-    [&](auto clone) { clone->UnregisterObject(table, *schema_id, true); });
+    [&](auto clone) {
+      clone->UnregisterObject(table, *schema_id, true);
+      // If the shard ctor created on-disk artifacts (e.g. iresearch directory
+      // for kSearch), wipe them. kRocksDB has nothing to clean up here -- no
+      // row data was ever written, the catalog WriteBatch above is atomic.
+      if (shard->GetStorage() != StorageKind::kRocksDB) {
+        auto r = TableShard::DropArtifacts(shard->GetStorage(), table->GetId(),
+                                           shard->GetId(), /*size=*/0);
+        if (!r.ok()) {
+          SDB_ERROR("xxxxx", Logger::THREADS,
+                    "Failed to drop artifacts on CREATE TABLE rollback for "
+                    "table_id ",
+                    table->GetId().id(), ": ", r.errorMessage());
+        }
+      }
+    });
 }
 
 Result LocalCatalog::CreateTokenizer(ObjectId database_id,

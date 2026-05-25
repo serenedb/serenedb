@@ -28,6 +28,7 @@
 #include <shared_mutex>
 #include <tuple>
 
+#include "basics/result_or.h"
 #include "catalog/fwd.h"
 #include "catalog/object.h"
 #include "catalog/table_options.h"
@@ -51,13 +52,6 @@ class DocumentIterator;
 struct OperationOptions;
 class Result;
 
-// Selects the physical backend for a TableShard's row store. Persisted in
-// the shard's vpack payload so recovery can construct the right subclass.
-enum class StorageKind : uint8_t {
-  kRocksDB = 0,  // default -- RocksDB row store, what every existing table uses
-  kSearch = 1,   // iresearch columnstore + RocksDB WAL markers
-};
-
 class TableShard : public catalog::Object {
  public:
   static constexpr double kDefaultLockTimeout = 10.0 * 60.0;
@@ -67,7 +61,7 @@ class TableShard : public catalog::Object {
 
   auto GetTableId() const noexcept { return _table_id; }
 
-  StorageKind GetStorage() const noexcept { return _storage; }
+  catalog::StorageKind GetStorage() const noexcept { return _storage; }
 
   auto& GetTableLock() noexcept { return _table_lock; }
 
@@ -97,7 +91,7 @@ class TableShard : public catalog::Object {
   // For kRocksDB: rocksdb range delete on the table's key range.
   // For kSearch (when implemented): remove the iresearch directory derived
   // from (table_id, shard_id).
-  static Result DropArtifacts(StorageKind kind, ObjectId table_id,
+  static Result DropArtifacts(catalog::StorageKind kind, ObjectId table_id,
                               ObjectId shard_id, uint64_t size);
 
   // New table shard ctor
@@ -121,7 +115,15 @@ class TableShard : public catalog::Object {
   std::shared_mutex _table_lock;
   // Set by subclasses in their constructor; default RocksDB matches every
   // existing call site that constructs bare TableShard.
-  StorageKind _storage = StorageKind::kRocksDB;
+  catalog::StorageKind _storage = catalog::StorageKind::kRocksDB;
 };
+
+// Factory for CREATE TABLE. Returns the right TableShard subclass for the
+// requested storage kind. The kSearch case constructs a SearchTableShard
+// once that class lands (M2 PR 2.2); until then it returns
+// ERROR_NOT_IMPLEMENTED.
+ResultOr<std::shared_ptr<TableShard>> MakeTableShard(
+  catalog::StorageKind kind, ObjectId table_id,
+  const catalog::TableStats& stats);
 
 }  // namespace sdb

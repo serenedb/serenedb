@@ -53,10 +53,10 @@ TableShard::TableShard(ObjectId table_id, const catalog::TableStats& stats)
     _table_id{table_id},
     _num_rows{stats.num_rows} {}
 
-Result TableShard::DropArtifacts(StorageKind kind, ObjectId table_id,
+Result TableShard::DropArtifacts(catalog::StorageKind kind, ObjectId table_id,
                                  ObjectId /*shard_id*/, uint64_t size) {
   switch (kind) {
-    case StorageKind::kRocksDB: {
+    case catalog::StorageKind::kRocksDB: {
       auto& server = GetServerEngine();
       auto [start, end] = connector::key_utils::CreateTableRange(table_id);
       auto* cf = RocksDBColumnFamilyManager::get(
@@ -66,7 +66,7 @@ Result TableShard::DropArtifacts(StorageKind kind, ObjectId table_id,
                                           rocksdb::Slice{end}, cf, true,
                                           (size >= 1000));
     }
-    case StorageKind::kSearch:
+    case catalog::StorageKind::kSearch:
       // SearchTableShard is not implemented yet (lands in M2). When it
       // does, this case computes the iresearch directory path from
       // (table_id, shard_id) and removes it. Until then, reaching this
@@ -74,6 +74,21 @@ Result TableShard::DropArtifacts(StorageKind kind, ObjectId table_id,
       // but the code that handles it doesn't.
       SDB_ASSERT(false, "DropArtifacts(kSearch) not yet implemented");
       return Result{ERROR_NOT_IMPLEMENTED};
+  }
+  SDB_UNREACHABLE();
+}
+
+ResultOr<std::shared_ptr<TableShard>> MakeTableShard(
+  catalog::StorageKind kind, ObjectId table_id,
+  const catalog::TableStats& stats) {
+  switch (kind) {
+    case catalog::StorageKind::kRocksDB:
+      return std::make_shared<TableShard>(table_id, stats);
+    case catalog::StorageKind::kSearch:
+      // SearchTableShard lands in M2 PR 2.2.
+      return std::unexpected<Result>{
+        std::in_place, ERROR_NOT_IMPLEMENTED,
+        "WITH (storage = 'search') is not yet supported"};
   }
   SDB_UNREACHABLE();
 }

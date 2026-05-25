@@ -100,6 +100,50 @@ std::vector<std::string> ExtractColumnList(
   return result;
 }
 
+// Extracts a string-valued WITH option. Returns std::nullopt if absent.
+// Throws on non-string shapes.
+std::optional<std::string> ExtractString(std::string_view option_key,
+                                         const duckdb::ParsedExpression& expr) {
+  if (expr.GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      ERR_MSG("WITH option \"", option_key, "\" expects a string literal"));
+  }
+  auto& cexpr = expr.Cast<duckdb::ConstantExpression>();
+  try {
+    return cexpr.value.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+      .GetValue<std::string>();
+  } catch (...) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      ERR_MSG("WITH option \"", option_key, "\" expects a string literal"));
+  }
+}
+
+void ApplyStorageKind(
+  catalog::CreateTableOptions& options,
+  const duckdb::case_insensitive_map_t<
+    duckdb::unique_ptr<duckdb::ParsedExpression>>& with_options) {
+  static constexpr std::string_view kStorageKey = "storage";
+  auto it = with_options.find(std::string{kStorageKey});
+  if (it == with_options.end() || !it->second) {
+    return;  // default kRocksDB
+  }
+  auto value = ExtractString(kStorageKey, *it->second);
+  SDB_ASSERT(value);
+  auto lower = duckdb::StringUtil::Lower(*value);
+  if (lower == "rocksdb") {
+    options.storage = catalog::StorageKind::kRocksDB;
+  } else if (lower == "search") {
+    options.storage = catalog::StorageKind::kSearch;
+  } else {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("WITH option \"", kStorageKey,
+              "\" must be 'rocksdb' or 'search', got \"", *value, "\""));
+  }
+}
+
 }  // namespace
 
 void ApplyColumnModes(
@@ -351,6 +395,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   }
 
   ApplyColumnModes(options.columns, table_info.options);
+  ApplyStorageKind(options, table_info.options);
 
   auto& catalog_impl =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();

@@ -414,10 +414,4 @@ duckdb::TableFunction CreateSKRangesScanFunction();
 
 duckdb::TableFunction CreateIResearchScanFunction();
 
-duckdb::TableFunction CreateIResearchCountFunction();
-
-duckdb::TableFunction CreateIResearchANNScanFunction();
-
-duckdb::TableFunction CreateIResearchANNRangeScanFunction();
-
 }  // namespace sdb::connector

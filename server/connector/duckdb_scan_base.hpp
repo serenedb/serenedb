@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
@@ -36,6 +37,11 @@
 #include "rocksdb/snapshot.h"
 #include "rocksdb/utilities/transaction.h"
 
+namespace irs {
+
+class IndexReader;
+
+}  // namespace irs
 namespace sdb::connector {
 
 struct SereneDBScanBindData;
@@ -78,11 +84,10 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   // column (i.e. IndexSource still has work to do).
   bool has_external_projections = false;
 
-  // Per-segment materializers shared by streaming, top-K, ANN, range,
-  // and bulk-scan paths. Populated lazily on first batch that touches
-  // the segment; lives for the whole query. Sized to the index reader's
-  // segment count on first use (see GetOrOpenSegmentMaterializer).
+  // Per-segment INCLUDE materializers. Lazy-built under
+  // cs_materializers_mu (parallel paths claim concurrently).
   std::vector<std::unique_ptr<ColumnstoreMaterializer>> cs_materializers;
+  absl::Mutex cs_materializers_mu;
 
   // Rowid virtual column
   bool has_generated_pk = false;
@@ -99,6 +104,11 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   duckdb::idx_t score_output_idx = 0;
 
   bool finished = false;
+
+  // Parallel scan coordination consumed by RunParallelInvertedIndexScan.
+  const irs::IndexReader* reader = nullptr;
+  size_t total_segments = 0;
+  std::atomic_uint32_t next_segment{0};
 
   // Rows emitted -- read by the rows_scanned DuckDB callback.
   std::atomic<duckdb::idx_t> produced_rows{0};
@@ -117,7 +127,15 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   ~CommonScanGlobalState() override;
 };
 
-struct CommonScanLocalState : public duckdb::LocalTableFunctionState {};
+struct CommonScanLocalState : public duckdb::LocalTableFunctionState {
+  // Set by the skeleton after OnSegmentsExhausted; lets EmitNextChunk
+  // distinguish "still collecting" from "done".
+  bool segments_exhausted = false;
+
+  // Default no-op; top-K backends shadow it with prep work (sort, pk_batch).
+  void OnSegmentsExhausted(duckdb::ClientContext& /*ctx*/,
+                           CommonScanGlobalState& /*g*/) {}
+};
 
 // Shared base for PK-based scan states (full and range).
 // Holds the upper-bound key storage that column iterators reference.
@@ -148,14 +166,6 @@ struct SegDoc {
   irs::doc_id_t doc_pos;
 };
 
-}  // namespace sdb::connector
-namespace irs {
-
-class IndexReader;
-
-}  // namespace irs
-namespace sdb::connector {
-
 // Returns the materializer for `seg_idx`, lazy-building it on first call.
 // Returns nullptr when the segment has no cs reader or no bound INCLUDE'd
 // columns. The returned pointer is owned by `gstate.cs_materializers` and
@@ -164,9 +174,12 @@ ColumnstoreMaterializer* GetOrOpenSegmentMaterializer(
   CommonScanGlobalState& gstate, const irs::IndexReader& reader,
   size_t seg_idx);
 
-void MaterializeIncludeColumnsScoreOrder(
-  CommonScanGlobalState& gstate, const irs::IndexReader& reader,
-  std::span<const SegDoc> seg_doc_score_order, duckdb::DataChunk& output);
+// Materialise INCLUDE'd columnstore columns. `seg_doc_batched` must be
+// sorted by (segment_idx, doc_pos) -- iresearch's ScanCursor is forward-only.
+void MaterializeIncludeColumnsBatched(CommonScanGlobalState& gstate,
+                                      const irs::IndexReader& reader,
+                                      std::span<const SegDoc> seg_doc_batched,
+                                      duckdb::DataChunk& output);
 
 // Read generated PK int64 values from RocksDB iterator keys into output.
 // Key format: [ObjectId(8)][ColumnId(8)][PK int64 big-endian XOR 0x80].
@@ -183,6 +196,84 @@ duckdb::idx_t CommonScanRowsScanned(duckdb::GlobalTableFunctionState& gstate,
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> CommonScanInitLocal(
   duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
   duckdb::GlobalTableFunctionState* global_state);
+
+// Fill virtual-column slots (tableoid / rowid / score). Pass `{}` for
+// scores when the path wrote them inline or there's no score column.
+void WriteVirtualColumns(CommonScanGlobalState& gstate, duckdb::idx_t num_rows,
+                         duckdb::DataChunk& output,
+                         std::span<const float> scores_or_empty);
+
+// Drain one chunk from a per-thread (seg, doc) buffer: virtual cols +
+// external (RocksDB) + INCLUDE cs cols, advances current_idx. Returns
+// rows emitted (0 = drained). Lstate must expose current_idx, pk_batch,
+// index_source.
+template<class Gstate, class Lstate>
+duckdb::idx_t EmitChunkFromBuffer(duckdb::ClientContext& ctx, Gstate& g,
+                                  Lstate& l,
+                                  std::span<const SegDoc> all_seg_docs,
+                                  std::span<const float> all_scores_or_empty,
+                                  duckdb::DataChunk& output) {
+  const size_t remaining = all_seg_docs.size() - l.current_idx;
+  if (remaining == 0) {
+    return 0;
+  }
+  const auto num_rows = static_cast<duckdb::idx_t>(
+    std::min<size_t>(remaining, STANDARD_VECTOR_SIZE));
+
+  std::span<const SegDoc> chunk = all_seg_docs.subspan(l.current_idx, num_rows);
+  std::span<const float> score_chunk =
+    all_scores_or_empty.empty()
+      ? std::span<const float>{}
+      : all_scores_or_empty.subspan(l.current_idx, num_rows);
+
+  WriteVirtualColumns(g, num_rows, output, score_chunk);
+
+  if (g.has_external_projections) {
+    l.index_source->Materialize(ctx, l.pk_batch, l.current_idx, num_rows,
+                                output);
+  }
+  if (!g.cs_projections.empty()) {
+    MaterializeIncludeColumnsBatched(g, *g.reader, chunk, output);
+  }
+
+  l.current_idx += num_rows;
+  output.SetCardinality(num_rows);
+  g.produced_rows.fetch_add(num_rows, std::memory_order_relaxed);
+  return num_rows;
+}
+
+// EmitNextChunk return:
+//   Chunk         - rows written, return to DuckDB
+//   NeedsSegment  - ask skeleton for more work
+//   Finished      - this thread is done
+enum class EmitOutput { Chunk, NeedsSegment, Finished };
+
+template<class Gstate, class Lstate>
+void RunParallelInvertedIndexScan(duckdb::ClientContext& ctx, Gstate& g,
+                                  Lstate& l, duckdb::DataChunk& output) {
+  while (true) {
+    switch (l.EmitNextChunk(ctx, g, output)) {
+      case EmitOutput::Chunk:
+        return;
+      case EmitOutput::Finished:
+        output.SetCardinality(0);
+        return;
+      case EmitOutput::NeedsSegment: {
+        const auto seg = g.next_segment.fetch_add(1, std::memory_order_relaxed);
+        if (seg < g.total_segments) {
+          // Invariant: iresearch never commits empty segments
+          // (index_writer.cpp drops live_docs_count==0 at flush/commit).
+          SDB_ASSERT((*g.reader)[seg].live_docs_count() != 0);
+          l.OnSegment(ctx, (*g.reader)[seg], seg, g);
+        } else {
+          l.OnSegmentsExhausted(ctx, g);
+          l.segments_exhausted = true;
+        }
+        break;
+      }
+    }
+  }
+}
 
 // Builds the scan column list and populates state.upper_bound_data and
 // state.upper_bound_slices. Must be called after InitCommonState.

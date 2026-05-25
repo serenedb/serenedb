@@ -791,42 +791,177 @@ duckdb::TableFunction CreateSKRangesScanFunction() {
   return func;
 }
 
+namespace {
+
+// True when DuckDB asks the scan for zero real columns and no virtual
+// columns -- e.g. `SELECT count(*) FROM idx WHERE search(...)`, where
+// UNUSED_COLUMNS has pruned every column the scan would otherwise
+// produce. The upstream operator (typically a count_star aggregate)
+// just consumes chunk cardinality. Detecting this at init time lets us
+// take the much cheaper Count path (live_docs_count() for match-all,
+// tight WAND-less iterate-and-count otherwise) without a plan-shape
+// optimizer pattern match.
+bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
+                     const duckdb::TableFunctionInitInput& input) {
+  for (auto col_id : input.column_ids) {
+    if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY) {
+      continue;
+    }
+    if (col_id == kColumnIdentifierGeneratedPk ||
+        col_id == kColumnIdentifierTableOid) {
+      return false;  // rowid / tableoid still need to be emitted.
+    }
+    if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
+      return false;  // virtual PK column.
+    }
+    if (col_id < bind_data.column_ids.size()) {
+      return false;  // real column requested.
+    }
+  }
+  return true;
+}
+
+// Swap `bind_data.scan_source` to a CountScan that inherits the current
+// SearchScan's filter / snapshot, or that resolves a fresh snapshot when
+// the bind is still on FullTable (bare `SELECT count(*) FROM idx`).
+// Returns false if the swap can't be performed (e.g. a SearchScan with a
+// scorer or offsets attached, or a FullTable bind that isn't an
+// inverted-index entry).
+bool PromoteToCountScan(SereneDBScanBindData& bind_data) {
+  auto count_scan = std::make_unique<CountScan>();
+  switch (bind_data.scan_source->Kind()) {
+    case ScanSourceKind::Search: {
+      auto& search = bind_data.scan_source->Cast<SearchScan>();
+      if (search.scorer.has_value() || search.EmitOffsets()) {
+        return false;
+      }
+      count_scan->stored_filter = std::move(search.stored_filter);
+      count_scan->snapshot = std::move(search.snapshot);
+      count_scan->filter_summary = std::move(search.filter_summary);
+      break;
+    }
+    case ScanSourceKind::FullTable: {
+      if (!bind_data.IsInvertedIndexEntry() || !bind_data.inverted_index) {
+        return false;
+      }
+      auto cat_snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+      std::shared_ptr<search::InvertedIndexShard> shard;
+      for (auto& s : cat_snapshot->GetIndexShardsByRelation(
+             bind_data.inverted_index->GetRelationId())) {
+        if (s->GetIndexId() == bind_data.inverted_index->GetId() &&
+            s->GetType() == catalog::ObjectType::InvertedIndexShard) {
+          shard = basics::downCast<search::InvertedIndexShard>(std::move(s));
+          break;
+        }
+      }
+      if (!shard) {
+        return false;
+      }
+      auto idx_snapshot = shard->GetInvertedIndexSnapshot();
+      if (!idx_snapshot) {
+        return false;
+      }
+      count_scan->snapshot = std::move(idx_snapshot);
+      break;
+    }
+    default:
+      return false;
+  }
+  bind_data.scan_source = std::move(count_scan);
+  return true;
+}
+
+// Single entry point for every inverted-index scan kind. Dispatches on
+// `bind_data.scan_source->Kind()` -- set at bind time (FullTable) and
+// possibly rewritten by the optimizer to Ann / RangeSearch. Each
+// per-kind InitGlobal / InitLocal / Function lives in its own TU; this
+// dispatcher is what `iresearch_scan` exposes to DuckDB.
+
+duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
+  duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
+  auto& bind_data = const_cast<SereneDBScanBindData&>(
+    input.bind_data->Cast<SereneDBScanBindData>());
+
+  // Auto-promote zero-projection Search / FullTable binds to Count.
+  // Replaces the old TryConvertAggregateToCount optimizer rule -- any
+  // scan that arrives here with no column requests gets the fast Count
+  // path, regardless of the upstream plan shape.
+  const auto kind_before = bind_data.scan_source->Kind();
+  if ((kind_before == ScanSourceKind::Search ||
+       kind_before == ScanSourceKind::FullTable) &&
+      IsCountOnlyScan(bind_data, input)) {
+    PromoteToCountScan(
+      bind_data);  // best-effort; leaves source alone on failure
+  }
+
+  switch (bind_data.scan_source->Kind()) {
+    case ScanSourceKind::FullTable:
+    case ScanSourceKind::Search:
+      return SearchFullScanInitGlobal(context, input);
+    case ScanSourceKind::Count:
+      return SearchCountScanInitGlobal(context, input);
+    case ScanSourceKind::Ann:
+      return SearchAnnScanInitGlobal(context, input);
+    case ScanSourceKind::RangeSearch:
+      return SearchRangeScanInitGlobal(context, input);
+    default:
+      SDB_THROW(ERROR_INTERNAL, "iresearch_scan: unsupported scan source kind");
+  }
+}
+
+duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
+  duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
+  duckdb::GlobalTableFunctionState* global_state) {
+  auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
+  switch (bind_data.scan_source->Kind()) {
+    case ScanSourceKind::FullTable:
+    case ScanSourceKind::Search:
+      return SearchFullScanInitLocal(context, input, global_state);
+    case ScanSourceKind::Count:
+      return SearchCountScanInitLocal(context, input, global_state);
+    case ScanSourceKind::Ann:
+      return SearchAnnScanInitLocal(context, input, global_state);
+    case ScanSourceKind::RangeSearch:
+      return SearchRangeScanInitLocal(context, input, global_state);
+    default:
+      SDB_THROW(ERROR_INTERNAL, "iresearch_scan: unsupported scan source kind");
+  }
+}
+
+void IResearchScanFunction(duckdb::ClientContext& context,
+                           duckdb::TableFunctionInput& data,
+                           duckdb::DataChunk& output) {
+  auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
+  switch (bind_data.scan_source->Kind()) {
+    case ScanSourceKind::FullTable:
+    case ScanSourceKind::Search:
+      SearchFullScanFunction(context, data, output);
+      return;
+    case ScanSourceKind::Count:
+      SearchCountScanFunction(context, data, output);
+      return;
+    case ScanSourceKind::Ann:
+      SearchAnnScanFunction(context, data, output);
+      return;
+    case ScanSourceKind::RangeSearch:
+      SearchRangeScanFunction(context, data, output);
+      return;
+    default:
+      SDB_THROW(ERROR_INTERNAL, "iresearch_scan: unsupported scan source kind");
+  }
+}
+
+}  // namespace
+
 duckdb::TableFunction CreateIResearchScanFunction() {
   duckdb::TableFunction func{
-    "iresearch_scan",         {}, SearchFullScanFunction, SereneDBScanBind,
-    SearchFullScanInitGlobal,
+    "iresearch_scan",        {}, IResearchScanFunction, SereneDBScanBind,
+    IResearchScanInitGlobal,
   };
   SetCommonCallbacks(func);
+  func.init_local = IResearchScanInitLocal;
   func.pushdown_complex_filter = &optimizer::IresearchPushdownComplexFilter;
-  return func;
-}
-
-duckdb::TableFunction CreateIResearchCountFunction() {
-  duckdb::TableFunction func{
-    "iresearch_count",         {}, SearchCountScanFunction, SereneDBScanBind,
-    SearchCountScanInitGlobal,
-  };
-  SetCommonCallbacks(func);
-  return func;
-}
-
-duckdb::TableFunction CreateIResearchANNScanFunction() {
-  duckdb::TableFunction func{
-    "iresearch_ann_scan",    {}, SearchAnnScanFunction, SereneDBScanBind,
-    SearchAnnScanInitGlobal,
-  };
-  SetCommonCallbacks(func);
-  func.init_local = SearchAnnScanInitLocal;
-  return func;
-}
-
-duckdb::TableFunction CreateIResearchANNRangeScanFunction() {
-  duckdb::TableFunction func{
-    "iresearch_ann_range_scan", {}, SearchRangeScanFunction, SereneDBScanBind,
-    SearchRangeScanInitGlobal,
-  };
-  SetCommonCallbacks(func);
-  func.init_local = SearchRangeScanInitLocal;
+  func.set_top_n_hint = &SereneDBSetTopNHint;
   return func;
 }
 

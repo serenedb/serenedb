@@ -1,4 +1,5 @@
 hash-threshold 100
+control substitution on
 
 # View-backed CREATE INDEX column pruning: when the view exposes more
 # columns than the index uses, BindCreateIndex's PruneViewFastPathChain

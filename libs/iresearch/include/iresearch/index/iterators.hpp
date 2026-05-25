@@ -126,12 +126,18 @@ class NthPartitionScoreCollector final : public ScoreCollector {
 
   void SetSegment(uint32_t idx) noexcept { _current_segment = idx; }
 
-  IRS_FORCE_INLINE uint64_t Finalize() {
-    std::sort(_hits_begin, _hits_end, [](const ScoreDoc& l, const ScoreDoc& r) {
-      return l.score > r.score;
-    });
-    return _count;
+  // Number of (score, doc, segment_idx) tuples this thread's collector
+  // has actually accepted -- i.e. passed the threshold check in TryPush
+  // and were written into the buffer. The remaining slots up to
+  // `_hits_end` are either default-init eof sentinels or stale residue
+  // from before the last nth_element compaction. Pair with
+  // `TotalMatches()` which counts every doc the iterator handed in
+  // (pre-threshold).
+  IRS_FORCE_INLINE size_t AcceptedCount() const noexcept {
+    return _hits_it - _hits_begin;
   }
+
+  IRS_FORCE_INLINE uint64_t TotalMatches() const noexcept { return _count; }
 
   IRS_FORCE_INLINE void AddWindow(const score_t* scores, const uint64_t* mask,
                                   doc_id_t min, size_t num_blocks,

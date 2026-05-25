@@ -156,12 +156,20 @@ duckdb::vector<duckdb::column_t> ViewInvertedIndexScanEntry::GetRowIdColumns()
 duckdb::virtual_column_map_t ViewInvertedIndexScanEntry::GetVirtualColumns()
   const {
   duckdb::virtual_column_map_t result;
-  result.reserve(2);
+  result.reserve(3);
   result.emplace(kColumnIdentifierTableOid,
                  duckdb::TableColumn{"tableoid", duckdb::LogicalType::BIGINT});
   result.emplace(
     kColumnIdentifierGeneratedPk,
     duckdb::TableColumn{"generated_pk", duckdb::LogicalType::ROW_TYPE});
+  // COLUMN_IDENTIFIER_EMPTY: the "no data needed" placeholder
+  // LogicalGet::GetAnyColumn picks for queries like count(*) that have
+  // no real column dependency. Without this, UNUSED_COLUMNS adds back
+  // the view's first real column as the placeholder, which trips up the
+  // runtime count-only detection (and would force materialisation on
+  // view-backed indices that don't support arbitrary column reads).
+  result.emplace(duckdb::COLUMN_IDENTIFIER_EMPTY,
+                 duckdb::TableColumn{"", duckdb::LogicalType::BOOLEAN});
   return result;
 }
 

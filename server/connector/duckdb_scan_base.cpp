@@ -228,6 +228,11 @@ ColumnstoreMaterializer* GetOrOpenSegmentMaterializer(
   if (gstate.cs_field_ids.empty() || seg_idx >= reader.size()) {
     return nullptr;
   }
+  // Parallel scans (ANN/BM25 top-K) call this from multiple threads.
+  // The resize + slot lazy-build must be guarded; once a slot is filled,
+  // it's immutable for the rest of the query, so subsequent reads are
+  // safe outside the mutex.
+  std::lock_guard lock{gstate.cs_materializers_mu};
   if (gstate.cs_materializers.size() < reader.size()) {
     gstate.cs_materializers.resize(reader.size());
   }
@@ -243,77 +248,55 @@ ColumnstoreMaterializer* GetOrOpenSegmentMaterializer(
   return slot.get();
 }
 
-void MaterializeIncludeColumnsScoreOrder(
-  CommonScanGlobalState& gstate, const irs::IndexReader& reader,
-  std::span<const SegDoc> seg_doc_score_order, duckdb::DataChunk& output) {
-  const auto num_rows = seg_doc_score_order.size();
+void MaterializeIncludeColumnsBatched(CommonScanGlobalState& gstate,
+                                      const irs::IndexReader& reader,
+                                      std::span<const SegDoc> seg_doc_batched,
+                                      duckdb::DataChunk& output) {
+  const auto num_rows = seg_doc_batched.size();
   if (num_rows == 0 || gstate.cs_projections.empty()) {
     return;
   }
 
-  std::vector<uint32_t> perm(num_rows);
-  absl::c_iota(perm, uint32_t{0});
-  std::ranges::sort(perm, {}, [&](uint32_t i) {
-    return std::pair{seg_doc_score_order[i].segment_idx,
-                     seg_doc_score_order[i].doc_pos};
-  });
-  duckdb::SelectionVector dict_sel(num_rows);
-  for (duckdb::idx_t k = 0; k < num_rows; ++k) {
-    dict_sel.set_index(perm[k], k);
-  }
-
-  const size_t n_bindings = gstate.cs_projections.size();
-  std::vector<duckdb::Vector> seg_vecs;
-  seg_vecs.reserve(n_bindings);
+  // SelectByDocIds only resets LIST/MAP list size when output_start == 0,
+  // which is fine for the first segment in the batch but misses any
+  // LIST/MAP column that first appears in a later segment (e.g. cs
+  // column present in seg 1 but not seg 0). Reset every LIST/MAP cs
+  // projection up front so per-segment Materialize calls always start
+  // from a clean offset table.
   for (const auto& cp : gstate.cs_projections) {
-    seg_vecs.emplace_back(gstate.projected_types[cp.output_slot],
-                          static_cast<duckdb::idx_t>(num_rows));
-    duckdb::FlatVector::ValidityMutable(seg_vecs.back()).SetAllValid(num_rows);
+    const auto type_id = gstate.projected_types[cp.output_slot].id();
+    if (type_id == duckdb::LogicalTypeId::LIST ||
+        type_id == duckdb::LogicalTypeId::MAP) {
+      duckdb::ListVector::SetListSize(output.data[cp.output_slot], 0);
+    }
   }
 
-  struct PermDocIds {
-    std::span<const SegDoc> hits;
-    const uint32_t* perm_run;
-    size_t count;
-    size_t size() const noexcept { return count; }
-    irs::doc_id_t operator[](size_t k) const noexcept {
-      return hits[perm_run[k]].doc_pos;
-    }
-  };
-
+  // Caller passes hits already sorted by (segment, doc) -- both because
+  // consecutive same-segment runs let us batch one MaterializeNode call
+  // per segment and because the columnstore reader is forward-only. Each
+  // row's column value lands at slot `seg_start + k`, so the output
+  // stays aligned with the score column / RocksDB columns (which also
+  // write to their input-position slots). No internal sort, no dict_sel
+  // un-shuffle.
+  std::vector<irs::doc_id_t> seg_docs;
   size_t i = 0;
   while (i < num_rows) {
-    const uint32_t seg_id = seg_doc_score_order[perm[i]].segment_idx;
+    const uint32_t seg_id = seg_doc_batched[i].segment_idx;
     const size_t seg_start = i;
     do {
       ++i;
-    } while (i < num_rows &&
-             seg_doc_score_order[perm[i]].segment_idx == seg_id);
+    } while (i < num_rows && seg_doc_batched[i].segment_idx == seg_id);
     auto* mat = GetOrOpenSegmentMaterializer(gstate, reader, seg_id);
     if (!mat || !mat->HasAny()) {
       continue;
     }
-    const PermDocIds seg_docs{.hits = seg_doc_score_order,
-                              .perm_run = perm.data() + seg_start,
-                              .count = i - seg_start};
-    // Materializer bindings are a subsequence of cs_projections (filtered to
-    // columns present in this segment), in the same order. Step b_mat
-    // whenever its output_slot matches the next cs_projection.
-    size_t b_mat = 0;
-    for (size_t b_proj = 0; b_proj < n_bindings; ++b_proj) {
-      if (b_mat < mat->BindingCount() &&
-          mat->BindingOutputSlot(b_mat) ==
-            gstate.cs_projections[b_proj].output_slot) {
-        mat->MaterializeBinding(b_mat, seg_docs, seg_vecs[b_proj],
-                                static_cast<duckdb::idx_t>(seg_start));
-        ++b_mat;
-      }
+    seg_docs.clear();
+    seg_docs.reserve(i - seg_start);
+    for (size_t k = seg_start; k < i; ++k) {
+      seg_docs.push_back(seg_doc_batched[k].doc_pos);
     }
-  }
-
-  for (size_t b = 0; b < n_bindings; ++b) {
-    output.data[gstate.cs_projections[b].output_slot].Slice(seg_vecs[b],
-                                                            dict_sel, num_rows);
+    mat->SelectByDocIds(seg_docs, output,
+                        static_cast<duckdb::idx_t>(seg_start));
   }
 }
 
@@ -348,6 +331,35 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> CommonScanInitLocal(
   duckdb::TableFunctionInitInput& /*input*/,
   duckdb::GlobalTableFunctionState* /*global_state*/) {
   return duckdb::make_uniq<CommonScanLocalState>();
+}
+
+void WriteVirtualColumns(CommonScanGlobalState& gstate, duckdb::idx_t num_rows,
+                         duckdb::DataChunk& output,
+                         std::span<const float> scores_or_empty) {
+  for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
+    if (gstate.projected_columns[proj] != duckdb::DConstants::INVALID_INDEX) {
+      continue;
+    }
+    if (gstate.scan_tableoid && proj == gstate.tableoid_output_idx) {
+      output.data[proj].Reference(duckdb::Value::BIGINT(gstate.tableoid_value));
+    } else if (gstate.scan_score && proj == gstate.score_output_idx) {
+      // Empty scores_or_empty means the path wrote scores inline
+      // (BM25 streaming) or there's no score column to populate.
+      if (!scores_or_empty.empty()) {
+        SDB_ASSERT(scores_or_empty.size() >= num_rows);
+        auto* score_data =
+          duckdb::FlatVector::GetDataMutable<float>(output.data[proj]);
+        std::memcpy(score_data, scores_or_empty.data(),
+                    num_rows * sizeof(float));
+      }
+    } else if (gstate.scan_rowid && proj == gstate.rowid_output_idx) {
+      auto* data =
+        duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
+      for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+        data[i] = static_cast<int64_t>(i);
+      }
+    }
+  }
 }
 
 std::vector<std::string> InitPKScanColumns(

@@ -51,7 +51,24 @@ EXPLAIN SELECT label, tag FROM vec_t_idx
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 1          │
+│      Order By: #2 ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│           label           │
+│            tag            │
+│    (emb <-> [1, 0, 0])    │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │      Index: vec_t_idx     │
 │          TopK: 1          │
@@ -60,6 +77,7 @@ QUERY PLAN
 │        Projections:       │
 │           label           │
 │            tag            │
+│            emb            │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘
@@ -81,7 +99,25 @@ EXPLAIN SELECT pk, label, body FROM vec_t_idx
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 1          │
+│      Order By: #3 ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│           label           │
+│            body           │
+│   (emb <-> [10, 10, 10])  │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │      Index: vec_t_idx     │
 │      Lookup: rocksdb      │
@@ -92,6 +128,7 @@ QUERY PLAN
 │           pk (l)          │
 │         label (i)         │
 │          body (l)         │
+│          emb (i)          │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘

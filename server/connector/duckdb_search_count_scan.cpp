@@ -32,64 +32,73 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchCountScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
   auto state = duckdb::make_uniq<SearchCountScanGlobalState>();
-  // Reuse the common init for transaction isolation checks. The scan emits
-  // zero columns, so projected_columns / projected_types stay empty.
+  // Zero-column scan; projected_columns / types stay empty.
   InitCommonState(*state, context, bind_data, input);
 
-  // Single prepare site for CountScan. When stored_filter is null the
-  // scan short-circuits to live_docs_count() and skips iteration.
   const auto& count_scan = bind_data.scan_source->Cast<CountScan>();
+  SDB_ASSERT(count_scan.snapshot);
+  state->reader = &count_scan.snapshot->reader;
+  state->total_segments = count_scan.snapshot->reader.size();
+
   if (count_scan.stored_filter) {
-    SDB_ASSERT(count_scan.snapshot);
     state->query = count_scan.stored_filter->prepare({
       .index = count_scan.snapshot->reader,
     });
+  } else {
+    state->match_all_shortcut = true;
+    state->match_all_total = count_scan.snapshot->reader.live_docs_count();
   }
   return state;
 }
 
-void SearchCountScanFunction(duckdb::ClientContext& /*context*/,
+duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchCountScanInitLocal(
+  duckdb::ExecutionContext& /*context*/,
+  duckdb::TableFunctionInitInput& /*input*/,
+  duckdb::GlobalTableFunctionState* state) {
+  auto& gstate = state->Cast<SearchCountScanGlobalState>();
+  auto lstate = duckdb::make_uniq<SearchCountScanLocalState>();
+  if (gstate.match_all_shortcut) {
+    // MaxThreads=1 here; this lone lstate owns the precomputed total.
+    lstate->local_count = gstate.match_all_total;
+    lstate->segments_exhausted = true;
+  }
+  return lstate;
+}
+
+void SearchCountScanLocalState::OnSegment(duckdb::ClientContext& /*ctx*/,
+                                          const irs::SubReader& seg,
+                                          uint32_t /*seg_idx*/,
+                                          SearchCountScanGlobalState& g) {
+  if (!g.query) {
+    return;  // match_all_shortcut path; lstate.local_count seeded in InitLocal
+  }
+  auto doc = seg.mask(g.query->execute({.segment = seg}));
+  local_count += doc->count();
+}
+
+EmitOutput SearchCountScanLocalState::EmitNextChunk(
+  duckdb::ClientContext& /*ctx*/, SearchCountScanGlobalState& g,
+  duckdb::DataChunk& output) {
+  if (!segments_exhausted) {
+    return EmitOutput::NeedsSegment;
+  }
+  if (local_emitted >= local_count) {
+    return EmitOutput::Finished;
+  }
+  const auto batch =
+    std::min<duckdb::idx_t>(local_count - local_emitted, STANDARD_VECTOR_SIZE);
+  output.SetCardinality(batch);
+  g.produced_rows.fetch_add(batch, std::memory_order_relaxed);
+  local_emitted += batch;
+  return EmitOutput::Chunk;
+}
+
+void SearchCountScanFunction(duckdb::ClientContext& context,
                              duckdb::TableFunctionInput& data,
                              duckdb::DataChunk& output) {
   auto& gstate = data.global_state->Cast<SearchCountScanGlobalState>();
-  auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
-  auto& count_scan = bind_data.scan_source->Cast<CountScan>();
-
-  if (gstate.finished) {
-    output.SetCardinality(0);
-    return;
-  }
-
-  // First call: compute the total match count from iresearch.
-  // Mirrors server/connector/search_count_data_source.cpp:54-74.
-  if (!gstate.counted) {
-    SDB_ASSERT(count_scan.snapshot);
-    auto& reader = count_scan.snapshot->reader;
-    if (!gstate.query) {
-      gstate.total = reader.live_docs_count();
-    } else {
-      uint64_t count = 0;
-      for (size_t i = 0; i < reader.size(); ++i) {
-        auto& segment = reader[i];
-        auto doc = segment.mask(gstate.query->execute({.segment = segment}));
-        count += doc->count();
-      }
-      gstate.total = count;
-    }
-    gstate.counted = true;
-  }
-
-  const uint64_t remaining = gstate.total - gstate.emitted;
-  if (remaining == 0) {
-    gstate.finished = true;
-    output.SetCardinality(0);
-    return;
-  }
-  const duckdb::idx_t batch = static_cast<duckdb::idx_t>(
-    std::min<uint64_t>(remaining, STANDARD_VECTOR_SIZE));
-  output.SetCardinality(batch);
-  gstate.emitted += batch;
-  gstate.produced_rows.fetch_add(batch, std::memory_order_relaxed);
+  auto& lstate = data.local_state->Cast<SearchCountScanLocalState>();
+  RunParallelInvertedIndexScan(context, gstate, lstate, output);
 }
 
 }  // namespace sdb::connector

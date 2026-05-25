@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <duckdb.hpp>
 #include <iresearch/search/filter.hpp>
 
@@ -27,23 +28,44 @@
 
 namespace sdb::connector {
 
-// Computes the matching doc count from iresearch up-front, then emits
-// zero-column DataChunks capped at STANDARD_VECTOR_SIZE until drained.
-// The aggregate above (count_star) sums chunk cardinalities.
+struct SearchCountScanGlobalState;
+
+// Per-thread per-segment counting. Each thread emits its own
+// local_count as zero-column rows; count_star above sums cardinalities.
+// Match-all (no filter) short-circuits via reader.live_docs_count().
+struct SearchCountScanLocalState : public CommonScanLocalState {
+  uint64_t local_count = 0;
+  uint64_t local_emitted = 0;
+
+  void OnSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
+                 uint32_t seg_idx, SearchCountScanGlobalState& g);
+  EmitOutput EmitNextChunk(duckdb::ClientContext& ctx,
+                           SearchCountScanGlobalState& g,
+                           duckdb::DataChunk& output);
+};
+
 struct SearchCountScanGlobalState : public CommonScanGlobalState {
-  // Prepared filter query. Null when CountScan.stored_filter is null
-  // (match-all short-circuit via IndexReader::live_docs_count()).
-  // Otherwise built once in SearchCountScanInitGlobal -- the only
-  // prepare site for CountScan.
+  // Null when match-all (no stored_filter).
   irs::Filter::Query::ptr query;
 
-  uint64_t total = 0;
-  uint64_t emitted = 0;
-  bool counted = false;
+  // Match-all: live_docs_count() precomputed; OnSegment loop skipped.
+  bool match_all_shortcut = false;
+  uint64_t match_all_total = 0;
+
+  duckdb::idx_t MaxThreads() const override {
+    if (match_all_shortcut) {
+      return 1;
+    }
+    return std::max<duckdb::idx_t>(1, total_segments);
+  }
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchCountScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input);
+
+duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchCountScanInitLocal(
+  duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
+  duckdb::GlobalTableFunctionState* global_state);
 
 void SearchCountScanFunction(duckdb::ClientContext& context,
                              duckdb::TableFunctionInput& data,

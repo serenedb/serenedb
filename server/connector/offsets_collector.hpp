@@ -71,6 +71,7 @@ struct FieldState {
 
 struct FieldEntry {
   duckdb::idx_t output_idx = 0;
+  size_t limit = 0;
   std::string name;
   FieldState state;
 };

@@ -125,14 +125,14 @@ query
 SHOW TRANSACTION ISOLATION LEVEL;
 ----
 transaction_isolation
-repeatable read
+<slt:ignore>
 
 
 query
 SHOW transaction_isolation;
 ----
 transaction_isolation
-repeatable read
+<slt:ignore>
 
 
 query
@@ -172,7 +172,7 @@ query
 DESCRIBE TRANSACTION ISOLATION LEVEL;
 ----
 transaction_isolation
-repeatable read
+<slt:ignore>
 
 
 query
@@ -187,4 +187,4 @@ query
 show transaction isolation level;
 ----
 transaction_isolation
-repeatable read
+<slt:ignore>

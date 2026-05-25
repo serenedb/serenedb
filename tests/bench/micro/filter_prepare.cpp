@@ -36,9 +36,12 @@
 
 #include <array>
 #include <cstdio>
+#include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #include "iresearch/analysis/analyzers.hpp"
@@ -58,7 +61,7 @@
 #include "iresearch/search/terms_filter.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
-#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/mmap_directory.hpp"
 #include "iresearch/utils/compression.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -160,6 +163,12 @@ class FilterPrepareFixture : public benchmark::Fixture {
 
   void TearDown(const ::benchmark::State&) override {
     _reader = irs::DirectoryReader{};
+    _dir.reset();
+    if (!_dir_path.empty()) {
+      std::error_code ec;
+      std::filesystem::remove_all(_dir_path, ec);
+      _dir_path.clear();
+    }
   }
 
  protected:
@@ -180,10 +189,11 @@ class FilterPrepareFixture : public benchmark::Fixture {
     }
   }
 
-  // MemoryDirectory is Noncopyable + has no move; wrap in optional so we
-  // can re-create it on every SetUp (the fixture is reused for multiple
-  // state.range(0) values).
-  std::optional<irs::MemoryDirectory> _dir;
+  // MMapDirectory is Noncopyable + non-movable; hold by unique_ptr so we can
+  // re-create it on every SetUp (the fixture is reused across state.range(0)
+  // values).
+  std::unique_ptr<irs::MMapDirectory> _dir;
+  std::filesystem::path _dir_path;
   irs::Format::ptr _codec;
   irs::DirectoryReader _reader;
 
@@ -195,7 +205,15 @@ class FilterPrepareFixture : public benchmark::Fixture {
 
 void FilterPrepareFixture::BuildIndex(size_t num_segments) {
   _reader = irs::DirectoryReader{};
-  _dir.emplace();
+  _dir.reset();
+
+  if (_dir_path.empty()) {
+    _dir_path =
+      std::filesystem::temp_directory_path() / "serenedb-bench-filter-prepare";
+  }
+  std::filesystem::remove_all(_dir_path);
+  std::filesystem::create_directories(_dir_path);
+  _dir = std::make_unique<irs::MMapDirectory>(_dir_path);
 
   auto writer = irs::IndexWriter::Make(*_dir, _codec, irs::kOmCreate);
 

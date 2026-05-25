@@ -194,6 +194,56 @@ id    s
 2     10
 
 
+# --- ARRAY columns and expressions only allowed with built-in HNSW -------
+# Bare 'hnsw' would resolve to the user dict named 'hnsw' (text tokenizer),
+# but ARRAY values can only be indexed with the parens form of the built-in
+# 'hnsw' opclass. Validation rejects every other ARRAY case, regardless of
+# the element type. The shadowing dict in scope is irrelevant.
+
+statement ok
+CREATE TABLE shadow_hnsw_int_arr_col(id INT PRIMARY KEY, emb INT[3]);
+
+statement error
+CREATE INDEX bad_shadow_hnsw_int_arr_col_idx ON shadow_hnsw_int_arr_col USING inverted(
+    id, emb hnsw);
+----
+db error: ERROR: Failed to create index: Column 'emb' has unsupported type INTEGER[3]; ARRAY values can only be indexed with the built-in 'hnsw' opclass; use 'hnsw (...)'
+
+
+statement ok
+CREATE TABLE shadow_hnsw_float_arr_col(id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement error
+CREATE INDEX bad_shadow_hnsw_float_arr_col_idx ON shadow_hnsw_float_arr_col USING inverted(
+    id, emb hnsw);
+----
+db error: ERROR: Failed to create index: Column 'emb' has unsupported type FLOAT[3]; ARRAY values can only be indexed with the built-in 'hnsw' opclass; use 'hnsw (...)'
+
+
+statement ok
+CREATE TABLE shadow_hnsw_arr_expr(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
+
+statement error
+CREATE INDEX bad_shadow_hnsw_arr_expr_idx ON shadow_hnsw_arr_expr USING inverted(
+    id, (array_value(x, y, z)) hnsw);
+----
+db error: ERROR: Failed to create index: Column 'array_value(x, y, z)' has unsupported type FLOAT[3]; ARRAY values can only be indexed with the built-in 'hnsw' opclass; use 'hnsw (...)'
+
+
+# The parens form selects the built-in HNSW even with the shadowing dict
+# in scope -- this is the supported escape hatch. INT[3] still fails at
+# validation because HNSW requires ARRAY(FLOAT, N).
+statement ok
+CREATE INDEX good_shadow_hnsw_float_arr_col_idx ON shadow_hnsw_float_arr_col USING inverted(
+    id, emb hnsw(metric = 'l2', m = 8, ef_construction = 16));
+
+statement error
+CREATE INDEX bad_shadow_hnsw_int_arr_with_opts_idx ON shadow_hnsw_int_arr_col USING inverted(
+    id, emb hnsw(metric = 'l2', m = 8, ef_construction = 16));
+----
+db error: ERROR: Failed to create index: Column 'emb' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass
+
+
 # --- No dict with a built-in name: bare use surfaces the options hint ----
 
 # Fresh schema with no 'hnsw' / 'included' dicts in scope.

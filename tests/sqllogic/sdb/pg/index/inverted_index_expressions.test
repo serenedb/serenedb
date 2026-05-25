@@ -1315,8 +1315,7 @@ statement error
 CREATE INDEX hnsw_e_no_opts ON hnsw_e USING inverted(
     id, (array_value(x, y, z)) hnsw);
 ----
-db error: ERROR: Unknown opclass 'hnsw' on column 'array_value(x, y, z)': no text dictionary by that name in schema 'public'
-HINT: 'hnsw' is a built-in opclass; use the options form 'hnsw (...)'
+db error: ERROR: Failed to create index: Column 'array_value(x, y, z)' has unsupported type FLOAT[3]; ARRAY values can only be indexed with the built-in 'hnsw' opclass; use 'hnsw (...)'
 
 
 # ARRAY of non-FLOAT child type is rejected.
@@ -1328,7 +1327,7 @@ statement error
 CREATE INDEX hnsw_e3_idx ON hnsw_e3 USING inverted(
     id, (array_value(a, b, c)) hnsw(metric='l2', m=8, ef_construction=16));
 ----
-db error: ERROR: Failed to create index: Indexed expression array_value(a, b, c) has unsupported return type INTEGER[3]
+db error: ERROR: Failed to create index: Column 'array_value(a, b, c)' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass
 
 
 # Non-ARRAY return type rejected when hnsw is requested.

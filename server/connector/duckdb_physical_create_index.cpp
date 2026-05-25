@@ -248,6 +248,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     return static_cast<const catalog::Column*>(nullptr);
   };
 
+  idx_columns.reserve(_info->parsed_expressions.size());
   for (size_t i = 0; i < _info->parsed_expressions.size(); ++i) {
     auto& expr = _info->parsed_expressions[i];
     std::string opclass = i < _info->column_opclasses.size()
@@ -300,7 +301,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         "indexed expression must reference at least one base table column");
     }
     auto return_type = normalized->GetReturnType();
-    idx_columns.emplace_back(
+    auto& indexed_column = idx_columns.emplace_back(
       nullptr, "", std::move(opclass),
       catalog::ExpressionData{
         .serialized_expr = std::move(serialized),
@@ -309,6 +310,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         .pretty_printed = expr->ToString(),
       },
       std::move(opclass_options));
+    indexed_column.name = indexed_column.indexed_expr->pretty_printed;
   }
 
   bool if_not_exists =

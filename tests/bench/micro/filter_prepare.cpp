@@ -111,12 +111,19 @@ struct TextField {
     "segmentation", irs::Type<irs::text_format::Json>::get(), "{}");
 };
 
+// Half the pool uses `term_NNNN` (underscore in the value); the other half uses
+// `kwNNNN` (no underscore). The second half lets the wildcard "Term" classifier
+// path hit a real dictionary entry -- its pattern can't contain `_` or `%`.
 std::vector<std::string> MakeTermPool() {
   std::vector<std::string> v;
   v.reserve(kTermPoolSize);
   char buf[16];
   for (size_t i = 0; i < kTermPoolSize; ++i) {
-    std::snprintf(buf, sizeof(buf), "term_%04zu", i);
+    if (i % 2 == 0) {
+      std::snprintf(buf, sizeof(buf), "term_%04zu", i);
+    } else {
+      std::snprintf(buf, sizeof(buf), "kw%04zu", i);
+    }
     v.emplace_back(buf);
   }
   return v;
@@ -144,30 +151,31 @@ class FilterPrepareFixture : public benchmark::Fixture {
     // at static-init time (BENCHMARK_REGISTER_F instantiates one per
     // benchmark), before main() has called formats::Init() et al -- so
     // anything that calls `...::Get(name)` has to wait until SetUp.
-    if (!codec_) {
-      codec_ = irs::formats::Get("1_5simd");
-      term_pool_ = MakeTermPool();
+    if (!_codec) {
+      _codec = irs::formats::Get("1_5simd");
+      _term_pool = MakeTermPool();
     }
     BuildIndex(static_cast<size_t>(state.range(0)));
   }
 
   void TearDown(const ::benchmark::State&) override {
-    reader_ = irs::DirectoryReader{};
+    _reader = irs::DirectoryReader{};
   }
 
  protected:
   void BuildIndex(size_t num_segments);
 
+  // Construction + setup + boost happen once; only `prepare()` is timed.
   template<typename Filter, typename Setup>
   void RunBench(benchmark::State& s, Setup setup, const irs::Scorer* scorer,
                 std::optional<irs::score_t> boost) {
+    Filter f;
+    setup(f);
+    if (boost) {
+      f.boost(*boost);
+    }
     for (auto _ : s) {
-      Filter f;
-      setup(f);
-      if (boost) {
-        f.boost(*boost);
-      }
-      auto q = f.prepare({.index = reader_, .scorer = scorer});
+      auto q = f.prepare({.index = _reader, .scorer = scorer});
       benchmark::DoNotOptimize(q);
     }
   }
@@ -175,21 +183,21 @@ class FilterPrepareFixture : public benchmark::Fixture {
   // MemoryDirectory is Noncopyable + has no move; wrap in optional so we
   // can re-create it on every SetUp (the fixture is reused for multiple
   // state.range(0) values).
-  std::optional<irs::MemoryDirectory> dir_;
-  irs::Format::ptr codec_;
-  irs::DirectoryReader reader_;
+  std::optional<irs::MemoryDirectory> _dir;
+  irs::Format::ptr _codec;
+  irs::DirectoryReader _reader;
 
-  irs::BM25 bm25_{};
-  irs::TFIDF tfidf_{};
+  irs::BM25 _bm25{};
+  irs::TFIDF _tfidf{};
 
-  std::vector<std::string> term_pool_;
+  std::vector<std::string> _term_pool;
 };
 
 void FilterPrepareFixture::BuildIndex(size_t num_segments) {
-  reader_ = irs::DirectoryReader{};
-  dir_.emplace();
+  _reader = irs::DirectoryReader{};
+  _dir.emplace();
 
-  auto writer = irs::IndexWriter::Make(*dir_, codec_, irs::kOmCreate);
+  auto writer = irs::IndexWriter::Make(*_dir, _codec, irs::kOmCreate);
 
   KeywordField kw_field{.name = "kw"};
   TextField body_field{.name = "body"};
@@ -199,7 +207,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
       auto trx = writer->GetBatch();
       for (size_t d = 0; d < kDocsPerSegment; ++d) {
         const size_t i = s * kDocsPerSegment + d;
-        kw_field.value = term_pool_[i % term_pool_.size()];
+        kw_field.value = _term_pool[i % _term_pool.size()];
         body_field.value = kBodyPool[i % kBodyPool.size()];
 
         auto doc = trx.Insert();
@@ -210,7 +218,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
     writer->Commit();
   }
 
-  reader_ = irs::DirectoryReader{*dir_, codec_};
+  _reader = irs::DirectoryReader{*_dir, _codec};
 }
 
 // Common segment-count grid for every case.
@@ -230,7 +238,7 @@ void SetUpPrefix(irs::ByPrefix& f) {
 
 void SetUpWildcardTerm(irs::ByWildcard& f) {
   *f.mutable_field() = "kw";
-  f.mutable_options()->term = AsBytes("term0042");
+  f.mutable_options()->term = AsBytes("kw0001");
 }
 
 void SetUpWildcardTermEscaped(irs::ByWildcard& f) {
@@ -332,15 +340,15 @@ void SetUpNot(irs::Not& n) {
   BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_NoScorer)                   \
     ->Apply(ApplyArgs);                                                        \
   BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_Bm25)                         \
-  (benchmark::State & s) { RunBench<Filter>(s, Setup, &bm25_, std::nullopt); } \
+  (benchmark::State & s) { RunBench<Filter>(s, Setup, &_bm25, std::nullopt); } \
   BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_Bm25)->Apply(ApplyArgs);    \
   BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_Tfidf)                        \
   (benchmark::State & s) {                                                     \
-    RunBench<Filter>(s, Setup, &tfidf_, std::nullopt);                         \
+    RunBench<Filter>(s, Setup, &_tfidf, std::nullopt);                         \
   }                                                                            \
   BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_Tfidf)->Apply(ApplyArgs);   \
   BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_Bm25_Boost)                   \
-  (benchmark::State & s) { RunBench<Filter>(s, Setup, &bm25_, kBoostValue); }  \
+  (benchmark::State & s) { RunBench<Filter>(s, Setup, &_bm25, kBoostValue); }  \
   BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_Bm25_Boost)->Apply(ApplyArgs)
 
 DEFINE_FILTER_VARIANTS(ByTerm, irs::ByTerm, SetUpTerm);

@@ -677,8 +677,8 @@ void FillEntryFromTokenizer(const Tokenizer& dict,
 Result ApplyOpclassToEntry(const CreateIndexColumn& c,
                            std::string_view owner_label,
                            const duckdb::LogicalType& value_type,
-                           bool is_indexed_column, const Snapshot& snapshot,
-                           ObjectId database_id, std::string_view schema_name,
+                           const Snapshot& snapshot, ObjectId database_id,
+                           std::string_view schema_name,
                            InvertedIndexEntryInfo& entry) {
   if (c.opclass.empty()) {
     return {};
@@ -688,30 +688,21 @@ Result ApplyOpclassToEntry(const CreateIndexColumn& c,
   const bool is_builtin_name = is_included_opclass || is_hnsw_opclass;
 
   if (c.HasParentheses() && !is_builtin_name) {
-    if (is_indexed_column) {
-      return {ERROR_BAD_PARAMETER,
-              "Unknown built-in opclass '",
-              c.opclass,
-              "' on column '",
-              owner_label,
-              "' (known: ",
-              DescribeKnownOpclassTypes(),
-              ")"};
-    }
-    return {ERROR_BAD_PARAMETER, "indexed expression '", owner_label,
-            "': only the 'included' and 'hnsw' built-in opclasses "
-            "accept options"};
+    return {ERROR_BAD_PARAMETER,
+            "Unknown built-in opclass '",
+            c.opclass,
+            "' on '",
+            owner_label,
+            "' (known: ",
+            DescribeKnownOpclassTypes(),
+            ")"};
   }
 
   std::shared_ptr<Tokenizer> dict;
   if (!c.HasParentheses()) {
     dict = LookupTokenizer(snapshot, database_id, schema_name, c.opclass);
   }
-
-  const bool bare_builtin_no_dict =
-    !dict && !c.HasParentheses() &&
-    (is_hnsw_opclass || (is_indexed_column && is_included_opclass));
-  if (bare_builtin_no_dict) {
+  if (!dict && !c.HasParentheses() && is_builtin_name) {
     ThrowUnknownBuiltinOpclass(c.opclass, owner_label, schema_name);
   }
 
@@ -734,12 +725,9 @@ Result ApplyOpclassToEntry(const CreateIndexColumn& c,
   if (!analyzer) {
     return std::move(analyzer).error();
   }
-  if (is_indexed_column) {
-    if (auto r =
-          ValidateGeoTokenizerColumn(owner_label, value_type, **analyzer);
-        r.fail()) {
-      return r;
-    }
+  if (auto r = ValidateGeoTokenizerColumn(owner_label, value_type, **analyzer);
+      r.fail()) {
+    return r;
   }
   FillEntryFromTokenizer(*dict, **analyzer, entry);
   return {};
@@ -794,8 +782,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       InvertedIndexEntryInfo expr_info;
       expr_info.expression = expr_data;
       if (auto r = ApplyOpclassToEntry(c, expr_data.pretty_printed,
-                                       expr_data.return_type,
-                                       /*is_indexed_column=*/false, *snapshot,
+                                       expr_data.return_type, *snapshot,
                                        database_id, schema_name, expr_info);
           r.fail()) {
         return std::unexpected<Result>(std::move(r));
@@ -807,9 +794,9 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       static_cast<irs::field_id>(c.catalog_column->GetId());
     auto& index_col =
       entries.try_emplace(col_field_id, InvertedIndexEntryInfo{}).first->second;
-    if (auto r = ApplyOpclassToEntry(c, c.name, c.catalog_column->type,
-                                     /*is_indexed_column=*/true, *snapshot,
-                                     database_id, schema_name, index_col);
+    if (auto r =
+          ApplyOpclassToEntry(c, c.name, c.catalog_column->type, *snapshot,
+                              database_id, schema_name, index_col);
         r.fail()) {
       return std::unexpected<Result>(std::move(r));
     }

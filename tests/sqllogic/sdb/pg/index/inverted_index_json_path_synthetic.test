@@ -55,45 +55,6 @@ id
 
 
 # ---------------------------------------------------------------------------
-# Section 2: JSON path with geojson_shape (StoreAttr from geo analyzer).
-# ---------------------------------------------------------------------------
-
-statement ok
-CREATE TEXT SEARCH DICTIONARY js_geo(
-    template = 'geojson'
-);
-
-
-statement ok
-CREATE TABLE jp_geo (id INTEGER PRIMARY KEY, doc JSON);
-
-
-statement ok
-CREATE INDEX jp_geo_idx ON jp_geo
-    USING inverted(id, (doc->>'where') js_geo);
-
-
-statement count 1
-INSERT INTO jp_geo VALUES (1, '{"where":"{\"type\":\"Point\",\"coordinates\":[37.615895,55.703900]}"}'::json);
-
-statement count 1
-INSERT INTO jp_geo VALUES (2, '{"where":"{\"type\":\"Point\",\"coordinates\":[37.616297,55.704831]}"}'::json);
-
-
-statement ok
-VACUUM (UPDATE_INDEXES) jp_geo;
-
-
-# Just confirm the rows are reachable -- the geo predicate language
-# isn't the point here; the catalog-reservation path is.
-query
-SELECT count(*) FROM jp_geo_idx;
-----
-count
-2
-
-
-# ---------------------------------------------------------------------------
 # Section 3: JSON path with text-tokenizer-with-norm.
 # ---------------------------------------------------------------------------
 
@@ -185,16 +146,10 @@ statement ok
 DROP TABLE jp_wild;
 
 statement ok
-DROP TABLE jp_geo;
-
-statement ok
 DROP TABLE jp_norm;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY js_wild;
-
-statement ok
-DROP TEXT SEARCH DICTIONARY js_geo;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY js_norm;

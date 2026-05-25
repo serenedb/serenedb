@@ -1127,7 +1127,7 @@ statement ok
 CREATE TABLE inc_e_num(id INT PRIMARY KEY, a INT, b INT);
 
 statement ok
-CREATE INDEX inc_e_num_idx ON inc_e_num USING inverted(id, (a + b) included);
+CREATE INDEX inc_e_num_idx ON inc_e_num USING inverted(id, (a + b) included ());
 
 statement ok
 INSERT INTO inc_e_num VALUES (1, 10, 20), (2, 5, 5), (3, 100, 1);
@@ -1170,7 +1170,7 @@ CREATE TABLE inc_e_str(id INT PRIMARY KEY, a VARCHAR, b VARCHAR);
 
 statement ok
 CREATE INDEX inc_e_str_idx ON inc_e_str USING inverted(
-    id, (LOWER(a) || '-' || LOWER(b)) included);
+    id, (LOWER(a) || '-' || LOWER(b)) included ());
 
 statement ok
 INSERT INTO inc_e_str VALUES (1, 'FOO', 'Bar'), (2, 'X', 'Y');
@@ -1246,7 +1246,7 @@ statement error
 CREATE INDEX inc_e_dict_with_opts ON inc_e_num USING inverted(
     id, (a + b) verbatim_dict (compression='zstd'));
 ----
-db error: ERROR: Failed to create index: indexed expression '(a + b)': only the 'included' and 'hnsw' built-in opclasses accept options
+db error: ERROR: Failed to create index: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, hnsw)
 
 
 # --- HNSW on an indexed expression: `(expr) hnsw(metric='l2', m=..., ef_construction=...)` builds an ANN graph over the expression's value.
@@ -1475,3 +1475,30 @@ CREATE TABLE udf_ok(id INT PRIMARY KEY, a INT, b INT);
 
 statement ok
 CREATE INDEX udf_ok_idx ON udf_ok USING inverted(id, (a + b) verbatim_dict);
+
+
+# --- Geo-analyzer validation runs for indexed expressions ----------------
+# The geojson / geopoint analyzers require a JSON or GEOMETRY value type.
+# A geo dict on an expression whose return type is anything else is rejected
+# with the same error that a non-JSON/non-GEOMETRY column would produce.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_expr_dict(template = 'geojson');
+
+statement ok
+CREATE TABLE geo_expr_bad(id INT PRIMARY KEY, s VARCHAR);
+
+statement error
+CREATE INDEX geo_expr_bad_idx ON geo_expr_bad USING inverted(
+    id, (LOWER(s)) geo_expr_dict);
+----
+db error: ERROR: Failed to create index: Column 'lower(s)' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# Positive case: a JSON-typed expression is accepted.
+statement ok
+CREATE TABLE geo_expr_ok(id INT PRIMARY KEY, raw VARCHAR);
+
+statement ok
+CREATE INDEX geo_expr_ok_idx ON geo_expr_ok USING inverted(
+    id, (raw::JSON) geo_expr_dict);

@@ -236,28 +236,17 @@ db error: ERROR: Unknown opclass 'hnsw' on column '(a || b)': no text dictionary
 HINT: 'hnsw' is a built-in opclass; use the options form 'hnsw (...)'
 
 
-# Bare 'included' on an indexed expression accepts default options on the
-# built-in path (the 'included' opclass has no required options). No hint
-# error here; the index is built with built-in 'included'.
+# Bare 'included' on an indexed expression with no dict in scope -- same
+# hint shape as the column path.
 statement ok
 CREATE TABLE bare_inc_expr(id INT PRIMARY KEY, a INT, b INT);
 
-statement ok
+statement error
 CREATE INDEX bare_inc_expr_idx ON bare_inc_expr USING inverted(
     id, (a + b) included);
-
-statement ok
-INSERT INTO bare_inc_expr VALUES (1, 10, 20), (2, 5, 5);
-
-statement ok
-VACUUM (UPDATE_INDEXES) bare_inc_expr;
-
-query
-SELECT id, a + b AS s FROM bare_inc_expr_idx ORDER BY id;
 ----
-id    s
-1     30
-2     10
+db error: ERROR: Unknown opclass 'included' on column '(a + b)': no text dictionary by that name in schema 'hint_only'
+HINT: 'included' is a built-in opclass; use the options form 'included (...)'
 
 
 # A non-built-in name with parens is rejected regardless of whether a
@@ -269,7 +258,7 @@ statement error
 CREATE INDEX hint_parens_dict ON hint_hnsw_col USING inverted(
     id, s hint_only_dict (compression = 'zstd'));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'hint_only_dict' on column 's' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'hint_only_dict' on 's' (known: included, hnsw)
 
 
 # A non-built-in name with no dict by that name: existing "unknown opclass"

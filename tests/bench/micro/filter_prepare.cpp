@@ -142,8 +142,8 @@ class FilterPrepareFixture : public benchmark::Fixture {
   void SetUp(const ::benchmark::State& state) override {
     // Lazy-initialise registry-backed handles. The fixture is constructed
     // at static-init time (BENCHMARK_REGISTER_F instantiates one per
-    // benchmark), before main() has called formats::Init() et al — so
-    // anything that calls `…::Get(name)` has to wait until SetUp.
+    // benchmark), before main() has called formats::Init() et al -- so
+    // anything that calls `...::Get(name)` has to wait until SetUp.
     if (!codec_) {
       codec_ = irs::formats::Get("1_5simd");
       term_pool_ = MakeTermPool();
@@ -158,7 +158,7 @@ class FilterPrepareFixture : public benchmark::Fixture {
  protected:
   void BuildIndex(size_t num_segments);
 
-  template <typename Filter, typename Setup>
+  template<typename Filter, typename Setup>
   void RunBench(benchmark::State& s, Setup setup, const irs::Scorer* scorer,
                 std::optional<irs::score_t> boost) {
     for (auto _ : s) {
@@ -228,9 +228,29 @@ void SetUpPrefix(irs::ByPrefix& f) {
   f.mutable_options()->term = AsBytes("term_0");
 }
 
-void SetUpWildcard(irs::ByWildcard& f) {
+void SetUpWildcardTerm(irs::ByWildcard& f) {
   *f.mutable_field() = "kw";
-  f.mutable_options()->term = AsBytes("term_0??");
+  f.mutable_options()->term = AsBytes("term0042");
+}
+
+void SetUpWildcardTermEscaped(irs::ByWildcard& f) {
+  *f.mutable_field() = "kw";
+  f.mutable_options()->term = AsBytes("term\\_0042");
+}
+
+void SetUpWildcardPrefix(irs::ByWildcard& f) {
+  *f.mutable_field() = "kw";
+  f.mutable_options()->term = AsBytes("term%");
+}
+
+void SetUpWildcardPrefixEscaped(irs::ByWildcard& f) {
+  *f.mutable_field() = "kw";
+  f.mutable_options()->term = AsBytes("term\\_0%");
+}
+
+void SetUpWildcardGeneric(irs::ByWildcard& f) {
+  *f.mutable_field() = "kw";
+  f.mutable_options()->term = AsBytes("term_0%");
 }
 
 void SetUpRange(irs::ByRange& f) {
@@ -304,34 +324,37 @@ void SetUpNot(irs::Not& n) {
 
 }  // namespace
 
-#define DEFINE_FILTER_VARIANTS(Tag, Filter, Setup)                              \
-  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_NoScorer)                      \
+#define DEFINE_FILTER_VARIANTS(Tag, Filter, Setup)                             \
+  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_NoScorer)                     \
   (benchmark::State & s) {                                                     \
     RunBench<Filter>(s, Setup, nullptr, std::nullopt);                         \
   }                                                                            \
-  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_NoScorer)->Apply(ApplyArgs); \
-  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_Bm25)                          \
-  (benchmark::State & s) {                                                     \
-    RunBench<Filter>(s, Setup, &bm25_, std::nullopt);                          \
-  }                                                                            \
-  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_Bm25)->Apply(ApplyArgs);     \
-  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_Tfidf)                         \
+  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_NoScorer)                   \
+    ->Apply(ApplyArgs);                                                        \
+  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_Bm25)                         \
+  (benchmark::State & s) { RunBench<Filter>(s, Setup, &bm25_, std::nullopt); } \
+  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_Bm25)->Apply(ApplyArgs);    \
+  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_Tfidf)                        \
   (benchmark::State & s) {                                                     \
     RunBench<Filter>(s, Setup, &tfidf_, std::nullopt);                         \
   }                                                                            \
-  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_Tfidf)->Apply(ApplyArgs);    \
-  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_Bm25_Boost)                    \
-  (benchmark::State & s) {                                                     \
-    RunBench<Filter>(s, Setup, &bm25_, kBoostValue);                           \
-  }                                                                            \
-  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_Bm25_Boost)                  \
-    ->Apply(ApplyArgs)
+  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_Tfidf)->Apply(ApplyArgs);   \
+  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_Bm25_Boost)                   \
+  (benchmark::State & s) { RunBench<Filter>(s, Setup, &bm25_, kBoostValue); }  \
+  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_Bm25_Boost)->Apply(ApplyArgs)
 
 DEFINE_FILTER_VARIANTS(ByTerm, irs::ByTerm, SetUpTerm);
 DEFINE_FILTER_VARIANTS(ByPrefix, irs::ByPrefix, SetUpPrefix);
 DEFINE_FILTER_VARIANTS(ByRange, irs::ByRange, SetUpRange);
 DEFINE_FILTER_VARIANTS(ByTerms, irs::ByTerms, SetUpTerms);
-DEFINE_FILTER_VARIANTS(ByWildcard, irs::ByWildcard, SetUpWildcard);
+DEFINE_FILTER_VARIANTS(ByWildcard_Term, irs::ByWildcard, SetUpWildcardTerm);
+DEFINE_FILTER_VARIANTS(ByWildcard_TermEscaped, irs::ByWildcard,
+                       SetUpWildcardTermEscaped);
+DEFINE_FILTER_VARIANTS(ByWildcard_Prefix, irs::ByWildcard, SetUpWildcardPrefix);
+DEFINE_FILTER_VARIANTS(ByWildcard_PrefixEscaped, irs::ByWildcard,
+                       SetUpWildcardPrefixEscaped);
+DEFINE_FILTER_VARIANTS(ByWildcard_Generic, irs::ByWildcard,
+                       SetUpWildcardGeneric);
 DEFINE_FILTER_VARIANTS(ByEditDistance, irs::ByEditDistance, SetUpEdit);
 DEFINE_FILTER_VARIANTS(ByPhrase, irs::ByPhrase, SetUpPhrase);
 DEFINE_FILTER_VARIANTS(And, irs::And, SetUpAnd);

@@ -158,6 +158,20 @@ class FilterPrepareFixture : public benchmark::Fixture {
  protected:
   void BuildIndex(size_t num_segments);
 
+  template <typename Filter, typename Setup>
+  void RunBench(benchmark::State& s, Setup setup, const irs::Scorer* scorer,
+                std::optional<irs::score_t> boost) {
+    for (auto _ : s) {
+      Filter f;
+      setup(f);
+      if (boost) {
+        f.boost(*boost);
+      }
+      auto q = f.prepare({.index = reader_, .scorer = scorer});
+      benchmark::DoNotOptimize(q);
+    }
+  }
+
   // MemoryDirectory is Noncopyable + has no move; wrap in optional so we
   // can re-create it on every SetUp (the fixture is reused for multiple
   // state.range(0) values).
@@ -202,6 +216,21 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
 // Common segment-count grid for every case.
 void ApplyArgs(benchmark::internal::Benchmark* b) {
   b->Arg(1)->Arg(4)->Arg(16)->Arg(64)->Unit(benchmark::kMicrosecond);
+}
+
+void SetUpTerm(irs::ByTerm& f) {
+  *f.mutable_field() = "kw";
+  f.mutable_options()->term = AsBytes("term_0042");
+}
+
+void SetUpPrefix(irs::ByPrefix& f) {
+  *f.mutable_field() = "kw";
+  f.mutable_options()->term = AsBytes("term_0");
+}
+
+void SetUpWildcard(irs::ByWildcard& f) {
+  *f.mutable_field() = "kw";
+  f.mutable_options()->term = AsBytes("term_0??");
 }
 
 void SetUpRange(irs::ByRange& f) {
@@ -275,500 +304,41 @@ void SetUpNot(irs::Not& n) {
 
 }  // namespace
 
-// ---------------------------------------------------------------------------
-// ByTerm
-// ---------------------------------------------------------------------------
+#define DEFINE_FILTER_VARIANTS(Tag, Filter, Setup)                              \
+  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_NoScorer)                      \
+  (benchmark::State & s) {                                                     \
+    RunBench<Filter>(s, Setup, nullptr, std::nullopt);                         \
+  }                                                                            \
+  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_NoScorer)->Apply(ApplyArgs); \
+  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_Bm25)                          \
+  (benchmark::State & s) {                                                     \
+    RunBench<Filter>(s, Setup, &bm25_, std::nullopt);                          \
+  }                                                                            \
+  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_Bm25)->Apply(ApplyArgs);     \
+  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_Tfidf)                         \
+  (benchmark::State & s) {                                                     \
+    RunBench<Filter>(s, Setup, &tfidf_, std::nullopt);                         \
+  }                                                                            \
+  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_Tfidf)->Apply(ApplyArgs);    \
+  BENCHMARK_DEFINE_F(FilterPrepareFixture, Tag##_Bm25_Boost)                    \
+  (benchmark::State & s) {                                                     \
+    RunBench<Filter>(s, Setup, &bm25_, kBoostValue);                           \
+  }                                                                            \
+  BENCHMARK_REGISTER_F(FilterPrepareFixture, Tag##_Bm25_Boost)                  \
+    ->Apply(ApplyArgs)
 
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByTerm_NoScorer)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByTerm f;
-    *f.mutable_field() = "kw";
-    f.mutable_options()->term = AsBytes("term_0042");
-    auto q = f.prepare({.index = reader_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByTerm_NoScorer)->Apply(ApplyArgs);
+DEFINE_FILTER_VARIANTS(ByTerm, irs::ByTerm, SetUpTerm);
+DEFINE_FILTER_VARIANTS(ByPrefix, irs::ByPrefix, SetUpPrefix);
+DEFINE_FILTER_VARIANTS(ByRange, irs::ByRange, SetUpRange);
+DEFINE_FILTER_VARIANTS(ByTerms, irs::ByTerms, SetUpTerms);
+DEFINE_FILTER_VARIANTS(ByWildcard, irs::ByWildcard, SetUpWildcard);
+DEFINE_FILTER_VARIANTS(ByEditDistance, irs::ByEditDistance, SetUpEdit);
+DEFINE_FILTER_VARIANTS(ByPhrase, irs::ByPhrase, SetUpPhrase);
+DEFINE_FILTER_VARIANTS(And, irs::And, SetUpAnd);
+DEFINE_FILTER_VARIANTS(Or, irs::Or, SetUpOr);
+DEFINE_FILTER_VARIANTS(Not, irs::Not, SetUpNot);
 
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByTerm_Bm25)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByTerm f;
-    *f.mutable_field() = "kw";
-    f.mutable_options()->term = AsBytes("term_0042");
-    auto q = f.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByTerm_Bm25)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByTerm_Tfidf)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByTerm f;
-    *f.mutable_field() = "kw";
-    f.mutable_options()->term = AsBytes("term_0042");
-    auto q = f.prepare({.index = reader_, .scorer = &tfidf_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByTerm_Tfidf)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByTerm_Bm25_Boost)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByTerm f;
-    *f.mutable_field() = "kw";
-    f.mutable_options()->term = AsBytes("term_0042");
-    f.boost(kBoostValue);
-    auto q = f.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByTerm_Bm25_Boost)
-  ->Apply(ApplyArgs);
-
-// ---------------------------------------------------------------------------
-// ByPrefix
-// ---------------------------------------------------------------------------
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByPrefix_NoScorer)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByPrefix f;
-    *f.mutable_field() = "kw";
-    f.mutable_options()->term = AsBytes("term_0");
-    auto q = f.prepare({.index = reader_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByPrefix_NoScorer)
-  ->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByPrefix_Bm25)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByPrefix f;
-    *f.mutable_field() = "kw";
-    f.mutable_options()->term = AsBytes("term_0");
-    auto q = f.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByPrefix_Bm25)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByPrefix_Tfidf)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByPrefix f;
-    *f.mutable_field() = "kw";
-    f.mutable_options()->term = AsBytes("term_0");
-    auto q = f.prepare({.index = reader_, .scorer = &tfidf_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByPrefix_Tfidf)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByPrefix_Bm25_Boost)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByPrefix f;
-    *f.mutable_field() = "kw";
-    f.mutable_options()->term = AsBytes("term_0");
-    f.boost(kBoostValue);
-    auto q = f.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByPrefix_Bm25_Boost)
-  ->Apply(ApplyArgs);
-
-// ---------------------------------------------------------------------------
-// ByRange
-// ---------------------------------------------------------------------------
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByRange_NoScorer)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByRange f;
-    SetUpRange(f);
-    auto q = f.prepare({.index = reader_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByRange_NoScorer)
-  ->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByRange_Bm25)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByRange f;
-    SetUpRange(f);
-    auto q = f.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByRange_Bm25)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByRange_Tfidf)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByRange f;
-    SetUpRange(f);
-    auto q = f.prepare({.index = reader_, .scorer = &tfidf_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByRange_Tfidf)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByRange_Bm25_Boost)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByRange f;
-    SetUpRange(f);
-    f.boost(kBoostValue);
-    auto q = f.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByRange_Bm25_Boost)
-  ->Apply(ApplyArgs);
-
-// ---------------------------------------------------------------------------
-// ByTerms (8 terms)
-// ---------------------------------------------------------------------------
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByTerms_NoScorer)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByTerms f;
-    SetUpTerms(f);
-    auto q = f.prepare({.index = reader_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByTerms_NoScorer)
-  ->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByTerms_Bm25)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByTerms f;
-    SetUpTerms(f);
-    auto q = f.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByTerms_Bm25)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByTerms_Tfidf)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByTerms f;
-    SetUpTerms(f);
-    auto q = f.prepare({.index = reader_, .scorer = &tfidf_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByTerms_Tfidf)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByTerms_Bm25_Boost)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByTerms f;
-    SetUpTerms(f);
-    f.boost(kBoostValue);
-    auto q = f.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByTerms_Bm25_Boost)
-  ->Apply(ApplyArgs);
-
-// ---------------------------------------------------------------------------
-// ByWildcard
-// ---------------------------------------------------------------------------
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByWildcard_NoScorer)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByWildcard f;
-    *f.mutable_field() = "kw";
-    f.mutable_options()->term = AsBytes("term_0??");
-    auto q = f.prepare({.index = reader_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByWildcard_NoScorer)
-  ->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByWildcard_Bm25)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByWildcard f;
-    *f.mutable_field() = "kw";
-    f.mutable_options()->term = AsBytes("term_0??");
-    auto q = f.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByWildcard_Bm25)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByWildcard_Tfidf)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByWildcard f;
-    *f.mutable_field() = "kw";
-    f.mutable_options()->term = AsBytes("term_0??");
-    auto q = f.prepare({.index = reader_, .scorer = &tfidf_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByWildcard_Tfidf)
-  ->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByWildcard_Bm25_Boost)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByWildcard f;
-    *f.mutable_field() = "kw";
-    f.mutable_options()->term = AsBytes("term_0??");
-    f.boost(kBoostValue);
-    auto q = f.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByWildcard_Bm25_Boost)
-  ->Apply(ApplyArgs);
-
-// ---------------------------------------------------------------------------
-// ByEditDistance (Levenshtein) — max_distance=1, max_terms=64
-// ---------------------------------------------------------------------------
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByEditDistance_NoScorer)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByEditDistance f;
-    SetUpEdit(f);
-    auto q = f.prepare({.index = reader_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByEditDistance_NoScorer)
-  ->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByEditDistance_Bm25)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByEditDistance f;
-    SetUpEdit(f);
-    auto q = f.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByEditDistance_Bm25)
-  ->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByEditDistance_Tfidf)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByEditDistance f;
-    SetUpEdit(f);
-    auto q = f.prepare({.index = reader_, .scorer = &tfidf_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByEditDistance_Tfidf)
-  ->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByEditDistance_Bm25_Boost)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByEditDistance f;
-    SetUpEdit(f);
-    f.boost(kBoostValue);
-    auto q = f.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByEditDistance_Bm25_Boost)
-  ->Apply(ApplyArgs);
-
-// ---------------------------------------------------------------------------
-// ByPhrase ("quick brown")
-// ---------------------------------------------------------------------------
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByPhrase_NoScorer)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByPhrase f;
-    SetUpPhrase(f);
-    auto q = f.prepare({.index = reader_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByPhrase_NoScorer)
-  ->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByPhrase_Bm25)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByPhrase f;
-    SetUpPhrase(f);
-    auto q = f.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByPhrase_Bm25)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByPhrase_Tfidf)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByPhrase f;
-    SetUpPhrase(f);
-    auto q = f.prepare({.index = reader_, .scorer = &tfidf_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByPhrase_Tfidf)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, ByPhrase_Bm25_Boost)
-(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::ByPhrase f;
-    SetUpPhrase(f);
-    f.boost(kBoostValue);
-    auto q = f.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, ByPhrase_Bm25_Boost)
-  ->Apply(ApplyArgs);
-
-// ---------------------------------------------------------------------------
-// And { ByTerm, ByPrefix, ByRange }
-// ---------------------------------------------------------------------------
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, And_NoScorer)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::And a;
-    SetUpAnd(a);
-    auto q = a.prepare({.index = reader_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, And_NoScorer)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, And_Bm25)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::And a;
-    SetUpAnd(a);
-    auto q = a.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, And_Bm25)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, And_Tfidf)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::And a;
-    SetUpAnd(a);
-    auto q = a.prepare({.index = reader_, .scorer = &tfidf_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, And_Tfidf)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, And_Bm25_Boost)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::And a;
-    SetUpAnd(a);
-    a.boost(kBoostValue);
-    auto q = a.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, And_Bm25_Boost)->Apply(ApplyArgs);
-
-// ---------------------------------------------------------------------------
-// Or { ByTerm, ByTerm, ByTerm }
-// ---------------------------------------------------------------------------
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, Or_NoScorer)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::Or o;
-    SetUpOr(o);
-    auto q = o.prepare({.index = reader_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, Or_NoScorer)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, Or_Bm25)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::Or o;
-    SetUpOr(o);
-    auto q = o.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, Or_Bm25)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, Or_Tfidf)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::Or o;
-    SetUpOr(o);
-    auto q = o.prepare({.index = reader_, .scorer = &tfidf_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, Or_Tfidf)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, Or_Bm25_Boost)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::Or o;
-    SetUpOr(o);
-    o.boost(kBoostValue);
-    auto q = o.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, Or_Bm25_Boost)->Apply(ApplyArgs);
-
-// ---------------------------------------------------------------------------
-// Not(ByTerm)
-// ---------------------------------------------------------------------------
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, Not_NoScorer)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::Not n;
-    SetUpNot(n);
-    auto q = n.prepare({.index = reader_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, Not_NoScorer)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, Not_Bm25)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::Not n;
-    SetUpNot(n);
-    auto q = n.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, Not_Bm25)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, Not_Tfidf)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::Not n;
-    SetUpNot(n);
-    auto q = n.prepare({.index = reader_, .scorer = &tfidf_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, Not_Tfidf)->Apply(ApplyArgs);
-
-BENCHMARK_DEFINE_F(FilterPrepareFixture, Not_Bm25_Boost)(benchmark::State& s) {
-  for (auto _ : s) {
-    irs::Not n;
-    SetUpNot(n);
-    n.boost(kBoostValue);
-    auto q = n.prepare({.index = reader_, .scorer = &bm25_});
-    benchmark::DoNotOptimize(q);
-  }
-}
-BENCHMARK_REGISTER_F(FilterPrepareFixture, Not_Bm25_Boost)->Apply(ApplyArgs);
+#undef DEFINE_FILTER_VARIANTS
 
 int main(int argc, char** argv) {
   // Statically-linked plugin registries need explicit initialisation; without

@@ -261,12 +261,12 @@ CREATE INDEX hint_parens_dict ON hint_hnsw_col USING inverted(
 db error: ERROR: Failed to create index: Unknown built-in opclass 'hint_only_dict' on 's' (known: included, hnsw)
 
 
-# A non-built-in name with no dict by that name: existing "unknown opclass"
-# message (lists built-ins and the schema it searched).
+# A non-built-in name with no dict by that name: bare-name lookup misses,
+# resulting in the "Unknown opclass" error.
 statement error
 CREATE INDEX hint_unknown ON hint_hnsw_col USING inverted(id, s missing_dict);
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'missing_dict' on column 's': not a built-in type (known: included, hnsw) and no text dictionary by that name in schema 'hint_only'
+db error: ERROR: Failed to create index: Unknown opclass 'missing_dict' on column 's': no text dictionary by that name in schema 'hint_only'
 
 
 statement ok

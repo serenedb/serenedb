@@ -619,10 +619,6 @@ std::shared_ptr<Tokenizer> LookupTokenizer(const Snapshot& snapshot,
              opclass, " (...)'"));
 }
 
-// Produces the error for a non-built-in opclass name that didn't resolve
-// to a text search dictionary -- either because the name qualifies a
-// different schema (cross-schema use is not supported) or because no
-// dictionary by that name exists in the current schema.
 Result MakeUnknownOpclassError(std::string_view opclass,
                                std::string_view owner_label,
                                std::string_view schema_name) {
@@ -636,9 +632,7 @@ Result MakeUnknownOpclassError(std::string_view opclass,
           opclass,
           "' on column '",
           owner_label,
-          "': not a built-in type (known: ",
-          DescribeKnownOpclassTypes(),
-          ") and no text dictionary by that name in schema '",
+          "': no text dictionary by that name in schema '",
           schema_name,
           "'"};
 }

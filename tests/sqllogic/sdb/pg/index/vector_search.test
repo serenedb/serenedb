@@ -846,7 +846,7 @@ db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 
 statement error
 CREATE INDEX m_fake_name ON t_err USING inverted(emb fake_dict);
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'fake_dict' on column 'emb': not a built-in type (known: included, hnsw) and no text dictionary by that name in schema 'public'
+db error: ERROR: Failed to create index: Unknown opclass 'fake_dict' on column 'emb': no text dictionary by that name in schema 'public'
 
 
 

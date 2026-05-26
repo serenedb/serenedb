@@ -28,13 +28,15 @@
 #include "catalog/object.h"
 #include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
-#include "catalog/types.h"
 
 namespace sdb {
 
 class IndexShard;
 
 namespace catalog {
+
+inline constexpr std::string_view kIncludedKind = "included";
+inline constexpr std::string_view kHNSWKind = "hnsw";
 
 class SecondaryIndex;
 class InvertedIndex;
@@ -56,7 +58,7 @@ struct ExpressionData {
 };
 
 struct CreateIndexColumn {
-  const catalog::Column* catalog_column{nullptr};
+  const catalog::Column* catalog_column = nullptr;
   std::string_view name;
   std::string opclass;
   std::optional<ExpressionData> indexed_expr;
@@ -65,6 +67,12 @@ struct CreateIndexColumn {
   std::optional<duckdb::case_insensitive_map_t<duckdb::Value>> opclass_options;
 
   bool IsIndexedExpression() const noexcept { return indexed_expr.has_value(); }
+
+  bool HasParentheses() const noexcept { return opclass_options.has_value(); }
+
+  bool IsBuiltin(std::string_view name) const noexcept {
+    return HasParentheses() && opclass == name;
+  }
 
   const ExpressionData& GetIndexedExpression() const {
     SDB_ASSERT(IsIndexedExpression());
@@ -79,11 +87,6 @@ struct CreateIndexColumn {
   void SetCatalogColumn(const catalog::Column* col) noexcept {
     SDB_ASSERT(!IsIndexedExpression());
     catalog_column = col;
-  }
-
-  std::string_view ColumnName() const noexcept {
-    SDB_ASSERT(!IsIndexedExpression());
-    return name;
   }
 };
 

@@ -484,7 +484,16 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Sets the current session's user name.",
         [] { return duckdb::Value{std::string{StaticStrings::kDefaultUser}}; },
-        Readonly<"session_authorization">,
+        NoOverwrite<"session_authorization">,
+      },
+    },
+    {
+      "role",
+      {
+        LogicalTypeId::VARCHAR,
+        "Sets the current role.",
+        [] { return duckdb::Value{std::string{StaticStrings::kDefaultUser}}; },
+        NoOverwrite<"role">,
       },
     },
     {

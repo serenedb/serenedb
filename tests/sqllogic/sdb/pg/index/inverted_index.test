@@ -400,11 +400,7 @@ QUERY PLAN
 │└───────────────────────────────────┘│
 └─────────────────────────────────────┘
 EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english);
-┌────────────────────────────────────────────────┐
-│┌──────────────────────────────────────────────┐│
-││              Total Time: <slt:ignore>        ││
-│└──────────────────────────────────────────────┘│
-└────────────────────────────────────────────────┘
+<slt:ignore>
 ┌───────────────────────────┐
 │      RESULT_COLLECTOR     │
 │    ────────────────────   │
@@ -417,14 +413,14 @@ EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b tes
 │    ────────────────────   │
 │                           │
 │           0 rows          │
-│           <slt:ignore>    │
+<slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         EXTENSION         │
 │    ────────────────────   │
 │                           │
 │           1 row           │
-│           <slt:ignore>    │
+<slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         TABLE_SCAN        │
@@ -439,7 +435,7 @@ EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b tes
 │                           │
 │                           │
 │           3 rows          │
-│           <slt:ignore>    │
+<slt:ignore>
 └───────────────────────────┘
 
 

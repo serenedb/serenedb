@@ -38,14 +38,8 @@ target_include_directories(
 add_executable(vector-distances-bench vector_distances.cpp)
 target_compile_options(
     vector-distances-bench
-    PRIVATE
-        -fno-lto # no faiss inlined
-        -fassociative-math
-        -fno-signed-zeros
-        -g
-        -fno-omit-frame-pointer
+    PRIVATE -fassociative-math -fno-signed-zeros
 )
-target_link_options(vector-distances-bench PRIVATE -fno-lto)
 
 target_link_libraries(vector-distances-bench PRIVATE sereneserver benchmark)
 if(VELOX_ENABLE_FAISS)

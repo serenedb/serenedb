@@ -21,7 +21,7 @@
 #include "pg/system_catalog.h"
 
 #include <absl/strings/str_cat.h>
-#include <vpack/serializer.h>
+#include "basics/serializer.h"
 
 #include <boost/pfr.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>

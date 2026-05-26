@@ -24,7 +24,6 @@
 #include <absl/base/internal/endian.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/time.h>
-#include <vpack/serializer.h>
 
 #include <chrono>
 #include <filesystem>
@@ -45,6 +44,7 @@
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "basics/log.h"
+#include "basics/serializer.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/scorer_options.h"
@@ -273,7 +273,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
     absl::StrCat("flush subscription for inverted index '", _id, "'"));
 }
 
-void InvertedIndexShard::WriteInternal(vpack::Builder& /*b*/) const {}
+void InvertedIndexShard::Serialize(duckdb::Serializer& /*sink*/) const {}
 
 void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
                                         query::Transaction* user_txn)

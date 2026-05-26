@@ -204,7 +204,7 @@ Result SchemaDrop::Finalize() {
   // Standalone seq counter rows -- DropEntry only sweeps Definitions CF.
   auto r =
     server.VisitDefinitions(_id, catalog::ObjectType::Sequence,
-                            [&](DefinitionKey key, vpack::Slice) -> Result {
+                            [&](DefinitionKey key, std::string_view) -> Result {
                               return server.DropSequence(key.GetObjectId());
                             });
   if (!r.ok()) {

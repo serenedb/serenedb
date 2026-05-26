@@ -25,6 +25,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/bm25.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
@@ -454,9 +455,13 @@ TEST_P(ByEditDistanceTestCase, bm25) {
   using tests::FieldBase;
   using tests::JsonDocGenerator;
 
-  auto analyzer = irs::analysis::analyzers::Get(
-    "text", irs::Type<irs::text_format::Json>::get(),
-    R"({"locale":"en.UTF-8", "stem":false, "accent":false, "case":"lower", "stopwords":[]})");
+  irs::analysis::TextTokenizer::Options opts{
+    .locale = icu::Locale::createFromName("en"),
+  };
+  opts.case_convert = irs::Case::Lower;
+  opts.explicit_stopwords_set = true;
+  opts.stemming = false;
+  auto analyzer = irs::analysis::TextTokenizer::Make(std::move(opts));
   ASSERT_NE(nullptr, analyzer);
 
   struct TextField : FieldBase {
@@ -498,8 +503,8 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     add_segment(gen, irs::kOmCreate, opts);
   }
 
-  std::array<irs::Scorer::ptr, 1> order{irs::scorers::Get(
-    "bm25", irs::Type<irs::text_format::Json>::get(), std::string_view{})};
+  std::array<irs::Scorer::ptr, 1> order{
+    irs::BM25::Make(irs::BM25::Options{})};
   ASSERT_NE(nullptr, order.front());
 
   auto index = open_reader(irs::tests::DefaultReaderOptions());

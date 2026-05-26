@@ -20,9 +20,8 @@
 
 #pragma once
 
-#include <vpack/builder.h>
-#include <vpack/slice.h>
-
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <string>
 #include <vector>
@@ -30,6 +29,7 @@
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
 #include "basics/result.h"
+#include "basics/serializer.h"
 #include "catalog/identifiers/object_id.h"
 
 namespace duckdb {
@@ -67,16 +67,10 @@ struct Refs {
   std::vector<ObjectId> types;
 };
 
-// Column expression (default value, computed column).
-// In memory: DuckDB ParsedExpression.
-// On disk: DuckDB BinarySerializer bytes in VPack.
 class ColumnExpr {
  public:
   ColumnExpr() = default;
   explicit ColumnExpr(duckdb::unique_ptr<duckdb::ParsedExpression> expr);
-
-  static Result FromVPack(vpack::Slice slice, ColumnExpr& column_expr);
-  void ToVPack(vpack::Builder& builder) const;
 
   duckdb::ParsedExpression& GetExpr() const {
     SDB_ASSERT(_expr);
@@ -87,6 +81,13 @@ class ColumnExpr {
 
   Refs GetRefs(RefKinds kinds) const;
 
+  void Serialize(duckdb::Serializer& serializer) const {
+    GetExpr().Serialize(serializer);
+  }
+  static ColumnExpr Deserialize(duckdb::Deserializer& deserializer) {
+    return ColumnExpr{duckdb::ParsedExpression::Deserialize(deserializer)};
+  }
+
  private:
   duckdb::unique_ptr<duckdb::ParsedExpression> _expr;
 };
@@ -96,14 +97,5 @@ Refs ExtractRefs(const duckdb::ParsedExpression& expr, RefKinds kinds);
 Refs ExtractRefs(const duckdb::QueryNode& node, RefKinds kinds);
 
 void CollectTypeRefs(const duckdb::LogicalType& type, Refs& out);
-
-void VPackWrite(auto ctx, const ColumnExpr& column_expr) {
-  column_expr.ToVPack(ctx.vpack());
-}
-
-void VPackRead(auto ctx, ColumnExpr& column_expr) {
-  auto r = ColumnExpr::FromVPack(ctx.vpack(), column_expr);
-  SDB_ENSURE(r.ok(), r.errorNumber(), r.errorMessage());
-}
 
 }  // namespace sdb

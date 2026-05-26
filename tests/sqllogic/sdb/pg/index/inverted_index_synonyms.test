@@ -44,7 +44,7 @@ CREATE TEXT SEARCH DICTIONARY syn_solr_missing(
 )
 
 # Malformed input is rejected at DDL time.
-statement error Failed to create text search dictionary "syn_solr_malformed"
+statement error solr_synonyms: failed to parse synonyms
 CREATE TEXT SEARCH DICTIONARY syn_solr_malformed(
     template = 'solr_synonyms',
     synonyms = 'foo => => bar'
@@ -78,7 +78,7 @@ SELECT ts_lexize('syn_wordnet_basic', 'missing');
 ts_lexize
 {}
 
-statement error Failed to create text search dictionary "syn_wordnet_malformed"
+statement error wordnet_synonyms: failed to parse synonyms
 CREATE TEXT SEARCH DICTIONARY syn_wordnet_malformed(
     template = 'wordnet_synonyms',
     synonyms = 'not a wordnet record'

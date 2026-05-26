@@ -26,7 +26,6 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/raw_tf.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
@@ -42,8 +41,7 @@ TEST(raw_tf_test, consts) {
 }
 
 TEST(raw_tf_test, load) {
-  auto scorer = irs::scorers::Get(
-    "raw_tf", irs::Type<irs::text_format::Json>::get(), std::string_view{});
+  auto scorer = irs::RawTF::Make(irs::RawTF::Options{});
   ASSERT_NE(nullptr, scorer);
   ASSERT_EQ(irs::Type<irs::RawTF>::id(), scorer->type());
   ASSERT_EQ(irs::IndexFeatures::Freq, scorer->GetIndexFeatures());

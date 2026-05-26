@@ -32,7 +32,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <iresearch/analysis/analyzers.hpp>
+#include <unicode/locid.h>
+
+#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -94,9 +96,12 @@ class FieldBase : public IField {
 class TextField final : public FieldBase {
  public:
   TextField(std::string name, irs::IndexFeatures extra_features)
-    : _stream(irs::analysis::analyzers::Get(
-        "text", irs::Type<irs::text_format::Json>::get(),
-        "{\"locale\":\"C\", \"stopwords\":[]}")) {
+    : _stream(irs::analysis::TextTokenizer::Make([] {
+        irs::analysis::TextTokenizer::Options opts;
+        opts.locale = icu::Locale::createFromName("C");
+        opts.explicit_stopwords_set = true;
+        return opts;
+      }())) {
     SetName(std::move(name));
     SetIndexFeatures(irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
                      irs::IndexFeatures::Offs | extra_features);
@@ -332,7 +337,6 @@ Corpus BuildIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  irs::analysis::analyzers::Init();
   irs::formats::Init();
 
   auto format = irs::formats::Get(std::string{kFormatName});

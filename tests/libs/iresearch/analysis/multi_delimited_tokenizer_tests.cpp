@@ -18,25 +18,21 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/parser.h>
-
 #include "gtest/gtest.h"
 #include "iresearch/analysis/multi_delimited_tokenizer.hpp"
 #include "tests_config.hpp"
 
-using namespace vpack;
 using namespace irs::analysis;
 
 namespace {
 
 irs::bstring operator""_b(const char* ptr, size_t size) {
-  return irs::bstring{
-    irs::ViewCast<irs::byte_type>(std::string_view{ptr, size})};
+  return irs::bstring{reinterpret_cast<const irs::byte_type*>(ptr), size};
 }
 
 class MultiDelimitedTokenizerTests : public ::testing::Test {
  public:
-  static void SetUpTestCase() { MultiDelimitedTokenizer::init(); }
+  static void SetUpTestCase() {  }
 
   void SetUp() final {
     // Code here will be called immediately after the constructor (right before
@@ -270,35 +266,9 @@ TEST_F(MultiDelimitedTokenizerTests, trick_matching_1) {
 }
 
 TEST_F(MultiDelimitedTokenizerTests, construct) {
-  // wrong name
+  // happy path -- two distinct delimiters.
   {
-    auto builder = Parser::fromJson(R"({"delimiter":["a", "b"]})");
-    std::string in_str;
-    in_str.assign(builder->slice().startAs<char>(),
-                  builder->slice().byteSize());
-    auto stream = analyzers::Get(
-      "multi_delimiter", irs::Type<irs::text_format::VPack>::get(), in_str);
-    ASSERT_EQ(nullptr, stream);
-  }
-
-  // wrong type
-  {
-    auto builder = Parser::fromJson(R"({"delimiters":1})");
-    std::string in_str;
-    in_str.assign(builder->slice().startAs<char>(),
-                  builder->slice().byteSize());
-    auto stream = analyzers::Get(
-      "multi_delimiter", irs::Type<irs::text_format::VPack>::get(), in_str);
-    ASSERT_EQ(nullptr, stream);
-  }
-
-  {
-    auto builder = Parser::fromJson(R"({"delimiters":["a", "b"]})");
-    std::string in_str;
-    in_str.assign(builder->slice().startAs<char>(),
-                  builder->slice().byteSize());
-    auto stream = analyzers::Get(
-      "multi_delimiter", irs::Type<irs::text_format::VPack>::get(), in_str);
+    auto stream = MultiDelimitedTokenizer::Make({.delimiters = {"a"_b, "b"_b}});
     ASSERT_NE(nullptr, stream);
     ASSERT_TRUE(stream->reset("aib"));
     ASSERT_TRUE(stream->next());
@@ -306,20 +276,17 @@ TEST_F(MultiDelimitedTokenizerTests, construct) {
     ASSERT_EQ("i", irs::ViewCast<char>(term->value));
     ASSERT_FALSE(stream->next());
   }
-  {
-    auto builder = Parser::fromJson(R"({"delimiters":["a", "b", "c", "d"]})");
-    std::string in_str;
-    in_str.assign(builder->slice().startAs<char>(),
-                  builder->slice().byteSize());
-    std::string actual;
-    [[maybe_unused]] auto stream =
-      analyzers::Normalize(actual, "multi_delimiter",
-                           irs::Type<irs::text_format::VPack>::get(), in_str);
 
-    auto slice = Slice(reinterpret_cast<uint8_t*>(actual.data()));
-    ASSERT_TRUE(slice.isObject());
-    auto delimiters = slice.get("delimiters");
-    ASSERT_TRUE(delimiters.isArray());
-    ASSERT_EQ(4, delimiters.length());
+  // .........................................................................
+  // The old JSON suite covered "wrong name" (registry asked for a non-existent
+  // type) and "wrong type" (`"delimiters": 1`). Both are parser-/registry-
+  // level failures with no direct-API analogue. The remaining valid construct
+  // case is the default-Options happy path -- an empty delimiters list still
+  // produces a valid (degenerate) analyzer.
+  // .........................................................................
+  {
+    auto stream =
+      MultiDelimitedTokenizer::Make(MultiDelimitedTokenizer::Options{});
+    ASSERT_NE(nullptr, stream);
   }
 }

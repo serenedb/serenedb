@@ -15,10 +15,11 @@ add_executable(
     random_test.cpp
     string_utils_test.cpp
     serializer_test.cpp
+    serializer_binary_test.cpp
+    json_serde_test.cpp
+    json_serde_types_test.cpp
     vpack_helper_test.cpp
-    inspection_test.cpp
-    vpack_load_test.cpp
-    vpack_save_test.cpp
+    duckdb_roundtrip_test.cpp
 )
 
 target_link_libraries(

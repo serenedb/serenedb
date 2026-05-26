@@ -21,21 +21,24 @@
 #pragma once
 
 #include <absl/synchronization/mutex.h>
-#include <vpack/builder.h>
-#include <vpack/slice.h>
 
 #include <iresearch/analysis/analyzer.hpp>
-#include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/normalizing_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
+#include <iresearch/analysis/tokenizer_config.hpp>
 #include <memory>
 #include <tuple>
 #include <vector>
 
 #include "catalog/object.h"
 #include "catalog/search_analyzer_impl.h"
+
+namespace duckdb {
+class Serializer;
+class Deserializer;
+}  // namespace duckdb
 
 namespace sdb::catalog {
 
@@ -56,21 +59,21 @@ class Tokenizer : public Object {
 
   using TokenizerWrapper = std::unique_ptr<irs::analysis::Analyzer, Deleter>;
 
-  static std::shared_ptr<Tokenizer> ReadInternal(vpack::Slice slice,
-                                                 ReadContext ctx);
+  static std::shared_ptr<Tokenizer> Deserialize(duckdb::Deserializer& src,
+                                                ReadContext ctx);
 
   ResultOr<TokenizerWrapper> GetTokenizer();
 
   void PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept;
 
-  vpack::Slice Slice() const noexcept;
+  const auto& Config() const noexcept { return _config; }
 
-  void WriteInternal(vpack::Builder&) const final;
+  void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
 
   Tokenizer(ObjectId schema_id, ObjectId id, std::string_view name,
             search::Features features, uint32_t norm_row_group_size,
-            std::string data);
+            irs::analysis::TokenizerConfig config);
 
   const search::Features& GetFeatures() const noexcept { return _features; }
 
@@ -81,7 +84,7 @@ class Tokenizer : public Object {
 
   mutable absl::Mutex _m;
   std::vector<irs::analysis::Analyzer::ptr> _pool;
-  std::string _data;
+  irs::analysis::TokenizerConfig _config;
   search::Features _features;
   uint32_t _norm_row_group_size;
 };

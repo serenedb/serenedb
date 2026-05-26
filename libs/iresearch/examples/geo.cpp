@@ -23,7 +23,7 @@
 
 #include <duckdb/main/database.hpp>
 #include <iostream>
-#include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/columnstore/column_writer.hpp>
 #include <iresearch/columnstore/format.hpp>
@@ -31,9 +31,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/geo_filter.hpp>
-#include <iresearch/search/scorers.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/compression.hpp>
 #include <iresearch/utils/text_format.hpp>
 #include <iresearch/utils/vpack_utils.hpp>
 #include <memory>
@@ -72,8 +70,8 @@ inline constexpr irs::field_id kGeoColumnId = 1;
 struct GeoField {
   std::string_view name;
   vpack::Slice shape_slice;
-  irs::analysis::Analyzer::ptr analyzer{irs::analysis::GeoJsonAnalyzer::make(
-    irs::slice_to_view<char>(vpack::Slice::emptyObjectSlice()))};
+  irs::analysis::Analyzer::ptr analyzer{irs::analysis::GeoJsonAnalyzer::Make(
+    irs::analysis::GeoJsonAnalyzer::Options{})};
 
   std::string_view Name() const noexcept { return name; }
 
@@ -223,10 +221,7 @@ int main() {
   auto& engine = sdb::DuckDBEngine::Instance();
   engine.Initialize();
 
-  irs::analysis::analyzers::Init();
   irs::formats::Init();
-  irs::scorers::Init();
-  irs::compression::Init();
 
   // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
   // down the duckdb::DuckDB they were dispatching through.

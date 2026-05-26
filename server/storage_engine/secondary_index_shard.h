@@ -21,7 +21,10 @@
 #pragma once
 
 #include "storage_engine/index_shard.h"
-#include "vpack/vpack.h"
+
+namespace duckdb {
+class Serializer;
+}  // namespace duckdb
 
 namespace sdb {
 
@@ -35,7 +38,7 @@ class SecondaryIndexShard : public IndexShard {
   explicit SecondaryIndexShard(ObjectId index_id)
     : IndexShard{index_id, catalog::ObjectType::SecondaryIndexShard} {}
 
-  void WriteInternal(vpack::Builder& /*b*/) const final {}
+  void Serialize(duckdb::Serializer& /*sink*/) const final {}
 };
 
 }  // namespace sdb

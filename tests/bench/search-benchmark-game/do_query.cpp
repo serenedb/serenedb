@@ -124,9 +124,6 @@ int main(int argc, const char* argv[]) {
     irs::DefaultPDP(1, true);
     irs::DefaultPDP(2, false);
     irs::DefaultPDP(2, true);
-    irs::analysis::analyzers::Init();
-    irs::formats::Init();
-    irs::scorers::Init();
     irs::compression::Init();
 
     bench::Executor executor{argv[1]};

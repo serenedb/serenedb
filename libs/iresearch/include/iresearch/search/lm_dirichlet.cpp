@@ -20,12 +20,6 @@
 
 #include "lm_dirichlet.hpp"
 
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
-#include <vpack/vpack.h>
-
 #include <cmath>
 
 #include "basics/down_cast.h"
@@ -51,82 +45,6 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 }
 
 constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
-  return nullptr;
-}
-
-struct ObjectParams {
-  score_t mu = LMDirichlet::MU();
-};
-
-Scorer::ptr MakeFromObject(const vpack::Slice slice) {
-  ObjectParams params;
-  auto r = vpack::ReadObjectNothrow(slice, params,
-                                    {
-                                      .skip_unknown = true,
-                                      .strict = false,
-                                    });
-  if (!r.ok()) {
-    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
-              "' while constructing lm_dirichlet scorer from VPack");
-    return {};
-  }
-  if (!std::isfinite(params.mu) || params.mu < 0.f) {
-    SDB_ERROR(IRESEARCH, "lm_dirichlet mu must be a non-negative finite value");
-    return {};
-  }
-  return std::make_unique<LMDirichlet>(params.mu);
-}
-
-Scorer::ptr MakeFromArray(const vpack::Slice slice) {
-  ObjectParams params;
-  auto r = vpack::ReadTupleNothrow(slice, params);
-  if (!r.ok()) {
-    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
-              "' while constructing lm_dirichlet scorer from VPack array");
-    return {};
-  }
-  if (!std::isfinite(params.mu) || params.mu < 0.f) {
-    SDB_ERROR(IRESEARCH, "lm_dirichlet mu must be a non-negative finite value");
-    return {};
-  }
-  return std::make_unique<LMDirichlet>(params.mu);
-}
-
-Scorer::ptr MakeVPack(const vpack::Slice slice) {
-  switch (slice.type()) {
-    case vpack::ValueType::Object:
-      return MakeFromObject(slice);
-    case vpack::ValueType::Array:
-      return MakeFromArray(slice);
-    default:
-      SDB_ERROR(IRESEARCH, "Invalid VPack arguments for lm_dirichlet scorer");
-      return nullptr;
-  }
-}
-
-Scorer::ptr MakeVPack(std::string_view args) {
-  if (IsNull(args)) {
-    return std::make_unique<LMDirichlet>();
-  }
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-Scorer::ptr MakeJson(std::string_view args) {
-  if (IsNull(args)) {
-    return std::make_unique<LMDirichlet>();
-  }
-  try {
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH, "Caught error '", ex.what(),
-              "' while constructing VPack from JSON for lm_dirichlet");
-  } catch (...) {
-    SDB_ERROR(
-      IRESEARCH,
-      "Caught error while constructing VPack from JSON for lm_dirichlet");
-  }
   return nullptr;
 }
 
@@ -274,11 +192,6 @@ bool LMDirichlet::equals(const Scorer& other) const noexcept {
   }
   const auto& p = sdb::basics::downCast<LMDirichlet>(other);
   return p._mu == _mu;
-}
-
-void LMDirichlet::init() {
-  REGISTER_SCORER_JSON(LMDirichlet, MakeJson);
-  REGISTER_SCORER_VPACK(LMDirichlet, MakeVPack);
 }
 
 }  // namespace irs

@@ -45,11 +45,11 @@
 #include <vpack/builder.h>
 #include <vpack/collection.h>
 #include <vpack/iterator.h>
-#include <vpack/serializer.h>
 #include <vpack/slice.h>
 #include <vpack/vpack_helper.h>
 
 #include <atomic>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <filesystem>
 #include <iomanip>
 #include <limits>
@@ -267,12 +267,10 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_key, auto&& make_value,
   }
 
   auto key = make_key();
-  auto value = make_value();
-  std::string value_str{reinterpret_cast<const char*>(value.start()),
-                        value.byteSize()};
+  std::string_view value = make_value();
   batch.Put(RocksDBColumnFamilyManager::get(
               RocksDBColumnFamilyManager::Family::Definitions),
-            key.GetBuffer(), value_str);
+            key.GetBuffer(), value);
 
   rocksdb::WriteOptions wo;
   return rocksutils::ConvertStatus(db->Write(wo, &batch));
@@ -650,7 +648,7 @@ bool RocksDBEngineCatalog::hasBackgroundError() const {
 // TODO: Rewrite this to use single scan.
 Result RocksDBEngineCatalog::VisitDefinitionsImpl(
   std::string_view start, std::string_view end,
-  absl::FunctionRef<Result(DefinitionKey key, vpack::Slice)> visitor) {
+  absl::FunctionRef<Result(DefinitionKey key, std::string_view)> visitor) {
   auto* cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Definitions);
 
@@ -662,8 +660,8 @@ Result RocksDBEngineCatalog::VisitDefinitionsImpl(
   std::unique_ptr<rocksdb::Iterator> iter{_db->NewIterator(ro, cf)};
   for (iter->Seek(rocksdb::Slice{start}); iter->Valid(); iter->Next()) {
     SDB_ASSERT(iter->key().compare(upper) < 0);
-    vpack::Slice slice{reinterpret_cast<const uint8_t*>(iter->value().data())};
-    if (auto r = visitor(DefinitionKey{iter->key()}, slice); !r.ok()) {
+    std::string_view def{iter->value().data(), iter->value().size()};
+    if (auto r = visitor(DefinitionKey{iter->key()}, def); !r.ok()) {
       return r;
     }
   }
@@ -673,7 +671,7 @@ Result RocksDBEngineCatalog::VisitDefinitionsImpl(
 
 Result RocksDBEngineCatalog::VisitDefinitions(
   ObjectId parent_id, catalog::ObjectType type,
-  absl::FunctionRef<Result(DefinitionKey key, vpack::Slice)> visitor) {
+  absl::FunctionRef<Result(DefinitionKey key, std::string_view)> visitor) {
   auto [start, end] = DefinitionKey::CreateInterval(parent_id, type);
   return VisitDefinitionsImpl(start, end, visitor);
 }
@@ -695,15 +693,14 @@ Tick RocksDBEngineCatalog::recoveryTick() noexcept {
 Result RocksDBEngineCatalog::SyncTableShard(const TableShard& shard) {
   ObjectId table_id = shard.GetParentId();
   ObjectId shard_id = shard.GetId();
-  vpack::Builder b;
-  shard.WriteInternal(b);
+  duckdb::MemoryStream stream;
+  auto bytes = catalog::SerializeObject(shard, stream);
   RocksDBKeyWithBuffer<DefinitionKey> key{
     table_id, catalog::ObjectType::TableShard, shard_id};
   auto* cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Definitions);
 
-  auto slice =
-    rocksdb::Slice{reinterpret_cast<const char*>(b.data()), b.size()};
+  auto slice = rocksdb::Slice{bytes.data(), bytes.size()};
   // TODO(codeworse): probably should use Merge instead of Put, since in case of
   // concurrent delete operation it may re-create deleted entry.
   return rocksutils::ConvertStatus(
@@ -1043,7 +1040,7 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
   bool has_system = false;
   std::ignore =
     VisitDefinitions(id::kInstance, catalog::ObjectType::Database,
-                     [&](DefinitionKey key, vpack::Slice) -> Result {
+                     [&](DefinitionKey key, std::string_view) -> Result {
                        has_system = key.GetObjectId() == id::kSystemDB;
                        return {ERROR_INTERNAL};  // stop iteration
                      });
@@ -1053,25 +1050,26 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
     return;
   }
 
-  catalog::Database database{id::kSystemDB, StaticStrings::kDefaultDatabase};
-  vpack::Builder builder;
-  database.WriteInternal(builder);
-  auto r =
-    CreateDefinition(id::kInstance, catalog::ObjectType::Database,
-                     id::kSystemDB, [&](bool) { return builder.slice(); });
+  catalog::Database database{
+    id::kSystemDB,
+    catalog::DatabaseOptions{std::string{StaticStrings::kDefaultDatabase}}};
+  duckdb::MemoryStream stream;
+  auto database_bytes = catalog::SerializeObject(database, stream);
+  auto r = CreateDefinition(
+    id::kInstance, catalog::ObjectType::Database, id::kSystemDB,
+    [&](bool) { return std::string_view{database_bytes}; });
   if (!r.ok()) {
     SDB_FATAL(STARTUP, "unable to write database marker: ", r.errorMessage());
   }
 
-  catalog::SchemaOptions schema_options{
-    .id = catalog::NextId(),
-    .name = std::string{StaticStrings::kPublic},
-  };
-  builder.clear();
-  vpack::WriteTuple(builder, schema_options);
-  r =
-    CreateDefinition(id::kSystemDB, catalog::ObjectType::Schema,
-                     schema_options.id, [&](bool) { return builder.slice(); });
+  const auto schema_id = catalog::NextId();
+  catalog::Schema schema{
+    id::kSystemDB,
+    catalog::SchemaOptions{.id = schema_id,
+                           .name = std::string{StaticStrings::kPublic}}};
+  auto schema_bytes = catalog::SerializeObject(schema, stream);
+  r = CreateDefinition(id::kSystemDB, catalog::ObjectType::Schema, schema_id,
+                       [&](bool) { return std::string_view{schema_bytes}; });
   if (!r.ok()) {
     SDB_FATAL(STARTUP, "unable to write schema marker: ", r.errorMessage());
   }
@@ -1088,13 +1086,12 @@ Result RocksDBEngineCatalog::CreateDefinition(ObjectId parent_id,
 }
 
 void RocksDBEngineCatalog::CatalogWriteContext::PutDefinition(
-  ObjectId parent_id, catalog::ObjectType type, ObjectId id, vpack::Slice def) {
+  ObjectId parent_id, catalog::ObjectType type, ObjectId id,
+  std::string_view def) {
   RocksDBKeyWithBuffer<DefinitionKey> key{parent_id, type, id};
   _batch.Put(RocksDBColumnFamilyManager::get(
                RocksDBColumnFamilyManager::Family::Definitions),
-             key.GetBuffer(),
-             std::string_view{reinterpret_cast<const char*>(def.start()),
-                              def.byteSize()});
+             key.GetBuffer(), def);
 }
 
 void RocksDBEngineCatalog::CatalogWriteContext::PutSequence(
@@ -1129,12 +1126,9 @@ void RocksDBEngineCatalog::CatalogWriteContext::WriteTombstone(
   ObjectId parent_id, ObjectId id) {
   RocksDBKeyWithBuffer<DefinitionKey> key{parent_id,
                                           catalog::ObjectType::Tombstone, id};
-  auto v = vpack::Slice::emptyStringSlice();
-  _batch.Put(
-    RocksDBColumnFamilyManager::get(
-      RocksDBColumnFamilyManager::Family::Definitions),
-    key.GetBuffer(),
-    std::string_view{reinterpret_cast<const char*>(v.start()), v.byteSize()});
+  _batch.Put(RocksDBColumnFamilyManager::get(
+               RocksDBColumnFamilyManager::Family::Definitions),
+             key.GetBuffer(), std::string_view{});
 }
 
 Result RocksDBEngineCatalog::Write(
@@ -1228,8 +1222,7 @@ Result RocksDBEngineCatalog::WriteTombstone(ObjectId parent_id, ObjectId id) {
       return RocksDBKeyWithBuffer<DefinitionKey>{
         parent_id, catalog::ObjectType::Tombstone, id};
     },
-    [] { return vpack::Slice::emptyStringSlice(); },
-    [] { return std::string_view{}; });
+    [] { return std::string_view{}; }, [] { return std::string_view{}; });
 }
 
 void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {

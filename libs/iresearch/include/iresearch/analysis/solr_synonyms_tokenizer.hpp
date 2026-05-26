@@ -27,8 +27,9 @@
 #include <string_view>
 #include <vector>
 
-#include "analyzers.hpp"
 #include "basics/result.h"
+#include "basics/result_or.h"
+#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
@@ -75,6 +76,13 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
     SynonymsMap synonyms;
   };
 
+  struct Options {
+    using Owner = SolrSynonymsTokenizer;
+    // Inline synonyms file content (Solr format).
+    std::string synonyms_text;
+  };
+  static Analyzer::ptr Make(Options opts);
+
   static constexpr std::string_view type_name() noexcept {
     return "solr_synonyms";
   }
@@ -84,8 +92,6 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
   static sdb::ResultOr<SynonymsMap> Parse(const SynonymsLines& lines);
   static sdb::ResultOr<std::shared_ptr<const State>> MakeState(
     std::string text);
-
-  static void init();
 
   explicit SolrSynonymsTokenizer(std::shared_ptr<const State> state) noexcept;
 

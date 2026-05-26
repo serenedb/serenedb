@@ -23,7 +23,6 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/lm_similarity.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 
 namespace irs {
 
@@ -45,7 +44,18 @@ class LMJelinekMercer final : public irs::ScorerBase<LMJelinekMercer, LMStats> {
 
   static constexpr score_t LAMBDA() noexcept { return 0.1f; }
 
-  static void init();
+  struct Options {
+    using Owner = LMJelinekMercer;
+    float lambda = LAMBDA();
+    bool operator==(const Options&) const = default;
+  };
+
+  static std::unique_ptr<LMJelinekMercer> Make(const Options& opts) {
+    if (!(opts.lambda > 0.f) || opts.lambda > 1.f) {
+      return nullptr;
+    }
+    return std::make_unique<LMJelinekMercer>(opts.lambda);
+  }
 
   explicit LMJelinekMercer(score_t lambda = LAMBDA()) noexcept
     : _lambda{lambda} {}

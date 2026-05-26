@@ -36,7 +36,6 @@
 #include "catalog/object.h"
 #include "catalog/sequence.h"
 #include "query/utils.h"
-#include "utils/velox_vpack.h"
 
 namespace sdb::catalog {
 
@@ -46,6 +45,7 @@ enum class ColumnStoreMode : uint8_t {
   kIndexOnly = 1,
 };
 
+// Persistent on-disk catalog format.
 class Column final : public Object {
  public:
   enum GeneratedType : uint8_t {
@@ -100,7 +100,10 @@ class Column final : public Object {
     return generated_type != GeneratedType::kNone;
   }
 
-  void WriteInternal(vpack::Builder&) const final {}
+  // Column is never persisted as a standalone Object — it rides inside
+  // TableData (see table.cpp). The Serialize override is a required no-op
+  // to satisfy the Object base.
+  void Serialize(duckdb::Serializer&) const final {}
   std::shared_ptr<Object> Clone() const final;
 
   void SetId(Id id) noexcept { _id = id; }
@@ -115,62 +118,37 @@ inline std::shared_ptr<Object> Column::Clone() const {
   return std::make_shared<Column>(*this);
 }
 
-inline void VPackWrite(auto ctx, const Column& col) {
-  vpack::WriteTuple(
-    ctx.vpack(),
+inline void SerdeWrite(auto ctx, const Column& col) {
+  basics::WriteTuple(
+    ctx.io(),
     std::forward_as_tuple(col.GetId(), col.type, std::string{col.GetName()},
                           col.expr, col.generated_type));
 }
 
-inline void VPackRead(auto ctx, Column& col) {
+inline void SerdeRead(auto ctx, Column& col) {
   ObjectId id;
   duckdb::LogicalType type;
   std::string name;
   std::shared_ptr<ColumnExpr> expr;
   Column::GeneratedType gt = Column::kNone;
   auto tup = std::tie(id, type, name, expr, gt);
-  vpack::ReadTuple(ctx.vpack(), tup);
+  basics::ReadTuple(ctx.io(), tup);
   col = Column{ctx.arg(), id, name, std::move(type), std::move(expr), gt};
 }
 
-class CheckConstraint final : public Object {
- public:
-  CheckConstraint() : Object{{}, {}, {}, ObjectType::CheckConstraint} {}
-
-  CheckConstraint(ObjectId owner_table_id, ObjectId id, std::string_view name,
-                  std::shared_ptr<ColumnExpr> e)
-    : Object{owner_table_id, id, std::string{name},
-             ObjectType::CheckConstraint},
-      expr{std::move(e)} {}
-
-  void WriteInternal(vpack::Builder&) const final {}
-  std::shared_ptr<Object> Clone() const final {
-    return std::make_shared<CheckConstraint>(*this);
-  }
+// Persistent on-disk catalog format.
+struct CheckConstraint {
+  ObjectId id;
+  std::string name;
+  std::shared_ptr<ColumnExpr> expr;
 
   // If this constraint is just `NOT NULL` on a single column of `columns`,
   // returns that column's index. Otherwise returns std::nullopt.
   std::optional<size_t> IsNotNull(
     std::span<const Column> columns) const noexcept;
-
-  std::shared_ptr<ColumnExpr> expr;
 };
 
-inline void VPackWrite(auto ctx, const CheckConstraint& c) {
-  vpack::WriteTuple(
-    ctx.vpack(),
-    std::forward_as_tuple(c.GetId(), std::string{c.GetName()}, c.expr));
-}
-
-inline void VPackRead(auto ctx, CheckConstraint& c) {
-  ObjectId id;
-  std::string name;
-  std::shared_ptr<ColumnExpr> expr;
-  auto tup = std::tie(id, name, expr);
-  vpack::ReadTuple(ctx.vpack(), tup);
-  c = CheckConstraint{ctx.arg(), id, name, std::move(expr)};
-}
-
+// Persistent on-disk catalog format.
 struct TableStats {
   uint64_t num_rows = 0;
 };

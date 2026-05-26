@@ -21,7 +21,7 @@
 #include "catalog/index.h"
 
 #include <absl/strings/ascii.h>
-#include <vpack/serializer.h>
+#include "basics/serializer.h"
 
 #include <array>
 #include <duckdb/common/enum_util.hpp>
@@ -504,7 +504,7 @@ Result ValidateGeoTokenizerColumn(std::string_view column_name,
     }
     if (is_geojson) {
       const auto& geojson =
-        basics::downCast<irs::analysis::GeoJsonAnalyzer>(analyzer);
+        sdb::basics::downCast<irs::analysis::GeoJsonAnalyzer>(analyzer);
       using Coding = irs::analysis::GeoJsonAnalyzer::Coding;
       if (geojson.coding() != Coding::S2Point) {
         // VPack is rejected at CREATE TEXT SEARCH DICTIONARY time and can't

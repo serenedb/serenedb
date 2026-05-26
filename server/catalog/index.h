@@ -42,6 +42,7 @@ inline constexpr std::string_view kHNSWKind = "hnsw";
 class SecondaryIndex;
 class InvertedIndex;
 
+// Persistent on-disk catalog format.
 struct InvertedIndexOptions {
   uint32_t row_group_size = 0;
   uint32_t norm_row_group_size = 0;
@@ -51,6 +52,7 @@ struct InvertedIndexOptions {
   std::optional<ScorerOptions> topk_scorer;
 };
 
+// Persistent on-disk catalog format.
 struct ExpressionData {
   std::string serialized_expr;
   std::vector<Column::Id> dependent_columns;

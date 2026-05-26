@@ -89,7 +89,7 @@ class RestHandlerFactory;
 
 class RocksDBEngineCatalog;
 
-using WriteProperties = absl::FunctionRef<vpack::Slice(bool internal)>;
+using WriteProperties = absl::FunctionRef<std::string_view(bool internal)>;
 
 /// helper class to make file-purging thread-safe
 /// while there is an object of this type around, it will prevent
@@ -219,7 +219,7 @@ class RocksDBEngineCatalog {
     CatalogWriteContext& operator=(const CatalogWriteContext&) = delete;
 
     void PutDefinition(ObjectId parent_id, catalog::ObjectType type,
-                       ObjectId id, vpack::Slice def);
+                       ObjectId id, std::string_view def);
     void PutSequence(ObjectId sequence_id, uint64_t value);
     void DropDefinition(ObjectId parent_id, catalog::ObjectType type,
                         ObjectId id);
@@ -329,12 +329,12 @@ class RocksDBEngineCatalog {
 
   Result VisitDefinitions(
     ObjectId parent_id, catalog::ObjectType type,
-    absl::FunctionRef<Result(DefinitionKey, vpack::Slice)> visitor);
+    absl::FunctionRef<Result(DefinitionKey, std::string_view)> visitor);
 
  private:
   Result VisitDefinitionsImpl(
     std::string_view start, std::string_view end,
-    absl::FunctionRef<Result(DefinitionKey, vpack::Slice)> visitor);
+    absl::FunctionRef<Result(DefinitionKey, std::string_view)> visitor);
 
   void shutdownRocksDBInstance() noexcept;
   void EnsureSystemDatabase();

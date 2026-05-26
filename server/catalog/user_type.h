@@ -25,20 +25,24 @@
 
 #include "catalog/object.h"
 
+namespace duckdb {
+class Serializer;
+class Deserializer;
+}  // namespace duckdb
+
 namespace sdb::catalog {
 
 inline constexpr std::string kPgSqlTypeOidProp = "sdb_oid";
 
-// A user-defined type (ENUM or RECORD).
 class PgSqlType final : public Object {
  public:
   PgSqlType(ObjectId schema_id, ObjectId id, std::string_view name,
             duckdb::unique_ptr<duckdb::CreateTypeInfo> info);
 
-  static std::shared_ptr<PgSqlType> ReadInternal(vpack::Slice slice,
-                                                 ReadContext ctx);
+  static std::shared_ptr<PgSqlType> Deserialize(duckdb::Deserializer& src,
+                                                ReadContext ctx);
 
-  void WriteInternal(vpack::Builder& b) const final;
+  void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
 
   const duckdb::CreateTypeInfo& GetInfo() const noexcept { return *_info; }

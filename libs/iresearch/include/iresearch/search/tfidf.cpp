@@ -23,11 +23,6 @@
 #include "tfidf.hpp"
 
 #include <absl/container/inlined_vector.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
-#include <vpack/vpack.h>
 
 #include <cmath>
 #include <cstddef>
@@ -58,97 +53,6 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 
 constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
   return nullptr;
-}
-
-Scorer::ptr MakeFromBool(const vpack::Slice slice) {
-  SDB_ASSERT(slice.isBool());
-
-  return std::make_unique<TFIDF>(slice.getBool());
-}
-
-struct Params {
-  bool withNorms = TFIDF::WITH_NORMS();  // NOLINT
-};
-
-Scorer::ptr MakeFromObject(const vpack::Slice slice) {
-  Params params;
-  auto r = vpack::ReadObjectNothrow(slice, params,
-                                    {
-                                      .skip_unknown = true,
-                                      .strict = false,
-                                    });
-  if (!r.ok()) {
-    SDB_ERROR(
-      IRESEARCH,
-      absl::StrCat("Error '", r.errorMessage(),
-                   "' while constructing tfidf scorer from VPack arguments"));
-    return {};
-  }
-
-  return std::make_unique<TFIDF>(params.withNorms);
-}
-
-Scorer::ptr MakeFromArray(const vpack::Slice slice) {
-  Params params;
-  auto r = vpack::ReadTupleNothrow(slice, params);
-  if (!r.ok()) {
-    SDB_ERROR(
-      IRESEARCH,
-      absl::StrCat("Error '", r.errorMessage(),
-                   "' while constructing bm25 scorer from VPack arguments"));
-    return {};
-  }
-
-  return std::make_unique<TFIDF>(params.withNorms);
-}
-
-Scorer::ptr MakeVPack(const vpack::Slice slice) {
-  switch (slice.type()) {
-    case vpack::ValueType::Bool:
-      return MakeFromBool(slice);
-    case vpack::ValueType::Object:
-      return MakeFromObject(slice);
-    case vpack::ValueType::Array:
-      return MakeFromArray(slice);
-    default:  // wrong type
-      SDB_ERROR(
-        IRESEARCH,
-        "Invalid VPack arguments passed while constructing tfidf scorer, "
-        "arguments");
-      return nullptr;
-  }
-}
-
-Scorer::ptr MakeVPack(std::string_view args) {
-  if (IsNull(args)) {
-    // default args
-    return std::make_unique<TFIDF>();
-  } else {
-    vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-    return MakeVPack(slice);
-  }
-}
-
-Scorer::ptr MakeJson(std::string_view args) {
-  if (IsNull(args)) {
-    // default args
-    return std::make_unique<TFIDF>();
-  } else {
-    try {
-      auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-      return MakeVPack(vpack->slice());
-    } catch (const vpack::Exception& ex) {
-      SDB_ERROR(
-        IRESEARCH,
-        absl::StrCat("Caught error '", ex.what(),
-                     "' while constructing VPack from JSON for tfidf scorer"));
-    } catch (...) {
-      SDB_ERROR(
-        IRESEARCH,
-        "Caught error while constructing VPack from JSON for tfidf scorer");
-    }
-    return nullptr;
-  }
 }
 
 // Helper functions
@@ -319,11 +223,6 @@ bool TFIDF::equals(const Scorer& other) const noexcept {
   }
   const auto& p = sdb::basics::downCast<TFIDF>(other);
   return p._normalize == _normalize;
-}
-
-void TFIDF::init() {
-  REGISTER_SCORER_JSON(TFIDF, MakeJson);
-  REGISTER_SCORER_VPACK(TFIDF, MakeVPack);
 }
 
 }  // namespace irs

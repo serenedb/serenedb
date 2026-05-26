@@ -21,10 +21,10 @@
 
 #pragma once
 
-#include <vpack/builder.h>
-#include <vpack/slice.h>
+#include <absl/container/node_hash_map.h>
 
 #include <set>
+#include <string>
 
 #include "auth/common.h"
 #include "basics/containers/node_hash_map.h"
@@ -33,24 +33,41 @@
 
 namespace sdb::catalog {
 
+// Persistent on-disk catalog format.
+struct RoleData {
+  ObjectId id;
+  std::string name;
+  bool active = true;
+  std::string password_method;
+  std::string password_salt;
+  std::string password_hash;
+  absl::node_hash_map<std::string, std::underlying_type_t<auth::Level>>
+    db_access;
+};
+
 class Role final : public catalog::Object {
+ public:
   struct PrivateTag {
     explicit PrivateTag() = default;
   };
-  static void fromDocumentDatabases(catalog::Role& role,
-                                    vpack::Slice databases);
 
- public:
   explicit Role(PrivateTag, ObjectId id, std::string_view name);
 
-  void WriteInternal(vpack::Builder&) const final;
+  // Capture the persistent state into a flat RoleData (used by the
+  // reflection-based Serialize path).
+  RoleData ToData() const;
+  // Construct a Role from RoleData (read-side counterpart). Static helper
+  // so Deserialize has a shared implementation.
+  static std::shared_ptr<Role> FromData(RoleData data);
+
+  void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
 
   static std::shared_ptr<catalog::Role> NewUser(std::string_view name,
                                                 std::string_view password,
                                                 ObjectId id = {});
-  static std::shared_ptr<Role> ReadInternal(vpack::Slice slice,
-                                            ReadContext ctx);
+  static std::shared_ptr<Role> Deserialize(duckdb::Deserializer& src,
+                                           ReadContext ctx);
 
   std::string_view username() const { return GetName(); }
   std::string_view passwordMethod() const { return _password_method; }

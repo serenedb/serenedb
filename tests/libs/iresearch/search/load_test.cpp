@@ -21,8 +21,9 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
-#include <vpack/parser.h>
-#include <vpack/serializer.h>
+#include <simdjson.h>
+#include "basics/serializer.h"
+#include "basics/simdjson_sink.h"
 #include <zlib.h>
 
 #include <bit>
@@ -39,6 +40,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_builder.h"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/search/bm25.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "tests_shared.hpp"
 
@@ -363,17 +365,35 @@ void HashResults(std::vector<QueryResult>& results) {
 }
 
 std::string SerializeResults(const std::vector<QueryResult>& results) {
-  vpack::Builder builder;
-  vpack::WriteObject(builder, results);
-  auto options = vpack::Options::gDefaults;
-  options.pretty_print = true;
-  return builder.slice().toJson(&options);
+  // Drive the templated reflection-based writer through `sdb::basics::JsonSink`
+  // (simdjson::builder), emitting JSON text directly without an intermediate
+  // vpack::Builder + slice round-trip.
+  simdjson::SIMDJSON_BUILTIN_IMPLEMENTATION::builder::string_builder sb(1024);
+  {
+    sdb::basics::JsonSink sink{sb};
+    sdb::basics::WriteObject(sink, results);
+  }
+  std::string_view body;
+  if (sb.view().get(body) != simdjson::SUCCESS) {
+    return {};
+  }
+  return std::string{body};
 }
 
 std::vector<QueryResult> DeserializeResults(std::string_view json_str) {
-  auto builder{vpack::Parser::fromJson(json_str)};
+  // Mirror SerializeResults' simdjson path on the read side: parse JSON via
+  // simdjson::ondemand and feed it through `sdb::basics::JsonSource` + the
+  // reflection reader.
+  simdjson::padded_string padded{json_str};
+  simdjson::SIMDJSON_BUILTIN_IMPLEMENTATION::ondemand::parser parser;
+  simdjson::SIMDJSON_BUILTIN_IMPLEMENTATION::ondemand::document doc;
+  auto err = parser.iterate(padded).get(doc);
+  if (err != simdjson::SUCCESS) {
+    return {};
+  }
   std::vector<QueryResult> results;
-  vpack::ReadObject(builder->slice(), results);
+  sdb::basics::JsonSource source{doc};
+  sdb::basics::ReadObject(source, results);
   return results;
 }
 
@@ -739,9 +759,7 @@ TEST_F(LoadTest, WikiSmall) { RunAndValidate("wiki_small"); }
 
 TEST_F(LoadTest, DisjunctionScoreAccuracy) {
   const auto& reader = gExecutor->GetReader();
-  auto scorer_ptr =
-    irs::scorers::Get(gConfig.scorer, irs::Type<irs::text_format::Json>::get(),
-                      gConfig.scorer_options, false);
+  auto scorer_ptr = irs::BM25::Make(irs::BM25::Options{});
   ASSERT_TRUE(scorer_ptr);
   const auto& scorer = *scorer_ptr;
 

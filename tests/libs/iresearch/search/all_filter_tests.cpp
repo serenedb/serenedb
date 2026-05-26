@@ -24,8 +24,10 @@
 #include "filter_test_case_base.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/all_filter.hpp"
+#include "iresearch/search/bm25.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/search/tfidf.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -148,8 +150,7 @@ TEST_P(AllFilterTestCase, all_order) {
     Docs docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
               17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
 
-    auto sort = irs::scorers::Get(
-      "bm25", irs::Type<irs::text_format::Json>::get(), std::string_view{});
+    irs::Scorer::ptr sort = irs::BM25::Make(irs::BM25::Options{});
 
     CheckQuery(irs::All(), std::span{&sort, 1}, docs, rdr);
   }
@@ -159,8 +160,7 @@ TEST_P(AllFilterTestCase, all_order) {
     Docs docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
               17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
 
-    auto sort = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), std::string_view{});
+    irs::Scorer::ptr sort = irs::TFIDF::Make(irs::TFIDF::Options{});
     CheckQuery(irs::All(), std::span{&sort, 1}, docs, rdr);
   }
 }

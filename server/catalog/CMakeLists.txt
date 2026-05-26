@@ -19,7 +19,6 @@ target_sources(
         user_type.cpp
         role.cpp
         secondary_index.cpp
-        identity_analyzer.cpp
         inverted_index.cpp
         mangling.cpp
         scorer_options.cpp

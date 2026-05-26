@@ -36,6 +36,11 @@
 #include "catalog/tokenizer.h"
 #include "storage_engine/index_shard.h"
 
+namespace duckdb {
+class Serializer;
+class Deserializer;
+}  // namespace duckdb
+
 namespace sdb::catalog {
 
 // Numeric/temporal DuckDB types the inverted-index sink indexes via a
@@ -57,6 +62,7 @@ constexpr bool IsNumericSliceKind(duckdb::LogicalTypeId kind) noexcept {
   }
 }
 
+// Persistent on-disk catalog format.
 struct HNSWColumnConfig {
   int d = 0;
   int m = 32;
@@ -113,9 +119,9 @@ class InvertedIndex final : public Index {
     BumpTickServerForEntryIds();
   }
 
-  static std::shared_ptr<InvertedIndex> ReadInternal(vpack::Slice slice,
-                                                     ReadContext ctx);
-  void WriteInternal(vpack::Builder& builder) const final;
+  static std::shared_ptr<InvertedIndex> Deserialize(duckdb::Deserializer& src,
+                                                    ReadContext ctx);
+  void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
     bool is_new, ObjectId id) const final;

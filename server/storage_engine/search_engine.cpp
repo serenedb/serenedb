@@ -41,7 +41,6 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/formats/formats.hpp>
-#include <iresearch/search/scorers.hpp>
 
 #include "app/app_server.h"
 #include "basics/down_cast.h"
@@ -50,7 +49,6 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 #include "basics/log.h"
 #include "basics/number_of_cores.h"
 #include "catalog/catalog.h"
-#include "catalog/identity_analyzer.h"
 #include "catalog/index.h"
 #include "catalog/search_common.h"
 #include "catalog/view.h"
@@ -64,11 +62,6 @@ using namespace std::chrono_literals;
 
 namespace sdb::search {
 namespace {
-
-REGISTER_ANALYZER_VPACK(IdentityAnalyzer, IdentityAnalyzer::make,
-                        IdentityAnalyzer::normalize);
-REGISTER_ANALYZER_JSON(IdentityAnalyzer, IdentityAnalyzer::make_json,
-                       IdentityAnalyzer::normalize_json);
 
 uint32_t ComputeThreadsCount(uint32_t threads, uint32_t threads_limit,
                              uint32_t div) noexcept {
@@ -121,10 +114,7 @@ SearchEngine::SearchEngine()
   ::irs::analysis::NearestNeighborsTokenizer::set_model_provider(
     &fast_text::CreateModel<fasttext::ImmutableFastText>);
 
-  irs::analysis::analyzers::Init();
   irs::formats::Init();
-  irs::scorers::Init();
-  irs::compression::Init();
 
   gInstance = this;
 }

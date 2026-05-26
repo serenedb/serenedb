@@ -21,153 +21,30 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/analysis/analyzers.hpp"
-#include "tests_config.hpp"
+#include "iresearch/analysis/analyzer.hpp"
+#include "iresearch/analysis/text_tokenizer.hpp"
 #include "tests_shared.hpp"
 
 namespace tests {
 
-class AnalyzerTest : public ::testing::Test {
-  void SetUp() final {
-    // Code here will be called immediately after the constructor (right before
-    // each test).
-
-    // ensure stopwords are loaded/cached for the 'en' locale used for text
-    // analysis below
-    {
-      // same env variable name as
-      // irs::analysis::text_token_stream::STOPWORD_PATH_ENV_VARIABLE
-      const auto text_stopword_path_var = "IRESEARCH_TEXT_STOPWORD_PATH";
-      const char* cz_old_stopword_path = std::getenv(text_stopword_path_var);
-      std::string s_old_stopword_path =
-        cz_old_stopword_path == nullptr ? "" : cz_old_stopword_path;
-
-      ::setenv(text_stopword_path_var, IRS_TEST_RESOURCE_DIR, /*overwrite=*/1);
-      irs::analysis::analyzers::Get(
-        "text", irs::Type<irs::text_format::Text>::get(),
-        "en");  // stream needed only to load stopwords
-
-      if (cz_old_stopword_path) {
-        ::setenv(text_stopword_path_var, s_old_stopword_path.c_str(),
-                 /*overwrite=*/1);
-      }
-    }
-  }
-
-  void TearDown() final {
-    // Code here will be called immediately after each test (right before the
-    // destructor).
-  }
-};
+class AnalyzerTest : public ::testing::Test {};
 
 }  // namespace tests
 
 using namespace tests;
 
-TEST_F(AnalyzerTest, duplicate_register) {
-  struct DummyAnalyzer : public irs::analysis::TypedAnalyzer<DummyAnalyzer> {
-    static ptr Make(std::string_view) { return ptr(new DummyAnalyzer()); }
-    static bool Normalize(std::string_view, std::string&) { return true; }
-    irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
-      return nullptr;
-    }
-    bool next() final { return false; }
-    bool reset(std::string_view) final { return false; }
-  };
-
-  static bool gInitialExpected = true;
-
-  // check required for tests with repeat (static maps are not cleared between
-  // runs)
-  if (gInitialExpected) {
-    ASSERT_FALSE(irs::analysis::analyzers::Exists(
-      irs::Type<DummyAnalyzer>::name(),
-      irs::Type<irs::text_format::VPack>::get()));
-    ASSERT_FALSE(irs::analysis::analyzers::Exists(
-      irs::Type<DummyAnalyzer>::name(),
-      irs::Type<irs::text_format::Json>::get()));
-    ASSERT_FALSE(irs::analysis::analyzers::Exists(
-      irs::Type<DummyAnalyzer>::name(),
-      irs::Type<irs::text_format::Text>::get()));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                irs::Type<DummyAnalyzer>::name(),
-                irs::Type<irs::text_format::Json>::get(), std::string_view{}));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                irs::Type<DummyAnalyzer>::name(),
-                irs::Type<irs::text_format::Text>::get(), std::string_view{}));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                irs::Type<DummyAnalyzer>::name(),
-                irs::Type<irs::text_format::VPack>::get(), std::string_view{}));
-
-    irs::analysis::AnalyzerRegistrar initial0(
-      irs::Type<DummyAnalyzer>::get(),
-      irs::Type<irs::text_format::VPack>::get(), &DummyAnalyzer::Make,
-      &DummyAnalyzer::Normalize);
-    irs::analysis::AnalyzerRegistrar initial1(
-      irs::Type<DummyAnalyzer>::get(), irs::Type<irs::text_format::Json>::get(),
-      &DummyAnalyzer::Make, &DummyAnalyzer::Normalize);
-    irs::analysis::AnalyzerRegistrar initial2(
-      irs::Type<DummyAnalyzer>::get(), irs::Type<irs::text_format::Text>::get(),
-      &DummyAnalyzer::Make, &DummyAnalyzer::Normalize);
-    ASSERT_EQ(!gInitialExpected, !initial0);
-    ASSERT_EQ(!gInitialExpected, !initial1);
-    ASSERT_EQ(!gInitialExpected, !initial2);
-  }
-
-  gInitialExpected = false;  // next test iteration will not be able to register
-                             // the same analyzer
-  irs::analysis::AnalyzerRegistrar duplicate0(
-    irs::Type<DummyAnalyzer>::get(), irs::Type<irs::text_format::VPack>::get(),
-    &DummyAnalyzer::Make, &DummyAnalyzer::Normalize);
-  irs::analysis::AnalyzerRegistrar duplicate1(
-    irs::Type<DummyAnalyzer>::get(), irs::Type<irs::text_format::Json>::get(),
-    &DummyAnalyzer::Make, &DummyAnalyzer::Normalize);
-  irs::analysis::AnalyzerRegistrar duplicate2(
-    irs::Type<DummyAnalyzer>::get(), irs::Type<irs::text_format::Text>::get(),
-    &DummyAnalyzer::Make, &DummyAnalyzer::Normalize);
-  ASSERT_TRUE(!duplicate0);
-  ASSERT_TRUE(!duplicate1);
-  ASSERT_TRUE(!duplicate2);
-
-  ASSERT_TRUE(irs::analysis::analyzers::Exists(
-    irs::Type<DummyAnalyzer>::name(),
-    irs::Type<irs::text_format::VPack>::get()));
-  ASSERT_TRUE(
-    irs::analysis::analyzers::Exists(irs::Type<DummyAnalyzer>::name(),
-                                     irs::Type<irs::text_format::Json>::get()));
-  ASSERT_TRUE(
-    irs::analysis::analyzers::Exists(irs::Type<DummyAnalyzer>::name(),
-                                     irs::Type<irs::text_format::Text>::get()));
-  ASSERT_NE(nullptr,
-            irs::analysis::analyzers::Get(
-              irs::Type<DummyAnalyzer>::name(),
-              irs::Type<irs::text_format::VPack>::get(), std::string_view{}));
-  ASSERT_NE(nullptr,
-            irs::analysis::analyzers::Get(
-              irs::Type<DummyAnalyzer>::name(),
-              irs::Type<irs::text_format::Json>::get(), std::string_view{}));
-  ASSERT_NE(nullptr,
-            irs::analysis::analyzers::Get(
-              irs::Type<DummyAnalyzer>::name(),
-              irs::Type<irs::text_format::Text>::get(), std::string_view{}));
-}
+// NOTE: the legacy `duplicate_register` test exercised the now-deleted
+// AnalyzerRegistrar / analyzers::Exists APIs and has been removed alongside
+// the registry. Variant-based dispatch has no runtime registration step so
+// there is nothing to verify here.
 
 TEST_F(AnalyzerTest, test_load) {
-  {
-    auto analyzer = irs::analysis::analyzers::Get(
-      "text", irs::Type<irs::text_format::Text>::get(), "en");
-
-    ASSERT_NE(nullptr, analyzer);
-    ASSERT_TRUE(analyzer->reset("abc"));
-  }
-
   // locale with default ingnored_words
   {
-    auto analyzer = irs::analysis::analyzers::Get(
-      "text", irs::Type<irs::text_format::Json>::get(), "{\"locale\":\"en\"}");
+    auto analyzer =
+      irs::analysis::TextTokenizer::Make(irs::analysis::TextTokenizer::Options{
+        .locale = icu::Locale::createFromName("en"),
+      });
 
     ASSERT_NE(nullptr, analyzer);
     ASSERT_TRUE(analyzer->reset("abc"));
@@ -175,27 +52,27 @@ TEST_F(AnalyzerTest, test_load) {
 
   // locale with provided ignored_words
   {
-    auto analyzer = irs::analysis::analyzers::Get(
-      "text", irs::Type<irs::text_format::Json>::get(),
-      "{\"locale\":\"en\", \"stopwords\":[\"abc\", \"def\", \"ghi\"]}");
+    irs::analysis::TextTokenizer::Options opts{
+      .locale = icu::Locale::createFromName("en"),
+    };
+    opts.explicit_stopwords.insert("abc");
+    opts.explicit_stopwords.insert("def");
+    opts.explicit_stopwords.insert("ghi");
+    opts.explicit_stopwords_set = true;
+    auto analyzer = irs::analysis::TextTokenizer::Make(std::move(opts));
 
     ASSERT_NE(nullptr, analyzer);
     ASSERT_TRUE(analyzer->reset("abc"));
   }
 
-  // ...........................................................................
-  // invalid
-  // ...........................................................................
-
-  // missing required locale
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "text", irs::Type<irs::text_format::Json>::get(), "{}"));
-
-  // invalid ignored_words
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "text", irs::Type<irs::text_format::Json>::get(),
-                       "{{\"locale\":\"en\", \"stopwords\":\"abc\"}}"));
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "text", irs::Type<irs::text_format::Json>::get(),
-                       "{{\"locale\":\"en\", \"stopwords\":[1, 2, 3]}}"));
+  // .........................................................................
+  // invalid: missing required locale -- the old JSON path rejected "{}".
+  // Direct Options API: a default-constructed Options has `locale` set to
+  // `MakeBogusLocale()`; Make should reject because BreakIterator cannot be
+  // built from a bogus locale.
+  // .........................................................................
+  {
+    ASSERT_ANY_THROW(irs::analysis::TextTokenizer::Make(
+      irs::analysis::TextTokenizer::Options{}));
+  }
 }

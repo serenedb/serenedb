@@ -56,7 +56,6 @@ set(iresearch-tests_sources
     ./search/regexp_filter_test.cpp
     ./search/levenshtein_filter_test.cpp
     ./search/index_reader_test.cpp
-    ./search/scorers_tests.cpp
     ./search/bitset_doc_iterator_test.cpp
     ./search/sort_tests.cpp
     ./search/tfidf_test.cpp

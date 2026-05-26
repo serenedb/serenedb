@@ -23,13 +23,17 @@
 
 #include <unicode/locid.h>
 #include <utf8.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
 
 #include <sstream>
 
 #include "iresearch/analysis/ngram_tokenizer.hpp"
 #include "tests_shared.hpp"
+
+namespace {
+irs::bstring operator""_b(const char* ptr, size_t size) {
+  return irs::bstring{reinterpret_cast<const irs::byte_type*>(ptr), size};
+}
+}  // namespace
 
 TEST(ngram_token_stream_test, consts) {
   static_assert(
@@ -42,11 +46,11 @@ TEST(ngram_token_stream_test, consts) {
 }
 
 TEST(ngram_token_stream_test, construct) {
-  // load jSON object
+  // 1..3, preserve_original=true
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "ngram", irs::Type<irs::text_format::Json>::get(),
-      "{\"min\":1, \"max\":3, \"preserveOriginal\":true}");
+    auto stream = irs::analysis::NGramTokenizerBase::Make(
+      irs::analysis::NGramTokenizerBase::Options{
+        .min_gram = 1, .max_gram = 3, .preserve_original = true});
     ASSERT_NE(nullptr, stream);
     ASSERT_EQ(irs::Type<irs::analysis::NGramTokenizer<
                 irs::analysis::NGramTokenizerBase::InputType::Binary>>::id(),
@@ -59,12 +63,11 @@ TEST(ngram_token_stream_test, construct) {
     ASSERT_EQ(true, impl.preserve_original());
   }
 
-  // load jSON object
+  // min=0 -> clamps to 1, max=1
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "ngram", irs::Type<irs::text_format::Json>::get(),
-      "{\"min\":0, \"max\":1, \"preserveOriginal\":false, "
-      "\"invalidProperty\":true }");
+    auto stream = irs::analysis::NGramTokenizerBase::Make(
+      irs::analysis::NGramTokenizerBase::Options{
+        .min_gram = 0, .max_gram = 1, .preserve_original = false});
     ASSERT_NE(nullptr, stream);
 
     auto& impl = dynamic_cast<irs::analysis::NGramTokenizer<
@@ -74,11 +77,11 @@ TEST(ngram_token_stream_test, construct) {
     ASSERT_EQ(false, impl.preserve_original());
   }
 
-  // load jSON object
+  // min>max -> max clamped to min
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "ngram", irs::Type<irs::text_format::Json>::get(),
-      "{\"min\":2, \"max\":1, \"preserveOriginal\":false }");
+    auto stream = irs::analysis::NGramTokenizerBase::Make(
+      irs::analysis::NGramTokenizerBase::Options{
+        .min_gram = 2, .max_gram = 1, .preserve_original = false});
     ASSERT_NE(nullptr, stream);
 
     auto& impl = dynamic_cast<irs::analysis::NGramTokenizer<
@@ -88,40 +91,21 @@ TEST(ngram_token_stream_test, construct) {
     ASSERT_EQ(false, impl.preserve_original());
   }
 
-  // load jSON invalid
+  // .........................................................................
+  // The old "load jSON invalid" block exercised JSON-parser type errors
+  // (`"min":"1"`, `"preserveOriginal":"true"`), missing-field rejection
+  // (`"{}"`) and an unknown enum string (`"streamType":"unknown"`). All of
+  // these are parser-/registry-level failures with no direct-API analogue:
+  //   - field type errors can't be expressed with typed `Options` members,
+  //   - the "missing required min/max" rule no longer holds (the new
+  //     Options has explicit numeric defaults and Make clamps to >= 1), and
+  //   - the `InputType` enum is now type-checked at the call site.
+  // What survives is the default-Options happy path -- it must construct.
+  // .........................................................................
   {
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "ngram", irs::Type<irs::text_format::Json>::get(),
-                         std::string_view{}));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "ngram", irs::Type<irs::text_format::Json>::get(), "1"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "ngram", irs::Type<irs::text_format::Json>::get(), "[]"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "ngram", irs::Type<irs::text_format::Json>::get(), "{}"));
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "ngram", irs::Type<irs::text_format::Json>::get(),
-                         "{\"locale\":1}"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "ngram", irs::Type<irs::text_format::Json>::get(),
-                "{\"min\":\"1\", \"max\":3, \"preserveOriginal\":true}"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "ngram", irs::Type<irs::text_format::Json>::get(),
-                "{\"min\":1, \"max\":\"3\", \"preserveOriginal\":true}"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "ngram", irs::Type<irs::text_format::Json>::get(),
-                "{\"min\":1, \"max\":3, \"preserveOriginal\":\"true\"}"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "ngram", irs::Type<irs::text_format::Json>::get(),
-                "{\"min\":1, \"max\":3, "
-                "\"preserveOriginal\":\"true\",\"streamType\":\"unknown\"}"));
+    auto stream = irs::analysis::NGramTokenizerBase::Make(
+      irs::analysis::NGramTokenizerBase::Options{});
+    ASSERT_NE(nullptr, stream);
   }
 
   // 2-gram
@@ -296,8 +280,8 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         1, 1, false, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::kEmptyStringView<irs::byte_type>,
-        irs::kEmptyStringView<irs::byte_type>));
+        irs::bstring{},
+        irs::bstring{}));
 
     std::u8string utf8data = u8"a\u00A2b\u00A3c\u00A4d\u00A5";
 
@@ -322,8 +306,8 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         2, 2, false, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::kEmptyStringView<irs::byte_type>,
-        irs::kEmptyStringView<irs::byte_type>));
+        irs::bstring{},
+        irs::bstring{}));
 
     constexpr std::u8string_view kUtf8data = u8"a\u00A2b\u00A3c\u00A4d\u00A5";
     const auto data = irs::ViewCast<char>(kUtf8data);
@@ -356,8 +340,8 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         1, 2, false, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::kEmptyStringView<irs::byte_type>,
-        irs::kEmptyStringView<irs::byte_type>));
+        irs::bstring{},
+        irs::bstring{}));
 
     constexpr std::u8string_view kUtf8data = u8"a\u00A2b\u00A3c\u00A4d\u00A5";
     const auto data = irs::ViewCast<char>(kUtf8data);
@@ -415,8 +399,8 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         5, 5, false, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::kEmptyStringView<irs::byte_type>,
-        irs::kEmptyStringView<irs::byte_type>));
+        irs::bstring{},
+        irs::bstring{}));
 
     constexpr std::u8string_view kUtf8data = u8"\u00C0\u00C1\u00C2\u00C3\u00C4";
     const auto data = irs::ViewCast<char>(kUtf8data);
@@ -432,9 +416,8 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         5, 5, false, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::bytes_view(reinterpret_cast<const irs::byte_type*>("\xc2\xa2"), 2),
-        irs::bytes_view(reinterpret_cast<const irs::byte_type*>("\xc2\xa1"),
-                        2)));
+        irs::bstring{reinterpret_cast<const irs::byte_type*>("\xc2\xa2"), 2},
+        irs::bstring{reinterpret_cast<const irs::byte_type*>("\xc2\xa1"), 2}));
 
     constexpr std::u8string_view kUtf8data = u8"\u00C0\u00C1\u00C2\u00C3\u00C4";
     const auto data = irs::ViewCast<char>(kUtf8data);
@@ -453,8 +436,8 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         5, 5, true, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::kEmptyStringView<irs::byte_type>,
-        irs::kEmptyStringView<irs::byte_type>));
+        irs::bstring{},
+        irs::bstring{}));
     const std::u8string_view utf8data = u8"\u00C0\u00C1\u00C2\u00C3\u00C4";
     const auto data = irs::ViewCast<char>(utf8data);
 
@@ -469,8 +452,8 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         6, 6, true, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::kEmptyStringView<irs::byte_type>,
-        irs::kEmptyStringView<irs::byte_type>));
+        irs::bstring{},
+        irs::bstring{}));
     constexpr std::u8string_view kUtf8data = u8"\u00C0\u00C1\u00C2\u00C3\u00C4";
     const auto data = irs::ViewCast<char>(kUtf8data);
 
@@ -485,8 +468,8 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         6, 6, false, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::kEmptyStringView<irs::byte_type>,
-        irs::kEmptyStringView<irs::byte_type>));
+        irs::bstring{},
+        irs::bstring{}));
     const std::u8string_view utf8data = u8"\u00C0\u00C1\u00C2\u00C3\u00C4";
     const auto data = irs::ViewCast<char>(utf8data);
 
@@ -500,8 +483,8 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         1, 2, false, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::bytes_view(reinterpret_cast<const irs::byte_type*>("\xc2\xa1"), 2),
-        irs::kEmptyStringView<irs::byte_type>));
+        irs::bstring{reinterpret_cast<const irs::byte_type*>("\xc2\xa1"), 2},
+        irs::bstring{}));
 
     constexpr std::u8string_view kUtf8data = u8"a\u00A2b\u00A3c\u00A4d\u00A5";
     const auto data = irs::ViewCast<char>(kUtf8data);
@@ -546,8 +529,8 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         1, 2, true, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::bytes_view(reinterpret_cast<const irs::byte_type*>("\xc2\xa1"), 2),
-        irs::kEmptyStringView<irs::byte_type>));
+        irs::bstring{reinterpret_cast<const irs::byte_type*>("\xc2\xa1"), 2},
+        irs::bstring{}));
 
     constexpr std::u8string_view kUtf8data = u8"a\u00A2b\u00A3c\u00A4d\u00A5";
     const auto data = irs::ViewCast<char>(kUtf8data);
@@ -602,9 +585,8 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         2, 3, true, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::kEmptyStringView<irs::byte_type>,
-        irs::bytes_view(reinterpret_cast<const irs::byte_type*>("\xc2\xa1"),
-                        2)));
+        irs::bstring{},
+        irs::bstring{reinterpret_cast<const irs::byte_type*>("\xc2\xa1"), 2}));
 
     constexpr std::u8string_view kUtf8data = u8"a\u00A2b\u00A3c\u00A4d\u00A5";
     const auto data = irs::ViewCast<char>(kUtf8data);
@@ -675,9 +657,8 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         1, 3, true, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::kEmptyStringView<irs::byte_type>,
-        irs::bytes_view(reinterpret_cast<const irs::byte_type*>("\xc2\xa1"),
-                        2)));
+        irs::bstring{},
+        irs::bstring{reinterpret_cast<const irs::byte_type*>("\xc2\xa1"), 2}));
 
     const std::u8string_view utf8data = u8"a\u00A2b\u00A3c\u00A4d\u00A5";
     const auto data = irs::ViewCast<char>(utf8data);
@@ -758,9 +739,8 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         1, 3, true, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::bytes_view(reinterpret_cast<const irs::byte_type*>("\xc2\xa2"), 2),
-        irs::bytes_view(reinterpret_cast<const irs::byte_type*>("\xc2\xa1"),
-                        2)));
+        irs::bstring{reinterpret_cast<const irs::byte_type*>("\xc2\xa2"), 2},
+        irs::bstring{reinterpret_cast<const irs::byte_type*>("\xc2\xa1"), 2}));
 
     constexpr std::u8string_view kUtf8data = u8"a\u00A2b\u00A3c\u00A4d\u00A5";
     const auto data = irs::ViewCast<char>(kUtf8data);
@@ -855,9 +835,8 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         1, 3, false, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::bytes_view(reinterpret_cast<const irs::byte_type*>("\xc2\xa2"), 2),
-        irs::bytes_view(reinterpret_cast<const irs::byte_type*>("\xc2\xa1"),
-                        2)));
+        irs::bstring{reinterpret_cast<const irs::byte_type*>("\xc2\xa2"), 2},
+        irs::bstring{reinterpret_cast<const irs::byte_type*>("\xc2\xa1"), 2}));
 
     const std::u8string_view utf8data = u8"a\u00A2b\u00A3c\u00A4d\u00A5";
     const auto data = irs::ViewCast<char>(utf8data);
@@ -1038,8 +1017,8 @@ TEST(ngram_token_stream_test, next) {
       irs::analysis::NGramTokenizerBase::InputType::Binary>
       stream(irs::analysis::NGramTokenizerBase::Options(
         1, 1, false, irs::analysis::NGramTokenizerBase::InputType::Binary,
-        irs::ViewCast<irs::byte_type>(std::string_view("$")),
-        irs::ViewCast<irs::byte_type>(std::string_view("^"))));
+        "$"_b,
+        "^"_b));
 
     const std::vector<Token> expected{{"$q", 0, 1, "$", ""},
                                       {"u", 1, 2},
@@ -1070,8 +1049,8 @@ TEST(ngram_token_stream_test, next) {
       irs::analysis::NGramTokenizerBase::InputType::Binary>
       stream(irs::analysis::NGramTokenizerBase::Options(
         1, 1, true, irs::analysis::NGramTokenizerBase::InputType::Binary,
-        irs::ViewCast<irs::byte_type>(std::string_view("$")),
-        irs::ViewCast<irs::byte_type>(std::string_view("^"))));
+        "$"_b,
+        "^"_b));
 
     const std::vector<Token> expected{{"$q", 0, 1, "$", ""},
                                       {"$quick", 0, 5, "$", ""},
@@ -1157,8 +1136,8 @@ TEST(ngram_token_stream_test, next) {
       irs::analysis::NGramTokenizerBase::InputType::Binary>
       stream(irs::analysis::NGramTokenizerBase::Options(
         1, 3, false, irs::analysis::NGramTokenizerBase::InputType::Binary,
-        irs::ViewCast<irs::byte_type>(std::string_view("$")),
-        irs::ViewCast<irs::byte_type>(std::string_view("^"))));
+        "$"_b,
+        "^"_b));
 
     const std::vector<Token> expected{
       {"$q", 0, 1, "$", ""}, {"$qu", 0, 2, "$", ""}, {"$qui", 0, 3, "$", ""},
@@ -1202,8 +1181,8 @@ TEST(ngram_token_stream_test, next) {
       irs::analysis::NGramTokenizerBase::InputType::Binary>
       stream(irs::analysis::NGramTokenizerBase::Options(
         2, 3, true, irs::analysis::NGramTokenizerBase::InputType::Binary,
-        irs::ViewCast<irs::byte_type>(std::string_view("$")),
-        irs::kEmptyStringView<irs::byte_type>));
+        "$"_b,
+        irs::bstring{}));
 
     const std::vector<Token> expected{{"$qu", 0, 2, "$", ""},
                                       {"$qui", 0, 3, "$", ""},
@@ -1223,8 +1202,8 @@ TEST(ngram_token_stream_test, next) {
       irs::analysis::NGramTokenizerBase::InputType::Binary>
       stream(irs::analysis::NGramTokenizerBase::Options(
         2, 3, true, irs::analysis::NGramTokenizerBase::InputType::Binary,
-        irs::kEmptyStringView<irs::byte_type>,
-        irs::ViewCast<irs::byte_type>(std::string_view("^"))));
+        irs::bstring{},
+        "^"_b));
 
     const std::vector<Token> expected{{"qu", 0, 2},
                                       {"qui", 0, 3},
@@ -1244,8 +1223,8 @@ TEST(ngram_token_stream_test, next) {
       irs::analysis::NGramTokenizerBase::InputType::Binary>
       stream(irs::analysis::NGramTokenizerBase::Options(
         2, 3, true, irs::analysis::NGramTokenizerBase::InputType::Binary,
-        irs::ViewCast<irs::byte_type>(std::string_view("$")),
-        irs::ViewCast<irs::byte_type>(std::string_view("^"))));
+        "$"_b,
+        "^"_b));
 
     const std::vector<Token> expected{{"$qu", 0, 2, "$", ""},
                                       {"$qui", 0, 3, "$", ""},
@@ -1441,107 +1420,10 @@ TEST(ngram_token_stream_test, next) {
   }
 }
 
-TEST(ngram_token_stream_test, test_make_config_json) {
-  // with unknown parameter
-  {
-    std::string config =
-      "{\"min\":1,\"max\":5,\"preserveOriginal\":false,\"invalid_parameter\":"
-      "true}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "ngram", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(
-      vpack::Parser::fromJson(
-        "{\"min\":1,\"max\":5,\"preserveOriginal\":false,"
-        "\"streamType\":\"binary\",\"startMarker\":\"\",\"endMarker\":\"\"}")
-        ->toString(),
-      actual);
-  }
-
-  // with changed values
-  {
-    std::string config =
-      "{\"min\":11,\"max\":22,\"preserveOriginal\":true,\"startMarker\":\"$\","
-      "\"endMarker\":\"#\",\"streamType\":\"utf8\"}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "ngram", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(
-      vpack::Parser::fromJson(
-        "{\"min\":11,\"max\":22,\"preserveOriginal\":true,\"streamType\":"
-        "\"utf8\",\"startMarker\":\"$\",\"endMarker\":\"#\"}")
-        ->toString(),
-      actual);
-  }
-
-  // with only start marker
-  {
-    std::string config =
-      "{\"min\":11,\"max\":22,\"preserveOriginal\":true,\"startMarker\":\"$"
-      "123\"}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "ngram", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(vpack::Parser::fromJson(
-                "{\"min\":11,\"max\":22,\"preserveOriginal\":true,"
-                "\"streamType\":\"binary\","
-                "\"startMarker\":\"$123\", \"endMarker\":\"\"}")
-                ->toString(),
-              actual);
-  }
-  // with only end marker
-  {
-    std::string config =
-      "{\"min\":11,\"max\":22,\"preserveOriginal\":true,\"endMarker\":\"#"
-      "456\"}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "ngram", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(vpack::Parser::fromJson(
-                "{\"min\":11,\"max\":22,\"preserveOriginal\":true,"
-                "\"streamType\":\"binary\","
-                "\"startMarker\":\"\", \"endMarker\":\"#456\"}")
-                ->toString(),
-              actual);
-  }
-
-  // test vpack
-  {
-    std::string config =
-      "{\"min\":11,\"max\":22,\"preserveOriginal\":true,\"endMarker\":\"#"
-      "456\"}";
-    auto in_vpack = vpack::Parser::fromJson(config.c_str(), config.size());
-    std::string in_str;
-    in_str.assign(in_vpack->slice().startAs<char>(),
-                  in_vpack->slice().byteSize());
-    std::string out_str;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      out_str, "ngram", irs::Type<irs::text_format::VPack>::get(), in_str));
-    vpack::Slice out_slice(reinterpret_cast<const uint8_t*>(out_str.c_str()));
-    ASSERT_EQ(vpack::Parser::fromJson(
-                "{\"min\":11,\"max\":22,\"preserveOriginal\":true,"
-                "\"streamType\":\"binary\","
-                "\"startMarker\":\"\", \"endMarker\":\"#456\"}")
-                ->toString(),
-              out_slice.toString());
-  }
-}
-
-// TEST_F(ngram_token_stream_test, test_make_config_text) {
-//  No text builder for analyzer so far
-// }
-
-TEST(ngram_token_stream_test, test_make_config_invalid_format) {
-  std::string config = "{\"min\":11,\"max\":22,\"preserveOriginal\":true}";
-  std::string actual;
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    actual, "ngram", irs::Type<irs::text_format::Text>::get(), config));
-}
-
 TEST(ngram_token_stream_test, test_out_of_range_pos_issue) {
-  auto stream = irs::analysis::analyzers::Get(
-    "ngram", irs::Type<irs::text_format::Json>::get(),
-    "{\"min\":2,\"max\":3,\"preserveOriginal\":true}");
+  auto stream = irs::analysis::NGramTokenizerBase::Make(
+    irs::analysis::NGramTokenizerBase::Options{
+      .min_gram = 2, .max_gram = 3, .preserve_original = true});
   ASSERT_NE(nullptr, stream);
   auto* inc = irs::get<irs::IncAttr>(*stream);
   for (size_t i = 0; i < 10000; ++i) {
@@ -1605,8 +1487,8 @@ TEST(ngram_token_stream_test, test_out_of_range_pos_issue) {
 //  stream(
 //    irs::analysis::ngram_token_stream_base::Options(1, 3, true,
 //      irs::analysis::ngram_token_stream_base::InputType::UTF8,
-//      irs::bytes_view(reinterpret_cast<const irs::byte_type*>("\xc2\xa2"), 2),
-//      irs::bytes_view(reinterpret_cast<const irs::byte_type*>("\xc2\xa1"),
+//      irs::bstring{reinterpret_cast<const irs::byte_type*>("\xc2\xa2"), 2},
+//      std::string(reinterpret_cast<const char*>("\xc2\xa1"),
 //      2)));
 //
 //  std::wstring data = u8"a\u00A2b\u00A3c\u00A4d\u00A5";
@@ -1626,8 +1508,8 @@ TEST(ngram_token_stream_test, test_out_of_range_pos_issue) {
 //  stream(
 //    irs::analysis::ngram_token_stream_base::Options(1, 3, true,
 //      irs::analysis::ngram_token_stream_base::InputType::Binary,
-//      irs::bytes_view(reinterpret_cast<const irs::byte_type*>("\xc2\xa2"), 2),
-//      irs::bytes_view(reinterpret_cast<const irs::byte_type*>("\xc2\xa1"),
+//      irs::bstring{reinterpret_cast<const irs::byte_type*>("\xc2\xa2"), 2},
+//      std::string(reinterpret_cast<const char*>("\xc2\xa1"),
 //      2)));
 //
 //  std::string data = "quickbro";
@@ -1645,11 +1527,13 @@ TEST(ngram_token_stream_test, test_out_of_range_pos_issue) {
 TEST(ngram_token_stream_test, test_load) {
   {
     std::string_view data("quick");
-    auto stream = irs::analysis::analyzers::Get(
-      "ngram", irs::Type<irs::text_format::Json>::get(),
-      "{ "
-      "\"min\":5,\"max\":5,\"preserveOriginal\":false,\"streamType\":"
-      "\"binary\"}");
+    auto stream = irs::analysis::NGramTokenizerBase::Make(
+      irs::analysis::NGramTokenizerBase::Options{
+        .min_gram = 5,
+        .max_gram = 5,
+        .preserve_original = false,
+        .stream_bytes_type =
+          irs::analysis::NGramTokenizerBase::InputType::Binary});
 
     ASSERT_NE(nullptr, stream);
     ASSERT_TRUE(stream->reset(data));
@@ -1669,11 +1553,13 @@ TEST(ngram_token_stream_test, test_load) {
     constexpr std::u8string_view kData = u8"\u00C0\u00C1\u00C2\u00C3\u00C4";
     const auto ref = irs::ViewCast<char>(kData);
 
-    auto stream = irs::analysis::analyzers::Get(
-      "ngram", irs::Type<irs::text_format::Json>::get(),
-      "{ "
-      "\"min\":5,\"max\":5,\"preserveOriginal\":false,\"streamType\":"
-      "\"utf8\"}");
+    auto stream = irs::analysis::NGramTokenizerBase::Make(
+      irs::analysis::NGramTokenizerBase::Options{
+        .min_gram = 5,
+        .max_gram = 5,
+        .preserve_original = false,
+        .stream_bytes_type =
+          irs::analysis::NGramTokenizerBase::InputType::UTF8});
 
     ASSERT_NE(nullptr, stream);
     ASSERT_TRUE(stream->reset(ref));

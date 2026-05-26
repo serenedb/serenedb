@@ -28,9 +28,10 @@
 #include <absl/container/flat_hash_set.h>
 #include <unicode/locid.h>
 
-#include "analyzers.hpp"
+#include "analyzer.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
+#include "iresearch/utils/icu_locale_serde.hpp"
 #include "token_attributes.hpp"
 #include "tokenizer.hpp"
 
@@ -42,16 +43,17 @@ class TextTokenizer final : public TypedAnalyzer<TextTokenizer>,
  public:
   using stopwords_t = absl::flat_hash_set<std::string>;
 
-  struct OptionsT {
+  struct Options {
+    using Owner = TextTokenizer;
+    icu::Locale locale = irs::MakeBogusLocale();
     // lowercase tokens, match original implementation
     Case case_convert{Case::Lower};
     stopwords_t explicit_stopwords;
-    icu::Locale locale;
-    std::string stopwords_path{
-      0};  // string with zero char indicates 'no value set'
+    // single zero char indicates 'no value set' — empty string means a custom
+    // (empty) path was explicitly requested.
+    std::string stopwords_path = std::string(1, '\0');
     size_t min_gram{};
     size_t max_gram{};
-
     // needed for mark empty explicit_stopwords as valid and prevent loading
     // from defaults
     bool explicit_stopwords_set{};
@@ -67,20 +69,16 @@ class TextTokenizer final : public TypedAnalyzer<TextTokenizer>,
     // needed for mark empty preserve_original as valid and prevent loading from
     // defaults
     bool preserve_original_set{};
-
-    OptionsT() : locale{"C"} { locale.setToBogus(); }
   };
+  static ptr Make(Options opts);
 
   struct StateT;
 
   static const char* gStopwordPathEnvVariable;
 
   static constexpr std::string_view type_name() noexcept { return "text"; }
-  static void init();  // for triggering registration in a static build
-  static ptr make(std::string_view locale);
-  static void clear_cache();
 
-  TextTokenizer(const OptionsT& options, const stopwords_t& stopwords);
+  TextTokenizer(Options options, stopwords_t stopwords);
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }

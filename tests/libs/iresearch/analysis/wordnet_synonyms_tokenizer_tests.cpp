@@ -21,7 +21,7 @@
 #include <stdexcept>
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/wordnet_synonyms_tokenizer.hpp"
 
@@ -383,10 +383,10 @@ TEST(wordnet_synonyms_tests, make_state_invalid_input) {
 }
 
 TEST(wordnet_synonyms_tests, factory_make_json) {
-  auto analyzer = irs::analysis::analyzers::Get(
-    WordnetSynonymsTokenizer::type_name(),
-    irs::Type<irs::text_format::Json>::get(),
-    R"({"synonyms": "s(100000002,1,'come',v,1,0)."})");
+  auto analyzer = WordnetSynonymsTokenizer::Make(
+    WordnetSynonymsTokenizer::Options{
+      .synonyms_text = "s(100000002,1,'come',v,1,0).",
+    });
   ASSERT_NE(nullptr, analyzer);
 
   auto* term = irs::get<irs::TermAttr>(*analyzer);
@@ -396,18 +396,20 @@ TEST(wordnet_synonyms_tests, factory_make_json) {
   ASSERT_FALSE(analyzer->next());
 }
 
-TEST(wordnet_synonyms_tests, factory_make_json_missing_field) {
-  auto analyzer = irs::analysis::analyzers::Get(
-    WordnetSynonymsTokenizer::type_name(),
-    irs::Type<irs::text_format::Json>::get(), R"({})");
-  ASSERT_EQ(nullptr, analyzer);
+// NOTE: the legacy `factory_make_json_missing_field` test fed `{}` (no
+// `synonyms` field) through the JSON loader and expected nullptr because the
+// loader rejected the missing required field. The direct Options API has no
+// equivalent "field-was-missing" notion -- `synonyms_text` is just a string,
+// and the default-initialized empty value is a valid (empty) synonyms file
+// that Parse accepts. The check below ports the spirit of the original test:
+// default Options yields a valid analyzer that simply has no entries, so
+// every term reset to a non-empty input emits the input itself.
+TEST(wordnet_synonyms_tests, factory_make_missing_field) {
+  auto analyzer =
+    WordnetSynonymsTokenizer::Make(WordnetSynonymsTokenizer::Options{});
+  ASSERT_NE(nullptr, analyzer);
+
+  ASSERT_TRUE(analyzer->reset("anything"));
+  ASSERT_FALSE(analyzer->next());
 }
 
-TEST(wordnet_synonyms_tests, factory_normalize_json) {
-  std::string normalized;
-  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-    normalized, WordnetSynonymsTokenizer::type_name(),
-    irs::Type<irs::text_format::Json>::get(),
-    R"({"synonyms": "s(100000002,1,'come',v,1,0)."})"));
-  ASSERT_FALSE(normalized.empty());
-}

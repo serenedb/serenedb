@@ -20,7 +20,9 @@
 
 #include "catalog/schema.h"
 
-#include <vpack/serializer.h>
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
+#include "basics/serializer.h"
 
 namespace sdb::catalog {
 
@@ -28,26 +30,20 @@ Schema::Schema(ObjectId database_id, SchemaOptions options)
   : Object{database_id, options.id, std::move(options.name),
            ObjectType::Schema} {}
 
-std::shared_ptr<Schema> Schema::ReadInternal(vpack::Slice slice,
-                                             ReadContext ctx) {
+std::shared_ptr<Schema> Schema::Deserialize(duckdb::Deserializer& src,
+                                            ReadContext ctx) {
   SchemaOptions options;
-  if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
-    return nullptr;
-  }
+  basics::ReadTuple(src, options);
   return std::make_shared<Schema>(ctx.database_id, std::move(options));
 }
 
-void Schema::WriteInternal(vpack::Builder& b) const {
-  vpack::WriteTuple(b, SchemaOptions{
-                         .id = GetId(),
-                         .name = _name,
-                       });
+void Schema::Serialize(duckdb::Serializer& sink) const {
+  basics::WriteTuple(sink, SchemaOptions{.id = GetId(), .name = _name});
 }
 
 std::shared_ptr<Object> Schema::Clone() const {
-  vpack::Builder b;
-  WriteInternal(b);
-  return ReadInternal(b.slice(), {.database_id = GetParentId()});
+  return std::make_shared<Schema>(
+    GetParentId(), SchemaOptions{.id = GetId(), .name = _name});
 }
 
 }  // namespace sdb::catalog

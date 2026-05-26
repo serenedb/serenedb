@@ -22,18 +22,31 @@
 #include "table.h"
 
 #include <absl/algorithm/container.h>
-#include <vpack/builder.h>
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
 
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
 #include <memory>
 #include <utility>
 
 #include "basics/down_cast.h"
 #include "basics/errors.h"
-#include "vpack/vpack_helper.h"
+#include "basics/serializer.h"
 
 namespace sdb::catalog {
+namespace {
+
+// Persistent on-disk catalog format.
+struct TableData {
+  std::string name;
+  std::vector<Column> columns;
+  std::vector<Column::Id> pk_columns;
+  std::vector<CheckConstraint> check_constraints;
+  // Duckdb is positional, so we always write the slot; an unset ObjectId
+  // (default-constructed) is the "no generated PK sequence" sentinel.
+  ObjectId generated_pk_seq_id;
+};
+
+}  // namespace
 
 Table::Table(ObjectId schema_id, ObjectId id, std::string_view name,
              std::vector<Column> columns, std::vector<Column::Id> pk_columns,
@@ -52,52 +65,27 @@ Table::Table(ObjectId schema_id, ObjectId id, std::string_view name,
   }
 }
 
-std::shared_ptr<Table> Table::ReadInternal(vpack::Slice slice,
-                                           ReadContext ctx) {
-  auto name_slice = slice.get("name");
-  if (!name_slice.isString()) {
-    return nullptr;
-  }
-
-  std::vector<Column> columns;
-  if (auto r = vpack::ReadTupleNothrow(slice.get("columns"), columns, ctx.id);
-      !r.ok()) {
-    return nullptr;
-  }
-  std::vector<Column::Id> pk_columns;
-  if (auto r = vpack::ReadTupleNothrow(slice.get("pk_columns"), pk_columns);
-      !r.ok()) {
-    return nullptr;
-  }
-  std::vector<CheckConstraint> check_constraints;
-  if (auto r = vpack::ReadTupleNothrow(slice.get("check_constraints"),
-                                       check_constraints, ctx.id);
-      !r.ok()) {
-    return nullptr;
-  }
-
-  ObjectId generated_pk_seq_id{
-    basics::VPackHelper::getNumber<uint64_t>(slice, "generated_pk_seq_id", 0)};
-
+std::shared_ptr<Table> Table::Deserialize(duckdb::Deserializer& src,
+                                          ReadContext ctx) {
+  TableData data;
+  // Pass ctx.id as the per-element arg so Column's SerdeRead can stamp the
+  // owner table id when reconstructing each column.
+  basics::ReadTuple(src, data, ctx.id);
   return std::make_shared<Table>(
-    ctx.schema_id, ctx.id, name_slice.stringView(), std::move(columns),
-    std::move(pk_columns), std::move(check_constraints), generated_pk_seq_id);
+    ctx.schema_id, ctx.id, data.name, std::move(data.columns),
+    std::move(data.pk_columns), std::move(data.check_constraints),
+    data.generated_pk_seq_id);
 }
 
-void Table::WriteInternal(vpack::Builder& b) const {
-  b.openObject();
-  WriteObject(b, [&](vpack::Builder& b) {
-    b.add("columns");
-    vpack::WriteTuple(b, _columns);
-    b.add("pk_columns");
-    vpack::WriteTuple(b, _pk_columns);
-    b.add("check_constraints");
-    vpack::WriteTuple(b, _check_constraints);
-    if (_generated_pk_seq_id.isSet()) {
-      b.add("generated_pk_seq_id", _generated_pk_seq_id.id());
-    }
-  });
-  b.close();
+void Table::Serialize(duckdb::Serializer& sink) const {
+  TableData data{
+    .name = std::string{GetName()},
+    .columns = _columns,
+    .pk_columns = _pk_columns,
+    .check_constraints = _check_constraints,
+    .generated_pk_seq_id = _generated_pk_seq_id,
+  };
+  basics::WriteTuple(sink, data);
 }
 
 Result Table::RenameColumn(std::shared_ptr<Table>& result,

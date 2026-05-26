@@ -21,8 +21,10 @@
 #include "executor.h"
 
 #include <cstring>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
+#include <iresearch/search/bm25.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/store/store_utils.hpp>
 
@@ -31,12 +33,9 @@
 namespace bench {
 
 Executor::Executor(std::string_view path, const BenchConfig& config)
-  : _scorer{irs::scorers::Get(config.scorer,
-                              irs::Type<irs::text_format::Json>::get(),
-                              config.scorer_options, false)},
-    _tokenizer{irs::analysis::analyzers::Get(
-      config.tokenizer, irs::Type<irs::text_format::Json>::get(),
-      config.tokenizer_options)},
+  : _scorer{irs::BM25::Make(irs::BM25::Options{})},
+    _tokenizer{irs::analysis::SegmentationTokenizer::Make(
+      irs::analysis::SegmentationTokenizer::Options{})},
     _format{irs::formats::Get(config.format_name, false)},
     _dir{path},
     _reader{irs::DirectoryReader(

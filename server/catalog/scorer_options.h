@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <vpack/serializer.h>
-
 #include <cstdint>
 #include <iresearch/search/bm25.hpp>
 #include <iresearch/search/dfi.hpp>
@@ -41,6 +39,7 @@
 #include <variant>
 
 #include "basics/exceptions.h"
+#include "basics/serializer.h"
 
 namespace duckdb {
 
@@ -50,56 +49,18 @@ class ClientContext;
 }  // namespace duckdb
 namespace sdb::catalog {
 
+// Persistent on-disk catalog format.
 struct ScorerOptions {
-  enum class DfiMeasure : uint8_t {
-    Standardized,
-    Saturated,
-    ChiSquared,
-  };
-
-  struct Bm25 {
-    static constexpr std::string_view kName = irs::BM25::type_name();
-    float k1 = 1.2f;
-    float b = 0.75f;
-    bool operator==(const Bm25&) const = default;
-  };
-  struct Tfidf {
-    static constexpr std::string_view kName = irs::TFIDF::type_name();
-    bool with_norms = false;
-    bool operator==(const Tfidf&) const = default;
-  };
-  struct LmJm {
-    static constexpr std::string_view kName = irs::LMJelinekMercer::type_name();
-    float lambda = 0.1f;
-    bool operator==(const LmJm&) const = default;
-  };
-  struct LmDirichlet {
-    static constexpr std::string_view kName = irs::LMDirichlet::type_name();
-    float mu = 2000.0f;
-    bool operator==(const LmDirichlet&) const = default;
-  };
-  struct IndriDirichlet {
-    static constexpr std::string_view kName = irs::IndriDirichlet::type_name();
-    float mu = 2000.0f;
-    bool operator==(const IndriDirichlet&) const = default;
-  };
-  struct Dfi {
-    static constexpr std::string_view kName = irs::DFI::type_name();
-    DfiMeasure measure = DfiMeasure::Standardized;
-    bool operator==(const Dfi&) const = default;
-  };
-  struct RawBoost {
-    static constexpr std::string_view kName = irs::RawBoost::type_name();
-    bool operator==(const RawBoost&) const = default;
-  };
-  struct RawTf {
-    static constexpr std::string_view kName = irs::RawTF::type_name();
-    bool operator==(const RawTf&) const = default;
-  };
-  struct RawDL {
-    static constexpr std::string_view kName = irs::RawDL::type_name();
-    bool operator==(const RawDL&) const = default;
-  };
+  using DfiMeasure = irs::DFIMeasure;
+  using Bm25 = irs::BM25::Options;
+  using Tfidf = irs::TFIDF::Options;
+  using LmJm = irs::LMJelinekMercer::Options;
+  using LmDirichlet = irs::LMDirichlet::Options;
+  using IndriDirichlet = irs::IndriDirichlet::Options;
+  using Dfi = irs::DFI::Options;
+  using RawBoost = irs::RawBoost::Options;
+  using RawTf = irs::RawTF::Options;
+  using RawDL = irs::RawDL::Options;
 
   using Params = std::variant<Bm25, Tfidf, LmJm, LmDirichlet, IndriDirichlet,
                               Dfi, RawBoost, RawTf, RawDL>;
@@ -110,7 +71,9 @@ struct ScorerOptions {
 
   std::string_view Name() const noexcept {
     return std::visit(
-      []<typename P>(const P&) -> std::string_view { return P::kName; },
+      []<typename P>(const P&) -> std::string_view {
+        return P::Owner::type_name();
+      },
       params);
   }
 
@@ -131,61 +94,6 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
 // sdb::SqlException on any parse / bind / value error.
 ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
                                     std::string input);
-
-// vpack serialisation hook for Scorer. The persisted shape is a 2-tuple
-// `[name, arm_fields]`: `name` discriminates which variant arm follows, and
-// the arm itself is written via WriteTuple so each per-arm aggregate is
-// (de)serialised positionally by boost::pfr (no per-field code here). The
-// hook is picked up via ADL by the standard vpack::WriteTuple /
-// vpack::ReadTuple machinery.
-template<typename Context>
-void VPackWrite(Context ctx, const ScorerOptions& s) {
-  auto& b = ctx.vpack();
-  b.openArray(true);
-  b.add(s.Name());
-  std::visit([&](const auto& p) { vpack::WriteTuple(b, p, ctx.arg()); },
-             s.params);
-  b.close();
-}
-
-template<typename Context>
-void VPackRead(Context ctx, ScorerOptions& s) {
-  vpack::ArrayIterator it{ctx.vpack()};
-  if (!it.valid() || !(*it).isString()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "Invalid 'scorer' tuple: missing scorer name");
-  }
-  // 1. Discriminator -> default-construct the matching variant arm.
-  const auto name = (*it).stringView();
-  if (name == ScorerOptions::Bm25::kName) {
-    s.params = ScorerOptions::Bm25{};
-  } else if (name == ScorerOptions::Tfidf::kName) {
-    s.params = ScorerOptions::Tfidf{};
-  } else if (name == ScorerOptions::LmJm::kName) {
-    s.params = ScorerOptions::LmJm{};
-  } else if (name == ScorerOptions::LmDirichlet::kName) {
-    s.params = ScorerOptions::LmDirichlet{};
-  } else if (name == ScorerOptions::IndriDirichlet::kName) {
-    s.params = ScorerOptions::IndriDirichlet{};
-  } else if (name == ScorerOptions::Dfi::kName) {
-    s.params = ScorerOptions::Dfi{};
-  } else if (name == ScorerOptions::RawBoost::kName) {
-    s.params = ScorerOptions::RawBoost{};
-  } else if (name == ScorerOptions::RawTf::kName) {
-    s.params = ScorerOptions::RawTf{};
-  } else if (name == ScorerOptions::RawDL::kName) {
-    s.params = ScorerOptions::RawDL{};
-  } else {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "Unknown 'scorer' name '", name, "'");
-  }
-  it.next();
-  if (!it.valid()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "Invalid 'scorer' tuple: missing arm payload for '", name, "'");
-  }
-  // 2. Fill the active arm via the standard tuple reader (boost::pfr).
-  std::visit([&](auto& p) { vpack::ReadTuple(*it, p, ctx.arg()); }, s.params);
-}
 
 }  // namespace sdb::catalog
 namespace magic_enum {

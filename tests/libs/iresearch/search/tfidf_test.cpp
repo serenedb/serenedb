@@ -252,8 +252,7 @@ TEST_P(TfidfTestCase, consts) {
 }
 
 TEST_P(TfidfTestCase, test_load) {
-  auto scorer = irs::scorers::Get(
-    "tfidf", irs::Type<irs::text_format::Json>::get(), std::string_view{});
+  auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{});
 
   ASSERT_NE(nullptr, scorer);
 }
@@ -261,30 +260,18 @@ TEST_P(TfidfTestCase, test_load) {
 TEST_P(TfidfTestCase, make_from_bool) {
   // `withNorms` argument
   {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "true");
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{.with_norms = true});
     ASSERT_NE(nullptr, scorer);
     auto& tfidf = dynamic_cast<irs::TFIDF&>(*scorer);
     ASSERT_EQ(true, tfidf.normalize());
     ASSERT_EQ(irs::TFIDF::BOOST_AS_SCORE(), tfidf.use_boost_as_score());
   }
-
-  // invalid `withNorms` argument
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                              "\"false\""));
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                              "null"));
-  ASSERT_EQ(nullptr, irs::scorers::Get(
-                       "tfidf", irs::Type<irs::text_format::Json>::get(), "1"));
 }
 
 TEST_P(TfidfTestCase, make_from_array) {
   // default args
   {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), std::string_view{});
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{});
     ASSERT_NE(nullptr, scorer);
     ASSERT_EQ(irs::Type<irs::TFIDF>::id(), scorer->type());
     auto& tfidf = dynamic_cast<irs::TFIDF&>(*scorer);
@@ -292,86 +279,40 @@ TEST_P(TfidfTestCase, make_from_array) {
     ASSERT_EQ(irs::TFIDF::BOOST_AS_SCORE(), tfidf.use_boost_as_score());
   }
 
-  // default args
-  {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "[]");
-    ASSERT_EQ(nullptr, scorer);
-  }
-
   // `withNorms` argument
   {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "[ true ]");
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{.with_norms = true});
     ASSERT_NE(nullptr, scorer);
     ASSERT_EQ(irs::Type<irs::TFIDF>::id(), scorer->type());
     auto& tfidf = dynamic_cast<irs::TFIDF&>(*scorer);
     ASSERT_EQ(true, tfidf.normalize());
     ASSERT_EQ(irs::TFIDF::BOOST_AS_SCORE(), tfidf.use_boost_as_score());
   }
-
-  // invalid `withNorms` argument
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                              "[ \"false\" ]"));
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                              "[ null]"));
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                              "[ 1 ]"));
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                              "[ {} ]"));
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                              "[ [] ]"));
 }
 
 TEST_P(TfidfTestCase, test_normalize_features) {
   // default norms
   {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), std::string_view{});
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{});
     ASSERT_NE(nullptr, scorer);
     ASSERT_EQ(irs::IndexFeatures::Freq, scorer->GetIndexFeatures());
-  }
-
-  // with norms (as args)
-  {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "true");
-    ASSERT_NE(nullptr, scorer);
-    ASSERT_EQ(irs::IndexFeatures::Freq | irs::IndexFeatures::Norm,
-              scorer->GetIndexFeatures());
   }
 
   // with norms
   {
-    auto scorer =
-      irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                        "{\"withNorms\": true}");
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{.with_norms = true});
     ASSERT_NE(nullptr, scorer);
     ASSERT_EQ(irs::IndexFeatures::Freq | irs::IndexFeatures::Norm,
               scorer->GetIndexFeatures());
   }
 
-  // without norms (as args)
+  // without norms
   {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "false");
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{.with_norms = false});
     ASSERT_NE(nullptr, scorer);
     ASSERT_EQ(irs::IndexFeatures::Freq, scorer->GetIndexFeatures());
   }
 
-  // without norms
-  {
-    auto scorer =
-      irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                        "{\"withNorms\": false}");
-    ASSERT_NE(nullptr, scorer);
-    ASSERT_EQ(irs::IndexFeatures::Freq, scorer->GetIndexFeatures());
-  }
 }
 
 TEST_P(TfidfTestCase, test_phrase) {
@@ -1430,54 +1371,20 @@ TEST_P(TfidfTestCase, test_query) {
 TEST_P(TfidfTestCase, test_make) {
   // default values
   {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), std::string_view{});
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{});
     ASSERT_NE(nullptr, scorer);
     auto& scr = dynamic_cast<irs::TFIDF&>(*scorer);
     ASSERT_FALSE(scr.normalize());
     ASSERT_EQ(irs::TFIDF::BOOST_AS_SCORE(), scr.use_boost_as_score());
   }
 
-  // invalid args
+  // with_norms=true
   {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "\"12345");
-    ASSERT_EQ(nullptr, scorer);
-  }
-
-  // custom value
-  {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "true");
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{.with_norms = true});
     ASSERT_NE(nullptr, scorer);
     auto& scr = dynamic_cast<irs::TFIDF&>(*scorer);
     ASSERT_EQ(true, scr.normalize());
     ASSERT_EQ(irs::TFIDF::BOOST_AS_SCORE(), scr.use_boost_as_score());
-  }
-
-  // invalid value (non-bool)
-  {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "42");
-    ASSERT_EQ(nullptr, scorer);
-  }
-
-  // custom values
-  {
-    auto scorer =
-      irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                        "{\"withNorms\": true}");
-    ASSERT_NE(nullptr, scorer);
-    auto& scr = dynamic_cast<irs::TFIDF&>(*scorer);
-    ASSERT_EQ(true, scr.normalize());
-    ASSERT_EQ(irs::TFIDF::BOOST_AS_SCORE(), scr.use_boost_as_score());
-  }
-
-  // invalid values (withNorms)
-  {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "{\"withNorms\": 42}");
-    ASSERT_EQ(nullptr, scorer);
   }
 }
 

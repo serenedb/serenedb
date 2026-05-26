@@ -29,8 +29,10 @@
 #include <fstream>
 #include <functional>
 
+#include <unicode/locid.h>
+
 #include "basics/down_cast.h"
-#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/text_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_writer.hpp"
@@ -610,15 +612,23 @@ class TokenizerPayload final : public irs::Tokenizer {
   irs::Tokenizer* _impl;
 };
 
+// Construct the "text" analyzer with locale=C and an empty (explicit) stopword
+// list. Mirrors the legacy registry call `tests::LegacyGetAnalyzer("text", Json,
+// "{\"locale\":\"C\", \"stopwords\":[]}")`.
+inline irs::analysis::Analyzer::ptr MakeDocGenTextTokenizer() {
+  irs::analysis::TextTokenizer::Options opts;
+  opts.locale = icu::Locale::createFromName("C");
+  opts.explicit_stopwords_set = true;
+  return irs::analysis::TextTokenizer::Make(std::move(opts));
+}
+
 // field which uses text analyzer for tokenization and stemming
 template<typename T>
 class TextField : public tests::FieldBase {
  public:
   TextField(const std::string& name, bool payload = false,
             irs::IndexFeatures extra_features = irs::IndexFeatures::None)
-    : _token_stream(irs::analysis::analyzers::Get(
-        "text", irs::Type<irs::text_format::Json>::get(),
-        "{\"locale\":\"C\", \"stopwords\":[]}")) {
+    : _token_stream(MakeDocGenTextTokenizer()) {
     if (payload) {
       if (!_token_stream->reset(_value)) {
         throw irs::IllegalState{"Failed to reset stream."};
@@ -632,10 +642,7 @@ class TextField : public tests::FieldBase {
 
   TextField(const std::string& name, const T& value, bool payload = false,
             irs::IndexFeatures extra_features = irs::IndexFeatures::None)
-    : _token_stream(irs::analysis::analyzers::Get(
-        "text", irs::Type<irs::text_format::Json>::get(),
-        "{\"locale\":\"C\", \"stopwords\":[]}")),
-      _value(value) {
+    : _token_stream(MakeDocGenTextTokenizer()), _value(value) {
     if (payload) {
       if (!_token_stream->reset(_value)) {
         throw irs::IllegalState{"Failed to reset stream."};

@@ -20,16 +20,18 @@
 
 #pragma once
 
-#include <vpack/builder.h>
-#include <vpack/slice.h>
-
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
 #include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/utils/string.hpp>
+#include <magic_enum/magic_enum.hpp>
+#include <utility>
 
 #include "basics/bit_utils.hpp"
 #include "basics/exceptions.h"
 #include "basics/object_pool.hpp"
+#include "basics/serializer.h"
 #include "catalog/function.h"
 
 namespace sdb::search {
@@ -70,15 +72,6 @@ class Features final {
   // Return true if feature found, false otherwise
   bool Add(std::string_view name);
 
-  Result FromVPack(vpack::Slice s);
-  void ToVPack(vpack::Builder& b) const;
-
-  std::string ToStr() const {
-    vpack::Builder builder;
-    ToVPack(builder);
-    return builder.toJson();
-  }
-
   void Clear() noexcept { _index_features = irs::IndexFeatures::None; }
 
   constexpr irs::IndexFeatures GetIndexFeatures() const noexcept {
@@ -98,19 +91,18 @@ class Features final {
   constexpr bool operator==(const Features& rhs) const noexcept = default;
   constexpr auto operator<=>(const Features& rhs) const noexcept = default;
 
+  void Serialize(duckdb::Serializer& serializer) const {
+    serializer.WriteValue(std::to_underlying(_index_features));
+  }
+
+  static Features Deserialize(duckdb::Deserializer& deserializer) {
+    return Features{
+      static_cast<irs::IndexFeatures>(deserializer.ReadUnsignedInt8())};
+  }
+
  private:
   irs::IndexFeatures _index_features;
 };
-
-void VPackWrite(auto ctx, const Features& features) {
-  features.ToVPack(ctx.vpack());
-}
-void VPackRead(auto ctx, Features& features) {
-  Result res = features.FromVPack(ctx.vpack());
-  if (res.fail()) {
-    SDB_THROW(std::move(res));
-  }
-}
 
 bool IsGeoAnalyzer(std::string_view type) noexcept;
 
@@ -135,7 +127,7 @@ class AnalyzerImpl final {
     static ptr make(NumberStreamTag);
     static ptr make(BoolStreamTag);
     static ptr make(NullStreamTag);
-    static ptr make(std::string_view type, vpack::Slice properties);
+    static ptr make(std::string_view bytes);
   };
 
   using CacheType = irs::UnboundedObjectPool<Builder>;
@@ -144,16 +136,17 @@ class AnalyzerImpl final {
   CacheType::ptr Get() const noexcept;
 
   std::string_view GetType() const noexcept { return _type; }
-  vpack::Slice GetProperties() const noexcept { return _properties; }
+  // duckdb-binary serialized `TokenizerConfig` blob — opaque to callers.
+  std::string_view GetProperties() const noexcept { return _properties; }
   Features GetFeatures() const noexcept { return _features; }
   char GetFieldMarker() const noexcept { return _field_marker; }
 
-  void ToVPack(vpack::Builder& builder) const;
-
-  static Result FromVPack(ObjectId database, vpack::Slice slice,
-                          std::unique_ptr<AnalyzerImpl>& implementation);
-
-  Result init(std::string_view type, vpack::Slice properties, Features features,
+  // Native (no-vpack) entry point: `properties_bytes` is the duckdb-binary
+  // serialization of an `irs::analysis::TokenizerConfig` -- the same shape
+  // Builder::make consumes. Callers that already hold a serialized config
+  // feed it in directly.
+  Result init(std::string_view type, std::string_view properties_bytes,
+              Features features,
               FunctionValueType input_type = FunctionValueType::Invalid,
               FunctionValueType return_type = FunctionValueType::Invalid);
 
@@ -169,7 +162,8 @@ class AnalyzerImpl final {
   // cache size is 8, it's chosen in legacy code without clarification
   mutable CacheType _cache{8};
   std::string_view _type;
-  vpack::Slice _properties;
+  // duckdb-binary serialized `TokenizerConfig` bytes; view into `_config`.
+  std::string_view _properties;
   Features _features;
   char _field_marker{};
   std::string _config;  // non-null type + non-null properties
@@ -177,9 +171,6 @@ class AnalyzerImpl final {
   FunctionValueType _input_type{FunctionValueType::Invalid};
   FunctionValueType _return_type{FunctionValueType::Invalid};
 };
-
-bool AnalyzerEquals(const AnalyzerImpl& analyzer, std::string_view type,
-                    vpack::Slice properties, Features features);
 
 }  // namespace sdb::search
 namespace magic_enum {

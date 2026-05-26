@@ -20,12 +20,6 @@
 
 #include "dfi.hpp"
 
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
-#include <vpack/vpack.h>
-
 #include <cmath>
 #include <string_view>
 
@@ -73,89 +67,6 @@ bool ParseMeasure(std::string_view s, DFIMeasure& out) {
     return true;
   }
   return false;
-}
-
-struct ObjectParams {
-  std::string measure = "standardized";
-};
-
-Scorer::ptr MakeFromObject(const vpack::Slice slice) {
-  ObjectParams params;
-  auto r = vpack::ReadObjectNothrow(slice, params,
-                                    {
-                                      .skip_unknown = true,
-                                      .strict = false,
-                                    });
-  if (!r.ok()) {
-    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
-              "' while constructing dfi scorer from VPack");
-    return {};
-  }
-  DFIMeasure m;
-  if (!ParseMeasure(params.measure, m)) {
-    SDB_ERROR(IRESEARCH,
-              "dfi measure must be one of: standardized, saturated, "
-              "chi_squared; got '",
-              params.measure, "'");
-    return {};
-  }
-  return std::make_unique<DFI>(m);
-}
-
-Scorer::ptr MakeFromArray(const vpack::Slice slice) {
-  ObjectParams params;
-  auto r = vpack::ReadTupleNothrow(slice, params);
-  if (!r.ok()) {
-    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
-              "' while constructing dfi scorer from VPack array");
-    return {};
-  }
-  DFIMeasure m;
-  if (!ParseMeasure(params.measure, m)) {
-    SDB_ERROR(IRESEARCH,
-              "dfi measure must be one of: standardized, saturated, "
-              "chi_squared; got '",
-              params.measure, "'");
-    return {};
-  }
-  return std::make_unique<DFI>(m);
-}
-
-Scorer::ptr MakeVPack(const vpack::Slice slice) {
-  switch (slice.type()) {
-    case vpack::ValueType::Object:
-      return MakeFromObject(slice);
-    case vpack::ValueType::Array:
-      return MakeFromArray(slice);
-    default:
-      SDB_ERROR(IRESEARCH, "Invalid VPack arguments for dfi scorer");
-      return nullptr;
-  }
-}
-
-Scorer::ptr MakeVPack(std::string_view args) {
-  if (IsNull(args)) {
-    return std::make_unique<DFI>();
-  }
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-Scorer::ptr MakeJson(std::string_view args) {
-  if (IsNull(args)) {
-    return std::make_unique<DFI>();
-  }
-  try {
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH, "Caught error '", ex.what(),
-              "' while constructing VPack from JSON for dfi");
-  } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught error while constructing VPack from JSON for dfi");
-  }
-  return nullptr;
 }
 
 // Independence measure kernels; inlined by the templated scorer.
@@ -330,11 +241,6 @@ bool DFI::equals(const Scorer& other) const noexcept {
   }
   const auto& p = sdb::basics::downCast<DFI>(other);
   return p._measure == _measure;
-}
-
-void DFI::init() {
-  REGISTER_SCORER_JSON(DFI, MakeJson);
-  REGISTER_SCORER_VPACK(DFI, MakeVPack);
 }
 
 }  // namespace irs

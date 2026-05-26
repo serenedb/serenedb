@@ -58,10 +58,7 @@ int main(int argc, const char* argv[]) {
 
     SCOPED_TIMER("Total indexing time");
 
-    irs::analysis::analyzers::Init();
     irs::formats::Init();
-    irs::scorers::Init();
-    irs::compression::Init();
 
     struct IndexAllFields : bench::IBatchHandler {
       bench::Document doc;

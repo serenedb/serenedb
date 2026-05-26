@@ -74,8 +74,8 @@ struct GeoField final {
   }
 
   mutable irs::analysis::Analyzer::ptr stream{
-    irs::analysis::GeoJsonAnalyzer::make(
-      irs::slice_to_view<char>(vpack::Slice::emptyObjectSlice()))};
+    irs::analysis::GeoJsonAnalyzer::Make(
+      irs::analysis::GeoJsonAnalyzer::Options{})};
   vpack::Slice shape_slice;
   std::string_view field_name;
 };

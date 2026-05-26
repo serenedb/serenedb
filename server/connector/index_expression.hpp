@@ -37,6 +37,7 @@ struct IndexedExpression {
   std::string serialized;
   std::vector<catalog::Column::Id> dependent_columns;
   irs::field_id field_id = 0;
+  bool is_geojson = false;
 };
 
 const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
@@ -75,6 +76,6 @@ void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
 duckdb::Vector EvaluateExprOverChunk(
   const duckdb::Expression& bound_expr, duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id,
-  duckdb::ClientContext& context);
+  duckdb::ClientContext& context, bool is_geojson = false);
 
 }  // namespace sdb::connector

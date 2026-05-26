@@ -266,6 +266,20 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
 
   if (expr_desc.type.IsJSONType()) {
     auto tokenizer = _subexpr_tokenizer_provider(field_id);
+    if (irs::get<irs::StoreAttr>(*tokenizer.analyzer) != nullptr) {
+      MakeFieldName(field_id, _name_buffer);
+      search::mangling::MangleString(_name_buffer);
+      const auto tokenizer_column = tokenizer.tokenizer_column;
+      _field.PrepareForStringValue(std::move(tokenizer));
+      SDB_ASSERT(_field.store_attr != nullptr);
+      SDB_ASSERT(tokenizer_column);
+      _current_writer =
+        MakeStoreAttrWriter(*tokenizer_column, have_nulls, &WriteStringValue);
+      _field.name = _name_buffer;
+      SDB_ASSERT(_document);
+      _document->NextFieldBatch();
+      return true;
+    }
     SetupJsonExpressionWriter(field_id, std::move(tokenizer));
     SDB_ASSERT(_document);
     _document->NextFieldBatch();
@@ -316,30 +330,8 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
                    "expression tokenizer registers StoreAttr but catalog has "
                    "no synthetic column allocated for field_id ",
                    field_id);
-        const auto tokenizer_column_id = *tokenizer_column;
-        EnsurePerRowBlobWriter(tokenizer_column_id);
-        _current_writer = [&, tokenizer_column_id, have_nulls](
-                            std::string_view full_key,
-                            std::span<const rocksdb::Slice> cell_slices) {
-          Field* field = nullptr;
-          const bool is_null = have_nulls && cell_slices.size() == 1 &&
-                               cell_slices.front().empty();
-          if (is_null) {
-            _null_field.SetNullValue();
-            field = &_null_field;
-          } else {
-            field = &WriteStringValue(full_key, cell_slices, _field);
-          }
-          if (!_document->Insert(field)) {
-            SDB_THROW(ERROR_INTERNAL,
-                      "Failed to insert field into IResearch document");
-          }
-          if (is_null || !field->store_attr) {
-            AppendPerRowBlobNull(tokenizer_column_id);
-          } else {
-            AppendPerRowBlob(tokenizer_column_id, field->store_attr->value);
-          }
-        };
+        _current_writer =
+          MakeStoreAttrWriter(*tokenizer_column, have_nulls, &WriteStringValue);
       } else {
         _current_writer = have_nulls
                             ? MakeIndexWriter(make_nullable(&WriteStringValue))
@@ -552,30 +544,8 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
                  "tokenizer registers StoreAttr but catalog has no tokenizer "
                  "column allocated for column ",
                  column_id);
-      const auto tokenizer_column_id = *tokenizer_column;
-      EnsurePerRowBlobWriter(tokenizer_column_id);
-      _current_writer = [&, tokenizer_column_id, have_nulls](
-                          std::string_view full_key,
-                          std::span<const rocksdb::Slice> cell_slices) {
-        Field* field = nullptr;
-        const bool is_null =
-          have_nulls && cell_slices.size() == 1 && cell_slices.front().empty();
-        if (is_null) {
-          _null_field.SetNullValue();
-          field = &_null_field;
-        } else {
-          field = &WriteStringValue(full_key, cell_slices, _field);
-        }
-        if (!_document->Insert(field)) {
-          SDB_THROW(ERROR_INTERNAL,
-                    "Failed to insert field into IResearch document");
-        }
-        if (is_null || !field->store_attr) {
-          AppendPerRowBlobNull(tokenizer_column_id);
-        } else {
-          AppendPerRowBlob(tokenizer_column_id, field->store_attr->value);
-        }
-      };
+      _current_writer =
+        MakeStoreAttrWriter(*tokenizer_column, have_nulls, &WriteStringValue);
     } else {
       _current_writer =
         have_nulls
@@ -628,30 +598,8 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
                  "geo tokenizer registers StoreAttr but catalog has no "
                  "tokenizer column allocated for column ",
                  column_id);
-      const auto tokenizer_column_id = *tokenizer_column;
-      EnsurePerRowBlobWriter(tokenizer_column_id);
-      _current_writer = [&, geo_writer, tokenizer_column_id, have_nulls](
-                          std::string_view full_key,
-                          std::span<const rocksdb::Slice> cell_slices) {
-        Field* field = nullptr;
-        const bool is_null =
-          have_nulls && cell_slices.size() == 1 && cell_slices.front().empty();
-        if (is_null) {
-          _null_field.SetNullValue();
-          field = &_null_field;
-        } else {
-          field = &geo_writer(full_key, cell_slices, _field);
-        }
-        if (!_document->Insert(field)) {
-          SDB_THROW(ERROR_INTERNAL,
-                    "Failed to insert field into IResearch document");
-        }
-        if (is_null || !field->store_attr) {
-          AppendPerRowBlobNull(tokenizer_column_id);
-        } else {
-          AppendPerRowBlob(tokenizer_column_id, field->store_attr->value);
-        }
-      };
+      _current_writer =
+        MakeStoreAttrWriter(*tokenizer_column, have_nulls, geo_writer);
     } else {
       _current_writer =
         have_nulls ? MakeIndexWriter(make_nullable_writer_func(geo_writer))
@@ -834,6 +782,30 @@ SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeIndexWriter(
       if (!_document->Insert(&field)) {
         SDB_THROW(ERROR_INTERNAL,
                   "Failed to insert field into IResearch document");
+      }
+    };
+}
+
+template<typename WriteFunc>
+SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeStoreAttrWriter(
+  irs::field_id tokenizer_column_id, bool have_nulls, WriteFunc&& write_func) {
+  EnsurePerRowBlobWriter(tokenizer_column_id);
+  return
+    [this, tokenizer_column_id, have_nulls,
+     func = std::forward<WriteFunc>(write_func)](
+      std::string_view full_key, std::span<const rocksdb::Slice> cell_slices) {
+      const bool is_null =
+        have_nulls && cell_slices.size() == 1 && cell_slices.front().empty();
+      Field* field = is_null ? (_null_field.SetNullValue(), &_null_field)
+                             : &func(full_key, cell_slices, _field);
+      if (!_document->Insert(field)) {
+        SDB_THROW(ERROR_INTERNAL,
+                  "Failed to insert field into IResearch document");
+      }
+      if (is_null || !field->store_attr) {
+        AppendPerRowBlobNull(tokenizer_column_id);
+      } else {
+        AppendPerRowBlob(tokenizer_column_id, field->store_attr->value);
       }
     };
 }

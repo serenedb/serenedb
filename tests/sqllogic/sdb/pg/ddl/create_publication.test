@@ -1,0 +1,30 @@
+# Tests for CREATE PUBLICATION syntax.
+# The catalog handler is not yet implemented, so every form of the statement is
+# parsed successfully but fails at execution time with a "does not exist" error
+# for the create_publication pragma.  The point of these tests is to verify that
+# the PEG grammar accepts all three supported syntactic forms without a parse
+# error.
+
+# --- Bare form ---
+statement error
+CREATE PUBLICATION my_pub;
+----
+db error: ERROR: Pragma Function with name create_publication does not exist
+
+# --- FOR ALL TABLES ---
+statement error
+CREATE PUBLICATION my_pub FOR ALL TABLES;
+----
+db error: ERROR: Pragma Function with name create_publication does not exist
+
+# --- FOR TABLE (single table) ---
+statement error
+CREATE PUBLICATION my_pub FOR TABLE my_table;
+----
+db error: ERROR: Pragma Function with name create_publication does not exist
+
+# --- FOR TABLE (multiple tables, schema-qualified) ---
+statement error
+CREATE PUBLICATION my_pub FOR TABLE public.t1, public.t2;
+----
+db error: ERROR: Pragma Function with name create_publication does not exist

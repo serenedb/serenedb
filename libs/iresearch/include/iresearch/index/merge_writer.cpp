@@ -563,7 +563,7 @@ field_id MergeNormColumnFromSources(
     }
 
     SDB_ASSERT(nc->RowCount() == src.reader->docs_count());
-    const bool has_mask = src.mask && !src.mask->empty();
+    const bool has_mask = !src.mask.IsEmpty();
     for (size_t rg = 0, rg_count = nc->RowGroupCount(); rg < rg_count; ++rg) {
       const auto bytes = nc->RowGroupBytes(rg);
       const auto byte_size = nc->ByteSize(rg);
@@ -586,7 +586,7 @@ field_id MergeNormColumnFromSources(
       for (size_t i = 0; i < n; ++i) {
         const auto src_doc =
           static_cast<doc_id_t>(rg_first_row + i + doc_limits::min());
-        if (src.mask->contains(src_doc)) {
+        if (src.mask.IsDeleted(src_doc)) {
           flush_run(i);
           run_start = i + 1;
         }
@@ -685,7 +685,7 @@ bool ComputeDocMappingsAndFieldMeta(
       reader_ctx.remap.base_id = base_id;
       base_id += static_cast<doc_id_t>(docs_count);
     } else {
-      reader_ctx.remap.mask = reader.docs_mask();
+      reader_ctx.remap.mask = DocumentMaskView(reader.docs_mask());
       base_id = ComputeDocIds(reader_ctx.remap.id_map, reader, base_id);
     }
     if (!doc_limits::valid(base_id)) {
@@ -719,7 +719,7 @@ void OpenColumnstoreContexts(
     sources.push_back(columnstore::MergeSource{
       .reader = ctx.reader,
       .cs_reader = ctx.reader->CsReader(),
-      .mask = ctx.reader->docs_mask(),
+      .mask = DocumentMaskView{ctx.reader->docs_mask()},
       .alive_count = static_cast<uint64_t>(ctx.reader->live_docs_count()),
     });
   }

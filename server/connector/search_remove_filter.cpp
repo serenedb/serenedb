@@ -27,7 +27,7 @@ namespace sdb::connector {
 irs::DocIterator::ptr SearchRemoveFilterBase::execute(
   const irs::ExecutionContext& ctx) const {
   _segment = &ctx.segment;
-  _segment_mask = ctx.segment.docs_mask();
+  _segment_mask = irs::DocumentMaskView(ctx.segment.docs_mask());
   _pending_mask = ctx.pending_docs_mask;
   _pk_field = _segment->field(kPkFieldName);
   SDB_ASSERT(_pk_field);
@@ -71,8 +71,7 @@ irs::doc_id_t SearchRemoveFilter::advance() {
 
     auto doc = irs::doc_limits::eof();
     auto acceptor = [&](irs::doc_id_t found_doc) {
-      if ((_segment_mask && _segment_mask->contains(found_doc)) ||
-          (_pending_mask && _pending_mask->contains(found_doc))) {
+      if (_segment_mask.IsDeleted(found_doc) || _pending_mask.IsDeleted(found_doc)) {
         return true;  // skip deleted
       }
       // found alive document with this PK

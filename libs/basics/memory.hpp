@@ -115,6 +115,7 @@ class AllocatorArrayDeallocator {
   }
 
   allocator_type& alloc() noexcept { return _alloc; }
+  const allocator_type& alloc() const noexcept { return _alloc; }
   size_t size() const noexcept { return _size; }
 
  private:

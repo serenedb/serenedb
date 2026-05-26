@@ -669,7 +669,7 @@ class IndexWriter : private util::Noncopyable {
       : IndexSegment{std::move(segment)},
         old2new{std::move(old2new)},
         docs_mask{std::move(docs_mask)},
-        document_mask{{this->docs_mask.set.get_allocator()}},
+        document_mask{this->docs_mask.set.get_allocator().Manager()},
         cs_hnsw_graphs{std::move(cs_hnsw_graphs)},
         _docs_begin{docs_begin},
         _docs_end{_docs_begin + meta.docs_count} {}
@@ -688,7 +688,7 @@ class IndexWriter : private util::Noncopyable {
     DocMap new2old;
     // Flushed segment removals
     DocsMask docs_mask;
-    DocumentMask document_mask;
+    DocumentBitMask document_mask;
     columnstore::PreloadedHnswGraphs cs_hnsw_graphs;
     bool was_flush = false;
 

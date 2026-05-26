@@ -82,13 +82,13 @@ void MergeInto(std::span<const MergeSource> sources, Writer& output,
       }
       SDB_ASSERT(col->Type() == first_col->Type(),
                  "schema evolution between merge sources not supported");
-      const auto* mask = s.mask;
+      const auto mask = s.mask;
 
       ReadContext src_ctx{*src};
       auto state = MakeMaterializeState(*col, src_ctx);
       duckdb::Vector batch{col->Type(), STANDARD_VECTOR_SIZE,
                            duckdb::VectorDataInitialization::UNINITIALIZED};
-      const bool has_mask = mask && !mask->empty();
+      const bool has_mask = !mask.IsEmpty();
       duckdb::SelectionVector sel;
       if (has_mask) {
         sel.Initialize(STANDARD_VECTOR_SIZE);
@@ -109,7 +109,7 @@ void MergeInto(std::span<const MergeSource> sources, Writer& output,
           for (duckdb::idx_t i = 0; i < take; ++i) {
             const auto src_doc =
               static_cast<doc_id_t>(pos + i + doc_limits::min());
-            if (mask->contains(src_doc)) {
+            if (mask.IsDeleted(src_doc)) {
               continue;
             }
             sel.set_index(kept++, i);

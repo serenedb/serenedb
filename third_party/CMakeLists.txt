@@ -781,10 +781,6 @@ set(AWSSDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/aws-cmake" CACHE PATH "" FORCE)
 ################################################################################
 
 set(BUILD_SHELL FALSE CACHE BOOL "" FORCE)
-# DuckDB's `unittest` binary drives the vendored extension test suites
-# (third_party/duckdb_postgres/test/, etc.). On by default so
-# tests/postgres_scanner/run.sh works out of a vanilla build; opt out with
-# -DSDB_BUILD_DUCKDB_UNITTESTS=OFF if you want to skip the (~1GB) binary.
 option(
     SDB_BUILD_DUCKDB_UNITTESTS
     "Build DuckDB's unittest binary for vendored-extension test suites"
@@ -805,8 +801,6 @@ set(ENABLE_THREAD_SANITIZER FALSE CACHE BOOL "" FORCE)
 set(EXPORT_DLL_SYMBOLS FALSE CACHE BOOL "" FORCE)
 set(DUCKDB_SKIP_INSTALL TRUE CACHE BOOL "" FORCE)
 # Suppress the per-extension "vcpkg.json present but VCPKG_BUILD not set" warning.
-# We satisfy postgres_scanner's openssl dependency via the vendored third_party/openssl
-# pre-seeded above; vcpkg is not used in this build.
 set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS
     "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner"

@@ -1097,8 +1097,6 @@ IndexWriter::IndexWriter(
   std::shared_ptr<const DirectoryReaderImpl>&& committed_reader,
   yaclib::IExecutorPtr executor, size_t executor_parallelism)
   : _meta_payload_provider{meta_payload_provider},
-    _column_info{column_info},
-    _meta_payload_provider{meta_payload_provider},
     _comparator{comparator},
     _codec{std::move(codec)},
     _dir{dir},
@@ -1112,7 +1110,6 @@ IndexWriter::IndexWriter(
     _write_lock_file_ref{std::move(lock_file_ref)},
     _executor{executor},
     _executor_parallelism{executor_parallelism} {
-  SDB_ASSERT(column_info);  // ensured by 'make'
   SDB_ASSERT(_codec);
 
   _topk_scorer = _committed_reader->Options().scorer;

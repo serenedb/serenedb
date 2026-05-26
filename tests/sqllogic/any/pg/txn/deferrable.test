@@ -1,0 +1,55 @@
+# ----------------------------------------------------------------------
+# PG-compat: BEGIN / START TRANSACTION accept [NOT] DEFERRABLE as one of
+# the transaction_mode_list options, alongside ISOLATION LEVEL and READ
+# ONLY/WRITE. Only meaningful for SERIALIZABLE READ ONLY transactions in
+# PG, but the keyword is accepted in any combination by the parser.
+#
+# Drivers (esp. ORM-emitted txn boilerplate) sometimes set DEFERRABLE to
+# avoid serialization-failure retries.
+# ----------------------------------------------------------------------
+
+# Standalone DEFERRABLE / NOT DEFERRABLE.
+statement ok
+BEGIN DEFERRABLE;
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN NOT DEFERRABLE;
+
+
+statement ok
+ROLLBACK;
+
+
+# DEFERRABLE combined with an isolation level + READ ONLY. PG only treats
+# DEFERRABLE as meaningful for SERIALIZABLE, but accepts the keyword on any
+# transaction. Serenedb rejects SERIALIZABLE upfront (separate gap), so the
+# combined test uses REPEATABLE READ to exercise the DEFERRABLE-after-mode
+# grammar path without tripping the isolation-level limit.
+statement ok
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY DEFERRABLE;
+
+
+statement ok
+ROLLBACK;
+
+
+# START TRANSACTION spelling.
+statement ok
+START TRANSACTION DEFERRABLE;
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+START TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY DEFERRABLE;
+
+
+statement ok
+ROLLBACK;

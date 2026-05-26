@@ -225,15 +225,31 @@ struct Boosted : public irs::FilterWithBoost {
     irs::score_t _boost;
   };
 
+  struct Buffer final : irs::Filter::ScoredBuffer {
+    Buffer(const irs::PrepareContext& ctx,
+           const BasicDocIterator::DocidsT& docs, irs::score_t boost)
+      : ScoredBuffer{ctx, boost}, _docs{&docs} {}
+
+    void PrepareSegment(const irs::SubReader&) final {}
+    void Merge(PrepareBuffer&&) final {}
+    bool Empty() const noexcept final { return false; }
+
+    irs::Filter::Query::ptr Compile(const irs::PrepareContext&) && final {
+      return irs::memory::make_managed<Boosted::Prepared>(*_docs, _boost);
+    }
+
+   private:
+    const BasicDocIterator::DocidsT* _docs;
+  };
+
   irs::Filter::Query::ptr prepare(const irs::PrepareContext& ctx) const final {
     return irs::memory::make_managed<Boosted::Prepared>(docs,
                                                         ctx.boost * Boost());
   }
 
   std::unique_ptr<irs::Filter::PrepareBuffer> CreateBuffer(
-    const irs::PrepareContext&) const final {
-    return std::make_unique<irs::Filter::LazyQueryBuffer>(
-      [this](const irs::PrepareContext& ctx) { return this->prepare(ctx); });
+    const irs::PrepareContext& ctx) const final {
+    return std::make_unique<Buffer>(ctx, docs, Boost());
   }
 
   irs::TypeInfo::type_id type() const noexcept final {

@@ -283,6 +283,24 @@ void SetUpPhrase(irs::ByPhrase& f) {
   opts->push_back<irs::ByTermOptions>().term = AsBytes("brown");
 }
 
+void SetUpPhraseVariadic(irs::ByPhrase& f) {
+  *f.mutable_field() = "body";
+  auto* opts = f.mutable_options();
+  opts->push_back<irs::ByTermOptions>().term = AsBytes("quick");
+  opts->push_back<irs::ByPrefixOptions>().term = AsBytes("bro");
+}
+
+void SetUpPhraseFuzzy(irs::ByPhrase& f) {
+  *f.mutable_field() = "body";
+  auto* opts = f.mutable_options();
+  opts->push_back<irs::ByTermOptions>().term = AsBytes("quick");
+  auto& fuzzy = opts->push_back<irs::ByEditDistanceOptions>();
+  fuzzy.term = AsBytes("brown");
+  fuzzy.max_distance = 1;
+  fuzzy.with_transpositions = false;
+  fuzzy.max_terms = 16;
+}
+
 void SetUpAnd(irs::And& a) {
   auto& f1 = a.add<irs::ByTerm>();
   *f1.mutable_field() = "kw";
@@ -379,6 +397,8 @@ DEFINE_FILTER_VARIANTS(ByWildcard_Generic, irs::ByWildcard,
                        SetUpWildcardGeneric);
 DEFINE_FILTER_VARIANTS(ByEditDistance, irs::ByEditDistance, SetUpEdit);
 DEFINE_FILTER_VARIANTS(ByPhrase, irs::ByPhrase, SetUpPhrase);
+DEFINE_FILTER_VARIANTS(ByPhraseVariadic, irs::ByPhrase, SetUpPhraseVariadic);
+DEFINE_FILTER_VARIANTS(ByPhraseFuzzy, irs::ByPhrase, SetUpPhraseFuzzy);
 DEFINE_FILTER_VARIANTS(And, irs::And, SetUpAnd);
 DEFINE_FILTER_VARIANTS(Or, irs::Or, SetUpOr);
 DEFINE_FILTER_VARIANTS(Not, irs::Not, SetUpNot);

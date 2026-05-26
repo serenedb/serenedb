@@ -132,6 +132,40 @@ class OwningBuffer final : public Filter::PrepareBuffer {
   Buffer _inner;
 };
 
+class AllScoringBuffer final : public Filter::PrepareBuffer {
+ public:
+  AllScoringBuffer(const PrepareContext& ctx, std::string_view field,
+                   const ByTermsOptions& options, score_t boost,
+                   AllDocsProvider::Ptr all_docs) {
+    _disj.add(std::move(all_docs));
+    auto& terms = _disj.add<ByTerms>();
+    terms.boost(boost);
+    *terms.mutable_field() = field;
+    *terms.mutable_options() = options;
+    terms.mutable_options()->min_match = 1;
+    _inner = _disj.CreateBuffer(ctx);
+  }
+
+  void PrepareSegment(const SubReader& segment) final {
+    _inner->PrepareSegment(segment);
+  }
+
+  void Merge(PrepareBuffer&& other) final {
+    _inner->Merge(
+      std::move(*sdb::basics::downCast<AllScoringBuffer>(other)._inner));
+  }
+
+  bool Empty() const noexcept final { return _inner->Empty(); }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    return std::move(*_inner).Compile(ctx);
+  }
+
+ private:
+  Or _disj;  // declared before _inner so it outlives the borrow
+  std::unique_ptr<PrepareBuffer> _inner;
+};
+
 }  // namespace
 
 void ByTerms::visit(const SubReader& segment, const TermReader& field,
@@ -182,8 +216,11 @@ std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(
 std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(
   const PrepareContext& ctx) const {
   if (!options().terms.empty() && options().min_match == 0) {
-    return std::make_unique<LazyQueryBuffer>(
-      [this](const PrepareContext& ctx) { return prepare(ctx); });
+    if (!ctx.scorer) {
+      return MakeAllDocsFilter(kNoBoost)->CreateBuffer(ctx);
+    }
+    return std::make_unique<AllScoringBuffer>(ctx, field(), options(), Boost(),
+                                              MakeAllDocsFilter(0.F));
   }
   return std::make_unique<Buffer>(ctx, field(), options(), Boost());
 }

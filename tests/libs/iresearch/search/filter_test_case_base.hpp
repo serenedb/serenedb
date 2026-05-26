@@ -614,7 +614,8 @@ class EmptyFilterVisitor : public irs::FilterVisitor {
 };
 
 inline void RunParallelPrepareParity(const irs::Filter& filter,
-                                     const irs::IndexReader& rdr) {
+                                     const irs::IndexReader& rdr,
+                                     const irs::Scorer* scorer = nullptr) {
   std::vector<const irs::SubReader*> segments;
   segments.reserve(rdr.size());
   for (const auto& s : rdr) {
@@ -622,7 +623,8 @@ inline void RunParallelPrepareParity(const irs::Filter& filter,
   }
 
   MaxMemoryCounter counter;
-  const irs::PrepareContext ctx{.index = rdr, .memory = counter};
+  const irs::PrepareContext ctx{
+    .index = rdr, .memory = counter, .scorer = scorer};
 
   auto seq = filter.prepare(ctx);
   ASSERT_NE(nullptr, seq);
@@ -643,8 +645,32 @@ inline void RunParallelPrepareParity(const irs::Filter& filter,
   ASSERT_EQ(seq->Boost(), par->Boost());
 
   for (const auto* segment : segments) {
-    auto docs_seq = seq->execute({.segment = *segment});
-    auto docs_par = par->execute({.segment = *segment});
+    auto docs_seq = seq->execute({.segment = *segment, .scorer = scorer});
+    auto docs_par = par->execute({.segment = *segment, .scorer = scorer});
+
+    if (scorer) {
+      irs::ColumnArgsFetcher fetcher_seq;
+      irs::ColumnArgsFetcher fetcher_par;
+      auto score_seq = docs_seq->PrepareScore(
+        {.scorer = scorer, .segment = segment, .fetcher = &fetcher_seq});
+      auto score_par = docs_par->PrepareScore(
+        {.scorer = scorer, .segment = segment, .fetcher = &fetcher_par});
+      while (true) {
+        const auto doc_seq = docs_seq->advance();
+        const auto doc_par = docs_par->advance();
+        ASSERT_EQ(doc_seq, doc_par);
+        if (irs::doc_limits::eof(doc_seq)) {
+          break;
+        }
+        fetcher_seq.Fetch(doc_seq);
+        fetcher_par.Fetch(doc_par);
+        docs_seq->FetchScoreArgs(0);
+        docs_par->FetchScoreArgs(0);
+        ASSERT_FLOAT_EQ(score_seq.Score(), score_par.Score());
+      }
+      continue;
+    }
+
     while (true) {
       const bool has_seq = docs_seq->next();
       const bool has_par = docs_par->next();

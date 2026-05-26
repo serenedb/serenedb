@@ -50,6 +50,10 @@ struct TopTermsCollectorImpl final : FilterVisitor {
 
   void Visit(score_t boost) final { _impl.Visit(boost); }
 
+  void Merge(TopTermsCollectorImpl&& other) {
+    _impl.Merge(std::move(other._impl));
+  }
+
   field_visitor ToVisitor() {
     // TODO(mbkkt) we can avoid by_terms, but needs to change
     // TopTermsCollector, to make it able keep equal elements
@@ -223,82 +227,138 @@ bool Valid(const TermReader* reader) noexcept {
                                 FixedPhraseQuery::kRequiredFeatures;
 }
 
-Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
-                                          std::string_view field,
-                                          const ByPhraseOptions& options) {
-  const auto phrase_size = options.size();
-  // stats collectors
-  FieldCollectors field_stats{ctx.scorer};
-
-  std::vector<field_visitor> phrase_part_visitors;
-  phrase_part_visitors.reserve(phrase_size);
-  std::vector<TermCollectors> phrase_part_stats;
-  phrase_part_stats.reserve(phrase_size);
-
-  std::vector<field_visitor*> all_terms_visitors;
-  std::vector<TopTermsCollectorImpl> top_terms_collectors;
-
-  for (const auto& word : options) {
-    phrase_part_stats.emplace_back(ctx.scorer, 0);
-    auto& visitor =
-      phrase_part_visitors.emplace_back(std::visit(GetVisitor{}, word.part));
-    if (!visitor) {
-      auto& opts = std::get<ByEditDistanceOptions>(word.part);
-      visitor = ByEditDistance::visitor(opts);
-      all_terms_visitors.push_back(&visitor);
-      top_terms_collectors.emplace_back(opts.max_terms);
+class VariadicPhraseBuffer final : public Filter::ScoredBuffer {
+ public:
+  VariadicPhraseBuffer(const PrepareContext& ctx, std::string_view field,
+                       const ByPhraseOptions& options, score_t boost = kNoBoost)
+    : ScoredBuffer{ctx, boost},
+      _field{field},
+      _options{options},
+      _memory{&ctx.memory},
+      _scorer{ctx.scorer},
+      _field_stats{ctx.scorer},
+      _states{ctx.memory, ctx.index.size()} {
+    const auto phrase_size = _options.size();
+    _visitors.reserve(phrase_size);
+    _part_stats.reserve(phrase_size);
+    for (const auto& word : _options) {
+      _part_stats.emplace_back(ctx.scorer, 0);
+      auto& visitor =
+        _visitors.emplace_back(std::visit(GetVisitor{}, word.part));
+      if (!visitor) {
+        const auto& opts = std::get<ByEditDistanceOptions>(word.part);
+        visitor = ByEditDistance::visitor(opts);
+        _topn_part_idx.push_back(_visitors.size() - 1);
+        _top_terms.emplace_back(opts.max_terms);
+      }
     }
   }
 
-  if (!all_terms_visitors.empty()) {
-    // TODO(mbkkt) we should move all terms search to here
-    // And make second loop for index only to make correct order of terms
-    for (const auto& segment : ctx.index) {
-      // get term dictionary for field
-      const auto* reader = segment.field(field);
-      if (!Valid(reader)) {
-        continue;
-      }
-      auto it = top_terms_collectors.begin();
-      for (auto* visitor : all_terms_visitors) {
-        (*visitor)(segment, *reader, *it++);
-      }
+  void PrepareSegment(const SubReader& segment) final {
+    if (_top_terms.empty()) {
+      CollectSegment(segment);
+      return;
     }
-    auto it = top_terms_collectors.begin();
-    for (auto* visitor : all_terms_visitors) {
-      *visitor = it++->ToVisitor();
-    }
-  }
-
-  // per segment phrase states
-  VariadicPhraseQuery::states_t phrase_states{ctx.memory, ctx.index.size()};
-
-  // per segment phrase terms: number of terms per part
-  ManagedVector<size_t> num_terms(phrase_size, {ctx.memory});
-  VariadicPhraseState::Terms phrase_terms{{ctx.memory}};
-  // reserve space for at least 1 term per part
-  phrase_terms.reserve(phrase_size);
-
-  // iterate over the segments
-  const auto is_ord_empty = !ctx.scorer;
-
-  PhraseTermVisitor<decltype(phrase_terms)> ptv(phrase_terms);
-
-  for (const auto& segment : ctx.index) {
-    // get term dictionary for field
-    const auto* reader = segment.field(field);
+    const auto* reader = segment.field(_field);
     if (!Valid(reader)) {
-      continue;
+      return;
+    }
+    for (size_t k = 0, n = _topn_part_idx.size(); k < n; ++k) {
+      _visitors[_topn_part_idx[k]](segment, *reader, _top_terms[k]);
+    }
+  }
+
+  void Merge(PrepareBuffer&& other) final {
+    auto& rhs = sdb::basics::downCast<VariadicPhraseBuffer>(other);
+    if (!_top_terms.empty()) {
+      SDB_ASSERT(_states.empty() && rhs._states.empty());
+      for (size_t k = 0, n = _top_terms.size(); k < n; ++k) {
+        _top_terms[k].Merge(std::move(rhs._top_terms[k]));
+      }
+      return;
+    }
+    _field_stats.collect(std::move(rhs._field_stats));
+    for (size_t i = 0, n = _part_stats.size(); i < n; ++i) {
+      auto& lhs = _part_stats[i];
+      auto& other_stats = rhs._part_stats[i];
+      while (lhs.size() < other_stats.size()) {
+        lhs.push_back();
+      }
+      while (other_stats.size() < lhs.size()) {
+        other_stats.push_back();
+      }
+      lhs.collect(std::move(other_stats));
+    }
+    _states.Merge(std::move(rhs._states));
+  }
+
+  bool Empty() const noexcept final { return _states.empty(); }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    if (!_top_terms.empty()) {
+      for (size_t k = 0, n = _topn_part_idx.size(); k < n; ++k) {
+        _visitors[_topn_part_idx[k]] = _top_terms[k].ToVisitor();
+      }
+      for (const auto& segment : ctx.index) {
+        CollectSegment(segment);
+      }
     }
 
-    // collect field statistics once per segment
-    field_stats.collect(segment, *reader);
-    ptv.Reset();  // reset boost volaitility mark
+#ifndef SDB_GTEST  // TODO(mbkkt) adjust tests
+    if (_states.empty()) {
+      return Filter::Query::empty();
+    }
+#endif
+
+    const auto phrase_size = _options.size();
+    SDB_ASSERT(!_options.empty());
+    SDB_ASSERT(phrase_size == _part_stats.size());
+    bstring stats(GetStatsSize(ctx.scorer), 0);
+    auto* stats_buf = stats.data();
+    auto collector = _part_stats.begin();
+
+    VariadicPhraseQuery::positions_t positions(phrase_size);
+    auto position = positions.begin();
+    PosAttr::value_t look_back = 0;
+    for (const auto& term : _options) {
+      SDB_ASSERT(position != positions.end());
+      position->offs_max = term.offs_max;
+      position->offs_min = term.offs_min;
+      position->lead_offset = look_back += term.offs_max;
+      for (size_t i = 0, size = collector->size(); i < size; ++i) {
+        collector->finish(stats_buf, i, _field_stats, ctx.index);
+      }
+      ++position;
+      ++collector;
+    }
+
+    return memory::make_tracked<VariadicPhraseQuery>(
+      ctx.memory, std::move(_states), std::move(positions), std::move(stats),
+      _boost);
+  }
+
+ private:
+  void CollectSegment(const SubReader& segment) {
+    const auto* reader = segment.field(_field);
+    if (!Valid(reader)) {
+      return;
+    }
+
+    _field_stats.collect(segment, *reader);
+
+    const auto phrase_size = _options.size();
+    VariadicPhraseState::Terms phrase_terms{{*_memory}};
+    phrase_terms.reserve(phrase_size);
+    ManagedVector<size_t> num_terms(phrase_size, {*_memory});
+
+    const auto is_ord_empty = !_scorer;
+    PhraseTermVisitor<decltype(phrase_terms)> ptv(phrase_terms);
+    ptv.Reset();  // reset boost volatility mark
 
     size_t found_parts = 0;
-    for (const auto& visitor : phrase_part_visitors) {
+    for (const auto& visitor : _visitors) {
       const auto was_terms_count = phrase_terms.size();
-      ptv.Reset(phrase_part_stats[found_parts]);
+      ptv.Reset(_part_stats[found_parts]);
       visitor(segment, *reader, ptv);
       const auto new_terms_count = phrase_terms.size() - was_terms_count;
       // TODO(mbkkt) Avoid unnecessary work for min_match > 1 queries
@@ -309,59 +369,29 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
       }
     }
 
-    // we have not found all needed terms
     if (found_parts != phrase_size) {
-      phrase_terms.clear();
-      continue;
+      return;
     }
 
-    auto& state = phrase_states.insert(segment);
+    auto& state = _states.insert(segment);
     state.terms = std::move(phrase_terms);
     state.num_terms = std::move(num_terms);
     state.reader = reader;
     state.volatile_boost = !is_ord_empty && ptv.VolatileBoost();
     SDB_ASSERT(phrase_size == state.num_terms.size());
-
-    phrase_terms.clear();
-    phrase_terms.reserve(phrase_size);
-    // reserve space for at least 1 term per part
-    num_terms.clear();
-    num_terms.resize(phrase_size);
   }
 
-#ifndef SDB_GTEST  // TODO(mbkkt) adjust tests
-  if (phrase_states.empty()) {
-    return Filter::Query::empty();
-  }
-#endif
-
-  // offset of the first term in a phrase
-  SDB_ASSERT(!options.empty());
-  // finish stats
-  SDB_ASSERT(phrase_size == phrase_part_stats.size());
-  bstring stats(GetStatsSize(ctx.scorer), 0);
-  auto* stats_buf = stats.data();
-  auto collector = phrase_part_stats.begin();
-
-  VariadicPhraseQuery::positions_t positions(phrase_size);
-  auto position = positions.begin();
-  PosAttr::value_t look_back = 0;
-  for (const auto& term : options) {
-    SDB_ASSERT(position != positions.end());
-    position->offs_max = term.offs_max;
-    position->offs_min = term.offs_min;
-    position->lead_offset = look_back += term.offs_max;
-    for (size_t i = 0, size = collector->size(); i < size; ++i) {
-      collector->finish(stats_buf, i, field_stats, ctx.index);
-    }
-    ++position;
-    ++collector;
-  }
-
-  return memory::make_tracked<VariadicPhraseQuery>(
-    ctx.memory, std::move(phrase_states), std::move(positions),
-    std::move(stats), ctx.boost);
-}
+  std::string _field;
+  ByPhraseOptions _options;
+  IResourceManager* _memory;
+  const Scorer* _scorer;
+  FieldCollectors _field_stats;
+  std::vector<TermCollectors> _part_stats;
+  std::vector<field_visitor> _visitors;
+  std::vector<size_t> _topn_part_idx;
+  std::vector<TopTermsCollectorImpl> _top_terms;
+  VariadicPhraseQuery::states_t _states;
+};
 
 class FixedPhraseBuffer final : public Filter::ScoredBuffer {
  public:
@@ -466,11 +496,8 @@ std::unique_ptr<Filter::PrepareBuffer> ByPhrase::CreateBuffer(
                                                Boost());
   }
 
-  return std::make_unique<LazyQueryBuffer>(
-    [boost = Boost(), field_name = std::string{field()},
-     opts = options()](const PrepareContext& sub_ctx) {
-      return ByPhrase::Prepare(sub_ctx.Boost(boost), field_name, opts);
-    });
+  return std::make_unique<VariadicPhraseBuffer>(ctx, field(), options(),
+                                                Boost());
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByPhrase::CreateFixedBuffer(
@@ -503,7 +530,8 @@ Filter::Query::ptr ByPhrase::Prepare(const PrepareContext& ctx,
     return PrepareWithBuffer<FixedPhraseBuffer>(buf, ctx);
   }
 
-  return VariadicPrepareCollect(ctx, field, options);
+  VariadicPhraseBuffer buf{ctx, field, options};
+  return PrepareWithBuffer<VariadicPhraseBuffer>(buf, ctx);
 }
 
 }  // namespace irs

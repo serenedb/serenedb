@@ -7312,47 +7312,144 @@ TEST_P(PhraseFilterTestCase, parallel_prepare_parity) {
   auto rdr = open_reader();
   ASSERT_GE(rdr.size(), 2u);
 
+  irs::TFIDF scorer;
   auto run = [&](const irs::ByPhrase& f) {
     tests::RunParallelPrepareParity(f, rdr);
+    tests::RunParallelPrepareParity(f, rdr, &scorer);
   };
 
-  auto fixed_two_terms = [](irs::score_t boost) {
+  auto as_bytes = [](std::string_view s) {
+    return irs::ViewCast<irs::byte_type>(s);
+  };
+
+  auto fixed_two_terms = [&](irs::score_t boost) {
     irs::ByPhrase q;
     *q.mutable_field() = "phrase_anl";
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
-      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+      as_bytes("quick");
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
-      irs::ViewCast<irs::byte_type>(std::string_view("brown"));
+      as_bytes("brown");
     q.boost(boost);
     return q;
   };
 
-  auto single_term = [](irs::score_t boost) {
+  auto single_term = [&](irs::score_t boost) {
     irs::ByPhrase q;
     *q.mutable_field() = "phrase_anl";
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
-      irs::ViewCast<irs::byte_type>(std::string_view("fox"));
+    q.mutable_options()->push_back<irs::ByTermOptions>().term = as_bytes("fox");
     q.boost(boost);
     return q;
   };
 
-  auto variadic_prefix = [](irs::score_t boost) {
+  auto variadic_prefix = [&](irs::score_t boost) {
     irs::ByPhrase q;
     *q.mutable_field() = "phrase_anl";
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
-      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+      as_bytes("quick");
     q.mutable_options()->push_back<irs::ByPrefixOptions>().term =
-      irs::ViewCast<irs::byte_type>(std::string_view("bro"));
+      as_bytes("bro");
     q.boost(boost);
     return q;
   };
 
-  run(fixed_two_terms(irs::kNoBoost));
-  run(fixed_two_terms(2.5f));
-  run(single_term(irs::kNoBoost));
-  run(single_term(0.5f));
-  run(variadic_prefix(irs::kNoBoost));
-  run(variadic_prefix(1.75f));
+  auto variadic_wildcard = [&](irs::score_t boost) {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      as_bytes("quick");
+    q.mutable_options()->push_back<irs::ByWildcardOptions>().term =
+      as_bytes("b%wn");
+    q.boost(boost);
+    return q;
+  };
+
+  auto variadic_terms = [&](irs::score_t boost) {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      as_bytes("quick");
+    auto& st = q.mutable_options()->push_back<irs::ByTermsOptions>();
+    st.terms.emplace(as_bytes("brown"));
+    st.terms.emplace(as_bytes("rabbit"));
+    q.boost(boost);
+    return q;
+  };
+
+  auto variadic_range = [&](irs::score_t boost) {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      as_bytes("quick");
+    auto& rt = q.mutable_options()->push_back<irs::ByRangeOptions>();
+    rt.range.min = as_bytes("brown");
+    rt.range.max = as_bytes("brown");
+    rt.range.min_type = irs::BoundType::Inclusive;
+    rt.range.max_type = irs::BoundType::Inclusive;
+    q.boost(boost);
+    return q;
+  };
+
+  auto variadic_regexp = [&](irs::score_t boost) {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      as_bytes("quick");
+    q.mutable_options()->push_back<irs::ByRegexpOptions>().pattern =
+      as_bytes("[br]+own");
+    q.boost(boost);
+    return q;
+  };
+
+  auto variadic_fuzzy_uncapped = [&](irs::score_t boost) {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      as_bytes("quick");
+    auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    lt.term = as_bytes("brown");
+    lt.max_distance = 1;
+    lt.max_terms = 0;
+    q.boost(boost);
+    return q;
+  };
+
+  auto variadic_fuzzy_capped = [&](irs::score_t boost) {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      as_bytes("quick");
+    auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    lt.term = as_bytes("brown");
+    lt.max_distance = 1;
+    lt.max_terms = 16;
+    q.boost(boost);
+    return q;
+  };
+
+  auto variadic_multipart = [&](irs::score_t boost) {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      as_bytes("quick");
+    q.mutable_options()->push_back<irs::ByPrefixOptions>().term =
+      as_bytes("bro");
+    q.mutable_options()->push_back<irs::ByTermOptions>().term = as_bytes("fox");
+    q.boost(boost);
+    return q;
+  };
+
+  for (const irs::score_t boost : {irs::kNoBoost, 0.5f, 1.75f}) {
+    run(fixed_two_terms(boost));
+    run(single_term(boost));
+    run(variadic_prefix(boost));
+    run(variadic_wildcard(boost));
+    run(variadic_terms(boost));
+    run(variadic_range(boost));
+    run(variadic_regexp(boost));
+    run(variadic_fuzzy_uncapped(boost));
+    run(variadic_fuzzy_capped(boost));
+    run(variadic_multipart(boost));
+  }
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

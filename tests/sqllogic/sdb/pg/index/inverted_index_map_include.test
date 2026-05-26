@@ -56,7 +56,7 @@ INSERT INTO map_t VALUES (5, 'fifth',  MAP {'e': NULL, 'f': 5})
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) map_t
+VACUUM (REFRESH_TABLE) map_t
 
 
 # Sanity: the MAP column is served by the iresearch columnstore (i),

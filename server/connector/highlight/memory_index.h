@@ -46,7 +46,7 @@ class MemoryIndex {
       doc.NextFieldBatch();
       write_docs(doc);
     }
-    writer->Commit();
+    writer->RefreshCommit();
     auto reader = writer->GetSnapshot();
     if (reader.size() == 0) {
       return {std::shared_ptr<const irs::SubReader>{},

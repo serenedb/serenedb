@@ -68,12 +68,12 @@ pk	big_int	dbl
 5	500	5.25
 
 # Insert into existing index, flush, query: hits a fresh segment with
-# columnstore data merged with the original on consolidation.
+# columnstore data merged with the original on compaction.
 statement ok
 INSERT INTO foo VALUES (6, 66, 600, 6.5, 6.25, TRUE, 'fresh');
 
 statement ok
-VACUUM (UPDATE_INDEXES) foo;
+VACUUM (REFRESH_TABLE) foo;
 
 query
 SELECT pk, small_int, big_int, flag FROM foo_idx WHERE txt @@ ts_phrase('fresh');
@@ -86,7 +86,7 @@ statement ok
 UPDATE foo SET big_int = 999, flag = FALSE WHERE pk = 6;
 
 statement ok
-VACUUM (UPDATE_INDEXES) foo;
+VACUUM (REFRESH_TABLE) foo;
 
 query
 SELECT pk, big_int, flag FROM foo_idx WHERE txt @@ ts_phrase('fresh');
@@ -94,7 +94,7 @@ SELECT pk, big_int, flag FROM foo_idx WHERE txt @@ ts_phrase('fresh');
 pk	big_int	flag
 6	999	f
 
-# After multiple consolidation cycles, columnstore data from older segments
+# After multiple compaction cycles, columnstore data from older segments
 # survives the merge: original 5 rows still materialize correctly.
 query
 SELECT pk, big_int, dbl FROM foo_idx ORDER BY pk;

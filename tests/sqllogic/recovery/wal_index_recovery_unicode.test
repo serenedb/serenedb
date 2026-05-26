@@ -26,7 +26,7 @@ statement ok
 CREATE INDEX uni_idx ON uni_t USING inverted(id, body uni_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) uni_t;
+VACUUM (REFRESH_TABLE) uni_t;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';
@@ -51,7 +51,7 @@ SELECT 1;
 
 connection uni_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) uni_t;
+VACUUM (REFRESH_TABLE) uni_t;
 
 connection uni_after
 query

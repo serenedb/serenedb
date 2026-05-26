@@ -62,7 +62,7 @@ CREATE INDEX docs_wand_idx ON docs_wand USING inverted(id, body en_wand)
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_wand;
+VACUUM (REFRESH_TABLE) docs_wand;
 
 
 # Top-K with WAND on. Tie-break on id for deterministic ordering across
@@ -111,7 +111,7 @@ CREATE INDEX docs_plain_idx ON docs_plain USING inverted(id, body en_wand);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_plain;
+VACUUM (REFRESH_TABLE) docs_plain;
 
 
 query I
@@ -212,7 +212,7 @@ CREATE INDEX docs_default_idx ON docs_default USING inverted(id, body en_wand);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_default;
+VACUUM (REFRESH_TABLE) docs_default;
 
 
 query I
@@ -310,11 +310,11 @@ INSERT INTO docs_plain VALUES (8, 'no match here');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_wand;
+VACUUM (REFRESH_TABLE) docs_wand;
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_plain;
+VACUUM (REFRESH_TABLE) docs_plain;
 
 
 query I
@@ -483,7 +483,7 @@ CREATE INDEX docs_tfidf_idx ON docs_tfidf
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_tfidf;
+VACUUM (REFRESH_TABLE) docs_tfidf;
 
 
 query
@@ -532,7 +532,7 @@ CREATE INDEX docs_bm25_args_idx ON docs_bm25_args
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_bm25_args;
+VACUUM (REFRESH_TABLE) docs_bm25_args;
 
 
 query

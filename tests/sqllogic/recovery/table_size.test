@@ -41,7 +41,7 @@ VACUUM (SYNC_STATS) t;
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) t;
+VACUUM (REFRESH_TABLE) t;
 
 
 query

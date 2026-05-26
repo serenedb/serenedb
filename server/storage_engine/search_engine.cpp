@@ -69,7 +69,7 @@ DECLARE_GAUGE(serenedb_search_columns_cache_size, LimitedResourceManager,
               "Search columns cache usage in bytes");
 
 const std::string kCommitThreadsParam("--search.commit-threads");
-const std::string kConsolidationThreadsParam("--search.consolidation-threads");
+const std::string kCompactionThreadsParam("--search.compaction-threads");
 const std::string kFailOnOutOfSync("--search.fail-queries-on-out-of-sync");
 const std::string kSkipRecovery("--search.skip-recovery");
 const std::string kSkipWalRecovery("--search.skip-wal-recovery");
@@ -100,18 +100,18 @@ class SearchThreadPools {
   ~SearchThreadPools() { Stop(); }
 
   ThreadPool& Get(ThreadGroup id) noexcept {
-    return ThreadGroup::Commit == id ? _commit_threads_pool
-                                     : _consolidation_threads_pool;
+    return ThreadGroup::Refresh == id ? _refresh_threads_pool
+                                      : _compaction_threads_pool;
   }
 
   void Stop() noexcept {
-    _commit_threads_pool.stop(true);
-    _consolidation_threads_pool.stop(true);
+    _refresh_threads_pool.stop(true);
+    _compaction_threads_pool.stop(true);
   }
 
  private:
-  ThreadPool _commit_threads_pool;
-  ThreadPool _consolidation_threads_pool;
+  ThreadPool _refresh_threads_pool;
+  ThreadPool _compaction_threads_pool;
 };
 
 SearchEngine::SearchEngine(Server& server)
@@ -133,13 +133,12 @@ void SearchEngine::collectOptions(
   options->addSection("search", absl::StrCat(name(), " feature"));
 
   options
-    ->addOption(
-      kConsolidationThreadsParam,
-      "The upper limit to the allowed number of consolidation threads "
-      "(0 = auto-detect).",
-      new options::UInt32Parameter(&_consolidation_threads))
+    ->addOption(kCompactionThreadsParam,
+                "The upper limit to the allowed number of compaction threads "
+                "(0 = auto-detect).",
+                new options::UInt32Parameter(&_compaction_threads))
     .setLongDescription(R"(The option value must fall in the range
-`[ 1..search.consolidation-threads ]`. Set it to `0` to automatically
+`[ 1..search.compaction-threads ]`. Set it to `0` to automatically
 choose a sensible number based on the number of cores in the system.)");
 
   options
@@ -236,8 +235,8 @@ void SearchEngine::validateOptions(
     static_cast<uint32_t>(4 * number_of_cores::GetValue());
 
   _commit_threads = ComputeThreadsCount(_commit_threads, threads_limit, 6);
-  _consolidation_threads =
-    ComputeThreadsCount(_consolidation_threads, threads_limit, 6);
+  _compaction_threads =
+    ComputeThreadsCount(_compaction_threads, threads_limit, 6);
 
   if (!args.touched(kSearchThreadsLimit)) {
     _search_execution_threads_limit =
@@ -263,9 +262,9 @@ void SearchEngine::prepare() {
   irs::compression::Init();
 
   SDB_ASSERT(std::make_tuple(size_t(0), size_t(0), size_t(0)) ==
-             stats(ThreadGroup::Commit));
+             stats(ThreadGroup::Refresh));
   SDB_ASSERT(std::make_tuple(size_t(0), size_t(0), size_t(0)) ==
-             stats(ThreadGroup::Consolidation));
+             stats(ThreadGroup::Compaction));
 }
 
 void SearchEngine::start() {
@@ -274,19 +273,19 @@ void SearchEngine::start() {
   if (ServerState::instance()->IsDBServer() ||
       ServerState::instance()->IsSingle()) {
     SDB_ASSERT(_commit_threads);
-    SDB_ASSERT(_consolidation_threads);
+    SDB_ASSERT(_compaction_threads);
 
-    _thread_pools->Get(ThreadGroup::Commit)
+    _thread_pools->Get(ThreadGroup::Refresh)
       .start(_commit_threads, IR_NATIVE_STRING("search:commit"));
-    _thread_pools->Get(ThreadGroup::Consolidation)
-      .start(_consolidation_threads, IR_NATIVE_STRING("search:compact"));
+    _thread_pools->Get(ThreadGroup::Compaction)
+      .start(_compaction_threads, IR_NATIVE_STRING("search:compact"));
 
     InitInvertedIndexes(_skip_wal_recovery);
 
     SDB_INFO("xxxxx", Logger::SEARCH, "Search maintenance: [", _commit_threads,
              "..", _commit_threads, "] commit thread(s), [",
-             _consolidation_threads, "..", _consolidation_threads,
-             "] consolidation thread(s). Search execution parallel threads "
+             _compaction_threads, "..", _compaction_threads,
+             "] compaction thread(s). Search execution parallel threads "
              "limit: ",
              _search_execution_threads_limit);
   }
@@ -351,8 +350,8 @@ std::filesystem::path SearchEngine::GetPersistedPath(
 }
 
 void SearchEngine::beginShutdown() {
-  _thread_pools->Get(ThreadGroup::Commit).stop(false);
-  _thread_pools->Get(ThreadGroup::Consolidation).stop(false);
+  _thread_pools->Get(ThreadGroup::Refresh).stop(false);
+  _thread_pools->Get(ThreadGroup::Compaction).stop(false);
 }
 
 }  // namespace sdb::search

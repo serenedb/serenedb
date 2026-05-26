@@ -30,7 +30,7 @@ statement ok
 INSERT INTO tsq values (4, 'something else entirely', 'bar');
 
 statement ok
-VACUUM (UPDATE_INDEXES) tsq;
+VACUUM (REFRESH_TABLE) tsq;
 
 # ----------------------------------------------------------------------
 # Basic @@ with PHRASE
@@ -1500,7 +1500,7 @@ statement ok
 INSERT INTO re_idn VALUES (1, 'Foo'), (2, 'foobar'), (3, 'BARFOO'), (4, 'baz');
 
 statement ok
-VACUUM (UPDATE_INDEXES) re_idn;
+VACUUM (REFRESH_TABLE) re_idn;
 
 # `~` -- case-sensitive POSIX regex. The literal-prefix range bound
 # pushed by regex_range_filter is upper bound `foo<F4 BF BF C0>`,
@@ -2054,7 +2054,7 @@ statement ok
 INSERT INTO tsq_ngram values (1, 'hello'), (2, 'help'), (3, 'held');
 
 statement ok
-VACUUM (UPDATE_INDEXES) tsq_ngram;
+VACUUM (REFRESH_TABLE) tsq_ngram;
 
 query
 SELECT a FROM tsq_ngram_idx WHERE ngram_matches(b, 'hello', 0.3) ORDER BY a;
@@ -2492,7 +2492,7 @@ statement ok
 INSERT INTO tsq_kw VALUES (1, 'foo'), (2, 'foobar'), (3, 'bar'), (4, ''), (5, '50%'), (6, 'abc123');
 
 statement ok
-VACUUM (UPDATE_INDEXES) tsq_kw;
+VACUUM (REFRESH_TABLE) tsq_kw;
 
 # contains
 query

@@ -1,8 +1,8 @@
 # Reproducer for the flaky BM25-OR scoring bug from inverted_index_score.test:1480.
 # The original test was non-deterministic w.r.t. segment layout; here we pin
-# each layout explicitly via `VACUUM (UPDATE_INDEXES)` per INSERT or as a
-# single batch, plus `PRAGMA serenedb_vacuum('compact_indexes', tbl)` for
-# consolidation.
+# each layout explicitly via `VACUUM (REFRESH_TABLE)` per INSERT or as a
+# single batch, plus `VACUUM (COMPACT_TABLE) <table>` for
+# compaction.
 #
 # Data: 3 docs, each with one unique single-term body. The 3-way OR
 # `body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'` must return all
@@ -48,7 +48,7 @@ INSERT INTO one_seg_docs VALUES (3, 'gamma');
 
 # Single VACUUM => single batch flush => one segment.
 statement ok
-VACUUM (UPDATE_INDEXES) one_seg_docs;
+VACUUM (REFRESH_TABLE) one_seg_docs;
 
 
 # All three should be uniform.
@@ -79,19 +79,19 @@ statement count 1
 INSERT INTO three_segs_docs VALUES (1, 'alpha');
 
 statement ok
-VACUUM (UPDATE_INDEXES) three_segs_docs;
+VACUUM (REFRESH_TABLE) three_segs_docs;
 
 statement count 1
 INSERT INTO three_segs_docs VALUES (2, 'beta');
 
 statement ok
-VACUUM (UPDATE_INDEXES) three_segs_docs;
+VACUUM (REFRESH_TABLE) three_segs_docs;
 
 statement count 1
 INSERT INTO three_segs_docs VALUES (3, 'gamma');
 
 statement ok
-VACUUM (UPDATE_INDEXES) three_segs_docs;
+VACUUM (REFRESH_TABLE) three_segs_docs;
 
 
 query
@@ -126,13 +126,13 @@ statement count 1
 INSERT INTO split_docs VALUES (3, 'gamma');
 
 statement ok
-VACUUM (UPDATE_INDEXES) split_docs;
+VACUUM (REFRESH_TABLE) split_docs;
 
 statement count 1
 INSERT INTO split_docs VALUES (2, 'beta');
 
 statement ok
-VACUUM (UPDATE_INDEXES) split_docs;
+VACUUM (REFRESH_TABLE) split_docs;
 
 
 query
@@ -163,7 +163,7 @@ statement count 1
 INSERT INTO split2_docs VALUES (2, 'beta');
 
 statement ok
-VACUUM (UPDATE_INDEXES) split2_docs;
+VACUUM (REFRESH_TABLE) split2_docs;
 
 statement count 1
 INSERT INTO split2_docs VALUES (1, 'alpha');
@@ -172,7 +172,7 @@ statement count 1
 INSERT INTO split2_docs VALUES (3, 'gamma');
 
 statement ok
-VACUUM (UPDATE_INDEXES) split2_docs;
+VACUUM (REFRESH_TABLE) split2_docs;
 
 
 query
@@ -187,42 +187,42 @@ id	d
 
 
 # =====================================================================
-# Layout E: 3 segments then consolidate via compact_indexes => should
+# Layout E: 3 segments then compact via COMPACT_TABLE => should
 # match Layout A (single merged segment).
 # =====================================================================
 
 statement ok
-CREATE TABLE consolidated_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE compacted_docs (id INTEGER PRIMARY KEY, body VARCHAR);
 
 
 statement ok
-CREATE INDEX consolidated_idx ON consolidated_docs USING inverted(id, body one_seg_en);
+CREATE INDEX compacted_idx ON compacted_docs USING inverted(id, body one_seg_en);
 
 
 statement count 1
-INSERT INTO consolidated_docs VALUES (1, 'alpha');
+INSERT INTO compacted_docs VALUES (1, 'alpha');
 
 statement ok
-VACUUM (UPDATE_INDEXES) consolidated_docs;
+VACUUM (REFRESH_TABLE) compacted_docs;
 
 statement count 1
-INSERT INTO consolidated_docs VALUES (2, 'beta');
+INSERT INTO compacted_docs VALUES (2, 'beta');
 
 statement ok
-VACUUM (UPDATE_INDEXES) consolidated_docs;
+VACUUM (REFRESH_TABLE) compacted_docs;
 
 statement count 1
-INSERT INTO consolidated_docs VALUES (3, 'gamma');
+INSERT INTO compacted_docs VALUES (3, 'gamma');
 
 statement ok
-VACUUM (UPDATE_INDEXES) consolidated_docs;
+VACUUM (REFRESH_TABLE) compacted_docs;
 
 statement ok
-PRAGMA serenedb_vacuum('compact_indexes', 'consolidated_docs');
+VACUUM (COMPACT_TABLE) compacted_docs;
 
 
 query
-SELECT id, BM25(consolidated_idx.tableoid) as d FROM consolidated_idx
+SELECT id, BM25(compacted_idx.tableoid) as d FROM compacted_idx
 WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
 ORDER BY d DESC, id;
 ----
@@ -249,7 +249,7 @@ statement ok
 DROP TABLE split2_docs;
 
 statement ok
-DROP TABLE consolidated_docs;
+DROP TABLE compacted_docs;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY one_seg_en;

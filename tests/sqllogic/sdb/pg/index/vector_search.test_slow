@@ -41,7 +41,7 @@ CREATE INDEX vecs_hnsw ON vecs USING inverted(emb hnsw (metric = 'l2', m = 64, e
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) vecs;
+VACUUM (REFRESH_TABLE) vecs;
 
 
 query
@@ -123,7 +123,7 @@ CREATE INDEX vecs_hnsw_l1 ON vecs USING inverted(id, emb hnsw (metric = 'l1', m 
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) vecs;
+VACUUM (REFRESH_TABLE) vecs;
 
 
 query
@@ -158,7 +158,7 @@ CREATE INDEX vecs_hnsw_cos ON vecs USING inverted(id, emb hnsw (metric = 'cosine
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) vecs;
+VACUUM (REFRESH_TABLE) vecs;
 
 
 query
@@ -194,7 +194,7 @@ CREATE INDEX vecs_hnsw_ip ON vecs USING inverted(id, emb hnsw (metric = 'ip', m 
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) vecs;
+VACUUM (REFRESH_TABLE) vecs;
 
 
 query
@@ -294,7 +294,7 @@ CREATE INDEX vecs_text_idx ON vecs_text USING inverted(id, body en, emb hnsw (me
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) vecs_text;
+VACUUM (REFRESH_TABLE) vecs_text;
 
 
 # Filtered ANN needs higher efSearch to maintain recall

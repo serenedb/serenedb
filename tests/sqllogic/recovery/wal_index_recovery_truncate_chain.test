@@ -28,7 +28,7 @@ statement ok
 CREATE INDEX gayazov_idx ON gayazov_t USING inverted(id, body gayazov_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) gayazov_t;
+VACUUM (REFRESH_TABLE) gayazov_t;
 
 # Block search commits. Everything below this stays in the WAL until restart.
 statement ok

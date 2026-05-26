@@ -219,7 +219,7 @@ QUERY PLAN
 # Confirms that when EXPLAIN says (i) for emb, the value really comes
 # back through the index path (not garbage / not empty).
 statement ok
-VACUUM (UPDATE_INDEXES) src_hnsw_only;
+VACUUM (REFRESH_TABLE) src_hnsw_only;
 
 query
 SELECT id, emb FROM src_hnsw_only_idx ORDER BY id;

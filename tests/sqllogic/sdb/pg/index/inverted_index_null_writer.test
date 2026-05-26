@@ -47,7 +47,7 @@ FROM read_json('/tmp/${__DATABASE__}_null_writer.jsonl');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) rj_t;
+VACUUM (REFRESH_TABLE) rj_t;
 
 
 query
@@ -109,7 +109,7 @@ UPDATE upd_t SET body = NULL WHERE id % 2 = 0;
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) upd_t;
+VACUUM (REFRESH_TABLE) upd_t;
 
 
 query
@@ -161,7 +161,7 @@ SELECT s::INT, NULL::VARCHAR FROM generate_series(1, 1024) AS s;
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) const_t;
+VACUUM (REFRESH_TABLE) const_t;
 
 
 query

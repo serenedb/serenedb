@@ -41,10 +41,10 @@ CREATE INDEX pl_lagging_idx ON pl_lagging
   USING inverted(id, body pl_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) pl_caught_up;
+VACUUM (REFRESH_TABLE) pl_caught_up;
 
 statement ok
-VACUUM (UPDATE_INDEXES) pl_lagging;
+VACUUM (REFRESH_TABLE) pl_lagging;
 
 # Both indexes are caught up. Block search commits and write to the lagging
 # table only.
@@ -76,11 +76,11 @@ SELECT 1;
 
 connection pl_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) pl_caught_up;
+VACUUM (REFRESH_TABLE) pl_caught_up;
 
 connection pl_after
 statement ok
-VACUUM (UPDATE_INDEXES) pl_lagging;
+VACUUM (REFRESH_TABLE) pl_lagging;
 
 # Caught-up table is unchanged.
 connection pl_after

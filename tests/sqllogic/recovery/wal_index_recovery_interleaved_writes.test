@@ -38,7 +38,7 @@ statement ok
 CREATE INDEX iw_idx ON iw_idx_t USING inverted(id, body iw_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) iw_idx_t;
+VACUUM (REFRESH_TABLE) iw_idx_t;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';
@@ -124,7 +124,7 @@ SELECT 1;
 
 connection iw_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) iw_idx_t;
+VACUUM (REFRESH_TABLE) iw_idx_t;
 
 # Final pks in iw_idx_t:
 #  pre seeds: 1 was deleted, 2 updated → kept as id=2

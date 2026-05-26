@@ -995,9 +995,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_two_segments) {
   CheckQuery(MakeFilter("nonexistent", ".*"), Docs{}, rdr);
 }
 
-// Consolidation
+// Compaction
 
-TEST_P(RegexpFilterTestCase, by_regexp_consolidation) {
+TEST_P(RegexpFilterTestCase, by_regexp_compaction) {
   auto writer = open_writer();
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
@@ -1018,9 +1018,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_consolidation) {
     }
     CheckQuery(MakeFilter("same", ".*"), all, rdr);
   }
-  ASSERT_TRUE(writer->Consolidate(
-    irs::index_utils::MakePolicy(irs::index_utils::ConsolidateCount())));
-  writer->Commit();
+  ASSERT_TRUE(writer->Compact(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  writer->RefreshCommit();
   {
     auto rdr = open_reader();
     ASSERT_EQ(1, rdr.size());

@@ -33,7 +33,7 @@ CREATE INDEX del_then_insert_idx ON del_then_insert_t
   USING inverted(a, b del_then_insert_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) del_then_insert_t;
+VACUUM (REFRESH_TABLE) del_then_insert_t;
 
 # Block iresearch commit so all subsequent ops only land in the WAL.
 statement ok
@@ -58,7 +58,7 @@ SELECT 1;
 
 connection after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) del_then_insert_t;
+VACUUM (REFRESH_TABLE) del_then_insert_t;
 
 # The stale token must NOT be searchable: if Delete didn't clear indexed_cols
 # in the recovery accumulator, the pre-delete Put would leak through.

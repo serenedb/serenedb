@@ -666,7 +666,7 @@ TEST_P(TfidfTestCase, test_query) {
         store_seq(d, *doc);
         gen.next();  // skip 1 doc
       }
-      writer->Commit();
+      writer->RefreshCommit();
       AssertSnapshotEquality(*writer);
     }
 
@@ -681,7 +681,7 @@ TEST_P(TfidfTestCase, test_query) {
         store_seq(d, *doc);
         gen.next();  // skip 1 doc
       }
-      writer->Commit();
+      writer->RefreshCommit();
       AssertSnapshotEquality(*writer);
     }
 
@@ -775,7 +775,7 @@ TEST_P(TfidfTestCase, test_query) {
         store_seq(d, *doc);
         gen.next();  // skip 1 doc
       }
-      writer->Commit();
+      writer->RefreshCommit();
       AssertSnapshotEquality(*writer);
     }
 
@@ -790,7 +790,7 @@ TEST_P(TfidfTestCase, test_query) {
         store_seq(d, *doc);
         gen.next();  // skip 1 doc
       }
-      writer->Commit();
+      writer->RefreshCommit();
       AssertSnapshotEquality(*writer);
     }
 
@@ -897,7 +897,7 @@ TEST_P(TfidfTestCase, test_query) {
         store_seq(d, *doc);
         gen.next();  // skip 1 doc
       }
-      writer->Commit();
+      writer->RefreshCommit();
       AssertSnapshotEquality(*writer);
     }
 
@@ -912,7 +912,7 @@ TEST_P(TfidfTestCase, test_query) {
         store_seq(d, *doc);
         gen.next();  // skip 1 doc
       }
-      writer->Commit();
+      writer->RefreshCommit();
       AssertSnapshotEquality(*writer);
     }
 
@@ -1444,7 +1444,7 @@ TEST_P(TfidfTestCase, test_collector_serialization) {
       store_seq(d, *doc);
     }
 
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
 

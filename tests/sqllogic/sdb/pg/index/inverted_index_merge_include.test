@@ -2,9 +2,9 @@ hash-threshold 100
 
 # Validity must round-trip through the cs segment merge for INCLUDE'd
 # composite types. We force the index into a multi-segment shape by
-# inserting in two batches separated by VACUUM (UPDATE_INDEXES) -- each
-# VACUUM commits a fresh segment -- then drive consolidation via
-# PRAGMA serenedb_vacuum('compact_indexes', ...) and re-run the same
+# inserting in two batches separated by VACUUM (REFRESH_TABLE) -- each
+# VACUUM commits a fresh segment -- then drive compaction via
+# VACUUM (COMPACT_TABLE) <table> and re-run the same
 # projection. The post-merge projection must match the pre-merge one,
 # including NULL rows and (for MAP) empty-vs-NULL distinction.
 
@@ -44,7 +44,7 @@ INSERT INTO arr_c VALUES (3, 'alpha three', [-1.0, 0.0, 1.0])
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) arr_c
+VACUUM (REFRESH_TABLE) arr_c
 
 
 # Segment B: all non-null.
@@ -57,7 +57,7 @@ INSERT INTO arr_c VALUES (5, 'beta two', [7.0, 8.0, 9.0])
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) arr_c
+VACUUM (REFRESH_TABLE) arr_c
 
 
 # Baseline projection across both pre-merge segments.
@@ -75,7 +75,7 @@ pk	vec
 
 
 statement ok
-PRAGMA serenedb_vacuum('compact_indexes', 'arr_c')
+VACUUM (COMPACT_TABLE) arr_c
 
 
 # After merge: the NULL row must survive.
@@ -118,7 +118,7 @@ pk	vec
 # Idempotency: a second compact pass on the already-merged segment must
 # keep the validity bitmap intact.
 statement ok
-PRAGMA serenedb_vacuum('compact_indexes', 'arr_c')
+VACUUM (COMPACT_TABLE) arr_c
 
 
 query
@@ -159,7 +159,7 @@ INSERT INTO struct_c VALUES (3, 'alpha three', ROW(NULL, 30))
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) struct_c
+VACUUM (REFRESH_TABLE) struct_c
 
 
 # Segment B: also exercises a NULL field on the second slot.
@@ -172,7 +172,7 @@ INSERT INTO struct_c VALUES (5, 'beta two', ROW('epsilon', 50))
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) struct_c
+VACUUM (REFRESH_TABLE) struct_c
 
 
 query
@@ -189,7 +189,7 @@ pk	payload
 
 
 statement ok
-PRAGMA serenedb_vacuum('compact_indexes', 'struct_c')
+VACUUM (COMPACT_TABLE) struct_c
 
 
 query
@@ -229,7 +229,7 @@ pk	payload
 
 
 statement ok
-PRAGMA serenedb_vacuum('compact_indexes', 'struct_c')
+VACUUM (COMPACT_TABLE) struct_c
 
 
 query
@@ -270,7 +270,7 @@ INSERT INTO map_c VALUES (3, 'alpha three', MAP {})
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) map_c
+VACUUM (REFRESH_TABLE) map_c
 
 
 # Segment B: also exercises a NULL value inside a non-null map.
@@ -283,7 +283,7 @@ INSERT INTO map_c VALUES (5, 'beta two', MAP {'e': NULL, 'f': 5})
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) map_c
+VACUUM (REFRESH_TABLE) map_c
 
 
 query
@@ -300,7 +300,7 @@ pk	attrs
 
 
 statement ok
-PRAGMA serenedb_vacuum('compact_indexes', 'map_c')
+VACUUM (COMPACT_TABLE) map_c
 
 
 query
@@ -341,7 +341,7 @@ pk	attrs
 
 
 statement ok
-PRAGMA serenedb_vacuum('compact_indexes', 'map_c')
+VACUUM (COMPACT_TABLE) map_c
 
 
 query

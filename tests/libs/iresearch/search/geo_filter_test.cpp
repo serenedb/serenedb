@@ -365,7 +365,7 @@ TEST(GeoFilterTest, query) {
         }
       }
     }
-    writer->Commit();
+    writer->RefreshCommit();
     reader = writer->GetSnapshot();
   }
 
@@ -752,7 +752,7 @@ TEST(GeoFilterTest, checkScorer) {
         }
       }
     }
-    writer->Commit();
+    writer->RefreshCommit();
     reader = writer->GetSnapshot();
   }
 

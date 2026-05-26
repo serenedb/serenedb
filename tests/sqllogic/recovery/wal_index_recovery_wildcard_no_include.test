@@ -27,7 +27,7 @@ CREATE INDEX wal_wild_ni_idx ON wal_wild_ni_t
   USING inverted(b wal_wild_ni_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) wal_wild_ni_t;
+VACUUM (REFRESH_TABLE) wal_wild_ni_t;
 
 # Plan: ts_like filter consults analyzer-output cs aux column;
 # `b` projection falls back to RocksDB lookup (no INCLUDE).
@@ -104,7 +104,7 @@ SELECT 1;
 
 connection wal_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) wal_wild_ni_t;
+VACUUM (REFRESH_TABLE) wal_wild_ni_t;
 
 # Pre-crash row queryable.
 connection wal_after

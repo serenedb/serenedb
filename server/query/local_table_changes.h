@@ -20,9 +20,8 @@
 
 #pragma once
 
-#include <duckdb/common/types/column/column_data_collection.hpp>
-
 #include <cstdint>
+#include <duckdb/common/types/column/column_data_collection.hpp>
 #include <memory>
 #include <vector>
 

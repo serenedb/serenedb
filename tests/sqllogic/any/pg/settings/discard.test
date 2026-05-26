@@ -1,0 +1,87 @@
+# ----------------------------------------------------------------------
+# PG-compat: DISCARD <target> is emitted between checkouts by pooled
+# drivers (Npgsql, pgjdbc, psycopg pooled connections). SereneDB has no
+# temp tables / session sequences, so every DISCARD variant collapses to
+# DEALLOCATE ALL semantically -- the only observable effect is clearing
+# the prepared statement cache.
+# ----------------------------------------------------------------------
+
+# DISCARD ALL on a fresh connection is a no-op success.
+statement ok
+DISCARD ALL;
+
+
+statement ok
+DISCARD PLANS;
+
+
+statement ok
+DISCARD SEQUENCES;
+
+
+statement ok
+DISCARD TEMP;
+
+
+statement ok
+DISCARD TEMPORARY;
+
+
+# Case insensitivity (keywords).
+statement ok
+discard all;
+
+
+# DISCARD ALL clears the prepared statement cache, so a previously-prepared
+# statement cannot be executed afterwards.
+statement ok
+PREPARE drv_discard_test AS SELECT 1;
+
+
+query
+EXECUTE drv_discard_test;
+----
+?column?
+1
+
+
+statement ok
+DISCARD ALL;
+
+
+statement error
+EXECUTE drv_discard_test;
+----
+db error: ERROR: prepared statement "drv_discard_test" does not exist<slt:ignore>
+
+
+# DISCARD PLANS / SEQUENCES / TEMP also clear prepared statements in SereneDB
+# (same physical-drop path, since the underlying state is the same). PG keeps
+# the prepared statement -- DISCARD PLANS only releases its cached plan.
+statement ok
+PREPARE drv_discard_test AS SELECT 2;
+
+
+statement ok
+DISCARD PLANS;
+
+
+skipif postgres
+statement error
+EXECUTE drv_discard_test;
+----
+db error: ERROR: prepared statement "drv_discard_test" does not exist<slt:ignore>
+
+
+# DEALLOCATE ALL is PG-only here -- serenedb already cleared the prepared
+# statement via DISCARD PLANS above, while PG kept it cached.
+onlyif postgres
+statement ok
+DEALLOCATE ALL;
+
+
+# Unknown DISCARD target is a syntax error.
+statement error
+DISCARD WHATEVER;
+----
+db error: ERROR: syntax error at or near "WHATEVER"<slt:ignore>

@@ -33,6 +33,8 @@
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_schema_entry.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -98,6 +100,17 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // Table constructor wires up a generated PK sequence.
 
   ApplyColumnModes(options.columns, table_info.options);
+  ApplyStorageKind(options, table_info.options);
+  if (options.storage == catalog::StorageKind::kSearch) {
+    // Per design D18, CTAS on a kSearch table should route through the
+    // regular insert operator (SereneDBSearchInsert) once M3 lands. Until
+    // then, reject explicitly so the table isn't created in an
+    // unusable state.
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("CREATE TABLE ... AS SELECT into a search-backed table is "
+              "not yet supported (M3-M6)"));
+  }
 
   auto& catalog_impl =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();

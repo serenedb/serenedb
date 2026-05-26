@@ -121,6 +121,8 @@ std::optional<std::string> ExtractString(std::string_view option_key,
   }
 }
 
+}  // namespace
+
 void ApplyStorageKind(
   catalog::CreateTableOptions& options,
   const duckdb::case_insensitive_map_t<
@@ -144,8 +146,6 @@ void ApplyStorageKind(
               "\" must be 'rocksdb' or 'search', got \"", *value, "\""));
   }
 }
-
-}  // namespace
 
 void ApplyColumnModes(
   std::vector<catalog::Column>& columns,

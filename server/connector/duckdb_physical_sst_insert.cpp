@@ -144,6 +144,7 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
   state->table_shard =
     conn_ctx.EnsureCatalogSnapshot()->GetTableShard(state->table_id);
   SDB_ASSERT(state->table_shard);
+  RejectIfSearchTable(*state->table_shard, "INSERT (bulk)");
   state->table_lock = std::unique_lock{state->table_shard->GetTableLock()};
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
     state->table_id, conn_ctx, *_table);

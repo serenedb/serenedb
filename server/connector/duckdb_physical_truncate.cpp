@@ -25,7 +25,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_truncate_function.h"
 #include "pg/connection_context.h"
-#include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
 

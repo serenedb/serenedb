@@ -124,6 +124,7 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
   state->table_shard =
     conn_ctx.EnsureCatalogSnapshot()->GetTableShard(state->table_id);
   SDB_ASSERT(state->table_shard);
+  RejectIfSearchTable(*state->table_shard, "INSERT");
   state->table_lock = std::shared_lock{state->table_shard->GetTableLock()};
 
   // Build column metadata

@@ -71,3 +71,78 @@ CREATE TABLE storage_err2 (a INTEGER PRIMARY KEY)
   WITH (storage = ['search']);
 ----
 db error: ERROR: WITH option "storage" expects a string literal
+
+
+## PR 2.3 -- planner-side stubs. Until M3-M6 deliver parallel operators,
+## every DML / SCAN / CREATE INDEX on a kSearch table must fail loudly with
+## a friendly NOT_IMPLEMENTED message at the operator-construction site.
+## RocksDB-backed tables still work normally; we don't assert that here
+## because every other test in the suite already exercises that path.
+
+statement ok
+CREATE TABLE search_dml (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search');
+
+
+statement error
+INSERT INTO search_dml VALUES (1, 'x');
+----
+db error: ERROR: INSERT on a search-backed table is not yet supported (M3-M6)
+
+
+statement error
+SELECT * FROM search_dml;
+----
+db error: ERROR: SELECT on a search-backed table is not yet supported (M3-M6)
+
+
+# UPDATE / DELETE / TRUNCATE / CREATE INDEX all resolve the target through
+# GetScanFunction during bind (TRUNCATE and CREATE INDEX go through table
+# functions / scan-on-target respectively), so the SCAN guard fires first
+# and the user sees the SELECT message. We don't add operator-specific
+# guards for those paths since the SCAN guard catches them all -- the four
+# guards we *do* keep (SCAN, INSERT-VALUES, SST, CTAS) cover every plan-
+# time path that can reach a search shard.
+statement error
+UPDATE search_dml SET b = 'y' WHERE a = 1;
+----
+db error: ERROR: SELECT on a search-backed table is not yet supported (M3-M6)
+
+
+statement error
+DELETE FROM search_dml WHERE a = 1;
+----
+db error: ERROR: SELECT on a search-backed table is not yet supported (M3-M6)
+
+
+statement error
+TRUNCATE search_dml;
+----
+db error: ERROR: SELECT on a search-backed table is not yet supported (M3-M6)
+
+
+# All access methods rejected (including USING inverted -- iresearch on
+# top of iresearch makes no sense). CREATE INDEX binds the target table
+# via a scan, so the SCAN guard fires first.
+statement error
+CREATE INDEX search_dml_idx ON search_dml (b);
+----
+db error: ERROR: SELECT on a search-backed table is not yet supported (M3-M6)
+
+
+statement error
+CREATE INDEX search_dml_inv_idx ON search_dml USING inverted (b);
+----
+db error: ERROR: SELECT on a search-backed table is not yet supported (M3-M6)
+
+
+statement ok
+DROP TABLE search_dml;
+
+
+# CREATE TABLE AS SELECT into a search-backed table: rejected before the
+# new table is materialised (parsed-options check, no catalog mutation).
+statement error
+CREATE TABLE search_ctas WITH (storage = 'search') AS SELECT 1 AS a;
+----
+db error: ERROR: CREATE TABLE ... AS SELECT into a search-backed table is not yet supported (M3-M6)

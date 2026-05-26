@@ -34,13 +34,26 @@
 #include <duckdb/storage/table_storage_info.hpp>
 
 #include "basics/assert.h"
+#include "catalog/catalog.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
+#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
+
+void RejectIfSearchTable(const TableShard& shard, std::string_view operation) {
+  if (shard.GetStorage() == catalog::StorageKind::kSearch) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(operation,
+              " on a search-backed table is not yet supported (M3-M6)"));
+  }
+}
 
 SereneDBTableEntry& RequireBaseTable(duckdb::TableCatalogEntry& table) {
   // RTTI is unavoidable here: the caller hands us a generic
@@ -72,6 +85,11 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SereneDBTableEntry::GetStatistics(
 duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
+  auto& conn_ctx = GetSereneDBContext(context);
+  auto shard =
+    conn_ctx.EnsureCatalogSnapshot()->GetTableShard(_sdb_table->GetId());
+  SDB_ASSERT(shard);
+  RejectIfSearchTable(*shard, "SELECT");
   auto data = duckdb::make_uniq<TableScanBindData>();
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {

@@ -1,0 +1,73 @@
+## storage WITH-option for CREATE TABLE: selects the table's physical backend.
+## PR 2.2 scope: lifecycle only -- CREATE / DROP must work; DML on a kSearch
+## table is gated to a later milestone and isn't exercised here.
+
+# Default (no WITH clause) is the rocksdb row store.
+statement ok
+CREATE TABLE storage_default (a INTEGER PRIMARY KEY, b TEXT);
+
+statement ok
+DROP TABLE storage_default;
+
+
+# Explicit rocksdb -- equivalent to default.
+statement ok
+CREATE TABLE storage_rocks (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'rocksdb');
+
+statement ok
+DROP TABLE storage_rocks;
+
+
+# Headline smoke: kSearch shard creates iresearch directory + empty writer,
+# dtor closes cleanly, drop wipes the directory.
+statement ok
+CREATE TABLE storage_search (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search');
+
+statement ok
+DROP TABLE storage_search;
+
+
+# Value is case-insensitive (the parser lowercases before matching).
+statement ok
+CREATE TABLE storage_search_upper (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'SEARCH');
+
+statement ok
+DROP TABLE storage_search_upper;
+
+
+# Two search tables coexist in the same schema (independent directories).
+statement ok
+CREATE TABLE storage_search_a (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search');
+
+statement ok
+CREATE TABLE storage_search_b (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search');
+
+statement ok
+DROP TABLE storage_search_a;
+
+statement ok
+DROP TABLE storage_search_b;
+
+
+# Error: unknown storage kind.
+statement error
+CREATE TABLE storage_err1 (a INTEGER PRIMARY KEY)
+  WITH (storage = 'invalid_storage_type');
+----
+db error: ERROR: WITH option "storage" must be 'rocksdb' or 'search', got "invalid_storage_type"
+
+
+# Error: non-constant expression -- a list literal trips ExtractString's
+# expression-type check (it's a FunctionExpression(list_value), not a
+# VALUE_CONSTANT). Scalar numeric/boolean values cast cleanly to VARCHAR
+# and reach the "rocksdb|search" check above instead.
+statement error
+CREATE TABLE storage_err2 (a INTEGER PRIMARY KEY)
+  WITH (storage = ['search']);
+----
+db error: ERROR: WITH option "storage" expects a string literal

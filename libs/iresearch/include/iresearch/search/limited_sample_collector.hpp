@@ -349,6 +349,11 @@ class SampledMultiTermBuffer : public Filter::ScoredBuffer {
       _collector{ctx.scorer ? scored_terms_limit : 0},
       _visitor{_collector, _states} {}
 
+  SampledMultiTermBuffer(const SampledMultiTermBuffer&) = delete;
+  SampledMultiTermBuffer& operator=(const SampledMultiTermBuffer&) = delete;
+  SampledMultiTermBuffer(SampledMultiTermBuffer&&) = delete;
+  SampledMultiTermBuffer& operator=(SampledMultiTermBuffer&&) = delete;
+
   void Merge(Filter::PrepareBuffer&& other) override {
     auto& rhs = sdb::basics::downCast<SampledMultiTermBuffer>(other);
     _states.Merge(std::move(rhs._states));

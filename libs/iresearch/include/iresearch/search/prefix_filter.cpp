@@ -80,10 +80,7 @@ Filter::Query::ptr ByPrefix::Prepare(const PrepareContext& ctx,
                                      std::string_view field, bytes_view prefix,
                                      size_t scored_terms_limit) {
   Buffer buf{ctx, field, prefix, scored_terms_limit};
-  for (auto& segment : ctx.index) {
-    buf.PrepareSegment(segment);
-  }
-  return std::move(buf).Compile(ctx);
+  return Filter::PrepareWithBuffer(buf, ctx);
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByPrefix::CreateBuffer(

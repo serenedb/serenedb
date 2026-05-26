@@ -154,10 +154,7 @@ Filter::Query::ptr ByRange::Prepare(const PrepareContext& ctx,
   }
 
   Buffer buf{ctx, field, rng, scored_terms_limit};
-  for (auto& segment : ctx.index) {
-    buf.PrepareSegment(segment);
-  }
-  return std::move(buf).Compile(ctx);
+  return Filter::PrepareWithBuffer(buf, ctx);
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByRange::CreateBuffer(

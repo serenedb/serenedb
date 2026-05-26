@@ -214,6 +214,9 @@ void BySamePosition::Buffer::PrepareSegment(const SubReader& segment) {
     SeekTermIterator::ptr term = field->iterator(SeekMode::NORMAL);
 
     if (!term->seek(branch.second)) {
+      if (!_has_scorer) {
+        return;
+      }
       // continue here because we should collect stats for other terms
       continue;
     }

@@ -36,18 +36,19 @@
 namespace irs {
 namespace {
 
-class CompoundBuffer final : public Filter::PrepareBuffer {
+class CompoundBuffer final : public Filter::ScoredBuffer {
  public:
   enum class Shape : uint8_t { And, Or, MinMatch };
 
   struct ChildEntry {
     std::unique_ptr<Filter::PrepareBuffer> buffer;
-    PrepareContext compile_ctx;
+    const Scorer* scorer;
+    score_t boost;
   };
 
   CompoundBuffer(Shape shape, ScoreMergeType merge_type,
-                 PrepareContext boolean_ctx, size_t min_match = 0)
-    : _boolean_ctx{boolean_ctx},
+                 const PrepareContext& boolean_ctx, size_t min_match = 0)
+    : ScoredBuffer{boolean_ctx},
       _shape{shape},
       _merge_type{merge_type},
       _min_match{min_match} {}
@@ -73,6 +74,10 @@ class CompoundBuffer final : public Filter::PrepareBuffer {
 
   void Merge(PrepareBuffer&& other) final {
     auto& rhs = sdb::basics::downCast<CompoundBuffer>(other);
+    SDB_ASSERT(_shape == rhs._shape);
+    SDB_ASSERT(_merge_type == rhs._merge_type);
+    SDB_ASSERT(_min_match == rhs._min_match);
+    SDB_ASSERT(_excl_begin == rhs._excl_begin);
     SDB_ASSERT(_children.size() == rhs._children.size());
     for (size_t i = 0; i < _children.size(); ++i) {
       _children[i].buffer->Merge(std::move(*rhs._children[i].buffer));
@@ -81,35 +86,41 @@ class CompoundBuffer final : public Filter::PrepareBuffer {
 
   bool Empty() const noexcept final { return false; }
 
-  Filter::Query::ptr Compile(const PrepareContext&) && final {
-    BooleanQuery::queries_t queries{{_boolean_ctx.memory}};
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    BooleanQuery::queries_t queries{{ctx.memory}};
     queries.reserve(_children.size());
     for (auto& c : _children) {
       auto buf = std::move(c.buffer);
-      queries.emplace_back(buf->Empty()
-                             ? Filter::Query::empty()
-                             : std::move(*buf).Compile(c.compile_ctx));
+      if (buf->Empty()) {
+        queries.emplace_back(Filter::Query::empty());
+        continue;
+      }
+      PrepareContext child_ctx = ctx;
+      child_ctx.scorer = c.scorer;
+      child_ctx.boost = c.boost;
+      queries.emplace_back(std::move(*buf).Compile(child_ctx));
     }
 
     memory::managed_ptr<BooleanQuery> q;
     switch (_shape) {
       case Shape::And:
-        q = memory::make_tracked<AndQuery>(_boolean_ctx.memory);
+        q = memory::make_tracked<AndQuery>(ctx.memory);
         break;
       case Shape::Or:
-        q = memory::make_tracked<OrQuery>(_boolean_ctx.memory);
+        q = memory::make_tracked<OrQuery>(ctx.memory);
         break;
       case Shape::MinMatch:
-        q =
-          memory::make_tracked<MinMatchQuery>(_boolean_ctx.memory, _min_match);
+        q = memory::make_tracked<MinMatchQuery>(ctx.memory, _min_match);
         break;
     }
-    q->prepare(_boolean_ctx, _merge_type, std::move(queries), _excl_begin);
+    PrepareContext boolean_compile_ctx = ctx;
+    boolean_compile_ctx.boost = _boost;
+    q->prepare(boolean_compile_ctx, _merge_type, std::move(queries),
+               _excl_begin);
     return q;
   }
 
  private:
-  PrepareContext _boolean_ctx;
   Shape _shape;
   ScoreMergeType _merge_type;
   size_t _min_match;
@@ -128,13 +139,13 @@ PrepareContext ExclChildCtx(const PrepareContext& parent_ctx) {
 
 CompoundBuffer::ChildEntry MakeChildEntry(const Filter& filter,
                                           const PrepareContext& parent_ctx) {
-  return {filter.CreateBuffer(parent_ctx), parent_ctx};
+  return {filter.CreateBuffer(parent_ctx), parent_ctx.scorer, parent_ctx.boost};
 }
 
 CompoundBuffer::ChildEntry MakeExclChildEntry(
   const Filter& filter, const PrepareContext& parent_ctx) {
   auto child_ctx = ExclChildCtx(parent_ctx);
-  return {filter.CreateBuffer(child_ctx), child_ctx};
+  return {filter.CreateBuffer(child_ctx), child_ctx.scorer, child_ctx.boost};
 }
 
 std::pair<const Filter*, bool> OptimizeNot(const Not& node) {

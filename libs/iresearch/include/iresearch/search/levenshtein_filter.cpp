@@ -269,6 +269,7 @@ class TopTermsBuffer final : public MultiTermQuery::BufferBase {
 
   void Merge(PrepareBuffer&& other) final {
     auto& rhs = sdb::basics::downCast<TopTermsBuffer>(other);
+    SDB_ASSERT(_states.empty() && rhs._states.empty());
     _field_stats.collect(std::move(rhs._field_stats));
     _collector.Merge(std::move(rhs._collector));
   }

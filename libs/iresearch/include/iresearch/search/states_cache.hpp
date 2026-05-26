@@ -58,7 +58,12 @@ class StatesCacheImpl : public StatesCache, private util::Noncopyable {
     return result.first->second;
   }
 
-  void Merge(StatesCacheImpl&& other) { _states.merge(other._states); }
+  void Merge(StatesCacheImpl&& other) {
+    [[maybe_unused]] const size_t expected =
+      _states.size() + other._states.size();
+    _states.merge(other._states);
+    SDB_ASSERT(_states.size() == expected);
+  }
 
   const state_type* find(const SubReader& segment) const noexcept {
     const auto it = _states.find(&segment);

@@ -105,6 +105,14 @@ class Filter {
     virtual Query::ptr Compile(const PrepareContext& ctx) && = 0;
   };
 
+  static Query::ptr PrepareWithBuffer(PrepareBuffer& buf,
+                                      const PrepareContext& ctx) {
+    for (const auto& segment : ctx.index) {
+      buf.PrepareSegment(segment);
+    }
+    return std::move(buf).Compile(ctx);
+  }
+
   // Carries the *cumulative* boost from root to this filter, captured at
   // construction. `Compile` returns a Query whose Boost() is `_boost`
   // directly; the Compile-time ctx is for memory/scorer/index only.

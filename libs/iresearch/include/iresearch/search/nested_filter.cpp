@@ -657,13 +657,15 @@ class NestedBuffer final : public Filter::PrepareBuffer {
       _match{opts.match},
       _merge_type{opts.merge_type},
       _none_boost{ctx.boost * boost},
-      _child_ctx{[&] {
-        auto c = ctx;
-        c.scorer = GetOrder(opts.match, ctx.scorer);
-        c.boost *= boost;
-        return c;
-      }()},
-      _child{opts.child->CreateBuffer(_child_ctx)} {}
+      _child_scorer{GetOrder(opts.match, ctx.scorer)},
+      _child_boost{ctx.boost * boost},
+      _child{opts.child->CreateBuffer({
+        .index = ctx.index,
+        .memory = ctx.memory,
+        .scorer = _child_scorer,
+        .ctx = ctx.ctx,
+        .boost = _child_boost,
+      })} {}
 
   void PrepareSegment(const SubReader& segment) final {
     _child->PrepareSegment(segment);
@@ -677,8 +679,11 @@ class NestedBuffer final : public Filter::PrepareBuffer {
   bool Empty() const noexcept final { return false; }
 
   Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    PrepareContext child_ctx = ctx;
+    child_ctx.scorer = _child_scorer;
+    child_ctx.boost = _child_boost;
     auto child_q = _child->Empty() ? Filter::Query::empty()
-                                   : std::move(*_child).Compile(_child_ctx);
+                                   : std::move(*_child).Compile(child_ctx);
     if (!child_q) {
       return Filter::Query::empty();
     }
@@ -692,7 +697,8 @@ class NestedBuffer final : public Filter::PrepareBuffer {
   ByNestedOptions::MatchType _match;
   ScoreMergeType _merge_type;
   score_t _none_boost;
-  PrepareContext _child_ctx;
+  const Scorer* _child_scorer;
+  score_t _child_boost;
   std::unique_ptr<Filter::PrepareBuffer> _child;
 };
 

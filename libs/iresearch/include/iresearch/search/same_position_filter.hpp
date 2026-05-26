@@ -65,7 +65,8 @@ class BySamePosition : public FilterWithOptions<BySamePositionOptions> {
         _memory{&ctx.memory},
         _field_stats{ctx.scorer},
         _term_stats{ctx.scorer, terms.size()},
-        _states{ctx.memory, ctx.index.size()} {}
+        _states{ctx.memory, ctx.index.size()},
+        _has_scorer{ctx.scorer != nullptr} {}
 
     void PrepareSegment(const SubReader& segment) final;
     void Merge(PrepareBuffer&& other) final;
@@ -78,6 +79,7 @@ class BySamePosition : public FilterWithOptions<BySamePositionOptions> {
     FieldCollectors _field_stats;
     TermCollectors _term_stats;
     StatesT _states;
+    bool _has_scorer;
   };
 
   std::unique_ptr<PrepareBuffer> CreateBuffer(
@@ -90,10 +92,7 @@ class BySamePosition : public FilterWithOptions<BySamePositionOptions> {
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
     auto buf = CreateBuffer(ctx);
-    for (const auto& segment : ctx.index) {
-      buf->PrepareSegment(segment);
-    }
-    return std::move(*buf).Compile(ctx);
+    return Filter::PrepareWithBuffer(*buf, ctx);
   }
 };
 

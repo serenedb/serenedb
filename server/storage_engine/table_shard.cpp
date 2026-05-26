@@ -28,6 +28,8 @@
 #include <vpack/slice.h>
 
 #include <atomic>
+#include <filesystem>
+#include <system_error>
 #include <yaclib/async/make.hpp>
 
 #include "basics/errors.h"
@@ -37,6 +39,7 @@
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "search/search_table_shard.h"
 #include "storage_engine/engine_feature.h"
 
 namespace sdb {
@@ -53,8 +56,9 @@ TableShard::TableShard(ObjectId table_id, const catalog::TableStats& stats)
     _table_id{table_id},
     _num_rows{stats.num_rows} {}
 
-Result TableShard::DropArtifacts(catalog::StorageKind kind, ObjectId table_id,
-                                 ObjectId /*shard_id*/, uint64_t size) {
+Result TableShard::DropArtifacts(catalog::StorageKind kind, ObjectId db_id,
+                                 ObjectId schema_id, ObjectId table_id,
+                                 ObjectId shard_id, uint64_t size) {
   switch (kind) {
     case catalog::StorageKind::kRocksDB: {
       auto& server = GetServerEngine();
@@ -66,29 +70,36 @@ Result TableShard::DropArtifacts(catalog::StorageKind kind, ObjectId table_id,
                                           rocksdb::Slice{end}, cf, true,
                                           (size >= 1000));
     }
-    case catalog::StorageKind::kSearch:
-      // SearchTableShard is not implemented yet (lands in M2). When it
-      // does, this case computes the iresearch directory path from
-      // (table_id, shard_id) and removes it. Until then, reaching this
-      // case means corruption -- a kSearch shard payload exists on disk
-      // but the code that handles it doesn't.
-      SDB_ASSERT(false, "DropArtifacts(kSearch) not yet implemented");
-      return Result{ERROR_NOT_IMPLEMENTED};
+    case catalog::StorageKind::kSearch: {
+      // remove_all returns 0 and leaves ec clear when the path doesn't
+      // exist -- treat that as success (idempotent drop, also covers the
+      // create-then-rollback path where the dir may never have been made).
+      // shard_id is unused: single-shard-per-table arch, path is keyed on
+      // (db_id, schema_id, table_id) only -- see SearchTableShard::GetPath.
+      (void)shard_id;
+      auto path = search::SearchTableShard::GetPath(db_id, schema_id, table_id);
+      std::error_code ec;
+      std::filesystem::remove_all(path, ec);
+      if (ec) {
+        return Result{ERROR_INTERNAL,
+                      "Failed to remove search table shard directory '" +
+                        path.string() + "': " + ec.message()};
+      }
+      return {};
+    }
   }
   SDB_UNREACHABLE();
 }
 
 ResultOr<std::shared_ptr<TableShard>> MakeTableShard(
-  catalog::StorageKind kind, ObjectId table_id,
-  const catalog::TableStats& stats) {
+  catalog::StorageKind kind, ObjectId db_id, ObjectId schema_id,
+  ObjectId table_id, const catalog::TableStats& stats) {
   switch (kind) {
     case catalog::StorageKind::kRocksDB:
       return std::make_shared<TableShard>(table_id, stats);
     case catalog::StorageKind::kSearch:
-      // SearchTableShard lands in M2 PR 2.2.
-      return std::unexpected<Result>{
-        std::in_place, ERROR_NOT_IMPLEMENTED,
-        "WITH (storage = 'search') is not yet supported"};
+      return std::make_shared<search::SearchTableShard>(db_id, schema_id,
+                                                        table_id, stats);
   }
   SDB_UNREACHABLE();
 }

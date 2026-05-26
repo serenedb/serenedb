@@ -198,7 +198,7 @@ class SnapshotImpl : public Snapshot {
     auto owned_sequences =
       table_deps->owned_sequences | std::ranges::to<std::vector>();
 
-    return std::make_shared<TableDrop>(table, shard, std::move(indexes),
+    return std::make_shared<TableDrop>(table, shard, db_id, std::move(indexes),
                                        std::move(owned_sequences), schema_id,
                                        is_root);
   }
@@ -2003,7 +2003,8 @@ Result LocalCatalog::CreateTable(
   if (operation_options.create_with_tombstone) {
     table->SetTombstoned(true);
   }
-  auto shard_or = MakeTableShard(options.storage, table->GetId(), TableStats{});
+  auto shard_or = MakeTableShard(options.storage, database_id, *schema_id,
+                                 table->GetId(), TableStats{});
   if (!shard_or) {
     return std::move(shard_or.error());
   }
@@ -2060,7 +2061,8 @@ Result LocalCatalog::CreateTable(
       // for kSearch), wipe them. kRocksDB has nothing to clean up here -- no
       // row data was ever written, the catalog WriteBatch above is atomic.
       if (shard->GetStorage() != StorageKind::kRocksDB) {
-        auto r = TableShard::DropArtifacts(shard->GetStorage(), table->GetId(),
+        auto r = TableShard::DropArtifacts(shard->GetStorage(), database_id,
+                                           *schema_id, table->GetId(),
                                            shard->GetId(), /*size=*/0);
         if (!r.ok()) {
           SDB_ERROR("xxxxx", Logger::THREADS,

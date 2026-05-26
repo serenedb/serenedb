@@ -111,7 +111,8 @@ std::optional<std::string> ExtractString(std::string_view option_key,
   }
   auto& cexpr = expr.Cast<duckdb::ConstantExpression>();
   try {
-    return cexpr.value.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+    return cexpr.GetValue()
+      .DefaultCastAs(duckdb::LogicalType::VARCHAR)
       .GetValue<std::string>();
   } catch (...) {
     THROW_SQL_ERROR(

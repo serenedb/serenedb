@@ -70,6 +70,7 @@
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "search/inverted_index_shard.h"
+#include "search/search_table_shard.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/secondary_index_shard.h"
 #include "vpack/value.h"
@@ -184,7 +185,7 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
   return std::make_shared<TableDrop>(
-    table_id, shard_id, table_size, std::move(indexes),
+    table_id, shard_id, db_id, table_size, std::move(indexes),
     std::move(owned_sequences), schema_id, shard_storage, is_root);
 }
 
@@ -267,7 +268,8 @@ class OpenDatabase {
   Result RegisterSequences(ObjectId database_id, ObjectId schema_id,
                            bool owned);
   Result RegisterTypes(ObjectId database_id, ObjectId schema_id);
-  Result RegisterTableShard(ObjectId table_id);
+  Result RegisterTableShard(ObjectId db_id, ObjectId schema_id,
+                            ObjectId table_id);
   Result RegisterTables(ObjectId database_id, ObjectId schema_id);
   Result RegisterIndexShard(const std::shared_ptr<Index>& index);
   Result RegisterIndexes(ObjectId database_id, ObjectId schema_id,
@@ -492,7 +494,8 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
   return {};
 }
 
-Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
+Result OpenDatabase::RegisterTableShard(ObjectId db_id, ObjectId schema_id,
+                                        ObjectId table_id) {
   return GetServerEngine().VisitDefinitions(
     table_id, ObjectType::TableShard,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
@@ -504,11 +507,17 @@ Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
       if (auto r = vpack::ReadTupleNothrow(slice, tup); !r.ok()) {
         return r;
       }
-      // Defensive: SearchTableShard does not exist yet (lands in a later PR).
-      // Until then any non-RocksDB kind on disk is corruption / a
-      // future-version payload we cannot interpret.
-      SDB_ASSERT(kind == StorageKind::kRocksDB);
-      auto shard = std::make_shared<TableShard>(shard_id, table_id, stats);
+      std::shared_ptr<TableShard> shard;
+      switch (kind) {
+        case StorageKind::kRocksDB:
+          shard = std::make_shared<TableShard>(shard_id, table_id, stats);
+          break;
+        case StorageKind::kSearch:
+          shard = std::make_shared<search::SearchTableShard>(
+            db_id, schema_id, table_id, shard_id, stats);
+          break;
+      }
+      SDB_ASSERT(shard);
       return _catalog.RegisterTableShard(std::move(shard));
     });
 }
@@ -587,7 +596,7 @@ Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
   irs::Finally cleanup = [&] noexcept {
     ClearDeletedDefinitions(DeletedScope::Relation);
   };
-  r = RegisterTableShard(table_id);
+  r = RegisterTableShard(db_id, schema_id, table_id);
   if (!r.ok()) {
     return r;
   }

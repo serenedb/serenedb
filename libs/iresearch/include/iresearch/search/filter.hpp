@@ -105,8 +105,9 @@ class Filter {
     virtual Query::ptr Compile(const PrepareContext& ctx) && = 0;
   };
 
-  static Query::ptr PrepareWithBuffer(PrepareBuffer& buf,
-                                      const PrepareContext& ctx) {
+  template<typename BufferT>
+  static Query::ptr PrepareWithBuffer(BufferT& buf, const PrepareContext& ctx) {
+    static_assert(std::derived_from<BufferT, PrepareBuffer>);
     for (const auto& segment : ctx.index) {
       buf.PrepareSegment(segment);
     }

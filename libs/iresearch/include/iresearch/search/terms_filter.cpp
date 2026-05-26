@@ -84,11 +84,11 @@ class TermsVisitor {
 class Buffer final : public MultiTermQuery::BufferBase {
  public:
   Buffer(const PrepareContext& ctx, std::string_view field,
-         ByTermsOptions options, score_t boost = kNoBoost)
+         const ByTermsOptions& options, score_t boost = kNoBoost)
     : BufferBase{ctx, options.terms.size(), options.merge_type,
                  options.min_match, boost},
       _field{field},
-      _options{std::move(options)},
+      _options{&options},
       _collector{_states, _field_stats, _term_stats},
       _visitor{_collector} {}
 
@@ -97,14 +97,39 @@ class Buffer final : public MultiTermQuery::BufferBase {
     if (!reader) {
       return;
     }
-    VisitImpl(segment, *reader, _options.terms, _visitor);
+    VisitImpl(segment, *reader, _options->terms, _visitor);
   }
 
  private:
   std::string_view _field;
-  ByTermsOptions _options;
+  const ByTermsOptions* _options;
   AllTermsCollector<MultiTermQuery::States> _collector;
   TermsVisitor<AllTermsCollector<MultiTermQuery::States>> _visitor;
+};
+
+class OwningBuffer final : public Filter::PrepareBuffer {
+ public:
+  OwningBuffer(const PrepareContext& ctx, std::string_view field,
+               ByTermsOptions&& options, score_t boost = kNoBoost)
+    : _options{std::move(options)}, _inner{ctx, field, _options, boost} {}
+
+  void PrepareSegment(const SubReader& segment) final {
+    _inner.PrepareSegment(segment);
+  }
+
+  void Merge(PrepareBuffer&& other) final {
+    _inner.Merge(std::move(sdb::basics::downCast<OwningBuffer>(other)._inner));
+  }
+
+  bool Empty() const noexcept final { return _inner.Empty(); }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    return std::move(_inner).Compile(ctx);
+  }
+
+ private:
+  ByTermsOptions _options;  // declared before _inner so it outlives the borrow
+  Buffer _inner;
 };
 
 }  // namespace
@@ -135,7 +160,7 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
   }
 
   Buffer buf{ctx, field, options};
-  return Filter::PrepareWithBuffer(buf, ctx);
+  return Filter::PrepareWithBuffer<Buffer>(buf, ctx);
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(
@@ -151,7 +176,7 @@ std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(
     return std::make_unique<ByTerm::Buffer>(ctx, field, term->term,
                                             term->boost);
   }
-  return std::make_unique<Buffer>(ctx, field, std::move(options));
+  return std::make_unique<OwningBuffer>(ctx, field, std::move(options));
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(

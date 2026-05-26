@@ -36,6 +36,17 @@
 namespace irs {
 namespace {
 
+Filter::Query::ptr FinalizeBoolean(memory::managed_ptr<BooleanQuery> q,
+                                   const PrepareContext& ctx, score_t boost,
+                                   ScoreMergeType merge_type,
+                                   BooleanQuery::queries_t queries,
+                                   size_t excl_begin) {
+  PrepareContext boolean_compile_ctx = ctx;
+  boolean_compile_ctx.boost = boost;
+  q->prepare(boolean_compile_ctx, merge_type, std::move(queries), excl_begin);
+  return q;
+}
+
 class CompoundBuffer final : public Filter::ScoredBuffer {
  public:
   enum class Shape : uint8_t { And, Or, MinMatch };
@@ -113,11 +124,8 @@ class CompoundBuffer final : public Filter::ScoredBuffer {
         q = memory::make_tracked<MinMatchQuery>(ctx.memory, _min_match);
         break;
     }
-    PrepareContext boolean_compile_ctx = ctx;
-    boolean_compile_ctx.boost = _boost;
-    q->prepare(boolean_compile_ctx, _merge_type, std::move(queries),
-               _excl_begin);
-    return q;
+    return FinalizeBoolean(std::move(q), ctx, _boost, _merge_type,
+                           std::move(queries), _excl_begin);
   }
 
  private:
@@ -147,6 +155,49 @@ CompoundBuffer::ChildEntry MakeExclChildEntry(
   auto child_ctx = ExclChildCtx(parent_ctx);
   return {filter.CreateBuffer(child_ctx), child_ctx.scorer, child_ctx.boost};
 }
+
+class NotBuffer final : public Filter::ScoredBuffer {
+ public:
+  NotBuffer(const PrepareContext& ctx, AllDocsProvider::Ptr all_docs,
+            std::unique_ptr<PrepareBuffer> excl)
+    : ScoredBuffer{ctx},
+      _all_docs{std::move(all_docs)},
+      _excl{std::move(excl)} {}
+
+  void PrepareSegment(const SubReader& segment) final {
+    _excl->PrepareSegment(segment);
+  }
+
+  void Merge(PrepareBuffer&& other) final {
+    auto& rhs = sdb::basics::downCast<NotBuffer>(other);
+    _excl->Merge(std::move(*rhs._excl));
+  }
+
+  bool Empty() const noexcept final { return false; }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    BooleanQuery::queries_t queries{{ctx.memory}};
+    queries.reserve(2);
+
+    PrepareContext incl_ctx = ctx;
+    incl_ctx.boost = _boost;
+    queries.emplace_back(_all_docs->prepare(incl_ctx));
+
+    if (_excl->Empty()) {
+      queries.emplace_back(Filter::Query::empty());
+    } else {
+      auto excl_ctx = ExclChildCtx(ctx);
+      queries.emplace_back(std::move(*_excl).Compile(excl_ctx));
+    }
+
+    return FinalizeBoolean(memory::make_tracked<AndQuery>(ctx.memory), ctx,
+                           _boost, ScoreMergeType::Sum, std::move(queries), 1);
+  }
+
+ private:
+  AllDocsProvider::Ptr _all_docs;
+  std::unique_ptr<PrepareBuffer> _excl;
+};
 
 std::pair<const Filter*, bool> OptimizeNot(const Not& node) {
   bool neg = true;
@@ -552,12 +603,8 @@ std::unique_ptr<Filter::PrepareBuffer> Not::CreateBuffer(
   }
 
   auto all_docs = MakeAllDocsFilter(kNoBoost);
-  auto compound = std::make_unique<CompoundBuffer>(CompoundBuffer::Shape::And,
-                                                   ScoreMergeType::Sum, ctx);
-  compound->AddIncl(MakeChildEntry(*all_docs, ctx));
-  compound->AddExcl(MakeExclChildEntry(*res.first, ctx));
-  compound->AddOwned(std::move(all_docs));
-  return compound;
+  auto excl = res.first->CreateBuffer(ExclChildCtx(ctx));
+  return std::make_unique<NotBuffer>(ctx, std::move(all_docs), std::move(excl));
 }
 
 bool Not::equals(const irs::Filter& rhs) const noexcept {

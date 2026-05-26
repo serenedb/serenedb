@@ -592,7 +592,7 @@ Filter::Query::ptr ByGranularRange::Prepare(const PrepareContext& ctx,
   }
 
   Buffer buf{ctx, field, options};
-  return Filter::PrepareWithBuffer(buf, ctx);
+  return Filter::PrepareWithBuffer<Buffer>(buf, ctx);
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByGranularRange::CreateBuffer(

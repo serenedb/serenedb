@@ -154,7 +154,7 @@ Filter::Query::ptr ByRange::Prepare(const PrepareContext& ctx,
   }
 
   Buffer buf{ctx, field, rng, scored_terms_limit};
-  return Filter::PrepareWithBuffer(buf, ctx);
+  return Filter::PrepareWithBuffer<Buffer>(buf, ctx);
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByRange::CreateBuffer(

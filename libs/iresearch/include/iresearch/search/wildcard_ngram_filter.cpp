@@ -304,7 +304,7 @@ Filter::Query::ptr ByWildcardNgram::Prepare(
   const PrepareContext& ctx, std::string_view field,
   const ByWildcardNgramOptions& opts) {
   Buffer buf{ctx, field, opts};
-  return Filter::PrepareWithBuffer(buf, ctx);
+  return Filter::PrepareWithBuffer<Buffer>(buf, ctx);
 }
 
 ByWildcardNgramOptions::ByWildcardNgramOptions(

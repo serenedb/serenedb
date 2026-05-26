@@ -500,7 +500,7 @@ Filter::Query::ptr ByPhrase::Prepare(const PrepareContext& ctx,
   // prepare phrase stats (collector for each term)
   if (options.simple()) {
     FixedPhraseBuffer buf{ctx, field, options};
-    return PrepareWithBuffer(buf, ctx);
+    return PrepareWithBuffer<FixedPhraseBuffer>(buf, ctx);
   }
 
   return VariadicPrepareCollect(ctx, field, options);

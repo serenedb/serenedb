@@ -340,14 +340,14 @@ class MultiTermVisitor {
 // ByGranularRange). Holds the per-segment states cache, the bounded-top-N
 // sampler, and a MultiTermVisitor wired to both; subclasses only need to
 // implement PrepareSegment with their filter-specific term-iteration logic.
-class SampledMultiTermBuffer : public Filter::PrepareBuffer {
+class SampledMultiTermBuffer : public Filter::ScoredBuffer {
  public:
   SampledMultiTermBuffer(const PrepareContext& ctx, size_t scored_terms_limit,
                          score_t boost = kNoBoost)
-    : _states{ctx.memory, ctx.index.size()},
+    : ScoredBuffer{ctx, boost},
+      _states{ctx.memory, ctx.index.size()},
       _collector{ctx.scorer ? scored_terms_limit : 0},
-      _visitor{_collector, _states},
-      _boost{boost} {}
+      _visitor{_collector, _states} {}
 
   void Merge(Filter::PrepareBuffer&& other) override {
     auto& rhs = sdb::basics::downCast<SampledMultiTermBuffer>(other);
@@ -360,16 +360,15 @@ class SampledMultiTermBuffer : public Filter::PrepareBuffer {
   Filter::Query::ptr Compile(const PrepareContext& ctx) && override {
     MultiTermQuery::Stats stats{{ctx.memory}};
     _collector.score(ctx.index, ctx.scorer, stats);
-    return memory::make_tracked<MultiTermQuery>(
-      ctx.memory, std::move(_states), std::move(stats), ctx.boost * _boost,
-      ScoreMergeType::Sum, size_t{1});
+    return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(_states),
+                                                std::move(stats), _boost,
+                                                ScoreMergeType::Sum, size_t{1});
   }
 
  protected:
   MultiTermQuery::States _states;
   LimitedSampleCollector<TermFrequency> _collector;
   MultiTermVisitor<MultiTermQuery::States> _visitor;
-  score_t _boost;
 };
 
 }  // namespace irs

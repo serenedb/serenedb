@@ -84,11 +84,11 @@ class TermsVisitor {
 class Buffer final : public MultiTermQuery::BufferBase {
  public:
   Buffer(const PrepareContext& ctx, std::string_view field,
-         const ByTermsOptions& options, score_t boost = kNoBoost)
+         ByTermsOptions options, score_t boost = kNoBoost)
     : BufferBase{ctx, options.terms.size(), options.merge_type,
                  options.min_match, boost},
       _field{field},
-      _terms{&options.terms},
+      _options{std::move(options)},
       _collector{_states, _field_stats, _term_stats},
       _visitor{_collector} {}
 
@@ -97,12 +97,12 @@ class Buffer final : public MultiTermQuery::BufferBase {
     if (!reader) {
       return;
     }
-    VisitImpl(segment, *reader, *_terms, _visitor);
+    VisitImpl(segment, *reader, _options.terms, _visitor);
   }
 
  private:
   std::string_view _field;
-  const ByTermsOptions::search_terms* _terms;
+  ByTermsOptions _options;
   AllTermsCollector<MultiTermQuery::States> _collector;
   TermsVisitor<AllTermsCollector<MultiTermQuery::States>> _visitor;
 };
@@ -142,8 +142,7 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(
-  const PrepareContext& ctx, std::string_view field,
-  const ByTermsOptions& options) {
+  const PrepareContext& ctx, std::string_view field, ByTermsOptions options) {
   const auto& [terms, min_match, merge_type] = options;
   const size_t size = terms.size();
   if (0 == size || min_match > size) {
@@ -155,7 +154,7 @@ std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(
     return std::make_unique<ByTerm::Buffer>(ctx, field, term->term,
                                             term->boost);
   }
-  return std::make_unique<Buffer>(ctx, field, options);
+  return std::make_unique<Buffer>(ctx, field, std::move(options));
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(

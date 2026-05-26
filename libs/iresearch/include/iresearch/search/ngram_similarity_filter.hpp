@@ -50,19 +50,19 @@ struct ByNGramSimilarityOptions {
 
 class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
  public:
-  class Buffer final : public PrepareBuffer {
+  class Buffer final : public ScoredBuffer {
    public:
     Buffer(const PrepareContext& ctx, std::string_view field,
            const std::vector<bstring>& ngrams, size_t min_match_count,
            score_t boost = kNoBoost)
-      : _field{field},
+      : ScoredBuffer{ctx, boost},
+        _field{field},
         _ngrams{&ngrams},
         _min_match_count{min_match_count},
         _memory{&ctx.memory},
         _field_stats{ctx.scorer},
         _term_stats{ctx.scorer, ngrams.size()},
-        _states{ctx.memory, ctx.index.size()},
-        _boost{boost} {}
+        _states{ctx.memory, ctx.index.size()} {}
 
     void PrepareSegment(const SubReader& segment) final;
     void Merge(PrepareBuffer&& other) final;
@@ -77,7 +77,6 @@ class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
     FieldCollectors _field_stats;
     TermCollectors _term_stats;
     NGramStates _states;
-    score_t _boost;
   };
 
   static Query::ptr Prepare(const PrepareContext& ctx,

@@ -284,9 +284,10 @@ class ColumnExistenceQuery : public Filter::Query {
   score_t _boost;
 };
 
-class Buffer final : public Filter::PrepareBuffer {
+class Buffer final : public Filter::ScoredBuffer {
  public:
-  Buffer(field_id id, score_t boost) noexcept : _id{id}, _boost{boost} {}
+  Buffer(const PrepareContext& ctx, field_id id, score_t boost) noexcept
+    : ScoredBuffer{ctx, boost}, _id{id} {}
 
   void PrepareSegment(const SubReader&) final {}
 
@@ -296,26 +297,29 @@ class Buffer final : public Filter::PrepareBuffer {
 
   bool Empty() const noexcept final { return false; }
 
+  // `boost` is the *cumulative* boost from root.
+  static Filter::Query::ptr CompileQuery(const PrepareContext& ctx, field_id id,
+                                         score_t boost) {
+    return memory::make_tracked<ColumnExistenceQuery>(ctx.memory, id, boost);
+  }
+
   Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
-    return memory::make_tracked<ColumnExistenceQuery>(ctx.memory, _id,
-                                                      ctx.boost * _boost);
+    return CompileQuery(ctx, _id, _boost);
   }
 
  private:
   field_id _id;
-  score_t _boost;
 };
 
 }  // namespace
 
 std::unique_ptr<Filter::PrepareBuffer> ByColumnExistence::CreateBuffer(
-  const PrepareContext& /*ctx*/) const {
-  return std::make_unique<Buffer>(id(), Boost());
+  const PrepareContext& ctx) const {
+  return std::make_unique<Buffer>(ctx, id(), Boost());
 }
 
 Filter::Query::ptr ByColumnExistence::prepare(const PrepareContext& ctx) const {
-  return memory::make_tracked<ColumnExistenceQuery>(ctx.memory, _id,
-                                                    ctx.boost * Boost());
+  return Buffer::CompileQuery(ctx, id(), ctx.boost * Boost());
 }
 
 }  // namespace irs

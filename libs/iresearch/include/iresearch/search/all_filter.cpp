@@ -26,6 +26,7 @@
 #include "basics/down_cast.h"
 
 namespace irs {
+namespace {
 
 class AllQuery : public Filter::Query {
  public:
@@ -48,11 +49,9 @@ class AllQuery : public Filter::Query {
   score_t _boost;
 };
 
-namespace {
-
-class Buffer final : public Filter::PrepareBuffer {
+class Buffer final : public Filter::ScoredBuffer {
  public:
-  explicit Buffer(score_t boost = kNoBoost) noexcept : _boost{boost} {}
+  using ScoredBuffer::ScoredBuffer;
 
   void PrepareSegment(const SubReader&) final {}
 
@@ -62,33 +61,30 @@ class Buffer final : public Filter::PrepareBuffer {
 
   bool Empty() const noexcept final { return false; }
 
-  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+  // `boost` here is the *cumulative* boost from root.
+  static Filter::Query::ptr CompileQuery(const PrepareContext& ctx,
+                                         score_t boost) {
     bstring stats(GetStatsSize(ctx.scorer), 0);
     if (ctx.scorer) {
       ctx.scorer->collect(stats.data(), nullptr, nullptr);
     }
-    return memory::make_tracked<AllQuery>(ctx.memory, std::move(stats),
-                                          ctx.boost * _boost);
+    return memory::make_tracked<AllQuery>(ctx.memory, std::move(stats), boost);
   }
 
- private:
-  score_t _boost;
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    return CompileQuery(ctx, _boost);
+  }
 };
 
 }  // namespace
 
 std::unique_ptr<Filter::PrepareBuffer> All::CreateBuffer(
-  const PrepareContext& /*ctx*/) const {
-  return std::make_unique<Buffer>(Boost());
+  const PrepareContext& ctx) const {
+  return std::make_unique<Buffer>(ctx, Boost());
 }
 
 Filter::Query::ptr All::prepare(const PrepareContext& ctx) const {
-  bstring stats(GetStatsSize(ctx.scorer), 0);
-  if (ctx.scorer) {
-    ctx.scorer->collect(stats.data(), nullptr, nullptr);
-  }
-  return memory::make_tracked<AllQuery>(ctx.memory, std::move(stats),
-                                        ctx.boost * Boost());
+  return Buffer::CompileQuery(ctx, ctx.boost * Boost());
 }
 
 }  // namespace irs

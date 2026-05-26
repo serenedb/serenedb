@@ -105,6 +105,20 @@ class Filter {
     virtual Query::ptr Compile(const PrepareContext& ctx) && = 0;
   };
 
+  // Carries the *cumulative* boost from root to this filter, captured at
+  // construction. `Compile` returns a Query whose Boost() is `_boost`
+  // directly; the Compile-time ctx is for memory/scorer/index only.
+  class ScoredBuffer : public PrepareBuffer {
+   public:
+    ScoredBuffer(const PrepareContext& ctx, score_t boost = kNoBoost) noexcept
+      : _boost{ctx.boost * boost} {}
+
+    score_t Boost() const noexcept { return _boost; }
+
+   protected:
+    score_t _boost;
+  };
+
   class EmptyBuffer final : public PrepareBuffer {
    public:
     void PrepareSegment(const SubReader&) final {}
@@ -138,19 +152,13 @@ class Filter {
     return equals(rhs);
   }
 
+  // Builds a buffer for this filter. The buffer is responsible for folding
+  // the filter's own Boost() into the query it compiles; the caller must pass
+  // a ctx whose `boost` already reflects every enclosing filter's boost.
+  // Filters that genuinely cannot do segmentable work (e.g. variadic phrase)
+  // return a LazyQueryBuffer wrapping prepare().
   virtual std::unique_ptr<PrepareBuffer> CreateBuffer(
     const PrepareContext& ctx) const;
-
-  // Builds a buffer for use as a child of a CompoundBuffer (or any caller that
-  // wants to drive `prepare()` through the buffer pipeline). The default impl
-  // wraps prepare() in a LazyQueryBuffer with raw ctx -- prepare() self-folds
-  // its own Boost(). Filters with a real per-segment Buffer override this to
-  // pre-fold their own Boost() into ctx and route to CreateBuffer.
-  virtual std::unique_ptr<PrepareBuffer> CreateChildBuffer(
-    const PrepareContext&) const {
-    return std::make_unique<LazyQueryBuffer>(
-      [this](const PrepareContext& ctx) { return this->prepare(ctx); });
-  }
 
   virtual Query::ptr prepare(const PrepareContext& ctx) const = 0;
 
@@ -160,8 +168,6 @@ class Filter {
   virtual score_t BoostImpl() const noexcept { return kNoBoost; }
 
  protected:
-  Query::ptr DefaultPrepare(const PrepareContext& ctx) const;
-
   virtual bool equals(const Filter& rhs) const noexcept {
     return type() == rhs.type();
   }

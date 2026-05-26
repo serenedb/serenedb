@@ -449,17 +449,17 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
     std::move(stats), ctx.boost);
 }
 
-class FixedPhraseBuffer final : public Filter::PrepareBuffer {
+class FixedPhraseBuffer final : public Filter::ScoredBuffer {
  public:
   FixedPhraseBuffer(const PrepareContext& ctx, std::string_view field,
                     const ByPhraseOptions& options, score_t boost = kNoBoost)
-    : _field{field},
+    : ScoredBuffer{ctx, boost},
+      _field{field},
       _options{&options},
       _memory{&ctx.memory},
       _field_stats{ctx.scorer},
       _term_stats{ctx.scorer, options.size()},
-      _states{ctx.memory, ctx.index.size()},
-      _boost{boost} {}
+      _states{ctx.memory, ctx.index.size()} {}
 
   void PrepareSegment(const SubReader& segment) final {
     const auto* reader = segment.field(_field);
@@ -523,7 +523,7 @@ class FixedPhraseBuffer final : public Filter::PrepareBuffer {
 
     return memory::make_tracked<FixedPhraseQuery>(
       ctx.memory, std::move(_states), std::move(positions), std::move(stats),
-      ctx.boost * _boost);
+      _boost);
   }
 
  private:
@@ -533,7 +533,6 @@ class FixedPhraseBuffer final : public Filter::PrepareBuffer {
   FieldCollectors _field_stats;
   TermCollectors _term_stats;
   FixedPhraseQuery::states_t _states;
-  score_t _boost;
 };
 
 }  // namespace

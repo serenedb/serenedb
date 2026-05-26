@@ -75,21 +75,11 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
     _filters.erase(_filters.begin() + to, _filters.end());
   }
 
-  Query::ptr PrepareImpl(const PrepareContext& ctx, uint32_t min_match) const;
-
   std::unique_ptr<PrepareBuffer> CreateBuffer(
-    const PrepareContext& ctx) const final;
+    const PrepareContext& ctx) const override;
 
  protected:
   bool equals(const Filter& rhs) const noexcept final;
-
-  virtual Query::ptr PrepareBoolean(std::vector<const Filter*>& incl,
-                                    std::vector<const Filter*>& excl,
-                                    const PrepareContext& ctx) const = 0;
-
-  void GroupFilters(AllDocsProvider::Ptr& all_docs_zero_boost,
-                    std::vector<const Filter*>& incl,
-                    std::vector<const Filter*>& excl) const;
 
   std::vector<Filter::ptr> _filters;
   ScoreMergeType _merge_type = ScoreMergeType::Sum;
@@ -101,11 +91,6 @@ class And final : public BooleanFilter {
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<And>::id(); }
-
- protected:
-  Query::ptr PrepareBoolean(std::vector<const Filter*>& incl,
-                            std::vector<const Filter*>& excl,
-                            const PrepareContext& ctx) const final;
 };
 
 // Represents disjunction
@@ -122,12 +107,10 @@ class Or final : public BooleanFilter {
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
-  TypeInfo::type_id type() const noexcept final { return irs::Type<Or>::id(); }
+  std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx) const final;
 
- protected:
-  Query::ptr PrepareBoolean(std::vector<const Filter*>& incl,
-                            std::vector<const Filter*>& excl,
-                            const PrepareContext& ctx) const final;
+  TypeInfo::type_id type() const noexcept final { return irs::Type<Or>::id(); }
 
  private:
   uint32_t _min_match_count{1};

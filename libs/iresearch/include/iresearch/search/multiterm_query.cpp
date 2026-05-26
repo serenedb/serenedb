@@ -216,9 +216,9 @@ Filter::Query::ptr MultiTermQuery::BufferBase::Compile(
     _term_stats.finish(stat.data(), term_idx++, _field_stats, ctx.index);
   }
 
-  return memory::make_tracked<MultiTermQuery>(
-    ctx.memory, std::move(_states), std::move(stats), ctx.boost * _boost,
-    _merge_type, _min_match);
+  return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(_states),
+                                              std::move(stats), _boost,
+                                              _merge_type, _min_match);
 }
 
 }  // namespace irs

@@ -383,15 +383,15 @@ Filter::Query::ptr MakeQuery(IResourceManager& manager, GeoStates&& states,
 }
 
 template<typename Options, typename Acceptor>
-class GeoBufferImpl final : public Filter::PrepareBuffer {
+class GeoBufferImpl final : public Filter::ScoredBuffer {
  public:
   GeoBufferImpl(const PrepareContext& ctx, std::string_view field,
                 const Options& options, std::vector<std::string> geo_terms,
                 Acceptor acceptor, score_t boost)
-    : _field{field},
+    : ScoredBuffer{ctx, boost},
+      _field{field},
       _store_field_id{options.store_field_id},
       _options{&options},
-      _boost{boost},
       _acceptor{std::move(acceptor)},
       _memory{&ctx.memory},
       _field_stats{ctx.scorer},
@@ -449,15 +449,14 @@ class GeoBufferImpl final : public Filter::PrepareBuffer {
 
   Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
     _field_stats.finish(_stats.data());
-    return MakeQuery(ctx.memory, std::move(_states), std::move(_stats),
-                     ctx.boost * _boost, *_options, std::move(_acceptor));
+    return MakeQuery(ctx.memory, std::move(_states), std::move(_stats), _boost,
+                     *_options, std::move(_acceptor));
   }
 
  private:
   std::string_view _field;
   field_id _store_field_id;
   const Options* _options;
-  score_t _boost;
   Acceptor _acceptor;
   IResourceManager* _memory;
   FieldCollectors _field_stats;

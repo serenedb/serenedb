@@ -44,16 +44,16 @@ struct ByTermOptions {
 // User-side term filter
 class ByTerm : public FilterWithField<ByTermOptions> {
  public:
-  class Buffer final : public PrepareBuffer {
+  class Buffer final : public ScoredBuffer {
    public:
     Buffer(const PrepareContext& ctx, std::string_view field, bytes_view term,
            score_t boost = kNoBoost)
-      : _field{field},
+      : ScoredBuffer{ctx, boost},
+        _field{field},
         _term{term},
         _field_stats{ctx.scorer},
         _term_stats{ctx.scorer, 1},
-        _states{ctx.memory, ctx.index.size()},
-        _boost{boost} {}
+        _states{ctx.memory, ctx.index.size()} {}
 
     void PrepareSegment(const SubReader& segment) final;
     void Merge(PrepareBuffer&& other) final;
@@ -66,7 +66,6 @@ class ByTerm : public FilterWithField<ByTermOptions> {
     FieldCollectors _field_stats;
     TermCollectors _term_stats;
     TermQuery::States _states;
-    score_t _boost;
   };
 
   static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,

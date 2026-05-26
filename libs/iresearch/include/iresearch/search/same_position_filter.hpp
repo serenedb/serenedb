@@ -55,17 +55,17 @@ class BySamePosition : public FilterWithOptions<BySamePositionOptions> {
   using TermsStatesT = ManagedVector<TermState>;
   using StatesT = StatesCacheImpl<TermsStatesT>;
 
-  class Buffer final : public PrepareBuffer {
+  class Buffer final : public ScoredBuffer {
    public:
     Buffer(const PrepareContext& ctx,
            const BySamePositionOptions::search_terms& terms,
            score_t boost = kNoBoost)
-      : _terms{&terms},
+      : ScoredBuffer{ctx, boost},
+        _terms{&terms},
         _memory{&ctx.memory},
         _field_stats{ctx.scorer},
         _term_stats{ctx.scorer, terms.size()},
-        _states{ctx.memory, ctx.index.size()},
-        _boost{boost} {}
+        _states{ctx.memory, ctx.index.size()} {}
 
     void PrepareSegment(const SubReader& segment) final;
     void Merge(PrepareBuffer&& other) final;
@@ -78,7 +78,6 @@ class BySamePosition : public FilterWithOptions<BySamePositionOptions> {
     FieldCollectors _field_stats;
     TermCollectors _term_stats;
     StatesT _states;
-    score_t _boost;
   };
 
   std::unique_ptr<PrepareBuffer> CreateBuffer(

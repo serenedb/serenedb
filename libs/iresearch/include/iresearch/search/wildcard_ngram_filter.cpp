@@ -201,30 +201,35 @@ ByWildcardNgram::Buffer::Buffer(const PrepareContext& ctx,
                                 std::string_view field,
                                 const ByWildcardNgramOptions& opts,
                                 score_t boost)
-  : _field{field},
+  : ScoredBuffer{ctx, boost},
+    _field{field},
     _matcher{opts.matcher},
-    _store_field_id{opts.store_field_id},
-    _boost{boost} {
+    _store_field_id{opts.store_field_id} {
+  // Children inherit our cumulative boost via `child_ctx`; each child's
+  // ScoredBuffer will fold this into its own `_boost` at construction.
+  const auto child_ctx = ctx.Boost(boost);
   auto& parts = opts.parts;
   const auto size = parts.size();
 
   if (size == 0) {
     bytes_view token = opts.token;
     if (token.size() != 1 && token.back() == 0xFF) {
-      _children.push_back(std::make_unique<ByTerm::Buffer>(ctx, field, token));
+      _children.push_back(
+        std::make_unique<ByTerm::Buffer>(child_ctx, field, token));
     } else {
       if (token.back() == 0xFF) {
         token = kEmptyStringView<byte_type>;
       }
       _children.push_back(std::make_unique<ByPrefix::Buffer>(
-        ctx, field, token, kDefaultScoredTermsLimit));
+        child_ctx, field, token, kDefaultScoredTermsLimit));
     }
     _single = true;
     return;
   }
 
   if (size == 1 && opts.has_pos) {
-    _children.push_back(ByPhrase::CreateFixedBuffer(ctx, field, parts[0]));
+    _children.push_back(
+      ByPhrase::CreateFixedBuffer(child_ctx, field, parts[0]));
     _single = true;
     return;
   }
@@ -233,13 +238,13 @@ ByWildcardNgram::Buffer::Buffer(const PrepareContext& ctx,
   if (opts.has_pos) {
     _children.reserve(size);
     for (const auto& part : parts) {
-      _children.push_back(ByPhrase::CreateFixedBuffer(ctx, field, part));
+      _children.push_back(ByPhrase::CreateFixedBuffer(child_ctx, field, part));
     }
   } else {
     for (const auto& part : parts) {
       for (const auto& info : part) {
         _children.push_back(std::make_unique<ByTerm::Buffer>(
-          ctx, field, std::get<ByTermOptions>(info.part).term));
+          child_ctx, field, std::get<ByTermOptions>(info.part).term));
       }
     }
   }
@@ -270,7 +275,10 @@ bool ByWildcardNgram::Buffer::Empty() const noexcept {
 
 Filter::Query::ptr ByWildcardNgram::Buffer::Compile(
   const PrepareContext& ctx) && {
-  auto sub_ctx = ctx.Boost(_boost);
+  // `_boost` is the cumulative boost from root. Children already captured
+  // it at construction; the AndQuery wrapping them needs it explicitly.
+  auto sub_ctx = ctx;
+  sub_ctx.boost = _boost;
   if (_single) {
     auto child = std::move(_children.front());
     auto inner = std::move(*child).Compile(sub_ctx);

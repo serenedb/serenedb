@@ -40,17 +40,17 @@ class MultiTermQuery : public Filter::Query {
   // ByGranularRange). Holds the per-segment accumulators common to the
   // family; subclasses override PrepareSegment with their filter-specific
   // term-iteration logic.
-  class BufferBase : public Filter::PrepareBuffer {
+  class BufferBase : public Filter::ScoredBuffer {
    public:
     BufferBase(const PrepareContext& ctx, size_t terms_count,
                ScoreMergeType merge_type, size_t min_match,
                score_t boost = kNoBoost)
-      : _field_stats{ctx.scorer},
+      : ScoredBuffer{ctx, boost},
+        _field_stats{ctx.scorer},
         _term_stats{ctx.scorer, terms_count},
         _states{ctx.memory, ctx.index.size()},
         _merge_type{merge_type},
-        _min_match{min_match},
-        _boost{boost} {}
+        _min_match{min_match} {}
 
     void Merge(PrepareBuffer&& other) override;
     bool Empty() const noexcept override;
@@ -62,7 +62,6 @@ class MultiTermQuery : public Filter::Query {
     States _states;
     ScoreMergeType _merge_type;
     size_t _min_match;
-    score_t _boost;
   };
 
   explicit MultiTermQuery(States&& states, Stats&& stats, score_t boost,

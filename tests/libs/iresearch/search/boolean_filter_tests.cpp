@@ -230,6 +230,12 @@ struct Boosted : public irs::FilterWithBoost {
                                                         ctx.boost * Boost());
   }
 
+  std::unique_ptr<irs::Filter::PrepareBuffer> CreateBuffer(
+    const irs::PrepareContext&) const final {
+    return std::make_unique<irs::Filter::LazyQueryBuffer>(
+      [this](const irs::PrepareContext& ctx) { return this->prepare(ctx); });
+  }
+
   irs::TypeInfo::type_id type() const noexcept final {
     return irs::Type<Boosted>::id();
   }
@@ -1133,6 +1139,12 @@ struct Unestimated : public irs::FilterWithBoost {
     return irs::memory::make_managed<Unestimated::Prepared>();
   }
 
+  std::unique_ptr<irs::Filter::PrepareBuffer> CreateBuffer(
+    const irs::PrepareContext&) const final {
+    return std::make_unique<irs::Filter::LazyQueryBuffer>(
+      [this](const irs::PrepareContext& ctx) { return this->prepare(ctx); });
+  }
+
   irs::TypeInfo::type_id type() const noexcept final {
     return irs::Type<Unestimated>::id();
   }
@@ -1183,6 +1195,12 @@ struct Estimated : public irs::FilterWithBoost {
 
   Filter::Query::ptr prepare(const irs::PrepareContext& /*ctx*/) const final {
     return irs::memory::make_managed<Estimated::Prepared>(est, &evaluated);
+  }
+
+  std::unique_ptr<irs::Filter::PrepareBuffer> CreateBuffer(
+    const irs::PrepareContext&) const final {
+    return std::make_unique<irs::Filter::LazyQueryBuffer>(
+      [this](const irs::PrepareContext& ctx) { return this->prepare(ctx); });
   }
 
   irs::TypeInfo::type_id type() const noexcept final {

@@ -79,7 +79,7 @@ struct ByWildcardNgramOptions {
 
 class ByWildcardNgram final : public FilterWithField<ByWildcardNgramOptions> {
  public:
-  class Buffer final : public PrepareBuffer {
+  class Buffer final : public ScoredBuffer {
    public:
     Buffer(const PrepareContext& ctx, std::string_view field,
            const ByWildcardNgramOptions& options, score_t boost = kNoBoost);
@@ -94,7 +94,6 @@ class ByWildcardNgram final : public FilterWithField<ByWildcardNgramOptions> {
     std::shared_ptr<RE2> _matcher;
     field_id _store_field_id{0};
     std::vector<std::unique_ptr<PrepareBuffer>> _children;
-    score_t _boost{kNoBoost};
     bool _single{true};
   };
 

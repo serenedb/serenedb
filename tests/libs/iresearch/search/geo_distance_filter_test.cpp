@@ -391,6 +391,26 @@ TEST(GeoDistanceFilterTest, boost) {
     auto prepared = q.prepare({.index = irs::SubReader::empty()});
     ASSERT_EQ(boost, prepared->Boost());
   }
+
+  // Regression: exclusive lower bound at dist == 0 routes through
+  // CreateOpenIntervalBuffer's `And{Not{GeoDistance(=0)}}` owned-filter
+  // path. The And's own Boost() -- which carries the GeoDistanceFilter's
+  // Boost -- must survive to the resulting AndQuery.
+  {
+    irs::score_t boost = 1.5f;
+    GeoDistanceFilter q;
+    q.mutable_options()->origin =
+      S2LatLng::FromDegrees(-41.69642, 77.91159).ToPoint();
+    q.mutable_options()->options.set_max_cells(50);
+    q.mutable_options()->range.min = 0.;
+    q.mutable_options()->range.min_type = irs::BoundType::Exclusive;
+    *q.mutable_field() = "field";
+    q.mutable_options()->store_field_id = kGeo;
+    q.boost(boost);
+
+    auto prepared = q.prepare({.index = irs::SubReader::empty()});
+    ASSERT_EQ(boost, prepared->Boost());
+  }
 }
 
 TEST(GeoDistanceFilterTest, query) {

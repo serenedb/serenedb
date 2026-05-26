@@ -39,16 +39,19 @@ size_t ComputeMinMatch(size_t terms_count, float_t threshold) {
                     size_t{1}, terms_count);
 }
 
+// Adapters that forward to an inner buffer. Under the cumulative-boost rule
+// the inner captures `ctx.boost * boost` at construction, so the adapter
+// pre-folds the boost into the ctx it hands to the inner and then just
+// forwards the rest unchanged. No own `_boost` field needed.
 class ByTermsAdapterBuffer final : public Filter::PrepareBuffer {
  public:
   ByTermsAdapterBuffer(const PrepareContext& ctx, std::string_view field,
                        const std::vector<bstring>& ngrams,
-                       score_t boost = kNoBoost)
-    : _boost{boost} {
+                       score_t boost = kNoBoost) {
     for (const auto& term : ngrams) {
       _options.terms.emplace(term, kNoBoost);
     }
-    _inner = ByTerms::CreateBuffer(ctx, field, _options);
+    _inner = ByTerms::CreateBuffer(ctx.Boost(boost), field, _options);
   }
 
   void PrepareSegment(const SubReader& segment) final {
@@ -63,26 +66,24 @@ class ByTermsAdapterBuffer final : public Filter::PrepareBuffer {
   bool Empty() const noexcept final { return _inner->Empty(); }
 
   Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
-    return std::move(*_inner).Compile(ctx.Boost(_boost));
+    return std::move(*_inner).Compile(ctx);
   }
 
  private:
   ByTermsOptions _options;
   std::unique_ptr<PrepareBuffer> _inner;
-  score_t _boost;
 };
 
 class ByPhraseAdapterBuffer final : public Filter::PrepareBuffer {
  public:
   ByPhraseAdapterBuffer(const PrepareContext& ctx, std::string_view field,
                         const std::vector<bstring>& ngrams,
-                        score_t boost = kNoBoost)
-    : _boost{boost} {
+                        score_t boost = kNoBoost) {
     for (const auto& ngram : ngrams) {
       _options.push_back(ByTermOptions{ngram});
     }
     SDB_ASSERT(_options.simple());
-    _inner = ByPhrase::CreateFixedBuffer(ctx, field, _options);
+    _inner = ByPhrase::CreateFixedBuffer(ctx.Boost(boost), field, _options);
   }
 
   void PrepareSegment(const SubReader& segment) final {
@@ -97,13 +98,12 @@ class ByPhraseAdapterBuffer final : public Filter::PrepareBuffer {
   bool Empty() const noexcept final { return _inner->Empty(); }
 
   Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
-    return std::move(*_inner).Compile(ctx.Boost(_boost));
+    return std::move(*_inner).Compile(ctx);
   }
 
  private:
   ByPhraseOptions _options;
   std::unique_ptr<PrepareBuffer> _inner;
-  score_t _boost;
 };
 
 }  // namespace
@@ -165,8 +165,7 @@ Filter::Query::ptr ByNGramSimilarity::Buffer::Compile(
   }
 
   return memory::make_tracked<NGramSimilarityQuery>(
-    ctx.memory, _min_match_count, std::move(_states), std::move(stats),
-    ctx.boost * _boost);
+    ctx.memory, _min_match_count, std::move(_states), std::move(stats), _boost);
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByNGramSimilarity::CreateBuffer(

@@ -74,6 +74,34 @@ class BoostQueryTestCase : public tests::IndexTestBase {
     return hits;
   }
 
+  // Same shape as ExecuteTopKWithCount but takes an already-prepared Query
+  // so the caller can choose between filter.prepare() and the
+  // CreateBuffer+PrepareSegment+Compile pipeline.
+  std::vector<irs::ScoreDoc> CollectAllUsingQuery(
+    const irs::DirectoryReader& reader, const irs::Filter::Query& query,
+    const irs::Scorer& scorer) {
+    constexpr size_t kK = 1024;
+    std::vector<irs::ScoreDoc> hits(irs::BlockSize(kK));
+    irs::score_t threshold = std::numeric_limits<irs::score_t>::min();
+    irs::NthPartitionScoreCollector collector{threshold, kK, std::span{hits}};
+    irs::ColumnArgsFetcher fetcher;
+    uint32_t seg_idx = 0;
+    for (auto& segment : reader) {
+      fetcher.Clear();
+      collector.SetSegment(seg_idx++);
+      auto it = query.execute({.segment = segment, .scorer = &scorer});
+      auto score_func = it->PrepareScore({
+        .scorer = &scorer,
+        .segment = &segment,
+        .fetcher = &fetcher,
+      });
+      it->Collect(score_func, fetcher, collector);
+    }
+    const auto count = collector.Finalize();
+    hits.resize(std::min<size_t>(count, kK));
+    return hits;
+  }
+
   // Parse a Lucene query string into a MixedBooleanFilter.
   static irs::Filter::ptr ParseQuery(std::string_view query) {
     irs::analysis::DelimitedTokenizer tokenizer(" ");
@@ -168,6 +196,70 @@ TEST_P(BoostQueryTestCase, OptionalOnlyActsAsDisjunction) {
   auto hits = CollectAll(reader, *filter);
   // Docs B, C, D all contain at least one of "source" / "software"
   ASSERT_EQ(3u, hits.size());
+}
+
+// Regression: MixedBooleanFilter::Buffer must propagate the Or filter's
+// own Boost() to every optional child -- the legacy BoostQuery::Prepare
+// path does `opt_ctx = ctx.Boost(opt.Boost())`. The two paths must score
+// each document identically.
+TEST_P(BoostQueryTestCase, CreateBufferPreservesOrBoost) {
+  auto reader = CreateIndex();
+
+  auto build = []() {
+    auto root = std::make_unique<irs::MixedBooleanFilter>();
+    auto required = std::make_unique<irs::ByTerm>();
+    *required->mutable_field() = "content";
+    required->mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view{"open"});
+    root->GetRequired().add(std::move(required));
+
+    auto optional = std::make_unique<irs::ByTerm>();
+    *optional->mutable_field() = "content";
+    optional->mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view{"source"});
+    root->GetOptional().add(std::move(optional));
+    root->GetOptional().boost(2.5f);
+    return root;
+  };
+
+  irs::TFIDF scorer{/*normalize=*/false};
+  MaxMemoryCounter counter;
+  const irs::PrepareContext ctx{
+    .index = reader,
+    .memory = counter,
+    .scorer = &scorer,
+  };
+
+  auto filter_seq = build();
+  auto query_seq = filter_seq->prepare(ctx);
+  ASSERT_NE(nullptr, query_seq);
+
+  auto filter_par = build();
+  auto buf = filter_par->CreateBuffer(ctx);
+  ASSERT_NE(nullptr, buf);
+  for (auto& segment : reader) {
+    buf->PrepareSegment(segment);
+  }
+  auto query_par = std::move(*buf).Compile(ctx);
+  ASSERT_NE(nullptr, query_par);
+
+  auto by_doc = [](auto& hits) {
+    std::sort(hits.begin(), hits.end(),
+              [](const auto& a, const auto& b) { return a.doc < b.doc; });
+  };
+
+  auto hits_seq = CollectAllUsingQuery(reader, *query_seq, scorer);
+  auto hits_par = CollectAllUsingQuery(reader, *query_par, scorer);
+  by_doc(hits_seq);
+  by_doc(hits_par);
+
+  ASSERT_EQ(hits_seq.size(), hits_par.size());
+  for (size_t i = 0; i < hits_seq.size(); ++i) {
+    EXPECT_EQ(hits_seq[i].doc, hits_par[i].doc);
+    EXPECT_FLOAT_EQ(hits_seq[i].score, hits_par[i].score)
+      << "doc " << hits_seq[i].doc
+      << ": CreateBuffer path did not apply Or filter's Boost";
+  }
 }
 
 // Programmatic construction of required/optional: verify same behavior as

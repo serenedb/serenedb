@@ -80,9 +80,9 @@ class ByTerms final : public FilterWithField<ByTermsOptions>,
   static Query::ptr Prepare(const PrepareContext& ctx, std::string_view field,
                             const ByTermsOptions& options);
 
-  static std::unique_ptr<PrepareBuffer> CreateBuffer(
-    const PrepareContext& ctx, std::string_view field,
-    const ByTermsOptions& options);
+  static std::unique_ptr<PrepareBuffer> CreateBuffer(const PrepareContext& ctx,
+                                                     std::string_view field,
+                                                     ByTermsOptions options);
 
   std::unique_ptr<PrepareBuffer> CreateBuffer(
     const PrepareContext& ctx) const final;

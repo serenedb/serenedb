@@ -108,8 +108,7 @@ TEST_P(TermsFilterTestCase, boost) {
       .index = irs::SubReader::empty(),
       .memory = counter,
     });
-    ASSERT_EQ(irs::kNoBoost,
-              prepared->Boost());  // no boost because index is empty
+    ASSERT_EQ(boost, prepared->Boost());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);

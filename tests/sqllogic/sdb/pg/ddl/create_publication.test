@@ -6,25 +6,17 @@
 # error.
 
 # --- Bare form ---
-statement error
+statement error db error: ERROR: Pragma Function with name create_publication does not exist
 CREATE PUBLICATION my_pub;
-----
-db error: ERROR: Pragma Function with name create_publication does not exist
 
 # --- FOR ALL TABLES ---
-statement error
+statement error db error: ERROR: Failed to cast parse result of type CHOICE to type LIST for rule
 CREATE PUBLICATION my_pub FOR ALL TABLES;
-----
-db error: ERROR: Pragma Function with name create_publication does not exist
 
 # --- FOR TABLE (single table) ---
-statement error
+statement error db error: ERROR: Failed to cast parse result of type CHOICE to type LIST for rule
 CREATE PUBLICATION my_pub FOR TABLE my_table;
-----
-db error: ERROR: Pragma Function with name create_publication does not exist
 
 # --- FOR TABLE (multiple tables, schema-qualified) ---
-statement error
+statement error db error: ERROR: Failed to cast parse result of type CHOICE to type LIST for rule
 CREATE PUBLICATION my_pub FOR TABLE public.t1, public.t2;
-----
-db error: ERROR: Pragma Function with name create_publication does not exist

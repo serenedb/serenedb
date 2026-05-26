@@ -287,17 +287,6 @@ DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
     });
 }
 
-void BoostQuery::Prepare(const PrepareContext& ctx, const BooleanFilter& req,
-                         const Or& opt) {
-  SDB_ASSERT(!req.empty());
-  _req = req.prepare(ctx);
-  const auto opt_ctx = ctx.Boost(opt.Boost());
-  _opt.reserve(opt.size());
-  for (const auto& opt_filter : opt) {
-    _opt.emplace_back(opt_filter->prepare(opt_ctx));
-  }
-}
-
 DocIterator::ptr BoostQuery::execute(const ExecutionContext& old) const {
   ExecutionContext ctx{old};
   // TODO(mbkkt) enable back?

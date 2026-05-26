@@ -46,7 +46,6 @@ class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
 
   bool equals(const Filter& rhs) const noexcept final;
 
-  And _root;
   std::unique_ptr<And> _and;
   std::unique_ptr<Or> _or;
 };

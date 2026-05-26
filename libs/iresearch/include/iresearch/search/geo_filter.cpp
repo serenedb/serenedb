@@ -359,11 +359,11 @@ struct GeoDistanceAcceptor {
   }
 };
 
-template<typename Options, typename Acceptor>
+template<typename Acceptor>
 Filter::Query::ptr MakeQuery(IResourceManager& manager, GeoStates&& states,
-                             bstring&& stats, score_t boost,
-                             const Options& options, Acceptor&& acceptor) {
-  switch (options.stored) {
+                             bstring&& stats, score_t boost, StoredType stored,
+                             Acceptor&& acceptor) {
+  switch (stored) {
     case StoredType::VPack:
       return memory::make_tracked<GeoQuery<VPackParser, Acceptor>>(
         manager, std::move(states), std::move(stats), VPackParser{},
@@ -382,16 +382,17 @@ Filter::Query::ptr MakeQuery(IResourceManager& manager, GeoStates&& states,
   return Filter::Query::empty();
 }
 
-template<typename Options, typename Acceptor>
+template<typename Acceptor>
 class GeoBufferImpl final : public Filter::ScoredBuffer {
  public:
+  template<typename Options>
   GeoBufferImpl(const PrepareContext& ctx, std::string_view field,
                 const Options& options, std::vector<std::string> geo_terms,
                 Acceptor acceptor, score_t boost)
     : ScoredBuffer{ctx, boost},
       _field{field},
       _store_field_id{options.store_field_id},
-      _options{&options},
+      _stored{options.stored},
       _acceptor{std::move(acceptor)},
       _memory{&ctx.memory},
       _field_stats{ctx.scorer},
@@ -450,13 +451,13 @@ class GeoBufferImpl final : public Filter::ScoredBuffer {
   Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
     _field_stats.finish(_stats.data());
     return MakeQuery(ctx.memory, std::move(_states), std::move(_stats), _boost,
-                     *_options, std::move(_acceptor));
+                     _stored, std::move(_acceptor));
   }
 
  private:
-  std::string_view _field;
+  std::string _field;
   field_id _store_field_id;
-  const Options* _options;
+  StoredType _stored;
   Acceptor _acceptor;
   IResourceManager* _memory;
   FieldCollectors _field_stats;
@@ -469,36 +470,10 @@ template<typename Options, typename Acceptor>
 std::unique_ptr<Filter::PrepareBuffer> MakeGeoBuffer(
   const PrepareContext& ctx, std::string_view field, const Options& options,
   std::vector<std::string> geo_terms, Acceptor&& acceptor, score_t boost) {
-  return std::make_unique<GeoBufferImpl<Options, std::decay_t<Acceptor>>>(
+  return std::make_unique<GeoBufferImpl<std::decay_t<Acceptor>>>(
     ctx, field, options, std::move(geo_terms), std::forward<Acceptor>(acceptor),
     boost);
 }
-
-class OwnedFilterBuffer final : public Filter::PrepareBuffer {
- public:
-  OwnedFilterBuffer(const PrepareContext& ctx, std::unique_ptr<Filter> inner)
-    : _inner_filter{std::move(inner)},
-      _inner_buffer{_inner_filter->CreateBuffer(ctx)} {}
-
-  void PrepareSegment(const SubReader& segment) final {
-    _inner_buffer->PrepareSegment(segment);
-  }
-
-  void Merge(PrepareBuffer&& other) final {
-    auto& rhs = sdb::basics::downCast<OwnedFilterBuffer>(other);
-    _inner_buffer->Merge(std::move(*rhs._inner_buffer));
-  }
-
-  bool Empty() const noexcept final { return _inner_buffer->Empty(); }
-
-  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
-    return std::move(*_inner_buffer).Compile(ctx);
-  }
-
- private:
-  std::unique_ptr<Filter> _inner_filter;
-  std::unique_ptr<PrepareBuffer> _inner_buffer;
-};
 
 std::pair<S2Cap, bool> GetBound(BoundType type, S2Point origin,
                                 double distance) {
@@ -554,7 +529,7 @@ std::unique_ptr<Filter::PrepareBuffer> CreateOpenIntervalBuffer(
           opts.range.max = 0;
           opts.range.max_type = BoundType::Inclusive;
 
-          return std::make_unique<OwnedFilterBuffer>(ctx, std::move(root));
+          return root->CreateBuffer(ctx);
         } else {
           bound = S2Cap::Empty();
         }

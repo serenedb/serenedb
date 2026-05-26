@@ -223,92 +223,6 @@ bool Valid(const TermReader* reader) noexcept {
                                 FixedPhraseQuery::kRequiredFeatures;
 }
 
-Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
-                                       std::string_view field,
-                                       const ByPhraseOptions& options) {
-  const auto phrase_size = options.size();
-  const auto is_ord_empty = !ctx.scorer;
-
-  // stats collectors
-  FieldCollectors field_stats(ctx.scorer);
-  TermCollectors term_stats(ctx.scorer, phrase_size);
-
-  // per segment phrase states
-  FixedPhraseQuery::states_t phrase_states{ctx.memory, ctx.index.size()};
-
-  // per segment phrase terms
-  FixedPhraseState::Terms phrase_terms{{ctx.memory}};
-  phrase_terms.reserve(phrase_size);
-
-  // iterate over the segments
-  PhraseTermVisitor<decltype(phrase_terms)> ptv(phrase_terms);
-
-  for (const auto& segment : ctx.index) {
-    // get term dictionary for field
-    const auto* reader = segment.field(field);
-    if (!Valid(reader)) {
-      continue;
-    }
-
-    // collect field statistics once per segment
-    field_stats.collect(segment, *reader);
-    ptv.Reset(term_stats);
-
-    for (const auto& word : options) {
-      SDB_ASSERT(std::get_if<ByTermOptions>(&word.part));
-      ByTerm::visit(segment, *reader, std::get<ByTermOptions>(word.part).term,
-                    ptv);
-      if (!ptv.Found() && is_ord_empty) {
-        break;
-      }
-    }
-
-    // we have not found all needed terms
-    if (phrase_terms.size() != phrase_size) {
-      phrase_terms.clear();
-      continue;
-    }
-
-    auto& state = phrase_states.insert(segment);
-    state.terms = std::move(phrase_terms);
-    state.reader = reader;
-
-    phrase_terms.clear();
-    phrase_terms.reserve(phrase_size);
-  }
-
-#ifndef SDB_GTEST  // TODO(mbkkt) adjust tests
-  if (phrase_states.empty()) {
-    return Filter::Query::empty();
-  }
-#endif
-
-  // offset of the first term in a phrase
-  SDB_ASSERT(!options.empty());
-
-  // finish stats
-  bstring stats(GetStatsSize(ctx.scorer), 0);
-  auto* stats_buf = stats.data();
-
-  FixedPhraseQuery::positions_t positions(phrase_size);
-  auto pos_itr = positions.begin();
-
-  size_t term_idx = 0;
-  PosAttr::value_t look_back = 0;
-  for (const auto& term : options) {
-    pos_itr->offs_max = term.offs_max;
-    pos_itr->offs_min = term.offs_min;
-    pos_itr->lead_offset = look_back += term.offs_max;
-    term_stats.finish(stats_buf, term_idx, field_stats, ctx.index);
-    ++pos_itr;
-    ++term_idx;
-  }
-
-  return memory::make_tracked<FixedPhraseQuery>(
-    ctx.memory, std::move(phrase_states), std::move(positions),
-    std::move(stats), ctx.boost);
-}
-
 Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
                                           std::string_view field,
                                           const ByPhraseOptions& options) {
@@ -585,7 +499,8 @@ Filter::Query::ptr ByPhrase::Prepare(const PrepareContext& ctx,
 
   // prepare phrase stats (collector for each term)
   if (options.simple()) {
-    return FixedPrepareCollect(ctx, field, options);
+    FixedPhraseBuffer buf{ctx, field, options};
+    return PrepareWithBuffer(buf, ctx);
   }
 
   return VariadicPrepareCollect(ctx, field, options);

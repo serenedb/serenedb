@@ -22,6 +22,8 @@
 
 #include "levenshtein_filter.hpp"
 
+#include <optional>
+
 #include "basics/down_cast.h"
 #include "basics/noncopyable.hpp"
 #include "basics/shared.hpp"
@@ -212,24 +214,23 @@ class LevenshteinSpec {
   uint32_t _utf8_term_size;
 };
 
-std::unique_ptr<LevenshteinSpec> MakeSpec(bytes_view prefix, bytes_view term,
-                                          const ParametricDescription& d) {
+std::optional<LevenshteinSpec> MakeSpec(bytes_view prefix, bytes_view term,
+                                        const ParametricDescription& d) {
   auto acceptor = MakeLevenshteinAutomaton(d, prefix, term);
   if (!Validate(acceptor)) {
-    return nullptr;
+    return std::nullopt;
   }
   const uint32_t utf8_term_size =
     std::max(1U, static_cast<uint32_t>(utf8_utils::Length(prefix) +
                                        utf8_utils::Length(term)));
-  return std::make_unique<LevenshteinSpec>(
-    std::move(acceptor), d.max_distance() + 1, utf8_term_size);
+  return LevenshteinSpec(std::move(acceptor), d.max_distance() + 1,
+                         utf8_term_size);
 }
 
 class AllTermsBuffer final : public MultiTermQuery::BufferBase {
  public:
   AllTermsBuffer(const PrepareContext& ctx, std::string_view field,
-                 std::unique_ptr<LevenshteinSpec> spec,
-                 score_t boost = kNoBoost)
+                 LevenshteinSpec spec, score_t boost = kNoBoost)
     : BufferBase{ctx, 1, ScoreMergeType::Max, 1, boost},
       _field{field},
       _spec{std::move(spec)},
@@ -239,21 +240,21 @@ class AllTermsBuffer final : public MultiTermQuery::BufferBase {
 
   void PrepareSegment(const SubReader& segment) final {
     if (const auto* reader = segment.field(_field); reader) {
-      VisitImpl(segment, *reader, _spec->max_distance(),
-                _spec->utf8_term_size(), _spec->matcher(), _collector);
+      VisitImpl(segment, *reader, _spec.max_distance(), _spec.utf8_term_size(),
+                _spec.matcher(), _collector);
     }
   }
 
  private:
   std::string_view _field;
-  std::unique_ptr<LevenshteinSpec> _spec;
+  LevenshteinSpec _spec;
   AllTermsCollector<MultiTermQuery::States> _collector;
 };
 
 class TopTermsBuffer final : public MultiTermQuery::BufferBase {
  public:
   TopTermsBuffer(const PrepareContext& ctx, std::string_view field,
-                 std::unique_ptr<LevenshteinSpec> spec, size_t terms_limit,
+                 LevenshteinSpec spec, size_t terms_limit,
                  score_t boost = kNoBoost)
     : BufferBase{ctx, 1, ScoreMergeType::Max, 1, boost},
       _field{field},
@@ -262,8 +263,8 @@ class TopTermsBuffer final : public MultiTermQuery::BufferBase {
 
   void PrepareSegment(const SubReader& segment) final {
     if (const auto* reader = segment.field(_field); reader) {
-      VisitImpl(segment, *reader, _spec->max_distance(),
-                _spec->utf8_term_size(), _spec->matcher(), _collector);
+      VisitImpl(segment, *reader, _spec.max_distance(), _spec.utf8_term_size(),
+                _spec.matcher(), _collector);
     }
   }
 
@@ -287,7 +288,7 @@ class TopTermsBuffer final : public MultiTermQuery::BufferBase {
 
  private:
   std::string_view _field;
-  std::unique_ptr<LevenshteinSpec> _spec;
+  LevenshteinSpec _spec;
   TopTermsCollectorImpl _collector;
 };
 
@@ -302,9 +303,9 @@ Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
   }
   std::unique_ptr<Filter::PrepareBuffer> buf;
   if (!terms_limit) {
-    buf = std::make_unique<AllTermsBuffer>(ctx, field, std::move(spec));
+    buf = std::make_unique<AllTermsBuffer>(ctx, field, *std::move(spec));
   } else {
-    buf = std::make_unique<TopTermsBuffer>(ctx, field, std::move(spec),
+    buf = std::make_unique<TopTermsBuffer>(ctx, field, *std::move(spec),
                                            terms_limit);
   }
   for (auto& segment : ctx.index) {
@@ -396,10 +397,10 @@ std::unique_ptr<Filter::PrepareBuffer> ByEditDistance::CreateBuffer(
         return std::make_unique<EmptyBuffer>();
       }
       if (!opts.max_terms) {
-        return std::make_unique<AllTermsBuffer>(ctx, field(), std::move(spec),
+        return std::make_unique<AllTermsBuffer>(ctx, field(), *std::move(spec),
                                                 boost);
       }
-      return std::make_unique<TopTermsBuffer>(ctx, field(), std::move(spec),
+      return std::make_unique<TopTermsBuffer>(ctx, field(), *std::move(spec),
                                               opts.max_terms, boost);
     });
 }

@@ -94,9 +94,11 @@ Filter::Query::ptr MixedBooleanFilter::prepare(
   if (_or->empty()) {
     return _and->prepare(ctx);
   }
-  auto q = memory::make_tracked<BoostQuery>(ctx.memory);
-  q->Prepare(ctx, *_and, *_or);
-  return q;
+  Buffer buf{ctx, *_and, *_or};
+  for (const auto& segment : ctx.index) {
+    buf.PrepareSegment(segment);
+  }
+  return std::move(buf).Compile(ctx);
 }
 
 bool MixedBooleanFilter::equals(const Filter& rhs) const noexcept {

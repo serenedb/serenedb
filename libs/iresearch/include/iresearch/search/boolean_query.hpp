@@ -113,9 +113,6 @@ class BoostQuery : public Filter::Query {
     return {};
   }
 
-  void Prepare(const PrepareContext& ctx, const BooleanFilter& req,
-               const Or& opt);
-
   void PrepareFromQueries(Query::ptr req,
                           std::vector<Query::ptr> opt) noexcept {
     SDB_ASSERT(req);

@@ -303,59 +303,8 @@ Filter::Query::ptr ByWildcardNgram::Buffer::Compile(
 Filter::Query::ptr ByWildcardNgram::Prepare(
   const PrepareContext& ctx, std::string_view field,
   const ByWildcardNgramOptions& opts) {
-  auto& parts = opts.parts;
-  auto size = parts.size();
-  Filter::Query::ptr p;
-
-  if (size == 0) {
-    bytes_view token = opts.token;
-    if (token.size() != 1 && token.back() == 0xFF) {
-      p = ByTerm::prepare(ctx, field, token);
-    } else {
-      if (token.back() == 0xFF) {
-        token = kEmptyStringView<byte_type>;
-      }
-      p = ByPrefix::Prepare(ctx, field, token, kDefaultScoredTermsLimit);
-    }
-  } else if (size == 1 && opts.has_pos) {
-    p = ByPhrase::Prepare(ctx, field, parts[0]);
-  }
-
-  if (p) {
-    if (p == Filter::Query::empty()) {
-      return p;
-    }
-    return memory::make_tracked<WildcardQuery>(
-      ctx.memory, opts.matcher, std::move(p), opts.store_field_id);
-  }
-
-  AndQuery::queries_t queries{{ctx.memory}};
-  if (opts.has_pos) {
-    queries.resize(size);
-    for (size_t i = 0; auto& part : parts) {
-      p = ByPhrase::Prepare(ctx, field, part);
-      if (p == Filter::Query::empty()) {
-        return p;
-      }
-      queries[i++] = std::move(p);
-    }
-  } else {
-    for (auto& part : parts) {
-      for (const auto& info : part) {
-        p =
-          ByTerm::prepare(ctx, field, std::get<ByTermOptions>(info.part).term);
-        if (p == Filter::Query::empty()) {
-          return p;
-        }
-        queries.push_back(std::move(p));
-      }
-    }
-    size = queries.size();
-  }
-  auto conjunction = memory::make_tracked<AndQuery>(ctx.memory);
-  conjunction->prepare(ctx, ScoreMergeType::Sum, std::move(queries), size);
-  return memory::make_tracked<WildcardQuery>(
-    ctx.memory, opts.matcher, std::move(conjunction), opts.store_field_id);
+  Buffer buf{ctx, field, opts};
+  return Filter::PrepareWithBuffer(buf, ctx);
 }
 
 ByWildcardNgramOptions::ByWildcardNgramOptions(

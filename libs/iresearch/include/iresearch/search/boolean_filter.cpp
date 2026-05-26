@@ -473,18 +473,7 @@ void PopulateCompound(BoolBuild&& b, const PrepareContext& effective_ctx,
   }
 }
 
-Filter::Query::ptr CompileCompoundOnStack(BoolBuild&& b,
-                                          const PrepareContext& caller_ctx) {
-  PrepareContext eff = WithBoost(caller_ctx, b.boost);
-  CompoundBuffer buf{b.shape, b.merge_type, eff, b.min_match};
-  PopulateCompound(std::move(b), eff, buf);
-  for (const auto& segment : eff.index) {
-    buf.PrepareSegment(segment);
-  }
-  return std::move(buf).Compile(eff);
-}
-
-std::unique_ptr<Filter::PrepareBuffer> BuildCompoundOnHeap(
+std::unique_ptr<Filter::PrepareBuffer> BuildCompound(
   BoolBuild&& b, const PrepareContext& caller_ctx) {
   PrepareContext eff = WithBoost(caller_ctx, b.boost);
   auto buf =
@@ -523,52 +512,18 @@ std::unique_ptr<Filter::PrepareBuffer> BooleanFilter::CreateBuffer(
       return ByTerms::CreateBuffer(WithBoost(ctx, b.boost), b.by_terms_field,
                                    std::move(b.by_terms_options));
     case BoolBuild::Kind::Compound:
-      return BuildCompoundOnHeap(std::move(b), ctx);
+      return BuildCompound(std::move(b), ctx);
   }
   SDB_ASSERT(false);
   return std::make_unique<EmptyBuffer>();
 }
 
-Filter::Query::ptr And::prepare(const PrepareContext& raw_ctx) const {
-  const auto ctx = raw_ctx.Boost(Boost());
-  auto b = AnalyzeBoolean(*this, /*is_or=*/false,
-                          std::numeric_limits<uint32_t>::max(), ctx);
-  switch (b.kind) {
-    case BoolBuild::Kind::Empty:
-      return Query::empty();
-    case BoolBuild::Kind::Delegate:
-      return b.delegate_filter->prepare(WithBoost(ctx, b.boost));
-    case BoolBuild::Kind::ByTerms:
-      return ByTerms::Prepare(WithBoost(ctx, b.boost), b.by_terms_field,
-                              b.by_terms_options);
-    case BoolBuild::Kind::Compound:
-      return CompileCompoundOnStack(std::move(b), ctx);
-  }
-  SDB_ASSERT(false);
-  return Query::empty();
+Filter::Query::ptr And::prepare(const PrepareContext& ctx) const {
+  return PrepareWithBuffer(*CreateBuffer(ctx), ctx);
 }
 
-Filter::Query::ptr Or::prepare(const PrepareContext& raw_ctx) const {
-  PrepareContext ctx = raw_ctx;
-  ctx.boost *= Boost();
-  if (0 == _min_match_count) {
-    return MakeAllDocsFilter(kNoBoost)->prepare(ctx);
-  }
-
-  auto b = AnalyzeBoolean(*this, /*is_or=*/true, _min_match_count, ctx);
-  switch (b.kind) {
-    case BoolBuild::Kind::Empty:
-      return Query::empty();
-    case BoolBuild::Kind::Delegate:
-      return b.delegate_filter->prepare(WithBoost(ctx, b.boost));
-    case BoolBuild::Kind::ByTerms:
-      return ByTerms::Prepare(WithBoost(ctx, b.boost), b.by_terms_field,
-                              b.by_terms_options);
-    case BoolBuild::Kind::Compound:
-      return CompileCompoundOnStack(std::move(b), ctx);
-  }
-  SDB_ASSERT(false);
-  return Query::empty();
+Filter::Query::ptr Or::prepare(const PrepareContext& ctx) const {
+  return PrepareWithBuffer(*CreateBuffer(ctx), ctx);
 }
 
 std::unique_ptr<Filter::PrepareBuffer> Or::CreateBuffer(
@@ -579,28 +534,8 @@ std::unique_ptr<Filter::PrepareBuffer> Or::CreateBuffer(
   return BooleanFilter::CreateBuffer(ctx);
 }
 
-Filter::Query::ptr Not::prepare(const PrepareContext& raw_ctx) const {
-  const auto res = OptimizeNot(*this);
-  if (!res.first) {
-    return Query::empty();
-  }
-
-  PrepareContext ctx = raw_ctx;
-  ctx.boost *= Boost();
-
-  if (!res.second) {
-    return res.first->prepare(ctx);
-  }
-
-  auto all_docs = MakeAllDocsFilter(kNoBoost);
-  CompoundBuffer buf{CompoundBuffer::Shape::And, ScoreMergeType::Sum, ctx};
-  buf.AddIncl(MakeChildEntry(*all_docs, ctx));
-  buf.AddExcl(MakeExclChildEntry(*res.first, ctx));
-  buf.AddOwned(std::move(all_docs));
-  for (const auto& segment : ctx.index) {
-    buf.PrepareSegment(segment);
-  }
-  return std::move(buf).Compile(ctx);
+Filter::Query::ptr Not::prepare(const PrepareContext& ctx) const {
+  return PrepareWithBuffer(*CreateBuffer(ctx), ctx);
 }
 
 std::unique_ptr<Filter::PrepareBuffer> Not::CreateBuffer(

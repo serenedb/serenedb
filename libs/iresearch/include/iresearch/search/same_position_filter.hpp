@@ -63,10 +63,14 @@ class BySamePosition : public FilterWithOptions<BySamePositionOptions> {
       : ScoredBuffer{ctx, boost},
         _terms{&terms},
         _memory{&ctx.memory},
-        _field_stats{ctx.scorer},
         _term_stats{ctx.scorer, terms.size()},
         _states{ctx.memory, ctx.index.size()},
-        _has_scorer{ctx.scorer != nullptr} {}
+        _has_scorer{ctx.scorer != nullptr} {
+      _field_stats.reserve(terms.size());
+      for (size_t i = 0, n = terms.size(); i < n; ++i) {
+        _field_stats.emplace_back(ctx.scorer);
+      }
+    }
 
     void PrepareSegment(const SubReader& segment) final;
     void Merge(PrepareBuffer&& other) final;
@@ -76,7 +80,7 @@ class BySamePosition : public FilterWithOptions<BySamePositionOptions> {
    private:
     const BySamePositionOptions::search_terms* _terms;
     IResourceManager* _memory;
-    FieldCollectors _field_stats;
+    std::vector<FieldCollectors> _field_stats;
     TermCollectors _term_stats;
     StatesT _states;
     bool _has_scorer;

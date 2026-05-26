@@ -360,6 +360,59 @@ TEST_P(ColumnExistenceFilterTestCase, parallel_prepare_parity) {
   run(with_boost(MakeFilter(kName), 0.5f));
 }
 
+// Verifies that the boost stored on the prepared query is `ctx.boost * Boost()`
+// regardless of whether the query came from `prepare` or
+// `CreateBuffer` + `Compile`. The plain `parallel_prepare_parity` above always
+// runs with `ctx.boost == kNoBoost`, which masks any accidental double
+// multiplication (`1 * X == 1 * 1 * X`); this case uses a non-default
+// `ctx.boost` so an extra multiplication on either path would diverge.
+TEST_P(ColumnExistenceFilterTestCase, parallel_prepare_boost_parity) {
+  {
+    auto writer = open_writer(irs::kOmCreate);
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(*writer, gen, MakeStoreHook());
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+  ASSERT_GE(rdr->size(), 1u);
+
+  MaxMemoryCounter counter;
+
+  auto check = [&](irs::score_t filter_boost, irs::score_t ctx_boost) {
+    irs::ByColumnExistence filter = MakeFilter(kName);
+    filter.boost(filter_boost);
+
+    const irs::PrepareContext ctx{
+      .index = *rdr,
+      .memory = counter,
+      .boost = ctx_boost,
+    };
+
+    auto seq = filter.prepare(ctx);
+    ASSERT_NE(nullptr, seq);
+
+    auto buf = filter.CreateBuffer(ctx);
+    ASSERT_NE(nullptr, buf);
+    for (const auto& segment : *rdr) {
+      buf->PrepareSegment(segment);
+    }
+    auto par = std::move(*buf).Compile(ctx);
+    ASSERT_NE(nullptr, par);
+
+    EXPECT_FLOAT_EQ(ctx_boost * filter_boost, seq->Boost());
+    EXPECT_FLOAT_EQ(ctx_boost * filter_boost, par->Boost());
+    EXPECT_FLOAT_EQ(seq->Boost(), par->Boost());
+  };
+
+  check(irs::kNoBoost, irs::kNoBoost);
+  check(2.5f, irs::kNoBoost);
+  check(irs::kNoBoost, 3.0f);
+  check(2.5f, 3.0f);
+  check(0.5f, 2.0f);
+  check(0.25f, 4.0f);
+}
+
 TEST(by_column_existence, options) {
   irs::ByColumnExistenceOptions opts;
   ASSERT_EQ(irs::ByColumnExistenceOptions{}, opts);

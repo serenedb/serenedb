@@ -29,6 +29,50 @@
 #include "iresearch/utils/regexp_utils.hpp"
 
 namespace irs {
+namespace {
+
+std::unique_ptr<Filter::PrepareBuffer> CreateBufferImpl(
+  const PrepareContext& ctx, std::string_view field, bytes_view pattern,
+  size_t scored_terms_limit, RegexpSyntax syntax, score_t boost) {
+  const auto type = ComputeRegexpType(pattern);
+
+  switch (type) {
+    case RegexpType::LiteralEscaped: {
+      bstring unescaped;
+      UnescapeRegexp(pattern, unescaped);
+      return std::make_unique<ByTerm::Buffer>(ctx, field, unescaped, boost);
+    }
+    case RegexpType::Literal:
+      return std::make_unique<ByTerm::Buffer>(ctx, field, pattern, boost);
+    case RegexpType::PrefixEscaped: {
+      auto raw_prefix = ExtractRegexpPrefix(pattern);
+      bstring unescaped;
+      UnescapeRegexp(raw_prefix, unescaped);
+      return std::make_unique<ByPrefix::Buffer>(ctx, field, unescaped,
+                                                scored_terms_limit, boost);
+    }
+    case RegexpType::Prefix: {
+      auto prefix = ExtractRegexpPrefix(pattern);
+      return std::make_unique<ByPrefix::Buffer>(ctx, field, prefix,
+                                                scored_terms_limit, boost);
+    }
+    case RegexpType::Complex: {
+      auto acceptor = FromRegexp(pattern, kDefaultMaxDfaStates, syntax);
+      if (!Validate(acceptor)) {
+        return std::make_unique<Filter::EmptyBuffer>();
+      }
+      if (auto buf = MakeAutomatonBuffer(ctx, field, std::move(acceptor),
+                                         scored_terms_limit, boost)) {
+        return buf;
+      }
+      return std::make_unique<Filter::EmptyBuffer>();
+    }
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+}  // namespace
 
 field_visitor ByRegexp::visitor(bytes_view pattern, RegexpSyntax syntax) {
   const auto type = ComputeRegexpType(pattern);
@@ -105,84 +149,16 @@ Filter::Query::ptr ByRegexp::Prepare(const PrepareContext& ctx,
                                      std::string_view field, bytes_view pattern,
                                      size_t scored_terms_limit,
                                      RegexpSyntax syntax) {
-  const auto type = ComputeRegexpType(pattern);
-
-  switch (type) {
-    case RegexpType::LiteralEscaped: {
-      bstring buf;
-      UnescapeRegexp(pattern, buf);
-      return ByTerm::prepare(ctx, field, buf);
-    }
-
-    case RegexpType::Literal:
-      return ByTerm::prepare(ctx, field, pattern);
-
-    case RegexpType::PrefixEscaped: {
-      auto raw_prefix = ExtractRegexpPrefix(pattern);
-      bstring unescaped;
-      UnescapeRegexp(raw_prefix, unescaped);
-      return ByPrefix::Prepare(ctx, field, unescaped, scored_terms_limit);
-    }
-
-    case RegexpType::Prefix: {
-      auto prefix = ExtractRegexpPrefix(pattern);
-      return ByPrefix::Prepare(ctx, field, prefix, scored_terms_limit);
-    }
-
-    case RegexpType::Complex: {
-      auto acceptor = FromRegexp(pattern, kDefaultMaxDfaStates, syntax);
-      if (!Validate(acceptor)) {
-        return Query::empty();
-      }
-      return PrepareAutomatonFilter(ctx, field, acceptor, scored_terms_limit);
-    }
-
-    default:
-      SDB_UNREACHABLE();
-  }
+  auto buf =
+    CreateBufferImpl(ctx, field, pattern, scored_terms_limit, syntax, kNoBoost);
+  return PrepareWithBuffer(*buf, ctx);
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByRegexp::CreateBuffer(
   const PrepareContext& ctx) const {
-  const score_t boost = Boost();
-  const auto type = ComputeRegexpType(options().pattern);
-
-  switch (type) {
-    case RegexpType::LiteralEscaped: {
-      bstring unescaped;
-      UnescapeRegexp(options().pattern, unescaped);
-      return std::make_unique<ByTerm::Buffer>(ctx, field(), unescaped, boost);
-    }
-    case RegexpType::Literal:
-      return std::make_unique<ByTerm::Buffer>(ctx, field(), options().pattern,
-                                              boost);
-    case RegexpType::PrefixEscaped: {
-      auto raw_prefix = ExtractRegexpPrefix(options().pattern);
-      bstring unescaped;
-      UnescapeRegexp(raw_prefix, unescaped);
-      return std::make_unique<ByPrefix::Buffer>(
-        ctx, field(), unescaped, options().scored_terms_limit, boost);
-    }
-    case RegexpType::Prefix: {
-      auto prefix = ExtractRegexpPrefix(options().pattern);
-      return std::make_unique<ByPrefix::Buffer>(
-        ctx, field(), prefix, options().scored_terms_limit, boost);
-    }
-    case RegexpType::Complex: {
-      auto acceptor =
-        FromRegexp(options().pattern, kDefaultMaxDfaStates, options().syntax);
-      if (!Validate(acceptor)) {
-        return std::make_unique<EmptyBuffer>();
-      }
-      if (auto buf = MakeAutomatonBuffer(ctx, field(), std::move(acceptor),
-                                         options().scored_terms_limit, boost)) {
-        return buf;
-      }
-      return std::make_unique<EmptyBuffer>();
-    }
-    default:
-      SDB_UNREACHABLE();
-  }
+  return CreateBufferImpl(ctx, field(), options().pattern,
+                          options().scored_terms_limit, options().syntax,
+                          Boost());
 }
 
 }  // namespace irs

@@ -209,7 +209,7 @@ void BySamePosition::Buffer::PrepareSegment(const SubReader& segment) {
       continue;
     }
 
-    _field_stats.collect(segment, *field);
+    _field_stats[term_idx].collect(segment, *field);
 
     SeekTermIterator::ptr term = field->iterator(SeekMode::NORMAL);
 
@@ -239,7 +239,10 @@ void BySamePosition::Buffer::PrepareSegment(const SubReader& segment) {
 
 void BySamePosition::Buffer::Merge(PrepareBuffer&& other) {
   auto& rhs = sdb::basics::downCast<Buffer>(other);
-  _field_stats.collect(std::move(rhs._field_stats));
+  SDB_ASSERT(_field_stats.size() == rhs._field_stats.size());
+  for (size_t i = 0, n = _field_stats.size(); i < n; ++i) {
+    _field_stats[i].collect(std::move(rhs._field_stats[i]));
+  }
   _term_stats.collect(std::move(rhs._term_stats));
   _states.Merge(std::move(rhs._states));
 }
@@ -252,7 +255,9 @@ Filter::Query::ptr BySamePosition::Buffer::Compile(
   size_t term_idx = 0;
   for (auto& stat : stats) {
     stat.resize(GetStatsSize(ctx.scorer));
-    _term_stats.finish(stat.data(), term_idx++, _field_stats, ctx.index);
+    _term_stats.finish(stat.data(), term_idx, _field_stats[term_idx],
+                       ctx.index);
+    ++term_idx;
   }
 
   return memory::make_tracked<SamePositionQuery>(ctx.memory, std::move(_states),

@@ -222,6 +222,7 @@ void Transaction::Destroy() noexcept {
   _search_transactions.clear();
   _table_rows_deltas.clear();
   _search_snapshots.clear();
+  _local_table_changes.clear();
   _num_log_data_markers = 0;
 }
 

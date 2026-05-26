@@ -31,6 +31,7 @@
 #include "basics/result.h"
 #include "catalog/catalog.h"
 #include "query/config.h"
+#include "query/local_table_changes.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
 
@@ -111,6 +112,15 @@ class Transaction : public Config {
     _search_transactions.erase(shard_id);
   }
 
+  // Per-search-table in-flight INSERT/UPDATE buffer (see
+  // local_table_changes.h). Lazily populated by SereneDBSearchInsert; read
+  // back by the scan overlay and the commit-time sink/marker drain.
+  // PR 3.1: struct + accessor only -- nothing populates it yet.
+  template<typename Self>
+  auto& GetLocalTableChanges(this Self&& self) noexcept {
+    return self._local_table_changes;
+  }
+
   void Destroy() noexcept;
 
   catalog::TableStats GetTableStats(ObjectId table_id) const;
@@ -172,6 +182,7 @@ class Transaction : public Config {
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
+  LocalTableChanges _local_table_changes;
   uint64_t _num_log_data_markers = 0;
 };
 

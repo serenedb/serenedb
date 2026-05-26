@@ -412,14 +412,14 @@ Result ValidateInvertedIndexColumns(
     }
 
     if (c.IsBuiltin(kHNSWKind)) {
-      if (kind != duckdb::LogicalTypeId::ARRAY) {
+      const bool is_float_array =
+        kind == duckdb::LogicalTypeId::ARRAY &&
+        duckdb::ArrayType::GetChildType(value_type).id() ==
+          duckdb::LogicalTypeId::FLOAT;
+      if (!is_float_array) {
         return {ERROR_BAD_PARAMETER, "Column '", label,
-                "' must be an ARRAY type to use the 'hnsw' opclass"};
-      }
-      if (duckdb::ArrayType::GetChildType(value_type).id() !=
-          duckdb::LogicalTypeId::FLOAT) {
-        return {ERROR_BAD_PARAMETER, "Column '", label,
-                "' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass"};
+                "' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not ",
+                value_type.ToString()};
       }
       continue;
     }
@@ -446,8 +446,8 @@ Result ValidateInvertedIndexColumns(
       return {ERROR_BAD_PARAMETER,
               "Column '",
               label,
-              "' has unsupported kind ",
-              duckdb::EnumUtil::ToString(kind),
+              "' has unsupported type ",
+              value_type.ToString(),
               " and can not be indexed"};
     }
   }

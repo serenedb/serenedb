@@ -217,19 +217,19 @@ CREATE TABLE tstest (a INTEGER, b TIMESTAMP, c VARCHAR, d HUGEINT, e DECIMAL(10,
 statement error
 CREATE INDEX index_ts on tstest USING inverted(b);
 ----
-db error: ERROR: Failed to create index: Column 'b' has unsupported kind TIMESTAMP and can not be indexed
+db error: ERROR: Failed to create index: Column 'b' has unsupported type TIMESTAMP and can not be indexed
 
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(d);
 ----
-db error: ERROR: Failed to create index: Column 'd' has unsupported kind HUGEINT and can not be indexed
+db error: ERROR: Failed to create index: Column 'd' has unsupported type HUGEINT and can not be indexed
 
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(e);
 ----
-db error: ERROR: Failed to create index: Column 'e' has unsupported kind DECIMAL and can not be indexed
+db error: ERROR: Failed to create index: Column 'e' has unsupported type DECIMAL(10,2) and can not be indexed
 
 
 statement ok

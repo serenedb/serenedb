@@ -1327,7 +1327,7 @@ statement error
 CREATE INDEX hnsw_e3_idx ON hnsw_e3 USING inverted(
     id, (array_value(a, b, c)) hnsw(metric='l2', m=8, ef_construction=16));
 ----
-db error: ERROR: Failed to create index: Column 'array_value(a, b, c)' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass
+db error: ERROR: Failed to create index: Column 'array_value(a, b, c)' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
 
 
 # Non-ARRAY return type rejected when hnsw is requested.
@@ -1336,7 +1336,7 @@ statement error
 CREATE INDEX hnsw_e_scalar ON hnsw_e USING inverted(
     id, (x + y + z) hnsw(metric='l2', m=8, ef_construction=16));
 ----
-db error: ERROR: Failed to create index: Column '((x + y) + z)' must be an ARRAY type to use the 'hnsw' opclass
+db error: ERROR: Failed to create index: Column '((x + y) + z)' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT
 
 
 # --- INCLUDE columns alongside an indexed expression ---------------------

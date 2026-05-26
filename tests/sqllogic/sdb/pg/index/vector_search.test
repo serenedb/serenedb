@@ -796,13 +796,13 @@ db error: ERROR: Failed to create index: Column 'emb': hnsw option 'ef_construct
 statement error
 CREATE INDEX bad_scalar ON t_err USING inverted(id hnsw (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'id' must be an ARRAY type to use the 'hnsw' opclass
+db error: ERROR: Failed to create index: Column 'id' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER
 
 
 statement error
 CREATE INDEX bad_int_arr ON t_err USING inverted(emb_int hnsw (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'emb_int' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass
+db error: ERROR: Failed to create index: Column 'emb_int' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
 
 
 statement error

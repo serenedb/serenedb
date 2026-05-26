@@ -117,7 +117,7 @@ declare -A env_aliases=(
 	[host]=SDB_DRV_HOST [port]=SDB_DRV_PORT [database]=SDB_DRV_DATABASE
 	[user]=SDB_DRV_USER [protocols]=SDB_DRV_PROTOCOLS [types]=SDB_DRV_TYPES
 	[junit]=SDB_DRV_JUNIT [run_id]=SDB_DRV_RUN_ID [debug]=SDB_DRV_DEBUG
-	[driver]=SDB_DRV_DRIVER
+	[driver]=SDB_DRV_DRIVER [lang]=SDB_DRV_LANG
 )
 for k in "${!defaults[@]}"; do
 	if [[ -z "${args[$k]:-}" ]]; then
@@ -147,6 +147,17 @@ export SDB_DRV_RUN_ID="${args[run_id]}"
 export SDB_DRV_DEBUG="${args[debug]}"
 export SDB_DRV_DRIVER="${args[driver]}"
 export SDB_DRV_SPEC="${SCRIPT_DIR}/spec"
+
+# Silence per-tool first-run / update-check banners so the suite output
+# is just test results. Each is a no-op when the driver tool isn't used.
+export DOTNET_NOLOGO=1               # "Welcome to .NET 8.0!" banner
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 # telemetry first-run prompt
+export NO_UPDATE_NOTIFIER=1          # "npm notice New major version..."
+export NPM_CONFIG_UPDATE_NOTIFIER=false
+export NPM_CONFIG_FUND=false
+export NPM_CONFIG_AUDIT=false
+export CARGO_TERM_QUIET=true # cargo's "Downloading" + "Compiling"
+export PIP_DISABLE_PIP_VERSION_CHECK=1
 
 echo "[drivers] host=${args[host]} port=${args[port]} db=${args[database]} run_id=${args[run_id]}"
 echo "[drivers] languages=${args[lang]} protocols=${args[protocols]} types=${args[types]}"
@@ -200,6 +211,13 @@ fi
 final_exit=0
 pids=()
 declare -A pid_lang=()
+declare -A pid_log=()
+declare -A pid_started=()
+# Where to buffer per-lang output. Each runner's stdout/stderr is captured
+# to its own tempfile so we can render the final log as contiguous blocks
+# (BEGIN ... END), eliminating the parallel-interleaving that makes a
+# multi-driver run hard to read live.
+buffer_dir="$(mktemp -d -t drv-XXXXXX)"
 
 for lang in "${langs[@]}"; do
 	runner="${lang_runner[$lang]:-}"
@@ -207,19 +225,187 @@ for lang in "${langs[@]}"; do
 		echo "[drivers] WARN: no runner for $lang ($runner)" >&2
 		continue
 	fi
+	log="$buffer_dir/$lang.log"
 	(
 		cd "$(dirname "$runner")"
-		exec "$runner"
-	) &
+		"$runner" 2>&1
+	) >"$log" 2>&1 &
 	pids+=("$!")
 	pid_lang[$!]="$lang"
+	pid_log[$!]="$log"
+	pid_started[$!]="$(date +%s)"
 done
 
-for pid in "${pids[@]}"; do
-	if ! wait "$pid"; then
-		echo "[drivers] ${pid_lang[$pid]} FAILED" >&2
-		final_exit=1
+# Render each lang as a contiguous block as soon as its background process
+# exits. Wall time is still bounded by the slowest lang (everything runs in
+# parallel); only the *printing* is serialized so output stays readable.
+declare -A lang_rc=()
+declare -A lang_secs=()
+remaining=("${pids[@]}")
+while [[ ${#remaining[@]} -gt 0 ]]; do
+	# Wait for any one background process; bash's wait -n returns its exit
+	# code so we don't need to check pid status afterwards.
+	finished=()
+	for pid in "${remaining[@]}"; do
+		if ! kill -0 "$pid" 2>/dev/null; then
+			finished+=("$pid")
+		fi
+	done
+	if [[ ${#finished[@]} -eq 0 ]]; then
+		# No-one done yet -- block on any.
+		wait -n "${remaining[@]}" 2>/dev/null || true
+		continue
 	fi
+	for pid in "${finished[@]}"; do
+		lang="${pid_lang[$pid]}"
+		log="${pid_log[$pid]}"
+		rc=0
+		wait "$pid" 2>/dev/null || rc=$?
+		secs=$(($(date +%s) - pid_started[$pid]))
+		lang_rc[$lang]=$rc
+		lang_secs[$lang]=$secs
+		status=$([[ $rc -eq 0 ]] && echo PASS || echo "FAIL rc=$rc")
+		printf '\n===== [%s] BEGIN =====\n' "$lang"
+		cat "$log"
+		printf '===== [%s] END (%s, %ss) =====\n' "$lang" "$status" "$secs"
+		rm -f "$log"
+		if [[ $rc -ne 0 ]]; then
+			final_exit=1
+		fi
+		# Drop pid from the remaining list.
+		new_remaining=()
+		for p in "${remaining[@]}"; do
+			[[ "$p" != "$pid" ]] && new_remaining+=("$p")
+		done
+		remaining=("${new_remaining[@]}")
+	done
 done
 
+# Compact summary table at the end so the operator doesn't have to scroll
+# back through each block. Test counts come from the junit XMLs each runner
+# produced; some emitters (mvn -q, go-junit-report, vitest --reporter=junit)
+# print nothing to stdout, so the table is the only place to see the tally.
+echo
+echo "===== [drivers] SUMMARY ====="
+printf '  %-10s %5s %5s %5s %5s  %s\n' lang tests fails errs secs status
+
+# Map lang -> junit file glob. Some langs split across multiple files
+# (java -> pgjdbc + r2dbc; js -> pg + postgres-js; python -> 3 drivers).
+declare -A lang_junit_glob=(
+	[c]="$SDB_DRV_JUNIT/tests-drivers-c-junit.xml"
+	[csharp]="$SDB_DRV_JUNIT/tests-drivers-csharp-junit.xml"
+	[go]="$SDB_DRV_JUNIT/tests-drivers-go-junit.xml"
+	[java]="$SDB_DRV_JUNIT/TEST-*.xml"
+	[js]="$SDB_DRV_JUNIT/tests-drivers-js-*junit.xml"
+	[php]="$SDB_DRV_JUNIT/tests-drivers-php-junit.xml"
+	[python]="$SDB_DRV_JUNIT/tests-drivers-python-*-junit.xml"
+	[r]="$SDB_DRV_JUNIT/tests-drivers-r-junit.xml"
+	[ruby]="$SDB_DRV_JUNIT/tests-drivers-ruby-junit.xml"
+	[rust]="$SDB_DRV_JUNIT/tests-drivers-rust-junit.xml"
+)
+
+# Count tests/failures/errors across one or more junit files. Detection
+# order (per file):
+#   1. <testsuites tests="N">  -- plural wrapper with summary attr
+#      (go-junit-report, vitest emit this with the true total).
+#   2. first <testsuite tests="N">  -- singular root
+#      (java/maven-surefire emit only this; PHPUnit/csharp/pytest emit a
+#      <testsuites> wrapper *without* attrs, then nested <testsuite> roots
+#      with the correct count -- summing every <testsuite> would inflate
+#      the total because the inner per-class entries restate the same N).
+#   3. count <testcase> elements as a last resort (c/r/ruby junits omit
+#      every summary attribute).
+count_junit_glob() {
+	local glob="$1"
+	local total_t=0 total_f=0 total_e=0
+	shopt -s nullglob
+	# shellcheck disable=SC2206 -- intentional word-split on glob.
+	local files=($glob)
+	shopt -u nullglob
+	local f t fl er line
+	for f in "${files[@]}"; do
+		t=""
+		fl=""
+		er=""
+		# Pass 1: <testsuites> (plural) wrapper.
+		while IFS= read -r line; do
+			if [[ "$line" =~ tests=\"([0-9]+)\" ]]; then
+				t=${BASH_REMATCH[1]}
+				fl=0
+				er=0
+				[[ "$line" =~ failures=\"([0-9]+)\" ]] && fl=${BASH_REMATCH[1]}
+				[[ "$line" =~ errors=\"([0-9]+)\" ]] && er=${BASH_REMATCH[1]}
+				break
+			fi
+		done < <(grep -hE '<testsuites\b' "$f" 2>/dev/null)
+		# Pass 2: first <testsuite> (singular) root.
+		if [[ -z "$t" ]]; then
+			while IFS= read -r line; do
+				if [[ "$line" =~ tests=\"([0-9]+)\" ]]; then
+					t=${BASH_REMATCH[1]}
+					fl=0
+					er=0
+					[[ "$line" =~ failures=\"([0-9]+)\" ]] && fl=${BASH_REMATCH[1]}
+					[[ "$line" =~ errors=\"([0-9]+)\" ]] && er=${BASH_REMATCH[1]}
+					break
+				fi
+			done < <(grep -hE '<testsuite[ />]' "$f" 2>/dev/null)
+		fi
+		# Pass 3: count <testcase> elements.
+		if [[ -z "$t" ]]; then
+			t=$(grep -c '<testcase\b' "$f" 2>/dev/null)
+			t=${t:-0}
+			fl=$(grep -c '<failure\b' "$f" 2>/dev/null)
+			fl=${fl:-0}
+			er=$(grep -c '<error\b' "$f" 2>/dev/null)
+			er=${er:-0}
+		fi
+		total_t=$((total_t + t))
+		total_f=$((total_f + fl))
+		total_e=$((total_e + er))
+	done
+	echo "$total_t $total_f $total_e"
+}
+
+# Rust falls back to a plain .log when cargo2junit isn't installed; parse the
+# "test result: ok. N passed; M failed" lines and sum.
+count_rust_log() {
+	local log="$1"
+	[[ -f "$log" ]] || {
+		echo "0 0 0"
+		return
+	}
+	local t=0 fl=0
+	local line
+	while IFS= read -r line; do
+		if [[ "$line" =~ test\ result:\ ok\.\ ([0-9]+)\ passed\;\ ([0-9]+)\ failed ]]; then
+			t=$((t + ${BASH_REMATCH[1]}))
+			fl=$((fl + ${BASH_REMATCH[2]}))
+		elif [[ "$line" =~ test\ result:\ FAILED\.\ ([0-9]+)\ passed\;\ ([0-9]+)\ failed ]]; then
+			t=$((t + ${BASH_REMATCH[1]}))
+			fl=$((fl + ${BASH_REMATCH[2]}))
+		fi
+	done <"$log"
+	echo "$t $fl 0"
+}
+
+for lang in "${langs[@]}"; do
+	# Skip langs that had no runner (warn was already printed above).
+	[[ -z "${lang_rc[$lang]:-}" ]] && continue
+	rc="${lang_rc[$lang]}"
+	secs="${lang_secs[$lang]}"
+	status=$([[ $rc -eq 0 ]] && echo PASS || echo FAIL)
+	tests=- fails=- errs=-
+	if [[ -n "${lang_junit_glob[$lang]:-}" ]]; then
+		read -r tests fails errs <<<"$(count_junit_glob "${lang_junit_glob[$lang]}")"
+	fi
+	# Rust may have emitted a .log instead of junit when cargo2junit isn't
+	# present in the build image; pick up the count from there.
+	if [[ "$lang" == "rust" && "${tests:-0}" -eq 0 ]]; then
+		read -r tests fails errs <<<"$(count_rust_log "$SDB_DRV_JUNIT/tests-drivers-rust.log")"
+	fi
+	printf '  %-10s %5s %5s %5s %4ss  %s\n' "$lang" "$tests" "$fails" "$errs" "$secs" "$status"
+done
+
+rmdir "$buffer_dir" 2>/dev/null || true
 exit $final_exit

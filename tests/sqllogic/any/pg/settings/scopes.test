@@ -2,9 +2,13 @@
 # Different ways to set config options, different scopes —
 # rollback/commit semantics.
 #
-# Covers: plain SET, SET SESSION, SET LOCAL, SET GLOBAL, set_config(),
+# Covers: plain SET, SET SESSION, SET LOCAL, set_config(),
 # across both built-in (search_path, default_transaction_read_only)
 # and extension (sdb_write_conflict_policy) options.
+#
+# SET GLOBAL lives in tests/sqllogic/recovery/settings_global_scope.test --
+# that harness runs each file against its own serened instance, so the
+# global mutation can't race with sibling parallel sessions.
 # ----------------------------------------------------------------------
 
 statement ok
@@ -181,31 +185,11 @@ some_schema
 
 
 # --- SET GLOBAL is not rolled back ---
-statement ok
-BEGIN;
-
-
-skipif postgres # SET GLOBAL is not supported syntax in pg
-statement ok
-SET GLOBAL default_transaction_read_only TO true;
-
-
-statement ok
-ROLLBACK;
-
-
-# GLOBAL SET is not tracked for rollback
-onlyif serenedb
-query
-SHOW default_transaction_read_only;
-----
-default_transaction_read_only
-on
-
-
-skipif postgres # SET GLOBAL is not supported syntax in pg
-statement ok
-SET GLOBAL default_transaction_read_only TO false;
+# Moved to tests/sqllogic/recovery/settings_global_scope.test so the global
+# state mutation runs against an isolated serened instance. Keeping it here
+# would race with sibling tests running in parallel against the shared
+# server, since SET GLOBAL leaks the value to other open sessions until the
+# explicit restore (see basic.test occasionally inheriting read-only state).
 
 
 # --- Extension option (sdb_write_conflict_policy) — plain + local, commit + rollback ---

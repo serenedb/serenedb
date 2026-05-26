@@ -4,14 +4,9 @@ services:
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
       POSTGRES_DB: postgres
-      # DuckDB's LIKE-to-prefix-range pushdown (filter_combiner.cpp:TryPushdownLikeFilter)
-      # increments the last byte of the prefix to compute the upper bound -- e.g.
-      # `col LIKE 'foo9%'` becomes `col >= 'foo9' AND col < 'foo:'`. That is correct
-      # under bytewise comparison but wrong under collation-aware comparison in many
-      # locales (en_US.utf8 sorts `:` before `9`, so `'foo:' < 'foo9bar'` and the
-      # range excludes the very rows it should match). Upstream's CI runs postgres
-      # natively on a C.UTF-8 runner where this isn't a problem; the postgres docker
-      # image otherwise initdbs with en_US.utf8. Pin the locale to C.UTF-8 to match.
+      # C.UTF-8 (not the image default en_US.utf8) so collation is bytewise:
+      # DuckDB's LIKE pushdown emits a bytewise prefix range that en_US sorts
+      # wrong, failing attach_like.test. See README "gotchas".
       POSTGRES_INITDB_ARGS: "--locale=C.UTF-8"
       LANG: C.UTF-8
     healthcheck:
@@ -21,10 +16,7 @@ services:
       retries: 30
     ports:
       - "${POSTGRES_HOST_PORT:-5432}:5432"
-    # Some upstream tests run COPY ... FROM '/path/on/host.bin' through
-    # postgres_execute(), which means the postgres backend must be able to
-    # read files at host paths. Bind-mount the workspace at the same path
-    # so test-generated files (in third_party/duckdb_postgres/duckdb_unittest_tempdir)
-    # are reachable.
+    # Bind-mount the workspace at the same path so the postgres backend can
+    # read host-path files that tests COPY FROM via postgres_execute().
     volumes:
       - "${SDB_WORKSPACE_DIR:-/serenedb}:${SDB_WORKSPACE_DIR:-/serenedb}:ro"

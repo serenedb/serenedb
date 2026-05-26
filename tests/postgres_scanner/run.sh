@@ -155,12 +155,9 @@ if ! psql_postgresscanner_exists; then
 			-v ON_ERROR_STOP=1 -q -f "$WORKSPACE/third_party/duckdb_postgres/test/$fixture"
 	done
 
-	# Upstream's create-postgres-tables.sh additionally seeds tpch + tpcds via
-	# DuckDB's dbgen/dsdgen + EXPORT DATABASE. We don't ship a duckdb CLI in our
-	# build, so we synthesize the only fixture our test suite actually needs:
-	# `tpch.lineitem` with enough rows that `SELECT count(*) FROM lineitem,
-	# lineitem t2, lineitem t3` takes longer than the 1s statement_timeout
-	# that test/sql/storage/attach_timeout_error.test sets.
+	# Synthetic tpch.lineitem (upstream seeds tpch via the duckdb CLI's dbgen,
+	# which we don't ship). 10k rows is enough that the 3-way cross-join in
+	# attach_timeout_error.test trips its 1s statement_timeout.
 	echo "Provisioning synthetic tpch.lineitem fixture..."
 	PGPASSWORD="" psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgresscanner \
 		-v ON_ERROR_STOP=1 -q <<-'SQL'
@@ -173,17 +170,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Run unittest. --test-dir cd's it into the extension's source root so its
-# `test/` scan picks up the .test files.
-#
-# Note: do NOT pass --test-config attach_postgres.json here. That config is
-# upstream's "run DuckDB-core sqllogic tests against postgres as the storage
-# backend" mode -- its on_init creates a per-test postgres database and its
-# on_new_connection runs `USE pgdb;`. Applied to duckdb_postgres' OWN tests
-# (scanner/*, storage/attach_*), the `USE pgdb;` breaks the legacy
-# `CALL postgres_attach(...)` flow (views land in memory, lookup goes to
-# pgdb) and any test that resolves unqualified table names. Upstream's
-# `make test` runs `unittest "*"` config-less for exactly this reason.
+# Run unittest. --test-dir points it at the extension's source root so its
+# `test/` scan finds the .test files. We pass our own test-config.json, NOT
+# upstream's attach_postgres.json -- see the README for why.
 mkdir -p "$REPORTS_DIR"
 JUNIT_XML="$REPORTS_DIR/postgres_scanner.xml"
 

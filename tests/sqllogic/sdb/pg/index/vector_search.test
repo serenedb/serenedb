@@ -796,13 +796,13 @@ db error: ERROR: Failed to create index: Column 'emb': hnsw option 'ef_construct
 statement error
 CREATE INDEX bad_scalar ON t_err USING inverted(id hnsw (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'id' must be an ARRAY type to use the 'hnsw' opclass
+db error: ERROR: Failed to create index: Column 'id' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER
 
 
 statement error
 CREATE INDEX bad_int_arr ON t_err USING inverted(emb_int hnsw (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'emb_int' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass
+db error: ERROR: Failed to create index: Column 'emb_int' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
 
 
 statement error
@@ -821,31 +821,31 @@ DROP INDEX m_real_real;
 statement error
 CREATE INDEX m_real_bare ON t_err USING inverted(emb hnsw);
 ----
-db error: ERROR: Failed to create index: Built-in opclass 'hnsw' on column 'emb' requires options; use 'hnsw (...)'
+db error: ERROR: Failed to create index: Column 'emb' has unsupported type FLOAT[3]
 
 
 statement error
 CREATE INDEX m_fake_empty ON t_err USING inverted(emb fake_idx ());
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, hnsw)
 
 
 statement error
 CREATE INDEX m_fake_real ON t_err USING inverted(emb fake_idx (m = 16));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, hnsw)
 
 
 statement error
 CREATE INDEX m_fake_fake ON t_err USING inverted(emb fake_idx (foo = 1));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, hnsw)
 
 
 statement error
 CREATE INDEX m_fake_name ON t_err USING inverted(emb fake_dict);
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'fake_dict' on column 'emb': not a built-in type (known: included, hnsw) and no text dictionary by that name in schema 'public'
+db error: ERROR: Failed to create index: Column 'emb' has unsupported type FLOAT[3]
 
 
 

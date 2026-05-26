@@ -70,7 +70,7 @@ CREATE TABLE jp_geo (id INTEGER PRIMARY KEY, doc JSON);
 
 statement ok
 CREATE INDEX jp_geo_idx ON jp_geo
-    USING inverted(id, (doc->>'where') js_geo);
+    USING inverted(id, (doc->'where') js_geo);
 
 
 statement count 1

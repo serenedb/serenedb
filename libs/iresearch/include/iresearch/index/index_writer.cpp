@@ -28,9 +28,11 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <shared_mutex>
-#include <thread>
+#include <span>
 #include <type_traits>
+#include <vector>
 #include <yaclib/exe/submit.hpp>
 
 #include "basics/assert.h"
@@ -1745,103 +1747,152 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     segment_mask.emplace(entry.second->Meta().name);
   }
 
-  size_t current_segment_index = 0;
   const size_t committed_reader_size = committed_reader.size();
-
   readers.reserve(committed_reader_size);
   pending_meta.segments.reserve(committed_reader_size);
 
-  WaitGroup wg;
-  std::vector<DocumentMask> deleted_docs_vector;
-  std::vector<std::vector<QueryContext*>> applied_queries;
-  deleted_docs_vector.reserve(committed_reader_size);
-  applied_queries.reserve(committed_reader_size);
-  for (size_t i = 0; i != committed_reader_size; ++i) {
-    deleted_docs_vector.emplace_back(
-      DocumentMask{{*dir.ResourceManager().transactions}});
-    applied_queries.emplace_back();
-  }
-
+  std::vector<size_t> active_indices;
+  std::vector<uint64_t> live_docs;
+  active_indices.reserve(committed_reader_size);
+  live_docs.reserve(committed_reader_size);
   uint64_t total_live_docs = 0;
-  uint64_t max_live_docs = 0;
-  for (auto& existing_segment : committed_reader.GetReaders()) {
-    if (segment_mask.contains(existing_segment->Meta().name)) {
+  for (size_t i = 0; i != committed_reader_size; ++i) {
+    const auto& seg = committed_reader[i];
+    if (segment_mask.contains(seg->Meta().name)) {
       continue;
     }
-    const auto w = existing_segment->live_docs_count();
+    active_indices.push_back(i);
+    const auto w = seg->live_docs_count();
+    live_docs.push_back(w);
     total_live_docs += w;
-    max_live_docs = std::max(max_live_docs, w);
   }
+  const size_t active_cnt = active_indices.size();
 
-  const bool use_executor = _executor != nullptr &&
-                            committed_reader_size >= _executor_parallelism &&
-                            3 * max_live_docs <= total_live_docs;
+  size_t query_count = 0;
+  apply_all_queries([&query_count](QueryContext&) noexcept { ++query_count; });
 
-  size_t batch_size;
-  if (use_executor) {
-    const size_t pre_batch_count =
-      std::sqrt(committed_reader_size * _executor_parallelism);
-    const auto batch_count =
-      std::max(1ul, std::min(committed_reader_size, pre_batch_count));
-    batch_size = committed_reader_size / batch_count + 1;
-  } else {
-    batch_size = committed_reader_size;
-  }
+  constexpr uint64_t kMinWork = 10'000;
+  const bool use_executor =
+    _executor != nullptr && _executor_parallelism > 0 && active_cnt >= 2 &&
+    query_count > 0 &&
+    total_live_docs * static_cast<uint64_t>(query_count) >= kMinWork;
 
-  for (size_t batch_start = 0; batch_start < committed_reader_size;
-       batch_start += batch_size) {
-    progress("Stage 1: Applying removals to batch of existing segments from",
-             batch_start, committed_reader_size);
-    const size_t batch_end =
-      std::min(batch_start + batch_size, committed_reader_size);
-    auto task = [&, batch_start, batch_end] {
-      Finally task_ended = [&] noexcept { wg.Done(); };
-      for (size_t pos = batch_start; pos < batch_end; ++pos) {
-        if (segment_mask.contains(committed_reader[pos]->Meta().name)) {
-          continue;
+  auto make_batches = [&](size_t batch_count) {
+    std::vector<size_t> batches_bounds;
+    batches_bounds.reserve(batch_count + 1);
+    batches_bounds.push_back(0);
+    uint64_t l = 0, r = 0;
+    for (uint64_t d : live_docs) {
+      l = std::max(l, d - 1);
+      r += d;
+    }
+    while (l + 1 < r) {
+      const uint64_t mid = l + (r - l) / 2;
+      size_t chunks = 1;
+      uint64_t acc = 0;
+      for (uint64_t d : live_docs) {
+        if (acc + d > mid) {
+          ++chunks;
+          acc = d;
+        } else {
+          acc += d;
         }
-        auto& deleted_docs = deleted_docs_vector[pos];
-        auto& local_applied_queries = applied_queries[pos];
-        const auto& existing_segment = committed_reader[pos];
-
-        apply_all_queries([&](QueryContext& query) {
-          // FIXME(gnusi): optimize PK queries
-          if (RemoveFromExistingSegment(deleted_docs, query,
-                                        existing_segment)) {
-            local_applied_queries.push_back(&query);
-          }
-        });
       }
-    };
+      if (chunks <= batch_count) {
+        r = mid;
+      } else {
+        l = mid;
+      }
+    }
+    uint64_t acc = 0;
+    for (size_t k = 0; k < active_cnt; ++k) {
+      if (acc + live_docs[k] > r && batches_bounds.size() < batch_count) {
+        batches_bounds.push_back(k);
+        acc = 0;
+      }
+      acc += live_docs[k];
+    }
+    batches_bounds.push_back(active_cnt);
+    return batches_bounds;
+  };
 
-    wg.Add();
-    if (use_executor) {
-      yaclib::Submit(*_executor, std::move(task));
-    } else {
-      task();
+  std::vector<size_t> batch_bnd;
+  size_t inline_batch_idx = 0;
+  if (use_executor) {
+    batch_bnd = make_batches(std::min(_executor_parallelism, active_cnt));
+
+    uint64_t best_load = std::numeric_limits<uint64_t>::max();
+    for (size_t i = 0; i + 1 < batch_bnd.size(); ++i) {
+      uint64_t load = 0;
+      for (size_t k = batch_bnd[i]; k < batch_bnd[i + 1]; ++k) {
+        load += live_docs[k];
+      }
+      if (load < best_load) {
+        best_load = load;
+        inline_batch_idx = i;
+      }
     }
   }
 
-  wg.Wait();
-  current_segment_index = 0;
-  for (const auto& existing_segment : committed_reader.GetReaders()) {
-    auto& index_segment =
-      committed_meta.index_meta.segments[current_segment_index];
-    // skip already masked segments
-    if (segment_mask.contains(existing_segment->Meta().name)) {
-      ++current_segment_index;
-      continue;
-    }
-    auto& local_applied_queries = applied_queries[current_segment_index];
-    auto& deleted_docs = deleted_docs_vector[current_segment_index];
-    ++current_segment_index;
+  WaitGroup wg;
+  std::vector<DocumentMask> deleted_docs;
+  deleted_docs.reserve(active_cnt);
+  for (size_t k = 0; k != active_cnt; ++k) {
+    deleted_docs.emplace_back(
+      DocumentMask{{*dir.ResourceManager().transactions}});
+  }
+  std::vector<std::vector<QueryContext*>> applied_queries(active_cnt);
 
-    for (auto* query : local_applied_queries) {
+  auto process_segment = [&](size_t k) {
+    const auto& existing_segment = committed_reader[active_indices[k]];
+    apply_all_queries([&](QueryContext& query) {
+      // FIXME(gnusi): optimize PK queries
+      if (RemoveFromExistingSegment(deleted_docs[k], query, existing_segment)) {
+        applied_queries[k].push_back(&query);
+      }
+    });
+  };
+
+  progress("Stage 1: Applying removals to existing segments", 0, active_cnt);
+  if (!use_executor) {
+    for (size_t k = 0; k != active_cnt; ++k) {
+      process_segment(k);
+    }
+  } else {
+    for (size_t i = 0; i + 1 < batch_bnd.size(); ++i) {
+      if (i == inline_batch_idx) {
+        continue;
+      }
+      wg.Add();
+      yaclib::Submit(*_executor, [&, batch_idx = i] {
+        Finally f = [&] noexcept { wg.Done(); };
+        for (size_t k = batch_bnd[batch_idx]; k < batch_bnd[batch_idx + 1];
+             ++k) {
+          process_segment(k);
+        }
+      });
+    }
+    for (size_t k = batch_bnd[inline_batch_idx];
+         k < batch_bnd[inline_batch_idx + 1]; ++k) {
+      process_segment(k);
+    }
+  }
+  wg.Wait();
+
+  // Iterate active segments in commit order so pending_meta keeps the
+  // original segment ordering.
+  for (size_t k = 0; k != active_cnt; ++k) {
+    const size_t pos = active_indices[k];
+    const auto& existing_segment = committed_reader[pos];
+    auto& index_segment = committed_meta.index_meta.segments[pos];
+    progress("Stage 1: Stitch existing segments", k, active_cnt);
+
+    for (auto* query : applied_queries[k]) {
       query->ForceDone();
     }
 
     // Write docs_mask if masks added
-    const size_t num_removals = deleted_docs.size();
+    const size_t num_removals = deleted_docs[k].size();
     if (num_removals) {
       // If all docs are masked then mask segment
       if (existing_segment.live_docs_count() == num_removals) {
@@ -1857,7 +1908,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       IndexSegment segment{.meta = index_segment.meta};
       segment.meta.docs_mask = [&] {
         auto docs_mask = CopyMask(dir, existing_segment);
-        docs_mask->merge(deleted_docs);
+        docs_mask->merge(deleted_docs[k]);
         return docs_mask;
       }();
 

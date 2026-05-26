@@ -75,6 +75,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <yaclib/exe/submit.hpp>
 #include <yaclib/runtime/fair_thread_pool.hpp>
 
 namespace {
@@ -123,9 +124,9 @@ irs::Format::ptr GetFormat() {
   return format;
 }
 
-irs::IndexWriterOptions MakeWriterOptions(
-  uint32_t docs_per_segment, const yaclib::IExecutorPtr& executor,
-  size_t executor_parallelism = 0) {
+irs::IndexWriterOptions MakeWriterOptions(uint32_t docs_per_segment,
+                                          const yaclib::IExecutorPtr& executor,
+                                          size_t executor_parallelism = 0) {
   irs::IndexWriterOptions options;
   options.lock_repository = false;
   options.segment_docs_max = docs_per_segment;
@@ -196,9 +197,8 @@ void BuildCommittedSegments(irs::IndexWriter& writer, int64_t segment_count,
 // Build (small_count + 1) segments — one "fat" of fat_docs followed by
 // small_count small ones of small_docs each. Uses runtime Options() to
 // change segment_docs_max between batches.
-void BuildCommittedSegmentsSkewed(irs::IndexWriter& writer,
-                                  int64_t small_count, int64_t small_docs,
-                                  int64_t fat_docs,
+void BuildCommittedSegmentsSkewed(irs::IndexWriter& writer, int64_t small_count,
+                                  int64_t small_docs, int64_t fat_docs,
                                   const std::vector<std::string>& terms) {
   // Step 1: one fat segment.
   irs::SegmentOptions fat_opts;
@@ -216,10 +216,10 @@ void BuildCommittedSegmentsSkewed(irs::IndexWriter& writer,
 // Multi-fat variant: `fat_count` segments of `fat_docs` followed by
 // `small_count` segments of `small_docs`. Used to test stage 1 batching on
 // loads with several hot spots, not just one.
-void BuildCommittedSegmentsMultiSkewed(
-  irs::IndexWriter& writer, int64_t fat_count, int64_t fat_docs,
-  int64_t small_count, int64_t small_docs,
-  const std::vector<std::string>& terms) {
+void BuildCommittedSegmentsMultiSkewed(irs::IndexWriter& writer,
+                                       int64_t fat_count, int64_t fat_docs,
+                                       int64_t small_count, int64_t small_docs,
+                                       const std::vector<std::string>& terms) {
   irs::SegmentOptions fat_opts;
   fat_opts.segment_docs_max = static_cast<uint32_t>(fat_docs);
   writer.Options(fat_opts);
@@ -233,8 +233,7 @@ void BuildCommittedSegmentsMultiSkewed(
   InsertAndCommit(writer, small_count * small_docs, terms);
 }
 
-void AddRemovalQueryContexts(irs::IndexWriter& writer,
-                             int64_t removal_contexts,
+void AddRemovalQueryContexts(irs::IndexWriter& writer, int64_t removal_contexts,
                              const std::vector<std::string>& terms) {
   std::vector<irs::IndexWriter::Transaction> transactions;
   transactions.reserve(static_cast<size_t>(removal_contexts));
@@ -287,8 +286,8 @@ int64_t EstimatedRemovedDocsUniform(int64_t segment_count,
   // each of size docs_per_segment / num_terms.
   const auto distinct =
     std::min<int64_t>(removal_contexts, static_cast<int64_t>(num_terms));
-  const auto per_segment = distinct * (docs_per_segment /
-                                       static_cast<int64_t>(num_terms));
+  const auto per_segment =
+    distinct * (docs_per_segment / static_cast<int64_t>(num_terms));
   return segment_count * per_segment;
 }
 
@@ -300,19 +299,17 @@ void SetCommonCounters(benchmark::State& state, const Workload& workload,
   state.counters["segments"] = static_cast<double>(workload.segment_count);
   state.counters["total_live_docs"] = static_cast<double>(workload.total_docs);
   state.counters["avg_docs_per_segment"] =
-    workload.segment_count
-      ? static_cast<double>(workload.total_docs) /
-          static_cast<double>(workload.segment_count)
-      : 0.0;
+    workload.segment_count ? static_cast<double>(workload.total_docs) /
+                               static_cast<double>(workload.segment_count)
+                           : 0.0;
   state.counters["removal_contexts"] = static_cast<double>(removal_contexts);
   state.counters["num_terms"] = static_cast<double>(num_terms);
   state.counters["removed_docs_total"] =
     static_cast<double>(workload.removed_docs_total);
   state.counters["deleted_ratio"] =
-    workload.total_docs
-      ? static_cast<double>(workload.removed_docs_total) /
-          static_cast<double>(workload.total_docs)
-      : 0.0;
+    workload.total_docs ? static_cast<double>(workload.removed_docs_total) /
+                            static_cast<double>(workload.total_docs)
+                        : 0.0;
 
   if (threads == 0) {
     state.SetLabel("sync");
@@ -321,11 +318,8 @@ void SetCommonCounters(benchmark::State& state, const Workload& workload,
   }
 }
 
-// ---------------------------- Uniform sweep ----------------------------
-
 Workload PrepareUniformWorkload(int64_t segments, int64_t docs_per_segment,
-                                int64_t removal_contexts,
-                                size_t num_terms,
+                                int64_t removal_contexts, size_t num_terms,
                                 const yaclib::IExecutorPtr& executor,
                                 size_t parallelism) {
   Workload workload;
@@ -348,6 +342,24 @@ Workload PrepareUniformWorkload(int64_t segments, int64_t docs_per_segment,
   return workload;
 }
 
+template <typename PrepareFn>
+void RunBenchLoop(benchmark::State& state, PrepareFn prepare) {
+  for (auto _ : state) {
+    state.PauseTiming();
+    auto workload = prepare();
+    state.ResumeTiming();
+
+    benchmark::DoNotOptimize(workload.writer->Commit());
+
+    state.PauseTiming();
+    workload.writer.reset();
+    workload.dir.reset();
+    state.ResumeTiming();
+  }
+}
+
+// ---------------------------- Uniform sweep ----------------------------
+
 void BmStage1Uniform(benchmark::State& state) {
   const auto segments = state.range(0);
   const auto docs_per_segment = state.range(1);
@@ -358,23 +370,12 @@ void BmStage1Uniform(benchmark::State& state) {
   const auto num_terms = IndexedTermsForSelectivity(selectivity_pct);
   auto executor = MakeExecutor(threads);
 
-  for (auto _ : state) {
-    state.PauseTiming();
-    auto workload = PrepareUniformWorkload(segments, docs_per_segment,
-                                           removal_contexts, num_terms,
-                                           executor,
-                                           static_cast<size_t>(threads));
-    state.ResumeTiming();
-
-    const auto modified = workload.writer->Commit();
-    benchmark::DoNotOptimize(modified);
-
-    state.PauseTiming();
-    workload.writer.reset();
-    workload.dir.reset();
-    state.ResumeTiming();
-  }
-
+  auto prepare = [&] {
+    return PrepareUniformWorkload(segments, docs_per_segment, removal_contexts,
+                                  num_terms, executor,
+                                  static_cast<size_t>(threads));
+  };
+  RunBenchLoop(state, prepare);
   StopExecutor(executor);
 
   Workload reference;
@@ -394,22 +395,24 @@ void AddUniformArgs(benchmark::internal::Benchmark* b, int64_t segments,
   }
 }
 
-// Series 1: vary committed_segments.
+// Series 1: vary committed_segments. N=2 is the smallest value that activates
+// the executor (n_active >= 2). N=1 stays for sync baseline.
 void RegisterSegmentsSeries(benchmark::internal::Benchmark* b) {
   constexpr int64_t kDocsPerSegment = 4096;
   constexpr int64_t kContexts = 32;
   constexpr int64_t kSelectivityPct = 10;
-  for (auto segments : {1, 4, 16, 64, 256}) {
+  for (auto segments : {1, 2, 4, 16, 64, 256}) {
     AddUniformArgs(b, segments, kDocsPerSegment, kContexts, kSelectivityPct);
   }
 }
 
-// Series 2: vary docs_per_segment.
+// Series 2: vary docs_per_segment. Extended down to docs=4 to cover the
+// W*Q ≈ 8k..524k range for crossover discovery.
 void RegisterSegmentSizeSeries(benchmark::internal::Benchmark* b) {
   constexpr int64_t kSegments = 64;
   constexpr int64_t kContexts = 32;
   constexpr int64_t kSelectivityPct = 10;
-  for (auto docs : {1024, 4096, 16384, 65536}) {
+  for (auto docs : {4, 16, 64, 256, 1024, 4096, 16384, 65536}) {
     AddUniformArgs(b, kSegments, docs, kContexts, kSelectivityPct);
   }
 }
@@ -514,35 +517,22 @@ void BmStage1Skewed(benchmark::State& state) {
   const auto num_terms = IndexedTermsForSelectivity(selectivity_pct);
   auto executor = MakeExecutor(threads);
 
-  for (auto _ : state) {
-    state.PauseTiming();
-    auto workload = PrepareSkewedWorkload(small_count, small_docs, fat_docs,
-                                          removal_contexts, num_terms,
-                                          executor,
-                                          static_cast<size_t>(threads));
-    state.ResumeTiming();
-
-    const auto modified = workload.writer->Commit();
-    benchmark::DoNotOptimize(modified);
-
-    state.PauseTiming();
-    workload.writer.reset();
-    workload.dir.reset();
-    state.ResumeTiming();
-  }
-
+  auto prepare = [&] {
+    return PrepareSkewedWorkload(small_count, small_docs, fat_docs,
+                                 removal_contexts, num_terms, executor,
+                                 static_cast<size_t>(threads));
+  };
+  RunBenchLoop(state, prepare);
   StopExecutor(executor);
 
+  const auto distinct =
+    std::min<int64_t>(removal_contexts, static_cast<int64_t>(num_terms));
   Workload reference;
   reference.segment_count = small_count + 1;
   reference.total_docs = fat_docs + small_count * small_docs;
-  const auto distinct =
-    std::min<int64_t>(removal_contexts, static_cast<int64_t>(num_terms));
-  const auto fat_matches =
-    distinct * (fat_docs / static_cast<int64_t>(num_terms));
-  const auto small_matches =
-    distinct * (small_docs / static_cast<int64_t>(num_terms));
-  reference.removed_docs_total = fat_matches + small_count * small_matches;
+  reference.removed_docs_total =
+    distinct * (fat_docs / static_cast<int64_t>(num_terms)) +
+    small_count * distinct * (small_docs / static_cast<int64_t>(num_terms));
   SetCommonCounters(state, reference, removal_contexts, num_terms, threads);
 }
 
@@ -589,8 +579,7 @@ BENCHMARK(BmStage1Skewed)
 
 Workload PrepareMultiSkewedWorkload(int64_t fat_count, int64_t fat_docs,
                                     int64_t small_count, int64_t small_docs,
-                                    int64_t removal_contexts,
-                                    size_t num_terms,
+                                    int64_t removal_contexts, size_t num_terms,
                                     const yaclib::IExecutorPtr& executor,
                                     size_t parallelism) {
   Workload workload;
@@ -630,29 +619,19 @@ void BmStage1HeavySkewed(benchmark::State& state) {
   const auto num_terms = IndexedTermsForSelectivity(selectivity_pct);
   auto executor = MakeExecutor(threads);
 
-  for (auto _ : state) {
-    state.PauseTiming();
-    auto workload = PrepareMultiSkewedWorkload(
-      fat_count, fat_docs, small_count, small_docs, removal_contexts,
-      num_terms, executor, static_cast<size_t>(threads));
-    state.ResumeTiming();
-
-    const auto modified = workload.writer->Commit();
-    benchmark::DoNotOptimize(modified);
-
-    state.PauseTiming();
-    workload.writer.reset();
-    workload.dir.reset();
-    state.ResumeTiming();
-  }
-
+  auto prepare = [&] {
+    return PrepareMultiSkewedWorkload(fat_count, fat_docs, small_count,
+                                      small_docs, removal_contexts, num_terms,
+                                      executor, static_cast<size_t>(threads));
+  };
+  RunBenchLoop(state, prepare);
   StopExecutor(executor);
 
+  const auto distinct =
+    std::min<int64_t>(removal_contexts, static_cast<int64_t>(num_terms));
   Workload reference;
   reference.segment_count = fat_count + small_count;
   reference.total_docs = fat_count * fat_docs + small_count * small_docs;
-  const auto distinct =
-    std::min<int64_t>(removal_contexts, static_cast<int64_t>(num_terms));
   reference.removed_docs_total =
     fat_count * (distinct * (fat_docs / static_cast<int64_t>(num_terms))) +
     small_count * (distinct * (small_docs / static_cast<int64_t>(num_terms)));
@@ -668,11 +647,11 @@ void RegisterHeavySkewedSeries(benchmark::internal::Benchmark* b) {
   // All configs sized so total docs ~ 0.5..1.5M and N is well above any T
   // we test, to guarantee executor runs.
   const std::vector<std::array<int64_t, 4>> shapes = {
-    {1, 262144, 256, 1024},   // single fat, moderate skew (N=257)
-    {1, 524288, 512, 512},    // single fat, extreme skew  (N=513)
-    {4, 65536, 256, 1024},    // few fat, balanced totals  (N=260)
-    {16, 16384, 256, 1024},   // many fat, mid-skew        (N=272)
-    {16, 16384, 48, 1024},    // dense fat                 (N=64)
+    {1, 262144, 256, 1024},  // single fat, moderate skew (N=257)
+    {1, 524288, 512, 512},   // single fat, extreme skew  (N=513)
+    {4, 65536, 256, 1024},   // few fat, balanced totals  (N=260)
+    {16, 16384, 256, 1024},  // many fat, mid-skew        (N=272)
+    {16, 16384, 48, 1024},   // dense fat                 (N=64)
   };
   for (const auto& s : shapes) {
     for (auto threads : {0, 4, 8, 16}) {  // 0 = sync baseline

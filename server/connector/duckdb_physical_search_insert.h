@@ -22,18 +22,32 @@
 
 #include <duckdb.hpp>
 #include <duckdb/execution/physical_operator.hpp>
+#include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <memory>
 
 #include "catalog/table.h"
 
 namespace sdb::connector {
 
-// Parallel physical operator for INSERT into a search-backed table
-// (StorageKind::kSearch). Selected at plan time by SereneDBCatalog::PlanInsert
-// when the target shard reports kSearch -- the rocksdb-bound
-// SereneDBPhysicalInsert is bypassed entirely (different write contract:
-// no DuckDBColumnSerializer, no secondary RocksDB indexes, all rows land
-// in iresearch via SearchTableSinkWriter).
+// Parallel physical operator for writing into a search-backed table
+// (StorageKind::kSearch). It is the *single* write path for search tables --
+// regular INSERT, COPY FROM, INSERT...SELECT, and CREATE TABLE AS SELECT all
+// route here. (RocksDB needs separate SST / CTAS operators because its bulk
+// path differs from its row path; search has no such split.) Selected at
+// plan time by SereneDBCatalog::PlanInsert / PlanCreateTableAs when the
+// target reports kSearch -- the rocksdb-bound operators are bypassed
+// entirely (different write contract: no DuckDBColumnSerializer, no
+// secondary RocksDB indexes, all rows land in iresearch via
+// SearchTableSinkWriter).
+//
+// Two construction modes:
+//   * Insert mode  -- target table already exists; ctor takes the Table.
+//   * CTAS mode    -- target table is created (tombstoned) in
+//                     GetGlobalSinkState from the BoundCreateTableInfo, and
+//                     the tombstone is removed in Finalize on success
+//                     (rollback handled by the global-state dtor). The data
+//                     path (Sink / buffer / drain / markers) is identical to
+//                     insert mode.
 //
 // Lifecycle (per design D15):
 //   Sink(chunk):     append the input chunk to the per-txn LocalTableChanges
@@ -44,14 +58,22 @@ namespace sdb::connector {
 //                    transaction is committed by query::Transaction::Commit
 //                    later (same path InvertedIndexShard already uses).
 //
-// PR 3.4 scope: minimal write path. No PK conflict detection (duplicate INSERTs
-// silently double-write); generated-PK tables are rejected (need explicit PK).
-// Reads land in M4; conflict resolution in M6.
+// Scope: no PK conflict detection yet (duplicate INSERTs silently
+// double-write). Reads land in M4; conflict resolution in M6.
 class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
  public:
+  // Insert mode: pre-existing target table.
   SereneDBSearchInsert(duckdb::PhysicalPlan& plan,
                        std::shared_ptr<catalog::Table> table,
                        duckdb::vector<duckdb::LogicalType> types,
+                       duckdb::idx_t estimated_cardinality);
+
+  // CTAS mode: create the target table from `info` in GetGlobalSinkState.
+  // Output type is hardcoded to BIGINT (the inserted-row count), like
+  // SereneDBPhysicalCTAS.
+  SereneDBSearchInsert(duckdb::PhysicalPlan& plan,
+                       duckdb::unique_ptr<duckdb::BoundCreateTableInfo> info,
+                       duckdb::SchemaCatalogEntry& schema,
                        duckdb::idx_t estimated_cardinality);
 
   // Sink interface
@@ -75,7 +97,18 @@ class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
   bool IsSource() const final { return true; }
 
  private:
+  // Insert mode: the pre-existing target table. Null in CTAS mode (the
+  // table is created at GetGlobalSinkState time and lives on the global
+  // sink state from then on).
   std::shared_ptr<catalog::Table> _table;
+
+  // CTAS mode only -- mutually exclusive with _table. The
+  // BoundCreateTableInfo carries the column list + WITH options; the
+  // schema is where the new table lands. Raw pointer (not optional_ptr)
+  // so dereferencing in the const GetGlobalSinkState yields a non-const
+  // SchemaCatalogEntry&; null in insert mode.
+  duckdb::unique_ptr<duckdb::BoundCreateTableInfo> _ctas_info;
+  duckdb::SchemaCatalogEntry* _ctas_schema = nullptr;
 };
 
 }  // namespace sdb::connector

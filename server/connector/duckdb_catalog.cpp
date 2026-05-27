@@ -32,6 +32,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/planner/binder.hpp>
@@ -54,6 +55,7 @@
 #include "catalog/catalog.h"
 #include "catalog/pk_spec.h"
 #include "catalog/schema.h"
+#include "catalog/table_options.h"
 #include "catalog/view.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_entry_cache.h"
@@ -469,6 +471,21 @@ void SereneDBCatalog::DropSchema(duckdb::ClientContext& context,
 duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) {
+  // Search-backed CTAS routes through the single search-insert operator
+  // (CTAS mode) -- search has no separate bulk/SST path. Peek the storage
+  // kind from the WITH options; rocksdb keeps the SST-based CTAS operator.
+  {
+    auto& table_info = op.info->Base().Cast<duckdb::CreateTableInfo>();
+    catalog::CreateTableOptions probe;
+    ApplyStorageKind(probe, table_info.options);
+    if (probe.storage == catalog::StorageKind::kSearch) {
+      auto& search_ctas = planner.Make<SereneDBSearchInsert>(
+        std::move(op.info), op.schema, op.estimated_cardinality);
+      search_ctas.children.push_back(plan);
+      return search_ctas;
+    }
+  }
+
   // CTAS always gets a generated PK (monotonic), no sort needed.
   auto& ctas = planner.Make<SereneDBPhysicalCTAS>(std::move(op.info), op.schema,
                                                   op.estimated_cardinality);

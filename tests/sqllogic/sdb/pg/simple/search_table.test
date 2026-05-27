@@ -167,9 +167,24 @@ statement ok
 DROP TABLE search_genpk;
 
 
-# CREATE TABLE AS SELECT into a search-backed table: rejected before the
-# new table is materialised (parsed-options check, no catalog mutation).
-statement error
-CREATE TABLE search_ctas WITH (storage = 'search') AS SELECT 1 AS a;
+# CREATE TABLE AS SELECT into a search-backed table routes through the same
+# SereneDBSearchInsert operator (CTAS mode): create the tombstoned table,
+# drain the SELECT through the search sink, drop the tombstone on commit.
+# CTAS tables have a generated PK -- exercises the reserved_pk_ranges path.
+statement ok
+CREATE TABLE search_ctas WITH (storage = 'search') AS
+  SELECT * FROM (VALUES (1, 'a'), (2, 'b'), (3, 'c')) AS t(x, y);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_ctas;
+
+query
+SELECT * FROM search_ctas ORDER BY x;
 ----
-db error: ERROR: CREATE TABLE ... AS SELECT into a search-backed table is not yet supported (M3-M6)
+x	y
+1	a
+2	b
+3	c
+
+statement ok
+DROP TABLE search_ctas;

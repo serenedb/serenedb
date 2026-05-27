@@ -211,7 +211,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
   sink.Write({rocksdb::Slice(big_data[3])}, pk[3]);
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
-  _data_writer->Commit();
+  _data_writer->RefreshCommit();
 
   auto validate_row = [](const irs::SubReader& segment, std::string_view pk,
                          int32_t col1, std::string_view col2, bool col3,
@@ -320,7 +320,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     delete_sink.Finish();
     ASSERT_TRUE(delete_trx.Commit());
   }
-  _data_writer->Commit();
+  _data_writer->RefreshCommit();
 
   {
     auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
@@ -370,7 +370,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   sink.Write({{}}, pk[3]);  // null
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
-  _data_writer->Commit();
+  _data_writer->RefreshCommit();
 
   auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
   ASSERT_EQ(1, reader.size());
@@ -521,7 +521,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
 
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
-  _data_writer->Commit();
+  _data_writer->RefreshCommit();
   auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(1, reader.docs_count());
@@ -574,7 +574,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     sink.Finish();
     trx.Commit();
     // That would be our "existing" segment
-    _data_writer->Commit();
+    _data_writer->RefreshCommit();
   }
   {
     auto delete_trx = _data_writer->GetBatch();
@@ -625,7 +625,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     sink.Finish();
     trx.Commit();
     // eventually commit. value3 would be visible
-    _data_writer->Commit();
+    _data_writer->RefreshCommit();
   }
   auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
   ASSERT_EQ(2, reader.size());
@@ -752,7 +752,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
     sink.Finish();
     trx.Commit();
     // eventually commit. value3 would be visible
-    _data_writer->Commit();
+    _data_writer->RefreshCommit();
   }
   auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
   ASSERT_EQ(1, reader.size());
@@ -892,7 +892,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
       sink.Finish();
       trx.Commit();
       // eventually commit. value3 would be visible
-      limited_data_writer->Commit();
+      limited_data_writer->RefreshCommit();
     }
     auto reader = irs::DirectoryReader(dir, _codec, {.db = &TestDb()});
     ASSERT_EQ(3, reader.size());
@@ -975,7 +975,7 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
     sink.Finish();
     trx.Commit();
     // That would be our "existing" segment
-    _data_writer->Commit();
+    _data_writer->RefreshCommit();
   }
   {
     // this delete should not fire at value2 during new segment processing
@@ -1001,7 +1001,7 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
     sink.Write({rocksdb::Slice("value2", 6)}, kPk);
     sink.Finish();
     trx.Commit();
-    _data_writer->Commit();
+    _data_writer->RefreshCommit();
     // Intentionally do not commit data writer to force several same PKs in one
     // writer commit
   }
@@ -1069,7 +1069,7 @@ TEST_F(DuckDBSearchSinkWriterTest, UpdateWithExisting) {
     sink.Write({rocksdb::Slice("value2", 6)}, kPk2);
     sink.Finish();
     ASSERT_TRUE(trx.Commit());
-    _data_writer->Commit();
+    _data_writer->RefreshCommit();
   }
   // Phase 2: update pk1's value using the combined update writer.
   // Update == delete old + insert new for the same PK.
@@ -1088,7 +1088,7 @@ TEST_F(DuckDBSearchSinkWriterTest, UpdateWithExisting) {
     sink.Write({rocksdb::Slice("value1_new", 10)}, kPk1);
     sink.Finish();
     ASSERT_TRUE(trx.Commit());
-    _data_writer->Commit();
+    _data_writer->RefreshCommit();
   }
 
   auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});

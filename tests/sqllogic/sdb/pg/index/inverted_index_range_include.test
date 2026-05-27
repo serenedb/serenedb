@@ -38,7 +38,7 @@ INSERT INTO vec_r VALUES (4, [10, 10, 10]::FLOAT[3], 'delta', 400, 'body-four')
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) vec_r
+VACUUM (REFRESH_TABLE) vec_r
 
 
 # All-INCLUDE projection: plan should suppress the "Lookup" line --

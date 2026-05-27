@@ -42,7 +42,7 @@ CREATE INDEX docs_idx ON docs USING inverted(id, body en);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 # Indri Dirichlet with small mu: log((tf + mu*P(t|C)) / (dl + mu)) is finite

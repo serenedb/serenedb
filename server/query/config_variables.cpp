@@ -313,23 +313,23 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "commit_interval",
+      "refresh_interval",
       {
         LogicalTypeId::UINTEGER,
-        "Background commit interval (ms) for newly created inverted indexes. "
-        "Per-index WITH (commit_interval = ...) overrides. 0 disables the "
-        "commit task. Default: 1000.",
+        "Background refresh interval (ms) for newly created inverted indexes. "
+        "Per-index WITH (refresh_interval = ...) overrides. 0 disables the "
+        "refresh task. Default: 1000.",
         [] { return duckdb::Value::UINTEGER(1000); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
     },
     {
-      "consolidation_interval",
+      "compaction_interval",
       {
         LogicalTypeId::UINTEGER,
-        "Background consolidation interval (ms) for newly created inverted "
-        "indexes. Per-index WITH (consolidation_interval = ...) overrides. "
-        "0 disables the consolidation task. Default: 1000.",
+        "Background compaction interval (ms) for newly created inverted "
+        "indexes. Per-index WITH (compaction_interval = ...) overrides. "
+        "0 disables the compaction task. Default: 1000.",
         [] { return duckdb::Value::UINTEGER(1000); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
@@ -484,7 +484,16 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Sets the current session's user name.",
         [] { return duckdb::Value{std::string{StaticStrings::kDefaultUser}}; },
-        Readonly<"session_authorization">,
+        NoOverwrite<"session_authorization">,
+      },
+    },
+    {
+      "role",
+      {
+        LogicalTypeId::VARCHAR,
+        "Sets the current role.",
+        [] { return duckdb::Value{std::string{StaticStrings::kDefaultUser}}; },
+        NoOverwrite<"role">,
       },
     },
     {

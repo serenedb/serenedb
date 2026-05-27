@@ -34,7 +34,7 @@ CREATE INDEX docs_idx ON docs USING inverted(id, body en);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 # BM25 scores are non-negative; verify they are returned and > 0
@@ -91,7 +91,7 @@ INSERT INTO docs VALUES (5, 'a quick brown rabbit and a fox');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 # Both segments contribute matching documents; all should have score > 0
@@ -245,7 +245,7 @@ INSERT INTO docs VALUES (41, 'smart fox');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 # More than kScoreBlock (32) docs match 'fox'; all should exist in result
@@ -530,7 +530,7 @@ QUERY PLAN
 │    ────────────────────   │
 │      docs_idx.id ASC      │
 │                           │
-│          ~0 rows          │
+│          ~7 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
@@ -608,7 +608,7 @@ DELETE FROM docs WHERE id = 1;
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 query
 SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND id = 1;
@@ -659,8 +659,8 @@ SELECT TFIDF();
 ----
 db error: ERROR: No function matches the given name and argument types 'tfidf()'. You might need to add explicit type casts.
 	Candidate functions:
-	tfidf(BIGINT) -> FLOAT
-	tfidf(BIGINT, BOOLEAN) -> FLOAT
+	tfidf(col BIGINT) -> FLOAT
+	tfidf(col BIGINT, col2 BOOLEAN) -> FLOAT
 
 
 # Error: BM25(docs_idx.tableoid, 1) — must be 0 or 2 arguments
@@ -669,8 +669,8 @@ SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND BM25(docs_idx.tableoi
 ----
 db error: ERROR: No function matches the given name and argument types 'bm25(BIGINT, DECIMAL(2,1))'. You might need to add explicit type casts.
 	Candidate functions:
-	bm25(BIGINT) -> FLOAT
-	bm25(BIGINT, DOUBLE, DOUBLE) -> FLOAT
+	bm25(col BIGINT) -> FLOAT
+	bm25(col BIGINT, col2 DOUBLE, col3 DOUBLE) -> FLOAT
 
 
 # Error: BM25(docs_idx.tableoid, k1, b, extra) — too many arguments
@@ -679,8 +679,8 @@ SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND BM25(docs_idx.tableoi
 ----
 db error: ERROR: No function matches the given name and argument types 'bm25(BIGINT, DECIMAL(2,1), DECIMAL(3,2), DECIMAL(2,1))'. You might need to add explicit type casts.
 	Candidate functions:
-	bm25(BIGINT) -> FLOAT
-	bm25(BIGINT, DOUBLE, DOUBLE) -> FLOAT
+	bm25(col BIGINT) -> FLOAT
+	bm25(col BIGINT, col2 DOUBLE, col3 DOUBLE) -> FLOAT
 
 
 # Error: BM25(docs.tableoid) with plain table in FROM (no inverted index scan)
@@ -748,7 +748,7 @@ QUERY PLAN
 │    ────────────────────   │
 │           id ASC          │
 │                           │
-│          ~0 rows          │
+│          ~4 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           UNION           ├──────────────┐
@@ -937,7 +937,7 @@ CREATE INDEX docs2_idx ON docs2 USING inverted(id, body en);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs2;
+VACUUM (REFRESH_TABLE) docs2;
 
 
 statement ok
@@ -1017,13 +1017,21 @@ QUERY PLAN
 │    ────────────────────   │
 │          a.id ASC         │
 │                           │
-│          ~0 rows          │
+│          ~7 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
 │             id            │
 │         has_score         │
+│                           │
+│          ~7 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│  sdb_inverted_index_score │
 │                           │
 │          ~7 rows          │
 └─────────────┬─────────────┘
@@ -1082,7 +1090,7 @@ QUERY PLAN
 │    ────────────────────   │
 │      docs_idx.id ASC      │
 │                           │
-│          ~0 rows          │
+│          ~7 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
@@ -1194,34 +1202,53 @@ QUERY PLAN
 │          ~6 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           UNION           ├──────────────┬────────────────────────────┬────────────────────────────┐
-└─────────────┬─────────────┘              │                            │                            │
+│           UNION           ├──────────────┬────────────────────────────┐
+└─────────────┬─────────────┘              │                            │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│      STREAMING_LIMIT      ││      STREAMING_LIMIT      ││           UNION           │
+│    ────────────────────   ││    ────────────────────   ││                           │
+│          Limit: 2         ││          Limit: 2         ││                           ├──────────────┐
+│                           ││                           ││                           │              │
+│          ~2 rows          ││          ~2 rows          ││                           │              │
+└─────────────┬─────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘              │
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│      STREAMING_LIMIT      ││      STREAMING_LIMIT      ││      STREAMING_LIMIT      ││      STREAMING_LIMIT      │
+│       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││      STREAMING_LIMIT      ││      STREAMING_LIMIT      │
 │    ────────────────────   ││    ────────────────────   ││    ────────────────────   ││    ────────────────────   │
-│          Limit: 2         ││          Limit: 2         ││          Limit: 2         ││          Limit: 2         │
+│      Index: docs_idx      ││      Index: docs_idx      ││          Limit: 2         ││          Limit: 2         │
+│      Lookup: rocksdb      ││      Lookup: rocksdb      ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│          ~2 rows          ││          ~2 rows          ││          ~2 rows          ││          ~2 rows          │
-└─────────────┬─────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘
-┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
-│    ────────────────────   ││    ────────────────────   ││    ────────────────────   ││    ────────────────────   │
-│      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      │
-│      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      │
+│          Filter:          ││          Filter:          ││                           ││                           │
+│ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││                           ││                           │
+│    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│          Filter:          ││          Filter:          ││          Filter:          ││          Filter:          │
-│ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   ││    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   │
+│           Score:          ││           Score:          ││                           ││                           │
+│    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│           Score:          ││           Score:          ││           Score:          ││           Score:          │
-│    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   │
+│        Projections:       ││        Projections:       ││                           ││                           │
+│             id            ││             id            ││                           ││                           │
+│  sdb_inverted_index_score ││  sdb_inverted_index_score ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│        Projections:       ││        Projections:       ││        Projections:       ││        Projections:       │
-│             id            ││             id            ││             id            ││             id            │
-│  sdb_inverted_index_score ││  sdb_inverted_index_score ││  sdb_inverted_index_score ││  sdb_inverted_index_score │
-│                           ││                           ││                           ││                           │
-│          ~7 rows          ││          ~7 rows          ││          ~7 rows          ││          ~7 rows          │
-└───────────────────────────┘└───────────────────────────┘└───────────────────────────┘└───────────────────────────┘
+│          ~7 rows          ││          ~7 rows          ││          ~2 rows          ││          ~2 rows          │
+└───────────────────────────┘└───────────────────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘
+                                                          ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+                                                          │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
+                                                          │    ────────────────────   ││    ────────────────────   │
+                                                          │      Index: docs_idx      ││      Index: docs_idx      │
+                                                          │      Lookup: rocksdb      ││      Lookup: rocksdb      │
+                                                          │                           ││                           │
+                                                          │          Filter:          ││          Filter:          │
+                                                          │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
+                                                          │    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   │
+                                                          │                           ││                           │
+                                                          │           Score:          ││           Score:          │
+                                                          │    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   │
+                                                          │                           ││                           │
+                                                          │        Projections:       ││        Projections:       │
+                                                          │             id            ││             id            │
+                                                          │  sdb_inverted_index_score ││  sdb_inverted_index_score │
+                                                          │                           ││                           │
+                                                          │          ~7 rows          ││          ~7 rows          │
+                                                          └───────────────────────────┘└───────────────────────────┘
 
 
 query error
@@ -1258,34 +1285,53 @@ QUERY PLAN
 │          ~6 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           UNION           ├──────────────┬────────────────────────────┬────────────────────────────┐
-└─────────────┬─────────────┘              │                            │                            │
+│           UNION           ├──────────────┬────────────────────────────┐
+└─────────────┬─────────────┘              │                            │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│      STREAMING_LIMIT      ││      STREAMING_LIMIT      ││           UNION           │
+│    ────────────────────   ││    ────────────────────   ││                           │
+│          Limit: 2         ││          Limit: 2         ││                           ├──────────────┐
+│                           ││                           ││                           │              │
+│          ~2 rows          ││          ~2 rows          ││                           │              │
+└─────────────┬─────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘              │
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│      STREAMING_LIMIT      ││      STREAMING_LIMIT      ││      STREAMING_LIMIT      ││      STREAMING_LIMIT      │
+│       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││      STREAMING_LIMIT      ││      STREAMING_LIMIT      │
 │    ────────────────────   ││    ────────────────────   ││    ────────────────────   ││    ────────────────────   │
-│          Limit: 2         ││          Limit: 2         ││          Limit: 2         ││          Limit: 2         │
+│      Index: docs_idx      ││      Index: docs_idx      ││          Limit: 2         ││          Limit: 2         │
+│      Lookup: rocksdb      ││      Lookup: rocksdb      ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│          ~2 rows          ││          ~2 rows          ││          ~2 rows          ││          ~2 rows          │
-└─────────────┬─────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘
-┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
-│    ────────────────────   ││    ────────────────────   ││    ────────────────────   ││    ────────────────────   │
-│      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      │
-│      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      │
+│          Filter:          ││          Filter:          ││                           ││                           │
+│ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││                           ││                           │
+│    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│          Filter:          ││          Filter:          ││          Filter:          ││          Filter:          │
-│ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   ││    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   │
+│           Score:          ││           Score:          ││                           ││                           │
+│    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│           Score:          ││           Score:          ││           Score:          ││           Score:          │
-│    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   │
+│        Projections:       ││        Projections:       ││                           ││                           │
+│             id            ││             id            ││                           ││                           │
+│  sdb_inverted_index_score ││  sdb_inverted_index_score ││                           ││                           │
 │                           ││                           ││                           ││                           │
-│        Projections:       ││        Projections:       ││        Projections:       ││        Projections:       │
-│             id            ││             id            ││             id            ││             id            │
-│  sdb_inverted_index_score ││  sdb_inverted_index_score ││  sdb_inverted_index_score ││  sdb_inverted_index_score │
-│                           ││                           ││                           ││                           │
-│          ~7 rows          ││          ~7 rows          ││          ~7 rows          ││          ~7 rows          │
-└───────────────────────────┘└───────────────────────────┘└───────────────────────────┘└───────────────────────────┘
+│          ~7 rows          ││          ~7 rows          ││          ~2 rows          ││          ~2 rows          │
+└───────────────────────────┘└───────────────────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘
+                                                          ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+                                                          │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
+                                                          │    ────────────────────   ││    ────────────────────   │
+                                                          │      Index: docs_idx      ││      Index: docs_idx      │
+                                                          │      Lookup: rocksdb      ││      Lookup: rocksdb      │
+                                                          │                           ││                           │
+                                                          │          Filter:          ││          Filter:          │
+                                                          │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
+                                                          │    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   │
+                                                          │                           ││                           │
+                                                          │           Score:          ││           Score:          │
+                                                          │    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   │
+                                                          │                           ││                           │
+                                                          │        Projections:       ││        Projections:       │
+                                                          │             id            ││             id            │
+                                                          │  sdb_inverted_index_score ││  sdb_inverted_index_score │
+                                                          │                           ││                           │
+                                                          │          ~7 rows          ││          ~7 rows          │
+                                                          └───────────────────────────┘└───────────────────────────┘
 
 
 
@@ -1325,7 +1371,7 @@ INSERT INTO bigdocs SELECT i, 'fox' FROM generate_series(1, 1100) AS s(i);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) bigdocs;
+VACUUM (REFRESH_TABLE) bigdocs;
 
 
 # All 1100 docs match 'fox'; count exercises multi-batch materializer path
@@ -1397,7 +1443,7 @@ INSERT INTO boost_docs VALUES (2, 'beta');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) boost_docs;
+VACUUM (REFRESH_TABLE) boost_docs;
 
 
 query
@@ -1465,7 +1511,7 @@ INSERT INTO sql_boost_docs VALUES (3, 'gamma');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) sql_boost_docs;
+VACUUM (REFRESH_TABLE) sql_boost_docs;
 
 
 # Baseline (no SQL-surface boost): 3-way OR over the body terms; all
@@ -1584,7 +1630,7 @@ INSERT INTO prefix_docs VALUES (4, 'gamma-1');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) prefix_docs;
+VACUUM (REFRESH_TABLE) prefix_docs;
 
 
 # Bare `LIKE 'pre%'` -- DuckDB rewrites to prefix(sku, 'alpha-');

@@ -36,7 +36,7 @@ enum class Version : int32_t {
 };
 
 FieldWriter::ptr MakeWriter(Version version, PostingsWriter::ptr&& writer,
-                            bool consolidation,
+                            bool compaction,
                             IResourceManager& resource_manager);
 
 FieldReader::ptr MakeReader(PostingsReader::ptr&& reader,

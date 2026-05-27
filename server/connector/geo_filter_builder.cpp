@@ -52,17 +52,17 @@ namespace {
 // re-shapes (struct field projection) are NOT peeled -- they carry data
 // changes the filter builder must respect.
 const duckdb::Expression& PeelSameTypeIdCast(const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_CAST) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
     return expr;
   }
   const auto& cast = expr.Cast<duckdb::BoundCastExpression>();
   if (!cast.child) {
     return expr;
   }
-  if (cast.return_type.id() != cast.child->return_type.id()) {
+  if (cast.GetReturnType().id() != cast.child->GetReturnType().id()) {
     return expr;
   }
-  if (cast.return_type.IsNested()) {
+  if (cast.GetReturnType().IsNested()) {
     return expr;
   }
   return *cast.child;
@@ -343,7 +343,7 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
 Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
                      const duckdb::BoundFunctionExpression& func) {
   if (func.children.size() != 2) {
-    return {ERROR_BAD_PARAMETER, func.function.name, " has ",
+    return {ERROR_BAD_PARAMETER, func.function.GetName(), " has ",
             func.children.size(), " inputs but 2 expected"};
   }
 
@@ -356,7 +356,7 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
     column_info =
       FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*func.children[1]));
     if (!column_info) {
-      return {ERROR_BAD_PARAMETER, func.function.name,
+      return {ERROR_BAD_PARAMETER, func.function.GetName(),
               ": one argument must be an indexed column reference"};
     }
     field_idx = 1;
@@ -366,17 +366,17 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
   const auto* shape_val =
     TryGetConstant(PeelSameTypeIdCast(*func.children[shape_idx]));
   if (!shape_val) {
-    return {ERROR_BAD_PARAMETER, func.function.name,
+    return {ERROR_BAD_PARAMETER, func.function.GetName(),
             ": shape argument must be a constant"};
   }
 
   if (column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info->logical_type.id() != duckdb::LogicalTypeId::GEOMETRY) {
-    return {ERROR_BAD_PARAMETER, func.function.name,
+    return {ERROR_BAD_PARAMETER, func.function.GetName(),
             ": field must be JSON (GeoJSON) or GEOMETRY"};
   }
   if (!column_info->tokenizer.analyzer) {
-    return {ERROR_BAD_PARAMETER, func.function.name,
+    return {ERROR_BAD_PARAMETER, func.function.GetName(),
             ": field has no analyzer attached"};
   }
 
@@ -403,10 +403,10 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
   options->shape = std::move(shape);
 
-  if (func.function.name == kGeoIntersects) {
+  if (func.function.GetName() == kGeoIntersects) {
     options->type = irs::GeoFilterType::Intersects;
   } else {
-    SDB_ASSERT(func.function.name == kGeoContains);
+    SDB_ASSERT(func.function.GetName() == kGeoContains);
     // ST_Contains(field, shape): indexed contains shape -> filter type
     //   IsContained ("the filter shape is contained within indexed data").
     // ST_Contains(shape, field): shape contains indexed -> filter type
@@ -438,17 +438,17 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
 // analyzer before adding the iresearch GeoDistanceFilter.
 const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
   const FilterContext& ctx, const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return nullptr;
   }
   const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
   if (func.children.size() != 2) {
     return nullptr;
   }
-  if (func.function.name == kGeoDistance) {
+  if (func.function.GetName() == kGeoDistance) {
     return &func;
   }
-  if (func.function.name == kL2DistanceOp) {
+  if (func.function.GetName() == kL2DistanceOp) {
     auto is_geo_col = [&ctx](const duckdb::Expression& child) {
       const auto* info = FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(child));
       if (!info) {
@@ -518,7 +518,7 @@ Result FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
 std::optional<Result> TryDispatchGeoFunction(
   irs::BooleanFilter& filter, const FilterContext& ctx,
   const duckdb::BoundFunctionExpression& func) {
-  const auto& name = func.function.name;
+  const auto& name = func.function.GetName();
   if (name == kGeoInRange) {
     return FromGeoInRange(filter, ctx, func);
   }

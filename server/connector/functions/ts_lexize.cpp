@@ -351,8 +351,8 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
         LookupTokenizerDict(*ctx.snapshot, ctx.db_id, ctx.current_schema,
                             duckdb::StringValue::Get(val));
       auto& fn = input.GetBoundFunction();
-      fn.function = ConstantFn;
-      fn.init_local_state = InitTsLexizeLocalState;
+      fn.SetFunctionCallback(ConstantFn);
+      fn.SetInitStateCallback(InitTsLexizeLocalState);
       return bind;
     }
   }
@@ -369,7 +369,7 @@ duckdb::ScalarFunction MakeFn(duckdb::vector<duckdb::LogicalType> args,
     dynamic_fn,
     bind,
   };
-  f.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+  f.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
   return f;
 }
 

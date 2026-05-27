@@ -41,23 +41,30 @@ checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically t
 cleanup_interval_step	1	Number of commit ticks between background unreferenced-file cleanup passes for newly created inverted indexes. Per-index WITH (cleanup_interval_step = ...) overrides. 0 disables cleanup. Default: 1.
 client_encoding	UTF8	Sets the client's character set encoding.
 client_min_messages	notice	Sets the message levels that are sent to the client.
-commit_interval	1000	Background commit interval (ms) for newly created inverted indexes. Per-index WITH (commit_interval = ...) overrides. 0 disables the commit task. Default: 1000.
-configure_metrics	{"ATTACH_LOAD_STORAGE_LATENCY": "true", "ATTACH_REPLAY_WAL_LATENCY": "true", "BLOCKED_THREAD_TIME": "true", "CHECKPOINT_LATENCY": "true", "COMMIT_LOCAL_STORAGE_LATENCY": "true", "CPU_TIME": "true", "CUMULATIVE_CARDINALITY": "true", "CUMULATIVE_ROWS_SCANNED": "true", "EXTRA_INFO": "true", "LATENCY": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_NAME": "true", "OPERATOR_ROWS_SCANNED": "true", "OPERATOR_TIMING": "true", "OPERATOR_TYPE": "true", "QUERY_NAME": "true", "RESULT_SET_SIZE": "true", "ROWS_RETURNED": "true", "SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true", "TOTAL_BYTES_READ": "true", "TOTAL_BYTES_WRITTEN": "true", "TOTAL_MEMORY_ALLOCATED": "true", "WAITING_TO_ATTACH_LATENCY": "true", "WAL_REPLAY_ENTRY_COUNT": "true", "WRITE_TO_WAL_LATENCY": "true"}	Accepts a JSON enabling custom metrics
-configure_profiling	{"ATTACH_LOAD_STORAGE_LATENCY": "true", "ATTACH_REPLAY_WAL_LATENCY": "true", "BLOCKED_THREAD_TIME": "true", "CHECKPOINT_LATENCY": "true", "COMMIT_LOCAL_STORAGE_LATENCY": "true", "CPU_TIME": "true", "CUMULATIVE_CARDINALITY": "true", "CUMULATIVE_ROWS_SCANNED": "true", "EXTRA_INFO": "true", "LATENCY": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_NAME": "true", "OPERATOR_ROWS_SCANNED": "true", "OPERATOR_TIMING": "true", "OPERATOR_TYPE": "true", "QUERY_NAME": "true", "RESULT_SET_SIZE": "true", "ROWS_RETURNED": "true", "SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true", "TOTAL_BYTES_READ": "true", "TOTAL_BYTES_WRITTEN": "true", "TOTAL_MEMORY_ALLOCATED": "true", "WAITING_TO_ATTACH_LATENCY": "true", "WAL_REPLAY_ENTRY_COUNT": "true", "WRITE_TO_WAL_LATENCY": "true"}	Accepts a JSON enabling custom metrics
-consolidation_interval	1000	Background consolidation interval (ms) for newly created inverted indexes. Per-index WITH (consolidation_interval = ...) overrides. 0 disables the consolidation task. Default: 1000.
+compaction_interval	1000	Background compaction interval (ms) for newly created inverted indexes. Per-index WITH (compaction_interval = ...) overrides. 0 disables the compaction task. Default: 1000.
+configure_metrics	[*]	Accepts a JSON enabling custom metrics
+configure_profiling	[*]	Accepts a JSON enabling custom metrics
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction
 custom_extension_repository	(empty)	Overrides the custom endpoint for remote extension installation
-custom_profiling_settings	{"ATTACH_LOAD_STORAGE_LATENCY": "true", "ATTACH_REPLAY_WAL_LATENCY": "true", "BLOCKED_THREAD_TIME": "true", "CHECKPOINT_LATENCY": "true", "COMMIT_LOCAL_STORAGE_LATENCY": "true", "CPU_TIME": "true", "CUMULATIVE_CARDINALITY": "true", "CUMULATIVE_ROWS_SCANNED": "true", "EXTRA_INFO": "true", "LATENCY": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_NAME": "true", "OPERATOR_ROWS_SCANNED": "true", "OPERATOR_TIMING": "true", "OPERATOR_TYPE": "true", "QUERY_NAME": "true", "RESULT_SET_SIZE": "true", "ROWS_RETURNED": "true", "SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true", "TOTAL_BYTES_READ": "true", "TOTAL_BYTES_WRITTEN": "true", "TOTAL_MEMORY_ALLOCATED": "true", "WAITING_TO_ATTACH_LATENCY": "true", "WAL_REPLAY_ENTRY_COUNT": "true", "WRITE_TO_WAL_LATENCY": "true"}	Accepts a JSON enabling custom metrics
+custom_profiling_settings	[*]	Accepts a JSON enabling custom metrics
 custom_user_agent	(empty)	Metadata from DuckDB callers
 debug_asof_iejoin	off	DEBUG SETTING: force use of IEJoin to implement AsOf joins
 debug_checkpoint_abort	NONE	DEBUG SETTING: trigger an abort while checkpointing for testing purposes
 debug_checkpoint_sleep_ms	0	DEBUG SETTING: time to sleep before a checkpoint
+debug_disable_optimizer	off	DEBUG SETTING: disable optimizer for most queries
 debug_eviction_queue_sleep_micro_seconds	0	DEBUG SETTING: time for the eviction queue to sleep before acquiring shared ownership of block memory
 debug_force_external	off	DEBUG SETTING: force out-of-core computation for operators that support it, used for testing
+debug_force_fetch_row	off	DEBUG SETTING: force per-row fetching during scans, used for testing
 debug_force_no_cross_product	off	DEBUG SETTING: Force disable cross product generation when hyper graph isn't connected, used for testing
 debug_physical_table_scan_execution_strategy	DEFAULT	DEBUG SETTING: force use of given strategy for executing physical table scans
 debug_skip_checkpoint_on_commit	off	DEBUG SETTING: skip checkpointing on commit
+debug_verification_mode	NONE	DEBUG SETTING: toggle the verification mode.
+debug_verification_projection	off	DEBUG SETTING: add internal verification projections to stress optimizers
 debug_verify_blocks	off	DEBUG SETTING: verify block metadata during checkpointing
+debug_verify_column_bindings	off	DEBUG SETTING: run extra internal verification of column bindings
+debug_verify_serializer	off	DEBUG SETTING: verify logical plan serializer
+debug_verify_statement	NONE	DEBUG SETTING: the type of statement verification to perform
+debug_verify_stats	off	DEBUG SETTING: verify statistics are correct during execution, instead of assuming
 debug_verify_vector	NONE	DEBUG SETTING: enable vector verification
 debug_window_mode	WINDOW	DEBUG SETTING: switch window mode to use
 default_block_size	262144	The default block size for new duckdb database files (new as-in, they do not yet exist).
@@ -65,6 +72,7 @@ default_collation	(empty)	The collation setting used when none is specified
 default_null_order	NULLS_LAST	NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST)
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC)
 default_secret_storage	local_file	Allows switching the default storage for secrets
+default_transaction_invalidation_policy	ALL_ERRORS_INVALIDATE_TRANSACTION	When to invalidate transactions when errors occur (SYNTACTIC_ERRORS_DO_NOT_INVALIDATE, i.e. parser and binder exceptions do not invalidate, or ALL_ERRORS_INVALIDATE_TRANSACTION)
 default_transaction_isolation	repeatable read	Sets the transaction isolation level of each new transaction.
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
 deprecated_using_key_syntax	DEFAULT	Configures the use of the deprecated union syntax for USING KEY CTEs.
@@ -77,6 +85,7 @@ disabled_log_types	(empty)	Sets the list of disabled loggers
 disabled_optimizers	(empty)	DEBUG SETTING: disable a specific set of optimizers (comma separated)
 duckdb_api	cpp	DuckDB API surface
 dynamic_or_filter_threshold	50	The maximum amount of OR filters we generate dynamically from a hash join
+enable_caching_operators	on	Enables caching operators that cache intermediate results
 enable_curl_server_cert_verification	on	Enable server side certificate verification for CURL backend.
 enable_external_access	on	Allow the database to access external state (through e.g. loading/installing modules, COPY TO/FROM, CSV readers, pandas replacement scans, etc)
 enable_external_file_cache	on	Allow the database to cache external files (e.g., Parquet) in memory.
@@ -85,7 +94,7 @@ enable_geoparquet_conversion	on	Attempt to decode/encode geometry data in/as Geo
 enable_global_s3_configuration	on	Automatically fetch AWS credentials from environment variables.
 enable_http_logging	on	(deprecated) Enables HTTP logging
 enable_http_metadata_cache	off	Whether or not the global http metadata is used to cache HTTP metadata
-enable_logging	<slt:ignore>	Enables the logger
+enable_logging	0	Enables the logger
 enable_macro_dependencies	off	Enable created MACROs to create dependencies on the referenced objects (such as tables)
 enable_object_cache	off	[PLACEHOLDER] Legacy setting - does nothing
 enable_profiling	NULL	Enables profiling, and sets the output format (JSON, QUERY_TREE, QUERY_TREE_OPTIMIZER)
@@ -93,16 +102,19 @@ enable_progress_bar	off	Enables the progress bar, printing progress to the termi
 enable_progress_bar_print	on	Controls the printing of the progress bar, when 'enable_progress_bar' is true
 enable_server_cert_verification	off	Enable server side certificate verification.
 enable_view_dependencies	off	Enable created VIEWs to create dependencies on the referenced objects (such as tables)
-enabled_log_types	<slt:ignore>	Sets the list of enabled loggers
+enabled_log_types	(empty)	Sets the list of enabled loggers
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY)
 extension_directories	[]	Set the directories to store extensions in
 extension_directory	(empty)	Set the directory to store extensions in
+external_file_cache_local_block_size	16384	Block size in bytes for the external file cache when reading local (non-remote) files.
+external_file_cache_remote_block_size	2097152	Block size in bytes for the external file cache when reading remote files (e.g. HTTP/S3).
 external_threads	1	The number of external threads that work on DuckDB tasks.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 file_search_path	(empty)	A comma separated list of directories to search for input files
 force_bitpacking_mode	AUTO	DEBUG SETTING: forces a specific bitpacking mode
+force_column_metadata_reuse	off	Force re-use of row group metadata on a column-level when checkpointing on older storage versions 6 and 7. This breaks storage backward-compatibility with older DuckDB versions.
 force_compression	auto	DEBUG SETTING: forces a specific compression method to be used
 force_download	off	Forces upfront download of file
 force_download_threshold	0	Forces upfront download of files smaller than the given size in bytes
@@ -113,7 +125,7 @@ hf_max_per_page	0	Debug option to limit number of items returned in list request
 home_directory	(empty)	Sets the home directory used by the system
 http_keep_alive	on	Keep alive connections. Setting this to false can help when running into connection failures
 http_logging_output	(empty)	(deprecated) The file to which HTTP logging output should be saved, or empty to print to the terminal
-http_proxy	(empty)	HTTP proxy host
+http_proxy	(empty)	HTTP proxy host (defaults to the HTTP_PROXY environment variable when unset)
 http_proxy_password	(empty)	Password for HTTP proxy
 http_proxy_username	(empty)	Username for HTTP proxy
 http_retries	3	HTTP retries on I/O error
@@ -126,16 +138,20 @@ iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for
 iceberg_use_metadata_log	on	Whether or not to make use of the (optional) 'metadata-log' of a table to ensure atomicity guarantees hold, at the cost of making another GET for json metadata in rare circumstances
 iceberg_via_aws_sdk_for_catalog_interactions	off	Use legacy code to interact with AWS-based catalogs, via AWS's SDK
 ieee_floating_point_ops	on	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
+ignore_row_group_size_for_partitioned_tables	off	Ignore unsupported write.parquet.row-group-size-bytes table property for partitioned tables
+ignore_target_file_size_for_partitioned_tables	off	Ignore unsupported write.target-file-size-bytes table property for partitioned tables
 ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
 immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called
 in_hot_standby	off	Shows whether hot standby is currently active.
 index_scan_max_count	2048	The maximum index scan count sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage * total_row_count) rows match, we perform an index scan instead of a table scan.
 index_scan_percentage	0.001	The index scan percentage sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage * total_row_count) rows match, we perform an index scan instead of a table scan.
+initial_column_segment_size	2048	The initial memory (in bytes) reserved for the first transient column segment. Must be a power of two. Internally, we subtract the block header size (typically 8 bytes) for segments with or exceeding 1024 bytes. Subsequent segments double in size until reaching the block size.
 integer_datetimes	on	Shows whether datetimes are integer based.
 integer_division	off	Whether or not the / operator defaults to integer division, or to floating point division
 is_superuser	off	Shows whether the current session's user is a superuser.
-lambda_syntax	DEFAULT	Configures the use of the deprecated single arrow operator (->) for lambda functions.
+lambda_syntax	ENABLE_SINGLE_ARROW	Configures the use of the deprecated single arrow operator (->) for lambda functions.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization
+legacy_metrics_format	off	When enabled, profiling output uses the legacy flat format instead of the current grouped format
 lock_configuration	off	Whether or not configurations can be altered
 log_query_path	(empty)	Specifies the path to which queries should be logged (default: NULL, queries are not logged)
 logging_level	<slt:ignore>	The log level which will be recorded in the log
@@ -156,6 +172,7 @@ old_implicit_casting	off	Allow implicit casting to/from VARCHAR
 operator_memory_limit	NULL	The maximum memory for query intermediates (sorts, hash tables) per connection (e.g. 256MB)
 order_by_non_integer_literal	off	Allow ordering by non-integer literals - ordering by such literals has no effect.
 ordered_aggregate_threshold	262144	The number of rows to accumulate before sorting, used for tuning
+parallelize_sequential_sources	on	Whether to automatically parallelize sequential sources
 parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same files multiple times
 partitioned_write_flush_threshold	524288	The threshold in number of rows after which we flush a thread state when writing using PARTITION_BY
 partitioned_write_max_open_files	100	The maximum amount of files the system can keep open before flushing to disk when writing using PARTITION_BY
@@ -174,6 +191,8 @@ profiling_coverage	SELECT	The profiling coverage (SELECT or ALL)
 profiling_mode	NULL	The profiling mode (STANDARD or DETAILED)
 profiling_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
 progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
+refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000.
+role	postgres	Sets the current role.
 row_group_size	122880	Default column row-group size for INCLUDEd in newly created inverted indexes. Per-column (row_group_size = ...) and per-index WITH (row_group_size = ...) override. Reads from existing indexes are unaffected. Default: 122'880.
 s3_access_key_id	NULL	S3 Access Key ID
 s3_allow_recursive_globbing	on	Whether globs on S3-like storage are optimized with recursive strategy (alterative is listing)
@@ -209,14 +228,16 @@ session_authorization	postgres	Sets the current session's user name.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 statement_timeout	0	Aborts any statement that takes more than the specified number of milliseconds. Accepted for compatibility but not currently enforced.
 storage_block_prefetch	REMOTE_ONLY	In which scenarios to use storage block prefetching
-storage_compatibility_version	v0.10.2	Serialize on checkpoint with compatibility for a given duckdb version
+storage_compatibility_version	latest	Serialize on checkpoint with compatibility for a given duckdb version
 streaming_buffer_size	976.5 KiB	The maximum memory to buffer between fetching from a streaming result (e.g. 1GB)
 temp_directory	.tmp	Set the directory to which to write temp files
 temp_file_encryption	off	Encrypt all temporary files if database is encrypted
 threads	<slt:ignore>	The number of total threads used by the system.
+tracked_metrics	[*]	A list of metric glob patterns to enable for collection (e.g. ['query.*', 'optimizer.*'])
 transaction_isolation	repeatable read	Sets the current transaction's isolation level.
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
 unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
+unsafe_iceberg_ignore_sort_order	off	Allow INSERT/UPDATE on iceberg tables that declare a sort order, without applying that sort order to the written data. The Iceberg spec permits this (writers are not required to honour a declared sort order, and readers do not assume files are sorted), but skipping the sort may reduce later file-pruning effectiveness and compression.
 user	<slt:ignore>	The username to use. Ignored for legacy compatibility.
 username	<slt:ignore>	The username to use. Ignored for legacy compatibility.
 vacuum_rebuild_indexes	0	(Experimental) Allow vacuum to compact row groups on tables with bound ART indexes, rebuilding the indexes afterward. Tables with a row count exceeding this threshold are skipped. 0 = disabled.
@@ -227,6 +248,7 @@ wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count r
 warnings_as_errors	off	Escalate all warnings to errors.
 worker_threads	<slt:ignore>	The number of total threads used by the system.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
+write_buffer_row_group_memory_limit	<slt:ignore>	The maximum data to buffer in row groups (in bytes) to buffer prior to flushing them together. When either this limit is reached, or write_buffer_row_group_count is reached, we flush the data to disk. Defaults to 20% of memory limit divided by thread count.
 zstd_min_string_length	4096	The (average) length at which to enable ZSTD compression, defaults to 4096
 
 
@@ -279,23 +301,30 @@ checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically t
 cleanup_interval_step	1	Number of commit ticks between background unreferenced-file cleanup passes for newly created inverted indexes. Per-index WITH (cleanup_interval_step = ...) overrides. 0 disables cleanup. Default: 1.
 client_encoding	UTF8	Sets the client's character set encoding.
 client_min_messages	notice	Sets the message levels that are sent to the client.
-commit_interval	1000	Background commit interval (ms) for newly created inverted indexes. Per-index WITH (commit_interval = ...) overrides. 0 disables the commit task. Default: 1000.
-configure_metrics	{"ATTACH_LOAD_STORAGE_LATENCY": "true", "ATTACH_REPLAY_WAL_LATENCY": "true", "BLOCKED_THREAD_TIME": "true", "CHECKPOINT_LATENCY": "true", "COMMIT_LOCAL_STORAGE_LATENCY": "true", "CPU_TIME": "true", "CUMULATIVE_CARDINALITY": "true", "CUMULATIVE_ROWS_SCANNED": "true", "EXTRA_INFO": "true", "LATENCY": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_NAME": "true", "OPERATOR_ROWS_SCANNED": "true", "OPERATOR_TIMING": "true", "OPERATOR_TYPE": "true", "QUERY_NAME": "true", "RESULT_SET_SIZE": "true", "ROWS_RETURNED": "true", "SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true", "TOTAL_BYTES_READ": "true", "TOTAL_BYTES_WRITTEN": "true", "TOTAL_MEMORY_ALLOCATED": "true", "WAITING_TO_ATTACH_LATENCY": "true", "WAL_REPLAY_ENTRY_COUNT": "true", "WRITE_TO_WAL_LATENCY": "true"}	Accepts a JSON enabling custom metrics
-configure_profiling	{"ATTACH_LOAD_STORAGE_LATENCY": "true", "ATTACH_REPLAY_WAL_LATENCY": "true", "BLOCKED_THREAD_TIME": "true", "CHECKPOINT_LATENCY": "true", "COMMIT_LOCAL_STORAGE_LATENCY": "true", "CPU_TIME": "true", "CUMULATIVE_CARDINALITY": "true", "CUMULATIVE_ROWS_SCANNED": "true", "EXTRA_INFO": "true", "LATENCY": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_NAME": "true", "OPERATOR_ROWS_SCANNED": "true", "OPERATOR_TIMING": "true", "OPERATOR_TYPE": "true", "QUERY_NAME": "true", "RESULT_SET_SIZE": "true", "ROWS_RETURNED": "true", "SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true", "TOTAL_BYTES_READ": "true", "TOTAL_BYTES_WRITTEN": "true", "TOTAL_MEMORY_ALLOCATED": "true", "WAITING_TO_ATTACH_LATENCY": "true", "WAL_REPLAY_ENTRY_COUNT": "true", "WRITE_TO_WAL_LATENCY": "true"}	Accepts a JSON enabling custom metrics
-consolidation_interval	1000	Background consolidation interval (ms) for newly created inverted indexes. Per-index WITH (consolidation_interval = ...) overrides. 0 disables the consolidation task. Default: 1000.
+compaction_interval	1000	Background compaction interval (ms) for newly created inverted indexes. Per-index WITH (compaction_interval = ...) overrides. 0 disables the compaction task. Default: 1000.
+configure_metrics	[*]	Accepts a JSON enabling custom metrics
+configure_profiling	[*]	Accepts a JSON enabling custom metrics
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction
 custom_extension_repository	(empty)	Overrides the custom endpoint for remote extension installation
-custom_profiling_settings	{"ATTACH_LOAD_STORAGE_LATENCY": "true", "ATTACH_REPLAY_WAL_LATENCY": "true", "BLOCKED_THREAD_TIME": "true", "CHECKPOINT_LATENCY": "true", "COMMIT_LOCAL_STORAGE_LATENCY": "true", "CPU_TIME": "true", "CUMULATIVE_CARDINALITY": "true", "CUMULATIVE_ROWS_SCANNED": "true", "EXTRA_INFO": "true", "LATENCY": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_NAME": "true", "OPERATOR_ROWS_SCANNED": "true", "OPERATOR_TIMING": "true", "OPERATOR_TYPE": "true", "QUERY_NAME": "true", "RESULT_SET_SIZE": "true", "ROWS_RETURNED": "true", "SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true", "TOTAL_BYTES_READ": "true", "TOTAL_BYTES_WRITTEN": "true", "TOTAL_MEMORY_ALLOCATED": "true", "WAITING_TO_ATTACH_LATENCY": "true", "WAL_REPLAY_ENTRY_COUNT": "true", "WRITE_TO_WAL_LATENCY": "true"}	Accepts a JSON enabling custom metrics
+custom_profiling_settings	[*]	Accepts a JSON enabling custom metrics
 custom_user_agent	(empty)	Metadata from DuckDB callers
 debug_asof_iejoin	off	DEBUG SETTING: force use of IEJoin to implement AsOf joins
 debug_checkpoint_abort	NONE	DEBUG SETTING: trigger an abort while checkpointing for testing purposes
 debug_checkpoint_sleep_ms	0	DEBUG SETTING: time to sleep before a checkpoint
+debug_disable_optimizer	off	DEBUG SETTING: disable optimizer for most queries
 debug_eviction_queue_sleep_micro_seconds	0	DEBUG SETTING: time for the eviction queue to sleep before acquiring shared ownership of block memory
 debug_force_external	off	DEBUG SETTING: force out-of-core computation for operators that support it, used for testing
+debug_force_fetch_row	off	DEBUG SETTING: force per-row fetching during scans, used for testing
 debug_force_no_cross_product	off	DEBUG SETTING: Force disable cross product generation when hyper graph isn't connected, used for testing
 debug_physical_table_scan_execution_strategy	DEFAULT	DEBUG SETTING: force use of given strategy for executing physical table scans
 debug_skip_checkpoint_on_commit	off	DEBUG SETTING: skip checkpointing on commit
+debug_verification_mode	NONE	DEBUG SETTING: toggle the verification mode.
+debug_verification_projection	off	DEBUG SETTING: add internal verification projections to stress optimizers
 debug_verify_blocks	off	DEBUG SETTING: verify block metadata during checkpointing
+debug_verify_column_bindings	off	DEBUG SETTING: run extra internal verification of column bindings
+debug_verify_serializer	off	DEBUG SETTING: verify logical plan serializer
+debug_verify_statement	NONE	DEBUG SETTING: the type of statement verification to perform
+debug_verify_stats	off	DEBUG SETTING: verify statistics are correct during execution, instead of assuming
 debug_verify_vector	NONE	DEBUG SETTING: enable vector verification
 debug_window_mode	WINDOW	DEBUG SETTING: switch window mode to use
 default_block_size	262144	The default block size for new duckdb database files (new as-in, they do not yet exist).
@@ -303,6 +332,7 @@ default_collation	(empty)	The collation setting used when none is specified
 default_null_order	NULLS_LAST	NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST)
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC)
 default_secret_storage	local_file	Allows switching the default storage for secrets
+default_transaction_invalidation_policy	ALL_ERRORS_INVALIDATE_TRANSACTION	When to invalidate transactions when errors occur (SYNTACTIC_ERRORS_DO_NOT_INVALIDATE, i.e. parser and binder exceptions do not invalidate, or ALL_ERRORS_INVALIDATE_TRANSACTION)
 default_transaction_isolation	read committed	Sets the transaction isolation level of each new transaction.
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
 deprecated_using_key_syntax	DEFAULT	Configures the use of the deprecated union syntax for USING KEY CTEs.
@@ -315,6 +345,7 @@ disabled_log_types	(empty)	Sets the list of disabled loggers
 disabled_optimizers	(empty)	DEBUG SETTING: disable a specific set of optimizers (comma separated)
 duckdb_api	cpp	DuckDB API surface
 dynamic_or_filter_threshold	50	The maximum amount of OR filters we generate dynamically from a hash join
+enable_caching_operators	on	Enables caching operators that cache intermediate results
 enable_curl_server_cert_verification	on	Enable server side certificate verification for CURL backend.
 enable_external_access	on	Allow the database to access external state (through e.g. loading/installing modules, COPY TO/FROM, CSV readers, pandas replacement scans, etc)
 enable_external_file_cache	on	Allow the database to cache external files (e.g., Parquet) in memory.
@@ -323,7 +354,7 @@ enable_geoparquet_conversion	on	Attempt to decode/encode geometry data in/as Geo
 enable_global_s3_configuration	on	Automatically fetch AWS credentials from environment variables.
 enable_http_logging	on	(deprecated) Enables HTTP logging
 enable_http_metadata_cache	off	Whether or not the global http metadata is used to cache HTTP metadata
-enable_logging	<slt:ignore>	Enables the logger
+enable_logging	0	Enables the logger
 enable_macro_dependencies	off	Enable created MACROs to create dependencies on the referenced objects (such as tables)
 enable_object_cache	off	[PLACEHOLDER] Legacy setting - does nothing
 enable_profiling	NULL	Enables profiling, and sets the output format (JSON, QUERY_TREE, QUERY_TREE_OPTIMIZER)
@@ -331,16 +362,19 @@ enable_progress_bar	off	Enables the progress bar, printing progress to the termi
 enable_progress_bar_print	on	Controls the printing of the progress bar, when 'enable_progress_bar' is true
 enable_server_cert_verification	off	Enable server side certificate verification.
 enable_view_dependencies	off	Enable created VIEWs to create dependencies on the referenced objects (such as tables)
-enabled_log_types	<slt:ignore>	Sets the list of enabled loggers
+enabled_log_types	(empty)	Sets the list of enabled loggers
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY)
 extension_directories	[]	Set the directories to store extensions in
 extension_directory	(empty)	Set the directory to store extensions in
+external_file_cache_local_block_size	16384	Block size in bytes for the external file cache when reading local (non-remote) files.
+external_file_cache_remote_block_size	2097152	Block size in bytes for the external file cache when reading remote files (e.g. HTTP/S3).
 external_threads	1	The number of external threads that work on DuckDB tasks.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 file_search_path	(empty)	A comma separated list of directories to search for input files
 force_bitpacking_mode	AUTO	DEBUG SETTING: forces a specific bitpacking mode
+force_column_metadata_reuse	off	Force re-use of row group metadata on a column-level when checkpointing on older storage versions 6 and 7. This breaks storage backward-compatibility with older DuckDB versions.
 force_compression	auto	DEBUG SETTING: forces a specific compression method to be used
 force_download	off	Forces upfront download of file
 force_download_threshold	0	Forces upfront download of files smaller than the given size in bytes
@@ -351,7 +385,7 @@ hf_max_per_page	0	Debug option to limit number of items returned in list request
 home_directory	(empty)	Sets the home directory used by the system
 http_keep_alive	on	Keep alive connections. Setting this to false can help when running into connection failures
 http_logging_output	(empty)	(deprecated) The file to which HTTP logging output should be saved, or empty to print to the terminal
-http_proxy	(empty)	HTTP proxy host
+http_proxy	(empty)	HTTP proxy host (defaults to the HTTP_PROXY environment variable when unset)
 http_proxy_password	(empty)	Password for HTTP proxy
 http_proxy_username	(empty)	Username for HTTP proxy
 http_retries	3	HTTP retries on I/O error
@@ -364,16 +398,20 @@ iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for
 iceberg_use_metadata_log	on	Whether or not to make use of the (optional) 'metadata-log' of a table to ensure atomicity guarantees hold, at the cost of making another GET for json metadata in rare circumstances
 iceberg_via_aws_sdk_for_catalog_interactions	off	Use legacy code to interact with AWS-based catalogs, via AWS's SDK
 ieee_floating_point_ops	on	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
+ignore_row_group_size_for_partitioned_tables	off	Ignore unsupported write.parquet.row-group-size-bytes table property for partitioned tables
+ignore_target_file_size_for_partitioned_tables	off	Ignore unsupported write.target-file-size-bytes table property for partitioned tables
 ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
 immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called
 in_hot_standby	off	Shows whether hot standby is currently active.
 index_scan_max_count	2048	The maximum index scan count sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage * total_row_count) rows match, we perform an index scan instead of a table scan.
 index_scan_percentage	0.001	The index scan percentage sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage * total_row_count) rows match, we perform an index scan instead of a table scan.
+initial_column_segment_size	2048	The initial memory (in bytes) reserved for the first transient column segment. Must be a power of two. Internally, we subtract the block header size (typically 8 bytes) for segments with or exceeding 1024 bytes. Subsequent segments double in size until reaching the block size.
 integer_datetimes	on	Shows whether datetimes are integer based.
 integer_division	off	Whether or not the / operator defaults to integer division, or to floating point division
 is_superuser	off	Shows whether the current session's user is a superuser.
-lambda_syntax	DEFAULT	Configures the use of the deprecated single arrow operator (->) for lambda functions.
+lambda_syntax	ENABLE_SINGLE_ARROW	Configures the use of the deprecated single arrow operator (->) for lambda functions.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization
+legacy_metrics_format	off	When enabled, profiling output uses the legacy flat format instead of the current grouped format
 lock_configuration	off	Whether or not configurations can be altered
 log_query_path	(empty)	Specifies the path to which queries should be logged (default: NULL, queries are not logged)
 logging_level	<slt:ignore>	The log level which will be recorded in the log
@@ -394,6 +432,7 @@ old_implicit_casting	off	Allow implicit casting to/from VARCHAR
 operator_memory_limit	NULL	The maximum memory for query intermediates (sorts, hash tables) per connection (e.g. 256MB)
 order_by_non_integer_literal	off	Allow ordering by non-integer literals - ordering by such literals has no effect.
 ordered_aggregate_threshold	262144	The number of rows to accumulate before sorting, used for tuning
+parallelize_sequential_sources	on	Whether to automatically parallelize sequential sources
 parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same files multiple times
 partitioned_write_flush_threshold	524288	The threshold in number of rows after which we flush a thread state when writing using PARTITION_BY
 partitioned_write_max_open_files	100	The maximum amount of files the system can keep open before flushing to disk when writing using PARTITION_BY
@@ -412,6 +451,8 @@ profiling_coverage	SELECT	The profiling coverage (SELECT or ALL)
 profiling_mode	NULL	The profiling mode (STANDARD or DETAILED)
 profiling_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
 progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
+refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000.
+role	postgres	Sets the current role.
 row_group_size	122880	Default column row-group size for INCLUDEd in newly created inverted indexes. Per-column (row_group_size = ...) and per-index WITH (row_group_size = ...) override. Reads from existing indexes are unaffected. Default: 122'880.
 s3_access_key_id	NULL	S3 Access Key ID
 s3_allow_recursive_globbing	on	Whether globs on S3-like storage are optimized with recursive strategy (alterative is listing)
@@ -447,14 +488,16 @@ session_authorization	postgres	Sets the current session's user name.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 statement_timeout	0	Aborts any statement that takes more than the specified number of milliseconds. Accepted for compatibility but not currently enforced.
 storage_block_prefetch	REMOTE_ONLY	In which scenarios to use storage block prefetching
-storage_compatibility_version	v0.10.2	Serialize on checkpoint with compatibility for a given duckdb version
+storage_compatibility_version	latest	Serialize on checkpoint with compatibility for a given duckdb version
 streaming_buffer_size	976.5 KiB	The maximum memory to buffer between fetching from a streaming result (e.g. 1GB)
 temp_directory	.tmp	Set the directory to which to write temp files
 temp_file_encryption	off	Encrypt all temporary files if database is encrypted
 threads	<slt:ignore>	The number of total threads used by the system.
+tracked_metrics	[*]	A list of metric glob patterns to enable for collection (e.g. ['query.*', 'optimizer.*'])
 transaction_isolation	read committed	Sets the current transaction's isolation level.
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
 unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
+unsafe_iceberg_ignore_sort_order	off	Allow INSERT/UPDATE on iceberg tables that declare a sort order, without applying that sort order to the written data. The Iceberg spec permits this (writers are not required to honour a declared sort order, and readers do not assume files are sorted), but skipping the sort may reduce later file-pruning effectiveness and compression.
 user	<slt:ignore>	The username to use. Ignored for legacy compatibility.
 username	<slt:ignore>	The username to use. Ignored for legacy compatibility.
 vacuum_rebuild_indexes	0	(Experimental) Allow vacuum to compact row groups on tables with bound ART indexes, rebuilding the indexes afterward. Tables with a row count exceeding this threshold are skipped. 0 = disabled.
@@ -465,4 +508,5 @@ wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count r
 warnings_as_errors	off	Escalate all warnings to errors.
 worker_threads	<slt:ignore>	The number of total threads used by the system.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
+write_buffer_row_group_memory_limit	<slt:ignore>	The maximum data to buffer in row groups (in bytes) to buffer prior to flushing them together. When either this limit is reached, or write_buffer_row_group_count is reached, we flush the data to disk. Defaults to 20% of memory limit divided by thread count.
 zstd_min_string_length	4096	The (average) length at which to enable ZSTD compression, defaults to 4096

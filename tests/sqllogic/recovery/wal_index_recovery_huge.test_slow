@@ -23,10 +23,10 @@ statement ok
 CREATE TABLE huge_t(id INTEGER PRIMARY KEY, body TEXT);
 
 statement ok
-CREATE INDEX huge_idx ON huge_t USING inverted(id, body huge_dict) WITH (commit_interval = 0);
+CREATE INDEX huge_idx ON huge_t USING inverted(id, body huge_dict) WITH (refresh_interval = 0);
 
 statement ok
-VACUUM (UPDATE_INDEXES) huge_t;
+VACUUM (REFRESH_TABLE) huge_t;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';
@@ -52,7 +52,7 @@ SELECT 1;
 
 connection huge_after
 statement ok retry 60 backoff 1s
-VACUUM (UPDATE_INDEXES) huge_t;
+VACUUM (REFRESH_TABLE) huge_t;
 
 # Counts: 100_000 - 100 (deleted at every multiple of 1000) = 99_900.
 connection huge_after

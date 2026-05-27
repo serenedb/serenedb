@@ -824,10 +824,10 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     if (t == duckdb::ExpressionType::VALUE_DEFAULT) {
       auto phys = op.columns[i].index;
       SDB_ASSERT(phys < op.bound_defaults.size());
-      proj_types.push_back(op.bound_defaults[phys]->return_type);
+      proj_types.push_back(op.bound_defaults[phys]->GetReturnType());
       proj_exprs.push_back(op.bound_defaults[phys]->Copy());
     } else if (t == duckdb::ExpressionType::BOUND_REF) {
-      proj_types.push_back(expr->return_type);
+      proj_types.push_back(expr->GetReturnType());
       proj_exprs.push_back(expr->Copy());
     } else {
       // STORED gen-col recompute: placeholder from BindUpdateConstraints;
@@ -845,7 +845,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
           SDB_ASSERT(it != dep_source.end());
           e = it->second->Copy();
         });
-      proj_types.push_back(bound_copy->return_type);
+      proj_types.push_back(bound_copy->GetReturnType());
       proj_exprs.push_back(std::move(bound_copy));
     }
   }

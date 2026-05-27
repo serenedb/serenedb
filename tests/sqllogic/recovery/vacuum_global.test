@@ -1,0 +1,176 @@
+control substitution on
+
+# Instance-wide VACUUM scopes: REFRESH_ALL / COMPACT_ALL / SYNC_STATS_ALL /
+# COMPACT_ROCKSDB. These walk every database / the whole rocksdb engine, so they
+# need their own serened instance -- under the shared sqllogic runner they would
+# touch other tests' per-test databases. Per-scope variants and the error paths
+# are covered in tests/sqllogic/sdb/pg/index/vacuum_options.test.
+
+statement ok
+CREATE SCHEMA s1;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY public.en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false,
+    accent = false, frequency = true, position = true, norm = true);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY s1.en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false,
+    accent = false, frequency = true, position = true, norm = true);
+
+
+statement ok
+CREATE TABLE public.docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX docs_idx ON public.docs USING inverted(id, body en);
+
+
+statement ok
+CREATE TABLE s1.notes (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX notes_idx ON s1.notes USING inverted(id, body en);
+
+
+# REFRESH_ALL publishes pending writes across every database + schema at once.
+statement ok
+INSERT INTO public.docs VALUES (1, 'alpha across schemas');
+
+
+statement ok
+INSERT INTO s1.notes VALUES (1, 'alpha across schemas');
+
+
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('alpha');
+----
+count
+0
+
+
+statement ok
+VACUUM (REFRESH_ALL);
+
+
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('alpha');
+----
+count
+1
+
+
+query
+SELECT count(*) FROM s1.notes_idx WHERE body @@ ts_phrase('alpha');
+----
+count
+1
+
+
+# Inflate both indexes to several segments, then COMPACT_ALL to a fixpoint.
+statement ok
+INSERT INTO public.docs VALUES (2, 'beta one');
+
+
+statement ok
+VACUUM (REFRESH_ALL);
+
+
+statement ok
+INSERT INTO public.docs VALUES (3, 'beta two');
+
+
+statement ok
+INSERT INTO s1.notes VALUES (2, 'beta two');
+
+
+statement ok
+VACUUM (REFRESH_ALL);
+
+
+statement ok
+INSERT INTO public.docs VALUES (4, 'beta three');
+
+
+statement ok
+VACUUM (REFRESH_ALL);
+
+
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('beta');
+----
+count
+3
+
+
+statement ok
+VACUUM (COMPACT_ALL);
+
+
+# Compaction must not change query results in any database.
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('beta');
+----
+count
+3
+
+
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('alpha');
+----
+count
+1
+
+
+query
+SELECT count(*) FROM s1.notes_idx WHERE body @@ ts_phrase('beta');
+----
+count
+1
+
+
+# COMPACT_ALL again is idempotent.
+statement ok
+VACUUM (COMPACT_ALL);
+
+
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('beta');
+----
+count
+3
+
+
+# SYNC_STATS_ALL and COMPACT_ROCKSDB are whole-instance maintenance ops that
+# must run without error.
+statement ok
+VACUUM (SYNC_STATS_ALL);
+
+
+statement ok
+VACUUM (COMPACT_ROCKSDB);
+
+
+# Data is still intact after the rocksdb compaction.
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('beta');
+----
+count
+3
+
+
+statement ok
+DROP TABLE public.docs;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY public.en;
+
+
+statement ok
+DROP SCHEMA s1 CASCADE;

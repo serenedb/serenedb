@@ -72,47 +72,47 @@ enum OpenMode {
 
 ENABLE_BITMASK_ENUM(OpenMode);
 
-// A set of candidates denoting an instance of consolidation
-using Consolidation = std::vector<const SubReader*>;
-using ConsolidationView = std::span<const SubReader* const>;
+// A set of candidates denoting an instance of compaction
+using Compaction = std::vector<const SubReader*>;
+using CompactionView = std::span<const SubReader* const>;
 
-// segments that are under consolidation
-using ConsolidatingSegments = absl::flat_hash_set<std::string_view>;
+// segments that are under compaction
+using CompactingSegments = absl::flat_hash_set<std::string_view>;
 
-// Mark consolidation candidate segments matching the current policy
-// candidates the segments that should be consolidated
+// Mark compaction candidate segments matching the current policy
+// candidates the segments that should be compacted
 // in: segment candidates that may be considered by this policy
 // out: actual segments selected by the current policy
 // dir the segment directory
 // meta the index meta containing segments to be considered
-// Consolidating_segments segments that are currently in progress
-// of consolidation
+// Compacting_segments segments that are currently in progress
+// of compaction
 // Final candidates are all segments selected by at least some policy
-using ConsolidationPolicy =
-  std::function<void(Consolidation& candidates, const IndexReader& index,
-                     const ConsolidatingSegments& consolidating_segments)>;
+using CompactionPolicy =
+  std::function<void(Compaction& candidates, const IndexReader& index,
+                     const CompactingSegments& compacting_segments)>;
 
-enum class ConsolidationError : uint32_t {
-  // Consolidation failed
+enum class CompactionError : uint32_t {
+  // Compaction failed
   Fail = 0,
 
-  // Consolidation successfully finished
+  // Compaction successfully finished
   Ok,
 
-  // Consolidation was scheduled for the upcoming commit
+  // Compaction was scheduled for the upcoming commit
   Pending,
 };
 
-// Represents result of a consolidation
-struct ConsolidationResult {
+// Represents result of a compaction
+struct CompactionResult {
   // Number of candidates
   size_t size{0};
 
   // Error code
-  ConsolidationError error{ConsolidationError::Fail};
+  CompactionError error{CompactionError::Fail};
 
   // intentionally implicit
-  operator bool() const noexcept { return error != ConsolidationError::Fail; }
+  operator bool() const noexcept { return error != CompactionError::Fail; }
 };
 
 // Options the the writer should use for segments
@@ -533,22 +533,22 @@ class IndexWriter : private util::Noncopyable {
   // Policy the specified defragmentation policy
   // Codec desired format that will be used for segment creation,
   // nullptr == use index_writer's codec
-  // Progress callback triggered for consolidation steps, if the
-  // callback returns false then consolidation is aborted
+  // Progress callback triggered for compaction steps, if the
+  // callback returns false then compaction is aborted
   // For deferred policies during the commit stage each policy will be
   // given the exact same index_meta containing all segments in the
   // commit, however, the resulting acceptor will only be segments not
-  // yet marked for consolidation by other policies in the same commit
-  ConsolidationResult Consolidate(
-    const ConsolidationPolicy& policy, Format::ptr codec = nullptr,
-    const MergeWriter::FlushProgress& progress = {});
+  // yet marked for compaction by other policies in the same commit
+  CompactionResult Compact(const CompactionPolicy& policy,
+                           Format::ptr codec = nullptr,
+                           const MergeWriter::FlushProgress& progress = {});
 
   // Imports index from the specified index reader into new segment
   // Reader the index reader to import.
   // Desired format that will be used for segment creation,
   // nullptr == use index_writer's codec.
-  // Progress callback triggered for consolidation steps, if the
-  // callback returns false then consolidation is aborted.
+  // Progress callback triggered for compaction steps, if the
+  // callback returns false then compaction is aborted.
   // Returns true on success.
   bool Import(const IndexReader& reader, Format::ptr codec = nullptr,
               const MergeWriter::FlushProgress& progress = {});
@@ -569,31 +569,30 @@ class IndexWriter : private util::Noncopyable {
   // nullptr == default sort order
   const Comparer* Comparator() const noexcept { return _comparator; }
 
-  // Begins the two-phase transaction.
+  // Begins the two-phase refresh (publish the in-memory writer's segment).
   // payload arbitrary user supplied data to store in the index
-  // Returns true if transaction has been successfully started.
-
-  bool Begin(const CommitInfo& info = {}) {
+  // Returns true if a refresh has been successfully started.
+  bool RefreshBegin(const CommitInfo& info = {}) {
     _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
     return Start(info);
   }
 
-  // Rollbacks the two-phase transaction
-  void Rollback() {
+  // Discards a pending two-phase refresh.
+  void RefreshAbort() {
     _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
     Abort();
   }
 
-  // Make all buffered changes visible for readers.
+  // Publish all buffered changes so they become visible to readers.
   // payload arbitrary user supplied data to store in the index
-  // Return whether any changes were committed.
+  // Return whether any changes were published.
   //
-  // Note that if begin() has been already called commit() is
-  // relatively lightweight operation.
-  // FIXME(gnusi): Commit() should return committed index snapshot
-  bool Commit(const CommitInfo& info = {}) {
+  // If RefreshBegin() has already been called RefreshCommit() is
+  // relatively lightweight.
+  // FIXME(gnusi): RefreshCommit() should return committed index snapshot
+  bool RefreshCommit(const CommitInfo& info = {}) {
     _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
     const bool modified = Start(info);
@@ -612,29 +611,28 @@ class IndexWriter : private util::Noncopyable {
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
 
  private:
-  struct ConsolidationContext : util::Noncopyable {
-    std::shared_ptr<const DirectoryReaderImpl> consolidation_reader;
-    Consolidation candidates;
+  struct CompactionContext : util::Noncopyable {
+    std::shared_ptr<const DirectoryReaderImpl> compaction_reader;
+    Compaction candidates;
     MergeWriter merger;
   };
 
-  static_assert(std::is_nothrow_move_constructible_v<ConsolidationContext>);
+  static_assert(std::is_nothrow_move_constructible_v<CompactionContext>);
 
   struct ImportContext {
     ImportContext(
       IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
-      Consolidation&& consolidation_candidates,
+      Compaction&& compaction_candidates,
       std::shared_ptr<const SegmentReaderImpl>&& reader,
-      std::shared_ptr<const DirectoryReaderImpl>&& consolidation_reader,
+      std::shared_ptr<const DirectoryReaderImpl>&& compaction_reader,
       MergeWriter&& merger) noexcept
       : tick{tick},
         segment{std::move(segment)},
         refs{std::move(refs)},
         reader{std::move(reader)},
-        consolidation_ctx{
-          .consolidation_reader = std::move(consolidation_reader),
-          .candidates = std::move(consolidation_candidates),
-          .merger = std::move(merger)} {}
+        compaction_ctx{.compaction_reader = std::move(compaction_reader),
+                       .candidates = std::move(compaction_candidates),
+                       .merger = std::move(merger)} {}
 
     ImportContext(IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
                   std::shared_ptr<const SegmentReaderImpl>&& reader,
@@ -643,7 +641,7 @@ class IndexWriter : private util::Noncopyable {
         segment{std::move(segment)},
         refs{std::move(refs)},
         reader{std::move(reader)},
-        consolidation_ctx{.merger{resource_manager}} {}
+        compaction_ctx{.merger{resource_manager}} {}
 
     ImportContext(ImportContext&&) = default;
 
@@ -654,7 +652,7 @@ class IndexWriter : private util::Noncopyable {
     IndexSegment segment;
     FileRefs refs;
     std::shared_ptr<const SegmentReaderImpl> reader;
-    ConsolidationContext consolidation_ctx;
+    CompactionContext compaction_ctx;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<ImportContext>);
@@ -861,7 +859,7 @@ class IndexWriter : private util::Noncopyable {
     WaitGroup pending;
 
     // set of segments to be removed from the index upon commit
-    ConsolidatingSegments segment_mask;
+    CompactingSegments segment_mask;
 
     FlushContext() = default;
 
@@ -889,7 +887,7 @@ class IndexWriter : private util::Noncopyable {
     void StartReset(IndexWriter& writer, bool keep_next = false) noexcept {
       auto* curr = ctx.get();
       if (curr != nullptr) {
-        std::lock_guard lock{writer._consolidating.lock};
+        std::lock_guard lock{writer._compacting.lock};
         writer.Cleanup(*curr, keep_next ? nullptr : curr->next);
       }
     }
@@ -940,8 +938,7 @@ class IndexWriter : private util::Noncopyable {
   ActiveSegmentContext GetSegmentContext();
 
   // Return options for SegmentWriter
-  SegmentWriterOptions GetSegmentWriterOptions(
-    bool consolidation) const noexcept;
+  SegmentWriterOptions GetSegmentWriterOptions(bool compaction) const noexcept;
 
   // Return next segment identifier
   uint64_t NextSegmentId() noexcept;
@@ -965,13 +962,13 @@ class IndexWriter : private util::Noncopyable {
   PayloadProvider _meta_payload_provider;  // provides payload for new segments
   const Comparer* _comparator;
   Format::ptr _codec;
-  // Prevent concurrent Begin/Commit/Rollback/Clear and multiple Consolidate
+  // Prevent concurrent Begin/Commit/Rollback/Clear and multiple Compact
   absl::Mutex _commit_lock;
   struct {
     std::recursive_mutex lock;  // TODO(mbkkt) make it absl::Mutex
-    // It's recursive because our tests, where consolidation policy calls commit
-    ConsolidatingSegments segments;  // segments that are under consolidation
-  } _consolidating;
+    // It's recursive because our tests, where compaction policy calls commit
+    CompactingSegments segments;  // segments that are under compaction
+  } _compacting;
   // directory used for initialization of readers
   Directory& _dir;
   // currently active context accumulating data to be

@@ -210,7 +210,10 @@ void EmitResult(duckdb::ClientContext& context,
   const size_t batch_start = g.current_idx;
   if (g.finished || batch_start >= total) {
     g.finished = true;
-    output.SetCardinality(0);
+    // Use SetChildCardinality so child Vector sizes drop to 0 too -- otherwise
+    // downstream BinaryExecutor sees stale child vectors from the previous
+    // batch and complains about size mismatches.
+    output.SetChildCardinality(0);
     return;
   }
   // TODO(codeworse): think how to send the result in batches
@@ -221,7 +224,12 @@ void EmitResult(duckdb::ClientContext& context,
       continue;
     }
     if (g.scan_tableoid && proj == g.tableoid_output_idx) {
-      output.data[proj].Reference(duckdb::Value::BIGINT(g.tableoid_value));
+      // batch_size here, not output.size(): SetChildCardinality runs at the
+      // bottom of this function, so output.size() is still 0 and a Reference
+      // with count=0 leaves the constant vector at zero rows, which then
+      // mismatches the rest of the chunk in downstream BinaryExecutor.
+      output.data[proj].Reference(duckdb::Value::BIGINT(g.tableoid_value),
+                                  duckdb::count_t(batch_size));
     }
   }
 
@@ -236,7 +244,7 @@ void EmitResult(duckdb::ClientContext& context,
     MaterializeIncludeColumnsScoreOrder(g, *g.reader, slice, output);
   }
   g.current_idx += batch_size;
-  output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));
+  output.SetChildCardinality(static_cast<duckdb::idx_t>(batch_size));
   SDB_ASSERT(batch_size > 0);
   g.produced_rows.fetch_add(batch_size, std::memory_order_relaxed);
 
@@ -420,7 +428,7 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
   auto remained =
     g.remained_segments.fetch_sub(processed, std::memory_order_acq_rel);
   if (processed == 0 || remained != processed) {
-    output.SetCardinality(0);
+    output.SetChildCardinality(0);
     return;
   }
   g.search_finished.store(true, std::memory_order_release);
@@ -494,7 +502,7 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
   const size_t total = l.seg_docs.size();
   const size_t batch_start = l.current_idx;
   if (batch_start >= total) {
-    output.SetCardinality(0);
+    output.SetChildCardinality(0);
     return;
   }
 
@@ -506,7 +514,8 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
       continue;
     }
     if (g.scan_tableoid && proj == g.tableoid_output_idx) {
-      output.data[proj].Reference(duckdb::Value::BIGINT(g.tableoid_value));
+      output.data[proj].Reference(duckdb::Value::BIGINT(g.tableoid_value),
+                                  duckdb::count_t(batch_size));
     }
   }
 
@@ -522,7 +531,7 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
     MaterializeIncludeColumnsScoreOrder(g, *g.reader, slice, output);
   }
 
-  output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));
+  output.SetChildCardinality(static_cast<duckdb::idx_t>(batch_size));
   l.current_idx += batch_size;
   g.produced_rows.fetch_add(batch_size, std::memory_order_relaxed);
 }

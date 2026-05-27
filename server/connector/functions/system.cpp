@@ -52,31 +52,47 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
                              duckdb::Vector& result) {
   auto& context = state.GetContext();
   auto count = args.size();
-
-  duckdb::BinaryExecutor::ExecuteWithNulls<duckdb::string_t, bool,
-                                           duckdb::string_t>(
-    args.data[0], args.data[1], result, count,
-    [&](duckdb::string_t name, bool missing_ok, duckdb::ValidityMask& mask,
-        duckdb::idx_t idx) -> duckdb::string_t {
-      std::string key{name.GetData(), name.GetSize()};
-      duckdb::Value value;
-      if (context.TryGetCurrentSetting(key, value)) {
-        return duckdb::StringVector::AddString(result, value.ToString());
-      }
-      if (missing_ok) {
-        mask.SetInvalid(idx);
-        return duckdb::string_t();
-      }
-      throw duckdb::InvalidInputException(
-        "unrecognized configuration parameter \"%s\"", key);
-    });
+  duckdb::UnifiedVectorFormat name_data, ok_data;
+  args.data[0].ToUnifiedFormat(name_data);
+  args.data[1].ToUnifiedFormat(ok_data);
+  const auto* name_ptr =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(name_data);
+  const auto* ok_ptr = duckdb::UnifiedVectorFormat::GetData<bool>(ok_data);
+  auto* result_ptr =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
+  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
+  for (duckdb::idx_t row = 0; row < count; row++) {
+    auto n_idx = name_data.sel->get_index(row);
+    auto o_idx = ok_data.sel->get_index(row);
+    if (!name_data.validity.RowIsValid(n_idx) ||
+        !ok_data.validity.RowIsValid(o_idx)) {
+      result_validity.SetInvalid(row);
+      continue;
+    }
+    const auto& name = name_ptr[n_idx];
+    bool missing_ok = ok_ptr[o_idx];
+    std::string key{name.GetData(), name.GetSize()};
+    duckdb::Value value;
+    if (context.TryGetCurrentSetting(key, value)) {
+      result_ptr[row] =
+        duckdb::StringVector::AddString(result, value.ToString());
+      continue;
+    }
+    if (missing_ok) {
+      result_validity.SetInvalid(row);
+      continue;
+    }
+    throw duckdb::InvalidInputException(
+      "unrecognized configuration parameter \"%s\"", key);
+  }
 }
 
-void CurrentUserFunction(duckdb::DataChunk&, duckdb::ExpressionState& state,
+void CurrentUserFunction(duckdb::DataChunk& args,
+                         duckdb::ExpressionState& state,
                          duckdb::Vector& result) {
   auto& context = state.GetContext();
   const auto& conn_ctx = GetSereneDBContext(context);
-  result.Reference(conn_ctx.user());
+  result.Reference(conn_ctx.user(), duckdb::count_t(args.size()));
 }
 
 // set_config(name, value, is_local) -> text
@@ -104,11 +120,11 @@ void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 }
 
 // PG-style version string. Overrides DuckDB's built-in version()
-void VersionFunction(duckdb::DataChunk&, duckdb::ExpressionState&,
+void VersionFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                      duckdb::Vector& result) {
   auto value = duckdb::Value(
     absl::StrCat("PostgreSQL 18.3 (SereneDB ", SERENEDB_VERSION, ")"));
-  result.Reference(value);
+  result.Reference(value, duckdb::count_t(args.size()));
 }
 
 // search_path_canonical() -> text
@@ -123,7 +139,7 @@ void SearchPathCanonicalFunction(duckdb::DataChunk& args,
   auto entries =
     duckdb::ClientData::Get(context).catalog_search_path->GetResolvedSetPaths();
   auto str = duckdb::CatalogSearchEntry::ListToString(entries);
-  result.Reference(duckdb::Value{std::move(str)});
+  result.Reference(duckdb::Value{std::move(str)}, duckdb::count_t(args.size()));
 }
 
 // num_nonnulls(...) -> int
@@ -173,12 +189,13 @@ void NumNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 void PgTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                       duckdb::Vector& result) {
   auto oid = static_cast<int64_t>(pg::Type2Oid(args.data[0].GetType()));
-  result.Reference(duckdb::Value::BIGINT(oid));
+  result.Reference(duckdb::Value::BIGINT(oid), duckdb::count_t(args.size()));
 }
 
 duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
   duckdb::FunctionBindExpressionInput& input) {
-  auto oid = static_cast<int64_t>(pg::Type2Oid(input.children[0]->return_type));
+  auto oid =
+    static_cast<int64_t>(pg::Type2Oid(input.children[0]->GetReturnType()));
   auto val = duckdb::Value::BIGINT(oid);
   val.Reinterpret(pg::REGTYPE());
   return duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(val));
@@ -341,8 +358,8 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
   {
     duckdb::ScalarFunction func{
       "pg_typeof", {duckdb::LogicalType::ANY}, pg::REGTYPE(), PgTypeofFunction};
-    func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
-    func.bind_expression = BindPgTypeof;
+    func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    func.SetBindExpressionCallback(BindPgTypeof);
     loader.RegisterFunction(func);
   }
 
@@ -353,7 +370,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BOOLEAN},
       duckdb::LogicalType::VARCHAR,
       CurrentSetting2Function};
-    func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }
 
@@ -381,8 +398,8 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                 {duckdb::LogicalType::ANY},
                                 duckdb::LogicalType::INTEGER,
                                 NumNonNullsFunction};
-    func.varargs = duckdb::LogicalType::ANY;
-    func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    func.SetVarArgs(duckdb::LogicalType::ANY);
+    func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }
 
@@ -392,8 +409,8 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                 {duckdb::LogicalType::ANY},
                                 duckdb::LogicalType::INTEGER,
                                 NumNullsFunction};
-    func.varargs = duckdb::LogicalType::ANY;
-    func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    func.SetVarArgs(duckdb::LogicalType::ANY);
+    func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }
 

@@ -52,7 +52,7 @@ TEST_P(SortedIndexTestCase, reader_components) {
   GTEST_SKIP() << kSortedReason;
 }
 
-TEST_P(SortedIndexTestCase, simple_sequential_consolidate) {
+TEST_P(SortedIndexTestCase, simple_sequential_compact) {
   GTEST_SKIP() << kSortedReason;
 }
 
@@ -70,12 +70,12 @@ TEST_P(SortedIndexTestCase, multi_valued_sorting_field) {
   GTEST_SKIP() << kSortedReason;
 }
 
-TEST_P(SortedIndexTestCase, check_document_order_after_consolidation_dense) {
+TEST_P(SortedIndexTestCase, check_document_order_after_compaction_dense) {
   GTEST_SKIP() << kSortedReason;
 }
 
 TEST_P(SortedIndexTestCase,
-       check_document_order_after_consolidation_dense_with_removals) {
+       check_document_order_after_compaction_dense_with_removals) {
   GTEST_SKIP() << kSortedReason;
 }
 
@@ -88,21 +88,21 @@ TEST_P(SortedIndexTestCase, doc_removal_same_key_within_trx_flush) {
 }
 
 TEST_P(SortedIndexTestCase,
-       check_document_order_after_consolidation_sparse_with_gaps) {
+       check_document_order_after_compaction_sparse_with_gaps) {
   GTEST_SKIP() << kSortedReason;
 }
 
-TEST_P(SortedIndexTestCase, check_document_order_after_consolidation_sparse) {
-  GTEST_SKIP() << kSortedReason;
-}
-
-TEST_P(SortedIndexTestCase,
-       check_document_order_after_consolidation_sparse_already_sorted) {
+TEST_P(SortedIndexTestCase, check_document_order_after_compaction_sparse) {
   GTEST_SKIP() << kSortedReason;
 }
 
 TEST_P(SortedIndexTestCase,
-       check_document_order_after_consolidation_sparse_with_removals) {
+       check_document_order_after_compaction_sparse_already_sorted) {
+  GTEST_SKIP() << kSortedReason;
+}
+
+TEST_P(SortedIndexTestCase,
+       check_document_order_after_compaction_sparse_with_removals) {
   GTEST_SKIP() << kSortedReason;
 }
 

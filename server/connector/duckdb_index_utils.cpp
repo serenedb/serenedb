@@ -303,9 +303,9 @@ void EvaluateAndWriteIndexedExpressions(
   std::vector<std::string>& row_keys, DuckDBColumnSerializer& serializer) {
   for (const auto& indexed_expr : indexed_exprs) {
     SDB_ASSERT(indexed_expr.normalized_expr);
-    auto result =
-      EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk, table_id,
-                            slot_to_col_id, client_context);
+    auto result = EvaluateExprOverChunk(
+      *indexed_expr.normalized_expr, chunk, table_id, slot_to_col_id,
+      client_context, indexed_expr.is_geojson);
 
     const ExpressionDescriptor expr_desc{result.GetType(), /*have_nulls=*/true,
                                          indexed_expr.field_id};

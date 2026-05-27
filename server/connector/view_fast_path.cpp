@@ -307,7 +307,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       cur = cur->Cast<duckdb::CastExpression>().child.get();
     }
     if (cur->GetExpressionClass() == duckdb::ExpressionClass::CONSTANT) {
-      return cur->Cast<duckdb::ConstantExpression>().value;
+      return cur->Cast<duckdb::ConstantExpression>().GetValue();
     }
     if (cur->GetExpressionType() == duckdb::ExpressionType::FUNCTION) {
       const auto& fn = cur->Cast<duckdb::FunctionExpression>();

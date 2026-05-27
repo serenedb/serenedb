@@ -82,7 +82,7 @@ void TSQueryStubFn(duckdb::DataChunk& /*args*/,
 void ScorerStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& state,
                   duckdb::Vector& /*result*/) {
   const auto& fn_name =
-    state.expr.Cast<duckdb::BoundFunctionExpression>().function.name;
+    state.expr.Cast<duckdb::BoundFunctionExpression>().function.GetName();
   throw duckdb::InvalidInputException(
     "%s() requires an inverted index scan in the same sub-query", fn_name);
 }
@@ -324,7 +324,7 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
          {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
       duckdb::ScalarFunction fn(std::string{kTSQPhrase}, {first_arg},
                                 MakeTSQueryType(), TSQueryStubFn);
-      fn.varargs = duckdb::LogicalType::ANY;
+      fn.SetVarArgs(duckdb::LogicalType::ANY);
       set.AddFunction(std::move(fn));
     }
     loader.RegisterFunction(std::move(set));
@@ -370,7 +370,7 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
   for (auto name : {kTSQLess, kTSQLessEq, kTSQGreater, kTSQGreaterEq}) {
     duckdb::ScalarFunction fn(std::string{name}, {duckdb::LogicalType::ANY},
                               MakeTSQueryType(), TSQueryStubFn);
-    fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(std::move(fn));
   }
 
@@ -476,7 +476,7 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
       // Without SPECIAL_HANDLING, DuckDB folds any call with a NULL
       // arg to NULL at bind time; we'd never see the user's bucket
       // structure (e.g. `compound(list, NULL, NULL)` -> NULL).
-      fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+      fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
       set.AddFunction(std::move(fn));
     };
     for (const auto& a : opts) {
@@ -552,7 +552,7 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
       {duckdb::LogicalType::ANY, duckdb::LogicalType::ANY,
        duckdb::LogicalType::BOOLEAN, duckdb::LogicalType::BOOLEAN},
       MakeTSQueryType(), TSQueryStubFn);
-    fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(std::move(fn));
   }
 }
@@ -689,7 +689,7 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
       std::string{kPhraseMatches},
       {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::BOOLEAN, SearchStubFn);
-    fn.varargs = duckdb::LogicalType::ANY;
+    fn.SetVarArgs(duckdb::LogicalType::ANY);
     loader.RegisterFunction(std::move(fn));
   }
 
@@ -895,7 +895,7 @@ void RegisterPositionFunctions(duckdb::ExtensionLoader& loader) {
 
   auto add_inline = [&](duckdb::vector<duckdb::LogicalType> args) {
     duckdb::ScalarFunction fn{std::move(args), list_int, SearchStubFn};
-    fn.init_local_state = InitOffsetsLocalState;
+    fn.SetInitStateCallback(InitOffsetsLocalState);
     set.AddFunction(std::move(fn));
   };
   add_inline({duckdb::LogicalType::ANY});
@@ -904,8 +904,8 @@ void RegisterPositionFunctions(duckdb::ExtensionLoader& loader) {
   auto add_standalone = [&](duckdb::vector<duckdb::LogicalType> args) {
     duckdb::ScalarFunction fn{std::move(args), list_int, OffsetsScalarFn,
                               OffsetsStandaloneBind};
-    fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
-    fn.init_local_state = InitOffsetsLocalState;
+    fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    fn.SetInitStateCallback(InitOffsetsLocalState);
     set.AddFunction(std::move(fn));
   };
   add_standalone({duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,

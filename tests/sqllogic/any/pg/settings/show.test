@@ -113,3 +113,110 @@ SHOW standard_conforming_strings;
 ----
 standard_conforming_strings
 on
+
+
+# ----------------------------------------------------------------------
+# PG-compat: SHOW <multi-word alias> resolves to the same underlying
+# variable as SHOW <varname>. Real drivers issue these forms on startup
+# (r2dbc, pgjdbc, Npgsql), so the parser must accept them verbatim.
+# ----------------------------------------------------------------------
+
+query
+SHOW TRANSACTION ISOLATION LEVEL;
+----
+transaction_isolation
+<slt:ignore>
+
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+<slt:ignore>
+
+
+query
+SHOW SESSION AUTHORIZATION;
+----
+session_authorization
+postgres
+
+
+query
+SHOW session_authorization;
+----
+session_authorization
+postgres
+
+
+statement ok
+SET TimeZone = 'Etc/UTC';
+
+
+query
+SHOW TIME ZONE;
+----
+TimeZone
+Etc/UTC
+
+
+query
+SHOW timezone;
+----
+TimeZone
+Etc/UTC
+
+
+# PG canonical column headers for the other CamelCase outlier GUCs.
+query
+SHOW DateStyle;
+----
+DateStyle
+ISO, MDY
+
+
+query
+SHOW datestyle;
+----
+DateStyle
+ISO, MDY
+
+
+query
+SHOW IntervalStyle;
+----
+IntervalStyle
+postgres
+
+
+query
+SHOW intervalstyle;
+----
+IntervalStyle
+postgres
+
+
+# DESCRIBE / DESC accept the same aliases (mirrors the regular SHOW <name> branch).
+# PG has no DESCRIBE/DESC keyword, so this branch is serenedb-only.
+skipif postgres
+query
+DESCRIBE TRANSACTION ISOLATION LEVEL;
+----
+transaction_isolation
+<slt:ignore>
+
+
+skipif postgres
+query
+DESC TIME ZONE;
+----
+TimeZone
+Etc/UTC
+
+
+# Aliases survive case variation -- keywords are case-insensitive.
+query
+show transaction isolation level;
+----
+transaction_isolation
+<slt:ignore>

@@ -2,9 +2,9 @@ hash-threshold 100
 
 # End-to-end test: BM25 ordering must remain correct after the inverted
 # index is compacted. We force the index into a multi-segment shape by
-# inserting in three batches with VACUUM (UPDATE_INDEXES) between each
-# batch (each VACUUM commits a fresh segment). Then we drive consolidation
-# to a fixpoint via the new compact_indexes handler and re-run the same
+# inserting in three batches with VACUUM (REFRESH_TABLE) between each
+# batch (each VACUUM commits a fresh segment). Then we drive compaction
+# to a fixpoint via the COMPACT_TABLE handler and re-run the same
 # BM25 queries. Norms feed BM25, so this also covers the norm read path
 # across pre- and post-merge segments.
 
@@ -39,7 +39,7 @@ INSERT INTO docs VALUES (2, 'the quick fox');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 # Batch 2 — segment B
@@ -52,7 +52,7 @@ INSERT INTO docs VALUES (4, 'a fox is a fox is a fox');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 # Batch 3 — segment C
@@ -65,7 +65,7 @@ INSERT INTO docs VALUES (6, 'nothing here');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 # Snapshot the pre-compaction BM25 ordering for 'fox'. The expected
@@ -92,10 +92,10 @@ id
 1
 
 
-# Drive consolidation to a fixpoint. After this, all live docs should be
+# Drive compaction to a fixpoint. After this, all live docs should be
 # in a single merged segment.
 statement ok
-PRAGMA serenedb_vacuum('compact_indexes', 'docs');
+VACUUM (COMPACT_TABLE) docs;
 
 
 # Same BM25 queries must give the same ordering after compaction.
@@ -130,7 +130,7 @@ id	has_score
 
 # Compacting again should be a no-op (idempotent).
 statement ok
-PRAGMA serenedb_vacuum('compact_indexes', 'docs');
+VACUUM (COMPACT_TABLE) docs;
 
 
 query

@@ -22,7 +22,7 @@ INSERT INTO logs VALUES
     (4, '{"host":"server-14","status":"warning"}'::json);
 
 statement ok
-VACUUM (UPDATE_INDEXES) logs;
+VACUUM (REFRESH_TABLE) logs;
 
 
 
@@ -62,7 +62,7 @@ INSERT INTO evts VALUES
     (3, '{"host":"a","status":"error"}'::json);
 
 statement ok
-VACUUM (UPDATE_INDEXES) evts;
+VACUUM (REFRESH_TABLE) evts;
 
 query
 SELECT id FROM evts_idx WHERE content->>'host' @@ ts_like('a') ORDER BY id;
@@ -104,7 +104,7 @@ INSERT INTO preds VALUES
     (3, '{"host":"server-03","msg":"the quick fox jumps"}'::json);
 
 statement ok
-VACUUM (UPDATE_INDEXES) preds;
+VACUUM (REFRESH_TABLE) preds;
 
 # TERM_EQ on a JSON path
 query
@@ -154,7 +154,7 @@ INSERT INTO lev VALUES
     (3, '{"tag":"unrelated"}'::json);
 
 statement ok
-VACUUM (UPDATE_INDEXES) lev;
+VACUUM (REFRESH_TABLE) lev;
 
 query
 SELECT id FROM lev_idx WHERE content->>'tag' @@ ts_levenshtein('urgent', 1) ORDER BY id;
@@ -179,7 +179,7 @@ INSERT INTO arr_logs VALUES
     (3, '{"tags":["alpha","epsilon"]}'::json);
 
 statement ok
-VACUUM (UPDATE_INDEXES) arr_logs;
+VACUUM (REFRESH_TABLE) arr_logs;
 
 query
 SELECT id FROM arr_idx WHERE content->'tags'->>0 = 'alpha' ORDER BY id;
@@ -207,7 +207,7 @@ INSERT INTO jonly VALUES
     (2, '{"host":"server-02"}'::json);
 
 statement ok
-VACUUM (UPDATE_INDEXES) jonly;
+VACUUM (REFRESH_TABLE) jonly;
 
 # Sanity check: the ->> form claims the predicate and returns rows.
 query
@@ -225,12 +225,12 @@ SELECT id FROM jonly_idx WHERE content->'host' @@ ts_like('server-0_') ORDER BY 
 ----
 db error: ERROR: No function matches the given name and argument types 'json_extract(JSON, BOOLEAN)'. You might need to add explicit type casts.
 	Candidate functions:
-	json_extract(VARCHAR, BIGINT) -> JSON
-	json_extract(VARCHAR, VARCHAR) -> JSON
-	json_extract(VARCHAR, VARCHAR[]) -> JSON[]
-	json_extract(JSON, BIGINT) -> JSON
-	json_extract(JSON, VARCHAR) -> JSON
-	json_extract(JSON, VARCHAR[]) -> JSON[]
+	json_extract(col VARCHAR, col2 BIGINT) -> JSON
+	json_extract(col VARCHAR, col2 VARCHAR) -> JSON
+	json_extract(col VARCHAR, col2 VARCHAR[]) -> JSON[]
+	json_extract(col JSON, col2 BIGINT) -> JSON
+	json_extract(col JSON, col2 VARCHAR) -> JSON
+	json_extract(col JSON, col2 VARCHAR[]) -> JSON[]
 
 
 # `->` (JSON-typed leaf) is accepted as an indexed expression; the sink emits
@@ -320,7 +320,7 @@ id
 7
 
 statement ok
-VACUUM (UPDATE_INDEXES) prim_types;
+VACUUM (REFRESH_TABLE) prim_types;
 
 # String leaf is searchable through TERM_EQ via the ->> form.
 query
@@ -396,7 +396,7 @@ INSERT INTO str_lookalike VALUES
     (3, '{"val":"  {leading ws"}'::json);
 
 statement ok
-VACUUM (UPDATE_INDEXES) str_lookalike;
+VACUUM (REFRESH_TABLE) str_lookalike;
 
 query
 SELECT id FROM str_lookalike_idx
@@ -429,7 +429,7 @@ INSERT INTO num_str_split VALUES
     (4, '{"val":true}'::json);
 
 statement ok
-VACUUM (UPDATE_INDEXES) num_str_split;
+VACUUM (REFRESH_TABLE) num_str_split;
 
 query
 SELECT id FROM num_str_split_idx WHERE (content->'val')::int = 42;
@@ -593,7 +593,7 @@ INSERT INTO mixed_tok VALUES
     (4, '{"val":7}'::json);
 
 statement ok
-VACUUM (UPDATE_INDEXES) mixed_tok;
+VACUUM (REFRESH_TABLE) mixed_tok;
 
 # Keyword tokenizer side: exact-match string lookup hits the string-mangled
 # field.
@@ -639,7 +639,7 @@ INSERT INTO hashpath_single VALUES
     (3, '{"host":"server-03","status":"err"}'::json);
 
 statement ok
-VACUUM (UPDATE_INDEXES) hashpath_single;
+VACUUM (REFRESH_TABLE) hashpath_single;
 
 query
 SELECT id FROM hashpath_single_idx
@@ -676,7 +676,7 @@ INSERT INTO hashpath_multi VALUES
     (3, '{"user":{"name":"alice","age":40}}'::json);
 
 statement ok
-VACUUM (UPDATE_INDEXES) hashpath_multi;
+VACUUM (REFRESH_TABLE) hashpath_multi;
 
 query
 SELECT id FROM hashpath_multi_idx
@@ -704,7 +704,7 @@ INSERT INTO hashpath_chain VALUES
     (3, '{"user":{"name":"carol","role":"user"}}'::json);
 
 statement ok
-VACUUM (UPDATE_INDEXES) hashpath_chain;
+VACUUM (REFRESH_TABLE) hashpath_chain;
 
 query
 SELECT id FROM hashpath_chain_idx
@@ -730,7 +730,7 @@ INSERT INTO chain_to_hash VALUES
     (2, '{"user":{"name":"frank"}}'::json);
 
 statement ok
-VACUUM (UPDATE_INDEXES) chain_to_hash;
+VACUUM (REFRESH_TABLE) chain_to_hash;
 
 query
 SELECT id FROM chain_to_hash_idx
@@ -753,13 +753,13 @@ INSERT INTO dml_t VALUES
     (2, '{"host":"beta"}'::json);
 
 statement ok
-VACUUM (UPDATE_INDEXES) dml_t;
+VACUUM (REFRESH_TABLE) dml_t;
 
 statement ok
 UPDATE dml_t SET content = '{"host":"gamma"}'::json WHERE id = 1;
 
 statement ok
-VACUUM (UPDATE_INDEXES) dml_t;
+VACUUM (REFRESH_TABLE) dml_t;
 
 query
 SELECT id FROM dml_idx WHERE content->>'host' = 'alpha';
@@ -778,7 +778,7 @@ statement ok
 DELETE FROM dml_t WHERE id = 2;
 
 statement ok
-VACUUM (UPDATE_INDEXES) dml_t;
+VACUUM (REFRESH_TABLE) dml_t;
 
 query
 SELECT id FROM dml_idx WHERE content->>'host' = 'beta';
@@ -812,7 +812,7 @@ CREATE INDEX jp_inc_idx ON jp_inc
   INCLUDE (label);
 
 statement ok
-VACUUM (UPDATE_INDEXES) jp_inc;
+VACUUM (REFRESH_TABLE) jp_inc;
 
 query
 SELECT id, label FROM jp_inc_idx WHERE doc->>'host' = 'a' ORDER BY id;
@@ -847,7 +847,7 @@ CREATE INDEX jp_inc2_idx ON jp_inc2
   INCLUDE (label);
 
 statement ok
-VACUUM (UPDATE_INDEXES) jp_inc2;
+VACUUM (REFRESH_TABLE) jp_inc2;
 
 query
 SELECT id, label FROM jp_inc2_idx WHERE (doc->'val')::int = 42 ORDER BY id;
@@ -884,7 +884,7 @@ CREATE INDEX jp_inc_mixed_idx ON jp_inc_mixed
   INCLUDE (label);
 
 statement ok
-VACUUM (UPDATE_INDEXES) jp_inc_mixed;
+VACUUM (REFRESH_TABLE) jp_inc_mixed;
 
 query
 SELECT id, label FROM jp_inc_mixed_idx ORDER BY id;
@@ -914,7 +914,7 @@ CREATE INDEX jp_inc3_idx ON jp_inc3
   INCLUDE (big included (compression = 'uncompressed'));
 
 statement ok
-VACUUM (UPDATE_INDEXES) jp_inc3;
+VACUUM (REFRESH_TABLE) jp_inc3;
 
 query
 SELECT id, big FROM jp_inc3_idx WHERE doc->>'host' = 'x' ORDER BY id;

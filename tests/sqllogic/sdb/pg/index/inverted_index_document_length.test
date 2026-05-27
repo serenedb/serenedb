@@ -34,7 +34,7 @@ INSERT INTO docs VALUES (3, 'the lazy dog');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 query
@@ -84,7 +84,7 @@ INSERT INTO docs VALUES (5, 'a quick brown rabbit and a fox');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 query
@@ -112,7 +112,7 @@ QUERY PLAN
 │    ────────────────────   │
 │      docs_idx.id ASC      │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
@@ -243,7 +243,7 @@ INSERT INTO sparse_norm VALUES (6, '{"body":"x"}'::json);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) sparse_norm;
+VACUUM (REFRESH_TABLE) sparse_norm;
 
 
 query

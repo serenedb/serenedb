@@ -22,6 +22,7 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <duckdb/parser/parser.hpp>
 #include <string_view>
 
 #include "catalog/fwd.h"
@@ -30,8 +31,8 @@
 namespace sdb::pg {
 
 // Parse and cache all system views and functions. Call once at startup.
-void InitSystemViews();
-void InitSystemFunctions();
+void InitSystemViews(duckdb::Parser& parser);
+void InitSystemFunctions(duckdb::Parser& parser);
 
 const catalog::VirtualTable* GetSystemTable(std::string_view schema,
                                             std::string_view name);

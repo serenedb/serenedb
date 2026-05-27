@@ -327,25 +327,25 @@ db error: ERROR: VALUES types integer and boolean cannot be matched
 query error
 SELECT * FROM (VALUES (228), (666, 993)) AS vedernikoff(iq);
 ----
-db error: ERROR: VALUES lists must all be the same length
+db error: ERROR: VALUES lists<slt:ignore>
 
 
 query error
 SELECT * FROM (VALUES (228, 666), (993)) AS kostya(iq, grade);
 ----
-db error: ERROR: VALUES lists must all be the same length
+db error: ERROR: VALUES lists<slt:ignore>
 
 
 query error
 SELECT * FROM (VALUES (1, 'clickclack'), (2, 'deadinside'), (3)) AS pudge(iq, name);
 ----
-db error: ERROR: VALUES lists must all be the same length
+db error: ERROR: VALUES lists<slt:ignore>
 
 
 query error
 SELECT * FROM (VALUES (228), (1, 2, 3)) AS babsky(iq);
 ----
-db error: ERROR: VALUES lists must all be the same length
+db error: ERROR: VALUES lists<slt:ignore>
 
 
 skipif serenedb # DuckDB supports implicit cast from boolean to integer

@@ -56,11 +56,11 @@ void WalkExpr(const duckdb::ParsedExpression& expr, RefKinds kinds, Refs& out) {
         const auto& arg = *fn.children[0];
         if (arg.GetExpressionType() == duckdb::ExpressionType::VALUE_CONSTANT) {
           const auto& konst = arg.Cast<duckdb::ConstantExpression>();
-          if (konst.value.type().id() == duckdb::LogicalTypeId::VARCHAR &&
-              !konst.value.IsNull()) {
+          if (konst.GetValue().type().id() == duckdb::LogicalTypeId::VARCHAR &&
+              !konst.GetValue().IsNull()) {
             // nextval('[schema.]name') -- split here so callers see a
             // uniform QualifiedRef like relations/functions.
-            auto qualified = konst.value.GetValue<std::string>();
+            auto qualified = konst.GetValue().GetValue<std::string>();
             auto dot = qualified.find('.');
             if (dot == std::string::npos) {
               out.sequences.emplace_back("", "", std::move(qualified));

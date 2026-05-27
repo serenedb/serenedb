@@ -23,7 +23,7 @@ INSERT INTO t VALUES (1, 'the quick brown fox');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) t;
+VACUUM (REFRESH_TABLE) t;
 
 connection reader
 statement ok

@@ -237,7 +237,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_multi_segment) {
         ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
         gen.next();  // skip 1 doc
       }
-      writer->Commit();
+      writer->RefreshCommit();
       AssertSnapshotEquality(*writer);
     }
 
@@ -249,7 +249,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_multi_segment) {
         ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
         gen.next();  // skip 1 doc
       }
-      writer->Commit();
+      writer->RefreshCommit();
       AssertSnapshotEquality(*writer);
     }
   }

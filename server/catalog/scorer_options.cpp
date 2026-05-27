@@ -44,7 +44,7 @@ namespace sdb::catalog {
 namespace {
 
 const duckdb::Value* TryGetConstantValue(const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
     return nullptr;
   }
   return &expr.Cast<duckdb::BoundConstantExpression>().value;
@@ -263,7 +263,8 @@ ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
   auto binder = Binder::CreateBinder(context);
   ConstantBinder cb(*binder, context, "optimize_top_k");
   auto bound = cb.Bind(fn_expr);
-  if (!bound || bound->expression_class != ExpressionClass::BOUND_FUNCTION) {
+  if (!bound ||
+      bound->GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_SYNTAX_ERROR),
       ERR_MSG("'optimize_top_k' did not bind to a scorer function: '", input,
@@ -272,7 +273,7 @@ ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
 
   auto& bound_fn = bound->Cast<BoundFunctionExpression>();
   for (auto& child : bound_fn.children) {
-    if (child->expression_class != ExpressionClass::BOUND_CONSTANT &&
+    if (child->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT &&
         child->IsFoldable()) {
       auto val = ExpressionExecutor::EvaluateScalar(context, *child);
       child = make_uniq<BoundConstantExpression>(std::move(val));

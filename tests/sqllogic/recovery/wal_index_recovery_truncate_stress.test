@@ -31,7 +31,7 @@ statement ok
 CREATE INDEX ivanov_idx ON ivanov_t USING inverted(id, body ivanov_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) ivanov_t;
+VACUUM (REFRESH_TABLE) ivanov_t;
 
 # Sanity before stress.
 query

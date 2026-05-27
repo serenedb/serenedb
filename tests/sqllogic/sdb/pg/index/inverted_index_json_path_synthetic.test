@@ -43,7 +43,7 @@ INSERT INTO jp_wild VALUES (3, '{"host":"router-15"}'::json);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) jp_wild;
+VACUUM (REFRESH_TABLE) jp_wild;
 
 
 query
@@ -70,7 +70,7 @@ CREATE TABLE jp_geo (id INTEGER PRIMARY KEY, doc JSON);
 
 statement ok
 CREATE INDEX jp_geo_idx ON jp_geo
-    USING inverted(id, (doc->>'where') js_geo);
+    USING inverted(id, (doc->'where') js_geo);
 
 
 statement count 1
@@ -81,7 +81,7 @@ INSERT INTO jp_geo VALUES (2, '{"where":"{\"type\":\"Point\",\"coordinates\":[37
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) jp_geo;
+VACUUM (REFRESH_TABLE) jp_geo;
 
 
 # Just confirm the rows are reachable -- the geo predicate language
@@ -162,7 +162,7 @@ INSERT INTO jp_norm VALUES (3, '{"body":"alpha"}'::json);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) jp_norm;
+VACUUM (REFRESH_TABLE) jp_norm;
 
 
 # Norm-bearing dictionary should not crash the norm-callback path -- the

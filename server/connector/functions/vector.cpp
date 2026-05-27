@@ -279,9 +279,9 @@ static void ValidateArrayArgs(duckdb::BindScalarFunctionInput& input) {
   auto& bound = input.GetBoundFunction();
   auto& args = input.GetArguments();
   for (auto& a : args) {
-    if (a->return_type.id() != duckdb::LogicalTypeId::ARRAY) {
+    if (a->GetReturnType().id() != duckdb::LogicalTypeId::ARRAY) {
       throw duckdb::InvalidInputException("%s requires ARRAY arguments",
-                                          bound.name);
+                                          bound.GetName());
     }
   }
 }
@@ -291,7 +291,7 @@ static duckdb::unique_ptr<duckdb::FunctionData> NormalizeBind(
   ValidateArrayArgs(input);
   auto& bound = input.GetBoundFunction();
   auto& args = input.GetArguments();
-  bound.SetReturnType(args[0]->return_type);
+  bound.SetReturnType(args[0]->GetReturnType());
   return duckdb::make_uniq<duckdb::VariableReturnBindData>(
     bound.GetReturnType());
 }

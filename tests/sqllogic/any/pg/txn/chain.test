@@ -1,0 +1,63 @@
+# ----------------------------------------------------------------------
+# PG-compat: COMMIT/ROLLBACK AND [NO] CHAIN. CHAIN immediately opens a new
+# transaction with the same characteristics; NO CHAIN is the default
+# behaviour, just makes it explicit.
+#
+# Drivers using EF Core / Hibernate / pgbouncer sometimes emit AND CHAIN
+# to keep transaction characteristics across the commit boundary.
+# ----------------------------------------------------------------------
+
+# Outside any txn: COMMIT/ROLLBACK [AND NO CHAIN] silently warn-and-noop in
+# PG. AND CHAIN outside a txn errors -- there's no characteristic state to
+# carry over.
+statement ok
+COMMIT AND NO CHAIN;
+
+
+statement ok
+ROLLBACK AND NO CHAIN;
+
+
+# COMMIT AND CHAIN: commits the current txn, immediately re-enters a new one.
+statement ok
+BEGIN;
+
+
+statement ok
+COMMIT AND CHAIN;
+
+
+# We should still be inside a (new) transaction; verify by COMMIT'ing it.
+statement ok
+COMMIT;
+
+
+# ROLLBACK AND CHAIN: rolls back the current txn, re-enters a new one.
+statement ok
+BEGIN;
+
+
+statement ok
+ROLLBACK AND CHAIN;
+
+
+# Still inside a (new, rolled-back-then-opened) txn.
+statement ok
+ROLLBACK;
+
+
+# WORK / TRANSACTION are accepted noise keywords on both COMMIT and ROLLBACK.
+statement ok
+BEGIN;
+
+
+statement ok
+COMMIT WORK AND CHAIN;
+
+
+statement ok
+ROLLBACK TRANSACTION AND CHAIN;
+
+
+statement ok
+COMMIT;

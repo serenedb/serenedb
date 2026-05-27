@@ -184,14 +184,15 @@ void PKPointLookupFunction(duckdb::ClientContext& /*context*/,
 
   if (gstate.scan_tableoid) {
     output.data[gstate.tableoid_output_idx].Reference(
-      duckdb::Value::BIGINT(gstate.tableoid_value));
+      duckdb::Value::BIGINT(gstate.tableoid_value),
+      duckdb::count_t(output.size()));
   }
 
   gstate.point_offset += batch_size;
   if (gstate.point_offset >= total) {
     gstate.finished = true;
   }
-  output.SetCardinality(static_cast<duckdb::idx_t>(found_count));
+  output.SetChildCardinality(static_cast<duckdb::idx_t>(found_count));
   if (found_count > 0) {
     gstate.produced_rows.fetch_add(found_count, std::memory_order_relaxed);
   }

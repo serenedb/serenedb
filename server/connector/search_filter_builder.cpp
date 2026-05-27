@@ -284,8 +284,8 @@ std::optional<double> TryGetBoostModifier(const duckdb::LogicalType& type) {
 }
 
 bool IsComparisonExpr(const duckdb::Expression& expr) {
-  return expr.expression_class == duckdb::ExpressionClass::BOUND_COMPARISON &&
-         GetComparisonOp(expr.type) != ComparisonOp::None;
+  return duckdb::BoundComparisonExpression::IsComparison(expr) &&
+         GetComparisonOp(expr.GetExpressionType()) != ComparisonOp::None;
 }
 
 // Unwraps reinterpret casts between VARCHAR / TSQUERY / TOKENIZED_TSQUERY
@@ -309,17 +309,17 @@ bool IsComparisonExpr(const duckdb::Expression& expr) {
 // isn't that exact shape, returns `expr` unchanged.
 const duckdb::Expression& UnwrapBoostBoolCoercion(
   const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_CAST) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
     return expr;
   }
   const auto& cast = expr.Cast<duckdb::BoundCastExpression>();
   if (!cast.child) {
     return expr;
   }
-  if (cast.return_type.id() != duckdb::LogicalTypeId::BOOLEAN) {
+  if (cast.GetReturnType().id() != duckdb::LogicalTypeId::BOOLEAN) {
     return expr;
   }
-  if (!TryGetBoostModifier(cast.child->return_type)) {
+  if (!TryGetBoostModifier(cast.child->GetReturnType())) {
     return expr;
   }
   return *cast.child;
@@ -446,10 +446,15 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   // ST_Distance_Centroid(field, centroid) </<=/>/>= distance  --  rewrite to
-  // range.
+  // range. We've already absorbed `ctx.negated` into `op` via
+  // InvertComparisonOp above, so clear it before recursing -- otherwise the
+  // geo filter would Negate the range that is itself already inverted.
   if constexpr (GenericVersion) {
     if (const auto* geo_call = TryGetGeoDistanceCall(ctx, field_expr)) {
-      return FromGeoDistanceComparison(filter, ctx, *geo_call, value_expr, op);
+      FilterContext geo_ctx = ctx;
+      geo_ctx.negated = false;
+      return FromGeoDistanceComparison(filter, geo_ctx, *geo_call, value_expr,
+                                       op);
     }
   }
 
@@ -541,20 +546,29 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
 }
 
 Result FromBetween(irs::BooleanFilter& filter, const FilterContext& ctx,
-                   const duckdb::BoundBetweenExpression& between) {
+                   const duckdb::BoundFunctionExpression& between) {
   // Decompose BETWEEN into conjunction of two range comparisons.
   // BETWEEN a AND b  =>  field >= a (or >) AND field <= b (or <)
   // NOT BETWEEN       =>  field < a (or <=) OR field > b (or >=)
-  const auto* lower_val = TryGetConstant(*between.lower);
-  const auto* upper_val = TryGetConstant(*between.upper);
+  const auto& between_input = duckdb::BoundBetweenExpression::Input(between);
+  const auto& between_lower =
+    duckdb::BoundBetweenExpression::LowerBound(between);
+  const auto& between_upper =
+    duckdb::BoundBetweenExpression::UpperBound(between);
+  const bool lower_inclusive =
+    duckdb::BoundBetweenExpression::LowerInclusive(between);
+  const bool upper_inclusive =
+    duckdb::BoundBetweenExpression::UpperInclusive(between);
+  const auto* lower_val = TryGetConstant(between_lower);
+  const auto* upper_val = TryGetConstant(between_upper);
   if (!lower_val || !upper_val) {
     return {ERROR_BAD_PARAMETER, "BETWEEN bounds must be constants"};
   }
 
   if (!ctx.negated) {
     // field >= lower AND field <= upper (with inclusivity flags)
-    auto lower = between.lower_inclusive ? ComparisonOp::Ge : ComparisonOp::Gt;
-    auto upper = between.upper_inclusive ? ComparisonOp::Le : ComparisonOp::Lt;
+    auto lower = lower_inclusive ? ComparisonOp::Ge : ComparisonOp::Gt;
+    auto upper = upper_inclusive ? ComparisonOp::Le : ComparisonOp::Lt;
 
     auto& group = AddFilter<irs::And>(filter);
     group.boost(ctx.boost);
@@ -564,18 +578,18 @@ Result FromBetween(irs::BooleanFilter& filter, const FilterContext& ctx,
     sub_ctx.negated = false;
     sub_ctx.boost = irs::kNoBoost;
 
-    auto r = FromComparison<true>(group, sub_ctx, *between.input,
-                                  *between.lower, lower);
+    auto r =
+      FromComparison<true>(group, sub_ctx, between_input, between_lower, lower);
     if (!r.ok()) {
       return r;
     }
-    return FromComparison<true>(group, sub_ctx, *between.input, *between.upper,
+    return FromComparison<true>(group, sub_ctx, between_input, between_upper,
                                 upper);
   }
 
   // NOT BETWEEN: De Morgan -> field < lower OR field > upper
-  auto lower = between.lower_inclusive ? ComparisonOp::Lt : ComparisonOp::Le;
-  auto upper = between.upper_inclusive ? ComparisonOp::Gt : ComparisonOp::Ge;
+  auto lower = lower_inclusive ? ComparisonOp::Lt : ComparisonOp::Le;
+  auto upper = upper_inclusive ? ComparisonOp::Gt : ComparisonOp::Ge;
 
   auto& group = AddFilter<irs::Or>(filter);
   group.boost(ctx.boost);
@@ -585,11 +599,11 @@ Result FromBetween(irs::BooleanFilter& filter, const FilterContext& ctx,
   sub_ctx.boost = irs::kNoBoost;
 
   auto r =
-    FromComparison<true>(group, sub_ctx, *between.input, *between.lower, lower);
+    FromComparison<true>(group, sub_ctx, between_input, between_lower, lower);
   if (!r.ok()) {
     return r;
   }
-  return FromComparison<true>(group, sub_ctx, *between.input, *between.upper,
+  return FromComparison<true>(group, sub_ctx, between_input, between_upper,
                               upper);
 }
 
@@ -672,10 +686,10 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> MakeTSQueryCall(
   std::string_view ts_name, duckdb::LogicalType return_type,
   std::vector<duckdb::unique_ptr<duckdb::Expression>> children) {
   duckdb::ScalarFunction fn(std::string{ts_name}, {}, return_type, nullptr);
-  auto expr = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
-    return_type, std::move(fn), std::move(children), nullptr);
-  expr->function.name = std::string{ts_name};
-  return expr;
+  duckdb::BoundScalarFunction bound_fn(fn);
+  bound_fn.SetName(std::string{ts_name});
+  return duckdb::make_uniq<duckdb::BoundFunctionExpression>(
+    std::move(bound_fn), std::move(children), nullptr);
 }
 
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> MakeTSQueryCall(
@@ -723,7 +737,7 @@ duckdb::unique_ptr<duckdb::Expression> WrapTextAsConstantList(
 duckdb::unique_ptr<duckdb::Expression> BuildAnyToken(
   std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args) {
   const bool is_text =
-    args.at(0)->return_type.id() == duckdb::LogicalTypeId::VARCHAR;
+    args.at(0)->GetReturnType().id() == duckdb::LogicalTypeId::VARCHAR;
   const bool has_min_match = args.size() >= 2;
 
   if (!is_text) {
@@ -851,7 +865,7 @@ constexpr containers::TrivialBiMap kBuiltinBuilder = [](auto selector) {
 Result FromFunctionExpression(irs::BooleanFilter& filter,
                               const FilterContext& ctx,
                               const duckdb::BoundFunctionExpression& func) {
-  std::string_view name = func.function.name;
+  std::string_view name = func.function.GetName();
   std::span args = func.children;
 
   if (name == kTSQueryMatch) {
@@ -885,10 +899,10 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
   if (args.size() == 2) {
     if (auto builder = kBuiltinBuilder.TryFindByFirst(name).value_or(nullptr)) {
       SDB_ASSERT(args.size() == 2);
-      if (args[0]->return_type.id() != duckdb::LogicalTypeId::VARCHAR) {
-        return {ERROR_NOT_IMPLEMENTED, func.function.name,
+      if (args[0]->GetReturnType().id() != duckdb::LogicalTypeId::VARCHAR) {
+        return {ERROR_NOT_IMPLEMENTED, func.function.GetName(),
                 ": VARCHAR overload only -- declined for ",
-                args[0]->return_type.ToString()};
+                args[0]->GetReturnType().ToString()};
       }
       std::string pattern;
       if (auto r = GetVarcharArg(*args[1], name, pattern); !r.ok()) {
@@ -988,9 +1002,9 @@ void FromTSQueryBoost(irs::BooleanFilter& parent, const FilterContext& ctx,
 bool TryDispatchBoostCast(irs::BooleanFilter& parent, const FilterContext& ctx,
                           const SearchColumnInfo& column_info,
                           const duckdb::Expression& peeled) {
-  if (peeled.expression_class == duckdb::ExpressionClass::BOUND_CAST) {
+  if (peeled.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
     const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
-    const auto boost = TryGetBoostModifier(cast_expr.return_type);
+    const auto boost = TryGetBoostModifier(cast_expr.GetReturnType());
     if (!boost || !cast_expr.child) {
       return false;
     }
@@ -998,7 +1012,7 @@ bool TryDispatchBoostCast(irs::BooleanFilter& parent, const FilterContext& ctx,
                  column_info, *cast_expr.child);
     return true;
   }
-  if (peeled.expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
+  if (peeled.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
     const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().value;
     const auto boost = TryGetBoostModifier(cv.type());
     if (!boost) {
@@ -1019,11 +1033,11 @@ bool TryDispatchBoostCast(irs::BooleanFilter& parent, const FilterContext& ctx,
 bool TryDispatchSqlBoostCast(irs::BooleanFilter& filter,
                              const FilterContext& ctx,
                              const duckdb::Expression& peeled) {
-  if (peeled.expression_class != duckdb::ExpressionClass::BOUND_CAST) {
+  if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
     return false;
   }
   const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
-  const auto boost = TryGetBoostModifier(cast_expr.return_type);
+  const auto boost = TryGetBoostModifier(cast_expr.GetReturnType());
   if (!boost || !cast_expr.child) {
     return false;
   }
@@ -1051,14 +1065,14 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
   std::string_view tokenizer;
   const duckdb::Expression* expr = nullptr;
   const duckdb::Value* val = nullptr;
-  if (peeled.expression_class == duckdb::ExpressionClass::BOUND_CAST) {
+  if (peeled.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
     const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
-    tokenizer = TryGetTokenizerModifier(cast_expr.return_type);
+    tokenizer = TryGetTokenizerModifier(cast_expr.GetReturnType());
     if (!tokenizer.empty() && cast_expr.child) {
       expr = cast_expr.child.get();
       val = TryGetConstant(UnwrapTSQueryCast(*expr));
     }
-  } else if (peeled.expression_class ==
+  } else if (peeled.GetExpressionClass() ==
              duckdb::ExpressionClass::BOUND_CONSTANT) {
     const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().value;
     tokenizer = TryGetTokenizerModifier(cv.type());
@@ -1149,29 +1163,33 @@ void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
 
 Result FromComparisonExpression(irs::BooleanFilter& filter,
                                 const FilterContext& ctx,
-                                const duckdb::BoundComparisonExpression& cmp) {
-  switch (cmp.type) {
+                                const duckdb::BoundFunctionExpression& cmp) {
+  const auto& left = duckdb::BoundComparisonExpression::Left(cmp);
+  const auto& right = duckdb::BoundComparisonExpression::Right(cmp);
+  const auto cmp_type = cmp.GetExpressionType();
+  switch (cmp_type) {
     case duckdb::ExpressionType::COMPARE_EQUAL:
-      return FromBinaryEq<true>(filter, ctx, *cmp.left, *cmp.right, false);
+      return FromBinaryEq<true>(filter, ctx, left, right, false);
     case duckdb::ExpressionType::COMPARE_NOTEQUAL:
-      return FromBinaryEq<true>(filter, ctx, *cmp.left, *cmp.right, true);
+      return FromBinaryEq<true>(filter, ctx, left, right, true);
     case duckdb::ExpressionType::COMPARE_LESSTHAN:
     case duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
     case duckdb::ExpressionType::COMPARE_GREATERTHAN:
     case duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO: {
-      auto op = GetComparisonOp(cmp.type);
-      return FromComparison<true>(filter, ctx, *cmp.left, *cmp.right, op);
+      auto op = GetComparisonOp(cmp_type);
+      return FromComparison<true>(filter, ctx, left, right, op);
     }
     default:
       return {ERROR_NOT_IMPLEMENTED,
-              "Unsupported comparison type: ", static_cast<int>(cmp.type)};
+              "Unsupported comparison type: ", static_cast<int>(cmp_type)};
   }
 }
 
 Result FromOperatorExpression(irs::BooleanFilter& filter,
                               const FilterContext& ctx,
                               const duckdb::BoundOperatorExpression& op_expr) {
-  switch (op_expr.type) {
+  const auto op_type = op_expr.GetExpressionType();
+  switch (op_type) {
     case duckdb::ExpressionType::OPERATOR_NOT: {
       SDB_ASSERT(op_expr.children.size() == 1);
       auto negated_ctx = ctx;
@@ -1194,7 +1212,7 @@ Result FromOperatorExpression(irs::BooleanFilter& filter,
     }
     default:
       return {ERROR_NOT_IMPLEMENTED,
-              "Unsupported operator type: ", static_cast<int>(op_expr.type)};
+              "Unsupported operator type: ", static_cast<int>(op_type)};
   }
 }
 
@@ -1205,33 +1223,36 @@ Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
   if (TryDispatchSqlBoostCast(filter, ctx, UnwrapBoostBoolCoercion(expr))) {
     return {};
   }
-  switch (expr.expression_class) {
+  if (duckdb::BoundComparisonExpression::IsComparison(expr)) {
+    return FromComparisonExpression(
+      filter, ctx, expr.Cast<duckdb::BoundFunctionExpression>());
+  }
+  if (expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_BETWEEN) {
+    return FromBetween(filter, ctx,
+                       expr.Cast<duckdb::BoundFunctionExpression>());
+  }
+  switch (expr.GetExpressionClass()) {
     case duckdb::ExpressionClass::BOUND_CONJUNCTION: {
       const auto& conj = expr.Cast<duckdb::BoundConjunctionExpression>();
-      if (conj.type == duckdb::ExpressionType::CONJUNCTION_AND) {
+      const auto conj_type = conj.GetExpressionType();
+      if (conj_type == duckdb::ExpressionType::CONJUNCTION_AND) {
         return MakeGroup<irs::And>(filter, ctx, conj);
       }
-      if (conj.type == duckdb::ExpressionType::CONJUNCTION_OR) {
+      if (conj_type == duckdb::ExpressionType::CONJUNCTION_OR) {
         return MakeGroup<irs::Or>(filter, ctx, conj);
       }
       return {ERROR_NOT_IMPLEMENTED,
-              "Unsupported conjunction type: ", static_cast<int>(conj.type)};
+              "Unsupported conjunction type: ", static_cast<int>(conj_type)};
     }
-    case duckdb::ExpressionClass::BOUND_COMPARISON:
-      return FromComparisonExpression(
-        filter, ctx, expr.Cast<duckdb::BoundComparisonExpression>());
     case duckdb::ExpressionClass::BOUND_OPERATOR:
       return FromOperatorExpression(
         filter, ctx, expr.Cast<duckdb::BoundOperatorExpression>());
     case duckdb::ExpressionClass::BOUND_FUNCTION:
       return FromFunctionExpression(
         filter, ctx, expr.Cast<duckdb::BoundFunctionExpression>());
-    case duckdb::ExpressionClass::BOUND_BETWEEN:
-      return FromBetween(filter, ctx,
-                         expr.Cast<duckdb::BoundBetweenExpression>());
     default:
       return {ERROR_NOT_IMPLEMENTED, "Unsupported expression class: ",
-              static_cast<int>(expr.expression_class)};
+              static_cast<int>(expr.GetExpressionClass())};
   }
 }
 
@@ -1242,14 +1263,14 @@ const duckdb::Value* TryGetConstant(const duckdb::Expression& expr) {
   // run the filter builder mid-bind, before the optimizer folds
   // redundant casts the binder may have inserted around literals.
   const auto* cur = &expr;
-  while (cur->expression_class == duckdb::ExpressionClass::BOUND_CAST) {
+  while (cur->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
     const auto& cast = cur->Cast<duckdb::BoundCastExpression>();
     if (!cast.child) {
       return nullptr;
     }
     cur = cast.child.get();
   }
-  if (cur->expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
+  if (cur->GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
     return nullptr;
   }
   return &cur->Cast<duckdb::BoundConstantExpression>().value;
@@ -1280,7 +1301,7 @@ const SearchColumnInfo* FindColumnRefInfo(
 
 const duckdb::BoundColumnRefExpression* TryGetColumnRef(
   const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     return nullptr;
   }
   return &expr.Cast<duckdb::BoundColumnRefExpression>();
@@ -1300,20 +1321,51 @@ bool IsNumericTypeId(duckdb::LogicalTypeId id) {
   }
 }
 
+const duckdb::BoundColumnRefExpression* TryGetJsonColumnRef(
+  const duckdb::Expression& expr, std::vector<std::string>& out_path) {
+  out_path.clear();
+  // Reject when outermost extraction does not return string.
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION ||
+      !IsJsonExtractString(
+        expr.Cast<duckdb::BoundFunctionExpression>().function.GetName())) {
+    return nullptr;
+  }
+
+  // Walk the chain: every node must be some JSON-extract
+  // until we reach a column ref.
+  const duckdb::Expression* cur = &expr;
+  while (cur->GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
+    const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
+    // TODO(mkornaukhov) first must be extracting string,
+    // all the others should be extracing json
+    if (!IsJsonExtract(f.function.GetName()) || f.children.size() != 2) {
+      return nullptr;
+    }
+    const auto* key_val = TryGetConstant(*f.children[1]);
+    if (!key_val || key_val->IsNull() ||
+        !AppendJsonPathKey(*key_val, out_path)) {
+      return nullptr;
+    }
+    cur = f.children[0].get();
+  }
+  absl::c_reverse(out_path);
+  return TryGetColumnRef(*cur);
+}
+
 struct UnwrappedField {
   const duckdb::Expression* expr;
   std::optional<duckdb::LogicalType> override_type;
 };
 
 UnwrappedField UnwrapFieldCast(const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_CAST) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
     return {&expr, std::nullopt};
   }
   const auto& c = expr.Cast<duckdb::BoundCastExpression>();
   if (!c.child) {
     return {&expr, std::nullopt};
   }
-  return {c.child.get(), c.return_type};
+  return {c.child.get(), c.GetReturnType()};
 }
 
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
@@ -1418,13 +1470,13 @@ bool IsRangeNumericValueType(duckdb::LogicalTypeId id) {
 
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
   const duckdb::Expression* cur = &expr;
-  while (cur->expression_class == duckdb::ExpressionClass::BOUND_CAST) {
+  while (cur->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
     const auto& cast = cur->Cast<duckdb::BoundCastExpression>();
     if (!cast.child) {
       break;
     }
-    const auto& target = cast.return_type;
-    const auto& source = cast.child->return_type;
+    const auto& target = cast.GetReturnType();
+    const auto& source = cast.child->GetReturnType();
     // Modifier-bearing casts must be preserved so the walker sees them.
     if (!TryGetTokenizerModifier(target).empty() ||
         TryGetBoostModifier(target)) {
@@ -1605,10 +1657,10 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
   // false -> Empty. Surfaces as either a NULL TSQUERY constant or a
   // BoundCast<TSQUERY> wrapping a BOOLEAN constant. Works at any
   // TSQUERY position thanks to the recursive walker.
-  if (unwrapped.expression_class == duckdb::ExpressionClass::BOUND_CAST) {
+  if (unwrapped.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
     const auto& cast = unwrapped.Cast<duckdb::BoundCastExpression>();
     if (cast.child &&
-        cast.child->return_type.id() == duckdb::LogicalTypeId::BOOLEAN) {
+        cast.child->GetReturnType().id() == duckdb::LogicalTypeId::BOOLEAN) {
       const auto* val = TryGetConstant(*cast.child);
       if (!val) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1640,7 +1692,8 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
   // the ambient (column) analyzer. Multi-token input composes with OR
   // (min_match=1) per the plan's "col @@ 'Quick Fox' ≡ ANY_OF(tokens)"
   // rule. Non-VARCHAR / analyzer-less paths fall back to raw ByTerm.
-  if (unwrapped.expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
+  if (unwrapped.GetExpressionClass() ==
+      duckdb::ExpressionClass::BOUND_CONSTANT) {
     const auto& val = unwrapped.Cast<duckdb::BoundConstantExpression>().value;
     if (val.IsNull()) {
       AddFilter<irs::Empty>(parent);
@@ -1656,16 +1709,17 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
     return;
   }
 
-  if (unwrapped.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
+  if (unwrapped.GetExpressionClass() !=
+      duckdb::ExpressionClass::BOUND_FUNCTION) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Unsupported TSQUERY expression class: ",
-                            static_cast<int>(unwrapped.expression_class)),
+                            static_cast<int>(unwrapped.GetExpressionClass())),
                     ERR_HINT("Use a TSQUERY constructor (ts_phrase, ts_like, "
                              "...) or 'literal'::TSQUERY."));
   }
 
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
-  const auto op = ClassifyTSQueryFunction(func.function.name);
+  const auto op = ClassifyTSQueryFunction(func.function.GetName());
 
   switch (op) {
     case TSQueryOp::Phrase:
@@ -1743,7 +1797,7 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
     case TSQueryOp::Unknown:
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("Not a TSQUERY-producing function: ", func.function.name),
+        ERR_MSG("Not a TSQUERY-producing function: ", func.function.GetName()),
         ERR_HINT("Use a TSQUERY constructor (ts_phrase, ts_like, ts_between, "
                  "ts_ngram, ts_levenshtein, ts_regexp, ts_any, ts_all, "
                  "ts_compound, ...) or 'literal'::TSQUERY."));

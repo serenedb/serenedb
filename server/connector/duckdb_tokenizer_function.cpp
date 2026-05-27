@@ -156,11 +156,14 @@ void RegisterTokenizerPragma(duckdb::DatabaseInstance& db) {
   auto create_pragma = duckdb::PragmaFunction::PragmaCall(
     "create_text_search_dictionary", CreateTSDictionaryPragma,
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BOOLEAN});
+  // Tokenizer-specific kwargs are validated by CreateTSDictionaryPragma itself.
+  create_pragma.accept_arbitrary_named_parameters = true;
   loader.RegisterFunction(create_pragma);
 
   auto drop_pragma = duckdb::PragmaFunction::PragmaCall(
     "drop_text_search_dictionary", DropTSDictionaryPragma,
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BOOLEAN});
+  drop_pragma.accept_arbitrary_named_parameters = true;
   loader.RegisterFunction(drop_pragma);
 }
 

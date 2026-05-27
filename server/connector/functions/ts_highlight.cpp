@@ -574,8 +574,8 @@ duckdb::ScalarFunction MakeOffsetsFn(duckdb::vector<duckdb::LogicalType> args) {
     TsHighlightOffsets,
     TsHighlightBind,
   };
-  f.init_local_state = InitTsHighlightLocalState;
-  f.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+  f.SetInitStateCallback(InitTsHighlightLocalState);
+  f.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
   return f;
 }
 
@@ -611,7 +611,7 @@ duckdb::unique_ptr<duckdb::Expression> RewriteToPostings(
   // form stays on the original path -- it has no column to derive
   // offsets from and fails downstream with a clear error.
   if (!dict_standalone && children.size() == 2 &&
-      children[body_idx]->expression_class !=
+      children[body_idx]->GetExpressionClass() !=
         duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> postings_args;
     postings_args.emplace_back(std::move(children[body_idx]));
@@ -694,7 +694,7 @@ duckdb::ScalarFunction MakeSugarFn(duckdb::vector<duckdb::LogicalType> args) {
   duckdb::ScalarFunction f{std::move(args), duckdb::LogicalType::VARCHAR,
                            TsHighlightStubFn};
   f.SetBindExpressionCallback(RewriteToPostings);
-  f.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+  f.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
   return f;
 }
 

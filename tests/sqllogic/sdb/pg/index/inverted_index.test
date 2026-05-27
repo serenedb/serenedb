@@ -1,4 +1,4 @@
-hash-threshold 100
+hash-threshold 200
 
 statement ok
 CREATE TABLE foo (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);
@@ -30,7 +30,7 @@ statement ok
 INSERT INTO foo values (2, 'quick red fox jumps over lazy dog', 'value a');
 
 statement ok
-VACUUM (UPDATE_INDEXES) foo;
+VACUUM (REFRESH_TABLE) foo;
 
 query
 SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('over lazy dog') ORDER BY a;
@@ -43,7 +43,7 @@ statement ok
 UPDATE foo SET c = 'value abc' WHERE a = 1;
 
 statement ok
-VACUUM (UPDATE_INDEXES) foo;
+VACUUM (REFRESH_TABLE) foo;
 
 query
 SELECT a, b, c FROM foo_idx WHERE c @@ ts_phrase('value abc') AND b @@ ts_phrase('over lazy dog');
@@ -58,7 +58,7 @@ statement ok
 INSERT INTO foo values (4, 'quick brown fox jumps over big dog', 'value b');
 
 statement ok
-VACUUM (UPDATE_INDEXES) foo;
+VACUUM (REFRESH_TABLE) foo;
 
 query
 SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('over big dog') OR b @@ ts_phrase('red fox') ORDER BY a;
@@ -89,7 +89,7 @@ statement ok
 INSERT INTO foo values (6, 'quick fox over big dog', 'value c');
 
 statement ok
-VACUUM (UPDATE_INDEXES) foo;
+VACUUM (REFRESH_TABLE) foo;
 
 # Exact gap: 1 word between 'quick' and 'fox' -- matches rows with 'quick brown fox' and 'quick red fox'
 query
@@ -302,7 +302,7 @@ UPDATE vedernikoff SET c = 'deadinside' WHERE a = 3;
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) vedernikoff;
+VACUUM (REFRESH_TABLE) vedernikoff;
 
 
 query
@@ -400,27 +400,27 @@ QUERY PLAN
 │└───────────────────────────────────┘│
 └─────────────────────────────────────┘
 EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english);
-┌────────────────────────────────────────────────┐
-│┌──────────────────────────────────────────────┐│
-││              Total Time: <slt:ignore>        ││
-│└──────────────────────────────────────────────┘│
-└────────────────────────────────────────────────┘
+<slt:ignore>
 ┌───────────────────────────┐
-│           QUERY           │
+│      RESULT_COLLECTOR     │
+│    ────────────────────   │
+│                           │
+│           0 rows          │
+<slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │      EXPLAIN_ANALYZE      │
 │    ────────────────────   │
 │                           │
 │           0 rows          │
-│           <slt:ignore>    │
+<slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         EXTENSION         │
 │    ────────────────────   │
 │                           │
 │           1 row           │
-│           <slt:ignore>    │
+<slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         TABLE_SCAN        │
@@ -435,7 +435,7 @@ EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b tes
 │                           │
 │                           │
 │           3 rows          │
-│           <slt:ignore>    │
+<slt:ignore>
 └───────────────────────────┘
 
 
@@ -664,7 +664,7 @@ QUERY PLAN
 │    ────────────────────   │
 │  score_parquet_idx.a ASC  │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
@@ -772,13 +772,13 @@ statement ok
 CREATE INDEX multi_seg_idx ON multi_seg USING inverted(a, b score_en);
 
 statement ok
-VACUUM (UPDATE_INDEXES) multi_seg;
+VACUUM (REFRESH_TABLE) multi_seg;
 
 statement ok
 INSERT INTO multi_seg VALUES (3, 'gamma fox'), (4, 'delta fox');
 
 statement ok
-VACUUM (UPDATE_INDEXES) multi_seg;
+VACUUM (REFRESH_TABLE) multi_seg;
 
 query
 SELECT a, BM25(multi_seg_idx.tableoid) > 0 AS has_score FROM multi_seg_idx WHERE b @@ ts_phrase('fox') ORDER BY a;
@@ -981,7 +981,7 @@ QUERY PLAN
 │    ────────────────────   │
 │    dense_csv_idx.a ASC    │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
@@ -1129,7 +1129,7 @@ statement ok
 CREATE INDEX dense_multi_idx ON dense_multi USING inverted(a, b test_english);
 
 statement ok
-VACUUM (UPDATE_INDEXES) dense_multi;
+VACUUM (REFRESH_TABLE) dense_multi;
 
 statement ok
 INSERT INTO dense_multi VALUES
@@ -1139,7 +1139,7 @@ INSERT INTO dense_multi VALUES
   (8, 'universal token theta');
 
 statement ok
-VACUUM (UPDATE_INDEXES) dense_multi;
+VACUUM (REFRESH_TABLE) dense_multi;
 
 query
 SELECT a, b FROM dense_multi_idx WHERE b @@ ts_phrase('universal token') ORDER BY a;
@@ -1180,7 +1180,7 @@ INSERT INTO dense_multi VALUES
   (10, 'universal token kappa');
 
 statement ok
-VACUUM (UPDATE_INDEXES) dense_multi;
+VACUUM (REFRESH_TABLE) dense_multi;
 
 query
 SELECT a, b FROM dense_multi_idx WHERE b @@ ts_phrase('universal token') ORDER BY a;

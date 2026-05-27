@@ -360,7 +360,7 @@ Corpus BuildIndex() {
     }
     ++inserted;
   }
-  writer->Commit();
+  writer->RefreshCommit();
 
   if (inserted == 0) {
     Die("inserted 0 documents - dataset file empty?");

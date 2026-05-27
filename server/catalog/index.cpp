@@ -45,7 +45,8 @@
 #include "catalog/object.h"
 #include "catalog/secondary_index.h"
 #include "catalog/tokenizer.h"
-#include "catalog/types.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 
 namespace sdb::catalog {
@@ -102,8 +103,6 @@ ResultOr<std::string> GetIndexStringOption(std::string_view index_kind,
                                  "'"};
 }
 
-constexpr std::string_view kIncludedKind = "included";
-constexpr std::string_view kHNSWKind = "hnsw";
 constexpr std::array<std::string_view, 2> kKnownOpclassTypes{
   kIncludedKind,
   kHNSWKind,
@@ -363,37 +362,13 @@ Result ApplyHNSWOptions(
 Result ValidateInvertedIndexColumns(
   std::span<CreateIndexColumn> indexed_columns) {
   for (const auto& c : indexed_columns) {
-    if (c.IsIndexedExpression()) {
-      const auto& expr_type = c.GetIndexedExpression().return_type;
-      const auto kind = expr_type.id();
-      bool supported = kind == duckdb::LogicalTypeId::SQLNULL ||
-                       kind == duckdb::LogicalTypeId::VARCHAR ||
-                       kind == duckdb::LogicalTypeId::BOOLEAN ||
-                       kind == duckdb::LogicalTypeId::TINYINT ||
-                       kind == duckdb::LogicalTypeId::SMALLINT ||
-                       kind == duckdb::LogicalTypeId::INTEGER ||
-                       kind == duckdb::LogicalTypeId::BIGINT ||
-                       kind == duckdb::LogicalTypeId::FLOAT ||
-                       kind == duckdb::LogicalTypeId::DOUBLE ||
-                       kind == duckdb::LogicalTypeId::DATE ||
-                       kind == duckdb::LogicalTypeId::TIMESTAMP_TZ;
-      if (!supported && kind == duckdb::LogicalTypeId::ARRAY &&
-          c.opclass == kHNSWKind &&
-          duckdb::ArrayType::GetChildType(expr_type).id() ==
-            duckdb::LogicalTypeId::FLOAT) {
-        supported = true;
-      }
-      if (!supported) {
-        return {ERROR_BAD_PARAMETER, "Indexed expression ",
-                c.GetIndexedExpression().pretty_printed,
-                " has unsupported return kind ",
-                duckdb::EnumUtil::ToString(kind)};
-      }
-      continue;
-    }
-    SDB_ASSERT(c.catalog_column);
-    const auto kind = c.catalog_column->type.id();
-    if (c.opclass == kIncludedKind) {
+    const auto& value_type = c.IsIndexedExpression()
+                               ? c.GetIndexedExpression().return_type
+                               : c.catalog_column->type;
+    const auto label = c.name;
+    const auto kind = value_type.id();
+
+    if (c.IsBuiltin(kIncludedKind)) {
       // TODO(mbkkt) List of supported instead of list of unsupported
       const bool unsupported =
         kind == duckdb::LogicalTypeId::UNION ||
@@ -415,14 +390,45 @@ Result ValidateInvertedIndexColumns(
         kind == duckdb::LogicalTypeId::POINTER;
       if (unsupported) {
         return {ERROR_BAD_PARAMETER,
-                "Column ",
-                c.name,
-                " has kind ",
-                duckdb::EnumUtil::ToString(kind),
+                "Column '",
+                label,
+                "' has type ",
+                value_type.ToString(),
                 " which is not supported in INCLUDE"};
       }
       continue;
     }
+
+    if (c.HasParentheses() && c.opclass != kHNSWKind &&
+        c.opclass != kIncludedKind) {
+      return {ERROR_BAD_PARAMETER,
+              "Unknown built-in opclass '",
+              c.opclass,
+              "' on '",
+              label,
+              "' (known: ",
+              DescribeKnownOpclassTypes(),
+              ")"};
+    }
+
+    if (c.IsBuiltin(kHNSWKind)) {
+      const bool is_float_array =
+        kind == duckdb::LogicalTypeId::ARRAY &&
+        duckdb::ArrayType::GetChildType(value_type).id() ==
+          duckdb::LogicalTypeId::FLOAT;
+      if (!is_float_array) {
+        return {ERROR_BAD_PARAMETER, "Column '", label,
+                "' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not ",
+                value_type.ToString()};
+      }
+      continue;
+    }
+
+    if (kind == duckdb::LogicalTypeId::ARRAY) {
+      return {ERROR_BAD_PARAMETER, "Column '", label, "' has unsupported type ",
+              value_type.ToString()};
+    }
+
     const bool supported = kind == duckdb::LogicalTypeId::SQLNULL ||
                            kind == duckdb::LogicalTypeId::VARCHAR ||
                            kind == duckdb::LogicalTypeId::BLOB ||
@@ -435,14 +441,13 @@ Result ValidateInvertedIndexColumns(
                            kind == duckdb::LogicalTypeId::DOUBLE ||
                            kind == duckdb::LogicalTypeId::DATE ||
                            kind == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
-                           kind == duckdb::LogicalTypeId::ARRAY ||
                            kind == duckdb::LogicalTypeId::GEOMETRY;
     if (!supported) {
       return {ERROR_BAD_PARAMETER,
-              "Column ",
-              c.name,
-              " has unsupported kind ",
-              duckdb::EnumUtil::ToString(kind),
+              "Column '",
+              label,
+              "' has unsupported type ",
+              value_type.ToString(),
               " and can not be indexed"};
     }
   }
@@ -562,19 +567,10 @@ Result ApplyHNSWOpclass(
   std::string_view owner_label, const duckdb::LogicalType& value_type,
   const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
   InvertedIndexEntryInfo& entry) {
-  if (value_type.id() != duckdb::LogicalTypeId::ARRAY) {
-    return {ERROR_BAD_PARAMETER, "Column '", owner_label,
-            "' must be an ARRAY type to use the 'hnsw' opclass"};
-  }
-  if (duckdb::ArrayType::GetChildType(value_type).id() !=
-      duckdb::LogicalTypeId::FLOAT) {
-    return {ERROR_BAD_PARAMETER, "Column '", owner_label,
-            "' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass"};
-  }
-  if (!opts) {
-    return {ERROR_BAD_PARAMETER, "Built-in opclass 'hnsw' on column '",
-            owner_label, "' requires options; use 'hnsw (...)'"};
-  }
+  SDB_ASSERT(opts);
+  SDB_ASSERT(value_type.id() == duckdb::LogicalTypeId::ARRAY);
+  SDB_ASSERT(duckdb::ArrayType::GetChildType(value_type).id() ==
+             duckdb::LogicalTypeId::FLOAT);
   HNSWColumnConfig cfg{
     .d = static_cast<int>(duckdb::ArrayType::GetSize(value_type)),
   };
@@ -593,6 +589,123 @@ Result ApplyHNSWOpclass(
   entry.compression = compression;
   entry.row_group_size = row_group_size;
   entry.store_values = true;
+  return {};
+}
+
+std::shared_ptr<Tokenizer> LookupTokenizer(const Snapshot& snapshot,
+                                           ObjectId database_id,
+                                           std::string_view schema_name,
+                                           std::string_view opclass) {
+  if (opclass.empty()) {
+    return nullptr;
+  }
+  auto object_name = pg::ParseObjectName(opclass, schema_name);
+  if (object_name.schema != schema_name) {
+    return nullptr;
+  }
+  return snapshot.GetTokenizer(database_id, object_name.schema,
+                               object_name.relation);
+}
+
+[[noreturn]] void ThrowUnknownBuiltinOpclass(std::string_view opclass,
+                                             std::string_view owner_label,
+                                             std::string_view schema_name) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+    ERR_MSG("Unknown opclass '", opclass, "' on column '", owner_label,
+            "': no text dictionary by that name in schema '", schema_name, "'"),
+    ERR_HINT("'", opclass, "' is a built-in opclass; use the options form '",
+             opclass, " (...)'"));
+}
+
+Result MakeUnknownOpclassError(std::string_view opclass,
+                               std::string_view owner_label,
+                               std::string_view schema_name) {
+  auto object_name = pg::ParseObjectName(std::string{opclass}, schema_name);
+  if (object_name.schema != schema_name) {
+    return {ERROR_BAD_PARAMETER,
+            "Accessing text dictionary from different schema is not supported"};
+  }
+  return {ERROR_BAD_PARAMETER,
+          "Unknown opclass '",
+          opclass,
+          "' on column '",
+          owner_label,
+          "': no text dictionary by that name in schema '",
+          schema_name,
+          "'"};
+}
+
+ResultOr<Tokenizer::TokenizerWrapper> InstantiateAnalyzer(
+  std::string_view opclass, Tokenizer& dict) {
+  auto tokenizer = dict.GetTokenizer();
+  if (!tokenizer) {
+    return std::unexpected<Result>{std::in_place,
+                                   ERROR_BAD_PARAMETER,
+                                   "Text search dictionary '",
+                                   opclass,
+                                   "' failed to instantiate: ",
+                                   tokenizer.error().errorMessage()};
+  }
+  return std::move(*tokenizer);
+}
+
+void FillEntryFromTokenizer(const Tokenizer& dict,
+                            const irs::analysis::Analyzer& analyzer,
+                            InvertedIndexEntryInfo& entry) {
+  entry.text_dictionary = dict.GetId();
+  entry.features = dict.GetFeatures();
+  const bool wants_store = irs::get<irs::StoreAttr>(analyzer) != nullptr;
+  const bool wants_norm = entry.features.HasFeatures(irs::IndexFeatures::Norm);
+  SDB_ASSERT(!(wants_store && wants_norm),
+             "tokenizer-store and norm should be mutually exclusive");
+  if (wants_store || wants_norm) {
+    entry.synthetic_column = static_cast<irs::field_id>(NextId());
+  }
+  if (wants_norm) {
+    entry.norm_row_group_size = dict.GetNormRowGroupSize();
+  }
+}
+
+Result ApplyOpclassToEntry(const CreateIndexColumn& c,
+                           std::string_view owner_label,
+                           const duckdb::LogicalType& value_type,
+                           const Snapshot& snapshot, ObjectId database_id,
+                           std::string_view schema_name,
+                           InvertedIndexEntryInfo& entry) {
+  if (c.opclass.empty()) {
+    return {};
+  }
+  if (c.IsBuiltin(kHNSWKind)) {
+    return ApplyHNSWOpclass(owner_label, value_type, c.opclass_options, entry);
+  }
+  if (c.IsBuiltin(kIncludedKind)) {
+    if (auto r = ApplyIncludedOpclass(owner_label, value_type,
+                                      c.opclass_options, entry);
+        r.fail()) {
+      return r;
+    }
+    entry.store_values = true;
+    return {};
+  }
+
+  auto dict = LookupTokenizer(snapshot, database_id, schema_name, c.opclass);
+  if (!dict) {
+    if (c.opclass == kHNSWKind || c.opclass == kIncludedKind) {
+      // Maybe confused with hnws(...) and included(...), give a hint
+      ThrowUnknownBuiltinOpclass(c.opclass, owner_label, schema_name);
+    }
+    return MakeUnknownOpclassError(c.opclass, owner_label, schema_name);
+  }
+  auto analyzer = InstantiateAnalyzer(c.opclass, *dict);
+  if (!analyzer) {
+    return std::move(analyzer).error();
+  }
+  if (auto r = ValidateGeoTokenizerColumn(owner_label, value_type, **analyzer);
+      r.fail()) {
+    return r;
+  }
+  FillEntryFromTokenizer(*dict, **analyzer, entry);
   return {};
 }
 
@@ -633,42 +746,6 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     return std::unexpected<Result>(std::move(column_validation_res));
   }
 
-  // Resolves a text-dictionary opclass against the current snapshot. The HNSW
-  // opclass is handled inline because it does not feed JSON paths.
-  auto resolve_dict =
-    [&](std::string_view col_name,
-        const std::string& opclass) -> ResultOr<std::shared_ptr<Tokenizer>> {
-    auto object_name = pg::ParseObjectName(opclass, schema_name);
-    // Technically nothing prevents us from allowing so.
-    // But that will make schema drop more complicated as we will need to
-    // check if any dictionaries are used in the indexes from other
-    // schemas and even fail schema drops on this case. For now if we
-    // drop text dictionary as a child entity we can be sure that
-    // indexes will also be dropped along with tables from same schema.
-    if (object_name.schema != schema_name) {
-      return std::unexpected<Result>{
-        std::in_place, ERROR_BAD_PARAMETER,
-        "Accessing text dictionary from different schema is not supported"};
-    }
-    auto dict = snapshot->GetTokenizer(database_id, object_name.schema,
-                                       object_name.relation);
-    if (!dict) {
-      return std::unexpected<Result>{std::in_place,
-                                     ERROR_BAD_PARAMETER,
-                                     "Unknown opclass '",
-                                     opclass,
-                                     "' on column '",
-                                     col_name,
-                                     "': not a built-in type (known: ",
-                                     DescribeKnownOpclassTypes(),
-                                     ") and no text dictionary by that name "
-                                     "in schema '",
-                                     schema_name,
-                                     "'"};
-    }
-    return dict;
-  };
-
   InvertedIndex::Entries entries;
   const uint64_t expressions_cnt = std::ranges::count_if(
     columns, [](const auto& c) { return c.IsIndexedExpression(); });
@@ -680,59 +757,11 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       const auto field_id = next_expr_field_id++;
       InvertedIndexEntryInfo expr_info;
       expr_info.expression = expr_data;
-      const bool is_included_opclass = c.opclass == kIncludedKind;
-      const bool is_hnsw_opclass = c.opclass == kHNSWKind;
-      const bool accepts_options = is_included_opclass || is_hnsw_opclass;
-      if (c.opclass_options.has_value() && !accepts_options) {
-        return std::unexpected<Result>{std::in_place, ERROR_BAD_PARAMETER,
-                                       "indexed expression '",
-                                       expr_data.pretty_printed,
-                                       "': only the 'included' and 'hnsw' "
-                                       "built-in opclasses accept options"};
-      }
-      if (is_included_opclass) {
-        if (auto r = ApplyIncludedOpclass(expr_data.pretty_printed,
-                                          expr_data.return_type,
-                                          c.opclass_options, expr_info);
-            r.fail()) {
-          return std::unexpected<Result>(std::move(r));
-        }
-        expr_info.store_values = true;
-      } else if (is_hnsw_opclass) {
-        if (auto r =
-              ApplyHNSWOpclass(expr_data.pretty_printed, expr_data.return_type,
-                               c.opclass_options, expr_info);
-            r.fail()) {
-          return std::unexpected<Result>(std::move(r));
-        }
-      } else if (!c.opclass.empty()) {
-        auto dict = resolve_dict(expr_data.pretty_printed, c.opclass);
-        if (!dict) {
-          return std::unexpected<Result>{std::move(dict.error())};
-        }
-        auto tokenizer = (*dict)->GetTokenizer();
-        if (!tokenizer) {
-          return std::unexpected<Result>{std::in_place,
-                                         ERROR_BAD_PARAMETER,
-                                         "Text search dictionary '",
-                                         c.opclass,
-                                         "' failed to instantiate: ",
-                                         tokenizer.error().errorMessage()};
-        }
-        expr_info.text_dictionary = (*dict)->GetId();
-        expr_info.features = (*dict)->GetFeatures();
-        const bool wants_store =
-          irs::get<irs::StoreAttr>(**tokenizer) != nullptr;
-        const bool wants_norm =
-          expr_info.features.HasFeatures(irs::IndexFeatures::Norm);
-        SDB_ASSERT(!(wants_store && wants_norm),
-                   "tokenizer-store and norm should be mutually exclusive");
-        if (wants_store || wants_norm) {
-          expr_info.synthetic_column = static_cast<irs::field_id>(NextId());
-        }
-        if (wants_norm) {
-          expr_info.norm_row_group_size = (*dict)->GetNormRowGroupSize();
-        }
+      if (auto r = ApplyOpclassToEntry(c, expr_data.pretty_printed,
+                                       expr_data.return_type, *snapshot,
+                                       database_id, schema_name, expr_info);
+          r.fail()) {
+        return std::unexpected<Result>(std::move(r));
       }
       entries.emplace(field_id, std::move(expr_info));
       continue;
@@ -741,81 +770,11 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       static_cast<irs::field_id>(c.catalog_column->GetId());
     auto& index_col =
       entries.try_emplace(col_field_id, InvertedIndexEntryInfo{}).first->second;
-
-    if (!c.opclass.empty()) {
-      const bool has_parens = c.opclass_options.has_value();
-      const bool is_builtin_name =
-        (c.opclass == kHNSWKind || c.opclass == kIncludedKind);
-      if (!has_parens && is_builtin_name) {
-        return std::unexpected<Result>{std::in_place,
-                                       ERROR_BAD_PARAMETER,
-                                       "Built-in opclass '",
-                                       c.opclass,
-                                       "' on column '",
-                                       c.name,
-                                       "' requires options; use '",
-                                       c.opclass,
-                                       " (...)'"};
-      }
-      if (has_parens && !is_builtin_name) {
-        return std::unexpected<Result>{std::in_place,
-                                       ERROR_BAD_PARAMETER,
-                                       "Unknown built-in opclass '",
-                                       c.opclass,
-                                       "' on column '",
-                                       c.name,
-                                       "' (known: ",
-                                       DescribeKnownOpclassTypes(),
-                                       ")"};
-      }
-      if (c.opclass == kHNSWKind) {
-        if (auto r = ApplyHNSWOpclass(c.name, c.catalog_column->type,
-                                      c.opclass_options, index_col);
-            r.fail()) {
-          return std::unexpected<Result>(std::move(r));
-        }
-      } else if (c.opclass == kIncludedKind) {
-        if (auto r = ApplyIncludedOpclass(c.name, c.catalog_column->type,
-                                          c.opclass_options, index_col);
-            r.fail()) {
-          return std::unexpected<Result>(std::move(r));
-        }
-        index_col.store_values = true;
-      } else {
-        SDB_ASSERT(!c.opclass_options);
-        auto dict = resolve_dict(c.name, c.opclass);
-        if (!dict) {
-          return std::unexpected<Result>{std::move(dict.error())};
-        }
-        auto analyzer = (*dict)->GetTokenizer();
-        if (!analyzer) {
-          return std::unexpected<Result>{std::in_place,
-                                         ERROR_BAD_PARAMETER,
-                                         "Text search dictionary '",
-                                         c.opclass,
-                                         "' failed to instantiate: ",
-                                         analyzer.error().errorMessage()};
-        }
-        if (auto res = ValidateGeoTokenizerColumn(
-              c.name, c.catalog_column->type, **analyzer);
-            res.fail()) {
-          return std::unexpected<Result>(std::move(res));
-        }
-        index_col.text_dictionary = (*dict)->GetId();
-        index_col.features = (*dict)->GetFeatures();
-        const bool wants_store =
-          irs::get<irs::StoreAttr>(**analyzer) != nullptr;
-        const bool wants_norm =
-          index_col.features.HasFeatures(irs::IndexFeatures::Norm);
-        SDB_ASSERT(!(wants_store && wants_norm),
-                   "tokenizer-store and norm should be mutually exclusive");
-        if (wants_store || wants_norm) {
-          index_col.synthetic_column = static_cast<irs::field_id>(NextId());
-        }
-        if (wants_norm) {
-          index_col.norm_row_group_size = (*dict)->GetNormRowGroupSize();
-        }
-      }
+    if (auto r =
+          ApplyOpclassToEntry(c, c.name, c.catalog_column->type, *snapshot,
+                              database_id, schema_name, index_col);
+        r.fail()) {
+      return std::unexpected<Result>(std::move(r));
     }
   }
   for (auto& [_, entry] : entries) {

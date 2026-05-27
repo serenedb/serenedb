@@ -220,7 +220,7 @@ TEST(WildcardNgramFilterTest, query) {
       irs::tests::StoreFieldAt(*cs, kStoreId, doc.DocId(), field);
     }
     ctx.Commit();
-    writer->Commit();
+    writer->RefreshCommit();
   }
 
   irs::DirectoryReader reader{dir, irs::formats::Get("1_5simd"),

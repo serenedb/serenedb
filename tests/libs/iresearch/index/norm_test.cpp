@@ -199,7 +199,7 @@ TEST_P(NormTestCase, CheckNorms) {
   ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));
-  writer->Commit();
+  writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
   // Create expected index
@@ -309,7 +309,7 @@ TEST_P(NormTestCase, CheckNormsBatched) {
   for (const auto* d : docs) {
     ASSERT_TRUE(Insert(*writer, d->indexed.begin(), d->indexed.end()));
   }
-  writer->Commit();
+  writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
   // Create expected index
@@ -371,7 +371,7 @@ TEST_P(NormTestCase, CheckNormsBatched) {
   }
 }
 
-TEST_P(NormTestCase, CheckNormsConsolidation) {
+TEST_P(NormTestCase, CheckNormsCompaction) {
   const absl::flat_hash_map<std::string_view, uint32_t> seed_mapping{
     {"name", uint32_t{1}},
     {"same", uint32_t{1} << 5},
@@ -417,12 +417,12 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
   ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));
-  writer->Commit();
+  writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
   ASSERT_TRUE(Insert(*writer, doc4->indexed.begin(), doc4->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc5->indexed.begin(), doc5->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc6->indexed.begin(), doc6->indexed.end()));
-  writer->Commit();
+  writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
   // Create expected index
@@ -533,15 +533,14 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
     }
   }
 
-  // Consolidate segments
+  // Compact segments
   {
-    const irs::index_utils::ConsolidateCount consolidate_all;
-    ASSERT_TRUE(
-      writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
-    writer->Commit();
+    const irs::index_utils::CompactionCount compact_all;
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
-    // Simulate consolidation
+    // Simulate compaction
     index().clear();
     index().emplace_back();
     expected_index.back().insert(doc0->indexed.begin(), doc0->indexed.end(),
@@ -622,7 +621,7 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
   }
 }
 
-TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
+TEST_P(NormTestCase, CheckNormsCompactionWithRemovals) {
   const absl::flat_hash_map<std::string_view, uint32_t> seed_mapping{
     {"name", uint32_t{1}},
     {"same", uint32_t{1} << 5},
@@ -668,12 +667,12 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
   ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));
-  writer->Commit();
+  writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
   ASSERT_TRUE(Insert(*writer, doc4->indexed.begin(), doc4->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc5->indexed.begin(), doc5->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc6->indexed.begin(), doc6->indexed.end()));
-  writer->Commit();
+  writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
   // Create expected index
@@ -788,19 +787,18 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
   {
     auto query_doc3 = MakeByTerm("name", "D");
     writer->GetBatch().Remove(*query_doc3);
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
 
-  // Consolidate segments
+  // Compact segments
   {
-    const irs::index_utils::ConsolidateCount consolidate_all;
-    ASSERT_TRUE(
-      writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
-    writer->Commit();
+    const irs::index_utils::CompactionCount compact_all;
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
-    // Simulate consolidation
+    // Simulate compaction
     index().clear();
     index().emplace_back();
     expected_index.back().insert(doc0->indexed.begin(), doc0->indexed.end(),
@@ -878,15 +876,14 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
   }
 
   ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end()));
-  writer->Commit();
+  writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
-  // Consolidate segments
+  // Compact segments
   {
-    const irs::index_utils::ConsolidateCount consolidate_all;
-    ASSERT_TRUE(
-      writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
-    writer->Commit();
+    const irs::index_utils::CompactionCount compact_all;
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
 

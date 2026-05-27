@@ -38,7 +38,7 @@ INSERT INTO vec_t VALUES (4, [10, 10, 10]::FLOAT[3], 'delta', 400, 'body-four')
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) vec_t
+VACUUM (REFRESH_TABLE) vec_t
 
 
 # All-INCLUDE projection: label + tag are both INCLUDE'd, so the

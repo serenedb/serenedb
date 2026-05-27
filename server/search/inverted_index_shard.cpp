@@ -129,9 +129,8 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
     _search{GetSearchEngine()},
     _state{std::make_shared<ThreadPoolState>()} {
   const auto& options = index.GetOptions();
-  _tasks_settings.commit_interval_msec = options.commit_interval_ms;
-  _tasks_settings.consolidation_interval_msec =
-    options.consolidation_interval_ms;
+  _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
+  _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
   _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
   auto& server = SerenedServer::Instance();
 
@@ -180,7 +179,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   irs::ResourceManagementOptions resource_manager;
   resource_manager.transactions = _writers_memory;
   resource_manager.readers = _readers_memory;
-  resource_manager.consolidations = _consolidations_memory;
+  resource_manager.compactions = _compactions_memory;
   resource_manager.file_descriptors = _file_descriptors_count;
   resource_manager.cached_columns =
     &GetSearchEngine().getCachedColumnsManager();
@@ -264,7 +263,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
 
   if (!path_exists) {
     // Initialize empty index
-    _writer->Commit();
+    _writer->RefreshCommit();
   }
 
   auto reader = _writer->GetSnapshot();
@@ -392,22 +391,22 @@ void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
   }
 }
 
-void InvertedIndexShard::ScheduleConsolidation(absl::Duration delay) {
-  ConsolidationTask task{shared_from_this(), [] { return /* TODO */ true; }};
+void InvertedIndexShard::ScheduleCompaction(absl::Duration delay) {
+  CompactionTask task{shared_from_this(), [] { return /* TODO */ true; }};
 
-  _state->pending_consolidations.fetch_add(1, std::memory_order_release);
+  _state->pending_compactions.fetch_add(1, std::memory_order_release);
   std::move(task).Schedule(delay).Detach();
 }
 
 void InvertedIndexShard::ScheduleCommit(absl::Duration delay) {
-  CommitTask task{shared_from_this(), false};
+  RefreshTask task{shared_from_this(), false};
 
   _state->pending_commits.fetch_add(1, std::memory_order_release);
   std::move(task).Schedule(delay).Detach();
 }
 
 yaclib::Future<> InvertedIndexShard::CommitWait() {
-  CommitTask task{shared_from_this(), true};
+  RefreshTask task{shared_from_this(), true};
   _state->pending_commits.fetch_add(1, std::memory_order_release);
   return std::move(task).Schedule();
 }
@@ -467,19 +466,19 @@ Result InvertedIndexShard::CleanupUnsafeImpl() {
   return {};
 }
 
-InvertedIndexShard::ResultWithTime InvertedIndexShard::ConsolidateUnsafe(
-  const irs::ConsolidationPolicy& policy,
-  const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation) {
+InvertedIndexShard::ResultWithTime InvertedIndexShard::CompactUnsafe(
+  const irs::CompactionPolicy& policy,
+  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction) {
   auto begin = std::chrono::steady_clock::now();
-  auto result = ConsolidateUnsafeImpl(policy, progress, empty_consolidation);
+  auto result = CompactUnsafeImpl(policy, progress, empty_compaction);
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
-  if (bool ok = result.ok(); ok && _avg_consolidation_time_ms != nullptr) {
-    _avg_consolidation_time_ms->store(
-      ComputeAvg(_consolidation_time_num, time_ms), std::memory_order_relaxed);
-  } else if (!ok && _num_failed_consolidations != nullptr) {
-    _num_failed_consolidations->fetch_add(1, std::memory_order_relaxed);
+  if (bool ok = result.ok(); ok && _avg_compaction_time_ms != nullptr) {
+    _avg_compaction_time_ms->store(ComputeAvg(_compaction_time_num, time_ms),
+                                   std::memory_order_relaxed);
+  } else if (!ok && _num_failed_compactions != nullptr) {
+    _num_failed_compactions->fetch_add(1, std::memory_order_relaxed);
   }
   return {std::move(result), time_ms};
 }
@@ -508,37 +507,37 @@ InvertedIndexShard::ResultWithTime InvertedIndexShard::CommitUnsafe(
   return {std::move(result), time_ms};
 }
 
-Result InvertedIndexShard::ConsolidateUnsafeImpl(
-  const irs::ConsolidationPolicy& policy,
-  const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation) {
-  empty_consolidation = false;
+Result InvertedIndexShard::CompactUnsafeImpl(
+  const irs::CompactionPolicy& policy,
+  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction) {
+  empty_compaction = false;
 
   if (!policy) {
     return {ERROR_BAD_PARAMETER,
-            "unset consolidation policy while executing consolidation policy "
+            "unset compaction policy while executing compaction policy "
             "on Search index '",
             GetId().id(), "'"};
   }
 
   try {
-    const auto res = _writer->Consolidate(policy, nullptr, progress);
+    const auto res = _writer->Compact(policy, nullptr, progress);
     if (!res) {
       return {ERROR_INTERNAL,
-              "failure while executing consolidation policy on Search index '",
+              "failure while executing compaction policy on Search index '",
               GetId().id(), "'"};
     }
 
-    empty_consolidation = (res.size == 0);
+    empty_compaction = (res.size == 0);
   } catch (const std::exception& e) {
     return {ERROR_INTERNAL,
-            "caught exception while executing consolidation policy ",
+            "caught exception while executing compaction policy ",
             "on Search index '",
             GetId().id(),
             "': ",
             e.what()};
   } catch (...) {
     return {ERROR_INTERNAL,
-            "caught exception while executing consolidation policy ",
+            "caught exception while executing compaction policy ",
             "on Search index '", GetId().id(), "'"};
   }
   return {};
@@ -588,7 +587,7 @@ Result InvertedIndexShard::CommitUnsafeImpl(
           return before_commit;
       }
     }();
-    const bool were_changes = _writer->Commit({
+    const bool were_changes = _writer->RefreshCommit({
       .tick = commit_tick,
       .progress = progress,
       .reopen_columnstore = /* TODO(codeworse) */ false,

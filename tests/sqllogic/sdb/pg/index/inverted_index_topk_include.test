@@ -32,7 +32,7 @@ INSERT INTO docs VALUES
   (4, 'a clever fox',        44, 'four');
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 # Plan check: optimizer pulls TOP_N(score) into the SearchScan.
 query
@@ -92,19 +92,19 @@ statement ok
 INSERT INTO docs VALUES (5, 'fox alpha',          55, 'five');
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 statement ok
 INSERT INTO docs VALUES (6, 'fox beta gamma',     66, 'six');
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 statement ok
 INSERT INTO docs VALUES (7, 'fox delta epsilon zeta eta', 77, 'seven');
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 # Sanity: INCLUDE columns coming from later segments must still
 # resolve to the right rows for each score-ordered hit.

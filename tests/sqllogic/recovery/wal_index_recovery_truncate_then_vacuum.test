@@ -1,6 +1,6 @@
 control substitution on
 
-# WAL index recovery: VACUUM (UPDATE_INDEXES) AFTER a TRUNCATE, then crash.
+# WAL index recovery: VACUUM (REFRESH_TABLE) AFTER a TRUNCATE, then crash.
 #
 # Sequence inside the recovery range:
 #   1) seed + VACUUM            -> on-disk iresearch holds the seed.
@@ -39,7 +39,7 @@ CREATE INDEX gnusi_idx ON gnusi_t USING inverted(id, body gnusi_dict);
 
 # Phase 1: seed -> publish via vacuum.
 statement ok
-VACUUM (UPDATE_INDEXES) gnusi_t;
+VACUUM (REFRESH_TABLE) gnusi_t;
 
 # Phase 2: write more, then publish via vacuum -- iresearch on-disk now holds
 # {phase1, phase2}.
@@ -47,7 +47,7 @@ statement ok
 INSERT INTO gnusi_t VALUES (3, 'phase2 charlie'), (4, 'phase2 delta');
 
 statement ok
-VACUUM (UPDATE_INDEXES) gnusi_t;
+VACUUM (REFRESH_TABLE) gnusi_t;
 
 query
 SELECT count(*) FROM gnusi_idx WHERE body @@ ts_phrase('phase1 alpha');

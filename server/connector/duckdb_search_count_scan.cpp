@@ -87,7 +87,7 @@ void SearchCountScanFunction(duckdb::ClientContext& /*context*/,
   }
   const duckdb::idx_t batch = static_cast<duckdb::idx_t>(
     std::min<uint64_t>(remaining, STANDARD_VECTOR_SIZE));
-  output.SetCardinality(batch);
+  output.SetChildCardinality(batch);
   gstate.emitted += batch;
   gstate.produced_rows.fetch_add(batch, std::memory_order_relaxed);
 }

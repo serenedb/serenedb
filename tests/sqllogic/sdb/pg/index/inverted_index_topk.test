@@ -42,7 +42,7 @@ CREATE INDEX docs_topk_idx ON docs USING inverted(id, body en_topk);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 query
@@ -240,7 +240,7 @@ QUERY PLAN
 │    ────────────────────   │
 │           id ASC          │
 │                           │
-│          ~0 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           UNION           ├──────────────┐
@@ -291,7 +291,7 @@ QUERY PLAN
 │    ────────────────────   │
 │         sub.id ASC        │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
@@ -389,7 +389,7 @@ INSERT INTO docs VALUES (19, 'purple fox');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 # Get expected results from full scan across two segments

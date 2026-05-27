@@ -175,7 +175,7 @@ SELECT seq_int, step_int FROM codec_seq_idx WHERE txt @@ ts_phrase('five');
 seq_int	step_int
 1004	50
 
-# --- 5. Insert + VACUUM-driven consolidation across codec mixes -----------
+# --- 5. Insert + VACUUM-driven compaction across codec mixes -----------
 # Forces a merge that has to bring together row groups whose chosen codec
 # differs (constant marker vs. mixed marker). The merged segment must read
 # back identical values.
@@ -185,7 +185,7 @@ INSERT INTO codec_const VALUES
   (6, TRUE,  9, 'zeta');
 
 statement ok
-VACUUM (UPDATE_INDEXES) codec_const;
+VACUUM (REFRESH_TABLE) codec_const;
 
 query
 SELECT pk, flag, marker FROM codec_const_idx ORDER BY pk;

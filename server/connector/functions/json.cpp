@@ -247,19 +247,53 @@ void JsonInFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 // -> operator (index / field) -- ported from PgJsonExtractIndex/Field
 // ---------------------------------------------------------------------------
 
+namespace {
+
+// Replacement for BinaryExecutor::ExecuteWithNulls<TA, TB, TR>(left, right,
+// result, count, fn) which was removed upstream. `fn` returns string_t and sets
+// the validity bit via the supplied callback when the extracted JSON value is
+// missing.
+template<typename TA, typename TB, typename FN>
+void JsonBinaryExecuteWithNulls(duckdb::Vector& left, duckdb::Vector& right,
+                                duckdb::Vector& result, duckdb::idx_t count,
+                                FN&& fn) {
+  duckdb::UnifiedVectorFormat ldata, rdata;
+  left.ToUnifiedFormat(ldata);
+  right.ToUnifiedFormat(rdata);
+  const auto* lptr = duckdb::UnifiedVectorFormat::GetData<TA>(ldata);
+  const auto* rptr = duckdb::UnifiedVectorFormat::GetData<TB>(rdata);
+  auto* result_ptr =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
+  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
+  for (duckdb::idx_t i = 0; i < count; i++) {
+    auto l_idx = ldata.sel->get_index(i);
+    auto r_idx = rdata.sel->get_index(i);
+    if (!ldata.validity.RowIsValid(l_idx) ||
+        !rdata.validity.RowIsValid(r_idx)) {
+      result_validity.SetInvalid(i);
+      continue;
+    }
+    bool valid = true;
+    result_ptr[i] = fn(lptr[l_idx], rptr[r_idx], valid);
+    if (!valid) {
+      result_validity.SetInvalid(i);
+    }
+  }
+}
+
+}  // namespace
+
 // json -> int  (returns JSON)
 void JsonExtractIndexFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                               duckdb::Vector& result) {
-  duckdb::BinaryExecutor::ExecuteWithNulls<duckdb::string_t, int64_t,
-                                           duckdb::string_t>(
+  JsonBinaryExecuteWithNulls<duckdb::string_t, int64_t>(
     args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t json, int64_t index, duckdb::ValidityMask& mask,
-        duckdb::idx_t row) -> duckdb::string_t {
+    [&](duckdb::string_t json, int64_t index, bool& valid) -> duckdb::string_t {
       JsonParser parser;
       parser.PrepareJson({json.GetData(), json.GetSize()});
       auto str = parser.ExtractByIndex<JsonOutputType::JSON>(index);
       if (str.empty() && !str.data()) {
-        mask.SetInvalid(row);
+        valid = false;
         return duckdb::string_t{};
       }
       return duckdb::StringVector::AddString(result, str.data(), str.size());
@@ -269,17 +303,16 @@ void JsonExtractIndexFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 // json -> text  (returns JSON)
 void JsonExtractFieldFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                               duckdb::Vector& result) {
-  duckdb::BinaryExecutor::ExecuteWithNulls<duckdb::string_t, duckdb::string_t,
-                                           duckdb::string_t>(
+  JsonBinaryExecuteWithNulls<duckdb::string_t, duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t json, duckdb::string_t field,
-        duckdb::ValidityMask& mask, duckdb::idx_t row) -> duckdb::string_t {
+        bool& valid) -> duckdb::string_t {
       JsonParser parser;
       parser.PrepareJson({json.GetData(), json.GetSize()});
       auto str = parser.ExtractByField<JsonOutputType::JSON>(
         {field.GetData(), field.GetSize()});
       if (str.empty() && !str.data()) {
-        mask.SetInvalid(row);
+        valid = false;
         return duckdb::string_t{};
       }
       return duckdb::StringVector::AddString(result, str.data(), str.size());
@@ -294,16 +327,14 @@ void JsonExtractFieldFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 void JsonExtractIndexTextFunction(duckdb::DataChunk& args,
                                   duckdb::ExpressionState&,
                                   duckdb::Vector& result) {
-  duckdb::BinaryExecutor::ExecuteWithNulls<duckdb::string_t, int64_t,
-                                           duckdb::string_t>(
+  JsonBinaryExecuteWithNulls<duckdb::string_t, int64_t>(
     args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t json, int64_t index, duckdb::ValidityMask& mask,
-        duckdb::idx_t row) -> duckdb::string_t {
+    [&](duckdb::string_t json, int64_t index, bool& valid) -> duckdb::string_t {
       JsonParser parser;
       parser.PrepareJson({json.GetData(), json.GetSize()});
       auto str = parser.ExtractByIndex<JsonOutputType::TEXT>(index);
       if (str.empty() && !str.data()) {
-        mask.SetInvalid(row);
+        valid = false;
         return duckdb::string_t{};
       }
       return duckdb::StringVector::AddString(result, str.data(), str.size());
@@ -314,17 +345,16 @@ void JsonExtractIndexTextFunction(duckdb::DataChunk& args,
 void JsonExtractFieldTextFunction(duckdb::DataChunk& args,
                                   duckdb::ExpressionState&,
                                   duckdb::Vector& result) {
-  duckdb::BinaryExecutor::ExecuteWithNulls<duckdb::string_t, duckdb::string_t,
-                                           duckdb::string_t>(
+  JsonBinaryExecuteWithNulls<duckdb::string_t, duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t json, duckdb::string_t field,
-        duckdb::ValidityMask& mask, duckdb::idx_t row) -> duckdb::string_t {
+        bool& valid) -> duckdb::string_t {
       JsonParser parser;
       parser.PrepareJson({json.GetData(), json.GetSize()});
       auto str = parser.ExtractByField<JsonOutputType::TEXT>(
         {field.GetData(), field.GetSize()});
       if (str.empty() && !str.data()) {
-        mask.SetInvalid(row);
+        valid = false;
         return duckdb::string_t{};
       }
       return duckdb::StringVector::AddString(result, str.data(), str.size());
@@ -589,8 +619,8 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
   {
     duckdb::ScalarFunction func{
       "json_extract_path", {JSON}, JSON, JsonExtractPathFunction};
-    func.varargs = VARCHAR;
-    func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    func.SetVarArgs(VARCHAR);
+    func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }
 
@@ -598,8 +628,8 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
   {
     duckdb::ScalarFunction func{
       "json_extract_path_text", {JSON}, VARCHAR, JsonExtractPathTextFunction};
-    func.varargs = VARCHAR;
-    func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    func.SetVarArgs(VARCHAR);
+    func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }
 
@@ -609,7 +639,7 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
                                 {JSON, duckdb::LogicalType::LIST(VARCHAR)},
                                 JSON,
                                 JsonExtractPathFunction};
-    func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }
   {
@@ -617,7 +647,7 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
                                 {JSON, duckdb::LogicalType::LIST(VARCHAR)},
                                 VARCHAR,
                                 JsonExtractPathTextFunction};
-    func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }
 
@@ -642,13 +672,13 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
     {
       duckdb::ScalarFunction f{
         "json_extract", {JSON, BIGINT}, JSON, JsonExtractIndexFunction};
-      f.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+      f.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
       extract_set.AddFunction(f);
     }
     {
       duckdb::ScalarFunction f{
         "json_extract", {JSON, VARCHAR}, JSON, JsonExtractFieldFunction};
-      f.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+      f.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
       extract_set.AddFunction(f);
     }
     loader.RegisterFunction(extract_set);
@@ -659,13 +689,13 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
     {
       duckdb::ScalarFunction f{
         "->>", {JSON, BIGINT}, VARCHAR, JsonExtractIndexTextFunction};
-      f.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+      f.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
       arrow_text_set.AddFunction(f);
     }
     {
       duckdb::ScalarFunction f{
         "->>", {JSON, VARCHAR}, VARCHAR, JsonExtractFieldTextFunction};
-      f.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+      f.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
       arrow_text_set.AddFunction(f);
     }
     loader.RegisterFunction(arrow_text_set);
@@ -677,7 +707,7 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
                                {JSON, BIGINT},
                                VARCHAR,
                                JsonExtractIndexTextFunction};
-      f.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+      f.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
       extract_string_set.AddFunction(f);
     }
     {
@@ -685,7 +715,7 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
                                {JSON, VARCHAR},
                                VARCHAR,
                                JsonExtractFieldTextFunction};
-      f.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+      f.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
       extract_string_set.AddFunction(f);
     }
     loader.RegisterFunction(extract_string_set);

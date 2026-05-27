@@ -132,10 +132,14 @@ bool ANNFilter::Accept(faiss::idx_t id) const {
 
   _scratch.Reset();
   _index_source->Materialize(_ctx.context, _pk_batch, 0, 1, _scratch);
-  _scratch.SetCardinality(1);
+  // SetChildCardinality (not SetCardinality) so each child Vector's flat-size
+  // is also updated to 1; ExpressionExecutor on the new DuckDB asserts that
+  // the chunk count matches each input Vector's flat-size and otherwise
+  // surfaces a `BinaryExecutor: left has 0 rows but right has 1` mismatch.
+  _scratch.SetChildCardinality(1);
 
   _bool_out.Reset();
-  _bool_out.SetCardinality(1);
+  _bool_out.SetChildCardinality(1);
   _executor.Execute(_scratch, _bool_out);
 
   // TODO(mbkkt) Maybe store as member?

@@ -82,21 +82,21 @@ class Task {
   SearchEngine* _engine;
 };
 
-class CommitTask : public Task {
+class RefreshTask : public Task {
  public:
   static constexpr ThreadGroup ThreadGroup() noexcept {
-    return ThreadGroup::Commit;
+    return ThreadGroup::Refresh;
   }
-  static constexpr std::string_view TaskName() noexcept { return "Commit"; }
-  CommitTask(const std::shared_ptr<InvertedIndexShard>& inverted_index_shard,
-             bool wait)
+  static constexpr std::string_view TaskName() noexcept { return "Refresh"; }
+  RefreshTask(const std::shared_ptr<InvertedIndexShard>& inverted_index_shard,
+              bool wait)
     : Task{inverted_index_shard}, _wait{wait} {}
 
-  CommitTask GetContinuos(
+  RefreshTask GetContinuos(
     std::shared_ptr<InvertedIndexShard>&& inverted_index_shard) const {
     // continue is always no-wait as we rescheduling next background commit
     SDB_ASSERT(inverted_index_shard);
-    return CommitTask(inverted_index_shard, false);
+    return RefreshTask(inverted_index_shard, false);
   }
 
   void operator()();
@@ -105,37 +105,35 @@ class CommitTask : public Task {
     CommitResult res);
 
  private:
-  absl::Duration _commit_interval_msec;
-  absl::Duration _consolidation_interval_msec;
-  size_t _cleanup_interval_step;
-  size_t _cleanup_interval_count;
+  absl::Duration _refresh_interval_msec{};
+  absl::Duration _compaction_interval_msec{};
+  size_t _cleanup_interval_step{0};
+  size_t _cleanup_interval_count{0};
   bool _wait;
 };
 
-class ConsolidationTask : public Task {
+class CompactionTask : public Task {
  public:
   static constexpr ThreadGroup ThreadGroup() noexcept {
-    return ThreadGroup::Consolidation;
+    return ThreadGroup::Compaction;
   }
-  static constexpr std::string_view TaskName() noexcept {
-    return "Consolidate";
-  }
-  ConsolidationTask(
+  static constexpr std::string_view TaskName() noexcept { return "Compact"; }
+  CompactionTask(
     const std::shared_ptr<InvertedIndexShard>& inverted_index_shard,
     std::function<bool()> flush_progress)
     : Task{inverted_index_shard}, _progress{std::move(flush_progress)} {}
 
   void operator()();
-  ConsolidationTask GetContinuos(
+  CompactionTask GetContinuos(
     std::shared_ptr<InvertedIndexShard>&& inverted_index_shard) const {
     SDB_ASSERT(inverted_index_shard);
-    return ConsolidationTask(inverted_index_shard, _progress);
+    return CompactionTask(inverted_index_shard, _progress);
   }
 
  private:
   irs::MergeWriter::FlushProgress _progress;
-  irs::ConsolidationPolicy _consolidation_policy;
-  absl::Duration _consolidation_interval_msec;
+  irs::CompactionPolicy _compaction_policy;
+  absl::Duration _compaction_interval_msec;
 };
 
 }  // namespace sdb::search

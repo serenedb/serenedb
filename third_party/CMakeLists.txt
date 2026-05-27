@@ -801,9 +801,6 @@ set(BUILD_EXTENSIONS
     ""
     FORCE
 )
-if(FOLLY_USE_JEMALLOC)
-    set(BUILD_EXTENSIONS "jemalloc;${BUILD_EXTENSIONS}" CACHE STRING "" FORCE)
-endif()
 
 sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_httpfs" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
@@ -831,9 +828,6 @@ target_link_libraries(
         avro_extension
         iceberg_extension
 )
-if(FOLLY_USE_JEMALLOC)
-    target_link_libraries(duckdb_static PUBLIC jemalloc_extension)
-endif()
 
 # !!! KEEP THIS LAST !!!
 # Guard against a future add_subdirectory() in this file re-pointing OpenSSL at

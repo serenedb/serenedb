@@ -96,6 +96,16 @@ class DuckDBEntryCache {
     //    catalog entries under the same name: a SereneDBIndexScanEntry
     //    (TABLE_ENTRY, the "FROM idx_name" scan wrapper) and a
     //    SereneDBIndexEntry (INDEX_ENTRY, for DROP INDEX / duckdb_indexes).
+    //
+    // Within a group, names are unique across the constituent CatalogTypes
+    // (PG semantics: a name can't be both a scalar function and a table
+    // function in the same schema). Consequently EnsureEntry uses the
+    // requested CatalogType only to pick the bucket -- the returned entry's
+    // `type` is the canonical one and may not equal the requested type
+    // (e.g. asking for SCALAR_FUNCTION_ENTRY on a procedure returns the
+    // TABLE_MACRO_ENTRY). Callers must inspect `entry.type` rather than
+    // assuming a match; see ExpressionBinder::BindFunction's switch in
+    // duckdb/src/planner/binder/expression/bind_function_expression.cpp.
     using EntryMap =
       containers::FlatHashMap<std::string,
                               duckdb::unique_ptr<duckdb::CatalogEntry>>;

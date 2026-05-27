@@ -32,7 +32,7 @@ statement ok
 INSERT INTO test_term_ops values (6, 'foo', 'F');
 
 statement ok
-VACUUM (UPDATE_INDEXES) test_term_ops;
+VACUUM (REFRESH_TABLE) test_term_ops;
 
 query
 SELECT a FROM test_term_ops_idx WHERE b @@ (ts_like('percent_not_contain')) ORDER BY a;
@@ -144,7 +144,7 @@ statement ok
 INSERT INTO test_wildcard_ops VALUES (7, 'percent_value');
 
 statement ok
-VACUUM (UPDATE_INDEXES) test_wildcard_ops;
+VACUUM (REFRESH_TABLE) test_wildcard_ops;
 
 # Match all values starting with 'hel' (hello, help; herald starts with 'her')
 query

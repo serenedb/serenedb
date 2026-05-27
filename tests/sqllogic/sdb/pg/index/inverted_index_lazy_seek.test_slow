@@ -65,7 +65,7 @@ statement ok
 CREATE INDEX lzs_idx ON lzs USING inverted(id, body lzs_en);
 
 statement ok
-VACUUM (UPDATE_INDEXES) lzs;
+VACUUM (REFRESH_TABLE) lzs;
 
 
 # ============================================================================

@@ -141,10 +141,15 @@ class ColumnReader final {
       _state.offset_in_column += count;
       _state.internal_index += count;
       _cursor += count;
-      if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR &&
-          _seg->block) {
-        auto& bm = duckdb::BufferManager::GetBufferManager(_seg->db);
-        auto& block = _seg->block;
+      // Pin the segment's block onto the output Vector for BOTH scan types.
+      // SCAN_FLAT_VECTOR can still reference segment memory for non-inline
+      // string_t payloads (PK blobs, VARCHAR > 12 bytes), so dropping the
+      // segment between Fetch and the caller consuming pk_data[k] is a
+      // heap-use-after-free (ASAN-confirmed via SearchFullScanFunction ->
+      // AppendPrimaryKey<PrimaryKeyI64I64>).
+      if (_seg->GetBlockHandle()) {
+        auto& bm = duckdb::BufferManager::GetBufferManager(_seg->GetDatabase());
+        auto& block = _seg->GetBlockHandle();
         auto handle = bm.Pin(block);
         out_vec.BufferMutable().AddAuxiliaryData(
           std::make_unique<duckdb::PinnedBufferHolder>(std::move(handle)));

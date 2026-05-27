@@ -174,10 +174,9 @@ duckdb::idx_t ReadGeneratedPKFromKeys(rocksdb::Iterator& it,
                                       duckdb::Vector& output,
                                       duckdb::idx_t max_rows);
 
-// DuckDB rows_scanned callback: returns produced_rows from
-// CommonScanGlobalState.
-duckdb::idx_t CommonScanRowsScanned(duckdb::GlobalTableFunctionState& gstate,
-                                    duckdb::LocalTableFunctionState&);
+// DuckDB get_metrics callback: writes produced_rows from CommonScanGlobalState
+// into input.operator_metrics.rows_scanned.
+void CommonScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input);
 
 // DuckDB init_local callback: creates an empty CommonScanLocalState.
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> CommonScanInitLocal(

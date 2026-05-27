@@ -46,7 +46,7 @@ INSERT INTO arr_n VALUES (3, 'third',  [-1.0, 0.0, 1.0])
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) arr_n
+VACUUM (REFRESH_TABLE) arr_n
 
 
 # Sanity: the ARRAY column is served by the iresearch columnstore (i),

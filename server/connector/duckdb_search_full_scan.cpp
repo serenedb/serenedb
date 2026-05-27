@@ -122,7 +122,8 @@ static void WriteVirtualColumns(SearchFullScanGlobalState& gstate,
       continue;
     }
     if (gstate.scan_tableoid && proj == gstate.tableoid_output_idx) {
-      output.data[proj].Reference(duckdb::Value::BIGINT(gstate.tableoid_value));
+      output.data[proj].Reference(duckdb::Value::BIGINT(gstate.tableoid_value),
+                                  duckdb::count_t(output.size()));
     } else if (gstate.scan_score && proj == gstate.score_output_idx) {
       if (!scores_or_empty.empty()) {
         SDB_ASSERT(scores_or_empty.size() >= num_rows);
@@ -434,7 +435,7 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
     }
 
     gstate.topk_offset += num_rows;
-    output.SetCardinality(num_rows);
+    output.SetChildCardinality(num_rows);
     gstate.produced_rows.fetch_add(num_rows, std::memory_order_relaxed);
     return;
   }
@@ -484,7 +485,7 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
     }
 
     WriteVirtualColumns(gstate, produced, output, std::span<const float>{});
-    output.SetCardinality(produced);
+    output.SetChildCardinality(produced);
     gstate.produced_rows.fetch_add(produced, std::memory_order_relaxed);
     return;
   }
@@ -687,7 +688,7 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
   // scan loop -- WriteVirtualColumns leaves those columns alone, fills only
   // tableoid / rowid here.
   WriteVirtualColumns(gstate, collected, output, std::span<const float>{});
-  output.SetCardinality(collected);
+  output.SetChildCardinality(collected);
   gstate.produced_rows.fetch_add(collected, std::memory_order_relaxed);
 }
 

@@ -767,7 +767,7 @@ void SerializeTimestampTz(SerializationContext& context,
     vdata.unified
       .GetData<duckdb::timestamp_tz_t>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
-    auto str = duckdb::Timestamp::ToString(ts);
+    auto str = duckdb::Timestamp::ToString(duckdb::timestamp_t{ts});
     WithWrapIfNested<InContainer>(context, [&] {
       context.buffer->WriteUncommitted(str);
       context.buffer->WriteUncommitted("+00");

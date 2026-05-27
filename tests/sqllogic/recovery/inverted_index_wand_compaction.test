@@ -1,7 +1,7 @@
 hash-threshold 100
 
 # ---------------------------------------------------------------------------
-# Verify that WAND metadata survives index consolidation. A review pass on
+# Verify that WAND metadata survives index compaction. A review pass on
 # `merge_writer.cpp` flagged that `Flush` builds a `FlushState` with
 # `norms = nullptr` (the new field on `FlushState` was added for the initial
 # flush; merge never sets it). If true, `PostingsWriterBase::PrepareWriters`
@@ -14,7 +14,7 @@ hash-threshold 100
 #      VACUUM, insert, VACUUM).
 #   2. Pre-merge: arm `irs::WandIterator` fault -- query trips, proving
 #      both initial-flush segments wrote wand metadata.
-#   3. PRAGMA serenedb_vacuum('compact_indexes', ...) -- merges into one
+#   3. VACUUM (COMPACT_TABLE) <table> -- merges into one
 #      segment via MergeWriter::Flush.
 #   4. Post-merge: arm `irs::WandIterator` fault -- if wand metadata is in
 #      the merged segment, the fault trips again. If not, the query
@@ -59,7 +59,7 @@ INSERT INTO wand_cons SELECT i, CASE i % 5
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) wand_cons;
+VACUUM (REFRESH_TABLE) wand_cons;
 
 
 # Segment 2: 100 more rows under a disjoint pk range.
@@ -75,7 +75,7 @@ INSERT INTO wand_cons SELECT i, CASE i % 5
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) wand_cons;
+VACUUM (REFRESH_TABLE) wand_cons;
 
 
 # === Pre-merge sanity: WAND fires on the initial-flush segments. ===
@@ -94,10 +94,10 @@ statement ok
 SET sdb_faults = '-irs::WandIterator';
 
 
-# === Force consolidation into one merged segment. ===
+# === Force compaction into one merged segment. ===
 
 statement ok
-PRAGMA serenedb_vacuum('compact_indexes', 'wand_cons');
+VACUUM (COMPACT_TABLE) wand_cons;
 
 
 # Correctness sanity: the merged segment returns the right docs.

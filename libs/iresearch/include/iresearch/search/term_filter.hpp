@@ -62,7 +62,7 @@ class ByTerm : public FilterWithField<ByTermOptions> {
 
    private:
     std::string_view _field;
-    bstring _term;
+    bytes_view _term;
     FieldCollectors _field_stats;
     TermCollectors _term_stats;
     TermQuery::States _states;

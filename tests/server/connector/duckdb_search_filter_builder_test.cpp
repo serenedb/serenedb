@@ -356,7 +356,7 @@ irs::ByWildcard& AddLikeFilter(Filter& root, uint64_t column,
                                std::string_view value) {
   auto& wc = AddFilter<irs::ByWildcard>(root);
   *wc.mutable_field() = MakeFieldName<std::string_view>(column);
-  wc.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(value));
+  wc.mutable_options()->set_term(irs::ViewCast<irs::byte_type>(value));
   return wc;
 }
 
@@ -376,8 +376,8 @@ irs::ByRegexp& AddRegexpFilter(
   auto& re = AddFilter<irs::ByRegexp>(root);
   *re.mutable_field() = MakeFieldName<std::string_view>(column);
   auto* opts = re.mutable_options();
-  opts->pattern.assign(irs::ViewCast<irs::byte_type>(pattern));
   opts->syntax = syntax;
+  opts->set_pattern(irs::ViewCast<irs::byte_type>(pattern));
   return re;
 }
 
@@ -404,12 +404,12 @@ irs::ByEditDistance& AddEditDistanceFilter(Filter& root, uint64_t column,
                                            std::string_view prefix = "") {
   auto& ed = AddFilter<irs::ByEditDistance>(root);
   *ed.mutable_field() = MakeFieldName<std::string_view>(column);
-  ed.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(term));
+  ed.mutable_options()->set_term(irs::ViewCast<irs::byte_type>(term));
   ed.mutable_options()->max_distance = max_distance;
   ed.mutable_options()->with_transpositions = with_transpositions;
   ed.mutable_options()->max_terms = max_terms;
   if (!prefix.empty()) {
-    ed.mutable_options()->prefix.assign(irs::ViewCast<irs::byte_type>(prefix));
+    ed.mutable_options()->set_prefix(irs::ViewCast<irs::byte_type>(prefix));
   }
   return ed;
 }
@@ -3794,7 +3794,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpUnderNot) {
   auto& not_filter = expected.add<irs::Not>();
   auto& re = not_filter.filter<irs::ByRegexp>();
   *re.mutable_field() = MakeFieldName<std::string_view>(1);
-  re.mutable_options()->pattern.assign(
+  re.mutable_options()->set_pattern(
     irs::ViewCast<irs::byte_type>(std::string_view{"foo.*"}));
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ !!ts_regexp('foo.*')",
                columns, true);

@@ -77,6 +77,25 @@ auto ExecuteWildcard(bstring& buf, bytes_view term, Term&& t, Prefix&& p,
 
 }  // namespace
 
+void ByWildcardOptions::set_term(bytes_view term) {
+  this->term = term;
+  bstring buf;
+  ExecuteWildcard(
+    buf, this->term,
+    [&](bytes_view resolved) {
+      _kind = WildcardKind::Term;
+      _resolved = resolved;
+    },
+    [&](bytes_view resolved) {
+      _kind = WildcardKind::Prefix;
+      _resolved = resolved;
+    },
+    [&](bytes_view resolved) {
+      _kind = WildcardKind::Wildcard;
+      _resolved = resolved;
+    });
+}
+
 field_visitor ByWildcard::visitor(bytes_view term) {
   bstring buf;
   return ExecuteWildcard(
@@ -142,24 +161,25 @@ Filter::Query::ptr ByWildcard::Prepare(const PrepareContext& ctx,
 std::unique_ptr<Filter::PrepareBuffer> ByWildcard::CreateBuffer(
   const PrepareContext& ctx) const {
   const score_t boost = Boost();
-  bstring buf;
-  return ExecuteWildcard(
-    buf, options().term,
-    [&](bytes_view term) -> std::unique_ptr<PrepareBuffer> {
-      return std::make_unique<ByTerm::Buffer>(ctx, field(), term, boost);
-    },
-    [&](bytes_view term) -> std::unique_ptr<PrepareBuffer> {
-      return std::make_unique<ByPrefix::Buffer>(
-        ctx, field(), term, options().scored_terms_limit, boost);
-    },
-    [&](bytes_view term) -> std::unique_ptr<PrepareBuffer> {
-      auto acceptor = FromWildcard(term);
+  const auto& opts = options();
+  switch (opts.kind()) {
+    case WildcardKind::Term:
+      return std::make_unique<ByTerm::Buffer>(ctx, field(), opts.resolved(),
+                                              boost);
+    case WildcardKind::Prefix:
+      return std::make_unique<ByPrefix::Buffer>(ctx, field(), opts.resolved(),
+                                                opts.scored_terms_limit, boost);
+    case WildcardKind::Wildcard: {
+      auto acceptor = FromWildcard(opts.resolved());
       if (auto b = MakeAutomatonBuffer(ctx, field(), std::move(acceptor),
-                                       options().scored_terms_limit, boost)) {
+                                       opts.scored_terms_limit, boost)) {
         return b;
       }
       return std::make_unique<EmptyBuffer>();
-    });
+    }
+  }
+  SDB_ASSERT(false);
+  return std::make_unique<EmptyBuffer>();
 }
 
 }  // namespace irs

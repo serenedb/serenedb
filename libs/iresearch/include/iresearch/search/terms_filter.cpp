@@ -132,6 +132,34 @@ class OwningBuffer final : public Filter::PrepareBuffer {
   Buffer _inner;
 };
 
+// Single-term fast path: owns the one term so the borrow-only ByTerm::Buffer
+// can point into it.
+class OwningTermBuffer final : public Filter::PrepareBuffer {
+ public:
+  OwningTermBuffer(const PrepareContext& ctx, std::string_view field,
+                   bstring term, score_t boost = kNoBoost)
+    : _term{std::move(term)}, _inner{ctx, field, _term, boost} {}
+
+  void PrepareSegment(const SubReader& segment) final {
+    _inner.PrepareSegment(segment);
+  }
+
+  void Merge(PrepareBuffer&& other) final {
+    _inner.Merge(
+      std::move(sdb::basics::downCast<OwningTermBuffer>(other)._inner));
+  }
+
+  bool Empty() const noexcept final { return _inner.Empty(); }
+
+  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
+    return std::move(_inner).Compile(ctx);
+  }
+
+ private:
+  bstring _term;  // declared before _inner so it outlives the borrow
+  ByTerm::Buffer _inner;
+};
+
 class AllScoringBuffer final : public Filter::PrepareBuffer {
  public:
   AllScoringBuffer(const PrepareContext& ctx, std::string_view field,
@@ -206,9 +234,8 @@ std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(
   }
   SDB_ASSERT(min_match != 0);
   if (1 == size) {
-    const auto term = std::begin(terms);
-    return std::make_unique<ByTerm::Buffer>(ctx, field, term->term,
-                                            term->boost);
+    const auto& st = *std::begin(terms);
+    return std::make_unique<OwningTermBuffer>(ctx, field, st.term, st.boost);
   }
   return std::make_unique<OwningBuffer>(ctx, field, std::move(options));
 }

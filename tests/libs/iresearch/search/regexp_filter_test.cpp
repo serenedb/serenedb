@@ -38,7 +38,7 @@ Filter MakeFilter(std::string_view field, std::string_view value) {
   Filter q;
   *q.mutable_field() = field;
   if constexpr (std::is_same_v<Filter, irs::ByRegexp>) {
-    q.mutable_options()->pattern = irs::ViewCast<irs::byte_type>(value);
+    q.mutable_options()->set_pattern(irs::ViewCast<irs::byte_type>(value));
   } else {
     q.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
   }
@@ -550,8 +550,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
   {
     irs::ByRegexp q;
     *q.mutable_field() = "prefix";
-    q.mutable_options()->pattern =
-      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"));
+    q.mutable_options()->set_pattern(
+      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*")));
     q.mutable_options()->scored_terms_limit = 1;
     auto prepared =
       q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
@@ -561,8 +561,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
   {
     irs::ByRegexp q;
     *q.mutable_field() = "prefix";
-    q.mutable_options()->pattern =
-      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"));
+    q.mutable_options()->set_pattern(
+      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*")));
     q.mutable_options()->scored_terms_limit = 0;
     auto prepared =
       q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
@@ -572,8 +572,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
   {
     irs::ByRegexp q;
     *q.mutable_field() = "prefix";
-    q.mutable_options()->pattern =
-      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"));
+    q.mutable_options()->set_pattern(
+      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*")));
     q.mutable_options()->scored_terms_limit = 1000000;
     auto prepared =
       q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
@@ -891,14 +891,14 @@ TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
     {
       auto& s = d.add<irs::ByRegexp>();
       *s.mutable_field() = "alt";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("cat"));
+      s.mutable_options()->set_pattern(
+        irs::ViewCast<irs::byte_type>(std::string_view("cat")));
     }
     {
       auto& s = d.add<irs::ByRegexp>();
       *s.mutable_field() = "alt";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("dog"));
+      s.mutable_options()->set_pattern(
+        irs::ViewCast<irs::byte_type>(std::string_view("dog")));
     }
     CheckQuery(d, Docs{1, 2, 4, 6, 8, 10, 11, 14, 15, 17, 18, 20}, rdr);
   }
@@ -907,14 +907,14 @@ TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
     {
       auto& s = c.add<irs::ByRegexp>();
       *s.mutable_field() = "term";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("foo.*"));
+      s.mutable_options()->set_pattern(
+        irs::ViewCast<irs::byte_type>(std::string_view("foo.*")));
     }
     {
       auto& s = c.add<irs::ByRegexp>();
       *s.mutable_field() = "alt";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("cat"));
+      s.mutable_options()->set_pattern(
+        irs::ViewCast<irs::byte_type>(std::string_view("cat")));
     }
     CheckQuery(c, Docs{1, 4, 8, 14, 20}, rdr);
   }
@@ -923,8 +923,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
     {
       auto& s = d.add<irs::ByRegexp>();
       *s.mutable_field() = "term";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("foobar"));
+      s.mutable_options()->set_pattern(
+        irs::ViewCast<irs::byte_type>(std::string_view("foobar")));
     }
     {
       auto& s = d.add<irs::ByTerm>();

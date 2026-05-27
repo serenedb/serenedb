@@ -34,7 +34,11 @@ template<typename Filter = irs::ByWildcard>
 Filter MakeFilter(std::string_view field, std::string_view term) {
   Filter q;
   *q.mutable_field() = field;
-  q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+  if constexpr (std::is_same_v<Filter, irs::ByWildcard>) {
+    q.mutable_options()->set_term(irs::ViewCast<irs::byte_type>(term));
+  } else {
+    q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+  }
   return q;
 }
 

@@ -234,7 +234,7 @@ int main() {
     std::cout << "\n=== ByRegexp /f[ao]x/ ===\n";
     irs::ByRegexp q;
     *q.mutable_field() = "body";
-    q.mutable_options()->pattern = irs::bstring{Bytes("f[ao]x")};
+    q.mutable_options()->set_pattern(Bytes("f[ao]x"));
     PrintHits("expect d0, d2 (matches 'fox')", RunFilter(reader, q, names));
   }
 
@@ -245,7 +245,7 @@ int main() {
     std::cout << "\n=== ByWildcard \"f_x\" ===\n";
     irs::ByWildcard q;
     *q.mutable_field() = "body";
-    q.mutable_options()->term = irs::bstring{Bytes("f_x")};
+    q.mutable_options()->set_term(Bytes("f_x"));
     PrintHits("expect d0, d2, d5 (fox, fox, fix)", RunFilter(reader, q, names));
   }
 
@@ -256,7 +256,7 @@ int main() {
     std::cout << "\n=== ByEditDistance \"fox\" max_distance=1 ===\n";
     irs::ByEditDistance q;
     *q.mutable_field() = "body";
-    q.mutable_options()->term = irs::bstring{Bytes("fox")};
+    q.mutable_options()->set_term(Bytes("fox"));
     q.mutable_options()->max_distance = 1;
     q.mutable_options()->with_transpositions = true;
     PrintHits("expect d0, d2, d4, d5 (fox, fox, foxy, fix)",

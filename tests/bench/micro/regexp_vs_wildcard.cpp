@@ -397,14 +397,14 @@ class RegexpVsWildcardBench : public benchmark::Fixture {
 irs::ByWildcard MakeWildcard(std::string_view pattern) {
   irs::ByWildcard q;
   *q.mutable_field() = kFieldName;
-  q.mutable_options()->term = irs::ViewCast<irs::byte_type>(pattern);
+  q.mutable_options()->set_term(irs::ViewCast<irs::byte_type>(pattern));
   return q;
 }
 
 irs::ByRegexp MakeRegexp(std::string_view pattern) {
   irs::ByRegexp q;
   *q.mutable_field() = kFieldName;
-  q.mutable_options()->pattern = irs::ViewCast<irs::byte_type>(pattern);
+  q.mutable_options()->set_pattern(irs::ViewCast<irs::byte_type>(pattern));
   return q;
 }
 

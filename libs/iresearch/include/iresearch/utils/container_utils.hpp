@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <streamvbyte.h>
+
 #include <array>
 #include <memory>
 
@@ -93,6 +95,8 @@ class RawBlockVectorBase : private util::Noncopyable {
     size_t size{};      // total buffer size
   };
 
+  static constexpr size_t kTailPadding = STREAMVBYTE_PADDING;
+
   explicit RawBlockVectorBase(IResourceManager& rm) noexcept
     : _alloc{rm}, _buffers{{rm}} {}
 
@@ -109,7 +113,7 @@ class RawBlockVectorBase : private util::Noncopyable {
 
   IRS_FORCE_INLINE void clear() noexcept {
     for (auto& buffer : _buffers) {
-      _alloc.deallocate(buffer.data, buffer.size);
+      _alloc.deallocate(buffer.data, buffer.size + kTailPadding);
     }
     _buffers.clear();
   }
@@ -121,7 +125,7 @@ class RawBlockVectorBase : private util::Noncopyable {
 #ifdef SDB_GTEST
   void pop_buffer() noexcept {
     const auto& bucket = _buffers.back();
-    _alloc.deallocate(bucket.data, bucket.size);
+    _alloc.deallocate(bucket.data, bucket.size + kTailPadding);
     _buffers.pop_back();
   }
 #endif
@@ -155,7 +159,7 @@ class RawBlockVector : public RawBlockVectorBase {
     auto v = CreateValue();
     Finally f = [&]() noexcept {
       if (v.data) {
-        _alloc.deallocate(v.data, v.size);
+        _alloc.deallocate(v.data, v.size + kTailPadding);
       }
     };
     const auto& buffer = _buffers.emplace_back(v);
@@ -167,12 +171,13 @@ class RawBlockVector : public RawBlockVectorBase {
   IRS_FORCE_INLINE BufferT CreateValue() {
     if (_buffers.size() < NumBuckets) {
       const auto& bucket = kMeta[_buffers.size()];
-      return {bucket.offset, _alloc.allocate(bucket.size), bucket.size};
+      return {bucket.offset, _alloc.allocate(bucket.size + kTailPadding),
+              bucket.size};
     }
     const auto& bucket = _buffers.back();
     SDB_ASSERT(bucket.size == kLast.size);
-    return {bucket.offset + kLast.size, _alloc.allocate(kLast.size),
-            kLast.size};
+    return {bucket.offset + kLast.size,
+            _alloc.allocate(kLast.size + kTailPadding), kLast.size};
   }
 };
 

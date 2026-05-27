@@ -114,7 +114,7 @@ struct ParserContext {
   irs::ByWildcard& AddWildcard(std::string_view value) {
     auto& f = current_root->GetOptional().add<irs::ByWildcard>();
     *f.mutable_field() = default_field;
-    f.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
+    f.mutable_options()->set_term(irs::ViewCast<irs::byte_type>(value));
     return f;
   }
 
@@ -143,7 +143,7 @@ struct ParserContext {
   irs::ByEditDistance& AddFuzzy(std::string_view value, int distance) {
     auto& f = current_root->GetOptional().add<irs::ByEditDistance>();
     *f.mutable_field() = default_field;
-    f.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
+    f.mutable_options()->set_term(irs::ViewCast<irs::byte_type>(value));
     f.mutable_options()->max_distance = static_cast<uint8_t>(distance);
     return f;
   }

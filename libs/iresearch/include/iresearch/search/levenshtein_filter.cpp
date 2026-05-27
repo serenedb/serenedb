@@ -377,18 +377,8 @@ std::unique_ptr<Filter::PrepareBuffer> ByEditDistance::CreateBuffer(
       return std::make_unique<EmptyBuffer>();
     },
     [&] -> std::unique_ptr<PrepareBuffer> {
-      bytes_view target;
-      bstring joined;
-      if (!opts.prefix.empty() && !opts.term.empty()) {
-        joined.reserve(opts.prefix.size() + opts.term.size());
-        joined += opts.prefix;
-        joined += opts.term;
-        target = joined;
-      } else {
-        target =
-          opts.prefix.empty() ? bytes_view{opts.term} : bytes_view{opts.prefix};
-      }
-      return std::make_unique<ByTerm::Buffer>(ctx, field(), target, boost);
+      return std::make_unique<ByTerm::Buffer>(ctx, field(), opts.exact(),
+                                              boost);
     },
     [&](const ParametricDescription& d, const bytes_view prefix,
         const bytes_view term) -> std::unique_ptr<PrepareBuffer> {

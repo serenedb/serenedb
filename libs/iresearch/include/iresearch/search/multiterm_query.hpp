@@ -49,6 +49,7 @@ class MultiTermQuery : public Filter::Query {
         _field_stats{ctx.scorer},
         _term_stats{ctx.scorer, terms_count},
         _states{ctx.memory, ctx.index.size()},
+        _terms_count{terms_count},
         _merge_type{merge_type},
         _min_match{min_match} {}
 
@@ -60,6 +61,7 @@ class MultiTermQuery : public Filter::Query {
     FieldCollectors _field_stats;
     TermCollectors _term_stats;
     States _states;
+    size_t _terms_count;
     ScoreMergeType _merge_type;
     size_t _min_match;
   };

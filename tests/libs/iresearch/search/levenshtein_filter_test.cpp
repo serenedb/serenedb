@@ -51,11 +51,11 @@ irs::ByEditDistance MakeFilter(const std::string_view& field,
                                const std::string_view prefix = "") {
   irs::ByEditDistance q;
   *q.mutable_field() = field;
-  q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+  q.mutable_options()->set_term(irs::ViewCast<irs::byte_type>(term));
   q.mutable_options()->max_distance = max_distance;
   q.mutable_options()->max_terms = max_terms;
   q.mutable_options()->with_transpositions = with_transpositions;
-  q.mutable_options()->prefix = irs::ViewCast<irs::byte_type>(prefix);
+  q.mutable_options()->set_prefix(irs::ViewCast<irs::byte_type>(prefix));
   return q;
 }
 
@@ -104,8 +104,8 @@ TEST(by_edit_distance_test, boost) {
   {
     irs::ByEditDistance q;
     *q.mutable_field() = "field";
-    q.mutable_options()->term =
-      irs::ViewCast<irs::byte_type>(std::string_view("bar*"));
+    q.mutable_options()->set_term(
+      irs::ViewCast<irs::byte_type>(std::string_view("bar*")));
 
     auto prepared = q.prepare({
       .index = irs::SubReader::empty(),
@@ -123,8 +123,8 @@ TEST(by_edit_distance_test, boost) {
 
     irs::ByEditDistance q;
     *q.mutable_field() = "field";
-    q.mutable_options()->term =
-      irs::ViewCast<irs::byte_type>(std::string_view("bar*"));
+    q.mutable_options()->set_term(
+      irs::ViewCast<irs::byte_type>(std::string_view("bar*")));
     q.boost(boost);
 
     auto prepared = q.prepare({

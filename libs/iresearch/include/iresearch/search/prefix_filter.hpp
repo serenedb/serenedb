@@ -79,7 +79,7 @@ class ByPrefix : public FilterWithField<ByPrefixOptions> {
 
    private:
     std::string_view _field;
-    bstring _prefix;
+    bytes_view _prefix;
   };
 
   static Query::ptr Prepare(const PrepareContext& ctx, std::string_view field,

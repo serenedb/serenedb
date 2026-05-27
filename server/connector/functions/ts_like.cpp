@@ -81,8 +81,7 @@ void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
   *filter.mutable_field() = std::move(field_name);
   auto& wild_opts = *filter.mutable_options();
   wild_opts.scored_terms_limit = ctx.scored_terms_limit;
-  wild_opts.term.assign(
-    irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
+  wild_opts.set_term(irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
 }
 
 }  // namespace sdb::connector

@@ -30,6 +30,9 @@ namespace irs {
 class ByWildcard;
 struct FilterVisitor;
 
+// How a wildcard pattern dispatches once resolved.
+enum class WildcardKind { Term, Prefix, Wildcard };
+
 struct ByWildcardFilterOptions {
   bstring term;
 
@@ -46,10 +49,22 @@ struct ByWildcardOptions : ByWildcardFilterOptions {
   // The maximum number of most frequent terms to consider for scoring
   size_t scored_terms_limit{1024};
 
+  // Sets the raw wildcard `term` and resolves it once into a dispatch kind and
+  // the bytes the prepared buffer borrows. Must be used instead of writing
+  // `term` directly so the resolved form stays in sync.
+  void set_term(bytes_view term);
+
+  WildcardKind kind() const noexcept { return _kind; }
+  bytes_view resolved() const noexcept { return _resolved; }
+
   bool operator==(const ByWildcardOptions& rhs) const noexcept {
     return filter_options::operator==(rhs) &&
            scored_terms_limit == rhs.scored_terms_limit;
   }
+
+ private:
+  WildcardKind _kind{WildcardKind::Term};
+  bstring _resolved;
 };
 
 // User-side wildcard filter
@@ -64,8 +79,7 @@ class ByWildcard final : public FilterWithField<ByWildcardOptions> {
     const PrepareContext& ctx) const final;
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
-    return Prepare(ctx.Boost(Boost()), field(), options().term,
-                   options().scored_terms_limit);
+    return PrepareWithBuffer(*CreateBuffer(ctx), ctx);
   }
 };
 

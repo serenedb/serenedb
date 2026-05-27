@@ -29,6 +29,9 @@ namespace irs {
 class ByRegexp;
 struct FilterVisitor;
 
+// How a regexp pattern dispatches once resolved.
+enum class RegexpKind { Literal, Prefix, Automaton };
+
 struct ByRegexpFilterOptions {
   bstring pattern;
 
@@ -42,7 +45,22 @@ struct ByRegexpOptions : ByRegexpFilterOptions {
   size_t scored_terms_limit{1024};
   RegexpSyntax syntax{RegexpSyntax::Perl};
 
-  bool operator==(const ByRegexpOptions&) const noexcept = default;
+  // Sets the raw `pattern` and resolves it once into a dispatch kind and the
+  // bytes the prepared buffer borrows. Must be used instead of writing
+  // `pattern` directly so the resolved form stays in sync.
+  void set_pattern(bytes_view pattern);
+
+  RegexpKind kind() const noexcept { return _kind; }
+  bytes_view resolved() const noexcept { return _resolved; }
+
+  bool operator==(const ByRegexpOptions& rhs) const noexcept {
+    return filter_options::operator==(rhs) &&
+           scored_terms_limit == rhs.scored_terms_limit && syntax == rhs.syntax;
+  }
+
+ private:
+  RegexpKind _kind{RegexpKind::Literal};
+  bstring _resolved;
 };
 
 class ByRegexp final : public FilterWithField<ByRegexpOptions> {
@@ -58,8 +76,7 @@ class ByRegexp final : public FilterWithField<ByRegexpOptions> {
     const PrepareContext& ctx) const final;
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
-    return Prepare(ctx.Boost(Boost()), field(), options().pattern,
-                   options().scored_terms_limit, options().syntax);
+    return PrepareWithBuffer(*CreateBuffer(ctx), ctx);
   }
 };
 

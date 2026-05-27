@@ -79,11 +79,35 @@ struct ByEditDistanceOptions : ByEditDistanceAllOptions {
   //////////////////////////////////////////////////////////////////////////////
   size_t max_terms{};
 
+  // Set `term`/`prefix` through these so the exact-match target stays in sync.
+  void set_term(bytes_view value) {
+    term.assign(value);
+    RecomputeExact();
+  }
+  void set_prefix(bytes_view value) {
+    prefix.assign(value);
+    RecomputeExact();
+  }
+
+  // `prefix ++ term`, materialized once; what the exact-match (distance 0)
+  // buffer borrows.
+  bytes_view exact() const noexcept { return _exact; }
+
   bool operator==(const ByEditDistanceOptions& rhs) const noexcept {
     return term == rhs.term && max_distance == rhs.max_distance &&
            with_transpositions == rhs.with_transpositions &&
            max_terms == rhs.max_terms;
   }
+
+ private:
+  void RecomputeExact() {
+    _exact.clear();
+    _exact.reserve(prefix.size() + term.size());
+    _exact += prefix;
+    _exact += term;
+  }
+
+  bstring _exact;
 };
 
 ////////////////////////////////////////////////////////////////////////////////

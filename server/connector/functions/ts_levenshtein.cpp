@@ -95,9 +95,8 @@ LevenshteinArgs ParseLevenshteinArgs(
 
 void FillByEditDistanceOptions(const LevenshteinArgs& args,
                                irs::ByEditDistanceOptions& out) {
-  out.term.assign(irs::ViewCast<irs::byte_type>(std::string_view{args.text}));
-  out.prefix.assign(
-    irs::ViewCast<irs::byte_type>(std::string_view{args.prefix}));
+  out.set_term(irs::ViewCast<irs::byte_type>(std::string_view{args.text}));
+  out.set_prefix(irs::ViewCast<irs::byte_type>(std::string_view{args.prefix}));
   out.max_distance = static_cast<uint8_t>(args.distance);
   out.with_transpositions = args.with_transpositions;
   out.max_terms = 64;

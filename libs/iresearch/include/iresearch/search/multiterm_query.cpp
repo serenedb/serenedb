@@ -209,8 +209,7 @@ Filter::Query::ptr MultiTermQuery::BufferBase::Compile(
   }
 
   Stats stats{{ctx.memory}};
-  const size_t terms_count = _term_stats.size();
-  stats.resize(terms_count > 0 ? terms_count : 1);
+  stats.resize(_terms_count > 0 ? _terms_count : 1);
   for (size_t term_idx = 0; auto& stat : stats) {
     stat.resize(GetStatsSize(ctx.scorer), 0);
     _term_stats.finish(stat.data(), term_idx++, _field_stats, ctx.index);

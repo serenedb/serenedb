@@ -25,6 +25,7 @@
 #include <atomic>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
@@ -776,11 +777,18 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   if (!op.info) {
     throw duckdb::InternalException("CreateIndexInfo is null in create_plan");
   }
-  auto& sdb_catalog = op.table.ParentCatalog().Cast<SereneDBCatalog>();
-  // ParentSchema() comes from the parent catalog; sdb_catalog above has
-  // already been validated, so the schema is necessarily one of ours.
+
+  auto* sdb_catalog = dynamic_cast<SereneDBCatalog*>(&op.table.ParentCatalog());
+  if (!sdb_catalog) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("cannot CREATE INDEX on ", op.table.ParentCatalog().GetName(),
+              ".", op.table.name,
+              ": its catalog differs from the current one (",
+              duckdb::DatabaseManager::GetDefaultDatabase(input.context), ")"));
+  }
   auto& schema_entry = op.table.ParentSchema().Cast<SereneDBSchemaEntry>();
-  auto database_id = sdb_catalog.GetDatabaseId();
+  auto database_id = sdb_catalog->GetDatabaseId();
 
   std::shared_ptr<catalog::Object> relation;
   std::vector<catalog::Column> view_columns;

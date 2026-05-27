@@ -1,0 +1,21 @@
+control substitution on
+
+# Negative cases — bad DSN / unreachable backend / wrong credentials all
+# surface as clean errors instead of crashes or hangs. The exact error
+# text is libpq's, so we just match on a substring that's stable across
+# postgres versions.
+
+# Port 1 is reserved (tcpmux) — nothing answers, so this is a
+# guaranteed connection-refused.
+statement error connection.*refused
+ATTACH 'host=127.0.0.1 port=1 dbname=postgres user=postgres' AS bad_refused_${__DATABASE__} (TYPE postgres);
+
+
+# A hostname with no DNS resolution.
+statement error
+ATTACH 'host=invalid.serenedb.test port=5432 dbname=postgres user=postgres' AS bad_dns_${__DATABASE__} (TYPE postgres);
+
+
+# Empty DSN is also a hard error (libpq rejects it at parse time).
+statement error
+ATTACH '' AS bad_empty_${__DATABASE__} (TYPE postgres);

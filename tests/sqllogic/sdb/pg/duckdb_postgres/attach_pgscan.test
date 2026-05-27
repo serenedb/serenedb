@@ -1,0 +1,30 @@
+control substitution on
+
+# Verifies the postgres_scanner extension's ATTACH path through the pg-wire
+# layer. Needs a postgres backend reachable at ${PGHOST}:${PGPORT}; the
+# _pgscan filename suffix tells run.sh to bring one up.
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__DATABASE__} (TYPE postgres);
+
+
+# count() not name: ${__DATABASE__} is substituted in SQL, not in expected rows.
+query
+SELECT count(*) AS n FROM (SHOW DATABASES) WHERE database_name = 'pg_${__DATABASE__}';
+----
+n
+1
+
+
+statement ok
+DETACH pg_${__DATABASE__};
+
+
+# Re-attaching the same alias after DETACH must succeed (no stale catalog
+# state left behind).
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+DETACH pg_${__DATABASE__};

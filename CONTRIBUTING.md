@@ -62,6 +62,7 @@ The test tree is split by what runs the test and what it covers:
 - `tests/sqllogic/recovery/...` -- sqllogic with crash injection (`SET sdb_faults = '...'`) plus a restart; each test runs against a fresh serened + datadir.
 - `tests/server/<area>/...`, `tests/libs/<lib>/...` -- gtest unit tests; use for isolated C++ logic where a sqllogic test would be awkward (library classes / pure functions / hard-to-reproduce bugs).
 - `tests/bench/micro/...` -- microbenchmarks for performance claims.
+- `tests/postgres_scanner/`, `tests/avro/`, `tests/httpfs/` -- drivers that run the **vendored DuckDB extension** test suites via DuckDB's own `unittest` binary. Built only when configured with `-DSDB_BUILD_DUCKDB_UNITTESTS=ON`.
 
 When a change needs a test:
 
@@ -88,6 +89,24 @@ C++ unit tests:
 ./build/bin/serenedb-tests_basics "--gtest_filter=*VPackLoadInspectorTest*"
 ./build/bin/serenedb-tests_connector "--gtest_filter=*DataSourceWithSearchTest*"
 ```
+
+### Running vendored DuckDB extension tests
+
+The `postgres_scanner`, `avro`, `httpfs` extensions ship with their own
+sqllogic-style test suites under `third_party/duckdb_<name>/test/`. They
+run through DuckDB's `unittest` binary, which is built by default
+(opt out with `-DSDB_BUILD_DUCKDB_UNITTESTS=OFF` if you want to skip
+its ~1GB output).
+
+```bash
+# postgres_scanner -- postgres fixture comes up via docker
+./tests/postgres_scanner/run.sh
+```
+
+The serened-level postgres_scanner tests
+(`tests/sqllogic/sdb/pg/duckdb_postgres/*_pgscan.test`) ride the regular
+sqllogic runner -- the `_pgscan.` filename suffix triggers
+`launch_postgres()` in `tests/sqllogic/run.sh` automatically.
 
 ## Branching, commits, PRs
 

@@ -1724,6 +1724,8 @@ MemoryDirectoryWithoutScheduler(const TestBase* ctx) {
   return {std::move(dir), std::move(name)};
 }
 
+class IndexSchedulerStressTestCase : public IndexSchedulerTestCase {};
+
 void IndexTestCase::DocsBitUnion(irs::IndexFeatures features,
                                  size_t docs_count_per_term) {
   tests::StringViewField field("0", features);
@@ -4088,8 +4090,7 @@ TEST_P(IndexSchedulerTestCase, doc_removal) {
 
   // new segment: add
   {
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->Commit();
@@ -4116,8 +4117,7 @@ TEST_P(IndexSchedulerTestCase, doc_removal) {
   // new segment: add + remove 1st (as reference)
   {
     auto query_doc1 = MakeByTerm("name", "A");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -4146,8 +4146,7 @@ TEST_P(IndexSchedulerTestCase, doc_removal) {
   // new segment: add + remove 1st (as unique_ptr)
   {
     auto query_doc1 = MakeByTerm("name", "A");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -4176,8 +4175,7 @@ TEST_P(IndexSchedulerTestCase, doc_removal) {
   // new segment: add + remove 1st (as shared_ptr)
   {
     auto query_doc1 = MakeByTerm("name", "A");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -4207,8 +4205,7 @@ TEST_P(IndexSchedulerTestCase, doc_removal) {
   // new segment: remove + add
   {
     auto query_doc2 = MakeByTerm("name", "B");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->GetBatch().Remove(std::move(query_doc2));  // not present yet
@@ -4240,8 +4237,7 @@ TEST_P(IndexSchedulerTestCase, doc_removal) {
   // new segment: add + remove + readd
   {
     auto query_doc1 = MakeByTerm("name", "A");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->GetBatch().Remove(std::move(query_doc1));
@@ -4271,8 +4267,7 @@ TEST_P(IndexSchedulerTestCase, doc_removal) {
   {
     auto query_doc2 = MakeByTerm("name", "B");
     auto query_doc3 = MakeByTerm("name", "C");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -4306,8 +4301,7 @@ TEST_P(IndexSchedulerTestCase, doc_removal) {
   // new segment: add + add, old segment: remove + remove + add
   {
     auto query_doc1_doc2 = MakeByTermOrByTerm("name", "A", "name", "B");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -4339,8 +4333,7 @@ TEST_P(IndexSchedulerTestCase, doc_removal) {
   // new segment: add, old segment: remove
   {
     auto query_doc2 = MakeByTerm("name", "B");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -4392,8 +4385,7 @@ TEST_P(IndexSchedulerTestCase, doc_removal) {
   // new segment: add + remove, old segment: remove
   {
     auto query_doc1_doc3 = MakeByTermOrByTerm("name", "A", "name", "C");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -4451,8 +4443,7 @@ TEST_P(IndexSchedulerTestCase, doc_removal) {
       MakeOr({{"name", "B"}, {"name", "F"}, {"name", "I"}});
     auto query_doc3_doc7 = MakeByTermOrByTerm("name", "C", "name", "G");
     auto query_doc4 = MakeByTerm("name", "D");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));  // A
     ASSERT_TRUE(InsertWithName(*writer, *doc2));  // B
@@ -4552,8 +4543,7 @@ TEST_P(IndexSchedulerTestCase, doc_update) {
     auto query_doc3 = MakeByTerm("name", "C");
     auto query_doc4 = MakeByTerm("name", "D");
     auto query_doc5 = MakeByTerm("name", "E");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     auto trx1 = writer->GetBatch();
     auto trx2 = writer->GetBatch();
@@ -4610,8 +4600,7 @@ TEST_P(IndexSchedulerTestCase, doc_update) {
   // new segment update (as reference)
   {
     auto query_doc1 = MakeByTerm("name", "A");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(UpdateWithName(*writer, *(query_doc1.get()), *doc2));
@@ -4639,8 +4628,7 @@ TEST_P(IndexSchedulerTestCase, doc_update) {
   // new segment update (as unique_ptr)
   {
     auto query_doc1 = MakeByTerm("name", "A");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(UpdateWithName(*writer, std::move(query_doc1), *doc2));
@@ -4668,8 +4656,7 @@ TEST_P(IndexSchedulerTestCase, doc_update) {
   // new segment update (as shared_ptr)
   {
     auto query_doc1 = MakeByTerm("name", "A");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(UpdateWithName(
@@ -4698,8 +4685,7 @@ TEST_P(IndexSchedulerTestCase, doc_update) {
   // old segment update
   {
     auto query_doc1 = MakeByTerm("name", "A");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -4753,8 +4739,7 @@ TEST_P(IndexSchedulerTestCase, doc_update) {
     auto query_doc1 = MakeByTerm("name", "A");
     auto query_doc2 = MakeByTerm("name", "B");
     auto query_doc3 = MakeByTerm("name", "C");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(UpdateWithName(*writer, std::move(query_doc1), *doc2));
@@ -4786,8 +4771,7 @@ TEST_P(IndexSchedulerTestCase, doc_update) {
     auto query_doc1 = MakeByTerm("name", "A");
     auto query_doc2 = MakeByTerm("name", "B");
     auto query_doc3 = MakeByTerm("name", "C");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->Commit();
@@ -4823,8 +4807,7 @@ TEST_P(IndexSchedulerTestCase, doc_update) {
   // no matching documnts
   {
     auto query_doc2 = MakeByTerm("name", "B");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->Commit();
@@ -4855,8 +4838,7 @@ TEST_P(IndexSchedulerTestCase, doc_update) {
   // update + delete (same segment)
   {
     auto query_doc2 = MakeByTerm("name", "B");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -4889,8 +4871,7 @@ TEST_P(IndexSchedulerTestCase, doc_update) {
   // update + delete (different segments)
   {
     auto query_doc2 = MakeByTerm("name", "B");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -4945,8 +4926,7 @@ TEST_P(IndexSchedulerTestCase, doc_update) {
   // delete + update (same segment)
   {
     auto query_doc2 = MakeByTerm("name", "B");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -4977,8 +4957,7 @@ TEST_P(IndexSchedulerTestCase, doc_update) {
   // delete + update (different segments)
   {
     auto query_doc2 = MakeByTerm("name", "B");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -5015,8 +4994,7 @@ TEST_P(IndexSchedulerTestCase, doc_update) {
   {
     auto query_doc2 = MakeByTerm("name", "B");
     auto query_doc3 = MakeByTerm("name", "C");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -5049,8 +5027,7 @@ TEST_P(IndexSchedulerTestCase, doc_update) {
   {
     auto query_doc2 = MakeByTerm("name", "B");
     auto query_doc3 = MakeByTerm("name", "C");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -8055,8 +8032,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_pending_commit) {
 
   // consolidate without deletes
   {
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
     ASSERT_NE(nullptr, writer);
 
     // segment 1
@@ -8154,8 +8130,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_pending_commit) {
   // consolidate without deletes
   {
     SetUp();
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
     ASSERT_NE(nullptr, writer);
 
     // segment 1
@@ -8283,8 +8258,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_pending_commit) {
   // consolidate without deletes
   {
     SetUp();
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
     ASSERT_NE(nullptr, writer);
 
     // segment 1
@@ -8447,8 +8421,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_pending_commit) {
     SetUp();
     auto query_doc1 = MakeByTerm("name", "A");
 
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
     ASSERT_NE(nullptr, writer);
 
     // segment 1
@@ -8582,8 +8555,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_pending_commit) {
     SetUp();
     auto query_doc1_doc4 = MakeByTermOrByTerm("name", "A", "name", "D");
 
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
     ASSERT_NE(nullptr, writer);
 
     // segment 1
@@ -8718,8 +8690,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_pending_commit) {
     SetUp();
     auto query_doc1 = MakeByTerm("name", "A");
     auto query_doc4 = MakeByTerm("name", "D");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
     ASSERT_NE(nullptr, writer);
 
     // segment 1
@@ -8878,8 +8849,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_pending_commit) {
   {
     SetUp();
     auto query_doc1 = MakeByTerm("name", "A");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
     ASSERT_NE(nullptr, writer);
 
     // segment 1
@@ -8953,8 +8923,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_pending_commit) {
     SetUp();
     auto query_doc1 = MakeByTerm("name", "A");
     auto query_doc4 = MakeByTerm("name", "D");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
     ASSERT_NE(nullptr, writer);
 
     // segment 1
@@ -9031,8 +9000,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_pending_commit) {
   {
     SetUp();
     auto query_doc1 = MakeByTerm("name", "A");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
     ASSERT_NE(nullptr, writer);
 
     // segment 1
@@ -9104,8 +9072,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_pending_commit) {
     SetUp();
     auto query_doc1_doc4 = MakeByTermOrByTerm("name", "A", "name", "D");
 
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
     ASSERT_NE(nullptr, writer);
 
     // segment 1
@@ -9262,8 +9229,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_pending_commit) {
     SetUp();
     auto query_doc1_doc4 = MakeByTermOrByTerm("name", "A", "name", "D");
 
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
     ASSERT_NE(nullptr, writer);
 
     // segment 1
@@ -9425,8 +9391,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_pending_commit) {
     SetUp();
     auto query_doc3_doc4 = MakeOr({{"name", "C"}, {"name", "D"}});
 
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
     ASSERT_NE(nullptr, writer);
 
     // segment 1
@@ -9780,8 +9745,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
   // remove empty new segment
   {
     auto query_doc1 = MakeByTerm("name", "A");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->GetBatch().Remove(std::move(query_doc1));
@@ -9796,8 +9760,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
   // remove empty old segment
   {
     auto query_doc1 = MakeByTerm("name", "A");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->Commit();
@@ -9814,8 +9777,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
   // remove empty old, defragment new
   {
     auto query_doc1_doc2 = MakeByTermOrByTerm("name", "A", "name", "B");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->Commit();
@@ -9858,8 +9820,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
   // remove empty old, defragment new
   {
     auto query_doc1_doc2 = MakeByTermOrByTerm("name", "A", "name", "B");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->Commit();
@@ -9901,8 +9862,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
   // remove empty old, defragment old
   {
     auto query_doc1_doc2 = MakeByTermOrByTerm("name", "A", "name", "B");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->Commit();
@@ -9946,8 +9906,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
   // remove empty old, defragment old
   {
     auto query_doc1_doc2 = MakeByTermOrByTerm("name", "A", "name", "B");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->Commit();
@@ -10002,8 +9961,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
   // uncomitted removals)
   {
     auto query_doc1 = MakeByTerm("name", "A");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -10029,8 +9987,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
   // consider uncomitted removals)
   {
     auto query_doc1 = MakeByTerm("name", "A");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -10066,8 +10023,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
   // merge new+old segment
   {
     auto query_doc1_doc3 = MakeByTermOrByTerm("name", "A", "name", "C");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -10114,8 +10070,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
   // merge new+old segment
   {
     auto query_doc1_doc3 = MakeByTermOrByTerm("name", "A", "name", "C");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -10162,8 +10117,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
   // merge old+old segment
   {
     auto query_doc1_doc3 = MakeByTermOrByTerm("name", "A", "name", "C");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -10212,8 +10166,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
   // merge old+old segment
   {
     auto query_doc1_doc3 = MakeByTermOrByTerm("name", "A", "name", "C");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -10263,8 +10216,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
   {
     auto query_doc1_doc3_doc5 =
       MakeOr({{"name", "A"}, {"name", "C"}, {"name", "E"}});
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -10322,8 +10274,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
   {
     auto query_doc1_doc3_doc5 =
       MakeOr({{"name", "A"}, {"name", "C"}, {"name", "E"}});
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -10379,8 +10330,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
 
   // merge two segments with different fields
   {
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
     // add 1st segment
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
@@ -10458,8 +10408,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate) {
 
   // merge two segments with different fields
   {
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
     // add 1st segment
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
@@ -10555,8 +10504,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_policy) {
 
   // bytes size policy (merge)
   {
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -10632,8 +10580,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_policy) {
 
   // bytes size policy (not modified)
   {
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -10706,8 +10653,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_policy) {
 
   // valid segment bytes_accum policy (merge)
   {
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->Commit();
@@ -10752,8 +10698,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_policy) {
 
   // valid segment bytes_accum policy (not modified)
   {
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->Commit();
@@ -10824,8 +10769,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_policy) {
   {
     auto query_doc2_doc3_doc4 =
       MakeOr({{"name", "B"}, {"name", "C"}, {"name", "D"}});
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -10874,8 +10818,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_policy) {
   {
     auto query_doc2_doc3_doc4 =
       MakeOr({{"name", "B"}, {"name", "C"}, {"name", "D"}});
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -10952,8 +10895,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_policy) {
   // valid segment fill policy (merge)
   {
     auto query_doc2_doc4 = MakeByTermOrByTerm("name", "B", "name", "D");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -11002,8 +10944,7 @@ TEST_P(IndexSchedulerTestCase, segment_consolidate_policy) {
   // valid segment fill policy (not modified)
   {
     auto query_doc2_doc4 = MakeByTermOrByTerm("name", "B", "name", "D");
-    auto writer =
-      open_writer(irs::kOmCreate, MakeOpts());
+    auto writer = open_writer(irs::kOmCreate, MakeOpts());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -11579,7 +11520,8 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment) {
   AssertSnapshotEquality(*writer);
 }
 
-TEST_P(IndexSchedulerTestCase, writer_remove_all_from_last_segment_consolidation) {
+TEST_P(IndexSchedulerTestCase,
+       writer_remove_all_from_last_segment_consolidation) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
   auto& directory = dir();
@@ -11646,6 +11588,43 @@ TEST_P(IndexSchedulerTestCase, writer_remove_all_from_last_segment_consolidation
     irs::index_utils::MakePolicy(irs::index_utils::ConsolidateCount())));
   writer->Commit();
   AssertSnapshotEquality(*writer);
+}
+
+TEST_P(IndexSchedulerStressTestCase, multi_segment_bulk_remove) {
+  constexpr size_t kSegments = 256;
+  constexpr size_t kDocsPerSegment = 500;
+  constexpr size_t kTotalDocs = kSegments * kDocsPerSegment;
+  static_assert(kTotalDocs >= 10'000,
+                "stress shape must clear Stage 1 NQ gate (kMinWork)");
+
+  auto opts = MakeOpts();
+  opts.segment_docs_max = kDocsPerSegment;
+  auto writer = open_writer(irs::kOmCreate, opts);
+  ASSERT_NE(nullptr, writer);
+
+  for (size_t i = 0; i < kTotalDocs; ++i) {
+    auto trx = writer->GetBatch();
+    auto doc = trx.Insert();
+    tests::StringField kind("kind", (i % 2 == 0) ? "even" : "odd");
+    ASSERT_TRUE(doc.Insert(kind));
+  }
+  writer->Commit();
+  AssertSnapshotEquality(*writer);
+
+  auto snapshot_before = writer->GetSnapshot();
+  ASSERT_GE(snapshot_before.size(), 2u);
+  ASSERT_EQ(snapshot_before.docs_count(), kTotalDocs);
+  ASSERT_EQ(snapshot_before.live_docs_count(), kTotalDocs);
+
+  auto query = MakeByTerm("kind", "even");
+  writer->GetBatch().Remove(*query);
+  writer->Commit();
+  AssertSnapshotEquality(*writer);
+
+  auto snapshot_after = writer->GetSnapshot();
+  EXPECT_EQ(snapshot_after.docs_count(), kTotalDocs);
+  EXPECT_EQ(snapshot_after.live_docs_count(), kTotalDocs / 2);
+  EXPECT_EQ(snapshot_after.size(), snapshot_before.size());
 }
 
 TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
@@ -12597,6 +12576,13 @@ INSTANTIATE_TEST_SUITE_P(
                                        &MemoryDirectoryWithoutScheduler),
                      kTestFormats),
   IndexSchedulerTestCase::to_string);
+
+INSTANTIATE_TEST_SUITE_P(
+  IndexSchedulerStressTest, IndexSchedulerStressTestCase,
+  ::testing::Combine(::testing::Values(&MemoryDirectoryWithScheduler,
+                                       &MemoryDirectoryWithoutScheduler),
+                     kTestFormats),
+  IndexSchedulerStressTestCase::to_string);
 
 INSTANTIATE_TEST_SUITE_P(
   BasicANNSearch, ANNSearchTest,

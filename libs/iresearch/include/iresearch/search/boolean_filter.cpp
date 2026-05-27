@@ -22,7 +22,10 @@
 
 #include "boolean_filter.hpp"
 
+#include <absl/container/btree_map.h>
 #include <absl/container/inlined_vector.h>
+
+#include <vector>
 
 #include "basics/down_cast.h"
 #include "conjunction.hpp"
@@ -225,7 +228,10 @@ struct BoolBuild {
   const Filter* delegate_filter = nullptr;
 
   std::string_view by_terms_field;
-  ByTermsOptions by_terms_options;
+  // Coalesced terms, borrowing into the boolean's child ByTerm filters (stable
+  // for the prepare phase). The coalesced min_match/merge_type reuse
+  // `min_match` and `merge_type` below.
+  std::vector<TermRef> by_terms;
 
   CompoundBuffer::Shape shape = CompoundBuffer::Shape::And;
   size_t min_match = 0;
@@ -464,25 +470,30 @@ BoolBuild AnalyzeBoolean(const BooleanFilter& filter, bool is_or,
         return first.field() == cur.field();
       })) {
     auto& first = sdb::basics::downCast<ByTerm>(filter[0]);
-    ByTermsOptions options;
-    options.merge_type = filter.merge_type();
+    // Dedup by term bytes (ordered, like the prior std::set), merging boosts.
+    // Keys/views borrow into the child ByTerm filters, which outlive prepare.
+    absl::btree_map<bytes_view, score_t> merged;
     bool has_duplicates = false;
     for (const auto& f : filter) {
       auto& tf = sdb::basics::downCast<ByTerm>(*f);
-      auto it = options.terms.emplace(tf.options().term, tf.Boost());
-      if (!it.second) {
-        const_cast<score_t&>(it.first->boost) *= tf.Boost();
+      auto [it, inserted] =
+        merged.try_emplace(bytes_view{tf.options().term}, tf.Boost());
+      if (!inserted) {
+        it->second *= tf.Boost();
         has_duplicates = true;
       }
     }
     if (!has_duplicates || min_match == 1 ||
         min_match == std::numeric_limits<uint32_t>::max()) {
-      options.min_match = min_match == std::numeric_limits<uint32_t>::max()
-                            ? options.terms.size()
-                            : min_match;
       b.kind = BoolBuild::Kind::ByTerms;
       b.by_terms_field = first.field();
-      b.by_terms_options = std::move(options);
+      b.min_match = min_match == std::numeric_limits<uint32_t>::max()
+                      ? merged.size()
+                      : min_match;
+      b.by_terms.reserve(merged.size());
+      for (const auto& [term, boost] : merged) {
+        b.by_terms.push_back(TermRef{term, boost});
+      }
       return b;
     }
   }
@@ -561,7 +572,7 @@ std::unique_ptr<Filter::PrepareBuffer> BooleanFilter::CreateBuffer(
       return b.delegate_filter->CreateBuffer(WithBoost(ctx, b.boost));
     case BoolBuild::Kind::ByTerms:
       return ByTerms::CreateBuffer(WithBoost(ctx, b.boost), b.by_terms_field,
-                                   std::move(b.by_terms_options));
+                                   b.by_terms, b.merge_type, b.min_match);
     case BoolBuild::Kind::Compound:
       return BuildCompound(std::move(b), ctx);
   }

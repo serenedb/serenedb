@@ -23,6 +23,7 @@
 #pragma once
 
 #include <set>
+#include <span>
 
 #include "iresearch/search/all_docs_provider.hpp"
 #include "iresearch/search/filter.hpp"
@@ -69,6 +70,15 @@ struct ByTermsOptions {
   }
 };
 
+// Borrowed view of a term plus its boost. The bytes are owned elsewhere (a
+// filter's options, or the child filters of a coalesced boolean) and must
+// outlive the prepared buffer; the buffer reads them only during
+// PrepareSegment.
+struct TermRef {
+  bytes_view term;
+  score_t boost;
+};
+
 // Filter by a set of terms
 class ByTerms final : public FilterWithField<ByTermsOptions>,
                       public AllDocsProvider {
@@ -80,9 +90,13 @@ class ByTerms final : public FilterWithField<ByTermsOptions>,
   static Query::ptr Prepare(const PrepareContext& ctx, std::string_view field,
                             const ByTermsOptions& options);
 
-  static std::unique_ptr<PrepareBuffer> CreateBuffer(const PrepareContext& ctx,
-                                                     std::string_view field,
-                                                     ByTermsOptions options);
+  // Builds a buffer from term refs that borrow into a caller-owned source
+  // (e.g. the coalesced child filters of a boolean). The refs must outlive the
+  // buffer's prepare phase.
+  static std::unique_ptr<PrepareBuffer> CreateBuffer(
+    const PrepareContext& ctx, std::string_view field,
+    std::span<const TermRef> terms, ScoreMergeType merge_type,
+    size_t min_match);
 
   std::unique_ptr<PrepareBuffer> CreateBuffer(
     const PrepareContext& ctx) const final;

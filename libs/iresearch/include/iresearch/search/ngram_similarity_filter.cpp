@@ -51,7 +51,14 @@ class ByTermsAdapterBuffer final : public Filter::PrepareBuffer {
     for (const auto& term : ngrams) {
       _options.terms.emplace(term, kNoBoost);
     }
-    _inner = ByTerms::CreateBuffer(ctx.Boost(boost), field, _options);
+    // Refs borrow into `_options` (a member that outlives `_inner`).
+    ManagedVector<TermRef> refs{{ctx.memory}};
+    refs.reserve(_options.terms.size());
+    for (const auto& term : _options.terms) {
+      refs.push_back(TermRef{term.term, term.boost});
+    }
+    _inner = ByTerms::CreateBuffer(ctx.Boost(boost), field, refs,
+                                   _options.merge_type, _options.min_match);
   }
 
   void PrepareSegment(const SubReader& segment) final {

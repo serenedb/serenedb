@@ -34,10 +34,9 @@
 namespace irs {
 namespace {
 
-template<typename Visitor>
+template<typename TermRange, typename Visitor>
 void VisitImpl(const SubReader& segment, const TermReader& field,
-               const ByTermsOptions::search_terms& search_terms,
-               Visitor& visitor) {
+               const TermRange& search_terms, Visitor& visitor) {
   auto terms = field.iterator(SeekMode::NORMAL);
 
   if (!terms) [[unlikely]] {
@@ -83,81 +82,37 @@ class TermsVisitor {
 
 class Buffer final : public MultiTermQuery::BufferBase {
  public:
+  // `terms` is any range of elements exposing `.term` (bytes_view-convertible)
+  // and `.boost` (e.g. ByTermsOptions::search_terms or std::span<const
+  // TermRef>). Its bytes must outlive the buffer; we keep only borrowed views.
+  template<typename TermRange>
   Buffer(const PrepareContext& ctx, std::string_view field,
-         const ByTermsOptions& options, score_t boost = kNoBoost)
-    : BufferBase{ctx, options.terms.size(), options.merge_type,
-                 options.min_match, boost},
+         const TermRange& terms, ScoreMergeType merge_type, size_t min_match,
+         score_t boost = kNoBoost)
+    : BufferBase{ctx, std::size(terms), merge_type, min_match, boost},
       _field{field},
-      _options{&options},
+      _terms{{ctx.memory}},
       _collector{_states, _field_stats, _term_stats},
-      _visitor{_collector} {}
+      _visitor{_collector} {
+    _terms.reserve(std::size(terms));
+    for (const auto& term : terms) {
+      _terms.push_back(TermRef{bytes_view{term.term}, term.boost});
+    }
+  }
 
   void PrepareSegment(const SubReader& segment) final {
     auto* reader = segment.field(_field);
     if (!reader) {
       return;
     }
-    VisitImpl(segment, *reader, _options->terms, _visitor);
+    VisitImpl(segment, *reader, _terms, _visitor);
   }
 
  private:
   std::string_view _field;
-  const ByTermsOptions* _options;
+  ManagedVector<TermRef> _terms;
   AllTermsCollector<MultiTermQuery::States> _collector;
   TermsVisitor<AllTermsCollector<MultiTermQuery::States>> _visitor;
-};
-
-class OwningBuffer final : public Filter::PrepareBuffer {
- public:
-  OwningBuffer(const PrepareContext& ctx, std::string_view field,
-               ByTermsOptions&& options, score_t boost = kNoBoost)
-    : _options{std::move(options)}, _inner{ctx, field, _options, boost} {}
-
-  void PrepareSegment(const SubReader& segment) final {
-    _inner.PrepareSegment(segment);
-  }
-
-  void Merge(PrepareBuffer&& other) final {
-    _inner.Merge(std::move(sdb::basics::downCast<OwningBuffer>(other)._inner));
-  }
-
-  bool Empty() const noexcept final { return _inner.Empty(); }
-
-  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
-    return std::move(_inner).Compile(ctx);
-  }
-
- private:
-  ByTermsOptions _options;  // declared before _inner so it outlives the borrow
-  Buffer _inner;
-};
-
-// Single-term fast path: owns the one term so the borrow-only ByTerm::Buffer
-// can point into it.
-class OwningTermBuffer final : public Filter::PrepareBuffer {
- public:
-  OwningTermBuffer(const PrepareContext& ctx, std::string_view field,
-                   bstring term, score_t boost = kNoBoost)
-    : _term{std::move(term)}, _inner{ctx, field, _term, boost} {}
-
-  void PrepareSegment(const SubReader& segment) final {
-    _inner.PrepareSegment(segment);
-  }
-
-  void Merge(PrepareBuffer&& other) final {
-    _inner.Merge(
-      std::move(sdb::basics::downCast<OwningTermBuffer>(other)._inner));
-  }
-
-  bool Empty() const noexcept final { return _inner.Empty(); }
-
-  Filter::Query::ptr Compile(const PrepareContext& ctx) && final {
-    return std::move(_inner).Compile(ctx);
-  }
-
- private:
-  bstring _term;  // declared before _inner so it outlives the borrow
-  ByTerm::Buffer _inner;
 };
 
 class AllScoringBuffer final : public Filter::PrepareBuffer {
@@ -221,23 +176,23 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
     return ByTerm::prepare(sub_ctx, field, term->term);
   }
 
-  Buffer buf{ctx, field, options};
+  Buffer buf{ctx, field, terms, merge_type, min_match};
   return Filter::PrepareWithBuffer<Buffer>(buf, ctx);
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(
-  const PrepareContext& ctx, std::string_view field, ByTermsOptions options) {
-  const auto& [terms, min_match, merge_type] = options;
+  const PrepareContext& ctx, std::string_view field,
+  std::span<const TermRef> terms, ScoreMergeType merge_type, size_t min_match) {
   const size_t size = terms.size();
   if (0 == size || min_match > size) {
     return std::make_unique<Filter::EmptyBuffer>();
   }
   SDB_ASSERT(min_match != 0);
   if (1 == size) {
-    const auto& st = *std::begin(terms);
-    return std::make_unique<OwningTermBuffer>(ctx, field, st.term, st.boost);
+    return std::make_unique<ByTerm::Buffer>(ctx, field, terms[0].term,
+                                            terms[0].boost);
   }
-  return std::make_unique<OwningBuffer>(ctx, field, std::move(options));
+  return std::make_unique<Buffer>(ctx, field, terms, merge_type, min_match);
 }
 
 std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(
@@ -249,7 +204,9 @@ std::unique_ptr<Filter::PrepareBuffer> ByTerms::CreateBuffer(
     return std::make_unique<AllScoringBuffer>(ctx, field(), options(), Boost(),
                                               MakeAllDocsFilter(0.F));
   }
-  return std::make_unique<Buffer>(ctx, field(), options(), Boost());
+  return std::make_unique<Buffer>(ctx, field(), options().terms,
+                                  options().merge_type, options().min_match,
+                                  Boost());
 }
 
 Filter::Query::ptr ByTerms::prepare(const PrepareContext& ctx) const {

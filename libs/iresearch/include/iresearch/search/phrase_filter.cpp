@@ -419,7 +419,7 @@ class FixedPhraseBuffer final : public Filter::ScoredBuffer {
     PhraseTermVisitor<FixedPhraseState::Terms> ptv(phrase_terms);
     ptv.Reset(_term_stats);
 
-    const auto is_ord_empty = (_term_stats.size() == 0) ? true : false;
+    const auto is_ord_empty = (_term_stats.empty()) ? true : false;
     for (const auto& word : *_options) {
       SDB_ASSERT(std::get_if<ByTermOptions>(&word.part));
       ByTerm::visit(segment, *reader, std::get<ByTermOptions>(word.part).term,

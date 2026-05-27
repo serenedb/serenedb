@@ -161,11 +161,6 @@ class Filter {
     return equals(rhs);
   }
 
-  // Builds a buffer for this filter. The buffer is responsible for folding
-  // the filter's own Boost() into the query it compiles; the caller must pass
-  // a ctx whose `boost` already reflects every enclosing filter's boost.
-  // Filters that genuinely cannot do segmentable work (e.g. variadic phrase)
-  // return a LazyQueryBuffer wrapping prepare().
   virtual std::unique_ptr<PrepareBuffer> CreateBuffer(
     const PrepareContext& ctx) const;
 

@@ -8,13 +8,12 @@ statement ok
 ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__DATABASE__} (TYPE postgres);
 
 
-# The attached database appears in SHOW DATABASES alongside the built-in
-# `memory` and the session's default.
+# count() not name: ${__DATABASE__} is substituted in SQL, not in expected rows.
 query
-SELECT database_name FROM (SHOW DATABASES) WHERE database_name = 'pg_${__DATABASE__}';
+SELECT count(*) AS n FROM (SHOW DATABASES) WHERE database_name = 'pg_${__DATABASE__}';
 ----
-database_name
-pg_${__DATABASE__}
+n
+1
 
 
 statement ok

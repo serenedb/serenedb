@@ -37,8 +37,8 @@ FROM pg_${__DATABASE__}.${__DATABASE__}_types.assorted
 ORDER BY i32 NULLS LAST;
 ----
 i32	i64	txt	flag	amount	big
--2	-1	(empty)	false	-0.001	0.0
-1	9223372036854775806	alpha	true	123.456	3.141592653589793
+-2	-1	(empty)	f	-0.001	0
+1	9223372036854775806	alpha	t	123.456	3.141592653589793
 NULL	NULL	NULL	NULL	NULL	NULL
 
 

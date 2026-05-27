@@ -1,0 +1,103 @@
+## pg_stat_progress_copy must surface a row WHILE a COPY FROM is running
+## (CopyProgressReporter is constructed in SwitchSinkInsertGlobalState).
+## After the COPY finishes the entry is cleared (~ProgressReporterBase
+## calls EndCommand). INSERT ... SELECT shares the SST insert operator
+## but is intentionally NOT reported here.
+
+control substitution on
+control max-async-connections 5
+
+
+# Materialise a moderately-wide CSV on disk so the async COPY has enough
+# work for the observer connection to catch it in flight. ~100k rows
+# × ~256 bytes per row is large enough to be observable on CI but small
+# enough not to slow the suite meaningfully.
+
+statement ok
+CREATE TABLE pgsp_copy_src(id BIGINT, body TEXT);
+
+
+statement count 100000
+INSERT INTO pgsp_copy_src
+SELECT g, repeat(g::TEXT || ' lorem ipsum dolor sit amet ', 8)
+FROM generate_series(1, 100000) AS s(g);
+
+
+statement ok
+COPY pgsp_copy_src TO '/tmp/${__DATABASE__}_pgsp_copy_inflight.csv' (FORMAT CSV);
+
+
+statement ok
+CREATE TABLE pgsp_copy_dst(id BIGINT, body TEXT);
+
+
+# pg_stat_progress_copy is empty before any COPY runs.
+
+query
+SELECT count(*) FROM pg_stat_progress_copy
+WHERE relid = 'pgsp_copy_dst'::regclass;
+----
+count
+0
+
+
+# Kick off the COPY in the background. The observer connection races
+# against it to catch the in-flight row.
+
+statement async ok
+COPY pgsp_copy_dst
+  FROM '/tmp/${__DATABASE__}_pgsp_copy_inflight.csv' (FORMAT CSV);
+
+
+# Poll the view from a separate connection. `1 / count(*) FILTER (...)`
+# divides by zero -- a retryable runtime error -- whenever there is no
+# row for our relid yet OR the row's command/type don't match the
+# expected COPY FROM / FILE shape. retry/backoff keeps polling until
+# the in-flight entry shows up; if the COPY finished before any poll
+# succeeded the retry budget expires and the test fails loud (rather
+# than silently masking a regression in the reporter wiring).
+
+connection observer
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1 / count(*) FILTER (
+  WHERE command = 'COPY FROM' AND type = 'FILE'
+) FROM pg_stat_progress_copy
+WHERE relid = 'pgsp_copy_dst'::regclass;
+
+
+wait
+
+
+# After the COPY finishes, the entry is gone (EndCommand on destruction).
+
+connection observer
+query
+SELECT count(*) FROM pg_stat_progress_copy
+WHERE relid = 'pgsp_copy_dst'::regclass;
+----
+count
+0
+
+
+# Sanity: the COPY itself worked end-to-end.
+
+query
+SELECT count(*) FROM pgsp_copy_dst;
+----
+count
+100000
+
+
+# COPY-vs-INSERT gating (the reporter is only attached when the active
+# statement is COPY_STATEMENT) is asserted authoritatively by the unit
+# test in tests/server/connector/pg_progress_tracker_test.cpp -- no
+# attempt is made here, since "INSERT never appears in the view" is
+# hard to verify reliably from sqllogic without a barrier failpoint.
+
+
+statement ok
+DROP TABLE pgsp_copy_dst;
+
+
+statement ok
+DROP TABLE pgsp_copy_src;

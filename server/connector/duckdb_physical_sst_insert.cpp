@@ -153,6 +153,11 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
       _table->GetGeneratedPkSeqId());
   SDB_ASSERT(state->generated_pk_seq || !_table->PKColumns().empty());
 
+  if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
+        kSereneDBClientStateKey)) {
+    state->progress = sdb_state->progress.get();
+  }
+
   return state;
 }
 
@@ -238,6 +243,13 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
   }
 
   gstate.insert_count += num_rows;
+
+  if (gstate.progress) {
+    gstate.progress->Add(pg::copy_progress::Param::TuplesProcessed, num_rows);
+    gstate.progress->Add(pg::copy_progress::Param::BytesProcessed,
+                         chunk.GetAllocationSize());
+  }
+
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 

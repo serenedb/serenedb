@@ -24,6 +24,8 @@
 #include <duckdb/main/client_context_state.hpp>
 #include <memory>
 
+#include "pg/progress_tracker.h"
+
 namespace sdb {
 
 class ConnectionContext;
@@ -65,6 +67,8 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   pg::CopyMessagesQueue* copy_queue = nullptr;
   message::Buffer* send_buffer = nullptr;
 
+  std::unique_ptr<pg::ProgressReporter> progress;
+
   // Buffer for COPY FROM STDIN data. DuckDB opens /dev/stdin multiple
   // times (for sniffing and reading). Data read on first opens is saved
   // here and replayed on the final open.
@@ -83,6 +87,11 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 
   void TransactionRollback(duckdb::MetaTransaction& transaction,
                            duckdb::ClientContext& context) final;
+
+  duckdb::RebindQueryInfo OnExecutePrepared(
+    duckdb::ClientContext& context,
+    duckdb::PreparedStatementCallbackInfo& info,
+    duckdb::RebindQueryInfo current_rebind) final;
 
   void QueryEnd(duckdb::ClientContext& context) final;
 

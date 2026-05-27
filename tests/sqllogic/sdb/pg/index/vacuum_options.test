@@ -1,0 +1,549 @@
+hash-threshold 100
+
+# `${__DATABASE__}` resolves to the per-test database the runner creates.
+control substitution on
+
+# Coverage test for VACUUM (REFRESH_*|COMPACT_*|SYNC_STATS_*|COMPACT_ROCKSDB).
+# Drives every scope variant on real data and locks down the error paths
+# (missing/extra arguments, over-qualified names, missing objects, mixed
+# extension + standard options, conflicting extension options).
+
+statement ok
+CREATE SCHEMA s1;
+
+
+statement ok
+CREATE SCHEMA s2;
+
+
+# Inverted opclasses resolve dictionaries from the target table's schema, so
+# each schema in this test gets its own copy of the `en` dictionary.
+statement ok
+CREATE TEXT SEARCH DICTIONARY public.en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false,
+    accent = false, frequency = true, position = true, norm = true);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY s1.en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false,
+    accent = false, frequency = true, position = true, norm = true);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY s2.en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false,
+    accent = false, frequency = true, position = true, norm = true);
+
+
+statement ok
+CREATE TABLE public.docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX docs_idx ON public.docs USING inverted(id, body en);
+
+
+statement ok
+CREATE TABLE s1.notes (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX notes_idx ON s1.notes USING inverted(id, body en);
+
+
+statement ok
+CREATE TABLE s2.memos (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX memos_idx ON s2.memos USING inverted(id, body en);
+
+
+# ---------------------------------------------------------------------------
+# REFRESH_* success paths -- each scope publishes its writes to readers.
+# ---------------------------------------------------------------------------
+
+# REFRESH_INDEX: only the named index becomes queryable.
+statement ok
+INSERT INTO public.docs VALUES (1, 'alpha refresh_index');
+
+
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('alpha');
+----
+count
+0
+
+
+statement ok
+VACUUM (REFRESH_INDEX) docs_idx;
+
+
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('alpha');
+----
+count
+1
+
+
+# REFRESH_TABLE: publishes every inverted index under the table.
+statement ok
+INSERT INTO s1.notes VALUES (1, 'beta refresh_table');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) s1.notes;
+
+
+query
+SELECT count(*) FROM s1.notes_idx WHERE body @@ ts_phrase('beta');
+----
+count
+1
+
+
+# REFRESH_SCHEMA: publishes every inverted index in the schema.
+statement ok
+INSERT INTO s2.memos VALUES (1, 'gamma refresh_schema');
+
+
+statement ok
+VACUUM (REFRESH_SCHEMA) s2;
+
+
+query
+SELECT count(*) FROM s2.memos_idx WHERE body @@ ts_phrase('gamma');
+----
+count
+1
+
+
+# REFRESH_SCHEMA with database-qualified name.
+statement ok
+INSERT INTO s2.memos VALUES (2, 'gamma refresh_schema qualified');
+
+
+statement ok
+VACUUM (REFRESH_SCHEMA) ${__DATABASE__}.s2;
+
+
+query
+SELECT count(*) FROM s2.memos_idx WHERE body @@ ts_phrase('qualified');
+----
+count
+1
+
+
+# REFRESH_DATABASE: publishes everything in the named database.
+statement ok
+INSERT INTO public.docs VALUES (2, 'delta refresh_database');
+
+
+statement ok
+INSERT INTO s1.notes VALUES (2, 'delta refresh_database notes');
+
+
+statement ok
+VACUUM (REFRESH_DATABASE) ${__DATABASE__};
+
+
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('delta');
+----
+count
+1
+
+
+query
+SELECT count(*) FROM s1.notes_idx WHERE body @@ ts_phrase('delta');
+----
+count
+1
+
+
+# Note: REFRESH_ALL / COMPACT_ALL / SYNC_STATS_ALL / COMPACT_ROCKSDB are
+# instance-wide and would touch other tests' per-test databases under the
+# shared sqllogic runner, so their success paths live in
+# tests/sqllogic/recovery/vacuum_global.test (one serened instance per test).
+# Their argument-validation errors are still covered below.
+
+# Fully-qualified INDEX scope still resolves.
+statement ok
+INSERT INTO public.docs VALUES (4, 'zeta qualified_index');
+
+
+statement ok
+VACUUM (REFRESH_INDEX) ${__DATABASE__}.public.docs_idx;
+
+
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('zeta');
+----
+count
+1
+
+
+# Fully-qualified TABLE scope still resolves.
+statement ok
+INSERT INTO s1.notes VALUES (3, 'eta qualified_table');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ${__DATABASE__}.s1.notes;
+
+
+query
+SELECT count(*) FROM s1.notes_idx WHERE body @@ ts_phrase('eta');
+----
+count
+1
+
+
+# ---------------------------------------------------------------------------
+# COMPACT_* success paths -- compaction must not change query results.
+# We first inflate to several segments via interleaved REFRESH_TABLE.
+# ---------------------------------------------------------------------------
+
+statement ok
+INSERT INTO public.docs VALUES (10, 'theta compact A');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) public.docs;
+
+
+statement ok
+INSERT INTO public.docs VALUES (11, 'theta compact B');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) public.docs;
+
+
+statement ok
+INSERT INTO public.docs VALUES (12, 'theta compact C');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) public.docs;
+
+
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('theta');
+----
+count
+3
+
+
+# COMPACT_INDEX
+statement ok
+VACUUM (COMPACT_INDEX) docs_idx;
+
+
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('theta');
+----
+count
+3
+
+
+# COMPACT_TABLE -- no-op now (already compacted) but must still succeed.
+statement ok
+VACUUM (COMPACT_TABLE) public.docs;
+
+
+# COMPACT_SCHEMA
+statement ok
+VACUUM (COMPACT_SCHEMA) public;
+
+
+# COMPACT_SCHEMA with database-qualified name
+statement ok
+VACUUM (COMPACT_SCHEMA) ${__DATABASE__}.s2;
+
+
+# COMPACT_DATABASE
+statement ok
+VACUUM (COMPACT_DATABASE) ${__DATABASE__};
+
+
+# Query results survive compaction at every scope.
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('theta');
+----
+count
+3
+
+
+query
+SELECT count(*) FROM s1.notes_idx WHERE body @@ ts_phrase('delta');
+----
+count
+1
+
+
+query
+SELECT count(*) FROM s2.memos_idx WHERE body @@ ts_phrase('gamma');
+----
+count
+2
+
+
+# ---------------------------------------------------------------------------
+# SYNC_STATS_* -- placeholder ops that must not error while rocksdb-backed
+# tables are still around. SYNC_STATS_ALL and COMPACT_ROCKSDB are instance-wide
+# and live in tests/sqllogic/recovery/vacuum_global.test.
+# ---------------------------------------------------------------------------
+
+statement ok
+VACUUM (SYNC_STATS_TABLE) public.docs;
+
+
+statement ok
+VACUUM (SYNC_STATS_SCHEMA) s1;
+
+
+statement ok
+VACUUM (SYNC_STATS_SCHEMA) ${__DATABASE__}.s2;
+
+
+statement ok
+VACUUM (SYNC_STATS_DATABASE) ${__DATABASE__};
+
+
+# ---------------------------------------------------------------------------
+# Error paths
+# ---------------------------------------------------------------------------
+
+# Missing required argument.
+statement error
+VACUUM (REFRESH_INDEX);
+----
+db error: ERROR: VACUUM (refresh_index) requires an object name
+
+
+statement error
+VACUUM (REFRESH_TABLE);
+----
+db error: ERROR: VACUUM (refresh_table) requires an object name
+
+
+statement error
+VACUUM (REFRESH_SCHEMA);
+----
+db error: ERROR: VACUUM (refresh_schema) requires an object name
+
+
+statement error
+VACUUM (REFRESH_DATABASE);
+----
+db error: ERROR: VACUUM (refresh_database) requires an object name
+
+
+statement error
+VACUUM (COMPACT_INDEX);
+----
+db error: ERROR: VACUUM (compact_index) requires an object name
+
+
+statement error
+VACUUM (COMPACT_TABLE);
+----
+db error: ERROR: VACUUM (compact_table) requires an object name
+
+
+statement error
+VACUUM (COMPACT_SCHEMA);
+----
+db error: ERROR: VACUUM (compact_schema) requires an object name
+
+
+statement error
+VACUUM (COMPACT_DATABASE);
+----
+db error: ERROR: VACUUM (compact_database) requires an object name
+
+
+statement error
+VACUUM (SYNC_STATS_TABLE);
+----
+db error: ERROR: VACUUM (sync_stats_table) requires an object name
+
+
+statement error
+VACUUM (SYNC_STATS_SCHEMA);
+----
+db error: ERROR: VACUUM (sync_stats_schema) requires an object name
+
+
+statement error
+VACUUM (SYNC_STATS_DATABASE);
+----
+db error: ERROR: VACUUM (sync_stats_database) requires an object name
+
+
+# Argument forbidden on _ALL scope.
+statement error
+VACUUM (REFRESH_ALL) docs;
+----
+db error: ERROR: VACUUM (refresh_all) does not take an argument
+
+
+statement error
+VACUUM (COMPACT_ALL) docs;
+----
+db error: ERROR: VACUUM (compact_all) does not take an argument
+
+
+statement error
+VACUUM (SYNC_STATS_ALL) docs;
+----
+db error: ERROR: VACUUM (sync_stats_all) does not take an argument
+
+
+statement error
+VACUUM (COMPACT_ROCKSDB) docs;
+----
+db error: ERROR: VACUUM (compact_rocksdb) does not take an argument
+
+
+# Over-qualified database / schema arguments.
+statement error
+VACUUM (REFRESH_DATABASE) ${__DATABASE__}.public;
+----
+db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE|SYNC_STATS_DATABASE) expects a single database name
+
+
+statement error
+VACUUM (COMPACT_DATABASE) ${__DATABASE__}.public;
+----
+db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE|SYNC_STATS_DATABASE) expects a single database name
+
+
+statement error
+VACUUM (SYNC_STATS_DATABASE) ${__DATABASE__}.public;
+----
+db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE|SYNC_STATS_DATABASE) expects a single database name
+
+
+statement error
+VACUUM (REFRESH_SCHEMA) ${__DATABASE__}.public.docs;
+----
+db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA|SYNC_STATS_SCHEMA) expects [<database>.]<schema>
+
+
+statement error
+VACUUM (COMPACT_SCHEMA) ${__DATABASE__}.public.docs;
+----
+db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA|SYNC_STATS_SCHEMA) expects [<database>.]<schema>
+
+
+statement error
+VACUUM (SYNC_STATS_SCHEMA) ${__DATABASE__}.public.docs;
+----
+db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA|SYNC_STATS_SCHEMA) expects [<database>.]<schema>
+
+
+# Catalog lookup failures, one per scope.
+statement error
+VACUUM (REFRESH_INDEX) nope_idx;
+----
+db error: ERROR: inverted index 'nope_idx' not found.
+
+
+statement error
+VACUUM (COMPACT_INDEX) nope_idx;
+----
+db error: ERROR: inverted index 'nope_idx' not found.
+
+
+statement error
+VACUUM (REFRESH_TABLE) nope_table;
+----
+db error: ERROR: relation 'nope_table' not found.
+
+
+statement error
+VACUUM (COMPACT_TABLE) nope_table;
+----
+db error: ERROR: relation 'nope_table' not found.
+
+
+statement error
+VACUUM (SYNC_STATS_TABLE) nope_table;
+----
+db error: ERROR: relation 'nope_table' not found.
+
+
+statement error
+VACUUM (REFRESH_SCHEMA) nope_schema;
+----
+db error: ERROR: schema 'nope_schema' does not exist.
+
+
+statement error
+VACUUM (COMPACT_SCHEMA) nope_schema;
+----
+db error: ERROR: schema 'nope_schema' does not exist.
+
+
+statement error
+VACUUM (SYNC_STATS_SCHEMA) nope_schema;
+----
+db error: ERROR: schema 'nope_schema' does not exist.
+
+
+statement error
+VACUUM (REFRESH_DATABASE) nope_db;
+----
+db error: ERROR: database 'nope_db' does not exist.
+
+
+statement error
+VACUUM (COMPACT_DATABASE) nope_db;
+----
+db error: ERROR: database 'nope_db' does not exist.
+
+
+statement error
+VACUUM (SYNC_STATS_DATABASE) nope_db;
+----
+db error: ERROR: database 'nope_db' does not exist.
+
+
+# Two extension options in one VACUUM -- parser-level rejection.
+statement error
+VACUUM (REFRESH_TABLE, COMPACT_TABLE) public.docs;
+----
+db error: ERROR: VACUUM accepts at most one SereneDB option (got both 'refresh_table' and 'compact_table')
+
+
+statement error
+VACUUM (COMPACT_SCHEMA, REFRESH_ALL) s1;
+----
+db error: ERROR: VACUUM accepts at most one SereneDB option (got both 'compact_schema' and 'refresh_all')
+
+
+# Extension option mixed with a standard VACUUM option.
+statement error
+VACUUM (REFRESH_TABLE, ANALYZE) public.docs;
+----
+db error: ERROR: VACUUM SereneDB option 'refresh_table' cannot be combined with standard VACUUM options
+
+
+# Cleanup
+statement ok
+DROP TABLE public.docs;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY public.en;
+
+
+statement ok
+DROP SCHEMA s1 CASCADE;
+
+
+statement ok
+DROP SCHEMA s2 CASCADE;

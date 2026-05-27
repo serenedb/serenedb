@@ -83,7 +83,7 @@ SET sdb_faults = 'slow_search_task';
 
 connection new2
 statement ok
-VACUUM (UPDATE_INDEXES) t;
+VACUUM (REFRESH_TABLE) t;
 
 
 statement async ok
@@ -158,7 +158,7 @@ wait
 
 connection new2
 statement ok
-VACUUM (UPDATE_INDEXES) t;
+VACUUM (REFRESH_TABLE) t;
 
 
 connection new2
@@ -197,7 +197,7 @@ INSERT INTO t VALUES ('one'), ('two'), ('three');
 # with the INSERTs.
 connection new2
 statement ok
-VACUUM (UPDATE_INDEXES) t;
+VACUUM (REFRESH_TABLE) t;
 
 
 connection new2
@@ -242,5 +242,5 @@ query
 SELECT * FROM sdb_search_tasks_status;
 ----
 task_type	active_tasks	pending_tasks	threads
-Commit	0	0	<slt:ignore>
-Consolidation	0	0	<slt:ignore>
+Refresh	0	0	<slt:ignore>
+Compaction	0	0	<slt:ignore>

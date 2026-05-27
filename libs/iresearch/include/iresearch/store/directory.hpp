@@ -168,7 +168,7 @@ struct Directory : private util::Noncopyable {
   explicit Directory(const ResourceManagementOptions& resource_manager) noexcept
     : _resource_manager{resource_manager} {
     SDB_ASSERT(_resource_manager.cached_columns);
-    SDB_ASSERT(_resource_manager.consolidations);
+    SDB_ASSERT(_resource_manager.compactions);
     SDB_ASSERT(_resource_manager.file_descriptors);
     SDB_ASSERT(_resource_manager.readers);
     SDB_ASSERT(_resource_manager.transactions);

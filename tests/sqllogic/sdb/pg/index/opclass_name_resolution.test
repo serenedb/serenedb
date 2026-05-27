@@ -1,0 +1,323 @@
+# Opclass name resolution in CREATE INDEX USING inverted.
+#
+# A bare opclass name (no parens) on a column or indexed expression is
+# resolved against the snapshot's text search dictionaries first. If a
+# user-defined dictionary with that name exists, it is used -- even when
+# the name collides with a built-in opclass ('hnsw', 'included').
+#
+# With parens, the name must be a built-in opclass; non-built-in names
+# with parens error. A bare name that matches a built-in but has no
+# user-defined dictionary surfaces a hint about the options form.
+
+
+# --- dict with a built-in opclass name shadows the built-in --------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY hnsw(template = 'keyword');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY included(template = 'keyword');
+
+
+# Bare 'hnsw' on a column: resolves to the dict, not the built-in HNSW.
+statement ok
+CREATE TABLE shadow_hnsw_col(id INT PRIMARY KEY, s VARCHAR);
+
+statement ok
+CREATE INDEX shadow_hnsw_col_idx ON shadow_hnsw_col USING inverted(id, s hnsw);
+
+statement ok
+INSERT INTO shadow_hnsw_col VALUES (1, 'foo'), (2, 'bar'), (3, 'foo');
+
+statement ok
+VACUUM (REFRESH_TABLE) shadow_hnsw_col;
+
+query
+SELECT id FROM shadow_hnsw_col_idx WHERE s = 'foo' ORDER BY id;
+----
+id
+1
+3
+
+
+# Bare 'included' on a column: same -- dict wins.
+statement ok
+CREATE TABLE shadow_inc_col(id INT PRIMARY KEY, s VARCHAR);
+
+statement ok
+CREATE INDEX shadow_inc_col_idx ON shadow_inc_col USING inverted(id, s included);
+
+statement ok
+INSERT INTO shadow_inc_col VALUES (1, 'foo'), (2, 'bar'), (3, 'foo');
+
+statement ok
+VACUUM (REFRESH_TABLE) shadow_inc_col;
+
+query
+SELECT id FROM shadow_inc_col_idx WHERE s = 'foo' ORDER BY id;
+----
+id
+1
+3
+
+
+# Bare 'hnsw' on an indexed expression: dict wins.
+statement ok
+CREATE TABLE shadow_hnsw_expr(id INT PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement ok
+CREATE INDEX shadow_hnsw_expr_idx ON shadow_hnsw_expr USING inverted(
+    id, (a || b) hnsw);
+
+statement ok
+INSERT INTO shadow_hnsw_expr VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
+
+statement ok
+VACUUM (REFRESH_TABLE) shadow_hnsw_expr;
+
+query
+SELECT id FROM shadow_hnsw_expr_idx WHERE a || b = 'foobar';
+----
+id
+1
+
+
+# Bare 'included' on an indexed expression: dict wins.
+statement ok
+CREATE TABLE shadow_inc_expr(id INT PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement ok
+CREATE INDEX shadow_inc_expr_idx ON shadow_inc_expr USING inverted(
+    id, (a || b) included);
+
+statement ok
+INSERT INTO shadow_inc_expr VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
+
+statement ok
+VACUUM (REFRESH_TABLE) shadow_inc_expr;
+
+query
+SELECT id FROM shadow_inc_expr_idx WHERE a || b = 'foobar';
+----
+id
+1
+
+
+# --- With parens, the built-in still wins regardless of the dict ---------
+
+# 'hnsw (...)' on a vector column: built-in HNSW, not the dict named 'hnsw'.
+statement ok
+CREATE TABLE parens_hnsw_col(id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX parens_hnsw_col_idx ON parens_hnsw_col USING inverted(
+    id, emb hnsw(metric = 'l2', m = 8, ef_construction = 16));
+
+statement ok
+INSERT INTO parens_hnsw_col VALUES
+    (1, [1, 2, 3]),
+    (2, [10, 10, 10]),
+    (3, [0, 0, 0]);
+
+statement ok
+VACUUM (REFRESH_TABLE) parens_hnsw_col;
+
+query
+SELECT id FROM parens_hnsw_col_idx ORDER BY emb <-> [1, 2, 3]::FLOAT[3] LIMIT 1;
+----
+id
+1
+
+
+# 'included (...)' on a column: built-in 'included', not the dict named 'included'.
+statement ok
+CREATE TABLE parens_inc_col(id INT PRIMARY KEY, s VARCHAR);
+
+statement ok
+CREATE INDEX parens_inc_col_idx ON parens_inc_col USING inverted(
+    id, s included(compression = 'uncompressed'));
+
+statement ok
+INSERT INTO parens_inc_col VALUES (1, 'foo'), (2, 'bar');
+
+statement ok
+VACUUM (REFRESH_TABLE) parens_inc_col;
+
+query
+SELECT id, s FROM parens_inc_col_idx WHERE id = 1;
+----
+id	s
+1	foo
+
+
+# 'hnsw (...)' on an indexed expression: built-in HNSW.
+statement ok
+CREATE TABLE parens_hnsw_expr(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
+
+statement ok
+CREATE INDEX parens_hnsw_expr_idx ON parens_hnsw_expr USING inverted(
+    id, (array_value(x, y, z)) hnsw(metric = 'l2', m = 8, ef_construction = 16));
+
+statement ok
+INSERT INTO parens_hnsw_expr VALUES (1, 1, 2, 3), (2, 10, 10, 10);
+
+statement ok
+VACUUM (REFRESH_TABLE) parens_hnsw_expr;
+
+query
+SELECT id FROM parens_hnsw_expr_idx
+ORDER BY array_value(x, y, z) <-> [1, 2, 3]::FLOAT[3] LIMIT 1;
+----
+id
+1
+
+
+# 'included (...)' on an indexed expression: built-in 'included'.
+statement ok
+CREATE TABLE parens_inc_expr(id INT PRIMARY KEY, a INT, b INT);
+
+statement ok
+CREATE INDEX parens_inc_expr_idx ON parens_inc_expr USING inverted(
+    id, (a + b) included(compression = 'uncompressed'));
+
+statement ok
+INSERT INTO parens_inc_expr VALUES (1, 10, 20), (2, 5, 5);
+
+statement ok
+VACUUM (REFRESH_TABLE) parens_inc_expr;
+
+query
+SELECT id, a + b AS s FROM parens_inc_expr_idx ORDER BY id;
+----
+id    s
+1     30
+2     10
+
+
+# --- ARRAY columns and expressions only allowed with built-in HNSW -------
+# Bare 'hnsw' would resolve to the user dict named 'hnsw' (text tokenizer),
+# but ARRAY values can only be indexed with the parens form of the built-in
+# 'hnsw' opclass. Validation rejects every other ARRAY case, regardless of
+# the element type. The shadowing dict in scope is irrelevant.
+
+statement ok
+CREATE TABLE shadow_hnsw_int_arr_col(id INT PRIMARY KEY, emb INT[3]);
+
+statement error
+CREATE INDEX bad_shadow_hnsw_int_arr_col_idx ON shadow_hnsw_int_arr_col USING inverted(
+    id, emb hnsw);
+----
+db error: ERROR: Failed to create index: Column 'emb' has unsupported type INTEGER[3]
+
+
+statement ok
+CREATE TABLE shadow_hnsw_float_arr_col(id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement error
+CREATE INDEX bad_shadow_hnsw_float_arr_col_idx ON shadow_hnsw_float_arr_col USING inverted(
+    id, emb hnsw);
+----
+db error: ERROR: Failed to create index: Column 'emb' has unsupported type FLOAT[3]
+
+
+statement ok
+CREATE TABLE shadow_hnsw_arr_expr(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
+
+statement error
+CREATE INDEX bad_shadow_hnsw_arr_expr_idx ON shadow_hnsw_arr_expr USING inverted(
+    id, (array_value(x, y, z)) hnsw);
+----
+db error: ERROR: Failed to create index: Column 'array_value(x, y, z)' has unsupported type FLOAT[3]
+
+
+# The parens form selects the built-in HNSW even with the shadowing dict
+# in scope -- this is the supported escape hatch. INT[3] still fails at
+# validation because HNSW requires ARRAY(FLOAT, N).
+statement ok
+CREATE INDEX good_shadow_hnsw_float_arr_col_idx ON shadow_hnsw_float_arr_col USING inverted(
+    id, emb hnsw(metric = 'l2', m = 8, ef_construction = 16));
+
+statement error
+CREATE INDEX bad_shadow_hnsw_int_arr_with_opts_idx ON shadow_hnsw_int_arr_col USING inverted(
+    id, emb hnsw(metric = 'l2', m = 8, ef_construction = 16));
+----
+db error: ERROR: Failed to create index: Column 'emb' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
+
+
+# --- No dict with a built-in name: bare use surfaces the options hint ----
+
+# Fresh schema with no 'hnsw' / 'included' dicts in scope.
+statement ok
+CREATE SCHEMA hint_only;
+
+statement ok
+SET search_path TO hint_only;
+
+
+# Bare 'hnsw' on a column with no dict by that name in this schema -- hint
+# error pointing at the options form.
+statement ok
+CREATE TABLE hint_hnsw_col(id INT PRIMARY KEY, s VARCHAR);
+
+statement error
+CREATE INDEX hint_hnsw_col_idx ON hint_hnsw_col USING inverted(id, s hnsw);
+----
+db error: ERROR: Unknown opclass 'hnsw' on column 's': no text dictionary by that name in schema 'hint_only'
+HINT: 'hnsw' is a built-in opclass; use the options form 'hnsw (...)'
+
+
+# Bare 'included' on a column with no dict by that name -- same hint shape.
+statement error
+CREATE INDEX hint_inc_col_idx ON hint_hnsw_col USING inverted(id, s included);
+----
+db error: ERROR: Unknown opclass 'included' on column 's': no text dictionary by that name in schema 'hint_only'
+HINT: 'included' is a built-in opclass; use the options form 'included (...)'
+
+
+# Bare 'hnsw' on an indexed expression with no dict -- same hint.
+statement ok
+CREATE TABLE hint_hnsw_expr(id INT PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement error
+CREATE INDEX hint_hnsw_expr_idx ON hint_hnsw_expr USING inverted(
+    id, (a || b) hnsw);
+----
+db error: ERROR: Unknown opclass 'hnsw' on column '(a || b)': no text dictionary by that name in schema 'hint_only'
+HINT: 'hnsw' is a built-in opclass; use the options form 'hnsw (...)'
+
+
+# Bare 'included' on an indexed expression with no dict in scope -- same
+# hint shape as the column path.
+statement ok
+CREATE TABLE bare_inc_expr(id INT PRIMARY KEY, a INT, b INT);
+
+statement error
+CREATE INDEX bare_inc_expr_idx ON bare_inc_expr USING inverted(
+    id, (a + b) included);
+----
+db error: ERROR: Unknown opclass 'included' on column '(a + b)': no text dictionary by that name in schema 'hint_only'
+HINT: 'included' is a built-in opclass; use the options form 'included (...)'
+
+
+# A non-built-in name with parens is rejected regardless of whether a
+# dict exists -- the options form is reserved for built-ins.
+statement ok
+CREATE TEXT SEARCH DICTIONARY hint_only_dict(template = 'keyword');
+
+statement error
+CREATE INDEX hint_parens_dict ON hint_hnsw_col USING inverted(
+    id, s hint_only_dict (compression = 'zstd'));
+----
+db error: ERROR: Failed to create index: Unknown built-in opclass 'hint_only_dict' on 's' (known: included, hnsw)
+
+
+# A non-built-in name with no dict by that name: bare-name lookup misses,
+# resulting in the "Unknown opclass" error.
+statement error
+CREATE INDEX hint_unknown ON hint_hnsw_col USING inverted(id, s missing_dict);
+----
+db error: ERROR: Failed to create index: Unknown opclass 'missing_dict' on column 's': no text dictionary by that name in schema 'hint_only'
+
+
+statement ok
+RESET search_path;

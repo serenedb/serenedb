@@ -277,8 +277,9 @@ void DuckDBEngine::Initialize() {
 
   // Parse and cache system functions/views
   // for serving from our attached catalog.
-  pg::InitSystemFunctions();
-  pg::InitSystemViews();
+  duckdb::Parser parser;
+  pg::InitSystemFunctions(parser);
+  pg::InitSystemViews(parser);
 }
 
 void DuckDBEngine::Shutdown() { _db.reset(); }

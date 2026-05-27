@@ -11,7 +11,7 @@ CREATE INDEX t_hnsw ON t USING inverted(v hnsw (metric = 'l2'));
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) t;
+VACUUM (REFRESH_TABLE) t;
 
 
 # Catalog snapshot pinning under REPEATABLE READ. The optimizer must use

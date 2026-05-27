@@ -157,7 +157,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       {
         std::unique_lock commit_lock{_commit_mutex};
         REGISTER_TIMER_NAMED_DETAILED("init - commit");
-        import_writer->Commit({.tick = CommitTick()});
+        import_writer->RefreshCommit({.tick = CommitTick()});
       }
 
       REGISTER_TIMER_NAMED_DETAILED("init - open");
@@ -229,7 +229,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
               {
                 REGISTER_TIMER_NAMED_DETAILED("commit");
-                writer->Commit({.tick = CommitTick()});
+                writer->RefreshCommit({.tick = CommitTick()});
               }
 
               count = 0;
@@ -240,7 +240,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
           {
             std::unique_lock commit_lock{_commit_mutex};
             REGISTER_TIMER_NAMED_DETAILED("commit");
-            writer->Commit({.tick = CommitTick()});
+            writer->RefreshCommit({.tick = CommitTick()});
           }
 
           ++writer_commit_count;
@@ -367,7 +367,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
               {
                 REGISTER_TIMER_NAMED_DETAILED("commit");
-                writer->Commit({.tick = CommitTick()});
+                writer->RefreshCommit({.tick = CommitTick()});
               }
 
               count = 0;
@@ -378,7 +378,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
           {
             std::unique_lock commit_lock{_commit_mutex};
             REGISTER_TIMER_NAMED_DETAILED("commit");
-            writer->Commit({.tick = CommitTick()});
+            writer->RefreshCommit({.tick = CommitTick()});
           }
 
           ++writer_commit_count;
@@ -391,8 +391,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     // ensure all data have been committed
     {
       std::unique_lock commit_lock{_commit_mutex};
-      writer->Commit({.tick = CommitTick()});
-      EXPECT_FALSE(writer->Commit());
+      writer->RefreshCommit({.tick = CommitTick()});
+      EXPECT_FALSE(writer->RefreshCommit());
     }
 
     auto path = test_dir();
@@ -499,7 +499,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
             {
               std::unique_lock commit_lock{_commit_mutex};
               REGISTER_TIMER_NAMED_DETAILED("commit");
-              writer->Commit({.tick = CommitTick()});
+              writer->RefreshCommit({.tick = CommitTick()});
             }
             ++writer_commit_count;
             std::this_thread::sleep_for(
@@ -516,11 +516,10 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     thread_pool.stop();
   }
 
-  void ProfileBulkIndexDedicatedConsolidate(size_t num_threads,
-                                            size_t batch_size,
-                                            size_t consolidate_interval) {
+  void ProfileBulkIndexDedicatedCompact(size_t num_threads, size_t batch_size,
+                                        size_t compact_interval) {
     const auto policy =
-      irs::index_utils::MakePolicy(irs::index_utils::ConsolidateCount());
+      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount());
     auto options = irs::tests::DefaultWriterOptions();
     std::atomic<bool> working(true);
     irs::async_utils::ThreadPool<> thread_pool(2);
@@ -530,14 +529,13 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
     auto writer = open_writer(irs::kOmCreate, options);
 
-    thread_pool.run(
-      [consolidate_interval, &working, &writer, &policy]() -> void {
-        while (working.load()) {
-          writer->Consolidate(policy);
-          std::this_thread::sleep_for(
-            std::chrono::milliseconds(consolidate_interval));
-        }
-      });
+    thread_pool.run([compact_interval, &working, &writer, &policy]() -> void {
+      while (working.load()) {
+        writer->Compact(policy);
+        std::this_thread::sleep_for(
+          std::chrono::milliseconds(compact_interval));
+      }
+    });
 
     {
       irs::Finally finalizer = [&working]() noexcept { working = false; };
@@ -545,18 +543,18 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     }
 
     thread_pool.stop();
-    // ensure there are no consolidation-pending segments
-    // left in 'consolidating_segments_' before applying the final consolidation
+    // ensure there are no compaction-pending segments
+    // left in 'compacting_segments_' before applying the final compaction
     {
       std::unique_lock commit_lock{_commit_mutex};
-      writer->Commit({.tick = CommitTick()});
-      EXPECT_FALSE(writer->Commit());
+      writer->RefreshCommit({.tick = CommitTick()});
+      EXPECT_FALSE(writer->RefreshCommit());
     }
-    ASSERT_TRUE(writer->Consolidate(policy));
+    ASSERT_TRUE(writer->Compact(policy));
     {
       std::unique_lock commit_lock{_commit_mutex};
-      writer->Commit({.tick = CommitTick()});
-      EXPECT_FALSE(writer->Commit());
+      writer->RefreshCommit({.tick = CommitTick()});
+      EXPECT_FALSE(writer->RefreshCommit());
     }
 
     struct DummyDocTemplateT : public tests::CsvDocGenerator::DocTemplate {
@@ -594,9 +592,9 @@ TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_cleanup_mt) {
   ProfileBulkIndexDedicatedCleanup(16, 10000, 100);
 }
 
-TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_consolidate_mt) {
+TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_compact_mt) {
   // a lot of threads cause a lot of contention for the segment pool
-  ProfileBulkIndexDedicatedConsolidate(8, 10000, 500);
+  ProfileBulkIndexDedicatedCompact(8, 10000, 500);
 }
 
 TEST_P(IndexProfileTestCase,
@@ -656,11 +654,10 @@ TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_cleanup_mt_tick) {
   ProfileBulkIndexDedicatedCleanup(16, 10000, 100);
 }
 
-TEST_P(IndexProfileTestCase,
-       profile_bulk_index_multithread_consolidate_mt_tick) {
+TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_compact_mt_tick) {
   SetOnTick(true);
   // a lot of threads cause a lot of contention for the segment pool
-  ProfileBulkIndexDedicatedConsolidate(8, 10000, 500);
+  ProfileBulkIndexDedicatedCompact(8, 10000, 500);
 }
 
 TEST_P(IndexProfileTestCase,

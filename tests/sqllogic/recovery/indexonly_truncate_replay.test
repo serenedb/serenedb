@@ -35,7 +35,7 @@ INSERT INTO indexonly_trunc VALUES
   (2, 'pre truncate charlie delta');
 
 statement ok
-VACUUM (UPDATE_INDEXES) indexonly_trunc;
+VACUUM (REFRESH_TABLE) indexonly_trunc;
 
 # Sanity: rows are searchable before TRUNCATE.
 query
@@ -90,7 +90,7 @@ INSERT INTO indexonly_trunc VALUES
 
 connection after_truncate
 statement ok
-VACUUM (UPDATE_INDEXES) indexonly_trunc;
+VACUUM (REFRESH_TABLE) indexonly_trunc;
 
 connection after_truncate
 query

@@ -35,7 +35,7 @@ statement ok
 CREATE INDEX ws_score_idx ON ws_t(score);
 
 statement ok
-VACUUM (UPDATE_INDEXES) ws_t;
+VACUUM (REFRESH_TABLE) ws_t;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';
@@ -75,7 +75,7 @@ SELECT 1;
 
 connection ws_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) ws_t;
+VACUUM (REFRESH_TABLE) ws_t;
 
 # Total row count.
 connection ws_after

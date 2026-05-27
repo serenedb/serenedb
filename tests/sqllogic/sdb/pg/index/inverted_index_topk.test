@@ -42,7 +42,7 @@ CREATE INDEX docs_topk_idx ON docs USING inverted(id, body en_topk);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 query
@@ -389,7 +389,7 @@ INSERT INTO docs VALUES (19, 'purple fox');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 # Get expected results from full scan across two segments

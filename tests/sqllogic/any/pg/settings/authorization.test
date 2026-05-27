@@ -1,0 +1,64 @@
+# ----------------------------------------------------------------------
+# PG-compat: SET ROLE / SET SESSION AUTHORIZATION grammar. Drivers issue
+# these on startup for role-based access (Npgsql ConnectionString=...Role=,
+# JDBC currentSchema=, pgbouncer auth_pass-through, etc).
+#
+# PG grammar [set_rest_more]:
+#   SET ROLE NonReservedWord_or_Sconst
+#   SET SESSION AUTHORIZATION NonReservedWord_or_Sconst
+#   SET SESSION AUTHORIZATION DEFAULT
+#
+# PG's RESET counterparts go through the generic_reset / reset_rest path.
+# ----------------------------------------------------------------------
+
+# SET ROLE assigns the active role; SHOW ROLE / RESET ROLE round-trip.
+statement ok
+SET ROLE postgres;
+
+
+query
+SHOW ROLE;
+----
+role
+postgres
+
+
+statement ok
+RESET ROLE;
+
+
+# Quoted-literal spelling (NonReservedWord_or_Sconst accepts both).
+statement ok
+SET ROLE 'postgres';
+
+
+statement ok
+RESET ROLE;
+
+
+# SET SESSION AUTHORIZATION <user> with both word and string-literal payloads.
+statement ok
+SET SESSION AUTHORIZATION postgres;
+
+
+query
+SHOW session_authorization;
+----
+session_authorization
+postgres
+
+
+statement ok
+SET SESSION AUTHORIZATION 'postgres';
+
+
+# SET SESSION AUTHORIZATION DEFAULT restores the original authenticated user.
+statement ok
+SET SESSION AUTHORIZATION DEFAULT;
+
+
+query
+SHOW session_authorization;
+----
+session_authorization
+postgres

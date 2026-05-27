@@ -36,7 +36,7 @@ statement ok
 INSERT INTO test_ngram values (5, 'hero');
 
 statement ok
-VACUUM (UPDATE_INDEXES) test_ngram;
+VACUUM (REFRESH_TABLE) test_ngram;
 
 # Default threshold (0.7) - should match strings with high ngram similarity to 'hello'
 query

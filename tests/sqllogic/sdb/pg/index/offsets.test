@@ -30,7 +30,7 @@ statement ok
 INSERT INTO offsets_test VALUES (4, 'good day', 'fox fox fox fox fox fox fox fox fox fox fox fox', 12);
 
 statement ok
-VACUUM (UPDATE_INDEXES) offsets_test;
+VACUUM (REFRESH_TABLE) offsets_test;
 
 statement ok
 CREATE TABLE offsets_test2 (id INTEGER PRIMARY KEY, body VARCHAR);
@@ -42,7 +42,7 @@ statement ok
 INSERT INTO offsets_test2 VALUES (1, 'fox'), (2, 'cat');
 
 statement ok
-VACUUM (UPDATE_INDEXES) offsets_test2;
+VACUUM (REFRESH_TABLE) offsets_test2;
 
 query
 SELECT id, ts_offsets(body) AS bo

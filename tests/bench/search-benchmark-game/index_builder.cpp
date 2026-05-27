@@ -82,7 +82,7 @@ IndexBuilder::IndexBuilder(std::string_view path,
 void IndexBuilder::IndexFromStream(std::istream& input,
                                    BatchHandlerFactory factory) {
   irs::async_utils::ThreadPool<> thread_pool{_opts.indexer_threads +
-                                             _opts.consolidation_threads + 1};
+                                             _opts.compaction_threads + 1};
 
   struct {
     absl::CondVar cond;
@@ -139,54 +139,53 @@ void IndexBuilder::IndexFromStream(std::istream& input,
     batch_provider.eof = true;
   });
 
-  absl::Mutex consolidation_mutex;
-  absl::CondVar consolidation_cv;
+  absl::Mutex compaction_mutex;
+  absl::CondVar compaction_cv;
 
   // commiter thread
-  if (_opts.commit_interval_ms) {
-    thread_pool.run(
-      [&consolidation_cv, &consolidation_mutex, &batch_provider, this] {
-        irs::SetThreadName(IR_NATIVE_STRING("committer"));
-
-        while (!batch_provider.done.load()) {
-          {
-            std::cout << "[COMMIT]" << std::endl;
-            _writer->Commit();
-          }
-
-          // notify consolidation threads
-          if (_opts.consolidation_threads) {
-            absl::MutexLock lock{&consolidation_mutex};
-            consolidation_cv.notify_all();
-          }
-
-          std::this_thread::sleep_for(
-            std::chrono::milliseconds(_opts.commit_interval_ms));
-        }
-      });
-  }
-
-  // consolidation threads
-  const irs::index_utils::ConsolidateTier consolidation_options;
-  auto policy = irs::index_utils::MakePolicy(consolidation_options);
-
-  for (size_t i = _opts.consolidation_threads; i; --i) {
-    thread_pool.run([&] {
-      irs::SetThreadName(IR_NATIVE_STRING("consolidater"));
+  if (_opts.refresh_interval_ms) {
+    thread_pool.run([&compaction_cv, &compaction_mutex, &batch_provider, this] {
+      irs::SetThreadName(IR_NATIVE_STRING("committer"));
 
       while (!batch_provider.done.load()) {
         {
-          absl::MutexLock lock{&consolidation_mutex};
-          if (consolidation_cv.WaitWithTimeout(
-                &consolidation_mutex,
-                absl::Milliseconds(_opts.consolidation_interval_ms))) {
+          std::cout << "[COMMIT]" << std::endl;
+          _writer->RefreshCommit();
+        }
+
+        // notify compaction threads
+        if (_opts.compaction_threads) {
+          absl::MutexLock lock{&compaction_mutex};
+          compaction_cv.notify_all();
+        }
+
+        std::this_thread::sleep_for(
+          std::chrono::milliseconds(_opts.refresh_interval_ms));
+      }
+    });
+  }
+
+  // compaction threads
+  const irs::index_utils::CompactionTier compaction_options;
+  auto policy = irs::index_utils::MakePolicy(compaction_options);
+
+  for (size_t i = _opts.compaction_threads; i; --i) {
+    thread_pool.run([&] {
+      irs::SetThreadName(IR_NATIVE_STRING("compactr"));
+
+      while (!batch_provider.done.load()) {
+        {
+          absl::MutexLock lock{&compaction_mutex};
+          if (compaction_cv.WaitWithTimeout(
+                &compaction_mutex,
+                absl::Milliseconds(_opts.compaction_interval_ms))) {
             continue;
           }
         }
 
         {
-          std::cout << "[CONSOLIDATE]" << std::flush;
-          _writer->Consolidate(policy);
+          std::cout << "[COMPACT]" << std::flush;
+          _writer->Compact(policy);
         }
 
         irs::directory_utils::RemoveAllUnreferenced(_dir);
@@ -214,20 +213,20 @@ void IndexBuilder::IndexFromStream(std::istream& input,
   thread_pool.stop();
 
   std::cout << "[COMMIT]" << std::endl;
-  _writer->Commit();
+  _writer->RefreshCommit();
 
-  if (_opts.consolidate_all) {
-    std::cout << "Consolidating all segments:" << std::endl;
-    ConsolidateAll();
-  } else if (_opts.consolidation_threads) {
+  if (_opts.compact_all) {
+    std::cout << "Compacting all segments:" << std::endl;
+    CompactAll();
+  } else if (_opts.compaction_threads) {
     irs::directory_utils::RemoveAllUnreferenced(_dir);
   }
 }
 
-void IndexBuilder::ConsolidateAll() {
-  _writer->Consolidate(
-    irs::index_utils::MakePolicy(irs::index_utils::ConsolidateCount()));
-  _writer->Commit();
+void IndexBuilder::CompactAll() {
+  _writer->Compact(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+  _writer->RefreshCommit();
   irs::directory_utils::RemoveAllUnreferenced(_dir);
 }
 

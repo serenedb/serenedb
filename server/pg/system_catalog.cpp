@@ -28,6 +28,7 @@
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
+#include <duckdb/parser/statement/select_statement.hpp>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
@@ -361,7 +362,7 @@ std::shared_ptr<PgSqlView> GetView(std::string_view name) {
   return it->second;
 }
 
-void InitSystemViews() {
+void InitSystemViews(duckdb::Parser& parser) {
   for (const auto& view : kExternalViews) {
     auto info = duckdb::make_uniq<duckdb::CreateViewInfo>();
     info->schema = view.schema;
@@ -369,7 +370,15 @@ void InitSystemViews() {
     info->sql = view.sql;
     info->temporary = true;
     info->internal = true;
-    info->query = duckdb::CreateViewInfo::ParseSelect(info->sql);
+
+    parser.statements.clear();
+    parser.ParseQuery(info->sql);
+    SDB_ASSERT(parser.statements.size() == 1);
+    SDB_ASSERT(parser.statements[0]->type ==
+               duckdb::StatementType::SELECT_STATEMENT);
+    info->query =
+      duckdb::unique_ptr_cast<duckdb::SQLStatement, duckdb::SelectStatement>(
+        std::move(parser.statements[0]));
 
     auto entry = std::make_shared<catalog::PgSqlView>(
       ObjectId{}, ObjectId{}, view.name, std::move(info));
@@ -382,10 +391,10 @@ void InitSystemViews() {
 }
 
 static duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
-  const SystemMacro& macro) {
+  duckdb::Parser& parser, const SystemMacro& macro) {
   auto sql =
     absl::StrCat("CREATE FUNCTION ", macro.name, macro.macro_definition);
-  duckdb::Parser parser;
+  parser.statements.clear();
   parser.ParseQuery(sql);
   SDB_ASSERT(parser.statements.size() == 1 &&
              parser.statements[0]->type ==
@@ -411,9 +420,9 @@ static duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
   return info;
 }
 
-void InitSystemFunctions() {
+void InitSystemFunctions(duckdb::Parser& parser) {
   for (const auto& macro : kExternalMacros) {
-    auto info = ParseMacro(macro);
+    auto info = ParseMacro(parser, macro);
 
     // DEFAULT_SCHEMA schema macros go into pg_catalog because in PG,
     // pg_catalog is always implicitly searched -- functions like current_user,

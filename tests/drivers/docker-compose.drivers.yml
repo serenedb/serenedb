@@ -37,6 +37,7 @@ services:
     environment:
       - HOME=/tmp/home
       - LOG_DIR=/logs
+      - SDB_DRV_LANG
     networks:
       - test-network
     command: >

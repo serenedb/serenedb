@@ -111,7 +111,7 @@ id
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) t;
+VACUUM (REFRESH_TABLE) t;
 
 
 query
@@ -407,7 +407,7 @@ statement count 4
 INSERT INTO t_l2 VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_l2;
+VACUUM (REFRESH_TABLE) t_l2;
 
 query
 SELECT id FROM l2_tuned ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
@@ -430,7 +430,7 @@ INSERT INTO t_l1 VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]),
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_l1;
+VACUUM (REFRESH_TABLE) t_l1;
 
 
 query
@@ -499,7 +499,7 @@ statement count 4
 INSERT INTO t_cos VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_cos;
+VACUUM (REFRESH_TABLE) t_cos;
 
 query
 EXPLAIN SELECT id FROM cos_index ORDER BY emb <=> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 2;
@@ -620,7 +620,7 @@ statement count 4
 INSERT INTO t_ip VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_ip;
+VACUUM (REFRESH_TABLE) t_ip;
 
 query
 EXPLAIN SELECT id FROM ip_index ORDER BY emb <#> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 2;
@@ -738,7 +738,7 @@ statement count 4
 INSERT INTO t_l1 VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_l1;
+VACUUM (REFRESH_TABLE) t_l1;
 
 query
 SELECT id FROM l1_index ORDER BY l1_distance(emb, [0, 0, 0]::FLOAT[3]) LIMIT 2;
@@ -796,13 +796,13 @@ db error: ERROR: Failed to create index: Column 'emb': hnsw option 'ef_construct
 statement error
 CREATE INDEX bad_scalar ON t_err USING inverted(id hnsw (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'id' must be an ARRAY type to use the 'hnsw' opclass
+db error: ERROR: Failed to create index: Column 'id' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER
 
 
 statement error
 CREATE INDEX bad_int_arr ON t_err USING inverted(emb_int hnsw (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'emb_int' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass
+db error: ERROR: Failed to create index: Column 'emb_int' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
 
 
 statement error
@@ -821,31 +821,31 @@ DROP INDEX m_real_real;
 statement error
 CREATE INDEX m_real_bare ON t_err USING inverted(emb hnsw);
 ----
-db error: ERROR: Failed to create index: Built-in opclass 'hnsw' on column 'emb' requires options; use 'hnsw (...)'
+db error: ERROR: Failed to create index: Column 'emb' has unsupported type FLOAT[3]
 
 
 statement error
 CREATE INDEX m_fake_empty ON t_err USING inverted(emb fake_idx ());
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, hnsw)
 
 
 statement error
 CREATE INDEX m_fake_real ON t_err USING inverted(emb fake_idx (m = 16));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, hnsw)
 
 
 statement error
 CREATE INDEX m_fake_fake ON t_err USING inverted(emb fake_idx (foo = 1));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, hnsw)
 
 
 statement error
 CREATE INDEX m_fake_name ON t_err USING inverted(emb fake_dict);
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'fake_dict' on column 'emb': not a built-in type (known: included, hnsw) and no text dictionary by that name in schema 'public'
+db error: ERROR: Failed to create index: Column 'emb' has unsupported type FLOAT[3]
 
 
 
@@ -906,7 +906,7 @@ INSERT INTO t_proj VALUES (1, 1, 'a', [100, 0, 0]::FLOAT[3]), (2, 2, 'b', [50, 5
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_proj;
+VACUUM (REFRESH_TABLE) t_proj;
 
 
 query
@@ -1029,7 +1029,7 @@ INSERT INTO t_mixed VALUES (1, 'red fox', [100, 0, 0]::FLOAT[3]), (2, 'blue cat'
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_mixed;
+VACUUM (REFRESH_TABLE) t_mixed;
 
 
 query
@@ -1270,7 +1270,7 @@ INSERT INTO t_big SELECT i, [CAST(i AS FLOAT), CAST(i AS FLOAT), CAST(i AS FLOAT
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_big;
+VACUUM (REFRESH_TABLE) t_big;
 
 
 query
@@ -1353,7 +1353,7 @@ INSERT INTO t_merge VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_merge;
+VACUUM (REFRESH_TABLE) t_merge;
 
 
 statement count 2
@@ -1361,7 +1361,7 @@ INSERT INTO t_merge VALUES (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_merge;
+VACUUM (REFRESH_TABLE) t_merge;
 
 
 statement count 2
@@ -1369,7 +1369,7 @@ INSERT INTO t_merge VALUES (5, [10, 10, 10]::FLOAT[3]), (6, [20, 20, 20]::FLOAT[
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_merge;
+VACUUM (REFRESH_TABLE) t_merge;
 
 
 statement count 2
@@ -1377,11 +1377,11 @@ INSERT INTO t_merge VALUES (7, [5, 5, 5]::FLOAT[3]), (8, [30, 30, 30]::FLOAT[3])
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_merge;
+VACUUM (REFRESH_TABLE) t_merge;
 
 
 statement ok
-PRAGMA serenedb_vacuum('compact_indexes', 't_merge');
+VACUUM (COMPACT_TABLE) t_merge;
 
 
 query

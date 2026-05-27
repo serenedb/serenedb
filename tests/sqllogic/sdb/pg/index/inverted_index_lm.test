@@ -42,7 +42,7 @@ CREATE INDEX docs_idx ON docs USING inverted(id, body en);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 # LM Jelinek-Mercer with default lambda (0.1): strictly positive for matches.
@@ -136,7 +136,7 @@ INSERT INTO docs VALUES (7, 'fox runs fast fox');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 # LM JM across segments: positive for every match, doc 7 (higher tf) strictly

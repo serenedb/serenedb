@@ -248,6 +248,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     return static_cast<const catalog::Column*>(nullptr);
   };
 
+  idx_columns.reserve(_info->parsed_expressions.size());
   for (size_t i = 0; i < _info->parsed_expressions.size(); ++i) {
     auto& expr = _info->parsed_expressions[i];
     std::string opclass = i < _info->column_opclasses.size()
@@ -300,7 +301,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         "indexed expression must reference at least one base table column");
     }
     auto return_type = normalized->GetReturnType();
-    idx_columns.emplace_back(
+    auto& indexed_column = idx_columns.emplace_back(
       nullptr, "", std::move(opclass),
       catalog::ExpressionData{
         .serialized_expr = std::move(serialized),
@@ -309,6 +310,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         .pretty_printed = expr->ToString(),
       },
       std::move(opclass_options));
+    indexed_column.name = indexed_column.indexed_expr->pretty_printed;
   }
 
   bool if_not_exists =
@@ -333,8 +335,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     catalog::InvertedIndexOptions options{
       .row_group_size = resolve_uint("row_group_size"),
       .norm_row_group_size = resolve_uint("norm_row_group_size"),
-      .commit_interval_ms = resolve_uint("commit_interval"),
-      .consolidation_interval_ms = resolve_uint("consolidation_interval"),
+      .refresh_interval_ms = resolve_uint("refresh_interval"),
+      .compaction_interval_ms = resolve_uint("compaction_interval"),
       .cleanup_interval_step = resolve_uint("cleanup_interval_step"),
     };
     if (auto* v = find_with("optimize_top_k")) {

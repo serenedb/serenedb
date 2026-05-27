@@ -208,7 +208,7 @@ INSERT INTO hnsw_comp VALUES
   (3, [0.0, 0.0, 1.0]::FLOAT[3]);
 
 statement ok
-VACUUM (UPDATE_INDEXES) hnsw_comp;
+VACUUM (REFRESH_TABLE) hnsw_comp;
 
 query
 SELECT id FROM hnsw_comp_unc ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
@@ -231,7 +231,7 @@ INSERT INTO hnsw_mat VALUES
   (2, [4.0, 5.0, 6.0]::FLOAT[3]);
 
 statement ok
-VACUUM (UPDATE_INDEXES) hnsw_mat;
+VACUUM (REFRESH_TABLE) hnsw_mat;
 
 query
 SELECT id, emb FROM hnsw_mat_idx ORDER BY id;

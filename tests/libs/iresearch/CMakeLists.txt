@@ -46,7 +46,7 @@ set(iresearch-tests_sources
     ./index/postings_tests.cpp
     ./index/segment_writer_tests.cpp
     ./index/sorted_index_tests.cpp
-    ./index/consolidation_policy_tests.cpp
+    ./index/compaction_policy_tests.cpp
     ./parser/lucene_parser_test.cpp
     ./search/empty_filter_tests.cpp
     ./search/nested_filter_test.cpp

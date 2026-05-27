@@ -33,7 +33,7 @@ CREATE INDEX ko_idx ON ko_t
   USING inverted(id, a ko_dict, b ko_dict, c ko_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) ko_t;
+VACUUM (REFRESH_TABLE) ko_t;
 
 # Pre-crash: every token searchable.
 query
@@ -75,7 +75,7 @@ SELECT 1;
 
 connection ko_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) ko_t;
+VACUUM (REFRESH_TABLE) ko_t;
 
 # Updated columns: new tokens findable, old gone.
 

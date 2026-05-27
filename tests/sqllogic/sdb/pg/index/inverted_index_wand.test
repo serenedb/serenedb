@@ -65,7 +65,7 @@ CREATE INDEX wand_small_idx ON wand_small USING inverted(id, body en_wand)
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) wand_small;
+VACUUM (REFRESH_TABLE) wand_small;
 
 
 # Term-only filter + matching scorer + LIMIT -> WAND engages.
@@ -273,11 +273,11 @@ CREATE INDEX plain_big_idx ON plain_big USING inverted(id, body en_wand);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) wand_big;
+VACUUM (REFRESH_TABLE) wand_big;
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) plain_big;
+VACUUM (REFRESH_TABLE) plain_big;
 
 
 # Sanity: both indexes match the same population.

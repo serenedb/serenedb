@@ -217,7 +217,7 @@ INSERT INTO hl_docs VALUES
     (5, 'lorem ipsum dolor sit amet quick consectetur adipiscing elit fox sed do')
 
 statement ok
-VACUUM (UPDATE_INDEXES) hl_docs
+VACUUM (REFRESH_TABLE) hl_docs
 
 
 # Single-term match: search scan emits ts_offsets(body); piped into
@@ -339,7 +339,7 @@ INSERT INTO hl_corpus VALUES
     (30, 'fox in socks by dr seuss is a classic')
 
 statement ok
-VACUUM (UPDATE_INDEXES) hl_corpus
+VACUUM (REFRESH_TABLE) hl_corpus
 
 # BM25 ORDER BY + LIMIT: top-3 most relevant snippets. Pure-fox doc (5)
 # scores highest by raw frequency. We take top 3 and render with
@@ -547,7 +547,7 @@ statement ok
 INSERT INTO hl_no_offs_docs VALUES (1, 'the quick brown fox')
 
 statement ok
-VACUUM (UPDATE_INDEXES) hl_no_offs_docs
+VACUUM (REFRESH_TABLE) hl_no_offs_docs
 
 query
 SELECT id, ts_highlight(body)
@@ -568,7 +568,7 @@ INSERT INTO hl_no_offs_docs VALUES
     (4, 'a slow brown bear')
 
 statement ok
-VACUUM (UPDATE_INDEXES) hl_no_offs_docs
+VACUUM (REFRESH_TABLE) hl_no_offs_docs
 
 query
 SELECT id, ts_highlight(body)
@@ -778,7 +778,7 @@ INSERT INTO hl_multi VALUES
     (2, 'cat news', 'cat is here')
 
 statement ok
-VACUUM (UPDATE_INDEXES) hl_multi
+VACUUM (REFRESH_TABLE) hl_multi
 
 # Two ts_offsets() projections on different columns with different
 # limits. The per-FieldEntry cap in FillRowOffsets keeps the

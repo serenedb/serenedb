@@ -37,10 +37,10 @@ statement ok
 CREATE INDEX dt_drop_idx ON dt_drop USING inverted(id, body dt_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) dt_keep;
+VACUUM (REFRESH_TABLE) dt_keep;
 
 statement ok
-VACUUM (UPDATE_INDEXES) dt_drop;
+VACUUM (REFRESH_TABLE) dt_drop;
 
 # Block search commits — rocksdb keeps advancing.
 statement ok
@@ -80,7 +80,7 @@ SELECT 1;
 
 connection dt_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) dt_keep;
+VACUUM (REFRESH_TABLE) dt_keep;
 
 # Dropped table and its index are gone.
 connection dt_after

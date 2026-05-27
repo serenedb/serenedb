@@ -53,7 +53,7 @@ INSERT INTO ce VALUES (4, 'delta', NULL)
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) ce
+VACUUM (REFRESH_TABLE) ce
 
 
 # ---- 1. ts_is_null() pushes down as NOT[EXISTS[col_id]] ----

@@ -38,10 +38,10 @@ statement ok
 CREATE INDEX vedernikoff_drop_idx ON vedernikoff_drop USING inverted(id, body vedernikoff_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) vedernikoff_keep;
+VACUUM (REFRESH_TABLE) vedernikoff_keep;
 
 statement ok
-VACUUM (UPDATE_INDEXES) vedernikoff_drop;
+VACUUM (REFRESH_TABLE) vedernikoff_drop;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';

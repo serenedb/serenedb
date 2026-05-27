@@ -31,7 +31,7 @@ statement ok
 CREATE INDEX wal_del_idx ON wal_del_t USING inverted(a, b del_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) wal_del_t;
+VACUUM (REFRESH_TABLE) wal_del_t;
 
 query
 SELECT a FROM wal_del_idx WHERE b @@ ts_phrase('apple');
@@ -61,7 +61,7 @@ SELECT 1;
 
 connection del_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) wal_del_t;
+VACUUM (REFRESH_TABLE) wal_del_t;
 
 # Deleted rows are gone from the index
 connection del_after

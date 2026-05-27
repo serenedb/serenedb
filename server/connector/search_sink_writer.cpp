@@ -102,18 +102,6 @@ struct NumericSliceTypeImpl<duckdb::LogicalTypeId::DOUBLE> {
 template<duckdb::LogicalTypeId Kind>
 using NumericSliceType = typename NumericSliceTypeImpl<Kind>::Type;
 
-template<duckdb::LogicalTypeId Kind>
-inline constexpr bool kIsNumericKind =
-  Kind == duckdb::LogicalTypeId::TINYINT ||
-  Kind == duckdb::LogicalTypeId::SMALLINT ||
-  Kind == duckdb::LogicalTypeId::INTEGER ||
-  Kind == duckdb::LogicalTypeId::BIGINT ||
-  Kind == duckdb::LogicalTypeId::FLOAT ||
-  Kind == duckdb::LogicalTypeId::DOUBLE ||
-  Kind == duckdb::LogicalTypeId::DATE ||
-  Kind == duckdb::LogicalTypeId::TIMESTAMP ||
-  Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ;
-
 }  // namespace
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
@@ -392,6 +380,26 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
       _current_writer = std::move(numeric_writer);
       break;
     }
+    case duckdb::LogicalTypeId::LIST: {
+      duckdb::Vector::RecursiveToUnifiedFormat(vec, count, _list_fmt);
+      if (!SetupListExpressionWriterForChild(
+            field_id, have_nulls,
+            duckdb::ListType::GetChildType(expr_desc.type).id(),
+            /*array_size=*/0)) {
+        _current_writer = nullptr;
+        return false;
+      }
+    } break;
+    case duckdb::LogicalTypeId::ARRAY: {
+      duckdb::Vector::RecursiveToUnifiedFormat(vec, count, _list_fmt);
+      if (!SetupListExpressionWriterForChild(
+            field_id, have_nulls,
+            duckdb::ArrayType::GetChildType(expr_desc.type).id(),
+            duckdb::ArrayType::GetSize(expr_desc.type))) {
+        _current_writer = nullptr;
+        return false;
+      }
+    } break;
     default:
       _current_writer = nullptr;
       return false;
@@ -561,7 +569,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     } else {
       _current_writer = MakeIndexWriter(&WriteBooleanValue);
     }
-  } else if constexpr (kIsNumericKind<Kind>) {
+  } else if constexpr (catalog::IsNumericSliceKind(Kind)) {
     search::mangling::MangleNumeric(_name_buffer);
     _field.PrepareForNumericValue();
     using T = NumericSliceType<Kind>;
@@ -632,6 +640,166 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       data_writer(full_key, cell_slices);
     };
     _emit_pk = false;
+  }
+}
+
+bool SearchSinkInsertBaseImpl::SetupListExpressionWriterForChild(
+  irs::field_id field_id, bool have_nulls, duckdb::LogicalTypeId child_kind,
+  duckdb::idx_t array_size) {
+  switch (child_kind) {
+    case duckdb::LogicalTypeId::VARCHAR:
+      SetupListExpressionWriter<duckdb::LogicalTypeId::VARCHAR>(
+        field_id, have_nulls, array_size);
+      break;
+    case duckdb::LogicalTypeId::BOOLEAN:
+      SetupListExpressionWriter<duckdb::LogicalTypeId::BOOLEAN>(
+        field_id, have_nulls, array_size);
+      break;
+    case duckdb::LogicalTypeId::TINYINT:
+      SetupListExpressionWriter<duckdb::LogicalTypeId::TINYINT>(
+        field_id, have_nulls, array_size);
+      break;
+    case duckdb::LogicalTypeId::SMALLINT:
+      SetupListExpressionWriter<duckdb::LogicalTypeId::SMALLINT>(
+        field_id, have_nulls, array_size);
+      break;
+    case duckdb::LogicalTypeId::INTEGER:
+      SetupListExpressionWriter<duckdb::LogicalTypeId::INTEGER>(
+        field_id, have_nulls, array_size);
+      break;
+    case duckdb::LogicalTypeId::DATE:
+      SetupListExpressionWriter<duckdb::LogicalTypeId::DATE>(
+        field_id, have_nulls, array_size);
+      break;
+    case duckdb::LogicalTypeId::BIGINT:
+      SetupListExpressionWriter<duckdb::LogicalTypeId::BIGINT>(
+        field_id, have_nulls, array_size);
+      break;
+    case duckdb::LogicalTypeId::TIMESTAMP:
+      SetupListExpressionWriter<duckdb::LogicalTypeId::TIMESTAMP>(
+        field_id, have_nulls, array_size);
+      break;
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+      SetupListExpressionWriter<duckdb::LogicalTypeId::TIMESTAMP_TZ>(
+        field_id, have_nulls, array_size);
+      break;
+    case duckdb::LogicalTypeId::FLOAT:
+      SetupListExpressionWriter<duckdb::LogicalTypeId::FLOAT>(
+        field_id, have_nulls, array_size);
+      break;
+    case duckdb::LogicalTypeId::DOUBLE:
+      SetupListExpressionWriter<duckdb::LogicalTypeId::DOUBLE>(
+        field_id, have_nulls, array_size);
+      break;
+    default:
+      return false;
+  }
+  return true;
+}
+
+template<duckdb::LogicalTypeId ChildKind>
+void SearchSinkInsertBaseImpl::SetupListExpressionWriter(irs::field_id field_id,
+                                                         bool have_nulls,
+                                                         duckdb::idx_t
+                                                           array_size) {
+  if constexpr (ChildKind == duckdb::LogicalTypeId::VARCHAR) {
+    search::mangling::MangleString(_name_buffer);
+    _field.PrepareForStringValue(_subexpr_tokenizer_provider(field_id));
+  } else if constexpr (ChildKind == duckdb::LogicalTypeId::BOOLEAN) {
+    search::mangling::MangleBool(_name_buffer);
+    _field.PrepareForBooleanValue();
+  } else {
+    static_assert(catalog::IsNumericSliceKind(ChildKind),
+                  "Unsupported LIST/ARRAY child kind");
+    search::mangling::MangleNumeric(_name_buffer);
+    _field.PrepareForNumericValue();
+  }
+
+  _current_writer = [this, have_nulls, array_size, row = duckdb::idx_t{0}](
+                      std::string_view,
+                      std::span<const rocksdb::Slice>) mutable {
+    const auto& parent_fmt = _list_fmt.unified;
+    const auto parent_idx = parent_fmt.sel->get_index(row++);
+    if (!parent_fmt.validity.RowIsValid(parent_idx)) {
+      if (have_nulls) {
+        InsertNullValue();
+      }
+      return;
+    }
+    duckdb::idx_t offset;
+    duckdb::idx_t length;
+    if (array_size == 0) {
+      const auto* list_data =
+        duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(parent_fmt);
+      const auto entry = list_data[parent_idx];
+      offset = entry.offset;
+      length = entry.length;
+    } else {
+      offset = parent_idx * array_size;
+      length = array_size;
+    }
+    const auto& child_fmt = _list_fmt.children[0].unified;
+    for (duckdb::idx_t i = 0; i < length; ++i) {
+      WriteListElementValue<ChildKind>(child_fmt, offset + i, have_nulls);
+    }
+  };
+}
+
+void SearchSinkInsertBaseImpl::InsertNullValue() {
+  _null_field.SetNullValue();
+  if (!_document->Insert(&_null_field)) {
+    SDB_THROW(ERROR_INTERNAL,
+              "Failed to insert null field into IResearch document");
+  }
+}
+
+template<duckdb::LogicalTypeId Kind>
+void SearchSinkInsertBaseImpl::WriteListElementValue(
+  const duckdb::UnifiedVectorFormat& child_fmt, duckdb::idx_t flat_idx,
+  bool have_nulls) {
+  const auto idx = child_fmt.sel->get_index(flat_idx);
+  if (!child_fmt.validity.RowIsValid(idx)) {
+    if (have_nulls) {
+      InsertNullValue();
+    }
+    return;
+  }
+
+  if constexpr (Kind == duckdb::LogicalTypeId::VARCHAR) {
+    const auto& s =
+      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(child_fmt)[idx];
+    _field.SetStringValue({s.GetData(), s.GetSize()});
+  } else if constexpr (Kind == duckdb::LogicalTypeId::BOOLEAN) {
+    _field.SetBooleanValue(
+      duckdb::UnifiedVectorFormat::GetData<bool>(child_fmt)[idx]);
+  } else if constexpr (Kind == duckdb::LogicalTypeId::TINYINT) {
+    _field.SetNumericValue(static_cast<int32_t>(
+      duckdb::UnifiedVectorFormat::GetData<int8_t>(child_fmt)[idx]));
+  } else if constexpr (Kind == duckdb::LogicalTypeId::SMALLINT) {
+    _field.SetNumericValue(static_cast<int32_t>(
+      duckdb::UnifiedVectorFormat::GetData<int16_t>(child_fmt)[idx]));
+  } else if constexpr (Kind == duckdb::LogicalTypeId::INTEGER ||
+                       Kind == duckdb::LogicalTypeId::DATE) {
+    _field.SetNumericValue(
+      duckdb::UnifiedVectorFormat::GetData<int32_t>(child_fmt)[idx]);
+  } else if constexpr (Kind == duckdb::LogicalTypeId::BIGINT ||
+                       Kind == duckdb::LogicalTypeId::TIMESTAMP ||
+                       Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ) {
+    _field.SetNumericValue(
+      duckdb::UnifiedVectorFormat::GetData<int64_t>(child_fmt)[idx]);
+  } else if constexpr (Kind == duckdb::LogicalTypeId::FLOAT) {
+    _field.SetNumericValue(
+      duckdb::UnifiedVectorFormat::GetData<float>(child_fmt)[idx]);
+  } else {
+    static_assert(Kind == duckdb::LogicalTypeId::DOUBLE,
+                  "Unsupported LIST/ARRAY child kind");
+    _field.SetNumericValue(
+      duckdb::UnifiedVectorFormat::GetData<double>(child_fmt)[idx]);
+  }
+
+  if (!_document->Insert(&_field)) {
+    SDB_THROW(ERROR_INTERNAL,
+              "Failed to insert list element into IResearch document");
   }
 }
 

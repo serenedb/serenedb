@@ -24,6 +24,7 @@
 #include <simdjson.h>
 
 #include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/common/vector/unified_vector_format.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/columnstore/column_writer.hpp>
 #include <iresearch/columnstore/format.hpp>
@@ -260,10 +261,23 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
                                   std::span<const rocksdb::Slice> cell_slices,
                                   Field& field);
 
-  // Setup column writer according to type kind.
-  // Builds actual executor to avoid switch/case on each row whenever possible.
   template<duckdb::LogicalTypeId Kind>
   void SetupColumnWriter(catalog::Column::Id column_id, bool have_nulls);
+
+  template<duckdb::LogicalTypeId ChildKind>
+  void SetupListExpressionWriter(irs::field_id field_id, bool have_nulls,
+                                 duckdb::idx_t array_size);
+
+  bool SetupListExpressionWriterForChild(irs::field_id field_id,
+                                         bool have_nulls,
+                                         duckdb::LogicalTypeId child_kind,
+                                         duckdb::idx_t array_size);
+
+  template<duckdb::LogicalTypeId Kind>
+  void WriteListElementValue(const duckdb::UnifiedVectorFormat& child_fmt,
+                             duckdb::idx_t flat_idx, bool have_nulls);
+
+  void InsertNullValue();
 
   irs::columnstore::ColumnWriter* EnsurePerRowBlobWriter(
     irs::field_id field_id);
@@ -327,6 +341,8 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   std::vector<JsonExpressionFields> _json_fields;
   simdjson::ondemand::parser _json_parser;
   std::string _json_buffer;
+
+  duckdb::RecursiveUnifiedVectorFormat _list_fmt;
 };
 
 class SearchSinkDeleteBaseImpl {

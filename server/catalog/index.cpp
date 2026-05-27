@@ -424,6 +424,25 @@ Result ValidateInvertedIndexColumns(
       continue;
     }
 
+    // LIST<T>/ARRAY<T> indexed expressions: each element is tokenised
+    // separately by the search sink (SetupListExpressionWriter). Only on the
+    // expression path -- direct LIST/ARRAY columns aren't walked. T must be a
+    // scalar the sink can project.
+    if ((kind == duckdb::LogicalTypeId::LIST ||
+         kind == duckdb::LogicalTypeId::ARRAY) &&
+        c.IsIndexedExpression()) {
+      const auto child = (kind == duckdb::LogicalTypeId::LIST
+                            ? duckdb::ListType::GetChildType(value_type)
+                            : duckdb::ArrayType::GetChildType(value_type))
+                           .id();
+      const bool child_supported = child == duckdb::LogicalTypeId::VARCHAR ||
+                                   child == duckdb::LogicalTypeId::BOOLEAN ||
+                                   IsNumericSliceKind(child);
+      if (child_supported) {
+        continue;
+      }
+    }
+
     if (kind == duckdb::LogicalTypeId::ARRAY) {
       return {ERROR_BAD_PARAMETER, "Column '", label, "' has unsupported type ",
               value_type.ToString()};

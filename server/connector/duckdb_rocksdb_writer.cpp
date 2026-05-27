@@ -167,7 +167,7 @@ void AppendPKValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
       break;
     }
     default:
-      SDB_ASSERT(false, "Unsupported PK type: ", type.ToString());
+      SDB_THROW(ERROR_NOT_IMPLEMENTED, "Unsupported PK type: ", type.ToString());
   }
 }
 
@@ -946,7 +946,8 @@ size_t DuckDBColumnSerializer::WriteSubVector(
           return WriteSubVectorPrimitive<uint32_t>(rdata.unified, offset,
                                                    count);
         default:
-          SDB_ASSERT(false, "Unsupported ENUM physical type in WriteSubVector");
+          SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                    "Unsupported ENUM physical type in WriteSubVector");
       }
       return 0;
     case duckdb::LogicalTypeId::VARCHAR:
@@ -976,9 +977,9 @@ size_t DuckDBColumnSerializer::WriteSubVector(
       return bytes;
     }
     default:
-      SDB_ASSERT(false,
-                 "Unsupported sub-vector type for RocksDB serialization: ",
-                 type.ToString());
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                "Unsupported sub-vector type for RocksDB serialization: ",
+                type.ToString());
       return 0;
   }
 }
@@ -1204,14 +1205,14 @@ size_t DuckDBColumnSerializer::WriteScalarValue(
         case duckdb::PhysicalType::UINT32:
           return WriteScalarField<uint32_t>(fmt, row_idx);
         default:
-          SDB_ASSERT(false,
-                     "Unsupported ENUM physical type in WriteScalarValue");
+          SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                    "Unsupported ENUM physical type in WriteScalarValue");
           return 0;
       }
     default:
-      SDB_ASSERT(false,
-                 "Unsupported type in WriteScalarValue: ", type.ToString(),
-                 " -- nested types go through WriteComplexValue");
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                "Unsupported type in WriteScalarValue: ", type.ToString(),
+                " -- nested types go through WriteComplexValue");
       return 0;
   }
 }

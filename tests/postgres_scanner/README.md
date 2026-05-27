@@ -30,7 +30,7 @@ tests/postgres_scanner/run.sh --use-existing # postgres already at $PGHOST:$PGPO
 The driver brings postgres up, provisions the `postgresscanner` database,
 runs the suite, and writes JUnit XML to `tests/sqllogic/postgres_scanner.xml`.
 In CI it's invoked by the `test-functional` job via
-`048-ci-in-docker-run-extension-tests.bash` →
+`048-ci-in-docker-run-extension-tests.bash` ->
 [docker-compose.extensions.yml](../sqllogic/docker-compose.extensions.yml)
 (`run.sh --use-existing`).
 
@@ -43,14 +43,14 @@ Three things differ from a naive run, each non-obvious:
   (running DuckDB *core's* suite against postgres-as-storage); its
   `on_new_connection: USE pgdb;` breaks duckdb_postgres' own tests.
   Ours just sets `search_path = main` and skips two tests:
-  - `postgres_binary` — server-side `COPY FROM <host-path>` needs the
+  - `postgres_binary` -- server-side `COPY FROM <host-path>` needs the
     postgres backend uid to read a runner-owned file; fails across the
     docker bind-mount.
-  - `postgres_execute_transaction` — asserts an exact log-row count
+  - `postgres_execute_transaction` -- asserts an exact log-row count
     that's only deterministic with upstream's per-test `pgdb` isolation.
 
 - **Locale pinned to `C.UTF-8`** (in both compose files). DuckDB rewrites
-  `col LIKE 'foo9%'` → `col >= 'foo9' AND col < 'foo:'`; under `en_US.utf8`
+  `col LIKE 'foo9%'` -> `col >= 'foo9' AND col < 'foo:'`; under `en_US.utf8`
   (the postgres image default) `:` sorts before `9`, so the range excludes
   matching rows and `attach_like.test` fails. Upstream's CI runs a
   C-locale postgres and never hits this.

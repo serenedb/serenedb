@@ -59,10 +59,10 @@ class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
         _field{field},
         _ngrams{&ngrams},
         _min_match_count{min_match_count},
-        _memory{&ctx.memory},
         _field_stats{ctx.scorer},
         _term_stats{ctx.scorer, ngrams.size()},
-        _states{ctx.memory, ctx.index.size()} {}
+        _states{ctx.memory, ctx.index.size()},
+        _term_states{{ctx.memory}} {}
 
     void PrepareSegment(const SubReader& segment) final;
     void Merge(PrepareBuffer&& other) final;
@@ -73,10 +73,10 @@ class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
     std::string_view _field;
     const std::vector<bstring>* _ngrams;
     size_t _min_match_count;
-    IResourceManager* _memory;
     FieldCollectors _field_stats;
     TermCollectors _term_stats;
     NGramStates _states;
+    ManagedVector<SeekCookie::ptr> _term_states;
   };
 
   static Query::ptr Prepare(const PrepareContext& ctx,

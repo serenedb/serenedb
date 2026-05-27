@@ -20,6 +20,7 @@
 
 #include <gtest/gtest.h>
 
+#include "filter_test_case_base.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/parser/parser.hpp"
@@ -285,6 +286,58 @@ TEST_P(BoostQueryTestCase, ManualRequiredOptionalConstruction) {
   // Score ordering must be: C > B > A
   EXPECT_GT(hits[0].score, hits[1].score);
   EXPECT_GT(hits[1].score, hits[2].score);
+}
+
+// Doc-set parity between `prepare` and the parallel
+// `CreateBuffer`/`PrepareSegment`/`Merge`/`Compile` path for each branch of
+// `MixedBooleanFilter::CreateBuffer`: required+optional (the dedicated
+// `Buffer`), optional-only (delegates to `Or`) and required-only (delegates to
+// `And`). `CreateBufferPreservesOrBoost` already covers scored parity for the
+// required+optional branch; this covers the two delegating branches that have
+// no other parity coverage.
+TEST_P(BoostQueryTestCase, CreateBufferBranchParity) {
+  auto reader = CreateIndex();
+
+  auto make_term = [](std::string_view value) {
+    auto f = std::make_unique<irs::ByTerm>();
+    *f->mutable_field() = "content";
+    f->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
+    return f;
+  };
+
+  // Required + optional -> MixedBooleanFilter::Buffer.
+  {
+    irs::MixedBooleanFilter root;
+    root.GetRequired().add(make_term("open"));
+    root.GetOptional().add(make_term("source"));
+    root.GetOptional().add(make_term("software"));
+    tests::RunParallelPrepareParity(root, reader);
+  }
+
+  // Required + optional with an Or-level boost.
+  {
+    irs::MixedBooleanFilter root;
+    root.GetRequired().add(make_term("open"));
+    root.GetOptional().add(make_term("source"));
+    root.GetOptional().boost(2.5f);
+    tests::RunParallelPrepareParity(root, reader);
+  }
+
+  // Optional-only -> delegates to Or::CreateBuffer.
+  {
+    irs::MixedBooleanFilter root;
+    root.GetOptional().add(make_term("source"));
+    root.GetOptional().add(make_term("software"));
+    tests::RunParallelPrepareParity(root, reader);
+  }
+
+  // Required-only -> delegates to And::CreateBuffer.
+  {
+    irs::MixedBooleanFilter root;
+    root.GetRequired().add(make_term("open"));
+    root.GetRequired().add(make_term("source"));
+    tests::RunParallelPrepareParity(root, reader);
+  }
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include <absl/container/node_hash_map.h>
+#include <absl/container/flat_hash_map.h>
 
 #include "basics/noncopyable.hpp"
 #include "basics/resource_manager.hpp"
@@ -81,7 +81,7 @@ class StatesCacheImpl : public StatesCache, private util::Noncopyable {
   using Alloc =
     ManagedTypedAllocator<std::pair<const SubReader* const, state_type>>;
 
-  using StatesMap = absl::node_hash_map<
+  using StatesMap = absl::flat_hash_map<
     const SubReader*, state_type,
     absl::container_internal::hash_default_hash<const SubReader*>,
     absl::container_internal::hash_default_eq<const SubReader*>, Alloc>;

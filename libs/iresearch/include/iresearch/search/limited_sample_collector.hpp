@@ -80,18 +80,23 @@ class LimitedSampleCollector : private util::Noncopyable {
   }
 
   // Fold another collector built from a disjoint set of segments into this one.
-  // Caller is responsible for merging the underlying StatesCache (which owns
-  // the MultiTermState nodes the snapshots in `other` point into) BEFORE
-  // calling this -- node_hash_map guarantees those pointers stay valid after
-  // the node-by-node merge.
-  void Merge(LimitedSampleCollector&& other) {
+  // Caller is responsible for merging the underlying StatesCache BEFORE calling
+  // this; `states` is the merged cache. Cached MultiTermState pointers are
+  // re-resolved from it by segment, so the cache may relocate its values on
+  // merge (flat_hash_map) without dangling.
+  void Merge(LimitedSampleCollector&& other, MultiTermQuery::States& states) {
     if (!_scored_terms_limit) {
       SDB_ASSERT(other._scored_states.empty());
       return;
     }
+    for (auto& s : _scored_states) {
+      SDB_ASSERT(s.segment);
+      s.state = &states.insert(*s.segment);
+    }
     for (auto& s : other._scored_states) {
-      SDB_ASSERT(s.cookie);
-      CollectImpl(s.key, s.state, s.segment, std::move(s.cookie),
+      SDB_ASSERT(s.cookie && s.segment);
+      auto& state = states.insert(*s.segment);
+      CollectImpl(s.key, &state, s.segment, std::move(s.cookie),
                   bytes_view{s.term}, s.docs_count);
     }
     other._scored_states.clear();
@@ -357,7 +362,7 @@ class SampledMultiTermBuffer : public Filter::ScoredBuffer {
   void Merge(Filter::PrepareBuffer&& other) override {
     auto& rhs = sdb::basics::downCast<SampledMultiTermBuffer>(other);
     _states.Merge(std::move(rhs._states));
-    _collector.Merge(std::move(rhs._collector));
+    _collector.Merge(std::move(rhs._collector), _states);
   }
 
   bool Empty() const noexcept override { return _states.empty(); }

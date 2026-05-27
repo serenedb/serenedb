@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/analysis/wildcard_analyzer.hpp"
 #include "iresearch/index/directory_reader.hpp"
@@ -295,4 +296,92 @@ TEST(WildcardNgramFilterTest, query) {
                                             /*has_positions=*/false)));
   EXPECT_EQ(ids({0}), execute(MakeFilter(kField, "foo_ar", analyzer,
                                          /*has_positions=*/false)));
+}
+
+// Verifies that the sequential `prepare` path and the parallel
+// `CreateBuffer`/`PrepareSegment`/`Merge`/`Compile` path produce the same
+// documents across a two-segment index, for every shape `ByWildcardNgram`
+// can compile: exact term, pure prefix/suffix, single-char `_` wildcard,
+// embedded `%`, the empty result set and the `has_pos == false` path that
+// always materialises the RE2 matcher.
+TEST(WildcardNgramFilterTest, parallel_prepare_parity) {
+  static constexpr std::string_view kField = "text";
+  static constexpr std::string_view kValues[] = {
+    "foobar", "foobaz", "xyz123", "hello", "world",
+  };
+
+  irs::analysis::WildcardAnalyzer::Options ana_opts;
+  ana_opts.ngram_size = 3;
+  irs::analysis::WildcardAnalyzer analyzer{std::move(ana_opts)};
+
+  irs::MemoryDirectory dir;
+  irs::DirectoryReader reader;
+
+  // Index the documents across two segments so the parallel path's `Merge`
+  // step combines two non-empty per-segment buffers.
+  {
+    auto codec = irs::formats::Get("1_5simd");
+    ASSERT_NE(nullptr, codec);
+    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    ASSERT_NE(nullptr, writer);
+
+    WildcardField field;
+    field.field_name = kField;
+    field.analyzer = &analyzer;
+
+    {
+      auto segment0 = writer->GetBatch();
+      auto segment1 = writer->GetBatch();
+      size_t i = 0;
+      for (auto v : kValues) {
+        field.value = v;
+        auto doc = (i++ % 2 ? segment1 : segment0).Insert();
+        ASSERT_TRUE(doc.Insert(field));
+        auto* cs = doc.Columnstore();
+        ASSERT_NE(nullptr, cs);
+        irs::tests::StoreFieldAt(*cs, kStoreId, doc.DocId(), field);
+      }
+    }
+    writer->RefreshCommit();
+    reader = writer->GetSnapshot();
+  }
+
+  ASSERT_NE(nullptr, reader);
+  ASSERT_EQ(2u, reader->size());
+  ASSERT_EQ(std::size(kValues), reader->live_docs_count());
+
+  auto with_boost = [](irs::ByWildcardNgram q, irs::score_t b) {
+    q.boost(b);
+    return q;
+  };
+  auto run = [&](const irs::ByWildcardNgram& f) {
+    tests::RunParallelPrepareParity(f, *reader);
+  };
+
+  // Exact match (no wildcards) -> single ByTerm child.
+  run(MakeFilter(kField, "hello", analyzer));
+  run(with_boost(MakeFilter(kField, "hello", analyzer), 2.5f));
+
+  // Pure prefix (trailing '%') -> single child, no RE2 matcher.
+  run(MakeFilter(kField, "foo%", analyzer));
+  run(with_boost(MakeFilter(kField, "foo%", analyzer), 0.5f));
+
+  // Pure suffix (leading '%').
+  run(MakeFilter(kField, "%bar", analyzer));
+
+  // Single-char '_' wildcard -> RE2 matcher, multi-part.
+  run(MakeFilter(kField, "foo_ar", analyzer));
+  run(with_boost(MakeFilter(kField, "foo_a_", analyzer), 1.75f));
+
+  // Embedded '%' -> RE2 matcher, multi-part.
+  run(MakeFilter(kField, "f%r", analyzer));
+
+  // No matches.
+  run(MakeFilter(kField, "nope%", analyzer));
+  run(MakeFilter(kField, "%qqq%", analyzer));
+
+  // has_positions == false -> matcher always built, terms-only children.
+  run(MakeFilter(kField, "foo%", analyzer, /*has_positions=*/false));
+  run(MakeFilter(kField, "foo_ar", analyzer, /*has_positions=*/false));
 }

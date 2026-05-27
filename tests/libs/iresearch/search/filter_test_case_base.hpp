@@ -24,12 +24,14 @@
 #pragma once
 
 #include <algorithm>
+#include <type_traits>
 #include <variant>
 
 #include "basics/memory.hpp"
 #include "basics/singleton.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/filter.hpp"
@@ -613,40 +615,23 @@ class EmptyFilterVisitor : public irs::FilterVisitor {
   size_t _visit_calls_counter = 0;
 };
 
-inline void RunParallelPrepareParity(const irs::Filter& filter,
-                                     const irs::IndexReader& rdr,
-                                     const irs::Scorer* scorer = nullptr) {
-  std::vector<const irs::SubReader*> segments;
-  segments.reserve(rdr.size());
-  for (const auto& s : rdr) {
-    segments.push_back(&s);
+// Asserts that two prepared queries -- one from `prepare`, one assembled
+// through the parallel `CreateBuffer`/`Merge`/`Compile` path -- produce the
+// same boost, the same doc sequence and (when a scorer is set) the same scores.
+inline void AssertPreparedParity(
+  const irs::Filter::Query& seq, const irs::Filter::Query& par,
+  const std::vector<const irs::SubReader*>& segments,
+  const irs::Scorer* scorer) {
+  // BoostQuery::Boost() is an intentionally unsupported test-only API; skip the
+  // boost-parity check when either side compiles to one.
+  if (!dynamic_cast<const irs::BoostQuery*>(&seq) &&
+      !dynamic_cast<const irs::BoostQuery*>(&par)) {
+    ASSERT_EQ(seq.Boost(), par.Boost());
   }
-
-  MaxMemoryCounter counter;
-  const irs::PrepareContext ctx{
-    .index = rdr, .memory = counter, .scorer = scorer};
-
-  auto seq = filter.prepare(ctx);
-  ASSERT_NE(nullptr, seq);
-
-  auto buf_lhs = filter.CreateBuffer(ctx);
-  auto buf_rhs = filter.CreateBuffer(ctx);
-  ASSERT_NE(nullptr, buf_lhs);
-  ASSERT_NE(nullptr, buf_rhs);
-
-  for (size_t i = 0; i < segments.size(); ++i) {
-    auto& buf = (i & 1u) ? *buf_rhs : *buf_lhs;
-    buf.PrepareSegment(*segments[i]);
-  }
-  buf_lhs->Merge(std::move(*buf_rhs));
-  auto par = std::move(*buf_lhs).Compile(ctx);
-  ASSERT_NE(nullptr, par);
-
-  ASSERT_EQ(seq->Boost(), par->Boost());
 
   for (const auto* segment : segments) {
-    auto docs_seq = seq->execute({.segment = *segment, .scorer = scorer});
-    auto docs_par = par->execute({.segment = *segment, .scorer = scorer});
+    auto docs_seq = seq.execute({.segment = *segment, .scorer = scorer});
+    auto docs_par = par.execute({.segment = *segment, .scorer = scorer});
 
     if (scorer) {
       irs::ColumnArgsFetcher fetcher_seq;
@@ -681,6 +666,67 @@ inline void RunParallelPrepareParity(const irs::Filter& filter,
       ASSERT_EQ(docs_seq->value(), docs_par->value());
     }
   }
+}
+
+// Normalises whatever a filter factory yields to a `const irs::Filter&`:
+// either the filter itself (by reference) or a smart pointer to it.
+inline const irs::Filter& AsFilterRef(const irs::Filter& f) noexcept {
+  return f;
+}
+template<typename T>
+const irs::Filter& AsFilterRef(const std::unique_ptr<T>& p) noexcept {
+  return *p;
+}
+
+// `make_filter` is invoked once per preparation (once for `prepare`, once per
+// parallel buffer). Each invocation must yield an equivalent filter, returned
+// either by reference or as a `std::unique_ptr`. This indirection is required
+// for filters whose `CreateBuffer`/`prepare` mutate or move out filter state
+// and can therefore only be prepared once per instance (e.g. GeoFilter moves
+// its shape into the produced buffer, and such filters are also non-movable so
+// a fresh instance must be heap-allocated per preparation).
+template<typename MakeFilter>
+  requires std::is_invocable_v<MakeFilter>
+void RunParallelPrepareParity(MakeFilter&& make_filter,
+                              const irs::IndexReader& rdr,
+                              const irs::Scorer* scorer = nullptr) {
+  std::vector<const irs::SubReader*> segments;
+  segments.reserve(rdr.size());
+  for (const auto& s : rdr) {
+    segments.push_back(&s);
+  }
+
+  MaxMemoryCounter counter;
+  const irs::PrepareContext ctx{
+    .index = rdr, .memory = counter, .scorer = scorer};
+
+  decltype(auto) f_seq = make_filter();
+  auto seq = AsFilterRef(f_seq).prepare(ctx);
+  ASSERT_NE(nullptr, seq);
+
+  decltype(auto) f_lhs = make_filter();
+  decltype(auto) f_rhs = make_filter();
+  auto buf_lhs = AsFilterRef(f_lhs).CreateBuffer(ctx);
+  auto buf_rhs = AsFilterRef(f_rhs).CreateBuffer(ctx);
+  ASSERT_NE(nullptr, buf_lhs);
+  ASSERT_NE(nullptr, buf_rhs);
+
+  for (size_t i = 0; i < segments.size(); ++i) {
+    auto& buf = (i & 1u) ? *buf_rhs : *buf_lhs;
+    buf.PrepareSegment(*segments[i]);
+  }
+  buf_lhs->Merge(std::move(*buf_rhs));
+  auto par = std::move(*buf_lhs).Compile(ctx);
+  ASSERT_NE(nullptr, par);
+
+  AssertPreparedParity(*seq, *par, segments, scorer);
+}
+
+inline void RunParallelPrepareParity(const irs::Filter& filter,
+                                     const irs::IndexReader& rdr,
+                                     const irs::Scorer* scorer = nullptr) {
+  RunParallelPrepareParity([&filter]() -> const irs::Filter& { return filter; },
+                           rdr, scorer);
 }
 
 }  // namespace tests

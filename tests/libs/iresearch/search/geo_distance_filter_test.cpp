@@ -23,6 +23,7 @@
 
 #include <set>
 
+#include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -1218,4 +1219,91 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     ASSERT_EQ(1, collector_finish_count);
     ASSERT_EQ(4, scorer_score_count);
   }
+}
+
+// Doc-set parity between the sequential `prepare` and the parallel
+// `CreateBuffer`/`PrepareSegment`/`Merge`/`Compile` path over a two-segment
+// index, across each branch of GeoDistanceFilter::CreateBuffer: both bounds
+// unbounded (delegates to All), a single open interval, a closed interval with
+// every inclusive/exclusive combination, and the degenerate zero-distance
+// point. GeoDistanceFilter::CreateBuffer only reads the range/origin, so the
+// non-destructive (reference) overload can reuse one filter instance.
+TEST(GeoDistanceFilterTest, parallel_prepare_parity) {
+  auto docs = vpack::Parser::fromJson(R"([
+    { "name": "A", "geometry": { "type": "Point", "coordinates": [ 37.615895, 55.7039   ] } },
+    { "name": "B", "geometry": { "type": "Point", "coordinates": [ 37.615315, 55.703915 ] } },
+    { "name": "Q", "geometry": { "type": "Point", "coordinates": [ 37.610235, 55.709754 ] } },
+    { "name": "R", "geometry": { "type": "Point", "coordinates": [ 37.605,    55.707917 ] } },
+    { "name": "S", "geometry": { "type": "Point", "coordinates": [ 37.545776, 55.722083 ] } },
+    { "name": "U", "geometry": { "type": "Point", "coordinates": [ 37.701645, 55.832144 ] } }
+  ])");
+
+  irs::MemoryDirectory dir;
+  irs::DirectoryReader reader;
+
+  {
+    auto codec = irs::formats::Get("1_5simd");
+    ASSERT_NE(nullptr, codec);
+    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    ASSERT_NE(nullptr, writer);
+    GeoField geo_field;
+    geo_field.field_name = "geometry";
+    StringField name_field;
+    name_field.field_name = "name";
+    {
+      auto segment0 = writer->GetBatch();
+      auto segment1 = writer->GetBatch();
+      size_t i = 0;
+      for (auto doc_slice : vpack::ArrayIterator(docs->slice())) {
+        geo_field.shape_slice = doc_slice.get("geometry");
+        name_field.value = slice_to_string_view(doc_slice.get("name"));
+
+        auto doc = (i++ % 2 ? segment1 : segment0).Insert();
+        ASSERT_TRUE(doc.Insert(name_field));
+        ASSERT_TRUE(doc.Insert(geo_field));
+        irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(),
+                                 name_field);
+        irs::tests::StoreFieldAt(*doc.Columnstore(), kGeo, doc.DocId(),
+                                 geo_field);
+      }
+    }
+    writer->RefreshCommit();
+    reader = writer->GetSnapshot();
+  }
+
+  ASSERT_NE(nullptr, reader);
+  ASSERT_EQ(2U, reader->size());
+
+  const auto origin = S2LatLng::FromDegrees(55.70892, 37.607768).ToPoint();
+
+  using BT = irs::BoundType;
+  auto run_range = [&](BT min_type, double min, BT max_type, double max,
+                       irs::score_t boost) {
+    GeoDistanceFilter q;
+    *q.mutable_field() = "geometry";
+    q.mutable_options()->store_field_id = kGeo;
+    q.mutable_options()->origin = origin;
+    q.boost(boost);
+    auto& range = q.mutable_options()->range;
+    range.min_type = min_type;
+    range.min = min;
+    range.max_type = max_type;
+    range.max = max;
+    ::tests::RunParallelPrepareParity(q, *reader);
+  };
+
+  // Both bounds unbounded -> delegates to All.
+  run_range(BT::Unbounded, 0, BT::Unbounded, 0, irs::kNoBoost);
+  // Upper bound only -> open interval (+/- boost).
+  run_range(BT::Unbounded, 0, BT::Inclusive, 300, irs::kNoBoost);
+  run_range(BT::Unbounded, 0, BT::Inclusive, 300, 2.5f);
+  // Lower bound only, exclusive -> open interval (complemented cap).
+  run_range(BT::Exclusive, 100, BT::Unbounded, 0, irs::kNoBoost);
+  // Closed interval, inclusive/inclusive.
+  run_range(BT::Inclusive, 100, BT::Inclusive, 300, 0.5f);
+  // Closed interval, exclusive/exclusive.
+  run_range(BT::Exclusive, 100, BT::Exclusive, 300, irs::kNoBoost);
+  // Degenerate zero-distance point [0, 0] inclusive/inclusive.
+  run_range(BT::Inclusive, 0, BT::Inclusive, 0, irs::kNoBoost);
 }

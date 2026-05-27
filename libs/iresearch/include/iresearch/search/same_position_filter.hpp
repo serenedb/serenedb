@@ -95,8 +95,11 @@ class BySamePosition : public FilterWithOptions<BySamePositionOptions> {
   }
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
-    auto buf = CreateBuffer(ctx);
-    return Filter::PrepareWithBuffer(*buf, ctx);
+    if (options().terms.empty()) {
+      return Query::empty();
+    }
+    Buffer buf{ctx, options().terms, Boost()};
+    return Filter::PrepareWithBuffer<Buffer>(buf, ctx);
   }
 };
 

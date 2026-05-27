@@ -398,7 +398,8 @@ class GeoBufferImpl final : public Filter::ScoredBuffer {
       _field_stats{ctx.scorer},
       _states{ctx.memory, ctx.index.size()},
       _stats(GetStatsSize(ctx.scorer), 0),
-      _sorted_terms{std::move(geo_terms)} {
+      _sorted_terms{std::move(geo_terms)},
+      _term_states{{ctx.memory}} {
     absl::c_sort(_sorted_terms);
     SDB_ASSERT(std::unique(_sorted_terms.begin(), _sorted_terms.end()) ==
                _sorted_terms.end());
@@ -421,22 +422,22 @@ class GeoBufferImpl final : public Filter::ScoredBuffer {
 
     _field_stats.collect(segment, *reader);
 
-    ManagedVector<SeekCookie::ptr> term_states{{*_memory}};
-    term_states.reserve(_sorted_terms.size());
+    _term_states.clear();
+    _term_states.reserve(_sorted_terms.size());
     for (const auto& term : _sorted_terms) {
       if (!terms->seek(ViewCast<byte_type>(std::string_view{term}))) {
         continue;
       }
       terms->read();
-      term_states.emplace_back(terms->cookie());
+      _term_states.emplace_back(terms->cookie());
     }
-    if (term_states.empty()) {
+    if (_term_states.empty()) {
       return;
     }
 
     auto& state = _states.insert(segment);
     state.reader = reader;
-    state.states = std::move(term_states);
+    state.states = std::move(_term_states);
     state.stored_field = stored_field;
   }
 
@@ -464,6 +465,7 @@ class GeoBufferImpl final : public Filter::ScoredBuffer {
   GeoStates _states;
   bstring _stats;
   std::vector<std::string> _sorted_terms;
+  ManagedVector<SeekCookie::ptr> _term_states;
 };
 
 template<typename Options, typename Acceptor>

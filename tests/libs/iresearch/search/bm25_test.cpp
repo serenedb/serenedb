@@ -1553,7 +1553,7 @@ TEST_P(Bm25TestCase, test_collector_merge) {
     while ((doc = gen.next())) {
       ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
     }
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
 

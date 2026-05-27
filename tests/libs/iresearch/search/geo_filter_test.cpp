@@ -23,6 +23,7 @@
 
 #include <set>
 
+#include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "geo/geo_json.h"
 #include "iresearch/index/directory_reader.hpp"
@@ -976,4 +977,101 @@ TEST(GeoFilterTest, checkScorer) {
     ASSERT_EQ(1, collector_finish_count);
     ASSERT_EQ(2, scorer_score_count);
   }
+}
+
+// Doc-set parity between the sequential `prepare` and the parallel
+// `CreateBuffer`/`PrepareSegment`/`Merge`/`Compile` path over a two-segment
+// index. GeoFilter::CreateBuffer moves the query shape into the produced
+// buffer and is single-shot, so each preparation needs a freshly built filter;
+// the factory overload of RunParallelPrepareParity rebuilds it per call.
+TEST(GeoFilterTest, parallel_prepare_parity) {
+  auto docs = vpack::Parser::fromJson(R"([
+    { "name": "A", "geometry": { "type": "Point", "coordinates": [ 37.615895, 55.7039   ] } },
+    { "name": "B", "geometry": { "type": "Point", "coordinates": [ 37.615315, 55.703915 ] } },
+    { "name": "C", "geometry": { "type": "Point", "coordinates": [ 37.61509,  55.703537 ] } },
+    { "name": "Q", "geometry": { "type": "Point", "coordinates": [ 37.610235, 55.709754 ] } },
+    { "name": "R", "geometry": { "type": "Point", "coordinates": [ 37.605,    55.707917 ] } },
+    { "name": "S", "geometry": { "type": "Point", "coordinates": [ 37.545776, 55.722083 ] } }
+  ])");
+
+  irs::MemoryDirectory dir;
+  irs::DirectoryReader reader;
+
+  {
+    auto codec = irs::formats::Get("1_5simd");
+    ASSERT_NE(nullptr, codec);
+    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    ASSERT_NE(nullptr, writer);
+    GeoField geo_field;
+    geo_field.field_name = "geometry";
+    StringField name_field;
+    name_field.field_name = "name";
+    {
+      auto segment0 = writer->GetBatch();
+      auto segment1 = writer->GetBatch();
+      size_t i = 0;
+      for (auto doc_slice : vpack::ArrayIterator(docs->slice())) {
+        geo_field.shape_slice = doc_slice.get("geometry");
+        name_field.value = slice_to_string_view(doc_slice.get("name"));
+
+        auto doc = (i++ % 2 ? segment1 : segment0).Insert();
+        ASSERT_TRUE(doc.Insert(name_field));
+        ASSERT_TRUE(doc.Insert(geo_field));
+        irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(),
+                                 name_field);
+        irs::tests::StoreFieldAt(*doc.Columnstore(), kGeo, doc.DocId(),
+                                 geo_field);
+      }
+    }
+    writer->RefreshCommit();
+    reader = writer->GetSnapshot();
+  }
+
+  ASSERT_NE(nullptr, reader);
+  ASSERT_EQ(2U, reader->size());
+
+  // Rebuilds an equivalent GeoFilter on every call (CreateBuffer consumes the
+  // shape, so the filter cannot be prepared twice).
+  auto make_geo = [](std::string shape_json, GeoFilterType type,
+                     bool points_only, irs::score_t boost) {
+    return [shape_json = std::move(shape_json), type, points_only, boost]() {
+      auto q = std::make_unique<GeoFilter>();
+      *q->mutable_field() = "geometry";
+      q->mutable_options()->store_field_id = kGeo;
+      q->mutable_options()->type = type;
+      if (points_only) {
+        q->mutable_options()->options.set_index_contains_points_only(true);
+      }
+      q->boost(boost);
+      auto json = vpack::Parser::fromJson(shape_json);
+      EXPECT_TRUE(
+        json::ParseRegion(json->slice(), q->mutable_options()->shape).ok());
+      return q;
+    };
+  };
+
+  const std::string point_json =
+    R"({ "type": "Point", "coordinates": [ 37.610235, 55.709754 ] })";
+  const std::string polygon_json = R"({ "type": "Polygon", "coordinates": [[
+        [37.602682, 55.706853], [37.613025, 55.706853],
+        [37.613025, 55.711906], [37.602682, 55.711906],
+        [37.602682, 55.706853] ]] })";
+
+  // S2Point query shape (separate GetQueryTerms path): Intersects +/- boost.
+  ::tests::RunParallelPrepareParity(
+    make_geo(point_json, GeoFilterType::Intersects, false, irs::kNoBoost),
+    *reader);
+  ::tests::RunParallelPrepareParity(
+    make_geo(point_json, GeoFilterType::Intersects, false, 2.5f), *reader);
+
+  // Polygon region query shape: each acceptor branch.
+  ::tests::RunParallelPrepareParity(
+    make_geo(polygon_json, GeoFilterType::Intersects, false, irs::kNoBoost),
+    *reader);
+  ::tests::RunParallelPrepareParity(
+    make_geo(polygon_json, GeoFilterType::Contains, true, 0.5f), *reader);
+  ::tests::RunParallelPrepareParity(
+    make_geo(polygon_json, GeoFilterType::IsContained, true, irs::kNoBoost),
+    *reader);
 }

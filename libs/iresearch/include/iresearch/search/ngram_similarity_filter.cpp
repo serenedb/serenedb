@@ -122,14 +122,14 @@ void ByNGramSimilarity::Buffer::PrepareSegment(const SubReader& segment) {
 
   _field_stats.collect(segment, *field);
 
-  ManagedVector<SeekCookie::ptr> term_states{{*_memory}};
-  term_states.reserve(_ngrams->size());
+  _term_states.clear();
+  _term_states.reserve(_ngrams->size());
 
   size_t term_idx = 0;
   size_t count_terms = 0;
   auto term = field->iterator(SeekMode::NORMAL);
   for (const auto& ngram : *_ngrams) {
-    auto& state = term_states.emplace_back();
+    auto& state = _term_states.emplace_back();
     if (term->seek(ngram)) {
       term->read();
       _term_stats.collect(segment, *field, term_idx, *term);
@@ -144,7 +144,7 @@ void ByNGramSimilarity::Buffer::PrepareSegment(const SubReader& segment) {
   }
 
   auto& state = _states.insert(segment);
-  state.terms = std::move(term_states);
+  state.terms = std::move(_term_states);
   state.reader = field;
 }
 

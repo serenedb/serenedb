@@ -328,12 +328,12 @@ class Format {
   virtual SegmentMetaReader::ptr get_segment_meta_reader() const = 0;
 
   virtual FieldWriter::ptr get_field_writer(
-    bool consolidation, IResourceManager& resource_manager) const = 0;
+    bool compaction, IResourceManager& resource_manager) const = 0;
   virtual FieldReader::ptr get_field_reader(
     IResourceManager& resource_manager) const = 0;
 
   virtual PostingsWriter::ptr get_postings_writer(
-    bool consolidation, IResourceManager& resource_manager) const = 0;
+    bool compaction, IResourceManager& resource_manager) const = 0;
   virtual PostingsReader::ptr get_postings_reader() const = 0;
 
   virtual TypeInfo::type_id type() const noexcept = 0;

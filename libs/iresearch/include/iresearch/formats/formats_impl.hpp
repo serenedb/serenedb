@@ -57,10 +57,10 @@ class FormatBase : public Format {
   }
 
   FieldWriter::ptr get_field_writer(
-    bool consolidation, IResourceManager& resource_manager) const final {
+    bool compaction, IResourceManager& resource_manager) const final {
     return burst_trie::MakeWriter(
       burst_trie::Version::Min,
-      get_postings_writer(consolidation, resource_manager), consolidation,
+      get_postings_writer(compaction, resource_manager), compaction,
       resource_manager);
   }
   FieldReader::ptr get_field_reader(
@@ -84,9 +84,9 @@ class FormatImpl final : public FormatBase {
   }
 
   PostingsWriter::ptr get_postings_writer(
-    bool consolidation, IResourceManager& resource_manager) const final {
+    bool compaction, IResourceManager& resource_manager) const final {
     return std::make_unique<PostingsWriterImpl<FormatTraits>>(
-      PostingsFormat::WandSimd, consolidation, resource_manager);
+      PostingsFormat::WandSimd, compaction, resource_manager);
   }
   PostingsReader::ptr get_postings_reader() const final {
     return std::make_unique<PostingsReaderImpl<FormatTraits>>();

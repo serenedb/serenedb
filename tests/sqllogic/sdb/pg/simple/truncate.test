@@ -257,7 +257,7 @@ SELECT
 FROM generate_series(1, 10000) AS t(x);
 
 statement ok
-VACUUM (UPDATE_INDEXES) vedernikoff;
+VACUUM (REFRESH_TABLE) vedernikoff;
 
 # Sanity-check both indexes before TRUNCATE.
 query
@@ -330,7 +330,7 @@ SELECT
 FROM generate_series(1, 500) AS t(x);
 
 statement ok
-VACUUM (UPDATE_INDEXES) vedernikoff;
+VACUUM (REFRESH_TABLE) vedernikoff;
 
 query
 SELECT count(*) FROM vedernikoff WHERE team = 'babsky';

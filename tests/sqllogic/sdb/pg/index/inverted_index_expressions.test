@@ -17,7 +17,7 @@ statement ok
 INSERT INTO num1 VALUES (1, 10), (2, 41), (3, -5);
 
 statement ok
-VACUUM (UPDATE_INDEXES) num1;
+VACUUM (REFRESH_TABLE) num1;
 
 query
 SELECT id FROM num1_idx WHERE a + 1 = 42;
@@ -45,7 +45,7 @@ statement ok
 INSERT INTO vc1 VALUES (1, 'HELLO'), (2, 'World'), (3, 'mixed');
 
 statement ok
-VACUUM (UPDATE_INDEXES) vc1;
+VACUUM (REFRESH_TABLE) vc1;
 
 query
 SELECT id FROM vc1_idx WHERE LOWER(s) = 'hello';
@@ -78,7 +78,7 @@ statement ok
 INSERT INTO b1 VALUES (1, 5), (2, -3), (3, 0), (4, 7);
 
 statement ok
-VACUUM (UPDATE_INDEXES) b1;
+VACUUM (REFRESH_TABLE) b1;
 
 query
 SELECT id FROM b1_idx WHERE (x > 0) = true ORDER BY id;
@@ -108,7 +108,7 @@ statement ok
 INSERT INTO b1d VALUES (1, 5), (2, -3), (3, 0), (4, 7);
 
 statement ok
-VACUUM (UPDATE_INDEXES) b1d;
+VACUUM (REFRESH_TABLE) b1d;
 
 query
 SELECT id FROM b1d_idx WHERE (x > 0) = true ORDER BY id;
@@ -130,7 +130,7 @@ statement ok
 INSERT INTO num2 VALUES (1, 10, 20), (2, 5, 5), (3, 7, 13);
 
 statement ok
-VACUUM (UPDATE_INDEXES) num2;
+VACUUM (REFRESH_TABLE) num2;
 
 query
 SELECT id FROM num2_idx WHERE a + b = 30;
@@ -158,7 +158,7 @@ statement ok
 INSERT INTO vc2 VALUES (1, 'foo', 'bar'), (2, 'hello', 'world'), (3, 'a', 'b');
 
 statement ok
-VACUUM (UPDATE_INDEXES) vc2;
+VACUUM (REFRESH_TABLE) vc2;
 
 query
 SELECT id FROM vc2_idx WHERE s1 || s2 = 'foobar';
@@ -185,7 +185,7 @@ statement ok
 INSERT INTO b2 VALUES (1, 10, 5), (2, 3, 7), (3, 4, 4);
 
 statement ok
-VACUUM (UPDATE_INDEXES) b2;
+VACUUM (REFRESH_TABLE) b2;
 
 query
 SELECT id FROM b2_idx WHERE (a > b) = true ORDER BY id;
@@ -213,7 +213,7 @@ statement ok
 INSERT INTO num3 VALUES (1, 1, 2, 3), (2, 10, 20, 30), (3, 0, 0, 0);
 
 statement ok
-VACUUM (UPDATE_INDEXES) num3;
+VACUUM (REFRESH_TABLE) num3;
 
 query
 SELECT id FROM num3_idx WHERE a + b + c = 6;
@@ -240,7 +240,7 @@ statement ok
 INSERT INTO vc3 VALUES (1, 'x', 'y', 'z'), (2, 'foo', 'bar', 'baz');
 
 statement ok
-VACUUM (UPDATE_INDEXES) vc3;
+VACUUM (REFRESH_TABLE) vc3;
 
 query
 SELECT id FROM vc3_idx WHERE CONCAT(a, '-', b, '-', c) = 'x-y-z';
@@ -267,7 +267,7 @@ statement ok
 INSERT INTO b3 VALUES (1, 1, 2, 10), (2, 10, 20, 5), (3, 4, 4, 8);
 
 statement ok
-VACUUM (UPDATE_INDEXES) b3;
+VACUUM (REFRESH_TABLE) b3;
 
 query
 SELECT id FROM b3_idx WHERE (a + b > c) = true ORDER BY id;
@@ -297,7 +297,7 @@ INSERT INTO mix VALUES
     (1, 'foo', 'bar'), (2, 'hello', 'world'), (3, 'foo', 'baz');
 
 statement ok
-VACUUM (UPDATE_INDEXES) mix;
+VACUUM (REFRESH_TABLE) mix;
 
 query
 SELECT id FROM mix_idx WHERE a = 'foo' ORDER BY id;
@@ -382,13 +382,13 @@ statement ok
 INSERT INTO dml VALUES (1, 10, 20), (2, 1, 1);
 
 statement ok
-VACUUM (UPDATE_INDEXES) dml;
+VACUUM (REFRESH_TABLE) dml;
 
 statement ok
 UPDATE dml SET a = 100 WHERE id = 1;
 
 statement ok
-VACUUM (UPDATE_INDEXES) dml;
+VACUUM (REFRESH_TABLE) dml;
 
 query
 SELECT id FROM dml_idx WHERE a + b = 30;
@@ -405,7 +405,7 @@ statement ok
 DELETE FROM dml WHERE id = 2;
 
 statement ok
-VACUUM (UPDATE_INDEXES) dml;
+VACUUM (REFRESH_TABLE) dml;
 
 query
 SELECT id FROM dml_idx ORDER BY id;
@@ -426,7 +426,7 @@ statement ok
 INSERT INTO n1 VALUES (1, 1, 2), (2, NULL, 5), (3, 7, NULL);
 
 statement ok
-VACUUM (UPDATE_INDEXES) n1;
+VACUUM (REFRESH_TABLE) n1;
 
 query
 SELECT id FROM n1_idx WHERE a + b IS NULL ORDER BY id;
@@ -455,7 +455,7 @@ statement ok
 INSERT INTO poly VALUES (1, 3), (2, 0), (3, 5);
 
 statement ok
-VACUUM (UPDATE_INDEXES) poly;
+VACUUM (REFRESH_TABLE) poly;
 
 query
 SELECT id FROM poly_idx WHERE a * a + a = 12;
@@ -490,7 +490,7 @@ statement ok
 INSERT INTO sgn VALUES (1, 5), (2, -3), (3, 0), (4, 7);
 
 statement ok
-VACUUM (UPDATE_INDEXES) sgn;
+VACUUM (REFRESH_TABLE) sgn;
 
 query
 SELECT id FROM sgn_idx
@@ -529,13 +529,13 @@ statement ok
 INSERT INTO mu1 VALUES (1, 10, 20), (2, 5, 25);
 
 statement ok
-VACUUM (UPDATE_INDEXES) mu1;
+VACUUM (REFRESH_TABLE) mu1;
 
 statement ok
 UPDATE mu1 SET b = 100;
 
 statement ok
-VACUUM (UPDATE_INDEXES) mu1;
+VACUUM (REFRESH_TABLE) mu1;
 
 query
 SELECT id FROM mu1_idx WHERE a + b = 110;
@@ -562,13 +562,13 @@ statement ok
 INSERT INTO mu2 VALUES (1, 10, 20, 'x'), (2, 5, 5, 'y');
 
 statement ok
-VACUUM (UPDATE_INDEXES) mu2;
+VACUUM (REFRESH_TABLE) mu2;
 
 statement ok
 UPDATE mu2 SET extra = 'z' WHERE id = 1;
 
 statement ok
-VACUUM (UPDATE_INDEXES) mu2;
+VACUUM (REFRESH_TABLE) mu2;
 
 query
 SELECT id FROM mu2_idx WHERE a + b = 30;
@@ -596,13 +596,13 @@ statement ok
 INSERT INTO mu3 VALUES (1, 'foo', 'bar'), (2, 'hello', 'world');
 
 statement ok
-VACUUM (UPDATE_INDEXES) mu3;
+VACUUM (REFRESH_TABLE) mu3;
 
 statement ok
 UPDATE mu3 SET a = 'baz' WHERE id = 1;
 
 statement ok
-VACUUM (UPDATE_INDEXES) mu3;
+VACUUM (REFRESH_TABLE) mu3;
 
 query
 SELECT id FROM mu3_idx WHERE a = 'foo';
@@ -638,13 +638,13 @@ statement ok
 INSERT INTO md VALUES (1, 10), (2, 41), (3, -5), (4, 100);
 
 statement ok
-VACUUM (UPDATE_INDEXES) md;
+VACUUM (REFRESH_TABLE) md;
 
 statement ok
 DELETE FROM md WHERE a > 10;
 
 statement ok
-VACUUM (UPDATE_INDEXES) md;
+VACUUM (REFRESH_TABLE) md;
 
 query
 SELECT id FROM md_idx ORDER BY id;
@@ -677,13 +677,13 @@ statement ok
 INSERT INTO md2 VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
 
 statement ok
-VACUUM (UPDATE_INDEXES) md2;
+VACUUM (REFRESH_TABLE) md2;
 
 statement ok
 DELETE FROM md2;
 
 statement ok
-VACUUM (UPDATE_INDEXES) md2;
+VACUUM (REFRESH_TABLE) md2;
 
 query
 SELECT id FROM md2_idx;
@@ -758,7 +758,7 @@ INSERT INTO tx_v VALUES
     (3, 'foo', 'baz');
 
 statement ok
-VACUUM (UPDATE_INDEXES) tx_v;
+VACUUM (REFRESH_TABLE) tx_v;
 
 # TERM_EQ
 query
@@ -803,7 +803,7 @@ statement ok
 INSERT INTO tx_n VALUES (1, 10, 20), (2, 5, 5), (3, 7, 13), (4, 50, 50);
 
 statement ok
-VACUUM (UPDATE_INDEXES) tx_n;
+VACUUM (REFRESH_TABLE) tx_n;
 
 # TERM_EQ
 query
@@ -842,7 +842,7 @@ statement ok
 INSERT INTO tx_b VALUES (1, 10, 5), (2, 3, 7), (3, 4, 4);
 
 statement ok
-VACUUM (UPDATE_INDEXES) tx_b;
+VACUUM (REFRESH_TABLE) tx_b;
 
 query
 SELECT id FROM tx_b_idx WHERE (a > b) = true;
@@ -874,7 +874,7 @@ INSERT INTO tx_mix VALUES
     (3, 'foo', 'baz');
 
 statement ok
-VACUUM (UPDATE_INDEXES) tx_mix;
+VACUUM (REFRESH_TABLE) tx_mix;
 
 # Direct-column @@.
 query
@@ -975,7 +975,7 @@ statement ok
 INSERT INTO strange_json VALUES (1, 10, 20), (2, 5, 5), (3, 7, 8);
 
 statement ok
-VACUUM (UPDATE_INDEXES) strange_json;
+VACUUM (REFRESH_TABLE) strange_json;
 
 query
 SELECT id FROM strange_json_idx WHERE ((a + b)::json) = '30'::json;
@@ -1013,7 +1013,7 @@ statement ok
 INSERT INTO types_smoke VALUES (1, 1), (2, 2);
 
 statement ok
-VACUUM (UPDATE_INDEXES) types_smoke;
+VACUUM (REFRESH_TABLE) types_smoke;
 
 query
 SELECT id FROM types_smoke_idx WHERE (a + 1)::TINYINT = 2::TINYINT;
@@ -1073,7 +1073,7 @@ statement ok
 INSERT INTO null_expr VALUES (1, 1), (2, -1);
 
 statement ok
-VACUUM (UPDATE_INDEXES) null_expr;
+VACUUM (REFRESH_TABLE) null_expr;
 
 query
 SELECT id FROM null_expr_idx ORDER BY id;
@@ -1104,7 +1104,7 @@ statement ok
 INSERT INTO null_col VALUES (1, NULL), (2, NULL);
 
 statement ok
-VACUUM (UPDATE_INDEXES) null_col;
+VACUUM (REFRESH_TABLE) null_col;
 
 query
 SELECT id FROM null_col_idx ORDER BY id;
@@ -1133,7 +1133,7 @@ statement ok
 INSERT INTO inc_e_num VALUES (1, 10, 20), (2, 5, 5), (3, 100, 1);
 
 statement ok
-VACUUM (UPDATE_INDEXES) inc_e_num;
+VACUUM (REFRESH_TABLE) inc_e_num;
 
 query
 SELECT id, a + b AS s FROM inc_e_num_idx WHERE id = 1;
@@ -1154,7 +1154,7 @@ statement ok
 UPDATE inc_e_num SET a = 50 WHERE id = 1;
 
 statement ok
-VACUUM (UPDATE_INDEXES) inc_e_num;
+VACUUM (REFRESH_TABLE) inc_e_num;
 
 query
 SELECT id, a + b AS s FROM inc_e_num_idx ORDER BY id;
@@ -1176,7 +1176,7 @@ statement ok
 INSERT INTO inc_e_str VALUES (1, 'FOO', 'Bar'), (2, 'X', 'Y');
 
 statement ok
-VACUUM (UPDATE_INDEXES) inc_e_str;
+VACUUM (REFRESH_TABLE) inc_e_str;
 
 query
 SELECT id, LOWER(a) || '-' || LOWER(b) AS s FROM inc_e_str_idx ORDER BY id;
@@ -1197,7 +1197,7 @@ statement ok
 INSERT INTO inc_e_zstd VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
 
 statement ok
-VACUUM (UPDATE_INDEXES) inc_e_zstd;
+VACUUM (REFRESH_TABLE) inc_e_zstd;
 
 query
 SELECT id, a || b AS s FROM inc_e_zstd_idx ORDER BY id;
@@ -1224,7 +1224,7 @@ statement ok
 INSERT INTO inc_e_rgs VALUES (1, 1), (2, 5), (3, 12);
 
 statement ok
-VACUUM (UPDATE_INDEXES) inc_e_rgs;
+VACUUM (REFRESH_TABLE) inc_e_rgs;
 
 query
 SELECT id, a * 2 AS s FROM inc_e_rgs_idx ORDER BY id;
@@ -1267,7 +1267,7 @@ INSERT INTO hnsw_e VALUES
     (4, 0, 0, 0);
 
 statement ok
-VACUUM (UPDATE_INDEXES) hnsw_e;
+VACUUM (REFRESH_TABLE) hnsw_e;
 
 query
 SELECT id FROM hnsw_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
@@ -1307,7 +1307,7 @@ statement ok
 INSERT INTO hnsw_e2 VALUES (1, 1, 0, 0), (2, 0, 1, 0), (3, 0, 0, 1);
 
 statement ok
-VACUUM (UPDATE_INDEXES) hnsw_e2;
+VACUUM (REFRESH_TABLE) hnsw_e2;
 
 # `hnsw` requires options.
 
@@ -1357,7 +1357,7 @@ CREATE INDEX inc_expr_idx ON inc_expr
   INCLUDE (payload);
 
 statement ok
-VACUUM (UPDATE_INDEXES) inc_expr;
+VACUUM (REFRESH_TABLE) inc_expr;
 
 query
 SELECT id, payload FROM inc_expr_idx WHERE a + b = 30 ORDER BY id;
@@ -1391,7 +1391,7 @@ CREATE INDEX inc_expr2_idx ON inc_expr2
   INCLUDE (big included (compression = 'uncompressed'));
 
 statement ok
-VACUUM (UPDATE_INDEXES) inc_expr2;
+VACUUM (REFRESH_TABLE) inc_expr2;
 
 query
 SELECT id, big FROM inc_expr2_idx WHERE a + b = 4 ORDER BY id;
@@ -1419,7 +1419,7 @@ CREATE INDEX inc_expr3_idx ON inc_expr3
   INCLUDE (label);
 
 statement ok
-VACUUM (UPDATE_INDEXES) inc_expr3;
+VACUUM (REFRESH_TABLE) inc_expr3;
 
 query
 SELECT id, label FROM inc_expr3_idx WHERE s1 || s2 = 'fooqux' ORDER BY id;

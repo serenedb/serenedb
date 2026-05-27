@@ -26,7 +26,7 @@ statement ok
 CREATE INDEX wal_mc_idx ON wal_mc_t USING inverted(pk, name mc_dict, score, ts);
 
 statement ok
-VACUUM (UPDATE_INDEXES) wal_mc_t;
+VACUUM (REFRESH_TABLE) wal_mc_t;
 
 # All 3 columns searchable pre-crash
 query
@@ -66,7 +66,7 @@ SELECT 1;
 
 connection mc_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) wal_mc_t;
+VACUUM (REFRESH_TABLE) wal_mc_t;
 
 # TEXT column recovered
 connection mc_after

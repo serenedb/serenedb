@@ -31,7 +31,7 @@ statement ok
 CREATE INDEX chain_idx ON chain_t USING inverted(a, b chain_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) chain_t;
+VACUUM (REFRESH_TABLE) chain_t;
 
 # Initial sanity
 query
@@ -189,7 +189,7 @@ SELECT 1;
 
 connection final
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) chain_t;
+VACUUM (REFRESH_TABLE) chain_t;
 
 connection final
 query

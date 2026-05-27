@@ -35,7 +35,7 @@ statement ok
 CREATE INDEX past_idx ON past_t USING inverted(value1, value2 past_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) past_t;
+VACUUM (REFRESH_TABLE) past_t;
 
 # At this point past_idx has _recovery_tick == engine.recoveryTick(). Everything
 # below now goes into WAL but the iresearch tick stays where it is.
@@ -64,7 +64,7 @@ SELECT 1;
 
 connection past_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) past_t;
+VACUUM (REFRESH_TABLE) past_t;
 
 # Row counts:
 #  seed 0..999      1000

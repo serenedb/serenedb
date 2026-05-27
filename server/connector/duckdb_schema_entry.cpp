@@ -456,8 +456,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     catalog::InvertedIndexOptions options{
       .row_group_size = resolve_uint("row_group_size"),
       .norm_row_group_size = resolve_uint("norm_row_group_size"),
-      .commit_interval_ms = resolve_uint("commit_interval"),
-      .consolidation_interval_ms = resolve_uint("consolidation_interval"),
+      .refresh_interval_ms = resolve_uint("refresh_interval"),
+      .compaction_interval_ms = resolve_uint("compaction_interval"),
       .cleanup_interval_step = resolve_uint("cleanup_interval_step"),
     };
     if (auto* v = find_with("optimize_top_k")) {

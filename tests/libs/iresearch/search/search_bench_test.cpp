@@ -424,10 +424,10 @@ void BuildIndex(const std::string& corpus_path,
   bench::IndexBuilderOptions builder_options{
     .batch_size = 100000,
     .indexer_threads = 1,
-    .commit_interval_ms = 0,
-    .consolidation_interval_ms = 5000,
-    .consolidation_threads = 0,
-    .consolidate_all = true,
+    .refresh_interval_ms = 0,
+    .compaction_interval_ms = 5000,
+    .compaction_threads = 0,
+    .compact_all = true,
     .norm_row_group_size = 10'000'000,
   };
 

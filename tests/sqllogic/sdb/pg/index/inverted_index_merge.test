@@ -14,8 +14,8 @@ hash-threshold 100
 #       * == 4096     -> two full chunks, no partial in either
 #       * boundary+/- 1 cases for off-by-one in tail-bit masking
 #
-# Driven via `PRAGMA serenedb_vacuum('compact_indexes', ...)` after several
-# VACUUM (UPDATE_INDEXES) segment-creating batches.
+# Driven via `VACUUM (COMPACT_TABLE) <table>` after several
+# VACUUM (REFRESH_TABLE) segment-creating batches.
 
 statement ok
 CREATE TABLE m (
@@ -67,7 +67,7 @@ INSERT INTO m VALUES (4, 'delta', 40, 'note-4')
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) m
+VACUUM (REFRESH_TABLE) m
 
 
 # ---------------- Segment 2: exactly STANDARD_VECTOR_SIZE (== 2048) -----
@@ -85,7 +85,7 @@ FROM generate_series(100, 2147) AS s(i)
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) m
+VACUUM (REFRESH_TABLE) m
 
 
 # ---------------- Segment 3: 2048 + 1 (partial last word in last chunk) -
@@ -101,7 +101,7 @@ FROM generate_series(3000, 5048) AS s(i)
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) m
+VACUUM (REFRESH_TABLE) m
 
 
 # ---------------- Segment 4: 4096 rows == 2 * STANDARD_VECTOR_SIZE ------
@@ -116,7 +116,7 @@ FROM generate_series(10000, 14095) AS s(i)
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) m
+VACUUM (REFRESH_TABLE) m
 
 
 # ---------------- Segment 5: 2047 (single chunk, max-tail-mask) ---------
@@ -129,11 +129,11 @@ FROM generate_series(20000, 22046) AS s(i)
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) m
+VACUUM (REFRESH_TABLE) m
 
 
 # ---------------- Removals: force the mask-filter / id_map paths --------
-# Delete some rows from each of the existing segments so the consolidation
+# Delete some rows from each of the existing segments so the compaction
 # pass sees sources with `live_docs_count < docs_count`. This exercises
 # `ComputeDocIds`, `DocRemap{mask, id_map}`, and the masked branch of
 # `MergeNormColumnFromSources`.
@@ -162,10 +162,10 @@ DELETE FROM m WHERE pk IN (20000, 22046)
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) m
+VACUUM (REFRESH_TABLE) m
 
 
-# Snapshot the pre-merge state. After compact_indexes runs everything
+# Snapshot the pre-merge state. After COMPACT_TABLE runs everything
 # below should still match exactly -- merging must not change query
 # results, only the segment shape.
 
@@ -243,10 +243,10 @@ count
 2642
 
 
-# Drive consolidation to a fixpoint. After this every source above
+# Drive compaction to a fixpoint. After this every source above
 # becomes one merged segment via MergeInto + MergeNormColumnFromSources.
 statement ok
-PRAGMA serenedb_vacuum('compact_indexes', 'm');
+VACUUM (COMPACT_TABLE) m;
 
 
 # Same queries must give identical answers post-merge.
@@ -307,7 +307,7 @@ count
 
 # Re-compact: idempotent (no-op merge).
 statement ok
-PRAGMA serenedb_vacuum('compact_indexes', 'm');
+VACUUM (COMPACT_TABLE) m;
 
 
 query

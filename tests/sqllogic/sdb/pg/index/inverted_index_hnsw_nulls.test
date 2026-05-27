@@ -9,7 +9,7 @@ hash-threshold 100
 #  2. DELETE flagged rows in docs_mask but the HNSW graph kept their
 #     node ids; the next HNSW search returned a deleted doc and the
 #     downstream PK fetch failed with "Missing row for PK in RocksDB".
-#  3. PRAGMA serenedb_vacuum('compact_indexes', ...) rebuilds HNSW
+#  3. VACUUM (COMPACT_TABLE) <table> rebuilds HNSW
 #     over the merged vector column; without the NULL skip, ANN
 #     search on the merged segment also returned NULL rows.
 #
@@ -52,7 +52,7 @@ INSERT INTO vec_n VALUES (5, [0, 0, 1]::FLOAT[3], 'unit-z')
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) vec_n
+VACUUM (REFRESH_TABLE) vec_n
 
 
 # ---- Full scan returns every row, NULL emb materialises as NULL ----
@@ -123,7 +123,7 @@ DELETE FROM vec_n WHERE pk = 3
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) vec_n
+VACUUM (REFRESH_TABLE) vec_n
 
 
 # pk=3 was the closest match to [0, 0.9, 0.1]; with the docs_mask
@@ -138,9 +138,9 @@ pk	label
 1	unit-x
 
 
-# ---- Consolidation rebuilds HNSW; NULL skip applies to merge too ----
+# ---- Compaction rebuilds HNSW; NULL skip applies to merge too ----
 statement ok
-PRAGMA serenedb_vacuum('compact_indexes', 'vec_n');
+VACUUM (COMPACT_TABLE) vec_n;
 
 
 # Pre-fix this returned pk=4, pk=2 (the two NULL rows) because the

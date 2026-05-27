@@ -87,7 +87,7 @@ class WandScoringTestCase : public IndexTestBase {
       index.emplace_back();
       write_segment(writer, index.back(), gen);
     }
-    writer.Commit();
+    writer.RefreshCommit();
   }
 
   // Single segment with multiplier * 420 docs.
@@ -132,7 +132,7 @@ class WandScoringTestCase : public IndexTestBase {
         index_ref.emplace_back();
         write_segment(*writer, index_ref.back(), gen);
       }
-      writer->Commit();
+      writer->RefreshCommit();
     }
 
     return writer->GetSnapshot();

@@ -30,7 +30,7 @@ statement ok
 INSERT INTO shadow_hnsw_col VALUES (1, 'foo'), (2, 'bar'), (3, 'foo');
 
 statement ok
-VACUUM (UPDATE_INDEXES) shadow_hnsw_col;
+VACUUM (REFRESH_TABLE) shadow_hnsw_col;
 
 query
 SELECT id FROM shadow_hnsw_col_idx WHERE s = 'foo' ORDER BY id;
@@ -51,7 +51,7 @@ statement ok
 INSERT INTO shadow_inc_col VALUES (1, 'foo'), (2, 'bar'), (3, 'foo');
 
 statement ok
-VACUUM (UPDATE_INDEXES) shadow_inc_col;
+VACUUM (REFRESH_TABLE) shadow_inc_col;
 
 query
 SELECT id FROM shadow_inc_col_idx WHERE s = 'foo' ORDER BY id;
@@ -73,7 +73,7 @@ statement ok
 INSERT INTO shadow_hnsw_expr VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
 
 statement ok
-VACUUM (UPDATE_INDEXES) shadow_hnsw_expr;
+VACUUM (REFRESH_TABLE) shadow_hnsw_expr;
 
 query
 SELECT id FROM shadow_hnsw_expr_idx WHERE a || b = 'foobar';
@@ -94,7 +94,7 @@ statement ok
 INSERT INTO shadow_inc_expr VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
 
 statement ok
-VACUUM (UPDATE_INDEXES) shadow_inc_expr;
+VACUUM (REFRESH_TABLE) shadow_inc_expr;
 
 query
 SELECT id FROM shadow_inc_expr_idx WHERE a || b = 'foobar';
@@ -120,7 +120,7 @@ INSERT INTO parens_hnsw_col VALUES
     (3, [0, 0, 0]);
 
 statement ok
-VACUUM (UPDATE_INDEXES) parens_hnsw_col;
+VACUUM (REFRESH_TABLE) parens_hnsw_col;
 
 query
 SELECT id FROM parens_hnsw_col_idx ORDER BY emb <-> [1, 2, 3]::FLOAT[3] LIMIT 1;
@@ -141,7 +141,7 @@ statement ok
 INSERT INTO parens_inc_col VALUES (1, 'foo'), (2, 'bar');
 
 statement ok
-VACUUM (UPDATE_INDEXES) parens_inc_col;
+VACUUM (REFRESH_TABLE) parens_inc_col;
 
 query
 SELECT id, s FROM parens_inc_col_idx WHERE id = 1;
@@ -162,7 +162,7 @@ statement ok
 INSERT INTO parens_hnsw_expr VALUES (1, 1, 2, 3), (2, 10, 10, 10);
 
 statement ok
-VACUUM (UPDATE_INDEXES) parens_hnsw_expr;
+VACUUM (REFRESH_TABLE) parens_hnsw_expr;
 
 query
 SELECT id FROM parens_hnsw_expr_idx
@@ -184,7 +184,7 @@ statement ok
 INSERT INTO parens_inc_expr VALUES (1, 10, 20), (2, 5, 5);
 
 statement ok
-VACUUM (UPDATE_INDEXES) parens_inc_expr;
+VACUUM (REFRESH_TABLE) parens_inc_expr;
 
 query
 SELECT id, a + b AS s FROM parens_inc_expr_idx ORDER BY id;

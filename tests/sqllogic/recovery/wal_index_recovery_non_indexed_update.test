@@ -32,7 +32,7 @@ statement ok
 CREATE INDEX ni_idx ON ni_t USING inverted(id, note ni_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) ni_t;
+VACUUM (REFRESH_TABLE) ni_t;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';
@@ -60,7 +60,7 @@ SELECT 1;
 
 connection ni_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) ni_t;
+VACUUM (REFRESH_TABLE) ni_t;
 
 # Indexed column unchanged for rows 1 and 2.
 connection ni_after

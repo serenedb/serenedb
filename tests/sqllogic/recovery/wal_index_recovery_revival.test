@@ -30,7 +30,7 @@ statement ok
 CREATE INDEX rv_idx ON rv_t USING inverted(id, body rv_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) rv_t;
+VACUUM (REFRESH_TABLE) rv_t;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';
@@ -73,7 +73,7 @@ SELECT 1;
 
 connection rv_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) rv_t;
+VACUUM (REFRESH_TABLE) rv_t;
 
 # pk=1 untouched
 connection rv_after

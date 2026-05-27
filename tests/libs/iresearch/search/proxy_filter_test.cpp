@@ -149,7 +149,7 @@ class ProxyFilterTestCase : public ::testing::TestWithParam<size_t> {
         doc.Insert(*field);
       }
     }
-    writer->Commit();
+    writer->RefreshCommit();
     _index = irs::DirectoryReader(_dir, codec);
     AssertSnapshotEquality(writer->GetSnapshot(), _index);
   }

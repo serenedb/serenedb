@@ -21,7 +21,7 @@ statement ok
 CREATE INDEX ls_idx ON ls_t USING inverted(id, body ls_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) ls_t;
+VACUUM (REFRESH_TABLE) ls_t;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';
@@ -48,7 +48,7 @@ SELECT 1;
 
 connection ls_after
 statement ok retry 60 backoff 1s
-VACUUM (UPDATE_INDEXES) ls_t;
+VACUUM (REFRESH_TABLE) ls_t;
 
 connection ls_after
 query

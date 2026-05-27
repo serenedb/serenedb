@@ -44,8 +44,8 @@ class InvertedIndex;
 struct InvertedIndexOptions {
   uint32_t row_group_size = 0;
   uint32_t norm_row_group_size = 0;
-  uint32_t commit_interval_ms = 0;
-  uint32_t consolidation_interval_ms = 0;
+  uint32_t refresh_interval_ms = 0;
+  uint32_t compaction_interval_ms = 0;
   uint32_t cleanup_interval_step = 0;
   std::optional<ScorerOptions> topk_scorer;
 };

@@ -80,7 +80,7 @@ TEST(directory_reader_test, open_empty_index) {
   // Create empty index
   {
     auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate);
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
   }
 
   auto rdr = irs::DirectoryReader(dir, codec);
@@ -129,7 +129,7 @@ TEST(directory_reader_test, open_newest_index) {
       return nullptr;
     }
     irs::PostingsWriter::ptr get_postings_writer(
-      bool consolidation, irs::IResourceManager&) const final {
+      bool compaction, irs::IResourceManager&) const final {
       return nullptr;
     }
     irs::PostingsReader::ptr get_postings_reader() const final {
@@ -241,7 +241,7 @@ TEST(directory_reader_test, open) {
       ASSERT_TRUE(d.Insert(doc3->indexed.begin(), doc3->indexed.end()));
       StoreName()(d, *doc3);
     }
-    writer->Commit();
+    writer->RefreshCommit();
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
@@ -271,7 +271,7 @@ TEST(directory_reader_test, open) {
       ASSERT_TRUE(d.Insert(doc7->indexed.begin(), doc7->indexed.end()));
       StoreName()(d, *doc7);
     }
-    writer->Commit();
+    writer->RefreshCommit();
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
@@ -289,7 +289,7 @@ TEST(directory_reader_test, open) {
       ASSERT_TRUE(d.Insert(doc9->indexed.begin(), doc9->indexed.end()));
       StoreName()(d, *doc9);
     }
-    writer->Commit();
+    writer->RefreshCommit();
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
@@ -532,7 +532,7 @@ TEST(segment_reader_test, open) {
       ASSERT_TRUE(d.Insert(doc5->indexed.begin(), doc5->indexed.end()));
       StoreName()(d, *doc5);
     }
-    writer->Commit();
+    writer->RefreshCommit();
     writer_snapshot = writer->GetSnapshot();
   }
 

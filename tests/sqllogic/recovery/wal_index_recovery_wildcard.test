@@ -36,7 +36,7 @@ CREATE INDEX wal_wild_idx ON wal_wild_t
   INCLUDE (b);
 
 statement ok
-VACUUM (UPDATE_INDEXES) wal_wild_t;
+VACUUM (REFRESH_TABLE) wal_wild_t;
 
 # Plan check: ts_like filter served by the inverted index.
 query
@@ -101,7 +101,7 @@ SELECT 1;
 
 connection wal_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) wal_wild_t;
+VACUUM (REFRESH_TABLE) wal_wild_t;
 
 # Pre-crash row queryable.
 connection wal_after

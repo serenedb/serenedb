@@ -31,7 +31,7 @@ statement ok
 CREATE INDEX wal_upd_idx ON wal_upd_t USING inverted(a, b upd_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) wal_upd_t;
+VACUUM (REFRESH_TABLE) wal_upd_t;
 
 query
 SELECT a FROM wal_upd_idx WHERE b @@ ts_phrase('old cat');
@@ -61,7 +61,7 @@ SELECT 1;
 
 connection upd_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) wal_upd_t;
+VACUUM (REFRESH_TABLE) wal_upd_t;
 
 # Old values for updated rows must be gone
 connection upd_after

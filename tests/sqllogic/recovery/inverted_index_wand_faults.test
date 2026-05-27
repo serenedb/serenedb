@@ -64,11 +64,11 @@ CREATE INDEX plain_docs_idx ON plain_docs USING inverted(id, body en_wand);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) wand_docs;
+VACUUM (REFRESH_TABLE) wand_docs;
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) plain_docs;
+VACUUM (REFRESH_TABLE) plain_docs;
 
 
 # === Positive: shapes that should engage WAND ===

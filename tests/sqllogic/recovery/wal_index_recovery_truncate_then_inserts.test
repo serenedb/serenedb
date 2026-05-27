@@ -31,7 +31,7 @@ statement ok
 CREATE INDEX mironov_idx ON mironov_t USING inverted(id, body mironov_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) mironov_t;
+VACUUM (REFRESH_TABLE) mironov_t;
 
 # Sanity: pre-truncate rows are searchable.
 query

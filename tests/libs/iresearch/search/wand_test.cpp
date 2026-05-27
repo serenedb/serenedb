@@ -88,7 +88,7 @@ class WandTestCase : public tests::IndexTestBase {
   void GenerateSegment(irs::ScorerPtr scorer, bool write_norms,
                        bool append_data = false);
   void GenerateSegmentMinNorm(irs::ScorerPtr scorer);
-  void ConsolidateAll(irs::ScorerPtr scorer, bool write_norms);
+  void CompactAll(irs::ScorerPtr scorer, bool write_norms);
 
   void AssertFilters(irs::ScorerPtr scorer, bool disjunction = true) {
     auto apply = [&](auto assert_filter) {
@@ -211,13 +211,12 @@ void WandTestCase::AssertResults(const irs::DirectoryReader& index,
   ASSERT_EQ(result, wand_result);
 }
 
-void WandTestCase::ConsolidateAll(irs::ScorerPtr scorer, bool write_norms) {
-  const irs::index_utils::ConsolidateCount consolidate_all;
+void WandTestCase::CompactAll(irs::ScorerPtr scorer, bool write_norms) {
+  const irs::index_utils::CompactionCount compact_all;
   auto writer =
     open_writer(irs::kOmAppend, GetWriterOptions(scorer, write_norms));
-  ASSERT_TRUE(
-    writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
-  ASSERT_TRUE(writer->Commit());
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+  ASSERT_TRUE(writer->RefreshCommit());
   ASSERT_EQ(1, writer->GetSnapshot().size());
 }
 
@@ -382,7 +381,7 @@ void WandTestCase::AssertWithNewSegmentsDense(irs::Scorer* scorer) {
   AssertFilters(scorer, false);
 
   GenerateSegment(scorer, true, true);  // Add another segment
-  ConsolidateAll(scorer, true);
+  CompactAll(scorer, true);
   AssertFilters(scorer, false);
 
   GenerateSegment(scorer, true, true);  // Add another segment
@@ -394,7 +393,7 @@ void WandTestCase::AssertWithNewSegmentsDense(irs::Scorer* scorer) {
   GenerateSegment(scorer, true, true);  // Add another segment
   AssertFilters(scorer, false);
 
-  ConsolidateAll(scorer, true);
+  CompactAll(scorer, true);
   AssertFilters(scorer, false);
 }
 
@@ -405,7 +404,7 @@ void WandTestCase::AssertWithNewSegmentsSparse(irs::Scorer* scorer) {
   GenerateSegment(scorer, false, true);  // Add another segment
   AssertFilters(scorer, false);
 
-  ConsolidateAll(scorer, false);
+  CompactAll(scorer, false);
   AssertFilters(scorer, false);
 }
 

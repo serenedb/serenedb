@@ -250,6 +250,10 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
                          chunk.GetAllocationSize());
   }
 
+  SDB_IF_FAILURE("pause_sst_sink_mid_copy") {
+    sdb::WaitWhileFailurePointDebugging("pause_sst_sink_mid_copy");
+  }
+
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 

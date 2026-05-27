@@ -1,17 +1,11 @@
-## pg_stat_progress_copy must surface a row WHILE a COPY FROM is running
-## (CopyProgressReporter is constructed in SwitchSinkInsertGlobalState).
-## After the COPY finishes the entry is cleared (~ProgressReporterBase
-## calls EndCommand). INSERT ... SELECT shares the SST insert operator
-## but is intentionally NOT reported here.
+## pg_stat_progress_copy must surface a row WHILE a COPY FROM is running and
+## clear it once the statement ends. The COPY is parked deterministically in
+## the SST sink via the 'pause_sst_sink_mid_copy' failpoint, so an observer
+## connection can read the in-flight entry without racing the loader.
 
 control substitution on
 control max-async-connections 5
 
-
-# Materialise a moderately-wide CSV on disk so the async COPY has enough
-# work for the observer connection to catch it in flight. ~100k rows
-# × ~256 bytes per row is large enough to be observable on CI but small
-# enough not to slow the suite meaningfully.
 
 statement ok
 CREATE TABLE pgsp_copy_src(id BIGINT, body TEXT);
@@ -31,8 +25,7 @@ statement ok
 CREATE TABLE pgsp_copy_dst(id BIGINT, body TEXT);
 
 
-# pg_stat_progress_copy is empty before any COPY runs.
-
+# Nothing is running yet, so the view is empty for our relation.
 query
 SELECT count(*) FROM pg_stat_progress_copy
 WHERE relid = 'pgsp_copy_dst'::regclass;
@@ -41,35 +34,39 @@ count
 0
 
 
-# Kick off the COPY in the background. The observer connection races
-# against it to catch the in-flight row.
+# Arm the barrier first, then start the COPY: the sink blocks after the first
+# chunk (and after reporting its progress) until the failpoint is cleared.
+connection observer
+statement ok
+SET sdb_faults = 'pause_sst_sink_mid_copy';
+
 
 statement async ok
 COPY pgsp_copy_dst
   FROM '/tmp/${__DATABASE__}_pgsp_copy_inflight.csv' (FORMAT CSV);
 
 
-# Poll the view from a separate connection. `1 / count(*) FILTER (...)`
-# divides by zero -- a retryable runtime error -- whenever there is no
-# row for our relid yet OR the row's command/type don't match the
-# expected COPY FROM / FILE shape. retry/backoff keeps polling until
-# the in-flight entry shows up; if the COPY finished before any poll
-# succeeded the retry budget expires and the test fails loud (rather
-# than silently masking a regression in the reporter wiring).
-
+# Poll until the parked COPY shows up. retry re-runs on result mismatch, so
+# this resolves as soon as the first chunk has been reported.
 connection observer
-statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT 1 / count(*) FILTER (
-  WHERE command = 'COPY FROM' AND type = 'FILE'
-) FROM pg_stat_progress_copy
-WHERE relid = 'pgsp_copy_dst'::regclass;
+query TT retry 100 backoff 100ms
+SELECT command, "type" FROM pg_stat_progress_copy
+WHERE relid = 'pgsp_copy_dst'::regclass AND tuples_processed > 0;
+----
+command	type
+COPY FROM	FILE
+
+
+# Release the barrier and let the COPY run to completion.
+connection observer
+statement ok
+SET sdb_faults = '-pause_sst_sink_mid_copy';
 
 
 wait
 
 
 # After the COPY finishes, the entry is gone (EndCommand on destruction).
-
 connection observer
 query
 SELECT count(*) FROM pg_stat_progress_copy
@@ -80,19 +77,11 @@ count
 
 
 # Sanity: the COPY itself worked end-to-end.
-
 query
 SELECT count(*) FROM pgsp_copy_dst;
 ----
 count
 100000
-
-
-# COPY-vs-INSERT gating (the reporter is only attached when the active
-# statement is COPY_STATEMENT) is asserted authoritatively by the unit
-# test in tests/server/connector/pg_progress_tracker_test.cpp -- no
-# attempt is made here, since "INSERT never appears in the view" is
-# hard to verify reliably from sqllogic without a barrier failpoint.
 
 
 statement ok

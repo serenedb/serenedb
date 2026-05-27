@@ -47,10 +47,10 @@ using BatchHandlerFactory = std::unique_ptr<IBatchHandler> (*)();
 struct IndexBuilderOptions {
   size_t batch_size = 100000;
   size_t indexer_threads = 1;
-  size_t commit_interval_ms = 0;
-  size_t consolidation_interval_ms = 5000;
-  size_t consolidation_threads = 0;
-  bool consolidate_all = true;
+  size_t refresh_interval_ms = 0;
+  size_t compaction_interval_ms = 5000;
+  size_t compaction_threads = 0;
+  bool compact_all = true;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   uint32_t norm_row_group_size = DEFAULT_ROW_GROUP_SIZE;
 };
@@ -66,7 +66,7 @@ class IndexBuilder {
   auto GetReader() { return _writer->GetSnapshot(); }
 
  private:
-  void ConsolidateAll();
+  void CompactAll();
 
   IndexBuilderOptions _opts;
   irs::Scorer::ptr _scorer;

@@ -32,7 +32,7 @@ statement ok
 CREATE INDEX wal_mix_idx ON wal_mix_t USING inverted(a, b mix_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) wal_mix_t;
+VACUUM (REFRESH_TABLE) wal_mix_t;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';
@@ -69,7 +69,7 @@ SELECT 1;
 
 connection mix_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) wal_mix_t;
+VACUUM (REFRESH_TABLE) wal_mix_t;
 
 # pk=1 untouched
 connection mix_after

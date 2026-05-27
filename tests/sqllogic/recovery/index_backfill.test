@@ -68,7 +68,7 @@ SELECT 1;
 
 connection bf_after_5
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) idx_bf_t;
+VACUUM (REFRESH_TABLE) idx_bf_t;
 
 connection bf_after_5
 query

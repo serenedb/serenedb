@@ -33,7 +33,7 @@ statement ok
 CREATE INDEX abramov_tag_idx ON abramov_t USING inverted(id, tag abramov_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) abramov_t;
+VACUUM (REFRESH_TABLE) abramov_t;
 
 # Sanity: both shards return seed rows.
 query

@@ -62,7 +62,7 @@ The win is a result of specific optimizations. We wrote them up as a five-post t
 
 See the [examples](examples/) directory for complete programs covering the public API, all built and exercised in CI on every PR so they stay in sync:
 
-- [basic.cpp](examples/basic.cpp) -- index documents, run term / phrase / boolean / prefix / fuzzy / top-K BM25 queries, read stored fields, delete documents, consolidate.
+- [basic.cpp](examples/basic.cpp) -- index documents, run term / phrase / boolean / prefix / fuzzy / top-K BM25 queries, read stored fields, delete documents, compact.
 - [text_filters.cpp](examples/text_filters.cpp) -- phrase search, n-gram similarity matching, regular expressions, SQL-style wildcard patterns (`%` and `_`) and fuzzy term matching with a configurable edit distance, all shown side-by-side against the same small corpus.
 - [geo.cpp](examples/geo.cpp) -- geospatial search over a GeoJSON-indexed point corpus: find everything within a radius of a center point, everything inside an annulus and everything that falls inside an arbitrary polygon.
 

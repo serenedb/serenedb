@@ -183,7 +183,7 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
       AppendStoredShape(*geo_cw, doc.DocId(), geo.shape_slice);
     }
   }
-  writer->Commit();
+  writer->RefreshCommit();
   return writer->GetSnapshot();
 }
 

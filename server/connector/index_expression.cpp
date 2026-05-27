@@ -365,14 +365,16 @@ void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
 duckdb::Vector EvaluateExprOverChunk(
   const duckdb::Expression& bound_expr, duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id,
-  duckdb::ClientContext& context) {
+  duckdb::ClientContext& context, bool is_geojson) {
   auto resolved =
     ResolveBoundColumnRefsForChunk(bound_expr, chunk, table_id, slot_to_col_id);
   const auto num_rows = chunk.size();
   duckdb::Vector result(resolved->GetReturnType(), num_rows);
   duckdb::ExpressionExecutor executor(context, *resolved);
   executor.ExecuteExpression(chunk, result);
-  RejectJsonObjectArrayLeaves(result, num_rows);
+  if (!is_geojson) {
+    RejectJsonObjectArrayLeaves(result, num_rows);
+  }
   return result;
 }
 

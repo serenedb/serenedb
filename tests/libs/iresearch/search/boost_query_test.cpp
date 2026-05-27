@@ -104,7 +104,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
     insert("open source software");
     insert("source software");
 
-    writer->Commit();
+    writer->RefreshCommit();
 
     auto reader = irs::DirectoryReader(dir(), codec());
     EXPECT_EQ(1, reader.size());

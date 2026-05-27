@@ -174,7 +174,7 @@ void MergeWriterTestCase::EnsureDocBlocksNotMixed(bool primary_sort) {
     insert_documents(segment2, 20, 30);
   }
 
-  ASSERT_TRUE(writer->Commit());
+  ASSERT_TRUE(writer->RefreshCommit());
   AssertSnapshotEquality(
     writer->GetSnapshot(),
     irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
@@ -193,10 +193,10 @@ void MergeWriterTestCase::EnsureDocBlocksNotMixed(bool primary_sort) {
   // 0: 1..10
   // 1: 11..20
   // 2: 21..30
-  const irs::index_utils::ConsolidateCount consolidate_all;
+  const irs::index_utils::CompactionCount compact_all;
   ASSERT_EQ(!primary_sort || SupportsSort(),
-            writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
-  ASSERT_EQ(!primary_sort || SupportsSort(), writer->Commit());
+            writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+  ASSERT_EQ(!primary_sort || SupportsSort(), writer->RefreshCommit());
   AssertSnapshotEquality(
     writer->GetSnapshot(),
     irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
@@ -264,7 +264,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
     for (auto* doc : docs) {
       ASSERT_NE(nullptr, doc);
       ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
-      writer->Commit();  // create segmentN
+      writer->RefreshCommit();  // create segmentN
       AssertSnapshotEquality(writer->GetSnapshot(),
                              irs::DirectoryReader(data_dir, codec_ptr));
     }
@@ -309,11 +309,11 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     auto* doc2 = gen.next();
     auto writer = irs::IndexWriter::Make(data_dir, codec_ptr, irs::kOmCreate);
     ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
-    writer->Commit();  // create segment0
+    writer->RefreshCommit();  // create segment0
     AssertSnapshotEquality(writer->GetSnapshot(),
                            irs::DirectoryReader(data_dir, codec_ptr));
     ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
-    writer->Commit();  // create segment1
+    writer->RefreshCommit();  // create segment1
     AssertSnapshotEquality(writer->GetSnapshot(),
                            irs::DirectoryReader(data_dir, codec_ptr));
   }
@@ -454,11 +454,11 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
   {
     auto writer = irs::IndexWriter::Make(dir, codec_ptr, irs::kOmCreate);
     ASSERT_TRUE(Insert(*writer, doc1.indexed.begin(), doc1.indexed.end()));
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(writer->GetSnapshot(),
                            irs::DirectoryReader(dir, codec_ptr));
     ASSERT_TRUE(Insert(*writer, doc2.indexed.begin(), doc2.indexed.end()));
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(writer->GetSnapshot(),
                            irs::DirectoryReader(dir, codec_ptr));
   }
@@ -712,18 +712,18 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     ASSERT_TRUE(Insert(*writer, doc1.indexed.begin(), doc1.indexed.end()));
     ASSERT_TRUE(Insert(*writer, doc2.indexed.begin(), doc2.indexed.end()));
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
     ASSERT_TRUE(Insert(*writer, doc3.indexed.begin(), doc3.indexed.end()));
     ASSERT_TRUE(Insert(*writer, doc4.indexed.begin(), doc4.indexed.end()));
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
     writer->GetBatch().Remove(std::move(query_doc4));
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
@@ -1669,7 +1669,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
         irs::tests::StoreFieldAt(*doc.Columnstore(), kTextId, doc.DocId(), t);
       }
     }
-    writer->Commit();
+    writer->RefreshCommit();
     {
       auto seg = writer->GetBatch();
       for (size_t i = 2; i < 4; ++i) {
@@ -1685,7 +1685,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
         irs::tests::StoreFieldAt(*doc.Columnstore(), kTextId, doc.DocId(), t);
       }
     }
-    writer->Commit();
+    writer->RefreshCommit();
   }
 
   // Pre-merge source-segment verification: each of the two segments
@@ -1764,9 +1764,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
   {
     auto writer = irs::IndexWriter::Make(dir, codec_ptr, irs::kOmAppend,
                                          irs::tests::DefaultWriterOptions());
-    ASSERT_TRUE(writer->Consolidate(
-      irs::index_utils::MakePolicy(irs::index_utils::ConsolidateCount{})));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->Compact(
+      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{})));
+    ASSERT_TRUE(writer->RefreshCommit());
   }
 
   auto merged_reader =
@@ -1927,7 +1927,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
 }
 
 // Three docs share doc_int + doc_string columns; the fourth doc has an
-// exclusive `another_column`. Removing doc4 before consolidation must
+// exclusive `another_column`. Removing doc4 before compaction must
 // either drop `another_column` from the merged segment or keep the
 // slot with all-null rows -- in any case every surviving live doc must
 // continue to read its doc_string + doc_int payload intact. Mirrors
@@ -1967,7 +1967,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
         irs::tests::StoreFieldAt(*doc.Columnstore(), kIntId, doc.DocId(), n);
       }
     }
-    writer->Commit();
+    writer->RefreshCommit();
     // Segment 1: doc2 (string + int) and doc4 (string + another_column).
     {
       auto seg = writer->GetBatch();
@@ -1991,9 +1991,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
                                  a);
       }
     }
-    writer->Commit();
+    writer->RefreshCommit();
     writer->GetBatch().Remove(MakeByTerm("doc_string", "string4_data"));
-    writer->Commit();
+    writer->RefreshCommit();
   }
 
   // Pre-merge inspection. Track which segment doc3 ended up in -- the
@@ -2083,13 +2083,13 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
     }
   }
 
-  // Consolidate to a single segment.
+  // Compact to a single segment.
   {
     auto writer = irs::IndexWriter::Make(dir, codec_ptr, irs::kOmAppend,
                                          irs::tests::DefaultWriterOptions());
-    ASSERT_TRUE(writer->Consolidate(
-      irs::index_utils::MakePolicy(irs::index_utils::ConsolidateCount{})));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->Compact(
+      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{})));
+    ASSERT_TRUE(writer->RefreshCommit());
   }
 
   auto merged_reader =
@@ -2229,7 +2229,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
           irs::tests::StoreFieldAt(*d.Columnstore(), kAnotherId, d.DocId(), a);
         }
       }
-      writer->Commit();
+      writer->RefreshCommit();
       // Segment 1: doc3, doc4 -- same shape.
       {
         auto seg = writer->GetBatch();
@@ -2247,20 +2247,20 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
           irs::tests::StoreFieldAt(*d.Columnstore(), kAnotherId, d.DocId(), a);
         }
       }
-      writer->Commit();
+      writer->RefreshCommit();
       // Remove doc2 -- still leaves the other two columns (doc_int,
       // another_column) populated in every remaining live doc.
       writer->GetBatch().Remove(MakeByTerm("doc_string", "string2_data"));
-      writer->Commit();
+      writer->RefreshCommit();
     }
 
-    // Consolidate.
+    // Compact.
     {
       auto writer = irs::IndexWriter::Make(dir2, codec_ptr, irs::kOmAppend,
                                            irs::tests::DefaultWriterOptions());
-      ASSERT_TRUE(writer->Consolidate(
-        irs::index_utils::MakePolicy(irs::index_utils::ConsolidateCount{})));
-      ASSERT_TRUE(writer->Commit());
+      ASSERT_TRUE(writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{})));
+      ASSERT_TRUE(writer->RefreshCommit());
     }
 
     auto reader2 =

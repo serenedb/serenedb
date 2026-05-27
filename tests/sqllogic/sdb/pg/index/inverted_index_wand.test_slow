@@ -104,11 +104,11 @@ CREATE INDEX plain_huge_idx ON plain_huge USING inverted(id, body en_wand);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) wand_huge;
+VACUUM (REFRESH_TABLE) wand_huge;
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) plain_huge;
+VACUUM (REFRESH_TABLE) plain_huge;
 
 
 # Sanity: both indexes saw the same vocabulary distribution.

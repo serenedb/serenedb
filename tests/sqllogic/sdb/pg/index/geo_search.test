@@ -58,7 +58,7 @@ statement ok
 INSERT INTO geo_data VALUES (6, '{"type":"Polygon","coordinates":[[[37.614323,55.705898],[37.615825,55.705898],[37.615825,55.706520],[37.614323,55.706520],[37.614323,55.705898]]]}')
 
 statement ok
-VACUUM (UPDATE_INDEXES) geo_data
+VACUUM (REFRESH_TABLE) geo_data
 
 
 # --- ST_Intersects ---
@@ -202,7 +202,7 @@ statement ok
 INSERT INTO geo_data VALUES (7, '{"type":"Point","coordinates":[37.614800,55.704500]}')
 
 statement ok
-VACUUM (UPDATE_INDEXES) geo_data
+VACUUM (REFRESH_TABLE) geo_data
 
 
 # New point [37.6148, 55.7045] is inside both large_poly and medium_poly.
@@ -362,7 +362,7 @@ statement ok
 INSERT INTO geo_plain VALUES (1, '{"type":"Point","coordinates":[0,0]}')
 
 statement ok
-VACUUM (UPDATE_INDEXES) geo_plain
+VACUUM (REFRESH_TABLE) geo_plain
 
 
 statement error
@@ -418,7 +418,7 @@ statement ok
 INSERT INTO geo_data_g VALUES (6, 'POLYGON((37.614323 55.705898, 37.615825 55.705898, 37.615825 55.706520, 37.614323 55.706520, 37.614323 55.705898))'::GEOMETRY('OGC:CRS84'))
 
 statement ok
-VACUUM (UPDATE_INDEXES) geo_data_g
+VACUUM (REFRESH_TABLE) geo_data_g
 
 
 # --- GEOMETRY field + JSON (GeoJSON) shape ---
@@ -638,7 +638,7 @@ statement ok
 INSERT INTO geo_data_g VALUES (7, 'POINT(37.614800 55.704500)'::GEOMETRY('OGC:CRS84'))
 
 statement ok
-VACUUM (UPDATE_INDEXES) geo_data_g
+VACUUM (REFRESH_TABLE) geo_data_g
 
 
 query
@@ -818,7 +818,7 @@ statement ok
 INSERT INTO places VALUES (7, '{"type":"Point","coordinates":[37.701645,55.832144]}', 'blue restaurant outpost')
 
 statement ok
-VACUUM (UPDATE_INDEXES) places
+VACUUM (REFRESH_TABLE) places
 
 
 # --- AND: geo predicate AND text @@ ---
@@ -1244,7 +1244,7 @@ statement ok
 INSERT INTO geo_pt VALUES (6, '{"name":"orphan"}')
 
 statement ok
-VACUUM (UPDATE_INDEXES) geo_pt
+VACUUM (REFRESH_TABLE) geo_pt
 
 
 # --- ST_Intersects + path-mode geopoint ---
@@ -1357,7 +1357,7 @@ statement ok
 INSERT INTO geo_pt_arr VALUES (6, '[55.704,37.616,0.0]')
 
 statement ok
-VACUUM (UPDATE_INDEXES) geo_pt_arr
+VACUUM (REFRESH_TABLE) geo_pt_arr
 
 
 # --- ST_Distance_Centroid + array-mode geopoint ---

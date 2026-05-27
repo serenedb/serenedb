@@ -67,7 +67,7 @@ CREATE INDEX wal_inc_idx ON wal_inc_t
   INCLUDE (pk, v, dual, ints, triple, pt, m, nest);
 
 statement ok
-VACUUM (UPDATE_INDEXES) wal_inc_t;
+VACUUM (REFRESH_TABLE) wal_inc_t;
 
 # All projections served from the inverted index (cs for INCLUDE columns,
 # inverted-index for txt filter, RocksDB for nothing).
@@ -152,7 +152,7 @@ SELECT 1;
 
 connection wal_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) wal_inc_t;
+VACUUM (REFRESH_TABLE) wal_inc_t;
 
 # Pre-crash row's INCLUDE'd values still served from cs.
 connection wal_after

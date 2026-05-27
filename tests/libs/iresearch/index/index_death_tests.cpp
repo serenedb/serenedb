@@ -299,7 +299,7 @@ void OpenReader(std::string_view format,
 
     writer->GetBatch().Remove(*query_doc2);
 
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -389,12 +389,13 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->Begin(), irs::IoError);  // creation failure
-    ASSERT_THROW(writer->Begin(), irs::IoError);  // synchronization failure
+    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);  // creation failure
+    ASSERT_THROW(writer->RefreshBegin(),
+                 irs::IoError);  // synchronization failure
 
     // successful attempt
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -429,14 +430,15 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->Begin(), irs::IoError);  // creation failure
-    ASSERT_THROW(writer->Begin(), irs::IoError);  // synchronization failure
+    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);  // creation failure
+    ASSERT_THROW(writer->RefreshBegin(),
+                 irs::IoError);  // synchronization failure
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
     // successful attempt
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
 
     // check data
     auto reader =
@@ -503,19 +505,22 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->Begin(), irs::IoError);  // synchronization failure
+    ASSERT_THROW(writer->RefreshBegin(),
+                 irs::IoError);  // synchronization failure
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->Begin(), irs::IoError);  // synchronization failure
+    ASSERT_THROW(writer->RefreshBegin(),
+                 irs::IoError);  // synchronization failure
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->Begin(), irs::IoError);  // synchronization failure
+    ASSERT_THROW(writer->RefreshBegin(),
+                 irs::IoError);  // synchronization failure
 
     // successful attempt
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
 
     // ensure no data
     auto reader =
@@ -547,32 +552,35 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
     ASSERT_NE(nullptr, writer);
 
     // initial commit
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->Begin(), irs::IoError);  // synchronization failure
-    ASSERT_FALSE(writer->Begin());                // nothing to flush
+    ASSERT_THROW(writer->RefreshBegin(),
+                 irs::IoError);            // synchronization failure
+    ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->Begin(), irs::IoError);  // synchronization failure
-    ASSERT_FALSE(writer->Begin());                // nothing to flush
+    ASSERT_THROW(writer->RefreshBegin(),
+                 irs::IoError);            // synchronization failure
+    ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->Begin(), irs::IoError);  // synchronization failure
-    ASSERT_FALSE(writer->Begin());                // nothing to flush
+    ASSERT_THROW(writer->RefreshBegin(),
+                 irs::IoError);            // synchronization failure
+    ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
     // successful attempt
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
 
     // check data
     auto reader =
@@ -636,15 +644,15 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_THROW(writer->Commit(), irs::IoError);
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
     ASSERT_THROW(
       (irs::DirectoryReader{dir, codec, irs::tests::DefaultReaderOptions()}),
       irs::IndexNotFound);
 
     // second attempt
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -676,8 +684,8 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_THROW(writer->Commit(), irs::IoError);
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
     ASSERT_THROW(
       (irs::DirectoryReader{dir, codec, irs::tests::DefaultReaderOptions()}),
       irs::IndexNotFound);
@@ -685,8 +693,8 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
     // second attempt
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -755,16 +763,16 @@ TEST(index_death_test_formats_15,
     // creation issue
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->Begin(), irs::IoError);
+    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
 
     // synchornization issue
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->Begin(), irs::IoError);
+    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
 
     // second attempt
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -798,18 +806,18 @@ TEST(index_death_test_formats_15,
     // creation issue
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->Begin(), irs::IoError);
+    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
 
     // synchornization issue
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->Begin(), irs::IoError);
+    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
     // second attempt
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -848,7 +856,7 @@ TEST(index_death_test_formats_15,
 }
 
 TEST(index_death_test_formats_15,
-     segment_meta_write_fail_immediate_consolidation) {
+     segment_meta_write_fail_immediate_compaction) {
   tests::JsonDocGenerator gen(
     TestBase::resource("simple_sequential.json"),
     [](tests::Document& doc, const std::string& name,
@@ -878,14 +886,14 @@ TEST(index_death_test_formats_15,
 
     // segment 0
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     // segment 1
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -893,24 +901,22 @@ TEST(index_death_test_formats_15,
     // register failures
     dir.RegisterFailure(
       FailingDirectory::Failure::CREATE,
-      "_3.0.sm");  // fail at segment meta creation on consolidation
+      "_3.0.sm");  // fail at segment meta creation on compaction
     dir.RegisterFailure(
       FailingDirectory::Failure::SYNC,
-      "_4.0.sm");  // fail at segment meta synchronization on consolidation
+      "_4.0.sm");  // fail at segment meta synchronization on compaction
 
-    const irs::index_utils::ConsolidateCount consolidate_all;
+    const irs::index_utils::CompactionCount compact_all;
 
     // segment meta creation failure
-    ASSERT_THROW(
-      writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)),
-      irs::IoError);
-    ASSERT_FALSE(writer->Begin());  // nothing to flush
+    ASSERT_THROW(writer->Compact(irs::index_utils::MakePolicy(compact_all)),
+                 irs::IoError);
+    ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
 
     // segment meta synchronization failure
-    ASSERT_TRUE(
-      writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
-    ASSERT_THROW(writer->Begin(), irs::IoError);
-    ASSERT_FALSE(writer->Begin());  // nothing to flush
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
+    ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
 
     // check data
     auto reader =
@@ -968,8 +974,7 @@ TEST(index_death_test_formats_15,
   }
 }
 
-TEST(index_death_test_formats_15,
-     segment_meta_write_fail_deffered_consolidation) {
+TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
   tests::JsonDocGenerator gen(
     TestBase::resource("simple_sequential.json"),
     [](tests::Document& doc, const std::string& name,
@@ -1001,14 +1006,14 @@ TEST(index_death_test_formats_15,
 
     // segment 0
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     // segment 1
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -1016,38 +1021,38 @@ TEST(index_death_test_formats_15,
     // register failures
     dir.RegisterFailure(
       FailingDirectory::Failure::CREATE,
-      "_4.0.sm");  // fail at segment meta creation on consolidation
+      "_4.0.sm");  // fail at segment meta creation on compaction
     dir.RegisterFailure(
       FailingDirectory::Failure::SYNC,
-      "_6.0.sm");  // fail at segment meta synchronization on consolidation
+      "_6.0.sm");  // fail at segment meta synchronization on compaction
 
-    const irs::index_utils::ConsolidateCount consolidate_all;
+    const irs::index_utils::CompactionCount compact_all;
 
     // segment meta creation failure
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    ASSERT_TRUE(writer->Begin());  // start transaction
-    ASSERT_TRUE(writer->Consolidate(irs::index_utils::MakePolicy(
-      consolidate_all)));            // register pending consolidation
-    ASSERT_FALSE(writer->Commit());  // commit started transaction
+    ASSERT_TRUE(writer->RefreshBegin());  // start transaction
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
+      compact_all)));                       // register pending compaction
+    ASSERT_FALSE(writer->RefreshCommit());  // commit started transaction
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
     ASSERT_THROW(
-      writer->Begin(),
-      irs::IoError);  // start transaction to commit pending consolidation
+      writer->RefreshBegin(),
+      irs::IoError);  // start transaction to commit pending compaction
 
     // segment meta synchronization failure
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
-    ASSERT_TRUE(writer->Begin());  // start transaction
-    ASSERT_TRUE(writer->Consolidate(irs::index_utils::MakePolicy(
-      consolidate_all)));            // register pending consolidation
-    ASSERT_FALSE(writer->Commit());  // commit started transaction
+    ASSERT_TRUE(writer->RefreshBegin());  // start transaction
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
+      compact_all)));                       // register pending compaction
+    ASSERT_FALSE(writer->RefreshCommit());  // commit started transaction
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
     ASSERT_THROW(
-      writer->Begin(),
-      irs::IoError);  // start transaction to commit pending consolidation
+      writer->RefreshBegin(),
+      irs::IoError);  // start transaction to commit pending compaction
 
     // check data
     auto reader =
@@ -1201,7 +1206,7 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
 
     writer->GetBatch().Remove(*query_doc2);
 
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -1371,8 +1376,8 @@ TEST(index_death_test_formats_15,
     ASSERT_THROW(InsertWithName(*writer, *doc1), irs::IoError);
 
     // Successful follow-up attempt: failure already consumed.
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -1402,8 +1407,8 @@ TEST(index_death_test_formats_15,
     ASSERT_THROW(InsertWithName(*writer, *doc2), irs::IoError);
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -1452,8 +1457,8 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, writer);
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -1461,8 +1466,8 @@ TEST(index_death_test_formats_15,
     ASSERT_THROW(InsertWithName(*writer, *doc2), irs::IoError);
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -1562,7 +1567,7 @@ TEST(index_death_test_formats_15,
       }
       if (inserts_ok) {
         writer.GetBatch().Remove(*query_doc2);
-        ASSERT_THROW(writer.Begin(), irs::IoError);
+        ASSERT_THROW(writer.RefreshBegin(), irs::IoError);
         ASSERT_LT(dir.NumFailures(), failures_before);
       }
     }
@@ -1591,8 +1596,8 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, writer);
 
     // initial commit
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -1630,8 +1635,8 @@ TEST(index_death_test_formats_15,
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -1694,7 +1699,7 @@ TEST(index_death_test_formats_15,
     while (!dir.NoFailures()) {
       const auto failures_before = dir.NumFailures();
       ASSERT_TRUE(InsertWithName(writer, *doc1));
-      ASSERT_THROW(writer.Begin(), irs::IoError);
+      ASSERT_THROW(writer.RefreshBegin(), irs::IoError);
       ASSERT_LT(dir.NumFailures(), failures_before);
     }
   };
@@ -1725,8 +1730,8 @@ TEST(index_death_test_formats_15,
 
     DriveSyncFailures(dir, *writer);
 
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -1763,8 +1768,8 @@ TEST(index_death_test_formats_15,
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -1800,10 +1805,10 @@ TEST(index_death_test_formats_15,
 }
 
 TEST(index_death_test_formats_15,
-     segment_meta_write_fail_long_running_consolidation) {
-  // BlockingDirectory blocks on `_3.cs` to keep consolidation in
+     segment_meta_write_fail_long_running_compaction) {
+  // BlockingDirectory blocks on `_3.cs` to keep compaction in
   // flight while the test runs a second commit; once the lock is
-  // released the consolidation thread observes the registered failure
+  // released the compaction thread observes the registered failure
   // and the test asserts the index is still healthy.
   tests::JsonDocGenerator gen(
     TestBase::resource("simple_sequential.json"),
@@ -1820,7 +1825,7 @@ TEST(index_death_test_formats_15,
   auto codec = irs::formats::Get("1_5simd");
   ASSERT_NE(nullptr, codec);
 
-  // segment meta creation failure during consolidation
+  // segment meta creation failure during compaction
   {
     constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                                 irs::IndexFeatures::Pos |
@@ -1836,41 +1841,40 @@ TEST(index_death_test_formats_15,
 
     // segment 0
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     // segment 1
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
-    // fail segment meta creation on the consolidated segment
+    // fail segment meta creation on the compacted segment
     failing_dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_3.0.sm");
 
     dir.intermediate_commits_lock.lock();
 
-    std::thread consolidation_thread([&writer]() {
-      const irs::index_utils::ConsolidateCount consolidate_all;
-      ASSERT_THROW(
-        writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)),
-        irs::IoError);
+    std::thread compaction_thread([&writer]() {
+      const irs::index_utils::CompactionCount compact_all;
+      ASSERT_THROW(writer->Compact(irs::index_utils::MakePolicy(compact_all)),
+                   irs::IoError);
     });
 
     dir.wait_for_blocker();
 
-    // commit an intermediate segment while consolidation is blocked
+    // commit an intermediate segment while compaction is blocked
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     dir.intermediate_commits_lock.unlock();
-    consolidation_thread.join();
+    compaction_thread.join();
 
     auto reader =
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
@@ -1889,7 +1893,7 @@ TEST(index_death_test_formats_15,
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
   }
 
-  // segment meta sync failure during consolidation
+  // segment meta sync failure during compaction
   {
     constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                                 irs::IndexFeatures::Pos |
@@ -1904,13 +1908,13 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, writer);
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -1919,25 +1923,24 @@ TEST(index_death_test_formats_15,
 
     dir.intermediate_commits_lock.lock();
 
-    std::thread consolidation_thread([&writer]() {
-      const irs::index_utils::ConsolidateCount consolidate_all;
-      ASSERT_TRUE(
-        writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
+    std::thread compaction_thread([&writer]() {
+      const irs::index_utils::CompactionCount compact_all;
+      ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
     });
 
     dir.wait_for_blocker();
 
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     dir.intermediate_commits_lock.unlock();
-    consolidation_thread.join();
+    compaction_thread.join();
 
-    // pending consolidation commit fails on segment-meta sync.
-    ASSERT_THROW(writer->Begin(), irs::IoError);
+    // pending compaction commit fails on segment-meta sync.
+    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
 
     auto reader =
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
@@ -1957,7 +1960,7 @@ TEST(index_death_test_formats_15,
   }
 }
 
-TEST(index_death_test_formats_15, segment_components_write_fail_consolidation) {
+TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
   // Legacy registered CREATE failures on every per-segment component
   // (`_N.doc`, `_N.cm`, `_N.ti`, `_N.tm`, `_N.pos`, `_N.pay`). The new
   // cs collapses `_N.cm` into `_N.cs`; we add `_N.cs` to the set.
@@ -1983,27 +1986,27 @@ TEST(index_death_test_formats_15, segment_components_write_fail_consolidation) {
 
     // segment 0
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     // segment 1
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
-    // Register CREATE failures across the consolidated-segment
-    // components. Each consolidation attempt allocates a fresh
+    // Register CREATE failures across the compacted-segment
+    // components. Each compaction attempt allocates a fresh
     // segment id (NextSegmentId()), so after `_3.cs` fails the next
     // attempt's segment is `_4`, the one after is `_5`, etc. Order
     // matches the order files are created during MergeWriter::Flush:
     // cs writer is opened first (in OpenColumnstoreContexts), then
     // postings, then term index/data, etc.
     dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "_3.cs");  // new-cs columnstore for consolidated seg
+                        "_3.cs");  // new-cs columnstore for compacted seg
     dir.RegisterFailure(FailingDirectory::Failure::CREATE,
                         "_4.doc");  // postings list (documents)
     dir.RegisterFailure(FailingDirectory::Failure::CREATE,
@@ -2015,13 +2018,12 @@ TEST(index_death_test_formats_15, segment_components_write_fail_consolidation) {
     dir.RegisterFailure(FailingDirectory::Failure::CREATE,
                         "_8.pay");  // postings list (offset + payload)
 
-    const irs::index_utils::ConsolidateCount consolidate_all;
+    const irs::index_utils::CompactionCount compact_all;
 
     while (!dir.NoFailures()) {
-      ASSERT_THROW(
-        writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)),
-        irs::IoError);
-      ASSERT_FALSE(writer->Begin());  // nothing to flush
+      ASSERT_THROW(writer->Compact(irs::index_utils::MakePolicy(compact_all)),
+                   irs::IoError);
+      ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
     }
 
     auto reader =
@@ -2071,9 +2073,9 @@ TEST(index_death_test_formats_15, segment_components_write_fail_consolidation) {
   }
 }
 
-TEST(index_death_test_formats_15, segment_components_sync_fail_consolidation) {
-  // Like the *_write_fail_consolidation* test but with SYNC failures
-  // (consolidation creates the files, then sync fails at Begin()).
+TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
+  // Like the *_write_fail_compaction* test but with SYNC failures
+  // (compaction creates the files, then sync fails at Begin()).
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::PayloadedJsonFieldFactory);
   const auto* doc1 = gen.next();
@@ -2095,18 +2097,18 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_consolidation) {
     ASSERT_NE(nullptr, writer);
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
-    // Sync failures fire at Begin() (after Consolidate succeeds in
+    // Sync failures fire at Begin() (after Compact succeeds in
     // creating the files). Each iteration consumes one failure;
     // segment id advances each retry.
     dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_3.cs");
@@ -2116,13 +2118,12 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_consolidation) {
     dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_7.pos");
     dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_8.pay");
 
-    const irs::index_utils::ConsolidateCount consolidate_all;
+    const irs::index_utils::CompactionCount compact_all;
 
     while (!dir.NoFailures()) {
-      ASSERT_TRUE(
-        writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
-      ASSERT_THROW(writer->Begin(), irs::IoError);
-      ASSERT_FALSE(writer->Begin());
+      ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+      ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
+      ASSERT_FALSE(writer->RefreshBegin());
     }
 
     auto reader =
@@ -2193,7 +2194,7 @@ TEST(index_death_test_formats_15, segment_components_fail_import) {
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(src_dir, codec, irs::tests::DefaultReaderOptions()));
@@ -2230,15 +2231,15 @@ TEST(index_death_test_formats_15, segment_components_fail_import) {
     ASSERT_NE(nullptr, writer);
 
     // initial commit
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     while (!dir.NoFailures()) {
       ASSERT_THROW(writer->Import(*src_index), irs::IoError);
-      ASSERT_FALSE(writer->Begin());  // nothing to commit
+      ASSERT_FALSE(writer->RefreshBegin());  // nothing to commit
     }
 
     auto reader =
@@ -2267,20 +2268,20 @@ TEST(index_death_test_formats_15, segment_components_fail_import) {
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     while (!dir.NoFailures()) {
       ASSERT_THROW(writer->Import(*src_index), irs::IoError);
-      ASSERT_FALSE(writer->Begin());  // nothing to commit
+      ASSERT_FALSE(writer->RefreshBegin());  // nothing to commit
     }
 
     ASSERT_TRUE(writer->Import(*src_index));
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -2342,8 +2343,8 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, writer);
 
     // initial commit
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -2360,7 +2361,7 @@ TEST(index_death_test_formats_15,
     // not at insert time.
     dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_2.0.sm");
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_THROW(writer->Begin(), irs::IoError);
+    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
     ASSERT_TRUE(dir.NoFailures());
 
     (void)doc2;
@@ -2400,7 +2401,7 @@ TEST(index_death_test_formats_15,
 
     // After the failure clears, Insert + Commit proceed normally.
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -2454,8 +2455,8 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, writer);
 
     // initial commit so a DirectoryReader can be opened at the end
-    ASSERT_TRUE(writer->Begin());
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
 
     // 1) CREATE failure on `_1.cs` -> first insert throws.
     dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_1.cs");
@@ -2467,7 +2468,7 @@ TEST(index_death_test_formats_15,
     // leaves the index empty.
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_2.cs");
-    ASSERT_THROW(writer->Begin(), irs::IoError);
+    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
     ASSERT_TRUE(dir.NoFailures());
 
     auto reader =
@@ -2481,9 +2482,9 @@ TEST(index_death_test_formats_15,
   }
 }
 
-TEST(index_death_test_formats_15, fails_in_consolidate_with_removals) {
+TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
   // Mixed failures around CREATE/SYNC/REMOVE on `.cs` files driven by
-  // a sequence of inserts, commits, and a consolidate. Each failing
+  // a sequence of inserts, commits, and a compact. Each failing
   // step is followed by a successful retry; final index has the full
   // dataset.
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
@@ -2508,17 +2509,17 @@ TEST(index_death_test_formats_15, fails_in_consolidate_with_removals) {
 
     dir.RegisterFailure(FailingDirectory::Failure::CREATE,
                         "pending_segments_1");
-    ASSERT_THROW(writer->Begin(), irs::IoError);
+    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
 
     dir.RegisterFailure(FailingDirectory::Failure::RENAME,
                         "pending_segments_1");
-    ASSERT_THROW(writer->Commit(), irs::IoError);
+    ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
     ASSERT_THROW(
       (irs::DirectoryReader{dir, codec, irs::tests::DefaultReaderOptions()}),
       irs::IndexNotFound);
 
     // Now empty commit succeeds.
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -2526,7 +2527,7 @@ TEST(index_death_test_formats_15, fails_in_consolidate_with_removals) {
     // Insert fails because `.cs` creation fails for the new segment.
     dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_1.cs");
     ASSERT_THROW(InsertWithName(*writer, *doc1), irs::IoError);
-    ASSERT_FALSE(writer->Commit());  // nothing to commit
+    ASSERT_FALSE(writer->RefreshCommit());  // nothing to commit
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -2536,32 +2537,31 @@ TEST(index_death_test_formats_15, fails_in_consolidate_with_removals) {
 
     // SYNC fails on segment 0's `.cs` -> Commit throws.
     dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_2.cs");
-    ASSERT_THROW(writer->Commit(), irs::IoError);
+    ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     // Nothing to commit after a failed first phase.
-    ASSERT_FALSE(writer->Commit());
+    ASSERT_FALSE(writer->RefreshCommit());
 
     // NOW IT IS OK -- insert + commit succeeds.
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
-    const irs::index_utils::ConsolidateCount consolidate_all;
+    const irs::index_utils::CompactionCount compact_all;
 
-    ASSERT_TRUE(
-      writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -2572,7 +2572,7 @@ TEST(index_death_test_formats_15, fails_in_consolidate_with_removals) {
     dir.RegisterFailure(FailingDirectory::Failure::REMOVE, "_3.cs");
     dir.RegisterFailure(FailingDirectory::Failure::REMOVE, "_5.cs");
     irs::DirectoryCleaner::clean(dir);
-    ASSERT_FALSE(writer->Commit());  // nothing changed
+    ASSERT_FALSE(writer->RefreshCommit());  // nothing changed
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -2613,7 +2613,7 @@ TEST(index_death_test_formats_15, fails_in_exists) {
   // Reader::Reader probes `dir.exists(filename)` before opening the
   // `.cs`. Force the EXISTS failure on consecutive `.cs` files to
   // exercise that path. After failures clear, commits and a
-  // consolidation must still succeed.
+  // compaction must still succeed.
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::PayloadedJsonFieldFactory);
 
@@ -2644,7 +2644,7 @@ TEST(index_death_test_formats_15, fails_in_exists) {
 
     while (!dir.NoFailures()) {
       ASSERT_TRUE(InsertWithName(*writer, *doc1));
-      ASSERT_THROW(writer->Commit(), irs::IoError);
+      ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
       ASSERT_THROW(
         (irs::DirectoryReader{dir, codec, irs::tests::DefaultReaderOptions()}),
         irs::IndexNotFound);
@@ -2652,23 +2652,22 @@ TEST(index_death_test_formats_15, fails_in_exists) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
-    const irs::index_utils::ConsolidateCount consolidate_all;
+    const irs::index_utils::CompactionCount compact_all;
 
-    ASSERT_TRUE(
-      writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -2719,7 +2718,7 @@ TEST(index_death_test_formats_15, fails_in_length) {
   // `dir.length(name)` failures on per-segment files. Commit without
   // removals doesn't call `length` -- the legacy test verified the
   // failure budget stays unchanged. Then EXISTS failures on `.cs`
-  // files exercise the consolidation cleanup path.
+  // files exercise the compaction cleanup path.
   tests::JsonDocGenerator gen(
     TestBase::resource("simple_sequential.json"),
     [](tests::Document& doc, const std::string& name,
@@ -2767,28 +2766,28 @@ TEST(index_death_test_formats_15, fails_in_length) {
 
     // segment 0
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     // segment 1
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
 
     // segment 3
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -2806,26 +2805,25 @@ TEST(index_death_test_formats_15, fails_in_length) {
     ASSERT_EQ(num_failures, dir.NumFailures());
     dir.ClearFailures();
 
-    // Now register EXISTS failures on the consolidated path's `.cs`
-    // probes -- consolidation should still succeed (the cleaner
-    // tolerates the missed exists check; the post-consolidation read
-    // works because the consolidated `.cs` exists).
+    // Now register EXISTS failures on the compacted path's `.cs`
+    // probes -- compaction should still succeed (the cleaner
+    // tolerates the missed exists check; the post-compaction read
+    // works because the compacted `.cs` exists).
     for (const auto& seg : {"_1", "_2", "_3", "_4"}) {
       dir.RegisterFailure(FailingDirectory::Failure::EXISTS,
                           std::string{seg} + ".cs");
     }
 
-    const irs::index_utils::ConsolidateCount consolidate_all;
+    const irs::index_utils::CompactionCount compact_all;
 
     const auto num_failures_before = dir.NumFailures();
-    ASSERT_TRUE(
-      writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
-    // Same number of failures: the consolidation code path doesn't
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    // Same number of failures: the compaction code path doesn't
     // probe exists on the input segment `.cs` files.
     ASSERT_EQ(num_failures_before, dir.NumFailures());
 
     irs::DirectoryCleaner::clean(dir);
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
@@ -2903,7 +2901,7 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->GetBatch().Remove(*query_doc2);
 
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));

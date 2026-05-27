@@ -52,7 +52,7 @@ RESET sdb_faults;
 
 connection after_replay
 statement ok
-VACUUM (UPDATE_INDEXES) indexonly_replay;
+VACUUM (REFRESH_TABLE) indexonly_replay;
 
 connection after_replay
 query
@@ -83,7 +83,7 @@ INSERT INTO indexonly_replay VALUES (4, 'doomed phrase about to vanish');
 
 connection after_replay
 statement ok
-VACUUM (UPDATE_INDEXES) indexonly_replay;
+VACUUM (REFRESH_TABLE) indexonly_replay;
 
 connection after_replay
 query
@@ -106,7 +106,7 @@ RESET sdb_faults;
 
 connection after_delete
 statement ok
-VACUUM (UPDATE_INDEXES) indexonly_replay;
+VACUUM (REFRESH_TABLE) indexonly_replay;
 
 # Row 4 must be gone from the inverted index.
 connection after_delete
@@ -160,7 +160,7 @@ INSERT INTO indexonly_update VALUES
 # AFTER it -- the [CP] from the UPDATE batch is what must be replayed.
 connection after_delete
 statement ok
-VACUUM (UPDATE_INDEXES) indexonly_update;
+VACUUM (REFRESH_TABLE) indexonly_update;
 
 # Sanity: original phrase searchable.
 connection after_delete
@@ -184,7 +184,7 @@ RESET sdb_faults;
 
 connection after_update
 statement ok
-VACUUM (UPDATE_INDEXES) indexonly_update;
+VACUUM (REFRESH_TABLE) indexonly_update;
 
 # New phrase must be searchable -- wal_recovery replayed the [CP] for
 # the post-update value.

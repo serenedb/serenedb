@@ -77,13 +77,13 @@ statement ok
 CREATE INDEX mt_epsilon_inv ON mt_epsilon USING inverted(id, body mt_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) mt_alpha;
+VACUUM (REFRESH_TABLE) mt_alpha;
 
 statement ok
-VACUUM (UPDATE_INDEXES) mt_beta;
+VACUUM (REFRESH_TABLE) mt_beta;
 
 statement ok
-VACUUM (UPDATE_INDEXES) mt_epsilon;
+VACUUM (REFRESH_TABLE) mt_epsilon;
 
 # === Block search commits and start the heavy interleaved workload. ===
 # mt_epsilon must NOT receive any writes — it stays caught up.
@@ -152,15 +152,15 @@ SELECT 1;
 
 connection mt_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) mt_alpha;
+VACUUM (REFRESH_TABLE) mt_alpha;
 
 connection mt_after
 statement ok
-VACUUM (UPDATE_INDEXES) mt_beta;
+VACUUM (REFRESH_TABLE) mt_beta;
 
 connection mt_after
 statement ok
-VACUUM (UPDATE_INDEXES) mt_epsilon;
+VACUUM (REFRESH_TABLE) mt_epsilon;
 
 # === mt_alpha: 5 rows — id ∈ {1, 2, 5, 40} after deletes, plus id=2 modified.
 #   Wait: started with 1,2,3, added 4,5, deleted 3, pk-renamed 4→40.

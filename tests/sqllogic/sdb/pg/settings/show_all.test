@@ -41,10 +41,9 @@ checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically t
 cleanup_interval_step	1	Number of commit ticks between background unreferenced-file cleanup passes for newly created inverted indexes. Per-index WITH (cleanup_interval_step = ...) overrides. 0 disables cleanup. Default: 1.
 client_encoding	UTF8	Sets the client's character set encoding.
 client_min_messages	notice	Sets the message levels that are sent to the client.
-commit_interval	1000	Background commit interval (ms) for newly created inverted indexes. Per-index WITH (commit_interval = ...) overrides. 0 disables the commit task. Default: 1000.
+compaction_interval	1000	Background compaction interval (ms) for newly created inverted indexes. Per-index WITH (compaction_interval = ...) overrides. 0 disables the compaction task. Default: 1000.
 configure_metrics	[*]	Accepts a JSON enabling custom metrics
 configure_profiling	[*]	Accepts a JSON enabling custom metrics
-consolidation_interval	1000	Background consolidation interval (ms) for newly created inverted indexes. Per-index WITH (consolidation_interval = ...) overrides. 0 disables the consolidation task. Default: 1000.
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction
 custom_extension_repository	(empty)	Overrides the custom endpoint for remote extension installation
 custom_profiling_settings	[*]	Accepts a JSON enabling custom metrics
@@ -192,6 +191,7 @@ profiling_coverage	SELECT	The profiling coverage (SELECT or ALL)
 profiling_mode	NULL	The profiling mode (STANDARD or DETAILED)
 profiling_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
 progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
+refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000.
 role	postgres	Sets the current role.
 row_group_size	122880	Default column row-group size for INCLUDEd in newly created inverted indexes. Per-column (row_group_size = ...) and per-index WITH (row_group_size = ...) override. Reads from existing indexes are unaffected. Default: 122'880.
 s3_access_key_id	NULL	S3 Access Key ID
@@ -301,10 +301,9 @@ checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically t
 cleanup_interval_step	1	Number of commit ticks between background unreferenced-file cleanup passes for newly created inverted indexes. Per-index WITH (cleanup_interval_step = ...) overrides. 0 disables cleanup. Default: 1.
 client_encoding	UTF8	Sets the client's character set encoding.
 client_min_messages	notice	Sets the message levels that are sent to the client.
-commit_interval	1000	Background commit interval (ms) for newly created inverted indexes. Per-index WITH (commit_interval = ...) overrides. 0 disables the commit task. Default: 1000.
+compaction_interval	1000	Background compaction interval (ms) for newly created inverted indexes. Per-index WITH (compaction_interval = ...) overrides. 0 disables the compaction task. Default: 1000.
 configure_metrics	[*]	Accepts a JSON enabling custom metrics
 configure_profiling	[*]	Accepts a JSON enabling custom metrics
-consolidation_interval	1000	Background consolidation interval (ms) for newly created inverted indexes. Per-index WITH (consolidation_interval = ...) overrides. 0 disables the consolidation task. Default: 1000.
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction
 custom_extension_repository	(empty)	Overrides the custom endpoint for remote extension installation
 custom_profiling_settings	[*]	Accepts a JSON enabling custom metrics
@@ -452,6 +451,7 @@ profiling_coverage	SELECT	The profiling coverage (SELECT or ALL)
 profiling_mode	NULL	The profiling mode (STANDARD or DETAILED)
 profiling_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
 progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
+refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000.
 role	postgres	Sets the current role.
 row_group_size	122880	Default column row-group size for INCLUDEd in newly created inverted indexes. Per-column (row_group_size = ...) and per-index WITH (row_group_size = ...) override. Reads from existing indexes are unaffected. Default: 122'880.
 s3_access_key_id	NULL	S3 Access Key ID

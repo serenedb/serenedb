@@ -134,7 +134,7 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
       names_out.emplace_back(name);
     }
   }
-  writer->Commit();
+  writer->RefreshCommit();
   return writer->GetSnapshot();
 }
 

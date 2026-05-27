@@ -38,7 +38,7 @@ statement ok
 INSERT INTO test_levenshtein values (6, 'act');
 
 statement ok
-VACUUM (UPDATE_INDEXES) test_levenshtein;
+VACUUM (REFRESH_TABLE) test_levenshtein;
 
 # Exact match (distance 0)
 query
@@ -181,7 +181,7 @@ INSERT INTO test_levenshtein_prefix VALUES
     (5, 'banana');
 
 statement ok
-VACUUM (UPDATE_INDEXES) test_levenshtein_prefix;
+VACUUM (REFRESH_TABLE) test_levenshtein_prefix;
 
 
 # Prefix `app` + suffix `le` distance 0 -> only `apple` matches.

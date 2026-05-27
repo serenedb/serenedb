@@ -39,7 +39,7 @@ statement ok
 SET sdb_faults = 'Search::CrashAfterCommit';
 
 statement error connection closed
-VACUUM (UPDATE_INDEXES) indexonly_no_double;
+VACUUM (REFRESH_TABLE) indexonly_no_double;
 
 # After restart, the inverted index already contains the row -- recovery
 # must NOT add it again. If the committed_tick filter is wrong, we'd see

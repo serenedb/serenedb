@@ -455,7 +455,7 @@ TEST(GeoDistanceFilterTest, query) {
         }
       }
     }
-    writer->Commit();
+    writer->RefreshCommit();
     reader = writer->GetSnapshot();
   }
 
@@ -993,7 +993,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
         }
       }
     }
-    writer->Commit();
+    writer->RefreshCommit();
     reader = writer->GetSnapshot();
   }
 

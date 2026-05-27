@@ -99,8 +99,7 @@ SereneDBSearchInsert::SereneDBSearchInsert(
     _table(std::move(table)) {}
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
-SereneDBSearchInsert::GetGlobalSinkState(
-  duckdb::ClientContext& context) const {
+SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchInsertGlobalState>();
   state->table_id = _table->GetId();
   state->table_key = key_utils::PrepareTableKey(state->table_id);
@@ -111,8 +110,7 @@ SereneDBSearchInsert::GetGlobalSinkState(
   SDB_ASSERT(state->table_shard);
   SDB_ASSERT(state->table_shard->GetStorage() == catalog::StorageKind::kSearch,
              "SereneDBSearchInsert dispatched against a non-search shard");
-  state->table_lock =
-    std::shared_lock{state->table_shard->GetTableLock()};
+  state->table_lock = std::shared_lock{state->table_shard->GetTableLock()};
 
   // No explicit PK -> resolve the generated-PK sequence object once here;
   // Sink reserves per-chunk ranges from it. Mirrors duckdb_physical_insert.
@@ -140,8 +138,7 @@ SereneDBSearchInsert::GetGlobalSinkState(
   auto& search_shard =
     basics::downCast<search::SearchTableShard>(*state->table_shard);
   state->search_trx = &state->sdb_txn->EnsureSearchTransaction(
-    state->table_shard->GetId(),
-    [&] { return search_shard.GetTransaction(); });
+    state->table_shard->GetId(), [&] { return search_shard.GetTransaction(); });
 
   return state;
 }

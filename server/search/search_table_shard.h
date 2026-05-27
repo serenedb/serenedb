@@ -101,7 +101,7 @@ class SearchTableShard final : public TableShard {
   // visible to subsequent scans.
   void Commit() {
     SDB_ASSERT(_writer);
-    _writer->Commit();
+    _writer->RefreshCommit();
   }
 
  private:

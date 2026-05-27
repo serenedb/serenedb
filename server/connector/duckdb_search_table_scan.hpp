@@ -61,9 +61,8 @@ struct SearchTableScanGlobalState : public CommonScanGlobalState {
   std::unique_ptr<ColumnstoreMaterializer> materializer;
 };
 
-duckdb::unique_ptr<duckdb::GlobalTableFunctionState>
-SearchTableScanInitGlobal(duckdb::ClientContext& context,
-                          duckdb::TableFunctionInitInput& input);
+duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
+  duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input);
 
 void SearchTableScanFunction(duckdb::ClientContext& context,
                              duckdb::TableFunctionInput& data,

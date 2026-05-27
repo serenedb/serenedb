@@ -20,9 +20,8 @@
 
 #include "connector/duckdb_search_table_scan.hpp"
 
-#include <duckdb/common/types/data_chunk.hpp>
-
 #include <algorithm>
+#include <duckdb/common/types/data_chunk.hpp>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
@@ -42,9 +41,8 @@
 
 namespace sdb::connector {
 
-duckdb::unique_ptr<duckdb::GlobalTableFunctionState>
-SearchTableScanInitGlobal(duckdb::ClientContext& context,
-                          duckdb::TableFunctionInitInput& input) {
+duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
+  duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
   SDB_ASSERT(!bind_data.IsViewBacked(),
              "SearchTableScan reached a view-backed bind -- views route "
@@ -128,8 +126,8 @@ void SearchTableScanFunction(duckdb::ClientContext& /*context*/,
         *cs_reader, gstate.field_ids, gstate.output_slots);
     }
 
-    const auto take = std::min<duckdb::idx_t>(batch_size,
-                                              seg_docs - gstate.doc_in_seg);
+    const auto take =
+      std::min<duckdb::idx_t>(batch_size, seg_docs - gstate.doc_in_seg);
     gstate.materializer->Scan(gstate.doc_in_seg, take, output);
     gstate.doc_in_seg += take;
     produced = take;

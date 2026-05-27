@@ -30,8 +30,8 @@
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "search/search_table_shard.h"
 #include "search/inverted_index_shard.h"
+#include "search/search_table_shard.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/table_shard.h"
 
@@ -244,9 +244,24 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
     }
   };
 
+  auto sync_search_shard = [&](auto& table) {
+    auto table_shard = snapshot.GetTableShard(table->GetId());
+    if (table_shard &&
+        table_shard->GetStorage() == catalog::StorageKind::kSearch) {
+      auto& search_shard =
+        basics::downCast<search::SearchTableShard>(*table_shard);
+      search_shard.Commit();
+    }
+  };
+
   auto walk_schema = [&](ObjectId db_id, std::string_view schema) {
     for (auto& table : snapshot.GetTables(db_id, schema)) {
       ForEachInvertedShard(snapshot, table->GetId(), apply);
+      // Commit search-backed table shards (M4 PR 4.1): SearchTableShard
+      // has no background commit thread yet, so VACUUM is currently the
+      // only way to flush a kSearch shard's pending iresearch trxs into
+      // a segment visible to subsequent scans.
+      sync_search_shard(table);
     }
   };
 
@@ -283,6 +298,7 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
                                        target.object);
       }
       ForEachInvertedShard(snapshot, table->GetId(), apply);
+      sync_search_shard(table);
       break;
     }
     case Scope::Schema: {
@@ -402,19 +418,6 @@ void VacuumExecute(duckdb::ClientContext& context,
       auto& engine = GetServerEngine();
       std::ignore = std::move(engine.compactAll(true, true)).Get().Ok();
       break;
-    }
-    // Commit search-backed table shards (M4 PR 4.1): SearchTableShard
-    // has no background commit thread yet, so VACUUM is currently the
-    // only way to flush a kSearch shard's pending iresearch trxs into
-    // a segment visible to subsequent scans.
-    for (const auto& table : tables) {
-      auto table_shard = snapshot->GetTableShard(table->GetId());
-      if (table_shard &&
-          table_shard->GetStorage() == catalog::StorageKind::kSearch) {
-        auto& search_shard =
-          basics::downCast<search::SearchTableShard>(*table_shard);
-        search_shard.Commit();
-      }
     }
   }
 

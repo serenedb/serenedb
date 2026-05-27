@@ -22,7 +22,6 @@
 
 #include <duckdb.hpp>
 #include <duckdb/execution/physical_operator.hpp>
-
 #include <memory>
 
 #include "catalog/table.h"

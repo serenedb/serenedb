@@ -18,8 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/search_table_sink_writer.h"
-
 #include <gtest/gtest.h>
 
 #include <duckdb.hpp>
@@ -34,6 +32,7 @@
 
 #include "catalog/identifiers/object_id.h"
 #include "connector/columnstore_materializer.h"
+#include "connector/search_table_sink_writer.h"
 
 namespace sdb::connector {
 namespace {

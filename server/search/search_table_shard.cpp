@@ -119,7 +119,7 @@ void SearchTableShard::OpenWriter() {
     // Force a commit so the directory contains a valid empty index --
     // otherwise a crash between CREATE TABLE and the first INSERT would
     // leave a half-initialised iresearch dir.
-    _writer->Commit();
+    _writer->RefreshCommit();
   }
 }
 

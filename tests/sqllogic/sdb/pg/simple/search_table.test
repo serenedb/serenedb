@@ -84,15 +84,10 @@ CREATE TABLE search_dml (a INTEGER PRIMARY KEY, b TEXT)
 statement ok
 INSERT INTO search_dml VALUES (1, 'x'), (2, 'y'), (3, 'z');
 
-# SearchTableShard has no background commit thread yet (parity with
-# InvertedIndexShard's TasksSettings is deferred), so VACUUM forces the
-# iresearch writer to flush pending trxs into a segment that a fresh
-# DirectoryReader can see. Without it, the SELECT below would snapshot
-# the writer's pre-INSERT state. Plain `VACUUM t` routes through
-# DuckDB's PhysicalVacuum (rejects non-DuckDB tables) -- the
-# (UPDATE_INDEXES) option is what serenedb's pragma hook listens for.
+
 statement ok
-VACUUM (UPDATE_INDEXES) search_dml;
+VACUUM (REFRESH_TABLE) search_dml;
+
 
 # SELECT round-trips via the search scan: iresearch DirectoryReader pinned
 # in the txn, ColumnstoreMaterializer materialises each segment's slice.
@@ -158,7 +153,7 @@ statement ok
 INSERT INTO search_genpk VALUES (10, 'p'), (20, 'q'), (30, 'r');
 
 statement ok
-VACUUM (UPDATE_INDEXES) search_genpk;
+VACUUM (REFRESH_TABLE) search_genpk;
 
 query
 SELECT * FROM search_genpk ORDER BY a;

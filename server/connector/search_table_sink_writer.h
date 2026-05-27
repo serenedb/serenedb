@@ -34,10 +34,11 @@
 #include "connector/search_sink_writer.hpp"
 
 namespace duckdb {
+
 class LogicalType;
 class Vector;
-}  // namespace duckdb
 
+}  // namespace duckdb
 namespace sdb::connector {
 
 // Sink writer for the SereneDBSearchInsert operator (M3 PR 3.4) and WAL
@@ -95,8 +96,7 @@ class SearchTableSinkWriter {
   // Throws NOT_IMPLEMENTED if any provider would route the column to a
   // tokenizer / HNSW / expression branch (those land when CREATE INDEX
   // on search tables is enabled).
-  void SwitchColumn(catalog::Column::Id col_id,
-                    const duckdb::LogicalType& type,
+  void SwitchColumn(catalog::Column::Id col_id, const duckdb::LogicalType& type,
                     const duckdb::Vector& vec, duckdb::idx_t count);
 
   // Per-row PK injection. Caller iterates rows after SwitchColumn'ing

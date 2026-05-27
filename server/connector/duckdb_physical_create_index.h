@@ -86,6 +86,9 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
     duckdb::OperatorSourceInput& input) const final;
   bool IsSource() const final { return true; }
 
+  ObjectId DatabaseId() const noexcept { return _database_id; }
+  ObjectId TargetRelationId() const noexcept { return _relation->GetId(); }
+
  private:
   // Returns the columns of the relation. For tables: `Table::Columns()`;
   // for views: the `_view_columns` list synthesised from the view's bound

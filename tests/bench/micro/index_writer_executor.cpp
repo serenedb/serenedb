@@ -176,7 +176,7 @@ void InsertAndCommit(irs::IndexWriter& writer, int64_t docs_count,
     field.Value(terms[static_cast<size_t>(i) % terms.size()]);
     auto trx = writer.GetBatch();
     auto doc = trx.Insert();
-    const auto ok = doc.Insert<irs::Action::INDEX>(field);
+    const auto ok = doc.Insert(field);
     if (!ok) {
       std::fprintf(stderr,
                    "index_writer_executor bench: document insert failed\n");

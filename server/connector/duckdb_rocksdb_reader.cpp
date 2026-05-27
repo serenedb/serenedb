@@ -568,7 +568,8 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
               copy_fixed(static_cast<uint32_t*>(nullptr));
               break;
             default:
-              SDB_THROW(ERROR_NOT_IMPLEMENTED, "Unsupported ENUM physical type");
+              SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                        "Unsupported ENUM physical type");
           }
           break;
         default:

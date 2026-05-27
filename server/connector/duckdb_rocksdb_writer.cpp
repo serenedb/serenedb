@@ -167,7 +167,8 @@ void AppendPKValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
       break;
     }
     default:
-      SDB_THROW(ERROR_NOT_IMPLEMENTED, "Unsupported PK type: ", type.ToString());
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                "Unsupported PK type: ", type.ToString());
   }
 }
 

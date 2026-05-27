@@ -698,10 +698,8 @@ bool SearchSinkInsertBaseImpl::SetupListExpressionWriterForChild(
 }
 
 template<duckdb::LogicalTypeId ChildKind>
-void SearchSinkInsertBaseImpl::SetupListExpressionWriter(irs::field_id field_id,
-                                                         bool have_nulls,
-                                                         duckdb::idx_t
-                                                           array_size) {
+void SearchSinkInsertBaseImpl::SetupListExpressionWriter(
+  irs::field_id field_id, bool have_nulls, duckdb::idx_t array_size) {
   if constexpr (ChildKind == duckdb::LogicalTypeId::VARCHAR) {
     search::mangling::MangleString(_name_buffer);
     _field.PrepareForStringValue(_subexpr_tokenizer_provider(field_id));

@@ -89,8 +89,7 @@ class SereneDBClientState final : public duckdb::ClientContextState {
                            duckdb::ClientContext& context) final;
 
   duckdb::RebindQueryInfo OnExecutePrepared(
-    duckdb::ClientContext& context,
-    duckdb::PreparedStatementCallbackInfo& info,
+    duckdb::ClientContext& context, duckdb::PreparedStatementCallbackInfo& info,
     duckdb::RebindQueryInfo current_rebind) final;
 
   void QueryEnd(duckdb::ClientContext& context) final;

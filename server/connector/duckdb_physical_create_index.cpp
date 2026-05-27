@@ -689,7 +689,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   writer->Finish();
   gstate.backfill_count_atomic.fetch_add(num_rows, std::memory_order_relaxed);
   if (gstate.progress) {
-    gstate.progress->Add(pg::create_index_progress::Param::TuplesDone, num_rows);
+    gstate.progress->Add(pg::create_index_progress::Param::TuplesDone,
+                         num_rows);
   }
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }

@@ -52,6 +52,7 @@
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
+#include "catalog/index.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
 #include "pg/connection_context.h"
@@ -710,6 +711,13 @@ class CreateTSDictionaryOptions : public OptionsParser {
 void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
                      std::string_view schema, bool if_not_exists,
                      const duckdb::named_parameter_map_t& options) {
+  if (catalog::IsBuiltinOpclassName(name)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_RESERVED_NAME),
+      ERR_MSG("text search dictionary name \"", name,
+              "\" is reserved for the built-in '", name, "' opclass"));
+  }
+
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
   auto db_id = conn_ctx.GetDatabaseId();
   auto current_schema = conn_ctx.GetCurrentSchema();

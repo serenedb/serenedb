@@ -42,7 +42,7 @@ INSERT INTO arr_t VALUES (3, 'third',  [-1.0, 0.0, 1.0])
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) arr_t
+VACUUM (REFRESH_TABLE) arr_t
 
 
 query

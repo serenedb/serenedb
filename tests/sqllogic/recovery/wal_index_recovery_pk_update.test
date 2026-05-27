@@ -34,7 +34,7 @@ statement ok
 CREATE INDEX pku_idx ON pku_t USING inverted(id, name pku_dict, data pku_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) pku_t;
+VACUUM (REFRESH_TABLE) pku_t;
 
 # Sanity: pre-PK-update everything findable
 query
@@ -65,7 +65,7 @@ SELECT 1;
 
 connection pku_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) pku_t;
+VACUUM (REFRESH_TABLE) pku_t;
 
 # Old pks (1, 2) — gone from index.
 connection pku_after

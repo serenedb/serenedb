@@ -440,7 +440,7 @@ void NestedFilterTestCase::InitDataSet() {
                          {"CPU", 1000, 2},
                          {"RAM", 5000, 2}}});
 
-  ASSERT_TRUE(writer->Commit());
+  ASSERT_TRUE(writer->RefreshCommit());
   AssertSnapshotEquality(*writer);
 
   auto reader = open_reader(irs::tests::DefaultReaderOptions());

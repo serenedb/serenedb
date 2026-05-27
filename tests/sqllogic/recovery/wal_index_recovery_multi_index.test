@@ -34,10 +34,10 @@ statement ok
 CREATE INDEX wal_mi_b_idx ON wal_mi_b USING inverted(id, txt mi_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) wal_mi_a;
+VACUUM (REFRESH_TABLE) wal_mi_a;
 
 statement ok
-VACUUM (UPDATE_INDEXES) wal_mi_b;
+VACUUM (REFRESH_TABLE) wal_mi_b;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';
@@ -61,11 +61,11 @@ SELECT 1;
 
 connection mi_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) wal_mi_a;
+VACUUM (REFRESH_TABLE) wal_mi_a;
 
 connection mi_after
 statement ok
-VACUUM (UPDATE_INDEXES) wal_mi_b;
+VACUUM (REFRESH_TABLE) wal_mi_b;
 
 # Table A: id=1 deleted, id=2 and id=3 added by recovery
 connection mi_after

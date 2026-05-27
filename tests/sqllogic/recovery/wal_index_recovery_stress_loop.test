@@ -56,10 +56,10 @@ CREATE TABLE stress_t(id INTEGER PRIMARY KEY, body TEXT);
 
 statement ok
 CREATE INDEX stress_idx ON stress_t USING inverted(id, body stress_dict)
-  WITH (commit_interval = 0);
+  WITH (refresh_interval = 0);
 
 statement ok
-VACUUM (UPDATE_INDEXES) stress_t;
+VACUUM (REFRESH_TABLE) stress_t;
 
 ###############################################################################
 # Round 1
@@ -1004,7 +1004,7 @@ SELECT 1;
 
 connection final
 statement ok retry 60 backoff 1s
-VACUUM (UPDATE_INDEXES) stress_t;
+VACUUM (REFRESH_TABLE) stress_t;
 
 # Per-sandbox surviving rows: 341.  10 sandboxes → 3410.
 connection final

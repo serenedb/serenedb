@@ -564,7 +564,7 @@ class FieldWriterImpl final : public FieldWriter {
     "block_tree_terms_index";
   static constexpr std::string_view kTermsIndexExt = "ti";
 
-  FieldWriterImpl(PostingsWriter::ptr&& pw, bool consolidation,
+  FieldWriterImpl(PostingsWriter::ptr&& pw, bool compaction,
                   IResourceManager& rm,
                   burst_trie::Version version = burst_trie::Version::Max,
                   uint32_t min_block_size = kDefaultMinBlockSize,
@@ -619,7 +619,7 @@ class FieldWriterImpl final : public FieldWriter {
   const burst_trie::Version _version;
   const uint32_t _min_block_size;
   const uint32_t _max_block_size;
-  const bool _consolidation;
+  const bool _compaction;
 };
 
 void FieldWriterImpl::WriteBlock(size_t prefix, size_t begin, size_t end,
@@ -708,8 +708,7 @@ void FieldWriterImpl::WriteBlock(size_t prefix, size_t begin, size_t end,
 
   // add new block to the list of created blocks
   _blocks.emplace_back(bytes_view{_last_term.View().data(), prefix},
-                       std::move(index), block_start, meta, label,
-                       _consolidation);
+                       std::move(index), block_start, meta, label, _compaction);
 }
 
 void FieldWriterImpl::WriteBlocks(size_t prefix, size_t count) {
@@ -803,10 +802,10 @@ void FieldWriterImpl::Push(bytes_view term) {
 
   _prefixes.resize(term.size());
   std::fill(_prefixes.begin() + pos, _prefixes.end(), _stack.size());
-  _last_term.Assign(term, _consolidation);
+  _last_term.Assign(term, _compaction);
 }
 
-FieldWriterImpl::FieldWriterImpl(PostingsWriter::ptr&& pw, bool consolidation,
+FieldWriterImpl::FieldWriterImpl(PostingsWriter::ptr&& pw, bool compaction,
                                  IResourceManager& rm,
                                  burst_trie::Version version,
                                  uint32_t min_block_size,
@@ -822,7 +821,7 @@ FieldWriterImpl::FieldWriterImpl(PostingsWriter::ptr&& pw, bool consolidation,
     _version{version},
     _min_block_size{min_block_size},
     _max_block_size{max_block_size},
-    _consolidation{consolidation} {
+    _compaction{compaction} {
   SDB_ASSERT(this->_pw);
   SDB_ASSERT(min_block_size > 1);
   SDB_ASSERT(min_block_size <= max_block_size);
@@ -913,7 +912,7 @@ void FieldWriterImpl::write(const BasicTermReader& reader) {
       Push(term);
 
       // push term to the top of the stack
-      _stack.emplace_back(term, std::move(meta), _consolidation);
+      _stack.emplace_back(term, std::move(meta), _compaction);
 
       ++term_count;
     }
@@ -3095,10 +3094,10 @@ namespace irs {
 namespace burst_trie {
 
 FieldWriter::ptr MakeWriter(Version version, PostingsWriter::ptr&& writer,
-                            bool consolidation,
+                            bool compaction,
                             IResourceManager& resource_manager) {
   // Here we can parametrize field_writer via version20::TermMeta
-  return std::make_unique<::FieldWriterImpl>(std::move(writer), consolidation,
+  return std::make_unique<::FieldWriterImpl>(std::move(writer), compaction,
                                              resource_manager, version);
 }
 

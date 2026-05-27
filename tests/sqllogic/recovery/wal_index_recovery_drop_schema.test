@@ -54,10 +54,10 @@ statement ok
 CREATE INDEX ds_drop_idx ON ds_drop.t USING inverted(id, body ds_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) ds_keep.t;
+VACUUM (REFRESH_TABLE) ds_keep.t;
 
 statement ok
-VACUUM (UPDATE_INDEXES) ds_drop.t;
+VACUUM (REFRESH_TABLE) ds_drop.t;
 
 # Block search commits.
 statement ok
@@ -97,7 +97,7 @@ SELECT 1;
 
 connection ds_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) ds_keep.t;
+VACUUM (REFRESH_TABLE) ds_keep.t;
 
 # Dropped schema is gone.
 connection ds_after

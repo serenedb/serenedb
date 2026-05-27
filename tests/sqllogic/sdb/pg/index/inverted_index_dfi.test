@@ -40,7 +40,7 @@ CREATE INDEX docs_idx ON docs USING inverted(id, body en);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 # DFI with default measure (standardized): never negative. At least one

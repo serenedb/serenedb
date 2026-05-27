@@ -24,7 +24,7 @@ statement ok
 CREATE INDEX wal_bulk_idx ON wal_bulk_t USING inverted(a, b bulk_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) wal_bulk_t;
+VACUUM (REFRESH_TABLE) wal_bulk_t;
 
 query
 SELECT COUNT(*) FROM wal_bulk_idx WHERE b @@ ts_phrase('seed');
@@ -51,7 +51,7 @@ SELECT 1;
 
 connection bulk_after
 statement ok retry 60 backoff 1s
-VACUUM (UPDATE_INDEXES) wal_bulk_t;
+VACUUM (REFRESH_TABLE) wal_bulk_t;
 
 connection bulk_after
 query

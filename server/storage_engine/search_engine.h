@@ -51,8 +51,8 @@ class SearchThreadPools;
 class ResourceMutex;
 
 enum class ThreadGroup : uint8_t {
-  Commit = 0,
-  Consolidation,
+  Refresh = 0,
+  Compaction,
 };
 
 SearchEngine& GetSearchEngine();
@@ -103,7 +103,7 @@ class SearchEngine final : public SerenedFeature {
   metrics::Gauge<uint64_t>& _out_of_sync_links;
   irs::IResourceManager& _columns_cache_memory_used;
 
-  uint32_t _consolidation_threads{0};
+  uint32_t _compaction_threads{0};
   uint32_t _commit_threads{0};
   uint32_t _search_execution_threads_limit{0};
   uint32_t _default_parallelism{1};

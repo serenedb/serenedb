@@ -246,7 +246,7 @@ class BlockScoringTestCase : public IndexTestBase {
       index.emplace_back();
       write_segment(writer, index.back(), gen, &StoreScoringFields);
     }
-    writer.Commit();
+    writer.RefreshCommit();
   }
 
   // Create single segment from multiple JSON files (420 total docs)
@@ -281,7 +281,7 @@ class BlockScoringTestCase : public IndexTestBase {
                                   &BlockScoringFieldFactory);
       index_ref.emplace_back();
       write_segment(*writer, index_ref.back(), gen, &StoreScoringFields);
-      writer->Commit();
+      writer->RefreshCommit();
     }
 
     // Segment 2
@@ -290,7 +290,7 @@ class BlockScoringTestCase : public IndexTestBase {
                                   &BlockScoringFieldFactory);
       index_ref.emplace_back();
       write_segment(*writer, index_ref.back(), gen, &StoreScoringFields);
-      writer->Commit();
+      writer->RefreshCommit();
     }
 
     // Segment 3
@@ -299,7 +299,7 @@ class BlockScoringTestCase : public IndexTestBase {
                                   &BlockScoringFieldFactory);
       index_ref.emplace_back();
       write_segment(*writer, index_ref.back(), gen, &StoreScoringFields);
-      writer->Commit();
+      writer->RefreshCommit();
     }
 
     auto reader =

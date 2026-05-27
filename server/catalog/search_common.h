@@ -113,23 +113,22 @@ struct StaticStrings {
   static constexpr std::string_view kOptimizeTopField = "optimizeTop";
 
   /// the name of the field in the Search View definition denoting the
-  ///        time in Ms between running consolidations
-  static constexpr std::string_view kConsolidationIntervalMsec =
-    "consolidationIntervalMsec";
+  ///        time in Ms between running compactions
+  static constexpr std::string_view kCompactionIntervalMsec =
+    "compactionIntervalMsec";
 
   /// the name of the field in the Search View definition denoting the
   ///        time in Ms between running commits
   static constexpr std::string_view kCommitIntervalMsec = "commitIntervalMsec";
 
   /// the name of the field in the Search View definition denoting the
-  ///        number of completed consolidtions before cleanup is run
+  ///        number of completed refreshes before cleanup is run
   static constexpr std::string_view kCleanupIntervalStep =
     "cleanupIntervalStep";
 
   /// the name of the field in the Search View definition denoting the
-  ///         consolidation policy properties
-  static constexpr std::string_view kConsolidationPolicy =
-    "consolidationPolicy";
+  ///         compaction policy properties
+  static constexpr std::string_view kCompactionPolicy = "compactionPolicy";
 
   /// the name of the field in the Search View definition denoting the
   ///        maximum number of concurrent active writers (segments) that perform

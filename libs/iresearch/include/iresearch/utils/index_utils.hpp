@@ -30,59 +30,59 @@ namespace irs::index_utils {
 
 // merge segment if:
 //   {threshold} > segment_bytes / (all_segment_bytes / #segments)
-struct ConsolidateBytes {
+struct CompactionBytes {
   float threshold = 0;
 };
 
-ConsolidationPolicy MakePolicy(const ConsolidateBytes& options);
+CompactionPolicy MakePolicy(const CompactionBytes& options);
 
 // merge segment if:
 //   {threshold} >= (segment_bytes + sum_of_merge_candidate_segment_bytes) /
 //   all_segment_bytes
-struct ConsolidateBytesAccum {
+struct CompactionBytesAccum {
   float threshold = 0;
 };
 
-ConsolidationPolicy MakePolicy(const ConsolidateBytesAccum& options);
+CompactionPolicy MakePolicy(const CompactionBytesAccum& options);
 
 // merge first {threshold} segments
-struct ConsolidateCount {
+struct CompactionCount {
   size_t threshold = std::numeric_limits<size_t>::max();
 };
 
-ConsolidationPolicy MakePolicy(const ConsolidateCount& options);
+CompactionPolicy MakePolicy(const CompactionCount& options);
 
 // merge segment if:
 //   {threshold} >= segment_docs{valid} / (all_segment_docs{valid} / #segments)
-struct ConsolidateDocsLive {
+struct CompactionDocsLive {
   float threshold = 0;
 };
 
-ConsolidationPolicy MakePolicy(const ConsolidateDocsLive& options);
+CompactionPolicy MakePolicy(const CompactionDocsLive& options);
 
 // merge segment if:
 //   {threshold} > #segment_docs{valid} / (#segment_docs{valid} +
 //   #segment_docs{removed})
-struct ConsolidateDocsFill {
+struct CompactionDocsFill {
   float threshold = 0;
 };
 
-ConsolidationPolicy MakePolicy(const ConsolidateDocsFill& options);
+CompactionPolicy MakePolicy(const CompactionDocsFill& options);
 
-struct ConsolidateTier {
-  // minimum allowed number of segments to consolidate at once
+struct CompactionTier {
+  // minimum allowed number of segments to compact at once
   size_t min_segments = 1;
-  // maximum allowed number of segments to consolidate at once
+  // maximum allowed number of segments to compact at once
   size_t max_segments = 10;
-  // maxinum allowed size of all consolidated segments
+  // maxinum allowed size of all compacted segments
   size_t max_segments_bytes = size_t(5) * (1 << 30);
-  // treat all smaller segments as equal for consolidation selection
+  // treat all smaller segments as equal for compaction selection
   size_t floor_segment_bytes = size_t(2) * (1 << 20);
   // filter out candidates with score less than min_score
   double_t min_score = 0.;
 };
 
-ConsolidationPolicy MakePolicy(const ConsolidateTier& options);
+CompactionPolicy MakePolicy(const CompactionTier& options);
 
 // Writes segment_meta to the supplied directory
 void FlushIndexSegment(Directory& dir, IndexSegment& segment,

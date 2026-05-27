@@ -1936,7 +1936,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_order_multiple_sorts) {
 
       write_segment(*writer, segment, gen);
     }
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
 

@@ -37,7 +37,7 @@ CREATE INDEX oni_inv_idx ON oni_inv_t USING inverted(id, body oni_dict);
 
 # Get inverted index fully caught up — nothing pending.
 statement ok
-VACUUM (UPDATE_INDEXES) oni_inv_t;
+VACUUM (REFRESH_TABLE) oni_inv_t;
 
 # === Block search commits, but never write to the indexed table. ===
 statement ok
@@ -68,7 +68,7 @@ SELECT 1;
 
 connection oni_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) oni_inv_t;
+VACUUM (REFRESH_TABLE) oni_inv_t;
 
 # Inverted index is exactly as before the crash.
 connection oni_after

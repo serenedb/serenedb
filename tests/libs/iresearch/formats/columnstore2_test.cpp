@@ -336,7 +336,7 @@ TEST_P(Columnstore2TestCase, empty_columns) {
 // last_valid / past-end), (g) row-group transitions across many small RGs,
 // (h) seek-and-iterate (fetch K, K+1, ... K+5 sequentially), (i) seek-
 // backwards (fresh reader for the smaller doc).
-// Legacy `ColumnHint::Consolidation` / `PrevDoc` paths and the "buffered"
+// Legacy `ColumnHint::Compaction` / `PrevDoc` paths and the "buffered"
 // reader-warmup dimension are dropped (no equivalent in the new cs).
 TEST_P(Columnstore2TestCase, sparse_mask_column) {
   constexpr std::string_view kSegment = "sparse_mask";

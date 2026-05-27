@@ -221,7 +221,7 @@ void BuildIndex(irs::IndexWriter& writer) {
   }  // Transaction commits here when ctx goes out of scope.
 
   // Commit flushes segments to disk and makes documents visible to readers.
-  writer.Commit();
+  writer.RefreshCommit();
   std::cout << "Indexed 5 documents.\n\n";
 }
 
@@ -363,7 +363,7 @@ void RemoveDocuments(irs::IndexWriter& writer,
   std::cout << "=== Remove Documents ===\n";
   auto filter = ParseQuery("databases", "title", tokenizer);
   writer.GetBatch().Remove(*filter);
-  writer.Commit();
+  writer.RefreshCommit();
 
   auto updated_reader = writer.GetSnapshot();
   std::cout << "After removal:\n";
@@ -372,28 +372,28 @@ void RemoveDocuments(irs::IndexWriter& writer,
             << "\n\n";
 }
 
-// Consolidate segments after removal to reclaim space and merge segments.
-// Deleted documents are only physically removed during consolidation.
-void ConsolidateIndex(irs::IndexWriter& writer, irs::Directory& dir) {
-  std::cout << "=== Consolidate Index ===\n";
+// Compact segments after removal to reclaim space and merge segments.
+// Deleted documents are only physically removed during compaction.
+void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
+  std::cout << "=== Compact Index ===\n";
 
   auto before = writer.GetSnapshot();
-  std::cout << "Before consolidation: " << before.size() << " segment(s)\n";
+  std::cout << "Before compaction: " << before.size() << " segment(s)\n";
 
-  // Tier-based consolidation merges segments of similar size.
-  irs::index_utils::ConsolidateTier tier_opts;
+  // Tier-based compaction merges segments of similar size.
+  irs::index_utils::CompactionTier tier_opts;
   tier_opts.min_segments = 1;
   tier_opts.max_segments = 10;
   auto policy = irs::index_utils::MakePolicy(tier_opts);
 
-  writer.Consolidate(policy);
-  writer.Commit();
+  writer.Compact(policy);
+  writer.RefreshCommit();
 
   // Remove files no longer referenced by any reader.
   irs::directory_utils::RemoveAllUnreferenced(dir);
 
   auto after = writer.GetSnapshot();
-  std::cout << "After consolidation:  " << after.size() << " segment(s)\n";
+  std::cout << "After compaction:  " << after.size() << " segment(s)\n";
   std::cout << "  Total documents: " << after.docs_count() << "\n";
   std::cout << "  Live documents:  " << after.live_docs_count() << "\n";
 }
@@ -446,7 +446,7 @@ int main() {
   QueryExclusion(reader, *tokenizer);
   ReadStoredFields(reader);
   RemoveDocuments(*writer, *tokenizer);
-  ConsolidateIndex(*writer, dir);
+  CompactIndex(*writer, dir);
 
   return 0;
 }

@@ -65,7 +65,7 @@ INSERT INTO m VALUES (4, 'delta',      400,  'note four',  40, 'red leaf')
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) m
+VACUUM (REFRESH_TABLE) m
 
 
 # ---- 1. INDEXED-only column projection: pushdown filter + rocksdb lookup ----

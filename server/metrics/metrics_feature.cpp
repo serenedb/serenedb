@@ -247,10 +247,10 @@ constexpr containers::TrivialSet kCoordinatorMetrics = [](auto selector) {
   return selector()
     .Case("serenedb_search_num_failed_commits")
     .Case("serenedb_search_num_failed_cleanups")
-    .Case("serenedb_search_num_failed_consolidations")
+    .Case("serenedb_search_num_failed_compactions")
     .Case("serenedb_search_commit_time")
     .Case("serenedb_search_cleanup_time")
-    .Case("serenedb_search_consolidation_time");
+    .Case("serenedb_search_compaction_time");
 };
 
 void MetricsFeature::toVPack(vpack::Builder& builder,

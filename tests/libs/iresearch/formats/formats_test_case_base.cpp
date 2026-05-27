@@ -192,7 +192,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
 
     // initialize directory
     {
-      writer->Commit();
+      writer->RefreshCommit();
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
@@ -203,7 +203,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     {
       ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
       ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
-      writer->Commit();
+      writer->RefreshCommit();
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
@@ -213,7 +213,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // add second segment (creating new index_meta file, remove old)
     {
       ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));
-      writer->Commit();
+      writer->RefreshCommit();
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
@@ -224,7 +224,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // file, remove old)
     {
       writer->GetBatch().Remove(*query_doc1);
-      writer->Commit();
+      writer->RefreshCommit();
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
@@ -235,7 +235,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // remove old meta + unused segment)
     {
       writer->GetBatch().Remove(*query_doc2);
-      writer->Commit();
+      writer->RefreshCommit();
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
@@ -246,7 +246,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // remove old meta + unused segment)
     {
       writer->GetBatch().Remove(*query_doc2);
-      writer->Commit();
+      writer->RefreshCommit();
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
@@ -273,7 +273,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
 
     // initialize directory
     {
-      writer->Commit();
+      writer->RefreshCommit();
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
@@ -285,7 +285,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
       ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
       ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));
-      writer->Commit();
+      writer->RefreshCommit();
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
@@ -295,7 +295,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete record from first segment (creating new doc_mask file)
     {
       writer->GetBatch().Remove(*query_doc1);
-      writer->Commit();
+      writer->RefreshCommit();
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
@@ -325,7 +325,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // add second segment (creating new index_meta file, not-removing old)
     {
       ASSERT_TRUE(Insert(*writer, doc4->indexed.begin(), doc4->indexed.end()));
-      writer->Commit();
+      writer->RefreshCommit();
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
@@ -336,7 +336,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // old)
     {
       writer->GetBatch().Remove(*(query_doc2));
-      writer->Commit();
+      writer->RefreshCommit();
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
@@ -347,7 +347,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // remove old meta but leave first segment)
     {
       writer->GetBatch().Remove(*(query_doc3));
-      writer->Commit();
+      writer->RefreshCommit();
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
@@ -358,7 +358,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // remove old meta + unused segment)
     {
       writer->GetBatch().Remove(*(query_doc4));
-      writer->Commit();
+      writer->RefreshCommit();
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
@@ -391,20 +391,20 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     {
       auto writer = irs::IndexWriter::Make(*dir, codec(), irs::kOmCreate);
 
-      writer->Commit();  // initialize directory
+      writer->RefreshCommit();  // initialize directory
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
-      writer->Commit();  // add first segment
+      writer->RefreshCommit();  // add first segment
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
       ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));
-      writer->Commit();  // add second segment
+      writer->RefreshCommit();  // add second segment
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
       writer->GetBatch().Remove(*(query_doc1));
-      writer->Commit();  // remove first segment
+      writer->RefreshCommit();  // remove first segment
       tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                     irs::DirectoryReader(*dir));
     }
@@ -1277,7 +1277,7 @@ TEST_P(FormatTestCaseWithEncryption, read_zero_block_encryption) {
 
     ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
 
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     AssertSnapshotEquality(*writer);
   }
 
@@ -1380,7 +1380,7 @@ TEST_P(FormatTestCaseWithEncryption, open_ecnrypted_with_wrong_encryption) {
 
     ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
 
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     AssertSnapshotEquality(*writer);
   }
 
@@ -1408,7 +1408,7 @@ TEST_P(FormatTestCaseWithEncryption, open_ecnrypted_with_non_encrypted) {
 
     ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
 
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     AssertSnapshotEquality(*writer);
   }
 
@@ -1438,7 +1438,7 @@ TEST_P(FormatTestCaseWithEncryption, open_non_ecnrypted_with_encrypted) {
 
     ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
 
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     AssertSnapshotEquality(*writer);
   }
 

@@ -15116,7 +15116,7 @@ TEST_P(BooleanFilterTestCase, or_sequential_multiple_segments) {
       Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));  // C
     ASSERT_TRUE(
       Insert(*writer, doc4->indexed.begin(), doc4->indexed.end()));  // D
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(
       Insert(*writer, doc5->indexed.begin(), doc5->indexed.end()));  // E
@@ -15124,13 +15124,13 @@ TEST_P(BooleanFilterTestCase, or_sequential_multiple_segments) {
       Insert(*writer, doc6->indexed.begin(), doc6->indexed.end()));  // F
     ASSERT_TRUE(
       Insert(*writer, doc7->indexed.begin(), doc7->indexed.end()));  // G
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(
       Insert(*writer, doc8->indexed.begin(), doc8->indexed.end()));  // H
     ASSERT_TRUE(
       Insert(*writer, doc9->indexed.begin(), doc9->indexed.end()));  // I
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
 

@@ -235,7 +235,7 @@ void LMIndexTest::BuildFixture() {
   ASSERT_TRUE(tests::Insert(*writer, doc1.indexed.begin(), doc1.indexed.end()));
   ASSERT_TRUE(tests::Insert(*writer, doc2.indexed.begin(), doc2.indexed.end()));
   ASSERT_TRUE(tests::Insert(*writer, doc3.indexed.begin(), doc3.indexed.end()));
-  writer->Commit();
+  writer->RefreshCommit();
 }
 
 namespace {

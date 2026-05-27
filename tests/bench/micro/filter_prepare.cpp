@@ -204,7 +204,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
         doc.Insert(body_field);
       }
     }
-    writer->Commit();
+    writer->RefreshCommit();
   }
 
   _reader = irs::DirectoryReader{*_dir, _codec};

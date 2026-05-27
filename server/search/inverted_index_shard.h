@@ -50,16 +50,16 @@ class InvertedIndexShard;
 struct ThreadPoolState {
   std::atomic_size_t pending_commits{0};
   std::atomic_size_t non_empty_commits{0};
-  std::atomic_size_t pending_consolidations{0};
-  std::atomic_size_t noop_consolidation_count{0};
+  std::atomic_size_t pending_compactions{0};
+  std::atomic_size_t noop_compaction_count{0};
   std::atomic_size_t noop_commit_count{0};
 };
 
 struct TasksSettings {
   size_t cleanup_interval_step{};
-  size_t commit_interval_msec{};
-  size_t consolidation_interval_msec{};
-  irs::ConsolidationPolicy consolidation_policy;
+  size_t refresh_interval_msec{};
+  size_t compaction_interval_msec{};
+  irs::CompactionPolicy compaction_policy;
   uint32_t version{};
   size_t writebuffer_active{};
   size_t writebuffer_idle{};
@@ -180,9 +180,9 @@ class InvertedIndexShard final
     return _writer->GetBatch();
   }
 
-  ResultWithTime ConsolidateUnsafe(
-    const irs::ConsolidationPolicy& policy,
-    const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation);
+  ResultWithTime CompactUnsafe(const irs::CompactionPolicy& policy,
+                               const irs::MergeWriter::FlushProgress& progress,
+                               bool& empty_compaction);
 
   ResultWithTime CommitUnsafe(bool wait,
                               const irs::ProgressReportCallback& progress,
@@ -191,7 +191,7 @@ class InvertedIndexShard final
   ResultWithTime CleanupUnsafe();
   Stats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
-  void ScheduleConsolidation(absl::Duration delay);
+  void ScheduleCompaction(absl::Duration delay);
   void ScheduleCommit(absl::Duration delay);
 
   yaclib::Future<> CommitWait();
@@ -224,7 +224,7 @@ class InvertedIndexShard final
 
   void StartTasks() {
     ScheduleCommit({});
-    ScheduleConsolidation({});
+    ScheduleCompaction({});
   }
 
   void FinishCreation();
@@ -251,9 +251,9 @@ class InvertedIndexShard final
   int64_t GetIcebergSnapshotId() const noexcept { return _iceberg_snapshot_id; }
 
  private:
-  Result ConsolidateUnsafeImpl(const irs::ConsolidationPolicy& policy,
-                               const irs::MergeWriter::FlushProgress& progress,
-                               bool& empty_consolidation);
+  Result CompactUnsafeImpl(const irs::CompactionPolicy& policy,
+                           const irs::MergeWriter::FlushProgress& progress,
+                           bool& empty_compaction);
   Result CommitUnsafeImpl(bool wait,
                           const irs::ProgressReportCallback& progress,
                           CommitResult& code);
@@ -279,14 +279,14 @@ class InvertedIndexShard final
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};
-  irs::IResourceManager* _consolidations_memory{&irs::IResourceManager::gNoop};
+  irs::IResourceManager* _compactions_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _file_descriptors_count{&irs::IResourceManager::gNoop};
 
   // Stats
   metrics::Gauge<uint64_t>* _mapped_memory{nullptr};
   metrics::Gauge<uint64_t>* _num_failed_commits{nullptr};
   metrics::Gauge<uint64_t>* _num_failed_cleanups{nullptr};
-  metrics::Gauge<uint64_t>* _num_failed_consolidations{nullptr};
+  metrics::Gauge<uint64_t>* _num_failed_compactions{nullptr};
 
   std::atomic_uint64_t _commit_time_num{0};
   metrics::Gauge<uint64_t>* _avg_commit_time_ms{nullptr};
@@ -294,8 +294,8 @@ class InvertedIndexShard final
   std::atomic_uint64_t _cleanup_time_num{0};
   metrics::Gauge<uint64_t>* _avg_cleanup_time_ms{nullptr};
 
-  std::atomic_uint64_t _consolidation_time_num{0};
-  metrics::Gauge<uint64_t>* _avg_consolidation_time_ms{nullptr};
+  std::atomic_uint64_t _compaction_time_num{0};
+  metrics::Gauge<uint64_t>* _avg_compaction_time_ms{nullptr};
   metrics::Guard<Stats>* _metric_stats{nullptr};
 
   enum class Error : uint8_t {

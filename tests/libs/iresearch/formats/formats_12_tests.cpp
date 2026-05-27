@@ -70,7 +70,7 @@ TEST_P(Format12TestCase, open_10_with_12) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
 
@@ -130,7 +130,7 @@ TEST_P(Format12TestCase, formats_12) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
 
@@ -144,7 +144,7 @@ TEST_P(Format12TestCase, formats_12) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
 

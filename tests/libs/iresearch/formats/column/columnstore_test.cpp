@@ -888,7 +888,7 @@ TEST_F(IRSColumnstoreTest, WriterRollbackLeavesOrphanFile) {
     w.Rollback();
   }
   // Post-Rollback: orphan file is left on disk. The IndexWriter-driven
-  // path (see index_tests `clear_writer` / `consolidate_*`) tracks the
+  // path (see index_tests `clear_writer` / `compact_*`) tracks the
   // file via `dir.attributes().refs()` and DirectoryCleaner::clean()
   // reaps it on a later pass; in this isolated columnstore-only test
   // we only assert that Rollback itself does not remove the file.

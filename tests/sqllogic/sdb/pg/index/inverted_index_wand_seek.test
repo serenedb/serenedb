@@ -30,7 +30,7 @@ CREATE INDEX wand_seek_idx ON wand_seek USING inverted(id, body en_wand_seek)
   WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 statement ok
-VACUUM (UPDATE_INDEXES) wand_seek;
+VACUUM (REFRESH_TABLE) wand_seek;
 
 query I
 SELECT count(*) FROM wand_seek_idx

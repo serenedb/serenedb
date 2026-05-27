@@ -23,7 +23,7 @@ INSERT INTO t VALUES (1, 'foo');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) t;
+VACUUM (REFRESH_TABLE) t;
 
 connection reader
 statement ok
@@ -50,7 +50,7 @@ INSERT INTO t VALUES (2, 'foo');
 
 connection writer
 statement ok
-VACUUM (UPDATE_INDEXES) t;
+VACUUM (REFRESH_TABLE) t;
 
 
 # Same query in the reader's transaction must return the pinned result.
@@ -92,7 +92,7 @@ INSERT INTO t VALUES (3, 'foo');
 
 connection writer
 statement ok
-VACUUM (UPDATE_INDEXES) t;
+VACUUM (REFRESH_TABLE) t;
 
 
 connection reader_rc

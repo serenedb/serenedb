@@ -44,7 +44,7 @@ statement ok
 CREATE INDEX ni2_main_idx ON ni2_main USING inverted(id, body ni2_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) ni2_main;
+VACUUM (REFRESH_TABLE) ni2_main;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';
@@ -94,7 +94,7 @@ SELECT 1;
 
 connection ni2_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) ni2_main;
+VACUUM (REFRESH_TABLE) ni2_main;
 
 # Inverted index counts only the indexed table.
 connection ni2_after

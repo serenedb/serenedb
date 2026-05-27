@@ -25,73 +25,15 @@
 
 namespace sdb::pg {
 
-ProgressReporterBase::ProgressReporterBase(ObjectId relid,
-                                           ProgressCommand command_type,
-                                           ObjectId datid)
+ProgressReporter::ProgressReporter(ObjectId datid, ObjectId relid,
+                                   ProgressCommand command)
   : _tracker{ProgressTracker::Instance()},
     _id{_tracker.StartCommand({.pid = gettid(),
                                .datid = datid,
                                .relid = relid,
-                               .command_type = command_type})},
+                               .command_type = command})},
     _params{_tracker.GetParams(_id)} {}
 
-ProgressReporterBase::~ProgressReporterBase() { _tracker.EndCommand(_id); }
-
-CopyProgressReporter::CopyProgressReporter(ObjectId datid, ObjectId relid,
-                                           copy_progress::Command command,
-                                           copy_progress::Type type)
-  : ProgressReporterBase{relid, ProgressCommand::Copy, datid} {
-  _params[copy_progress::kCommand].store(std::to_underlying(command),
-                                         std::memory_order_relaxed);
-  _params[copy_progress::kType].store(std::to_underlying(type),
-                                      std::memory_order_relaxed);
-}
-
-void CopyProgressReporter::ReportBatch(uint64_t delta_rows,
-                                       uint64_t delta_bytes,
-                                       uint64_t delta_excluded) {
-  _params[copy_progress::kTuplesProcessed].fetch_add(delta_rows,
-                                                     std::memory_order_relaxed);
-  _params[copy_progress::kBytesProcessed].fetch_add(delta_bytes,
-                                                    std::memory_order_relaxed);
-  _params[copy_progress::kTuplesExcluded].fetch_add(delta_excluded,
-                                                    std::memory_order_relaxed);
-}
-
-void CopyProgressReporter::SetBytesTotal(int64_t bytes) {
-  _params[copy_progress::kBytesTotal].store(bytes, std::memory_order_relaxed);
-}
-
-IndexProgressReporter::IndexProgressReporter(
-  ObjectId datid, ObjectId relid, create_index_progress::Command command,
-  create_index_progress::Phase phase, ObjectId index_relid)
-  : ProgressReporterBase{relid, ProgressCommand::CreateIndex, datid} {
-  _params[create_index_progress::kCommand].store(std::to_underlying(command),
-                                                 std::memory_order_relaxed);
-  _params[create_index_progress::kPhase].store(std::to_underlying(phase),
-                                               std::memory_order_relaxed);
-  _params[create_index_progress::kIndexRelid].store(index_relid.id(),
-                                                    std::memory_order_relaxed);
-}
-
-void IndexProgressReporter::SetPhase(create_index_progress::Phase phase) {
-  _params[create_index_progress::kPhase].store(std::to_underlying(phase),
-                                               std::memory_order_relaxed);
-}
-
-void IndexProgressReporter::SetTuplesTotal(uint64_t rows) {
-  _params[create_index_progress::kTuplesTotal].store(rows,
-                                                     std::memory_order_relaxed);
-}
-
-void IndexProgressReporter::ReportBatch(uint64_t delta_rows) {
-  _params[create_index_progress::kTuplesDone].fetch_add(
-    delta_rows, std::memory_order_relaxed);
-}
-
-void IndexProgressReporter::SetIndexRelid(ObjectId index_relid) {
-  _params[create_index_progress::kIndexRelid].store(index_relid.id(),
-                                                    std::memory_order_relaxed);
-}
+ProgressReporter::~ProgressReporter() { _tracker.EndCommand(_id); }
 
 }  // namespace sdb::pg

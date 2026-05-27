@@ -26,10 +26,14 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
+#include "search/search_table_shard.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
 namespace {
@@ -111,6 +115,19 @@ void VacuumExecute(duckdb::ClientContext& context,
           auto& inverted = basics::downCast<search::InvertedIndexShard>(*shard);
           std::ignore = std::move(inverted.CommitWait()).Get().Ok();
         }
+      }
+    }
+    // Commit search-backed table shards (M4 PR 4.1): SearchTableShard
+    // has no background commit thread yet, so VACUUM is currently the
+    // only way to flush a kSearch shard's pending iresearch trxs into
+    // a segment visible to subsequent scans.
+    for (const auto& table : tables) {
+      auto table_shard = snapshot->GetTableShard(table->GetId());
+      if (table_shard &&
+          table_shard->GetStorage() == catalog::StorageKind::kSearch) {
+        auto& search_shard =
+          basics::downCast<search::SearchTableShard>(*table_shard);
+        search_shard.Commit();
       }
     }
   }

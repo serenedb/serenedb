@@ -215,6 +215,10 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
   state->table_shard =
     conn_ctx.EnsureCatalogSnapshot()->GetTableShard(state->table_id);
   SDB_ASSERT(state->table_shard);
+  // Re-added in M4 PR 4.1: the SCAN guard in GetScanFunction no longer
+  // catches DML on kSearch shards (it now dispatches SELECT to the
+  // search scan). UPDATE / DELETE / TRUNCATE land in M6.
+  RejectIfSearchTable(*state->table_shard, "UPDATE");
   state->table_lock = std::shared_lock{state->table_shard->GetTableLock()};
 
   const auto& columns = _table->Columns();

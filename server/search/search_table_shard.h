@@ -64,6 +64,46 @@ class SearchTableShard final : public TableShard {
   static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
                                        ObjectId table_id);
 
+  // Returns a fresh iresearch IndexWriter::Transaction tied to this shard's
+  // writer. Used by SereneDBSearchInsert (M3) to stash one trx per shard
+  // in query::Transaction::_search_transactions; the per-sdb-txn lifetime
+  // is then managed by Transaction::Commit/Rollback exactly like
+  // InvertedIndexShard's own search trxs.
+  irs::IndexWriter::Transaction GetTransaction() noexcept {
+    SDB_ASSERT(_writer);
+    return _writer->GetBatch();
+  }
+
+  // Captures the writer's current segment state as a DirectoryReader.
+  // Used by SereneDBSearchScan (M4) -- the result is pinned per-sdb-txn
+  // in query::Transaction::EnsureSearchTableReader so every scan inside
+  // the same transaction sees the same committed view (mirrors the
+  // per-txn pinning InvertedIndexShard's GetInvertedIndexSnapshot
+  // provides for inverted-index scans).
+  //
+  // NOTE: returns a snapshot over whatever segments the writer has
+  // already produced; iresearch trxs committed via _trx.Commit() but
+  // not yet flushed into a segment are invisible. To force the flush,
+  // run VACUUM on the table (or the schema) -- the update_indexes
+  // path in duckdb_vacuum_function.cpp calls Commit() below.
+  irs::DirectoryReader GetDirectoryReader() noexcept {
+    SDB_ASSERT(_writer);
+    return _writer->GetSnapshot();
+  }
+
+  // Forces an iresearch IndexWriter::Commit so any trxs committed up to
+  // this moment land in a real segment visible to GetDirectoryReader.
+  // VACUUM <table> / VACUUM (UPDATE_INDEXES) <table> hooks here -- the
+  // search-backed table counterpart of InvertedIndexShard::CommitWait.
+  // Once SearchTableShard grows a background commit thread (parity with
+  // InvertedIndexShard's TasksSettings), explicit VACUUM becomes
+  // optional; until then it's the only way to make in-flight inserts
+  // visible to subsequent scans.
+  void Commit() {
+    SDB_ASSERT(_writer);
+    _writer->Commit();
+  }
+
  private:
   void OpenWriter();
 

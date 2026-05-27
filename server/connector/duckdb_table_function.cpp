@@ -44,6 +44,7 @@
 #include "connector/duckdb_search_ann_scan.h"
 #include "connector/duckdb_search_count_scan.hpp"
 #include "connector/duckdb_search_full_scan.hpp"
+#include "connector/duckdb_search_table_scan.hpp"
 #include "connector/duckdb_sk_full_scan.hpp"
 #include "connector/duckdb_sk_point_lookup.hpp"
 #include "connector/duckdb_sk_range_scan.hpp"
@@ -750,6 +751,15 @@ duckdb::TableFunction CreateTableFullscanFunction() {
   };
   SetCommonCallbacks(func);
   func.pushdown_complex_filter = &FullTablePushdownComplexFilter;
+  return func;
+}
+
+duckdb::TableFunction CreateSearchTableScanFunction() {
+  duckdb::TableFunction func{
+    "search_table_fullscan",   {}, SearchTableScanFunction, SereneDBScanBind,
+    SearchTableScanInitGlobal,
+  };
+  SetCommonCallbacks(func);
   return func;
 }
 

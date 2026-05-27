@@ -73,71 +73,103 @@ CREATE TABLE storage_err2 (a INTEGER PRIMARY KEY)
 db error: ERROR: WITH option "storage" expects a string literal
 
 
-## PR 2.3 -- planner-side stubs. Until M3-M6 deliver parallel operators,
-## every DML / SCAN / CREATE INDEX on a kSearch table must fail loudly with
-## a friendly NOT_IMPLEMENTED message at the operator-construction site.
-## RocksDB-backed tables still work normally; we don't assert that here
-## because every other test in the suite already exercises that path.
+## DML reachability matrix. M3 lifted INSERT (PR 3.4); M4 lifts SELECT
+## (PR 4.1, committed-reads only -- R-y-o-w overlay deferred). UPDATE /
+## DELETE / TRUNCATE land in M6. CREATE INDEX has no scheduled milestone.
 
 statement ok
 CREATE TABLE search_dml (a INTEGER PRIMARY KEY, b TEXT)
   WITH (storage = 'search');
 
+statement ok
+INSERT INTO search_dml VALUES (1, 'x'), (2, 'y'), (3, 'z');
 
-statement error
-INSERT INTO search_dml VALUES (1, 'x');
+# SearchTableShard has no background commit thread yet (parity with
+# InvertedIndexShard's TasksSettings is deferred), so VACUUM forces the
+# iresearch writer to flush pending trxs into a segment that a fresh
+# DirectoryReader can see. Without it, the SELECT below would snapshot
+# the writer's pre-INSERT state. Plain `VACUUM t` routes through
+# DuckDB's PhysicalVacuum (rejects non-DuckDB tables) -- the
+# (UPDATE_INDEXES) option is what serenedb's pragma hook listens for.
+statement ok
+VACUUM (UPDATE_INDEXES) search_dml;
+
+# SELECT round-trips via the search scan: iresearch DirectoryReader pinned
+# in the txn, ColumnstoreMaterializer materialises each segment's slice.
+query
+SELECT * FROM search_dml ORDER BY a;
 ----
-db error: ERROR: INSERT on a search-backed table is not yet supported (M3-M6)
+a	b
+1	x
+2	y
+3	z
 
 
-statement error
-SELECT * FROM search_dml;
-----
-db error: ERROR: SELECT on a search-backed table is not yet supported (M3-M6)
-
-
-# UPDATE / DELETE / TRUNCATE / CREATE INDEX all resolve the target through
-# GetScanFunction during bind (TRUNCATE and CREATE INDEX go through table
-# functions / scan-on-target respectively), so the SCAN guard fires first
-# and the user sees the SELECT message. We don't add operator-specific
-# guards for those paths since the SCAN guard catches them all -- the four
-# guards we *do* keep (SCAN, INSERT-VALUES, SST, CTAS) cover every plan-
-# time path that can reach a search shard.
+# UPDATE / DELETE / TRUNCATE / CREATE INDEX have their own operator-side
+# guards re-added now that the SCAN guard no longer catches them. The
+# user sees the operation-specific message (not "SELECT") at the
+# operator-construction site.
 statement error
 UPDATE search_dml SET b = 'y' WHERE a = 1;
 ----
-db error: ERROR: SELECT on a search-backed table is not yet supported (M3-M6)
+db error: ERROR: UPDATE on a search-backed table is not yet supported (M3-M6)
 
 
 statement error
 DELETE FROM search_dml WHERE a = 1;
 ----
-db error: ERROR: SELECT on a search-backed table is not yet supported (M3-M6)
+db error: ERROR: DELETE on a search-backed table is not yet supported (M3-M6)
 
 
 statement error
 TRUNCATE search_dml;
 ----
-db error: ERROR: SELECT on a search-backed table is not yet supported (M3-M6)
+db error: ERROR: TRUNCATE on a search-backed table is not yet supported (M3-M6)
 
 
 # All access methods rejected (including USING inverted -- iresearch on
-# top of iresearch makes no sense). CREATE INDEX binds the target table
-# via a scan, so the SCAN guard fires first.
+# top of iresearch makes no sense).
 statement error
 CREATE INDEX search_dml_idx ON search_dml (b);
 ----
-db error: ERROR: SELECT on a search-backed table is not yet supported (M3-M6)
+db error: ERROR: CREATE INDEX on a search-backed table is not yet supported (M3-M6)
 
 
 statement error
 CREATE INDEX search_dml_inv_idx ON search_dml USING inverted (b);
 ----
-db error: ERROR: SELECT on a search-backed table is not yet supported (M3-M6)
+db error: ERROR: CREATE INDEX on a search-backed table is not yet supported (M3-M6)
 
 
 statement ok
 DROP TABLE search_dml;
+
+
+## Generated-PK search table -- INSERT path reserves the sequence range
+## at Sink time and recovers per-row PKs via a cursor walk at Finalize
+## (LocalTableChangesEntry::reserved_pk_ranges). Memory: O(num_sink_calls),
+## not O(num_rows). The user-visible row identity comes from the row
+## contents -- we just observe that INSERT round-trips through the search
+## scan.
+statement ok
+CREATE TABLE search_genpk (a INTEGER, b TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO search_genpk VALUES (10, 'p'), (20, 'q'), (30, 'r');
+
+statement ok
+VACUUM (UPDATE_INDEXES) search_genpk;
+
+query
+SELECT * FROM search_genpk ORDER BY a;
+----
+a	b
+10	p
+20	q
+30	r
+
+statement ok
+DROP TABLE search_genpk;
 
 
 # CREATE TABLE AS SELECT into a search-backed table: rejected before the

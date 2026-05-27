@@ -53,11 +53,29 @@ namespace sdb::query {
 // PR 3.1 scope: struct + per-transaction map only. Population by the
 // SereneDBSearchInsert operator and consumption by the scan / commit lands
 // in 3.4 / M4.
+// Per-Sink-call sequence range for tables without an explicit PRIMARY KEY.
+// SereneDBSearchInsert reserves contiguous PKs at Sink time
+// (`generated_pk_seq->ReserveWriteUnsafe(num_rows)`); a contiguous range
+// is small (one pair) so we carry the list of ranges instead of per-row
+// PK values. At Finalize the per-row PK is recovered via a cursor that
+// walks ranges in append order -- ranges and buffer rows are in 1:1
+// arrival correspondence even when CDC consolidates Sink chunks.
+struct ReservedPkRange {
+  uint64_t base;
+  duckdb::idx_t count;
+};
+
 struct LocalTableChangesEntry {
   // Lazily constructed on first append (the operator needs LogicalTypes
   // and an Allocator that aren't available at Transaction-construction
   // time). nullptr until the first INSERT chunk arrives.
   std::unique_ptr<duckdb::ColumnDataCollection> inserts;
+
+  // Generated-PK reservations -- one entry per Sink call (in arrival order).
+  // Sum of counts equals inserts->Count(). Empty for tables with an
+  // explicit PRIMARY KEY -- the PK is in `inserts` directly and
+  // MakeColumnKey reads it from chunk columns.
+  std::vector<ReservedPkRange> reserved_pk_ranges;
 
   // Affected-row identifiers for in-flight UPDATE/DELETE (M6). Empty in
   // 3.1 -- carried here now to match DuckLake's struct shape and avoid

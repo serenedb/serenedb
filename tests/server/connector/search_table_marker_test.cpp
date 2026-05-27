@@ -18,8 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/search_table_marker.h"
-
 #include <absl/base/internal/endian.h>
 #include <gtest/gtest.h>
 
@@ -37,6 +35,7 @@
 
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
+#include "connector/search_table_marker.h"
 #include "rocksdb_engine_catalog/wal_log_data_magics.h"
 
 namespace sdb::connector::search_table_marker {
@@ -65,7 +64,8 @@ void FillTwoColChunk(duckdb::DataChunk& chunk, duckdb::Allocator& alloc,
 
 std::unique_ptr<duckdb::ColumnDataCollection> MakeTwoColCdc(
   duckdb::Allocator& alloc, duckdb::idx_t num_rows) {
-  auto cdc = std::make_unique<duckdb::ColumnDataCollection>(alloc, TwoColTypes());
+  auto cdc =
+    std::make_unique<duckdb::ColumnDataCollection>(alloc, TwoColTypes());
   duckdb::DataChunk chunk;
   FillTwoColChunk(chunk, alloc, num_rows);
   cdc->Append(chunk);

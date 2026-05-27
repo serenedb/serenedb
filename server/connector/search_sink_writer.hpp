@@ -124,6 +124,13 @@ inline IsTextIndexedProvider AllTextIndexed() {
   return [](irs::field_id) { return true; };
 }
 
+// Default for SearchTableSinkWriter: no column is text-indexed (search
+// tables have no InvertedIndex in the initial cut -- M2 PR 2.3 rejects
+// CREATE INDEX). Flipped per-column when that feature lands.
+inline IsTextIndexedProvider NeverTextIndexed() {
+  return [](irs::field_id) { return false; };
+}
+
 // Per-entry HNSW config (columns and expressions share the field_id namespace).
 using HNSWInfoProvider =
   std::function<std::optional<irs::HNSWInfo>(irs::field_id)>;

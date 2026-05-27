@@ -402,6 +402,12 @@ inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
 
 duckdb::TableFunction CreateTableFullscanFunction();
 
+// Full-table scan for search-backed tables (StorageKind::kSearch).
+// Selected by SereneDBTableEntry::GetScanFunction when the target
+// shard is a SearchTableShard; iresearch columnstore -> DuckDB
+// DataChunk via ColumnstoreMaterializer::Scan.
+duckdb::TableFunction CreateSearchTableScanFunction();
+
 duckdb::TableFunction CreatePKPointsLookupFunction();
 
 duckdb::TableFunction CreatePKRangesScanFunction();

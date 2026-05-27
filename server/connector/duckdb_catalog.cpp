@@ -61,6 +61,7 @@
 #include "connector/duckdb_physical_ctas.h"
 #include "connector/duckdb_physical_delete.h"
 #include "connector/duckdb_physical_insert.h"
+#include "connector/duckdb_physical_search_insert.h"
 #include "connector/duckdb_physical_sst_insert.h"
 #include "connector/duckdb_physical_truncate.h"
 #include "connector/duckdb_physical_update.h"
@@ -610,6 +611,26 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
     plan = &ResolveDefaultsWithGenerated(planner, op, *plan);
   }
 
+  // Search-table dispatch: bypass the SST / regular RocksDB paths entirely.
+  // No SST fast path -- per design D18, bulk inserts route through the
+  // regular search-insert operator until a dedicated bulk path is needed.
+  // No on-conflict handling -- M3 minimal scope rejects ON CONFLICT
+  // implicitly by ignoring the action; M6 wires it in.
+  {
+    auto& conn_ctx = GetSereneDBContext(context);
+    auto shard =
+      conn_ctx.EnsureCatalogSnapshot()->GetTableShard(sdb_table->GetId());
+    SDB_ASSERT(shard);
+    if (shard->GetStorage() == catalog::StorageKind::kSearch) {
+      auto& insert = planner.Make<SereneDBSearchInsert>(
+        std::move(sdb_table), std::move(op.types), op.estimated_cardinality);
+      if (plan) {
+        insert.children.push_back(*plan);
+      }
+      return insert;
+    }
+  }
+
   // Resolve on-conflict action: when no explicit ON CONFLICT clause was given
   // (action is THROW by default), override with the session-level
   // sdb_write_conflict_policy setting.
@@ -960,6 +981,21 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::CatalogEntry& target,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  // Reject CREATE INDEX targeting a search-backed table at bind time --
+  // SchemaEntry::CreateIndex (where the M2-era guard lived) isn't reached
+  // for the plan-bound CREATE INDEX path. View-backed indexes go through
+  // their own snapshot resolution below.
+  if (target.type != duckdb::CatalogType::VIEW_ENTRY) {
+    auto& table_entry =
+      RequireBaseTable(target.Cast<duckdb::TableCatalogEntry>());
+    auto sdb_table = table_entry.GetSereneDBTable();
+    auto& conn_ctx = GetSereneDBContext(binder.context);
+    auto target_shard =
+      conn_ctx.EnsureCatalogSnapshot()->GetTableShard(sdb_table->GetId());
+    SDB_ASSERT(target_shard);
+    RejectIfSearchTable(*target_shard, "CREATE INDEX");
+  }
+
   // View-backed indexes are STATIC -- captured at CREATE INDEX, no DML refresh.
   duckdb::optional_ptr<duckdb::TableCatalogEntry> resolved_table;
   bool view_backed = false;

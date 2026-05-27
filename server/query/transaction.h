@@ -112,6 +112,44 @@ class Transaction : public Config {
     _search_transactions.erase(shard_id);
   }
 
+  // Single helper for ensuring an iresearch trx exists for any shard type
+  // (InvertedIndexShard or SearchTableShard). ObjectIds are catalog-wide
+  // unique via NextId(), so one trx-per-shard_id map serves both without
+  // collision. `make_trx` is invoked only on first call for a given
+  // shard_id; for either shard type pass [&]{ return shard.GetTransaction(); }.
+  // Lifetime of the returned trx is owned by the sdb txn (Commit/Rollback
+  // drains the map).
+  template<typename Factory>
+  irs::IndexWriter::Transaction& EnsureSearchTransaction(ObjectId shard_id,
+                                                         Factory&& make_trx) {
+    auto [it, inserted] = _search_transactions.try_emplace(shard_id, nullptr);
+    if (inserted) {
+      it->second = std::make_unique<irs::IndexWriter::Transaction>(make_trx());
+    }
+    return *it->second;
+  }
+
+  // Pins a SearchTableShard's DirectoryReader for the lifetime of this
+  // sdb txn so every scan in the same transaction sees the same view
+  // (committed state at the moment of the first scan). Mirrors
+  // EnsureSearchSnapshot for inverted-index reads but on a separate map
+  // -- the reader type is different (no rocksdb snapshot pair, no
+  // segment-mask coordination) and recycling the existing map would
+  // bloat its value type. `make_reader` is invoked only on first call
+  // for a given shard_id; subsequent calls return the same reader.
+  template<typename Factory>
+  std::shared_ptr<irs::DirectoryReader> EnsureSearchTableReader(
+    ObjectId shard_id, Factory&& make_reader) {
+    auto it = _search_table_readers.find(shard_id);
+    if (it == _search_table_readers.end()) {
+      it = _search_table_readers
+             .emplace(shard_id,
+                      std::make_shared<irs::DirectoryReader>(make_reader()))
+             .first;
+    }
+    return it->second;
+  }
+
   // Per-search-table in-flight INSERT/UPDATE buffer (see
   // local_table_changes.h). Lazily populated by SereneDBSearchInsert; read
   // back by the scan overlay and the commit-time sink/marker drain.
@@ -181,6 +219,11 @@ class Transaction : public Config {
     _search_transactions;
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
+  // Per-(sdb txn, SearchTableShard) DirectoryReader cache. shared_ptr so
+  // multiple scans inside one txn alias the same reader without a fresh
+  // _writer->GetSnapshot() per scan.
+  containers::FlatHashMap<ObjectId, std::shared_ptr<irs::DirectoryReader>>
+    _search_table_readers;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
   LocalTableChanges _local_table_changes;
   uint64_t _num_log_data_markers = 0;

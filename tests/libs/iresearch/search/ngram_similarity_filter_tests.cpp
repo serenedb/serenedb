@@ -1547,12 +1547,23 @@ TEST_P(NGramSimilarityFilterTestCase, parallel_prepare_parity) {
       R"([{ "field": [ "1", "2", "3", "4"] },
           { "field": [ "5", "6", "7", "8"] }])",
       &tests::GenericJsonFieldFactory);
+    tests::JsonDocGenerator gen_c(
+      R"([{ "field": [ "1", "3", "4", "5", "6", "7", "2"] },
+          { "field": [ "1", "2", "3", "4"] },
+          { "field": [ "2", "9", "9", "9", "1"] }])",
+      &tests::GenericJsonFieldFactory);
+    tests::JsonDocGenerator gen_d(
+      R"([{ "field": [ "1", "2", "3", "4"] },
+          { "field": [ "5", "6", "7", "8"] }])",
+      &tests::GenericJsonFieldFactory);
     add_segment(*writer, gen_a);
     add_segment(*writer, gen_b);
+    add_segment(*writer, gen_c);
+    add_segment(*writer, gen_d);
   }
 
   auto rdr = open_reader();
-  ASSERT_GE(rdr.size(), 2u);
+  ASSERT_GE(rdr.size(), 4u);
 
   auto with_boost = [](irs::ByNGramSimilarity q, irs::score_t b) {
     q.boost(b);

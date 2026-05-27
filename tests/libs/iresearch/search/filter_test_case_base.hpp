@@ -685,11 +685,17 @@ const irs::Filter& AsFilterRef(const std::unique_ptr<T>& p) noexcept {
 // and can therefore only be prepared once per instance (e.g. GeoFilter moves
 // its shape into the produced buffer, and such filters are also non-movable so
 // a fresh instance must be heap-allocated per preparation).
+// Splits the reader's segments round-robin across `num_buffers` independent
+// buffers, merges them all into the first, compiles, and asserts parity with
+// the sequential `prepare` path. `num_buffers` larger than the segment count
+// also exercises the empty-buffer merge edge.
 template<typename MakeFilter>
   requires std::is_invocable_v<MakeFilter>
-void RunParallelPrepareParity(MakeFilter&& make_filter,
-                              const irs::IndexReader& rdr,
-                              const irs::Scorer* scorer = nullptr) {
+void RunParallelPrepareParityN(MakeFilter&& make_filter, size_t num_buffers,
+                               const irs::IndexReader& rdr,
+                               const irs::Scorer* scorer = nullptr) {
+  ASSERT_GE(num_buffers, 1u);
+
   std::vector<const irs::SubReader*> segments;
   segments.reserve(rdr.size());
   for (const auto& s : rdr) {
@@ -704,22 +710,37 @@ void RunParallelPrepareParity(MakeFilter&& make_filter,
   auto seq = AsFilterRef(f_seq).prepare(ctx);
   ASSERT_NE(nullptr, seq);
 
-  decltype(auto) f_lhs = make_filter();
-  decltype(auto) f_rhs = make_filter();
-  auto buf_lhs = AsFilterRef(f_lhs).CreateBuffer(ctx);
-  auto buf_rhs = AsFilterRef(f_rhs).CreateBuffer(ctx);
-  ASSERT_NE(nullptr, buf_lhs);
-  ASSERT_NE(nullptr, buf_rhs);
+  std::vector<std::unique_ptr<irs::Filter::PrepareBuffer>> bufs;
+  bufs.reserve(num_buffers);
+  for (size_t b = 0; b < num_buffers; ++b) {
+    decltype(auto) f = make_filter();
+    auto buf = AsFilterRef(f).CreateBuffer(ctx);
+    ASSERT_NE(nullptr, buf);
+    bufs.push_back(std::move(buf));
+  }
 
   for (size_t i = 0; i < segments.size(); ++i) {
-    auto& buf = (i & 1u) ? *buf_rhs : *buf_lhs;
-    buf.PrepareSegment(*segments[i]);
+    bufs[i % num_buffers]->PrepareSegment(*segments[i]);
   }
-  buf_lhs->Merge(std::move(*buf_rhs));
-  auto par = std::move(*buf_lhs).Compile(ctx);
+  for (size_t b = 1; b < num_buffers; ++b) {
+    bufs[0]->Merge(std::move(*bufs[b]));
+  }
+  auto par = std::move(*bufs[0]).Compile(ctx);
   ASSERT_NE(nullptr, par);
 
   AssertPreparedParity(*seq, *par, segments, scorer);
+}
+
+// Sweeps a few buffer counts so each call site exercises a genuine multi-way
+// merge (n=3) as well as the empty-buffer edge (n>segment count).
+template<typename MakeFilter>
+  requires std::is_invocable_v<MakeFilter>
+void RunParallelPrepareParity(MakeFilter&& make_filter,
+                              const irs::IndexReader& rdr,
+                              const irs::Scorer* scorer = nullptr) {
+  for (const size_t num_buffers : {2u, 3u, 5u}) {
+    RunParallelPrepareParityN(make_filter, num_buffers, rdr, scorer);
+  }
 }
 
 inline void RunParallelPrepareParity(const irs::Filter& filter,

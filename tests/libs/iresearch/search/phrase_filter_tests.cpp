@@ -7305,12 +7305,18 @@ TEST_P(PhraseFilterTestCase, parallel_prepare_parity) {
                                   &tests::AnalyzedJsonFieldFactory);
     tests::JsonDocGenerator gen_b(resource("phrase_sequential.json"),
                                   &tests::AnalyzedJsonFieldFactory);
+    tests::JsonDocGenerator gen_c(resource("phrase_sequential.json"),
+                                  &tests::AnalyzedJsonFieldFactory);
+    tests::JsonDocGenerator gen_d(resource("phrase_sequential.json"),
+                                  &tests::AnalyzedJsonFieldFactory);
     add_segment(*writer, gen_a);
     add_segment(*writer, gen_b);
+    add_segment(*writer, gen_c);
+    add_segment(*writer, gen_d);
   }
 
   auto rdr = open_reader();
-  ASSERT_GE(rdr.size(), 2u);
+  ASSERT_GE(rdr.size(), 4u);
 
   irs::TFIDF scorer;
   auto run = [&](const irs::ByPhrase& f) {

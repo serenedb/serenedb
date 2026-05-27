@@ -510,9 +510,13 @@ TEST_P(SamePositionFilterTestCase, parallel_prepare_parity) {
   add_segment(gen);
   gen.reset();
   add_segment(gen, irs::kOmAppend);
+  gen.reset();
+  add_segment(gen, irs::kOmAppend);
+  gen.reset();
+  add_segment(gen, irs::kOmAppend);
 
   auto rdr = open_reader();
-  ASSERT_GE(rdr.size(), 2u);
+  ASSERT_GE(rdr.size(), 4u);
 
   auto make = [](irs::score_t boost) {
     irs::BySamePosition q;

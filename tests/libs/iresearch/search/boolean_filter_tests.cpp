@@ -15510,11 +15510,17 @@ TEST_P(BooleanFilterTestCase, boolean_parallel_prepare_parity) {
                                   &tests::GenericJsonFieldFactory);
     tests::JsonDocGenerator gen_b(resource("simple_sequential.json"),
                                   &tests::GenericJsonFieldFactory);
+    tests::JsonDocGenerator gen_c(resource("simple_sequential.json"),
+                                  &tests::GenericJsonFieldFactory);
+    tests::JsonDocGenerator gen_d(resource("simple_sequential.json"),
+                                  &tests::GenericJsonFieldFactory);
     add_segment(*writer, gen_a);
     add_segment(*writer, gen_b);
+    add_segment(*writer, gen_c);
+    add_segment(*writer, gen_d);
   }
   auto rdr = open_reader();
-  ASSERT_GE(rdr.size(), 2u);
+  ASSERT_GE(rdr.size(), 4u);
 
   auto run = [&](const irs::Filter& f) {
     tests::RunParallelPrepareParity(f, rdr);

@@ -48,7 +48,7 @@ RESET sdb_faults;
 
 connection after_replay
 statement ok
-VACUUM (UPDATE_INDEXES) variant_replay;
+VACUUM (REFRESH_TABLE) variant_replay;
 
 
 connection after_replay

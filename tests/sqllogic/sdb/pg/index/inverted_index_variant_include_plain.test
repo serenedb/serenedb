@@ -36,7 +36,7 @@ INSERT INTO variant_inc_plain VALUES
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) variant_inc_plain;
+VACUUM (REFRESH_TABLE) variant_inc_plain;
 
 
 query

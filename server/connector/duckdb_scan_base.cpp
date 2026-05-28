@@ -160,15 +160,7 @@ void InitCommonState(CommonScanGlobalState& state,
             }
             if (bind_data.is_create_index) {
               state.finished = true;
-              break;
-            }
-            bool readable_via_inverted = false;
-            if (bind_data.IsInvertedIndexEntry() && bind_data.inverted_index) {
-              const auto* info =
-                bind_data.inverted_index->FindColumnInfo(catalog_col_id);
-              readable_via_inverted = info && info->store_values;
-            }
-            if (!readable_via_inverted) {
+            } else {
               THROW_SQL_ERROR(
                 ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                 ERR_MSG(

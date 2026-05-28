@@ -35,32 +35,32 @@ INSERT INTO variant_inc VALUES
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) variant_inc;
+VACUUM (REFRESH_TABLE) variant_inc;
 
 
 query
-SELECT id, payload FROM variant_inc_idx WHERE body @@ ts_phrase('alpha')
+SELECT id FROM variant_inc_idx WHERE body @@ ts_phrase('alpha')
 ORDER BY id;
 ----
-id	payload
-1	42
+id
+1
 
 
 query
-SELECT id, payload FROM variant_inc_idx WHERE body @@ ts_phrase('cat')
+SELECT id FROM variant_inc_idx WHERE body @@ ts_phrase('cat')
 ORDER BY id;
 ----
-id	payload
-1	42
-3	true
+id
+1
+3
 
 
 query
-SELECT id, payload FROM variant_inc_idx WHERE body @@ ts_phrase('delta')
+SELECT id FROM variant_inc_idx WHERE body @@ ts_phrase('delta')
 ORDER BY id;
 ----
-id	payload
-4	{"a":42}
+id
+4
 
 
 statement error

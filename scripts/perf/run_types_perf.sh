@@ -277,7 +277,6 @@ fi
 run_setup "attach_native_db" "${BUILD_THREADS}" "
 DETACH DATABASE IF EXISTS native_db;
 ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb, STORAGE_VERSION 'v1.5.0');
-SET variant_minimum_shredding_size = -1;
 SET search_path TO public, native_db.main;
 "
 

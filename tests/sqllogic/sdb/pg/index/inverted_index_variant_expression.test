@@ -1,0 +1,16 @@
+# Indexing a VARIANT column with an inverted index is rejected: the
+# indexed-column allow-list at server/catalog/index.cpp only accepts
+# scalar primitive types, and VARIANT is not one of them.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY variant_path_dict(template = 'keyword');
+
+statement ok
+CREATE TABLE variant_idx_bad(id INTEGER PRIMARY KEY, v VARIANT);
+
+TODO(mkornaukhov) support indexing variant
+statement error
+CREATE INDEX variant_idx_bad_idx ON variant_idx_bad
+  USING inverted(id, v variant_path_dict);
+----
+db error: ERROR: Failed to create index: Column 'v' has unsupported type VARIANT and can not be indexed

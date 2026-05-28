@@ -35,8 +35,6 @@
 namespace sdb::optimizer {
 namespace {
 
-// Returns true iff `type` is VARIANT or contains a VARIANT anywhere in its
-// nested structure (LIST/ARRAY element, STRUCT field, MAP key or value).
 bool NeedsClientCast(const duckdb::LogicalType& type) {
   switch (type.id()) {
     case duckdb::LogicalTypeId::VARIANT:

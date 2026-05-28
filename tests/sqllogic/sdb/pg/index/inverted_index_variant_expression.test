@@ -8,7 +8,7 @@ CREATE TEXT SEARCH DICTIONARY variant_path_dict(template = 'keyword');
 statement ok
 CREATE TABLE variant_idx_bad(id INTEGER PRIMARY KEY, v VARIANT);
 
-TODO(mkornaukhov) support indexing variant
+#TODO(mkornaukhov) support indexing variant
 statement error
 CREATE INDEX variant_idx_bad_idx ON variant_idx_bad
   USING inverted(id, v variant_path_dict);

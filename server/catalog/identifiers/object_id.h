@@ -44,8 +44,8 @@ inline constexpr ObjectId kRootUser{kMinSystem};
 
 // Database IDs
 inline constexpr ObjectId kInstance{kMinSystem.id() + 4};
-inline constexpr ObjectId kTombstoneDatabase{kMinSystem.id() + 1};
 inline constexpr ObjectId kSystemDB{kMinSystem.id() + 2};
+inline constexpr ObjectId kTombstoneDatabase{kMinSystem.id() + 1};
 
 // Schema IDs
 inline constexpr ObjectId kPgCatalogSchema{11};
@@ -54,6 +54,10 @@ inline constexpr ObjectId kPgInformationSchema{kMinSystem.id() + 3};
 // Type IDs
 inline constexpr ObjectId kVariant{kMinSystem.id() + 100};
 inline constexpr ObjectId kVariantArray{kMinSystem.id() + 101};
+
+// OpClasses
+inline constexpr ObjectId kPgOpclassHnsw{kMinSystem.id() + 200};
+inline constexpr ObjectId kPgOpclassIncluded{kMinSystem.id() + 201};
 
 }  // namespace id
 }  // namespace sdb

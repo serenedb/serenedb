@@ -148,7 +148,7 @@ index_scan_percentage	0.001	The index scan percentage sets a threshold for index
 initial_column_segment_size	2048	The initial memory (in bytes) reserved for the first transient column segment. Must be a power of two. Internally, we subtract the block header size (typically 8 bytes) for segments with or exceeding 1024 bytes. Subsequent segments double in size until reaching the block size.
 integer_datetimes	on	Shows whether datetimes are integer based.
 integer_division	off	Whether or not the / operator defaults to integer division, or to floating point division
-is_superuser	off	Shows whether the current session's user is a superuser.
+is_superuser	on	Shows whether the current session's user is a superuser.
 lambda_syntax	ENABLE_SINGLE_ARROW	Configures the use of the deprecated single arrow operator (->) for lambda functions.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization
 legacy_metrics_format	off	When enabled, profiling output uses the legacy flat format instead of the current grouped format
@@ -429,7 +429,7 @@ index_scan_percentage	0.001	The index scan percentage sets a threshold for index
 initial_column_segment_size	2048	The initial memory (in bytes) reserved for the first transient column segment. Must be a power of two. Internally, we subtract the block header size (typically 8 bytes) for segments with or exceeding 1024 bytes. Subsequent segments double in size until reaching the block size.
 integer_datetimes	on	Shows whether datetimes are integer based.
 integer_division	off	Whether or not the / operator defaults to integer division, or to floating point division
-is_superuser	off	Shows whether the current session's user is a superuser.
+is_superuser	on	Shows whether the current session's user is a superuser.
 lambda_syntax	ENABLE_SINGLE_ARROW	Configures the use of the deprecated single arrow operator (->) for lambda functions.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization
 legacy_metrics_format	off	When enabled, profiling output uses the legacy flat format instead of the current grouped format

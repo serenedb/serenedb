@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_schema_entry.h"
 
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/common/constants.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/constraints/check_constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
@@ -43,6 +45,7 @@
 #include <iostream>
 
 #include "app/app_server.h"
+#include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/function.h"
@@ -144,7 +147,31 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   auto result = snapshot->GetDuckDBEntryCache().EnsureEntry(
     lookup_info.GetCatalogType(), catalog, *this, GetDatabaseId(), name,
     lookup_info.GetEntryName(), *snapshot);
-  return result;
+  if (result || name != StaticStrings::kPgCatalogSchema) {
+    return result;
+  }
+
+  // Pg-compat fallback for `pg_catalog.<x>` that redirects to the system
+  // catalog.
+  switch (lookup_info.GetCatalogType()) {
+    case duckdb::CatalogType::MACRO_ENTRY:
+    case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+    case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
+    case duckdb::CatalogType::TABLE_FUNCTION_ENTRY:
+    case duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY:
+    case duckdb::CatalogType::TYPE_ENTRY: {
+      auto& sys = duckdb::Catalog::GetSystemCatalog(transaction.GetContext());
+      auto main_schema = sys.GetSchema(transaction, DEFAULT_SCHEMA,
+                                       duckdb::OnEntryNotFound::RETURN_NULL);
+      if (main_schema) {
+        return main_schema->LookupEntry(transaction, lookup_info);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return nullptr;
 }
 
 void SereneDBSchemaEntry::Scan(

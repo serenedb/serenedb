@@ -92,6 +92,11 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field) {
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
       duckdb::StringVector::AddStringOrBlob(vec, field.data.data(),
                                             field.data.size());
+  } else if constexpr (std::is_same_v<Field, Array<Aclitem>>) {
+    // ACL arrays (relacl/attacl/...) aren't populated; expose as NULL so
+    // `array_to_string(acl, ...)` propagates NULL the way postgres does for
+    // unprivileged objects.
+    duckdb::FlatVector::ValidityMutable(vec).SetInvalid(row);
   } else if constexpr (IsArray<Field>::value) {
     auto list_size = field.size();
     auto current_size = duckdb::ListVector::GetListSize(vec);
@@ -105,6 +110,8 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field) {
     }
     duckdb::ListVector::SetListSize(vec, current_size + list_size);
   } else if constexpr (std::is_same_v<Field, Empty>) {
+    duckdb::FlatVector::ValidityMutable(vec).SetInvalid(row);
+  } else if constexpr (std::is_same_v<Field, Aclitem>) {
     duckdb::FlatVector::ValidityMutable(vec).SetInvalid(row);
   } else {
     static_assert(false);
@@ -148,6 +155,8 @@ duckdb::LogicalType GetFieldType() {
     return duckdb::LogicalType::VARCHAR;
   } else if constexpr (std::is_same_v<Field, Empty>) {
     return duckdb::LogicalType::SQLNULL;
+  } else if constexpr (std::is_same_v<Field, Aclitem>) {
+    return ACLITEM();
   } else if constexpr (std::is_enum_v<Field>) {
     return GetFieldType<std::underlying_type_t<Field>>();
   } else if constexpr (IsArray<Field>::value) {

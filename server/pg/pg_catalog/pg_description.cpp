@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -18,38 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
-
-#include "pg/system_table.h"
+#include "pg/pg_catalog/pg_description.h"
 
 namespace sdb::pg {
 
-// https://www.postgresql.org/docs/18/catalog-pg-am.html
-// NOLINTBEGIN
-struct PgAm {
-  static constexpr uint64_t kId = 102;
-  static constexpr std::string_view kName = "pg_am";
-
-  enum class Amtype : char {
-    Table = 't',
-    Index = 'i',
-  };
-
-  enum Oids : uint32_t {
-    kInvertedOid = 5001,
-    kIresearchOid = 5002,
-    kRocksdbOid = 5003,
-    kSecondaryOid = 5004,
-  };
-
-  Oid oid;
-  Name amname;
-  Regproc amhandler;
-  Amtype amtype;
-};
-// NOLINTEND
-
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgAm>::GetTableData();
+catalog::MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
+  return {CreateColumns<PgDescription>(0), 0};
+}
 
 }  // namespace sdb::pg

@@ -17,16 +17,19 @@ ENV PATH=/usr/local/go/bin:${PATH}
 ADD https://apt.llvm.org/llvm-snapshot.gpg.key /etc/apt/trusted.gpg.d/llvm.asc
 ADD https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key /etc/apt/trusted.gpg.d/nodesource.asc
 ADD https://packages.microsoft.com/keys/microsoft.asc /etc/apt/trusted.gpg.d/microsoft.asc
+ADD https://www.postgresql.org/media/keys/ACCC4CF8.asc /etc/apt/trusted.gpg.d/pgdg.asc
 
 RUN \
   chmod 0644 /etc/apt/trusted.gpg.d/llvm.asc \
              /etc/apt/trusted.gpg.d/nodesource.asc \
-             /etc/apt/trusted.gpg.d/microsoft.asc && \
+             /etc/apt/trusted.gpg.d/microsoft.asc \
+             /etc/apt/trusted.gpg.d/pgdg.asc && \
   apt-get update && \
   apt-get install -y --no-install-recommends ca-certificates && \
   echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" > /etc/apt/sources.list.d/llvm-21.list && \
   echo "deb https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
   echo "deb https://packages.microsoft.com/ubuntu/24.04/prod noble main" > /etc/apt/sources.list.d/microsoft-prod.list && \
+  echo "deb https://apt.postgresql.org/pub/repos/apt noble-pgdg main" > /etc/apt/sources.list.d/pgdg.list && \
   apt-get update && \
   apt-get install -y --no-install-recommends \
       curl wget gnupg \
@@ -36,7 +39,7 @@ RUN \
       dh-make fakeroot \
       python3 python3-dev python3-pip perl \
       git gcc binutils coreutils bash \
-      postgresql-client \
+      postgresql-client-18 \
       systemd \
       nodejs \
       openjdk-21-jdk-headless maven \

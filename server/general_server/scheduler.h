@@ -142,7 +142,7 @@ class Scheduler {
     friend class Scheduler;
 #endif
 
-    std::string_view _name;
+    std::string _name;
     absl::AnyInvocable<void(bool)> _func;
     RequestLane _lane;
     std::atomic<Scheduler*> _scheduler;

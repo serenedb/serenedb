@@ -377,8 +377,8 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
 
       _connection_ctx->SetSetting("session_authorization",
                                   std::string{UserName()}, false);
-      _connection_ctx->SetSetting(
-        "is_superuser", _connection_ctx->isSuperuser() ? "on" : "off", false);
+      // serened has no RBAC yet -- every catalog role has rolsuper = true
+      _connection_ctx->SetSetting("is_superuser", "on", false);
 
       // Apply all user settings from startup packet
       for (const auto& user_setting : _client_parameters) {
@@ -976,7 +976,8 @@ void PgSQLCommTaskBase::BindQuery(std::string_view packet) {
   if (!statement) {
     auto statement_it = _statements.find(statement_name);
     if (statement_it == _statements.end()) {
-      return SendError("Invalid statement name",
+      return SendError(absl::StrCat("prepared statement \"", statement_name,
+                                    "\" does not exist"),
                        ERRCODE_INVALID_SQL_STATEMENT_NAME);
     }
     statement = &statement_it->second;

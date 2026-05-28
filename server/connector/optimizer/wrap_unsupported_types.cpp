@@ -60,9 +60,6 @@ bool NeedsClientCast(const duckdb::LogicalType& type) {
   }
 }
 
-// Builds a type that mirrors `type` with every nested VARIANT replaced by
-// JSON. The composite cast against this target lets DuckDB recurse into
-// nested types and apply VARIANT->JSON at every leaf.
 duckdb::LogicalType ClientCastTarget(const duckdb::LogicalType& type) {
   switch (type.id()) {
     case duckdb::LogicalTypeId::VARIANT:
@@ -119,14 +116,14 @@ duckdb::unique_ptr<duckdb::LogicalOperator> WrapPlan(
     if (NeedsClientCast(plan_types[i])) {
       auto cast = duckdb::BoundCastExpression::AddCastToType(
         context, std::move(ref), ClientCastTarget(plan_types[i]));
-      exprs.push_back(std::move(cast));
+      exprs.emplace_back(std::move(cast));
     } else {
-      exprs.push_back(std::move(ref));
+      exprs.emplace_back(std::move(ref));
     }
   }
   auto proj = duckdb::make_uniq<duckdb::LogicalProjection>(
     binder.GenerateTableIndex(), std::move(exprs));
-  proj->children.push_back(std::move(plan));
+  proj->children.emplace_back(std::move(plan));
   return proj;
 }
 
@@ -156,7 +153,7 @@ void WrapVariantOutputs(duckdb::PlannerExtensionInput& input,
   duckdb::vector<duckdb::LogicalType> new_types;
   new_types.reserve(statement.types.size());
   for (const auto& t : statement.types) {
-    new_types.push_back(NeedsClientCast(t) ? ClientCastTarget(t) : t);
+    new_types.emplace_back(NeedsClientCast(t) ? ClientCastTarget(t) : t);
   }
   statement.plan = std::move(wrapped);
   statement.types = std::move(new_types);

@@ -1,0 +1,175 @@
+# Indexing an expression whose result is a LIST<T>: every element becomes a
+# searchable token. Rows are inserted BEFORE the index so the array is only
+# ever produced by the CREATE INDEX backfill (which must both project the
+# dependent column and tokenize each element of the evaluated list).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY verbatim_dict(
+    template = 'keyword'
+);
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body TEXT);
+
+
+# Rows first -- the split expression is never evaluated until backfill.
+statement ok
+INSERT INTO docs VALUES
+    (1, 'alpha beta'),
+    (2, 'beta gamma'),
+    (3, 'delta');
+
+
+statement ok
+CREATE INDEX docs_idx ON docs
+  USING inverted(id, (string_to_array(body, ' ')) verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+
+# A token shared by two rows matches both -- each list element is indexed.
+query
+SELECT id FROM docs_idx
+WHERE (string_to_array(body, ' ')) @@ ts_like('beta') ORDER BY id;
+----
+id
+1
+2
+
+
+# A single-element list still matches.
+query
+SELECT id FROM docs_idx
+WHERE (string_to_array(body, ' ')) @@ ts_like('delta') ORDER BY id;
+----
+id
+3
+
+
+# First element of a multi-element list.
+query
+SELECT id FROM docs_idx
+WHERE (string_to_array(body, ' ')) @@ ts_like('alpha') ORDER BY id;
+----
+id
+1
+
+
+# A row inserted after the index indexes through the INSERT path and shares
+# the same field as the backfilled rows.
+statement ok
+INSERT INTO docs VALUES (4, 'beta epsilon');
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+query
+SELECT id FROM docs_idx
+WHERE (string_to_array(body, ' ')) @@ ts_like('beta') ORDER BY id;
+----
+id
+1
+2
+4
+
+
+# NULL and empty inputs must backfill without error and simply not match.
+statement ok
+CREATE TABLE edge (id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO edge VALUES (1, 'a b'), (2, NULL), (3, '');
+
+statement ok
+CREATE INDEX edge_idx ON edge
+  USING inverted(id, (string_to_array(body, ' ')) verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) edge;
+
+# All three rows materialise; only id 1 has the token 'a'.
+query
+SELECT id FROM edge_idx
+WHERE (string_to_array(body, ' ')) @@ ts_like('a') ORDER BY id;
+----
+id
+1
+
+query
+SELECT count(*) FROM edge_idx;
+----
+count
+3
+
+
+# Fixed-size ARRAY<T> expressions are handled like LIST<T>: each element is a
+# searchable token. array_value(a, b) yields VARCHAR[2].
+statement ok
+CREATE TABLE arr (id INTEGER PRIMARY KEY, a TEXT, b TEXT);
+
+statement ok
+INSERT INTO arr VALUES (1, 'alpha', 'beta'), (2, 'beta', 'gamma'), (3, 'delta', 'alpha');
+
+statement ok
+CREATE INDEX arr_idx ON arr USING inverted(id, (array_value(a, b)) verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) arr;
+
+# A token appearing in either array slot matches.
+query
+SELECT id FROM arr_idx WHERE (array_value(a, b)) @@ ts_like('beta') ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM arr_idx WHERE (array_value(a, b)) @@ ts_like('alpha') ORDER BY id;
+----
+id
+1
+3
+
+
+# Post-index INSERT indexes through the INSERT path into the same field.
+statement ok
+INSERT INTO arr VALUES (4, 'beta', 'zeta');
+
+statement ok
+VACUUM (REFRESH_TABLE) arr;
+
+query
+SELECT id FROM arr_idx WHERE (array_value(a, b)) @@ ts_like('beta') ORDER BY id;
+----
+id
+1
+2
+4
+
+
+# A NULL array element is skipped; the rest of the row still indexes.
+statement ok
+CREATE TABLE arr_n (id INTEGER PRIMARY KEY, a TEXT, b TEXT);
+
+statement ok
+INSERT INTO arr_n VALUES (1, 'p', 'q'), (2, NULL, 'r');
+
+statement ok
+CREATE INDEX arr_n_idx ON arr_n USING inverted(id, (array_value(a, b)) verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) arr_n;
+
+query
+SELECT id FROM arr_n_idx WHERE (array_value(a, b)) @@ ts_like('r') ORDER BY id;
+----
+id
+2
+
+query
+SELECT count(*) FROM arr_n_idx;
+----
+count
+2

@@ -496,12 +496,20 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       // create order
       size_t finish_count = 0;
+      uint64_t finish_docs_with_field = 0;
+      uint64_t finish_docs_with_term = 0;
 
       tests::sort::CustomSort scorer;
 
-      scorer.collectors_collect =
-        [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
-                        const irs::TermCollector*) -> void { ++finish_count; };
+      scorer.collectors_collect = [&](irs::byte_type*,
+                                      const irs::FieldCollector::Data* field,
+                                      const irs::TermCollector* term) -> void {
+        ++finish_count;
+        ASSERT_NE(nullptr, field);
+        ASSERT_NE(nullptr, term);
+        finish_docs_with_field += field->docs_with_field;
+        finish_docs_with_term += term->docs_with_term;
+      };
 
       std::set<irs::doc_id_t> expected{31, 32};
       auto prep = filter.prepare({
@@ -525,7 +533,11 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       }
 
       ASSERT_TRUE(expected.empty());
-      ASSERT_EQ(1, finish_count);
+      ASSERT_EQ(1, finish_count);  // 1 unique term
+      ASSERT_GT(finish_docs_with_field,
+                0u);  // field collector ran on the segment
+      ASSERT_GT(finish_docs_with_term,
+                0u);  // term collector ran on the matched term
     }
     EXPECT_EQ(counter.current, 0);
     EXPECT_GT(counter.max, 0);

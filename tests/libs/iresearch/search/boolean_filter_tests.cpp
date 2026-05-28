@@ -15481,10 +15481,15 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
 
     sort::CustomSort sort;
 
-    sort.collectors_collect =
-      [&collector_finish_count](
-        irs::byte_type*, const irs::FieldCollector::Data*,
-        const irs::TermCollector*) -> void { ++collector_finish_count; };
+    sort.collectors_collect = [&collector_finish_count](
+                                irs::byte_type*,
+                                const irs::FieldCollector::Data* field,
+                                const irs::TermCollector* term) -> void {
+      ++collector_finish_count;
+      // negated branch must not feed field/term collectors
+      ASSERT_EQ(nullptr, field);
+      ASSERT_EQ(nullptr, term);
+    };
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
       ASSERT_EQ(1, n);
@@ -15561,10 +15566,15 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
 
     sort::CustomSort sort;
 
-    sort.collectors_collect =
-      [&collector_finish_count](
-        irs::byte_type*, const irs::FieldCollector::Data*,
-        const irs::TermCollector*) -> void { ++collector_finish_count; };
+    sort.collectors_collect = [&collector_finish_count](
+                                irs::byte_type*,
+                                const irs::FieldCollector::Data* field,
+                                const irs::TermCollector* term) -> void {
+      ++collector_finish_count;
+      // negated branch must not feed field/term collectors
+      ASSERT_EQ(nullptr, field);
+      ASSERT_EQ(nullptr, term);
+    };
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
       ASSERT_EQ(1, n);

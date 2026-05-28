@@ -99,12 +99,20 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
       filter.mutable_options()->terms.emplace_back(
         "phrase", irs::ViewCast<irs::byte_type>(std::string_view("quick")));
       size_t finish_count = 0;
+      uint64_t finish_docs_with_field = 0;
+      uint64_t finish_docs_with_term = 0;
 
       tests::sort::CustomSort scorer;
 
-      scorer.collectors_collect =
-        [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
-                        const irs::TermCollector*) -> void { ++finish_count; };
+      scorer.collectors_collect = [&](irs::byte_type*,
+                                      const irs::FieldCollector::Data* field,
+                                      const irs::TermCollector* term) -> void {
+        ++finish_count;
+        ASSERT_NE(nullptr, field);
+        ASSERT_NE(nullptr, term);
+        finish_docs_with_field += field->docs_with_field;
+        finish_docs_with_term += term->docs_with_term;
+      };
 
       auto prepared = filter.prepare({
         .index = index,
@@ -112,6 +120,8 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         .scorer = &scorer,
       });
       ASSERT_EQ(1, finish_count);
+      ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+      ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
     }
     EXPECT_EQ(counter.current, 0);
     EXPECT_GT(counter.max, 0);
@@ -125,15 +135,25 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
       filter.mutable_options()->terms.emplace_back(
         "phrase", irs::ViewCast<irs::byte_type>(std::string_view("brown")));
       size_t finish_count = 0;
+      uint64_t finish_docs_with_field = 0;
+      uint64_t finish_docs_with_term = 0;
 
       tests::sort::CustomSort scorer;
 
-      scorer.collectors_collect =
-        [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
-                        const irs::TermCollector*) -> void { ++finish_count; };
+      scorer.collectors_collect = [&](irs::byte_type*,
+                                      const irs::FieldCollector::Data* field,
+                                      const irs::TermCollector* term) -> void {
+        ++finish_count;
+        ASSERT_NE(nullptr, field);
+        ASSERT_NE(nullptr, term);
+        finish_docs_with_field += field->docs_with_field;
+        finish_docs_with_term += term->docs_with_term;
+      };
 
       auto prepared = filter.prepare({.index = index, .scorer = &scorer});
       ASSERT_EQ(2, finish_count);
+      ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+      ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
     }
   }
 

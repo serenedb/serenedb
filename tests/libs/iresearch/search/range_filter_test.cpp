@@ -965,13 +965,21 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       size_t finish_count = 0;
+      uint64_t finish_docs_with_field = 0;
+      uint64_t finish_docs_with_term = 0;
 
       irs::Scorer::ptr sort{std::make_unique<tests::sort::CustomSort>()};
       auto& scorer = static_cast<tests::sort::CustomSort&>(*sort);
 
-      scorer.collectors_collect =
-        [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
-                        const irs::TermCollector*) -> void { ++finish_count; };
+      scorer.collectors_collect = [&](irs::byte_type*,
+                                      const irs::FieldCollector::Data* field,
+                                      const irs::TermCollector* term) -> void {
+        ++finish_count;
+        ASSERT_NE(nullptr, field);
+        ASSERT_NE(nullptr, term);
+        finish_docs_with_field += field->docs_with_field;
+        finish_docs_with_term += term->docs_with_term;
+      };
 
       irs::ByRange filter;
       *filter.mutable_field() = "value";
@@ -984,6 +992,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       CheckQuery(tests::FilterWrapper{filter}, std::span{&sort, 1}, docs, rdr);
       ASSERT_EQ(11, finish_count);
+      ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+      ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
     }
 
     // value = (..;..)

@@ -3605,12 +3605,20 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     wt2.term = irs::ViewCast<irs::byte_type>(std::string_view("bro%"));
     wt3.term = irs::ViewCast<irs::byte_type>(std::string_view("fo%"));
     size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
 
     tests::sort::CustomSort sort;
 
-    sort.collectors_collect =
-      [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
-                      const irs::TermCollector*) -> void { ++finish_count; };
+    sort.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector::Data* field,
+                                  const irs::TermCollector* term) -> void {
+      ++finish_count;
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
+    };
 
     irs::DocIterator* it = nullptr;
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
@@ -3624,6 +3632,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
       .scorer = &sort,
     });
     ASSERT_EQ(6, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -3912,12 +3922,20 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
 
     tests::sort::CustomSort sort;
 
-    sort.collectors_collect =
-      [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
-                      const irs::TermCollector*) -> void { ++finish_count; };
+    sort.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector::Data* field,
+                                  const irs::TermCollector* term) -> void {
+      ++finish_count;
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
+    };
     irs::DocIterator* it = nullptr;
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
@@ -3930,6 +3948,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
       .scorer = &sort,
     });
     ASSERT_EQ(3, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
     auto sub = rdr.begin();
 
     // no order passed - no frequency

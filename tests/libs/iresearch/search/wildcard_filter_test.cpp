@@ -301,16 +301,26 @@ TEST_P(WildcardFilterTestCase, simple_sequential_order) {
     Docs docs{1, 4, 9, 16, 21, 24, 26, 29, 31, 32};
     Costs costs{docs.size()};
     size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
 
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::CustomSort>()};
     auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
 
-    scorer.collectors_collect =
-      [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
-                      const irs::TermCollector*) -> void { ++finish_count; };
+    scorer.collectors_collect = [&](irs::byte_type*,
+                                    const irs::FieldCollector::Data* field,
+                                    const irs::TermCollector* term) -> void {
+      ++finish_count;
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
+    };
     CheckQuery(MakeFilter("prefix", "%"), order, docs, rdr);
     ASSERT_EQ(9, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
   }
 
   // match all

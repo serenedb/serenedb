@@ -1149,15 +1149,25 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
 
   Docs expected{1, 2, 5, 8, 11, 12, 13};
   size_t finish_count = 0;
+  uint64_t finish_docs_with_field = 0;
+  uint64_t finish_docs_with_term = 0;
   std::vector<size_t> frequency;
   std::vector<irs::score_t> filter_boost;
 
   irs::Scorer::ptr order{std::make_unique<CustomNGramScorer>()};
   auto& scorer = static_cast<CustomNGramScorer&>(*order);
 
-  scorer.collectors_collect =
-    [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
-                    const irs::TermCollector*) -> void { ++finish_count; };
+  scorer.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector::Data* field,
+                                  const irs::TermCollector* term) -> void {
+    ++finish_count;
+    if (field) {
+      finish_docs_with_field += field->docs_with_field;
+    }
+    if (term) {
+      finish_docs_with_term += term->docs_with_term;
+    }
+  };
   scorer.prepare_scorer =
     [&frequency,
      &filter_boost](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
@@ -1177,6 +1187,8 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
     ASSERT_DOUBLE_EQ(expected_filter_boost[i], filter_boost[i]);
   }
   ASSERT_EQ(6, finish_count);
+  ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+  ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
 }
 
 TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
@@ -1193,15 +1205,25 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
 
   Docs expected{1, 2, 5, 8, 11, 12, 13};
   size_t finish_count = 0;
+  uint64_t finish_docs_with_field = 0;
+  uint64_t finish_docs_with_term = 0;
   std::vector<size_t> frequency;
   std::vector<irs::score_t> filter_boost;
 
   irs::Scorer::ptr order{std::make_unique<CustomNGramScorer>()};
   auto& scorer = static_cast<CustomNGramScorer&>(*order);
 
-  scorer.collectors_collect =
-    [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
-                    const irs::TermCollector*) -> void { ++finish_count; };
+  scorer.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector::Data* field,
+                                  const irs::TermCollector* term) -> void {
+    ++finish_count;
+    if (field) {
+      finish_docs_with_field += field->docs_with_field;
+    }
+    if (term) {
+      finish_docs_with_term += term->docs_with_term;
+    }
+  };
   scorer.prepare_scorer =
     [&frequency,
      &filter_boost](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
@@ -1221,6 +1243,8 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
     ASSERT_DOUBLE_EQ(expected_filter_boost[i], filter_boost[i]);
   }
   ASSERT_EQ(6, finish_count);
+  ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+  ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
 }
 
 TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_norm_test) {

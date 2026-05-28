@@ -790,15 +790,20 @@ TEST(GeoFilterTest, checkScorer) {
     q.mutable_options()->store_field_id = kGeo;
 
     size_t collector_finish_count = 0;
+    uint64_t collector_field_docs = 0;
     size_t scorer_score_count = 0;
     size_t prepare_scorer_count = 0;
 
     ::CustomSort sort;
 
-    sort.collector_finish = [&collector_finish_count](
-                              irs::byte_type*, const irs::FieldCollector::Data*,
-                              const irs::TermCollector*) -> void {
+    sort.collector_finish = [&](irs::byte_type*,
+                                const irs::FieldCollector::Data* field,
+                                const irs::TermCollector* term) -> void {
       ++collector_finish_count;
+      // geo filter exercises field collector but not term collector
+      ASSERT_NE(nullptr, field);
+      ASSERT_EQ(nullptr, term);
+      collector_field_docs += field->docs_with_field;
     };
     sort._prepare_scorer = [&](const irs::ScoreContext& ctx) {
       EXPECT_EQ(q.Boost(), ctx.boost);
@@ -818,6 +823,7 @@ TEST(GeoFilterTest, checkScorer) {
 
     ASSERT_EQ(expected, execute_query(q, sort));
     ASSERT_EQ(1, collector_finish_count);
+    ASSERT_GT(collector_field_docs, 0u);  // field collector ran on segments
     ASSERT_EQ(2, scorer_score_count);
   }
 
@@ -846,15 +852,20 @@ TEST(GeoFilterTest, checkScorer) {
     q.mutable_options()->store_field_id = kGeo;
 
     size_t collector_finish_count = 0;
+    uint64_t collector_field_docs = 0;
     size_t scorer_score_count = 0;
     size_t prepare_scorer_count = 0;
 
     ::CustomSort sort;
 
-    sort.collector_finish = [&collector_finish_count](
-                              irs::byte_type*, const irs::FieldCollector::Data*,
-                              const irs::TermCollector*) -> void {
+    sort.collector_finish = [&](irs::byte_type*,
+                                const irs::FieldCollector::Data* field,
+                                const irs::TermCollector* term) -> void {
       ++collector_finish_count;
+      // geo filter exercises field collector but not term collector
+      ASSERT_NE(nullptr, field);
+      ASSERT_EQ(nullptr, term);
+      collector_field_docs += field->docs_with_field;
     };
     sort._prepare_scorer = [&](const irs::ScoreContext& ctx) {
       EXPECT_EQ(q.Boost(), ctx.boost);
@@ -874,6 +885,7 @@ TEST(GeoFilterTest, checkScorer) {
 
     ASSERT_EQ(expected, execute_query(q, sort));
     ASSERT_EQ(1, collector_finish_count);
+    ASSERT_GT(collector_field_docs, 0u);  // field collector ran on segments
     ASSERT_EQ(2, scorer_score_count);
   }
 }

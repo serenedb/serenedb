@@ -157,19 +157,29 @@ TEST_P(TermsFilterTestCase, simple_sequential_order) {
     const Docs docs{1, 21, 31, 32};
     Costs costs{docs.size()};
     size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
 
     irs::Scorer::ptr impl{std::make_unique<tests::sort::CustomSort>()};
     auto* scorer = static_cast<tests::sort::CustomSort*>(impl.get());
 
-    scorer->collectors_collect =
-      [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
-                      const irs::TermCollector*) -> void { ++finish_count; };
+    scorer->collectors_collect = [&](irs::byte_type*,
+                                     const irs::FieldCollector::Data* field,
+                                     const irs::TermCollector* term) -> void {
+      ++finish_count;
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
+    };
 
     const auto filter = MakeFilter(
       "prefix", {{"abcd", 1.f}, {"abcd", 1.f}, {"abc", 1.f}, {"abcy", 1.f}});
 
     CheckQuery(tests::FilterWrapper{filter}, std::span{&impl, 1}, docs, rdr);
     ASSERT_EQ(3, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
   }
 
   // check boost
@@ -481,13 +491,21 @@ TEST_P(TermsFilterTestCase, min_match) {
 
     const Costs costs{25, 0, 0, 0};
     size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
 
     irs::Scorer::ptr impl{std::make_unique<tests::sort::CustomSort>()};
     auto* scorer = static_cast<tests::sort::CustomSort*>(impl.get());
 
-    scorer->collectors_collect =
-      [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
-                      const irs::TermCollector*) -> void { ++finish_count; };
+    scorer->collectors_collect = [&](irs::byte_type*,
+                                     const irs::FieldCollector::Data* field,
+                                     const irs::TermCollector* term) -> void {
+      ++finish_count;
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
+    };
     scorer->prepare_scorer =
       [](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
       auto* doc = irs::get<tests::DocBlockAttr>(ctx.doc_attrs);
@@ -502,6 +520,8 @@ TEST_P(TermsFilterTestCase, min_match) {
 
     CheckQuery(filter, std::span{&impl, 1}, result, rdr[0]);
     ASSERT_EQ(3, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
   }
 }
 

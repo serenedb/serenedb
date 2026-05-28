@@ -27,6 +27,15 @@ if [ "$#" -eq 0 ]; then
 fi
 
 TARGETS=("$@")
+
+# Integration tests run DuckDB's `unittest` binary against the vendored
+# extensions' test suites. It's gated on SDB_BUILD_DUCKDB_UNITTESTS=On in
+# third_party/CMakeLists.txt, and only requested when the caller plumbed
+# the flag through (extension test path).
+if [[ "${SDB_BUILD_DUCKDB_UNITTESTS:-Off}" == "On" ]]; then
+	TARGETS+=(unittest)
+fi
+
 LOG_SUFFIX="${TARGETS[*]}"
 LOG_SUFFIX="${LOG_SUFFIX// /_}"
 

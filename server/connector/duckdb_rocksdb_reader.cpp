@@ -432,7 +432,7 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
           duckdb::FlatVector::GetDataMutable<uint32_t>(output)[idx] = v;
         } break;
         default:
-          SDB_ASSERT(false, "Unsupported ENUM physical type");
+          SDB_THROW(ERROR_NOT_IMPLEMENTED, "Unsupported ENUM physical type");
       }
     } break;
     default:
@@ -568,11 +568,14 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
               copy_fixed(static_cast<uint32_t*>(nullptr));
               break;
             default:
-              SDB_ASSERT(false, "Unsupported ENUM physical type");
+              SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                        "Unsupported ENUM physical type");
           }
           break;
         default:
-          SDB_ASSERT(false, "Unsupported fixed-width element type in list");
+          SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                    "Unsupported element type in list sub-vector: ",
+                    child_type.ToString());
       }
     } break;
     case duckdb::LogicalTypeId::LIST: {

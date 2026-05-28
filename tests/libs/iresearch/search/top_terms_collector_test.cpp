@@ -52,47 +52,6 @@ struct Type<::TestTermMeta> : Type<irs::TermMeta> {};
 }  // namespace irs
 namespace {
 
-struct Sort : irs::Scorer {
-  struct TermCollector final : irs::TermCollector {
-    uint64_t docs_with_term =
-      0;  // number of documents containing the matched term
-
-    void collect(const irs::SubReader&, const irs::TermReader&,
-                 const irs::AttributeProvider& term_attrs) final {
-      auto* meta = irs::get<irs::TermMeta>(term_attrs);
-
-      if (meta) {
-        docs_with_term += meta->docs_count;
-      }
-    }
-
-    void reset() noexcept final { docs_with_term = 0; }
-
-    void collect(irs::bytes_view) final {}
-    void write(irs::DataOutput&) const final {}
-  };
-
-  irs::IndexFeatures GetIndexFeatures() const final {
-    return irs::IndexFeatures::None;
-  }
-
-  irs::WandWriter::ptr prepare_wand_writer(size_t) const final {
-    return nullptr;
-  }
-
-  irs::WandSource::ptr prepare_wand_source() const final { return nullptr; }
-
-  irs::TermCollector::ptr PrepareTermCollector() const final {
-    return std::make_unique<TermCollector>();
-  }
-
-  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
-    return irs::ScoreFunction::Default();
-  }
-
-  size_t stats_size() const final { return 0; }
-};
-
 class TestSeekTermIterator : public irs::SeekTermIterator {
  public:
   typedef const std::pair<std::string_view, TestTermMeta>* IteratorType;

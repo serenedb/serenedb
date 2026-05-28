@@ -59,8 +59,6 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
-  TermCollector::ptr PrepareTermCollector() const final;
-
   WandWriter::ptr prepare_wand_writer(size_t max_levels) const final;
 
   WandSource::ptr prepare_wand_source() const final;

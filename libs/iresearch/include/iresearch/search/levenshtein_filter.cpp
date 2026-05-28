@@ -79,7 +79,7 @@ inline auto ExecuteLevenshtein(uint8_t max_distance,
 template<typename StatesType>
 struct AggregatedStatsVisitor : util::Noncopyable {
   AggregatedStatsVisitor(StatesType& states,
-                         const TermCollectors& term_stats) noexcept
+                         TermCollectors& term_stats) noexcept
     : term_stats(term_stats), states(states) {}
 
   void operator()(const irs::SubReader& segment, const irs::TermReader& field,
@@ -94,11 +94,11 @@ struct AggregatedStatsVisitor : util::Noncopyable {
   void operator()(SeekCookie::ptr& cookie) const {
     SDB_ASSERT(segment);
     SDB_ASSERT(field);
-    term_stats.collect(*segment, *field, 0, *cookie);
+    term_stats.Collect(0, *cookie);
     state->scored_states.emplace_back(std::move(cookie), 0, boost);
   }
 
-  const TermCollectors& term_stats;
+  TermCollectors& term_stats;
   StatesType& states;
   mutable typename StatesType::state_type* state{};
   mutable const SubReader* segment{};
@@ -225,7 +225,7 @@ Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
     1, MultiTermQuery::Stats::allocator_type{ctx.memory});
   stats.back().resize(GetStatsSize(ctx.scorer), 0);
   auto* stats_buf = stats[0].data();
-  term_stats.finish(stats_buf, 0, field_stats.Get(), ctx.index);
+  term_stats.Finish(stats_buf, 0, field_stats.Get(), ctx.index);
 
   return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),
                                               std::move(stats), ctx.boost,

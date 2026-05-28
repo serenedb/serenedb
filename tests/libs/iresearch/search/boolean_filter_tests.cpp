@@ -15475,19 +15475,12 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
     not_node.filter<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(column_name, "abcd");
 
-    size_t collector_collect_term_count = 0;
     size_t collector_finish_count = 0;
     size_t scorer_score_count = 0;
     irs::doc_id_t cur_doc = 0;
 
     sort::CustomSort sort;
 
-    sort.collector_collect_term = [&collector_collect_term_count](
-                                    const irs::SubReader&,
-                                    const irs::TermReader&,
-                                    const irs::AttributeProvider&) -> void {
-      ++collector_collect_term_count;
-    };
     sort.collectors_collect =
       [&collector_finish_count](
         irs::byte_type*, const irs::FieldCollector::Data*,
@@ -15527,9 +15520,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
 
     ASSERT_EQ(expected.size(), docs_count);
 
-    // possibly complex filter)
-    ASSERT_EQ(0, collector_collect_term_count);  // should not be executed
-    ASSERT_EQ(1, collector_finish_count);        // from "all" query
+    ASSERT_EQ(1, collector_finish_count);
     ASSERT_EQ(expected.size(), scorer_score_count);
 
     std::vector<irs::doc_id_t> actual;
@@ -15564,19 +15555,12 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
     root.add<irs::Not>().filter<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(column_name, "abcd");
 
-    size_t collector_collect_term_count = 0;
     size_t collector_finish_count = 0;
     size_t scorer_score_count = 0;
     irs::doc_id_t cur_doc = 0;
 
     sort::CustomSort sort;
 
-    sort.collector_collect_term = [&collector_collect_term_count](
-                                    const irs::SubReader&,
-                                    const irs::TermReader&,
-                                    const irs::AttributeProvider&) -> void {
-      ++collector_collect_term_count;
-    };
     sort.collectors_collect =
       [&collector_finish_count](
         irs::byte_type*, const irs::FieldCollector::Data*,
@@ -15616,9 +15600,7 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
 
     ASSERT_EQ(expected.size(), docs_count);
 
-    // possibly complex filter)
-    ASSERT_EQ(0, collector_collect_term_count);  // should not be executed
-    ASSERT_EQ(1, collector_finish_count);        // from "all" query
+    ASSERT_EQ(1, collector_finish_count);
     ASSERT_EQ(expected.size(), scorer_score_count);
 
     std::vector<irs::doc_id_t> actual;

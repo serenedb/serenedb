@@ -46,7 +46,6 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_impl.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 
@@ -370,11 +369,8 @@ void BM25::collect(byte_type* stats_buf, const irs::FieldCollector::Data* field,
                    const irs::TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 
-  const auto* term_ptr = sdb::basics::downCast<TermCollectorImpl>(term);
-
   const auto docs_with_field = field ? field->docs_with_field : 0;
-  // nullptr possible if e.g.'by_column_existence' filter
-  const auto docs_with_term = term_ptr ? term_ptr->docs_with_term : 0;
+  const auto docs_with_term = term ? term->docs_with_term : 0;
   const auto total_term_freq = field ? field->total_term_freq : 0;
 
   // precomputed idf value
@@ -496,10 +492,6 @@ WandSource::ptr BM25::prepare_wand_source() const {
     return std::make_unique<FreqNormSource<kWandTagFreq>>();
   }
   return std::make_unique<FreqNormSource<kWandTagNorm>>();
-}
-
-TermCollector::ptr BM25::PrepareTermCollector() const {
-  return std::make_unique<TermCollectorImpl>();
 }
 
 Scorer::WandType BM25::wand_type() const noexcept {

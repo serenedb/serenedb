@@ -99,7 +99,7 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
         // read term attributes
         term->read();
         // collect statistics
-        term_stats.collect(segment, *field, term_idx, *term);
+        term_stats.Collect(term_idx, *term);
         state = term->cookie();
         ++count_terms;
       }
@@ -129,7 +129,7 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
   auto* stats_buf = stats.data();
 
   for (size_t term_idx = 0; term_idx < terms_count; ++term_idx) {
-    term_stats.finish(stats_buf, term_idx, field_stats.Get(), ctx.index);
+    term_stats.Finish(stats_buf, term_idx, field_stats.Get(), ctx.index);
   }
 
   return memory::make_tracked<NGramSimilarityQuery>(

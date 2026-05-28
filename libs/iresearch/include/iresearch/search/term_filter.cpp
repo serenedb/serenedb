@@ -33,7 +33,7 @@ namespace {
 // Filter visitor for term queries
 class TermVisitor : private util::Noncopyable {
  public:
-  TermVisitor(const TermCollectors& term_stats, TermQuery::States& states)
+  TermVisitor(TermCollectors& term_stats, TermQuery::States& states)
     : _term_stats(term_stats), _states(states) {}
 
   void Prepare(const SubReader& segment, const TermReader& field,
@@ -46,7 +46,7 @@ class TermVisitor : private util::Noncopyable {
   void Visit(score_t /*boost*/) {
     // collect statistics
     SDB_ASSERT(_segment && _reader && _terms);
-    _term_stats.collect(*_segment, *_reader, 0, *_terms);
+    _term_stats.Collect(0, *_terms);
 
     // Cache term state in prepared query attributes.
     // Later, using cached state we could easily "jump" to
@@ -57,7 +57,7 @@ class TermVisitor : private util::Noncopyable {
   }
 
  private:
-  const TermCollectors& _term_stats;
+  TermCollectors& _term_stats;
   TermQuery::States& _states;
   const SubReader* _segment{};
   const TermReader* _reader{};
@@ -124,7 +124,7 @@ Filter::Query::ptr ByTerm::prepare(const PrepareContext& ctx,
   bstring stats(GetStatsSize(ctx.scorer), 0);
   auto* stats_buf = stats.data();
 
-  term_stats.finish(stats_buf, 0, field_stats.Get(), ctx.index);
+  term_stats.Finish(stats_buf, 0, field_stats.Get(), ctx.index);
 
   return memory::make_tracked<TermQuery>(ctx.memory, std::move(states),
                                          std::move(stats), ctx.boost);

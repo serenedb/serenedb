@@ -27,21 +27,6 @@
 
 namespace irs {
 
-// Tracks the collection-wide frequency of a single term (TermMeta::freq),
-// which is what the LM's term weight needs -- not just the doc count.
-struct LMTermCollector final : TermCollector {
-  uint64_t total_term_freq = 0;  // sum of tf across all docs containing term
-
-  void collect(const SubReader& /*segment*/, const TermReader& /*field*/,
-               const AttributeProvider& term_attrs) final;
-
-  void reset() noexcept final { total_term_freq = 0; }
-
-  void collect(bytes_view in) final;
-
-  void write(DataOutput& out) const final;
-};
-
 // Stats persisted per (field,term) and consumed by score().
 // `collection_prob` is DefaultCollectionModel:
 //   (ttf_term + 1) / (ttf_field + 1)

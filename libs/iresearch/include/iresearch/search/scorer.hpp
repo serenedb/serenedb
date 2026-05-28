@@ -62,7 +62,7 @@ class FieldCollector {
     uint64_t docs_with_field = 0;
     uint64_t total_term_freq = 0;
 
-    void collect(const TermReader& field) noexcept;
+    void Collect(const TermReader& field) noexcept;
   };
 
   explicit FieldCollector(const Scorer* scorer) {
@@ -73,7 +73,7 @@ class FieldCollector {
 
   void Collect(const TermReader& field) noexcept {
     if (_data) {
-      _data->collect(field);
+      _data->Collect(field);
     }
   }
 
@@ -85,33 +85,11 @@ class FieldCollector {
   std::optional<Data> _data;
 };
 
-// Object used for collecting index statistics, for a specific matched
-// term of a field, that are required by the scorer for scoring
-// individual documents.
 struct TermCollector {
-  using ptr = std::unique_ptr<TermCollector>;
+  uint64_t docs_with_term = 0;
+  uint64_t total_term_freq = 0;
 
-  virtual ~TermCollector() = default;
-
-  // Collect term related statistics, i.e. term used in the filter.
-  // `segment` is the segment being processed (e.g. for columnstore)
-  // `field` is the the field matched by the filter in the 'segment'.
-  // `term_attrs` is the attributes of the matched term in the field.
-  // Called once for every term matched by a filter in the 'field'
-  // per each segment.
-  // Only called on a matched 'term' in the 'field' in the 'segment'.
-  virtual void collect(const SubReader& segment, const TermReader& field,
-                       const AttributeProvider& term_attrs) = 0;
-
-  // Clear collected stats
-  virtual void reset() = 0;
-
-  // Collect term related statistics from a serialized
-  // representation as produced by write(...) below.
-  virtual void collect(bytes_view in) = 0;
-
-  // Serialize the internal data representation into 'out'.
-  virtual void write(DataOutput& out) const = 0;
+  void Collect(const AttributeProvider& term_attrs) noexcept;
 };
 
 struct WandSource : AttributeProvider {
@@ -158,32 +136,12 @@ struct Scorer {
 
   virtual ~Scorer() = default;
 
-  // Store collected index statistics into 'stats' of the
-  // current 'filter'
-  // `filter_attrs` is out-parameter to store statistics for later use in
-  // calls to score(...).
-  // `term` is the term level statistics collector as returned from
-  //  PrepareTermCollector()
-  // Called once on the 'index' for every field+term matched by the
-  // filter.
-  // Called once on the 'index' for every field with null term stats
-  // if term is not applicable, e.g. by_column_existence filter.
-  // Called exactly once if field/term collection is not applicable,
-  // e.g. collecting statistics over the columnstore.
-  // Called after all calls to collector::collect(...) on each segment.
   virtual void collect(byte_type* stats, const FieldCollector::Data* field,
                        const TermCollector* term) const = 0;
 
-  // The index features required for proper operation of this sort::Prepared
   virtual IndexFeatures GetIndexFeatures() const = 0;
 
-  // Create a stateful scorer used for computation of document scores
   virtual ScoreFunction PrepareScorer(const ScoreContext& ctx) const = 0;
-
-  // Create an object to be used for collecting index statistics, one
-  // instance per matched term.
-  // Returns nullptr == no statistics collection required.
-  virtual TermCollector::ptr PrepareTermCollector() const = 0;
 
   // Create an object to be used for writing wand entries to the skip list.
   // max_levels - max number of levels in the skip list
@@ -241,8 +199,6 @@ class ScorerBase : public Scorer {
   TypeInfo::type_id type() const noexcept final {
     return irs::Type<Impl>::id();
   }
-
-  TermCollector::ptr PrepareTermCollector() const override { return nullptr; }
 
   void collect(byte_type*, const FieldCollector::Data*,
                const TermCollector*) const override {}

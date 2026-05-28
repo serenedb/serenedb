@@ -176,13 +176,13 @@ class PhraseTermVisitor final : public FilterVisitor,
 
     if (_stats_size <= _term_offset) {
       // variadic phrase case
-      _collectors->push_back();
+      _collectors->PushBack();
       SDB_ASSERT(_stats_size == _term_offset);
       ++_stats_size;
       _volatile_boost |= (boost != kNoBoost);
     }
 
-    _collectors->collect(*_segment, *_reader, _term_offset++, *_terms);
+    _collectors->Collect(_term_offset++, *_terms);
     _phrase_states.emplace_back(_terms->cookie(), boost);
   }
 
@@ -193,7 +193,7 @@ class PhraseTermVisitor final : public FilterVisitor,
     _terms = nullptr;
     _term_offset = 0;
     _collectors = &collectors;
-    _stats_size = collectors.size();
+    _stats_size = collectors.Size();
   }
 
   bool Found() const noexcept { return _found; }
@@ -297,7 +297,7 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
     pos_itr->offs_max = term.offs_max;
     pos_itr->offs_min = term.offs_min;
     pos_itr->lead_offset = look_back += term.offs_max;
-    term_stats.finish(stats_buf, term_idx, field_stats.Get(), ctx.index);
+    term_stats.Finish(stats_buf, term_idx, field_stats.Get(), ctx.index);
     ++pos_itr;
     ++term_idx;
   }
@@ -435,8 +435,8 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
     position->offs_max = term.offs_max;
     position->offs_min = term.offs_min;
     position->lead_offset = look_back += term.offs_max;
-    for (size_t i = 0, size = collector->size(); i < size; ++i) {
-      collector->finish(stats_buf, i, field_stats.Get(), ctx.index);
+    for (size_t i = 0, size = collector->Size(); i < size; ++i) {
+      collector->Finish(stats_buf, i, field_stats.Get(), ctx.index);
     }
     ++position;
     ++collector;

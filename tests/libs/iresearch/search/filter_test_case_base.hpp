@@ -157,35 +157,6 @@ struct Boost : public irs::ScorerBase<Boost, void> {
 };
 
 struct CustomSort : public irs::ScorerBase<CustomSort, void> {
-  class TermCollector : public irs::TermCollector {
-   public:
-    TermCollector(const CustomSort& sort) : _sort(sort) {}
-
-    void collect(const irs::SubReader& segment, const irs::TermReader& field,
-                 const irs::AttributeProvider& term_attrs) final {
-      if (_sort.collector_collect_term) {
-        _sort.collector_collect_term(segment, field, term_attrs);
-      }
-    }
-
-    void reset() final {
-      if (_sort.term_reset) {
-        _sort.term_reset();
-      }
-    }
-
-    void collect(irs::bytes_view /*in*/) final {
-      // NOOP
-    }
-
-    void write(irs::DataOutput& /*out*/) const final {
-      // NOOP
-    }
-
-   private:
-    const CustomSort& _sort;
-  };
-
   struct Scorer : public irs::ScoreOperator {
     Scorer(const CustomSort& sort, const irs::ScoreContext& ctx)
       : ctx(ctx), sort(sort) {}
@@ -237,26 +208,13 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
     return irs::ScoreFunction::Make<CustomSort::Scorer>(*this, ctx);
   }
 
-  irs::TermCollector::ptr PrepareTermCollector() const final {
-    if (prepare_term_collector) {
-      return prepare_term_collector();
-    }
-
-    return std::make_unique<TermCollector>(*this);
-  }
-
-  std::function<void(const irs::SubReader&, const irs::TermReader&,
-                     const irs::AttributeProvider&)>
-    collector_collect_term;
   std::function<void(irs::byte_type*, const irs::FieldCollector::Data*,
                      const irs::TermCollector*)>
     collectors_collect;
   std::function<irs::ScoreFunction(const irs::ScoreContext& ctx)>
     prepare_scorer;
-  std::function<irs::TermCollector::ptr()> prepare_term_collector;
   std::function<void(const irs::ScoreOperator*, irs::score_t*, size_t n)>
     scorer_score;
-  std::function<void()> term_reset;
 };
 
 struct StatsT {
@@ -267,29 +225,6 @@ struct StatsT {
 /// @brief order by frequency, then if equal order by doc_id_t
 //////////////////////////////////////////////////////////////////////////////
 struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
-  struct TermCollector : public irs::TermCollector {
-    size_t docs_count{};
-    const irs::TermMeta* meta_attr;
-
-    void collect(const irs::SubReader& /*segment*/,
-                 const irs::TermReader& /*field*/,
-                 const irs::AttributeProvider& term_attrs) final {
-      meta_attr = irs::get<irs::TermMeta>(term_attrs);
-      ASSERT_NE(nullptr, meta_attr);
-      docs_count += meta_attr->docs_count;
-    }
-
-    void reset() noexcept final { docs_count = 0; }
-
-    void collect(irs::bytes_view /*in*/) final {
-      // NOOP
-    }
-
-    void write(irs::DataOutput& /*out*/) const final {
-      // NOOP
-    }
-  };
-
   struct Scorer : public irs::ScoreOperator {
     Scorer(irs::doc_id_t docs_count) : count(docs_count) {}
 
@@ -325,11 +260,9 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
   void collect(irs::byte_type* stats_buf,
                const irs::FieldCollector::Data* /*field*/,
                const irs::TermCollector* term) const final {
-    auto* term_ptr = dynamic_cast<const TermCollector*>(term);
-    if (term_ptr) {  // may be null e.g. 'all' filter
+    if (term) {
       stats_cast(stats_buf)->count =
-        static_cast<irs::doc_id_t>(term_ptr->docs_count);
-      const_cast<TermCollector*>(term_ptr)->docs_count = 0;
+        static_cast<irs::doc_id_t>(term->docs_with_term);
     }
   }
 
@@ -341,10 +274,6 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
     auto* stats = stats_cast(ctx.stats);
     const irs::doc_id_t docs_count = stats->count;
     return irs::ScoreFunction::Make<FrequencySort::Scorer>(docs_count);
-  }
-
-  irs::TermCollector::ptr PrepareTermCollector() const final {
-    return std::make_unique<TermCollector>();
   }
 };
 

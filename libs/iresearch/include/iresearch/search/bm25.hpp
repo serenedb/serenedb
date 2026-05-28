@@ -91,8 +91,6 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
 
   WandSource::ptr prepare_wand_source() const final;
 
-  TermCollector::ptr PrepareTermCollector() const final;
-
   WandType wand_type() const noexcept final;
 
   bool equals(const Scorer& other) const noexcept final;

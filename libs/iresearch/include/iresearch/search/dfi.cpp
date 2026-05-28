@@ -42,34 +42,11 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_impl.hpp"
 #include "iresearch/search/scorers.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
-
-void DFITermCollector::collect(const SubReader& /*segment*/,
-                               const TermReader& /*field*/,
-                               const AttributeProvider& term_attrs) {
-  if (const auto* meta = irs::get<TermMeta>(term_attrs)) {
-    total_term_freq += meta->freq;
-  }
-}
-
-void DFITermCollector::collect(bytes_view in) {
-  ByteRefIterator itr{in};
-  const auto v = vread<uint64_t>(itr);
-  if (itr.pos != itr.end) {
-    throw IoError{"input not read fully"};
-  }
-  total_term_freq += v;
-}
-
-void DFITermCollector::write(DataOutput& out) const {
-  out.WriteV64(total_term_freq);
-}
-
 namespace {
 
 template<typename T>
@@ -295,18 +272,12 @@ void DFI::collect(byte_type* stats_buf, const FieldCollector::Data* field,
                   const TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 
-  const auto* term_ptr = sdb::basics::downCast<DFITermCollector>(term);
-
   const auto ttf_field = field ? field->total_term_freq : 0;
-  const auto ttf_term = term_ptr ? term_ptr->total_term_freq : 0;
+  const auto ttf_term = term ? term->total_term_freq : 0;
 
   const double num = static_cast<double>(ttf_term) + 1.0;
   const double den = static_cast<double>(ttf_field) + 1.0;
   stats->ratio = static_cast<score_t>(num / den);
-}
-
-TermCollector::ptr DFI::PrepareTermCollector() const {
-  return std::make_unique<DFITermCollector>();
 }
 
 ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {

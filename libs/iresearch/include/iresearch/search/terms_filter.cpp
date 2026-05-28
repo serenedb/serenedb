@@ -147,7 +147,7 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
   for (size_t term_idx = 0; auto& stat : stats) {
     stat.resize(GetStatsSize(ctx.scorer), 0);
     auto* stats_buf = stat.data();
-    term_stats.finish(stats_buf, term_idx++, field_stats.Get(), ctx.index);
+    term_stats.Finish(stats_buf, term_idx++, field_stats.Get(), ctx.index);
   }
 
   return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),

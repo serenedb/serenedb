@@ -81,26 +81,16 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
     // collector count (no branches)
     {
       irs::BySamePosition filter;
-      size_t collect_term_count = 0;
       size_t finish_count = 0;
 
       tests::sort::CustomSort scorer;
 
-      scorer.collector_collect_term =
-        [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                              const irs::AttributeProvider&) -> void {
-        ++collect_term_count;
-      };
       scorer.collectors_collect =
         [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
                         const irs::TermCollector*) -> void { ++finish_count; };
-      scorer.prepare_term_collector = [&scorer]() -> irs::TermCollector::ptr {
-        return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
-      };
 
       auto prepared = filter.prepare({.index = index, .scorer = &scorer});
-      ASSERT_EQ(0, collect_term_count);  // should not be executed
-      ASSERT_EQ(0, finish_count);        // no terms optimization
+      ASSERT_EQ(0, finish_count);
     }
 
     // collector count (single term)
@@ -108,30 +98,20 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
       irs::BySamePosition filter;
       filter.mutable_options()->terms.emplace_back(
         "phrase", irs::ViewCast<irs::byte_type>(std::string_view("quick")));
-      size_t collect_term_count = 0;
       size_t finish_count = 0;
 
       tests::sort::CustomSort scorer;
 
-      scorer.collector_collect_term =
-        [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                              const irs::AttributeProvider&) -> void {
-        ++collect_term_count;
-      };
       scorer.collectors_collect =
         [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
                         const irs::TermCollector*) -> void { ++finish_count; };
-      scorer.prepare_term_collector = [&scorer]() -> irs::TermCollector::ptr {
-        return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
-      };
 
       auto prepared = filter.prepare({
         .index = index,
         .memory = counter,
         .scorer = &scorer,
       });
-      ASSERT_EQ(2, collect_term_count);  // 1 term in 2 segments
-      ASSERT_EQ(1, finish_count);        // 1 unique term
+      ASSERT_EQ(1, finish_count);
     }
     EXPECT_EQ(counter.current, 0);
     EXPECT_GT(counter.max, 0);
@@ -144,27 +124,16 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         "phrase", irs::ViewCast<irs::byte_type>(std::string_view("quick")));
       filter.mutable_options()->terms.emplace_back(
         "phrase", irs::ViewCast<irs::byte_type>(std::string_view("brown")));
-      size_t collect_term_count = 0;
       size_t finish_count = 0;
 
       tests::sort::CustomSort scorer;
 
-      scorer.collector_collect_term =
-        [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                              const irs::AttributeProvider&) -> void {
-        ++collect_term_count;
-      };
       scorer.collectors_collect =
         [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
                         const irs::TermCollector*) -> void { ++finish_count; };
-      scorer.prepare_term_collector = [&scorer]() -> irs::TermCollector::ptr {
-        return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
-      };
 
       auto prepared = filter.prepare({.index = index, .scorer = &scorer});
-      // as a disjunction) in 2 segments
-      ASSERT_EQ(4, collect_term_count);  // 2 term in 2 segments
-      ASSERT_EQ(2, finish_count);        // 2 unique terms
+      ASSERT_EQ(2, finish_count);
     }
   }
 

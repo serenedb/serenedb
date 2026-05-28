@@ -1749,7 +1749,6 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
     Docs docs{};
     Costs costs{docs.size()};
 
-    size_t collect_term_count = 0;
     size_t finish_count = 0;
     size_t field_docs = 0;
 
@@ -1757,11 +1756,6 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
       std::make_unique<tests::sort::CustomSort>()};
     auto& scorer = static_cast<tests::sort::CustomSort&>(*scorers.front());
 
-    scorer.collector_collect_term =
-      [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                            const irs::AttributeProvider&) -> void {
-      ++collect_term_count;
-    };
     scorer.collectors_collect = [&finish_count, &field_docs](
                                   irs::byte_type*,
                                   const irs::FieldCollector::Data* field,
@@ -1770,9 +1764,6 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
       if (field) {
         field_docs += field->docs_with_field;
       }
-    };
-    scorer.prepare_term_collector = [&scorer]() -> irs::TermCollector::ptr {
-      return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
     };
 
     irs::ByGranularRange q;
@@ -1785,7 +1776,6 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
     q.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
     CheckQuery(q, scorers, docs, rdr, false);
-    ASSERT_EQ(0, collect_term_count);
     ASSERT_EQ(0, field_docs);
     ASSERT_EQ(0, finish_count);
   }
@@ -1795,24 +1785,15 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
     Docs docs{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17};
     Costs costs{docs.size()};
 
-    size_t collect_term_count = 0;
     size_t finish_count = 0;
 
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::CustomSort>()};
     auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
 
-    scorer.collector_collect_term =
-      [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                            const irs::AttributeProvider&) -> void {
-      ++collect_term_count;
-    };
     scorer.collectors_collect =
       [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
                       const irs::TermCollector*) -> void { ++finish_count; };
-    scorer.prepare_term_collector = [&scorer]() -> irs::TermCollector::ptr {
-      return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
-    };
 
     irs::ByGranularRange q;
     *q.mutable_field() = "value";
@@ -1824,8 +1805,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
     q.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
     CheckQuery(tests::FilterWrapper{q}, order, docs, rdr);
-    ASSERT_EQ(11, collect_term_count);  // 11 different terms
-    ASSERT_EQ(11, finish_count);        // 11 different terms
+    ASSERT_EQ(11, finish_count);
   }
 
   // value = (..;..)

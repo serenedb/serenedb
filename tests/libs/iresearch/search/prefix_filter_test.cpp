@@ -60,7 +60,6 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
     {
       Docs docs{1, 4, 9, 16, 21, 24, 26, 29, 31, 32};
       Costs costs{docs.size()};
-      size_t collect_term_count = 0;
       size_t finish_count = 0;
 
       std::array<irs::Scorer::ptr, 1> order{
@@ -68,21 +67,11 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
 
       auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
 
-      scorer.collector_collect_term =
-        [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                              const irs::AttributeProvider&) -> void {
-        ++collect_term_count;
-      };
       scorer.collectors_collect =
         [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
                         const irs::TermCollector*) -> void { ++finish_count; };
-      scorer.prepare_term_collector = [&scorer]() -> irs::TermCollector::ptr {
-        return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
-      };
       CheckQuery(MakeFilter("prefix", ""), order, docs, rdr);
-      // as a disjunction) in 1 segment
-      ASSERT_EQ(9, collect_term_count);  // 9 different terms
-      ASSERT_EQ(9, finish_count);        // 9 unque terms
+      ASSERT_EQ(9, finish_count);
     }
 
     // empty prefix

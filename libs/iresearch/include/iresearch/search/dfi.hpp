@@ -54,19 +54,6 @@ struct DFIStats {
   score_t ratio;
 };
 
-struct DFITermCollector final : TermCollector {
-  uint64_t total_term_freq = 0;  // ttf of the term across the collection
-
-  void collect(const SubReader& /*segment*/, const TermReader& /*field*/,
-               const AttributeProvider& term_attrs) final;
-
-  void reset() noexcept final { total_term_freq = 0; }
-
-  void collect(bytes_view in) final;
-
-  void write(DataOutput& out) const final;
-};
-
 class DFI final : public irs::ScorerBase<DFI, DFIStats> {
  public:
   static constexpr std::string_view type_name() noexcept { return "dfi"; }
@@ -85,8 +72,6 @@ class DFI final : public irs::ScorerBase<DFI, DFIStats> {
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::Freq | IndexFeatures::Norm;
   }
-
-  TermCollector::ptr PrepareTermCollector() const final;
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 

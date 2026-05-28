@@ -412,21 +412,14 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_custom_sort) {
   auto rdr = open_reader();
   {
     Docs docs{1, 4, 9, 16, 21, 24, 26, 29, 31, 32};
-    size_t collect_term_count = 0, finish_count = 0;
+    size_t finish_count = 0;
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::CustomSort>()};
     auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
-    scorer.collector_collect_term =
-      [&](const irs::SubReader&, const irs::TermReader&,
-          const irs::AttributeProvider&) { ++collect_term_count; };
     scorer.collectors_collect =
       [&](irs::byte_type*, const irs::FieldCollector::Data*,
           const irs::TermCollector*) { ++finish_count; };
-    scorer.prepare_term_collector = [&]() -> irs::TermCollector::ptr {
-      return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
-    };
     CheckQuery(MakeFilter("prefix", ".*"), order, docs, rdr);
-    ASSERT_EQ(9, collect_term_count);
     ASSERT_EQ(9, finish_count);
   }
 }
@@ -464,13 +457,10 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_custom_sort) {
   {
     // ".*c.*" is Complex (not Prefix/Literal), so it goes through FromRegexp
     Docs docs{1, 4, 9, 21, 26, 31, 32};
-    size_t collect_term_count = 0, finish_count = 0, field_docs = 0;
+    size_t finish_count = 0, field_docs = 0;
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::CustomSort>()};
     auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
-    scorer.collector_collect_term =
-      [&](const irs::SubReader&, const irs::TermReader&,
-          const irs::AttributeProvider&) { ++collect_term_count; };
     scorer.collectors_collect = [&](irs::byte_type*,
                                     const irs::FieldCollector::Data* field,
                                     const irs::TermCollector*) {
@@ -479,12 +469,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_custom_sort) {
         field_docs += field->docs_with_field;
       }
     };
-    scorer.prepare_term_collector = [&]() -> irs::TermCollector::ptr {
-      return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
-    };
     CheckQuery(MakeFilter("prefix", ".*c.*"), order, docs, rdr);
-    // Verify collectors were called (terms were scored via automaton path)
-    ASSERT_GT(collect_term_count, 0);
     ASSERT_GT(field_docs, 0);
     ASSERT_GT(finish_count, 0);
   }

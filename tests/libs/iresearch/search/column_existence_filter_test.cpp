@@ -244,7 +244,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
     {
       irs::ByColumnExistence filter = MakeFilter(kSeq);
 
-      size_t collector_collect_term_count = 0;
       size_t collector_finish_count = 0;
       size_t collector_field_docs = 0;
       size_t scorer_score_count = 0;
@@ -252,12 +251,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       tests::sort::CustomSort sort;
 
-      sort.collector_collect_term = [&collector_collect_term_count](
-                                      const irs::SubReader&,
-                                      const irs::TermReader&,
-                                      const irs::AttributeProvider&) -> void {
-        ++collector_collect_term_count;
-      };
       sort.collectors_collect =
         [&collector_finish_count, &collector_field_docs](
           irs::byte_type*, const irs::FieldCollector::Data* field,
@@ -302,8 +295,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_EQ(segment.docs_count(), expected_docs.size());
       ASSERT_EQ(segment.live_docs_count(), expected_docs.size());
 
-      // Collectors are not exercised by columnstore-existence filters.
-      ASSERT_EQ(0, collector_collect_term_count);
       ASSERT_EQ(0, collector_field_docs);
       ASSERT_EQ(0, collector_finish_count);
       ASSERT_EQ(0, scorer_score_count);

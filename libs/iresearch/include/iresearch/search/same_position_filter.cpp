@@ -257,7 +257,7 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
       }
 
       term->read();  // read term attributes
-      term_stats.collect(segment, *field, term_idx, *term);
+      term_stats.Collect(term_idx, *term);
       term_states.emplace_back(ctx.memory);
 
       auto& state = term_states.back();
@@ -286,7 +286,7 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   for (auto& stat : stats) {
     stat.resize(GetStatsSize(ctx.scorer));
     auto* stats_buf = stat.data();
-    term_stats.finish(stats_buf, term_idx++, field_stats.Get(), ctx.index);
+    term_stats.Finish(stats_buf, term_idx++, field_stats.Get(), ctx.index);
   }
 
   return memory::make_tracked<SamePositionQuery>(

@@ -52,28 +52,6 @@ struct CustomSort final : public irs::ScorerBase<void> {
     return "custom_sort";
   }
 
-  class TermCollector final : public irs::TermCollector {
-   public:
-    TermCollector(const CustomSort& sort) : _sort(sort) {}
-
-    virtual void collect(const irs::SubReader& segment,
-                         const irs::TermReader& field,
-                         const irs::AttributeProvider& term_attrs) final {
-      if (_sort.term_collector_collect) {
-        _sort.term_collector_collect(segment, field, term_attrs);
-      }
-    }
-
-    void collect(irs::bytes_view) final {}
-
-    void reset() final {}
-
-    void write(irs::DataOutput&) const final {}
-
-   private:
-    const CustomSort& _sort;
-  };
-
   struct Scorer : public irs::ScoreOperator {
     Scorer(const CustomSort& sort, const irs::ScoreContext& ctx)
       : document_attrs(ctx.doc_attrs),
@@ -126,22 +104,10 @@ struct CustomSort final : public irs::ScorerBase<void> {
     return irs::ScoreFunction::Make<CustomSort::Scorer>(*this, ctx);
   }
 
-  irs::TermCollector::ptr PrepareTermCollector() const final {
-    if (_prepare_term_collector) {
-      return _prepare_term_collector();
-    }
-
-    return std::make_unique<CustomSort::TermCollector>(*this);
-  }
-
-  std::function<void(const irs::SubReader&, const irs::TermReader&,
-                     const irs::AttributeProvider&)>
-    term_collector_collect;
   std::function<void(irs::byte_type*, const irs::FieldCollector::Data*,
                      const irs::TermCollector*)>
     collector_finish;
   std::function<void(const irs::ScoreContext& ctx)> _prepare_scorer;  // NOLINT
-  std::function<irs::TermCollector::ptr()> _prepare_term_collector;   // NOLINT
   std::function<void(const irs::ScoreOperator*, irs::score_t*, size_t n)>
     scorer_score;
 
@@ -823,19 +789,12 @@ TEST(GeoFilterTest, checkScorer) {
     *q.mutable_field() = "geometry";
     q.mutable_options()->store_field_id = kGeo;
 
-    size_t collector_collect_term_count = 0;
     size_t collector_finish_count = 0;
     size_t scorer_score_count = 0;
     size_t prepare_scorer_count = 0;
 
     ::CustomSort sort;
 
-    sort.term_collector_collect = [&collector_collect_term_count, &q](
-                                    const irs::SubReader&,
-                                    const irs::TermReader& field,
-                                    const irs::AttributeProvider&) -> void {
-      collector_collect_term_count += (q.field() == field.meta().name);
-    };
     sort.collector_finish = [&collector_finish_count](
                               irs::byte_type*, const irs::FieldCollector::Data*,
                               const irs::TermCollector*) -> void {
@@ -858,7 +817,6 @@ TEST(GeoFilterTest, checkScorer) {
     const std::map<std::string, score_t> expected{{"Q", 9}, {"R", 9}};
 
     ASSERT_EQ(expected, execute_query(q, sort));
-    ASSERT_EQ(0, collector_collect_term_count);
     ASSERT_EQ(1, collector_finish_count);
     ASSERT_EQ(2, scorer_score_count);
   }
@@ -887,19 +845,12 @@ TEST(GeoFilterTest, checkScorer) {
     *q.mutable_field() = "geometry";
     q.mutable_options()->store_field_id = kGeo;
 
-    size_t collector_collect_term_count = 0;
     size_t collector_finish_count = 0;
     size_t scorer_score_count = 0;
     size_t prepare_scorer_count = 0;
 
     ::CustomSort sort;
 
-    sort.term_collector_collect = [&collector_collect_term_count, &q](
-                                    const irs::SubReader&,
-                                    const irs::TermReader& field,
-                                    const irs::AttributeProvider&) -> void {
-      collector_collect_term_count += (q.field() == field.meta().name);
-    };
     sort.collector_finish = [&collector_finish_count](
                               irs::byte_type*, const irs::FieldCollector::Data*,
                               const irs::TermCollector*) -> void {
@@ -922,7 +873,6 @@ TEST(GeoFilterTest, checkScorer) {
     const std::map<std::string, irs::score_t> expected{{"Q", 9}, {"R", 9}};
 
     ASSERT_EQ(expected, execute_query(q, sort));
-    ASSERT_EQ(0, collector_collect_term_count);
     ASSERT_EQ(1, collector_finish_count);
     ASSERT_EQ(2, scorer_score_count);
   }

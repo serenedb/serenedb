@@ -61,8 +61,7 @@ class AllTermsCollector : util::Noncopyable {
 
   void Visit(score_t boost) {
     SDB_ASSERT(_state);
-    _term_stats.collect(*_state.segment, *_state.state->reader, _stat_index,
-                        *_state.terms);
+    _term_stats.Collect(_stat_index, *_state.terms);
 
     auto& state = *_state.state;
     state.scored_states.emplace_back(_state.terms->cookie(), _stat_index,

@@ -39,7 +39,6 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_impl.hpp"
 #include "iresearch/search/scorers.hpp"
 
 namespace irs {
@@ -228,18 +227,12 @@ void LMDirichlet::collect(byte_type* stats_buf,
                           const TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 
-  const auto* term_ptr = sdb::basics::downCast<LMTermCollector>(term);
-
   const auto ttf_field = field ? field->total_term_freq : 0;
-  const auto ttf_term = term_ptr ? term_ptr->total_term_freq : 0;
+  const auto ttf_term = term ? term->total_term_freq : 0;
 
   const double num = static_cast<double>(ttf_term) + 1.0;
   const double den = static_cast<double>(ttf_field) + 1.0;
   stats->collection_prob = static_cast<score_t>(num / den);
-}
-
-TermCollector::ptr LMDirichlet::PrepareTermCollector() const {
-  return std::make_unique<LMTermCollector>();
 }
 
 ScoreFunction LMDirichlet::PrepareScorer(const ScoreContext& ctx) const {

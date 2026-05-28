@@ -45,7 +45,6 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_impl.hpp"
 #include "iresearch/search/scorers.hpp"
 
 namespace irs {
@@ -239,13 +238,8 @@ struct TfIdfScore : public ScoreOperator {
 
 void TFIDF::collect(byte_type* stats_buf, const FieldCollector::Data* field,
                     const TermCollector* term) const {
-  const auto* term_ptr = sdb::basics::downCast<TermCollectorImpl>(term);
-
-  // nullptr possible if e.g. 'all' filter
   const auto docs_with_field = field ? field->docs_with_field : 0;
-  // nullptr possible if e.g.'by_column_existence' filter
-  const auto docs_with_term = term_ptr ? term_ptr->docs_with_term : 0;
-  // TODO(mbkkt) SDB_ASSERT(docs_with_field >= docs_with_term);
+  const auto docs_with_term = term ? term->docs_with_term : 0;
 
   auto* idf = stats_cast(stats_buf);
   idf->value += static_cast<score_t>(
@@ -292,10 +286,6 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
         norm, ctx.boost, *stats, freq, filter_boost);
     });
   });
-}
-
-TermCollector::ptr TFIDF::PrepareTermCollector() const {
-  return std::make_unique<TermCollectorImpl>();
 }
 
 WandWriter::ptr TFIDF::prepare_wand_writer(size_t max_levels) const {

@@ -38,10 +38,6 @@ namespace catalog {
 inline constexpr std::string_view kIncludedKind = "included";
 inline constexpr std::string_view kHNSWKind = "hnsw";
 
-inline constexpr bool IsBuiltinOpclassName(std::string_view name) noexcept {
-  return name == kIncludedKind || name == kHNSWKind;
-}
-
 class SecondaryIndex;
 class InvertedIndex;
 

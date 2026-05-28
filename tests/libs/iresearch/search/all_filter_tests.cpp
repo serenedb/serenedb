@@ -88,29 +88,29 @@ TEST_P(AllFilterTestCase, all_order) {
   {
     Docs docs{1, 4,  5,  16, 17, 20, 21, 2,  3,  6,  7,  18, 19, 22, 23, 8,
               9, 12, 13, 24, 25, 28, 29, 10, 11, 14, 15, 26, 27, 30, 31, 32};
-    size_t collector_collect_field_count = 0;
     size_t collector_collect_term_count = 0;
     size_t collector_finish_count = 0;
+    size_t collector_field_docs = 0;
     size_t scorer_score_count = 0;
 
     irs::Scorer::ptr bucket{std::make_unique<tests::sort::CustomSort>()};
     auto* sort = static_cast<tests::sort::CustomSort*>(bucket.get());
 
-    sort->collector_collect_field = [&collector_collect_field_count](
-                                      const irs::SubReader&,
-                                      const irs::TermReader&) -> void {
-      ++collector_collect_field_count;
-    };
     sort->collector_collect_term = [&collector_collect_term_count](
                                      const irs::SubReader&,
                                      const irs::TermReader&,
                                      const irs::AttributeProvider&) -> void {
       ++collector_collect_term_count;
     };
-    sort->collectors_collect =
-      [&collector_finish_count](
-        const irs::byte_type*, const irs::FieldCollector*,
-        const irs::TermCollector*) -> void { ++collector_finish_count; };
+    sort->collectors_collect = [&collector_finish_count, &collector_field_docs](
+                                 const irs::byte_type*,
+                                 const irs::FieldCollector::Data* field,
+                                 const irs::TermCollector*) -> void {
+      ++collector_finish_count;
+      if (field) {
+        collector_field_docs += field->docs_with_field;
+      }
+    };
     sort->scorer_score = [&](const irs::ScoreOperator* ctx, irs::score_t* score,
                              size_t n) -> void {
       ASSERT_EQ(1, n);
@@ -120,8 +120,8 @@ TEST_P(AllFilterTestCase, all_order) {
     };
 
     CheckQuery(irs::All(), std::span{&bucket, 1}, docs, rdr);
-    ASSERT_EQ(0, collector_collect_field_count);  // should not be executed
-    ASSERT_EQ(0, collector_collect_term_count);   // should not be executed
+    ASSERT_EQ(0, collector_collect_term_count);  // should not be executed
+    ASSERT_EQ(0, collector_field_docs);          // should not be executed
     ASSERT_EQ(1, collector_finish_count);
     ASSERT_EQ(32, scorer_score_count);
   }
@@ -134,9 +134,6 @@ TEST_P(AllFilterTestCase, all_order) {
     irs::Scorer::ptr bucket{std::make_unique<tests::sort::CustomSort>()};
     auto& sort = static_cast<tests::sort::CustomSort&>(*bucket);
 
-    sort.prepare_field_collector = []() -> irs::FieldCollector::ptr {
-      return nullptr;
-    };
     sort.prepare_scorer =
       [](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
       return irs::ScoreFunction::Default();

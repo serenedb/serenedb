@@ -157,35 +157,6 @@ struct Boost : public irs::ScorerBase<Boost, void> {
 };
 
 struct CustomSort : public irs::ScorerBase<CustomSort, void> {
-  class FieldCollector : public irs::FieldCollector {
-   public:
-    FieldCollector(const CustomSort& sort) : _sort(sort) {}
-
-    void collect(const irs::SubReader& segment,
-                 const irs::TermReader& field) final {
-      if (_sort.collector_collect_field) {
-        _sort.collector_collect_field(segment, field);
-      }
-    }
-
-    void reset() final {
-      if (_sort.field_reset) {
-        _sort.field_reset();
-      }
-    }
-
-    void collect(irs::bytes_view /*in*/) final {
-      // NOOP
-    }
-
-    void write(irs::DataOutput& /*out*/) const final {
-      // NOOP
-    }
-
-   private:
-    const CustomSort& _sort;
-  };
-
   class TermCollector : public irs::TermCollector {
    public:
     TermCollector(const CustomSort& sort) : _sort(sort) {}
@@ -246,7 +217,8 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
     const CustomSort& sort;
   };
 
-  void collect(irs::byte_type* filter_attrs, const irs::FieldCollector* field,
+  void collect(irs::byte_type* filter_attrs,
+               const irs::FieldCollector::Data* field,
                const irs::TermCollector* term) const final {
     if (collectors_collect) {
       collectors_collect(filter_attrs, field, term);
@@ -255,14 +227,6 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
 
   irs::IndexFeatures GetIndexFeatures() const override {
     return irs::IndexFeatures::None;
-  }
-
-  irs::FieldCollector::ptr PrepareFieldCollector() const final {
-    if (prepare_field_collector) {
-      return prepare_field_collector();
-    }
-
-    return std::make_unique<FieldCollector>(*this);
   }
 
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
@@ -281,22 +245,18 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
     return std::make_unique<TermCollector>(*this);
   }
 
-  std::function<void(const irs::SubReader&, const irs::TermReader&)>
-    collector_collect_field;
   std::function<void(const irs::SubReader&, const irs::TermReader&,
                      const irs::AttributeProvider&)>
     collector_collect_term;
-  std::function<void(irs::byte_type*, const irs::FieldCollector*,
+  std::function<void(irs::byte_type*, const irs::FieldCollector::Data*,
                      const irs::TermCollector*)>
     collectors_collect;
-  std::function<irs::FieldCollector::ptr()> prepare_field_collector;
   std::function<irs::ScoreFunction(const irs::ScoreContext& ctx)>
     prepare_scorer;
   std::function<irs::TermCollector::ptr()> prepare_term_collector;
   std::function<void(const irs::ScoreOperator*, irs::score_t*, size_t n)>
     scorer_score;
   std::function<void()> term_reset;
-  std::function<void()> field_reset;
 };
 
 struct StatsT {
@@ -362,7 +322,8 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
     irs::doc_id_t count;
   };
 
-  void collect(irs::byte_type* stats_buf, const irs::FieldCollector* /*field*/,
+  void collect(irs::byte_type* stats_buf,
+               const irs::FieldCollector::Data* /*field*/,
                const irs::TermCollector* term) const final {
     auto* term_ptr = dynamic_cast<const TermCollector*>(term);
     if (term_ptr) {  // may be null e.g. 'all' filter
@@ -374,10 +335,6 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
 
   irs::IndexFeatures GetIndexFeatures() const final {
     return irs::IndexFeatures::None;
-  }
-
-  irs::FieldCollector::ptr PrepareFieldCollector() const final {
-    return nullptr;  // do not need to collect stats
   }
 
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
@@ -517,7 +474,7 @@ struct EmptyTermReader : irs::Singleton<EmptyTermReader>, irs::TermReader {
   }
 
   irs::SeekTermIterator::ptr iterator(
-    irs::automaton_table_matcher&) const final {
+    const irs::automaton_table_matcher&) const final {
     return irs::SeekTermIterator::empty();
   }
 

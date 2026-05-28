@@ -228,7 +228,7 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
   const auto is_ord_empty = !ctx.scorer;
 
   // stats collectors
-  FieldCollectors field_stats(ctx.scorer);
+  FieldCollector field_stats{ctx.scorer};
   TermCollectors term_stats(ctx.scorer, phrase_size);
 
   // per segment phrase states
@@ -249,7 +249,7 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
     }
 
     // collect field statistics once per segment
-    field_stats.collect(segment, *reader);
+    field_stats.Collect(*reader);
     ptv.Reset(term_stats);
 
     for (const auto& word : options) {
@@ -297,7 +297,7 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
     pos_itr->offs_max = term.offs_max;
     pos_itr->offs_min = term.offs_min;
     pos_itr->lead_offset = look_back += term.offs_max;
-    term_stats.finish(stats_buf, term_idx, field_stats, ctx.index);
+    term_stats.finish(stats_buf, term_idx, field_stats.Get(), ctx.index);
     ++pos_itr;
     ++term_idx;
   }
@@ -312,7 +312,7 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
                                           const ByPhraseOptions& options) {
   const auto phrase_size = options.size();
   // stats collectors
-  FieldCollectors field_stats{ctx.scorer};
+  FieldCollector field_stats{ctx.scorer};
 
   std::vector<field_visitor> phrase_part_visitors;
   phrase_part_visitors.reserve(phrase_size);
@@ -376,7 +376,7 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
     }
 
     // collect field statistics once per segment
-    field_stats.collect(segment, *reader);
+    field_stats.Collect(*reader);
     ptv.Reset();  // reset boost volaitility mark
 
     size_t found_parts = 0;
@@ -436,7 +436,7 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
     position->offs_min = term.offs_min;
     position->lead_offset = look_back += term.offs_max;
     for (size_t i = 0, size = collector->size(); i < size; ++i) {
-      collector->finish(stats_buf, i, field_stats, ctx.index);
+      collector->finish(stats_buf, i, field_stats.Get(), ctx.index);
     }
     ++position;
     ++collector;

@@ -111,17 +111,17 @@ class TopTermsCollectorImpl
  public:
   using BaseType = irs::TopTermsCollector<TopTermState<score_t>>;
 
-  TopTermsCollectorImpl(size_t size, FieldCollectors& field_stats)
+  TopTermsCollectorImpl(size_t size, FieldCollector& field_stats)
     : BaseType(size), _field_stats(field_stats) {}
 
   void Prepare(const SubReader& segment, const TermReader& field,
                const SeekTermIterator& terms) {
-    _field_stats.collect(segment, field);
+    _field_stats.Collect(field);
     BaseType::Prepare(segment, field, terms);
   }
 
  private:
-  FieldCollectors& _field_stats;
+  FieldCollector& _field_stats;
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -134,7 +134,7 @@ class TopTermsCollectorImpl
 template<typename Visitor>
 void VisitImpl(const SubReader& segment, const TermReader& reader,
                const byte_type no_distance, const uint32_t utf8_target_size,
-               automaton_table_matcher& matcher, Visitor&& visitor) {
+               const automaton_table_matcher& matcher, Visitor&& visitor) {
   SDB_ASSERT(fst::kError != matcher.Properties(0));
   auto terms = reader.iterator(matcher);
 
@@ -196,7 +196,7 @@ Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
                                             bytes_view prefix, bytes_view term,
                                             size_t terms_limit,
                                             const ParametricDescription& d) {
-  FieldCollectors field_stats{ctx.scorer};
+  FieldCollector field_stats{ctx.scorer};
   TermCollectors term_stats{ctx.scorer, 1};
   MultiTermQuery::States states{ctx.memory, ctx.index.size()};
 
@@ -225,7 +225,7 @@ Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
     1, MultiTermQuery::Stats::allocator_type{ctx.memory});
   stats.back().resize(GetStatsSize(ctx.scorer), 0);
   auto* stats_buf = stats[0].data();
-  term_stats.finish(stats_buf, 0, field_stats, ctx.index);
+  term_stats.finish(stats_buf, 0, field_stats.Get(), ctx.index);
 
   return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),
                                               std::move(stats), ctx.boost,

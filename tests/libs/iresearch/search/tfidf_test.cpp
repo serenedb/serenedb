@@ -1456,39 +1456,7 @@ TEST_P(TfidfTestCase, test_collector_serialization) {
   ASSERT_NE(nullptr, term);
   ASSERT_TRUE(term->next());
   term->read();  // fill TermMeta
-  irs::bstring fcollector_out;
   irs::bstring tcollector_out;
-
-  // default init (field_collector)
-  {
-    irs::TFIDF prepared_sort;
-    auto collector = prepared_sort.PrepareFieldCollector();
-    ASSERT_NE(nullptr, collector);
-    irs::StrOutput out0;
-    collector->write(out0);
-    collector->collect(reader[0], *field);
-    irs::StrOutput out1;
-    collector->write(out1);
-    fcollector_out = out1.out;
-    ASSERT_TRUE(out0.out.size() != out1.out.size() ||
-                0 != std::memcmp(&out0.out[0], &out1.out[0], out0.out.size()));
-
-    // identical to default
-    collector = prepared_sort.PrepareFieldCollector();
-    collector->collect(out0.out);
-    irs::StrOutput out2;
-    collector->write(out2);
-    ASSERT_TRUE(out0.out.size() == out2.out.size() &&
-                0 == std::memcmp(&out0.out[0], &out2.out[0], out0.out.size()));
-
-    // identical to modified
-    collector = prepared_sort.PrepareFieldCollector();
-    collector->collect(out1.out);
-    irs::StrOutput out3;
-    collector->write(out3);
-    ASSERT_TRUE(out1.out.size() == out3.out.size() &&
-                0 == std::memcmp(&out1.out[0], &out3.out[0], out1.out.size()));
-  }
 
   // default init (term_collector)
   {
@@ -1521,16 +1489,6 @@ TEST_P(TfidfTestCase, test_collector_serialization) {
                 0 == std::memcmp(&out1.out[0], &out3.out[0], out1.out.size()));
   }
 
-  // serialized too short (field_collector)
-  {
-    irs::TFIDF prepared_sort;
-    auto collector = prepared_sort.PrepareFieldCollector();
-    ASSERT_NE(nullptr, collector);
-    ASSERT_THROW(collector->collect(irs::bytes_view(&fcollector_out[0],
-                                                    fcollector_out.size() - 1)),
-                 irs::IoError);
-  }
-
   // serialized too short (term_collector)
   {
     irs::TFIDF prepared_sort;
@@ -1539,16 +1497,6 @@ TEST_P(TfidfTestCase, test_collector_serialization) {
     ASSERT_THROW(collector->collect(irs::bytes_view(&tcollector_out[0],
                                                     tcollector_out.size() - 1)),
                  irs::IoError);
-  }
-
-  // serialized too long (field_collector)
-  {
-    irs::TFIDF prepared_sort;
-    auto collector = prepared_sort.PrepareFieldCollector();
-    ASSERT_NE(nullptr, collector);
-    auto out = fcollector_out;
-    out.append(1, 42);
-    ASSERT_THROW(collector->collect(out), irs::IoError);
   }
 
   // serialized too long (term_collector)

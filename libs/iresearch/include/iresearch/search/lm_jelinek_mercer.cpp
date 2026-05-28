@@ -222,14 +222,14 @@ struct LmJmScore : public ScoreOperator {
 
 }  // namespace
 
-void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
+void LMJelinekMercer::collect(byte_type* stats_buf,
+                              const FieldCollector::Data* field,
                               const TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 
-  const auto* field_ptr = sdb::basics::downCast<LMFieldCollector>(field);
   const auto* term_ptr = sdb::basics::downCast<LMTermCollector>(term);
 
-  const auto ttf_field = field_ptr ? field_ptr->total_term_freq : 0;
+  const auto ttf_field = field ? field->total_term_freq : 0;
   const auto ttf_term = term_ptr ? term_ptr->total_term_freq : 0;
 
   // DefaultCollectionModel: P(t|C) = (ttf_t + 1) / (ttf_field + 1).
@@ -239,10 +239,6 @@ void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
   const double num = static_cast<double>(ttf_term) + 1.0;
   const double den = static_cast<double>(ttf_field) + 1.0;
   stats->collection_prob = static_cast<score_t>(num / den);
-}
-
-FieldCollector::ptr LMJelinekMercer::PrepareFieldCollector() const {
-  return std::make_unique<LMFieldCollector>();
 }
 
 TermCollector::ptr LMJelinekMercer::PrepareTermCollector() const {

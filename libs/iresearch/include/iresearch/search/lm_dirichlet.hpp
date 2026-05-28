@@ -49,14 +49,12 @@ class LMDirichlet final : public irs::ScorerBase<LMDirichlet, LMStats> {
 
   explicit LMDirichlet(score_t mu = MU()) noexcept : _mu{mu} {}
 
-  void collect(byte_type* stats_buf, const irs::FieldCollector* field,
+  void collect(byte_type* stats_buf, const irs::FieldCollector::Data* field,
                const irs::TermCollector* term) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::Freq | IndexFeatures::Norm;
   }
-
-  FieldCollector::ptr PrepareFieldCollector() const final;
 
   TermCollector::ptr PrepareTermCollector() const final;
 

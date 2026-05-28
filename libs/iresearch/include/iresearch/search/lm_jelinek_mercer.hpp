@@ -50,14 +50,12 @@ class LMJelinekMercer final : public irs::ScorerBase<LMJelinekMercer, LMStats> {
   explicit LMJelinekMercer(score_t lambda = LAMBDA()) noexcept
     : _lambda{lambda} {}
 
-  void collect(byte_type* stats_buf, const irs::FieldCollector* field,
+  void collect(byte_type* stats_buf, const irs::FieldCollector::Data* field,
                const irs::TermCollector* term) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::Freq | IndexFeatures::Norm;
   }
-
-  FieldCollector::ptr PrepareFieldCollector() const final;
 
   TermCollector::ptr PrepareTermCollector() const final;
 

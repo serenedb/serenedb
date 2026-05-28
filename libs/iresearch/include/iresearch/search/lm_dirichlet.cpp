@@ -223,23 +223,19 @@ struct LmDirScore : public ScoreOperator {
 
 }  // namespace
 
-void LMDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
+void LMDirichlet::collect(byte_type* stats_buf,
+                          const FieldCollector::Data* field,
                           const TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 
-  const auto* field_ptr = sdb::basics::downCast<LMFieldCollector>(field);
   const auto* term_ptr = sdb::basics::downCast<LMTermCollector>(term);
 
-  const auto ttf_field = field_ptr ? field_ptr->total_term_freq : 0;
+  const auto ttf_field = field ? field->total_term_freq : 0;
   const auto ttf_term = term_ptr ? term_ptr->total_term_freq : 0;
 
   const double num = static_cast<double>(ttf_term) + 1.0;
   const double den = static_cast<double>(ttf_field) + 1.0;
   stats->collection_prob = static_cast<score_t>(num / den);
-}
-
-FieldCollector::ptr LMDirichlet::PrepareFieldCollector() const {
-  return std::make_unique<LMFieldCollector>();
 }
 
 TermCollector::ptr LMDirichlet::PrepareTermCollector() const {

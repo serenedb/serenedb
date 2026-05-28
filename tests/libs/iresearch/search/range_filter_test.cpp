@@ -964,30 +964,20 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Docs docs{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17};
       Costs costs{docs.size()};
 
-      size_t collect_field_count = 0;
       size_t collect_term_count = 0;
       size_t finish_count = 0;
 
       irs::Scorer::ptr sort{std::make_unique<tests::sort::CustomSort>()};
       auto& scorer = static_cast<tests::sort::CustomSort&>(*sort);
 
-      scorer.collector_collect_field = [&collect_field_count](
-                                         const irs::SubReader&,
-                                         const irs::TermReader&) -> void {
-        ++collect_field_count;
-      };
       scorer.collector_collect_term =
         [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
                               const irs::AttributeProvider&) -> void {
         ++collect_term_count;
       };
       scorer.collectors_collect =
-        [&finish_count](irs::byte_type*, const irs::FieldCollector*,
+        [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
                         const irs::TermCollector*) -> void { ++finish_count; };
-      scorer.prepare_field_collector = [&scorer]() -> irs::FieldCollector::ptr {
-        return std::make_unique<tests::sort::CustomSort::FieldCollector>(
-          scorer);
-      };
       scorer.prepare_term_collector = [&scorer]() -> irs::TermCollector::ptr {
         return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
       };
@@ -1002,9 +992,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
       CheckQuery(tests::FilterWrapper{filter}, std::span{&sort, 1}, docs, rdr);
-      ASSERT_EQ(11, collect_field_count);  // 1 field in 1 segment
-      ASSERT_EQ(11, collect_term_count);   // 11 different terms
-      ASSERT_EQ(11, finish_count);         // 11 different terms
+      ASSERT_EQ(11, collect_term_count);  // 11 different terms
+      ASSERT_EQ(11, finish_count);        // 11 different terms
     }
 
     // value = (..;..)

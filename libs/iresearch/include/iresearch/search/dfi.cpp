@@ -49,26 +49,6 @@
 
 namespace irs {
 
-void DFIFieldCollector::collect(const SubReader& /*segment*/,
-                                const TermReader& field) noexcept {
-  if (const auto* freq = irs::get<FreqAttr>(field)) {
-    total_term_freq += freq->value;
-  }
-}
-
-void DFIFieldCollector::collect(bytes_view in) {
-  ByteRefIterator itr{in};
-  const auto v = vread<uint64_t>(itr);
-  if (itr.pos != itr.end) {
-    throw IoError{"input not read fully"};
-  }
-  total_term_freq += v;
-}
-
-void DFIFieldCollector::write(DataOutput& out) const {
-  out.WriteV64(total_term_freq);
-}
-
 void DFITermCollector::collect(const SubReader& /*segment*/,
                                const TermReader& /*field*/,
                                const AttributeProvider& term_attrs) {
@@ -311,23 +291,18 @@ ScoreFunction MakeScoreMeasure(const ScoreContext& ctx, const DFIStats& stats,
 
 }  // namespace
 
-void DFI::collect(byte_type* stats_buf, const FieldCollector* field,
+void DFI::collect(byte_type* stats_buf, const FieldCollector::Data* field,
                   const TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 
-  const auto* field_ptr = sdb::basics::downCast<DFIFieldCollector>(field);
   const auto* term_ptr = sdb::basics::downCast<DFITermCollector>(term);
 
-  const auto ttf_field = field_ptr ? field_ptr->total_term_freq : 0;
+  const auto ttf_field = field ? field->total_term_freq : 0;
   const auto ttf_term = term_ptr ? term_ptr->total_term_freq : 0;
 
   const double num = static_cast<double>(ttf_term) + 1.0;
   const double den = static_cast<double>(ttf_field) + 1.0;
   stats->ratio = static_cast<score_t>(num / den);
-}
-
-FieldCollector::ptr DFI::PrepareFieldCollector() const {
-  return std::make_unique<DFIFieldCollector>();
 }
 
 TermCollector::ptr DFI::PrepareTermCollector() const {

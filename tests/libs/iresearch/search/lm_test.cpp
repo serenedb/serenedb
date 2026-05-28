@@ -18,9 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-// Tests for both language-model similarities. They share stats collectors
-// (LMFieldCollector / LMTermCollector) and the LMStats layout, so they're
-// co-located here.
+// Tests for both language-model similarities. They share the LMTermCollector
+// and the LMStats layout, so they're co-located here.
 
 #include <algorithm>
 #include <map>

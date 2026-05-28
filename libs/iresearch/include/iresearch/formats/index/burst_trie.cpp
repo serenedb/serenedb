@@ -2297,7 +2297,7 @@ class AutomatonTermIterator : public TermIteratorBase {
   AutomatonTermIterator(const TermReaderBase& field, PostingsReader& postings,
                         IndexInput::ptr&& terms_in,
                         Encryption::Stream* terms_cipher, const FST& fst,
-                        automaton_table_matcher& matcher)
+                        const automaton_table_matcher& matcher)
     : TermIteratorBase{field, postings, terms_cipher, &_payload},
       _terms_in{std::move(terms_in)},
       _fst{&fst},
@@ -2397,7 +2397,7 @@ class AutomatonTermIterator : public TermIteratorBase {
   IndexInput::ptr _terms_in;
   const FST* _fst;
   const automaton* _acceptor;
-  automaton_table_matcher* _matcher;
+  const automaton_table_matcher* _matcher;
   ExplicitMatcher<FST> _fst_matcher;
   std::vector<BlockIterator> _block_stack;
   BlockIterator* _cur_block{};
@@ -2761,7 +2761,7 @@ class FieldReaderImpl final : public FieldReader {
     }
 
     SeekTermIterator::ptr iterator(
-      automaton_table_matcher& matcher) const final {
+      const automaton_table_matcher& matcher) const final {
       auto& acceptor = matcher.GetFst();
 
       const auto start = acceptor.Start();

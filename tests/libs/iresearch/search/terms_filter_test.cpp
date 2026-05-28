@@ -156,30 +156,20 @@ TEST_P(TermsFilterTestCase, simple_sequential_order) {
   {
     const Docs docs{1, 21, 31, 32};
     Costs costs{docs.size()};
-
-    size_t collect_field_count = 0;
     size_t collect_term_count = 0;
     size_t finish_count = 0;
 
     irs::Scorer::ptr impl{std::make_unique<tests::sort::CustomSort>()};
     auto* scorer = static_cast<tests::sort::CustomSort*>(impl.get());
 
-    scorer->collector_collect_field = [&collect_field_count](
-                                        const irs::SubReader&,
-                                        const irs::TermReader&) -> void {
-      ++collect_field_count;
-    };
     scorer->collector_collect_term =
       [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
                             const irs::AttributeProvider&) -> void {
       ++collect_term_count;
     };
     scorer->collectors_collect =
-      [&finish_count](irs::byte_type*, const irs::FieldCollector*,
+      [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
                       const irs::TermCollector*) -> void { ++finish_count; };
-    scorer->prepare_field_collector = [&scorer]() -> irs::FieldCollector::ptr {
-      return std::make_unique<tests::sort::CustomSort::FieldCollector>(*scorer);
-    };
     scorer->prepare_term_collector = [&scorer]() -> irs::TermCollector::ptr {
       return std::make_unique<tests::sort::CustomSort::TermCollector>(*scorer);
     };
@@ -188,9 +178,8 @@ TEST_P(TermsFilterTestCase, simple_sequential_order) {
       "prefix", {{"abcd", 1.f}, {"abcd", 1.f}, {"abc", 1.f}, {"abcy", 1.f}});
 
     CheckQuery(tests::FilterWrapper{filter}, std::span{&impl, 1}, docs, rdr);
-    ASSERT_EQ(1, collect_field_count);  // 1 fields in 1 segment
-    ASSERT_EQ(3, collect_term_count);   // 3 different terms
-    ASSERT_EQ(3, finish_count);         // 3 unque terms
+    ASSERT_EQ(3, collect_term_count);  // 3 different terms
+    ASSERT_EQ(3, finish_count);        // 3 unque terms
   }
 
   // check boost
@@ -501,30 +490,20 @@ TEST_P(TermsFilterTestCase, min_match) {
     }
 
     const Costs costs{25, 0, 0, 0};
-
-    size_t collect_field_count = 0;
     size_t collect_term_count = 0;
     size_t finish_count = 0;
 
     irs::Scorer::ptr impl{std::make_unique<tests::sort::CustomSort>()};
     auto* scorer = static_cast<tests::sort::CustomSort*>(impl.get());
 
-    scorer->collector_collect_field = [&collect_field_count](
-                                        const irs::SubReader&,
-                                        const irs::TermReader&) -> void {
-      ++collect_field_count;
-    };
     scorer->collector_collect_term =
       [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
                             const irs::AttributeProvider&) -> void {
       ++collect_term_count;
     };
     scorer->collectors_collect =
-      [&finish_count](irs::byte_type*, const irs::FieldCollector*,
+      [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
                       const irs::TermCollector*) -> void { ++finish_count; };
-    scorer->prepare_field_collector = [&scorer]() -> irs::FieldCollector::ptr {
-      return std::make_unique<tests::sort::CustomSort::FieldCollector>(*scorer);
-    };
     scorer->prepare_term_collector = [&scorer]() -> irs::TermCollector::ptr {
       return std::make_unique<tests::sort::CustomSort::TermCollector>(*scorer);
     };
@@ -541,9 +520,8 @@ TEST_P(TermsFilterTestCase, min_match) {
       MakeFilter("Fields", {{"BusinessEntityID", 1.f}, {"StartDate", 1.f}}, 0);
 
     CheckQuery(filter, std::span{&impl, 1}, result, rdr[0]);
-    ASSERT_EQ(1, collect_field_count);  // 1 fields in 1 segment
-    ASSERT_EQ(2, collect_term_count);   // 2 different terms
-    ASSERT_EQ(3, finish_count);         // 3 unque terms
+    ASSERT_EQ(2, collect_term_count);  // 2 different terms
+    ASSERT_EQ(3, finish_count);        // 3 unque terms
   }
 }
 

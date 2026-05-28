@@ -38,7 +38,7 @@ class EmptyTermReader final : public irs::TermReader {
   }
 
   SeekTermIterator::ptr iterator(
-    automaton_table_matcher&) const noexcept final {
+    const automaton_table_matcher&) const noexcept final {
     return SeekTermIterator::empty();
   }
 

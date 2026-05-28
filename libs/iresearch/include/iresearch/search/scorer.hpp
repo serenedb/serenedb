@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <optional>
+
 #include "basics/math_utils.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -52,32 +54,35 @@ struct ScoreThresholdAttr final : Attribute {
   score_t value = std::numeric_limits<score_t>::min();
 };
 
-// Object used for collecting index statistics, for a specific matched
-// field, that are required by the scorer for scoring individual
-// documents.
+struct Scorer;
+
 class FieldCollector {
  public:
-  using ptr = std::unique_ptr<FieldCollector>;
+  struct Data {
+    uint64_t docs_with_field = 0;
+    uint64_t total_term_freq = 0;
 
-  virtual ~FieldCollector() = default;
+    void collect(const TermReader& field) noexcept;
+  };
 
-  // Collect field related statistics, i.e. field used in the filter
-  // `segment` is the segment being processed (e.g. for columnstore).
-  // `field` is  the field matched by the filter in the 'segment'.
-  // Called once for every field matched by a filter per each segment.
-  // Always called on each matched 'field' irrespective of if it
-  // contains a matching 'term'.
-  virtual void collect(const SubReader& segment, const TermReader& field) = 0;
+  explicit FieldCollector(const Scorer* scorer) {
+    if (scorer != nullptr) {
+      _data.emplace();
+    }
+  }
 
-  // Clear collected stats
-  virtual void reset() = 0;
+  void Collect(const TermReader& field) noexcept {
+    if (_data) {
+      _data->collect(field);
+    }
+  }
 
-  // Collect field related statistics from a serialized
-  // representation as produced by write(...) below.
-  virtual void collect(bytes_view in) = 0;
+  const Data* Get() const noexcept {
+    return _data.has_value() ? &_data.value() : nullptr;
+  }
 
-  // Serialize the internal data representation into 'out'.
-  virtual void write(DataOutput& out) const = 0;
+ private:
+  std::optional<Data> _data;
 };
 
 // Object used for collecting index statistics, for a specific matched
@@ -157,8 +162,6 @@ struct Scorer {
   // current 'filter'
   // `filter_attrs` is out-parameter to store statistics for later use in
   // calls to score(...).
-  // `field` is the field level statistics collector as returned from
-  //  PrepareFieldCollector()
   // `term` is the term level statistics collector as returned from
   //  PrepareTermCollector()
   // Called once on the 'index' for every field+term matched by the
@@ -168,16 +171,11 @@ struct Scorer {
   // Called exactly once if field/term collection is not applicable,
   // e.g. collecting statistics over the columnstore.
   // Called after all calls to collector::collect(...) on each segment.
-  virtual void collect(byte_type* stats, const FieldCollector* field,
+  virtual void collect(byte_type* stats, const FieldCollector::Data* field,
                        const TermCollector* term) const = 0;
 
   // The index features required for proper operation of this sort::Prepared
   virtual IndexFeatures GetIndexFeatures() const = 0;
-
-  // Create an object to be used for collecting index statistics, one
-  // instance per matched field.
-  // Returns nullptr == no statistics collection required
-  virtual FieldCollector::ptr PrepareFieldCollector() const = 0;
 
   // Create a stateful scorer used for computation of document scores
   virtual ScoreFunction PrepareScorer(const ScoreContext& ctx) const = 0;
@@ -244,11 +242,9 @@ class ScorerBase : public Scorer {
     return irs::Type<Impl>::id();
   }
 
-  FieldCollector::ptr PrepareFieldCollector() const override { return nullptr; }
-
   TermCollector::ptr PrepareTermCollector() const override { return nullptr; }
 
-  void collect(byte_type*, const FieldCollector*,
+  void collect(byte_type*, const FieldCollector::Data*,
                const TermCollector*) const override {}
 
   IRS_FORCE_INLINE static const StatsType* stats_cast(

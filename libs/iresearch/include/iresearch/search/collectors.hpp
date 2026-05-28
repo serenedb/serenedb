@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <optional>
 #include <vector>
 
 #include "basics/shared.hpp"
@@ -137,61 +138,6 @@ class CollectorsBase {
   const Scorer* _scorer{};
 };
 
-// Wrapper around FieldCollector which guarantees collector
-// is not nullptr
-class FieldCollectorWrapper
-  : public CollectorWrapper<FieldCollectorWrapper, FieldCollector> {
- public:
-  using collector_type = FieldCollector;
-  using base_type = CollectorWrapper<FieldCollectorWrapper, collector_type>;
-
-  static collector_type& noop() noexcept;
-
-  FieldCollectorWrapper() = default;
-  FieldCollectorWrapper(FieldCollectorWrapper&&) = default;
-  FieldCollectorWrapper& operator=(FieldCollectorWrapper&&) = default;
-  explicit FieldCollectorWrapper(collector_type::ptr&& collector) noexcept
-    : base_type(collector.release()) {}
-  FieldCollectorWrapper& operator=(collector_type::ptr&& collector) noexcept {
-    base_type::operator=(collector.release());
-    return *this;
-  }
-};
-
-static_assert(std::is_nothrow_move_constructible_v<FieldCollectorWrapper>);
-static_assert(std::is_nothrow_move_assignable_v<FieldCollectorWrapper>);
-
-// Create an field level index statistics compound collector for
-// all buckets
-class FieldCollectors : public CollectorsBase<FieldCollectorWrapper> {
- public:
-  explicit FieldCollectors(const Scorer* scorer);
-  FieldCollectors(FieldCollectors&&) = default;
-  FieldCollectors& operator=(FieldCollectors&&) = default;
-
-  size_t size() const noexcept { return _collectors.size(); }
-
-  // Collect field related statistics, i.e. field used in the filter
-  // segment the segment being processed (e.g. for columnstore)
-  // field the field matched by the filter in the 'segment'
-  // Note called once for every field matched by a filter per each segment
-  // Note always called on each matched 'field' irrespective of if it
-  // contains a matching 'term'
-  void collect(const SubReader& segment, const TermReader& field) const;
-
-  // Store collected index statistics into 'stats' of the
-  // current 'filter'
-  // stats out-parameter to store statistics for later use in
-  // calls to score(...)
-  // Note called once on the 'index' for every term matched by a filter
-  //       calling collect(...) on each of its segments
-  // Note if not matched terms then called exactly once
-  void finish(byte_type* stats_buf) const;
-};
-
-static_assert(std::is_nothrow_move_constructible_v<FieldCollectors>);
-static_assert(std::is_nothrow_move_assignable_v<FieldCollectors>);
-
 // Wrapper around TermCollector which guarantees collector
 // is not nullptr
 class TermCollectorWrapper
@@ -250,7 +196,7 @@ class TermCollectors : public CollectorsBase<TermCollectorWrapper> {
   //       calling collect(...) on each of its segments
   // Note if not matched terms then called exactly once
   void finish(byte_type* stats_buf, size_t term_idx,
-              const FieldCollectors& field_collectors,
+              const FieldCollector::Data* field_data,
               const IndexReader& index) const;
 };
 

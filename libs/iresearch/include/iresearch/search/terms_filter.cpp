@@ -125,7 +125,7 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
     return ByTerm::prepare(sub_ctx, field, term->term);
   }
 
-  FieldCollectors field_stats{ctx.scorer};
+  FieldCollector field_stats{ctx.scorer};
   TermCollectors term_stats{ctx.scorer, size};
   MultiTermQuery::States states{ctx.memory, ctx.index.size()};
   AllTermsCollector collector{states, field_stats, term_stats};
@@ -147,7 +147,7 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
   for (size_t term_idx = 0; auto& stat : stats) {
     stat.resize(GetStatsSize(ctx.scorer), 0);
     auto* stats_buf = stat.data();
-    term_stats.finish(stats_buf, term_idx++, field_stats, ctx.index);
+    term_stats.finish(stats_buf, term_idx++, field_stats.Get(), ctx.index);
   }
 
   return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),

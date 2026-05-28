@@ -74,7 +74,7 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
       _boost_as_score{boost_as_score},
       _approximate{approximate} {}
 
-  void collect(byte_type* stats_buf, const irs::FieldCollector* field,
+  void collect(byte_type* stats_buf, const irs::FieldCollector::Data* field,
                const irs::TermCollector* term) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
@@ -84,8 +84,6 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
 
     return IndexFeatures::Freq;
   }
-
-  FieldCollector::ptr PrepareFieldCollector() const final;
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 

@@ -54,19 +54,6 @@ struct DFIStats {
   score_t ratio;
 };
 
-struct DFIFieldCollector final : FieldCollector {
-  uint64_t total_term_freq = 0;  // sum of tf across all docs in the field
-
-  void collect(const SubReader& /*segment*/,
-               const TermReader& field) noexcept final;
-
-  void reset() noexcept final { total_term_freq = 0; }
-
-  void collect(bytes_view in) final;
-
-  void write(DataOutput& out) const final;
-};
-
 struct DFITermCollector final : TermCollector {
   uint64_t total_term_freq = 0;  // ttf of the term across the collection
 
@@ -92,14 +79,12 @@ class DFI final : public irs::ScorerBase<DFI, DFIStats> {
 
   explicit DFI(DFIMeasure measure = MEASURE()) noexcept : _measure{measure} {}
 
-  void collect(byte_type* stats_buf, const irs::FieldCollector* field,
+  void collect(byte_type* stats_buf, const irs::FieldCollector::Data* field,
                const irs::TermCollector* term) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::Freq | IndexFeatures::Norm;
   }
-
-  FieldCollector::ptr PrepareFieldCollector() const final;
 
   TermCollector::ptr PrepareTermCollector() const final;
 

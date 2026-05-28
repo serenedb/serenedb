@@ -46,7 +46,7 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
                  bool boost_as_score = BOOST_AS_SCORE()) noexcept
     : _normalize{normalize}, _boost_as_score{boost_as_score} {}
 
-  void collect(byte_type* stats_buf, const irs::FieldCollector* field,
+  void collect(byte_type* stats_buf, const irs::FieldCollector::Data* field,
                const irs::TermCollector* term) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
@@ -56,8 +56,6 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
 
     return IndexFeatures::Freq;
   }
-
-  FieldCollector::ptr PrepareFieldCollector() const final;
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 

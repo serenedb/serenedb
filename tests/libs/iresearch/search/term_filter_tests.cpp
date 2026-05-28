@@ -495,29 +495,19 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       irs::ByTerm filter = MakeFilter("prefix", "abcy");
 
       // create order
-      size_t collect_field_count = 0;
       size_t collect_term_count = 0;
       size_t finish_count = 0;
 
       tests::sort::CustomSort scorer;
 
-      scorer.collector_collect_field = [&collect_field_count](
-                                         const irs::SubReader&,
-                                         const irs::TermReader&) -> void {
-        ++collect_field_count;
-      };
       scorer.collector_collect_term =
         [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
                               const irs::AttributeProvider&) -> void {
         ++collect_term_count;
       };
       scorer.collectors_collect =
-        [&finish_count](irs::byte_type*, const irs::FieldCollector*,
+        [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
                         const irs::TermCollector*) -> void { ++finish_count; };
-      scorer.prepare_field_collector = [&scorer]() -> irs::FieldCollector::ptr {
-        return std::make_unique<tests::sort::CustomSort::FieldCollector>(
-          scorer);
-      };
       scorer.prepare_term_collector = [&scorer]() -> irs::TermCollector::ptr {
         return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
       };
@@ -544,9 +534,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       }
 
       ASSERT_TRUE(expected.empty());
-      ASSERT_EQ(1, collect_field_count);  // 1 field in 1 segment
-      ASSERT_EQ(1, collect_term_count);   // 1 term in 1 field in 1 segment
-      ASSERT_EQ(1, finish_count);         // 1 unique term
+      ASSERT_EQ(1, collect_term_count);  // 1 term in 1 field in 1 segment
+      ASSERT_EQ(1, finish_count);        // 1 unique term
     }
     EXPECT_EQ(counter.current, 0);
     EXPECT_GT(counter.max, 0);

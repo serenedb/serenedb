@@ -40,6 +40,7 @@ namespace pg {
 using ParamIndex = int16_t;
 
 inline constexpr uint64_t kInvalidOid = 0;
+inline constexpr int32_t kCustomOidBase = 90'000;
 
 // Postgres stores date/time/timestamp from 2000-01-01
 inline constexpr int64_t kGapDays =
@@ -241,12 +242,8 @@ enum PgTypeOID : int32_t {
   kAnycompatiblemultirange = 4538,
   kPgBrinBloomSummary = 4600,
   kPgBrinMinmaxMultiSummary = 4601,
-  // SereneDB types that have no PostgreSQL built-in counterpart use OIDs in
-  // the 90000+ band. PG built-in OIDs grow with each release (currently up
-  // to ~8500 in PG 18), and SereneDB user-object OIDs are tick-allocated
-  // above kMaxSystem (2000000), so this band stays clear of both.
-  kVariant = 90000,
-  kVariantArray = 90001,
+  kVariant = kCustomOidBase,
+  kVariantArray,
 };
 
 int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array = false);

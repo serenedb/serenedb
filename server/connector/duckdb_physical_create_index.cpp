@@ -25,6 +25,7 @@
 #include <atomic>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
@@ -137,7 +138,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
 
   std::string value_buffer;
 
-  std::unique_ptr<pg::IndexProgressReporter> progress;
+  pg::ProgressReporter* progress = nullptr;
 
   ~CreateIndexGlobalState() {
     search_trx.reset();
@@ -215,12 +216,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   state->table_name = std::string{_relation->GetName()};
   state->index_name = _info->index_name;
 
-  state->progress = std::make_unique<pg::IndexProgressReporter>(
-    _database_id, _relation->GetId(),
-    pg::create_index_progress::Command::CreateIndex,
-    pg::create_index_progress::Phase::Initializing, ObjectId{});
-  if (estimated_cardinality > 0) {
-    state->progress->SetTuplesTotal(estimated_cardinality);
+  if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
+        kSereneDBClientStateKey)) {
+    state->progress = sdb_state->progress.get();
   }
 
   auto& catalog_feature =
@@ -373,8 +371,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   auto catalog_index =
     snapshot->GetRelation(_database_id, _schema_entry.name, _info->index_name);
   SDB_ASSERT(catalog_index);
-  state->progress->SetIndexRelid(catalog_index->GetId());
-  state->progress->SetPhase(pg::create_index_progress::Phase::BuildingIndex);
+  if (state->progress) {
+    state->progress->SetPhase(pg::create_index_progress::Phase::BuildingIndex);
+  }
   auto shard = snapshot->GetIndexShard(catalog_index->GetId());
   SDB_ASSERT(shard);
   state->index_shard = shard;
@@ -691,7 +690,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   writer->Finish();
   gstate.backfill_count_atomic.fetch_add(num_rows, std::memory_order_relaxed);
   if (gstate.progress) {
-    gstate.progress->ReportBatch(num_rows);
+    gstate.progress->Add(pg::create_index_progress::Param::TuplesDone,
+                         num_rows);
   }
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
@@ -777,11 +777,18 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   if (!op.info) {
     throw duckdb::InternalException("CreateIndexInfo is null in create_plan");
   }
-  auto& sdb_catalog = op.table.ParentCatalog().Cast<SereneDBCatalog>();
-  // ParentSchema() comes from the parent catalog; sdb_catalog above has
-  // already been validated, so the schema is necessarily one of ours.
+
+  auto* sdb_catalog = dynamic_cast<SereneDBCatalog*>(&op.table.ParentCatalog());
+  if (!sdb_catalog) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("cannot CREATE INDEX on ", op.table.ParentCatalog().GetName(),
+              ".", op.table.name,
+              ": its catalog differs from the current one (",
+              duckdb::DatabaseManager::GetDefaultDatabase(input.context), ")"));
+  }
   auto& schema_entry = op.table.ParentSchema().Cast<SereneDBSchemaEntry>();
-  auto database_id = sdb_catalog.GetDatabaseId();
+  auto database_id = sdb_catalog->GetDatabaseId();
 
   std::shared_ptr<catalog::Object> relation;
   std::vector<catalog::Column> view_columns;

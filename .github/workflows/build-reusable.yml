@@ -237,6 +237,14 @@ jobs:
           [[ "$SDB_GTEST" == "On" ]] && TARGETS+=(vpack-tests serenedb-tests_basics serenedb-tests_connector iresearch-tests fuerte-tests)
           [[ "$SDB_GTEST" != "On" || "$SDB_FAULT_INJECTION" == "On" ]] && TARGETS+=(serenedb tzdata)
 
+          # The integration test suite includes the vendored-DuckDB-extension
+          # tests (see scripts/ci/steps/048-...), which drive DuckDB's `unittest`
+          # binary. Build it only on jobs that will run it.
+          if [[ "$RUN_INTEGRATION_TESTS" == "true" ]]; then
+            TARGETS+=(unittest)
+            EXTRA_FLAGS="${EXTRA_FLAGS} -DSDB_BUILD_DUCKDB_UNITTESTS=ON"
+          fi
+
           docker run --rm \
             --user "$DOCKER_USER" \
             -e HOME=/serenedb \
@@ -288,6 +296,7 @@ jobs:
             serenedb-tests.log
             sqllogic-tests.log
             recovery-tests.log
+            extension-tests.log
             vpack-tests.xml
             iresearch-tests.xml
             serenedb-tests*.xml

@@ -1,0 +1,154 @@
+# Regression: CREATE OR REPLACE VIEW/FUNCTION used to allocate a fresh ObjectId
+# and leave the previous object (plus its reverse dependency edges) orphaned in
+# the catalog snapshot. A later DROP ... CASCADE then walked the stale edges and
+# tried to drop the same name twice, tripping SDB_ASSERT in RemoveFromResolution
+# (server/catalog/local_catalog.cpp). Fixed by reusing the existing id and
+# swapping the body in place (CreateView/CreateFunction -> ReplaceObject).
+#
+# SDB-specific function syntax (CREATE FUNCTION name(args) AS expr), so sdb/.
+
+statement ok
+CREATE TABLE vedernikoff_nums (n INT);
+
+
+statement count 3
+INSERT INTO vedernikoff_nums VALUES (1), (2), (3);
+
+
+# --- 1. Minimal repro: replace a view, then DROP FUNCTION CASCADE -----------
+
+statement ok
+CREATE FUNCTION vedernikoff_square(x INT) AS x * x;
+
+
+statement ok
+CREATE OR REPLACE VIEW v_vedernikoff_square AS SELECT vedernikoff_square(n) AS c FROM vedernikoff_nums;
+
+
+# REPLACE the same view: this is the step that previously leaked an orphan.
+statement ok
+CREATE OR REPLACE VIEW v_vedernikoff_square AS SELECT vedernikoff_square(n) + 1 AS c FROM vedernikoff_nums;
+
+
+# The replaced body must be the one in effect (1->2, 2->5, 3->10).
+query
+SELECT c FROM v_vedernikoff_square ORDER BY c;
+----
+c
+2
+5
+10
+
+
+# Exactly one catalog entry for the view -- no ghost left behind by the replace.
+query
+SELECT count(*) FROM information_schema.views WHERE table_name = 'v_vedernikoff_square';
+----
+count
+1
+
+
+# Used to SIGABRT here. Now succeeds and drops the (single) dependent view.
+statement ok
+DROP FUNCTION vedernikoff_square(INT) CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_vedernikoff_square.*does not exist
+SELECT * FROM v_vedernikoff_square;
+
+
+query
+SELECT count(*) FROM information_schema.views WHERE table_name = 'v_vedernikoff_square';
+----
+count
+0
+
+
+query
+SELECT n FROM vedernikoff_nums ORDER BY n;
+----
+n
+1
+2
+3
+
+
+# --- 2. CREATE OR REPLACE FUNCTION (same signature) then CASCADE ------------
+
+statement ok
+CREATE FUNCTION vedernikoff_grow(x INT) AS x + 1;
+
+
+statement ok
+CREATE VIEW v_vedernikoff_grow AS SELECT vedernikoff_grow(n) AS c FROM vedernikoff_nums;
+
+
+# Replace the function body in place; the dependent view must survive and see
+# the new definition (x + 100), and there must be exactly one vedernikoff_grow.
+statement ok
+CREATE OR REPLACE FUNCTION vedernikoff_grow(x INT) AS x + 100;
+
+
+query
+SELECT count(*) FROM pg_catalog.pg_proc WHERE proname = 'vedernikoff_grow';
+----
+count
+1
+
+
+query
+SELECT c FROM v_vedernikoff_grow ORDER BY c;
+----
+c
+101
+102
+103
+
+
+statement error (?i)cannot drop function .*vedernikoff_grow.* because other objects depend on it
+DROP FUNCTION vedernikoff_grow(INT);
+
+
+statement ok
+DROP FUNCTION vedernikoff_grow(INT) CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_vedernikoff_grow.*does not exist
+SELECT * FROM v_vedernikoff_grow;
+
+
+# --- 3. Repeated replace churn followed by a single cascade -----------------
+
+statement ok
+CREATE FUNCTION vedernikoff_pass(x INT) AS x;
+
+
+statement ok
+CREATE OR REPLACE VIEW v_vedernikoff_pass AS SELECT vedernikoff_pass(n) AS c FROM vedernikoff_nums;
+
+
+statement ok
+CREATE OR REPLACE VIEW v_vedernikoff_pass AS SELECT vedernikoff_pass(n) * 2 AS c FROM vedernikoff_nums;
+
+
+statement ok
+CREATE OR REPLACE VIEW v_vedernikoff_pass AS SELECT vedernikoff_pass(n) * 3 AS c FROM vedernikoff_nums;
+
+
+query
+SELECT count(*) FROM information_schema.views WHERE table_name = 'v_vedernikoff_pass';
+----
+count
+1
+
+
+statement ok
+DROP FUNCTION vedernikoff_pass(INT) CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_vedernikoff_pass.*does not exist
+SELECT * FROM v_vedernikoff_pass;
+
+
+statement ok
+DROP TABLE vedernikoff_nums;

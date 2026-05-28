@@ -84,6 +84,15 @@ std::vector<std::string> GetFailurePointsDebugging();
 constexpr std::vector<std::string> GetFailurePointsDebugging() { return {}; }
 #endif
 
+/// Block the calling thread while the named failure point is set, returning as
+/// soon as it is removed. Lets a test park execution at a fault and release it
+/// deterministically, without polling or a timeout.
+#ifdef SDB_FAULT_INJECTION
+void WaitWhileFailurePointDebugging(std::string_view value);
+#else
+constexpr void WaitWhileFailurePointDebugging(std::string_view) noexcept {}
+#endif
+
 constexpr bool CanUseFailurePointsDebugging() {
 #ifdef SDB_FAULT_INJECTION
   return true;

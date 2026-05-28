@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:18.3
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: postgres
+      # C.UTF-8 (not the image default en_US.utf8) so collation is bytewise:
+      # DuckDB's LIKE pushdown emits a bytewise prefix range that en_US sorts
+      # wrong, failing attach_like.test. See README "gotchas".
+      POSTGRES_INITDB_ARGS: "--locale=C.UTF-8"
+      LANG: C.UTF-8
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    # Bind-mount the workspace at the same path so the postgres backend can
+    # read host-path files that tests COPY FROM via postgres_execute().
+    volumes:
+      - "${SDB_WORKSPACE_DIR:-/serenedb}:${SDB_WORKSPACE_DIR:-/serenedb}:ro"

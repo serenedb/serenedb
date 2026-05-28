@@ -25,6 +25,7 @@
 #include <array>
 #include <atomic>
 #include <ranges>
+#include <utility>
 #include <vector>
 
 #include "basics/assert.h"
@@ -119,13 +120,15 @@ class ProgressTracker {
 
 namespace copy_progress {
 
-inline constexpr size_t kBytesProcessed = 0;
-inline constexpr size_t kBytesTotal = 1;
-inline constexpr size_t kTuplesProcessed = 2;
-inline constexpr size_t kTuplesExcluded = 3;
-inline constexpr size_t kCommand = 4;
-inline constexpr size_t kType = 5;
-inline constexpr size_t kTuplesSkipped = 6;
+enum class Param : size_t {
+  BytesProcessed = 0,
+  BytesTotal = 1,
+  TuplesProcessed = 2,
+  TuplesExcluded = 3,
+  Command = 4,
+  Type = 5,
+  TuplesSkipped = 6,
+};
 
 enum class Command : int64_t { CopyFrom = 1, CopyTo = 2 };
 enum class Type : int64_t { File = 1, Program = 2, Pipe = 3, Callback = 4 };
@@ -133,20 +136,22 @@ enum class Type : int64_t { File = 1, Program = 2, Pipe = 3, Callback = 4 };
 }  // namespace copy_progress
 namespace create_index_progress {
 
-inline constexpr size_t kCommand = 0;
-inline constexpr size_t kReservedInPG1 = 1;
-inline constexpr size_t kReservedInPG2 = 2;
-inline constexpr size_t kLockersTotal = 3;
-inline constexpr size_t kLockersDone = 4;
-inline constexpr size_t kCurrentLockerPid = 5;
-inline constexpr size_t kIndexRelid = 6;
-inline constexpr size_t kAccessMethodOid = 7;
-inline constexpr size_t kPhase = 9;
-inline constexpr size_t kSubphase = 10;
-inline constexpr size_t kTuplesTotal = 11;
-inline constexpr size_t kTuplesDone = 12;
-inline constexpr size_t kPartitionsTotal = 13;
-inline constexpr size_t kPartitionsDone = 14;
+enum class Param : size_t {
+  Command = 0,
+  ReservedInPG1 = 1,
+  ReservedInPG2 = 2,
+  LockersTotal = 3,
+  LockersDone = 4,
+  CurrentLockerPid = 5,
+  IndexRelid = 6,
+  AccessMethodOid = 7,
+  Phase = 9,
+  Subphase = 10,
+  TuplesTotal = 11,
+  TuplesDone = 12,
+  PartitionsTotal = 13,
+  PartitionsDone = 14,
+};
 
 enum class Command : int64_t {
   CreateIndex = 1,
@@ -165,46 +170,44 @@ enum class Phase : int64_t {
 
 }  // namespace create_index_progress
 
-class ProgressReporterBase {
+class ProgressReporter {
  public:
-  ProgressReporterBase(const ProgressReporterBase&) = delete;
-  ProgressReporterBase& operator=(const ProgressReporterBase&) = delete;
-  ~ProgressReporterBase();
+  ProgressReporter(ObjectId datid, ObjectId relid, ProgressCommand command);
+  ProgressReporter(const ProgressReporter&) = delete;
+  ProgressReporter& operator=(const ProgressReporter&) = delete;
+  ~ProgressReporter();
 
- protected:
-  ProgressReporterBase(ObjectId relid, ProgressCommand command_type,
-                       ObjectId datid);
+  template<typename Param>
+  void Set(Param param, int64_t value) {
+    const auto idx = std::to_underlying(param);
+    SDB_ASSERT(idx < kProgressMaxParams);
+    _params[idx].store(value, std::memory_order_relaxed);
+  }
 
+  template<typename Param>
+  void Add(Param param, int64_t delta) {
+    const auto idx = std::to_underlying(param);
+    SDB_ASSERT(idx < kProgressMaxParams);
+    _params[idx].fetch_add(delta, std::memory_order_relaxed);
+  }
+
+  void SetCommand(copy_progress::Command c) {
+    Set(copy_progress::Param::Command, std::to_underlying(c));
+  }
+  void SetType(copy_progress::Type t) {
+    Set(copy_progress::Param::Type, std::to_underlying(t));
+  }
+  void SetCommand(create_index_progress::Command c) {
+    Set(create_index_progress::Param::Command, std::to_underlying(c));
+  }
+  void SetPhase(create_index_progress::Phase p) {
+    Set(create_index_progress::Param::Phase, std::to_underlying(p));
+  }
+
+ private:
   ProgressTracker& _tracker;
   uint64_t _id;
   ProgressTracker::Params& _params;
-};
-
-class CopyProgressReporter : public ProgressReporterBase {
- public:
-  CopyProgressReporter(ObjectId datid, ObjectId relid,
-                       copy_progress::Command command,
-                       copy_progress::Type type);
-
-  void ReportBatch(uint64_t delta_rows, uint64_t delta_bytes,
-                   uint64_t delta_excluded);
-  void SetBytesTotal(int64_t bytes);
-};
-
-class IndexProgressReporter : public ProgressReporterBase {
- public:
-  IndexProgressReporter(ObjectId datid, ObjectId relid,
-                        create_index_progress::Command command,
-                        create_index_progress::Phase phase,
-                        ObjectId index_relid);
-
-  void SetPhase(create_index_progress::Phase phase);
-  void ReportBatch(uint64_t delta_rows);
-  void SetTuplesTotal(uint64_t rows);
-  // index_relid isn't known when CREATE INDEX starts running -- the catalog
-  // assigns it a moment later. SetIndexRelid lets the reporter publish it
-  // mid-flight without tearing down + rebuilding the entry.
-  void SetIndexRelid(ObjectId index_relid);
 };
 
 }  // namespace sdb::pg

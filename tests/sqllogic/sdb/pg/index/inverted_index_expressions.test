@@ -752,15 +752,18 @@ CREATE INDEX bad_struct ON bad_types USING inverted(id, ({'x': a, 'y': s}) verba
 ----
 db error: ERROR: Failed to create index: Column 'main.struct_pack(x := a, y := s)' has unsupported type STRUCT(x INTEGER, y VARCHAR) and can not be indexed
 
+
 statement error
 CREATE INDEX bad_map ON bad_types USING inverted(id, (map([k], [v])) verbatim_dict);
 ----
 db error: ERROR: Failed to create index: Column '"map"(main.list_value(k), main.list_value(v))' has unsupported type MAP(VARCHAR, VARCHAR) and can not be indexed
 
+
 statement error
 CREATE INDEX bad_list_struct ON bad_types USING inverted(id, ([{'x': a}]) verbatim_dict);
 ----
 db error: ERROR: Failed to create index: Column 'main.list_value(main.struct_pack(x := a))' has unsupported type STRUCT(x INTEGER)[] and can not be indexed
+
 
 statement error
 CREATE INDEX bad_list_map ON bad_types USING inverted(id, ([map([k], [v])]) verbatim_dict);
@@ -779,30 +782,36 @@ CREATE TABLE bad_scalars(
     uu UUID,
     ts TIMESTAMP);
 
+
 statement error
 CREATE INDEX bad_decimal ON bad_scalars USING inverted(id, (dc + 1) verbatim_dict);
 ----
 db error: ERROR: Failed to create index: Column '(dc + 1)' has unsupported type DECIMAL(13,2) and can not be indexed
+
 
 statement error
 CREATE INDEX bad_hugeint ON bad_scalars USING inverted(id, (hi + 1) verbatim_dict);
 ----
 db error: ERROR: Failed to create index: Column '(hi + 1)' has unsupported type HUGEINT and can not be indexed
 
+
 statement error
 CREATE INDEX bad_interval ON bad_scalars USING inverted(id, (iv) verbatim_dict);
 ----
 db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+
 
 statement error
 CREATE INDEX bad_time ON bad_scalars USING inverted(id, (tm) verbatim_dict);
 ----
 db error: ERROR: Failed to create index: Column 'tm' has unsupported type TIME and can not be indexed
 
+
 statement error
 CREATE INDEX bad_uuid ON bad_scalars USING inverted(id, (uu) verbatim_dict);
 ----
 db error: ERROR: Failed to create index: Column 'uu' has unsupported type UUID and can not be indexed
+
 
 # TIMESTAMP without time zone is NOT supported; only TIMESTAMP_TZ is.
 statement error
@@ -810,11 +819,13 @@ CREATE INDEX bad_timestamp ON bad_scalars USING inverted(id, (ts) verbatim_dict)
 ----
 db error: ERROR: Failed to create index: Column 'ts' has unsupported type TIMESTAMP and can not be indexed
 
+
 statement error
 CREATE INDEX bad_union ON bad_scalars
 USING inverted(id, (union_value(num := a)) verbatim_dict);
 ----
 db error: ERROR: Failed to create index: Column 'union_value(num := a)' has unsupported type UNION(num INTEGER) and can not be indexed
+
 
 statement error
 CREATE INDEX bad_list_list ON bad_scalars USING inverted(id, ([[a]]) verbatim_dict);

@@ -1229,16 +1229,16 @@ VACUUM (REFRESH_TABLE) inc_e_num;
 query
 SELECT id, a + b AS s FROM inc_e_num_idx WHERE id = 1;
 ----
-id    s
-1     30
+id	s
+1	30
 
 query
 SELECT id, a + b AS s FROM inc_e_num_idx ORDER BY id;
 ----
-id    s
-1     30
-2     10
-3     101
+id	s
+1	30
+2	10
+3	101
 
 
 statement ok
@@ -1250,10 +1250,10 @@ VACUUM (REFRESH_TABLE) inc_e_num;
 query
 SELECT id, a + b AS s FROM inc_e_num_idx ORDER BY id;
 ----
-id    s
-1     70
-2     10
-3     101
+id	s
+1	70
+2	10
+3	101
 
 
 statement ok
@@ -1272,9 +1272,9 @@ VACUUM (REFRESH_TABLE) inc_e_str;
 query
 SELECT id, LOWER(a) || '-' || LOWER(b) AS s FROM inc_e_str_idx ORDER BY id;
 ----
-id    s
-1     foo-bar
-2     x-y
+id	s
+1	foo-bar
+2	x-y
 
 
 statement ok
@@ -1293,9 +1293,9 @@ VACUUM (REFRESH_TABLE) inc_e_zstd;
 query
 SELECT id, a || b AS s FROM inc_e_zstd_idx ORDER BY id;
 ----
-id    s
-1     foobar
-2     bazqux
+id	s
+1	foobar
+2	bazqux
 
 statement error
 CREATE INDEX inc_e_zstd_bad ON inc_e_num USING inverted(
@@ -1320,10 +1320,10 @@ VACUUM (REFRESH_TABLE) inc_e_rgs;
 query
 SELECT id, a * 2 AS s FROM inc_e_rgs_idx ORDER BY id;
 ----
-id    s
-1     2
-2     10
-3     24
+id	s
+1	2
+2	10
+3	24
 
 
 statement error
@@ -1374,7 +1374,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
-│      Index: hnsw_e_idx    │
+│     Index: hnsw_e_idx     │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │

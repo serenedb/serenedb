@@ -1,0 +1,6 @@
+# DOCS_TEST: json_literal
+
+query
+select '5'::json;
+----
+json

@@ -53,7 +53,6 @@
 #include <utility>
 
 #include "app/app_server.h"
-#include "app/language.h"
 #include "app/options/parameters.h"
 #include "app/options/program_options.h"
 #include "app/options/section.h"

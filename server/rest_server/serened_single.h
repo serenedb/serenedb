@@ -58,13 +58,11 @@ class ServerOptionsFeature;
 class SslServerFeature;
 class MaxMapCountFeature;
 class FileDescriptorsFeature;
-class LanguageFeature;
 class TempPath;
 class DatabasePathFeature;
 class PrivilegeFeature;
 class SchedulerFeature;
 class AuthenticationFeature;
-class LanguageCheckFeature;
 class InitDatabaseFeature;
 class RocksDBOptionFeature;
 class EngineFeature;
@@ -87,13 +85,11 @@ using SerenedFeaturesList = type::List<
 #ifdef SERENEDB_HAVE_GETRLIMIT
   FileDescriptorsFeature,
 #endif
-  LanguageFeature,
   TempPath,
   DatabasePathFeature,
   PrivilegeFeature,
   SchedulerFeature,
   AuthenticationFeature,
-  LanguageCheckFeature,
   InitDatabaseFeature,
   RocksDBOptionFeature,
   EngineFeature,

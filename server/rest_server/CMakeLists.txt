@@ -8,7 +8,6 @@ target_sources(
         file_descriptors_feature.cpp
         flush_feature.cpp
         init_database_feature.cpp
-        language_check_feature.cpp
         lockfile_feature.cpp
         privilege_feature.cpp
         server_feature.cpp

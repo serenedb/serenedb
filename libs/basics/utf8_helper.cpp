@@ -42,7 +42,6 @@
 #include <memory>
 #include <new>
 
-#include "app/language.h"
 #include "basics/debugging.h"
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"

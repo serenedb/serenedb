@@ -1,0 +1,132 @@
+# DROP TYPE / DROP TYPE CASCADE for user-defined types. The catalog used to
+# only track column-direct uses; view bodies, function bodies, function
+# parameter types, CHECK constraints and column DEFAULTs using CAST(...) all
+# went unrecorded -- DROP TYPE silently succeeded and left dangling objects.
+# Each of the five edges is now tracked; the test matches PostgreSQL's
+# BEGIN ATOMIC behaviour.
+
+# --- 1. View body CAST ------------------------------------------------------
+
+statement ok
+CREATE TYPE vedernikoff_flavor AS ENUM ('sweet', 'salty');
+
+
+statement ok
+CREATE TABLE vedernikoff_strs (s TEXT);
+
+
+statement count 2
+INSERT INTO vedernikoff_strs VALUES ('sweet'), ('salty');
+
+
+statement ok
+CREATE VIEW vedernikoff_v_cast AS SELECT CAST(s AS vedernikoff_flavor) AS f FROM vedernikoff_strs;
+
+
+statement error (?i)cannot drop type .*vedernikoff_flavor.* because other objects depend on it
+DROP TYPE vedernikoff_flavor;
+
+
+statement ok
+DROP TYPE vedernikoff_flavor CASCADE;
+
+
+statement error (?i)(table|relation|view).*vedernikoff_v_cast.*does not exist
+SELECT * FROM vedernikoff_v_cast;
+
+
+statement ok
+DROP TABLE vedernikoff_strs;
+
+
+# --- 2. Function body CAST --------------------------------------------------
+
+statement ok
+CREATE TYPE vedernikoff_kind AS ENUM ('a', 'b');
+
+
+statement ok
+CREATE FUNCTION vedernikoff_fn_cast(x TEXT) AS CAST(x AS vedernikoff_kind);
+
+
+statement error (?i)cannot drop type .*vedernikoff_kind.* because other objects depend on it
+DROP TYPE vedernikoff_kind;
+
+
+statement ok
+DROP TYPE vedernikoff_kind CASCADE;
+
+
+statement error (?i)(function|macro|scalar).*vedernikoff_fn_cast.* does not exist
+SELECT vedernikoff_fn_cast('a');
+
+
+# --- 3. Function parameter type --------------------------------------------
+
+statement ok
+CREATE TYPE vedernikoff_param AS ENUM ('p', 'q');
+
+
+statement ok
+CREATE FUNCTION vedernikoff_fn_param(x vedernikoff_param) AS x;
+
+
+statement error (?i)cannot drop type .*vedernikoff_param.* because other objects depend on it
+DROP TYPE vedernikoff_param;
+
+
+statement ok
+DROP TYPE vedernikoff_param CASCADE;
+
+
+statement error (?i)(function|macro|scalar).*vedernikoff_fn_param.* does not exist
+SELECT vedernikoff_fn_param('p');
+
+
+# --- 4. CHECK constraint with CAST -----------------------------------------
+
+statement ok
+CREATE TYPE vedernikoff_check AS ENUM ('y', 'n');
+
+
+statement ok
+CREATE TABLE vedernikoff_t_check (s TEXT, CHECK (CAST(s AS vedernikoff_check) IS NOT NULL));
+
+
+statement error (?i)cannot drop type .*vedernikoff_check.* because other objects depend on it
+DROP TYPE vedernikoff_check;
+
+
+statement ok
+DROP TYPE vedernikoff_check CASCADE;
+
+
+# The CHECK constraint was cascade-dropped; inserts should now accept anything.
+statement count 1
+INSERT INTO vedernikoff_t_check VALUES ('not-an-enum-value');
+
+
+statement ok
+DROP TABLE vedernikoff_t_check;
+
+
+# --- 5. Column DEFAULT with CAST -------------------------------------------
+
+statement ok
+CREATE TYPE vedernikoff_def AS ENUM ('d', 'e');
+
+
+statement ok
+CREATE TABLE vedernikoff_t_def (x TEXT DEFAULT CAST('d' AS vedernikoff_def)::TEXT);
+
+
+statement error (?i)cannot drop type .*vedernikoff_def.* because other objects depend on it
+DROP TYPE vedernikoff_def;
+
+
+statement ok
+DROP TYPE vedernikoff_def CASCADE;
+
+
+statement ok
+DROP TABLE vedernikoff_t_def;

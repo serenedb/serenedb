@@ -79,7 +79,7 @@ std::shared_ptr<search::InvertedIndexShard> ResolveInvertedIndexShard(
   auto cat_snapshot = conn_ctx.EnsureCatalogSnapshot();
   for (auto& s : cat_snapshot->GetIndexShardsByRelation(
          bind.inverted_index->GetRelationId())) {
-    if (s->GetIndexId() == bind.inverted_index->GetId() &&
+    if (s->GetParentId() == bind.inverted_index->GetId() &&
         s->GetType() == catalog::ObjectType::InvertedIndexShard) {
       return basics::downCast<search::InvertedIndexShard>(std::move(s));
     }

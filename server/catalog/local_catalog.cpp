@@ -143,9 +143,12 @@ class SnapshotImpl : public Snapshot {
     result->_resolution_table = _resolution_table;
     result->_objects = _objects;
     result->_deps = _deps;
+    result->_in_load = _in_load;
     // New snapshot starts with empty DuckDB cache (lazily populated)
     return result;
   }
+
+  void EndLoad() noexcept { _in_load = false; }
 
   connector::DuckDBEntryCache& GetDuckDBEntryCache() const final {
     return _duckdb_cache;
@@ -395,8 +398,7 @@ class SnapshotImpl : public Snapshot {
         }
       }
       if (col.expr && col.expr->HasExpr() && !col.IsGenerated()) {
-        auto refs =
-          col.expr->ExtractRefs(RefKinds::Sequences | RefKinds::Functions);
+        auto refs = col.expr->ExtractRefs(RefKinds::All);
         for (const auto& ref : refs.sequences) {
           ModifyDependency(resolve_seq(ref),
                            &SequenceDependency::column_defaults, col.GetId(),
@@ -408,14 +410,19 @@ class SnapshotImpl : public Snapshot {
               database_id, schema_id, ref.catalog, ref.schema, ref.name),
             &PgSqlFunctionDependency::column_defaults, col.GetId(), action);
         }
+        for (const auto& ref : refs.unbound_types) {
+          ModifyDependency(
+            Resolve<ResolveType::Type, ObjectType::PgSqlType>(
+              database_id, schema_id, ref.catalog, ref.schema, ref.name),
+            &PgSqlTypeDependency::column_defaults, col.GetId(), action);
+        }
       }
     }
     for (const auto& c : table.CheckConstraints()) {
       if (!c.expr || !c.expr->HasExpr()) {
         continue;
       }
-      auto refs =
-        c.expr->ExtractRefs(RefKinds::Sequences | RefKinds::Functions);
+      auto refs = c.expr->ExtractRefs(RefKinds::All);
       auto edge = std::pair{table.GetId(), c.id};
       for (const auto& ref : refs.functions) {
         ModifyDependency(
@@ -426,6 +433,12 @@ class SnapshotImpl : public Snapshot {
       for (const auto& ref : refs.sequences) {
         ModifyDependency(resolve_seq(ref), &SequenceDependency::constraints,
                          edge, action);
+      }
+      for (const auto& ref : refs.unbound_types) {
+        ModifyDependency(
+          Resolve<ResolveType::Type, ObjectType::PgSqlType>(
+            database_id, schema_id, ref.catalog, ref.schema, ref.name),
+          &PgSqlTypeDependency::constraints, edge, action);
       }
     }
   }
@@ -472,13 +485,9 @@ class SnapshotImpl : public Snapshot {
 
   void ModifyViewDependencies(ObjectId schema_id, const PgSqlView& view,
                               RefKinds kinds, EdgeAction action) {
-    const auto& info = view.GetInfo();
-    if (!info.query) {
-      return;
-    }
     auto database_id = GetDatabaseId(view);
     auto view_id = view.GetId();
-    auto refs = ExtractRefs(*info.query, kinds);
+    auto refs = view.ExtractRefs(kinds);
     for (const auto& ref : refs.sequences) {
       ModifyDependency(
         Resolve<ResolveType::Relation, ObjectType::Sequence>(
@@ -499,39 +508,56 @@ class SnapshotImpl : public Snapshot {
           database_id, schema_id, ref.catalog, ref.schema, ref.name),
         &PgSqlFunctionDependency::views, view_id, action);
     }
+    for (const auto& ref : refs.unbound_types) {
+      ModifyDependency(
+        Resolve<ResolveType::Type, ObjectType::PgSqlType>(
+          database_id, schema_id, ref.catalog, ref.schema, ref.name),
+        &PgSqlTypeDependency::views, view_id, action);
+    }
+    for (auto type_id : refs.bound_types) {
+      ModifyDependency(type_id, &PgSqlTypeDependency::views, view_id, action);
+    }
   }
 
   void ModifyFunctionDependencies(ObjectId schema_id, const PgSqlFunction& func,
                                   EdgeAction action) {
     auto database_id = GetDatabaseId(func);
     auto fn_id = func.GetId();
-    for (const auto& macro : func.GetInfo().macros) {
-      if (!macro || macro->type != duckdb::MacroType::SCALAR_MACRO) {
-        continue;
+    auto refs = func.ExtractRefs(RefKinds::All);
+    for (const auto& ref : refs.sequences) {
+      ModifyDependency(
+        Resolve<ResolveType::Relation, ObjectType::Sequence>(
+          database_id, schema_id, ref.catalog, ref.schema, ref.name),
+        &SequenceDependency::functions, fn_id, action);
+    }
+    for (const auto& ref : refs.relations) {
+      ModifyDependency(
+        Resolve<ResolveType::Relation, ObjectType::Table,
+                ObjectType::PgSqlView>(database_id, schema_id, ref.catalog,
+                                       ref.schema, ref.name),
+        &RelationDependency::functions, fn_id, action);
+    }
+    for (const auto& ref : refs.functions) {
+      auto target = Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
+        database_id, schema_id, ref.catalog, ref.schema, ref.name);
+      if (target == fn_id) {
+        continue;  // skip self
       }
-      const auto& sm = macro->Cast<duckdb::ScalarMacroFunction>();
-      if (!sm.expression) {
-        continue;
-      }
-      auto refs =
-        ExtractRefs(*sm.expression, RefKinds::Sequences | RefKinds::Functions);
-      for (const auto& ref : refs.sequences) {
-        ModifyDependency(
-          Resolve<ResolveType::Relation, ObjectType::Sequence>(
-            database_id, schema_id, ref.catalog, ref.schema, ref.name),
-          &SequenceDependency::functions, fn_id, action);
-      }
-      for (const auto& ref : refs.functions) {
-        auto target = Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
-          database_id, schema_id, ref.catalog, ref.schema, ref.name);
-        if (target == fn_id) {
-          continue;  // skip self
-        }
-        ModifyDependency(target, &PgSqlFunctionDependency::functions, fn_id,
-                         action);
-      }
+      ModifyDependency(target, &PgSqlFunctionDependency::functions, fn_id,
+                       action);
+    }
+    for (const auto& ref : refs.unbound_types) {
+      ModifyDependency(
+        Resolve<ResolveType::Type, ObjectType::PgSqlType>(
+          database_id, schema_id, ref.catalog, ref.schema, ref.name),
+        &PgSqlTypeDependency::functions, fn_id, action);
+    }
+    for (auto type_id : refs.bound_types) {
+      ModifyDependency(type_id, &PgSqlTypeDependency::functions, fn_id, action);
     }
   }
+
+  const auto& Objects() const noexcept { return _objects; }
 
   template<typename DependencyType = void>
   Result AddObjectDefinition(ObjectId parent_id,
@@ -616,10 +642,12 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::InvertedIndexShard:
         GetDependencyForWrite<IndexDependency>(parent_id)->shard_id = id;
         break;
+      case ObjectType::Virtual:
+      case ObjectType::Column:
+        SDB_ASSERT(_in_load);
+        break;
       case ObjectType::Invalid:
       case ObjectType::Tombstone:
-      case ObjectType::Column:
-      case ObjectType::Virtual:
         SDB_UNREACHABLE();
     }
   }
@@ -1426,6 +1454,7 @@ class SnapshotImpl : public Snapshot {
   ObjectDependencies _deps;
   ObjectSetById<Object> _objects;
   mutable connector::DuckDBEntryCache _duckdb_cache;
+  bool _in_load = true;
 };
 
 std::string DropPlan::FormatDependentsDetail(const Snapshot& snap,
@@ -1632,7 +1661,7 @@ Result LocalCatalog::RegisterIndex(ObjectId database_id, ObjectId schema_id,
 Result LocalCatalog::RegisterIndexShard(std::shared_ptr<IndexShard> shard) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
-    return clone->RegisterObject(shard, shard->GetIndexId(), false);
+    return clone->RegisterObject(shard, shard->GetParentId(), false);
   });
 }
 
@@ -1640,7 +1669,7 @@ Result LocalCatalog::RegisterTableShard(std::shared_ptr<TableShard> shard) {
   absl::MutexLock lock{&_mutex};
 
   return Apply(_snapshot, [&](auto& clone) {
-    return clone->RegisterObject(shard, shard->GetTableId(), false);
+    return clone->RegisterObject(shard, shard->GetParentId(), false);
   });
 }
 
@@ -2935,6 +2964,17 @@ Result LocalCatalog::DropTokenizer(std::string_view database,
     clone->UnregisterObject(std::move(tokenizer), *schema_id);
     clone->ApplyDropPlan(*database_id, plan);
     return Result{};
+  });
+}
+
+Result LocalCatalog::FinalizeLoad() {
+  absl::MutexLock lock{&_mutex};
+  return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
+    for (const auto& obj : clone->Objects()) {
+      clone->AddDependencies(obj->GetParentId(), *obj);
+    }
+    clone->EndLoad();
+    return {};
   });
 }
 

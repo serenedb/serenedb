@@ -271,12 +271,28 @@ struct SequenceDependency : ObjectDependencyBase {
 
 struct PgSqlTypeDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> column_types;
+  containers::FlatHashSet<ObjectId> views;
+  containers::FlatHashSet<ObjectId> functions;
+  containers::FlatHashSet<std::pair<ObjectId, ObjectId>> constraints;
+  containers::FlatHashSet<ObjectId> column_defaults;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<PgSqlTypeDependency>(*this);
   }
   void Emit(DropEmitter& e) const final {
     for (auto col_id : column_types) {
       e.EmitCascadeColumnDrop(col_id);
+    }
+    for (auto id : views) {
+      e.EmitCascadeViewDrop(id);
+    }
+    for (auto id : functions) {
+      e.EmitCascadeFunctionDrop(id);
+    }
+    for (const auto& [tid, cid] : constraints) {
+      e.EmitCascadeCheckConstraintDrop(tid, cid);
+    }
+    for (auto col_id : column_defaults) {
+      e.EmitCascadeColumnDefaultValueDrop(col_id);
     }
   }
 };

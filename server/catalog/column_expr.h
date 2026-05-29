@@ -30,6 +30,7 @@
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
 #include "basics/result.h"
+#include "catalog/identifiers/object_id.h"
 
 namespace duckdb {
 
@@ -49,7 +50,8 @@ enum class RefKinds : uint8_t {
   Sequences = 1U << 0,
   Relations = 1U << 1,
   Functions = 1U << 2,
-  All = Sequences | Relations | Functions,
+  Types = 1U << 3,
+  All = Sequences | Relations | Functions | Types,
 };
 ENABLE_BITMASK_ENUM(RefKinds);
 
@@ -57,6 +59,10 @@ struct Refs {
   std::vector<QualifiedRef> sequences;
   std::vector<QualifiedRef> relations;
   std::vector<QualifiedRef> functions;
+  // Types named by CAST in expression bodies; caller resolves by name.
+  std::vector<QualifiedRef> unbound_types;
+  // Types resolved at CREATE time (function param/return); id is final.
+  std::vector<ObjectId> bound_types;
 };
 
 // Column expression (default value, computed column).

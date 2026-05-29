@@ -330,7 +330,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
         basics::downCast<const catalog::SecondaryIndex>(index);
       const auto& shards = snapshot.GetIndexShardsByRelation(view->GetId());
       auto it = absl::c_find_if(shards, [&](const auto& shard) {
-        return shard->GetIndexId() == index.GetId();
+        return shard->GetParentId() == index.GetId();
       });
       if (it == shards.end()) {
         return nullptr;
@@ -364,7 +364,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
     basics::downCast<const catalog::SecondaryIndex>(index);
   ObjectId sk_shard_id;
   for (auto& shard : snapshot.GetIndexShardsByRelation(table->GetId())) {
-    if (shard->GetIndexId() == index.GetId()) {
+    if (shard->GetParentId() == index.GetId()) {
       sk_shard_id = shard->GetId();
       break;
     }

@@ -1,0 +1,170 @@
+# A function body can reference a table or view (CREATE FUNCTION ... AS
+# (SELECT ... FROM rel)). The catalog used to track only function-to-function
+# and function-to-sequence edges, so DROP TABLE / DROP VIEW would succeed even
+# while a function still referenced the relation, leaving the function
+# silently broken at call time. Now the function-to-relation edge is tracked
+# the same way views do it, and DROP RESTRICT/CASCADE behave like PostgreSQL's
+# BEGIN ATOMIC SQL function.
+
+# --- 1. function references TABLE; DROP TABLE RESTRICT, then CASCADE --------
+
+statement ok
+CREATE TABLE vedernikoff_t (n INT);
+
+
+statement count 2
+INSERT INTO vedernikoff_t VALUES (1), (2);
+
+
+statement ok
+CREATE FUNCTION vedernikoff_count_t() AS (SELECT count(*) FROM vedernikoff_t);
+
+
+query
+SELECT vedernikoff_count_t();
+----
+vedernikoff_count_t
+2
+
+
+statement error (?i)cannot drop table .*vedernikoff_t.* because other objects depend on it
+DROP TABLE vedernikoff_t;
+
+
+statement ok
+DROP TABLE vedernikoff_t CASCADE;
+
+
+statement error (?i)(function|macro|scalar).*vedernikoff_count_t.* does not exist
+SELECT vedernikoff_count_t();
+
+
+# --- 2. function references VIEW; DROP VIEW RESTRICT, then CASCADE ----------
+
+statement ok
+CREATE TABLE vedernikoff_t (n INT);
+
+
+statement count 3
+INSERT INTO vedernikoff_t VALUES (10), (20), (30);
+
+
+statement ok
+CREATE VIEW vedernikoff_v AS SELECT n FROM vedernikoff_t;
+
+
+statement ok
+CREATE FUNCTION vedernikoff_count_v() AS (SELECT count(*) FROM vedernikoff_v);
+
+
+query
+SELECT vedernikoff_count_v();
+----
+vedernikoff_count_v
+3
+
+
+statement error (?i)cannot drop view .*vedernikoff_v.* because other objects depend on it
+DROP VIEW vedernikoff_v;
+
+
+statement ok
+DROP VIEW vedernikoff_v CASCADE;
+
+
+statement error (?i)(function|macro|scalar).*vedernikoff_count_v.* does not exist
+SELECT vedernikoff_count_v();
+
+
+statement ok
+DROP TABLE vedernikoff_t;
+
+
+# --- 3. CREATE OR REPLACE re-points the body a -> b ------------------------
+# The old relation's edge must be removed and the new one added; otherwise
+# DROP TABLE a stays incorrectly blocked or DROP TABLE b incorrectly allowed.
+
+statement ok
+CREATE TABLE vedernikoff_a (n INT);
+
+
+statement ok
+CREATE TABLE vedernikoff_b (n INT);
+
+
+statement ok
+CREATE FUNCTION vedernikoff_pivot() AS (SELECT count(*) FROM vedernikoff_a);
+
+
+statement error (?i)cannot drop table .*vedernikoff_a.* because other objects depend on it
+DROP TABLE vedernikoff_a;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION vedernikoff_pivot() AS (SELECT count(*) FROM vedernikoff_b);
+
+
+# After the re-point, vedernikoff_a is no longer a dependency; it must drop.
+statement ok
+DROP TABLE vedernikoff_a;
+
+
+# vedernikoff_b is now the dependency; RESTRICT refuses.
+statement error (?i)cannot drop table .*vedernikoff_b.* because other objects depend on it
+DROP TABLE vedernikoff_b;
+
+
+statement ok
+DROP TABLE vedernikoff_b CASCADE;
+
+
+statement error (?i)(function|macro|scalar).*vedernikoff_pivot.* does not exist
+SELECT vedernikoff_pivot();
+
+
+# --- 4. multiple functions referencing the same table; CASCADE drops all ----
+
+statement ok
+CREATE TABLE vedernikoff_shared (n INT);
+
+
+statement ok
+CREATE FUNCTION vedernikoff_share_a() AS (SELECT count(*) FROM vedernikoff_shared);
+
+
+statement ok
+CREATE FUNCTION vedernikoff_share_b() AS (SELECT min(n) FROM vedernikoff_shared);
+
+
+statement error (?i)cannot drop table .*vedernikoff_shared.* because other objects depend on it
+DROP TABLE vedernikoff_shared;
+
+
+statement ok
+DROP TABLE vedernikoff_shared CASCADE;
+
+
+statement error (?i)(function|macro|scalar).*vedernikoff_share_a.* does not exist
+SELECT vedernikoff_share_a();
+
+
+statement error (?i)(function|macro|scalar).*vedernikoff_share_b.* does not exist
+SELECT vedernikoff_share_b();
+
+
+# --- 5. DROP SCHEMA CASCADE drops the table and its referring function ------
+
+statement ok
+CREATE SCHEMA vedernikoff_sch;
+
+
+statement ok
+CREATE TABLE vedernikoff_sch.vedernikoff_st (n INT);
+
+
+statement ok
+CREATE FUNCTION vedernikoff_sch.vedernikoff_sf() AS (SELECT count(*) FROM vedernikoff_sch.vedernikoff_st);
+
+
+statement ok
+DROP SCHEMA vedernikoff_sch CASCADE;

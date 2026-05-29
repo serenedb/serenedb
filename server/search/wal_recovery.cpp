@@ -125,7 +125,7 @@ struct ShardState {
 
 bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
   auto inverted =
-    snapshot.template GetObject<catalog::InvertedIndex>(s.shard->GetIndexId());
+    snapshot.template GetObject<catalog::InvertedIndex>(s.shard->GetParentId());
   if (!inverted) {
     return false;
   }

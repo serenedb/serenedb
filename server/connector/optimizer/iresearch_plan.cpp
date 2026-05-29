@@ -140,7 +140,7 @@ std::optional<ResolvedIresearch> ResolveIresearch(
 
   for (auto& shard :
        snapshot.GetIndexShardsByRelation(out.index->GetRelationId())) {
-    if (shard->GetIndexId() == out.index->GetId() &&
+    if (shard->GetParentId() == out.index->GetId() &&
         shard->GetType() == catalog::ObjectType::InvertedIndexShard) {
       out.shard =
         basics::downCast<search::InvertedIndexShard>(std::move(shard));

@@ -59,7 +59,7 @@ struct IndexCandidate {
                                         ObjectId relation_id,
                                         ObjectId sk_index_id) {
   for (auto& shard : snapshot.GetIndexShardsByRelation(relation_id)) {
-    if (shard->GetIndexId() == sk_index_id) {
+    if (shard->GetParentId() == sk_index_id) {
       return shard->GetId();
     }
   }

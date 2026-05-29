@@ -23,12 +23,16 @@
 #include <absl/algorithm/container.h>
 #include <vpack/vpack_helper.h>
 
+#include <duckdb/common/extra_type_info.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/parser/expression/cast_expression.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/expression/subquery_expression.hpp>
+#include <duckdb/parser/expression/type_expression.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/query_node.hpp>
 #include <duckdb/parser/statement/select_statement.hpp>
@@ -47,7 +51,35 @@ bool IsSequenceFunctionName(std::string_view fn_name) {
 
 void WalkSelect(const duckdb::SelectStatement& stmt, RefKinds kinds, Refs& out);
 
+std::optional<QualifiedRef> ExtractUnboundTypeName(
+  const duckdb::LogicalType& type) {
+  if (type.id() != duckdb::LogicalTypeId::UNBOUND) {
+    return std::nullopt;
+  }
+  auto info = type.AuxInfo();
+  if (!info) {
+    return std::nullopt;
+  }
+  const auto& unbound = info->Cast<duckdb::UnboundTypeInfo>();
+  if (!unbound.expr ||
+      unbound.expr->GetExpressionType() != duckdb::ExpressionType::TYPE) {
+    return std::nullopt;
+  }
+  const auto& te = unbound.expr->Cast<duckdb::TypeExpression>();
+  return QualifiedRef{te.GetCatalog(), te.GetSchema(), te.GetTypeName()};
+}
+
+void CollectTypeRefs(const duckdb::LogicalType& type, Refs& out) {
+  if (auto qr = ExtractUnboundTypeName(type)) {
+    out.unbound_types.push_back(std::move(*qr));
+  }
+}
+
 void WalkExpr(const duckdb::ParsedExpression& expr, RefKinds kinds, Refs& out) {
+  if (RefKinds::None != (kinds & RefKinds::Types) &&
+      expr.GetExpressionType() == duckdb::ExpressionType::OPERATOR_CAST) {
+    CollectTypeRefs(expr.Cast<duckdb::CastExpression>().cast_type, out);
+  }
   if (expr.GetExpressionType() == duckdb::ExpressionType::FUNCTION) {
     const auto& fn = expr.Cast<duckdb::FunctionExpression>();
     if (IsSequenceFunctionName(fn.function_name)) {

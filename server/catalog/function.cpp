@@ -22,11 +22,14 @@
 
 #include <vpack/vpack_helper.h>
 
+#include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/function/scalar_macro_function.hpp>
 
 #include "basics/static_strings.h"
+#include "catalog/user_type.h"
 
 namespace sdb::catalog {
 
@@ -78,6 +81,53 @@ std::shared_ptr<Object> PgSqlFunction::Clone() const {
       _info->Copy());
   return std::make_shared<PgSqlFunction>(GetParentId(), GetId(), GetName(),
                                          std::move(cloned_info));
+}
+
+Refs PgSqlFunction::ExtractRefs(RefKinds kinds) const {
+  Refs out;
+  // Param/return types are bound at CREATE time; body CASTs stay unbound and
+  // are handled by WalkExpr below.
+  auto add_type = [&](const duckdb::LogicalType& t) {
+    if (RefKinds::None == (kinds & RefKinds::Types)) {
+      return;
+    }
+    if (auto ext = t.GetExtensionInfo()) {
+      if (auto it = ext->properties.find(kPgSqlTypeOidProp);
+          it != ext->properties.end()) {
+        out.bound_types.push_back(ObjectId{it->second.GetValue<uint64_t>()});
+      }
+    }
+  };
+  for (const auto& macro : _info->macros) {
+    if (!macro) {
+      continue;
+    }
+    for (const auto& t : macro->types) {
+      add_type(t);
+    }
+    for (const auto& t : macro->return_types) {
+      add_type(t);
+    }
+    if (macro->type != duckdb::MacroType::SCALAR_MACRO) {
+      continue;
+    }
+    const auto& sm = macro->Cast<duckdb::ScalarMacroFunction>();
+    if (sm.expression) {
+      auto body = ::sdb::ExtractRefs(*sm.expression, kinds);
+      out.sequences.insert(out.sequences.end(), body.sequences.begin(),
+                           body.sequences.end());
+      out.relations.insert(out.relations.end(), body.relations.begin(),
+                           body.relations.end());
+      out.functions.insert(out.functions.end(), body.functions.begin(),
+                           body.functions.end());
+      out.unbound_types.insert(out.unbound_types.end(),
+                               body.unbound_types.begin(),
+                               body.unbound_types.end());
+      out.bound_types.insert(out.bound_types.end(), body.bound_types.begin(),
+                             body.bound_types.end());
+    }
+  }
+  return out;
 }
 
 }  // namespace sdb::catalog

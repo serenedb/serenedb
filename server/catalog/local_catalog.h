@@ -148,6 +148,8 @@ class LocalCatalog final : public LogicalCatalog,
   Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                          std::string_view name) final;
 
+  Result FinalizeLoad() final;
+
   std::shared_ptr<const Snapshot> GetCatalogSnapshot() const noexcept final;
 
  private:

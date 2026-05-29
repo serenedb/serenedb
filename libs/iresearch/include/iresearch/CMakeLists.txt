@@ -74,6 +74,7 @@ set(IResearch_core_sources
     ./analysis/geo_analyzer.cpp
     ./analysis/pattern_tokenizer.cpp
     ./analysis/wildcard_analyzer.cpp
+    ./analysis/shingle_analyzer.cpp
     ./error/error.cpp
     ./columnstore/format.cpp
     ./columnstore/column_writer.cpp
@@ -126,6 +127,7 @@ set(IResearch_core_sources
     ./search/wildcard_filter.cpp
     ./search/regexp_filter.cpp
     ./search/wildcard_ngram_filter.cpp
+    ./search/phrase_ngram_filter.cpp
     ./search/levenshtein_filter.cpp
     ./search/multiterm_query.cpp
     ./search/term_query.cpp

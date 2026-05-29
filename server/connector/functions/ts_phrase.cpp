@@ -22,13 +22,16 @@
 
 #include <cstdint>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
+#include <iresearch/analysis/shingle_analyzer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/phrase_filter.hpp>
+#include <iresearch/search/phrase_ngram_filter.hpp>
 #include <iresearch/search/phrase_query.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -91,6 +94,44 @@ PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
           .max = static_cast<size_t>(raw) + 1};
 }
 
+bool IsShingleColumn(const SearchColumnInfo& column_info) {
+  return column_info.tokenizer.analyzer &&
+         column_info.tokenizer.analyzer->type() ==
+           irs::Type<irs::analysis::ShingleAnalyzer>::id();
+}
+
+// Build a position-free shingle phrase filter (irs::ByPhraseNgram) for a column
+// indexed with the shingle analyzer. Candidate documents come from the phrase's
+// shingle terms; unless the match is exact by construction they are verified
+// against the stored token stream.
+void BuildShingleNgram(irs::BooleanFilter& parent, const FilterContext& ctx,
+                       const SearchColumnInfo& column_info,
+                       std::string_view phrase_text) {
+  auto& filter = ctx.negated ? Negate<irs::ByPhraseNgram>(parent)
+                             : AddFilter<irs::ByPhraseNgram>(parent);
+  filter.boost(ctx.boost);
+  std::string field_name;
+  MakeFieldName(column_info.field_id, field_name);
+  search::mangling::MangleString(field_name);
+  *filter.mutable_field() = std::move(field_name);
+  auto* opts = filter.mutable_options();
+  *opts = irs::ByPhraseNgramOptions{
+    phrase_text, basics::downCast<irs::analysis::ShingleAnalyzer>(
+                   *column_info.tokenizer.analyzer.get())};
+  SDB_ASSERT(column_info.tokenizer.tokenizer_column);
+  opts->store_field_id = *column_info.tokenizer.tokenizer_column;
+  opts->positional =
+    (column_info.tokenizer.features & irs::IndexFeatures::Pos) ==
+    irs::IndexFeatures::Pos;
+  if (opts->query_tokens.empty()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_phrase text produced no searchable terms"),
+      ERR_HINT("All tokens were stripped (e.g. all-stopword input). Provide "
+               "at least one searchable term."));
+  }
+}
+
 }  // namespace
 
 void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
@@ -106,6 +147,37 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_phrase field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
+  }
+
+  if (IsShingleColumn(column_info)) {
+    // Position-free shingle phrase path. A shingle term exists only for
+    // adjacent tokens, so gap/slop arguments cannot be expressed here.
+    std::string phrase_text;
+    for (size_t i = 0; i < func.children.size(); ++i) {
+      const auto* const_val = TryGetConstant(*func.children[i]);
+      if (!const_val) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("ts_phrase argument ", i, " must be a constant"),
+                        ERR_HINT(kSyntaxHint));
+      }
+      const auto id = const_val->type().id();
+      if (id != duckdb::LogicalTypeId::VARCHAR &&
+          id != duckdb::LogicalTypeId::BLOB) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("ts_phrase on a shingle-analyzer column does not support "
+                  "gap/slop arguments"),
+          ERR_HINT("Recreate the inverted index with `Positions` + "
+                   "`Frequency` features for gappy phrase search, or drop the "
+                   "gap arguments."));
+      }
+      if (!phrase_text.empty()) {
+        phrase_text.push_back(' ');
+      }
+      phrase_text += duckdb::StringValue::Get(*const_val);
+    }
+    BuildShingleNgram(filter, ctx, column_info, phrase_text);
+    return;
   }
 
   if ((column_info.tokenizer.features &
@@ -225,6 +297,10 @@ void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_phrase field is not VARCHAR"));
+  }
+  if (IsShingleColumn(column_info)) {
+    BuildShingleNgram(parent, ctx, column_info, text);
+    return;
   }
   if ((column_info.tokenizer.features &
        irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) !=

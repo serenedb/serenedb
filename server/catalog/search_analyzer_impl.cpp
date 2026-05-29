@@ -23,6 +23,7 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
+#include <iresearch/analysis/shingle_analyzer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
@@ -99,6 +100,11 @@ Result Features::Validate(std::string_view type) const {
   const auto supported_features = [&] {
     if (type == irs::analysis::WildcardAnalyzer::type_name()) {
       return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
+    }
+    if (type == irs::analysis::ShingleAnalyzer::type_name()) {
+      // Position-free phrase path: Frequency is allowed for scoring; positions
+      // are intentionally rejected (the verifier replaces them).
+      return irs::IndexFeatures::Freq;
     }
     if (IsGeoAnalyzer(type)) {
       return irs::IndexFeatures::None;

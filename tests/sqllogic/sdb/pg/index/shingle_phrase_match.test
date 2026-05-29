@@ -1,0 +1,157 @@
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS shingle_dict;
+
+statement ok
+DROP TABLE IF EXISTS test_shingle;
+
+# Position-free phrase search: a shingle (word n-gram) analyzer over a
+# whitespace-delimited base. Frequency only -- no positions are stored.
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_dict(
+    template = 'shingle',
+    minshinglesize = 2,
+    maxshinglesize = 2,
+    frequency = true,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+statement ok
+CREATE TABLE test_shingle (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX test_shingle_idx ON test_shingle USING inverted(id, body shingle_dict);
+
+statement ok
+INSERT INTO test_shingle VALUES (1, 'the quick brown fox');
+
+statement ok
+INSERT INTO test_shingle VALUES (2, 'quick brown dog');
+
+statement ok
+INSERT INTO test_shingle VALUES (3, 'brown fox quick');
+
+statement ok
+INSERT INTO test_shingle VALUES (4, 'fox quick brown');
+
+# id 5 contains both bigrams of "quick brown fox" (quick|brown and brown|fox)
+# but not contiguously -- the verifier must reject it.
+statement ok
+INSERT INTO test_shingle VALUES (5, 'quick brown cat brown fox');
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle;
+
+# 3-token phrase: AND of overlapping bigrams + per-candidate verification.
+# Only id 1 has "quick brown fox" contiguously; id 5 is a verified-away false
+# positive.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id;
+----
+id
+1
+
+# 2-token phrase == shingle width: a single exact bigram lookup, no verify.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id;
+----
+id
+1
+2
+4
+5
+
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('brown fox') ORDER BY id;
+----
+id
+1
+3
+5
+
+# Single token: a plain unigram lookup.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+3
+4
+5
+
+# An empty phrase has no searchable terms and matches nothing.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('') ORDER BY id;
+----
+id
+
+# A phrase whose words are absent from the index yields no candidates.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('purple monkey dishwasher') ORDER BY id;
+----
+id
+
+# phraseto_tsquery routes through the same shingle path.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ phraseto_tsquery('quick brown fox') ORDER BY id;
+----
+id
+1
+
+# Combined with AND on a non-FTS predicate.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown') AND id < 2 ORDER BY id;
+----
+id
+1
+
+# The 3-token verify path also composes with a non-FTS predicate.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown fox') AND id > 0 ORDER BY id;
+----
+id
+1
+
+# Gap / slop is unsupported on a shingle column (a shingle term exists only for
+# adjacent tokens).
+statement error
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick', 1, 'fox') ORDER BY id;
+----
+db error: ERROR: ts_phrase on a shingle-analyzer column does not support gap/slop arguments
+HINT: Recreate the inverted index with `Positions` + `Frequency` features for gappy phrase search, or drop the gap arguments.
+
+# The ## (phrase-sequence) operator stays positions-only on a shingle column.
+statement error
+SELECT id FROM test_shingle_idx WHERE body @@ (ts_phrase('quick') ## ts_phrase('fox')) ORDER BY id;
+----
+db error: ERROR: ## field should have Positions and Frequency features enabled
+HINT: Recreate the inverted index with both `Positions` and `Frequency` features attached to the column.
+
+statement ok
+DROP TABLE test_shingle;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_dict;
+
+# Positions are rejected for a shingle dictionary: the verifier replaces them.
+statement error
+CREATE TEXT SEARCH DICTIONARY shingle_pos(
+    template = 'shingle',
+    frequency = true,
+    position = true,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+----
+db error: ERROR: Unsupported index features are specified: 3
+
+# A shingle must span at least two tokens.
+statement error
+CREATE TEXT SEARCH DICTIONARY shingle_min1(
+    template = 'shingle',
+    minshinglesize = 1,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+----
+db error: ERROR: Failed to create text search dictionary "shingle_min1"

@@ -33,6 +33,7 @@
 #include <iresearch/analysis/pattern_tokenizer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/shingle_analyzer.hpp>
 #include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
@@ -152,6 +153,22 @@ inline constexpr OptionInfo kNgramSize{
   "ngramsize", 3, "N-gram size for wildcard prefix indexing (minimum 2)",
   CheckNgramSize};
 
+// Shingle (word n-gram) analyzer for position-free phrase search.
+
+inline constexpr OptionInfo kMinShingleSize{
+  "minshinglesize", 2, "Minimum shingle (word n-gram) size (minimum 2)"};
+
+inline constexpr OptionInfo kMaxShingleSize{
+  "maxshinglesize", 2,
+  "Maximum shingle (word n-gram) size (>= minshinglesize)"};
+
+inline constexpr OptionInfo kOutputUnigrams{
+  "outputunigrams", true, "Index individual tokens alongside the shingles"};
+
+inline constexpr OptionInfo kOutputUnigramsIfNoShingles{
+  "outputunigramsifnoshingles", false,
+  "Index unigrams only when the input is too short to form a shingle"};
+
 // Geo options (kGeoMaxCells, kGeoLatitude, kGeoJsonType, ...) live in
 // "pg/geo_tokenizer_options.h", brought in by the include above.
 
@@ -257,6 +274,9 @@ inline constexpr OptionInfo kMinHashOptions[] = {kNumHashes};
 
 inline constexpr OptionInfo kWildcardOptions[] = {kNgramSize};
 
+inline constexpr OptionInfo kShingleOptions[] = {
+  kMinShingleSize, kMaxShingleSize, kOutputUnigrams, kOutputUnigramsIfNoShingles};
+
 inline constexpr OptionInfo kNormOptions[] = {kLocale, kCase, kAccent};
 
 inline constexpr OptionInfo kSegmentationOptions[] = {kCase, kBreak};
@@ -348,6 +368,11 @@ inline constexpr OptionGroup kWildcardGroup{
   kWildcardOptions,
   {},
 };
+inline constexpr OptionGroup kShingleGroup{
+  irs::analysis::ShingleAnalyzer::type_name(),
+  kShingleOptions,
+  {},
+};
 inline constexpr OptionGroup kNormGroup{
   irs::analysis::NormalizingTokenizer::type_name(),
   kNormOptions,
@@ -401,7 +426,8 @@ inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kClassificationGroup, kCollationGroup,
   kDelimiterGroup,      kMultiDelimiterGroup,
   kMinHashGroup,        kWildcardGroup,
-  kNormGroup,           kSegmentationGroup,
+  kShingleGroup,        kNormGroup,
+  kSegmentationGroup,
   kPipelineGroup,       kPatternGroup,
   kPathHierarchyGroup,  kUnionGroup,
   kCopyFromGroup,       kGeoPointGroup,

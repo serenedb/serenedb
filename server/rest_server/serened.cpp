@@ -39,7 +39,6 @@ static_assert(SerenedServer::id<LoggerFeature>() == 0);
 
 constexpr auto kNonServerFeatures = std::array{
 #ifdef SERENEDB_HAVE_FORK
-  SerenedServer::id<SupervisorFeature>(),
   SerenedServer::id<DaemonFeature>(),
 #endif
   SerenedServer::id<GeneralServerFeature>(),

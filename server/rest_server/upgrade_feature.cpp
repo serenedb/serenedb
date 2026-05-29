@@ -137,9 +137,6 @@ void UpgradeFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
       if constexpr (Server::contains<DaemonFeature>()) {
         server().forceDisableFeatures({Server::id<DaemonFeature>()});
       }
-      if constexpr (Server::contains<SupervisorFeature>()) {
-        server().forceDisableFeatures({Server::id<SupervisorFeature>()});
-      }
     };
 
     disable_daemon_and_supervisor();

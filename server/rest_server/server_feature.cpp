@@ -78,9 +78,6 @@ void ServerFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
     if constexpr (Server::contains<DaemonFeature>()) {
       server().disableFeatures({Server::id<DaemonFeature>()});
     }
-    if constexpr (Server::contains<SupervisorFeature>()) {
-      server().disableFeatures({Server::id<SupervisorFeature>()});
-    }
   };
 
   if (!_rest_server) {

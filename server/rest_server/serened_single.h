@@ -62,7 +62,6 @@ class DaemonFeature;
 class MaxMapCountFeature;
 class FileDescriptorsFeature;
 class LanguageFeature;
-class SupervisorFeature;
 class TempPath;
 class DatabasePathFeature;
 class PrivilegeFeature;
@@ -100,9 +99,6 @@ using SerenedFeaturesList = type::List<
   FileDescriptorsFeature,
 #endif
   LanguageFeature,
-#ifdef SERENEDB_HAVE_FORK
-  SupervisorFeature,
-#endif
   TempPath,
   DatabasePathFeature,
   PrivilegeFeature,

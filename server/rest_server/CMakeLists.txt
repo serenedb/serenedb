@@ -15,7 +15,6 @@ target_sources(
         log_buffer_feature.cpp
         privilege_feature.cpp
         server_feature.cpp
-        supervisor_feature.cpp
         time_zone_feature.cpp
         upgrade_feature.cpp
         database_context.cpp

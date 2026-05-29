@@ -568,7 +568,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
     case INDEX_ENTRY: {
       if (system) {
         // System tables (pg_class, pg_type, etc.)
-        if (type == TABLE_ENTRY) {
+        if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
           auto* vtable = pg::GetSystemTable(schema, name);
           if (vtable) {
             auto info = duckdb::make_uniq<duckdb::CreateTableInfo>();
@@ -597,7 +597,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
       auto relation = snapshot.GetRelation(database, schema, name);
       if (!relation) {
         // GetRelation doesn't find regular tables -- use GetTable.
-        if (type == TABLE_ENTRY) {
+        if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
           return BuildTableEntry(catalog, entry, database, schema, name,
                                  snapshot);
         }
@@ -605,7 +605,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
       }
       switch (relation->GetType()) {
         case catalog::ObjectType::Table:
-          if (type == TABLE_ENTRY) {
+          if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
             return BuildTableEntry(catalog, entry, database, schema, name,
                                    snapshot);
           }
@@ -619,7 +619,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
           return nullptr;
         case catalog::ObjectType::SecondaryIndex:
         case catalog::ObjectType::InvertedIndex: {
-          if (type == TABLE_ENTRY) {
+          if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
             // Index-as-table (SELECT * FROM index_name)
             const auto& index =
               basics::downCast<const catalog::Index>(*relation);

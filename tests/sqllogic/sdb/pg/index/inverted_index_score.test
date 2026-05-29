@@ -948,8 +948,7 @@ statement ok
 INSERT INTO meta VALUES (2, 'interesting'), (4, 'notable'), (5, 'relevant');
 
 
-# Error: JOIN two inverted indexes with BM25(docs_idx.tableoid) outside — ambiguous which index provides the score
-query ??
+query
 SELECT docs_idx.id, BM25(docs_idx.tableoid) FROM docs_idx JOIN docs2_idx ON docs_idx.id = docs2_idx.id
 WHERE docs_idx.body @@ ts_phrase('fox') AND docs2_idx.body @@ ts_phrase('fox')
 LIMIT 3;
@@ -958,7 +957,7 @@ id	bm25
 2	0
 4	0.031871427
 
-# Works: JOIN two inverted indexes, BM25(docs_idx.tableoid) scoped inside each subquery (only one subquery scores)
+
 query
 SELECT a.id, a.score > 0 AS has_score FROM
   (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox')) a

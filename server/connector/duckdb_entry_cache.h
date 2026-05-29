@@ -127,7 +127,7 @@ class DuckDBEntryCache {
         case duckdb::CatalogType::TYPE_ENTRY:
           return self.types;
         default:
-          return self.defaults;
+          return self.common;
       }
     }
   };

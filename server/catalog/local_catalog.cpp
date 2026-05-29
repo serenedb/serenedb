@@ -1821,39 +1821,54 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
     return Result(ERROR_SERVER_ILLEGAL_NAME);
   }
   view->SetParentId(*schema_id);
+
+  ObjectId existed_id;
   if (replace) {
-    // Check replaced object have the same type
-    Result r =
+    existed_id =
       _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, view->GetName())
-        .transform([&](ObjectId existed_id) {
-          auto existed_object = _snapshot->GetObject<Object>(existed_id);
-          return existed_object->GetType() == ObjectType::PgSqlView
-                   ? Result{}
-                   : Result{ERROR_SERVER_ILLEGAL_NAME, "\"", view->GetName(),
-                            "\" is not a view"};
-        })
-        .value_or(Result{});
-    if (!r.ok()) {
-      return r;
+        .value_or(ObjectId{});
+    if (existed_id.isSet() &&
+        _snapshot->GetObject<Object>(existed_id)->GetType() !=
+          ObjectType::PgSqlView) {
+      return Result{ERROR_SERVER_ILLEGAL_NAME, "\"", view->GetName(),
+                    "\" is not a view"};
     }
   }
 
   return Apply(
     _snapshot,
-    [&](auto& clone) {
-      auto r = clone->RegisterObject(view, *schema_id, replace);
-      if (!r.ok()) {
+    [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
+      if (existed_id.isSet()) {
+        view->SetId(existed_id);
+        if (auto r = clone->ReplaceObject<ResolveType::Relation>(
+              *schema_id, view->GetName(), view);
+            !r.ok()) {
+          return r;
+        }
+      } else if (auto r = clone->RegisterObject(view, *schema_id,
+                                                /*replace=*/false);
+                 !r.ok()) {
         return r;
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
 
       vpack::Builder builder;
       view->WriteInternal(builder);
+      if (existed_id.isSet()) {
+        return _engine->Write([&](auto& ctx) {
+          ctx.PutDefinition(*schema_id, ObjectType::PgSqlView, view->GetId(),
+                            builder.slice());
+        });
+      }
       return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlView,
                                        view->GetId(),
                                        [&](bool) { return builder.slice(); });
     },
-    [&](auto clone) { clone->UnregisterObject(view, *schema_id, true); });
+    [&](auto clone) {
+      if (!existed_id.isSet()) {
+        clone->UnregisterObject(view, *schema_id, true);
+      }
+    });
 }
 
 Result LocalCatalog::CreateSequence(ObjectId database_id,
@@ -1906,21 +1921,47 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
   }
   function->SetParentId(*schema_id);
 
+  ObjectId existed_id;
+  if (replace) {
+    existed_id =
+      _snapshot
+        ->GetObjectId<ResolveType::Function>(*schema_id, function->GetName())
+        .value_or(ObjectId{});
+  }
+
   return Apply(
     _snapshot,
-    [&](auto& clone) {
-      auto r = clone->RegisterObject(function, *schema_id, replace);
-      if (!r.ok()) {
+    [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
+      if (existed_id.isSet()) {
+        function->SetId(existed_id);
+        if (auto r = clone->ReplaceObject<ResolveType::Function>(
+              *schema_id, function->GetName(), function);
+            !r.ok()) {
+          return r;
+        }
+      } else if (auto r = clone->RegisterObject(function, *schema_id,
+                                                /*replace=*/false);
+                 !r.ok()) {
         return r;
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       vpack::Builder builder;
       function->WriteInternal(builder);
+      if (existed_id.isSet()) {
+        return _engine->Write([&](auto& ctx) {
+          ctx.PutDefinition(*schema_id, ObjectType::PgSqlFunction,
+                            function->GetId(), builder.slice());
+        });
+      }
       return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlFunction,
                                        function->GetId(),
                                        [&](bool) { return builder.slice(); });
     },
-    [&](auto clone) { clone->UnregisterObject(function, *schema_id, true); });
+    [&](auto clone) {
+      if (!existed_id.isSet()) {
+        clone->UnregisterObject(function, *schema_id, true);
+      }
+    });
 }
 
 Result LocalCatalog::CreateTable(

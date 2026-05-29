@@ -611,10 +611,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
       }
     }
 
-    // Use a fresh ObjectId -- the resolution table's replace=true will
-    // re-point the function name to the new ID. The old object becomes
-    // orphaned in the snapshot objects map (harmless, gets GC'd on
-    // next snapshot rotation).
     auto function = std::make_shared<catalog::PgSqlFunction>(
       ObjectId{}, ObjectId{}, info.name, std::move(merged_info));
     // Always replace=true for the catalog layer since we're replacing

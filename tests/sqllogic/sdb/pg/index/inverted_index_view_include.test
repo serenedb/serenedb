@@ -1,0 +1,206 @@
+control substitution on
+
+hash-threshold 100
+
+# View-backed inverted index with INCLUDE'd columns: the INCLUDE columns are
+# stored in the iresearch columnstore (no source-row materialisation needed
+# for those), while non-INCLUDE'd, non-indexed columns still flow through the
+# view's fast-path source.
+#
+# Today the fast-path source set is parquet / csv / json / iceberg / rocksdb
+# tables (see server/connector/view_fast_path.cpp). Once postgres_scan joins
+# that set, this same shape of test should pin the behaviour for a view over
+# an ATTACH'd postgres table -- the only thing that changes is the source.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY view_inc_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+# -----------------------------------------------------------------------------
+# 1. View over read_parquet -- INCLUDE a scalar (price), index id+body.
+#
+# Query path:
+#   - count(*) and BM25 score: iresearch index, no source touch.
+#   - SELECT id, body : id is indexed (forward field), body is indexed.
+#   - SELECT price : INCLUDE'd -> columnstore, no source touch.
+#   - SELECT extra : NOT indexed, NOT INCLUDE'd -> read_parquet lookup by PK.
+# -----------------------------------------------------------------------------
+
+statement count 3
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body, 9.99::DOUBLE AS price, 'cat-a' AS extra
+      UNION ALL SELECT 2, 'anchin reads manga', 19.99::DOUBLE, 'cat-b'
+      UNION ALL SELECT 3, 'pudge plays again', 4.50::DOUBLE, 'cat-a')
+TO '/tmp/${__DATABASE__}_view_inc.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE VIEW pq_inc_v AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_inc.parquet');
+
+
+statement ok
+CREATE INDEX pq_inc_idx ON pq_inc_v USING inverted(id, body view_inc_en)
+  INCLUDE (price);
+
+
+# count(*) flows from iresearch -- no columnstore or source touch.
+query
+SELECT count(*) FROM pq_inc_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+
+# INCLUDE'd column (price) served from iresearch columnstore.
+query
+SELECT id, price FROM pq_inc_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	price
+1	9.99
+3	4.5
+
+
+# Mix: id (indexed, forward) + body (indexed) + price (INCLUDE'd, columnstore).
+query
+SELECT id, body, price FROM pq_inc_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body	price
+1	pudge goes mid	9.99
+3	pudge plays again	4.5
+
+
+# Non-indexed, non-INCLUDE'd column (extra) reaches through to read_parquet
+# via the fast-path PK lookup. Filter still uses iresearch.
+query
+SELECT id, extra FROM pq_inc_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	extra
+1	cat-a
+3	cat-a
+
+
+# Aggregation over an INCLUDE'd column -- no source touch.
+query
+SELECT SUM(price) FROM pq_inc_idx WHERE body @@ ts_phrase('pudge');
+----
+sum
+14.49
+
+
+# -----------------------------------------------------------------------------
+# 2. View over a serenedb rocksdb table -- INCLUDE a MAP column.
+#
+# The INCLUDE side uses the same MAP-in-columnstore path that tables use
+# (see inverted_index_map_include.test); we just exercise it through a view.
+# -----------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE inc_base (
+  pk INTEGER PRIMARY KEY,
+  body TEXT,
+  attrs MAP(VARCHAR, INTEGER),
+  extra TEXT
+);
+
+
+statement count 4
+INSERT INTO inc_base VALUES
+  (1, 'pudge goes mid',     MAP {'kills': 7, 'deaths': 2}, 'a'),
+  (2, 'anchin reads manga', MAP {'pages': 200},            'b'),
+  (3, 'pudge plays again',  MAP {'kills': 3, 'deaths': 5}, 'c'),
+  (4, 'krivda writes sql',  NULL,                          'd');
+
+
+statement ok
+CREATE VIEW inc_base_v AS SELECT pk, body, attrs, extra FROM inc_base;
+
+
+statement ok
+CREATE INDEX inc_base_idx ON inc_base_v USING inverted(pk, body view_inc_en)
+  INCLUDE (attrs);
+
+
+# Sanity: count over the view-backed index.
+query
+SELECT count(*) FROM inc_base_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+
+# INCLUDE'd MAP column round-trips through the columnstore -- no source
+# touch needed for it.
+query
+SELECT pk, attrs FROM inc_base_idx WHERE body @@ ts_phrase('pudge') ORDER BY pk;
+----
+pk	attrs
+1	{"(kills,7)","(deaths,2)"}
+3	{"(kills,3)","(deaths,5)"}
+
+
+# Mixed projection: pk (indexed forward), body (indexed), attrs (INCLUDE'd),
+# extra (rocksdb lookup).
+query
+SELECT pk, body, attrs, extra FROM inc_base_idx WHERE body @@ ts_phrase('pudge') ORDER BY pk;
+----
+pk	body	attrs	extra
+1	pudge goes mid	{"(kills,7)","(deaths,2)"}	a
+3	pudge plays again	{"(kills,3)","(deaths,5)"}	c
+
+
+# IS NULL on an INCLUDE'd MAP column. Filter on body, projection on attrs.
+query
+SELECT pk, attrs FROM inc_base_idx WHERE body @@ ts_phrase('krivda');
+----
+pk	attrs
+4	NULL
+
+
+# -----------------------------------------------------------------------------
+# 3. View with projection rename + INCLUDE -- the column rename is preserved
+# through the index.
+# -----------------------------------------------------------------------------
+
+statement ok
+CREATE VIEW inc_base_v_renamed AS
+  SELECT pk AS doc_id, body AS text, attrs AS metadata, extra FROM inc_base;
+
+
+statement ok
+CREATE INDEX inc_renamed_idx ON inc_base_v_renamed USING inverted(doc_id, text view_inc_en)
+  INCLUDE (metadata);
+
+
+query
+SELECT doc_id, text, metadata FROM inc_renamed_idx WHERE text @@ ts_phrase('pudge') ORDER BY doc_id;
+----
+doc_id	text	metadata
+1	pudge goes mid	{"(kills,7)","(deaths,2)"}
+3	pudge plays again	{"(kills,3)","(deaths,5)"}
+
+
+# -----------------------------------------------------------------------------
+# 4. View-backed indexes are STATIC (captured at CREATE INDEX time, no DML
+# refresh). New rows in the base table after CREATE INDEX are NOT visible
+# through the view-backed index. This is the documented behaviour today;
+# pinning it so it doesn't silently change.
+# -----------------------------------------------------------------------------
+
+statement ok
+INSERT INTO inc_base VALUES (5, 'pudge surfaces fifth', MAP {'kills': 9}, 'e');
+
+
+# After-insert read still returns only the rows captured at index creation.
+query
+SELECT pk, attrs FROM inc_base_idx WHERE body @@ ts_phrase('pudge') ORDER BY pk;
+----
+pk	attrs
+1	{"(kills,7)","(deaths,2)"}
+3	{"(kills,3)","(deaths,5)"}

@@ -164,5 +164,12 @@ std::vector<std::string> GetFailurePointsDebugging() {
   return result;
 }
 
+void WaitWhileFailurePointDebugging(std::string_view value) {
+  const auto cleared =
+    +[](std::string_view* v) noexcept { return !gFailurePoints.contains(*v); };
+  absl::MutexLock lock{&gFailurePointsLock};
+  gFailurePointsLock.Await(absl::Condition{cleared, &value});
+}
+
 }  // namespace sdb
 #endif

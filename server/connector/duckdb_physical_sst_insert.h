@@ -27,6 +27,7 @@
 #include "catalog/table.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
+#include "pg/progress_tracker.h"
 #include "rocksdb/sst_file_writer.h"
 #include "storage_engine/table_shard.h"
 
@@ -76,6 +77,9 @@ struct SSTInsertGlobalState : public duckdb::GlobalSinkState {
   std::shared_ptr<TableShard> table_shard;
   std::unique_lock<std::shared_mutex> table_lock;
 
+  // Borrowed from SereneDBClientState; null unless this is a COPY FROM.
+  pg::ProgressReporter* progress = nullptr;
+
   ~SSTInsertGlobalState() override;
 };
 
@@ -105,6 +109,8 @@ class SereneDBPhysicalSSTInsert : public duckdb::PhysicalOperator {
     duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
     duckdb::OperatorSourceInput& input) const final;
   bool IsSource() const final { return true; }
+
+  ObjectId TargetTableId() const { return _table->GetId(); }
 
  protected:
   // Sets up SST writers on state for the given table. Does NOT create index

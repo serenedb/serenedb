@@ -37,6 +37,25 @@
 
 namespace sdb::catalog {
 
+// Numeric/temporal DuckDB types the inverted-index sink indexes via a
+// signed-int slice. Usable in both constexpr and runtime contexts.
+constexpr bool IsNumericSliceKind(duckdb::LogicalTypeId kind) noexcept {
+  switch (kind) {
+    case duckdb::LogicalTypeId::TINYINT:
+    case duckdb::LogicalTypeId::SMALLINT:
+    case duckdb::LogicalTypeId::INTEGER:
+    case duckdb::LogicalTypeId::BIGINT:
+    case duckdb::LogicalTypeId::FLOAT:
+    case duckdb::LogicalTypeId::DOUBLE:
+    case duckdb::LogicalTypeId::DATE:
+    case duckdb::LogicalTypeId::TIMESTAMP:
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+      return true;
+    default:
+      return false;
+  }
+}
+
 struct HNSWColumnConfig {
   int d = 0;
   int m = 32;

@@ -1,22 +1,5 @@
 hash-threshold 100
 
-# ---------------------------------------------------------------------------
-# Scoring for multi-term filters that expand a single predicate into many
-# terms over one field and route the per-term statistics through
-# LimitedSampleCollector: ts_starts_with (ByPrefix) and ts_lt / ts_ge
-# (ByRange).
-#
-# inverted_index_score.test covers single-term (ByTerm / phrase) scoring, and
-# inverted_index_wand.test_slow only checks WAND-vs-plain *equivalence* for
-# these filters -- a bug shared by both paths slips through. This test pins
-# the actual scores and the score-ordered result so a regression in the
-# collector's per-term / per-field statistics is caught.
-#
-# Each body is a single token, so every doc has length 1 (uniform BM25 length
-# norm) and matches exactly one term; the score difference is driven purely by
-# document frequency: a rarer term yields a higher BM25/TFIDF score.
-# ---------------------------------------------------------------------------
-
 statement ok
 CREATE TABLE mt (id INTEGER PRIMARY KEY, body VARCHAR);
 

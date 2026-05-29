@@ -187,12 +187,10 @@ void SetLogLevels(const C& levels) {
   }
 }
 
-void SetRole(char role);
 void SetOutputPrefix(std::string_view);
 void SetHostname(std::string_view);
 void SetShowIds(bool);
 void SetShowLineNumber(bool);
-void SetShowRole(bool);
 void SetShortenFilenames(bool);
 void SetShowProcessIdentifier(bool);
 void SetShowThreadIdentifier(bool);
@@ -210,7 +208,6 @@ void SetTimeFormat(log_time_formats::TimeFormat);
 void SetKeepLogrotate(bool);
 void SetLogRequestParameters(bool);
 bool GetLogRequestParameters();
-void SetUseJson(bool);
 bool IsActive() noexcept;
 void Deactive() noexcept;
 log_time_formats::TimeFormat GetTimeFormat();

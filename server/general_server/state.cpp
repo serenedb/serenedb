@@ -353,7 +353,6 @@ std::string ServerState::GetShortName() const {
 }
 
 void ServerState::SetRole(ServerState::Role role) {
-  log::SetRole(RoleToStr(role)[0]);
   _role.store(role, std::memory_order_release);
 }
 

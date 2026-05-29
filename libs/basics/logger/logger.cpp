@@ -122,15 +122,12 @@ bool gShortenFilenames = true;
 bool gShowProcessIdentifier = true;
 bool gShowThreadIdentifier = false;
 bool gShowThreadName = false;
-bool gShowRole = false;
 bool gUseColor = true;
 bool gUseControlEscaped = true;
 bool gUseUnicodeEscaped = false;
 bool gKeepLogRotate = false;
 bool gLogRequestParameters = true;
 bool gShowIds = false;
-bool gUseJson = false;
-char gRole = '\0';  // current server role to log
 std::atomic<pid_t> gCachedPid = 0;
 std::string gOutputPrefix;
 std::string gHostname;
@@ -248,7 +245,6 @@ void SetLogLevel(std::string_view level_assign) {
   }
 }
 
-void SetRole(char role) { gRole = role; }
 
 // NOTE: this function should not be called if the logging is active.
 void SetOutputPrefix(std::string_view prefix) {
@@ -384,15 +380,6 @@ void SetEscaping() {
 }
 
 // NOTE: this function should not be called if the logging is active.
-void SetShowRole(bool show) {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-
-  gShowRole = show;
-}
-
-// NOTE: this function should not be called if the logging is active.
 void SetTimeFormat(log_time_formats::TimeFormat format) {
   if (gActive) {
     SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
@@ -419,15 +406,6 @@ void SetLogRequestParameters(bool log) {
   gLogRequestParameters = log;
 }
 
-// NOTE: this function should not be called if the logging is active.
-void SetUseJson(bool value) {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-
-  gUseJson = value;
-}
-
 void Log(const char* logid, const char* function, const char* file, int line,
          LogLevel level, const LogTopic& topic, std::string_view message) try {
   SDB_ASSERT(logid != nullptr);
@@ -447,144 +425,7 @@ void Log(const char* logid, const char* function, const char* file, int line,
   uint32_t offset = 0;
   bool shrunk = false;
 
-  if (gUseJson) {
-    // construct JSON output
-    basics::string_utils::EscapeJsonOptions options{
-      .escape_control = gUseControlEscaped,
-      .escape_unicode = gUseUnicodeEscaped,
-    };
-
-    auto append_str = [&](std::string_view str) {
-      basics::string_utils::EscapeJsonStr(str, &sink, options);
-    };
-
-    out.push_back('{');
-
-    // current date/time
-    {
-      out.append("\"time\":");
-      if (log_time_formats::IsStringFormat(gTimeFormat)) {
-        out.push_back('"');
-      }
-      // value of date/time is always safe to print
-      log_time_formats::WriteTime(out, gTimeFormat,
-                                  std::chrono::system_clock::now());
-      if (log_time_formats::IsStringFormat(gTimeFormat)) {
-        out.push_back('"');
-      }
-    }
-
-    // prefix
-    if (!gOutputPrefix.empty()) {
-      out.append(",\"prefix\":");
-      append_str(gOutputPrefix);
-    }
-
-    // pid
-    if (gShowProcessIdentifier) {
-      out.append(",\"pid\":");
-      sink.PushU64(gCachedPid.load(std::memory_order_relaxed));
-    }
-
-    // tid
-    if (gShowThreadIdentifier) {
-      out.append(",\"tid\":");
-      sink.PushU64(Thread::currentThreadNumber());
-    }
-
-    // thread name
-    if (gShowThreadName) {
-      out.append(",\"thread\":");
-      ThreadNameFetcher fetcher;
-      append_str(fetcher.get());
-    }
-
-    // role
-    if (gShowRole) {
-      out.append(",\"role\":\"");
-      if (gRole != '\0') {
-        // value of _role is always safe to print
-        out.push_back(gRole);
-      }
-      out.push_back('"');
-    }
-
-    // log level
-    {
-      out.append(",\"level\":");
-      append_str(log::TranslateLogLevel(level));
-    }
-
-    // file and line
-    if (gShowLineNumber) {
-      if (file) {
-        const char* filename = file;
-        if (gShortenFilenames) {
-          const char* shortened = strrchr(filename, SERENEDB_DIR_SEPARATOR_CHR);
-          if (shortened != nullptr) {
-            filename = shortened + 1;
-          }
-        }
-        out.append(",\"file\":");
-        append_str(filename);
-      }
-
-      out.append(",\"line\":");
-      sink.PushU64(line);
-
-      if (function) {
-        out.append(",\"function\":");
-        append_str(function);
-      }
-    }
-
-    // the topic
-    out.append(",\"topic\":");
-    append_str(topic.GetName());
-
-    // the logid
-    if (gShowIds) {
-      out.append(",\"id\":");
-      // value of id is always safe to print
-      append_str(logid);
-    }
-
-    // hostname
-    if (!gHostname.empty()) {
-      out.append(",\"hostname\":");
-      append_str(gHostname);
-    }
-
-    // the message itself
-    {
-      out.append(",\"message\":");
-
-      // the log message can be really large, and it can lead to
-      // truncation of the log message further down the road.
-      // however, as we are supposed to produce valid JSON log
-      // entries even with the truncation in place, we need to make
-      // sure that the dynamic text part is truncated and not the
-      // entries JSON thing
-      size_t max_message_length = GetDefaultLogGroup().maxLogEntryLength();
-      // cut of prologue, the quotes ('"' --- ' '") and the final '}'
-      if (max_message_length >= out.size() + 3) {
-        max_message_length -= out.size() + 3;
-      }
-      if (max_message_length > message.size()) {
-        max_message_length = message.size();
-      }
-      append_str({message.data(), max_message_length});
-
-      // this tells the logger to not shrink our (potentially already
-      // shrunk) message once more - if it would shrink the message again,
-      // it may produce invalid JSON
-      shrunk = true;
-    }
-
-    out.push_back('}');
-
-    SDB_ASSERT(offset == 0);
-  } else {
+  {
     // hostname
     if (!gHostname.empty()) {
       out.append(gHostname);
@@ -633,11 +474,6 @@ void Log(const char* logid, const char* function, const char* file, int line,
       out.append("] ", 2);
     }
 
-    if (gShowRole && gRole != '\0') {
-      out.push_back(gRole);
-      out.push_back(' ');
-    }
-
     // log level
     out.append(log::TranslateLogLevel(level));
     out.push_back(' ');
@@ -682,8 +518,6 @@ void Log(const char* logid, const char* function, const char* file, int line,
 
     gWriterFn(message, out);
   }
-
-  SDB_ASSERT(offset == 0 || !gUseJson);
 
   // append final newline
   out.push_back('\n');

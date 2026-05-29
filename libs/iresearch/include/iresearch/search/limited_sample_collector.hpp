@@ -114,7 +114,6 @@ class LimitedSampleCollector : private util::Noncopyable {
       min_state.state = _state.state;
       min_state.cookie = _state.terms->cookie();
       min_state.term = _state.terms->value();
-      min_state.segment = _state.segment;
       min_state.key = key;
 
       push();
@@ -150,6 +149,7 @@ class LimitedSampleCollector : private util::Noncopyable {
     uint32_t stats_offset = 0;
     for (auto& scored_state : _scored_states) {
       SDB_ASSERT(scored_state.cookie);
+      SDB_ASSERT(scored_state.state->reader->meta().name == field_name);
 
       // find the stats for the current term
       const auto res = term_stats.try_emplace(
@@ -201,7 +201,6 @@ class LimitedSampleCollector : private util::Noncopyable {
       : key(key),
         cookie(state.terms->cookie()),
         state(state.state),
-        segment(state.segment),
         term(state.terms->value()),
         docs_count(*state.docs_count) {
       SDB_ASSERT(this->cookie);
@@ -211,10 +210,9 @@ class LimitedSampleCollector : private util::Noncopyable {
     ScoredTermState& operator=(ScoredTermState&&) = default;
 
     Key key;
-    SeekCookie::ptr cookie;    // term offset cache
-    MultiTermState* state;     // state containing this scored term
-    const SubReader* segment;  // segment reader for the current term
-    bstring term;              // actual term value this state is for
+    SeekCookie::ptr cookie;  // term offset cache
+    MultiTermState* state;   // state containing this scored term
+    bstring term;            // actual term value this state is for
     uint32_t docs_count;
   };
 

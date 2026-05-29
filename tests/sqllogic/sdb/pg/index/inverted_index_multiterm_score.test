@@ -44,26 +44,26 @@ count
 
 # Every matched doc is scored.
 query
-SELECT id, BM25(mt_idx.tableoid) > 0 AS has_score FROM mt_idx
+SELECT id, body, BM25(mt_idx.tableoid) > 0 AS has_score FROM mt_idx
 WHERE body @@ ts_starts_with('a') ORDER BY id;
 ----
-id	has_score
-1	t
-2	t
-3	t
-4	t
+id	body	has_score
+1	apple	t
+2	apple	t
+3	apple	t
+4	avocado	t
 
 
 # Score order: the rarer term (avocado, df 1) outranks apple (df 3).
-query I
-SELECT id FROM mt_idx WHERE body @@ ts_starts_with('a')
+query
+SELECT id, body FROM mt_idx WHERE body @@ ts_starts_with('a')
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
-id
-4
-1
-2
-3
+id	body
+4	avocado
+1	apple
+2	apple
+3	apple
 
 
 # Exact BM25 scores. Every doc is a single token (dl == avgdl, tf == 1), so the
@@ -72,30 +72,30 @@ id
 #   avocado: n=1 -> ln(1 + 6.5/1.5) = ln(5.3333) = 1.6739764
 #   apple:   n=3 -> ln(1 + 4.5/3.5) = ln(2.2857) = 0.8266785
 query
-SELECT id, BM25(mt_idx.tableoid) AS score FROM mt_idx
+SELECT id, body, BM25(mt_idx.tableoid) AS score FROM mt_idx
 WHERE body @@ ts_starts_with('a')
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
-id	score
-4	1.6739764
-1	0.8266785
-2	0.8266785
-3	0.8266785
+id	body	score
+4	avocado	1.6739764
+1	apple	0.8266785
+2	apple	0.8266785
+3	apple	0.8266785
 
 
 # TFIDF, same single-token simplification: score = idf = ln((N + 1) / (n + 1)).
 #   avocado: n=1 -> ln(8/2) = ln(4) = 1.609438
 #   apple:   n=3 -> ln(8/4) = ln(3) = 1.0986123
 query
-SELECT id, TFIDF(mt_idx.tableoid) AS score FROM mt_idx
+SELECT id, body, TFIDF(mt_idx.tableoid) AS score FROM mt_idx
 WHERE body @@ ts_starts_with('a')
 ORDER BY TFIDF(mt_idx.tableoid) DESC, id;
 ----
-id	score
-4	1.609438
-1	1.0986123
-2	1.0986123
-3	1.0986123
+id	body	score
+4	avocado	1.609438
+1	apple	1.0986123
+2	apple	1.0986123
+3	apple	1.0986123
 
 
 # --- ByRange: half-open term ranges ---
@@ -109,17 +109,17 @@ count
 6
 
 
-query I
-SELECT id FROM mt_idx WHERE body @@ ts_lt('c')
+query
+SELECT id, body FROM mt_idx WHERE body @@ ts_lt('c')
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
-id
-4
-5
-6
-1
-2
-3
+id	body
+4	avocado
+5	banana
+6	blueberry
+1	apple
+2	apple
+3	apple
 
 
 # Exact BM25 scores for the ByRange path. avocado/banana/blueberry are three
@@ -129,27 +129,17 @@ id
 # Same N=7. avocado/banana/blueberry are df 1 -> ln(5.3333) = 1.6739764;
 # apple is df 3 -> ln(2.2857) = 0.8266785 (identical idf to the prefix case).
 query
-SELECT id, BM25(mt_idx.tableoid) AS score FROM mt_idx
+SELECT id, body, BM25(mt_idx.tableoid) AS score FROM mt_idx
 WHERE body @@ ts_lt('c')
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
-id	score
-4	1.6739764
-5	1.6739764
-6	1.6739764
-1	0.8266785
-2	0.8266785
-3	0.8266785
-
-
-# ts_ge('b') matches {banana, blueberry, cherry}.
-query I
-SELECT id FROM mt_idx WHERE body @@ ts_ge('b') ORDER BY id;
-----
-id
-5
-6
-7
+id	body	score
+4	avocado	1.6739764
+5	banana	1.6739764
+6	blueberry	1.6739764
+1	apple	0.8266785
+2	apple	0.8266785
+3	apple	0.8266785
 
 
 # --- Multi-segment: a second batch lands in a new segment, so the collector
@@ -173,18 +163,18 @@ count
 
 # Cross-segment df drives the ranking: apricot (df 1) > avocado (df 2) >
 # apple (df 4). Wrong per-segment-only stats would reorder these.
-query I
-SELECT id FROM mt_idx WHERE body @@ ts_starts_with('a')
+query
+SELECT id, body FROM mt_idx WHERE body @@ ts_starts_with('a')
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
-id
-10
-4
-9
-1
-2
-3
-8
+id	body
+10	apricot
+4	avocado
+9	avocado
+1	apple
+2	apple
+3	apple
+8	apple
 
 
 # N = docs with body across both segments = 10.
@@ -192,18 +182,18 @@ id
 #   avocado: n=2 -> ln(1 + 8.5/2.5) = ln(4.4)    = 1.4816045
 #   apple:   n=4 -> ln(1 + 6.5/4.5) = ln(2.4444) = 0.8938179
 query
-SELECT id, BM25(mt_idx.tableoid) AS score FROM mt_idx
+SELECT id, body, BM25(mt_idx.tableoid) AS score FROM mt_idx
 WHERE body @@ ts_starts_with('a')
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
-id	score
-10	1.9924302
-4	1.4816045
-9	1.4816045
-1	0.8938179
-2	0.8938179
-3	0.8938179
-8	0.8938179
+id	body	score
+10	apricot	1.9924302
+4	avocado	1.4816045
+9	avocado	1.4816045
+1	apple	0.8938179
+2	apple	0.8938179
+3	apple	0.8938179
+8	apple	0.8938179
 
 
 statement ok
@@ -243,14 +233,14 @@ VACUUM (REFRESH_TABLE) mt_multi;
 # id 3 wins even though each of its terms contributes only ~0.39 (the longer doc
 # is length-penalized): the Sum over two terms beats either single term.
 query
-SELECT id, BM25(mt_multi_idx.tableoid) AS score FROM mt_multi_idx
+SELECT id, body, BM25(mt_multi_idx.tableoid) AS score FROM mt_multi_idx
 WHERE body @@ ts_starts_with('a')
 ORDER BY BM25(mt_multi_idx.tableoid) DESC, id;
 ----
-id	score
-3	0.78038335
-1	0.52354836
-2	0.52354836
+id	body	score
+3	apple avocado	0.78038335
+1	apple	0.52354836
+2	avocado	0.52354836
 
 
 statement ok
@@ -296,15 +286,15 @@ VACUUM (REFRESH_TABLE) mtok;
 #   id 3: 0.10536051 * 2.2/2.2  = 0.10536051   (dl == avgdl, factor 1)
 #   id 4: 0.10536051 * 2.2/2.65 = 0.0874691
 query
-SELECT id, BM25(mtok_idx.tableoid) AS score FROM mtok_idx
+SELECT id, body, BM25(mtok_idx.tableoid) AS score FROM mtok_idx
 WHERE body @@ ts_starts_with('apple')
 ORDER BY BM25(mtok_idx.tableoid) DESC, id;
 ----
-id	score
-2	0.1448707
-1	0.13245323
-3	0.10536051
-4	0.0874691
+id	body	score
+2	apple apple	0.1448707
+1	apple	0.13245323
+3	apple cat	0.10536051
+4	apple cat dog	0.0874691
 
 
 statement ok

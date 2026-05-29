@@ -35,7 +35,6 @@
 #include "metrics/metric_key.h"
 #include "metrics/metrics_parts.h"
 #include "rest_server/serened.h"
-#include "statistics/server_statistics.h"
 
 namespace sdb::metrics {
 
@@ -93,8 +92,6 @@ class MetricsFeature final : public SerenedFeature {
   //////////////////////////////////////////////////////////////////////////////
   void toVPack(vpack::Builder& builder, MetricsParts metrics_parts) const;
 
-  ServerStatistics& serverStatistics() noexcept;
-
   template<typename MetricType>
   MetricType& batchAdd(std::string_view name, std::string_view labels) {
     std::unique_lock lock{_mutex};
@@ -119,8 +116,6 @@ class MetricsFeature final : public SerenedFeature {
   std::map<MetricKeyView, std::shared_ptr<Metric>> _registry;
 
   containers::FlatHashMap<std::string_view, std::unique_ptr<IBatch>> _batch;
-
-  std::unique_ptr<ServerStatistics> _server_statistics;
 
   mutable std::string _globals;
   mutable bool _has_shortname = false;

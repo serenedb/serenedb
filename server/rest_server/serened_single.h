@@ -78,7 +78,6 @@ class UpgradeFeature;
 class ServerFeature;
 class HttpEndpointProvider;
 class GeneralServerFeature;
-class StatisticsFeature;
 class BootstrapFeature;
 class ShutdownFeature;
 class TimeZoneFeature;
@@ -116,7 +115,6 @@ using SerenedFeaturesList = type::List<
   ServerFeature,
   HttpEndpointProvider,
   GeneralServerFeature,
-  StatisticsFeature,
   pg::PostgresFeature,
   BootstrapFeature,
   ShutdownFeature,

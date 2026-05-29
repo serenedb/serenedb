@@ -38,7 +38,6 @@
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
 #include "rest_server/upgrade_feature.h"
-#include "statistics/statistics_feature.h"
 
 using namespace sdb::app;
 using namespace sdb::options;
@@ -85,7 +84,6 @@ void ServerFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
       Server::id<HttpEndpointProvider>(),
       Server::id<GeneralServerFeature>(),
       Server::id<SslServerFeature>(),
-      Server::id<StatisticsFeature>(),
     });
     disable_deamon_and_supervisor();
   }

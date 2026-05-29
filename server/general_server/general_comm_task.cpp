@@ -1014,29 +1014,15 @@ void GeneralCommTask<T>::SetRequestStatistics(uint64_t id,
 
 template<SocketType T>
 ConnectionStatistics::Item GeneralCommTask<T>::AcquireConnectionStatistics() {
-  ConnectionStatistics::Item stat;
-  if (this->_server.server()
-        .template getFeature<StatisticsFeature>()
-        .isEnabled()) {
-    // only acquire a new item if the statistics are enabled.
-    stat = ConnectionStatistics::acquire();
-  }
-  return stat;
+  return ConnectionStatistics::acquire();  // no-op stub
 }
 
 template<SocketType T>
 RequestStatistics::ItemView GeneralCommTask<T>::AcquireRequestStatistics(
   uint64_t id) {
-  RequestStatistics::Item stat;
-  if (this->_server.server()
-        .template getFeature<StatisticsFeature>()
-        .isEnabled()) {
-    // only acquire a new item if the statistics are enabled.
-    stat = RequestStatistics::acquire();
-  }
-
   std::lock_guard guard(_statistics_mutex);
-  return _statistics_map.insert_or_assign(id, std::move(stat)).first->second;
+  return _statistics_map.insert_or_assign(id, RequestStatistics::acquire())
+    .first->second;
 }
 
 template<SocketType T>

@@ -1,9 +1,4 @@
-target_sources(
-    sereneserver
-    PRIVATE
-        connection_statistics.cpp
-        descriptions.cpp
-        request_statistics.cpp
-        server_statistics.cpp
-        statistics_feature.cpp
-)
+# statistics dir is now header-only (no-op stubs for {connection,request}_statistics.h).
+# The ArangoDB statistics framework was deleted in the cleanup; the
+# headers survive so *_comm_task / RestHandler compile without churn
+# until those paths are cleaned up.

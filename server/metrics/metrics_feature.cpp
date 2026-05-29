@@ -36,7 +36,6 @@
 #include "general_server/state.h"
 #include "metrics/metric.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "statistics/statistics_feature.h"
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::metrics {
@@ -53,9 +52,6 @@ MetricsFeature::MetricsFeature(Server& server)
 
 void MetricsFeature::collectOptions(
   std::shared_ptr<options::ProgramOptions> options) {
-  _server_statistics =
-    std::make_unique<ServerStatistics>(*this, StatisticsFeature::time());
-
   options->addOption(
     "--server.export-metrics-api", "Whether to enable the metrics API.",
     new options::BooleanParameter(&_export),
@@ -172,10 +168,6 @@ MetricsFeature::UsageTrackingMode MetricsFeature::usageTrackingMode()
 }
 
 void MetricsFeature::validateOptions(std::shared_ptr<options::ProgramOptions>) {
-  if (_export_read_write_metrics) {
-    serverStatistics().setupDocumentMetrics();
-  }
-
   // translate usage tracking mode string to enum value
   if (_usage_tracking_mode_string == "enabled-per-shard") {
     _usage_tracking_mode = UsageTrackingMode::EnabledPerShard;
@@ -224,12 +216,6 @@ void MetricsFeature::toPrometheus(std::string& result,
   }
 
   if (metrics_parts.includeStandardMetrics()) {
-    // StatisticsFeature only provides standard metrics
-    auto& sf = server().getFeature<StatisticsFeature>();
-    auto time = std::chrono::duration<double, std::milli>(
-      std::chrono::system_clock::now().time_since_epoch());
-    sf.toPrometheus(result, time.count(), _globals, _ensure_whitespace);
-
     // Storage engine only provides standard metrics
     auto& es = server().getFeature<EngineFeature>().engine();
     es.toPrometheus(result, _globals, _ensure_whitespace);
@@ -272,10 +258,6 @@ void MetricsFeature::toVPack(vpack::Builder& builder,
   }
   lock.unlock();
   builder.close();
-}
-
-ServerStatistics& MetricsFeature::serverStatistics() noexcept {
-  return *_server_statistics;
 }
 
 std::shared_lock<absl::Mutex> MetricsFeature::initGlobalLabels() const {

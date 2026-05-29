@@ -46,7 +46,6 @@ constexpr auto kNonServerFeatures = std::array{
   SerenedServer::id<LogBufferFeature>(),
   SerenedServer::id<ServerFeature>(),
   SerenedServer::id<SslServerFeature>(),
-  SerenedServer::id<StatisticsFeature>(),
 };
 
 const boost::asio::ssl::detail::openssl_init<true> kSslInit{};

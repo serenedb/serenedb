@@ -64,6 +64,8 @@ class LimitedSampleCollector : private util::Noncopyable {
     _state.segment = &segment;
     _state.terms = &terms;
 
+    SDB_ASSERT(scored_state.reader);
+    _field_stats.Collect(*scored_state.reader);
     // get term metadata
     auto* meta = irs::get<TermMeta>(terms);
     _state.docs_count = meta ? &meta->docs_count : &_no_docs;
@@ -133,14 +135,6 @@ class LimitedSampleCollector : private util::Noncopyable {
     if (_scored_states.empty()) {
       return;
     }
-    const auto field_name = _scored_states.front().state->reader->meta().name;
-    FieldCollector field_stats;
-    for (const auto& segment : index) {
-      if (const auto* field = segment.field(field_name)) {
-        field_stats.Collect(*field);
-      }
-    }
-
     // stats for a specific term
     absl::flat_hash_map<hashed_bytes_view, StatsState, HashedStrHash>
       term_stats;
@@ -148,9 +142,6 @@ class LimitedSampleCollector : private util::Noncopyable {
     // iterate over all the states from which statistcis should be collected
     uint32_t stats_offset = 0;
     for (auto& scored_state : _scored_states) {
-      SDB_ASSERT(scored_state.cookie);
-      SDB_ASSERT(scored_state.state->reader->meta().name == field_name);
-
       // find the stats for the current term
       const auto res = term_stats.try_emplace(
         hashed_bytes_view{scored_state.term}, scorer, stats_offset);
@@ -174,7 +165,7 @@ class LimitedSampleCollector : private util::Noncopyable {
       stats_entry.resize(scorer ? scorer->stats_size() : 0);
       auto* stats_buf = const_cast<byte_type*>(stats_entry.data());
 
-      entry.second.term_stats.Finish(stats_buf, 0, &field_stats);
+      entry.second.term_stats.Finish(stats_buf, 0, &_field_stats);
     }
   }
 
@@ -233,6 +224,7 @@ class LimitedSampleCollector : private util::Noncopyable {
   [[no_unique_address]] comparer_type _comparer;
   const decltype(TermMeta::docs_count) _no_docs = 0;
   CollectorState _state;
+  FieldCollector _field_stats;
   std::vector<ScoredTermState> _scored_states;
   // use external heap as states are big
   std::vector<size_t> _scored_states_heap;

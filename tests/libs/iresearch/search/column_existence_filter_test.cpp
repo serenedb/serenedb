@@ -254,12 +254,12 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       sort.collectors_collect =
         [&collector_finish_count, &collector_field_docs](
           irs::byte_type*, const irs::FieldCollector* field,
-          const irs::TermCollector*) -> void {
-        ++collector_finish_count;
-        if (field) {
-          collector_field_docs += field->docs_with_field;
-        }
-      };
+          const irs::TermCollector*) {
+          ++collector_finish_count;
+          if (field) {
+            collector_field_docs += field->docs_with_field;
+          }
+        };
       sort.scorer_score = [&](const irs::ScoreOperator* /*ctx*/,
                               irs::score_t* score, size_t n) -> void {
         ASSERT_EQ(1, n);

@@ -169,31 +169,36 @@ class PhraseTermVisitor final : public FilterVisitor,
   }
 
   void Visit(score_t boost) final {
-    SDB_ASSERT(_terms && _collectors && _segment && _reader);
+    SDB_ASSERT(_terms && _segment && _reader);
 
     // disallow negative boost
     boost = std::max(0.f, boost);
 
-    if (_stats_size <= _term_offset) {
-      // variadic phrase case
-      _collectors->PushBack();
-      SDB_ASSERT(_stats_size == _term_offset);
-      ++_stats_size;
-      _volatile_boost |= (boost != kNoBoost);
-    }
+    // Only if it has scorer
+    if (_collectors) {
+      if (_stats_size <= _term_offset) {
+        // variadic phrase case
+        _collectors->PushBack();
+        SDB_ASSERT(_stats_size == _term_offset);
+        ++_stats_size;
+        _volatile_boost |= (boost != kNoBoost);
+      }
 
-    _collectors->Collect(_term_offset++, *_terms);
+      _collectors->Collect(_term_offset++, *_terms);
+    }
     _phrase_states.emplace_back(_terms->cookie(), boost);
   }
 
   void Reset() noexcept { _volatile_boost = false; }
 
-  void Reset(FlatTermBuffer& collectors) noexcept {
+  void Reset(FlatTermBuffer* collectors) noexcept {
     _found = false;
     _terms = nullptr;
     _term_offset = 0;
-    _collectors = &collectors;
-    _stats_size = collectors.Size();
+    _collectors = collectors;
+    if (_collectors) {
+      _stats_size = collectors->Size();
+    }
   }
 
   bool Found() const noexcept { return _found; }
@@ -250,7 +255,7 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
 
     // collect field statistics once per segment
     field_stats.Collect(*reader);
-    ptv.Reset(term_stats);
+    ptv.Reset(&term_stats);
 
     for (const auto& word : options) {
       SDB_ASSERT(std::get_if<ByTermOptions>(&word.part));

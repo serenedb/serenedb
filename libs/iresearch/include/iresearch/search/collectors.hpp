@@ -65,48 +65,39 @@ class CollectorBase {
 
 class FlatTermBuffer {
  public:
-  FlatTermBuffer(size_t size, bool has_scorer)
-    : _has_scorer{has_scorer}, _collectors{has_scorer ? size : 0} {}
+  FlatTermBuffer(size_t size) : _collectors{size} {}
 
   size_t Size() const noexcept { return _collectors.size(); }
   bool Empty() const noexcept { return _collectors.empty(); }
 
   size_t PushBack() {
-    if (!_has_scorer) {
-      return 0;
-    }
     _collectors.emplace_back();
     return _collectors.size() - 1;
   }
 
   void Collect(size_t term_idx, const AttributeProvider& attrs) {
-    if (_has_scorer) {
-      SDB_ASSERT(term_idx < _collectors.size());
-      _collectors[term_idx].Collect(attrs);
-    }
+    SDB_ASSERT(term_idx < _collectors.size());
+    _collectors[term_idx].Collect(attrs);
   }
 
   const TermCollector& Get(size_t term_idx) const {
-    SDB_ASSERT(_has_scorer);
     SDB_ASSERT(term_idx < _collectors.size());
     return _collectors[term_idx];
   }
 
   TermCollector& Get(size_t term_idx) {
-    SDB_ASSERT(_has_scorer);
     SDB_ASSERT(term_idx < _collectors.size());
     return _collectors[term_idx];
   }
 
  private:
-  bool _has_scorer;
   std::vector<TermCollector> _collectors;
 };
 
 class TermCollectorsFlat : public CollectorBase, public FlatTermBuffer {
  public:
   TermCollectorsFlat(const Scorer* scorer, size_t size)
-    : CollectorBase{scorer}, FlatTermBuffer{size, scorer != nullptr} {}
+    : CollectorBase{scorer}, FlatTermBuffer{scorer ? size : 0} {}
 
   size_t PushBack() {
     if (!HasScorer()) {
@@ -135,14 +126,16 @@ class TermCollectorsFlat : public CollectorBase, public FlatTermBuffer {
 class TermCollectorsVariadic : public CollectorBase {
  public:
   TermCollectorsVariadic(const Scorer* scorer, size_t phrase_size)
-    : CollectorBase{scorer},
-      _collectors(phrase_size, FlatTermBuffer{0, scorer != nullptr}) {}
+    : CollectorBase{scorer}, _collectors(phrase_size, FlatTermBuffer{0}) {}
 
   size_t Size() const noexcept { return _collectors.size(); }
 
-  FlatTermBuffer& GetCollector(size_t idx) {
+  FlatTermBuffer* GetCollector(size_t idx) {
+    if (!HasScorer()) {
+      return nullptr;
+    }
     SDB_ASSERT(idx < _collectors.size());
-    return _collectors[idx];
+    return &_collectors[idx];
   }
 
   void Finish(byte_type* stats_buf, size_t part_idx,

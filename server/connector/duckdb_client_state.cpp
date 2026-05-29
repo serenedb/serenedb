@@ -33,6 +33,7 @@
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_physical_sst_insert.h"
 #include "pg/connection_context.h"
+#include "pg/copy_messages_queue.h"
 #include "pg/errcodes.h"
 #include "pg/progress_tracker.h"
 #include "pg/sql_exception_macro.h"
@@ -206,10 +207,12 @@ duckdb::RebindQueryInfo SereneDBClientState::OnExecutePrepared(
 }
 
 void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
-  copy_queue = nullptr;
-  send_buffer = nullptr;
+  if (auto* queue = _connection_ctx->GetCopyQueue()) {
+    queue->CloseListening();
+  }
   copy_stdin_buffer.reset();
   copy_stdin_open_count = 0;
+  copy_stdin_done = false;
   progress.reset();
   _connection_ctx->OnNewStatement();
 }

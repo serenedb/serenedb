@@ -152,7 +152,7 @@ class SnapshotImpl : public Snapshot {
   }
 
   std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(
-    const std::shared_ptr<Database>& db) {
+    const std::shared_ptr<Database>& db, duckdb::shared_ptr<void> keep_alive) {
     auto db_deps = GetDependency<DatabaseDependency>(db->GetId());
     auto schemas_drop = db_deps->schemas |
                         std::views::transform([&](ObjectId id) {
@@ -161,8 +161,8 @@ class SnapshotImpl : public Snapshot {
                           return CreateSchemaDrop(db->GetId(), schema, false);
                         }) |
                         std::ranges::to<std::vector>();
-    auto drop_task =
-      std::make_shared<DatabaseDrop>(db, std::move(schemas_drop));
+    auto drop_task = std::make_shared<DatabaseDrop>(db, std::move(schemas_drop),
+                                                    std::move(keep_alive));
     return drop_task;
   }
 
@@ -698,6 +698,22 @@ class SnapshotImpl : public Snapshot {
                std::ranges::to<std::vector>();
       })
       .value_or(std::vector<std::shared_ptr<PgSqlView>>{});
+  }
+
+  std::vector<std::shared_ptr<Sequence>> GetSequences(
+    ObjectId db_id, std::string_view schema) const final {
+    return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+      .transform([&](ObjectId schema_id) {
+        const auto& schema_deps = GetDependency<SchemaDependency>(schema_id);
+        return schema_deps->sequences |
+               std::views::transform([&](ObjectId sequence_id) {
+                 auto it = _objects.find(sequence_id);
+                 SDB_ASSERT(it != _objects.end());
+                 return basics::downCast<Sequence>(*it);
+               }) |
+               std::ranges::to<std::vector>();
+      })
+      .value_or(std::vector<std::shared_ptr<Sequence>>{});
   }
 
   std::vector<std::shared_ptr<PgSqlFunction>> GetFunctions(
@@ -2463,7 +2479,8 @@ Result LocalCatalog::DropRole(std::string_view role) {
   return {};
 }
 
-Result LocalCatalog::DropDatabase(std::string_view name) {
+Result LocalCatalog::DropDatabase(std::string_view name,
+                                  duckdb::shared_ptr<void> keep_alive) {
   absl::MutexLock lock{&_mutex};
   auto database_id =
     _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, name);
@@ -2478,7 +2495,7 @@ Result LocalCatalog::DropDatabase(std::string_view name) {
     SDB_ASSERT(clone);
     auto database = clone->GetObject<Database>(*database_id);
     SDB_ASSERT(database);
-    auto task = clone->CreateDatabaseDrop(database);
+    auto task = clone->CreateDatabaseDrop(database, std::move(keep_alive));
     auto wr = _engine->Write([&](auto& ctx) {
       ctx.WriteTombstone(id::kInstance, *database_id);
       clone->CommitDropPlan(ctx, plan);

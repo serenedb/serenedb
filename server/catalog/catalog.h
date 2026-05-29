@@ -118,6 +118,8 @@ struct Snapshot {
     ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<Index>> GetIndexes(
     ObjectId database, std::string_view schema) const = 0;
+  virtual std::vector<std::shared_ptr<Sequence>> GetSequences(
+    ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<Tokenizer>> GetTokenizers(
     ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<PgSqlType>> GetTypes(
@@ -317,7 +319,8 @@ struct LogicalCatalog {
   virtual Result ChangeRole(std::string_view name,
                             ChangeCallback<catalog::Role> callback) = 0;
 
-  virtual Result DropDatabase(std::string_view name) = 0;
+  virtual Result DropDatabase(std::string_view name,
+                              duckdb::shared_ptr<void> keep_alive) = 0;
   virtual Result DropRole(std::string_view name) = 0;
   virtual Result DropSchema(std::string_view database, std::string_view name,
                             bool cascade) = 0;

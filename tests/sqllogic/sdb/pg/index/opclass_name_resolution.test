@@ -194,11 +194,12 @@ id    s
 2     10
 
 
-# --- ARRAY columns and expressions only allowed with built-in HNSW -------
-# Bare 'hnsw' would resolve to the user dict named 'hnsw' (text tokenizer),
-# but ARRAY values can only be indexed with the parens form of the built-in
-# 'hnsw' opclass. Validation rejects every other ARRAY case, regardless of
-# the element type. The shadowing dict in scope is irrelevant.
+# --- ARRAY: columns need built-in HNSW; expressions accept a tokenizer ---
+# Bare 'hnsw' resolves to the user dict (a text tokenizer). On an ARRAY
+# *column* it's still rejected -- raw array columns aren't tokenized. On an
+# ARRAY *expression* the tokenizer turns each element into a search term.
+# Vector search uses the parens form 'hnsw(...)', which selects the built-in
+# HNSW opclass and requires ARRAY(FLOAT, N).
 
 statement ok
 CREATE TABLE shadow_hnsw_int_arr_col(id INT PRIMARY KEY, emb INT[3]);
@@ -223,11 +224,23 @@ db error: ERROR: Failed to create index: Column 'emb' has unsupported type FLOAT
 statement ok
 CREATE TABLE shadow_hnsw_arr_expr(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
 
-statement error
-CREATE INDEX bad_shadow_hnsw_arr_expr_idx ON shadow_hnsw_arr_expr USING inverted(
+statement ok
+CREATE INDEX shadow_hnsw_arr_expr_idx ON shadow_hnsw_arr_expr USING inverted(
     id, (array_value(x, y, z)) hnsw);
+
+statement ok
+INSERT INTO shadow_hnsw_arr_expr VALUES (1, 1, 2, 3), (2, 10, 10, 10);
+
+statement ok
+VACUUM (REFRESH_TABLE) shadow_hnsw_arr_expr;
+
+# Row 2 has the element 10; row 1 does not.
+query
+SELECT id FROM shadow_hnsw_arr_expr_idx
+WHERE (array_value(x, y, z)) @@ ts_between(10, 10, true, true) ORDER BY id;
 ----
-db error: ERROR: Failed to create index: Column 'array_value(x, y, z)' has unsupported type FLOAT[3]
+id
+2
 
 
 # The parens form selects the built-in HNSW even with the shadowing dict

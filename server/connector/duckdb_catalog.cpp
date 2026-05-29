@@ -33,6 +33,7 @@
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -1177,21 +1178,30 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   }
 
   containers::FlatHashSet<duckdb::column_t> seen_columns;
-  for (auto& expr : create_index_info->parsed_expressions) {
-    if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
-      auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
-      auto col_name = col_ref.GetColumnName();
-      for (size_t i = 0; i < rel_columns.size(); ++i) {
-        if (absl::EqualsIgnoreCase(rel_columns[i].first, col_name)) {
-          const auto col_id = static_cast<duckdb::column_t>(i);
-          if (seen_columns.insert(col_id).second) {
-            create_index_info->column_ids.push_back(col_id);
-            create_index_info->scan_types.push_back(rel_columns[i].second);
-          }
-          break;
+  auto add_column = [&](std::string_view col_name) {
+    for (size_t i = 0; i < rel_columns.size(); ++i) {
+      if (absl::EqualsIgnoreCase(rel_columns[i].first, col_name)) {
+        const auto col_id = static_cast<duckdb::column_t>(i);
+        if (seen_columns.insert(col_id).second) {
+          create_index_info->column_ids.emplace_back(col_id);
+          create_index_info->scan_types.emplace_back(rel_columns[i].second);
         }
+        break;
       }
     }
+  };
+
+  auto collect = [&](this auto& self,
+                     const duckdb::ParsedExpression& e) -> void {
+    if (e.GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
+      add_column(e.Cast<duckdb::ColumnRefExpression>().GetColumnName());
+      return;
+    }
+    duckdb::ParsedExpressionIterator::EnumerateChildren(
+      e, [&](const duckdb::ParsedExpression& child) { self(child); });
+  };
+  for (auto& expr : create_index_info->parsed_expressions) {
+    collect(*expr);
   }
   create_index_info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
 

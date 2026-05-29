@@ -543,19 +543,14 @@ void LoggerFeature::prepare() {
   log::SetUseJson(_use_json);
 
   for (const auto& definition : _output) {
-    if (_supervisor && definition.starts_with("file://")) {
-      log::Appender::addAppender(log::GetDefaultLogGroup(),
-                                 absl::StrCat(definition, ".supervisor"));
-    } else {
-      log::Appender::addAppender(log::GetDefaultLogGroup(), definition);
-    }
+    log::Appender::addAppender(log::GetDefaultLogGroup(), definition);
   }
 
   if (_foreground_tty) {
     log::Appender::addAppender(log::GetDefaultLogGroup(), "-");
   }
 
-  if (_force_direct || _supervisor || !_threaded) {
+  if (_force_direct || !_threaded) {
     log::Initialize();
   } else {
     log::InitializeAsync(server(), _max_queued_log_messages);

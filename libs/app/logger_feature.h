@@ -51,7 +51,6 @@ class LoggerFeature final : public app::AppFeature {
   void unprepare() final;
 
   void disableThreaded() noexcept { _threaded = false; }
-  void setSupervisor(bool supervisor) noexcept { _supervisor = supervisor; }
 
  private:
   std::vector<std::string> _output;
@@ -79,7 +78,6 @@ class LoggerFeature final : public app::AppFeature {
   bool _show_ids = true;
   bool _show_role = false;
   bool _log_request_parameters = true;
-  bool _supervisor = false;
   bool _threaded = false;
 };
 

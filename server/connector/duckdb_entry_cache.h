@@ -111,8 +111,9 @@ class DuckDBEntryCache {
                               duckdb::unique_ptr<duckdb::CatalogEntry>>;
     EntryMap tables;     // TABLE_ENTRY, VIEW_ENTRY
     EntryMap indexes;    // INDEX_ENTRY
-    EntryMap functions;  // MACRO_ENTRY, TABLE_MACRO_ENTRY, *_FUNCTION_ENTRY
+    EntryMap sequences;  // SEQUENCE_ENTRY
     EntryMap types;      // TYPE_ENTRY
+    EntryMap common;
 
     auto& MapForType(this auto& self, duckdb::CatalogType t) {
       switch (t) {
@@ -121,10 +122,12 @@ class DuckDBEntryCache {
           return self.tables;
         case duckdb::CatalogType::INDEX_ENTRY:
           return self.indexes;
+        case duckdb::CatalogType::SEQUENCE_ENTRY:
+          return self.sequences;
         case duckdb::CatalogType::TYPE_ENTRY:
           return self.types;
         default:
-          return self.functions;
+          return self.common;
       }
     }
   };

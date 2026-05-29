@@ -85,7 +85,7 @@ QUERY PLAN
 └───────────────────────────┘
 
 
-query ?
+query
 EXPLAIN SELECT id, BM25(docs_topk_idx.tableoid) FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 5;
 ----
 QUERY PLAN

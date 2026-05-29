@@ -69,4 +69,20 @@ for driver in psycopg3 psycopg2 asyncpg; do
 	fi
 done
 
+if [[ "${SDB_DRV_DEBUG:-false}" == "true" ]]; then
+	pytest_args=(-v -s)
+else
+	pytest_args=(-q)
+fi
+for extra in test_copy test_shell_copy test_psql_mode; do
+	test_file="${SCRIPT_DIR}/${extra}.py"
+	[[ -f "$test_file" ]] || continue
+	echo "[python][$extra] running"
+	if ! python3 -m pytest "${pytest_args[@]}" \
+		--junitxml="${JUNIT}/tests-drivers-python-${extra}-junit.xml" \
+		"$test_file"; then
+		final=1
+	fi
+done
+
 exit "$final"

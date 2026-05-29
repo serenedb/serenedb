@@ -104,14 +104,12 @@ QUERY PLAN
 └───────────────────────────┘
 
 
-query ?
-SELECT id FROM l2_index ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 1;
-----
-id
-
-
 statement ok
 VACUUM (REFRESH_TABLE) t;
+
+
+query error
+SELECT id FROM l2_index ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 1;
 
 
 query

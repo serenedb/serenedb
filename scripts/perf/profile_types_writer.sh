@@ -141,7 +141,7 @@ start_serened_under_perf "${PERF_DATA_CTAS}" "${OUT_DIR}/serened-ctas.log"
 
 psql "${PSQL_CONN}" -v ON_ERROR_STOP=1 -X \
 	-c "SET threads = ${THREADS};" \
-	-c "ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);" \
+	-c "ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);" \
 	-c "SET search_path TO public, native_db.main;" \
 	2>&1 | tee "${OUT_DIR}/setup-ctas.log"
 

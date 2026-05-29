@@ -34,16 +34,11 @@ class CopyMessagesQueue;
 
 namespace sdb::connector {
 
-// FileSystem that intercepts "/dev/stdin" and reads from the PG COPY protocol
-// queue instead of the OS stdin. Registered as a sub-filesystem with DuckDB's
-// VirtualFileSystem.
-//
-// When psql sends "COPY FROM STDIN", libpgquery transforms STDIN to
-// "/dev/stdin". This filesystem handles that path and bridges PG CopyData
-// messages into DuckDB's file I/O interface.
-// Send PG CopyInResponse message to tell the client to start sending data.
-void SendCopyInResponse(message::Buffer& send_buffer, size_t column_count);
-
+// Bridges the PostgreSQL COPY wire protocol into DuckDB's FileSystem.
+// Intercepts "/dev/stdin" (read) and "/dev/stdout" (write); the SQL
+// identifiers STDIN and STDOUT are mapped to these paths by the PEG
+// transformer. Registered only on the server-side DuckDB instance, so
+// shell/psql mode falls through to the OS filesystem.
 class SereneDBCopyFileSystem final : public duckdb::FileSystem {
  public:
   std::string GetName() const final { return "SereneDBCopyFileSystem"; }
@@ -56,12 +51,15 @@ class SereneDBCopyFileSystem final : public duckdb::FileSystem {
     const std::string& path, duckdb::FileOpenFlags flags,
     duckdb::optional_ptr<duckdb::FileOpener> opener) final;
 
-  // Sequential read -- reads from CopyMessagesQueue
   int64_t Read(duckdb::FileHandle& handle, void* buffer,
                int64_t nr_bytes) final;
-  // Positional read -- not supported for streaming
   void Read(duckdb::FileHandle& handle, void* buffer, int64_t nr_bytes,
             duckdb::idx_t location) final;
+
+  int64_t Write(duckdb::FileHandle& handle, void* buffer,
+                int64_t nr_bytes) final;
+  void Write(duckdb::FileHandle& handle, void* buffer, int64_t nr_bytes,
+             duckdb::idx_t location) final;
 
   bool FileExists(const std::string& filename,
                   duckdb::optional_ptr<duckdb::FileOpener> opener) final;

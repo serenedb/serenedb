@@ -175,7 +175,7 @@ NDB_SQL_PATH=$(printf '%s' "${NATIVE_DB}" | sed "s/'/''/g")
 # bare references like `hits_native` still resolve. Native CREATE TABLE is
 # explicitly qualified (matches the iceberg.test_slow convention).
 run_setup "attach_native_db" "${BUILD_THREADS}" "
-ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
+ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);
 SET search_path TO public, native_db.main;
 "
 

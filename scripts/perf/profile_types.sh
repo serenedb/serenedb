@@ -72,7 +72,7 @@ setup_session() {
 	# session-local).  CREATE INDEX is safe because iresearch dedups
 	# against existing .cs files for the segments already on disk.
 	psql "${PSQL_CONN}" -v ON_ERROR_STOP=1 <<EOF
-ATTACH IF NOT EXISTS '${NATIVE_DB}' AS native_db (TYPE duckdb);
+ATTACH IF NOT EXISTS '${NATIVE_DB}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);
 SET search_path TO public, native_db.main;
 CREATE INDEX IF NOT EXISTS bench_idx ON bench_view USING inverted()
 INCLUDE (

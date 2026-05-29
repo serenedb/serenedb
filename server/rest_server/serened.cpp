@@ -38,9 +38,6 @@ using namespace sdb::app;
 static_assert(SerenedServer::id<LoggerFeature>() == 0);
 
 constexpr auto kNonServerFeatures = std::array{
-#ifdef SERENEDB_HAVE_FORK
-  SerenedServer::id<DaemonFeature>(),
-#endif
   SerenedServer::id<GeneralServerFeature>(),
   SerenedServer::id<HttpEndpointProvider>(),
   SerenedServer::id<LogBufferFeature>(),

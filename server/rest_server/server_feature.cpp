@@ -73,10 +73,8 @@ void ServerFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
               "restServer disabled only for upgrade");
   }
 
-  auto disable_deamon_and_supervisor = [&]() {
-    if constexpr (Server::contains<DaemonFeature>()) {
-      server().disableFeatures({Server::id<DaemonFeature>()});
-    }
+  auto disable_deamon_and_supervisor = []() {
+    // DaemonFeature + SupervisorFeature both deleted; no-op.
   };
 
   if (!_rest_server) {

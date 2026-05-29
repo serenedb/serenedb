@@ -3,7 +3,6 @@ target_sources(
     PRIVATE
         restart_action.cpp
         bootstrap_feature.cpp
-        daemon_feature.cpp
         database_path_feature.cpp
         endpoint_feature.cpp
         file_descriptors_feature.cpp

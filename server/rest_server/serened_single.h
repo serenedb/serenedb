@@ -73,7 +73,6 @@ class InitDatabaseFeature;
 class RocksDBOptionFeature;
 class EngineFeature;
 class ServerIdFeature;
-class CheckVersionFeature;
 class FlushFeature;
 class LockfileFeature;
 class RocksDBRecoveryManager;
@@ -116,7 +115,6 @@ using SerenedFeaturesList = type::List<
   RocksDBOptionFeature,
   EngineFeature,
   ServerIdFeature,
-  CheckVersionFeature,
   FlushFeature,
   LockfileFeature,
   RocksDBRecoveryManager,

@@ -80,10 +80,6 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       []<typename T>(auto& server, type::Tag<T>) {
         return std::make_unique<T>(server);
       },
-      [&ret](auto& server, type::Tag<CheckVersionFeature>) {
-        return std::make_unique<CheckVersionFeature>(server, &ret,
-                                                     kNonServerFeatures);
-      },
       [&name](auto& server, type::Tag<ConfigFeature>) {
         return std::make_unique<ConfigFeature>(
           server, name, [] { return GetServerOptions().app_print_version; });

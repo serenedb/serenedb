@@ -48,8 +48,8 @@ namespace sdb::catalog {
 
 using AsyncResult = yaclib::Future<Result>;
 
-inline constexpr uint32_t kInitialDelay = 125;
-inline constexpr uint32_t kMaxDelay = kInitialDelay << 7;
+inline constexpr auto kInitialDelay = std::chrono::milliseconds{1};
+inline constexpr auto kMaxDelay = std::chrono::milliseconds{1000};
 
 class DropTask {
  public:
@@ -86,17 +86,17 @@ class DropTask {
   virtual std::string_view GetName() const noexcept = 0;
   virtual std::string GetContext() const noexcept = 0;
   virtual bool AllowToDropDependencies() const noexcept = 0;
+  virtual ~DropTask() = default;
 
  protected:
   ObjectId _parent_id;
   ObjectId _id;
   bool _is_root;
-  uint32_t _delay = kInitialDelay;  // delay in microseconds
+  std::chrono::milliseconds _delay = kInitialDelay;
   std::weak_ptr<Object> _object;
 };
 
-class TableShardDrop final : public DropTask,
-                             std::enable_shared_from_this<TableShardDrop> {
+class TableShardDrop final : public DropTask {
  public:
   TableShardDrop(ObjectId id, ObjectId parent_id, uint64_t size)
     : DropTask{id, parent_id}, _size{size} {}
@@ -120,40 +120,7 @@ class TableShardDrop final : public DropTask,
   uint64_t _size;
 };
 
-struct IndexShardDrop final : public DropTask,
-                              std::enable_shared_from_this<IndexShardDrop> {
- public:
-  IndexShardDrop(const std::shared_ptr<IndexShard>& shard)
-    : DropTask{shard, shard->GetIndexId()} {}
-
-  IndexShardDrop(ObjectId id, ObjectId parent_id) : DropTask{id, parent_id} {}
-
-  std::string GetContext() const noexcept final {
-    return absl::Substitute("IndexShardDrop(index $0 shard $1)",
-                            _parent_id.id(), _id.id());
-  }
-
-  std::string_view GetName() const noexcept final { return "index shard drop"; }
-
-  AsyncResult Execute() final { SDB_UNREACHABLE(); }
-
-  bool AllowToDropDependencies() const noexcept final { return true; }
-
-  bool AllowToDrop() const noexcept final {
-    auto obj = _object.lock();
-    if (obj && obj->GetType() == ObjectType::InvertedIndexShard) {
-      const auto& shard =
-        basics::downCast<search::InvertedIndexShard>(*obj.get());
-      if (shard.HasActiveSegments()) {
-        return false;
-      }
-    }
-    return DropTask::AllowToDrop();
-  }
-};
-
-struct IndexDrop final : public DropTask,
-                         std::enable_shared_from_this<IndexDrop> {
+struct IndexDrop final : public DropTask {
  public:
   IndexDrop(ObjectId id, ObjectType type, ObjectId db_id, ObjectId schema_id,
             ObjectId table_id, bool is_root = false)
@@ -163,13 +130,13 @@ struct IndexDrop final : public DropTask,
       _type{type} {}
 
   IndexDrop(const std::shared_ptr<Index>& index,
-            std::shared_ptr<IndexShardDrop> shard_drop, ObjectId db_id,
+            std::shared_ptr<IndexShard> shard, ObjectId db_id,
             ObjectId schema_id, ObjectId table_id, bool is_root = false)
     : DropTask{index, table_id, is_root},
       _db_id{db_id},
       _schema_id{schema_id},
       _type{index->GetType()},
-      _shard_drop{std::move(shard_drop)} {}
+      _shard{std::move(shard)} {}
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("IndexDrop(schema $0 index $1)", _parent_id.id(),
@@ -177,7 +144,7 @@ struct IndexDrop final : public DropTask,
   }
 
   bool AllowToDropDependencies() const noexcept final {
-    return !_shard_drop || _shard_drop->AllowToDrop();
+    return _shard.expired();
   }
 
   std::string_view GetName() const noexcept final { return "index drop"; }
@@ -191,11 +158,10 @@ struct IndexDrop final : public DropTask,
   ObjectId _db_id;
   ObjectId _schema_id;
   ObjectType _type;
-  std::shared_ptr<IndexShardDrop> _shard_drop;
+  std::weak_ptr<IndexShard> _shard;
 };
 
-struct TableDrop final : public DropTask,
-                         std::enable_shared_from_this<TableDrop> {
+struct TableDrop final : public DropTask {
  public:
   static constexpr std::string_view kName = "table drop";
 
@@ -245,8 +211,7 @@ struct TableDrop final : public DropTask,
   std::shared_ptr<TableShardDrop> _shard_drop;
 };
 
-struct SchemaDrop final : public DropTask,
-                          std::enable_shared_from_this<SchemaDrop> {
+struct SchemaDrop final : public DropTask {
  public:
   SchemaDrop(ObjectId schema_id, std::vector<std::shared_ptr<TableDrop>> tables,
              ObjectId db_id, bool is_root = false)
@@ -278,8 +243,7 @@ struct SchemaDrop final : public DropTask,
   std::vector<std::shared_ptr<TableDrop>> _tables;
 };
 
-struct DatabaseDrop final : public DropTask,
-                            std::enable_shared_from_this<DatabaseDrop> {
+struct DatabaseDrop final : public DropTask {
  public:
   DatabaseDrop(ObjectId db_id, std::vector<std::shared_ptr<SchemaDrop>> schemas)
     : DropTask{db_id, id::kInstance, true}, _schemas{std::move(schemas)} {}

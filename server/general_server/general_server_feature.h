@@ -50,7 +50,6 @@ class GeneralServerFeature final : public SerenedFeature {
   void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
   void prepare() final;
   void start() final;
-  void initiateSoftShutdown() final;
   void beginShutdown() final;
   void stop() final;
   void unprepare() final;

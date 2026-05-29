@@ -269,12 +269,6 @@ void GeneralServerFeature::start() {
   ServerState::instance()->SetMode(ServerState::Mode::Maintenance);
 }
 
-void GeneralServerFeature::initiateSoftShutdown() {
-  if (_job_manager != nullptr) {
-    _job_manager->initiateSoftShutdown();
-  }
-}
-
 void GeneralServerFeature::beginShutdown() {
   for (auto& server : _servers) {
     server->stopListening();

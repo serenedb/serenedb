@@ -83,7 +83,6 @@ class GeneralServerFeature;
 class StatisticsFeature;
 class BootstrapFeature;
 class ShutdownFeature;
-class SoftShutdownFeature;
 class TimeZoneFeature;
 
 // clang-format off
@@ -127,7 +126,6 @@ using SerenedFeaturesList = type::List<
   pg::PostgresFeature,
   BootstrapFeature,
   ShutdownFeature,
-  SoftShutdownFeature,
   TimeZoneFeature>;
 // clang-format on
 

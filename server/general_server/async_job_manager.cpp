@@ -30,7 +30,6 @@
 #include "general_server/rest_handler.h"
 #include "general_server/state.h"
 #include "rest/general_response.h"
-#include "rest_server/soft_shutdown_feature.h"
 #include "utils/exec_context.h"
 
 namespace sdb::rest {
@@ -168,9 +167,6 @@ void AsyncJobManager::initAsyncJob(std::shared_ptr<RestHandler> handler) {
   AsyncJobResult result{id, AsyncJobResult::kJobPending, std::move(handler)};
 
   absl::WriterMutexLock write_locker{&_lock};
-  if (_soft_shutdown_ongoing.load(std::memory_order_relaxed)) {
-    SDB_THROW(ERROR_SHUTTING_DOWN, "Soft shutdown ongoing.");
-  }
   _jobs.try_emplace(id, std::move(user), std::move(result));
 }
 

@@ -228,8 +228,7 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
   const auto is_ord_empty = !ctx.scorer;
 
   // stats collectors
-  FieldCollector field_stats{ctx.scorer};
-  TermCollectors term_stats(ctx.scorer, phrase_size);
+  StatsCollectors stats_collectors{ctx.scorer, phrase_size};
 
   // per segment phrase states
   FixedPhraseQuery::states_t phrase_states{ctx.memory, ctx.index.size()};
@@ -249,8 +248,8 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
     }
 
     // collect field statistics once per segment
-    field_stats.Collect(*reader);
-    ptv.Reset(term_stats);
+    stats_collectors.CollectField(*reader);
+    ptv.Reset(stats_collectors.Terms());
 
     for (const auto& word : options) {
       SDB_ASSERT(std::get_if<ByTermOptions>(&word.part));
@@ -297,7 +296,7 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
     pos_itr->offs_max = term.offs_max;
     pos_itr->offs_min = term.offs_min;
     pos_itr->lead_offset = look_back += term.offs_max;
-    term_stats.Finish(stats_buf, term_idx, field_stats.Get(), ctx.index);
+    stats_collectors.Finish(stats_buf, term_idx);
     ++pos_itr;
     ++term_idx;
   }
@@ -436,7 +435,7 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
     position->offs_min = term.offs_min;
     position->lead_offset = look_back += term.offs_max;
     for (size_t i = 0, size = collector->Size(); i < size; ++i) {
-      collector->Finish(stats_buf, i, field_stats.Get(), ctx.index);
+      collector->Finish(stats_buf, i, field_stats.Get());
     }
     ++position;
     ++collector;

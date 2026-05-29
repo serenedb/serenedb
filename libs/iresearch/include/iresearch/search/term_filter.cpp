@@ -95,10 +95,9 @@ void ByTerm::visit(const SubReader& segment, const TermReader& field,
 Filter::Query::ptr ByTerm::prepare(const PrepareContext& ctx,
                                    std::string_view field, bytes_view term) {
   TermQuery::States states{ctx.memory, ctx.index.size()};
-  FieldCollector field_stats{ctx.scorer};
-  TermCollectors term_stats{ctx.scorer, 1};
+  StatsCollectors stats_collectors{ctx.scorer, 1};
 
-  TermVisitor visitor(term_stats, states);
+  TermVisitor visitor(stats_collectors.Terms(), states);
 
   // iterate over the segments
   for (const auto& segment : ctx.index) {
@@ -110,7 +109,7 @@ Filter::Query::ptr ByTerm::prepare(const PrepareContext& ctx,
     }
 
     // collect field statistics once per segment
-    field_stats.Collect(*reader);
+    stats_collectors.CollectField(*reader);
 
     VisitImpl(segment, *reader, term, visitor);
   }
@@ -124,7 +123,7 @@ Filter::Query::ptr ByTerm::prepare(const PrepareContext& ctx,
   bstring stats(GetStatsSize(ctx.scorer), 0);
   auto* stats_buf = stats.data();
 
-  term_stats.Finish(stats_buf, 0, field_stats.Get(), ctx.index);
+  stats_collectors.Finish(stats_buf, 0);
 
   return memory::make_tracked<TermQuery>(ctx.memory, std::move(states),
                                          std::move(stats), ctx.boost);

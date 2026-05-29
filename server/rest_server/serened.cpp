@@ -23,8 +23,14 @@
 
 #include <absl/functional/overload.h>
 
+#include <cstdlib>
+#include <cstring>
+
+#include "duckdb_shell.hpp"
 #include "general_server/server_options_feature.h"
 #include "rest_server/serened_includes.h"
+
+namespace {
 
 using namespace sdb;
 using namespace sdb::app;
@@ -44,9 +50,9 @@ constexpr auto kNonServerFeatures = std::array{
   SerenedServer::id<StatisticsFeature>(),
 };
 
-static const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
+const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
 
-static int RunServer(int argc, char** argv, GlobalContext& context) {
+int RunServer(int argc, char** argv, GlobalContext& context) {
   try {
     CrashHandler::installCrashHandler();
     std::string name = context.binaryName();
@@ -141,7 +147,24 @@ static int RunServer(int argc, char** argv, GlobalContext& context) {
   exit(EXIT_FAILURE);
 }
 
+// Trim argv in place: overwrite argv[1] with argv[0] and hand the shell
+// `argv + 1`. The shell sees {<binary>, <user args>...} with no copy.
+int RunSubcommand(int argc, char* argv[],
+                  duckdb_shell::ShellSubcommand subcommand) {
+  argv[1] = argv[0];
+  return duckdb_shell::Run(argc - 1, argv + 1, subcommand);
+}
+
+}  // namespace
+
 int main(int argc, char* argv[]) {
+  if (argc >= 2 && std::strcmp(argv[1], "shell") == 0) {
+    return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::SHELL);
+  }
+  if (argc >= 2 && std::strcmp(argv[1], "psql") == 0) {
+    return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::PSQL);
+  }
+
   std::string workdir(basics::file_utils::CurrentDirectory().result());
 
   GlobalContext context(argc, argv, BIN_DIRECTORY);

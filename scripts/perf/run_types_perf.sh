@@ -274,7 +274,7 @@ fi
 
 run_setup "attach_native_db" "${BUILD_THREADS}" "
 DETACH DATABASE IF EXISTS native_db;
-ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
+ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);
 SET search_path TO public, native_db.main;
 "
 
@@ -391,7 +391,7 @@ drop_os_cache_with_sudo() {
 
 reattach_native_db() {
 	run_setup "cold_reattach_native_db" "${BUILD_THREADS}" "
-ATTACH IF NOT EXISTS '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
+ATTACH IF NOT EXISTS '${NDB_SQL_PATH}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);
 SET search_path TO public, native_db.main;
 "
 }

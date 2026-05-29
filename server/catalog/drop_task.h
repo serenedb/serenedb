@@ -285,8 +285,11 @@ struct DatabaseDrop final : public DropTask,
     : DropTask{db_id, id::kInstance, true}, _schemas{std::move(schemas)} {}
 
   DatabaseDrop(const std::shared_ptr<Database>& db,
-               std::vector<std::shared_ptr<SchemaDrop>> schemas)
-    : DropTask{db, id::kInstance, true}, _schemas{std::move(schemas)} {}
+               std::vector<std::shared_ptr<SchemaDrop>> schemas,
+               duckdb::shared_ptr<void> keep_alive)
+    : DropTask{db, id::kInstance, true},
+      _keep_alive{std::move(keep_alive)},
+      _schemas{std::move(schemas)} {}
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("DatabaseDrop(database $0)", _id.id());
@@ -305,6 +308,7 @@ struct DatabaseDrop final : public DropTask,
   }
 
  private:
+  duckdb::shared_ptr<void> _keep_alive;
   std::vector<std::shared_ptr<SchemaDrop>> _schemas;
 };
 

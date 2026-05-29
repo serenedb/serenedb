@@ -424,6 +424,12 @@ git checkout <your-branch>
 
 This configures the submodule to fetch all branches (persists for your local clone) and lets you work with it like a normal repo -- `git push`, `git pull`, `git branch`, etc. will all work as expected.
 
+To apply this to every submodule at once, run from the repo root:
+
+```bash
+git submodule foreach --recursive 'git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" && git fetch origin'
+```
+
 ---
 
 # Thank you for your contribution <3

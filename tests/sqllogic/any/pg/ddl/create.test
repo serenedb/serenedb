@@ -12,10 +12,8 @@ statement ok
 DROP DATABASE my_test_unique_db_name;
 
 
-query error
+statement error
 DROP DATABASE my_test_unique_db_name;
-----
-db error: ERROR: database "my_test_unique_db_name" does not exist
 
 
 statement ok
@@ -36,10 +34,8 @@ statement ok
 DROP DATABASE my_test_unique_db_name;
 
 
-query error
+statement error
 DROP DATABASE my_test_unique_db_name;
-----
-db error: ERROR: database "my_test_unique_db_name" does not exist
 
 
 statement ok

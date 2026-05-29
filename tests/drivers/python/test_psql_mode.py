@@ -439,21 +439,18 @@ def test_psql_combo_o_with_f(tmp_path: Path) -> None:
 
 def test_psql_default_host_localhost() -> None:
     # With no -h and no $PGHOST, the synthesised DSN must include
-    # host=localhost (we read this via duckdb_databases().path).
-    k = _kw()
+    # host=localhost. Force a connection failure (bogus port) so the
+    # DSN echoes back via DuckDB's IO Error -- this avoids depending on
+    # whether a server happens to listen on localhost in the test env.
     env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
     env.pop("PGHOST", None)
-    env.update({"PGPORT": k["port"], "PGUSER": k["user"],
-                "PGDATABASE": k["dbname"]})
+    env["PGPORT"] = "1"
     r = subprocess.run(
-        [SERENED_BIN, "psql", "-c",
-         "SELECT path FROM duckdb_databases() "
-         "WHERE database_name <> 'memory' AND path IS NOT NULL;"],
+        [SERENED_BIN, "psql", "-c", "SELECT 1;"],
         capture_output=True, text=True, timeout=20, env=env,
     )
-    assert r.returncode == 0, r.stderr
-    assert "host=localhost" in r.stdout, \
-        f"default host wasn't localhost: {r.stdout!r}"
+    assert "host=localhost" in (r.stdout + r.stderr), \
+        f"default host wasn't localhost: stdout={r.stdout!r} stderr={r.stderr!r}"
 
 
 def test_psql_default_port_5432() -> None:
@@ -479,7 +476,7 @@ def test_psql_default_port_5432() -> None:
 def test_psql_flag_overrides_env() -> None:
     # -p on the command line must override $PGPORT.
     k = _kw()
-    env_extra = {"PGHOST": "127.0.0.1", "PGPORT": "1",  # bogus env port
+    env_extra = {"PGHOST": k["host"], "PGPORT": "1",  # bogus env port
                  "PGUSER": k["user"], "PGDATABASE": k["dbname"]}
     r = _run(["-p", k["port"], "-c", "SELECT 1+1 AS sum;"],
              env_extra=env_extra)

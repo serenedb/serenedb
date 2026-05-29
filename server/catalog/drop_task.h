@@ -119,24 +119,6 @@ class TableShardDrop final : public DropTask,
   uint64_t _size;
 };
 
-struct IndexShardDrop final : public DropTask,
-                              std::enable_shared_from_this<IndexShardDrop> {
- public:
-  IndexShardDrop(const std::shared_ptr<IndexShard>& shard)
-    : DropTask{shard, shard->GetIndexId()} {}
-
-  IndexShardDrop(ObjectId id, ObjectId parent_id) : DropTask{id, parent_id} {}
-
-  std::string GetContext() const noexcept final {
-    return absl::Substitute("IndexShardDrop(index $0 shard $1)",
-                            _parent_id.id(), _id.id());
-  }
-
-  std::string_view GetName() const noexcept final { return "index shard drop"; }
-
-  AsyncResult Execute() final { SDB_UNREACHABLE(); }
-};
-
 struct IndexDrop final : public DropTask,
                          std::enable_shared_from_this<IndexDrop> {
  public:
@@ -148,13 +130,13 @@ struct IndexDrop final : public DropTask,
       _type{type} {}
 
   IndexDrop(const std::shared_ptr<Index>& index,
-            std::shared_ptr<IndexShardDrop> shard_drop, ObjectId db_id,
+            std::shared_ptr<IndexShard> shard, ObjectId db_id,
             ObjectId schema_id, ObjectId table_id, bool is_root = false)
     : DropTask{index, table_id, is_root},
       _db_id{db_id},
       _schema_id{schema_id},
       _type{index->GetType()},
-      _shard_drop{std::move(shard_drop)} {}
+      _shard{std::move(shard)} {}
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("IndexDrop(schema $0 index $1)", _parent_id.id(),
@@ -162,7 +144,7 @@ struct IndexDrop final : public DropTask,
   }
 
   bool AllowToDropDependencies() const noexcept final {
-    return !_shard_drop || _shard_drop->AllowToDrop();
+    return _shard.expired();
   }
 
   std::string_view GetName() const noexcept final { return "index drop"; }
@@ -176,7 +158,7 @@ struct IndexDrop final : public DropTask,
   ObjectId _db_id;
   ObjectId _schema_id;
   ObjectType _type;
-  std::shared_ptr<IndexShardDrop> _shard_drop;
+  std::weak_ptr<IndexShard> _shard;
 };
 
 struct TableDrop final : public DropTask,

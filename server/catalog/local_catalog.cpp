@@ -208,8 +208,7 @@ class SnapshotImpl : public Snapshot {
     const std::shared_ptr<Index>& index, bool is_root) {
     auto index_deps = GetDependency<IndexDependency>(index->GetId());
     auto shard = GetObject<IndexShard>(index_deps->shard_id);
-    auto shard_drop = std::make_shared<IndexShardDrop>(shard);
-    return std::make_shared<IndexDrop>(index, std::move(shard_drop), db_id,
+    return std::make_shared<IndexDrop>(index, std::move(shard), db_id,
                                        schema_id, table_id, is_root);
   }
 

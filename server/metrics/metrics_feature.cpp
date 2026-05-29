@@ -41,69 +41,17 @@
 namespace sdb::metrics {
 
 MetricsFeature::MetricsFeature(Server& server)
-  : SerenedFeature{server, name()},
-    _export{true},
-    _export_read_write_metrics{false},
-    _ensure_whitespace{true},
-    _usage_tracking_mode_string{"disabled"},
-    _usage_tracking_mode{UsageTrackingMode::Disabled} {
+  : SerenedFeature{server, name()} {
   setOptional(false);
 }
 
 void MetricsFeature::collectOptions(
-  std::shared_ptr<options::ProgramOptions> options) {
-  options->addOption(
-    "--server.export-metrics-api", "Whether to enable the metrics API.",
-    new options::BooleanParameter(&_export),
-    sdb::options::MakeDefaultFlags(sdb::options::Flags::Uncommon));
-
-  options->addOption(
-    "--server.export-read-write-metrics",
-    "Whether to enable metrics for document reads and writes.",
-    new options::BooleanParameter(&_export_read_write_metrics),
-    sdb::options::MakeDefaultFlags(sdb::options::Flags::Uncommon));
-
-  options
-    ->addOption(
-      "--server.ensure-whitespace-metrics-format",
-      "Set to `true` to ensure whitespace between the exported metric "
-      "value and the preceding token (metric name or labels) in the "
-      "metrics output.",
-      new options::BooleanParameter(&_ensure_whitespace),
-      sdb::options::MakeDefaultFlags(sdb::options::Flags::Uncommon))
-
-    .setLongDescription(R"(Using the whitespace characters in the output may
-be required to make the metrics output compatible with some processing tools,
-although Prometheus itself doesn't need it.)");
-
-  options
-    ->addOption(
-      "--server.export-shard-usage-metrics",
-      "Whether or not to export shard usage metrics.",
-      new options::DiscreteValuesParameter<options::StringParameter>(
-        &_usage_tracking_mode_string,
-        {
-          "disabled",
-          "enabled-per-shard",
-          "enabled-per-shard-per-user",
-        }),
-      sdb::options::MakeFlags(sdb::options::Flags::DefaultNoComponents,
-                              sdb::options::Flags::OnDBServer))
-
-    .setLongDescription(R"(This option can be used to make DB-Servers export
-detailed shard usage metrics.
-
-- By default, this option is set to `disabled` so that no shard usage metrics
-  are exported.
-
-- Set the option to `enabled-per-shard` to make DB-Servers collect per-shard
-  usage metrics whenever a shard is accessed.
-
-- Set this option to `enabled-per-shard-per-user` to make DB-Servers collect
-  usage metrics per shard and per user whenever a shard is accessed.
-
-Note that enabling shard usage metrics can produce a lot of metrics if there
-are many shards and/or users in the system.)");
+  std::shared_ptr<options::ProgramOptions>) {
+  // No options. The ArangoDB-shaped --server.export-metrics-api,
+  // --server.export-read-write-metrics, --server.ensure-whitespace-metrics-format,
+  // and --server.export-shard-usage-metrics flags were tied to deleted
+  // machinery (admin HTTP endpoint, ServerStatistics' setupDocumentMetrics,
+  // Prometheus-formatter quirk, ArangoDB shard concept). All gone.
 }
 
 std::shared_ptr<Metric> MetricsFeature::doAdd(Builder& builder) {
@@ -156,27 +104,6 @@ bool MetricsFeature::remove(const Builder& builder) {
   return _registry.erase(key) != 0;
 }
 
-bool MetricsFeature::exportAPI() const noexcept { return _export; }
-
-bool MetricsFeature::ensureWhitespace() const noexcept {
-  return _ensure_whitespace;
-}
-
-MetricsFeature::UsageTrackingMode MetricsFeature::usageTrackingMode()
-  const noexcept {
-  return _usage_tracking_mode;
-}
-
-void MetricsFeature::validateOptions(std::shared_ptr<options::ProgramOptions>) {
-  // translate usage tracking mode string to enum value
-  if (_usage_tracking_mode_string == "enabled-per-shard") {
-    _usage_tracking_mode = UsageTrackingMode::EnabledPerShard;
-  } else if (_usage_tracking_mode_string == "enabled-per-shard-per-user") {
-    _usage_tracking_mode = UsageTrackingMode::EnabledPerShardPerUser;
-  } else {
-    _usage_tracking_mode = UsageTrackingMode::Disabled;
-  }
-}
 
 void MetricsFeature::toPrometheus(std::string& result,
                                   MetricsParts metrics_parts,
@@ -206,19 +133,19 @@ void MetricsFeature::toPrometheus(std::string& result,
         last = curr;
         Metric::addInfo(result, curr, i.second->help(), i.second->type());
       }
-      i.second->toPrometheus(result, _globals, _ensure_whitespace);
+      i.second->toPrometheus(result, _globals, /*ensure_whitespace=*/true);
     }
     for (const auto& [_, batch] : _batch) {
       SDB_ASSERT(batch);
       // TODO(mbkkt) merge vector::reserve's between IBatch::toPrometheus
-      batch->toPrometheus(result, _globals, _ensure_whitespace);
+      batch->toPrometheus(result, _globals, /*ensure_whitespace=*/true);
     }
   }
 
   if (metrics_parts.includeStandardMetrics()) {
     // Storage engine only provides standard metrics
     auto& es = server().getFeature<EngineFeature>().engine();
-    es.toPrometheus(result, _globals, _ensure_whitespace);
+    es.toPrometheus(result, _globals, /*ensure_whitespace=*/true);
   }
 }
 

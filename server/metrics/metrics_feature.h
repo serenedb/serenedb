@@ -40,25 +40,11 @@ namespace sdb::metrics {
 
 class MetricsFeature final : public SerenedFeature {
  public:
-  enum class UsageTrackingMode {
-    // no tracking
-    Disabled,
-    // tracking per shard (one-dimensional)
-    EnabledPerShard,
-    // tracking per shard and per user (two-dimensional)
-    EnabledPerShardPerUser,
-  };
-
   static constexpr std::string_view name() noexcept { return "Metrics"; }
 
   explicit MetricsFeature(Server& server);
 
-  bool exportAPI() const noexcept;
-  bool ensureWhitespace() const noexcept;
-  UsageTrackingMode usageTrackingMode() const noexcept;
-
   void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
-  void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
 
   // tries to add metric. throws if such metric already exists
   template<typename MetricBuilder>
@@ -120,15 +106,6 @@ class MetricsFeature final : public SerenedFeature {
   mutable std::string _globals;
   mutable bool _has_shortname = false;
   mutable bool _has_role = false;
-
-  bool _export;
-  bool _export_read_write_metrics;
-  // ensure that there is whitespace before the reported value, regardless
-  // of whether it is preceeded by labels or not.
-  bool _ensure_whitespace;
-
-  std::string _usage_tracking_mode_string;
-  UsageTrackingMode _usage_tracking_mode;
 };
 
 MetricsFeature& GetMetrics();

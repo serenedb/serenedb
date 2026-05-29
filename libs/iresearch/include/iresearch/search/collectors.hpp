@@ -30,19 +30,35 @@
 
 namespace irs {
 
-class TermCollectors {
+class CollectorBase {
  public:
-  TermCollectors(const Scorer* scorer, size_t size)
-    : _collectors(scorer ? size : 0), _scorer{scorer} {}
+  CollectorBase(const Scorer* scorer) noexcept : _scorer{scorer} {}
 
-  TermCollectors(TermCollectors&&) = default;
-  TermCollectors& operator=(TermCollectors&&) = default;
+ protected:
+  void Finish(byte_type* stats_buf, const TermCollector* collector,
+              const FieldCollector::Data* field_data) const {
+    SDB_ASSERT(_scorer);
+    SDB_ASSERT(field_data);
+    SDB_ASSERT(collector);
+    _scorer->collect(stats_buf, field_data, collector);
+  }
+
+  bool HasScorer() const noexcept { return _scorer != nullptr; }
+
+ private:
+  const Scorer* _scorer = nullptr;
+};
+
+class FlatTermBuffer {
+ public:
+  FlatTermBuffer(size_t size, bool has_scorer)
+    : _has_scorer{has_scorer}, _collectors{has_scorer ? size : 0} {}
 
   size_t Size() const noexcept { return _collectors.size(); }
   bool Empty() const noexcept { return _collectors.empty(); }
 
   size_t PushBack() {
-    if (!_scorer) {
+    if (!_has_scorer) {
       return 0;
     }
     _collectors.emplace_back();
@@ -50,32 +66,92 @@ class TermCollectors {
   }
 
   void Collect(size_t term_idx, const AttributeProvider& attrs) {
-    if (_scorer) {
+    if (_has_scorer) {
       SDB_ASSERT(term_idx < _collectors.size());
       _collectors[term_idx].Collect(attrs);
     }
   }
 
+  const TermCollector& Get(size_t term_idx) const {
+    SDB_ASSERT(_has_scorer);
+    SDB_ASSERT(term_idx < _collectors.size());
+    return _collectors[term_idx];
+  }
+
+  TermCollector& Get(size_t term_idx) {
+    SDB_ASSERT(_has_scorer);
+    SDB_ASSERT(term_idx < _collectors.size());
+    return _collectors[term_idx];
+  }
+
+ private:
+  bool _has_scorer;
+  std::vector<TermCollector> _collectors;
+};
+
+class TermCollectorsFlat : public CollectorBase, public FlatTermBuffer {
+ public:
+  TermCollectorsFlat(const Scorer* scorer, size_t size)
+    : CollectorBase{scorer}, FlatTermBuffer{size, scorer != nullptr} {}
+
+  size_t PushBack() {
+    if (!HasScorer()) {
+      return 0;
+    }
+    FlatTermBuffer::PushBack();
+    return Size() - 1;
+  }
+
+  void Collect(size_t term_idx, const AttributeProvider& attrs) {
+    if (HasScorer()) {
+      SDB_ASSERT(term_idx < Size());
+      Get(term_idx).Collect(attrs);
+    }
+  }
+
   void Finish(byte_type* stats_buf, size_t term_idx,
               const FieldCollector::Data* field_data) const {
-    if (_scorer) {
-      SDB_ASSERT(field_data);
-      SDB_ASSERT(term_idx < _collectors.size());
-      _scorer->collect(stats_buf, field_data, &_collectors[term_idx]);
+    if (HasScorer()) {
+      SDB_ASSERT(term_idx < Size());
+      CollectorBase::Finish(stats_buf, &Get(term_idx), field_data);
+    }
+  }
+};
+
+class TermCollectorsVariadic : public CollectorBase {
+ public:
+  TermCollectorsVariadic(const Scorer* scorer, size_t phrase_size)
+    : CollectorBase{scorer},
+      _collectors(phrase_size, FlatTermBuffer{0, scorer != nullptr}) {}
+
+  size_t Size() const noexcept { return _collectors.size(); }
+
+  FlatTermBuffer& GetCollector(size_t idx) {
+    SDB_ASSERT(idx < _collectors.size());
+    return _collectors[idx];
+  }
+
+  void Finish(byte_type* stats_buf, size_t part_idx,
+              const FieldCollector::Data* field_data) const {
+    if (!HasScorer()) {
+      return;
+    }
+    SDB_ASSERT(part_idx < _collectors.size());
+    const auto& part = _collectors[part_idx];
+    for (size_t i = 0, size = part.Size(); i < size; ++i) {
+      CollectorBase::Finish(stats_buf, &part.Get(i), field_data);
     }
   }
 
  private:
-  std::vector<TermCollector> _collectors;
-  const Scorer* _scorer{};
+  std::vector<FlatTermBuffer> _collectors;
 };
 
-static_assert(std::is_nothrow_move_constructible_v<TermCollectors>);
-static_assert(std::is_nothrow_move_assignable_v<TermCollectors>);
+static_assert(std::is_nothrow_move_constructible_v<TermCollectorsFlat>);
+static_assert(std::is_nothrow_move_assignable_v<TermCollectorsFlat>);
+static_assert(std::is_nothrow_move_constructible_v<TermCollectorsVariadic>);
+static_assert(std::is_nothrow_move_assignable_v<TermCollectorsVariadic>);
 
-// Bundles the FieldCollector and TermCollectors that filters collect scoring
-// statistics with as a pair, so callers don't thread the field data into
-// Finish by hand.
 class StatsCollectors {
  public:
   StatsCollectors(const Scorer* scorer, size_t size)
@@ -94,16 +170,12 @@ class StatsCollectors {
     _terms.Finish(stats_buf, term_idx, _field.Get());
   }
 
-  size_t Size() const noexcept { return _terms.Size(); }
-  bool Empty() const noexcept { return _terms.Empty(); }
-  size_t PushBack() { return _terms.PushBack(); }
-
   FieldCollector& Field() noexcept { return _field; }
-  TermCollectors& Terms() noexcept { return _terms; }
+  TermCollectorsFlat& Terms() noexcept { return _terms; }
 
  private:
   FieldCollector _field;
-  TermCollectors _terms;
+  TermCollectorsFlat _terms;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<StatsCollectors>);

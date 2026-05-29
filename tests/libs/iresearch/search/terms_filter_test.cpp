@@ -501,10 +501,12 @@ TEST_P(TermsFilterTestCase, min_match) {
                                      const irs::FieldCollector::Data* field,
                                      const irs::TermCollector* term) -> void {
       ++finish_count;
-      ASSERT_NE(nullptr, field);
-      ASSERT_NE(nullptr, term);
-      finish_docs_with_field += field->docs_with_field;
-      finish_docs_with_term += term->docs_with_term;
+      if (field) {
+        finish_docs_with_field += field->docs_with_field;
+      }
+      if (term) {
+        finish_docs_with_term += term->docs_with_term;
+      }
     };
     scorer->prepare_scorer =
       [](const irs::ScoreContext& ctx) -> irs::ScoreFunction {

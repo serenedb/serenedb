@@ -33,7 +33,7 @@ namespace {
 // Filter visitor for term queries
 class TermVisitor : private util::Noncopyable {
  public:
-  TermVisitor(TermCollectors& term_stats, TermQuery::States& states)
+  TermVisitor(TermCollectorsFlat& term_stats, TermQuery::States& states)
     : _term_stats(term_stats), _states(states) {}
 
   void Prepare(const SubReader& segment, const TermReader& field,
@@ -57,7 +57,7 @@ class TermVisitor : private util::Noncopyable {
   }
 
  private:
-  TermCollectors& _term_stats;
+  TermCollectorsFlat& _term_stats;
   TermQuery::States& _states;
   const SubReader* _segment{};
   const TermReader* _reader{};

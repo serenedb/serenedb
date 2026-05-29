@@ -6,7 +6,6 @@ target_sources(
         daemon_feature.cpp
         database_path_feature.cpp
         endpoint_feature.cpp
-        environment_feature.cpp
         file_descriptors_feature.cpp
         flush_feature.cpp
         init_database_feature.cpp

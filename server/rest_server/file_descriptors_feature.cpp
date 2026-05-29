@@ -32,7 +32,6 @@
 #include "basics/logger/logger.h"
 #include "metrics/gauge_builder.h"
 #include "metrics/metrics_feature.h"
-#include "rest_server/environment_feature.h"
 
 #ifdef SERENEDB_HAVE_SYS_RESOURCE_H
 #include <sys/resource.h>

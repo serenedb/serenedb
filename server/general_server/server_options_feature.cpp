@@ -29,7 +29,6 @@
 #include "basics/static_strings.h"
 #include "general_server/state.h"
 #include "rest/version.h"
-#include "rest_server/environment_feature.h"
 
 namespace sdb {
 
@@ -200,8 +199,6 @@ void ServerOptionsFeature::prepare() {
       }
     },
     true, true);
-
-  PrintEnvironment();
 }
 
 void ServerOptionsFeature::unprepare() {

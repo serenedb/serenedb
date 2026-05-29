@@ -49,7 +49,6 @@
 #include "rest_server/daemon_feature.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/endpoint_feature.h"
-#include "rest_server/environment_feature.h"
 #include "rest_server/file_descriptors_feature.h"
 #include "rest_server/flush_feature.h"
 #include "rest_server/init_database_feature.h"

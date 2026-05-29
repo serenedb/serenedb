@@ -38,7 +38,6 @@
 #include "basics/terminal-utils.h"
 #include "general_server/state.h"
 #include "rest_server/database_path_feature.h"
-#include "rest_server/environment_feature.h"
 
 using namespace sdb::app;
 using namespace sdb::basics;

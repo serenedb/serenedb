@@ -54,7 +54,6 @@
 #include "rest_server/privilege_feature.h"
 #include "rest_server/restart_action.h"
 #include "rest_server/server_feature.h"
-#include "rest_server/time_zone_feature.h"
 #include "rest_server/upgrade_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"

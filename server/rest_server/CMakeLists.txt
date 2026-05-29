@@ -12,7 +12,6 @@ target_sources(
         lockfile_feature.cpp
         privilege_feature.cpp
         server_feature.cpp
-        time_zone_feature.cpp
         upgrade_feature.cpp
         database_context.cpp
 )

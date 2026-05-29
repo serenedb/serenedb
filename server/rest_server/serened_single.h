@@ -77,7 +77,6 @@ class HttpEndpointProvider;
 class GeneralServerFeature;
 class BootstrapFeature;
 class ShutdownFeature;
-class TimeZoneFeature;
 
 // clang-format off
 using SerenedFeaturesList = type::List<
@@ -109,8 +108,7 @@ using SerenedFeaturesList = type::List<
   GeneralServerFeature,
   pg::PostgresFeature,
   BootstrapFeature,
-  ShutdownFeature,
-  TimeZoneFeature>;
+  ShutdownFeature>;
 // clang-format on
 
 struct SerenedFeatures : SerenedFeaturesList {};

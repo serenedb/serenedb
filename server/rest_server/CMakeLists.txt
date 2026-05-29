@@ -1,7 +1,6 @@
 target_sources(
     sereneserver
     PRIVATE
-        restart_action.cpp
         bootstrap_feature.cpp
         database_path_feature.cpp
         endpoint_feature.cpp

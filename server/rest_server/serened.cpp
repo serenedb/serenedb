@@ -27,7 +27,6 @@
 #include <cstring>
 
 #include "duckdb_shell.hpp"
-#include "general_server/server_options_feature.h"
 #include "rest_server/serened_includes.h"
 
 namespace {
@@ -146,44 +145,6 @@ int main(int argc, char* argv[]) {
     return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::PSQL);
   }
 
-  std::string workdir(basics::file_utils::CurrentDirectory().result());
-
   GlobalContext context(argc, argv, BIN_DIRECTORY);
-
-  gRestartAction = nullptr;
-
-  int res = RunServer(argc, argv, context);
-  if (res != 0) {
-    return res;
-  }
-  if (gRestartAction == nullptr) {
-    return 0;
-  }
-  try {
-    res = (*gRestartAction)();
-  } catch (...) {
-    res = -1;
-  }
-  delete gRestartAction;
-  if (res != 0) {
-    std::cerr << "FATAL: RestartAction returned non-zero exit status: " << res
-              << ", giving up." << std::endl;
-    return res;
-  }
-  // It is not clear if we want to do the following under Linux and OSX,
-  // it is a clean way to restart from scratch with the same process ID,
-  // so the process does not have to be terminated. On Windows, we have
-  // to do this because the solution below is not possible. In these
-  // cases, we need outside help to get the process restarted.
-#if defined(__linux__)
-  res = chdir(workdir.c_str());
-  if (res != 0) {
-    std::cerr << "WARNING: could not change into directory '" << workdir << "'"
-              << std::endl;
-  }
-  if (execvp(argv[0], argv) == -1) {
-    std::cerr << "WARNING: could not execvp ourselves, restore will not work!"
-              << std::endl;
-  }
-#endif
+  return RunServer(argc, argv, context);
 }

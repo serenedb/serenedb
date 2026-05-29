@@ -129,8 +129,6 @@ const std::string StaticStrings::kObjectId("objectId");
 
 // misc strings
 const std::string StaticStrings::kLastValue("lastValue");
-const std::string StaticStrings::kUpgradeEnvName(
-  "SERENEDB_UPGRADE_DURING_RESTORE");
 
 // Replication
 const std::string StaticStrings::kRevisionTreeCount("count");

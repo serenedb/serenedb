@@ -140,7 +140,6 @@ class StaticStrings {
 
   // misc strings
   static const std::string kLastValue;
-  static const std::string kUpgradeEnvName;
 
   // Replication
   static const std::string kRevisionTreeCount;

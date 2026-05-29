@@ -36,7 +36,6 @@
 #include "general_server/server_options_feature.h"
 #include "general_server/state.h"
 #include "rest_server/init_database_feature.h"
-#include "rest_server/restart_action.h"
 
 using namespace sdb::app;
 using namespace sdb::basics;
@@ -90,30 +89,7 @@ in the `VERSION` file, the server refuses to start.)");
     sdb::options::MakeDefaultFlags(sdb::options::Flags::Uncommon));
 }
 
-static int UpgradeRestart() {
-  unsetenv(StaticStrings::kUpgradeEnvName.c_str());
-  return 0;
-}
-
 void UpgradeFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
-  // The following environment variable is another way to run a database
-  // upgrade. If the environment variable is set, the system does a database
-  // upgrade and then restarts itself without the environment variable.
-  // This is used in backup if a restore to a backup happens which is from
-  // an older database version. The restore process sets the environment
-  // variable at runtime and then does a restore. After the restart (with
-  // the old data) the database upgrade is run and another restart is
-  // happening afterwards with the environment variable being cleared.
-  char* upgrade = getenv(StaticStrings::kUpgradeEnvName.c_str());
-  if (upgrade != nullptr) {
-    _upgrade = true;
-    gRestartAction = new std::function<int()>();
-    *gRestartAction = UpgradeRestart;
-    SDB_INFO("xxxxx", Logger::STARTUP, "Detected environment variable ",
-             StaticStrings::kUpgradeEnvName, " with value ", upgrade,
-             " will perform database auto-upgrade and immediately restart.");
-  }
-
   if (_upgrade && !_upgrade_check) {
     SDB_FATAL_EXIT_CODE(
       "xxxxx", sdb::Logger::FIXME, EXIT_INVALID_OPTION_VALUE,

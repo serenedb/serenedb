@@ -742,6 +742,97 @@ CREATE INDEX bad_volatile ON bad USING inverted(id, (random()) verbatim_dict);
 db error: ERROR: Index keys cannot contain expressions with side effects.
 
 
+# --- Unsupported return types are rejected gracefully --------------------
+
+statement ok
+CREATE TABLE bad_types(id INTEGER PRIMARY KEY, a INTEGER, s VARCHAR, k VARCHAR, v VARCHAR);
+
+statement error
+CREATE INDEX bad_struct ON bad_types USING inverted(id, ({'x': a, 'y': s}) verbatim_dict);
+----
+db error: ERROR: Failed to create index: Column 'main.struct_pack(x := a, y := s)' has unsupported type STRUCT(x INTEGER, y VARCHAR) and can not be indexed
+
+
+statement error
+CREATE INDEX bad_map ON bad_types USING inverted(id, (map([k], [v])) verbatim_dict);
+----
+db error: ERROR: Failed to create index: Column '"map"(main.list_value(k), main.list_value(v))' has unsupported type MAP(VARCHAR, VARCHAR) and can not be indexed
+
+
+statement error
+CREATE INDEX bad_list_struct ON bad_types USING inverted(id, ([{'x': a}]) verbatim_dict);
+----
+db error: ERROR: Failed to create index: Column 'main.list_value(main.struct_pack(x := a))' has unsupported type STRUCT(x INTEGER)[] and can not be indexed
+
+
+statement error
+CREATE INDEX bad_list_map ON bad_types USING inverted(id, ([map([k], [v])]) verbatim_dict);
+----
+db error: ERROR: Failed to create index: Column 'main.list_value("map"(main.list_value(k), main.list_value(v)))' has unsupported type MAP(VARCHAR, VARCHAR)[] and can not be indexed
+
+
+statement ok
+CREATE TABLE bad_scalars(
+    id INTEGER PRIMARY KEY,
+    a INTEGER,
+    dc DECIMAL(10, 2),
+    hi HUGEINT,
+    iv INTERVAL,
+    tm TIME,
+    uu UUID,
+    ts TIMESTAMP);
+
+
+statement error
+CREATE INDEX bad_decimal ON bad_scalars USING inverted(id, (dc + 1) verbatim_dict);
+----
+db error: ERROR: Failed to create index: Column '(dc + 1)' has unsupported type DECIMAL(13,2) and can not be indexed
+
+
+statement error
+CREATE INDEX bad_hugeint ON bad_scalars USING inverted(id, (hi + 1) verbatim_dict);
+----
+db error: ERROR: Failed to create index: Column '(hi + 1)' has unsupported type HUGEINT and can not be indexed
+
+
+statement error
+CREATE INDEX bad_interval ON bad_scalars USING inverted(id, (iv) verbatim_dict);
+----
+db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+
+
+statement error
+CREATE INDEX bad_time ON bad_scalars USING inverted(id, (tm) verbatim_dict);
+----
+db error: ERROR: Failed to create index: Column 'tm' has unsupported type TIME and can not be indexed
+
+
+statement error
+CREATE INDEX bad_uuid ON bad_scalars USING inverted(id, (uu) verbatim_dict);
+----
+db error: ERROR: Failed to create index: Column 'uu' has unsupported type UUID and can not be indexed
+
+
+# TIMESTAMP without time zone is NOT supported; only TIMESTAMP_TZ is.
+statement error
+CREATE INDEX bad_timestamp ON bad_scalars USING inverted(id, (ts) verbatim_dict);
+----
+db error: ERROR: Failed to create index: Column 'ts' has unsupported type TIMESTAMP and can not be indexed
+
+
+statement error
+CREATE INDEX bad_union ON bad_scalars
+USING inverted(id, (union_value(num := a)) verbatim_dict);
+----
+db error: ERROR: Failed to create index: Column 'union_value(num := a)' has unsupported type UNION(num INTEGER) and can not be indexed
+
+
+statement error
+CREATE INDEX bad_list_list ON bad_scalars USING inverted(id, ([[a]]) verbatim_dict);
+----
+db error: ERROR: Failed to create index: Column 'main.list_value(main.list_value(a))' has unsupported type INTEGER[][] and can not be indexed
+
+
 # --- @@ on indexed expressions (forces filter pushdown) -------------------
 
 # Varchar expression: ts_like / ts_phrase / ts_any / TERM_EQ via `=`.
@@ -1138,16 +1229,16 @@ VACUUM (REFRESH_TABLE) inc_e_num;
 query
 SELECT id, a + b AS s FROM inc_e_num_idx WHERE id = 1;
 ----
-id    s
-1     30
+id	s
+1	30
 
 query
 SELECT id, a + b AS s FROM inc_e_num_idx ORDER BY id;
 ----
-id    s
-1     30
-2     10
-3     101
+id	s
+1	30
+2	10
+3	101
 
 
 statement ok
@@ -1159,10 +1250,10 @@ VACUUM (REFRESH_TABLE) inc_e_num;
 query
 SELECT id, a + b AS s FROM inc_e_num_idx ORDER BY id;
 ----
-id    s
-1     70
-2     10
-3     101
+id	s
+1	70
+2	10
+3	101
 
 
 statement ok
@@ -1181,9 +1272,9 @@ VACUUM (REFRESH_TABLE) inc_e_str;
 query
 SELECT id, LOWER(a) || '-' || LOWER(b) AS s FROM inc_e_str_idx ORDER BY id;
 ----
-id    s
-1     foo-bar
-2     x-y
+id	s
+1	foo-bar
+2	x-y
 
 
 statement ok
@@ -1202,9 +1293,9 @@ VACUUM (REFRESH_TABLE) inc_e_zstd;
 query
 SELECT id, a || b AS s FROM inc_e_zstd_idx ORDER BY id;
 ----
-id    s
-1     foobar
-2     bazqux
+id	s
+1	foobar
+2	bazqux
 
 statement error
 CREATE INDEX inc_e_zstd_bad ON inc_e_num USING inverted(
@@ -1229,10 +1320,10 @@ VACUUM (REFRESH_TABLE) inc_e_rgs;
 query
 SELECT id, a * 2 AS s FROM inc_e_rgs_idx ORDER BY id;
 ----
-id    s
-1     2
-2     10
-3     24
+id	s
+1	2
+2	10
+3	24
 
 
 statement error
@@ -1283,7 +1374,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
-│      Index: hnsw_e_idx    │
+│     Index: hnsw_e_idx     │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
@@ -1309,13 +1400,15 @@ INSERT INTO hnsw_e2 VALUES (1, 1, 0, 0), (2, 0, 1, 0), (3, 0, 0, 1);
 statement ok
 VACUUM (REFRESH_TABLE) hnsw_e2;
 
-# `hnsw` requires options.
+# Bare `hnsw` is a built-in opclass name with no dictionary by that name --
+# the options form is required.
 
 statement error
 CREATE INDEX hnsw_e_no_opts ON hnsw_e USING inverted(
     id, (array_value(x, y, z)) hnsw);
 ----
-db error: ERROR: Failed to create index: Column 'array_value(x, y, z)' has unsupported type FLOAT[3]
+db error: ERROR: Unknown opclass 'hnsw' on column 'array_value(x, y, z)': no text dictionary by that name in schema 'public'
+HINT: 'hnsw' is a built-in opclass; use the options form 'hnsw (...)'
 
 
 # ARRAY of non-FLOAT child type is rejected.

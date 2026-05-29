@@ -246,6 +246,23 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     return static_cast<const catalog::Column*>(nullptr);
   };
 
+  auto make_column_ids = [&](auto&& positions) {
+    return std::forward<decltype(positions)>(positions) |
+           std::views::transform(
+             [&](size_t pos) { return columns[pos].GetId(); }) |
+           std::ranges::to<std::vector<catalog::Column::Id>>();
+  };
+
+  auto* table_for_proj = TableOrNull();
+  const auto col_index_to_id =
+    table_for_proj
+      ? make_column_ids(BuildCreateIndexProjection(table_for_proj->Columns(),
+                                                   table_for_proj->PKColumns(),
+                                                   _info->column_ids))
+      : make_column_ids(std::views::iota(size_t{0}, columns.size()));
+  const auto relation_id =
+    table_for_proj ? table_for_proj->GetId() : _relation->GetId();
+
   idx_columns.reserve(_info->parsed_expressions.size());
   for (size_t i = 0; i < _info->parsed_expressions.size(); ++i) {
     auto& expr = _info->parsed_expressions[i];
@@ -283,12 +300,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
                "bound expression is missing for inverted index expression");
     const auto& bound_expr = _bound_expressions[i];
 
-    auto col_index_to_id = columns |
-                           std::views::transform(&catalog::Column::GetId) |
-                           std::ranges::to<std::vector<catalog::Column::Id>>();
-    auto* table_ptr_local = TableOrNull();
-    auto relation_id =
-      table_ptr_local ? table_ptr_local->GetId() : _relation->GetId();
     auto normalized = NormalizeBoundExpression(*bound_expr, relation_id,
                                                col_index_to_id, context);
     RejectUserDefinedFunctions(*normalized, context);
@@ -553,11 +564,15 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   auto store_values_provider = MakeStoreValuesProvider(inverted_index);
   auto is_text_indexed_provider = MakeIsTextIndexedProvider(inverted_index);
   auto hnsw_info_provider = MakeHNSWInfoProvider(inverted_index);
+  auto expr_tokenizer_provider = MakeExpressionTokenizerProvider(
+    gstate.snapshot_for_providers, inverted_index);
+  auto indexed_exprs = MakeIndexedExpressions(inverted_index, context.client);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx, std::move(tokenizer_provider),
     gstate.index_for_providers->GetColumnIds(),
     std::move(store_values_provider), std::move(is_text_indexed_provider),
-    std::move(hnsw_info_provider));
+    std::move(hnsw_info_provider), std::move(expr_tokenizer_provider),
+    std::move(indexed_exprs));
 
   return lstate;
 }
@@ -685,6 +700,16 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     DuckDBSinkIndexWriter* writer_ptr = writer;
     serializer->WriteColumn(noop, chunk.data[col.input_col_idx], num_rows,
                             row_keys, {&writer_ptr, 1}, desc);
+  }
+
+  if (auto indexed_exprs = writer->IndexedExpressions();
+      !indexed_exprs.empty()) {
+    auto slot_to_col_ids = gstate.columns |
+                           std::views::transform(&InsertColumnMeta::id) |
+                           std::ranges::to<std::vector<catalog::Column::Id>>();
+    EvaluateAndWriteIndexedExpressions(
+      *writer, indexed_exprs, chunk, gstate.table_id, slot_to_col_ids,
+      context.client, num_rows, row_keys, *serializer);
   }
 
   writer->Finish();

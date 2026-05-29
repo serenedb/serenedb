@@ -1383,6 +1383,12 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
     return nullptr;
   }
 
+  if (info->logical_type.id() == duckdb::LogicalTypeId::LIST) {
+    info->logical_type = duckdb::ListType::GetChildType(info->logical_type);
+  } else if (info->logical_type.id() == duckdb::LogicalTypeId::ARRAY) {
+    info->logical_type = duckdb::ArrayType::GetChildType(info->logical_type);
+  }
+
   // Numerics fold to DOUBLE: writer tokenises JSON numbers via reset(double).
   if (unwrapped.override_type.has_value()) {
     if (IsNumericTypeId(unwrapped.override_type->id())) {

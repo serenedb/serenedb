@@ -32,7 +32,6 @@
 
 #include "basics/errors.h"
 #include "basics/logger/appender_file.h"
-#include "basics/logger/appender_syslog.h"
 #include "basics/logger/log_group.h"
 #include "basics/logger/logger.h"
 #include "basics/operating-system.h"
@@ -44,7 +43,6 @@ namespace sdb::log {
 namespace {
 
 constexpr std::string_view kFilePrefix = "file://";
-constexpr std::string_view kSyslogPrefix = "syslog://";
 
 constinit absl::Mutex gAppendersLock{absl::kConstInit};
 std::array<std::vector<std::shared_ptr<Appender>>, LogGroup::kCount>
@@ -76,12 +74,6 @@ void Appender::addAppender(const LogGroup& group,
   }
 
   auto key = output;
-
-#ifdef SERENEDB_ENABLE_SYSLOG
-  if (output.starts_with(kSyslogPrefix)) {
-    key = kSyslogPrefix;
-  }
-#endif
 
   std::shared_ptr<Appender> appender;
 
@@ -116,22 +108,6 @@ void Appender::addAppender(const LogGroup& group,
 
 std::shared_ptr<Appender> Appender::buildAppender(const LogGroup& group,
                                                   const std::string& output) {
-#ifdef SERENEDB_ENABLE_SYSLOG
-  // first handle syslog-logging
-  if (output.starts_with(kSyslogPrefix)) {
-    std::vector<std::string_view> s = absl::StrSplit(
-      std::string_view{output}.substr(kSyslogPrefix.size()), '/');
-    SDB_ASSERT(s.size() == 1 || s.size() == 2);
-
-    std::string_view identifier;
-
-    if (s.size() == 2) {
-      identifier = s[1];
-    }
-
-    return std::make_shared<AppenderSyslog>(s[0], identifier);
-  }
-#endif
 
   if (output == "+" || output == "-") {
     for (const auto& it : gDefinition2appenders[group.id()]) {
@@ -219,9 +195,6 @@ void Appender::log(const LogGroup& group, const log::Message& message) {
 void Appender::shutdown() {
   absl::WriterMutexLock guard{&gAppendersLock};
 
-#ifdef SERENEDB_ENABLE_SYSLOG
-  AppenderSyslog::close();
-#endif
   AppenderFileFactory::closeAll();
 
   for (size_t i = 0; i < LogGroup::kCount; ++i) {
@@ -279,27 +252,10 @@ Result Appender::parseDefinition(const std::string& definition,
     }
   }
 
-  bool handled = false;
-#ifdef SERENEDB_ENABLE_SYSLOG
-  if (output.starts_with(kSyslogPrefix)) {
-    handled = true;
-    auto s = absl::StrSplit(
-      std::string_view{output}.substr(kSyslogPrefix.size()), '/');
-    auto len = std::distance(s.begin(), s.end());
-    if (len < 1 || len > 2) {
-      return {ERROR_BAD_PARAMETER,
-              absl::StrCat("unknown syslog definition '", output,
-                           "', expecting 'syslog://facility/identifier'")};
-    }
-  }
-#endif
-
-  if (!handled) {
-    // not yet handled. must be a file-based logger now.
-    if (output != "+" && output != "-" && !output.starts_with(kFilePrefix)) {
-      return {ERROR_BAD_PARAMETER,
-              absl::StrCat("unknown output definition '", output, "'")};
-    }
+  // must be a file-based logger now.
+  if (output != "+" && output != "-" && !output.starts_with(kFilePrefix)) {
+    return {ERROR_BAD_PARAMETER,
+            absl::StrCat("unknown output definition '", output, "'")};
   }
 
   return {};

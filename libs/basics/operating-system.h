@@ -46,10 +46,6 @@
 
 #define SERENEDB_GETRUSAGE_MAXRSS_UNIT 1024
 
-// enabled features
-
-#define SERENEDB_ENABLE_SYSLOG 1
-
 // available include files
 
 #define SERENEDB_HAVE_DIRENT_H 1

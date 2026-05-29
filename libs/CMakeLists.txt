@@ -64,7 +64,6 @@ add_library(
     basics/logger/escaper.cpp
     basics/logger/appender.cpp
     basics/logger/appender_file.cpp
-    basics/logger/appender_syslog.cpp
     basics/logger/logger.cpp
     basics/logger/log_time_format.cpp
     basics/ssl/ssl_interface.cpp

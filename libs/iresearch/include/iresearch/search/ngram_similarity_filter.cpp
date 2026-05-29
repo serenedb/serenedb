@@ -70,8 +70,8 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
   term_states.reserve(terms_count);
 
   // prepare ngrams stats
-  FieldCollectors field_stats{ctx.scorer};
-  TermCollectors term_stats{ctx.scorer, terms_count};
+  FieldCollector field_stats;
+  TermCollectorsFlat term_stats{ctx.scorer, terms_count};
 
   for (const auto& segment : ctx.index) {
     // get term dictionary for field
@@ -89,7 +89,7 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
     }
 
     // collect field statistics once per segment
-    field_stats.collect(segment, *field);
+    field_stats.Collect(*field);
     size_t term_idx = 0;
     size_t count_terms = 0;
     auto term = field->iterator(SeekMode::NORMAL);
@@ -99,7 +99,7 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
         // read term attributes
         term->read();
         // collect statistics
-        term_stats.collect(segment, *field, term_idx, *term);
+        term_stats.Collect(term_idx, *term);
         state = term->cookie();
         ++count_terms;
       }
@@ -129,7 +129,7 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
   auto* stats_buf = stats.data();
 
   for (size_t term_idx = 0; term_idx < terms_count; ++term_idx) {
-    term_stats.finish(stats_buf, term_idx, field_stats, ctx.index);
+    term_stats.Finish(stats_buf, term_idx, &field_stats);
   }
 
   return memory::make_tracked<NGramSimilarityQuery>(

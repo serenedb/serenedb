@@ -180,141 +180,84 @@ TEST_P(ByEditDistanceTestCase, test_order) {
     Docs docs{28, 29};
     Costs costs{docs.size()};
 
-    size_t term_collectors_count = 0;
-    size_t field_collectors_count = 0;
-    size_t collect_field_count = 0;
-    size_t collect_term_count = 0;
     size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
 
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::CustomSort>()};
     auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
 
-    scorer.collector_collect_field = [&collect_field_count](
-                                       const irs::SubReader&,
-                                       const irs::TermReader&) -> void {
-      ++collect_field_count;
-    };
-    scorer.collector_collect_term =
-      [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                            const irs::AttributeProvider&) -> void {
-      ++collect_term_count;
-    };
-    scorer.collectors_collect =
-      [&finish_count](irs::byte_type*, const irs::FieldCollector*,
-                      const irs::TermCollector*) -> void { ++finish_count; };
-    scorer.prepare_field_collector =
-      [&scorer, &field_collectors_count]() -> irs::FieldCollector::ptr {
-      ++field_collectors_count;
-      return std::make_unique<tests::sort::CustomSort::FieldCollector>(scorer);
-    };
-    scorer.prepare_term_collector =
-      [&scorer, &term_collectors_count]() -> irs::TermCollector::ptr {
-      ++term_collectors_count;
-      return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
+    scorer.collectors_collect = [&](irs::byte_type*,
+                                    const irs::FieldCollector* field,
+                                    const irs::TermCollector* term) -> void {
+      ++finish_count;
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
     };
 
     CheckQuery(MakeFilter("title", "", 1, 0, false), order, docs, rdr);
-    ASSERT_EQ(1, field_collectors_count);  // 1 field, 1 field collector
-    ASSERT_EQ(1, term_collectors_count);  // need only 1 term collector since we
-                                          // distribute stats across terms
-    ASSERT_EQ(1, collect_field_count);    // 1 fields
-    ASSERT_EQ(2, collect_term_count);     // 2 different terms
-    ASSERT_EQ(1, finish_count);  // we distribute idf across all matched terms
+    ASSERT_EQ(1, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
   }
 
   {
     Docs docs{28, 29};
     Costs costs{docs.size()};
 
-    size_t term_collectors_count = 0;
-    size_t field_collectors_count = 0;
-    size_t collect_field_count = 0;
-    size_t collect_term_count = 0;
     size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
 
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::CustomSort>()};
     auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
 
-    scorer.collector_collect_field = [&collect_field_count](
-                                       const irs::SubReader&,
-                                       const irs::TermReader&) -> void {
-      ++collect_field_count;
-    };
-    scorer.collector_collect_term =
-      [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                            const irs::AttributeProvider&) -> void {
-      ++collect_term_count;
-    };
-    scorer.collectors_collect =
-      [&finish_count](irs::byte_type*, const irs::FieldCollector*,
-                      const irs::TermCollector*) -> void { ++finish_count; };
-    scorer.prepare_field_collector =
-      [&scorer, &field_collectors_count]() -> irs::FieldCollector::ptr {
-      ++field_collectors_count;
-      return std::make_unique<tests::sort::CustomSort::FieldCollector>(scorer);
-    };
-    scorer.prepare_term_collector =
-      [&scorer, &term_collectors_count]() -> irs::TermCollector::ptr {
-      ++term_collectors_count;
-      return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
+    scorer.collectors_collect = [&](irs::byte_type*,
+                                    const irs::FieldCollector* field,
+                                    const irs::TermCollector* term) -> void {
+      ++finish_count;
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
     };
 
     CheckQuery(MakeFilter("title", "", 1, 10, false), order, docs, rdr);
-    ASSERT_EQ(1, field_collectors_count);  // 1 field, 1 field collector
-    ASSERT_EQ(1, term_collectors_count);  // need only 1 term collector since we
-                                          // distribute stats across terms
-    ASSERT_EQ(1, collect_field_count);    // 1 fields
-    ASSERT_EQ(2, collect_term_count);     // 2 different terms
-    ASSERT_EQ(1, finish_count);  // we distribute idf across all matched terms
+    ASSERT_EQ(1, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
   }
 
   {
     Docs docs{29};
     Costs costs{docs.size()};
 
-    size_t term_collectors_count = 0;
-    size_t field_collectors_count = 0;
-    size_t collect_field_count = 0;
-    size_t collect_term_count = 0;
     size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
 
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::CustomSort>()};
     auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
 
-    scorer.collector_collect_field = [&collect_field_count](
-                                       const irs::SubReader&,
-                                       const irs::TermReader&) -> void {
-      ++collect_field_count;
-    };
-    scorer.collector_collect_term =
-      [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                            const irs::AttributeProvider&) -> void {
-      ++collect_term_count;
-    };
-    scorer.collectors_collect =
-      [&finish_count](irs::byte_type*, const irs::FieldCollector*,
-                      const irs::TermCollector*) -> void { ++finish_count; };
-    scorer.prepare_field_collector =
-      [&scorer, &field_collectors_count]() -> irs::FieldCollector::ptr {
-      ++field_collectors_count;
-      return std::make_unique<tests::sort::CustomSort::FieldCollector>(scorer);
-    };
-    scorer.prepare_term_collector =
-      [&scorer, &term_collectors_count]() -> irs::TermCollector::ptr {
-      ++term_collectors_count;
-      return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
+    scorer.collectors_collect = [&](irs::byte_type*,
+                                    const irs::FieldCollector* field,
+                                    const irs::TermCollector* term) -> void {
+      ++finish_count;
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
     };
 
     CheckQuery(MakeFilter("title", "", 1, 1, false), order, docs, rdr);
-    ASSERT_EQ(1, field_collectors_count);  // 1 field, 1 field collector
-    ASSERT_EQ(1, term_collectors_count);  // need only 1 term collector since we
-                                          // distribute stats across terms
-    ASSERT_EQ(1, collect_field_count);    // 1 fields
-    ASSERT_EQ(1, collect_term_count);     // 1 term
-    ASSERT_EQ(1, finish_count);  // we distribute idf across all matched terms
+    ASSERT_EQ(1, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
   }
 }
 

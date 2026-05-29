@@ -29,7 +29,6 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_impl.hpp"
 
 namespace irs {
 namespace {

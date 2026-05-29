@@ -140,7 +140,6 @@ set(IResearch_core_sources
     ./search/proxy_filter.cpp
     ./search/tfidf.cpp
     ./search/bm25.cpp
-    ./search/lm_similarity.cpp
     ./search/lm_jelinek_mercer.cpp
     ./search/lm_dirichlet.cpp
     ./search/indri_dirichlet.cpp

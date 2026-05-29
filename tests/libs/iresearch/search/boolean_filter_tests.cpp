@@ -15475,29 +15475,20 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
     not_node.filter<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(column_name, "abcd");
 
-    size_t collector_collect_field_count = 0;
-    size_t collector_collect_term_count = 0;
     size_t collector_finish_count = 0;
     size_t scorer_score_count = 0;
     irs::doc_id_t cur_doc = 0;
 
     sort::CustomSort sort;
 
-    sort.collector_collect_field = [&collector_collect_field_count](
-                                     const irs::SubReader&,
-                                     const irs::TermReader&) -> void {
-      ++collector_collect_field_count;
-    };
-    sort.collector_collect_term = [&collector_collect_term_count](
-                                    const irs::SubReader&,
-                                    const irs::TermReader&,
-                                    const irs::AttributeProvider&) -> void {
-      ++collector_collect_term_count;
-    };
     sort.collectors_collect = [&collector_finish_count](
-                                irs::byte_type*, const irs::FieldCollector*,
-                                const irs::TermCollector*) -> void {
+                                irs::byte_type*,
+                                const irs::FieldCollector* field,
+                                const irs::TermCollector* term) -> void {
       ++collector_finish_count;
+      // negated branch must not feed field/term collectors
+      ASSERT_EQ(nullptr, field);
+      ASSERT_EQ(nullptr, term);
     };
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
@@ -15534,11 +15525,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
 
     ASSERT_EQ(expected.size(), docs_count);
 
-    ASSERT_EQ(
-      0, collector_collect_field_count);  // should not be executed (a negated
-                                          // possibly complex filter)
-    ASSERT_EQ(0, collector_collect_term_count);  // should not be executed
-    ASSERT_EQ(1, collector_finish_count);        // from "all" query
+    ASSERT_EQ(1, collector_finish_count);
     ASSERT_EQ(expected.size(), scorer_score_count);
 
     std::vector<irs::doc_id_t> actual;
@@ -15573,29 +15560,20 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
     root.add<irs::Not>().filter<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(column_name, "abcd");
 
-    size_t collector_collect_field_count = 0;
-    size_t collector_collect_term_count = 0;
     size_t collector_finish_count = 0;
     size_t scorer_score_count = 0;
     irs::doc_id_t cur_doc = 0;
 
     sort::CustomSort sort;
 
-    sort.collector_collect_field = [&collector_collect_field_count](
-                                     const irs::SubReader&,
-                                     const irs::TermReader&) -> void {
-      ++collector_collect_field_count;
-    };
-    sort.collector_collect_term = [&collector_collect_term_count](
-                                    const irs::SubReader&,
-                                    const irs::TermReader&,
-                                    const irs::AttributeProvider&) -> void {
-      ++collector_collect_term_count;
-    };
     sort.collectors_collect = [&collector_finish_count](
-                                irs::byte_type*, const irs::FieldCollector*,
-                                const irs::TermCollector*) -> void {
+                                irs::byte_type*,
+                                const irs::FieldCollector* field,
+                                const irs::TermCollector* term) -> void {
       ++collector_finish_count;
+      // negated branch must not feed field/term collectors
+      ASSERT_EQ(nullptr, field);
+      ASSERT_EQ(nullptr, term);
     };
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
@@ -15632,11 +15610,7 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
 
     ASSERT_EQ(expected.size(), docs_count);
 
-    ASSERT_EQ(
-      0, collector_collect_field_count);  // should not be executed (a negated
-                                          // possibly complex filter)
-    ASSERT_EQ(0, collector_collect_term_count);  // should not be executed
-    ASSERT_EQ(1, collector_finish_count);        // from "all" query
+    ASSERT_EQ(1, collector_finish_count);
     ASSERT_EQ(expected.size(), scorer_score_count);
 
     std::vector<irs::doc_id_t> actual;

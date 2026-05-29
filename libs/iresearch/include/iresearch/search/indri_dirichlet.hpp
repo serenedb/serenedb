@@ -56,10 +56,6 @@ class IndriDirichlet final : public irs::ScorerBase<IndriDirichlet, LMStats> {
     return IndexFeatures::Freq | IndexFeatures::Norm;
   }
 
-  FieldCollector::ptr PrepareFieldCollector() const final;
-
-  TermCollector::ptr PrepareTermCollector() const final;
-
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
   bool equals(const Scorer& other) const noexcept final;

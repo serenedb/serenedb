@@ -28,6 +28,7 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/geo_filter.hpp"
 #include "iresearch/search/score_function.hpp"
@@ -53,48 +54,6 @@ struct CustomSort final : public irs::ScorerBase<void> {
   static constexpr std::string_view type_name() noexcept {
     return "custom_sort";
   }
-
-  class FieldCollector final : public irs::FieldCollector {
-   public:
-    FieldCollector(const CustomSort& sort) : _sort(sort) {}
-
-    void collect(const irs::SubReader& segment,
-                 const irs::TermReader& field) final {
-      if (_sort.field_collector_collect) {
-        _sort.field_collector_collect(segment, field);
-      }
-    }
-
-    void collect(irs::bytes_view) final {}
-
-    void reset() final {}
-
-    void write(irs::DataOutput& out) const final {}
-
-   private:
-    const CustomSort& _sort;
-  };
-
-  class TermCollector final : public irs::TermCollector {
-   public:
-    TermCollector(const CustomSort& sort) : _sort(sort) {}
-
-    void collect(const irs::SubReader& segment, const irs::TermReader& field,
-                 const irs::AttributeProvider& term_attrs) final {
-      if (_sort.term_collector_collect) {
-        _sort.term_collector_collect(segment, field, term_attrs);
-      }
-    }
-
-    void collect(irs::bytes_view in) final {}
-
-    void reset() final {}
-
-    void write(irs::DataOutput& out) const final {}
-
-   private:
-    const CustomSort& _sort;
-  };
 
   struct Scorer : public irs::ScoreOperator {
     Scorer(const CustomSort& sort, const irs::ScoreContext& ctx)
@@ -140,14 +99,6 @@ struct CustomSort final : public irs::ScorerBase<void> {
     return irs::IndexFeatures::None;
   }
 
-  irs::FieldCollector::ptr PrepareFieldCollector() const final {
-    if (_prepare_field_collector) {
-      return _prepare_field_collector();
-    }
-
-    return std::make_unique<CustomSort::FieldCollector>(*this);
-  }
-
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     if (_prepare_scorer) {
       _prepare_scorer(ctx);
@@ -156,25 +107,10 @@ struct CustomSort final : public irs::ScorerBase<void> {
     return irs::ScoreFunction::Make<CustomSort::Scorer>(*this, ctx);
   }
 
-  irs::TermCollector::ptr PrepareTermCollector() const final {
-    if (_prepare_term_collector) {
-      return _prepare_term_collector();
-    }
-
-    return std::make_unique<CustomSort::TermCollector>(*this);
-  }
-
-  std::function<void(const irs::SubReader&, const irs::TermReader&)>
-    field_collector_collect;
-  std::function<void(const irs::SubReader&, const irs::TermReader&,
-                     const irs::AttributeProvider&)>
-    term_collector_collect;
   std::function<void(irs::byte_type*, const irs::FieldCollector*,
                      const irs::TermCollector*)>
     collector_finish;
-  std::function<irs::FieldCollector::ptr()> _prepare_field_collector;  // NOLINT
-  std::function<void(const irs::ScoreContext& ctx)> _prepare_scorer;   // NOLINT
-  std::function<irs::TermCollector::ptr()> _prepare_term_collector;    // NOLINT
+  std::function<void(const irs::ScoreContext& ctx)> _prepare_scorer;  // NOLINT
   std::function<void(const irs::ScoreOperator*, irs::score_t*, size_t n)>
     scorer_score;
 
@@ -1093,29 +1029,21 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     range.max_type = irs::BoundType::Inclusive;
     range.max = 300;
 
-    size_t collector_collect_field_count = 0;
-    size_t collector_collect_term_count = 0;
     size_t collector_finish_count = 0;
+    uint64_t collector_field_docs = 0;
     size_t scorer_score_count = 0;
     size_t prepare_scorer_count = 0;
 
     ::CustomSort sort;
 
-    sort.field_collector_collect = [&collector_collect_field_count, &q](
-                                     const irs::SubReader&,
-                                     const irs::TermReader& field) -> void {
-      collector_collect_field_count += (q.field() == field.meta().name);
-    };
-    sort.term_collector_collect = [&collector_collect_term_count, &q](
-                                    const irs::SubReader&,
-                                    const irs::TermReader& field,
-                                    const irs::AttributeProvider&) -> void {
-      collector_collect_term_count += (q.field() == field.meta().name);
-    };
-    sort.collector_finish = [&collector_finish_count](
-                              irs::byte_type*, const irs::FieldCollector*,
-                              const irs::TermCollector*) -> void {
+    sort.collector_finish = [&](irs::byte_type*,
+                                const irs::FieldCollector* field,
+                                const irs::TermCollector* term) -> void {
       ++collector_finish_count;
+      // geo filter exercises field collector but not term collector
+      ASSERT_NE(nullptr, field);
+      ASSERT_EQ(nullptr, term);
+      collector_field_docs += field->docs_with_field;
     };
     sort._prepare_scorer = [&](const irs::ScoreContext& ctx) {
       EXPECT_EQ(q.Boost(), ctx.boost);
@@ -1133,9 +1061,8 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     const std::map<std::string, irs::score_t> expected{{"Q", 9}, {"R", 9}};
 
     ASSERT_EQ(expected, execute_query(q, sort));
-    ASSERT_EQ(2, collector_collect_field_count);  // 2 segments
-    ASSERT_EQ(0, collector_collect_term_count);
     ASSERT_EQ(1, collector_finish_count);
+    ASSERT_GT(collector_field_docs, 0u);  // field collector ran on segments
     ASSERT_EQ(4, scorer_score_count);
   }
 
@@ -1150,29 +1077,21 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     range.max_type = irs::BoundType::Inclusive;
     range.max = 300;
 
-    size_t collector_collect_field_count = 0;
-    size_t collector_collect_term_count = 0;
     size_t collector_finish_count = 0;
+    uint64_t collector_field_docs = 0;
     size_t scorer_score_count = 0;
     size_t prepare_scorer_count = 0;
 
     CustomSort sort;
 
-    sort.field_collector_collect = [&collector_collect_field_count, &q](
-                                     const irs::SubReader&,
-                                     const irs::TermReader& field) -> void {
-      collector_collect_field_count += (q.field() == field.meta().name);
-    };
-    sort.term_collector_collect = [&collector_collect_term_count, &q](
-                                    const irs::SubReader&,
-                                    const irs::TermReader& field,
-                                    const irs::AttributeProvider&) -> void {
-      collector_collect_term_count += (q.field() == field.meta().name);
-    };
-    sort.collector_finish = [&collector_finish_count](
-                              irs::byte_type*, const irs::FieldCollector*,
-                              const irs::TermCollector*) -> void {
+    sort.collector_finish = [&](irs::byte_type*,
+                                const irs::FieldCollector* field,
+                                const irs::TermCollector* term) -> void {
       ++collector_finish_count;
+      // geo filter exercises field collector but not term collector
+      ASSERT_NE(nullptr, field);
+      ASSERT_EQ(nullptr, term);
+      collector_field_docs += field->docs_with_field;
     };
     sort._prepare_scorer = [&](const irs::ScoreContext& ctx) {
       EXPECT_EQ(q.Boost(), ctx.boost);
@@ -1189,9 +1108,8 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     const std::map<std::string, irs::score_t> expected{{"Q", 9}, {"R", 9}};
 
     ASSERT_EQ(expected, execute_query(q, sort));
-    ASSERT_EQ(2, collector_collect_field_count);  // 2 segments
-    ASSERT_EQ(0, collector_collect_term_count);
     ASSERT_EQ(1, collector_finish_count);
+    ASSERT_GT(collector_field_docs, 0u);  // field collector ran on segments
     ASSERT_EQ(4, scorer_score_count);
   }
 }

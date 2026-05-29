@@ -195,7 +195,7 @@ Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
                                             bytes_view prefix, bytes_view term,
                                             size_t terms_limit,
                                             const ParametricDescription& d) {
-  FieldCollector field_stats{ctx.scorer};
+  FieldCollector field_stats;
   TermCollectorsFlat term_stats{ctx.scorer, 1};
   MultiTermQuery::States states{ctx.memory, ctx.index.size()};
 
@@ -224,7 +224,7 @@ Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
     1, MultiTermQuery::Stats::allocator_type{ctx.memory});
   stats.back().resize(GetStatsSize(ctx.scorer), 0);
   auto* stats_buf = stats[0].data();
-  term_stats.Finish(stats_buf, 0, field_stats.Get());
+  term_stats.Finish(stats_buf, 0, &field_stats);
 
   return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),
                                               std::move(stats), ctx.boost,

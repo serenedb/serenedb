@@ -419,7 +419,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_custom_sort) {
       std::make_unique<tests::sort::CustomSort>()};
     auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
     scorer.collectors_collect = [&](irs::byte_type*,
-                                    const irs::FieldCollector::Data* field,
+                                    const irs::FieldCollector* field,
                                     const irs::TermCollector* term) {
       ++finish_count;
       ASSERT_NE(nullptr, field);
@@ -472,7 +472,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_custom_sort) {
       std::make_unique<tests::sort::CustomSort>()};
     auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
     scorer.collectors_collect = [&](irs::byte_type*,
-                                    const irs::FieldCollector::Data* field,
+                                    const irs::FieldCollector* field,
                                     const irs::TermCollector*) {
       ++finish_count;
       if (field) {

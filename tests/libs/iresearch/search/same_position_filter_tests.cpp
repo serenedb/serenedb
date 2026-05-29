@@ -86,7 +86,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
       tests::sort::CustomSort scorer;
 
       scorer.collectors_collect =
-        [&finish_count](irs::byte_type*, const irs::FieldCollector::Data*,
+        [&finish_count](irs::byte_type*, const irs::FieldCollector*,
                         const irs::TermCollector*) -> void { ++finish_count; };
 
       auto prepared = filter.prepare({.index = index, .scorer = &scorer});
@@ -105,7 +105,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
       tests::sort::CustomSort scorer;
 
       scorer.collectors_collect = [&](irs::byte_type*,
-                                      const irs::FieldCollector::Data* field,
+                                      const irs::FieldCollector* field,
                                       const irs::TermCollector* term) -> void {
         ++finish_count;
         ASSERT_NE(nullptr, field);
@@ -141,7 +141,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
       tests::sort::CustomSort scorer;
 
       scorer.collectors_collect = [&](irs::byte_type*,
-                                      const irs::FieldCollector::Data* field,
+                                      const irs::FieldCollector* field,
                                       const irs::TermCollector* term) -> void {
         ++finish_count;
         ASSERT_NE(nullptr, field);

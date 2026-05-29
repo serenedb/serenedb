@@ -27,7 +27,7 @@
 
 namespace irs {
 
-void FieldCollector::Data::Collect(const TermReader& field) noexcept {
+void FieldCollector::Collect(const TermReader& field) noexcept {
   docs_with_field += field.docs_count();
   if (const auto* freq = irs::get<FreqAttr>(field)) {
     total_term_freq += freq->value;

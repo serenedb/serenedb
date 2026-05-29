@@ -219,7 +219,7 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   // instead of aggregating them using a single collector
   //
   // prepare phrase stats (collector for each term)
-  FieldCollector field_stats{ctx.scorer};
+  FieldCollector field_stats;
   TermCollectorsFlat term_stats{ctx.scorer, size};
 
   for (const auto& segment : ctx.index) {
@@ -286,7 +286,7 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   for (auto& stat : stats) {
     stat.resize(GetStatsSize(ctx.scorer));
     auto* stats_buf = stat.data();
-    term_stats.Finish(stats_buf, term_idx++, field_stats.Get());
+    term_stats.Finish(stats_buf, term_idx++, &field_stats);
   }
 
   return memory::make_tracked<SamePositionQuery>(

@@ -28,6 +28,7 @@
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/geo_filter.hpp"
 #include "iresearch/search/scorer.hpp"
@@ -85,7 +86,7 @@ struct CustomSort final : public irs::ScorerBase<void> {
     const CustomSort& sort;
   };
 
-  void collect(irs::byte_type* stats, const irs::FieldCollector::Data* field,
+  void collect(irs::byte_type* stats, const irs::FieldCollector* field,
                const irs::TermCollector* term) const final {
     if (collector_finish) {
       collector_finish(stats, field, term);
@@ -104,7 +105,7 @@ struct CustomSort final : public irs::ScorerBase<void> {
     return irs::ScoreFunction::Make<CustomSort::Scorer>(*this, ctx);
   }
 
-  std::function<void(irs::byte_type*, const irs::FieldCollector::Data*,
+  std::function<void(irs::byte_type*, const irs::FieldCollector*,
                      const irs::TermCollector*)>
     collector_finish;
   std::function<void(const irs::ScoreContext& ctx)> _prepare_scorer;  // NOLINT
@@ -797,7 +798,7 @@ TEST(GeoFilterTest, checkScorer) {
     ::CustomSort sort;
 
     sort.collector_finish = [&](irs::byte_type*,
-                                const irs::FieldCollector::Data* field,
+                                const irs::FieldCollector* field,
                                 const irs::TermCollector* term) -> void {
       ++collector_finish_count;
       // geo filter exercises field collector but not term collector
@@ -859,7 +860,7 @@ TEST(GeoFilterTest, checkScorer) {
     ::CustomSort sort;
 
     sort.collector_finish = [&](irs::byte_type*,
-                                const irs::FieldCollector::Data* field,
+                                const irs::FieldCollector* field,
                                 const irs::TermCollector* term) -> void {
       ++collector_finish_count;
       // geo filter exercises field collector but not term collector

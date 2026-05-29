@@ -70,7 +70,7 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
   term_states.reserve(terms_count);
 
   // prepare ngrams stats
-  FieldCollector field_stats{ctx.scorer};
+  FieldCollector field_stats;
   TermCollectorsFlat term_stats{ctx.scorer, terms_count};
 
   for (const auto& segment : ctx.index) {
@@ -129,7 +129,7 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
   auto* stats_buf = stats.data();
 
   for (size_t term_idx = 0; term_idx < terms_count; ++term_idx) {
-    term_stats.Finish(stats_buf, term_idx, field_stats.Get());
+    term_stats.Finish(stats_buf, term_idx, &field_stats);
   }
 
   return memory::make_tracked<NGramSimilarityQuery>(

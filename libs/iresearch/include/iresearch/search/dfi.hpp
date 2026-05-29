@@ -66,7 +66,7 @@ class DFI final : public irs::ScorerBase<DFI, DFIStats> {
 
   explicit DFI(DFIMeasure measure = MEASURE()) noexcept : _measure{measure} {}
 
-  void collect(byte_type* stats_buf, const irs::FieldCollector::Data* field,
+  void collect(byte_type* stats_buf, const irs::FieldCollector* field,
                const irs::TermCollector* term) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {

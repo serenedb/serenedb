@@ -30,6 +30,7 @@
 #include "basics/singleton.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/filter.hpp"
@@ -188,8 +189,7 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
     const CustomSort& sort;
   };
 
-  void collect(irs::byte_type* filter_attrs,
-               const irs::FieldCollector::Data* field,
+  void collect(irs::byte_type* filter_attrs, const irs::FieldCollector* field,
                const irs::TermCollector* term) const final {
     if (collectors_collect) {
       collectors_collect(filter_attrs, field, term);
@@ -208,7 +208,7 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
     return irs::ScoreFunction::Make<CustomSort::Scorer>(*this, ctx);
   }
 
-  std::function<void(irs::byte_type*, const irs::FieldCollector::Data*,
+  std::function<void(irs::byte_type*, const irs::FieldCollector*,
                      const irs::TermCollector*)>
     collectors_collect;
   std::function<irs::ScoreFunction(const irs::ScoreContext& ctx)>
@@ -257,8 +257,7 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
     irs::doc_id_t count;
   };
 
-  void collect(irs::byte_type* stats_buf,
-               const irs::FieldCollector::Data* /*field*/,
+  void collect(irs::byte_type* stats_buf, const irs::FieldCollector* /*field*/,
                const irs::TermCollector* term) const final {
     if (term) {
       stats_cast(stats_buf)->count =

@@ -166,8 +166,7 @@ class LimitedSampleCollector : private util::Noncopyable {
       stats_entry.resize(scorer ? scorer->stats_size() : 0);
       auto* stats_buf = const_cast<byte_type*>(stats_entry.data());
 
-      entry.second.term_stats.Finish(stats_buf, 0,
-                                     entry.second.field_stats.Get());
+      entry.second.term_stats.Finish(stats_buf, 0, &entry.second.field_stats);
     }
   }
 
@@ -175,7 +174,7 @@ class LimitedSampleCollector : private util::Noncopyable {
   struct StatsState {
     explicit StatsState(const IndexReader& index, std::string_view field_name,
                         const Scorer* scorer, uint32_t& state_offset)
-      : field_stats{scorer}, term_stats{scorer, 1} {
+      : term_stats{scorer, 1} {
       // 1 term per bstring because a range is treated as a disjunction
       for (const auto& segment : index) {
         if (const auto* field = segment.field(field_name)) {

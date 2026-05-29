@@ -1158,7 +1158,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
   auto& scorer = static_cast<CustomNGramScorer&>(*order);
 
   scorer.collectors_collect = [&](irs::byte_type*,
-                                  const irs::FieldCollector::Data* field,
+                                  const irs::FieldCollector* field,
                                   const irs::TermCollector* term) -> void {
     ++finish_count;
     if (field) {
@@ -1214,7 +1214,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
   auto& scorer = static_cast<CustomNGramScorer&>(*order);
 
   scorer.collectors_collect = [&](irs::byte_type*,
-                                  const irs::FieldCollector::Data* field,
+                                  const irs::FieldCollector* field,
                                   const irs::TermCollector* term) -> void {
     ++finish_count;
     if (field) {

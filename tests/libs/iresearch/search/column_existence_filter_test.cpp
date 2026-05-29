@@ -253,7 +253,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       sort.collectors_collect =
         [&collector_finish_count, &collector_field_docs](
-          irs::byte_type*, const irs::FieldCollector::Data* field,
+          irs::byte_type*, const irs::FieldCollector* field,
           const irs::TermCollector*) -> void {
         ++collector_finish_count;
         if (field) {

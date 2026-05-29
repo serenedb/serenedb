@@ -36,6 +36,7 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
@@ -214,8 +215,7 @@ struct IndriScore : public ScoreOperator {
 
 }  // namespace
 
-void IndriDirichlet::collect(byte_type* stats_buf,
-                             const FieldCollector::Data* field,
+void IndriDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
                              const TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 

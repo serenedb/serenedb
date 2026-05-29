@@ -55,42 +55,8 @@ struct ScoreThresholdAttr final : Attribute {
 };
 
 struct Scorer;
-
-class FieldCollector {
- public:
-  struct Data {
-    uint64_t docs_with_field = 0;
-    uint64_t total_term_freq = 0;
-
-    void Collect(const TermReader& field) noexcept;
-  };
-
-  explicit FieldCollector(const Scorer* scorer) {
-    if (scorer != nullptr) {
-      _data.emplace();
-    }
-  }
-
-  void Collect(const TermReader& field) noexcept {
-    if (_data) {
-      _data->Collect(field);
-    }
-  }
-
-  const Data* Get() const noexcept {
-    return _data.has_value() ? &_data.value() : nullptr;
-  }
-
- private:
-  std::optional<Data> _data;
-};
-
-struct TermCollector {
-  uint64_t docs_with_term = 0;
-  uint64_t total_term_freq = 0;
-
-  void Collect(const AttributeProvider& term_attrs) noexcept;
-};
+struct FieldCollector;
+struct TermCollector;
 
 struct WandSource : AttributeProvider {
   using ptr = std::unique_ptr<WandSource>;
@@ -136,7 +102,7 @@ struct Scorer {
 
   virtual ~Scorer() = default;
 
-  virtual void collect(byte_type* stats, const FieldCollector::Data* field,
+  virtual void collect(byte_type* stats, const FieldCollector* field,
                        const TermCollector* term) const = 0;
 
   virtual IndexFeatures GetIndexFeatures() const = 0;
@@ -200,7 +166,7 @@ class ScorerBase : public Scorer {
     return irs::Type<Impl>::id();
   }
 
-  void collect(byte_type*, const FieldCollector::Data*,
+  void collect(byte_type*, const FieldCollector*,
                const TermCollector*) const override {}
 
   IRS_FORCE_INLINE static const StatsType* stats_cast(

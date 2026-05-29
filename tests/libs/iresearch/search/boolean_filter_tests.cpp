@@ -15483,7 +15483,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
 
     sort.collectors_collect = [&collector_finish_count](
                                 irs::byte_type*,
-                                const irs::FieldCollector::Data* field,
+                                const irs::FieldCollector* field,
                                 const irs::TermCollector* term) -> void {
       ++collector_finish_count;
       // negated branch must not feed field/term collectors
@@ -15568,7 +15568,7 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
 
     sort.collectors_collect = [&collector_finish_count](
                                 irs::byte_type*,
-                                const irs::FieldCollector::Data* field,
+                                const irs::FieldCollector* field,
                                 const irs::TermCollector* term) -> void {
       ++collector_finish_count;
       // negated branch must not feed field/term collectors

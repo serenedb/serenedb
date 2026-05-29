@@ -407,7 +407,7 @@ std::pair<GeoStates, bstring> PrepareStates(
     std::forward_as_tuple(GetStatsSize(ctx.scorer), 0)};
 
   const auto size = sorted_terms.size();
-  FieldCollector field_stats{ctx.scorer};
+  FieldCollector field_stats;
   ManagedVector<SeekCookie::ptr> term_states{{ctx.memory}};
 
   SDB_ASSERT(store_field_id != 0);
@@ -447,7 +447,8 @@ std::pair<GeoStates, bstring> PrepareStates(
     term_states.clear();
   }
 
-  if (const auto fs = field_stats.Get()) {
+  if (ctx.scorer) {
+    const auto* fs = &field_stats;
     ctx.scorer->collect(const_cast<byte_type*>(res.second.data()), fs, nullptr);
   }
 

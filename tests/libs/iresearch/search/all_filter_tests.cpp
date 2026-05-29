@@ -97,7 +97,7 @@ TEST_P(AllFilterTestCase, all_order) {
 
     sort->collectors_collect = [&collector_finish_count, &collector_field_docs](
                                  const irs::byte_type*,
-                                 const irs::FieldCollector::Data* field,
+                                 const irs::FieldCollector* field,
                                  const irs::TermCollector*) -> void {
       ++collector_finish_count;
       if (field) {

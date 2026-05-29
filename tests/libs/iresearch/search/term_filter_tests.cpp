@@ -502,7 +502,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       tests::sort::CustomSort scorer;
 
       scorer.collectors_collect = [&](irs::byte_type*,
-                                      const irs::FieldCollector::Data* field,
+                                      const irs::FieldCollector* field,
                                       const irs::TermCollector* term) -> void {
         ++finish_count;
         ASSERT_NE(nullptr, field);

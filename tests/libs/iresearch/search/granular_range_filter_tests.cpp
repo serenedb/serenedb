@@ -1758,7 +1758,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
 
     scorer.collectors_collect = [&finish_count, &field_docs](
                                   irs::byte_type*,
-                                  const irs::FieldCollector::Data* field,
+                                  const irs::FieldCollector* field,
                                   const irs::TermCollector*) -> void {
       ++finish_count;
       if (field) {
@@ -1794,7 +1794,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
     auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
 
     scorer.collectors_collect = [&](irs::byte_type*,
-                                    const irs::FieldCollector::Data* field,
+                                    const irs::FieldCollector* field,
                                     const irs::TermCollector* term) -> void {
       ++finish_count;
       ASSERT_NE(nullptr, field);

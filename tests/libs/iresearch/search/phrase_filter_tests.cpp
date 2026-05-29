@@ -3611,7 +3611,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     tests::sort::CustomSort sort;
 
     sort.collectors_collect = [&](irs::byte_type*,
-                                  const irs::FieldCollector::Data* field,
+                                  const irs::FieldCollector* field,
                                   const irs::TermCollector* term) -> void {
       ++finish_count;
       ASSERT_NE(nullptr, field);
@@ -3928,7 +3928,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     tests::sort::CustomSort sort;
 
     sort.collectors_collect = [&](irs::byte_type*,
-                                  const irs::FieldCollector::Data* field,
+                                  const irs::FieldCollector* field,
                                   const irs::TermCollector* term) -> void {
       ++finish_count;
       ASSERT_NE(nullptr, field);

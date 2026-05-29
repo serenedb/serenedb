@@ -228,7 +228,7 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
   const auto is_ord_empty = !ctx.scorer;
 
   // stats collectors
-  FieldCollector field_stats{ctx.scorer};
+  FieldCollector field_stats;
   TermCollectorsFlat term_stats{ctx.scorer, phrase_size};
 
   // per segment phrase states
@@ -297,7 +297,7 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
     pos_itr->offs_max = term.offs_max;
     pos_itr->offs_min = term.offs_min;
     pos_itr->lead_offset = look_back += term.offs_max;
-    term_stats.Finish(stats_buf, term_idx, field_stats.Get());
+    term_stats.Finish(stats_buf, term_idx, &field_stats);
     ++pos_itr;
     ++term_idx;
   }
@@ -312,7 +312,7 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
                                           const ByPhraseOptions& options) {
   const auto phrase_size = options.size();
   // stats collectors
-  FieldCollector field_stats{ctx.scorer};
+  FieldCollector field_stats;
 
   std::vector<field_visitor> phrase_part_visitors;
   phrase_part_visitors.reserve(phrase_size);
@@ -433,7 +433,7 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
     position->offs_max = term.offs_max;
     position->offs_min = term.offs_min;
     position->lead_offset = look_back += term.offs_max;
-    phrase_part_stats.Finish(stats_buf, part_idx, field_stats.Get());
+    phrase_part_stats.Finish(stats_buf, part_idx, &field_stats);
     ++position;
     ++part_idx;
   }

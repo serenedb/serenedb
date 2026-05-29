@@ -30,13 +30,27 @@
 
 namespace irs {
 
+struct FieldCollector {
+  void Collect(const TermReader& field) noexcept;
+
+  uint64_t docs_with_field = 0;
+  uint64_t total_term_freq = 0;
+};
+
+struct TermCollector {
+  uint64_t docs_with_term = 0;
+  uint64_t total_term_freq = 0;
+
+  void Collect(const AttributeProvider& term_attrs) noexcept;
+};
+
 class CollectorBase {
  public:
   CollectorBase(const Scorer* scorer) noexcept : _scorer{scorer} {}
 
  protected:
   void Finish(byte_type* stats_buf, const TermCollector* collector,
-              const FieldCollector::Data* field_data) const {
+              const FieldCollector* field_data) const {
     SDB_ASSERT(_scorer);
     SDB_ASSERT(field_data);
     SDB_ASSERT(collector);
@@ -110,7 +124,7 @@ class TermCollectorsFlat : public CollectorBase, public FlatTermBuffer {
   }
 
   void Finish(byte_type* stats_buf, size_t term_idx,
-              const FieldCollector::Data* field_data) const {
+              const FieldCollector* field_data) const {
     if (HasScorer()) {
       SDB_ASSERT(term_idx < Size());
       CollectorBase::Finish(stats_buf, &Get(term_idx), field_data);
@@ -132,7 +146,7 @@ class TermCollectorsVariadic : public CollectorBase {
   }
 
   void Finish(byte_type* stats_buf, size_t part_idx,
-              const FieldCollector::Data* field_data) const {
+              const FieldCollector* field_data) const {
     if (!HasScorer()) {
       return;
     }

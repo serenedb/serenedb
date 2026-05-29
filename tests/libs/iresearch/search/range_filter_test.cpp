@@ -972,7 +972,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       auto& scorer = static_cast<tests::sort::CustomSort&>(*sort);
 
       scorer.collectors_collect = [&](irs::byte_type*,
-                                      const irs::FieldCollector::Data* field,
+                                      const irs::FieldCollector* field,
                                       const irs::TermCollector* term) -> void {
         ++finish_count;
         ASSERT_NE(nullptr, field);

@@ -164,7 +164,7 @@ TEST_P(TermsFilterTestCase, simple_sequential_order) {
     auto* scorer = static_cast<tests::sort::CustomSort*>(impl.get());
 
     scorer->collectors_collect = [&](irs::byte_type*,
-                                     const irs::FieldCollector::Data* field,
+                                     const irs::FieldCollector* field,
                                      const irs::TermCollector* term) -> void {
       ++finish_count;
       ASSERT_NE(nullptr, field);
@@ -498,7 +498,7 @@ TEST_P(TermsFilterTestCase, min_match) {
     auto* scorer = static_cast<tests::sort::CustomSort*>(impl.get());
 
     scorer->collectors_collect = [&](irs::byte_type*,
-                                     const irs::FieldCollector::Data* field,
+                                     const irs::FieldCollector* field,
                                      const irs::TermCollector* term) -> void {
       ++finish_count;
       if (field) {

@@ -42,6 +42,7 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
@@ -236,7 +237,7 @@ struct TfIdfScore : public ScoreOperator {
 
 }  // namespace
 
-void TFIDF::collect(byte_type* stats_buf, const FieldCollector::Data* field,
+void TFIDF::collect(byte_type* stats_buf, const FieldCollector* field,
                     const TermCollector* term) const {
   const auto docs_with_field = field ? field->docs_with_field : 0;
   const auto docs_with_term = term ? term->docs_with_term : 0;

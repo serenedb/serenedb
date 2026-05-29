@@ -55,6 +55,7 @@ set(iresearch-tests_sources
     ./search/wildcard_filter_test.cpp
     ./search/wildcard_ngram_filter_test.cpp
     ./search/phrase_ngram_filter_test.cpp
+    ./search/regexp_ngram_filter_test.cpp
     ./search/regexp_filter_test.cpp
     ./search/levenshtein_filter_test.cpp
     ./search/index_reader_test.cpp

@@ -102,13 +102,13 @@ struct ShingleField {
     return true;
   }
 
-  irs::IndexFeatures GetIndexFeatures() const noexcept {
-    return irs::IndexFeatures::Freq;
-  }
+  irs::IndexFeatures GetIndexFeatures() const noexcept { return index_features; }
 
   mutable irs::analysis::ShingleAnalyzer* analyzer{};
   std::string_view value;
   std::string_view field_name{"text"};
+  // Freq -> Strategy A (verify); Freq|Pos -> Strategy B (positional, no verify).
+  irs::IndexFeatures index_features{irs::IndexFeatures::Freq};
 };
 
 inline constexpr irs::field_id kStoreId = 1;
@@ -119,6 +119,7 @@ irs::ByPhraseNgram MakeFilter(std::string_view field, std::string_view phrase,
   *filter.mutable_field() = field;
   *filter.mutable_options() = irs::ByPhraseNgramOptions{phrase, analyzer};
   filter.mutable_options()->store_field_id = kStoreId;
+  // Strategy (verify vs positional) is detected from the index at Prepare time.
   return filter;
 }
 
@@ -133,9 +134,10 @@ irs::analysis::ShingleAnalyzer MakeAnalyzer(uint32_t min = 2, uint32_t max = 2) 
 
 // Index `values` as a single segment of ShingleField documents and open a
 // reader over them. `dir` and `analyzer` must outlive the returned reader.
-irs::DirectoryReader BuildReader(irs::MemoryDirectory& dir,
-                                 irs::analysis::ShingleAnalyzer& analyzer,
-                                 std::span<const std::string_view> values) {
+irs::DirectoryReader BuildReader(
+  irs::MemoryDirectory& dir, irs::analysis::ShingleAnalyzer& analyzer,
+  std::span<const std::string_view> values,
+  irs::IndexFeatures features = irs::IndexFeatures::Freq) {
   auto codec = irs::formats::Get("1_5simd");
   EXPECT_NE(nullptr, codec);
   auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
@@ -144,6 +146,7 @@ irs::DirectoryReader BuildReader(irs::MemoryDirectory& dir,
 
   ShingleField field;
   field.analyzer = &analyzer;
+  field.index_features = features;
   auto ctx = writer->GetBatch();
   for (auto v : values) {
     field.value = v;
@@ -334,6 +337,57 @@ TEST(PhraseNgramFilterTest, long_phrase) {
   EXPECT_EQ(Ids({}),
             Execute(reader,
                     MakeFilter("text", "the quick red panda climbs", analyzer)));
+}
+
+TEST(PhraseNgramFilterTest, positional_exact_no_verify) {
+  // Strategy B: the field carries positions, so a phrase over the positional
+  // shingle terms is exact by construction -- no per-candidate verification.
+  auto analyzer = MakeAnalyzer();
+  irs::MemoryDirectory dir;
+  auto reader =
+    BuildReader(dir, analyzer, kPhraseValues,
+                irs::IndexFeatures::Freq | irs::IndexFeatures::Pos);
+  ASSERT_NE(nullptr, reader);
+
+  // 3-token phrase: ByPhrase over the consecutive bigrams. doc4 has both
+  // bigrams but not adjacently -> rejected by position, with no store fetch.
+  EXPECT_EQ(Ids({0}),
+            Execute(reader, MakeFilter("text", "quick brown fox", analyzer)));
+  // 2-token phrase == shingle width: single bigram term.
+  EXPECT_EQ(Ids({0, 1, 3, 4}),
+            Execute(reader, MakeFilter("text", "quick brown", analyzer)));
+  EXPECT_EQ(Ids({0, 2, 4}),
+            Execute(reader, MakeFilter("text", "brown fox", analyzer)));
+  // Single token: a unigram lookup.
+  EXPECT_EQ(Ids({0, 2, 3, 4}),
+            Execute(reader, MakeFilter("text", "fox", analyzer)));
+  // Absent phrase.
+  EXPECT_EQ(Ids({}),
+            Execute(reader, MakeFilter("text", "purple monkey", analyzer)));
+}
+
+TEST(PhraseNgramFilterTest, positional_long_and_repeated) {
+  // Positional path on the trickier phrases: a long phrase with a repeated
+  // token and a repeated-token phrase that exercises adjacency over positions.
+  auto analyzer = MakeAnalyzer();
+  irs::MemoryDirectory dir;
+  static constexpr std::string_view kValues[] = {
+    "lorem the quick brown fox jumps over the lazy dog ipsum",  // 0: contiguous
+    "over the lazy dog the quick brown fox jumps over the",     // 1: all bigrams, not contiguous
+    "a b a b a c",                                              // 2
+    "a b a b a b a c",                                          // 3
+  };
+  auto reader =
+    BuildReader(dir, analyzer, kValues,
+                irs::IndexFeatures::Freq | irs::IndexFeatures::Pos);
+  ASSERT_NE(nullptr, reader);
+
+  EXPECT_EQ(Ids({0}),
+            Execute(reader, MakeFilter("text",
+                                       "the quick brown fox jumps over the lazy dog",
+                                       analyzer)));
+  EXPECT_EQ(Ids({2, 3}),
+            Execute(reader, MakeFilter("text", "a b a b a c", analyzer)));
 }
 
 TEST(PhraseNgramFilterTest, repeated_tokens_phrase) {

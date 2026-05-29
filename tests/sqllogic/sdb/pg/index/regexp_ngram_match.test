@@ -1,0 +1,98 @@
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS wildcard_dict;
+
+statement ok
+DROP TABLE IF EXISTS test_regex;
+
+# Regex search accelerated by a char n-gram index: the WildcardAnalyzer indexes
+# char n-grams + stores the original tokens. ts_regexp on such a column
+# prefilters candidates by the regex's required n-grams (RE2 Prefilter) and
+# verifies each with RE2 on the stored tokens. The column must be case-folded
+# (here the data is already lower-case) for the prefilter to be sound.
+statement ok
+CREATE TEXT SEARCH DICTIONARY wildcard_dict(
+    template = 'wildcard',
+    ngramsize = 3,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+statement ok
+CREATE TABLE test_regex (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX test_regex_idx ON test_regex USING inverted(id, body wildcard_dict);
+
+statement ok
+INSERT INTO test_regex VALUES
+  (1, 'the quick brown fox'),
+  (2, 'quick brown dog'),
+  (3, 'lazy fox runs'),
+  (4, 'quack browns foxy');
+
+statement ok
+VACUUM (REFRESH_TABLE) test_regex;
+
+# Literal >= n-gram size: AND of its char n-grams + RE2 verify. "quack" must
+# not match the "quick" n-grams.
+query
+SELECT id FROM test_regex_idx WHERE body @@ ts_regexp('quick') ORDER BY id;
+----
+id
+1
+2
+
+# Metacharacter: "bro.n" -> brown (1,2) and browns (4); literal run "bro"
+# drives the prefilter.
+query
+SELECT id FROM test_regex_idx WHERE body @@ ts_regexp('bro.n') ORDER BY id;
+----
+id
+1
+2
+4
+
+# Alternation -> OR of the alternatives' n-gram conjunctions.
+query
+SELECT id FROM test_regex_idx WHERE body @@ ts_regexp('quick|lazy') ORDER BY id;
+----
+id
+1
+2
+3
+
+# Anchors apply per stored token: whole-token "fox" matches fox (1,3) but not
+# foxy (4).
+query
+SELECT id FROM test_regex_idx WHERE body @@ ts_regexp('^fox$') ORDER BY id;
+----
+id
+1
+3
+
+# POSIX ERE syntax routes through the same n-gram path (RE2 posix_syntax).
+query
+SELECT id FROM test_regex_idx WHERE body @@ ts_regexp('quick', 'posix') ORDER BY id;
+----
+id
+1
+2
+
+# Combined with AND on a non-FTS predicate.
+query
+SELECT id FROM test_regex_idx WHERE body @@ ts_regexp('quick') AND id < 2 ORDER BY id;
+----
+id
+1
+
+# A literal whose n-grams are absent -> no candidate, no match.
+query
+SELECT id FROM test_regex_idx WHERE body @@ ts_regexp('xyzzy') ORDER BY id;
+----
+id
+
+statement ok
+DROP TABLE test_regex;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY wildcard_dict;

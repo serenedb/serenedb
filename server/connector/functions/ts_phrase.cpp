@@ -120,9 +120,9 @@ void BuildShingleNgram(irs::BooleanFilter& parent, const FilterContext& ctx,
                    *column_info.tokenizer.analyzer.get())};
   SDB_ASSERT(column_info.tokenizer.tokenizer_column);
   opts->store_field_id = *column_info.tokenizer.tokenizer_column;
-  opts->positional =
-    (column_info.tokenizer.features & irs::IndexFeatures::Pos) ==
-    irs::IndexFeatures::Pos;
+  // Position-free (Strategy A, verify) vs positional (Strategy B, no verify) is
+  // chosen adaptively inside ByPhraseNgram::Prepare from the indexed field's
+  // features -- there is no flag to set here.
   if (opts->query_tokens.empty()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

@@ -102,9 +102,12 @@ Result Features::Validate(std::string_view type) const {
       return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
     }
     if (type == irs::analysis::ShingleAnalyzer::type_name()) {
-      // Position-free phrase path: Frequency is allowed for scoring; positions
-      // are intentionally rejected (the verifier replaces them).
-      return irs::IndexFeatures::Freq;
+      // Two phrase strategies share the analyzer, chosen by the column's
+      // features. Frequency-only (Strategy A) generates shingle candidates and
+      // verifies contiguity against the stored token stream. Adding Positions
+      // (Strategy B) makes a phrase over the positional shingle terms exact by
+      // construction, so no per-candidate verification is needed.
+      return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
     }
     if (IsGeoAnalyzer(type)) {
       return irs::IndexFeatures::None;

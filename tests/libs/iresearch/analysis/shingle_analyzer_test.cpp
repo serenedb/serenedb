@@ -119,6 +119,25 @@ std::vector<std::string> Emit(irs::analysis::ShingleAnalyzer& analyzer,
   return out;
 }
 
+// Emit (term, position_increment) pairs. The increment model places each base
+// token at exactly one position (first term at a window front inc=1, shingles
+// that follow inc=0), which is what makes a positional ByPhrase over the
+// shingle terms exact.
+using TermInc = std::pair<std::string, uint32_t>;
+std::vector<TermInc> EmitWithInc(irs::analysis::ShingleAnalyzer& analyzer,
+                                 std::string_view data) {
+  EXPECT_TRUE(analyzer.reset(data));
+  const auto* term = irs::get<irs::TermAttr>(analyzer);
+  const auto* inc = irs::get<irs::IncAttr>(analyzer);
+  EXPECT_NE(nullptr, term);
+  EXPECT_NE(nullptr, inc);
+  std::vector<TermInc> out;
+  while (analyzer.next()) {
+    out.emplace_back(ToString(term->value), inc->value);
+  }
+  return out;
+}
+
 std::vector<std::string> DecodeStore(irs::analysis::ShingleAnalyzer& analyzer) {
   const auto* store = irs::get<irs::StoreAttr>(analyzer);
   EXPECT_NE(nullptr, store);
@@ -217,6 +236,41 @@ TEST(ShingleAnalyzerTest, output_unigrams_if_no_shingles) {
 TEST(ShingleAnalyzerTest, empty_input) {
   auto analyzer = MakeAnalyzer(2, 2, true);
   EXPECT_TRUE(Emit(analyzer, "").empty());
+}
+
+TEST(ShingleAnalyzerTest, positions_bigrams_with_unigrams) {
+  auto analyzer = MakeAnalyzer(2, 2, /*output_unigrams=*/true);
+  // Each base token gets one position: the unigram advances it (inc=1), the
+  // shingle starting there shares it (inc=0).
+  const std::vector<TermInc> expected{
+    {"quick", 1}, {Shingle({"quick", "brown"}), 0},
+    {"brown", 1}, {Shingle({"brown", "fox"}), 0},
+    {"fox", 1},
+  };
+  EXPECT_EQ(expected, EmitWithInc(analyzer, "quick brown fox"));
+}
+
+TEST(ShingleAnalyzerTest, positions_min2_max3) {
+  auto analyzer = MakeAnalyzer(2, 3, /*output_unigrams=*/true);
+  // All shingle sizes that start at a given token share that token's position.
+  const std::vector<TermInc> expected{
+    {"a", 1}, {Shingle({"a", "b"}), 0}, {Shingle({"a", "b", "c"}), 0},
+    {"b", 1}, {Shingle({"b", "c"}), 0}, {Shingle({"b", "c", "d"}), 0},
+    {"c", 1}, {Shingle({"c", "d"}), 0},
+    {"d", 1},
+  };
+  EXPECT_EQ(expected, EmitWithInc(analyzer, "a b c d"));
+}
+
+TEST(ShingleAnalyzerTest, positions_without_unigrams) {
+  auto analyzer = MakeAnalyzer(2, 2, /*output_unigrams=*/false);
+  // No unigram precedes the shingle, so the first (only) shingle at each token
+  // advances the position; consecutive bigrams land at consecutive positions.
+  const std::vector<TermInc> expected{
+    {Shingle({"a", "b"}), 1},
+    {Shingle({"b", "c"}), 1},
+  };
+  EXPECT_EQ(expected, EmitWithInc(analyzer, "a b c"));
 }
 
 TEST(ShingleAnalyzerTest, token_codec_round_trip) {

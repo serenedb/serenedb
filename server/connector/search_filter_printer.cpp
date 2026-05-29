@@ -34,9 +34,11 @@
 #include <iresearch/search/nested_filter.hpp>
 #include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
+#include <iresearch/search/phrase_ngram_filter.hpp>
 #include <iresearch/search/prefix_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/regexp_filter.hpp>
+#include <iresearch/search/regexp_ngram_filter.hpp>
 #include <iresearch/search/search_range.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
@@ -297,6 +299,53 @@ void StringifyWildcardNgram(std::string* out, const ByWildcardNgram& filter,
                   parts_str, "]]");
 }
 
+template<typename FT>
+void StringifyPhraseNgram(std::string* out, const ByPhraseNgram& filter,
+                          FT&& ft) {
+  const auto& opts = filter.options();
+  std::string shingles;
+  for (const auto& shingle : opts.shingles) {
+    absl::StrAppend(&shingles, TermToString(shingle), "; ");
+  }
+  absl::StrAppend(out, "PHRASE_NGRAM[", ft(filter.field()),
+                  ", exact=", opts.exact, ", shingles=[", shingles, "]]");
+}
+
+std::string RegexpNgramTree(const ByRegexpNgramOptions::Node& node) {
+  using Kind = ByRegexpNgramOptions::Node::Kind;
+  switch (node.kind) {
+    case Kind::kAll:
+      return "ALL";
+    case Kind::kNone:
+      return "NONE";
+    case Kind::kTerms: {
+      std::string terms;
+      for (const auto& term : node.terms) {
+        absl::StrAppend(&terms, TermToString(term), " ");
+      }
+      return absl::StrCat("{", terms, "}");
+    }
+    case Kind::kAnd:
+    case Kind::kOr: {
+      std::string subs;
+      for (const auto& sub : node.subs) {
+        absl::StrAppend(&subs, RegexpNgramTree(sub), " ");
+      }
+      return absl::StrCat(node.kind == Kind::kAnd ? "AND[" : "OR[", subs, "]");
+    }
+  }
+  return "?";
+}
+
+template<typename FT>
+void StringifyRegexpNgram(std::string* out, const ByRegexpNgram& filter,
+                          FT&& ft) {
+  const auto& opts = filter.options();
+  absl::StrAppend(out, "REGEXP_NGRAM[", ft(filter.field()), ", /",
+                  opts.matcher ? opts.matcher->pattern() : std::string{},
+                  "/, ngrams=", RegexpNgramTree(opts.root), "]");
+}
+
 std::string_view GeoFilterTypeName(GeoFilterType type) {
   switch (type) {
     case GeoFilterType::Intersects:
@@ -392,6 +441,12 @@ std::string StringifyFilter(const Filter& filter, FT&& ft) {
   } else if (type == Type<ByWildcardNgram>::id()) {
     StringifyWildcardNgram(&out, static_cast<const ByWildcardNgram&>(filter),
                            ft);
+  } else if (type == Type<ByRegexp>::id()) {
+    StringifyRegexp(&out, static_cast<const ByRegexp&>(filter), ft);
+  } else if (type == Type<ByPhraseNgram>::id()) {
+    StringifyPhraseNgram(&out, static_cast<const ByPhraseNgram&>(filter), ft);
+  } else if (type == Type<ByRegexpNgram>::id()) {
+    StringifyRegexpNgram(&out, static_cast<const ByRegexpNgram&>(filter), ft);
   } else if (type == Type<Empty>::id()) {
     out = "EMPTY[]";
   } else if (type == Type<ByPhrase>::id()) {

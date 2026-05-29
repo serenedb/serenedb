@@ -70,8 +70,7 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
       if (!scheduler) {
         co_return {};
       }
-      co_await scheduler->delay(task->GetName(),
-                                std::chrono::microseconds{task->_delay});
+      co_await scheduler->delay(task->GetName(), task->_delay);
       auto r = co_await scheduler->queueWithFuture(
         RequestLane::InternalLow,
         [task] { return DropTask::ExecuteTask(std::move(task)); });

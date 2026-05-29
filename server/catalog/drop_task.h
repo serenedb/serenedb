@@ -48,8 +48,8 @@ namespace sdb::catalog {
 
 using AsyncResult = yaclib::Future<Result>;
 
-inline constexpr uint32_t kInitialDelay = 125;
-inline constexpr uint32_t kMaxDelay = kInitialDelay << 7;
+inline constexpr auto kInitialDelay = std::chrono::milliseconds{1};
+inline constexpr auto kMaxDelay = std::chrono::milliseconds{1000};
 
 class DropTask {
  public:
@@ -82,16 +82,17 @@ class DropTask {
     return _object.expired() && AllowToDropDependencies();
   }
 
+  virtual bool AllowToDropDependencies() const noexcept { return true; }
+
   virtual AsyncResult Execute() = 0;
   virtual std::string_view GetName() const noexcept = 0;
   virtual std::string GetContext() const noexcept = 0;
-  virtual bool AllowToDropDependencies() const noexcept = 0;
 
  protected:
   ObjectId _parent_id;
   ObjectId _id;
   bool _is_root;
-  uint32_t _delay = kInitialDelay;  // delay in microseconds
+  std::chrono::milliseconds _delay = kInitialDelay;
   std::weak_ptr<Object> _object;
 };
 
@@ -114,8 +115,6 @@ class TableShardDrop final : public DropTask,
 
   AsyncResult Execute() final;
 
-  bool AllowToDropDependencies() const noexcept final { return true; }
-
  private:
   uint64_t _size;
 };
@@ -136,20 +135,6 @@ struct IndexShardDrop final : public DropTask,
   std::string_view GetName() const noexcept final { return "index shard drop"; }
 
   AsyncResult Execute() final { SDB_UNREACHABLE(); }
-
-  bool AllowToDropDependencies() const noexcept final { return true; }
-
-  bool AllowToDrop() const noexcept final {
-    auto obj = _object.lock();
-    if (obj && obj->GetType() == ObjectType::InvertedIndexShard) {
-      const auto& shard =
-        basics::downCast<search::InvertedIndexShard>(*obj.get());
-      if (shard.HasActiveSegments()) {
-        return false;
-      }
-    }
-    return DropTask::AllowToDrop();
-  }
 };
 
 struct IndexDrop final : public DropTask,

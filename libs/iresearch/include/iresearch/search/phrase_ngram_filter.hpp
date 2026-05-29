@@ -58,9 +58,10 @@ struct ByPhraseNgramOptions {
   // The single shingle/unigram term in `shingles` is itself the exact answer;
   // no per-candidate verification is needed.
   bool exact{false};
-  // Reserved: when the shingle field also stores positions, a phrase over the
-  // shingle terms proves contiguity directly and skips verification.
-  bool positional{false};
+  // Columnstore field id of the packed token stream, read by the verifier on
+  // the position-free (Strategy A) path. Unused when the field has positions:
+  // `Prepare` detects that and answers via a positional phrase (Strategy B)
+  // with no verification.
   field_id store_field_id{0};
 
   bool operator==(const ByPhraseNgramOptions& rhs) const = default;

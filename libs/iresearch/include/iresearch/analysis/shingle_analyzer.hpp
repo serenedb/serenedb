@@ -115,6 +115,11 @@ class ShingleAnalyzer final : public TypedAnalyzer<ShingleAnalyzer> {
   void AppendToken(bytes_view token);  // append to _terms + push onto the ring
   void PopFront() noexcept;            // drop the window's front token
   bytes_view BuildShingle(uint32_t size);  // join window[0..size) into _scratch
+  // Set the position increment for the term about to be emitted: the first
+  // term at a window front advances the position (inc=1), the shingles that
+  // follow share it (inc=0), so each base token occupies exactly one position
+  // and a positional ByPhrase over the shingle terms proves adjacency.
+  void EmitPosition() noexcept;
 
   Analyzer::ptr _analyzer;
   const TermAttr* _base_term{};  // base analyzer's emitted term
@@ -135,6 +140,7 @@ class ShingleAnalyzer final : public TypedAnalyzer<ShingleAnalyzer> {
   size_t _emitted_total{0};       // base tokens consumed so far
   uint32_t _emit_size{0};         // 0 = unigram phase; else current shingle size
   bool _base_exhausted{false};
+  bool _front_emitted{false};     // a term was already emitted at the window front
 };
 
 }  // namespace irs::analysis

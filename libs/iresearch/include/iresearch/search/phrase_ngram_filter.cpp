@@ -37,6 +37,20 @@ namespace {
 
 using QueryTokens = std::shared_ptr<const std::vector<bstring>>;
 
+// A shingle field indexed with positions answers a phrase over its shingle
+// terms exactly -- ByPhrase proves contiguity -- so per-candidate verification
+// is unnecessary (Strategy B). Detect this from the indexed field itself rather
+// than a caller-supplied flag, so the strategy always matches what is on disk.
+bool FieldHasPositions(const IndexReader& index, std::string_view field) {
+  for (const auto& segment : index) {
+    if (const auto* reader = segment.field(field); reader != nullptr) {
+      return (reader->meta().index_features & IndexFeatures::Pos) ==
+             IndexFeatures::Pos;
+    }
+  }
+  return false;
+}
+
 // Post-filter iterator: for each candidate produced by the shingle conjunction,
 // fetch the document's stored token stream and confirm the query tokens appear
 // as an ordered contiguous run. This removes the false positives that the
@@ -73,6 +87,15 @@ class PhraseVerifyIterator : public DocIterator {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return _approx->GetMutable(type);
   }
+
+  // Rank surviving candidates by the shingle conjunction's (Sum-merged) score:
+  // every doc this iterator yields is positioned on `_approx`, so its score
+  // function applies directly. Mirrors the Exclusion post-filter iterator.
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    return _approx->PrepareScore(ctx);
+  }
+
+  void FetchScoreArgs(uint16_t index) final { _approx->FetchScoreArgs(index); }
 
   doc_id_t advance() final {
     while (!doc_limits::eof(_approx->advance())) {
@@ -165,9 +188,14 @@ class PhraseVerifyQuery : public Filter::Query {
                                                       *column, *cs_reader);
   }
 
-  void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {}
+  // Forward statistics collection + boost to the conjunction so its shingle
+  // terms contribute to scoring (the candidate AND is the ranked component).
+  void visit(const SubReader& segment, PreparedStateVisitor& visitor,
+             score_t boost) const final {
+    _approx->visit(segment, visitor, boost);
+  }
 
-  score_t Boost() const noexcept final { return kNoBoost; }
+  score_t Boost() const noexcept final { return _approx->Boost(); }
 
  private:
   QueryTokens _tokens;
@@ -184,8 +212,8 @@ Filter::Query::ptr ByPhraseNgram::Prepare(const PrepareContext& ctx,
     return Filter::Query::empty();
   }
 
-  if (opts.positional) {
-    // Reserved positional fast path: the shingle terms carry positions, so a
+  if (FieldHasPositions(ctx.index, field)) {
+    // Strategy B (adaptive): the indexed shingle terms carry positions, so a
     // phrase over them proves contiguity with no per-candidate verification.
     ByPhraseOptions phrase;
     for (const auto& shingle : opts.shingles) {

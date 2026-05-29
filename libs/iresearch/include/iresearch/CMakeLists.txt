@@ -128,6 +128,7 @@ set(IResearch_core_sources
     ./search/regexp_filter.cpp
     ./search/wildcard_ngram_filter.cpp
     ./search/phrase_ngram_filter.cpp
+    ./search/regexp_ngram_filter.cpp
     ./search/levenshtein_filter.cpp
     ./search/multiterm_query.cpp
     ./search/term_query.cpp

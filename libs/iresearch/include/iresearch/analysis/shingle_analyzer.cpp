@@ -297,6 +297,11 @@ void ShingleAnalyzer::PopFront() noexcept {
   --_ring_len;
 }
 
+void ShingleAnalyzer::EmitPosition() noexcept {
+  _inc.value = _front_emitted ? 0 : 1;
+  _front_emitted = true;
+}
+
 bytes_view ShingleAnalyzer::BuildShingle(uint32_t size) {
   _join.clear();
   for (uint32_t j = 0; j < size; ++j) {
@@ -313,6 +318,7 @@ bool ShingleAnalyzer::reset(std::string_view data) {
   _emitted_total = 0;
   _emit_size = 0;
   _base_exhausted = false;
+  _front_emitted = false;
   _store.value = {};
   return _analyzer->reset(data);
 }
@@ -333,22 +339,24 @@ bool ShingleAnalyzer::next() {
       _store.value = ViewCast<byte_type>(std::string_view{_terms});
       return false;
     }
-    _inc.value = 1;
     if (_emit_size == 0) {
       _emit_size = _min;
       const bool no_shingles = _base_exhausted && _emitted_total < _min;
       if (_output_unigrams || (_output_unigrams_if_no_shingles && no_shingles)) {
         _shingle_term.value = TokenAt(_ring[_ring_head]);
+        EmitPosition();
         return true;
       }
     }
     if (_emit_size >= _min && _emit_size <= _ring_len) {
       _shingle_term.value = BuildShingle(_emit_size);
       ++_emit_size;
+      EmitPosition();
       return true;
     }
     PopFront();
     _emit_size = 0;
+    _front_emitted = false;
   }
 }
 

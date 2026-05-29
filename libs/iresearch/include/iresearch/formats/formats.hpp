@@ -225,7 +225,7 @@ struct TermReader : public AttributeProvider {
 
   // Returns an intersection of a specified automaton and term reader.
   virtual SeekTermIterator::ptr iterator(
-    automaton_table_matcher& matcher) const = 0;
+    const automaton_table_matcher& matcher) const = 0;
 
   // Evaluates a union of all docs denoted by cookies supplied via a
   // speciified 'provider'. Each doc is represented by a bit in a

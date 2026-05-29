@@ -36,10 +36,10 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_impl.hpp"
 #include "iresearch/search/scorers.hpp"
 
 namespace irs {
@@ -226,27 +226,12 @@ void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
                               const TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 
-  const auto* field_ptr = sdb::basics::downCast<LMFieldCollector>(field);
-  const auto* term_ptr = sdb::basics::downCast<LMTermCollector>(term);
+  const auto ttf_field = field ? field->total_term_freq : 0;
+  const auto ttf_term = term ? term->total_term_freq : 0;
 
-  const auto ttf_field = field_ptr ? field_ptr->total_term_freq : 0;
-  const auto ttf_term = term_ptr ? term_ptr->total_term_freq : 0;
-
-  // DefaultCollectionModel: P(t|C) = (ttf_t + 1) / (ttf_field + 1).
-  // Stats are allocated per-term (see TermCollectors::finish), so assignment
-  // is safe; multi-term filters produce one prepared scorer per term with
-  // its own stats buffer.
   const double num = static_cast<double>(ttf_term) + 1.0;
   const double den = static_cast<double>(ttf_field) + 1.0;
   stats->collection_prob = static_cast<score_t>(num / den);
-}
-
-FieldCollector::ptr LMJelinekMercer::PrepareFieldCollector() const {
-  return std::make_unique<LMFieldCollector>();
-}
-
-TermCollector::ptr LMJelinekMercer::PrepareTermCollector() const {
-  return std::make_unique<LMTermCollector>();
 }
 
 ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {

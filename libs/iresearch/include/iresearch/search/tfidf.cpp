@@ -42,10 +42,10 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_impl.hpp"
 #include "iresearch/search/scorers.hpp"
 
 namespace irs {
@@ -59,30 +59,6 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
   return nullptr;
 }
-
-struct TFIDFFieldCollector final : FieldCollector {
-  // number of documents containing the matched field
-  // (possibly without matching terms)
-  uint64_t docs_with_field = 0;
-
-  void collect(const SubReader& /*segment*/,
-               const TermReader& field) noexcept final {
-    docs_with_field += field.docs_count();
-  }
-
-  void reset() noexcept final { docs_with_field = 0; }
-
-  void collect(bytes_view in) final {
-    ByteRefIterator itr{in};
-    const auto docs_with_field_value = vread<uint64_t>(itr);
-    if (itr.pos != itr.end) {
-      throw IoError{"input not read fully"};
-    }
-    docs_with_field += docs_with_field_value;
-  }
-
-  void write(DataOutput& out) const final { out.WriteV64(docs_with_field); }
-};
 
 Scorer::ptr MakeFromBool(const vpack::Slice slice) {
   SDB_ASSERT(slice.isBool());
@@ -263,14 +239,8 @@ struct TfIdfScore : public ScoreOperator {
 
 void TFIDF::collect(byte_type* stats_buf, const FieldCollector* field,
                     const TermCollector* term) const {
-  const auto* field_ptr = sdb::basics::downCast<TFIDFFieldCollector>(field);
-  const auto* term_ptr = sdb::basics::downCast<TermCollectorImpl>(term);
-
-  // nullptr possible if e.g. 'all' filter
-  const auto docs_with_field = field_ptr ? field_ptr->docs_with_field : 0;
-  // nullptr possible if e.g.'by_column_existence' filter
-  const auto docs_with_term = term_ptr ? term_ptr->docs_with_term : 0;
-  // TODO(mbkkt) SDB_ASSERT(docs_with_field >= docs_with_term);
+  const auto docs_with_field = field ? field->docs_with_field : 0;
+  const auto docs_with_term = term ? term->docs_with_term : 0;
 
   auto* idf = stats_cast(stats_buf);
   idf->value += static_cast<score_t>(
@@ -317,14 +287,6 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
         norm, ctx.boost, *stats, freq, filter_boost);
     });
   });
-}
-
-TermCollector::ptr TFIDF::PrepareTermCollector() const {
-  return std::make_unique<TermCollectorImpl>();
-}
-
-FieldCollector::ptr TFIDF::PrepareFieldCollector() const {
-  return std::make_unique<TFIDFFieldCollector>();
 }
 
 WandWriter::ptr TFIDF::prepare_wand_writer(size_t max_levels) const {

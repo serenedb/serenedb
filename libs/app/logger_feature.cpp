@@ -275,50 +275,10 @@ between the log level and the log topic:
 `2020-06-22T21:16:48Z [39028] INFO [144fe] {general} using storage engine
 'rocksdb'` (where `144fe` is the log ID).)");
 
-  options
-    ->addOption("--log.role", "Log the server role.",
-                new BooleanParameter(&_show_role))
-    .setLongDescription(R"(If you set this option to `true`, log messages
-contains a single character with the server's role. The roles are:
-
-- `U`: Undefined / unclear (used at startup)
-- `S`: Single server
-- `C`: Coordinator
-- `P`: Primary / DB-Server
-- `A`: Agent)");
-
   options->addOption(
     "--log.file-mode",
     "mode to use for new log file, umask will be applied as well",
     new StringParameter(&_file_mode));
-
-  options
-    ->addOption("--log.use-json-format",
-                "Use JSON as output format for logging.",
-                new BooleanParameter(&_use_json))
-
-    .setLongDescription(R"(You can use this option to switch the log output
-to the JSON format. Each log message then produces a separate line with
-JSON-encoded log data, which can be consumed by other applications.
-
-The object attributes produced for each log message are:
-
-| Key        | Value      |
-|:-----------|:-----------|
-| `time`     | date/time of log message, in format specified by `--log.time-format`
-| `prefix`   | only emitted if `--log.prefix` is set
-| `pid`      | process id, only emitted if `--log.process` is set
-| `tid`      | thread id, only emitted if `--log.thread` is set
-| `thread`   | thread name, only emitted if `--log.thread-name` is set
-| `role`     | server role (1 character), only emitted if `--log.role` is set
-| `level`    | log level (e.g. `"WARN"`, `"INFO"`)
-| `file`     | source file name of log message, only emitted if `--log.line-number` is set
-| `line`     | source file line of log message, only emitted if `--log.line-number` is set
-| `function` | source file function name, only emitted if `--log.line-number` is set
-| `topic`    | log topic name
-| `id`       | log id (5 digit hexadecimal string), only emitted if `--log.ids` is set
-| `hostname` | hostname if `--log.hostname` is set
-| `message`  | the actual log message payload)");
 
 #ifdef SERENEDB_HAVE_SETGID
   options->addOption(
@@ -525,7 +485,6 @@ void LoggerFeature::prepare() {
 
   log::SetLogLevels(_levels);
   log::SetShowIds(_show_ids);
-  log::SetShowRole(_show_role);
   log::SetUseColor(_use_color);
   log::SetTimeFormat(log_time_formats::FormatFromName(_time_format_string));
   log::SetUseControlEscaped(_use_control_escaped);
@@ -540,7 +499,6 @@ void LoggerFeature::prepare() {
   log::SetHostname(_hostname);
   log::SetKeepLogrotate(_keep_log_rotate);
   log::SetLogRequestParameters(_log_request_parameters);
-  log::SetUseJson(_use_json);
 
   for (const auto& definition : _output) {
     log::Appender::addAppender(log::GetDefaultLogGroup(), definition);

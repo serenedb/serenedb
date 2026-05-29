@@ -63,7 +63,6 @@ class LoggerFeature final : public app::AppFeature {
   std::string _time_format_string;
   uint32_t _max_entry_length = 128U * 1048576U;
   uint32_t _max_queued_log_messages = 16384;
-  bool _use_json = false;
   bool _use_color = true;
   bool _use_control_escaped = true;
   bool _use_unicode_escaped = false;
@@ -76,7 +75,6 @@ class LoggerFeature final : public app::AppFeature {
   bool _foreground_tty = false;
   bool _force_direct = false;
   bool _show_ids = true;
-  bool _show_role = false;
   bool _log_request_parameters = true;
   bool _threaded = false;
 };

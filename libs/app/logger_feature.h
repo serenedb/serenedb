@@ -53,9 +53,6 @@ class LoggerFeature final : public app::AppFeature {
   void disableThreaded() noexcept { _threaded = false; }
   void setSupervisor(bool supervisor) noexcept { _supervisor = supervisor; }
 
-  bool isAPIEnabled() const noexcept { return _api_enabled; }
-  bool onlySuperUser() const noexcept { return _api_switch == "jwt"; }
-
  private:
   std::vector<std::string> _output;
   std::vector<std::string> _levels;
@@ -65,7 +62,6 @@ class LoggerFeature final : public app::AppFeature {
   std::string _file_mode;
   std::string _file_group;
   std::string _time_format_string;
-  std::string _api_switch = "true";
   uint32_t _max_entry_length = 128U * 1048576U;
   uint32_t _max_queued_log_messages = 16384;
   bool _use_json = false;
@@ -85,7 +81,6 @@ class LoggerFeature final : public app::AppFeature {
   bool _log_request_parameters = true;
   bool _supervisor = false;
   bool _threaded = false;
-  bool _api_enabled = true;
 };
 
 }  // namespace sdb

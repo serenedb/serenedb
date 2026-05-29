@@ -40,7 +40,6 @@ static_assert(SerenedServer::id<LoggerFeature>() == 0);
 constexpr auto kNonServerFeatures = std::array{
   SerenedServer::id<GeneralServerFeature>(),
   SerenedServer::id<HttpEndpointProvider>(),
-  SerenedServer::id<LogBufferFeature>(),
   SerenedServer::id<ServerFeature>(),
   SerenedServer::id<SslServerFeature>(),
 };

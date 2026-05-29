@@ -20,53 +20,13 @@
 
 #include "pg/sdb_catalog/sdb_log.h"
 
-#include <bit>
-
-#include "app/app_server.h"
-#include "app/logger_feature.h"
-#include "basics/logger/logger.h"
-#include "rest_server/log_buffer_feature.h"
-
 namespace sdb::pg {
-namespace {
 
-constexpr uint64_t kNullMask = MaskFromNonNulls({
-  GetIndex(&SdbLog::id),
-  GetIndex(&SdbLog::timestamp),
-  GetIndex(&SdbLog::topic),
-  GetIndex(&SdbLog::level),
-  GetIndex(&SdbLog::message),
-});
-}
-
+// LogBufferFeature deleted; this catalog table returns no rows. Phase 5
+// (DuckDB logger backend) rewires it to query duckdb_logs() instead.
 template<>
 catalog::MaterializedData SystemTableSnapshot<SdbLog>::GetTableData() {
-  if (!SerenedServer::Instance().getFeature<LoggerFeature>().isAPIEnabled()) {
-    return {CreateColumns<SdbLog>(0), 0};
-  }
-
-  auto entries =
-    SerenedServer::Instance().getFeature<LogBufferFeature>().entries(
-      LogLevel::TRACE, 0, true, {});
-  std::vector<SdbLog> values;
-  values.reserve(entries.size());
-
-  for (auto& entry : entries) {
-    SdbLog row{
-      .id = entry.id,
-      .timestamp = std::bit_cast<uint64_t>(entry.timestamp),
-      .topic = entry.topic ? entry.topic->GetName() : "",
-      .level = magic_enum::enum_name(entry.level),
-      .message = entry.message,
-    };
-    values.push_back(std::move(row));
-  }
-
-  auto result = CreateColumns<SdbLog>(values.size());
-  for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row);
-  }
-  return {std::move(result), values.size()};
+  return {CreateColumns<SdbLog>(0), 0};
 }
 
 }  // namespace sdb::pg

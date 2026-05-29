@@ -51,7 +51,6 @@
 #include "rest_server/init_database_feature.h"
 #include "rest_server/language_check_feature.h"
 #include "rest_server/lockfile_feature.h"
-#include "rest_server/log_buffer_feature.h"
 #include "rest_server/privilege_feature.h"
 #include "rest_server/restart_action.h"
 #include "rest_server/server_feature.h"

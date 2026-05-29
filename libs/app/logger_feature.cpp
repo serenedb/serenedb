@@ -292,32 +292,6 @@ contains a single character with the server's role. The roles are:
     "mode to use for new log file, umask will be applied as well",
     new StringParameter(&_file_mode));
 
-  if (_threaded) {
-    // this option only makes sense for serened, not for serenesh etc.
-    options
-      ->addOption("--log.api-enabled",
-                  "Whether the log API is enabled (true) or not (false), or "
-                  "only enabled for superuser JWT (jwt).",
-                  new StringParameter(&_api_switch))
-      .setLongDescription(R"(Credentials are not written to log files.
-Nevertheless, some logged data might be sensitive depending on the context of
-the deployment. For example, if request logging is switched on, user requests
-and corresponding data might end up in log files. Therefore, a certain care
-with log files is recommended.
-
-Since the database server offers an API to control logging and query logging
-data, this API has to be secured properly. By default, the API is accessible
-for admin users (administrative access to the `_system` database). However,
-you can lock this down further.
-
-The possible values for this option are:
-
- - `true`: The `/_admin/log` API is accessible for admin users.
- - `jwt`: The `/_admin/log` API is accessible for the superuser only
-   (authentication with JWT token and empty username).
- - `false`: The `/_admin/log` API is not accessible at all.)");
-  }
-
   options
     ->addOption("--log.use-json-format",
                 "Use JSON as output format for logging.",
@@ -491,16 +465,6 @@ void LoggerFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
     log_time_formats::FormatFromName(_time_format_string);
   }
 
-  if (_api_switch == "true" || _api_switch == "on" || _api_switch == "On") {
-    _api_enabled = true;
-    _api_switch = "true";
-  } else if (_api_switch == "jwt" || _api_switch == "JWT") {
-    _api_enabled = true;
-    _api_switch = "jwt";
-  } else {
-    _api_enabled = false;
-    _api_switch = "false";
-  }
 
   if (!_file_mode.empty()) {
     try {

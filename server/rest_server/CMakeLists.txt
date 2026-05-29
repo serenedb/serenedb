@@ -10,7 +10,6 @@ target_sources(
         init_database_feature.cpp
         language_check_feature.cpp
         lockfile_feature.cpp
-        log_buffer_feature.cpp
         privilege_feature.cpp
         server_feature.cpp
         time_zone_feature.cpp

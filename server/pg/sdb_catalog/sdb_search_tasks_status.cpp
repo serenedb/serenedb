@@ -25,7 +25,6 @@
 #include "app/app_server.h"
 #include "app/logger_feature.h"
 #include "basics/logger/logger.h"
-#include "rest_server/log_buffer_feature.h"
 #include "storage_engine/search_engine.h"
 namespace sdb::pg {
 namespace {

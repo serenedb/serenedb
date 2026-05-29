@@ -38,9 +38,6 @@
 #include "general_server/general_server_feature.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
-#include "network/methods.h"
-#include "network/network_feature.h"
-#include "network/utils.h"
 #include "rest/general_request.h"
 #include "rest/http_response.h"
 #include "statistics/request_statistics.h"
@@ -179,127 +176,11 @@ void RestHandler::SetRequestStatistics(RequestStatistics::Item&& stat) {
 }
 
 yaclib::Future<Result> RestHandler::forwardRequest(bool& forwarded) {
+  // The full forwarding path was an ArangoDB Coordinator → DBServer hop
+  // through the cluster-internal fuerte RPC pool. SereneDB has no
+  // Coordinator role, so the function short-circuits.
   forwarded = false;
-  if (!ServerState::instance()->IsCoordinator()) {
-    return yaclib::MakeFuture<Result>();
-  }
-
-  ResultOr forward_result = forwardingTarget();
-  if (!forward_result) {
-    return yaclib::MakeFuture(std::move(forward_result).error());
-  }
-
-  auto& forward_content = *forward_result;
-  std::string server_id = std::get<0>(forward_content);
-  bool remove_header = std::get<1>(forward_content);
-
-  if (remove_header) {
-    _request->removeHeader(StaticStrings::kAuthorization);
-    _request->setUser("");
-  }
-
-  if (server_id.empty()) {
-    // no need to actually forward
-    return yaclib::MakeFuture<Result>();
-  }
-
-  NetworkFeature& nf = server().getFeature<NetworkFeature>();
-  network::ConnectionPool* pool = nf.pool();
-  if (pool == nullptr) {
-    // nullptr happens only during controlled shutdown
-    generateError(rest::ResponseCode::ServiceUnavailable, ERROR_SHUTTING_DOWN,
-                  "shutting down server");
-    return yaclib::MakeFuture<Result>(ERROR_SHUTTING_DOWN);
-  }
-  SDB_DEBUG("xxxxx", Logger::REQUESTS, "forwarding request ",
-            _request->messageId(), " to ", server_id);
-
-  forwarded = true;
-
-  const std::string& dbname = _request->databaseName();
-
-  std::map<std::string, std::string> headers{_request->headers().begin(),
-                                             _request->headers().end()};
-
-  // always remove HTTP "Connection" header, so that we don't relay
-  // "Connection: Close" or "Connection: Keep-Alive" or such
-  headers.erase(StaticStrings::kConnection);
-
-  if (headers.find(StaticStrings::kAuthorization) == headers.end()) {
-    // No authorization header is set.
-    // In this case, we have to produce a proper JWT token as authorization:
-    auto auth = AuthenticationFeature::instance();
-    if (auth != nullptr && auth->isActive()) {
-      // when in superuser mode, username is empty
-      // in this case ClusterComm will add the default superuser token
-      const std::string& username = _request->user();
-      if (!username.empty()) {
-        headers.emplace(
-          StaticStrings::kAuthorization,
-          "bearer " + fuerte::jwt::GenerateUserToken(
-                        auth->tokenCache().jwtSecret(), username));
-      }
-    }
-  }
-
-  network::RequestOptions options;
-  options.database = dbname;
-  options.timeout = network::Timeout(900);
-
-  // if the type is unset JSON is used
-  options.content_type = rest::ContentTypeToString(_request->contentType());
-
-  options.accept_type =
-    rest::ContentTypeToString(_request->contentTypeResponse());
-
-  for (const auto& i : _request->values()) {
-    options.param(i.first, i.second);
-  }
-
-  auto request_type = fuerte::FromString(
-    GeneralRequest::translateMethod(_request->requestType()));
-
-  std::string_view res_payload = _request->rawPayload();
-  vpack::BufferUInt8 payload(res_payload.size());
-  payload.append(res_payload.data(), res_payload.size());
-
-  nf.trackForwardedRequest();
-
-  auto future = network::SendRequestRetry(
-    pool, "server:" + server_id, request_type, _request->requestPath(),
-    std::move(payload), options, std::move(headers));
-  auto cb = [this, server_id, self = shared_from_this()](
-              network::Response&& response) -> Result {
-    auto res = network::FuerteToSereneErrorCode(response);
-    if (res != ERROR_OK) {
-      generateError(res);
-      return res;
-    }
-
-    resetResponse(static_cast<rest::ResponseCode>(response.statusCode()));
-    _response->setContentType(
-      fuerte::ToString(response.response().contentType()));
-
-    HttpResponse* http_response = dynamic_cast<HttpResponse*>(_response.get());
-    if (_response == nullptr) {
-      SDB_THROW(ERROR_INTERNAL, "invalid response type");
-    }
-    http_response->body().Impl() = response.response().payloadAsString();
-
-    const auto& result_headers = response.response().messageHeader().meta();
-    for (const auto& it : result_headers) {
-      if (it.first == "http/1.1") {
-        // never forward this header, as the HTTP response code was already set
-        // via "resetResponse" above
-        continue;
-      }
-      _response->setHeader(it.first, it.second);
-    }
-    _response->setHeaderNC(StaticStrings::kRequestForwardedTo, server_id);
-
-    return {};
-  };
-  return std::move(future).ThenInline(cb);
+  return yaclib::MakeFuture<Result>();
 }
 
 void RestHandler::handleExceptionPtr(std::exception_ptr eptr) noexcept try {

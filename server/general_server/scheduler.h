@@ -191,7 +191,6 @@ class Scheduler {
   static constexpr const uint64_t kNumberOfQueues = 4;
 
   SerenedServer& _server;
-  NetworkFeature& _nf;
   const uint64_t _min_threads;
   const uint64_t _max_threads;
   std::unique_ptr<folly::CPUThreadPoolExecutor> _executor_handle;

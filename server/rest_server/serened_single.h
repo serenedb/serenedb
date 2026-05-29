@@ -76,7 +76,6 @@ class LockfileFeature;
 class RocksDBRecoveryManager;
 class UpgradeFeature;
 class ServerFeature;
-class NetworkFeature;
 class HttpEndpointProvider;
 class GeneralServerFeature;
 class StatisticsFeature;
@@ -115,7 +114,6 @@ using SerenedFeaturesList = type::List<
   search::SearchEngine,
   UpgradeFeature,
   ServerFeature,
-  NetworkFeature,
   HttpEndpointProvider,
   GeneralServerFeature,
   StatisticsFeature,

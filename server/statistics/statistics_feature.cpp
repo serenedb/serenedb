@@ -45,7 +45,6 @@
 #include "metrics/histogram_builder.h"
 #include "metrics/metric.h"
 #include "metrics/metrics_feature.h"
-#include "network/network_feature.h"
 #include "rest_server/upgrade_feature.h"
 #include "statistics/connection_statistics.h"
 #include "statistics/descriptions.h"

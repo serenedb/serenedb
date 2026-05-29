@@ -90,11 +90,6 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       [](auto& server, type::Tag<LoggerFeature>) {
         return std::make_unique<LoggerFeature>(server, true);
       },
-      [](auto& server, type::Tag<NetworkFeature>) {
-        auto& metrics = server.template getFeature<metrics::MetricsFeature>();
-        return std::make_unique<NetworkFeature>(
-          server, metrics, network::ConnectionPool::Config{metrics});
-      },
       [&ret](auto& server, type::Tag<ServerFeature>) {
         return std::make_unique<ServerFeature>(server, &ret);
       },

@@ -43,7 +43,7 @@
 #include "metrics/gauge_builder.h"
 #include "metrics/histogram_builder.h"
 #include "metrics/metrics_feature.h"
-#include "network/network_feature.h"
+#include "basics/number_of_cores.h"
 #include "rest/http_response.h"
 #include "rest_server/endpoint_feature.h"
 #include "rest_server/upgrade_feature.h"
@@ -80,7 +80,8 @@ GeneralServerFeature::GeneralServerFeature(Server& server)
     _return_queue_time_header(true),
     _compress_response_threshold(0),
     _options_api_policy("jwt"),
-    _num_io_threads(NetworkFeature::defaultIOThreads()),
+    _num_io_threads(
+      std::max(uint64_t(1), uint64_t(number_of_cores::GetValue() / 4))),
     _request_body_size_http1(AddMetric(serenedb_request_body_size_http1{})),
     _request_body_size_http2(AddMetric(serenedb_request_body_size_http2{})),
     _http1_connections(AddMetric(serenedb_http1_connections_total{})),

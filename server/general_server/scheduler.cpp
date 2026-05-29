@@ -38,7 +38,6 @@
 #include "metrics/counter_builder.h"
 #include "metrics/gauge_builder.h"
 #include "metrics/metrics_feature.h"
-#include "network/network_feature.h"
 #include "rest/general_response.h"
 #include "statistics/request_statistics.h"
 
@@ -102,7 +101,6 @@ Scheduler::Scheduler(SerenedServer& server, uint64_t min_threads,
                      double unavailability_queue_fill_grade,
                      metrics::MetricsFeature& metrics)
   : _server{server},
-    _nf{server.getFeature<NetworkFeature>()},
     _min_threads{min_threads},
     _max_threads{max_threads},
     _max_fifo_sizes{max_queue_size, fifo1_size, fifo2_size, fifo3_size},
@@ -239,9 +237,10 @@ void Scheduler::queue(RequestPriority prio, folly::Func func) noexcept {
         if (ongoing < _ongoing_low_priority_limit) {
           return false;
         }
-        // Because jobs may fan out to multiple servers and shards, we also
-        // limit dequeuing based on the number of internal requests in flight
-        return _nf.isSaturated();
+        // Cluster-RPC saturation backpressure was the old reason to refuse
+        // a dequeue here; without a cluster RPC pool the only backpressure
+        // is the ongoing-low-priority-limit checked above.
+        return false;
       }();
       if (needs_reschedule) {
         queue(RequestPriority::Low, std::move(func));

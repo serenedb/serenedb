@@ -43,7 +43,6 @@
 #include "general_server/ssl_server_feature.h"
 #include "general_server/state.h"
 #include "metrics/metrics_feature.h"
-#include "network/network_feature.h"
 #include "pg/pg_feature.h"
 #include "rest_server/bootstrap_feature.h"
 #include "rest_server/daemon_feature.h"

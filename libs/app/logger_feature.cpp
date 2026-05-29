@@ -53,14 +53,9 @@ namespace sdb {
 
 using namespace options;
 
-LoggerFeature::LoggerFeature(app::AppServer& server, bool threaded)
+LoggerFeature::LoggerFeature(app::AppServer& server)
   : AppFeature(server, name()),
-    _time_format_string(log_time_formats::DefaultFormatName()),
-    _threaded(threaded) {
-  // note: we use the _threaded option to determine whether we are serened
-  // (_threaded = true) or one of the client tools (_threaded = false). in
-  // the latter case we disable some options for the Logger, which only make
-  // sense when we are running in server mode
+    _time_format_string(log_time_formats::DefaultFormatName()) {
   setOptional(false);
 
   _levels.push_back("info");
@@ -340,43 +335,15 @@ If you set this option to `auto`, the hostname is automatically determined.)");
                      new BooleanParameter(&_thread_name),
                      options::MakeDefaultFlags(options::Flags::Uncommon));
 
-  if (_threaded) {
-    // this option only makes sense for serened, not for serenesh etc.
-    options->addOption("--log.keep-logrotate",
-                       "Keep the old log file after receiving a SIGHUP.",
-                       new BooleanParameter(&_keep_log_rotate),
-                       options::MakeDefaultFlags(options::Flags::Uncommon));
-  }
+  options->addOption("--log.keep-logrotate",
+                     "Keep the old log file after receiving a SIGHUP.",
+                     new BooleanParameter(&_keep_log_rotate),
+                     options::MakeDefaultFlags(options::Flags::Uncommon));
 
   options->addOption("--log.foreground-tty", "Also log to TTY if backgrounded.",
                      new BooleanParameter(&_foreground_tty),
                      options::MakeDefaultFlags(options::Flags::Uncommon,
                                                options::Flags::Dynamic));
-
-  options
-    ->addOption("--log.force-direct",
-                "Do not start a separate thread for logging.",
-                new BooleanParameter(&_force_direct),
-                options::MakeDefaultFlags(options::Flags::Uncommon))
-    .setLongDescription(R"(You can use this option to disable logging in an
-extra logging thread. If set to `true`, any log messages are immediately
-printed in the thread that triggered the log message. This is non-optimal for
-performance but can aid debugging. If set to `false`, log messages are handed
-off to an extra logging thread, which asynchronously writes the log messages.)");
-
-  options
-    ->addOption(
-      "--log.max-queued-entries",
-      "Upper limit of log entries that are queued in a background thread.",
-      new UInt32Parameter(&_max_queued_log_messages),
-      options::MakeDefaultFlags(options::Flags::Uncommon))
-
-    .setLongDescription(R"(Log entries are pushed on a queue for asynchronous
-writing unless you enable the `--log.force-direct` startup option. If you use a
-slow log output (e.g. syslog), the queue might grow and eventually overflow.
-
-You can configure the upper bound of the queue with this option. If the queue is
-full, log entries are written synchronously until the queue has space again.)");
 
   options->addOption(
     "--log.request-parameters",
@@ -508,11 +475,7 @@ void LoggerFeature::prepare() {
     log::Appender::addAppender(log::GetDefaultLogGroup(), "-");
   }
 
-  if (_force_direct || !_threaded) {
-    log::Initialize();
-  } else {
-    log::InitializeAsync(server(), _max_queued_log_messages);
-  }
+  log::Initialize();
 }
 
 void LoggerFeature::unprepare() { log::Flush(); }

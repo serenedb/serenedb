@@ -42,15 +42,13 @@ class LoggerFeature final : public app::AppFeature {
  public:
   static constexpr std::string_view name() { return "Logger"; }
 
-  LoggerFeature(app::AppServer& server, bool threaded);
+  explicit LoggerFeature(app::AppServer& server);
   ~LoggerFeature() final;
 
   void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
   void prepare() final;
   void unprepare() final;
-
-  void disableThreaded() noexcept { _threaded = false; }
 
  private:
   std::vector<std::string> _output;
@@ -62,7 +60,6 @@ class LoggerFeature final : public app::AppFeature {
   std::string _file_group;
   std::string _time_format_string;
   uint32_t _max_entry_length = 128U * 1048576U;
-  uint32_t _max_queued_log_messages = 16384;
   bool _use_color = true;
   bool _use_control_escaped = true;
   bool _use_unicode_escaped = false;
@@ -73,10 +70,8 @@ class LoggerFeature final : public app::AppFeature {
   bool _thread_name = false;
   bool _keep_log_rotate = false;
   bool _foreground_tty = false;
-  bool _force_direct = false;
   bool _show_ids = true;
   bool _log_request_parameters = true;
-  bool _threaded = false;
 };
 
 }  // namespace sdb

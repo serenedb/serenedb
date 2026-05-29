@@ -48,7 +48,6 @@
 #include "basics/logger/escaper.h"
 #include "basics/logger/log_group.h"
 #include "basics/logger/log_level.h"
-#include "basics/logger/log_thread.h"
 #include "basics/logger/logger.h"
 #include "basics/operating-system.h"
 #include "basics/sink.h"
@@ -138,38 +137,7 @@ std::string gHostname;
 void (*gWriterFn)(std::string_view, std::string&) =
   &Escaper<ControlCharsEscaper, UnicodeCharsRetainer>::writeIntoOutputBuffer;
 
-// logger thread. only populated when threaded logging is selected.
-// the pointer must only be used with atomic accessors after the ref counter
-// has been increased. Best to use the ThreadRef class for this!
-std::atomic<size_t> gLoggingThreadRefs = 0;
-std::atomic<LogThread*> gLoggingThread = nullptr;
-
-struct ThreadRef {
-  ThreadRef() {
-    // (1) - this acquire-fetch-add synchronizes with the release-fetch-add (5)
-    gLoggingThreadRefs.fetch_add(1, std::memory_order_acquire);
-    // (2) - this acquire-load synchronizes with the release-store (4)
-    _thread = gLoggingThread.load(std::memory_order_acquire);
-  }
-  ~ThreadRef() {
-    // (3) - this relaxed-fetch-add is potentially part of a release-sequence
-    //       headed by (5)
-    gLoggingThreadRefs.fetch_sub(1, std::memory_order_relaxed);
-  }
-
-  ThreadRef(const ThreadRef&) = delete;
-  ThreadRef(ThreadRef&&) = delete;
-  ThreadRef& operator=(const ThreadRef&) = delete;
-  ThreadRef& operator=(ThreadRef&&) = delete;
-
-  LogThread* operator->() const noexcept { return _thread; }
-  operator bool() const noexcept { return _thread != nullptr; }
-
- private:
-  LogThread* _thread;
-};
-
-void Append(LogGroup& group, std::unique_ptr<Message> msg, bool force_direct) {
+void Append(LogGroup& group, std::unique_ptr<Message> msg, bool /*force_direct*/) {
   SDB_ASSERT(msg != nullptr);
 
   // check if we need to shrink the message here
@@ -177,9 +145,7 @@ void Append(LogGroup& group, std::unique_ptr<Message> msg, bool force_direct) {
     msg->shrink(group.maxLogEntryLength());
   }
 
-  // first log to all "global" appenders, which are the in-memory ring buffer
-  // logger and the metrics counter. note that these loggers do not require any
-  // configuration so we can always and safely invoke them.
+  // first log to all "global" appenders.
   Appender::logGlobal(group, *msg);
 
   if (!gActive.load(std::memory_order_acquire)) {
@@ -187,27 +153,11 @@ void Append(LogGroup& group, std::unique_ptr<Message> msg, bool force_direct) {
     AppenderStdStream::writeLogMessage(
       STDERR_FILENO, (isatty(STDERR_FILENO) == 1), msg->level, msg->message);
   } else {
-    // now either queue or output the message
-    bool handled = false;
-    if (!force_direct) {
-      // check if we have a logging thread
-      ThreadRef logging_thread;
-
-      if (logging_thread) {
-        handled = logging_thread->log(group, msg);
-      }
+    SDB_IF_FAILURE("log::Append") {
+      // cut off all logging
+      return;
     }
-
-    if (!handled) {
-      SDB_ASSERT(msg != nullptr);
-
-      SDB_IF_FAILURE("log::Append") {
-        // cut off all logging
-        return;
-      }
-
-      Appender::log(group, *msg);
-    }
+    Appender::log(group, *msg);
   }
 }
 
@@ -752,67 +702,10 @@ void Initialize() {
   }
 }
 
-void InitializeAsync(app::AppServer& server, uint32_t max_queued_log_messages) {
-  Initialize();
-
-  // logging is now active
-  auto logging_thread = std::make_unique<LogThread>(
-    server, std::string(log::kLogThreadName), max_queued_log_messages);
-  if (!logging_thread->start()) {
-    SDB_FATAL("xxxxx", Logger::FIXME, "could not start logging thread");
-  }
-
-  // (4) - this release-store synchronizes with the acquire-load (2)
-  gLoggingThread.store(logging_thread.release(), std::memory_order_release);
-}
-
 void Shutdown() {
   if (!gActive.exchange(false, std::memory_order_acquire)) {
     // if logging not activated or already shut down, then we can abort here
     return;
-  }
-  // logging is now inactive
-
-  // reset the instance variable in Logger, so that others won't see it
-  // anymore
-  std::unique_ptr<LogThread> logging_thread(
-    gLoggingThread.exchange(nullptr, std::memory_order_relaxed));
-
-  // logging is now inactive (this will terminate the logging thread)
-  // join with the logging thread
-  if (logging_thread != nullptr) {
-    // (5) - this release-fetch-add synchronizes with the acquire-fetch-add
-    // (1) Even though a fetch-add with 0 is essentially a noop, this is
-    // necessary to ensure that threads which try to get a reference to the
-    // _logging_thread actually see the new nullptr value.
-    gLoggingThreadRefs.fetch_add(0, std::memory_order_release);
-
-    // wait until all threads have dropped their reference to the logging
-    // thread
-    while (gLoggingThreadRefs.load(std::memory_order_relaxed)) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-
-    ThreadNameFetcher name_fetcher;
-    std::string_view current_thread_name = name_fetcher.get();
-    if (log::kLogThreadName == current_thread_name) {
-      // oops, the LogThread itself crashed...
-      // so we need to flush the log messages here ourselves - if we waited
-      // for the LogThread to flush them, we would wait forever.
-      logging_thread->processPendingMessages();
-      logging_thread->beginShutdown();
-    } else {
-      int tries = 0;
-      while (logging_thread->hasMessages() && ++tries < 10) {
-        logging_thread->wakeup();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-      }
-      logging_thread->beginShutdown();
-      // wait until logging thread has logged all active messages
-      while (logging_thread->isRunning()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-      }
-    }
   }
 
   // cleanup appenders
@@ -822,15 +715,7 @@ void Shutdown() {
 }
 
 void Flush() noexcept {
-  if (!gActive.load(std::memory_order_acquire)) {
-    // logging not (or not yet) initialized
-    return;
-  }
-
-  ThreadRef logging_thread;
-  if (logging_thread) {
-    logging_thread->flush();
-  }
+  // Sync logger: nothing to flush — every Append() returns after writing.
 }
 
 std::vector<LogTopic*> GetTopics() { return {kTopics.begin(), kTopics.end()}; }

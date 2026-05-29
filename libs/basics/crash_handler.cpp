@@ -242,11 +242,7 @@ void LogStacktrace(void* ucontext = nullptr) try {
 
   ThreadNameFetcher name_fetcher;
   std::string_view current_thread_name = name_fetcher.get();
-  if (current_thread_name == log::kLogThreadName) {
-    // we must not log a backtrace from the logging thread itself. if we would
-    // do, we may cause a deadlock
-    return;
-  }
+
   // fixed buffer for constructing temporary log messages (to avoid malloc)
   SmallString buffer;
 

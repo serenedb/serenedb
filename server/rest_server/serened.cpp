@@ -78,7 +78,7 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
                                                      kNonServerFeatures);
       },
       [](auto& server, type::Tag<LoggerFeature>) {
-        return std::make_unique<LoggerFeature>(server, true);
+        return std::make_unique<LoggerFeature>(server);
       },
       [&ret](auto& server, type::Tag<ServerFeature>) {
         return std::make_unique<ServerFeature>(server, &ret);

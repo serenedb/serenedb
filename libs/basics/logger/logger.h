@@ -148,7 +148,6 @@ struct Logger {
 
 namespace log {
 
-inline constexpr std::string_view kLogThreadName = "Logging";
 
 struct Message {
   Message(const Message&) = delete;
@@ -231,7 +230,6 @@ inline bool IsEnabled(LogLevel level, const LogTopic& topic) noexcept {
 }
 
 void Initialize();
-void InitializeAsync(app::AppServer&, uint32_t max_queued_log_messages);
 void Shutdown();
 void Flush() noexcept;
 

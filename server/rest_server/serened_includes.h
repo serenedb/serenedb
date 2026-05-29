@@ -59,7 +59,6 @@
 #include "rest_server/privilege_feature.h"
 #include "rest_server/restart_action.h"
 #include "rest_server/server_feature.h"
-#include "rest_server/server_id_feature.h"
 #include "rest_server/soft_shutdown_feature.h"
 #include "rest_server/supervisor_feature.h"
 #include "rest_server/time_zone_feature.h"

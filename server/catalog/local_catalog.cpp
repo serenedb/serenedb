@@ -701,6 +701,22 @@ class SnapshotImpl : public Snapshot {
       .value_or(std::vector<std::shared_ptr<PgSqlView>>{});
   }
 
+  std::vector<std::shared_ptr<Sequence>> GetSequences(
+    ObjectId db_id, std::string_view schema) const final {
+    return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+      .transform([&](ObjectId schema_id) {
+        const auto& schema_deps = GetDependency<SchemaDependency>(schema_id);
+        return schema_deps->sequences |
+               std::views::transform([&](ObjectId sequence_id) {
+                 auto it = _objects.find(sequence_id);
+                 SDB_ASSERT(it != _objects.end());
+                 return basics::downCast<Sequence>(*it);
+               }) |
+               std::ranges::to<std::vector>();
+      })
+      .value_or(std::vector<std::shared_ptr<Sequence>>{});
+  }
+
   std::vector<std::shared_ptr<PgSqlFunction>> GetFunctions(
     ObjectId db_id, std::string_view schema) const final {
     return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)

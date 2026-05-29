@@ -532,6 +532,18 @@ void DuckDBEntryCache::ScanEntries(
         run([&](auto v) { snapshot.VisitIndexes(database, schema, v); },
             kIndex);
         break;
+      case SEQUENCE_ENTRY:
+        run(
+          [&](auto v) {
+            snapshot.VisitRelations(
+              database, schema, [&](const catalog::Object& o) {
+                if (o.GetType() == catalog::ObjectType::Sequence) {
+                  v(o);
+                }
+              });
+          },
+          kRelation);
+        break;
       case SCALAR_FUNCTION_ENTRY:
       case MACRO_ENTRY:
       case TABLE_FUNCTION_ENTRY:

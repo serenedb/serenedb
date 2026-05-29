@@ -118,6 +118,8 @@ struct Snapshot {
     ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<Index>> GetIndexes(
     ObjectId database, std::string_view schema) const = 0;
+  virtual std::vector<std::shared_ptr<Sequence>> GetSequences(
+    ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<Tokenizer>> GetTokenizers(
     ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<PgSqlType>> GetTypes(

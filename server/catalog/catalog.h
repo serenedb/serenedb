@@ -317,7 +317,8 @@ struct LogicalCatalog {
   virtual Result ChangeRole(std::string_view name,
                             ChangeCallback<catalog::Role> callback) = 0;
 
-  virtual Result DropDatabase(std::string_view name) = 0;
+  virtual Result DropDatabase(std::string_view name,
+                              duckdb::shared_ptr<void> keep_alive) = 0;
   virtual Result DropRole(std::string_view name) = 0;
   virtual Result DropSchema(std::string_view database, std::string_view name,
                             bool cascade) = 0;

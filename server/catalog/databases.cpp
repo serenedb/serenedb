@@ -42,7 +42,8 @@ Result CreateDatabase(const ExecContext& exec, std::string_view name) {
     .CreateDatabase(std::move(database));
 }
 
-Result DropDatabase(const ExecContext& exec, std::string_view db_name) {
+Result DropDatabase(const ExecContext& exec, std::string_view db_name,
+                    duckdb::shared_ptr<void> keep_alive) {
   if (exec.systemAuthLevel() != auth::Level::RW) {
     return {ERROR_FORBIDDEN};
   }
@@ -50,7 +51,7 @@ Result DropDatabase(const ExecContext& exec, std::string_view db_name) {
   return SerenedServer::Instance()
     .getFeature<catalog::CatalogFeature>()
     .Global()
-    .DropDatabase(db_name);
+    .DropDatabase(db_name, std::move(keep_alive));
 }
 
 }  // namespace sdb::catalog

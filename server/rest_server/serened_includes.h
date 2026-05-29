@@ -22,7 +22,6 @@
 #pragma once
 
 #include "app/app_server.h"
-#include "app/config.h"
 #include "app/global_context.h"
 #include "app/language.h"
 #include "app/logger_feature.h"

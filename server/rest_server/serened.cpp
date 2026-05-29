@@ -75,10 +75,6 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       []<typename T>(auto& server, type::Tag<T>) {
         return std::make_unique<T>(server);
       },
-      [&name](auto& server, type::Tag<ConfigFeature>) {
-        return std::make_unique<ConfigFeature>(
-          server, name, [] { return GetServerOptions().app_print_version; });
-      },
       [](auto& server, type::Tag<InitDatabaseFeature>) {
         return std::make_unique<InitDatabaseFeature>(server,
                                                      kNonServerFeatures);

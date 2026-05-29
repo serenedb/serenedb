@@ -56,7 +56,6 @@ class SearchEngine;
 class LoggerFeature;
 class ServerOptionsFeature;
 class SslServerFeature;
-class ConfigFeature;
 class LogBufferFeature;
 class MaxMapCountFeature;
 class FileDescriptorsFeature;
@@ -86,7 +85,6 @@ using SerenedFeaturesList = type::List<
   LoggerFeature,
   ServerOptionsFeature,
   SslServerFeature,
-  ConfigFeature,
   metrics::MetricsFeature,
   LogBufferFeature,
 #ifdef SERENEDB_HAVE_GETRLIMIT

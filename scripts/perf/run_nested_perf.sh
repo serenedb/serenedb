@@ -105,7 +105,7 @@ run_setup() {
 NDB_SQL_PATH=$(printf '%s' "${NATIVE_DB}" | sed "s/'/''/g")
 
 run_setup "attach_native_db" "${BUILD_THREADS}" "
-ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
+ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);
 SET search_path TO public, native_db.main;
 "
 

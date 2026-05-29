@@ -76,7 +76,7 @@ start_server() {
 
 reattach() {
 	psql "${PSQL_CONN}" -v ON_ERROR_STOP=1 -X >/dev/null <<EOF
-ATTACH IF NOT EXISTS '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
+ATTACH IF NOT EXISTS '${NDB_SQL_PATH}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);
 SET search_path TO public, native_db.main;
 EOF
 }

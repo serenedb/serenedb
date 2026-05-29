@@ -82,11 +82,11 @@ class DropTask {
     return _object.expired() && AllowToDropDependencies();
   }
 
-  virtual bool AllowToDropDependencies() const noexcept { return true; }
-
   virtual AsyncResult Execute() = 0;
   virtual std::string_view GetName() const noexcept = 0;
   virtual std::string GetContext() const noexcept = 0;
+  virtual bool AllowToDropDependencies() const noexcept = 0;
+  virtual ~DropTask() = default;
 
  protected:
   ObjectId _parent_id;
@@ -96,8 +96,7 @@ class DropTask {
   std::weak_ptr<Object> _object;
 };
 
-class TableShardDrop final : public DropTask,
-                             std::enable_shared_from_this<TableShardDrop> {
+class TableShardDrop final : public DropTask {
  public:
   TableShardDrop(ObjectId id, ObjectId parent_id, uint64_t size)
     : DropTask{id, parent_id}, _size{size} {}
@@ -115,12 +114,13 @@ class TableShardDrop final : public DropTask,
 
   AsyncResult Execute() final;
 
+  bool AllowToDropDependencies() const noexcept final { return true; }
+
  private:
   uint64_t _size;
 };
 
-struct IndexDrop final : public DropTask,
-                         std::enable_shared_from_this<IndexDrop> {
+struct IndexDrop final : public DropTask {
  public:
   IndexDrop(ObjectId id, ObjectType type, ObjectId db_id, ObjectId schema_id,
             ObjectId table_id, bool is_root = false)
@@ -161,8 +161,7 @@ struct IndexDrop final : public DropTask,
   std::weak_ptr<IndexShard> _shard;
 };
 
-struct TableDrop final : public DropTask,
-                         std::enable_shared_from_this<TableDrop> {
+struct TableDrop final : public DropTask {
  public:
   static constexpr std::string_view kName = "table drop";
 
@@ -212,8 +211,7 @@ struct TableDrop final : public DropTask,
   std::shared_ptr<TableShardDrop> _shard_drop;
 };
 
-struct SchemaDrop final : public DropTask,
-                          std::enable_shared_from_this<SchemaDrop> {
+struct SchemaDrop final : public DropTask {
  public:
   SchemaDrop(ObjectId schema_id, std::vector<std::shared_ptr<TableDrop>> tables,
              ObjectId db_id, bool is_root = false)
@@ -245,8 +243,7 @@ struct SchemaDrop final : public DropTask,
   std::vector<std::shared_ptr<TableDrop>> _tables;
 };
 
-struct DatabaseDrop final : public DropTask,
-                            std::enable_shared_from_this<DatabaseDrop> {
+struct DatabaseDrop final : public DropTask {
  public:
   DatabaseDrop(ObjectId db_id, std::vector<std::shared_ptr<SchemaDrop>> schemas)
     : DropTask{db_id, id::kInstance, true}, _schemas{std::move(schemas)} {}

@@ -1187,6 +1187,148 @@ TEST_P(RangeFilterTestCase, by_range_numeric) { ByRangeSequentialNumeric(); }
 
 TEST_P(RangeFilterTestCase, by_range_order) { ByRangeSequentialOrder(); }
 
+TEST_P(RangeFilterTestCase, by_range_order_multi_segment_field_stats) {
+  // two segments, both holding the queried field
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+    gen.reset();
+    add_segment(gen, irs::kOmAppend);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_EQ(2, rdr.size());
+
+  // field stats are summed across every segment that has the field
+  uint64_t expected_docs_with_field = 0;
+  for (const auto& segment : rdr) {
+    if (const auto* field = segment.field("value")) {
+      expected_docs_with_field += field->docs_count();
+    }
+  }
+  ASSERT_GT(expected_docs_with_field, 0u);
+
+  const irs::FieldCollector* shared_field = nullptr;
+  size_t finish_count = 0;
+
+  irs::Scorer::ptr sort{std::make_unique<tests::sort::CustomSort>()};
+  auto& scorer = static_cast<tests::sort::CustomSort&>(*sort);
+  scorer.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector* field,
+                                  const irs::TermCollector* term) -> void {
+    ++finish_count;
+    ASSERT_NE(nullptr, field);
+    ASSERT_NE(nullptr, term);
+    if (shared_field == nullptr) {
+      shared_field = field;
+    } else {
+      ASSERT_EQ(shared_field, field);  // same collector reused for every term
+    }
+    ASSERT_EQ(expected_docs_with_field, field->docs_with_field);
+  };
+
+  irs::ByRange filter;
+  *filter.mutable_field() = "value";
+  filter.mutable_options()->range.min =
+    irs::numeric_utils::numeric_traits<double_t>::ninf();
+  filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
+  filter.mutable_options()->range.max =
+    irs::numeric_utils::numeric_traits<double_t>::inf();
+  filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+
+  auto q = filter.prepare({.index = rdr, .scorer = sort.get()});
+  ASSERT_NE(nullptr, q);
+
+  ASSERT_GT(finish_count, 1u);       // multiple scored terms
+  ASSERT_NE(nullptr, shared_field);  // field stats were collected
+}
+
+TEST_P(RangeFilterTestCase, by_range_order_limit_field_stats) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+    gen.reset();
+    add_segment(gen, irs::kOmAppend);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_EQ(2, rdr.size());
+
+  const irs::FieldCollector* shared_field = nullptr;
+  size_t finish_count = 0;
+
+  irs::Scorer::ptr sort{std::make_unique<tests::sort::CustomSort>()};
+  auto& scorer = static_cast<tests::sort::CustomSort&>(*sort);
+  scorer.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector* field,
+                                  const irs::TermCollector* term) -> void {
+    ++finish_count;
+    ASSERT_NE(nullptr, field);
+    ASSERT_NE(nullptr, term);
+    if (shared_field == nullptr) {
+      shared_field = field;
+    } else {
+      ASSERT_EQ(shared_field, field);
+    }
+  };
+
+  irs::ByRange filter;
+  *filter.mutable_field() = "value";
+  filter.mutable_options()->range.min =
+    irs::numeric_utils::numeric_traits<double_t>::ninf();
+  filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
+  filter.mutable_options()->range.max =
+    irs::numeric_utils::numeric_traits<double_t>::inf();
+  filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+  filter.mutable_options()->scored_terms_limit = 2;
+
+  auto q = filter.prepare({.index = rdr, .scorer = sort.get()});
+  ASSERT_NE(nullptr, q);
+
+  ASSERT_GT(finish_count, 0u);
+  ASSERT_LE(finish_count, 2u);  // capped by scored_terms_limit
+}
+
+TEST_P(RangeFilterTestCase, by_range_order_no_match_field_stats) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+    gen.reset();
+    add_segment(gen, irs::kOmAppend);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_EQ(2, rdr.size());
+
+  size_t finish_count = 0;
+  irs::Scorer::ptr sort{std::make_unique<tests::sort::CustomSort>()};
+  auto& scorer = static_cast<tests::sort::CustomSort&>(*sort);
+  scorer.collectors_collect = [&](irs::byte_type*, const irs::FieldCollector*,
+                                  const irs::TermCollector*) -> void {
+    ++finish_count;
+  };
+
+  irs::NumericTokenizer min_stream;
+  min_stream.reset((double_t)1e9);
+  auto* min_term = irs::get<irs::TermAttr>(min_stream);
+  ASSERT_TRUE(min_stream.next());
+
+  irs::ByRange filter;
+  *filter.mutable_field() = "value";
+  filter.mutable_options()->range.min = min_term->value;
+  filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
+  filter.mutable_options()->range.max =
+    irs::numeric_utils::numeric_traits<double_t>::inf();
+  filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+
+  auto q = filter.prepare({.index = rdr, .scorer = sort.get()});
+  ASSERT_NE(nullptr, q);
+  ASSERT_EQ(0u, finish_count);  // nothing scored, no field stats collected
+}
+
 TEST_P(RangeFilterTestCase, visit) {
   // add segment
   {

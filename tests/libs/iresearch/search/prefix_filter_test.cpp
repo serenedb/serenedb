@@ -346,6 +346,100 @@ TEST_P(PrefixFilterTestCase, visit) {
   visitor.reset();
 }
 
+TEST_P(PrefixFilterTestCase, by_prefix_order_partial_field_stats) {
+  // segment 1 carries the "prefix" field
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  // segment 2 has no "prefix" field at all
+  {
+    tests::JsonDocGenerator gen(
+      resource("simple_sequential.json"),
+      [](tests::Document& doc, const std::string& name,
+         const tests::JsonDocGenerator::JsonValue& data) {
+        if (name == "name" && data.is_string()) {
+          doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        }
+      });
+    add_segment(gen, irs::kOmAppend);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_EQ(2, rdr.size());
+
+  // only the segments that have the field contribute to docs_with_field
+  uint64_t expected_docs_with_field = 0;
+  size_t segments_with_field = 0;
+  for (const auto& segment : rdr) {
+    if (const auto* field = segment.field("prefix")) {
+      expected_docs_with_field += field->docs_count();
+      ++segments_with_field;
+    }
+  }
+  ASSERT_EQ(1u, segments_with_field);  // field present in a single segment
+  ASSERT_GT(expected_docs_with_field, 0u);
+
+  const irs::FieldCollector* shared_field = nullptr;
+  size_t finish_count = 0;
+
+  std::array<irs::Scorer::ptr, 1> order{
+    std::make_unique<tests::sort::CustomSort>()};
+  auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
+  scorer.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector* field,
+                                  const irs::TermCollector* term) -> void {
+    ++finish_count;
+    ASSERT_NE(nullptr, field);
+    ASSERT_NE(nullptr, term);
+    if (shared_field == nullptr) {
+      shared_field = field;
+    } else {
+      ASSERT_EQ(shared_field, field);  // same collector reused for every term
+    }
+    ASSERT_EQ(expected_docs_with_field, field->docs_with_field);
+  };
+
+  auto q = MakeFilter("prefix", "").prepare({.index = rdr, .scorer = &scorer});
+  ASSERT_NE(nullptr, q);
+
+  ASSERT_GT(finish_count, 1u);       // multiple scored terms
+  ASSERT_NE(nullptr, shared_field);  // field stats were collected
+}
+
+TEST_P(PrefixFilterTestCase, by_prefix_order_multiple_terms_score) {
+  // single field "name", three terms with frequencies 2 / 1 / 3
+  {
+    auto writer = open_writer(irs::kOmCreate);
+    {
+      auto ctx = writer->GetBatch();
+      for (const auto* value : {"aa", "aa", "ab", "ac", "ac", "ac"}) {
+        auto doc = ctx.Insert();
+        tests::StringField field{"name", value};
+        doc.Insert(field);
+      }
+    }
+    writer->RefreshCommit();
+  }
+
+  auto rdr = open_reader();
+  ASSERT_EQ(1, rdr.size());
+
+  // prefix "a" matches all three terms; each doc carries exactly one term, so
+  // FrequencySort scores it 1 / docs_with_term:
+  //   doc 1,2 -> "aa" (freq 2) -> 0.5
+  //   doc 3   -> "ab" (freq 1) -> 1.0
+  //   doc 4,5,6 -> "ac" (freq 3) -> 1/3
+  ScoredDocs expected{
+    {1, {0.5f}},    {2, {0.5f}},    {3, {1.f}},
+    {4, {1.f / 3}}, {5, {1.f / 3}}, {6, {1.f / 3}},
+  };
+
+  irs::Scorer::ptr scorer{std::make_unique<tests::sort::FrequencySort>()};
+  CheckQuery(MakeFilter("name", "a"), std::span{&scorer, 1}, expected, rdr);
+}
+
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(prefix_filter_test, PrefixFilterTestCase,

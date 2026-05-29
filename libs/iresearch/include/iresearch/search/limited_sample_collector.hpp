@@ -131,6 +131,16 @@ class LimitedSampleCollector : private util::Noncopyable {
     if (!_scored_terms_limit) {
       return;  // nothing to score (optimization)
     }
+    if (_scored_states.empty()) {
+      return;
+    }
+    const auto field_name = _scored_states.front().state->reader->meta().name;
+    FieldCollector field_stats;
+    for (const auto& segment : index) {
+      if (const auto* field = segment.field(field_name)) {
+        field_stats.Collect(*field);
+      }
+    }
 
     // stats for a specific term
     absl::flat_hash_map<hashed_bytes_view, StatsState, HashedStrHash>
@@ -140,12 +150,10 @@ class LimitedSampleCollector : private util::Noncopyable {
     uint32_t stats_offset = 0;
     for (auto& scored_state : _scored_states) {
       SDB_ASSERT(scored_state.cookie);
-      auto& field = *scored_state.state->reader;
 
       // find the stats for the current term
-      const auto res =
-        term_stats.try_emplace(hashed_bytes_view{scored_state.term}, index,
-                               field.meta().name, scorer, stats_offset);
+      const auto res = term_stats.try_emplace(
+        hashed_bytes_view{scored_state.term}, scorer, stats_offset);
 
       auto& stats_entry = res.first->second;
 
@@ -166,26 +174,15 @@ class LimitedSampleCollector : private util::Noncopyable {
       stats_entry.resize(scorer ? scorer->stats_size() : 0);
       auto* stats_buf = const_cast<byte_type*>(stats_entry.data());
 
-      entry.second.term_stats.Finish(stats_buf, 0, &entry.second.field_stats);
+      entry.second.term_stats.Finish(stats_buf, 0, &field_stats);
     }
   }
 
  private:
   struct StatsState {
-    explicit StatsState(const IndexReader& index, std::string_view field_name,
-                        const Scorer* scorer, uint32_t& state_offset)
-      : term_stats{scorer, 1} {
-      // 1 term per bstring because a range is treated as a disjunction
-      for (const auto& segment : index) {
-        if (const auto* field = segment.field(field_name)) {
-          field_stats.Collect(*field);
-        }
-      }
+    explicit StatsState(const Scorer* scorer, uint32_t& state_offset)
+      : term_stats{scorer, 1}, stats_offset{state_offset++} {}
 
-      stats_offset = state_offset++;
-    }
-
-    FieldCollector field_stats;
     TermCollectorsFlat term_stats;
     uint32_t stats_offset;
   };

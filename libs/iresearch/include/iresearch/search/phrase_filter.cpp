@@ -228,7 +228,8 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
   const auto is_ord_empty = !ctx.scorer;
 
   // stats collectors
-  StatsCollectors stats_collectors{ctx.scorer, phrase_size};
+  FieldCollector field_stats{ctx.scorer};
+  TermCollectorsFlat term_stats{ctx.scorer, phrase_size};
 
   // per segment phrase states
   FixedPhraseQuery::states_t phrase_states{ctx.memory, ctx.index.size()};
@@ -248,8 +249,8 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
     }
 
     // collect field statistics once per segment
-    stats_collectors.CollectField(*reader);
-    ptv.Reset(stats_collectors.Terms());
+    field_stats.Collect(*reader);
+    ptv.Reset(term_stats);
 
     for (const auto& word : options) {
       SDB_ASSERT(std::get_if<ByTermOptions>(&word.part));
@@ -296,7 +297,7 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
     pos_itr->offs_max = term.offs_max;
     pos_itr->offs_min = term.offs_min;
     pos_itr->lead_offset = look_back += term.offs_max;
-    stats_collectors.Finish(stats_buf, term_idx);
+    term_stats.Finish(stats_buf, term_idx, field_stats.Get());
     ++pos_itr;
     ++term_idx;
   }

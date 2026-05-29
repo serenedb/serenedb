@@ -78,7 +78,7 @@ inline auto ExecuteLevenshtein(uint8_t max_distance,
 
 template<typename StatesType>
 struct AggregatedStatsVisitor : util::Noncopyable {
-  AggregatedStatsVisitor(StatesType& states, StatsCollectors& stats) noexcept
+  AggregatedStatsVisitor(StatesType& states, TermCollectorsFlat& stats) noexcept
     : stats(stats), states(states) {}
 
   void operator()(const irs::SubReader& segment, const irs::TermReader& field,
@@ -93,11 +93,11 @@ struct AggregatedStatsVisitor : util::Noncopyable {
   void operator()(SeekCookie::ptr& cookie) const {
     SDB_ASSERT(segment);
     SDB_ASSERT(field);
-    stats.CollectTerm(0, *cookie);
+    stats.Collect(0, *cookie);
     state->scored_states.emplace_back(std::move(cookie), 0, boost);
   }
 
-  StatsCollectors& stats;
+  TermCollectorsFlat& stats;
   StatesType& states;
   mutable typename StatesType::state_type* state{};
   mutable const SubReader* segment{};
@@ -110,17 +110,17 @@ class TopTermsCollectorImpl
  public:
   using BaseType = irs::TopTermsCollector<TopTermState<score_t>>;
 
-  TopTermsCollectorImpl(size_t size, StatsCollectors& stats)
+  TopTermsCollectorImpl(size_t size, FieldCollector& stats)
     : BaseType(size), _stats(stats) {}
 
   void Prepare(const SubReader& segment, const TermReader& field,
                const SeekTermIterator& terms) {
-    _stats.CollectField(field);
+    _stats.Collect(field);
     BaseType::Prepare(segment, field, terms);
   }
 
  private:
-  StatsCollectors& _stats;
+  FieldCollector& _stats;
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -195,24 +195,25 @@ Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
                                             bytes_view prefix, bytes_view term,
                                             size_t terms_limit,
                                             const ParametricDescription& d) {
-  StatsCollectors stats_collectors{ctx.scorer, 1};
+  FieldCollector field_stats{ctx.scorer};
+  TermCollectorsFlat term_stats{ctx.scorer, 1};
   MultiTermQuery::States states{ctx.memory, ctx.index.size()};
 
   if (!terms_limit) {
-    AllTermsCollector term_collector{states, stats_collectors};
+    AllTermsCollector term_collector{states, field_stats, term_stats};
     term_collector.stat_index(0);  // aggregate stats from different terms
 
     if (!CollectTerms(ctx.index, field, prefix, term, d, term_collector)) {
       return Filter::Query::empty();
     }
   } else {
-    TopTermsCollectorImpl term_collector(terms_limit, stats_collectors);
+    TopTermsCollectorImpl term_collector(terms_limit, field_stats);
 
     if (!CollectTerms(ctx.index, field, prefix, term, d, term_collector)) {
       return Filter::Query::empty();
     }
 
-    AggregatedStatsVisitor aggregate_stats{states, stats_collectors};
+    AggregatedStatsVisitor aggregate_stats{states, term_stats};
     term_collector.Visit([&aggregate_stats](TopTermState<score_t>& state) {
       aggregate_stats.boost = std::max(0.f, state.key);
       state.Visit(aggregate_stats);
@@ -223,7 +224,7 @@ Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
     1, MultiTermQuery::Stats::allocator_type{ctx.memory});
   stats.back().resize(GetStatsSize(ctx.scorer), 0);
   auto* stats_buf = stats[0].data();
-  stats_collectors.Finish(stats_buf, 0);
+  term_stats.Finish(stats_buf, 0, field_stats.Get());
 
   return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),
                                               std::move(stats), ctx.boost,

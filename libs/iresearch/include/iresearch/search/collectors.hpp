@@ -152,33 +152,4 @@ static_assert(std::is_nothrow_move_assignable_v<TermCollectorsFlat>);
 static_assert(std::is_nothrow_move_constructible_v<TermCollectorsVariadic>);
 static_assert(std::is_nothrow_move_assignable_v<TermCollectorsVariadic>);
 
-class StatsCollectors {
- public:
-  StatsCollectors(const Scorer* scorer, size_t size)
-    : _field{scorer}, _terms{scorer, size} {}
-
-  StatsCollectors(StatsCollectors&&) = default;
-  StatsCollectors& operator=(StatsCollectors&&) = default;
-
-  void CollectField(const TermReader& field) noexcept { _field.Collect(field); }
-
-  void CollectTerm(size_t term_idx, const AttributeProvider& attrs) {
-    _terms.Collect(term_idx, attrs);
-  }
-
-  void Finish(byte_type* stats_buf, size_t term_idx) const {
-    _terms.Finish(stats_buf, term_idx, _field.Get());
-  }
-
-  FieldCollector& Field() noexcept { return _field; }
-  TermCollectorsFlat& Terms() noexcept { return _terms; }
-
- private:
-  FieldCollector _field;
-  TermCollectorsFlat _terms;
-};
-
-static_assert(std::is_nothrow_move_constructible_v<StatsCollectors>);
-static_assert(std::is_nothrow_move_assignable_v<StatsCollectors>);
-
 }  // namespace irs

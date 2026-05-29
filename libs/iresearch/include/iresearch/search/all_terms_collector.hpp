@@ -32,8 +32,9 @@ namespace irs {
 template<typename States>
 class AllTermsCollector : util::Noncopyable {
  public:
-  AllTermsCollector(States& states, StatsCollectors& stats) noexcept
-    : _states(states), _stats(stats) {}
+  AllTermsCollector(States& states, FieldCollector& field_stats,
+                    TermCollectorsFlat& term_stats) noexcept
+    : _states(states), _field_stats(field_stats), _term_stats(term_stats) {}
 
   //////////////////////////////////////////////////////////////////////////////
   /// @brief prepare collector for terms collecting
@@ -43,7 +44,7 @@ class AllTermsCollector : util::Noncopyable {
   //////////////////////////////////////////////////////////////////////////////
   void Prepare(const SubReader& segment, const TermReader& field,
                const SeekTermIterator& terms) noexcept {
-    _stats.CollectField(field);
+    _field_stats.Collect(field);
 
     auto& state = _states.insert(segment);
     state.reader = &field;
@@ -60,7 +61,7 @@ class AllTermsCollector : util::Noncopyable {
 
   void Visit(score_t boost) {
     SDB_ASSERT(_state);
-    _stats.CollectTerm(_stat_index, *_state.terms);
+    _term_stats.Collect(_stat_index, *_state.terms);
 
     auto& state = *_state.state;
     state.scored_states.emplace_back(_state.terms->cookie(), _stat_index,
@@ -86,7 +87,8 @@ class AllTermsCollector : util::Noncopyable {
 
   CollectorState _state;
   States& _states;
-  StatsCollectors& _stats;
+  FieldCollector& _field_stats;
+  TermCollectorsFlat& _term_stats;
   uint32_t _stat_index = 0;
   const decltype(TermMeta::docs_count) _no_docs = 0;
 };

@@ -149,7 +149,7 @@ class LimitedSampleCollector : private util::Noncopyable {
 
       auto& stats_entry = res.first->second;
 
-      stats_entry.stats_collectors.CollectTerm(0, *scored_state.cookie);
+      stats_entry.term_stats.Collect(0, *scored_state.cookie);
 
       scored_state.state->scored_states.emplace_back(
         std::move(scored_state.cookie), stats_entry.stats_offset,
@@ -166,7 +166,8 @@ class LimitedSampleCollector : private util::Noncopyable {
       stats_entry.resize(scorer ? scorer->stats_size() : 0);
       auto* stats_buf = const_cast<byte_type*>(stats_entry.data());
 
-      entry.second.stats_collectors.Finish(stats_buf, 0);
+      entry.second.term_stats.Finish(stats_buf, 0,
+                                     entry.second.field_stats.Get());
     }
   }
 
@@ -174,18 +175,19 @@ class LimitedSampleCollector : private util::Noncopyable {
   struct StatsState {
     explicit StatsState(const IndexReader& index, std::string_view field_name,
                         const Scorer* scorer, uint32_t& state_offset)
-      : stats_collectors{scorer, 1} {  // 1 term per bstring because a range is
-                                       // treated as a disjunction
+      : field_stats{scorer}, term_stats{scorer, 1} {
+      // 1 term per bstring because a range is treated as a disjunction
       for (const auto& segment : index) {
         if (const auto* field = segment.field(field_name)) {
-          stats_collectors.CollectField(*field);
+          field_stats.Collect(*field);
         }
       }
 
       stats_offset = state_offset++;
     }
 
-    StatsCollectors stats_collectors;
+    FieldCollector field_stats;
+    TermCollectorsFlat term_stats;
     uint32_t stats_offset;
   };
 

@@ -125,9 +125,10 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
     return ByTerm::prepare(sub_ctx, field, term->term);
   }
 
-  StatsCollectors stats_collectors{ctx.scorer, size};
+  FieldCollector field_stats{ctx.scorer};
+  TermCollectorsFlat term_stats{ctx.scorer, size};
   MultiTermQuery::States states{ctx.memory, ctx.index.size()};
-  AllTermsCollector collector{states, stats_collectors};
+  AllTermsCollector collector{states, field_stats, term_stats};
   CollectTerms(ctx.index, field, terms, collector);
 
   // FIXME(gnusi): Filter out unmatched states during collection
@@ -146,7 +147,7 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
   for (size_t term_idx = 0; auto& stat : stats) {
     stat.resize(GetStatsSize(ctx.scorer), 0);
     auto* stats_buf = stat.data();
-    stats_collectors.Finish(stats_buf, term_idx++);
+    term_stats.Finish(stats_buf, term_idx++, field_stats.Get());
   }
 
   return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),

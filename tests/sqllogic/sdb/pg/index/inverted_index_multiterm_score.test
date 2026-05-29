@@ -1,0 +1,246 @@
+hash-threshold 100
+
+# ---------------------------------------------------------------------------
+# Scoring for multi-term filters that expand a single predicate into many
+# terms over one field and route the per-term statistics through
+# LimitedSampleCollector: ts_starts_with (ByPrefix) and ts_lt / ts_ge
+# (ByRange).
+#
+# inverted_index_score.test covers single-term (ByTerm / phrase) scoring, and
+# inverted_index_wand.test_slow only checks WAND-vs-plain *equivalence* for
+# these filters -- a bug shared by both paths slips through. This test pins
+# the actual scores and the score-ordered result so a regression in the
+# collector's per-term / per-field statistics is caught.
+#
+# Each body is a single token, so every doc has length 1 (uniform BM25 length
+# norm) and matches exactly one term; the score difference is driven purely by
+# document frequency: a rarer term yields a higher BM25/TFIDF score.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE mt (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX mt_idx ON mt USING inverted(id, body en);
+
+
+# apple x3 (df 3), avocado / banana / blueberry / cherry x1 (df 1 each)
+statement ok
+INSERT INTO mt VALUES
+  (1, 'apple'), (2, 'apple'), (3, 'apple'),
+  (4, 'avocado'), (5, 'banana'), (6, 'blueberry'), (7, 'cherry');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt;
+
+
+# --- ByPrefix: prefix 'a' expands to {apple, avocado} ---
+
+# Counting: 3 apple + 1 avocado.
+query I
+SELECT COUNT(*) FROM mt_idx WHERE body @@ ts_starts_with('a');
+----
+count
+4
+
+
+# Every matched doc is scored.
+query
+SELECT id, BM25(mt_idx.tableoid) > 0 AS has_score FROM mt_idx
+WHERE body @@ ts_starts_with('a') ORDER BY id;
+----
+id	has_score
+1	t
+2	t
+3	t
+4	t
+
+
+# Score order: the rarer term (avocado, df 1) outranks apple (df 3).
+query I
+SELECT id FROM mt_idx WHERE body @@ ts_starts_with('a')
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id
+4
+1
+2
+3
+
+
+# Exact BM25 scores: avocado tier vs apple tier.
+query
+SELECT id, BM25(mt_idx.tableoid) AS score FROM mt_idx
+WHERE body @@ ts_starts_with('a')
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id	score
+4	1.6739764
+1	0.8266785
+2	0.8266785
+3	0.8266785
+
+
+# TFIDF ranks the same way; the rarer term scores higher.
+query
+SELECT id, TFIDF(mt_idx.tableoid) AS score FROM mt_idx
+WHERE body @@ ts_starts_with('a')
+ORDER BY TFIDF(mt_idx.tableoid) DESC, id;
+----
+id	score
+4	1.609438
+1	1.0986123
+2	1.0986123
+3	1.0986123
+
+
+# --- ByRange: half-open term ranges ---
+
+# ts_lt('c') matches {apple, avocado, banana, blueberry}; the three df-1 terms
+# share the top score, apple (df 3) sits below.
+query I
+SELECT COUNT(*) FROM mt_idx WHERE body @@ ts_lt('c');
+----
+count
+6
+
+
+query I
+SELECT id FROM mt_idx WHERE body @@ ts_lt('c')
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id
+4
+5
+6
+1
+2
+3
+
+
+query
+SELECT id, BM25(mt_idx.tableoid) AS score FROM mt_idx
+WHERE body @@ ts_lt('c')
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id	score
+4	1.6739764
+5	1.6739764
+6	1.6739764
+1	0.8266785
+2	0.8266785
+3	0.8266785
+
+
+# ts_ge('b') matches {banana, blueberry, cherry}.
+query I
+SELECT id FROM mt_idx WHERE body @@ ts_ge('b') ORDER BY id;
+----
+id
+5
+6
+7
+
+
+# --- Multi-segment: a second batch lands in a new segment, so the collector
+# must aggregate per-term document frequency across both segments. ---
+
+statement ok
+INSERT INTO mt VALUES (8, 'apple'), (9, 'avocado'), (10, 'apricot');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt;
+
+
+# apple x4, avocado x2, apricot x1.
+query I
+SELECT COUNT(*) FROM mt_idx WHERE body @@ ts_starts_with('a');
+----
+count
+7
+
+
+# Cross-segment df drives the ranking: apricot (df 1) > avocado (df 2) >
+# apple (df 4). Wrong per-segment-only stats would reorder these.
+query I
+SELECT id FROM mt_idx WHERE body @@ ts_starts_with('a')
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id
+10
+4
+9
+1
+2
+3
+8
+
+
+query
+SELECT id, BM25(mt_idx.tableoid) AS score FROM mt_idx
+WHERE body @@ ts_starts_with('a')
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id	score
+10	1.9924302
+4	1.4816045
+9	1.4816045
+1	0.8938179
+2	0.8938179
+3	0.8938179
+8	0.8938179
+
+
+statement ok
+DROP TABLE mt;
+
+
+# --- A document matching several terms of the disjunction accumulates the
+# per-term contributions (Sum merge). ---
+
+statement ok
+CREATE TABLE mt_multi (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX mt_multi_idx ON mt_multi USING inverted(id, body en);
+
+
+statement ok
+INSERT INTO mt_multi VALUES (1, 'apple'), (2, 'avocado'), (3, 'apple avocado');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_multi;
+
+
+# Doc 3 matches both 'apple' and 'avocado' under prefix 'a', so its score is
+# the sum over both terms and exceeds either single-term doc.
+query I
+SELECT id FROM mt_multi_idx WHERE body @@ ts_starts_with('a')
+ORDER BY BM25(mt_multi_idx.tableoid) DESC, id;
+----
+id
+3
+1
+2
+
+
+statement ok
+DROP TABLE mt_multi;

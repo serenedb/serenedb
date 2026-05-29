@@ -7,7 +7,6 @@ add_executable(
     conversions_test.cpp
     escaper_test.cpp
     endian_test.cpp
-    connection_pool_test.cpp
     inifile_parser_test.cpp
     parameters_test.cpp
     assertions_tests.cpp

@@ -21,6 +21,7 @@
 
 #include "database_path_feature.h"
 
+#include <absl/flags/flag.h>
 #include <absl/strings/str_join.h>
 
 #include "app/app_server.h"
@@ -37,6 +38,9 @@
 #include "basics/operating-system.h"
 #include "basics/string_utils.h"
 
+ABSL_FLAG(std::string, database_directory, "",
+          "Path to the database directory. Overrides any positional arg.");
+
 using namespace sdb::app;
 using namespace sdb::basics;
 using namespace sdb::options;
@@ -49,33 +53,22 @@ DatabasePathFeature::DatabasePathFeature(Server& server)
 }
 
 void DatabasePathFeature::collectOptions(
-  std::shared_ptr<ProgramOptions> options) {
-  options
-    ->addOption("--database.directory", "The path to the database directory.",
-                new StringParameter(&_directory))
-    .setLongDescription(R"(This defines the location where all data of a
-server is stored.
-
-Make sure the directory is writable by the serened process. You should further
-not use a database directory which is provided by a network filesystem such as
-NFS. The reason is that networked filesystems might cause inconsistencies when
-there are multiple parallel readers or writers or they lack features required by
-serened, e.g. `flock()`.)");
-
-  // --database.required-directory-state: dropped; CI scripts can stat
-  // the dir themselves.
+  std::shared_ptr<ProgramOptions> /*options*/) {
+  // --database-directory is declared as ABSL_FLAG above.
 }
 
 void DatabasePathFeature::validateOptions(
-  std::shared_ptr<ProgramOptions> options) {
-  const auto& positionals = options->processingResult().positionals;
+  std::shared_ptr<ProgramOptions> /*options*/) {
+  _directory = absl::GetFlag(FLAGS_database_directory);
 
-  if (1 == positionals.size()) {
-    _directory = positionals[0];
-  } else if (1 < positionals.size()) {
-    SDB_FATAL(GENERAL,
-              "expected at most one database directory, got '",
-              absl::StrJoin(positionals, ","), "'");
+  // Positional arg (server.positionalArgs()[1]) wins over the flag if given.
+  const auto& positionals = server().positionalArgs();
+  if (positionals.size() == 2) {
+    _directory = positionals[1];
+  } else if (positionals.size() > 2) {
+    SDB_FATAL(GENERAL, "expected at most one positional data-dir arg, got '",
+              absl::StrJoin(positionals.begin() + 1, positionals.end(), ","),
+              "'");
   }
 
   if (_directory.empty()) {

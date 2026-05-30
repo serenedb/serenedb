@@ -164,6 +164,11 @@ class AppServer {
 
   const char* getBinaryPath() const { return _binary_path; }
 
+  // Positional args after absl::ParseCommandLine; [0] is argv[0].
+  const std::vector<std::string>& positionalArgs() const noexcept {
+    return _positional_args;
+  }
+
   void registerStartupCallback(const std::function<void()>& callback) {
     _startup_callbacks.emplace_back(callback);
   }
@@ -251,6 +256,9 @@ class AppServer {
 
   // help section displayed
   std::string _help_section;
+
+  // positional CLI args after absl::ParseCommandLine; [0] is argv[0]
+  std::vector<std::string> _positional_args;
 
   // the install directory of this program:
   const char* _binary_path;

@@ -21,7 +21,17 @@
 
 #include "ssl_server_feature.h"
 
+#include <absl/flags/flag.h>
 #include <nghttp2/nghttp2.h>
+
+ABSL_FLAG(std::string, ssl_cafile, "",
+          "CA file used for client certificate verification. Empty disables "
+          "client-cert checks.");
+ABSL_FLAG(std::string, ssl_keyfile, "",
+          "Server private key (PEM, certificate + key concatenated). Required "
+          "for SSL endpoints.");
+ABSL_FLAG(std::string, ssl_cipher_list, "",
+          "OpenSSL cipher list to restrict the server to. See OpenSSL docs.");
 #include <openssl/asn1.h>
 #include <openssl/bio.h>
 #include <openssl/ec.h>
@@ -71,13 +81,11 @@ SslServerFeature::SslServerFeature(Server& server)
   setOptional(true);
 }
 
-void SslServerFeature::collectOptions(std::shared_ptr<ProgramOptions> options) {
-  options->addSection("ssl", "SSL communication");
-
-  options
-    ->addOption("--ssl.cafile", "The CA file used for secure connections.",
-                new StringParameter(&_cafile))
-    .setLongDescription(R"(You can use this option to specify a file with
+void SslServerFeature::collectOptions(
+  std::shared_ptr<ProgramOptions> /*options*/) {
+  // SSL knobs are declared as ABSL_FLAGs in the global block below.
+#if 0
+  R"(You can use this option to specify a file with
 CA certificates that are sent to the client whenever the server requests a
 client certificate. If you specify a file, the server only accepts client
 requests with certificates issued by these CAs. Do not specify this option if
@@ -159,16 +167,16 @@ DHE-DSS-AES256-SHA      SSLv3 Kx=DH       Au=DSS  Enc=AES(256)  Mac=SHA1
 DHE-RSA-CAMELLIA256-SHA SSLv3 Kx=DH       Au=RSA  Enc=Camellia(256)
 Mac=SHA1
 ...
-```)");
-
-  // --ssl.protocol, --ssl.options, --ssl.ecdh-curve, --ssl.session-cache,
-  // --ssl.prefer-http1-in-alpn: dropped. Sensible defaults stand; the SSL
-  // context still honors the field initializers in the header.
+```)";
+#endif
 }
 
 void SslServerFeature::validateOptions(
   std::shared_ptr<ProgramOptions> options) {
-  // check for SSLv2
+  _cafile = absl::GetFlag(FLAGS_ssl_cafile);
+  _keyfile = absl::GetFlag(FLAGS_ssl_keyfile);
+  _cipher_list = absl::GetFlag(FLAGS_ssl_cipher_list);
+
   if (_ssl_protocol == SslProtocol::kSslV2) {
     SDB_FATAL(SSL,
               "SSLv2 is not supported any longer because of security "

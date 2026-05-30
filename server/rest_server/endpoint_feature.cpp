@@ -21,6 +21,8 @@
 
 #include "endpoint_feature.h"
 
+#include <absl/flags/flag.h>
+
 #include "app/app_server.h"
 #include "app/options/parameters.h"
 #include "app/options/program_options.h"
@@ -29,6 +31,11 @@
 #include "basics/logger/logger.h"
 #include "endpoint/endpoint.h"
 #include "general_server/scheduler_feature.h"
+
+ABSL_FLAG(std::vector<std::string>, server_endpoint, {},
+          "Endpoint for client requests (e.g. `pgsql+tcp://127.0.0.1:7890`). "
+          "Repeat for multiple. Supported schemes: pgsql+tcp, tcp, ssl, "
+          "unix.");
 
 using namespace sdb::basics;
 using namespace sdb::options;
@@ -46,13 +53,11 @@ EndpointFeature::EndpointFeature(SerenedServer& server)
   }
 }
 
-void EndpointFeature::collectOptions(std::shared_ptr<ProgramOptions> options) {
-  options
-    ->addOption("--server.endpoint",
-                "Endpoint for client requests (e.g. "
-                "`pgsql+tcp://127.0.0.1:7890`)",
-                new VectorParameter<StringParameter>(&_endpoints))
-    .setLongDescription(R"(You can specify this option multiple times to let
+void EndpointFeature::collectOptions(
+  std::shared_ptr<ProgramOptions> /*options*/) {
+#if 0
+  // Original `setLongDescription` text retained for documentation:
+  R"(You can specify this option multiple times to let
 the SereneDB server listen for incoming requests on multiple endpoints.
 
 The endpoints are normally specified either in SereneDB's configuration file or
@@ -112,13 +117,12 @@ link-local address may be `fe80::6257:18ff:fe82:3ec6%eth0` (IPv6 address plus
 interface name). A local IPv6 address may be `fd12:3456::789a`.
 To bind SereneDB to it, start `serened` with
 `--server.endpoint pgsql+tcp://[fe80::6257:18ff:fe82:3ec6%eth0]:7890`.
-You can use `telnet` to test the connection.)");
-
-  // --tcp.reuse-address (SO_REUSEADDR, defaults to true) and
-  // --tcp.backlog-size were TCP tuning knobs; defaults stand.
+You can use `telnet` to test the connection.)";
+#endif
 }
 
 void EndpointFeature::validateOptions(std::shared_ptr<ProgramOptions>) {
+  _endpoints = absl::GetFlag(FLAGS_server_endpoint);
   if (_backlog_size > SOMAXCONN) {
     SDB_WARN(GENERAL,
              "value for --tcp.backlog-size exceeds default system "

@@ -21,9 +21,25 @@
 
 #include "general_server_feature.h"
 
+#include <absl/flags/flag.h>
+
 #include <chrono>
 #include <stdexcept>
 #include <thread>
+
+ABSL_FLAG(uint64_t, server_io_threads, 0,
+          "Number of IO threads for HTTP and pg-wire connections "
+          "(0 = max(1, cpu_count/4)).");
+ABSL_FLAG(double, http_keep_alive_timeout, 300.0,
+          "Keep-alive timeout for HTTP and pg-wire connections (in seconds; "
+          "0 disables keep-alive).");
+ABSL_FLAG(std::vector<std::string>, http_trusted_origin, {},
+          "Trusted origin URLs for CORS requests with credentials.");
+ABSL_FLAG(bool, http_return_queue_time_header, true,
+          "Return the x-serene-queue-time-seconds header on every response.");
+ABSL_FLAG(uint64_t, http_compress_response_threshold, 0,
+          "Response body size threshold for transparent gzip/deflate "
+          "compression (0 disables compression).");
 
 #include "app/app_server.h"
 #include "app/options/parameters.h"
@@ -87,35 +103,20 @@ GeneralServerFeature::GeneralServerFeature(Server& server)
 }
 
 void GeneralServerFeature::collectOptions(
-  std::shared_ptr<ProgramOptions> options) {
-  options->addOption(
-    "--server.io-threads", "The number of threads used to handle I/O.",
-    new UInt64Parameter(&_num_io_threads, /*base*/ 1, /*minValue*/ 1));
-
-  options
-    ->addOption("--http.keep-alive-timeout",
-                "Keep-alive timeout for HTTP and pg-wire connections "
-                "(in seconds).",
-                new DoubleParameter(&_keep_alive_timeout));
-
-  options->addOption(
-    "--http.trusted-origin",
-    "Trusted origin URLs for CORS requests with credentials.",
-    new VectorParameter<StringParameter>(&_access_control_allow_origins));
-
-  options->addOption(
-    "--http.return-queue-time-header",
-    "Return the `x-serene-queue-time-seconds` header in all responses.",
-    new BooleanParameter(&_return_queue_time_header));
-
-  options->addOption(
-    "--http.compress-response-threshold",
-    "Response body size threshold for transparent gzip/deflate compression "
-    "(0 disables compression).",
-    new UInt64Parameter(&_compress_response_threshold));
+  std::shared_ptr<ProgramOptions> /*options*/) {
+  // Knobs declared as ABSL_FLAGs above.
 }
 
 void GeneralServerFeature::validateOptions(std::shared_ptr<ProgramOptions>) {
+  if (auto io = absl::GetFlag(FLAGS_server_io_threads); io > 0) {
+    _num_io_threads = io;
+  }
+  _keep_alive_timeout = absl::GetFlag(FLAGS_http_keep_alive_timeout);
+  _access_control_allow_origins = absl::GetFlag(FLAGS_http_trusted_origin);
+  _return_queue_time_header = absl::GetFlag(FLAGS_http_return_queue_time_header);
+  _compress_response_threshold =
+    absl::GetFlag(FLAGS_http_compress_response_threshold);
+
   if (!_access_control_allow_origins.empty()) {
     for (auto& it : _access_control_allow_origins) {
       if (it == "*" || it == "all") {

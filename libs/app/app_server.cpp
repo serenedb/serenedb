@@ -22,6 +22,7 @@
 #include "app_server.h"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/flags/parse.h>
 #include <absl/strings/str_join.h>
 #include <vpack/options.h>
 #include <vpack/slice.h>
@@ -217,25 +218,16 @@ void AppServer::collectOptions() {
 }
 
 void AppServer::parseOptions(int argc, char* argv[]) {
-  options::ArgumentParser parser(_options.get());
-
-  _help_section = parser.helpSection(argc, argv);
-
-  if (!_help_section.empty()) {
-    // user asked for "--help"
-
-    // translate "all" to ".", because section "all" does not exist
-    if (_help_section == "all" || _help_section == "hidden") {
-      _help_section = ".";
-    }
-    _options->printHelp(_help_section);
-    return;
-  }
-
-  if (!parser.parse(argc, argv)) {
-    // command-line option parsing failed. an error was already printed
-    // by now, so we can exit
-    FatalErrorExitCode(_options->processingResult().exitCodeOrFailure());
+  // CLI parsing has moved to absl::flags; surviving knobs are declared as
+  // ABSL_FLAGs in the feature .cpp files that own them and read via
+  // absl::GetFlag during validateOptions/prepare. Here we run absl's parser
+  // and stash the positional args so features can pull e.g. the data-dir
+  // positional from `positionalArgs()`.
+  auto positionals = absl::ParseCommandLine(argc, argv);
+  _positional_args.clear();
+  _positional_args.reserve(positionals.size());
+  for (auto* p : positionals) {
+    _positional_args.emplace_back(p);
   }
 
   for (auto& feature : EnabledFeatures()) {

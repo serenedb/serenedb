@@ -136,10 +136,6 @@ following commands should create a valid keyfile:
 For further information please check the manuals of the tools you use to create
 the certificate.)");
 
-  options->addOption("--ssl.session-cache",
-                     "Enable the session cache for connections.",
-                     new BooleanParameter(&_session_cache));
-
   options
     ->addOption("--ssl.cipher-list",
                 "The SSL ciphers to use. See the OpenSSL documentation.",
@@ -165,55 +161,9 @@ Mac=SHA1
 ...
 ```)");
 
-  options
-    ->addOption("--ssl.protocol", AvailableSslProtocolsDescription(),
-                new DiscreteValuesParameter<UInt64Parameter>(
-                  &_ssl_protocol, AvailableSslProtocols()))
-    .setLongDescription(R"(Use this option to specify the default encryption
-protocol to be used. The default value is 9 (generic TLS), which allows the
-negotiation of the TLS version between the client and the server, dynamically
-choosing the highest mutually supported version of TLS.
-
-Note that SSLv2 is unsupported as of version 3.4, because of the inherent
-security vulnerabilities in this protocol. Selecting SSLv2 as protocol aborts
-the startup.)");
-
-  options
-    ->addOption("--ssl.options",
-                "The SSL connection options. See the OpenSSL documentation.",
-                new UInt64Parameter(&_ssl_options),
-                sdb::options::MakeDefaultFlags(sdb::options::Flags::Uncommon))
-    .setLongDescription(R"(You can use this option to set various SSL-related
-options. Individual option values must be combined using bitwise OR.
-
-Which options are available on your platform is determined by the OpenSSL
-version you use. The list of options available on your platform might be
-retrieved by the following shell command:
-
-```bash
- > grep "#define SSL_OP_.*" /usr/include/openssl/ssl.h
-
- #define SSL_OP_MICROSOFT_SESS_ID_BUG                    0x00000001L
- #define SSL_OP_NETSCAPE_CHALLENGE_BUG                   0x00000002L
- #define SSL_OP_LEGACY_SERVER_CONNECT                    0x00000004L
- #define SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG         0x00000008L
- #define SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG              0x00000010L
- #define SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER               0x00000020L
- ...
-```
-
-A description of the options can be found online in the OpenSSL documentation:
-http://www.openssl.org/docs/ssl/SSL_CTX_set_options.html))");
-
-  options->addOption(
-    "--ssl.ecdh-curve",
-    "The SSL ECDH curve, see the output of \"openssl ecparam -list_curves\".",
-    new StringParameter(&_ecdh_curve));
-
-  options->addOption("--ssl.prefer-http1-in-alpn",
-                     "Allows to let the server prefer HTTP/1.1 over HTTP/2 in "
-                     "ALPN protocol negotiations",
-                     new BooleanParameter(&_prefer_http11_in_alpn));
+  // --ssl.protocol, --ssl.options, --ssl.ecdh-curve, --ssl.session-cache,
+  // --ssl.prefer-http1-in-alpn: dropped. Sensible defaults stand; the SSL
+  // context still honors the field initializers in the header.
 }
 
 void SslServerFeature::validateOptions(

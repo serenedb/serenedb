@@ -118,10 +118,6 @@ class ProgramOptions {
   // set context for error reporting
   void setContext(const std::string& value);
 
-  // sets a single old option and its replacement name.
-  // to be used when an option is renamed to still support the original name
-  void addOldOption(const std::string& old, const std::string& replacement);
-
   // adds a section to the options
   std::map<std::string, Section>::iterator addSection(Section&& section);
 
@@ -143,16 +139,6 @@ class ProgramOptions {
     const std::string& name, const std::string& description,
     Parameter* parameter,
     std::underlying_type_t<Flags> flags = MakeFlags(Flags::Default));
-
-  // adds a deprecated option that has no effect to the program options to not
-  // throw an unrecognized startup option error after upgrades until fully
-  // removed. not listed by --help (uncommon option)
-  Option& addObsoleteOption(const std::string& name,
-                            const std::string& description,
-                            bool requires_value);
-
-  // adds a sub-headline for one option or a group of options
-  void addHeadline(const std::string& prefix, const std::string& description);
 
   // prints usage information
   void printUsage() const;
@@ -208,9 +194,6 @@ class ProgramOptions {
 
   // add a positional argument (callback from parser)
   void addPositional(const std::string& value);
-
-  // return all auto-modernized options
-  containers::FlatHashMap<std::string, std::string> modernizedOptions() const;
 
  private:
   // returns a pointer to an option value, specified by option name

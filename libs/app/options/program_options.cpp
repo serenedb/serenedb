@@ -144,25 +144,6 @@ bool ProgramOptions::allowOverride() const { return _override_options; }
 // set context for error reporting
 void ProgramOptions::setContext(const std::string& value) { _context = value; }
 
-// adds a sub-headline for one option or a group of options
-void ProgramOptions::addHeadline(const std::string& prefix,
-                                 const std::string& description) {
-  checkIfSealed();
-
-  auto parts = Option::splitName(prefix);
-  if (parts.first.empty()) {
-    std::swap(parts.first, parts.second);
-  }
-  auto it = _sections.find(parts.first);
-
-  if (it == _sections.end()) {
-    throw std::logic_error(std::string("section '") + parts.first +
-                           "' not found");
-  }
-
-  (*it).second.headlines[parts.second] = description;
-}
-
 // prints usage information
 void ProgramOptions::printUsage() const {
   std::cout << _usage << std::endl << std::endl;
@@ -374,24 +355,6 @@ void ProgramOptions::endPass() {
   }
 }
 
-sdb::containers::FlatHashMap<std::string, std::string>
-ProgramOptions::modernizedOptions() const {
-  containers::FlatHashMap<std::string, std::string> result;
-  for (const auto& name : _already_modernized) {
-    auto it = _old_options.find(name);
-    if (it != _old_options.end()) {
-      result.emplace(name, (*it).second);
-    }
-  }
-  return result;
-}
-
-// sets a single old option and its replacement name
-void ProgramOptions::addOldOption(const std::string& old,
-                                  const std::string& replacement) {
-  _old_options[Option::stripPrefix(old)] = Option::stripPrefix(replacement);
-}
-
 // adds a section to the options
 std::map<std::string, Section>::iterator ProgramOptions::addSection(
   Section&& section) {
@@ -426,18 +389,6 @@ Option& ProgramOptions::addOption(const std::string& name,
                                   Parameter* parameter,
                                   std::underlying_type_t<Flags> flags) {
   addOption(name, description, std::unique_ptr<Parameter>(parameter), flags);
-  return getOption(name);
-}
-
-// adds a deprecated option that has no effect to the program options to not
-// throw an unrecognized startup option error after upgrades until fully
-// removed. not listed by --help (uncommon option)
-Option& ProgramOptions::addObsoleteOption(const std::string& name,
-                                          const std::string& description,
-                                          bool requires_value) {
-  addOption(Option(name, description,
-                   std::make_unique<ObsoleteParameter>(requires_value),
-                   MakeFlags(Flags::Uncommon, Flags::Obsolete)));
   return getOption(name);
 }
 

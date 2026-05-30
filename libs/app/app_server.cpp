@@ -117,20 +117,6 @@ void AppServer::run(int argc, char* argv[]) {
   reportServerProgress(State::Stopped);
 }
 
-// signal the server to initiate a soft shutdown
-void AppServer::initiateSoftShutdown() {
-  // fowards the begin shutdown signal to all features
-  for (auto& feature : EnabledFeaturesReverse()) {
-    auto r = basics::SafeCall([&] { feature.initiateSoftShutdown(); });
-
-    if (!r.ok()) {
-      SDB_ERROR(STARTUP,
-                "caught exception during initiateSoftShutdown of feature '",
-                feature.name(), "': ", r.errorMessage());
-    }
-  }
-}
-
 // signal the server to shut down
 void AppServer::beginShutdown() {
   // fetch the old state, check if somebody already called shutdown, and only
@@ -289,10 +275,6 @@ void AppServer::start() {
       shutdownFatalError();
       SDB_THROW(std::move(r));  // throw exception so the startup aborts
     }
-  }
-
-  for (const auto& callback : _startup_callbacks) {
-    callback();
   }
 }
 

@@ -67,12 +67,7 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
 
     try {
       server.run(argc, argv);
-      if (server.helpShown()) {
-        // --help was displayed
-        ret = EXIT_SUCCESS;
-      } else {
-        ret = EXIT_SUCCESS;
-      }
+      ret = EXIT_SUCCESS;
     } catch (const std::exception& ex) {
       SDB_ERROR(GENERAL,
                 "serened terminated because of an exception: ", ex.what());

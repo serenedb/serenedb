@@ -120,9 +120,6 @@ class AppServer {
 
   virtual ~AppServer() = default;
 
-  std::string helpSection() const { return _help_section; }
-  bool helpShown() const { return !_help_section.empty(); }
-
   // whether or not the server has made it as least as far as the
   // IN_START state
   bool isPrepared() const noexcept {
@@ -144,9 +141,6 @@ class AppServer {
   // signal. after that, it will shutdown all features
   void run(int argc, char* argv[]);
 
-  // signal a soft shutdown (only used for coordinators so far)
-  void initiateSoftShutdown();
-
   // signal the server to shut down
   void beginShutdown();
 
@@ -165,10 +159,6 @@ class AppServer {
   // Positional args after absl::ParseCommandLine; [0] is argv[0].
   const std::vector<std::string>& positionalArgs() const noexcept {
     return _positional_args;
-  }
-
-  void registerStartupCallback(const std::function<void()>& callback) {
-    _startup_callbacks.emplace_back(callback);
   }
 
   void SetupFeatures();
@@ -235,12 +225,6 @@ class AppServer {
 
   // reporter for progress
   std::vector<ProgressHandler> _progress_reports;
-
-  // callbacks that are called after start
-  std::vector<std::function<void()>> _startup_callbacks;
-
-  // help section displayed
-  std::string _help_section;
 
   // positional CLI args after absl::ParseCommandLine; [0] is argv[0]
   std::vector<std::string> _positional_args;

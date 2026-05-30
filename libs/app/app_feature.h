@@ -74,9 +74,6 @@ class AppFeature {
   // start the feature
   virtual void start() {}
 
-  // notify the feature about a soft shutdown request
-  virtual void initiateSoftShutdown() {}
-
   // notify the feature about a shutdown request
   virtual void beginShutdown() {}
 

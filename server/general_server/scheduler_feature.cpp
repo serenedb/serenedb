@@ -29,6 +29,7 @@
 #include "app/app_server.h"
 #include "basics/application-exit.h"
 #include "basics/asio_ns.h"
+#include "basics/lifecycle.h"
 #include "basics/logger/logger.h"
 #include "basics/number_of_cores.h"
 #include "basics/signals.h"
@@ -232,7 +233,7 @@ extern "C" void CExitHandler(int signal, siginfo_t* info, void*) {
       SDB_INFO(GENERAL, signals::Name(signal),
                " received (sender pid ", (info ? info->si_pid : 0),
                "), beginning shut down sequence");
-      app::AppServer::gCtrlC.store(true);
+      lifecycle::gCtrlC.store(true);
     } else {
       SDB_FATAL(GENERAL, signals::Name(signal),
                 " received during shutdown sequence (sender pid ", info->si_pid,

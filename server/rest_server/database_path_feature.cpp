@@ -41,7 +41,6 @@ ABSL_FLAG(std::string, database_directory, "",
 
 using namespace sdb::app;
 using namespace sdb::basics;
-using namespace sdb::options;
 
 namespace sdb {
 

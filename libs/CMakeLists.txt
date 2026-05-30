@@ -162,7 +162,6 @@ add_library(
     STATIC
     ${LIB_SERVER_POSIX}
     ${LIB_SERVER_DATE}
-    app/app_feature.cpp
     app/app_server.cpp
     app/global_context.cpp
     app/name_validator.cpp

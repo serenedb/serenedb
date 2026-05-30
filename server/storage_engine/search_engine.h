@@ -38,6 +38,7 @@
 #include "catalog/identifiers/index_id.h"
 #include "catalog/types.h"
 #include "metrics/fwd.h"
+#include "rest_server/database_path_feature.h"
 #include "rest_server/serened.h"
 #include "storage_engine/engine_feature.h"
 
@@ -55,6 +56,7 @@ enum class ThreadGroup : uint8_t {
   Compaction,
 };
 
+class SearchEngine;
 SearchEngine& GetSearchEngine();
 
 class SearchEngine final {

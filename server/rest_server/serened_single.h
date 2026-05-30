@@ -1,82 +1,9 @@
-////////////////////////////////////////////////////////////////////////////////
-/// DISCLAIMER
-///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
-///
-/// Licensed under the Apache License, Version 2.0 (the "License");
-/// you may not use this file except in compliance with the License.
-/// You may obtain a copy of the License at
-///
-///     http://www.apache.org/licenses/LICENSE-2.0
-///
-/// Unless required by applicable law or agreed to in writing, software
-/// distributed under the License is distributed on an "AS IS" BASIS,
-/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-/// See the License for the specific language governing permissions and
-/// limitations under the License.
-///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-////////////////////////////////////////////////////////////////////////////////
-
 #pragma once
 
-#include "app/app_feature.h"
-#include "basics/operating-system.h"
-#include "basics/type_list.h"
+#include "app/app_server.h"
 
 namespace sdb {
-namespace app {
 
-template<typename Features>
-class AppServerImpl;
-
-}  // namespace app
-namespace catalog {
-
-class CatalogFeature;
-
-}  // namespace catalog
-namespace pg {
-
-class PostgresFeature;
-
-}  // namespace pg
-namespace search {
-
-class SearchEngine;
-
-}  // namespace search
-
-class SslServerFeature;
-class MaxMapCountFeature;
-class DatabasePathFeature;
-class SchedulerFeature;
-class RocksDBOptionFeature;
-class EngineFeature;
-class FlushFeature;
-class RocksDBRecoveryManager;
-class EndpointFeature;
-class GeneralServerFeature;
-
-// clang-format off
-using SerenedFeaturesList = type::List<
-  SslServerFeature,
-  DatabasePathFeature,
-  SchedulerFeature,
-  RocksDBOptionFeature,
-  EngineFeature,
-  FlushFeature,
-  RocksDBRecoveryManager,
-  catalog::CatalogFeature,
-  search::SearchEngine,
-  EndpointFeature,
-  GeneralServerFeature,
-  pg::PostgresFeature>;
-// clang-format on
-
-struct SerenedFeatures : SerenedFeaturesList {};
-using SerenedServer = app::AppServerImpl<SerenedFeatures>;
-using SerenedFeature = app::AppFeatureImpl<SerenedServer>;
+using SerenedServer = app::AppServer;
 
 }  // namespace sdb

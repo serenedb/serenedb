@@ -21,7 +21,6 @@
 
 #pragma once
 
-#include "app/app_feature.h"
 #include "rest_server/serened.h"
 
 namespace sdb {

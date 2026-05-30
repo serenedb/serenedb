@@ -30,7 +30,6 @@
 #include <tuple>
 #include <vector>
 
-#include "app/app_feature.h"
 #include "catalog/types.h"
 #include "metrics/fwd.h"
 #include "rest_server/serened.h"

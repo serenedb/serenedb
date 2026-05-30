@@ -1,45 +1,23 @@
-////////////////////////////////////////////////////////////////////////////////
-/// DISCLAIMER
-///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
-///
-/// Licensed under the Apache License, Version 2.0 (the "License");
-/// you may not use this file except in compliance with the License.
-/// You may obtain a copy of the License at
-///
-///     http://www.apache.org/licenses/LICENSE-2.0
-///
-/// Unless required by applicable law or agreed to in writing, software
-/// distributed under the License is distributed on an "AS IS" BASIS,
-/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-/// See the License for the specific language governing permissions and
-/// limitations under the License.
-///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-////////////////////////////////////////////////////////////////////////////////
-
 #pragma once
 
 #include <absl/synchronization/mutex.h>
 
+#include <atomic>
+#include <functional>
 #include <magic_enum/magic_enum.hpp>
+#include <string_view>
+#include <vector>
 
-#include "app/app_feature.h"
-#include "basics/down_cast.h"
-#include "basics/type_traits.h"
+#include "basics/assert.h"
 
-namespace sdb {
-namespace app {
+namespace sdb::app {
 
-// AppServer lifecycle phases, called in this order:
-//   validateOptions  -- pull CLI knobs from absl::GetFlag into fields
-//   prepare          -- non-thread-creating init; obey kSerenedFeatures order
-//   start            -- create threads, open sockets; same order
-//   wait             -- block until beginShutdown is signaled
-//   stop             -- reverse order; threads must exit before stop returns
-//   unprepare        -- final teardown, reverse order
-
+// Lifecycle state-machine + signal-driven wait loop. RunServer drives
+// each feature's validateOptions/prepare/start/stop/unprepare directly;
+// AppServer no longer owns or iterates features. What's left:
+//   - state() and setState() for diagnostics (CrashHandler reporter)
+//   - wait() that blocks until SIGTERM/SIGINT or explicit beginShutdown
+//   - isStopping() for callers that still ask "is the process winding down"
 class AppServer {
  public:
   enum class State : int {
@@ -52,249 +30,68 @@ class AppServer {
     InStop,
     InUnprepare,
     Stopped,
-    Aborted
+    Aborted,
   };
 
   class ProgressHandler {
    public:
     std::function<void(State)> state;
-    std::function<void(State, std::string_view feature_name)> feature;
   };
 
-  inline static std::atomic_bool gCtrlC = false;
-
- public:
-  AppServer(const char* binary_path,
-            std::span<std::unique_ptr<AppFeature>> features);
-
-  virtual ~AppServer() = default;
-
-  // whether or not the server has made it as least as far as the
-  // IN_START state
-  bool isPrepared() const noexcept {
-    auto tmp = state();
-    return tmp == State::InStart || tmp == State::InWait ||
-           tmp == State::InShutdown || tmp == State::InStop;
+  inline static AppServer* gInstance = nullptr;
+  static AppServer& Instance() noexcept {
+    SDB_ASSERT(gInstance);
+    return *gInstance;
   }
 
-  // whether or not the server has made it as least as far as the
-  // IN_SHUTDOWN state
-  bool isStopping() const;
+  explicit AppServer(const char* binary_path);
+  ~AppServer();
 
-  /// whether or not state is the shutting down state or further (i.e.
-  /// stopped, aborted etc.)
-  bool isStoppingState(State state) const;
+  AppServer(const AppServer&) = delete;
+  AppServer& operator=(const AppServer&) = delete;
 
-  // signal the server to shut down
-  void beginShutdown();
+  bool isStopping() const noexcept;
 
-  // report that we are going down by fatal error
-  void shutdownFatalError();
+  // Set state == InShutdown (and prod the wait loop). Idempotent.
+  void beginShutdown() noexcept;
 
+  State state() const noexcept {
+    return _state.load(std::memory_order_acquire);
+  }
 
-  State state() const { return _state.load(std::memory_order_acquire); }
+  void setState(State new_state) noexcept {
+    _state.store(new_state, std::memory_order_release);
+    for (auto& r : _progress_reports) {
+      if (r.state) r.state(new_state);
+    }
+  }
 
   void addReporter(ProgressHandler reporter) {
     _progress_reports.emplace_back(std::move(reporter));
   }
 
-  const char* getBinaryPath() const { return _binary_path; }
+  const char* getBinaryPath() const noexcept { return _binary_path; }
 
-  // Positional args after absl::ParseCommandLine; [0] is argv[0].
-  const std::vector<std::string>& positionalArgs() const noexcept {
-    return _positional_args;
-  }
-
-#ifdef SDB_GTEST
-  auto GetFeatures() noexcept { return _all_features; }
-  void setBinaryPath(const char* path) { _binary_path = path; }
-  void setStateUnsafe(State ss) { _state = ss; }
-#endif
-
- private:
-  friend AppFeature;
-
-  // checks for the existence of a feature by type. will not throw when used
-  // for a non-existing feature
-  bool hasFeature(size_t type) const noexcept {
-    return type < _all_features.size() && nullptr != _all_features[type];
-  }
-
-  auto& getFeature(size_t type) const {
-    if (hasFeature(type)) [[likely]] {
-      return *_all_features[type];
-    }
-    SDB_THROW(sdb::ERROR_INTERNAL, "unknown feature: ", type);
-  }
-
- public:
   void parseOptions(int argc, char* argv[]);
 
-  // after start, the server will wait in this method until
-  // beginShutdown is called
+  // Block until beginShutdown() or SIGTERM/SIGINT.
   void wait();
 
-  // Advance the lifecycle state (must follow boot/shutdown order).
-  void setState(State new_state) noexcept {
-    _state.store(new_state, std::memory_order_release);
-    reportServerProgress(new_state);
-  }
-
  private:
-  void reportServerProgress(State);
-  void reportFeatureProgress(State, std::string_view);
+  std::atomic<State> _state{State::Uninitialized};
 
- private:
-  static auto EnabledFeaturesImpl(auto&& features) noexcept {
-    return features | std::views::filter([](const auto& p) {
-             return p && p->isEnabled();
-           }) |
-           std::views::transform([](auto& p) -> AppFeature& { return *p; });
-  }
-
-  auto EnabledFeatures() noexcept { return EnabledFeaturesImpl(_all_features); }
-
-  auto EnabledFeaturesReverse() noexcept {
-    return EnabledFeaturesImpl(std::views::reverse(_all_features));
-  }
-
-  std::atomic<State> _state = State::Uninitialized;
-
-  std::span<std::unique_ptr<AppFeature>> _all_features;
-
-  // will be signaled when the application server is asked to shut down
   struct {
     absl::CondVar cv;
     absl::Mutex mutex;
   } _shutdown_condition;
 
-  // reporter for progress
   std::vector<ProgressHandler> _progress_reports;
-
-  // positional CLI args after absl::ParseCommandLine; [0] is argv[0]
-  std::vector<std::string> _positional_args;
-
-  // the install directory of this program:
   const char* _binary_path;
-
-  // the condition variable protects access to this flag
-  // the flag is set to true when beginShutdown finishes
   bool _abort_waiting = false;
 };
 
-template<typename Features>
-class AppServerImpl : public AppServer {
-  inline static AppServer* gInstance = nullptr;
+}  // namespace sdb::app
 
- public:
-  static AppServerImpl& Instance() noexcept {
-    SDB_ASSERT(gInstance);
-    return basics::downCast<AppServerImpl>(*gInstance);
-  }
-
-#ifdef SDB_GTEST
-  static void Instance(AppServerImpl* instance) noexcept {
-    gInstance = instance;
-  }
-#endif
-
-  // Returns feature identifier.
-  template<typename T>
-  static constexpr size_t id() noexcept {
-    return Features::template id<T>();
-  }
-
-  // Returns true if a feature denoted by `T` is registered with the server.
-  template<typename T>
-  static constexpr bool contains() noexcept {
-    return Features::template contains<T>();
-  }
-
-  // Returns true if a feature denoted by `Feature` is created before other
-  // feautures denoted by `OtherFeatures`.
-  template<typename Feature, typename... OtherFeatures>
-  static constexpr bool isCreatedAfter() noexcept {
-    return (std::greater{}(id<Feature>(), id<OtherFeatures>()) && ...);
-  }
-
-  explicit AppServerImpl(const char* binary_path)
-    : AppServer{binary_path, _features} {
-    gInstance = this;
-  }
-
-  // Adds all registered features to the application server.
-  template<typename Initializer>
-  void addFeatures(Initializer&& initializer) {
-    Features::visit([&]<typename T>(type::Tag<T>) {
-      static_assert(std::is_base_of_v<AppFeature, T>);
-      constexpr auto kFeatureId = Features::template id<T>();
-
-      SDB_ASSERT(!hasFeature<T>());
-      _features[kFeatureId] =
-        std::forward<Initializer>(initializer)(*this, type::Tag<T>{});
-      SDB_ASSERT(hasFeature<T>());
-    });
-  }
-
-#ifdef SDB_GTEST
-  // Adds a feature to the application server. the application server
-  // will take ownership of the feature object and destroy it in its
-  // destructor.
-  template<typename Type, typename Impl = Type, typename... Args>
-  Impl& addFeature(Args&&... args) {
-    static_assert(std::is_base_of_v<AppFeature, Type>);
-    static_assert(std::is_base_of_v<AppFeature, Impl>);
-    static_assert(std::is_base_of_v<Type, Impl>);
-    constexpr auto kFeatureId = Features::template id<Type>();
-
-    SDB_ASSERT(!hasFeature<Type>());
-    auto& slot = _features[kFeatureId];
-    slot = std::make_unique<Impl>(*this, std::forward<Args>(args)...);
-
-    return static_cast<Impl&>(*slot);
-  }
-#endif
-
-  // Return whether or not a feature is enabled
-  // will throw when called for a non-existing feature.
-  template<typename T>
-  bool isEnabled() const {
-    return getFeature<T>().isEnabled();
-  }
-
-  // Checks for the existence of a feature. will not throw when used for
-  // a non-existing feature.
-  template<typename Type>
-  bool hasFeature() const noexcept {
-    static_assert(std::is_base_of_v<AppFeature, Type>);
-
-    constexpr auto kFeatureId = Features::template id<Type>();
-    return nullptr != _features[kFeatureId];
-  }
-
-  template<typename Type, typename Impl = Type>
-  Impl* TryGetFeature() const {
-    return hasFeature<Type>() ? &getFeature<Type, Impl>() : nullptr;
-  }
-
-  // Returns a const reference to a feature. will throw when used for
-  // a non-existing feature.
-  template<typename Type, typename Impl = Type>
-  Impl& getFeature() const {
-    static_assert(std::is_base_of_v<AppFeature, Type>);
-    static_assert(std::is_base_of_v<Type, Impl> ||
-                  std::is_base_of_v<Impl, Type>);
-    constexpr auto kFeatureId = Features::template id<Type>();
-    SDB_ASSERT(hasFeature<Type>());
-    return basics::downCast<Impl>(*_features[kFeatureId]);
-  }
-
- private:
-  std::array<std::unique_ptr<AppFeature>, Features::size()> _features;
-};
-
-}  // namespace app
-}  // namespace sdb
 namespace magic_enum {
 
 template<>
@@ -302,28 +99,17 @@ template<>
 customize::enum_name<sdb::app::AppServer::State>(
   sdb::app::AppServer::State state) noexcept {
   using State = sdb::app::AppServer::State;
-
   switch (state) {
-    case State::Uninitialized:
-      return "uninitialized";
-    case State::InValidateOptions:
-      return "in validate options";
-    case State::InPrepare:
-      return "in prepare";
-    case State::InStart:
-      return "in start";
-    case State::InWait:
-      return "in wait";
-    case State::InShutdown:
-      return "in beginShutdown";
-    case State::InStop:
-      return "in stop";
-    case State::InUnprepare:
-      return "in unprepare";
-    case State::Stopped:
-      return "in stopped";
-    case State::Aborted:
-      return "in aborted";
+    case State::Uninitialized:    return "uninitialized";
+    case State::InValidateOptions:return "in validate options";
+    case State::InPrepare:        return "in prepare";
+    case State::InStart:          return "in start";
+    case State::InWait:           return "in wait";
+    case State::InShutdown:       return "in beginShutdown";
+    case State::InStop:           return "in stop";
+    case State::InUnprepare:      return "in unprepare";
+    case State::Stopped:          return "in stopped";
+    case State::Aborted:          return "in aborted";
   }
   return invalid_tag;
 }

@@ -20,7 +20,6 @@
 
 #include "general_server/generic_comm_task.h"
 
-#include "app/app_feature.h"
 #include "app/app_server.h"
 #include "general_server/general_server_feature.h"
 #include "pg/pg_comm_task.h"

@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include "app/app_feature.h"
 #include "app/app_server.h"
 #include "basics/containers/flat_hash_map.h"
 #include "general_server/request_lane.h"

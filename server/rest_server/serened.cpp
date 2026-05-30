@@ -21,8 +21,6 @@
 
 #include "rest_server/serened.h"
 
-#include <absl/functional/overload.h>
-
 #include <cstdlib>
 #include <cstring>
 
@@ -54,8 +52,7 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       {[&](SerenedServer::State /*state*/) {
          CrashHandler::SetState(
            magic_enum::enum_name(server.state()));
-       },
-       {}});
+       }});
 
     // 1. Parse CLI before constructing any feature (some ctors read flags).
     server.parseOptions(argc, argv);

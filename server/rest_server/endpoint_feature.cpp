@@ -35,7 +35,6 @@ ABSL_FLAG(std::vector<std::string>, server_endpoint, {},
           "unix.");
 
 using namespace sdb::basics;
-using namespace sdb::options;
 
 namespace sdb {
 

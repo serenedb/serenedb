@@ -51,7 +51,6 @@ class SearchEngine;
 class LoggerFeature;
 class SslServerFeature;
 class MaxMapCountFeature;
-class TempPath;
 class DatabasePathFeature;
 class SchedulerFeature;
 class RocksDBOptionFeature;
@@ -67,7 +66,6 @@ class GeneralServerFeature;
 using SerenedFeaturesList = type::List<
   LoggerFeature,
   SslServerFeature,
-  TempPath,
   DatabasePathFeature,
   SchedulerFeature,
   RocksDBOptionFeature,

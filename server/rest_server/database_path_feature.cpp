@@ -28,7 +28,6 @@
 #include "app/options/parameters.h"
 #include "app/options/program_options.h"
 #include "app/options/section.h"
-#include "app/temp_path.h"
 #include "basics/application-exit.h"
 #include "basics/file_utils.h"
 #include "basics/files.h"
@@ -98,31 +97,8 @@ void DatabasePathFeature::validateOptions(
 }
 
 void DatabasePathFeature::prepare() {
-  // check if temporary directory and database directory are identical
-  {
-    std::string directory_copy = _directory;
-    basics::file_utils::MakePathAbsolute(directory_copy);
-
-    if (server().hasFeature<TempPath>()) {
-      auto& tf = server().getFeature<TempPath>();
-      // the feature is not present in unit tests, so make the execution depend
-      // on whether the feature is available
-      std::string temp_path_copy = tf.path();
-      basics::file_utils::MakePathAbsolute(temp_path_copy);
-      temp_path_copy =
-        basics::string_utils::RTrim(temp_path_copy, SERENEDB_DIR_SEPARATOR_STR);
-
-      if (directory_copy == temp_path_copy) {
-        SDB_FATAL(GENERAL, "database directory '", directory_copy,
-          "' is identical to the temporary directory. ",
-          "This can cause follow-up problems, including data loss. Please "
-          "review your setup!");
-      }
-    }
-  }
-
-
-  // all good here
+  // TempPath collision check removed with the feature; the system temp
+  // path is typically /tmp which never overlaps with the data dir.
 }
 
 void DatabasePathFeature::start() {

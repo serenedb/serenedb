@@ -42,6 +42,7 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
   try {
     CrashHandler::installCrashHandler();
     std::string name = context.binaryName();
+    SdbSetApplicationName(name);
 
     auto options = std::make_shared<sdb::options::ProgramOptions>(
       argv[0], "Usage: " + name + " [<options>]",
@@ -69,9 +70,6 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       },
       [&ret](auto& server, type::Tag<ServerFeature>) {
         return std::make_unique<ServerFeature>(server, &ret);
-      },
-      [&name](auto& server, type::Tag<TempPath>) {
-        return std::make_unique<TempPath>(server, name);
       },
       [](auto& server, type::Tag<SslServerFeature>) {
         return std::make_unique<SslServerFeature>(server);

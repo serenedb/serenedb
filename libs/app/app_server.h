@@ -30,71 +30,20 @@
 #include "basics/type_traits.h"
 
 namespace sdb {
-namespace options {
-
-}
 namespace app {
 
-// the following phases exist:
-//
-// `collectOptions`
-//
-// Creates the prgramm options for a feature. Features are not
-// allowed to open files or sockets, create threads or allocate
-// other resources. This method will be called regardless of whether
-// to feature is enabled or disabled. There is no defined order in
-// which the features are traversed.
-//
-// `loadOptions`
-//
-// Allows a feature to load more options from somewhere. This method
-// will only be called for enabled features. There is no defined
-// order in which the features are traversed.
-//
-// `validateOptions`
-//
-// Validates the feature's options. This method will only be called for enabled
-// features. Help is handled before any `validateOptions` of a feature is
-// called. The `validateOptions` methods are called in a order that obeys the
-// `startsAfter `conditions.
-//
-// `daemonize`
-//
-// In this phase process control (like putting the process into the background
-// will be handled). This method will only be called for enabled features.
-// The `daemonize` methods are called in a order that obeys the `startsAfter`
-// conditions.
-//
-// `prepare`
-//
-// Now the features will actually do some preparation work
-// in the preparation phase, the features must not start any threads
-// furthermore, they must not write any files under elevated privileges
-// if they want other features to access them, or if they want to access
-// these files with dropped privileges. The `prepare` methods are called in a
-// order that obeys the `startsAfter` conditions.
-//
-// `start`
-//
-// Start the features. Features are now allowed to created threads.
-//
-// The `start` methods are called in a order that obeys the `startsAfter`
-// conditions.
-//
-// `stop`
-//
-// Stops the features. The `stop` methods are called in reversed `start` order.
-// This must stop all threads, but not destroy the features.
-//
-// `unprepare`
-//
-// This destroys the features.
+// AppServer lifecycle phases, called in this order:
+//   validateOptions  -- pull CLI knobs from absl::GetFlag into fields
+//   prepare          -- non-thread-creating init; obey kSerenedFeatures order
+//   start            -- create threads, open sockets; same order
+//   wait             -- block until beginShutdown is signaled
+//   stop             -- reverse order; threads must exit before stop returns
+//   unprepare        -- final teardown, reverse order
 
 class AppServer {
  public:
   enum class State : int {
     Uninitialized = 0,
-    InCollectOptions,
     InValidateOptions,
     InPrepare,
     InStart,
@@ -361,8 +310,6 @@ customize::enum_name<sdb::app::AppServer::State>(
   switch (state) {
     case State::Uninitialized:
       return "uninitialized";
-    case State::InCollectOptions:
-      return "in collect options";
     case State::InValidateOptions:
       return "in validate options";
     case State::InPrepare:

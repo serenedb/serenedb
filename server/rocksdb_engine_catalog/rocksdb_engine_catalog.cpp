@@ -727,21 +727,14 @@ void RocksDBEngineCatalog::stop() {
       }
     }
 
-    // wait until background thread stops
-    while (_background_thread->isRunning()) {
-      std::this_thread::yield();
-    }
+    // jthread joins on reset() via ~RocksDBBackgroundThread()
     _background_thread.reset();
   }
 
   if (_sync_thread) {
     // _sync_thread may be a nullptr, in case automatic syncing is turned off
     _sync_thread->beginShutdown();
-
-    // wait until sync thread stops
-    while (_sync_thread->isRunning()) {
-      std::this_thread::yield();
-    }
+    // jthread joins on reset() via ~RocksDBSyncThread()
     _sync_thread.reset();
   }
 }

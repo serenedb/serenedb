@@ -23,14 +23,13 @@
 
 #include <atomic>
 
-#include "app/app_server.h"
 #include "basics/logger/logger.h"
 #include "basics/system-functions.h"
+#include "basics/thread_id.h"
 #include "catalog/catalog.h"
 #include "metrics/gauge_builder.h"
 #include "metrics/metrics_feature.h"
 #include "rest_server/flush_feature.h"
-#include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
@@ -43,21 +42,43 @@ DECLARE_GAUGE(rocksdb_wal_released_tick_replication, uint64_t,
 
 RocksDBBackgroundThread::RocksDBBackgroundThread(RocksDBEngineCatalog& engine,
                                                  double interval)
-  : Thread(SerenedServer::Instance(), "RocksDBThread"),
-    _engine(engine),
+  : _engine(engine),
     _interval(interval),
     _metrics_wal_released_tick_replication(
       metrics::GetMetrics().add(rocksdb_wal_released_tick_replication{})) {}
 
-RocksDBBackgroundThread::~RocksDBBackgroundThread() { shutdown(); }
+RocksDBBackgroundThread::~RocksDBBackgroundThread() {
+  beginShutdown();
+  if (_thread.joinable()) {
+    _thread.join();
+  }
+}
+
+bool RocksDBBackgroundThread::start() {
+  _thread = std::jthread{[this] {
+    InitThread("RocksDBThread");
+    try {
+      run();
+    } catch (const std::exception& ex) {
+      SDB_WARN(STORAGE, "caught exception in rocksdb background thread: ",
+               ex.what());
+    } catch (...) {
+      SDB_WARN(STORAGE, "caught unknown exception in rocksdb background");
+    }
+  }};
+  return true;
+}
 
 void RocksDBBackgroundThread::beginShutdown() {
-  Thread::beginShutdown();
+  {
+    absl::MutexLock guard{&_condition.mutex};
+    if (_stopping) {
+      return;
+    }
+    _stopping = true;
+    _condition.cv.notify_all();
+  }
   SyncStats();
-
-  // wake up the thread that may be waiting in run()
-  absl::MutexLock guard{&_condition.mutex};
-  _condition.cv.notify_all();
 }
 
 void RocksDBBackgroundThread::SyncStats() {
@@ -87,6 +108,11 @@ void RocksDBBackgroundThread::run() {
   const double start_time = utilities::GetMicrotime();
   uint64_t runs_until_sync_forced = 1;
   constexpr uint64_t kMaxRunsUntilSyncForced = 5;
+
+  auto isStopping = [this] {
+    absl::MutexLock guard{&_condition.mutex};
+    return _stopping;
+  };
 
   while (!isStopping()) {
     {

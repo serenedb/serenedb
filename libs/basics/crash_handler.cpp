@@ -50,7 +50,7 @@
 #include "basics/signals.h"
 #include "basics/size_limited_string.h"
 #include "basics/string_utils.h"
-#include "basics/thread.h"
+#include "basics/thread_id.h"
 #include "build_id/build_id.h"
 #include "crash_handler.h"
 #include "rest/version.h"
@@ -143,7 +143,7 @@ void BuildLogMessage(SmallString& buffer, std::string_view context, int signal,
 
   // append thread id
   buffer.append(", thread ")
-    .appendUInt64(uint64_t(Thread::currentThreadNumber()));
+    .appendUInt64(uint64_t(CurrentThreadNumber()));
 
 #ifdef __linux__
   // append thread name
@@ -246,7 +246,7 @@ void LogStacktrace(void* ucontext = nullptr) try {
   SmallString buffer;
 
   buffer.append("Backtrace of thread ");
-  buffer.appendUInt64(Thread::currentThreadNumber());
+  buffer.appendUInt64(CurrentThreadNumber());
   buffer.append(" [").append(current_thread_name).append("]");
 
   SDB_INFO(CRASH, buffer.view());

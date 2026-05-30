@@ -24,9 +24,8 @@
 #include <rocksdb/status.h>
 #include <rocksdb/utilities/transaction_db.h>
 
-#include "app/app_server.h"
 #include "basics/logger/logger.h"
-#include "rest_server/serened_single.h"
+#include "basics/thread_id.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
@@ -35,14 +34,32 @@ using namespace sdb;
 RocksDBSyncThread::RocksDBSyncThread(RocksDBEngineCatalog& engine,
                                      std::chrono::milliseconds interval,
                                      std::chrono::milliseconds delay_threshold)
-  : Thread(SerenedServer::Instance(), "RocksDBSync"),
-    _engine(engine),
+  : _engine(engine),
     _interval(interval),
     _last_sync_time(std::chrono::steady_clock::now()),
     _last_sequence_number(0),
     _delay_threshold(delay_threshold) {}
 
-RocksDBSyncThread::~RocksDBSyncThread() { shutdown(); }
+RocksDBSyncThread::~RocksDBSyncThread() {
+  beginShutdown();
+  if (_thread.joinable()) {
+    _thread.join();
+  }
+}
+
+bool RocksDBSyncThread::start() {
+  _thread = std::jthread{[this] {
+    InitThread("RocksDBSync");
+    try {
+      run();
+    } catch (const std::exception& ex) {
+      SDB_ERROR(STORAGE, "caught exception in RocksDBSyncThread: ", ex.what());
+    } catch (...) {
+      SDB_ERROR(STORAGE, "caught unknown exception in RocksDBSyncThread");
+    }
+  }};
+  return true;
+}
 
 Result RocksDBSyncThread::syncWal() {
   // note the following line in RocksDB documentation (rocksdb/db.h):
@@ -86,10 +103,8 @@ Result RocksDBSyncThread::sync(rocksdb::DB* db) {
 }
 
 void RocksDBSyncThread::beginShutdown() {
-  Thread::beginShutdown();
-
-  // wake up the thread that may be waiting in run()
   absl::MutexLock guard{&_condition.mutex};
+  _stopping = true;
   _condition.cv.notify_all();
 }
 
@@ -99,7 +114,7 @@ void RocksDBSyncThread::run() {
   SDB_TRACE(STORAGE, "starting RocksDB sync thread with interval ",
             _interval.count(), " milliseconds");
 
-  while (!isStopping()) {
+  while (true) {
     try {
       const auto now = std::chrono::steady_clock::now();
 
@@ -113,12 +128,20 @@ void RocksDBSyncThread::run() {
         // wait for time to elapse, and after that update last sync time
         absl::MutexLock guard{&_condition.mutex};
 
+        if (_stopping) {
+          return;
+        }
+
         previous_last_sequence_number = _last_sequence_number;
         previous_last_sync_time = _last_sync_time;
         const auto end = _last_sync_time + _interval;
         if (end > now) {
           _condition.cv.WaitWithTimeout(&_condition.mutex,
                                         absl::FromChrono(end - now));
+        }
+
+        if (_stopping) {
+          return;
         }
 
         if (_last_sync_time > previous_last_sync_time) {

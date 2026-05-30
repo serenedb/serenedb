@@ -22,14 +22,13 @@
 #pragma once
 
 #include <absl/synchronization/mutex.h>
+#include <sys/types.h>
 
 #include <functional>
 #include <mutex>
 #include <optional>
 #include <span>
 #include <string>
-
-#include "basics/threads.h"
 
 #define SERENEDB_INVALID_PROCESS_ID (-1)
 

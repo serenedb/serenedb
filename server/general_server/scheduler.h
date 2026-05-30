@@ -31,6 +31,7 @@
 #include <functional>
 #include <queue>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <yaclib/async/connect.hpp>
 #include <yaclib/async/contract.hpp>
@@ -45,8 +46,6 @@
 #include "utils/coro_helper.h"
 
 namespace sdb {
-
-class SchedulerCronThread;
 
 class Scheduler {
  public:
@@ -253,7 +252,6 @@ class Scheduler {
 
   // Entry point for the CronThread
   void runCronThread();
-  friend class SchedulerCronThread;
 
   typedef std::pair<clock::time_point, std::weak_ptr<DelayedWorkItem>>
     CronWorkItem;
@@ -271,7 +269,9 @@ class Scheduler {
   bool _cron_stopping{false};
   absl::Mutex _cron_queue_mutex;
   absl::CondVar _croncv;
-  std::unique_ptr<SchedulerCronThread> _cron_thread;
+  // Cron thread is the last member so it joins first on destruction (before
+  // _cron_queue/_cron_queue_mutex/_croncv get torn down).
+  std::jthread _cron_thread;
 };
 
 Scheduler* GetScheduler() noexcept;

@@ -75,8 +75,7 @@
 #include "basics/read_write_lock.h"
 #include "basics/string_buffer.h"
 #include "basics/string_utils.h"
-#include "basics/thread.h"
-#include "basics/threads.h"
+#include "basics/thread_id.h"
 #include "basics/write_locker.h"
 #include "files.h"
 
@@ -919,7 +918,7 @@ ErrorCode SdbCreateLockFile(const char* filename) {
     return ERROR_SYS_ERROR;
   }
 
-  pid_t pid = Thread::currentProcessId();
+  pid_t pid = CurrentProcessId();
   std::string buf = std::to_string(pid);
 
   int rv = SERENEDB_WRITE(fd, buf.c_str(), static_cast<size_t>(buf.size()));
@@ -1484,7 +1483,7 @@ ErrorCode SdbGetTempName(const char* directory, std::string& result,
 
   int tries = 0;
   while (tries++ < 10) {
-    auto pid = Thread::currentProcessId();
+    auto pid = CurrentProcessId();
 
     auto temp_name =
       absl::StrCat("tmp-", pid, "-", random::Interval(UINT32_MAX));

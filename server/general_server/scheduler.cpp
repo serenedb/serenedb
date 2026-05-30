@@ -31,7 +31,7 @@
 #include "basics/logger/logger.h"
 #include "basics/random/random_generator.h"
 #include "basics/string_utils.h"
-#include "basics/thread.h"
+#include "basics/thread_id.h"
 #include "general_server/acceptor.h"
 #include "general_server/rest_handler.h"
 #include "general_server/scheduler_feature.h"
@@ -42,32 +42,6 @@
 #include "rest/general_response.h"
 
 namespace sdb {
-namespace {
-
-class SchedulerThread : public ServerThread<SerenedServer> {
- public:
-  explicit SchedulerThread(Server& server, Scheduler& scheduler,
-                           const std::string& name = "Scheduler")
-    : ServerThread<SerenedServer>(server, name), _scheduler(scheduler) {}
-
-  // shutdown is called by derived implementation!
-  ~SchedulerThread() override = default;
-
- protected:
-  Scheduler& _scheduler;
-};
-
-}  // namespace
-
-class SchedulerCronThread final : public SchedulerThread {
- public:
-  explicit SchedulerCronThread(SerenedServer& server, Scheduler& scheduler)
-    : SchedulerThread(server, scheduler, "SchedCron") {}
-
-  ~SchedulerCronThread() final { shutdown(); }
-
-  void run() final { _scheduler.runCronThread(); }
-};
 
 DECLARE_COUNTER(serenedb_scheduler_handler_tasks_created_total,
                 "Number of scheduler tasks created");
@@ -152,8 +126,11 @@ bool Scheduler::start() {
     std::pair{_max_threads, _min_threads},
     folly::CPUThreadPoolExecutor::makeLifoSemPriorityQueue(4));
   _executor_handle->addTaskObserver(std::make_unique<JobObserver>(*this));
-  _cron_thread = std::make_unique<SchedulerCronThread>(_server, *this);
-  return _cron_thread->start();
+  _cron_thread = std::jthread{[this] {
+    InitThread("SchedCron");
+    runCronThread();
+  }};
+  return true;
 }
 
 void Scheduler::shutdown() {
@@ -164,7 +141,10 @@ void Scheduler::shutdown() {
   _croncv.notify_one();
   _cron_queue_mutex.Unlock();
 
-  _cron_thread.reset();
+  // Joins the cron thread.
+  if (_cron_thread.joinable()) {
+    _cron_thread.join();
+  }
 
 #ifdef SDB_DEV
   // At this point the cron thread has been stopped

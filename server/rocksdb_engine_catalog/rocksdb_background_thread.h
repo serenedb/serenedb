@@ -23,36 +23,46 @@
 
 #include <absl/synchronization/mutex.h>
 
-#include "basics/thread.h"
+#include <thread>
+
 #include "metrics/fwd.h"
 
 namespace sdb {
 
 class RocksDBEngineCatalog;
 
-class RocksDBBackgroundThread final : public Thread {
+class RocksDBBackgroundThread {
  public:
   RocksDBBackgroundThread(RocksDBEngineCatalog& eng, double interval);
-  ~RocksDBBackgroundThread() final;
+  ~RocksDBBackgroundThread();
 
-  void beginShutdown() final;
+  // start the background thread. Returns true on success.
+  bool start();
+
+  // request the thread to stop and notify it; idempotent.
+  void beginShutdown();
 
  private:
   void SyncStats();
-  void run() final;
+  void run();
 
   RocksDBEngineCatalog& _engine;
 
   /// interval in which we will run
   const double _interval;
 
-  /// condition variable for heartbeat
+  /// condition variable for heartbeat; also guards _stopping.
   struct {
     absl::CondVar cv;
     absl::Mutex mutex;
   } _condition;
 
+  bool _stopping{false};
+
   metrics::Gauge<uint64_t>& _metrics_wal_released_tick_replication;
+
+  // Declared last so it joins first on destruction.
+  std::jthread _thread;
 };
 
 }  // namespace sdb

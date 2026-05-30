@@ -25,7 +25,7 @@ add_library(
     basics/result.cpp
     basics/result_error.cpp
     basics/string_utils.cpp
-    basics/thread.cpp
+    basics/thread_id.cpp
     basics/static_strings.cpp
     basics/lifecycle.cpp
     basics/application-exit.cpp
@@ -38,7 +38,6 @@ add_library(
     basics/signals.cpp
     basics/system-functions.cpp
     basics/terminal-utils-posix.cpp
-    basics/threads-posix.cpp
     basics/strings.cpp
     basics/zip.cpp
     basics/datetime.cpp

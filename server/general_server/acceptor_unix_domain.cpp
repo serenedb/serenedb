@@ -21,6 +21,7 @@
 
 #include "general_server/acceptor_unix_domain.h"
 
+#include "basics/down_cast.h"
 #include "basics/exceptions.h"
 #include "basics/file_utils.h"
 #include "basics/logger/logger.h"

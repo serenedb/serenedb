@@ -39,6 +39,7 @@
 #include <thread>
 #include <type_traits>
 
+#include "basics/operating-system.h"
 #include "basics/strings.h"
 
 #if defined(SERENEDB_HAVE_MACOS_MEM_STATS)
@@ -86,7 +87,7 @@
 #include "basics/page_size.h"
 #include "basics/string_utils.h"
 #include "basics/system-functions.h"
-#include "basics/thread.h"
+#include "basics/thread_id.h"
 
 namespace sdb {
 namespace {
@@ -414,7 +415,7 @@ std::optional<ExternalProcessStatus> LookupSpawnedProcessStatus(pid_t pid) {
 #ifdef SERENEDB_HAVE_LINUX_PROC
 
 ProcessInfo GetProcessInfoSelf() {
-  return GetProcessInfo(Thread::currentProcessId());
+  return GetProcessInfo(CurrentProcessId());
 }
 
 #elif SERENEDB_HAVE_GETRUSAGE

@@ -21,55 +21,44 @@
 
 #include "io_context.h"
 
-#include <thread>
-
 #include "basics/logger/logger.h"
+#include "basics/thread_id.h"
 
 using namespace sdb;
-using namespace sdb::basics;
 using namespace sdb::rest;
-
-IoContext::IoThread::IoThread(app::AppServer& server, IoContext& iocontext)
-  : Thread(server, "Io"), _iocontext(iocontext) {}
-
-IoContext::IoThread::IoThread(const IoThread& other)
-  : Thread(other._server, "Io"), _iocontext(other._iocontext) {}
-
-IoContext::IoThread::~IoThread() { shutdown(); }
-
-void IoContext::IoThread::run() {
-  // run the asio io context
-  try {
-    _iocontext.io_context.run();
-  } catch (const std::exception& ex) {
-    SDB_WARN(GENERAL, "caught exception in IO thread: ", ex.what());
-  }
-}
 
 IoContext::IoContext(app::AppServer& server)
   : io_context(1),  // only a single thread per context
     _server(server),
-    _thread(server, *this),
     _work(io_context.get_executor()),
-    _clients(0) {
-  _thread.start();
-}
+    _clients(0),
+    _io_thread([this] {
+      InitThread("Io");
+      try {
+        io_context.run();
+      } catch (const std::exception& ex) {
+        SDB_WARN(GENERAL, "caught exception in IO thread: ", ex.what());
+      }
+    }) {}
 
 IoContext::IoContext(const IoContext& other)
   : io_context(1),
     _server(other._server),
-    _thread(other._server, *this),
     _work(io_context.get_executor()),
-    _clients(0) {
-  _thread.start();
-}
+    _clients(0),
+    _io_thread([this] {
+      InitThread("Io");
+      try {
+        io_context.run();
+      } catch (const std::exception& ex) {
+        SDB_WARN(GENERAL, "caught exception in IO thread: ", ex.what());
+      }
+    }) {}
 
 IoContext::~IoContext() { stop(); }
 
 void IoContext::stop() {
   _work.reset();
   io_context.stop();
-  while (_thread.isRunning()) {
-    std::this_thread::yield();
-  }
+  // The jthread joins automatically in its destructor; no busy-wait here.
 }

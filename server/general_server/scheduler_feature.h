@@ -29,7 +29,7 @@
 
 namespace sdb {
 
-class SchedulerFeature final : public SerenedFeature {
+class SchedulerFeature final {
  public:
   static constexpr std::string_view name() noexcept { return "Scheduler"; }
 
@@ -39,14 +39,14 @@ class SchedulerFeature final : public SerenedFeature {
   inline static SchedulerFeature* gInstance = nullptr;
   static SchedulerFeature& instance() noexcept { return *gInstance; }
 
-  SchedulerFeature(Server& server);
-  ~SchedulerFeature() final;
+  SchedulerFeature();
+  ~SchedulerFeature();
 
-  void validateOptions() final;
-  void prepare() final;
-  void start() final;
-  void stop() final;
-  void unprepare() final;
+  void validateOptions();
+  void prepare();
+  void start();
+  void stop();
+  void unprepare();
 
   // -------------------------------------------------------------------------
   // UNRELATED SECTION STARTS HERE: Signals and other things crept into Sched

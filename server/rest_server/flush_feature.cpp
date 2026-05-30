@@ -39,8 +39,8 @@ DECLARE_GAUGE(serenedb_flush_subscriptions, uint64_t,
 
 namespace sdb {
 
-FlushFeature::FlushFeature(Server& server)
-  : SerenedFeature{server, name()},
+FlushFeature::FlushFeature()
+  :
     _stopped(false),
     _metrics_flush_subscriptions(
       metrics::GetMetrics().add(

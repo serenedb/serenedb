@@ -72,7 +72,6 @@ class GeneralServer {
   bool openEndpoint(IoContext& io_context, Endpoint* endpoint);
 
  private:
-  GeneralServerFeature& _feature;
   std::vector<IoContext> _contexts;
   const bool _allow_early_connections;
 

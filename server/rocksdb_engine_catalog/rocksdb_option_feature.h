@@ -39,17 +39,21 @@ namespace options {
 class ProgramOptions;
 }
 
-class RocksDBOptionFeature final : public SerenedFeature {
+class RocksDBOptionFeature final {
  public:
   static constexpr std::string_view name() noexcept { return "RocksDBOption"; }
 
   inline static RocksDBOptionFeature* gInstance = nullptr;
   static RocksDBOptionFeature& instance() noexcept { return *gInstance; }
 
-  explicit RocksDBOptionFeature(Server& server);
+  RocksDBOptionFeature();
   ~RocksDBOptionFeature();
 
-  void validateOptions() final;
+  void validateOptions();
+  void prepare() {}
+  void start() {}
+  void stop() {}
+  void unprepare() {}
 
   const rocksdb::Options& getOptions() const;
   const rocksdb::BlockBasedTableOptions& getTableOptions() const;

@@ -57,22 +57,22 @@ enum class ThreadGroup : uint8_t {
 
 SearchEngine& GetSearchEngine();
 
-class SearchEngine final : public SerenedFeature {
+class SearchEngine final {
  public:
   static constexpr std::string_view name() noexcept { return "Search"; }
 
   inline static SearchEngine* gInstance = nullptr;
   static SearchEngine& instance() noexcept { return *gInstance; }
 
-  explicit SearchEngine(Server& server);
+  SearchEngine();
   ~SearchEngine();
 
-  void prepare() final;
-  void start() final;
-  void stop() final;
-  void unprepare() final;
-  void beginShutdown() final;
-  void validateOptions() final;
+  void prepare();
+  void start();
+  void stop();
+  void unprepare();
+  void beginShutdown();
+  void validateOptions();
 
   std::tuple<size_t, size_t, size_t> stats(ThreadGroup id) const;
   std::pair<size_t, size_t> limits(ThreadGroup id) const;

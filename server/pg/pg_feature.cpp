@@ -32,8 +32,7 @@
 
 namespace sdb::pg {
 
-PostgresFeature::PostgresFeature(SerenedServer& server)
-  : SerenedFeature{server, name()} {
+PostgresFeature::PostgresFeature() {
   gInstance = this;
 }
 

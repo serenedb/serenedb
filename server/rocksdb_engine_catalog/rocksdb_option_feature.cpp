@@ -256,8 +256,8 @@ static constexpr uint64_t kMinSyncInterval = 5;
 
 }  // namespace
 
-RocksDBOptionFeature::RocksDBOptionFeature(Server& server)
-  : SerenedFeature{server, name()},
+RocksDBOptionFeature::RocksDBOptionFeature()
+  :
     // number of lock stripes for the transaction lock manager. we bump this
     // to at least 16 to reduce contention for small scale systems.
     _transaction_lock_stripes(

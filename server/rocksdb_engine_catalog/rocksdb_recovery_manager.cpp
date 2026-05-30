@@ -59,8 +59,8 @@
 
 namespace sdb {
 
-RocksDBRecoveryManager::RocksDBRecoveryManager(Server& server)
-  : SerenedFeature{server, name()},
+RocksDBRecoveryManager::RocksDBRecoveryManager()
+  :
     _current_sequence_number(0),
     _recovery_state(RecoveryState::Before) {
   gInstance = this;

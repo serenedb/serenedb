@@ -38,7 +38,7 @@ namespace options {
 class ProgramOptions;
 }
 
-class SslServerFeature : public SerenedFeature {
+class SslServerFeature {
  public:
   typedef std::shared_ptr<std::vector<asio_ns::ssl::context>> SslContextList;
 
@@ -47,12 +47,14 @@ class SslServerFeature : public SerenedFeature {
   inline static SslServerFeature* gInstance = nullptr;
   static SslServerFeature& instance() noexcept { return *gInstance; }
 
-  explicit SslServerFeature(Server& server);
+  SslServerFeature();
   ~SslServerFeature();
 
-  void validateOptions() final;
-  void prepare() final;
-  void unprepare() final;
+  void validateOptions();
+  void prepare();
+  void start() {}
+  void stop() {}
+  void unprepare();
 
   void verifySslOptions();
 

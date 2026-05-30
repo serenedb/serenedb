@@ -26,19 +26,21 @@
 
 namespace sdb {
 
-class DatabasePathFeature final : public SerenedFeature {
+class DatabasePathFeature final {
  public:
   static constexpr std::string_view name() { return "DatabasePath"; }
 
   inline static DatabasePathFeature* gInstance = nullptr;
   static DatabasePathFeature& instance() noexcept { return *gInstance; }
 
-  explicit DatabasePathFeature(Server& server);
+  DatabasePathFeature();
   ~DatabasePathFeature();
 
-  void validateOptions() final;
-  void prepare() final;
-  void start() final;
+  void validateOptions();
+  void prepare();
+  void start();
+  void stop() {}
+  void unprepare() {}
 
   const std::string& directory() const { return _directory; }
   std::string subdirectoryName(std::string_view sub_directory) const;

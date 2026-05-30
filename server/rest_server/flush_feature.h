@@ -80,15 +80,21 @@ class LowerBoundSubscription final : public FlushSubscription {
   std::string _name;
 };
 
-class FlushFeature final : public SerenedFeature {
+class FlushFeature final {
  public:
   static constexpr std::string_view name() noexcept { return "Flush"; }
 
   inline static FlushFeature* gInstance = nullptr;
   static FlushFeature& instance() noexcept { return *gInstance; }
 
-  explicit FlushFeature(Server& server);
+  FlushFeature();
   ~FlushFeature();
+
+  void validateOptions() {}
+  void prepare() {}
+  void start() {}
+  void stop();
+  void unprepare() {}
 
   /// register a flush subscription that will ensure replay of all WAL
   ///        entries after the latter of registration or the last successful
@@ -103,8 +109,6 @@ class FlushFeature final : public SerenedFeature {
   /// engine could release ticks. if no active or stale flush subscriptions were
   /// found, the returned tick value is 0.
   std::tuple<size_t, size_t, Tick> releaseUnusedTicks();
-
-  void stop() final;
 
  private:
   absl::Mutex _flush_subscriptions_mutex;

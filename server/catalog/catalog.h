@@ -350,19 +350,21 @@ struct LogicalCatalog {
   virtual std::shared_ptr<const Snapshot> GetCatalogSnapshot() const = 0;
 };
 
-class CatalogFeature final : public SerenedFeature {
+class CatalogFeature final {
  public:
   static constexpr std::string_view name() noexcept { return "Catalog"; }
 
   inline static CatalogFeature* gInstance = nullptr;
   static CatalogFeature& instance() noexcept { return *gInstance; }
 
-  explicit CatalogFeature(Server& server);
+  CatalogFeature();
   ~CatalogFeature();
 
-  void start() final;
-  void unprepare() final;
-  void prepare() final;
+  void validateOptions() {}
+  void prepare();
+  void start();
+  void stop() {}
+  void unprepare();
 
   void Cleanup() {
     _local.reset();

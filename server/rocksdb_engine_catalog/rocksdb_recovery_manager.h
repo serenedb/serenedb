@@ -47,20 +47,21 @@ enum class RecoveryState : uint32_t {
   Done,
 };
 
-class RocksDBRecoveryManager final : public SerenedFeature {
+class RocksDBRecoveryManager final {
  public:
   static constexpr std::string_view name() { return "RocksDBRecoveryManager"; }
 
   inline static RocksDBRecoveryManager* gInstance = nullptr;
   static RocksDBRecoveryManager& instance() noexcept { return *gInstance; }
 
-  explicit RocksDBRecoveryManager(Server& server);
+  RocksDBRecoveryManager();
   ~RocksDBRecoveryManager();
 
-  void prepare() final;
-  void unprepare() final;
-
-  void start() final;
+  void validateOptions() {}
+  void prepare();
+  void start();
+  void stop() {}
+  void unprepare();
 
   RecoveryState recoveryState() const noexcept;
 

@@ -45,8 +45,7 @@ using namespace sdb::options;
 
 namespace sdb {
 
-DatabasePathFeature::DatabasePathFeature(Server& server)
-  : SerenedFeature{server, name()} {
+DatabasePathFeature::DatabasePathFeature() {
   gInstance = this;
 }
 

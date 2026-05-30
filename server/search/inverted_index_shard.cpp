@@ -132,7 +132,6 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
   _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
   _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
-  auto& server = SerenedServer::Instance();
 
   const auto schema_id = index.GetParentId();
   const auto db_id = catalog::CatalogFeature::instance()
@@ -291,10 +290,6 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   _flush_subscription = std::make_shared<LowerBoundSubscription>(
     _recovery_tick,
     absl::StrCat("flush subscription for inverted index '", _id, "'"));
-
-  if (!server.hasFeature<RocksDBRecoveryManager>()) {
-    return;
-  }
 }
 
 void InvertedIndexShard::WriteInternal(vpack::Builder& /*b*/) const {}
@@ -656,11 +651,7 @@ void InvertedIndexShard::FinishCreation() {
     return;
   }
   _phase = Phase::Active;
-  auto& server = SerenedServer::Instance();
-  if (server.hasFeature<FlushFeature>()) {
-    FlushFeature::instance().registerFlushSubscription(
-      _flush_subscription);
-  }
+  FlushFeature::instance().registerFlushSubscription(_flush_subscription);
 }
 
 void InvertedIndexShard::RecoveryCommit(Tick tick) {

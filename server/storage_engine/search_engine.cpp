@@ -115,16 +115,14 @@ class SearchThreadPools {
   ThreadPool _compaction_threads_pool;
 };
 
-SearchEngine::SearchEngine(Server& server)
-  : SerenedFeature{server, name()},
-    _dir_feature{DatabasePathFeature::instance()},
+SearchEngine::SearchEngine()
+  : _dir_feature{DatabasePathFeature::instance()},
     _thread_pools(std::make_shared<SearchThreadPools>()),
     _out_of_sync_links(metrics::GetMetrics().add(
       serenedb_search_num_out_of_sync_links{})),
     _columns_cache_memory_used(metrics::GetMetrics().add(
       serenedb_search_columns_cache_size{})) {
   gInstance = this;
-  static_assert(Server::isCreatedAfter<SearchEngine, DatabasePathFeature>());
 }
 
 SearchEngine::~SearchEngine() { gInstance = nullptr; }

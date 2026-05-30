@@ -40,22 +40,22 @@ namespace sdb {
 
 class RestServerThread;
 
-class GeneralServerFeature final : public SerenedFeature {
+class GeneralServerFeature final {
  public:
   static constexpr std::string_view name() noexcept { return "GeneralServer"; }
 
   inline static GeneralServerFeature* gInstance = nullptr;
   static GeneralServerFeature& instance() noexcept { return *gInstance; }
 
-  explicit GeneralServerFeature(Server& server);
+  GeneralServerFeature();
   ~GeneralServerFeature();
 
-  void validateOptions() final;
-  void prepare() final;
-  void start() final;
-  void beginShutdown() final;
-  void stop() final;
-  void unprepare() final;
+  void validateOptions();
+  void prepare();
+  void start();
+  void beginShutdown();
+  void stop();
+  void unprepare();
 
   double keepAliveTimeout() const noexcept;
   bool returnQueueTimeHeader() const noexcept;

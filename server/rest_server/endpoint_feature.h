@@ -26,17 +26,21 @@
 
 namespace sdb {
 
-class EndpointFeature final : public SerenedFeature {
+class EndpointFeature final {
  public:
   static constexpr std::string_view name() noexcept { return "Endpoint"; }
 
   inline static EndpointFeature* gInstance = nullptr;
   static EndpointFeature& instance() noexcept { return *gInstance; }
 
-  explicit EndpointFeature(SerenedServer& server);
+  EndpointFeature();
   ~EndpointFeature();
 
-  void validateOptions() final;
+  void validateOptions();
+  void prepare() {}
+  void start() {}
+  void stop() {}
+  void unprepare() {}
 
   std::vector<std::string> httpEndpoints();
   EndpointList& endpointList() { return _endpoint_list; }

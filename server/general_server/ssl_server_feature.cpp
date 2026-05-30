@@ -63,8 +63,8 @@ using namespace sdb;
 using namespace sdb::basics;
 using namespace sdb::options;
 
-SslServerFeature::SslServerFeature(Server& server)
-  : SerenedFeature{server, name()},
+SslServerFeature::SslServerFeature()
+  :
     _cafile(),
     _keyfile(),
     _cipher_list("HIGH:!EXPORT:!aNULL@STRENGTH"),

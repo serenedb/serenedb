@@ -51,8 +51,8 @@ int ClientHelloCallback(SSL* ssl, int* al, void* arg) { return 1; }
 GeneralServer::GeneralServer(GeneralServerFeature& feature,
                              uint64_t num_io_threads,
                              bool allow_early_connections)
-  : _feature(feature), _allow_early_connections(allow_early_connections) {
-  auto& server = feature.server();
+  : _allow_early_connections(allow_early_connections) {
+  auto& server = SerenedServer::Instance();
 
   _contexts.reserve(num_io_threads);
   for (size_t i = 0; i < num_io_threads; ++i) {
@@ -224,4 +224,6 @@ Result GeneralServer::reloadTLS() {
   }
 }
 
-SerenedServer& GeneralServer::server() const { return _feature.server(); }
+SerenedServer& GeneralServer::server() const {
+  return SerenedServer::Instance();
+}

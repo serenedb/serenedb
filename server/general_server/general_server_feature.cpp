@@ -80,8 +80,8 @@ DECLARE_COUNTER(serenedb_http2_connections_total,
 DECLARE_GAUGE(serenedb_requests_memory_usage, uint64_t,
               "Memory consumed by incoming requests");
 
-GeneralServerFeature::GeneralServerFeature(Server& server)
-  : SerenedFeature{server, name()},
+GeneralServerFeature::GeneralServerFeature()
+  :
     current_requests_size(AddMetric(serenedb_requests_memory_usage{})),
 #ifdef SDB_DEV
     _started_listening(false),

@@ -29,20 +29,21 @@
 
 namespace sdb::pg {
 
-class PostgresFeature final : public SerenedFeature {
+class PostgresFeature final {
  public:
   static constexpr std::string_view name() noexcept { return "postgres"; }
 
   inline static PostgresFeature* gInstance = nullptr;
   static PostgresFeature& instance() noexcept { return *gInstance; }
 
-  explicit PostgresFeature(SerenedServer& server);
+  PostgresFeature();
   ~PostgresFeature();
 
-  void validateOptions() final;
-  void prepare() final;
-  void start() final;
-  void unprepare() final;
+  void validateOptions();
+  void prepare();
+  void start();
+  void stop() {}
+  void unprepare();
 
   uint64_t RegisterTask(PgSQLCommTaskBase& task);
   void UnregisterTask(uint64_t key);

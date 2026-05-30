@@ -69,9 +69,8 @@ struct SchedulerFeature::AsioHandler {
   std::shared_ptr<asio_ns::signal_set> hangup_signals;
 };
 
-SchedulerFeature::SchedulerFeature(Server& server)
-  : SerenedFeature{server, name()},
-    _scheduler(nullptr),
+SchedulerFeature::SchedulerFeature()
+  : _scheduler(nullptr),
     _metrics_feature(sdb::metrics::GetMetrics()),
     _asio_handler(std::make_unique<AsioHandler>()) {
   gInstance = this;
@@ -141,7 +140,8 @@ void SchedulerFeature::prepare() {
                               _nr_maximal_threads);
 
   auto sched = std::make_unique<Scheduler>(
-    server(), _nr_minimal_threads, _nr_maximal_threads, _queue_size,
+    SerenedServer::Instance(), _nr_minimal_threads, _nr_maximal_threads,
+    _queue_size,
     _fifo1_size, _fifo2_size, _fifo3_size, ongoing_low_priority_limit,
     _unavailability_queue_fill_grade, _metrics_feature);
 

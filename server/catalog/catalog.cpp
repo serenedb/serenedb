@@ -680,8 +680,7 @@ ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
   return database;
 }
 
-CatalogFeature::CatalogFeature(Server& server)
-  : SerenedFeature{server, name()} {
+CatalogFeature::CatalogFeature() {
   gInstance = this;
 }
 

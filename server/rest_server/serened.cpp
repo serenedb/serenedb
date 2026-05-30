@@ -57,107 +57,121 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
        },
        {}});
 
-    server.addFeatures(absl::Overload{
-      []<typename T>(auto& server, type::Tag<T>) {
-        return std::make_unique<T>(server);
-      },
-      [](auto& server, type::Tag<SslServerFeature>) {
-        return std::make_unique<SslServerFeature>(server);
-      },
-    });
+    // 1. Parse CLI before constructing any feature (some ctors read flags).
+    server.parseOptions(argc, argv);
+
+    // 2. Construct features in dependency order. Each ctor sets its
+    //    static gInstance pointer; SerenedFeature::instance() works from
+    //    here on.
+    SslServerFeature ssl;
+    DatabasePathFeature db_path;
+    SchedulerFeature scheduler;
+    RocksDBOptionFeature rocksdb_opt;
+    EngineFeature engine{server};
+    FlushFeature flush;
+    RocksDBRecoveryManager recovery;
+    catalog::CatalogFeature catalog;
+    search::SearchEngine search;
+    EndpointFeature endpoint;
+    GeneralServerFeature general;
+    pg::PostgresFeature pg;
 
     try {
       // ----------------------------------------------------------------
       // Explicit boot / shutdown ordering. Each feature's lifecycle
       // method is invoked here directly; AppServer no longer dispatches.
-      // Boot order matches kSerenedFeatures; shutdown is strict LIFO.
+      // Construction order above doubles as boot order; shutdown is
+      // strict LIFO.
       // ----------------------------------------------------------------
 
-      // 1. Parse CLI (absl::ParseCommandLine + positional argv stash).
-      server.parseOptions(argc, argv);
-
-      // 2. validateOptions -- pull absl::GetFlag values into fields,
-      //    fail-fast on bad combinations. Order does not matter; we use
-      //    the kSerenedFeatures declaration order.
+      // 3. validateOptions -- pull absl::GetFlag values into fields,
+      //    fail-fast on bad combinations.
       server.setState(SerenedServer::State::InValidateOptions);
-      SslServerFeature::instance().validateOptions();
-      DatabasePathFeature::instance().validateOptions();
-      SchedulerFeature::instance().validateOptions();
-      RocksDBOptionFeature::instance().validateOptions();
-      EngineFeature::instance().validateOptions();
-      FlushFeature::instance().validateOptions();
-      RocksDBRecoveryManager::instance().validateOptions();
-      catalog::CatalogFeature::instance().validateOptions();
-      search::SearchEngine::instance().validateOptions();
-      EndpointFeature::instance().validateOptions();
-      GeneralServerFeature::instance().validateOptions();
-      pg::PostgresFeature::instance().validateOptions();
+      ssl.validateOptions();
+      db_path.validateOptions();
+      scheduler.validateOptions();
+      rocksdb_opt.validateOptions();
+      engine.validateOptions();
+      flush.validateOptions();
+      recovery.validateOptions();
+      catalog.validateOptions();
+      search.validateOptions();
+      endpoint.validateOptions();
+      general.validateOptions();
+      pg.validateOptions();
 
-      // 3. prepare -- non-thread-creating init.
+      // 4. prepare -- non-thread-creating init.
       server.setState(SerenedServer::State::InPrepare);
-      SslServerFeature::instance().prepare();
-      DatabasePathFeature::instance().prepare();
-      SchedulerFeature::instance().prepare();
-      RocksDBOptionFeature::instance().prepare();
-      EngineFeature::instance().prepare();
-      FlushFeature::instance().prepare();
-      RocksDBRecoveryManager::instance().prepare();
-      catalog::CatalogFeature::instance().prepare();
-      search::SearchEngine::instance().prepare();
-      EndpointFeature::instance().prepare();
-      GeneralServerFeature::instance().prepare();
-      pg::PostgresFeature::instance().prepare();
+      ssl.prepare();
+      db_path.prepare();
+      scheduler.prepare();
+      rocksdb_opt.prepare();
+      engine.prepare();
+      flush.prepare();
+      recovery.prepare();
+      catalog.prepare();
+      search.prepare();
+      endpoint.prepare();
+      general.prepare();
+      pg.prepare();
 
-      // 4. start -- spin up threads, open sockets. AFTER this returns
+      // 5. start -- spin up threads, open sockets. AFTER this returns
       //    successfully, the server is fully accepting clients.
       server.setState(SerenedServer::State::InStart);
-      SslServerFeature::instance().start();
-      DatabasePathFeature::instance().start();
-      SchedulerFeature::instance().start();
-      RocksDBOptionFeature::instance().start();
-      EngineFeature::instance().start();
-      FlushFeature::instance().start();
-      RocksDBRecoveryManager::instance().start();
-      catalog::CatalogFeature::instance().start();
-      search::SearchEngine::instance().start();
-      EndpointFeature::instance().start();
-      GeneralServerFeature::instance().start();
-      pg::PostgresFeature::instance().start();
+      ssl.start();
+      db_path.start();
+      scheduler.start();
+      rocksdb_opt.start();
+      engine.start();
+      flush.start();
+      recovery.start();
+      catalog.start();
+      search.start();
+      endpoint.start();
+      general.start();
+      pg.start();
 
-      // 5. wait for SIGTERM/SIGINT.
+      // 6. wait for SIGTERM/SIGINT.
       server.setState(SerenedServer::State::InWait);
       server.wait();
 
-      // 6. stop -- strict LIFO of step 4. Threads must exit before
+      // 7. beginShutdown -- LIFO; lets long-running threads (general
+      //    server listeners, engine background, search thread pools)
+      //    notice they should exit before stop() blocks on them.
+      general.beginShutdown();
+      search.beginShutdown();
+      engine.beginShutdown();
+
+      // 8. stop -- strict LIFO of step 5. Threads must exit before
       //    the call returns.
       server.setState(SerenedServer::State::InStop);
-      pg::PostgresFeature::instance().stop();
-      GeneralServerFeature::instance().stop();
-      EndpointFeature::instance().stop();
-      search::SearchEngine::instance().stop();
-      catalog::CatalogFeature::instance().stop();
-      RocksDBRecoveryManager::instance().stop();
-      FlushFeature::instance().stop();
-      EngineFeature::instance().stop();
-      RocksDBOptionFeature::instance().stop();
-      SchedulerFeature::instance().stop();
-      DatabasePathFeature::instance().stop();
-      SslServerFeature::instance().stop();
+      pg.stop();
+      general.stop();
+      endpoint.stop();
+      search.stop();
+      catalog.stop();
+      recovery.stop();
+      flush.stop();
+      engine.stop();
+      rocksdb_opt.stop();
+      scheduler.stop();
+      db_path.stop();
+      ssl.stop();
 
-      // 7. unprepare -- final teardown, also LIFO.
+      // 8. unprepare -- final teardown, also LIFO.
       server.setState(SerenedServer::State::InUnprepare);
-      pg::PostgresFeature::instance().unprepare();
-      GeneralServerFeature::instance().unprepare();
-      EndpointFeature::instance().unprepare();
-      search::SearchEngine::instance().unprepare();
-      catalog::CatalogFeature::instance().unprepare();
-      RocksDBRecoveryManager::instance().unprepare();
-      FlushFeature::instance().unprepare();
-      EngineFeature::instance().unprepare();
-      RocksDBOptionFeature::instance().unprepare();
-      SchedulerFeature::instance().unprepare();
-      DatabasePathFeature::instance().unprepare();
-      SslServerFeature::instance().unprepare();
+      pg.unprepare();
+      general.unprepare();
+      endpoint.unprepare();
+      search.unprepare();
+      catalog.unprepare();
+      recovery.unprepare();
+      flush.unprepare();
+      engine.unprepare();
+      rocksdb_opt.unprepare();
+      scheduler.unprepare();
+      db_path.unprepare();
+      ssl.unprepare();
       server.setState(SerenedServer::State::Stopped);
 
       ret = EXIT_SUCCESS;

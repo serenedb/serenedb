@@ -21,6 +21,7 @@
 #include "iresearch/analysis/shingle_analyzer.hpp"
 
 #include <vpack/builder.h>
+#include <vpack/iterator.h>
 
 #include "iresearch/analysis/analyzers.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
@@ -35,6 +36,7 @@ constexpr std::string_view kMaxSize = "maxShingleSize";
 constexpr std::string_view kOutputUnigrams = "outputUnigrams";
 constexpr std::string_view kOutputUnigramsIfNoShingles =
   "outputUnigramsIfNoShingles";
+constexpr std::string_view kFrequentWords = "frequentWords";
 constexpr std::string_view kParseError =
   ", failed to parse options for shingle analyzer";
 
@@ -114,6 +116,21 @@ bool ParseOptions(vpack::Slice slice, ShingleAnalyzer::Options& options) {
                  options.output_unigrams_if_no_shingles)) {
     return false;
   }
+  if (auto fw = slice.get(kFrequentWords); !fw.isNone()) {
+    if (!fw.isArray()) {
+      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, kFrequentWords,
+                " must be an array of strings", kParseError);
+      return false;
+    }
+    for (auto word : vpack::ArrayIterator{fw}) {
+      if (!word.isString()) {
+        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, kFrequentWords,
+                  " entries must be strings", kParseError);
+        return false;
+      }
+      options.frequent_words.emplace_back(ViewCast<byte_type>(word.stringView()));
+    }
+  }
   if (!analyzers::MakeAnalyzer(slice, options.base_analyzer)) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Invalid analyzer definition in ",
               slice_to_string(slice), kParseError);
@@ -151,6 +168,23 @@ bool NormalizeImpl(vpack::Slice input, vpack::Builder& output) {
   output.add(kMaxSize, max);
   output.add(kOutputUnigrams, output_unigrams);
   output.add(kOutputUnigramsIfNoShingles, output_unigrams_if_no_shingles);
+  if (auto fw = input.get(kFrequentWords); !fw.isNone()) {
+    if (!fw.isArray()) {
+      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, kFrequentWords,
+                " must be an array of strings", kParseError);
+      return false;
+    }
+    output.add(kFrequentWords, vpack::Value{vpack::ValueType::Array});
+    for (auto word : vpack::ArrayIterator{fw}) {
+      if (!word.isString()) {
+        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, kFrequentWords,
+                  " entries must be strings", kParseError);
+        return false;
+      }
+      output.add(word.stringView());
+    }
+    output.close();
+  }
   if (!analyzers::NormalizeAnalyzer(input, output)) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Invalid analyzer definition in ",
               slice_to_string(input), kParseError);
@@ -252,9 +286,22 @@ ShingleAnalyzer::ShingleAnalyzer(Options&& options) noexcept
   if (_separator.empty()) {
     _separator.push_back(kDefaultSeparator);
   }
+  _filler = std::move(options.filler_token);
+  if (_filler.empty()) {
+    _filler.push_back(static_cast<byte_type>('_'));  // Lucene's default filler
+  }
+  for (const auto& word : options.frequent_words) {
+    _frequent.emplace(ViewCast<char>(bytes_view{word}));
+  }
+  if (!_frequent.empty()) {
+    // A bounded vocabulary needs a term at every base position so a phrase over
+    // a rare-only span can fall back to unigrams -- force unigram emission.
+    _output_unigrams = true;
+  }
   SDB_ASSERT(_min >= 1 && _max >= _min);
   _ring.resize(_max);
   _base_term = irs::get<TermAttr>(*_analyzer);
+  _base_inc = irs::get<IncAttr>(*_analyzer);  // null -> assume gap-free (inc=1)
   SDB_ASSERT(_base_term);
 }
 
@@ -311,6 +358,15 @@ bytes_view ShingleAnalyzer::BuildShingle(uint32_t size) {
   return _scratch;
 }
 
+bool ShingleAnalyzer::WindowHasFrequent(uint32_t size) const noexcept {
+  for (uint32_t j = 0; j < size; ++j) {
+    if (IsFrequent(TokenAt(_ring[(_ring_head + j) % _max]))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool ShingleAnalyzer::reset(std::string_view data) {
   _terms.clear();
   _ring_head = 0;
@@ -319,6 +375,8 @@ bool ShingleAnalyzer::reset(std::string_view data) {
   _emit_size = 0;
   _base_exhausted = false;
   _front_emitted = false;
+  _pending_fillers = 0;
+  _has_pending = false;
   _store.value = {};
   return _analyzer->reset(data);
 }
@@ -329,8 +387,25 @@ bool ShingleAnalyzer::next() {
     // emit every shingle size; at end-of-stream a partial window emits the
     // sizes that still fit.
     while (!_base_exhausted && _ring_len < _max) {
-      if (_analyzer->next()) {
-        AppendToken(_base_term->value);
+      // Lucene-style gap handling: a base position increment > 1 (e.g. a
+      // stopword the base filtered out) inserts that many filler tokens before
+      // the real one, buffered across iterations so the ring never overflows.
+      // With inc == 1 (no gaps) this reduces to a plain AppendToken.
+      if (_pending_fillers != 0) {
+        AppendToken(_filler);
+        --_pending_fillers;
+      } else if (_has_pending) {
+        AppendToken(_pending_token);
+        _has_pending = false;
+      } else if (_analyzer->next()) {
+        const uint32_t inc = _base_inc != nullptr ? _base_inc->value : 1;
+        if (inc > 1) {
+          _pending_fillers = inc - 1;
+          _pending_token.assign(_base_term->value);  // value may change on next()
+          _has_pending = true;
+        } else {
+          AppendToken(_base_term->value);
+        }
       } else {
         _base_exhausted = true;
       }
@@ -349,10 +424,15 @@ bool ShingleAnalyzer::next() {
       }
     }
     if (_emit_size >= _min && _emit_size <= _ring_len) {
-      _shingle_term.value = BuildShingle(_emit_size);
-      ++_emit_size;
-      EmitPosition();
-      return true;
+      // A frequent-words bound omits shingles that contain no frequent word.
+      if (_frequent.empty() || WindowHasFrequent(_emit_size)) {
+        _shingle_term.value = BuildShingle(_emit_size);
+        ++_emit_size;
+        EmitPosition();
+        return true;
+      }
+      ++_emit_size;  // not in the bounded vocabulary: skip this shingle size
+      continue;
     }
     PopFront();
     _emit_size = 0;

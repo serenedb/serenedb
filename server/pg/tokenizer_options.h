@@ -169,6 +169,11 @@ inline constexpr OptionInfo kOutputUnigramsIfNoShingles{
   "outputunigramsifnoshingles", false,
   "Index unigrams only when the input is too short to form a shingle"};
 
+inline constexpr OptionInfo kFrequentWords{
+  "frequentwords", ""sv,
+  "Comma-separated words (typically stopwords). When non-empty, a shingle is "
+  "indexed only if it contains one of them, bounding the shingle vocabulary"};
+
 // Geo options (kGeoMaxCells, kGeoLatitude, kGeoJsonType, ...) live in
 // "pg/geo_tokenizer_options.h", brought in by the include above.
 
@@ -275,7 +280,8 @@ inline constexpr OptionInfo kMinHashOptions[] = {kNumHashes};
 inline constexpr OptionInfo kWildcardOptions[] = {kNgramSize};
 
 inline constexpr OptionInfo kShingleOptions[] = {
-  kMinShingleSize, kMaxShingleSize, kOutputUnigrams, kOutputUnigramsIfNoShingles};
+  kMinShingleSize, kMaxShingleSize, kOutputUnigrams, kOutputUnigramsIfNoShingles,
+  kFrequentWords};
 
 inline constexpr OptionInfo kNormOptions[] = {kLocale, kCase, kAccent};
 

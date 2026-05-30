@@ -20,6 +20,7 @@
 
 #include "iresearch/search/phrase_ngram_filter.hpp"
 
+#include <algorithm>
 #include <memory>
 
 #include "iresearch/analysis/shingle_analyzer.hpp"
@@ -214,10 +215,17 @@ Filter::Query::ptr ByPhraseNgram::Prepare(const PrepareContext& ctx,
 
   if (FieldHasPositions(ctx.index, field)) {
     // Strategy B (adaptive): the indexed shingle terms carry positions, so a
-    // phrase over them proves contiguity with no per-candidate verification.
+    // phrase over the greedy cover proves contiguity with no verification. The
+    // position offset between consecutive terms is their token-start gap (so a
+    // ByTerm part's delta is gap; push_back adds the implicit +1, hence gap-1);
+    // this also enforces the seam between non-overlapping shingles.
     ByPhraseOptions phrase;
-    for (const auto& shingle : opts.shingles) {
-      phrase.push_back<ByTermOptions>(ByTermOptions{shingle});
+    for (size_t i = 0; i < opts.positional_terms.size(); ++i) {
+      const size_t offs =
+        i == 0 ? 0
+               : opts.positional_starts[i] - opts.positional_starts[i - 1] - 1;
+      phrase.push_back<ByTermOptions>(ByTermOptions{opts.positional_terms[i]},
+                                      offs);
     }
     return ByPhrase::Prepare(ctx, field, phrase);
   }
@@ -272,41 +280,84 @@ ByPhraseNgramOptions::ByPhraseNgramOptions(std::string_view phrase,
   if (m == 0) {
     return;
   }
-  const auto max = analyzer.MaxShingleSize();
-  const auto min = analyzer.MinShingleSize();
+  const size_t max = analyzer.MaxShingleSize();
+  const size_t min = analyzer.MinShingleSize();
   const auto separator = analyzer.Separator();
+  const bool bounded = analyzer.HasFrequentWords();
 
   std::vector<bytes_view> window;
-  auto make_shingle = [&](size_t begin, size_t count) {
+  auto build = [&](size_t begin, size_t count) {
     window.clear();
     for (size_t i = 0; i < count; ++i) {
       window.emplace_back(query_tokens[begin + i]);
     }
     bstring shingle;
     analysis::ShingleAnalyzer::AppendShingle(window, separator, shingle);
-    shingles.push_back(std::move(shingle));
+    return shingle;
+  };
+  // Whether the span [begin, begin+count) is indexed as a shingle: always when
+  // unbounded, else only if it contains a frequent word (the analyzer's rule).
+  auto indexed = [&](size_t begin, size_t count) {
+    if (!bounded) {
+      return true;
+    }
+    for (size_t i = 0; i < count; ++i) {
+      if (analyzer.IsFrequent(query_tokens[begin + i])) {
+        return true;
+      }
+    }
+    return false;
   };
 
+  // --- Strategy A: position-free candidate terms (ANDed) + `exact`. ---
   if (m == 1) {
-    // Single token -> the indexed unigram is the exact answer.
-    shingles.push_back(query_tokens.front());
+    shingles.push_back(query_tokens.front());  // indexed unigram is exact
     exact = true;
-  } else if (m <= max && m >= min) {
-    // Whole phrase fits one indexed shingle -> exact, no verification.
-    make_shingle(0, m);
+  } else if (m >= min && m <= max && indexed(0, m)) {
+    shingles.push_back(build(0, m));  // whole phrase is one indexed shingle
     exact = true;
-  } else if (m < min) {
-    // No indexed shingle of this size: AND the unigrams and verify.
+  } else if (m > max) {
+    // AND the indexed overlapping max-size shingles; under a frequent-words
+    // bound also AND the (always-indexed) unigrams so every token is
+    // constrained even where its shingles were dropped. Verify contiguity.
+    for (size_t begin = 0; begin + max <= m; ++begin) {
+      if (indexed(begin, max)) {
+        shingles.push_back(build(begin, max));
+      }
+    }
+    if (bounded) {
+      for (const auto& token : query_tokens) {
+        shingles.push_back(token);
+      }
+    }
+    exact = false;
+  } else {
+    // Shorter than min, or a whole-phrase shingle that isn't indexed: AND the
+    // unigrams and verify.
     for (const auto& token : query_tokens) {
       shingles.push_back(token);
     }
     exact = false;
-  } else {
-    // Longer than max: AND the overlapping max-size shingles and verify.
-    for (size_t begin = 0; begin + max <= m; ++begin) {
-      make_shingle(begin, max);
+  }
+
+  // --- Strategy B: greedy non-overlapping positional cover. At each step use
+  // the largest indexed shingle starting here, else fall back to a unigram. ---
+  for (size_t i = 0; i < m;) {
+    size_t span = 0;
+    for (size_t cand = std::min(max, m - i); cand >= min; --cand) {
+      if (indexed(i, cand)) {
+        span = cand;
+        break;
+      }
     }
-    exact = false;
+    positional_starts.push_back(static_cast<uint32_t>(i));
+    if (span == 0) {
+      positional_terms.push_back(query_tokens[i]);  // unigram fallback
+      ++i;
+    } else {
+      positional_terms.push_back(build(i, span));
+      i += span;
+    }
   }
 }
 

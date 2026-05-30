@@ -104,7 +104,10 @@ class RegexpVerifyIterator : public DocIterator {
       const auto size = vread<uint32_t>(p);
       ++p;  // skip the 0xFF marker between the varint length and the bytes
       const re2::StringPiece token{reinterpret_cast<const char*>(p), size};
-      if (RE2::PartialMatch(token, *_matcher)) {
+      // Whole-term match (not substring): the automaton ByRegexp accepts a term
+      // only if the regex matches it entirely, so FullMatch keeps the two paths
+      // equivalent (e.g. /bro.n/ matches "brown" but not "browns").
+      if (RE2::FullMatch(token, *_matcher)) {
         return true;
       }
       p += size + 1;  // skip the bytes and the trailing 0xFF marker

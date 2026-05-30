@@ -78,6 +78,63 @@ class WhitespaceTokenizer final
   irs::IncAttr _inc;
 };
 
+// Whitespace tokenizer that drops the stopword "the" and reports the gap as a
+// position increment > 1 (like Lucene's StopFilter), so the shingle analyzer's
+// filler handling can be exercised.
+class StopwordTokenizer final
+  : public irs::analysis::TypedAnalyzer<StopwordTokenizer> {
+ public:
+  static constexpr std::string_view type_name() noexcept {
+    return "test_stopword_tokenizer";
+  }
+
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
+    if (type == irs::Type<irs::TermAttr>::id()) {
+      return &_term;
+    }
+    if (type == irs::Type<irs::IncAttr>::id()) {
+      return &_inc;
+    }
+    return nullptr;
+  }
+
+  bool reset(std::string_view data) final {
+    _data = data;
+    _pos = 0;
+    return true;
+  }
+
+  bool next() final {
+    uint32_t skipped = 0;
+    for (;;) {
+      while (_pos < _data.size() && _data[_pos] == ' ') {
+        ++_pos;
+      }
+      if (_pos >= _data.size()) {
+        return false;
+      }
+      const auto start = _pos;
+      while (_pos < _data.size() && _data[_pos] != ' ') {
+        ++_pos;
+      }
+      const auto word = _data.substr(start, _pos - start);
+      if (word == "the") {
+        ++skipped;  // a removed stopword widens the next token's increment
+        continue;
+      }
+      _term.value = irs::ViewCast<irs::byte_type>(word);
+      _inc.value = 1 + skipped;
+      return true;
+    }
+  }
+
+ private:
+  std::string_view _data;
+  size_t _pos{0};
+  irs::TermAttr _term;
+  irs::IncAttr _inc;
+};
+
 irs::analysis::ShingleAnalyzer MakeAnalyzer(uint32_t min, uint32_t max,
                                             bool output_unigrams,
                                             bool output_unigrams_if_no_shingles =
@@ -236,6 +293,76 @@ TEST(ShingleAnalyzerTest, output_unigrams_if_no_shingles) {
 TEST(ShingleAnalyzerTest, empty_input) {
   auto analyzer = MakeAnalyzer(2, 2, true);
   EXPECT_TRUE(Emit(analyzer, "").empty());
+}
+
+irs::bstring Bytes(std::string_view s) {
+  return irs::bstring{irs::ViewCast<irs::byte_type>(s)};
+}
+
+TEST(ShingleAnalyzerTest, frequent_words_bound) {
+  // A frequent-words bound emits a shingle only if it contains a frequent word;
+  // unigrams are always emitted (output_unigrams is forced on).
+  irs::analysis::ShingleAnalyzer analyzer{{
+    .base_analyzer = std::make_unique<WhitespaceTokenizer>(),
+    .min_shingle_size = 2,
+    .max_shingle_size = 2,
+    .output_unigrams = false,  // overridden because a bound is set
+    .frequent_words = {Bytes("the"), Bytes("of")},
+  }};
+  // "the quick brown": "the quick" kept (the is frequent); "quick brown" dropped
+  // (neither frequent); every unigram still emitted.
+  const std::vector<std::string> expected{
+    "the", Shingle({"the", "quick"}), "quick", "brown",
+  };
+  EXPECT_EQ(expected, Emit(analyzer, "the quick brown"));
+}
+
+TEST(ShingleAnalyzerTest, frequent_words_positions) {
+  // The dropped shingle leaves the unigram alone at its position (inc=1), so a
+  // positional phrase can still fall back to unigrams across the rare span.
+  irs::analysis::ShingleAnalyzer analyzer{{
+    .base_analyzer = std::make_unique<WhitespaceTokenizer>(),
+    .min_shingle_size = 2,
+    .max_shingle_size = 2,
+    .frequent_words = {Bytes("the")},
+  }};
+  const std::vector<TermInc> expected{
+    {"the", 1}, {Shingle({"the", "quick"}), 0},
+    {"quick", 1},  // "quick brown" dropped -> only the unigram here
+    {"brown", 1},
+  };
+  EXPECT_EQ(expected, EmitWithInc(analyzer, "the quick brown"));
+}
+
+TEST(ShingleAnalyzerTest, lucene_filler_gap) {
+  // The base drops "the"; the resulting gap becomes a filler token, so no
+  // shingle bridges the removed stopword.
+  irs::analysis::ShingleAnalyzer analyzer{{
+    .base_analyzer = std::make_unique<StopwordTokenizer>(),
+    .min_shingle_size = 2,
+    .max_shingle_size = 2,
+    .output_unigrams = true,
+  }};
+  const std::vector<std::string> expected{
+    "quick", Shingle({"quick", "_"}), "_", Shingle({"_", "brown"}), "brown",
+  };
+  EXPECT_EQ(expected, Emit(analyzer, "quick the brown"));
+}
+
+TEST(ShingleAnalyzerTest, lucene_filler_positions) {
+  // The filler occupies its own position so a positional phrase is gap-aware.
+  irs::analysis::ShingleAnalyzer analyzer{{
+    .base_analyzer = std::make_unique<StopwordTokenizer>(),
+    .min_shingle_size = 2,
+    .max_shingle_size = 2,
+    .output_unigrams = true,
+  }};
+  const std::vector<TermInc> expected{
+    {"quick", 1}, {Shingle({"quick", "_"}), 0},
+    {"_", 1},     {Shingle({"_", "brown"}), 0},
+    {"brown", 1},
+  };
+  EXPECT_EQ(expected, EmitWithInc(analyzer, "quick the brown"));
 }
 
 TEST(ShingleAnalyzerTest, positions_bigrams_with_unigrams) {

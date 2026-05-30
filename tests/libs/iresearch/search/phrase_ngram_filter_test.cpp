@@ -132,6 +132,29 @@ irs::analysis::ShingleAnalyzer MakeAnalyzer(uint32_t min = 2, uint32_t max = 2) 
   }};
 }
 
+irs::bstring Bytes(std::string_view s) {
+  return irs::bstring{irs::ViewCast<irs::byte_type>(s)};
+}
+
+irs::analysis::ShingleAnalyzer MakeFreqAnalyzer(
+  std::vector<irs::bstring> frequent) {
+  return irs::analysis::ShingleAnalyzer{{
+    .base_analyzer = std::make_unique<WhitespaceTokenizer>(),
+    .min_shingle_size = 2,
+    .max_shingle_size = 2,
+    .output_unigrams = true,
+    .frequent_words = std::move(frequent),
+  }};
+}
+
+// Frequent-words corpus: stopwords {the, of} bound the shingle vocabulary.
+constexpr std::string_view kFreqValues[] = {
+  "the quick brown fox",  // 0: contains "the quick brown" and "quick brown fox"
+  "quick brown the fox",  // 1: same words, neither phrase contiguous
+  "the quick brown",      // 2: contains "the quick brown"
+  "the lazy dog",         // 3
+};
+
 // Index `values` as a single segment of ShingleField documents and open a
 // reader over them. `dir` and `analyzer` must outlive the returned reader.
 irs::DirectoryReader BuildReader(
@@ -337,6 +360,38 @@ TEST(PhraseNgramFilterTest, long_phrase) {
   EXPECT_EQ(Ids({}),
             Execute(reader,
                     MakeFilter("text", "the quick red panda climbs", analyzer)));
+}
+
+TEST(PhraseNgramFilterTest, frequent_words_verify) {
+  // Strategy A under a frequent-words bound: the indexed "the quick" bigram +
+  // unigram coverage + verify; rare-only phrases fall back to a unigram AND.
+  auto analyzer = MakeFreqAnalyzer({Bytes("the"), Bytes("of")});
+  irs::MemoryDirectory dir;
+  auto reader = BuildReader(dir, analyzer, kFreqValues);
+  ASSERT_NE(nullptr, reader);
+
+  EXPECT_EQ(Ids({0, 2}),
+            Execute(reader, MakeFilter("text", "the quick brown", analyzer)));
+  // No bigram of this phrase is indexed (none frequent) -> unigram AND + verify
+  // rejects the non-contiguous doc 1.
+  EXPECT_EQ(Ids({0}),
+            Execute(reader, MakeFilter("text", "quick brown fox", analyzer)));
+}
+
+TEST(PhraseNgramFilterTest, frequent_words_positional) {
+  // Strategy B under the same bound: the greedy cover uses "the quick" then a
+  // unigram, and falls back to all-unigram positional phrases for rare spans.
+  auto analyzer = MakeFreqAnalyzer({Bytes("the"), Bytes("of")});
+  irs::MemoryDirectory dir;
+  auto reader =
+    BuildReader(dir, analyzer, kFreqValues,
+                irs::IndexFeatures::Freq | irs::IndexFeatures::Pos);
+  ASSERT_NE(nullptr, reader);
+
+  EXPECT_EQ(Ids({0, 2}),
+            Execute(reader, MakeFilter("text", "the quick brown", analyzer)));
+  EXPECT_EQ(Ids({0}),
+            Execute(reader, MakeFilter("text", "quick brown fox", analyzer)));
 }
 
 TEST(PhraseNgramFilterTest, positional_exact_no_verify) {

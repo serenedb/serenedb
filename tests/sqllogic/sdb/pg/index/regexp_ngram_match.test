@@ -42,15 +42,14 @@ id
 1
 2
 
-# Metacharacter: "bro.n" -> brown (1,2) and browns (4); literal run "bro"
-# drives the prefilter.
+# Whole-term match: "bro.n" -> brown (1,2) but NOT browns (4); the literal run
+# "bro" drives the prefilter.
 query
 SELECT id FROM test_regex_idx WHERE body @@ ts_regexp('bro.n') ORDER BY id;
 ----
 id
 1
 2
-4
 
 # Alternation -> OR of the alternatives' n-gram conjunctions.
 query

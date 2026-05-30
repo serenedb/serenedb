@@ -161,6 +161,17 @@ analysis::ShingleAnalyzer::Options ShingleOpts() {
   };
 }
 
+// A frequent-words-bounded variant: only bigrams involving a stopword are
+// indexed (SeekStorm economy). Shrinks the shingle vocabulary; the query side
+// falls back to unigrams across rare-only spans.
+analysis::ShingleAnalyzer::Options ShingleOptsBounded() {
+  auto opts = ShingleOpts();
+  for (auto* w : {"the", "of", "and", "a", "to", "in"}) {
+    opts.frequent_words.push_back(bstring{ViewCast<byte_type>(std::string_view{w})});
+  }
+  return opts;
+}
+
 // --- corpus ------------------------------------------------------------------
 
 // Vocabulary mixing frequent "stopwords" (front) with content words.
@@ -276,9 +287,9 @@ DirectoryReader BuildIndex(std::unique_ptr<MMapDirectory>& dir,
 // static): google-benchmark instantiates a fresh fixture per registration, so
 // per-fixture SetUp would rebuild the indexes for every benchmark.
 struct Corpus {
-  std::unique_ptr<MMapDirectory> classic_dir, a_dir, b_dir;
-  DirectoryReader classic_reader, a_reader, b_reader;
-  std::unique_ptr<analysis::ShingleAnalyzer> query_a, query_b;
+  std::unique_ptr<MMapDirectory> classic_dir, a_dir, b_dir, bf_dir;
+  DirectoryReader classic_reader, a_reader, b_reader, bf_reader;
+  std::unique_ptr<analysis::ShingleAnalyzer> query_a, query_b, query_bf;
 };
 
 const Corpus& GetCorpus() {
@@ -304,8 +315,17 @@ const Corpus& GetCorpus() {
     c.b_reader = BuildIndex(c.b_dir, tmp / "sdb-bench-phrase-shingleB", fb, docs,
                             false, "shingleB (Freq+Pos)");
 
+    auto idx_bf = std::make_unique<analysis::ShingleAnalyzer>(ShingleOptsBounded());
+    ShingleField fbf;
+    fbf.analyzer = idx_bf.get();
+    fbf.features = IndexFeatures::Freq | IndexFeatures::Pos;
+    c.bf_reader =
+      BuildIndex(c.bf_dir, tmp / "sdb-bench-phrase-shingleBF", fbf, docs, false,
+                 "shingleB+freqwords (Freq+Pos, bounded vocab)");
+
     c.query_a = std::make_unique<analysis::ShingleAnalyzer>(ShingleOpts());
     c.query_b = std::make_unique<analysis::ShingleAnalyzer>(ShingleOpts());
+    c.query_bf = std::make_unique<analysis::ShingleAnalyzer>(ShingleOptsBounded());
     return c;
   }();
   return corpus;
@@ -367,6 +387,13 @@ void BM_shingleB(benchmark::State& s, std::string_view text) {
   }
 }
 
+void BM_shingleBF(benchmark::State& s, std::string_view text) {
+  const auto& c = GetCorpus();
+  for (auto _ : s) {
+    benchmark::DoNotOptimize(RunFilter(c.bf_reader, MakeNgram(text, *c.query_bf)));
+  }
+}
+
 constexpr std::string_view kContent2[] = {"quick", "brown"};
 constexpr std::string_view kContent3[] = {"quick", "brown", "fox"};
 constexpr std::string_view kStop3[] = {"the", "of", "the"};
@@ -386,6 +413,10 @@ BENCHMARK_CAPTURE(BM_shingleA, stop3, "the of the");
 BENCHMARK_CAPTURE(BM_shingleB, content2, "quick brown");
 BENCHMARK_CAPTURE(BM_shingleB, content3, "quick brown fox");
 BENCHMARK_CAPTURE(BM_shingleB, stop3, "the of the");
+
+BENCHMARK_CAPTURE(BM_shingleBF, content2, "quick brown");
+BENCHMARK_CAPTURE(BM_shingleBF, content3, "quick brown fox");
+BENCHMARK_CAPTURE(BM_shingleBF, stop3, "the of the");
 
 int main(int argc, char** argv) {
   irs::analysis::analyzers::Init();

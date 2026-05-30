@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/container/flat_hash_set.h>
+
 #include <cstdint>
 #include <span>
 #include <string>
@@ -27,6 +29,7 @@
 
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs::analysis {
 
@@ -69,6 +72,17 @@ class ShingleAnalyzer final : public TypedAnalyzer<ShingleAnalyzer> {
     bool output_unigrams = true;
     bool output_unigrams_if_no_shingles = false;
     bstring token_separator;  // empty -> single 0xFF byte (set in the ctor)
+    // Lucene-style gap handling: when the base analyzer removes tokens (a
+    // position increment > 1, e.g. a stopword filter), that many filler tokens
+    // are inserted so shingles do not bridge the gap and phrase matching stays
+    // position-accurate. Empty -> a single '_' (Lucene's default).
+    bstring filler_token;
+    // When non-empty, a shingle is indexed only if it contains one of these
+    // words (the SeekStorm/Williams-Zobel "frequent words" economy: bigram only
+    // the expensive stopwords). This bounds the shingle vocabulary; unigrams are
+    // always emitted so a phrase over rare-only spans falls back to them. Empty
+    // -> every shingle is indexed (the default).
+    std::vector<bstring> frequent_words;
   };
 
   static constexpr std::string_view type_name() noexcept { return "shingle"; }
@@ -109,12 +123,23 @@ class ShingleAnalyzer final : public TypedAnalyzer<ShingleAnalyzer> {
   bool OutputUnigrams() const noexcept { return _output_unigrams; }
   bytes_view Separator() const noexcept { return _separator; }
 
+  // Whether a frequent-words bound is in effect (and so a shingle term exists
+  // only for frequent-involving spans). The phrase filter's query decomposition
+  // consults `IsFrequent` to avoid requiring an unindexed shingle.
+  bool HasFrequentWords() const noexcept { return !_frequent.empty(); }
+  bool IsFrequent(bytes_view token) const noexcept {
+    return _frequent.contains(ViewCast<char>(token));
+  }
+
  private:
   // Bytes of the token whose packed record starts at `offset` in `_terms`.
   bytes_view TokenAt(uint32_t offset) const noexcept;
   void AppendToken(bytes_view token);  // append to _terms + push onto the ring
   void PopFront() noexcept;            // drop the window's front token
   bytes_view BuildShingle(uint32_t size);  // join window[0..size) into _scratch
+  // Whether the window [head .. head+size) contains a frequent word (only
+  // meaningful when a frequent-words bound is set).
+  bool WindowHasFrequent(uint32_t size) const noexcept;
   // Set the position increment for the term about to be emitted: the first
   // term at a window front advances the position (inc=1), the shingles that
   // follow share it (inc=0), so each base token occupies exactly one position
@@ -123,6 +148,7 @@ class ShingleAnalyzer final : public TypedAnalyzer<ShingleAnalyzer> {
 
   Analyzer::ptr _analyzer;
   const TermAttr* _base_term{};  // base analyzer's emitted term
+  const IncAttr* _base_inc{};    // base analyzer's position increment (may be null)
   uint32_t _min;
   uint32_t _max;
   bool _output_unigrams;
@@ -141,6 +167,11 @@ class ShingleAnalyzer final : public TypedAnalyzer<ShingleAnalyzer> {
   uint32_t _emit_size{0};         // 0 = unigram phase; else current shingle size
   bool _base_exhausted{false};
   bool _front_emitted{false};     // a term was already emitted at the window front
+  absl::flat_hash_set<std::string> _frequent;  // frequent-words bound (may be empty)
+  bstring _filler;                // filler token for base-analyzer gaps ('_')
+  bstring _pending_token;         // a real token buffered behind pending fillers
+  uint32_t _pending_fillers{0};   // fillers still to emit before _pending_token
+  bool _has_pending{false};       // whether _pending_token holds a buffered token
 };
 
 }  // namespace irs::analysis

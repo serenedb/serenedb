@@ -50,9 +50,17 @@ class ByPhraseNgram;
 struct ByPhraseNgramOptions {
   using FilterType = ByPhraseNgram;
 
-  // Candidate-generation terms (ANDed). Either one term (the exact case) or
-  // the phrase's overlapping max-size shingles / unigrams.
+  // Strategy A (position-free) candidate-generation terms (ANDed): one term
+  // (the exact case) or the phrase's overlapping shingles / unigrams. With a
+  // frequent-words bound, unindexed shingles are replaced by their unigrams.
   std::vector<bstring> shingles;
+  // Strategy B (positional) plan: a greedy non-overlapping cover of the phrase
+  // by the largest indexed shingle at each step, falling back to a unigram.
+  // `positional_starts[i]` is the token index where `positional_terms[i]`
+  // begins; Prepare turns start gaps into ByPhrase position offsets, so the
+  // phrase stays exact (the gap also enforces the seam between terms).
+  std::vector<bstring> positional_terms;
+  std::vector<uint32_t> positional_starts;
   // Ordered original query tokens, used to verify exact contiguity.
   std::vector<bstring> query_tokens;
   // The single shingle/unigram term in `shingles` is itself the exact answer;

@@ -226,12 +226,12 @@ TEST(RegexpNgramFilterTest, regex_metachars) {
   auto reader = BuildReader(dir, analyzer, kValues);
   ASSERT_NE(nullptr, reader);
 
-  // "bro.n" matches brown (0,1) and browns (3); the literal run "bro" drives
-  // the n-gram prefilter.
-  EXPECT_EQ(Ids({0, 1, 3}), Execute(reader, MakeFilter("bro.n", analyzer)));
+  // Whole-term match: "bro.n" matches brown (0,1) but NOT browns (3); the
+  // literal run "bro" drives the n-gram prefilter.
+  EXPECT_EQ(Ids({0, 1}), Execute(reader, MakeFilter("bro.n", analyzer)));
   // "f.x" has no >=3 literal run -> prefilter is match-all -> scan + verify;
-  // matches fox (0,2) and foxy (3).
-  EXPECT_EQ(Ids({0, 2, 3}), Execute(reader, MakeFilter("f.x", analyzer)));
+  // matches fox (0,2) but NOT foxy (3).
+  EXPECT_EQ(Ids({0, 2}), Execute(reader, MakeFilter("f.x", analyzer)));
 }
 
 TEST(RegexpNgramFilterTest, alternation) {

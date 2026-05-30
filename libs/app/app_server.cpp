@@ -36,11 +36,6 @@
 #include <utility>
 
 #include "app/app_feature.h"
-#include "app/options/argument_parser.h"
-#include "app/options/option.h"
-#include "app/options/parameters.h"
-#include "app/options/program_options.h"
-#include "app/options/section.h"
 #include "basics/application-exit.h"
 #include "basics/debugging.h"
 #include "basics/errors.h"
@@ -51,10 +46,9 @@
 
 namespace sdb::app {
 
-AppServer::AppServer(std::shared_ptr<options::ProgramOptions> options,
-                     const char* binary_path,
+AppServer::AppServer(const char* binary_path,
                      std::span<std::unique_ptr<AppFeature>> features)
-  : _options{options}, _all_features{features}, _binary_path{binary_path} {
+  : _all_features{features}, _binary_path{binary_path} {
   addReporter(
     ProgressHandler{[](AppServer::State state) {},
                     [](AppServer::State state, std::string_view name) {}});

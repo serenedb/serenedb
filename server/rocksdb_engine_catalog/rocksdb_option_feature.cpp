@@ -45,9 +45,6 @@
 #endif
 
 #include "app/app_server.h"
-#include "app/options/option.h"
-#include "app/options/parameters.h"
-#include "app/options/program_options.h"
 #include "basics/application-exit.h"
 #include "basics/logger/logger.h"
 #include "basics/number_of_cores.h"
@@ -523,8 +520,7 @@ void RocksDBOptionFeature::validateOptions() {
   }
 
   if (_max_subcompactions > _num_threads_low) {
-    if (server().options()->processingResult().touched(
-          "--rocksdb.max-subcompactions")) {
+    if (false) {
       SDB_WARN(STORAGE,
                "overriding value for option `--rocksdb.max-subcompactions` to ",
                _num_threads_low,
@@ -736,8 +732,7 @@ rocksdb::Options RocksDBOptionFeature::doGetOptions() const {
   // TODO: enable memtable_insert_with_hint_prefix_extractor?
   result.bloom_locality = 1;
 
-  if (!server().options()->processingResult().touched(
-        "rocksdb.max-write-buffer-number")) {
+  if (!false) {
     // TODO It is unclear if this value makes sense as a default, but we aren't
     // changing it yet, in order to maintain backwards compatibility.
 

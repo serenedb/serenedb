@@ -43,12 +43,8 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     SdbSetApplicationName(name);
     log::Initialize();
 
-    auto options = std::make_shared<sdb::options::ProgramOptions>(
-      argv[0], "Usage: " + name + " [<options>]",
-      "For more information use:", BIN_DIRECTORY);
-
     int ret{EXIT_FAILURE};
-    SerenedServer server{options, BIN_DIRECTORY};
+    SerenedServer server{BIN_DIRECTORY};
     ServerState state;
     // SereneDB is single-node; the cluster topology that the
     // ArangoDB ServerState modeled never applied.

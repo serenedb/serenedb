@@ -42,9 +42,6 @@ ABSL_FLAG(uint64_t, http_compress_response_threshold, 0,
           "compression (0 disables compression).");
 
 #include "app/app_server.h"
-#include "app/options/parameters.h"
-#include "app/options/program_options.h"
-#include "app/options/section.h"
 #include "basics/application-exit.h"
 #include "basics/debugging.h"
 #include "basics/string_utils.h"

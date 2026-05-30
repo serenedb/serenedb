@@ -26,9 +26,6 @@
 
 #include "app/app_server.h"
 #include "app/global_context.h"
-#include "app/options/parameters.h"
-#include "app/options/program_options.h"
-#include "app/options/section.h"
 #include "basics/application-exit.h"
 #include "basics/cleanup_functions.h"
 #include "basics/exitcodes.h"

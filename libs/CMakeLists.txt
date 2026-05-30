@@ -165,10 +165,6 @@ add_library(
     app/app_server.cpp
     app/global_context.cpp
     app/name_validator.cpp
-    app/options/option.cpp
-    app/options/program_options.cpp
-    app/options/section.cpp
-    app/options/translator.cpp
     endpoint/endpoint.cpp
     endpoint/endpoint_ip.cpp
     endpoint/endpoint_ip_v4.cpp

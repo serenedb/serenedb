@@ -6,7 +6,6 @@ add_executable(
     serenedb-tests_basics
     conversions_test.cpp
     endian_test.cpp
-    parameters_test.cpp
     assertions_tests.cpp
     http_request_test.cpp
     error_test.cpp

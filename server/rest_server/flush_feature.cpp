@@ -22,8 +22,6 @@
 #include "flush_feature.h"
 
 #include "app/app_server.h"
-#include "app/options/program_options.h"
-#include "app/options/section.h"
 #include "basics/encoding.h"
 #include "basics/logger/logger.h"
 #include "general_server/state.h"

@@ -32,7 +32,6 @@
 namespace sdb {
 namespace options {
 
-class ProgramOptions;
 }
 namespace app {
 
@@ -116,7 +115,7 @@ class AppServer {
   inline static std::atomic_bool gCtrlC = false;
 
  public:
-  AppServer(std::shared_ptr<options::ProgramOptions>, const char* binary_path,
+  AppServer(const char* binary_path,
             std::span<std::unique_ptr<AppFeature>> features);
 
   virtual ~AppServer() = default;
@@ -154,7 +153,6 @@ class AppServer {
   // report that we are going down by fatal error
   void shutdownFatalError();
 
-  auto options() const { return _options; }
 
   State state() const { return _state.load(std::memory_order_acquire); }
 
@@ -236,8 +234,6 @@ class AppServer {
 
   std::atomic<State> _state = State::Uninitialized;
 
-  std::shared_ptr<options::ProgramOptions> _options;
-
   std::span<std::unique_ptr<AppFeature>> _all_features;
 
   // will be signaled when the application server is asked to shut down
@@ -301,9 +297,8 @@ class AppServerImpl : public AppServer {
     return (std::greater{}(id<Feature>(), id<OtherFeatures>()) && ...);
   }
 
-  AppServerImpl(std::shared_ptr<sdb::options::ProgramOptions> opts,
-                const char* binary_path)
-    : AppServer{opts, binary_path, _features} {
+  explicit AppServerImpl(const char* binary_path)
+    : AppServer{binary_path, _features} {
     gInstance = this;
   }
 

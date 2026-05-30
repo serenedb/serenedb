@@ -105,8 +105,6 @@ void CollectTypeRefs(const duckdb::LogicalType& type, Refs& out) {
         CollectTypeRefs(duckdb::UnionType::GetMemberType(type, i), out);
       }
       break;
-    case duckdb::LogicalTypeId::VARIANT:
-      break;
     default:
       break;
   }

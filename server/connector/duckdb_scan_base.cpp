@@ -81,7 +81,7 @@ void InitCommonState(CommonScanGlobalState& state,
   const bool is_search_scan = bind_data.scan_source->IsSearchLike();
   if (is_search_scan && conn_ctx.GetReadYourOwnWrites() &&
       conn_ctx.HasRocksDBTransaction()) {
-    SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED,
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
               "querying an index within a transaction is not supported when "
               "sdb_read_your_own_writes is enabled");
   }

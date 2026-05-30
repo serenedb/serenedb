@@ -422,10 +422,10 @@ std::string NormalizeUtf8ToNFC(std::string_view value) {
     deleter);
   if (normalized == nullptr) {
     if (status != U_ZERO_ERROR) {
-      SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+      SDB_THROW(ERROR_BAD_PARAMETER,
                 std::string("invalid UTF-8 string: ") + u_errorName(status));
     }
-    SDB_THROW(sdb::ERROR_OUT_OF_MEMORY);
+    SDB_THROW(ERROR_OUT_OF_MEMORY);
   }
   return std::string(normalized.get(), out_length);
 }

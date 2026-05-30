@@ -325,7 +325,7 @@ bool ShapeContainer::intersects(const ShapeContainer& other) const {
     case BinOpCase(Type::S2Point, Type::S2Multipolyline):
     case BinOpCase(Type::S2Polyline, Type::S2Multipoint):
     case BinOpCase(Type::S2Multipoint, Type::S2Multipolyline): {
-      SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED,
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
                 "The case GEO_INTERSECTS(<some points>, <some polylines>)"
                 " is numerically unstable and thus not supported.");
     }

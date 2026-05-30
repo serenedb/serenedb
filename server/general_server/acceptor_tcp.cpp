@@ -91,7 +91,7 @@ void AcceptorTcp<T>::open() {
         return resolver.resolve(asio_ns::ip::tcp::v4(), hostname,
                                 std::to_string(port_number), ec);
       }
-      SDB_THROW(sdb::ERROR_IP_ADDRESS_INVALID);
+      SDB_THROW(ERROR_IP_ADDRESS_INVALID);
     }();
 
     if (ec) {

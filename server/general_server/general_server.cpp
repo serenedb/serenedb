@@ -62,7 +62,7 @@ GeneralServer::~GeneralServer() = default;
 
 void GeneralServer::registerTask(std::shared_ptr<CommTask> task) {
   if (lifecycle::IsStopping()) {
-    SDB_THROW(sdb::ERROR_SHUTTING_DOWN);
+    SDB_THROW(ERROR_SHUTTING_DOWN);
   }
   auto* t = task.get();
   {

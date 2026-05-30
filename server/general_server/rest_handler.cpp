@@ -554,7 +554,7 @@ void RestHandler::resetResponse(rest::ResponseCode code) {
 }
 
 yaclib::Future<> RestHandler::executeAsync() {
-  SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED);
+  SDB_THROW(ERROR_NOT_IMPLEMENTED);
 }
 
 RestStatus RestHandler::execute() { return waitForFuture(executeAsync()); }

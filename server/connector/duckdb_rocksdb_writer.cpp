@@ -167,7 +167,7 @@ void AppendPKValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
       break;
     }
     default:
-      SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED,
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
                 "Unsupported PK type: ", type.ToString());
   }
 }
@@ -287,7 +287,7 @@ void DuckDBColumnSerializer::TxnWriter::Write(
   auto status = _txn->Put(_cf, rocksdb::Slice(key.data(), key.size()),
                           rocksdb::Slice(merged));
   if (!status.ok()) {
-    SDB_THROW(sdb::ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
+    SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
   }
 }
 
@@ -303,7 +303,7 @@ void DuckDBColumnSerializer::TxnWriter::WriteNull(std::string_view key) {
   auto status =
     _txn->Put(_cf, rocksdb::Slice(key.data(), key.size()), rocksdb::Slice());
   if (!status.ok()) {
-    SDB_THROW(sdb::ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
+    SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
   }
 }
 
@@ -325,7 +325,7 @@ void DuckDBColumnSerializer::SstWriter::Write(
   auto status = _writer->Put(rocksdb::Slice(key.data(), key.size()),
                              rocksdb::Slice(merged));
   if (!status.ok()) {
-    SDB_THROW(sdb::ERROR_INTERNAL, "SST write failed: ", status.ToString());
+    SDB_THROW(ERROR_INTERNAL, "SST write failed: ", status.ToString());
   }
 }
 
@@ -336,7 +336,7 @@ void DuckDBColumnSerializer::SstWriter::WriteNull(std::string_view key) {
   auto status =
     _writer->Put(rocksdb::Slice(key.data(), key.size()), rocksdb::Slice());
   if (!status.ok()) {
-    SDB_THROW(sdb::ERROR_INTERNAL, "SST write failed: ", status.ToString());
+    SDB_THROW(ERROR_INTERNAL, "SST write failed: ", status.ToString());
   }
 }
 
@@ -956,7 +956,7 @@ size_t DuckDBColumnSerializer::WriteSubVector(
           return WriteSubVectorPrimitive<uint32_t>(rdata.unified, offset,
                                                    count);
         default:
-          SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED,
+          SDB_THROW(ERROR_NOT_IMPLEMENTED,
                     "Unsupported ENUM physical type in WriteSubVector");
       }
       return 0;
@@ -988,7 +988,7 @@ size_t DuckDBColumnSerializer::WriteSubVector(
       return bytes;
     }
     default:
-      SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED,
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
                 "Unsupported sub-vector type for RocksDB serialization: ",
                 type.ToString());
       return 0;
@@ -1225,12 +1225,12 @@ size_t DuckDBColumnSerializer::WriteScalarValue(
         case duckdb::PhysicalType::UINT32:
           return WriteScalarField<uint32_t>(fmt, row_idx);
         default:
-          SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED,
+          SDB_THROW(ERROR_NOT_IMPLEMENTED,
                     "Unsupported ENUM physical type in WriteScalarValue");
           return 0;
       }
     default:
-      SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED,
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
                 "Unsupported type in WriteScalarValue: ", type.ToString(),
                 " -- nested types go through WriteComplexValue");
       return 0;

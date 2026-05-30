@@ -110,7 +110,7 @@ std::string SslPbkdF2HS1(const char* salt, size_t salt_length, const char* pass,
                          size_t pass_length, int iter, int key_length) {
   unsigned char* dk = new (std::nothrow) unsigned char[key_length + 1];
   if (dk == nullptr) {
-    SDB_THROW(sdb::ERROR_OUT_OF_MEMORY);
+    SDB_THROW(ERROR_OUT_OF_MEMORY);
   }
   irs::Finally sg = [&] noexcept { delete[] dk; };
 
@@ -141,7 +141,7 @@ std::string SslPbkdF2(const char* salt, size_t salt_length, const char* pass,
 
   unsigned char* dk = new (std::nothrow) unsigned char[key_length + 1];
   if (dk == nullptr) {
-    SDB_THROW(sdb::ERROR_OUT_OF_MEMORY);
+    SDB_THROW(ERROR_OUT_OF_MEMORY);
   }
 
   irs::Finally sg = [&] noexcept { delete[] dk; };
@@ -173,7 +173,7 @@ std::string SslHmac(const char* key, size_t key_length, const char* message,
 
   unsigned char* md = new (std::nothrow) unsigned char[EVP_MAX_MD_SIZE + 1];
   if (md == nullptr) {
-    SDB_THROW(sdb::ERROR_OUT_OF_MEMORY);
+    SDB_THROW(ERROR_OUT_OF_MEMORY);
   }
 
   irs::Finally sg = [&] noexcept { delete[] md; };

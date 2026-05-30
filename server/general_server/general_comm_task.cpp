@@ -315,7 +315,7 @@ void GeneralCommTask<T>::ExecuteRequest(
   SDB_ASSERT(response != nullptr);
 
   if (request == nullptr || response == nullptr) {
-    SDB_THROW(sdb::ERROR_INTERNAL, "invalid object setup for ExecuteRequest");
+    SDB_THROW(ERROR_INTERNAL, "invalid object setup for ExecuteRequest");
   }
 
   response->setContentTypeRequested(request->contentTypeResponse());

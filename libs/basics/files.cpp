@@ -1619,7 +1619,7 @@ Sha256Functor::Sha256Functor()
 #endif
   auto* context = static_cast<EVP_MD_CTX*>(_context);
   if (context == nullptr) {
-    SDB_THROW(sdb::ERROR_OUT_OF_MEMORY);
+    SDB_THROW(ERROR_OUT_OF_MEMORY);
   }
   if (EVP_DigestInit_ex(context, EVP_sha256(), nullptr) == 0) {
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
@@ -1627,7 +1627,7 @@ Sha256Functor::Sha256Functor()
 #else
     EVP_MD_CTX_destroy(_context);
 #endif
-    SDB_THROW(sdb::ERROR_INTERNAL, "unable to initialize SHA256 processor");
+    SDB_THROW(ERROR_INTERNAL, "unable to initialize SHA256 processor");
   }
 }
 

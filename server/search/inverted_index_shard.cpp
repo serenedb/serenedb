@@ -147,16 +147,15 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   std::error_code ec;
   bool path_exists = std::filesystem::exists(path, ec);
   if (ec) {
-    SDB_THROW(sdb::ERROR_INTERNAL, "Failed to check existence of path '",
+    SDB_THROW(ERROR_INTERNAL, "Failed to check existence of path '",
               path.string(), "' while initializing data store '", _id,
               "': ", ec.message());
   }
   if (!path_exists) {
     std::filesystem::create_directories(path, ec);
     if (ec) {
-      SDB_THROW(sdb::ERROR_INTERNAL, "Failed to create directory '",
-                path.string(), "' while initializing data store '", _id,
-                "': ", ec.message());
+      SDB_THROW(ERROR_INTERNAL, "Failed to create directory '", path.string(),
+                "' while initializing data store '", _id, "': ", ec.message());
     }
   }
   auto codec = irs::formats::Get("1_5simd");
@@ -281,7 +280,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   }
   auto engine_snapshot = _engine.currentSnapshot();
   if (!engine_snapshot) {
-    SDB_THROW(sdb::ERROR_INTERNAL, "Search index '", _id,
+    SDB_THROW(ERROR_INTERNAL, "Search index '", _id,
               "' cannot acquire snapshot");
   }
   _snapshot = std::make_shared<InvertedIndexSnapshot>(
@@ -309,7 +308,7 @@ void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
 
   SDB_IF_FAILURE("SereneSearchTruncateFailure") {
     CrashHandler::setHardKill();
-    SDB_THROW(sdb::ERROR_DEBUG);
+    SDB_THROW(ERROR_DEBUG);
   }
 
   SDB_ASSERT(_writer);
@@ -353,7 +352,7 @@ void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
         engine_snapshot = prev->snapshot;
       }
       if (!engine_snapshot) {
-        SDB_THROW(sdb::ERROR_INTERNAL,
+        SDB_THROW(ERROR_INTERNAL,
                   "Failed to get engine snapshot while truncating Search "
                   "index '",
                   GetId().id(), "'");

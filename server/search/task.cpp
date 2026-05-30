@@ -98,7 +98,7 @@ void RefreshTask::operator()() {
   // reload RuntimeState
   {
     SDB_IF_FAILURE("SearchRefreshTask::lockInvertedIndexShard") {
-      SDB_THROW(sdb::ERROR_DEBUG);
+      SDB_THROW(ERROR_DEBUG);
     }
     absl::ReaderMutexLock lock{data->GetMutex()};
     auto& settings = data->GetTasksSettings();
@@ -121,9 +121,7 @@ void RefreshTask::operator()() {
     return;
   }
 
-  SDB_IF_FAILURE("SearchRefreshTask::commitUnsafe") {
-    SDB_THROW(sdb::ERROR_DEBUG);
-  }
+  SDB_IF_FAILURE("SearchRefreshTask::commitUnsafe") { SDB_THROW(ERROR_DEBUG); }
   auto [res, timeMs] = data->CommitUnsafe(_wait, nullptr, code);
 
   if (res.ok()) {
@@ -139,7 +137,7 @@ void RefreshTask::operator()() {
       ++_cleanup_interval_count >= _cleanup_interval_step) {  // if enabled
     _cleanup_interval_count = 0;
     SDB_IF_FAILURE("SearchRefreshTask::cleanupUnsafe") {
-      SDB_THROW(sdb::ERROR_DEBUG);
+      SDB_THROW(ERROR_DEBUG);
     }
 
     auto [res, timeMs] = data->CleanupUnsafe();
@@ -190,7 +188,7 @@ void CompactionTask::operator()() {
   // reload RuntimeState
   {
     SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexShard") {
-      SDB_THROW(sdb::ERROR_DEBUG);
+      SDB_THROW(ERROR_DEBUG);
     }
 
     absl::ReaderMutexLock lock{data->GetMutex()};
@@ -219,7 +217,7 @@ void CompactionTask::operator()() {
     std::move(reschedule).Cancel();
   }
   SDB_IF_FAILURE("SearchCompactionTask::compactUnsafe") {
-    SDB_THROW(sdb::ERROR_DEBUG);
+    SDB_THROW(ERROR_DEBUG);
   }
 
   bool empty_compaction = false;

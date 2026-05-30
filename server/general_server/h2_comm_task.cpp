@@ -324,7 +324,7 @@ void H2CommTask<T>::InitNgHttp2Session() {
   nghttp2_session_callbacks* callbacks;
   int rv = nghttp2_session_callbacks_new(&callbacks);
   if (rv != 0) {
-    SDB_THROW(sdb::ERROR_OUT_OF_MEMORY);
+    SDB_THROW(ERROR_OUT_OF_MEMORY);
   }
 
   absl::Cleanup cb_scope = [&]() noexcept {
@@ -353,7 +353,7 @@ void H2CommTask<T>::InitNgHttp2Session() {
 
   rv = nghttp2_session_server_new(&_session, callbacks, /*args*/ this);
   if (rv != 0) {
-    SDB_THROW(sdb::ERROR_OUT_OF_MEMORY);
+    SDB_THROW(ERROR_OUT_OF_MEMORY);
   }
 }
 

@@ -288,11 +288,11 @@ void catalog::Role::updatePassword(std::string_view password) {
 void catalog::Role::grantDatabase(std::string_view database,
                                   auth::Level level) {
   if (database.empty() || level == auth::Level::Undefined) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "Cannot set rights for empty db name");
+    SDB_THROW(ERROR_BAD_PARAMETER, "Cannot set rights for empty db name");
   }
   if (_name == StaticStrings::kDefaultUser &&
       database == StaticStrings::kDefaultDatabase && level != auth::Level::RW) {
-    SDB_THROW(sdb::ERROR_FORBIDDEN, "Cannot lower access level of '",
+    SDB_THROW(ERROR_FORBIDDEN, "Cannot lower access level of '",
               StaticStrings::kDefaultUser, "' to ",
               StaticStrings::kDefaultDatabase);
   }
@@ -313,12 +313,11 @@ void catalog::Role::grantDatabase(std::string_view database,
 /// Removes the entry, returns true if entry existed
 bool catalog::Role::removeDatabase(std::string_view database) {
   if (database.empty()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "Cannot remove rights for empty db name");
+    SDB_THROW(ERROR_BAD_PARAMETER, "Cannot remove rights for empty db name");
   }
   if (_name == StaticStrings::kDefaultUser &&
       database == StaticStrings::kDefaultDatabase) {
-    SDB_THROW(sdb::ERROR_FORBIDDEN, "Cannot remove access level of '",
+    SDB_THROW(ERROR_FORBIDDEN, "Cannot remove access level of '",
               StaticStrings::kDefaultUser, "' to ",
               StaticStrings::kDefaultDatabase);
   }

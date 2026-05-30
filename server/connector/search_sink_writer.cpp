@@ -617,7 +617,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     }
   } else {
     // Defensive: SwitchColumnImpl only calls this for Kinds handled above.
-    SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED, "TypeKind ",
+    SDB_THROW(ERROR_NOT_IMPLEMENTED, "TypeKind ",
               duckdb::EnumUtil::ToString(Kind),
               " is not supported in search index");
   }
@@ -635,7 +635,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       _pk_field.SetStringValue(row_key);
       const bool r = _document->Insert(_pk_field);
       if (!r) {
-        SDB_THROW(sdb::ERROR_INTERNAL,
+        SDB_THROW(ERROR_INTERNAL,
                   "Failed to insert PK field into IResearch document");
       }
       AppendPerRowPrimaryKey(row_key);
@@ -748,7 +748,7 @@ void SearchSinkInsertBaseImpl::SetupListExpressionWriter(
 void SearchSinkInsertBaseImpl::InsertNullValue() {
   _null_field.SetNullValue();
   if (!_document->Insert(&_null_field)) {
-    SDB_THROW(sdb::ERROR_INTERNAL,
+    SDB_THROW(ERROR_INTERNAL,
               "Failed to insert null field into IResearch document");
   }
 }
@@ -798,7 +798,7 @@ void SearchSinkInsertBaseImpl::WriteListElementValue(
   }
 
   if (!_document->Insert(&_field)) {
-    SDB_THROW(sdb::ERROR_INTERNAL,
+    SDB_THROW(ERROR_INTERNAL,
               "Failed to insert list element into IResearch document");
   }
 }
@@ -875,7 +875,7 @@ void SearchSinkInsertBaseImpl::SetupJsonExpressionWriter(
     auto insert_field = [this](Field& field) {
       const bool ok = _document->Insert(&field);
       if (!ok) {
-        SDB_THROW(sdb::ERROR_INTERNAL,
+        SDB_THROW(ERROR_INTERNAL,
                   "Failed to insert JSON expression field into IResearch "
                   "document");
       }
@@ -926,7 +926,7 @@ void SearchSinkInsertBaseImpl::SetupJsonExpressionWriter(
         }
         case simdjson::ondemand::json_type::object:
         case simdjson::ondemand::json_type::array:
-          SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+          SDB_THROW(ERROR_BAD_PARAMETER,
                     "JSON expression indexed by an inverted index must point "
                     "to a primitive (string/number/boolean/null) leaf; got an "
                     "object or array");
@@ -948,7 +948,7 @@ SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeIndexWriter(
       std::string_view full_key, std::span<const rocksdb::Slice> cell_slices) {
       auto& field = func(full_key, cell_slices, _field);
       if (!_document->Insert(&field)) {
-        SDB_THROW(sdb::ERROR_INTERNAL,
+        SDB_THROW(ERROR_INTERNAL,
                   "Failed to insert field into IResearch document");
       }
     };
@@ -967,7 +967,7 @@ SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeStoreAttrWriter(
       Field* field = is_null ? (_null_field.SetNullValue(), &_null_field)
                              : &func(full_key, cell_slices, _field);
       if (!_document->Insert(field)) {
-        SDB_THROW(sdb::ERROR_INTERNAL,
+        SDB_THROW(ERROR_INTERNAL,
                   "Failed to insert field into IResearch document");
       }
       if (is_null || !field->store_attr) {

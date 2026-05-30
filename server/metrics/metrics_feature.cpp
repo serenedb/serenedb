@@ -41,7 +41,7 @@ std::shared_ptr<Metric> MetricsFeature::doAdd(Builder& builder) {
   std::lock_guard lock{_mutex};
   auto [it, inserted] = _registry.try_emplace(key, metric);
   if (!inserted) {
-    SDB_THROW(sdb::ERROR_INTERNAL,
+    SDB_THROW(ERROR_INTERNAL,
               absl::StrCat(builder.type(), " ", metric->name(), ":",
                            metric->labels(), " already exists"));
   }

@@ -107,7 +107,7 @@ void RestHandlerFactory::addHandler(std::string_view path, create_fptr func,
 
   if (!_constructors.try_emplace(path, func, data).second) {
     // there should only be one handler for each path
-    SDB_THROW(sdb::ERROR_INTERNAL,
+    SDB_THROW(ERROR_INTERNAL,
               "attempt to register duplicate path handler for: ", path);
   }
 }

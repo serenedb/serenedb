@@ -40,8 +40,7 @@ void VPackRead(auto ctx, Identifier& value) {
   uint64_t id;
 
   if (!absl::SimpleAtoi(ctx.vpack().stringView(), &id)) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "Failed to parse identifier from string");
+    SDB_THROW(ERROR_BAD_PARAMETER, "Failed to parse identifier from string");
   }
 
   value = Identifier{id};

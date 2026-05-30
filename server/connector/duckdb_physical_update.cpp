@@ -549,7 +549,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
         if (s.ok()) {
           col_vals[row].assign(rewrite_value.data(), rewrite_value.size());
         } else if (!s.IsNotFound()) {
-          SDB_THROW(sdb::ERROR_INTERNAL, "RocksDB Get error: ", s.ToString());
+          SDB_THROW(ERROR_INTERNAL, "RocksDB Get error: ", s.ToString());
         }
       }
     }
@@ -560,8 +560,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
         key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
         auto s = txn->Delete(gstate.cf, gstate.row_keys[row]);
         if (!s.ok()) {
-          SDB_THROW(sdb::ERROR_INTERNAL,
-                    "RocksDB Delete error: ", s.ToString());
+          SDB_THROW(ERROR_INTERNAL, "RocksDB Delete error: ", s.ToString());
         }
       }
       // Row-level marker for indexes that normal WAL replay would miss;
@@ -628,7 +627,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
         key_utils::SetupColumnForKey(gstate.new_row_keys[row], col_id);
         auto s = txn->Put(gstate.cf, gstate.new_row_keys[row], col_vals[row]);
         if (!s.ok()) {
-          SDB_THROW(sdb::ERROR_INTERNAL, "RocksDB Put error: ", s.ToString());
+          SDB_THROW(ERROR_INTERNAL, "RocksDB Put error: ", s.ToString());
         }
       }
     }

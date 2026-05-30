@@ -41,7 +41,7 @@ S2Point S2MultiPolylineRegion::GetCentroid() const noexcept {
 }
 
 S2Region* S2MultiPolylineRegion::Clone() const {
-  SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED);
+  SDB_THROW(ERROR_NOT_IMPLEMENTED);
 }
 
 S2Cap S2MultiPolylineRegion::GetCapBound() const {

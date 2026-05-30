@@ -323,7 +323,7 @@ std::string_view VPackHelper::checkAndGetString(vpack::Slice slice,
   SDB_ASSERT(slice.isObject());
   slice = slice.get(name);
   if (!slice.isString()) [[unlikely]] {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "attribute '", name,
+    SDB_THROW(ERROR_BAD_PARAMETER, "attribute '", name,
               slice.isNone() ? "' was not found" : "' is not a string");
   }
   return slice.stringViewUnchecked();
@@ -682,9 +682,8 @@ uint64_t VPackHelper::extractIdValue(vpack::Slice slice) {
   } else if (id.isNone()) {
     return 0;
   }
-  SDB_THROW(
-    sdb::ERROR_BAD_PARAMETER,
-    absl::StrCat("invalid type ", id.typeName(), " for 'id' attribute"));
+  SDB_THROW(ERROR_BAD_PARAMETER, absl::StrCat("invalid type ", id.typeName(),
+                                              " for 'id' attribute"));
 }
 
 }  // namespace sdb::basics

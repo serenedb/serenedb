@@ -280,11 +280,10 @@ duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
         case duckdb::PhysicalType::UINT32:
           return ReadScalarColumn<uint32_t>(it, output, max_rows);
         default:
-          SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED,
-                    "Unsupported ENUM physical type");
+          SDB_THROW(ERROR_NOT_IMPLEMENTED, "Unsupported ENUM physical type");
       }
     default:
-      SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED, "Unsupported vector type");
+      SDB_THROW(ERROR_NOT_IMPLEMENTED, "Unsupported vector type");
   }
 }
 
@@ -458,8 +457,7 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
           duckdb::FlatVector::GetDataMutable<uint32_t>(output)[idx] = v;
         } break;
         default:
-          SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED,
-                    "Unsupported ENUM physical type");
+          SDB_THROW(ERROR_NOT_IMPLEMENTED, "Unsupported ENUM physical type");
       }
     } break;
     default:
@@ -608,12 +606,12 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
               copy_fixed(static_cast<uint32_t*>(nullptr));
               break;
             default:
-              SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED,
+              SDB_THROW(ERROR_NOT_IMPLEMENTED,
                         "Unsupported ENUM physical type");
           }
           break;
         default:
-          SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED,
+          SDB_THROW(ERROR_NOT_IMPLEMENTED,
                     "Unsupported element type in list sub-vector: ",
                     child_type.ToString());
       }

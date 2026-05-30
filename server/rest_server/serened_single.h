@@ -55,7 +55,6 @@ class SchedulerFeature;
 class RocksDBOptionFeature;
 class EngineFeature;
 class FlushFeature;
-class LockfileFeature;
 class RocksDBRecoveryManager;
 class HttpEndpointProvider;
 class GeneralServerFeature;
@@ -68,7 +67,6 @@ using SerenedFeaturesList = type::List<
   RocksDBOptionFeature,
   EngineFeature,
   FlushFeature,
-  LockfileFeature,
   RocksDBRecoveryManager,
   catalog::CatalogFeature,
   search::SearchEngine,

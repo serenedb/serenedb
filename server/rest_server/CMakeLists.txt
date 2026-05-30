@@ -4,6 +4,5 @@ target_sources(
         database_path_feature.cpp
         endpoint_feature.cpp
         flush_feature.cpp
-        lockfile_feature.cpp
         database_context.cpp
 )

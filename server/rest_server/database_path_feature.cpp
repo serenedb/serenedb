@@ -29,6 +29,8 @@
 #include "app/options/program_options.h"
 #include "app/options/section.h"
 #include "basics/application-exit.h"
+#include "basics/cleanup_functions.h"
+#include "basics/exitcodes.h"
 #include "basics/file_utils.h"
 #include "basics/files.h"
 #include "basics/logger/logger.h"
@@ -119,6 +121,49 @@ void DatabasePathFeature::start() {
                 "': ", system_error_str);
     }
   }
+
+  // Acquire the LOCK file in the data directory. The lockfile guards against
+  // a second serened starting on the same data dir.
+  std::string lock_filename =
+    basics::file_utils::BuildFilename(_directory, "LOCK");
+  auto res = SdbVerifyLockFile(lock_filename.c_str());
+  if (res != ERROR_OK) {
+    std::string other_pid;
+    try {
+      other_pid = basics::file_utils::Slurp(lock_filename);
+    } catch (...) {
+    }
+    if (other_pid.empty()) {
+      SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
+        "failed to read/write lockfile, please check the file permissions "
+        "of the lockfile '",
+        lock_filename, "'");
+    } else {
+      SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
+        "database is locked by process ", other_pid,
+        "; please stop it first and check that the lockfile '", lock_filename,
+        "' goes away.");
+    }
+  }
+  if (SdbExistsFile(lock_filename.c_str())) {
+    res = SdbUnlinkFile(lock_filename.c_str());
+    if (res != ERROR_OK) {
+      SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
+        "failed to remove an abandoned lockfile '", lock_filename,
+        "': ", GetErrorStr(res));
+    }
+  }
+  res = SdbCreateLockFile(lock_filename.c_str());
+  if (res != ERROR_OK) {
+    SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
+                        "failed to lock the database directory using '",
+                        lock_filename, "': ", GetErrorStr(res));
+  }
+  basics::CleanupFunctions::registerFunction(
+    std::make_unique<basics::CleanupFunctions::CleanupFunction>(
+      [lock_filename](int, void*) {
+        std::ignore = SdbDestroyLockFile(lock_filename.c_str());
+      }));
 }
 
 std::string DatabasePathFeature::subdirectoryName(

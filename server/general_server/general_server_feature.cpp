@@ -154,11 +154,6 @@ Using the value 0 disables the automatic response compression.")");
                             sdb::options::Flags::Uncommon));
 #endif
 
-  options->addOption(
-    "--server.harden",
-    "Lock down REST APIs that reveal version information or server "
-    "internals for non-admin users.",
-    new BooleanParameter(&_hardened_rest_api));
 }
 
 void GeneralServerFeature::validateOptions(std::shared_ptr<ProgramOptions>) {
@@ -276,20 +271,6 @@ void GeneralServerFeature::unprepare() {
   }
   _servers.clear();
   _job_manager.reset();
-}
-
-bool GeneralServerFeature::canAccessHardenedApi(
-  const ExecContext& exec) const noexcept {
-  bool allow_access = !isRestApiHardened();
-
-  if (!allow_access) {
-    if (exec.isAdminUser()) {
-      // also allow access if there is not authentication
-      // enabled or when the user is an administrator
-      allow_access = true;
-    }
-  }
-  return allow_access;
 }
 
 double GeneralServerFeature::keepAliveTimeout() const noexcept {

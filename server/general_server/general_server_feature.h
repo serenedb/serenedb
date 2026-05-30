@@ -82,9 +82,6 @@ class GeneralServerFeature final : public SerenedFeature {
     return _telemetrics_max_requests_per_interval;
   }
 
-  bool isRestApiHardened() const noexcept { return _hardened_rest_api; }
-  bool canAccessHardenedApi(const ExecContext& exec) const noexcept;
-
   metrics::Gauge<uint64_t>& current_requests_size;
 
  private:
@@ -104,7 +101,6 @@ class GeneralServerFeature final : public SerenedFeature {
 #endif
   bool _allow_early_connections;
   bool _return_queue_time_header;
-  bool _hardened_rest_api = false;
   uint64_t _compress_response_threshold;
   std::vector<std::string> _access_control_allow_origins;
   std::string _options_api_policy;

@@ -386,7 +386,6 @@ class CatalogFeature final : public SerenedFeature {
  private:
   std::shared_ptr<LogicalCatalog> _global;
   std::shared_ptr<LogicalCatalog> _local;
-  bool _skip_background_errors = false;
 };
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id);

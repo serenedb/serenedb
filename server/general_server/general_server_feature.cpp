@@ -136,21 +136,8 @@ and if the response body size after compression is less than the original
 response body size.
 Using the value 0 disables the automatic response compression.")");
 
-  options->addOption("--server.early-connections",
-                     "Allow requests to a limited set of APIs early during the "
-                     "server startup.",
-                     new BooleanParameter(&_allow_early_connections));
-
-#ifdef SDB_FAULT_INJECTION
-  options->addOption(
-    "--server.failure-point",
-    "The failure point to set during server startup (requires compilation "
-    "with failure points support).",
-    new VectorParameter<StringParameter>(&_failure_points),
-    sdb::options::MakeFlags(sdb::options::Flags::Default,
-                            sdb::options::Flags::Uncommon));
-#endif
-
+  // --server.early-connections (cluster early-start) and
+  // --server.failure-point (no test coverage) dropped per plan.
 }
 
 void GeneralServerFeature::validateOptions(std::shared_ptr<ProgramOptions>) {

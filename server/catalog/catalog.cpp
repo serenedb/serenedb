@@ -686,12 +686,8 @@ CatalogFeature::CatalogFeature(Server& server)
   : SerenedFeature{server, name()} {}
 
 void CatalogFeature::collectOptions(
-  std::shared_ptr<options::ProgramOptions> options) {
-  options->addOption(
-    "--skip-background-errors",
-    "Whether to attempt to continue in face of errors caused by background "
-    "tasks; may result in inconsistent database state.",
-    std::make_unique<options::BooleanParameter>(&_skip_background_errors));
+  std::shared_ptr<options::ProgramOptions> /*options*/) {
+  // No catalog options. --skip-background-errors had no reader.
 }
 
 void CatalogFeature::prepare() {

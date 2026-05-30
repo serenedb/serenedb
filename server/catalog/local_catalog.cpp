@@ -568,8 +568,7 @@ class SnapshotImpl : public Snapshot {
       auto parsed = duckdb::Parser::ParseExpressionList(expr->pretty_printed);
       for (const auto& p : parsed) {
         SDB_ASSERT(p);
-        auto refs = ::sdb::ExtractRefs(*p, RefKinds::Functions);
-        for (const auto& ref : refs.functions) {
+        for (const auto& ref : ExtractRefs(*p, RefKinds::Functions).functions) {
           ModifyDependency(
             Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
               database_id, schema_id, ref.catalog, ref.schema, ref.name),
@@ -1691,7 +1690,7 @@ Result LocalCatalog::RegisterIndex(ObjectId database_id, ObjectId schema_id,
 Result LocalCatalog::RegisterIndexShard(std::shared_ptr<IndexShard> shard) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
-    return clone->RegisterObject(shard, shard->GetParentId(), false);
+    return clone->RegisterObject(shard, shard->GetIndexId(), false);
   });
 }
 
@@ -1699,7 +1698,7 @@ Result LocalCatalog::RegisterTableShard(std::shared_ptr<TableShard> shard) {
   absl::MutexLock lock{&_mutex};
 
   return Apply(_snapshot, [&](auto& clone) {
-    return clone->RegisterObject(shard, shard->GetParentId(), false);
+    return clone->RegisterObject(shard, shard->GetTableId(), false);
   });
 }
 

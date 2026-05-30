@@ -134,7 +134,7 @@ class Transaction : public Config {
 
     for (auto index_shard : snapshot->GetIndexShardsByRelation(table_id)) {
       auto index =
-        snapshot->GetObject<catalog::Index>(index_shard->GetParentId());
+        snapshot->GetObject<catalog::Index>(index_shard->GetIndexId());
       SDB_ASSERT(index);
 
       if constexpr (!std::is_same_v<std::decay_t<Filter>, std::nullptr_t>) {

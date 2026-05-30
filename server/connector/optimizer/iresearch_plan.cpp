@@ -138,14 +138,9 @@ std::optional<ResolvedIresearch> ResolveIresearch(
     return std::nullopt;
   }
 
-  for (auto& shard :
-       snapshot.GetIndexShardsByRelation(out.index->GetRelationId())) {
-    if (shard->GetParentId() == out.index->GetId() &&
-        shard->GetType() == catalog::ObjectType::InvertedIndexShard) {
-      out.shard =
-        basics::downCast<search::InvertedIndexShard>(std::move(shard));
-      break;
-    }
+  if (auto shard = snapshot.GetIndexShard(out.index->GetId());
+      shard && shard->GetType() == catalog::ObjectType::InvertedIndexShard) {
+    out.shard = basics::downCast<search::InvertedIndexShard>(std::move(shard));
   }
   if (!out.shard || !out.shard->GetInvertedIndexSnapshot()) {
     return std::nullopt;

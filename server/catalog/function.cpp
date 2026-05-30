@@ -84,8 +84,9 @@ std::shared_ptr<Object> PgSqlFunction::Clone() const {
 }
 
 Refs PgSqlFunction::ExtractRefs(RefKinds kinds) const {
+  using sdb::ExtractRefs;
   Refs out;
-  auto merge = [&](Refs body) {
+  auto append = [&](Refs body) {
     out.sequences.insert(out.sequences.end(), body.sequences.begin(),
                          body.sequences.end());
     out.relations.insert(out.relations.end(), body.relations.begin(),
@@ -97,12 +98,12 @@ Refs PgSqlFunction::ExtractRefs(RefKinds kinds) const {
                              body.unbound_types.end());
     out.types.insert(out.types.end(), body.types.begin(), body.types.end());
   };
-  const bool track_types = RefKinds::None != (kinds & RefKinds::Types);
+  const bool wants_types = RefKinds::None != (kinds & RefKinds::Types);
   for (const auto& macro : _info->macros) {
     if (!macro) {
       continue;
     }
-    if (track_types) {
+    if (wants_types) {
       for (const auto& t : macro->types) {
         ::sdb::CollectTypeRefs(t, out);
       }
@@ -113,12 +114,12 @@ Refs PgSqlFunction::ExtractRefs(RefKinds kinds) const {
     if (macro->type == duckdb::MacroType::SCALAR_MACRO) {
       const auto& sm = macro->Cast<duckdb::ScalarMacroFunction>();
       if (sm.expression) {
-        merge(::sdb::ExtractRefs(*sm.expression, kinds));
+        append(ExtractRefs(*sm.expression, kinds));
       }
     } else if (macro->type == duckdb::MacroType::TABLE_MACRO) {
       const auto& tm = macro->Cast<duckdb::TableMacroFunction>();
       if (tm.query_node) {
-        merge(::sdb::ExtractRefs(*tm.query_node, kinds));
+        append(ExtractRefs(*tm.query_node, kinds));
       }
     }
   }

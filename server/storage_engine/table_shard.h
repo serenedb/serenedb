@@ -56,6 +56,8 @@ class TableShard : public catalog::Object {
   virtual ~TableShard() = default;
   std::shared_ptr<Object> Clone() const final { return nullptr; }
 
+  ObjectId GetTableId() const noexcept { return GetParentId(); }
+
   auto& GetTableLock() noexcept { return _table_lock; }
 
   void UpdateNumRows(int64_t delta) noexcept {

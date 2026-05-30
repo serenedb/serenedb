@@ -152,13 +152,9 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
       // Secondary index
       auto& sec_index = basics::downCast<const catalog::SecondaryIndex>(index);
 
-      // Find shard ID
       ObjectId shard_id;
-      for (auto& shard : snapshot->GetIndexShardsByRelation(table_id)) {
-        if (shard->GetParentId() == index.GetId()) {
-          shard_id = shard->GetId();
-          break;
-        }
+      if (auto shard = snapshot->GetIndexShard(index.GetId())) {
+        shard_id = shard->GetId();
       }
 
       auto sk_columns = BuildSKColumns(index, table, col_id_to_chunk_pos);

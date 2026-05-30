@@ -73,13 +73,10 @@ std::optional<QualifiedRef> ExtractUnboundTypeName(
 }  // namespace
 
 void CollectTypeRefs(const duckdb::LogicalType& type, Refs& out) {
-  // CAST(x AS T) where T isn't resolved yet: parser-level TypeExpression.
   if (auto qr = ExtractUnboundTypeName(type)) {
     out.unbound_types.push_back(std::move(*qr));
     return;
   }
-  // CREATE-time-resolved user type: binder stamped the OID on the extension
-  // info (catalog::PgSqlType ctor).
   if (auto ext = type.GetExtensionInfo()) {
     if (auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
         it != ext->properties.end()) {
@@ -107,6 +104,8 @@ void CollectTypeRefs(const duckdb::LogicalType& type, Refs& out) {
       for (idx_t i = 0; i < duckdb::UnionType::GetMemberCount(type); ++i) {
         CollectTypeRefs(duckdb::UnionType::GetMemberType(type, i), out);
       }
+      break;
+    case duckdb::LogicalTypeId::VARIANT:
       break;
     default:
       break;

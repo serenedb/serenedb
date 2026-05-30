@@ -56,12 +56,9 @@ struct IndexCandidate {
 }
 
 [[nodiscard]] ObjectId ResolveSkShardId(const catalog::Snapshot& snapshot,
-                                        ObjectId relation_id,
                                         ObjectId sk_index_id) {
-  for (auto& shard : snapshot.GetIndexShardsByRelation(relation_id)) {
-    if (shard->GetParentId() == sk_index_id) {
-      return shard->GetId();
-    }
+  if (auto shard = snapshot.GetIndexShard(sk_index_id)) {
+    return shard->GetId();
   }
   return ObjectId{};
 }
@@ -87,7 +84,7 @@ struct IndexCandidate {
       if (index->GetType() != catalog::ObjectType::SecondaryIndex) {
         continue;
       }
-      auto shard_id = ResolveSkShardId(*snapshot, table_id, index->GetId());
+      auto shard_id = ResolveSkShardId(*snapshot, index->GetId());
       if (shard_id != idx_entry.GetSecondaryIndexShardId()) {
         continue;
       }
@@ -116,7 +113,7 @@ struct IndexCandidate {
     if (index->GetType() != catalog::ObjectType::SecondaryIndex) {
       continue;
     }
-    auto shard_id = ResolveSkShardId(*snapshot, table_id, index->GetId());
+    auto shard_id = ResolveSkShardId(*snapshot, index->GetId());
     if (shard_id == ObjectId{}) {
       continue;
     }

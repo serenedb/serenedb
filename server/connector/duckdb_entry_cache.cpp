@@ -328,16 +328,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
     if (index.GetType() == catalog::ObjectType::SecondaryIndex) {
       const auto& sec_index =
         basics::downCast<const catalog::SecondaryIndex>(index);
-      const auto& shards = snapshot.GetIndexShardsByRelation(view->GetId());
-      auto it = absl::c_find_if(shards, [&](const auto& shard) {
-        return shard->GetParentId() == index.GetId();
-      });
-      if (it == shards.end()) {
+      auto sk_shard = snapshot.GetIndexShard(index.GetId());
+      if (!sk_shard) {
         return nullptr;
       }
       return duckdb::make_uniq<ViewSecondaryIndexScanEntry>(
         catalog, schema, *info, std::move(view), std::move(indexed_col_indices),
-        (*it)->GetId(), sec_index.IsUnique());
+        sk_shard->GetId(), sec_index.IsUnique());
     }
     return nullptr;
   }
@@ -362,16 +359,11 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
   // Secondary (rocksdb-backed) index: find the shard for scanning.
   const auto& sec_index =
     basics::downCast<const catalog::SecondaryIndex>(index);
-  ObjectId sk_shard_id;
-  for (auto& shard : snapshot.GetIndexShardsByRelation(table->GetId())) {
-    if (shard->GetParentId() == index.GetId()) {
-      sk_shard_id = shard->GetId();
-      break;
-    }
-  }
-  if (sk_shard_id == ObjectId{}) {
+  auto shard = snapshot.GetIndexShard(index.GetId());
+  if (!shard) {
     return nullptr;
   }
+  auto sk_shard_id = shard->GetId();
   return duckdb::make_uniq<TableSecondaryIndexScanEntry>(
     catalog, schema, *built.info, std::move(table),
     std::move(built.indexed_col_indices), sk_shard_id, sec_index.IsUnique());

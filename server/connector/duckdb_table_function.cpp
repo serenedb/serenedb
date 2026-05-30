@@ -77,14 +77,11 @@ std::shared_ptr<search::InvertedIndexShard> ResolveInvertedIndexShard(
   }
   auto& conn_ctx = GetSereneDBContext(context);
   auto cat_snapshot = conn_ctx.EnsureCatalogSnapshot();
-  for (auto& s : cat_snapshot->GetIndexShardsByRelation(
-         bind.inverted_index->GetRelationId())) {
-    if (s->GetParentId() == bind.inverted_index->GetId() &&
-        s->GetType() == catalog::ObjectType::InvertedIndexShard) {
-      return basics::downCast<search::InvertedIndexShard>(std::move(s));
-    }
+  auto shard = cat_snapshot->GetIndexShard(bind.inverted_index->GetId());
+  if (!shard || shard->GetType() != catalog::ObjectType::InvertedIndexShard) {
+    return nullptr;
   }
-  return nullptr;
+  return basics::downCast<search::InvertedIndexShard>(std::move(shard));
 }
 
 uint64_t EstimateFilterMatchCount(const irs::Filter& filter,

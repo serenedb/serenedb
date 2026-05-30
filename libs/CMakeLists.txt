@@ -118,12 +118,6 @@ add_subdirectory(vpack EXCLUDE_FROM_ALL)
 target_link_libraries(vpack PUBLIC serene_base)
 
 ################################################################################
-## fuerte
-################################################################################
-
-add_subdirectory(fuerte)
-
-################################################################################
 ## iresearch
 ################################################################################
 
@@ -192,7 +186,7 @@ add_library(
 
 target_link_libraries(
     serene
-    PUBLIC s2 boost_boost vpack fuerte date_interface
+    PUBLIC s2 boost_boost vpack date_interface
 )
 
 # this is "."

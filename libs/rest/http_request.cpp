@@ -21,7 +21,6 @@
 
 #include "http_request.h"
 
-#include <fuerte/types.h>
 #include <vpack/builder.h>
 #include <vpack/options.h>
 #include <vpack/parser.h>
@@ -574,16 +573,27 @@ vpack::Slice HttpRequest::payload(bool strict_validation) {
 }
 
 EncodingType HttpRequest::parseAcceptEncoding(std::string_view value) const {
-  // let fuerte translate the content encoding for us
-  switch (fuerte::ToContentEncoding(value)) {
-    case fuerte::ContentEncoding::Deflate:
-      return EncodingType::Deflate;
-    case fuerte::ContentEncoding::Gzip:
-      return EncodingType::GZip;
-    case fuerte::ContentEncoding::Lz4:
-      return EncodingType::Lz4;
-    default:
-      // everything else counts as unset
-      return EncodingType::Unset;
+  // Parse a comma-separated list of HTTP encoding tokens; "q=" weights
+  // are stripped. Return the first known encoding.
+  size_t pos = 0;
+  while (pos < value.size()) {
+    std::string_view current;
+    size_t next = value.find(',', pos);
+    if (next == std::string_view::npos) {
+      current = value.substr(pos);
+      pos = value.size();
+    } else {
+      current = value.substr(pos, next - pos);
+      pos = next + 1;
+    }
+    if (auto semi = current.find(';'); semi != std::string_view::npos) {
+      current = current.substr(0, semi);
+    }
+    while (!current.empty() && current.front() == ' ') current.remove_prefix(1);
+    while (!current.empty() && current.back() == ' ') current.remove_suffix(1);
+    if (current == "x-serene-lz4") return EncodingType::Lz4;
+    if (current == "gzip") return EncodingType::GZip;
+    if (current == "deflate") return EncodingType::Deflate;
   }
+  return EncodingType::Unset;
 }

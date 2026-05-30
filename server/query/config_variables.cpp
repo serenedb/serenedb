@@ -180,12 +180,10 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Sets the server log level. "
-        "Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. "
+        "Use 'topic=level' format, e.g. 'all=trace', 'startup=debug'. "
         "Valid levels: fatal, error, warning, info, debug, trace. "
-        "Valid topics: all, authentication, authorization, communication, "
-        "config, crash, engines, flush, fuerte, general, httpclient, "
-        "iresearch, memory, replication, requests, rocksdb, search, ssl, "
-        "startup, statistics, syscall, threads.",
+        "Valid topics: general, startup, http, ssl, storage, search, "
+        "iresearch, crash.",
         [] { return duckdb::Value{log::LogLevelString()}; },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           log::SetLogLevel(value.ToString());

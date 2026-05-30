@@ -36,12 +36,10 @@ target_link_libraries(
         # TODO
         date_interface
         rocksdb_interface
-        fuerte
         llhttp
         nghttp2::nghttp2
         vpack
         rocksdb
-        fuerte
         duckdb_static
         Folly::folly
 )

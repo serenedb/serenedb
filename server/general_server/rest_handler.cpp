@@ -22,7 +22,6 @@
 #include "rest_handler.h"
 
 #include <absl/strings/str_cat.h>
-#include <fuerte/jwt.h>
 #include <vpack/exception.h>
 
 #include <source_location>

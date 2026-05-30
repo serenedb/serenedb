@@ -85,16 +85,8 @@ class GeneralServerFeature final {
   void buildServers();
   // open REST interface for listening
   void startListening();
-  // define initial (minimal) REST handlers
-  void defineInitialHandlers(rest::RestHandlerFactory& f);
-  // define remaining REST handlers
-  void defineRemainingHandlers(rest::RestHandlerFactory& f);
 
   double _keep_alive_timeout = 300.0;
-#ifdef SDB_DEV
-  bool _started_listening;
-#endif
-  bool _allow_early_connections;
   bool _return_queue_time_header;
   uint64_t _compress_response_threshold;
   std::vector<std::string> _access_control_allow_origins;

@@ -49,9 +49,7 @@ int ClientHelloCallback(SSL* ssl, int* al, void* arg) { return 1; }
 }  // namespace
 
 GeneralServer::GeneralServer(GeneralServerFeature& feature,
-                             uint64_t num_io_threads,
-                             bool allow_early_connections)
-  : _allow_early_connections(allow_early_connections) {
+                             uint64_t num_io_threads) {
   auto& server = SerenedServer::Instance();
 
   _contexts.reserve(num_io_threads);
@@ -61,10 +59,6 @@ GeneralServer::GeneralServer(GeneralServerFeature& feature,
 }
 
 GeneralServer::~GeneralServer() = default;
-
-bool GeneralServer::allowEarlyConnections() const noexcept {
-  return _allow_early_connections;
-}
 
 void GeneralServer::registerTask(std::shared_ptr<CommTask> task) {
   if (lifecycle::IsStopping()) {

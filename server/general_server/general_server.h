@@ -48,8 +48,7 @@ class GeneralServer {
   const GeneralServer& operator=(const GeneralServer&) = delete;
 
  public:
-  explicit GeneralServer(GeneralServerFeature&, uint64_t num_io_threads,
-                         bool allow_early_connections);
+  explicit GeneralServer(GeneralServerFeature&, uint64_t num_io_threads);
   ~GeneralServer();
 
   void registerTask(std::shared_ptr<rest::CommTask>);
@@ -59,7 +58,6 @@ class GeneralServer {
   void stopConnections();                   /// stop connections
   void stopWorking();
 
-  bool allowEarlyConnections() const noexcept;
   IoContext& selectIoContext();
   SslServerFeature::SslContextList sslContexts();
   SSL_CTX* getSSL_CTX(size_t index);
@@ -73,7 +71,6 @@ class GeneralServer {
 
  private:
   std::vector<IoContext> _contexts;
-  const bool _allow_early_connections;
 
   std::recursive_mutex _tasks_lock;
   std::vector<std::unique_ptr<Acceptor>> _acceptors;

@@ -23,10 +23,6 @@
 
 #include <absl/flags/flag.h>
 
-#include <chrono>
-#include <stdexcept>
-#include <thread>
-
 ABSL_FLAG(uint64_t, server_io_threads, 0,
           "Number of IO threads for HTTP and pg-wire connections "
           "(0 = max(1, cpu_count/4)).");
@@ -82,10 +78,6 @@ DECLARE_GAUGE(serenedb_requests_memory_usage, uint64_t,
 
 GeneralServerFeature::GeneralServerFeature()
   : current_requests_size(AddMetric(serenedb_requests_memory_usage{})),
-#ifdef SDB_DEV
-    _started_listening(false),
-#endif
-    _allow_early_connections(false),
     _return_queue_time_header(true),
     _compress_response_threshold(0),
     _num_io_threads(
@@ -143,57 +135,17 @@ void GeneralServerFeature::prepare() {
 
   _job_manager = std::make_unique<AsyncJobManager>();
 
-  // create an initial, very stripped-down RestHandlerFactory.
-  // this initial factory only knows a few selected RestHandlers.
-  // we will later create another RestHandlerFactory that knows
-  // all routes.
-  auto hf = std::make_shared<RestHandlerFactory>();
-  defineInitialHandlers(*hf);
-  // make handler-factory read-only
-  hf->seal();
-
-  std::atomic_store(&_handler_factory, std::move(hf));
-
   buildServers();
-
-  if (_allow_early_connections) {
-    // open HTTP interface early if this is requested.
-    startListening();
-  }
-
-#ifdef SDB_FAULT_INJECTION
-  SDB_IF_FAILURE("startListeningEarly") {
-    while (ShouldFailDebugging("startListeningEarly")) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-  }
-#endif
 }
 
 void GeneralServerFeature::start() {
   SDB_ASSERT(ServerState::instance()->GetMode() == ServerState::Mode::Startup);
 
-  // create the full RestHandlerFactory that knows all the routes.
-  // this will replace the previous, stripped-down RestHandlerFactory
-  // instance.
   auto hf = std::make_shared<RestHandlerFactory>();
-
-  defineInitialHandlers(*hf);
-  defineRemainingHandlers(*hf);
   hf->seal();
-
   std::atomic_store(&_handler_factory, std::move(hf));
 
-#ifdef SDB_DEV
-  SDB_ASSERT(!_allow_early_connections || _started_listening);
-#endif
-  if (!_allow_early_connections) {
-    // if HTTP interface is not open yet, open it now
-    startListening();
-  }
-#ifdef SDB_DEV
-  SDB_ASSERT(_started_listening);
-#endif
+  startListening();
 
   ServerState::instance()->SetMode(ServerState::Mode::Maintenance);
 }
@@ -267,30 +219,17 @@ void GeneralServerFeature::buildServers() {
     SslServerFeature::instance().verifySslOptions();
   }
 
-  _servers.emplace_back(std::make_unique<GeneralServer>(
-    *this, _num_io_threads, _allow_early_connections));
+  _servers.emplace_back(
+    std::make_unique<GeneralServer>(*this, _num_io_threads));
 }
 
 void GeneralServerFeature::startListening() {
-#ifdef SDB_DEV
-  SDB_ASSERT(!_started_listening);
-#endif
-
   EndpointFeature& endpoint = EndpointFeature::instance();
   auto& endpoint_list = endpoint.endpointList();
 
   for (auto& server : _servers) {
     server->startListening(endpoint_list);
   }
-
-#ifdef SDB_DEV
-  _started_listening = true;
-#endif
 }
-
-void GeneralServerFeature::defineInitialHandlers(rest::RestHandlerFactory& f) {}
-
-void GeneralServerFeature::defineRemainingHandlers(
-  rest::RestHandlerFactory& f) {}
 
 }  // namespace sdb

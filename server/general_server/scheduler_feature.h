@@ -48,18 +48,9 @@ class SchedulerFeature final {
   void stop();
   void unprepare();
 
-  // -------------------------------------------------------------------------
-  // UNRELATED SECTION STARTS HERE: Signals and other things crept into Sched
-  // -------------------------------------------------------------------------
-  void buildControlCHandler();
-  void buildHangupHandler();
-
   uint64_t maximalThreads() const noexcept;
 
  private:
-  void signalStuffInit();
-  void signalStuffDeinit();
-
   uint64_t _nr_minimal_threads = 4;
   uint64_t _nr_maximal_threads = 0;
   uint64_t _queue_size = 4096;
@@ -71,9 +62,6 @@ class SchedulerFeature final {
 
   std::unique_ptr<Scheduler> _scheduler;
   metrics::MetricsFeature& _metrics_feature;
-
-  struct AsioHandler;
-  std::unique_ptr<AsioHandler> _asio_handler;
 };
 
 }  // namespace sdb

@@ -14,6 +14,7 @@ target_sources(
         h2_comm_task.cpp
         scheduler.cpp
         scheduler_feature.cpp
+        signal_handling.cpp
         http_comm_task.cpp
         io_context.cpp
         request_lane.cpp

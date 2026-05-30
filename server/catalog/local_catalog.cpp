@@ -398,8 +398,8 @@ class SnapshotImpl : public Snapshot {
                          col.GetId(), action);
       }
       if (col.expr && col.expr->HasExpr() && !col.IsGenerated()) {
-        auto refs = col.expr->ExtractRefs(
-          RefKinds::Sequences | RefKinds::Functions | RefKinds::Types);
+        auto refs = col.expr->GetRefs(RefKinds::Sequences |
+                                      RefKinds::Functions | RefKinds::Types);
         for (const auto& ref : refs.sequences) {
           ModifyDependency(resolve_seq(ref),
                            &SequenceDependency::column_defaults, col.GetId(),
@@ -423,8 +423,8 @@ class SnapshotImpl : public Snapshot {
       if (!c.expr || !c.expr->HasExpr()) {
         continue;
       }
-      auto refs = c.expr->ExtractRefs(RefKinds::Sequences |
-                                      RefKinds::Functions | RefKinds::Types);
+      auto refs = c.expr->GetRefs(RefKinds::Sequences | RefKinds::Functions |
+                                  RefKinds::Types);
       auto edge = c.GetId();
       for (const auto& ref : refs.functions) {
         ModifyDependency(
@@ -489,7 +489,7 @@ class SnapshotImpl : public Snapshot {
                               RefKinds kinds, EdgeAction action) {
     auto database_id = GetDatabaseId(view);
     auto view_id = view.GetId();
-    auto refs = view.ExtractRefs(kinds);
+    auto refs = view.GetRefs(kinds);
     for (const auto& ref : refs.sequences) {
       ModifyDependency(
         Resolve<ResolveType::Relation, ObjectType::Sequence>(
@@ -522,7 +522,7 @@ class SnapshotImpl : public Snapshot {
                                   EdgeAction action) {
     auto database_id = GetDatabaseId(func);
     auto fn_id = func.GetId();
-    auto refs = func.ExtractRefs(RefKinds::All);
+    auto refs = func.GetRefs(RefKinds::All);
     for (const auto& ref : refs.sequences) {
       ModifyDependency(
         Resolve<ResolveType::Relation, ObjectType::Sequence>(

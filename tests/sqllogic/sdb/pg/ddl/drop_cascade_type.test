@@ -238,3 +238,204 @@ DROP SCHEMA jira_ticket;
 
 statement ok
 DROP SCHEMA manifest;
+
+
+# --- 8. VARIANT and user-defined types -------------------------------------
+# VARIANT shares STRUCT_TYPE_INFO with STRUCT, so CollectTypeRefs descends
+# into its child slots. The VARIANT LogicalType's children are a fixed
+# internal layout (keys / children / values / data) -- none user-defined --
+# so VARIANT expressions must NOT spuriously register a dependency on an
+# unrelated enum/type. But dependencies DO flow through CAST-to-usertype
+# expressions nested inside ::VARIANT casts (CHECK, DEFAULT, view, function).
+#
+# Two scenarios exercised per dep site:
+#   (a) VARIANT WITHOUT a CAST to the user type -- no dep, DROP succeeds.
+#   (b) VARIANT WITH    a CAST to the user type -- dep tracked, RESTRICT blocks.
+#
+# Note: SereneDB's RocksDB storage can't persist VARIANT-typed columns, so
+# VARIANT only appears inside expression sites (CHECK predicates, DEFAULT,
+# view body, function body) -- never as a stored column type.
+
+# --- 8a. VARIANT in a view, no user-type ref: no spurious dep -------------
+
+statement ok
+CREATE TYPE shred_solo_kind AS ENUM ('hot', 'cold');
+
+
+# VARIANT used purely on built-in types -- no reference to shred_solo_kind.
+statement ok
+CREATE VIEW shred_solo_v AS SELECT 42::INT::VARIANT AS v, 'hello'::TEXT::VARIANT AS s;
+
+
+# No CAST to shred_solo_kind anywhere -- DROP TYPE must succeed.
+statement ok
+DROP TYPE shred_solo_kind;
+
+
+statement ok
+DROP VIEW shred_solo_v;
+
+
+# --- 8b. CHECK constraint: VARIANT CAST through user type tracks the dep ---
+
+statement ok
+CREATE TYPE shred_check_kind AS ENUM ('hot', 'cold');
+
+
+statement ok
+CREATE TABLE shred_check_t (
+  s TEXT,
+  CHECK (CAST(s AS shred_check_kind)::VARIANT IS NOT NULL)
+);
+
+
+statement error
+DROP TYPE shred_check_kind;
+----
+db error: ERROR: cannot drop type shred_check_kind because other objects depend on it
+<slt:ignore>
+
+
+statement ok
+DROP TYPE shred_check_kind CASCADE;
+
+
+statement count 1
+INSERT INTO shred_check_t VALUES ('not-an-enum');
+
+
+statement ok
+DROP TABLE shred_check_t;
+
+
+# --- 8c. Two CHECKs side-by-side: one with the dep, one without -----------
+# DROP TYPE must report the blocking constraint; CASCADE must drop ONLY the
+# referencing CHECK, leaving the unrelated one intact.
+
+statement ok
+CREATE TYPE shred_pair_kind AS ENUM ('a', 'b');
+
+
+statement ok
+CREATE TABLE shred_pair_t (
+  s TEXT,
+  n INT,
+  CHECK (CAST(s AS shred_pair_kind)::VARIANT IS NOT NULL),
+  CHECK (CAST(n AS BIGINT)::VARIANT IS NOT NULL)
+);
+
+
+statement error
+DROP TYPE shred_pair_kind;
+----
+db error: ERROR: cannot drop type shred_pair_kind because other objects depend on it
+<slt:ignore>
+
+
+statement ok
+DROP TYPE shred_pair_kind CASCADE;
+
+
+# The unrelated NOT-NULL check on `n` survives -- inserting NULL still fails.
+statement error
+INSERT INTO shred_pair_t VALUES ('x', NULL);
+----
+db error: ERROR: new row for relation "shred_pair_t" violates check constraint "shred_pair_t_n_check"
+<slt:ignore>
+
+
+statement count 1
+INSERT INTO shred_pair_t VALUES ('x', 5);
+
+
+statement ok
+DROP TABLE shred_pair_t;
+
+
+# --- 8d. Column DEFAULT with VARIANT CAST: dep tracked --------------------
+
+statement ok
+CREATE TYPE shred_def_kind AS ENUM ('p', 'q');
+
+
+statement ok
+CREATE TABLE shred_def_t (x TEXT DEFAULT CAST(CAST('p' AS shred_def_kind)::VARIANT AS TEXT));
+
+
+statement error
+DROP TYPE shred_def_kind;
+----
+db error: ERROR: cannot drop type shred_def_kind because other objects depend on it
+<slt:ignore>
+
+
+statement ok
+DROP TYPE shred_def_kind CASCADE;
+
+
+statement ok
+DROP TABLE shred_def_t;
+
+
+# --- 8e. VIEW body: VARIANT CAST referencing the user type ----------------
+
+statement ok
+CREATE TYPE shred_view_kind AS ENUM ('on', 'off');
+
+
+statement ok
+CREATE TABLE shred_view_src (s TEXT);
+
+
+statement ok
+CREATE VIEW shred_view_v AS SELECT CAST(s AS shred_view_kind)::VARIANT AS f FROM shred_view_src;
+
+
+statement error
+DROP TYPE shred_view_kind;
+----
+db error: ERROR: cannot drop type shred_view_kind because other objects depend on it
+<slt:ignore>
+
+
+statement ok
+DROP TYPE shred_view_kind CASCADE;
+
+
+statement error
+SELECT * FROM shred_view_v;
+----
+db error: ERROR: Table with name shred_view_v does not exist!
+<slt:ignore>
+
+
+statement ok
+DROP TABLE shred_view_src;
+
+
+# --- 8f. FUNCTION body: VARIANT CAST referencing the user type ------------
+
+statement ok
+CREATE TYPE shred_fn_kind AS ENUM ('m', 'n');
+
+
+statement ok
+CREATE FUNCTION shred_fn_use(x TEXT) AS CAST(x AS shred_fn_kind)::VARIANT;
+
+
+statement error
+DROP TYPE shred_fn_kind;
+----
+db error: ERROR: cannot drop type shred_fn_kind because other objects depend on it
+<slt:ignore>
+
+
+statement ok
+DROP TYPE shred_fn_kind CASCADE;
+
+
+statement error
+SELECT shred_fn_use('m');
+----
+db error: ERROR: Scalar Function with name shred_fn_use does not exist!
+<slt:ignore>

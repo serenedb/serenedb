@@ -85,7 +85,7 @@ class ColumnExpr {
 
   bool HasExpr() const { return _expr != nullptr; }
 
-  Refs ExtractRefs(RefKinds kinds) const;
+  Refs GetRefs(RefKinds kinds) const;
 
  private:
   duckdb::unique_ptr<duckdb::ParsedExpression> _expr;

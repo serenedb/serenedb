@@ -42,6 +42,7 @@
 
 #include "catalog/user_type.h"
 #include "connector/functions/sequence.h"
+#include "utils/velox_vpack.h"
 
 namespace sdb {
 namespace {
@@ -92,6 +93,7 @@ void CollectTypeRefs(const duckdb::LogicalType& type, Refs& out) {
       CollectTypeRefs(duckdb::ArrayType::GetChildType(type), out);
       break;
     case duckdb::LogicalTypeId::STRUCT:
+    case duckdb::LogicalTypeId::VARIANT:
       for (const auto& child : duckdb::StructType::GetChildTypes(type)) {
         CollectTypeRefs(child.second, out);
       }
@@ -207,7 +209,7 @@ Refs ExtractRefs(const duckdb::SelectStatement& stmt, RefKinds kinds) {
   return out;
 }
 
-Refs ColumnExpr::ExtractRefs(RefKinds kinds) const {
+Refs ColumnExpr::GetRefs(RefKinds kinds) const {
   Refs out;
   if (HasExpr()) {
     WalkExpr(GetExpr(), kinds, out);
@@ -248,7 +250,7 @@ Result ColumnExpr::FromVPack(vpack::Slice slice, ColumnExpr& column_expr) {
 void ColumnExpr::ToVPack(vpack::Builder& builder) const {
   SDB_ASSERT(_expr);
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer(stream);
+  duckdb::BinarySerializer serializer(stream, duckdb::VersionStorageOptions());
   serializer.Begin();
   _expr->Serialize(serializer);
   serializer.End();

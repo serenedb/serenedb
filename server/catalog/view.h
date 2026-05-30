@@ -44,7 +44,7 @@ class PgSqlView final : public Object {
 
   const duckdb::CreateViewInfo& GetInfo() const noexcept { return *_info; }
 
-  Refs ExtractRefs(RefKinds kinds) const;
+  Refs GetRefs(RefKinds kinds) const;
 
  private:
   duckdb::unique_ptr<duckdb::CreateViewInfo> _info;

@@ -163,13 +163,12 @@ inline void VPackWrite(auto ctx, const CheckConstraint& c) {
 }
 
 inline void VPackRead(auto ctx, CheckConstraint& c) {
-  struct Fields {
-    ObjectId id;
-    std::string name;
-    std::shared_ptr<ColumnExpr> expr;
-  } f;
-  vpack::ReadTuple(ctx.vpack(), f);
-  c = CheckConstraint{ctx.arg(), f.id, f.name, std::move(f.expr)};
+  ObjectId id;
+  std::string name;
+  std::shared_ptr<ColumnExpr> expr;
+  auto tup = std::tie(id, name, expr);
+  vpack::ReadTuple(ctx.vpack(), tup);
+  c = CheckConstraint{ctx.arg(), id, name, std::move(expr)};
 }
 
 struct TableStats {

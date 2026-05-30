@@ -30,7 +30,11 @@ class EndpointFeature final : public SerenedFeature {
  public:
   static constexpr std::string_view name() noexcept { return "Endpoint"; }
 
+  inline static EndpointFeature* gInstance = nullptr;
+  static EndpointFeature& instance() noexcept { return *gInstance; }
+
   explicit EndpointFeature(SerenedServer& server);
+  ~EndpointFeature();
 
   void validateOptions() final;
 

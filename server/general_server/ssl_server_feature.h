@@ -44,7 +44,11 @@ class SslServerFeature : public SerenedFeature {
 
   static constexpr std::string_view name() noexcept { return "SslServer"; }
 
+  inline static SslServerFeature* gInstance = nullptr;
+  static SslServerFeature& instance() noexcept { return *gInstance; }
+
   explicit SslServerFeature(Server& server);
+  ~SslServerFeature();
 
   void validateOptions() final;
   void prepare() final;

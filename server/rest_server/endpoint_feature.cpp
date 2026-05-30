@@ -48,7 +48,10 @@ EndpointFeature::EndpointFeature(SerenedServer& server)
   if (_backlog_size > SOMAXCONN) {
     _backlog_size = SOMAXCONN / 2;
   }
+  gInstance = this;
 }
+
+EndpointFeature::~EndpointFeature() { gInstance = nullptr; }
 
 void EndpointFeature::validateOptions() {
   _endpoints = absl::GetFlag(FLAGS_server_endpoint);

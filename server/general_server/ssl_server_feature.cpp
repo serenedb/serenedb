@@ -74,8 +74,10 @@ SslServerFeature::SslServerFeature(Server& server)
     _ecdh_curve("x25519:prime256v1"),
     _session_cache(false),
     _prefer_http11_in_alpn(false) {
-  setOptional(true);
+  gInstance = this;
 }
+
+SslServerFeature::~SslServerFeature() { gInstance = nullptr; }
 
 void SslServerFeature::validateOptions() {
   _cafile = absl::GetFlag(FLAGS_ssl_cafile);

@@ -681,7 +681,11 @@ ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
 }
 
 CatalogFeature::CatalogFeature(Server& server)
-  : SerenedFeature{server, name()} {}
+  : SerenedFeature{server, name()} {
+  gInstance = this;
+}
+
+CatalogFeature::~CatalogFeature() { gInstance = nullptr; }
 
 void CatalogFeature::prepare() {
   auto catalog = std::make_shared<LocalCatalog>();

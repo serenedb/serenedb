@@ -354,7 +354,11 @@ class CatalogFeature final : public SerenedFeature {
  public:
   static constexpr std::string_view name() noexcept { return "Catalog"; }
 
+  inline static CatalogFeature* gInstance = nullptr;
+  static CatalogFeature& instance() noexcept { return *gInstance; }
+
   explicit CatalogFeature(Server& server);
+  ~CatalogFeature();
 
   void start() final;
   void unprepare() final;

@@ -43,7 +43,11 @@ class RocksDBOptionFeature final : public SerenedFeature {
  public:
   static constexpr std::string_view name() noexcept { return "RocksDBOption"; }
 
+  inline static RocksDBOptionFeature* gInstance = nullptr;
+  static RocksDBOptionFeature& instance() noexcept { return *gInstance; }
+
   explicit RocksDBOptionFeature(Server& server);
+  ~RocksDBOptionFeature();
 
   void validateOptions() final;
 

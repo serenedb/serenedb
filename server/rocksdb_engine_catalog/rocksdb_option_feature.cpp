@@ -358,8 +358,10 @@ RocksDBOptionFeature::RocksDBOptionFeature(Server& server)
     _total_write_buffer_size = ::DefaultTotalWriteBufferSize();
   }
 
-  setOptional(true);
+  gInstance = this;
 }
+
+RocksDBOptionFeature::~RocksDBOptionFeature() { gInstance = nullptr; }
 
 const rocksdb::Options& RocksDBOptionFeature::getOptions() const {
   if (!_options) {

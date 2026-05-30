@@ -377,7 +377,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   ApplyColumnModes(options.columns, table_info.options);
 
   auto& catalog_impl =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    catalog::CatalogFeature::instance().Global();
   auto database_id = GetDatabaseId();
 
   bool if_not_exists =
@@ -407,7 +407,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   auto sdb_table = sdb_table_entry.GetSereneDBTable();
 
   auto& catalog_feature =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+    catalog::CatalogFeature::instance();
   auto& catalog_impl = catalog_feature.Global();
   auto snapshot = catalog_impl.GetCatalogSnapshot();
   auto database_id = GetDatabaseId();
@@ -531,7 +531,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   duckdb::CatalogTransaction transaction, duckdb::CreateFunctionInfo& info) {
   auto& catalog_feature =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+    catalog::CatalogFeature::instance();
   auto& catalog_impl = catalog_feature.Global();
   auto database_id = GetDatabaseId();
 
@@ -610,7 +610,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
   duckdb::CatalogTransaction transaction, duckdb::CreateViewInfo& info) {
   auto& catalog_feature =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+    catalog::CatalogFeature::instance();
   auto& catalog_impl = catalog_feature.Global();
   auto database_id = GetDatabaseId();
 
@@ -676,7 +676,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
     ObjectId{}, ObjectId{}, info.name, opts, ObjectId{});
 
   auto& catalog_impl =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    catalog::CatalogFeature::instance().Global();
   auto r =
     catalog_impl.CreateSequence(database_id, name, sequence, if_not_exists);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
@@ -718,7 +718,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateCollation(
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
   duckdb::CatalogTransaction transaction, duckdb::CreateTypeInfo& info) {
   auto& catalog_feature =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+    catalog::CatalogFeature::instance();
   auto& catalog_impl = catalog_feature.Global();
   auto database_id = GetDatabaseId();
 
@@ -784,7 +784,7 @@ void HandleRenameRelationError(Result r, std::string_view name,
 void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                                 duckdb::AlterInfo& info) {
   auto& catalog_impl =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    catalog::CatalogFeature::instance().Global();
   auto db = GetDatabaseId();
 
   if (info.type == duckdb::AlterType::ALTER_SCALAR_FUNCTION) {

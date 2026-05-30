@@ -34,7 +34,7 @@ GenericCommTask<SocketType, Base>::GenericCommTask(
   : Base{server, std::move(info)},
     _protocol{std::move(socket)},
     _general_server_feature{
-      server.server().getFeature<GeneralServerFeature>()} {
+      GeneralServerFeature::instance()} {
   if (rest::AsioSocket<SocketType>::supportsMixedIO()) {
     _protocol->setNonBlocking(true);
   }

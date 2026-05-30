@@ -84,7 +84,7 @@ void RocksDBBackgroundThread::SyncStats() {
 }
 
 void RocksDBBackgroundThread::run() {
-  auto& flush_feature = SerenedServer::Instance().getFeature<FlushFeature>();
+  auto& flush_feature = FlushFeature::instance();
 
   const double start_time = utilities::GetMicrotime();
   uint64_t runs_until_sync_forced = 1;

@@ -90,7 +90,7 @@ std::shared_ptr<catalog::Database> LookupDatabaseFromRequest(
     req.setDatabaseName(StaticStrings::kDefaultDatabase);
   }
 
-  return server.getFeature<catalog::CatalogFeature>()
+  return catalog::CatalogFeature::instance()
     .Global()
     .GetCatalogSnapshot()
     ->GetDatabase(req.databaseName());
@@ -344,7 +344,7 @@ void GeneralCommTask<T>::ExecuteRequest(
   // create a handler, this takes ownership of request and response
   auto& server = this->_server.server();
   auto factory =
-    server.template getFeature<GeneralServerFeature>().handlerFactory();
+    GeneralServerFeature::instance().handlerFactory();
   auto handler =
     factory->createHandler(server, std::move(request), std::move(response));
 
@@ -519,7 +519,7 @@ bool GeneralCommTask<T>::AllowCorsCredentials(const std::string& origin) const {
   // if the request asks to allow credentials, we'll check against the
   // configured allowed list of origins
   const auto& gs =
-    this->_server.server().template getFeature<GeneralServerFeature>();
+    GeneralServerFeature::instance();
   const std::vector<std::string>& access_control_allow_origins =
     gs.accessControlAllowOrigins();
 
@@ -655,8 +655,7 @@ bool GeneralCommTask<T>::HandleRequestAsync(
   SDB_ASSERT(SchedulerFeature::gScheduler != nullptr);
 
   if (job_id != nullptr) {
-    auto& job_manager = this->_server.server()
-                          .template getFeature<GeneralServerFeature>()
+    auto& job_manager = GeneralServerFeature::instance()
                           .jobManager();
     try {
       // This will throw if a soft shutdown is already going on on a

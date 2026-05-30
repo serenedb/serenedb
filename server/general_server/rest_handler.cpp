@@ -58,7 +58,7 @@ RestHandler::RestHandler(SerenedServer& server, GeneralRequest* request,
     _canceled(false) {
   if (server.hasFeature<GeneralServerFeature>()) {
     _current_requests_size_tracker = metrics::GaugeCounterGuard<uint64_t>{
-      server.getFeature<GeneralServerFeature>().current_requests_size,
+      GeneralServerFeature::instance().current_requests_size,
       _request->memoryUsage()};
   }
 }
@@ -461,7 +461,7 @@ void RestHandler::compressResponse() {
   }
 
   uint64_t threshold =
-    server().getFeature<GeneralServerFeature>().compressResponseThreshold();
+    GeneralServerFeature::instance().compressResponseThreshold();
 
   if (threshold == 0) {
     // opted out of compression by configuration

@@ -71,7 +71,7 @@ void FlushFeature::registerFlushSubscription(
 }
 
 std::tuple<size_t, size_t, Tick> FlushFeature::releaseUnusedTicks() {
-  auto& engine = server().getFeature<EngineFeature>().engine();
+  auto& engine = EngineFeature::instance().engine();
   const auto initial_tick = engine.currentTick();
 
   size_t stale = 0;

@@ -47,8 +47,7 @@ struct CTASGlobalState final : public SSTInsertGlobalState {
   ~CTASGlobalState() final {
     if (!finalized && !table_name.empty()) {
       try {
-        auto& catalog = SerenedServer::Instance()
-                          .getFeature<catalog::CatalogFeature>()
+        auto& catalog = catalog::CatalogFeature::instance()
                           .Global();
         std::ignore =
           catalog.DropTable(database_name, schema_name, table_name, true);
@@ -100,7 +99,7 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   ApplyColumnModes(options.columns, table_info.options);
 
   auto& catalog_impl =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    catalog::CatalogFeature::instance().Global();
 
   bool if_not_exists =
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
@@ -163,7 +162,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCTAS::Finalize(
     SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
     auto& gstate = sink_state->Cast<CTASGlobalState>();
     auto& catalog =
-      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+      catalog::CatalogFeature::instance().Global();
     auto r = catalog.RemoveTombstone(gstate.database_id, gstate.schema_name,
                                      gstate.table_name);
     if (!r.ok()) {

@@ -116,7 +116,7 @@ class SearchThreadPools {
 
 SearchEngine::SearchEngine(Server& server)
   : SerenedFeature{server, name()},
-    _dir_feature{server.getFeature<DatabasePathFeature>()},
+    _dir_feature{DatabasePathFeature::instance()},
     _thread_pools(std::make_shared<SearchThreadPools>()),
     _out_of_sync_links(metrics::GetMetrics().add(
       serenedb_search_num_out_of_sync_links{})),
@@ -141,7 +141,7 @@ void SearchEngine::validateOptions() {
 }
 
 SearchEngine& GetSearchEngine() {
-  return SerenedServer::Instance().getFeature<SearchEngine>();
+  return SearchEngine::instance();
 }
 
 void SearchEngine::prepare() {

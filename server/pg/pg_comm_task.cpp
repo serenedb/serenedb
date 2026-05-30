@@ -160,7 +160,7 @@ duckdb::LogicalType ResolveExpectedType(const auto& value_map, uint16_t id) {
 PgSQLCommTaskBase::PgSQLCommTaskBase(rest::GeneralServer& server,
                                      ConnectionInfo info)
   : rest::CommTask(server, std::move(info)),
-    _feature{server.server().getFeature<PostgresFeature>()},
+    _feature{PostgresFeature::instance()},
     _copy_queue{_queue_mutex},
     _send{64, 4096, 4096,
           [this](message::SequenceView data) { this->SendAsync(data); }} {}
@@ -305,8 +305,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
 
     // Pin the catalog snapshot at connection time -- all operations
     // on this connection use the same snapshot until statement/transaction end.
-    auto snapshot = _feature.server()
-                      .getFeature<catalog::CatalogFeature>()
+    auto snapshot = catalog::CatalogFeature::instance()
                       .Global()
                       .GetCatalogSnapshot();
     auto database = snapshot->GetDatabase(DatabaseName());

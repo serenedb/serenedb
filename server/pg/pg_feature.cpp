@@ -63,7 +63,7 @@ uint64_t PostgresFeature::RegisterTask(PgSQLCommTaskBase& task) {
 
 void PostgresFeature::validateOptions() {
   const auto& endpoint_list =
-    server().getFeature<EndpointFeature>().endpointList();
+    EndpointFeature::instance().endpointList();
   const bool has_pgsql = std::ranges::any_of(
     endpoint_list | std::views::values, [](const auto& endpoint) {
       return endpoint->transport() == Endpoint::TransportType::PGSQL;

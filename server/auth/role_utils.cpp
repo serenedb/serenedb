@@ -44,7 +44,7 @@ std::atomic_uint64_t gGlobalVersion = 1;
 
 Result CreateRootRole(bool skip_if_exists) {
   auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    catalog::CatalogFeature::instance().Global();
 
   auto create_root = [&]() {
     // No `--database.password` flag anymore; root role gets an empty
@@ -76,7 +76,7 @@ Result StoreRole(bool replace, std::string_view name, std::string_view password,
   }
 
   auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    catalog::CatalogFeature::instance().Global();
 
   auto create_role = [&]() {
     auto new_role = catalog::Role::NewUser(name, password);
@@ -105,7 +105,7 @@ Result UpdateRole(std::string_view name,
   }
 
   auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    catalog::CatalogFeature::instance().Global();
 
   return catalog.ChangeRole(
     name,
@@ -125,13 +125,13 @@ Result RemoveRole(std::string_view name) {
   }
 
   auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    catalog::CatalogFeature::instance().Global();
   return catalog.DropRole(name);
 }
 
 Result RemoveAllRoles() {
   auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    catalog::CatalogFeature::instance().Global();
   while (true) {
     const auto roles = GetRoles();
     if (roles.empty()) {
@@ -175,16 +175,14 @@ Level DatabaseAuthLevel(std::string_view name, std::string_view database,
 }
 
 std::vector<std::shared_ptr<catalog::Role>> GetRoles() {
-  return SerenedServer::Instance()
-    .getFeature<catalog::CatalogFeature>()
+  return catalog::CatalogFeature::instance()
     .Global()
     .GetCatalogSnapshot()
     ->GetRoles();
 }
 
 std::shared_ptr<catalog::Role> GetRole(std::string_view name) {
-  return SerenedServer::Instance()
-    .getFeature<catalog::CatalogFeature>()
+  return catalog::CatalogFeature::instance()
     .Global()
     .GetCatalogSnapshot()
     ->GetRole(name);

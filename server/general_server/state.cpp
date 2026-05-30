@@ -301,7 +301,7 @@ std::string ServerState::RoleToAgencyKey(ServerState::Role role) {
 }
 
 std::string ServerState::GetUUIDFilename() const {
-  auto& dbpath = SerenedServer::Instance().getFeature<DatabasePathFeature>();
+  auto& dbpath = DatabasePathFeature::instance();
   return file_utils::BuildFilename(dbpath.directory(), "UUID");
 }
 

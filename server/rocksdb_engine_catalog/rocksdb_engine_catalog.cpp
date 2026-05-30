@@ -349,7 +349,7 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_old_key,
 }
 
 RocksDBEngineCatalog::RocksDBEngineCatalog(SerenedServer& server)
-  : RocksDBEngineCatalog(server.getFeature<RocksDBOptionFeature>(),
+  : RocksDBEngineCatalog(RocksDBOptionFeature::instance(),
                          metrics::GetMetrics()) {}
 
 RocksDBEngineCatalog::RocksDBEngineCatalog(
@@ -476,7 +476,7 @@ void RocksDBEngineCatalog::flushOpenFilesIfRequired() {
 // the storage engine must not start any threads here or write any files
 void RocksDBEngineCatalog::prepare() {
   _base_path =
-    SerenedServer::Instance().getFeature<DatabasePathFeature>().directory();
+    DatabasePathFeature::instance().directory();
   SDB_ASSERT(!_base_path.empty());
 }
 
@@ -529,8 +529,7 @@ void RocksDBEngineCatalog::start() {
             rest::Version::getRocksDBVersion(),
             ", supported compression types: ", getCompressionSupport());
 
-  _path = SerenedServer::Instance()
-            .getFeature<DatabasePathFeature>()
+  _path = DatabasePathFeature::instance()
             .subdirectoryName(StaticStrings::kRocksDbEngineRoot);
 
   [[maybe_unused]] bool created_engine_dir = false;
@@ -838,14 +837,12 @@ std::string RocksDBEngineCatalog::versionFilename(ObjectId id) const {
 void RocksDBEngineCatalog::cleanupReplicationContexts() {}
 
 RecoveryState RocksDBEngineCatalog::recoveryState() noexcept {
-  return SerenedServer::Instance()
-    .getFeature<RocksDBRecoveryManager>()
+  return RocksDBRecoveryManager::instance()
     .recoveryState();
 }
 
 Tick RocksDBEngineCatalog::recoveryTick() noexcept {
-  return SerenedServer::Instance()
-    .getFeature<RocksDBRecoveryManager>()
+  return RocksDBRecoveryManager::instance()
     .recoverySequenceNumber();
 }
 
@@ -913,7 +910,7 @@ Result RocksDBEngineCatalog::flushWal(bool wait_for_sync,
 
 void RocksDBEngineCatalog::waitForEstimatorSync() {
   // release all unused ticks from flush feature
-  SerenedServer::Instance().getFeature<FlushFeature>().releaseUnusedTicks();
+  FlushFeature::instance().releaseUnusedTicks();
 
   // force-flush
   std::ignore = _settings_manager->sync(/*force*/ true);

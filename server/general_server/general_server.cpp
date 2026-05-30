@@ -177,7 +177,7 @@ IoContext& GeneralServer::selectIoContext() {
 SslServerFeature::SslContextList GeneralServer::sslContexts() {
   std::lock_guard guard(_ssl_context_mutex);
   if (!_ssl_contexts) {
-    _ssl_contexts = server().getFeature<SslServerFeature>().createSslContexts();
+    _ssl_contexts = SslServerFeature::instance().createSslContexts();
     if (_ssl_contexts->size() > 0) {
       // Set a client hello callback such that we have a chance to change the
       // SSL context:
@@ -198,7 +198,7 @@ Result GeneralServer::reloadTLS() {
     {
       std::lock_guard guard(_ssl_context_mutex);
       _ssl_contexts =
-        server().getFeature<SslServerFeature>().createSslContexts();
+        SslServerFeature::instance().createSslContexts();
       if (_ssl_contexts->size() > 0) {
         // Set a client hello callback such that we have a chance to change the
         // SSL context:

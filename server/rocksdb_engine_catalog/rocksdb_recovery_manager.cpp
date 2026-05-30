@@ -467,7 +467,7 @@ Result RocksDBRecoveryManager::parseRocksWAL() {
 
 void RocksDBRecoveryManager::recoveryDone() {
   SDB_ASSERT(!ServerState::instance()->IsCoordinator());
-  SDB_ASSERT(!server().getFeature<EngineFeature>().engine().inRecovery());
+  SDB_ASSERT(!EngineFeature::instance().engine().inRecovery());
 
   // '_pending_recovery_callbacks' will not change because
   // !StorageEngine.inRecovery()
@@ -497,7 +497,7 @@ void RocksDBRecoveryManager::recoveryDone() {
 
 Result RocksDBRecoveryManager::registerPostRecoveryCallback(
   std::function<Result()>&& callback) {
-  if (!server().getFeature<EngineFeature>().engine().inRecovery()) {
+  if (!EngineFeature::instance().engine().inRecovery()) {
     return callback();  // if no engine then can't be in recovery
   }
 

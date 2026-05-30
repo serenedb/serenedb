@@ -37,7 +37,7 @@ EngineFeature::EngineFeature(Server& server)
 EngineFeature::~EngineFeature() { gInstance = nullptr; }
 
 RocksDBEngineCatalog& GetServerEngine() {
-  return SerenedServer::Instance().getFeature<EngineFeature>().engine();
+  return EngineFeature::instance().engine();
 }
 
 void EngineFeature::start() {

@@ -46,7 +46,7 @@ SystemTableSnapshot<SdbSearchTasksStatus>::GetTableData() {
   values.reserve(kThreadGroups.size());
   for (const auto& [thread_group, thread_group_name] : kThreadGroups) {
     auto [active, pending, threads] =
-      SerenedServer::Instance().getFeature<search::SearchEngine>().stats(
+      search::SearchEngine::instance().stats(
         thread_group);
 
     values.push_back({

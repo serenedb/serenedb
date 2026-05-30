@@ -50,7 +50,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   const duckdb::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
   auto& catalog_feature =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+    catalog::CatalogFeature::instance();
 
   if (info.path.empty()) {
     // CREATE DATABASE: create new database in SereneDB catalog

@@ -144,8 +144,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
     search_trx.reset();
     if (created && !finalized) {
       try {
-        auto& catalog = SerenedServer::Instance()
-                          .getFeature<catalog::CatalogFeature>()
+        auto& catalog = catalog::CatalogFeature::instance()
                           .Global();
         std::ignore =
           catalog.DropIndex(database_name, schema_name, index_name, true);
@@ -222,7 +221,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   }
 
   auto& catalog_feature =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+    catalog::CatalogFeature::instance();
   auto& catalog_impl = catalog_feature.Global();
 
   // Determine index type
@@ -757,7 +756,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   }
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
   auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    catalog::CatalogFeature::instance().Global();
   auto r = catalog.RemoveTombstone(_database_id, gstate.schema_name,
                                    gstate.index_name);
   if (!r.ok()) {

@@ -670,7 +670,7 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
 template<typename T>
 ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
   auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    catalog::CatalogFeature::instance().Global();
   auto database = catalog.GetCatalogSnapshot()->GetDatabase(key);
   if (!database) [[unlikely]] {
     return std::unexpected<Result>(std::in_place,
@@ -764,7 +764,7 @@ ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name) {
 
 LogicalCatalog& GetCatalog() {
   auto& catalogs =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+    catalog::CatalogFeature::instance();
   return ServerState::instance()->IsCoordinator() ? catalogs.Global()
                                                   : catalogs.Local();
 }

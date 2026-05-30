@@ -135,7 +135,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   auto& server = SerenedServer::Instance();
 
   const auto schema_id = index.GetParentId();
-  const auto db_id = server.getFeature<catalog::CatalogFeature>()
+  const auto db_id = catalog::CatalogFeature::instance()
                        .Global()
                        .GetCatalogSnapshot()
                        ->GetDatabaseId(index);
@@ -658,7 +658,7 @@ void InvertedIndexShard::FinishCreation() {
   _phase = Phase::Active;
   auto& server = SerenedServer::Instance();
   if (server.hasFeature<FlushFeature>()) {
-    server.getFeature<FlushFeature>().registerFlushSubscription(
+    FlushFeature::instance().registerFlushSubscription(
       _flush_subscription);
   }
 }

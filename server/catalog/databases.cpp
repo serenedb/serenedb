@@ -36,8 +36,7 @@ Result CreateDatabase(const ExecContext& exec, std::string_view name) {
 
   auto database = std::make_shared<catalog::Database>(ObjectId{}, name);
 
-  return SerenedServer::Instance()
-    .getFeature<catalog::CatalogFeature>()
+  return catalog::CatalogFeature::instance()
     .Global()
     .CreateDatabase(std::move(database));
 }
@@ -48,8 +47,7 @@ Result DropDatabase(const ExecContext& exec, std::string_view db_name,
     return {ERROR_FORBIDDEN};
   }
 
-  return SerenedServer::Instance()
-    .getFeature<catalog::CatalogFeature>()
+  return catalog::CatalogFeature::instance()
     .Global()
     .DropDatabase(db_name, std::move(keep_alive));
 }

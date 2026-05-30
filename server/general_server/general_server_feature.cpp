@@ -260,7 +260,7 @@ rest::AsyncJobManager& GeneralServerFeature::jobManager() {
 
 void GeneralServerFeature::buildServers() {
   EndpointFeature& endpoint =
-    server().getFeature<EndpointFeature>();
+    EndpointFeature::instance();
   const auto& endpoint_list = endpoint.endpointList();
 
   // check if endpointList contains ssl featured server
@@ -270,7 +270,7 @@ void GeneralServerFeature::buildServers() {
                 "no ssl context is known, cannot create https server, "
                 "please enable SSL");
     }
-    SslServerFeature& ssl = server().getFeature<SslServerFeature>();
+    SslServerFeature& ssl = SslServerFeature::instance();
     ssl.verifySslOptions();
   }
 
@@ -284,7 +284,7 @@ void GeneralServerFeature::startListening() {
 #endif
 
   EndpointFeature& endpoint =
-    server().getFeature<EndpointFeature>();
+    EndpointFeature::instance();
   auto& endpoint_list = endpoint.endpointList();
 
   for (auto& server : _servers) {

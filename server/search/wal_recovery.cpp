@@ -658,13 +658,12 @@ void RunWalRecovery(std::vector<ShardState>& shards,
 void InitInvertedIndexes(bool skip_wal_recovery) {
   auto begin = std::chrono::steady_clock::now();
 
-  auto& server = SerenedServer::Instance();
-  auto& engine = server.getFeature<EngineFeature>().engine();
+  auto& engine = EngineFeature::instance().engine();
   auto& rdb = basics::downCast<RocksDBEngineCatalog>(engine);
   SDB_ASSERT(!rdb.inRecovery());
   const Tick end_tick = rdb.recoveryTick();
 
-  auto& catalog_feature = server.getFeature<catalog::CatalogFeature>();
+  auto& catalog_feature = catalog::CatalogFeature::instance();
   auto snapshot = catalog_feature.Global().GetCatalogSnapshot();
   SDB_ASSERT(snapshot);
 

@@ -82,8 +82,7 @@ bool IsIOUringEnabled() {
   static const bool kSupported = IsIoUringSupported();
   return kSupported;
 #else
-  return SerenedServer::Instance()
-    .getFeature<RocksDBOptionFeature>()
+  return RocksDBOptionFeature::instance()
     .ioUringEnabled();
 #endif
 }

@@ -52,7 +52,6 @@ class ColumnSinkWriterImplBase {
     for (auto c : columns) {
       _columns.insert(c);
     }
-    SDB_ASSERT(!_columns.empty());
   }
 
   bool IsIndexed(catalog::Column::Id column_id) const noexcept {

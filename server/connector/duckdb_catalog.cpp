@@ -543,19 +543,25 @@ std::vector<duckdb::idx_t> ComputeKeptViewPositions(
     parsed_index_exprs,
   const duckdb::ViewColumnInfo& column_info) {
   std::vector<duckdb::idx_t> kept;
-  kept.reserve(parsed_index_exprs.size());
-  for (const auto& expr : parsed_index_exprs) {
-    if (expr->GetExpressionType() != duckdb::ExpressionType::COLUMN_REF) {
-      continue;
-    }
-    const auto& name =
-      expr->Cast<duckdb::ColumnRefExpression>().GetColumnName();
+  auto add = [&](std::string_view name) {
     for (size_t i = 0; i < column_info.names.size(); ++i) {
       if (column_info.names[i] == name) {
         kept.push_back(i);
         break;
       }
     }
+  };
+  auto collect = [&](this auto& self,
+                     const duckdb::ParsedExpression& e) -> void {
+    if (e.GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
+      add(e.Cast<duckdb::ColumnRefExpression>().GetColumnName());
+      return;
+    }
+    duckdb::ParsedExpressionIterator::EnumerateChildren(
+      e, [&](const duckdb::ParsedExpression& c) { self(c); });
+  };
+  for (const auto& expr : parsed_index_exprs) {
+    collect(*expr);
   }
   absl::c_sort(kept);
   kept.erase(std::unique(kept.begin(), kept.end()), kept.end());
@@ -1298,13 +1304,40 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         duckdb::Value::LIST(duckdb::LogicalType::UBIGINT,
                             std::move(kept_values));
     }
-    // column_binding_resolver synthesises (TableIndex(0), i) for
-    // LOGICAL_CREATE_INDEX.
-    for (size_t i = 0; i < rel_columns.size(); ++i) {
-      expressions.push_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-        rel_columns[i].second,
-        duckdb::ColumnBinding(duckdb::TableIndex(0),
-                              duckdb::ProjectionIndex(i))));
+    // Bind each parsed expression and remap col-ref bindings to
+    // (TableIndex(0), narrowed_position) so ColumnBindingResolver matches them
+    // and BoundReferenceExpression indices land within the narrowed row.
+    containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> full_to_narrowed;
+    if (kept_view_positions) {
+      full_to_narrowed.reserve(kept_view_positions->size());
+      for (size_t i = 0; i < kept_view_positions->size(); ++i) {
+        full_to_narrowed[(*kept_view_positions)[i]] = i;
+      }
+    }
+    duckdb::IndexBinder index_binder(binder, binder.context, nullptr,
+                                     create_index_info.get());
+    expressions.reserve(create_index_info->expressions.size());
+    for (auto& parsed : create_index_info->expressions) {
+      auto bound = index_binder.Bind(parsed);
+      auto remap = [&](this auto& self, duckdb::Expression& e) -> void {
+        if (e.GetExpressionClass() ==
+            duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+          auto& cref = e.Cast<duckdb::BoundColumnRefExpression>();
+          auto col_idx = cref.binding.column_index.GetIndex();
+          if (kept_view_positions) {
+            auto it = full_to_narrowed.find(col_idx);
+            SDB_ASSERT(it != full_to_narrowed.end(),
+                       "view col ref references a non-kept position");
+            col_idx = it->second;
+          }
+          cref.binding = duckdb::ColumnBinding(duckdb::TableIndex(0),
+                                               duckdb::ProjectionIndex(col_idx));
+        }
+        duckdb::ExpressionIterator::EnumerateChildren(
+          e, [&](duckdb::Expression& c) { self(c); });
+      };
+      remap(*bound);
+      expressions.emplace_back(std::move(bound));
     }
   }
 

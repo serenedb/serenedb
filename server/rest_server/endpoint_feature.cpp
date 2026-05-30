@@ -114,33 +114,8 @@ To bind SereneDB to it, start `serened` with
 `--server.endpoint pgsql+tcp://[fe80::6257:18ff:fe82:3ec6%eth0]:7890`.
 You can use `telnet` to test the connection.)");
 
-  options->addSection("tcp", "TCP features");
-
-  options
-    ->addOption("--tcp.reuse-address", "Try to reuse TCP port(s).",
-                new BooleanParameter(&_reuse_address),
-                sdb::options::MakeDefaultFlags(sdb::options::Flags::Uncommon))
-    .setLongDescription(R"(If you set this option to `true`, the socket
-option `SO_REUSEADDR` is set on all server endpoints, which is the default.
-If you set this option to `false`, it is possible that it takes up to a minute
-after a server has terminated until it is possible for a new server to use the
-same endpoint again.
-
-**Note**: This can be a security risk because it might be possible for another
-process to bind to the same address and port, possibly hijacking network
-traffic.)");
-
-  options
-    ->addOption("--tcp.backlog-size",
-                "Specify the size of the backlog for the `listen` "
-                "system call.",
-                new UInt64Parameter(&_backlog_size),
-                sdb::options::MakeDefaultFlags(sdb::options::Flags::Uncommon))
-    .setLongDescription(R"(The maximum value is platform-dependent.
-If you specify a value higher than defined in the system header's `SOMAXCONN`
-may result in a warning on server start. The actual value used by `listen`
-may also be silently truncated on some platforms (this happens inside the
-`listen` system call).)");
+  // --tcp.reuse-address (SO_REUSEADDR, defaults to true) and
+  // --tcp.backlog-size were TCP tuning knobs; defaults stand.
 }
 
 void EndpointFeature::validateOptions(std::shared_ptr<ProgramOptions>) {

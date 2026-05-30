@@ -161,34 +161,13 @@ void SearchEngine::collectOptions(
     "with a longer recovery window.",
     new options::BooleanParameter(&_skip_wal_recovery));
 
-  options
-    ->addOption(kFailOnOutOfSync,
-                "Whether retrieval queries on out-of-sync "
-                "View links and inverted indexes should fail.",
-                new options::BooleanParameter(&_fail_queries_on_out_of_sync))
-
-    .setLongDescription(R"(If set to `true`, any data retrieval queries on
-out-of-sync links/indexes fail with the error 'collection/view is out of sync'
-(error code 1481).
-
-If set to `false`, queries on out-of-sync links/indexes are answered normally,
-but the returned data may be incomplete.)");
-
-  options->addOption(
-    kSearchThreadsLimit,
-    "The maximum number of threads that can be used to process "
-    "Search indexes during a SEARCH operation of a query.",
-    new options::UInt32Parameter(&_search_execution_threads_limit),
-    options::MakeDefaultFlags(options::Flags::DefaultNoComponents,
-                              options::Flags::OnDBServer,
-                              options::Flags::OnSingle));
-
+  // --search.fail-on-out-of-sync, --search.search-threads-limit:
+  // fields stay at defaults.
+  // --search.default-parallelism survives as a runtime SET LOCAL setting --
+  // a follow-up will register it via DBConfig::AddExtensionOption.
   options->addOption(
     kSearchDefaultParallelism, "Default parallelism for Search queries",
-    new options::UInt32Parameter(&_default_parallelism),
-    options::MakeDefaultFlags(options::Flags::DefaultNoComponents,
-                              options::Flags::OnDBServer,
-                              options::Flags::OnSingle));
+    new options::UInt32Parameter(&_default_parallelism));
 }
 
 void SearchEngine::validateOptions(

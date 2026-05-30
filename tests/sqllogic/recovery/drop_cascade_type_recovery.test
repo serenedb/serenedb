@@ -1,0 +1,74 @@
+control substitution on
+
+
+# DROP TYPE CASCADE edges (view body CAST, function param, function body CAST)
+# must survive a restart. AddDependencies during load re-walks ExtractRefs on
+# each object and rebuilds PgSqlTypeDependency edges; ModifyDependency now
+# tolerates not-yet-loaded targets during _in_load so cross-tree edges resolve
+# cleanly via the post-load FinalizeLoad sweep.
+
+statement ok
+CREATE TYPE iceberg AS ENUM ('a', 'b');
+
+
+statement ok
+CREATE TABLE kostya_t (s TEXT);
+
+
+statement count 2
+INSERT INTO kostya_t VALUES ('a'), ('b');
+
+
+# View body CAST.
+statement ok
+CREATE VIEW kostya_v AS SELECT CAST(s AS iceberg) AS f FROM kostya_t;
+
+
+# Function body CAST.
+statement ok
+CREATE FUNCTION clickclack_fn(x TEXT) AS CAST(x AS iceberg);
+
+
+# Function param type.
+statement ok
+CREATE FUNCTION babsky_fp(x iceberg) AS x;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# Type still in use by all three -- RESTRICT blocked.
+connection after_crash
+statement error (?i)cannot drop type .*iceberg.* because other objects depend on it
+DROP TYPE iceberg;
+
+
+# CASCADE drops the type and all dependent objects.
+connection after_crash
+statement ok
+DROP TYPE iceberg CASCADE;
+
+
+connection after_crash
+statement error (?i)(table|relation|view).*kostya_v.*does not exist
+SELECT * FROM kostya_v;
+
+
+connection after_crash
+statement error (?i)(function|macro|scalar).*clickclack_fn.* does not exist
+SELECT clickclack_fn('a');
+
+
+connection after_crash
+statement ok
+DROP TABLE kostya_t;

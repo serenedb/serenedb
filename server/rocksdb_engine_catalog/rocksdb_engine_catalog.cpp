@@ -859,7 +859,7 @@ Tick RocksDBEngineCatalog::recoveryTick() noexcept {
 }
 
 Result RocksDBEngineCatalog::SyncTableShard(const TableShard& shard) {
-  ObjectId table_id = shard.GetTableId();
+  ObjectId table_id = shard.GetParentId();
   ObjectId shard_id = shard.GetId();
   vpack::Builder b;
   shard.WriteInternal(b);

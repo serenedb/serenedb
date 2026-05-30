@@ -133,16 +133,43 @@ inline void VPackRead(auto ctx, Column& col) {
   col = Column{ctx.arg(), id, name, std::move(type), std::move(expr), gt};
 }
 
-struct CheckConstraint {
-  ObjectId id;
-  std::string name;
-  std::shared_ptr<ColumnExpr> expr;
+class CheckConstraint final : public Object {
+ public:
+  CheckConstraint() : Object{{}, {}, {}, ObjectType::CheckConstraint} {}
+
+  CheckConstraint(ObjectId owner_table_id, ObjectId id, std::string_view name,
+                  std::shared_ptr<ColumnExpr> e)
+    : Object{owner_table_id, id, std::string{name},
+             ObjectType::CheckConstraint},
+      expr{std::move(e)} {}
+
+  void WriteInternal(vpack::Builder&) const final {}
+  std::shared_ptr<Object> Clone() const final {
+    return std::make_shared<CheckConstraint>(*this);
+  }
 
   // If this constraint is just `NOT NULL` on a single column of `columns`,
   // returns that column's index. Otherwise returns std::nullopt.
   std::optional<size_t> IsNotNull(
     std::span<const Column> columns) const noexcept;
+
+  std::shared_ptr<ColumnExpr> expr;
 };
+
+inline void VPackWrite(auto ctx, const CheckConstraint& c) {
+  vpack::WriteTuple(
+    ctx.vpack(),
+    std::forward_as_tuple(c.GetId(), std::string{c.GetName()}, c.expr));
+}
+
+inline void VPackRead(auto ctx, CheckConstraint& c) {
+  ObjectId id;
+  std::string name;
+  std::shared_ptr<ColumnExpr> expr;
+  auto tup = std::tie(id, name, expr);
+  vpack::ReadTuple(ctx.vpack(), tup);
+  c = CheckConstraint{ctx.arg(), id, name, std::move(expr)};
+}
 
 struct TableStats {
   uint64_t num_rows = 0;

@@ -1,0 +1,90 @@
+# An inverted index can use a user-defined macro / function inside its
+# indexed expression. The macro inlines at bind time so the persisted bound
+# tree no longer carries the function reference, but the parsed-form refs
+# are captured on the index entry so DROP FUNCTION RESTRICT blocks and
+# DROP FUNCTION CASCADE drops the index.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY clickclack_dict(template = 'keyword');
+
+
+statement ok
+CREATE FUNCTION babsky_double(x INT) AS x * 2;
+
+
+statement ok
+CREATE TABLE kostya_t (id INT PRIMARY KEY, n INT);
+
+
+# Backfill path: data is INSERTed before the index exists. The new index
+# scans existing rows through the user macro at VACUUM time.
+statement count 3
+INSERT INTO kostya_t VALUES (1, 10), (2, 50), (3, 100);
+
+
+statement ok
+CREATE INDEX kostya_idx ON kostya_t USING inverted(id, (babsky_double(n)) clickclack_dict);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) kostya_t;
+
+
+# Live INSERT path: new rows go through the macro as they're written.
+statement count 1
+INSERT INTO kostya_t VALUES (4, 7);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) kostya_t;
+
+
+query
+SELECT id FROM kostya_idx WHERE babsky_double(n) = 14 ORDER BY id;
+----
+id
+4
+
+
+# Index works through the original macro.
+query
+SELECT id FROM kostya_idx WHERE babsky_double(n) = 20 ORDER BY id;
+----
+id
+1
+
+
+# Index works through the inlined form.
+query
+SELECT id FROM kostya_idx WHERE n * 2 = 20 ORDER BY id;
+----
+id
+1
+
+
+# DROP FUNCTION RESTRICT is blocked because the index references it.
+statement error (?i)cannot drop function .*babsky_double.* because other objects depend on it
+DROP FUNCTION babsky_double(INT);
+
+
+query
+SELECT count(*) FROM pg_indexes WHERE indexname = 'kostya_idx';
+----
+count
+1
+
+
+# DROP FUNCTION CASCADE drops the dependent index.
+statement ok
+DROP FUNCTION babsky_double(INT) CASCADE;
+
+
+query
+SELECT count(*) FROM pg_indexes WHERE indexname = 'kostya_idx';
+----
+count
+0
+
+
+statement ok
+DROP TABLE kostya_t;

@@ -79,4 +79,12 @@ std::shared_ptr<Object> PgSqlView::Clone() const {
                                      std::move(cloned_info));
 }
 
+Refs PgSqlView::ExtractRefs(RefKinds kinds) const {
+  using sdb::ExtractRefs;
+  if (!_info->query) {
+    return {};
+  }
+  return ExtractRefs(*_info->query, kinds);
+}
+
 }  // namespace sdb::catalog

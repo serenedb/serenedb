@@ -31,13 +31,8 @@ class IndexShard : public catalog::Object {
   IndexShard(ObjectId id, ObjectId index_id, catalog::ObjectType type);
   IndexShard(ObjectId index_id, catalog::ObjectType type);
   virtual ~IndexShard() = default;
+  ObjectId GetIndexId() const noexcept { return GetParentId(); }
   std::shared_ptr<Object> Clone() const final { return nullptr; }
-
-  ObjectId GetId() const { return _id; }
-  ObjectId GetIndexId() const { return _index_id; }
-
- protected:
-  ObjectId _index_id;
 };
 
 }  // namespace sdb

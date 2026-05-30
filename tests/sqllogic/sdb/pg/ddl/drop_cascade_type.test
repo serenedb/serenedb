@@ -1,0 +1,240 @@
+# DROP TYPE / DROP TYPE CASCADE for user-defined types. The catalog used to
+# only track column-direct uses; view bodies, function bodies, function
+# parameter types, CHECK constraints and column DEFAULTs using CAST(...) all
+# went unrecorded -- DROP TYPE silently succeeded and left dangling objects.
+# Each of the five edges is now tracked; the test matches PostgreSQL's
+# BEGIN ATOMIC behaviour.
+
+# --- 1. View body CAST ------------------------------------------------------
+
+statement ok
+CREATE TYPE clickclack_flavor AS ENUM ('sweet', 'salty');
+
+
+statement ok
+CREATE TABLE clickclack_strs (s TEXT);
+
+
+statement count 2
+INSERT INTO clickclack_strs VALUES ('sweet'), ('salty');
+
+
+statement ok
+CREATE VIEW clickclack_v_cast AS SELECT CAST(s AS clickclack_flavor) AS f FROM clickclack_strs;
+
+
+statement error (?i)cannot drop type .*clickclack_flavor.* because other objects depend on it
+DROP TYPE clickclack_flavor;
+
+
+statement ok
+DROP TYPE clickclack_flavor CASCADE;
+
+
+statement error (?i)(table|relation|view).*clickclack_v_cast.*does not exist
+SELECT * FROM clickclack_v_cast;
+
+
+statement ok
+DROP TABLE clickclack_strs;
+
+
+# --- 2. Function body CAST --------------------------------------------------
+
+statement ok
+CREATE TYPE babsky_kind AS ENUM ('a', 'b');
+
+
+statement ok
+CREATE FUNCTION babsky_fn_cast(x TEXT) AS CAST(x AS babsky_kind);
+
+
+statement error (?i)cannot drop type .*babsky_kind.* because other objects depend on it
+DROP TYPE babsky_kind;
+
+
+statement ok
+DROP TYPE babsky_kind CASCADE;
+
+
+statement error (?i)(function|macro|scalar).*babsky_fn_cast.* does not exist
+SELECT babsky_fn_cast('a');
+
+
+# --- 3. Function parameter type --------------------------------------------
+
+statement ok
+CREATE TYPE kostya_param AS ENUM ('p', 'q');
+
+
+statement ok
+CREATE FUNCTION kostya_fn_param(x kostya_param) AS x;
+
+
+statement error (?i)cannot drop type .*kostya_param.* because other objects depend on it
+DROP TYPE kostya_param;
+
+
+statement ok
+DROP TYPE kostya_param CASCADE;
+
+
+# --- 3b. Function RETURN type ------------------------------------------------
+
+statement ok
+CREATE TYPE deadinside_ret AS ENUM ('r', 's');
+
+
+statement ok
+CREATE FUNCTION deadinside_fn_ret() RETURNS deadinside_ret AS 'r'::deadinside_ret;
+
+
+statement error (?i)cannot drop type .*deadinside_ret.* because other objects depend on it
+DROP TYPE deadinside_ret;
+
+
+statement ok
+DROP TYPE deadinside_ret CASCADE;
+
+
+statement error (?i)(function|macro|scalar).*deadinside_fn_ret.* does not exist
+SELECT deadinside_fn_ret();
+
+
+statement error (?i)(function|macro|scalar).*kostya_fn_param.* does not exist
+SELECT kostya_fn_param('p');
+
+
+# --- 4. CHECK constraint with CAST -----------------------------------------
+
+statement ok
+CREATE TYPE iceberg_check AS ENUM ('y', 'n');
+
+
+statement ok
+CREATE TABLE iceberg_t_check (s TEXT, CHECK (CAST(s AS iceberg_check) IS NOT NULL));
+
+
+statement error (?i)cannot drop type .*iceberg_check.* because other objects depend on it
+DROP TYPE iceberg_check;
+
+
+statement ok
+DROP TYPE iceberg_check CASCADE;
+
+
+# The CHECK constraint was cascade-dropped; inserts should now accept anything.
+statement count 1
+INSERT INTO iceberg_t_check VALUES ('not-an-enum-value');
+
+
+statement ok
+DROP TABLE iceberg_t_check;
+
+
+# --- 5. Column DEFAULT with CAST -------------------------------------------
+
+statement ok
+CREATE TYPE mop_def AS ENUM ('d', 'e');
+
+
+statement ok
+CREATE TABLE mop_t_def (x TEXT DEFAULT CAST('d' AS mop_def)::TEXT);
+
+
+statement error (?i)cannot drop type .*mop_def.* because other objects depend on it
+DROP TYPE mop_def;
+
+
+statement ok
+DROP TYPE mop_def CASCADE;
+
+
+statement ok
+DROP TABLE mop_t_def;
+
+
+# --- 6. Container column types (LIST / STRUCT) -----------------------------
+# CollectTypeRefs and ModifyTableDependencies' column-type loop recurse into
+# LIST/STRUCT/MAP/UNION/ARRAY children, so a column declared as `my_type[]`
+# or `STRUCT(..., my_type)` still tracks the dep edge.
+
+statement ok
+CREATE TYPE saga_box AS ENUM ('x', 'y');
+
+
+statement ok
+CREATE TABLE saga_t_arr (xs saga_box[]);
+
+
+statement error (?i)cannot drop type .*saga_box.* because other objects depend on it
+DROP TYPE saga_box;
+
+
+statement ok
+DROP TYPE saga_box CASCADE;
+
+
+# DROP TYPE CASCADE drops the dependent column (matches PG); the table stays.
+statement ok
+DROP TABLE saga_t_arr;
+
+
+statement ok
+CREATE TYPE saga_box AS ENUM ('x', 'y');
+
+
+statement ok
+CREATE TABLE saga_t_struct (s STRUCT(a INT, b saga_box));
+
+
+statement error (?i)cannot drop type .*saga_box.* because other objects depend on it
+DROP TYPE saga_box;
+
+
+statement ok
+DROP TYPE saga_box CASCADE;
+
+
+statement ok
+DROP TABLE saga_t_struct;
+
+
+# --- 7. Cross-schema type ref (function in sb references type in sa) -------
+
+statement ok
+CREATE SCHEMA jira_ticket;
+
+
+statement ok
+CREATE SCHEMA manifest;
+
+
+statement ok
+CREATE TYPE jira_ticket.flav AS ENUM ('x', 'y');
+
+
+statement ok
+CREATE FUNCTION manifest.useflav(s TEXT) AS CAST(s AS jira_ticket.flav);
+
+
+# RESTRICT blocked because the function in sb depends on the type in sa.
+statement error (?i)cannot drop type .*flav.* because other objects depend on it
+DROP TYPE jira_ticket.flav;
+
+
+# CASCADE drops the type and the dependent function in the other schema.
+statement ok
+DROP TYPE jira_ticket.flav CASCADE;
+
+
+statement error (?i)(function|macro|scalar).*useflav.* does not exist
+SELECT manifest.useflav('x');
+
+
+statement ok
+DROP SCHEMA jira_ticket;
+
+
+statement ok
+DROP SCHEMA manifest;

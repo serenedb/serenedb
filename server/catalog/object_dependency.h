@@ -149,8 +149,11 @@ class DropEmitter {
     _plan.index_drops.push_back(idx_id);
   }
 
-  void EmitCascadeCheckConstraintDrop(ObjectId table_id,
-                                      ObjectId constraint_id) {
+  void EmitCascadeCheckConstraintDrop(ObjectId constraint_id) {
+    auto c = _lookup(constraint_id);
+    SDB_ASSERT(c);
+    auto table_id = c->GetParentId();
+    SDB_ASSERT(table_id.isSet());
     if (_auto_drops.contains(table_id)) {
       return;
     }
@@ -247,7 +250,7 @@ struct ViewDependency : RelationDependency {
 
 struct SequenceDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> column_defaults;
-  containers::FlatHashSet<std::pair<ObjectId, ObjectId>> constraints;
+  containers::FlatHashSet<ObjectId> constraints;
   containers::FlatHashSet<ObjectId> views;
   containers::FlatHashSet<ObjectId> functions;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
@@ -257,8 +260,8 @@ struct SequenceDependency : ObjectDependencyBase {
     for (auto col_id : column_defaults) {
       e.EmitCascadeColumnDefaultValueDrop(col_id);
     }
-    for (const auto& [tid, cid] : constraints) {
-      e.EmitCascadeCheckConstraintDrop(tid, cid);
+    for (auto cid : constraints) {
+      e.EmitCascadeCheckConstraintDrop(cid);
     }
     for (auto id : views) {
       e.EmitCascadeViewDrop(id);
@@ -271,6 +274,10 @@ struct SequenceDependency : ObjectDependencyBase {
 
 struct PgSqlTypeDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> column_types;
+  containers::FlatHashSet<ObjectId> views;
+  containers::FlatHashSet<ObjectId> functions;
+  containers::FlatHashSet<ObjectId> constraints;
+  containers::FlatHashSet<ObjectId> column_defaults;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<PgSqlTypeDependency>(*this);
   }
@@ -278,13 +285,26 @@ struct PgSqlTypeDependency : ObjectDependencyBase {
     for (auto col_id : column_types) {
       e.EmitCascadeColumnDrop(col_id);
     }
+    for (auto id : views) {
+      e.EmitCascadeViewDrop(id);
+    }
+    for (auto id : functions) {
+      e.EmitCascadeFunctionDrop(id);
+    }
+    for (auto cid : constraints) {
+      e.EmitCascadeCheckConstraintDrop(cid);
+    }
+    for (auto col_id : column_defaults) {
+      e.EmitCascadeColumnDefaultValueDrop(col_id);
+    }
   }
 };
 
 struct PgSqlFunctionDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> views;
   containers::FlatHashSet<ObjectId> functions;
-  containers::FlatHashSet<std::pair<ObjectId, ObjectId>> constraints;
+  containers::FlatHashSet<ObjectId> indexes;
+  containers::FlatHashSet<ObjectId> constraints;
   containers::FlatHashSet<ObjectId> column_defaults;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<PgSqlFunctionDependency>(*this);
@@ -296,8 +316,11 @@ struct PgSqlFunctionDependency : ObjectDependencyBase {
     for (auto id : functions) {
       e.EmitCascadeFunctionDrop(id);
     }
-    for (const auto& [tid, cid] : constraints) {
-      e.EmitCascadeCheckConstraintDrop(tid, cid);
+    for (auto id : indexes) {
+      e.EmitCascadeIndexDrop(id);
+    }
+    for (auto cid : constraints) {
+      e.EmitCascadeCheckConstraintDrop(cid);
     }
     for (auto col_id : column_defaults) {
       e.EmitCascadeColumnDefaultValueDrop(col_id);

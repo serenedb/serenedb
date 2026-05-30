@@ -56,7 +56,7 @@ class TableShard : public catalog::Object {
   virtual ~TableShard() = default;
   std::shared_ptr<Object> Clone() const final { return nullptr; }
 
-  auto GetTableId() const noexcept { return _table_id; }
+  ObjectId GetTableId() const noexcept { return GetParentId(); }
 
   auto& GetTableLock() noexcept { return _table_lock; }
 
@@ -82,7 +82,6 @@ class TableShard : public catalog::Object {
   /// Inject figures that are specific to StorageEngine
   virtual void figuresSpecific(bool details, vpack::Builder&) {}
 
-  ObjectId _table_id;
   // TODO(codeworse): this probably won't work in case of distributed setup
   std::atomic_uint64_t _num_rows{0};
   // TODO: remove table lock when we have a proper create index

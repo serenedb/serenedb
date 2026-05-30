@@ -345,6 +345,8 @@ struct LogicalCatalog {
   virtual Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                                  std::string_view name) = 0;
 
+  virtual Result FinalizeLoad() = 0;
+
   virtual std::shared_ptr<const Snapshot> GetCatalogSnapshot() const = 0;
 };
 

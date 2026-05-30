@@ -48,7 +48,6 @@ class DatabasePathFeature final : public SerenedFeature {
 
  private:
   std::string _directory;
-  std::string _required_directory_state;
 };
 
 }  // namespace sdb

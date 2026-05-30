@@ -43,7 +43,7 @@ using namespace sdb::options;
 namespace sdb {
 
 DatabasePathFeature::DatabasePathFeature(Server& server)
-  : SerenedFeature{server, name()}, _required_directory_state("any") {
+  : SerenedFeature{server, name()} {
   setOptional(false);
 }
 
@@ -61,21 +61,8 @@ NFS. The reason is that networked filesystems might cause inconsistencies when
 there are multiple parallel readers or writers or they lack features required by
 serened, e.g. `flock()`.)");
 
-  options->addOption(
-    "--database.required-directory-state",
-    "The required state of the database directory at startup "
-    "(non-existing: the database directory must not exist, existing: the"
-    "database directory must exist, empty: the database directory must exist "
-    "but be empty, populated: the database directory must exist and contain "
-    "specific files already, any: any state is allowed)",
-    new DiscreteValuesParameter<StringParameter>(&_required_directory_state,
-                                                 {
-                                                   "any",
-                                                   "non-existing",
-                                                   "existing",
-                                                   "empty",
-                                                   "populated",
-                                                 }));
+  // --database.required-directory-state: dropped; CI scripts can stat
+  // the dir themselves.
 }
 
 void DatabasePathFeature::validateOptions(
@@ -134,58 +121,6 @@ void DatabasePathFeature::prepare() {
     }
   }
 
-  if (_required_directory_state == "any") {
-    // database directory can have any state. this is the default
-    return;
-  }
-
-  if (_required_directory_state == "non-existing") {
-    if (basics::file_utils::IsDirectory(_directory)) {
-      SDB_FATAL(STARTUP, "database directory '", _directory,
-        "' already exists, but option "
-        "'--database.required-directory-state' was set to 'non-existing'");
-    }
-    return;
-  }
-
-  // existing, empty, populated when we get here
-  if (!basics::file_utils::IsDirectory(_directory)) {
-    SDB_FATAL(STARTUP, "database directory '", _directory,
-      "' does not exist, but option '--database.required-directory-state' "
-      "was set to '",
-      _required_directory_state, "'");
-  }
-
-  if (_required_directory_state == "existing") {
-    // directory exists. all good
-    return;
-  }
-
-  std::vector<std::string> files;
-  for (const auto& it : basics::file_utils::ListFiles(_directory)) {
-    if (it.empty() || basics::file_utils::IsDirectory(it)) {
-      continue;
-    }
-
-    // we are interested in just the filenames
-    files.emplace_back(SdbBasename(it));
-  }
-
-  if (_required_directory_state == "empty" && !files.empty()) {
-    SDB_FATAL(STARTUP, "database directory '", _directory,
-      "' is not empty, but option '--database.required-directory-state' "
-      "was set to '",
-      _required_directory_state, "'");
-  }
-
-  if (_required_directory_state == "populated" &&
-      (std::find(files.begin(), files.end(), "ENGINE") == files.end() ||
-       std::find(files.begin(), files.end(), "SERVER") == files.end())) {
-    SDB_FATAL(STARTUP, "database directory '", _directory,
-              "' is not properly populated, but option "
-              "'--database.required-directory-state' was set to '",
-              _required_directory_state, "'");
-  }
 
   // all good here
 }

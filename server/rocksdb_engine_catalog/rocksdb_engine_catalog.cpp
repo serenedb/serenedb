@@ -681,10 +681,7 @@ void RocksDBEngineCatalog::start() {
   _db->SetDBOptions({{"max_total_wal_size",
                       std::to_string(_options_provider.maxTotalWalSize())}});
 
-  {
-    auto& feature = SerenedServer::Instance().getFeature<FlushFeature>();
-    _use_released_tick = feature.isEnabled();
-  }
+  _use_released_tick = true;  // FlushFeature is always present + enabled
 
   // useReleasedTick should be true on DB servers and single servers
   SDB_ASSERT((ServerState::instance()->IsCoordinator() ||

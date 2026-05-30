@@ -72,7 +72,6 @@ void RocksDBRecoveryManager::prepare() {
 }
 
 void RocksDBRecoveryManager::start() {
-  SDB_ASSERT(isEnabled());
 
   // synchronizes with acquire inRecovery()
   _recovery_state.store(RecoveryState::InProgress, std::memory_order_release);

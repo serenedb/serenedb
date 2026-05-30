@@ -254,7 +254,6 @@ const VirtualTable* GetSystemTable(std::string_view schema,
   }
 }
 const VirtualTable* GetTable(std::string_view name) {
-  SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
 
   if (name.starts_with("pg_") || name.starts_with("sdb_")) {
     return GetTableFromSchema(name, kPgCatalog);
@@ -264,7 +263,6 @@ const VirtualTable* GetTable(std::string_view name) {
 
 void VisitSystemTables(
   absl::FunctionRef<void(const VirtualTable&, Oid)> visitor) {
-  SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
   for (const auto* table : kPgCatalog) {
     SDB_ASSERT(table);
     visitor(*table, id::kPgCatalogSchema.id());
@@ -277,7 +275,6 @@ void VisitSystemTables(
 
 void VisitSystemViews(
   absl::FunctionRef<void(const catalog::PgSqlView&, Oid)> visitor) {
-  SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
   for (const auto& [name, view] : gPgCatalogViews) {
     SDB_ASSERT(view);
     visitor(*view, id::kPgCatalogSchema.id());
@@ -339,7 +336,6 @@ std::shared_ptr<catalog::PgSqlFunction> GetInfoSchemaFunction(
 std::shared_ptr<catalog::PgSqlFunction> GetPgCatalogFunction(
   std::string_view name) {
 #ifndef SDB_GTEST
-  SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
 #endif
   auto it = gPgCatalogFunctions.find(name);
   return it != gPgCatalogFunctions.end() ? it->second : nullptr;
@@ -354,7 +350,6 @@ std::shared_ptr<PgSqlView> GetInfoSchemaView(std::string_view name) {
 }
 
 std::shared_ptr<PgSqlView> GetView(std::string_view name) {
-  SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
   auto it = gPgCatalogViews.find(name);
   if (it == gPgCatalogViews.end()) {
     return nullptr;

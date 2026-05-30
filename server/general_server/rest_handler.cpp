@@ -56,8 +56,7 @@ RestHandler::RestHandler(SerenedServer& server, GeneralRequest* request,
     _tracked_as_ongoing_low_prio(false),
     _lane(RequestLane::Undefined),
     _canceled(false) {
-  if (server.hasFeature<GeneralServerFeature>() &&
-      server.isEnabled<GeneralServerFeature>()) {
+  if (server.hasFeature<GeneralServerFeature>()) {
     _current_requests_size_tracker = metrics::GaugeCounterGuard<uint64_t>{
       server.getFeature<GeneralServerFeature>().current_requests_size,
       _request->memoryUsage()};

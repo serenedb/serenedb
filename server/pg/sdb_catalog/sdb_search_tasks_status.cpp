@@ -40,11 +40,6 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 template<>
 catalog::MaterializedData
 SystemTableSnapshot<SdbSearchTasksStatus>::GetTableData() {
-  if (!SerenedServer::Instance()
-         .getFeature<search::SearchEngine>()
-         .isEnabled()) {
-    return {CreateColumns<SdbSearchTasksStatus>(0), 0};
-  }
   constexpr auto kThreadGroups =
     magic_enum::enum_entries<search::ThreadGroup>();
   std::vector<SdbSearchTasksStatus> values;

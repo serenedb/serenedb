@@ -143,7 +143,6 @@ SearchEngine& GetSearchEngine() {
 }
 
 void SearchEngine::prepare() {
-  SDB_ASSERT(isEnabled());
 
   ::irs::analysis::ClassificationTokenizer::set_model_provider(
     &fast_text::CreateModel<fasttext::FastText>);
@@ -162,7 +161,6 @@ void SearchEngine::prepare() {
 }
 
 void SearchEngine::start() {
-  SDB_ASSERT(isEnabled());
 
   if (ServerState::instance()->IsDBServer() ||
       ServerState::instance()->IsSingle()) {
@@ -186,11 +184,10 @@ void SearchEngine::start() {
 }
 
 void SearchEngine::stop() {
-  SDB_ASSERT(isEnabled());
   _thread_pools->Stop();
 }
 
-void SearchEngine::unprepare() { SDB_ASSERT(isEnabled()); }
+void SearchEngine::unprepare() {}
 
 bool SearchEngine::Queue(ThreadGroup id, absl::Duration delay,
                          absl::AnyInvocable<void()>&& fn) {

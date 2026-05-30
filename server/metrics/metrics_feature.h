@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,96 +15,43 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
 #include <map>
-#include <shared_mutex>
 
-#include "app/options/program_options.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/down_cast.h"
-#include "metrics/batch.h"
 #include "metrics/builder.h"
-#include "metrics/collect_mode.h"
-#include "metrics/ibatch.h"
 #include "metrics/metric.h"
 #include "metrics/metric_key.h"
-#include "metrics/metrics_parts.h"
 #include "rest_server/serened.h"
 
 namespace sdb::metrics {
 
+// Thin registry. No more Prometheus / VPack rendering, no per-server-shortname
+// label, no batch / dynamic metric surface — that machinery served ArangoDB's
+// /_admin/metrics endpoint, which is gone. Counters/Gauges/Histograms still
+// keep state via this registry so AddMetric() returns a stable reference; a
+// proper Prometheus exposition story is a follow-up.
 class MetricsFeature final : public SerenedFeature {
  public:
   static constexpr std::string_view name() noexcept { return "Metrics"; }
 
   explicit MetricsFeature(Server& server);
 
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
-
-  // tries to add metric. throws if such metric already exists
   template<typename MetricBuilder>
   auto add(MetricBuilder&& builder) -> typename MetricBuilder::MetricT& {
     return static_cast<typename MetricBuilder::MetricT&>(*doAdd(builder));
   }
 
-  template<typename MetricBuilder>
-  auto addShared(MetricBuilder&& builder)  // TODO(mbkkt) Remove this method
-    -> std::shared_ptr<typename MetricBuilder::MetricT> {
-    return std::static_pointer_cast<typename MetricBuilder::MetricT>(
-      doAdd(builder));
-  }
-
-  // tries to add dynamic metric. does not fail if such metric already exists
-  template<typename MetricBuilder>
-  auto addDynamic(MetricBuilder&& builder) -> typename MetricBuilder::MetricT& {
-    return static_cast<typename MetricBuilder::MetricT&>(
-      *doAddDynamic(builder));
-  }
-
   Metric* get(const MetricKeyView& key) const;
-  bool remove(const Builder& builder);
-
-  void toPrometheus(std::string& result, MetricsParts metrics_parts,
-                    CollectMode mode) const;
-
-  //////////////////////////////////////////////////////////////////////////////
-  /// That used for collect some metrics
-  /// to array for ClusterMetricsFeature
-  //////////////////////////////////////////////////////////////////////////////
-  void toVPack(vpack::Builder& builder, MetricsParts metrics_parts) const;
-
-  template<typename MetricType>
-  MetricType& batchAdd(std::string_view name, std::string_view labels) {
-    std::unique_lock lock{_mutex};
-    auto& ibatch = _batch[name];
-    if (!ibatch) {
-      ibatch = std::make_unique<metrics::Batch<MetricType>>();
-    }
-    return basics::downCast<metrics::Batch<MetricType>>(*ibatch).add(labels);
-  }
-  std::pair<std::shared_lock<absl::Mutex>, metrics::IBatch*> getBatch(
-    std::string_view name) const;
-  void batchRemove(std::string_view name, std::string_view labels);
 
  private:
   std::shared_ptr<Metric> doAdd(Builder& builder);
-  std::shared_ptr<Metric> doAddDynamic(Builder& builder);
-  std::shared_lock<absl::Mutex> initGlobalLabels() const;
 
   mutable absl::Mutex _mutex;
-
-  // TODO(mbkkt) abseil btree map? or hashmap<name, hashmap<labels, Metric>>?
   std::map<MetricKeyView, std::shared_ptr<Metric>> _registry;
-
-  containers::FlatHashMap<std::string_view, std::unique_ptr<IBatch>> _batch;
-
-  mutable std::string _globals;
-  mutable bool _has_shortname = false;
-  mutable bool _has_role = false;
 };
 
 MetricsFeature& GetMetrics();

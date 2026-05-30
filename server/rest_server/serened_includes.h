@@ -25,7 +25,6 @@
 #include "app/global_context.h"
 #include "app/logger_feature.h"
 #include "app/options/program_options.h"
-#include "app/shell_colors.h"
 #include "app/shutdown.h"
 #include "app/temp_path.h"
 #include "basics/common.h"

@@ -88,6 +88,8 @@ add_dependencies(serene_base errorfiles exitcodefiles)
 target_link_libraries(
     serene_base
     PUBLIC
+        absl::flags
+        absl::flags_parse
         absl::flat_hash_set
         absl::random_random
         absl::synchronization

@@ -87,14 +87,56 @@ GeneralServerFeature::GeneralServerFeature(Server& server)
 }
 
 void GeneralServerFeature::collectOptions(
-  std::shared_ptr<ProgramOptions> /*options*/) {
-  // All HTTP/server tuning knobs dropped per plan; field defaults stand:
-  // _num_io_threads = max(1, cpu_count/4), _keep_alive_timeout = 300s,
-  // _access_control_allow_origins = {}, _return_queue_time_header = true,
-  // _compress_response_threshold = 0 (disabled).
+  std::shared_ptr<ProgramOptions> options) {
+  options->addOption(
+    "--server.io-threads", "The number of threads used to handle I/O.",
+    new UInt64Parameter(&_num_io_threads, /*base*/ 1, /*minValue*/ 1));
+
+  options
+    ->addOption("--http.keep-alive-timeout",
+                "Keep-alive timeout for HTTP and pg-wire connections "
+                "(in seconds).",
+                new DoubleParameter(&_keep_alive_timeout));
+
+  options->addOption(
+    "--http.trusted-origin",
+    "Trusted origin URLs for CORS requests with credentials.",
+    new VectorParameter<StringParameter>(&_access_control_allow_origins));
+
+  options->addOption(
+    "--http.return-queue-time-header",
+    "Return the `x-serene-queue-time-seconds` header in all responses.",
+    new BooleanParameter(&_return_queue_time_header));
+
+  options->addOption(
+    "--http.compress-response-threshold",
+    "Response body size threshold for transparent gzip/deflate compression "
+    "(0 disables compression).",
+    new UInt64Parameter(&_compress_response_threshold));
 }
 
 void GeneralServerFeature::validateOptions(std::shared_ptr<ProgramOptions>) {
+  if (!_access_control_allow_origins.empty()) {
+    for (auto& it : _access_control_allow_origins) {
+      if (it == "*" || it == "all") {
+        _access_control_allow_origins.clear();
+        _access_control_allow_origins.push_back("*");
+        break;
+      } else if (it == "none") {
+        _access_control_allow_origins.clear();
+        break;
+      } else if (it.ends_with('/')) {
+        it = it.substr(0, it.size() - 1);
+      }
+    }
+    _access_control_allow_origins.erase(
+      std::remove_if(_access_control_allow_origins.begin(),
+                     _access_control_allow_origins.end(),
+                     [](const std::string& value) {
+                       return basics::string_utils::Trim(value).empty();
+                     }),
+      _access_control_allow_origins.end());
+  }
 #ifdef SDB_FAULT_INJECTION
   for (const auto& it : _failure_points) {
     AddFailurePointDebugging(it);

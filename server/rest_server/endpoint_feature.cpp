@@ -38,19 +38,13 @@ using namespace sdb::basics;
 
 namespace sdb {
 
-EndpointFeature::EndpointFeature() {
+EndpointFeature::EndpointFeature()
+  : _endpoints(absl::GetFlag(FLAGS_server_endpoint)) {
   // if our default value is too high, we'll use half of the max value provided
   // by the system
   if (_backlog_size > SOMAXCONN) {
     _backlog_size = SOMAXCONN / 2;
   }
-  gInstance = this;
-}
-
-EndpointFeature::~EndpointFeature() { gInstance = nullptr; }
-
-void EndpointFeature::validateOptions() {
-  _endpoints = absl::GetFlag(FLAGS_server_endpoint);
   if (_backlog_size > SOMAXCONN) {
     SDB_WARN(GENERAL,
              "value for --tcp.backlog-size exceeds default system "
@@ -63,7 +57,10 @@ void EndpointFeature::validateOptions() {
              _endpoints.back());
   }
   buildEndpointLists();
+  gInstance = this;
 }
+
+EndpointFeature::~EndpointFeature() { gInstance = nullptr; }
 
 std::vector<std::string> EndpointFeature::httpEndpoints() {
   auto http_entries = _endpoint_list.all(Endpoint::TransportType::HTTP);

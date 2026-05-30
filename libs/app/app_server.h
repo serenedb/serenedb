@@ -13,8 +13,8 @@
 namespace sdb::app {
 
 // Lifecycle state-machine + signal-driven wait loop. RunServer drives
-// each feature's validateOptions/prepare/start/stop/unprepare directly;
-// AppServer no longer owns or iterates features. What's left:
+// each feature's start/stop directly; AppServer no longer owns or
+// iterates features. What's left:
 //   - state() and setState() for diagnostics (CrashHandler reporter)
 //   - wait() that blocks until SIGTERM/SIGINT or explicit beginShutdown
 //   - isStopping() for callers that still ask "is the process winding down"
@@ -22,13 +22,9 @@ class AppServer {
  public:
   enum class State : int {
     Uninitialized = 0,
-    InValidateOptions,
-    InPrepare,
     InStart,
     InWait,
-    InShutdown,
     InStop,
-    InUnprepare,
     Stopped,
     Aborted,
   };
@@ -52,7 +48,10 @@ class AppServer {
 
   bool isStopping() const noexcept;
 
-  // Set state == InShutdown (and prod the wait loop). Idempotent.
+  // Prod the wait loop into returning. Idempotent. Triggered from the
+  // signal handler / Ctrl-C path; RunServer then drives the LIFO of
+  // stop() calls. State stays InWait until RunServer flips it to
+  // InStop.
   void beginShutdown() noexcept;
 
   State state() const noexcept {
@@ -100,20 +99,12 @@ customize::enum_name<sdb::app::AppServer::State>(
   switch (state) {
     case State::Uninitialized:
       return "uninitialized";
-    case State::InValidateOptions:
-      return "in validate options";
-    case State::InPrepare:
-      return "in prepare";
     case State::InStart:
       return "in start";
     case State::InWait:
       return "in wait";
-    case State::InShutdown:
-      return "in beginShutdown";
     case State::InStop:
       return "in stop";
-    case State::InUnprepare:
-      return "in unprepare";
     case State::Stopped:
       return "in stopped";
     case State::Aborted:

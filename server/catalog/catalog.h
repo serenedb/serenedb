@@ -360,11 +360,8 @@ class CatalogFeature final {
   CatalogFeature();
   ~CatalogFeature();
 
-  void validateOptions() {}
-  void prepare();
   void start();
   void stop() {}
-  void unprepare();
 
   void Cleanup() {
     _local.reset();

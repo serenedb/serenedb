@@ -250,11 +250,11 @@ bool Thread::isStopping() const noexcept {
 bool Thread::start(ConditionVariable* finished_condition) {
   using State = app::AppServer::State;
   const auto s = _server.state();
-  const bool prepared = s == State::InStart || s == State::InWait ||
-                        s == State::InShutdown || s == State::InStop;
+  const bool prepared =
+    s == State::InStart || s == State::InWait || s == State::InStop;
   if (!isSystem() && !prepared) {
     SDB_FATAL(GENERAL, "trying to start a thread '", _name,
-              "' before prepare has finished, current state: ", (int)s);
+              "' before start has finished, current state: ", (int)s);
     FatalErrorAbort();
   }
 

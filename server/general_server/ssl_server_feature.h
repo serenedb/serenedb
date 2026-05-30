@@ -50,11 +50,8 @@ class SslServerFeature {
   SslServerFeature();
   ~SslServerFeature();
 
-  void validateOptions();
-  void prepare();
-  void start() {}
-  void stop() {}
-  void unprepare();
+  void start();
+  void stop();
 
   void verifySslOptions();
 

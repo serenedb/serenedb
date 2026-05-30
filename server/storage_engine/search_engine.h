@@ -69,12 +69,8 @@ class SearchEngine final {
   SearchEngine();
   ~SearchEngine();
 
-  void prepare();
   void start();
   void stop();
-  void unprepare();
-  void beginShutdown();
-  void validateOptions();
 
   std::tuple<size_t, size_t, size_t> stats(ThreadGroup id) const;
   std::pair<size_t, size_t> limits(ThreadGroup id) const;

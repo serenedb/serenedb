@@ -32,7 +32,29 @@
 
 namespace sdb::pg {
 
-PostgresFeature::PostgresFeature() { gInstance = this; }
+PostgresFeature::PostgresFeature() {
+  // EndpointFeature is constructed earlier in RunServer, so
+  // endpointList() is populated by the time we get here.
+  const auto& endpoint_list = EndpointFeature::instance().endpointList();
+  const bool has_pgsql = std::ranges::any_of(
+    endpoint_list | std::views::values, [](const auto& endpoint) {
+      return endpoint->transport() == Endpoint::TransportType::PGSQL;
+    });
+  if (!has_pgsql) {
+    SDB_FATAL(GENERAL,
+              "no pgsql endpoint configured; --server_endpoint "
+              "must include a pgsql+tcp:// entry");
+  }
+
+  // DuckDB has to exist before CatalogFeature::start() runs (it attaches
+  // each database into DuckDB during Open()). pg.start() is sequenced
+  // last in RunServer, so doing it here in the ctor — which is sequenced
+  // after CatalogFeature's ctor but before any start() — is the right
+  // hook.
+  query::DuckDBEngine::Instance().Initialize();
+
+  gInstance = this;
+}
 
 PostgresFeature::~PostgresFeature() { gInstance = nullptr; }
 
@@ -58,27 +80,10 @@ uint64_t PostgresFeature::RegisterTask(PgSQLCommTaskBase& task) {
   }
 }
 
-void PostgresFeature::validateOptions() {
-  const auto& endpoint_list = EndpointFeature::instance().endpointList();
-  const bool has_pgsql = std::ranges::any_of(
-    endpoint_list | std::views::values, [](const auto& endpoint) {
-      return endpoint->transport() == Endpoint::TransportType::PGSQL;
-    });
-  if (!has_pgsql) {
-    SDB_FATAL(GENERAL,
-              "no pgsql endpoint configured; --server_endpoint "
-              "must include a pgsql+tcp:// entry");
-  }
-}
-
 void PostgresFeature::UnregisterTask(uint64_t key) {
   std::lock_guard lock{_mutex};
   [[maybe_unused]] auto count = _tasks.erase(key);
   SDB_ASSERT(count == 1);
-}
-
-void PostgresFeature::prepare() {
-  query::DuckDBEngine::Instance().Initialize();
 }
 
 void PostgresFeature::start() {
@@ -87,8 +92,6 @@ void PostgresFeature::start() {
   SDB_ASSERT(cf);
 }
 
-void PostgresFeature::unprepare() {
-  query::DuckDBEngine::Instance().Shutdown();
-}
+void PostgresFeature::stop() { query::DuckDBEngine::Instance().Shutdown(); }
 
 }  // namespace sdb::pg

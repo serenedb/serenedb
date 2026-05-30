@@ -36,11 +36,8 @@ class EndpointFeature final {
   EndpointFeature();
   ~EndpointFeature();
 
-  void validateOptions();
-  void prepare() {}
   void start() {}
   void stop() {}
-  void unprepare() {}
 
   std::vector<std::string> httpEndpoints();
   EndpointList& endpointList() { return _endpoint_list; }

@@ -52,12 +52,12 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       CrashHandler::SetState(magic_enum::enum_name(server.state()));
     }});
 
-    // 1. Parse CLI before constructing any feature (some ctors read flags).
+    // 1. Parse CLI before constructing any feature (ctors read flags).
     server.parseOptions(argc, argv);
 
-    // 2. Construct features in dependency order. Each ctor sets its
-    //    static gInstance pointer; SerenedFeature::instance() works from
-    //    here on.
+    // 2. Construct features in dependency order. Each ctor reads its
+    //    own flags, runs validation, and sets its static gInstance
+    //    pointer; SerenedFeature::instance() works from here on.
     SslServerFeature ssl;
     DatabasePathFeature db_path;
     SchedulerFeature scheduler;
@@ -73,45 +73,14 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
 
     try {
       // ----------------------------------------------------------------
-      // Explicit boot / shutdown ordering. Each feature's lifecycle
-      // method is invoked here directly; AppServer no longer dispatches.
-      // Construction order above doubles as boot order; shutdown is
-      // strict LIFO.
+      // Two-method lifecycle: start() does non-IO setup + spin-up of
+      // threads / sockets; stop() drains long-running threads then
+      // tears down. Construction order doubles as boot order; shutdown
+      // is strict LIFO.
       // ----------------------------------------------------------------
 
-      // 3. validateOptions -- pull absl::GetFlag values into fields,
-      //    fail-fast on bad combinations.
-      server.setState(SerenedServer::State::InValidateOptions);
-      ssl.validateOptions();
-      db_path.validateOptions();
-      scheduler.validateOptions();
-      rocksdb_opt.validateOptions();
-      engine.validateOptions();
-      flush.validateOptions();
-      recovery.validateOptions();
-      catalog.validateOptions();
-      search.validateOptions();
-      endpoint.validateOptions();
-      general.validateOptions();
-      pg.validateOptions();
-
-      // 4. prepare -- non-thread-creating init.
-      server.setState(SerenedServer::State::InPrepare);
-      ssl.prepare();
-      db_path.prepare();
-      scheduler.prepare();
-      rocksdb_opt.prepare();
-      engine.prepare();
-      flush.prepare();
-      recovery.prepare();
-      catalog.prepare();
-      search.prepare();
-      endpoint.prepare();
-      general.prepare();
-      pg.prepare();
-
-      // 5. start -- spin up threads, open sockets. AFTER this returns
-      //    successfully, the server is fully accepting clients.
+      // 3. start -- after a successful pass the server is fully
+      //    accepting clients.
       server.setState(SerenedServer::State::InStart);
       ssl.start();
       db_path.start();
@@ -126,19 +95,13 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       general.start();
       pg.start();
 
-      // 6. wait for SIGTERM/SIGINT.
+      // 4. wait for SIGTERM/SIGINT.
       server.setState(SerenedServer::State::InWait);
       server.wait();
 
-      // 7. beginShutdown -- LIFO; lets long-running threads (general
-      //    server listeners, engine background, search thread pools)
-      //    notice they should exit before stop() blocks on them.
-      general.beginShutdown();
-      search.beginShutdown();
-      engine.beginShutdown();
-
-      // 8. stop -- strict LIFO of step 5. Threads must exit before
-      //    the call returns.
+      // 5. stop -- strict LIFO. Each feature's stop() first nudges any
+      //    long-running threads to exit, then blocks on the joins and
+      //    finishes its own teardown.
       server.setState(SerenedServer::State::InStop);
       pg.stop();
       general.stop();
@@ -152,21 +115,6 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       scheduler.stop();
       db_path.stop();
       ssl.stop();
-
-      // 8. unprepare -- final teardown, also LIFO.
-      server.setState(SerenedServer::State::InUnprepare);
-      pg.unprepare();
-      general.unprepare();
-      endpoint.unprepare();
-      search.unprepare();
-      catalog.unprepare();
-      recovery.unprepare();
-      flush.unprepare();
-      engine.unprepare();
-      rocksdb_opt.unprepare();
-      scheduler.unprepare();
-      db_path.unprepare();
-      ssl.unprepare();
       server.setState(SerenedServer::State::Stopped);
 
       ret = EXIT_SUCCESS;

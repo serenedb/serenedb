@@ -117,18 +117,11 @@ class SearchThreadPools {
 SearchEngine::SearchEngine()
   : _dir_feature{DatabasePathFeature::instance()},
     _thread_pools(std::make_shared<SearchThreadPools>()),
+    _skip_wal_recovery(absl::GetFlag(FLAGS_search_skip_wal_recovery)),
     _out_of_sync_links(
       metrics::GetMetrics().add(serenedb_search_num_out_of_sync_links{})),
     _columns_cache_memory_used(
       metrics::GetMetrics().add(serenedb_search_columns_cache_size{})) {
-  gInstance = this;
-}
-
-SearchEngine::~SearchEngine() { gInstance = nullptr; }
-
-void SearchEngine::validateOptions() {
-  _skip_wal_recovery = absl::GetFlag(FLAGS_search_skip_wal_recovery);
-
   uint32_t threads_limit =
     static_cast<uint32_t>(4 * number_of_cores::GetValue());
   _commit_threads = ComputeThreadsCount(_commit_threads, threads_limit, 6);
@@ -136,11 +129,14 @@ void SearchEngine::validateOptions() {
     ComputeThreadsCount(_compaction_threads, threads_limit, 6);
   _search_execution_threads_limit =
     static_cast<uint32_t>(number_of_cores::GetValue());
+  gInstance = this;
 }
+
+SearchEngine::~SearchEngine() { gInstance = nullptr; }
 
 SearchEngine& GetSearchEngine() { return SearchEngine::instance(); }
 
-void SearchEngine::prepare() {
+void SearchEngine::start() {
   ::irs::analysis::ClassificationTokenizer::set_model_provider(
     &fast_text::CreateModel<fasttext::FastText>);
   ::irs::analysis::NearestNeighborsTokenizer::set_model_provider(
@@ -155,9 +151,7 @@ void SearchEngine::prepare() {
              stats(ThreadGroup::Refresh));
   SDB_ASSERT(std::make_tuple(size_t(0), size_t(0), size_t(0)) ==
              stats(ThreadGroup::Compaction));
-}
 
-void SearchEngine::start() {
   SDB_ASSERT(_commit_threads);
   SDB_ASSERT(_compaction_threads);
 
@@ -176,9 +170,12 @@ void SearchEngine::start() {
            _search_execution_threads_limit);
 }
 
-void SearchEngine::stop() { _thread_pools->Stop(); }
-
-void SearchEngine::unprepare() {}
+void SearchEngine::stop() {
+  // Nudge both pools to drain before we block on Stop().
+  _thread_pools->Get(ThreadGroup::Refresh).stop(false);
+  _thread_pools->Get(ThreadGroup::Compaction).stop(false);
+  _thread_pools->Stop();
+}
 
 bool SearchEngine::Queue(ThreadGroup id, absl::Duration delay,
                          absl::AnyInvocable<void()>&& fn) {
@@ -228,11 +225,6 @@ std::filesystem::path SearchEngine::GetPersistedPath(
   path /= StaticStrings::kEngineDirRoot;
   path /= absl::StrCat(database_id);
   return path;
-}
-
-void SearchEngine::beginShutdown() {
-  _thread_pools->Get(ThreadGroup::Refresh).stop(false);
-  _thread_pools->Get(ThreadGroup::Compaction).stop(false);
 }
 
 }  // namespace sdb::search

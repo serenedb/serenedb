@@ -40,19 +40,16 @@ RocksDBEngineCatalog& GetServerEngine() {
 }
 
 void EngineFeature::start() {
+  _engine->prepare();
   _engine->start();
   _started.store(true);
 }
 
 void EngineFeature::stop() {
+  _engine->beginShutdown();
   _engine->cleanupReplicationContexts();
   _engine->stop();
+  _engine->unprepare();
 }
-
-void EngineFeature::prepare() { _engine->prepare(); }
-
-void EngineFeature::unprepare() { _engine->unprepare(); }
-
-void EngineFeature::beginShutdown() { _engine->beginShutdown(); }
 
 }  // namespace sdb

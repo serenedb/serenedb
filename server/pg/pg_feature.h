@@ -38,11 +38,8 @@ class PostgresFeature final {
   PostgresFeature();
   ~PostgresFeature();
 
-  void validateOptions();
-  void prepare();
   void start();
-  void stop() {}
-  void unprepare();
+  void stop();
 
   uint64_t RegisterTask(PgSQLCommTaskBase& task);
   void UnregisterTask(uint64_t key);

@@ -89,11 +89,8 @@ class FlushFeature final {
   FlushFeature();
   ~FlushFeature();
 
-  void validateOptions() {}
-  void prepare() {}
   void start() {}
   void stop();
-  void unprepare() {}
 
   /// register a flush subscription that will ensure replay of all WAL
   ///        entries after the latter of registration or the last successful

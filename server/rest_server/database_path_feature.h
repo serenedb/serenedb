@@ -35,18 +35,15 @@ class DatabasePathFeature final {
   DatabasePathFeature();
   ~DatabasePathFeature();
 
-  void validateOptions();
-  void prepare();
   void start();
   void stop() {}
-  void unprepare() {}
 
   const std::string& directory() const { return _directory; }
   std::string subdirectoryName(std::string_view sub_directory) const;
   void setDirectory(const std::string& path) {
     // This is only needed in the catch tests, where we initialize the
-    // feature but do not have options or run `validateOptions`. Please
-    // do not use it from other code.
+    // feature with no CLI parsed (and therefore no flag-derived
+    // _directory). Please do not use it from other code.
     _directory = path;
   }
 

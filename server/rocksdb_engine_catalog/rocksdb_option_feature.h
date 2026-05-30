@@ -49,11 +49,8 @@ class RocksDBOptionFeature final {
   RocksDBOptionFeature();
   ~RocksDBOptionFeature();
 
-  void validateOptions();
-  void prepare() {}
   void start() {}
   void stop() {}
-  void unprepare() {}
 
   const rocksdb::Options& getOptions() const;
   const rocksdb::BlockBasedTableOptions& getTableOptions() const;
@@ -195,6 +192,8 @@ class RocksDBOptionFeature final {
   rocksdb::BlockBasedTableOptions doGetTableOptions() const;
   rocksdb::ColumnFamilyOptions getColumnFamilyOptionsDefault(
     RocksDBColumnFamilyManager::Family family) const;
+
+  void validateAndDeriveOptions();
 
   std::unique_ptr<RocksDBVPackComparator> _vpack_cmp;
   mutable std::optional<rocksdb::Options> _options;

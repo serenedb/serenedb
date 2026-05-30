@@ -353,6 +353,8 @@ RocksDBOptionFeature::RocksDBOptionFeature()
     _total_write_buffer_size = ::DefaultTotalWriteBufferSize();
   }
 
+  validateAndDeriveOptions();
+
   gInstance = this;
 }
 
@@ -377,7 +379,7 @@ bool RocksDBOptionFeature::ioUringEnabled() const noexcept {
   return _io_uring == kIoUringEnabled;
 }
 
-void RocksDBOptionFeature::validateOptions() {
+void RocksDBOptionFeature::validateAndDeriveOptions() {
   transaction::Options::setLimits(_max_transaction_size,
                                   _intermediate_commit_size,
                                   _intermediate_commit_count);

@@ -50,12 +50,8 @@ class GeneralServerFeature final {
   GeneralServerFeature();
   ~GeneralServerFeature();
 
-  void validateOptions();
-  void prepare();
   void start();
-  void beginShutdown();
   void stop();
-  void unprepare();
 
   double keepAliveTimeout() const noexcept;
   bool returnQueueTimeHeader() const noexcept;

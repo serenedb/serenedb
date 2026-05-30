@@ -64,33 +64,26 @@ using namespace sdb::basics;
 using namespace sdb::options;
 
 SslServerFeature::SslServerFeature()
-  : _cafile(),
-    _keyfile(),
-    _cipher_list("HIGH:!EXPORT:!aNULL@STRENGTH"),
+  : _cafile(absl::GetFlag(FLAGS_ssl_cafile)),
+    _keyfile(absl::GetFlag(FLAGS_ssl_keyfile)),
+    _cipher_list(absl::GetFlag(FLAGS_ssl_cipher_list)),
     _ssl_protocol(kTlsGeneric),
     _ssl_options(asio_ns::ssl::context::default_workarounds |
                  asio_ns::ssl::context::single_dh_use),
     _ecdh_curve("x25519:prime256v1"),
     _session_cache(false),
     _prefer_http11_in_alpn(false) {
-  gInstance = this;
-}
-
-SslServerFeature::~SslServerFeature() { gInstance = nullptr; }
-
-void SslServerFeature::validateOptions() {
-  _cafile = absl::GetFlag(FLAGS_ssl_cafile);
-  _keyfile = absl::GetFlag(FLAGS_ssl_keyfile);
-  _cipher_list = absl::GetFlag(FLAGS_ssl_cipher_list);
-
   if (_ssl_protocol == SslProtocol::kSslV2) {
     SDB_FATAL(SSL,
               "SSLv2 is not supported any longer because of security "
               "vulnerabilities in this protocol");
   }
+  gInstance = this;
 }
 
-void SslServerFeature::prepare() {
+SslServerFeature::~SslServerFeature() { gInstance = nullptr; }
+
+void SslServerFeature::start() {
   SDB_INFO(SSL, "using SSL options: ", stringifySslOptions(_ssl_options));
 
   if (!_cipher_list.empty()) {
@@ -102,8 +95,8 @@ void SslServerFeature::prepare() {
   _rctx = r.random(SSL_MAX_SSL_SESSION_ID_LENGTH);
 }
 
-void SslServerFeature::unprepare() {
-  SDB_TRACE(SSL, "unpreparing ssl: ", stringifySslOptions(_ssl_options));
+void SslServerFeature::stop() {
+  SDB_TRACE(SSL, "stopping ssl: ", stringifySslOptions(_ssl_options));
 }
 
 void SslServerFeature::verifySslOptions() {

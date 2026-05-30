@@ -15,22 +15,13 @@ AppServer::~AppServer() { gInstance = nullptr; }
 
 bool AppServer::isStopping() const noexcept {
   auto s = state();
-  return s == State::InShutdown || s == State::InStop ||
-         s == State::InUnprepare || s == State::Stopped || s == State::Aborted;
+  return s == State::InStop || s == State::Stopped || s == State::Aborted;
 }
 
 void AppServer::beginShutdown() noexcept {
-  State old = state();
-  do {
-    if (old == State::InShutdown || old == State::InStop ||
-        old == State::InUnprepare || old == State::Stopped ||
-        old == State::Aborted) {
-      return;
-    }
-  } while (!_state.compare_exchange_weak(old, State::InShutdown,
-                                         std::memory_order_release,
-                                         std::memory_order_acquire));
-
+  // Idempotent: lifecycle::BeginShutdown / the condvar notify are safe
+  // to call repeatedly. State transitions are owned by RunServer; we
+  // only nudge the wait loop here.
   lifecycle::BeginShutdown();
 
   absl::MutexLock guard{&_shutdown_condition.mutex};

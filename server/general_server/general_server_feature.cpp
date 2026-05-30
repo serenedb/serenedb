@@ -78,29 +78,21 @@ DECLARE_GAUGE(serenedb_requests_memory_usage, uint64_t,
 
 GeneralServerFeature::GeneralServerFeature()
   : current_requests_size(AddMetric(serenedb_requests_memory_usage{})),
-    _return_queue_time_header(true),
-    _compress_response_threshold(0),
+    _keep_alive_timeout(absl::GetFlag(FLAGS_http_keep_alive_timeout)),
+    _return_queue_time_header(
+      absl::GetFlag(FLAGS_http_return_queue_time_header)),
+    _compress_response_threshold(
+      absl::GetFlag(FLAGS_http_compress_response_threshold)),
+    _access_control_allow_origins(absl::GetFlag(FLAGS_http_trusted_origin)),
     _num_io_threads(
       std::max(uint64_t(1), uint64_t(number_of_cores::GetValue() / 4))),
     _request_body_size_http1(AddMetric(serenedb_request_body_size_http1{})),
     _request_body_size_http2(AddMetric(serenedb_request_body_size_http2{})),
     _http1_connections(AddMetric(serenedb_http1_connections_total{})),
     _http2_connections(AddMetric(serenedb_http2_connections_total{})) {
-  gInstance = this;
-}
-
-GeneralServerFeature::~GeneralServerFeature() { gInstance = nullptr; }
-
-void GeneralServerFeature::validateOptions() {
   if (auto io = absl::GetFlag(FLAGS_server_io_threads); io > 0) {
     _num_io_threads = io;
   }
-  _keep_alive_timeout = absl::GetFlag(FLAGS_http_keep_alive_timeout);
-  _access_control_allow_origins = absl::GetFlag(FLAGS_http_trusted_origin);
-  _return_queue_time_header =
-    absl::GetFlag(FLAGS_http_return_queue_time_header);
-  _compress_response_threshold =
-    absl::GetFlag(FLAGS_http_compress_response_threshold);
 
   if (!_access_control_allow_origins.empty()) {
     for (auto& it : _access_control_allow_origins) {
@@ -128,18 +120,21 @@ void GeneralServerFeature::validateOptions() {
     AddFailurePointDebugging(it);
   }
 #endif
+  gInstance = this;
 }
 
-void GeneralServerFeature::prepare() {
+GeneralServerFeature::~GeneralServerFeature() { gInstance = nullptr; }
+
+void GeneralServerFeature::start() {
+  // Mode flips to Startup so the still-empty HTTP listener serves the
+  // narrow "startup" surface (general_comm_task.cpp's
+  // HandleRequestStartup); once buildServers + startListening complete
+  // we move to Maintenance for normal traffic.
   ServerState::instance()->SetMode(ServerState::Mode::Startup);
 
   _job_manager = std::make_unique<AsyncJobManager>();
 
   buildServers();
-}
-
-void GeneralServerFeature::start() {
-  SDB_ASSERT(ServerState::instance()->GetMode() == ServerState::Mode::Startup);
 
   auto hf = std::make_shared<RestHandlerFactory>();
   hf->seal();
@@ -150,20 +145,16 @@ void GeneralServerFeature::start() {
   ServerState::instance()->SetMode(ServerState::Mode::Maintenance);
 }
 
-void GeneralServerFeature::beginShutdown() {
+void GeneralServerFeature::stop() {
+  // Nudge listeners off the accept loop first so stop()'s join-style
+  // shutdown of connections doesn't race new accepts.
   for (auto& server : _servers) {
     server->stopListening();
   }
-}
-
-void GeneralServerFeature::stop() {
   _job_manager->deleteJobs(ExecContext::superuser());
   for (auto& server : _servers) {
     server->stopConnections();
   }
-}
-
-void GeneralServerFeature::unprepare() {
   for (auto& server : _servers) {
     server->stopWorking();
   }

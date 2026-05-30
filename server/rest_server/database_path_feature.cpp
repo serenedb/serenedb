@@ -44,13 +44,8 @@ using namespace sdb::basics;
 
 namespace sdb {
 
-DatabasePathFeature::DatabasePathFeature() { gInstance = this; }
-
-DatabasePathFeature::~DatabasePathFeature() { gInstance = nullptr; }
-
-void DatabasePathFeature::validateOptions() {
-  _directory = absl::GetFlag(FLAGS_database_directory);
-
+DatabasePathFeature::DatabasePathFeature()
+  : _directory(absl::GetFlag(FLAGS_database_directory)) {
   // Positional arg (PositionalArgs()[1]) wins over the flag if given.
   const auto& positionals = lifecycle::PositionalArgs();
   if (positionals.size() == 2) {
@@ -78,12 +73,11 @@ void DatabasePathFeature::validateOptions() {
   }
 
   ctx->normalizePath(_directory, "database.directory", false);
+
+  gInstance = this;
 }
 
-void DatabasePathFeature::prepare() {
-  // TempPath collision check removed with the feature; the system temp
-  // path is typically /tmp which never overlaps with the data dir.
-}
+DatabasePathFeature::~DatabasePathFeature() { gInstance = nullptr; }
 
 void DatabasePathFeature::start() {
   // create base directory if it does not exist

@@ -42,11 +42,8 @@ class SchedulerFeature final {
   SchedulerFeature();
   ~SchedulerFeature();
 
-  void validateOptions();
-  void prepare();
   void start();
   void stop();
-  void unprepare();
 
   uint64_t maximalThreads() const noexcept;
 

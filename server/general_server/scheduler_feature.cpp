@@ -46,12 +46,6 @@ size_t DefaultNumberOfThreads() {
 
 SchedulerFeature::SchedulerFeature()
   : _scheduler(nullptr), _metrics_feature(sdb::metrics::GetMetrics()) {
-  gInstance = this;
-}
-
-SchedulerFeature::~SchedulerFeature() { gInstance = nullptr; }
-
-void SchedulerFeature::validateOptions() {
   const auto n = number_of_cores::GetValue();
 
   SDB_DEBUG(GENERAL, "Detected number of processors: ", n);
@@ -97,9 +91,12 @@ void SchedulerFeature::validateOptions() {
   }
 
   SDB_ASSERT(_queue_size > 0);
+  gInstance = this;
 }
 
-void SchedulerFeature::prepare() {
+SchedulerFeature::~SchedulerFeature() { gInstance = nullptr; }
+
+void SchedulerFeature::start() {
   SDB_ASSERT(4 <= _nr_minimal_threads);
   SDB_ASSERT(_nr_minimal_threads <= _nr_maximal_threads);
   SDB_ASSERT(_queue_size > 0);
@@ -116,9 +113,7 @@ void SchedulerFeature::prepare() {
   gScheduler = sched.get();
 
   _scheduler = std::move(sched);
-}
 
-void SchedulerFeature::start() {
   bool ok = _scheduler->start();
   if (!ok) {
     SDB_FATAL(GENERAL, "the scheduler cannot be started");
@@ -133,20 +128,11 @@ void SchedulerFeature::start() {
 void SchedulerFeature::stop() {
   signal_handling::Shutdown();
   _scheduler->shutdown();
-}
-
-void SchedulerFeature::unprepare() {
   gScheduler = nullptr;
-  // This is to please the TSAN sanitizer: On shutdown, we set this global
-  // pointer to nullptr. Other threads read the pointer, but the logic of
-  // ApplicationFeatures should ensure that nobody will read the pointer
-  // out after the SchedulerFeature has run its unprepare method.
-  // Sometimes the TSAN sanitizer cannot recognize this indirect
-  // synchronization and complains about reads that have happened before
-  // this write here, but are not officially inter-thread synchronized.
-  // We use the atomic reference here and in these places to silence TSAN.
-  // std::atomic_ref<Scheduler*> schedulerRef{SCHEDULER};
-  // schedulerRef.store(nullptr, std::memory_order_relaxed);
+  // TSAN: setting this global pointer to nullptr at shutdown is a
+  // synchronization point that the sanitizer doesn't always pick up via
+  // implicit happens-before edges. We use std::atomic_ref at the read
+  // sites to silence it.
   _scheduler.reset();
 }
 

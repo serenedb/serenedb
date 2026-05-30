@@ -65,8 +65,6 @@ RocksDBRecoveryManager::RocksDBRecoveryManager()
 
 RocksDBRecoveryManager::~RocksDBRecoveryManager() { gInstance = nullptr; }
 
-void RocksDBRecoveryManager::prepare() {}
-
 void RocksDBRecoveryManager::start() {
   // synchronizes with acquire inRecovery()
   _recovery_state.store(RecoveryState::InProgress, std::memory_order_release);
@@ -498,8 +496,6 @@ Result RocksDBRecoveryManager::registerPostRecoveryCallback(
   return {};
 }
 
-void RocksDBRecoveryManager::unprepare() {
-  _pending_recovery_callbacks.clear();
-}
+void RocksDBRecoveryManager::stop() { _pending_recovery_callbacks.clear(); }
 
 }  // namespace sdb

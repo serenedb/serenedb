@@ -37,12 +37,8 @@ class EngineFeature final {
   explicit EngineFeature(SerenedServer& server);
   ~EngineFeature();
 
-  void validateOptions() {}
-  void prepare();
   void start();
   void stop();
-  void unprepare();
-  void beginShutdown();
 
   RocksDBEngineCatalog& engine() { return *_engine; }
   bool started() const { return _started.load(std::memory_order_relaxed); }

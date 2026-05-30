@@ -711,8 +711,7 @@ Result CatalogFeature::Open() {
   }
 
   if (auto fr = Local().FinalizeLoad(); !fr.ok()) {
-    SDB_FATAL("xxxxx", Logger::FIXME,
-              "FinalizeLoad failed: ", fr.errorMessage());
+    SDB_FATAL(GENERAL, "FinalizeLoad failed: ", fr.errorMessage());
   }
 
   if (!catalog::GetDatabase(StaticStrings::kDefaultDatabase)) {

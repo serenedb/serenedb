@@ -46,7 +46,6 @@
 #include "rest_server/file_descriptors_feature.h"
 #include "rest_server/flush_feature.h"
 #include "rest_server/lockfile_feature.h"
-#include "rest_server/privilege_feature.h"
 #include "rest_server/server_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"

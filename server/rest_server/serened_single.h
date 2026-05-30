@@ -59,7 +59,6 @@ class MaxMapCountFeature;
 class FileDescriptorsFeature;
 class TempPath;
 class DatabasePathFeature;
-class PrivilegeFeature;
 class SchedulerFeature;
 class AuthenticationFeature;
 class RocksDBOptionFeature;
@@ -82,7 +81,6 @@ using SerenedFeaturesList = type::List<
 #endif
   TempPath,
   DatabasePathFeature,
-  PrivilegeFeature,
   SchedulerFeature,
   AuthenticationFeature,
   RocksDBOptionFeature,

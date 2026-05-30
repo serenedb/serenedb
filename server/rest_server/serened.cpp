@@ -57,11 +57,6 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     server.addReporter(
       {[&](SerenedServer::State state) {
          CrashHandler::SetState(magic_enum::enum_name(state));
-
-         if (state == SerenedServer::State::InStart) {
-           // drop priveleges before starting features
-           server.getFeature<PrivilegeFeature>().dropPrivilegesPermanently();
-         }
        },
        {}});
 

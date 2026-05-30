@@ -6,7 +6,6 @@ target_sources(
         file_descriptors_feature.cpp
         flush_feature.cpp
         lockfile_feature.cpp
-        privilege_feature.cpp
         server_feature.cpp
         database_context.cpp
 )

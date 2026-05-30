@@ -424,7 +424,7 @@ class SnapshotImpl : public Snapshot {
       }
       auto refs = c.expr->ExtractRefs(RefKinds::Sequences |
                                       RefKinds::Functions | RefKinds::Types);
-      auto edge = std::pair{table.GetId(), c.id};
+      auto edge = c.GetId();
       for (const auto& ref : refs.functions) {
         ModifyDependency(
           Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
@@ -616,6 +616,11 @@ class SnapshotImpl : public Snapshot {
             _objects.insert(std::make_shared<Column>(col));
           }
         }
+        for (const auto& c : table.CheckConstraints()) {
+          if (_objects.find(c.GetId()) == _objects.end()) {
+            _objects.insert(std::make_shared<CheckConstraint>(c));
+          }
+        }
         ModifyTableDependencies(parent_id, table, EdgeAction::Add);
       } break;
       case ObjectType::PgSqlView:
@@ -669,6 +674,7 @@ class SnapshotImpl : public Snapshot {
         break;
       case ObjectType::Virtual:
       case ObjectType::Column:
+      case ObjectType::CheckConstraint:
         SDB_ASSERT(_in_load);
         break;
       case ObjectType::Invalid:
@@ -1321,6 +1327,9 @@ class SnapshotImpl : public Snapshot {
           for (const auto& col : t.Columns()) {
             _objects.erase(col.GetId());
           }
+          for (const auto& c : t.CheckConstraints()) {
+            _objects.erase(c.GetId());
+          }
         } break;
         case ObjectType::PgSqlView: {
           GetDependencyForWrite<SchemaDependency>(parent_id)->views.erase(id);
@@ -1353,6 +1362,7 @@ class SnapshotImpl : public Snapshot {
         case ObjectType::Invalid:
         case ObjectType::Tombstone:
         case ObjectType::Column:
+        case ObjectType::CheckConstraint:
         case ObjectType::Virtual:
           SDB_UNREACHABLE();
       }
@@ -1429,6 +1439,7 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::Invalid:
       case ObjectType::Tombstone:
       case ObjectType::Column:
+      case ObjectType::CheckConstraint:
       case ObjectType::Virtual:
         SDB_UNREACHABLE();
     }

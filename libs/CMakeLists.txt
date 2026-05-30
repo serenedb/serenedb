@@ -27,6 +27,7 @@ add_library(
     basics/string_utils.cpp
     basics/thread.cpp
     basics/static_strings.cpp
+    basics/lifecycle.cpp
     basics/application-exit.cpp
     basics/debugging.cpp
     basics/error.cpp

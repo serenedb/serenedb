@@ -40,6 +40,7 @@ ABSL_FLAG(bool, search_skip_wal_recovery, false,
 #include "app/app_server.h"
 #include "basics/down_cast.h"
 #include "basics/exceptions.h"
+#include "basics/lifecycle.h"
 #include "basics/logger/logger.h"
 #include "basics/number_of_cores.h"
 #include "catalog/catalog.h"
@@ -203,7 +204,7 @@ bool SearchEngine::Queue(ThreadGroup id, absl::Duration delay,
     return true;
   }
 
-  if (!server().isStopping()) {
+  if (!lifecycle::IsStopping()) {
     SDB_WARN(SEARCH,
              "Caught exception while sumbitting a task to thread group '",
              std::underlying_type_t<ThreadGroup>(id),

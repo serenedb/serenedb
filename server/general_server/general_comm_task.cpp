@@ -25,6 +25,7 @@
 #include "auth/role_utils.h"
 #include "basics/encoding_utils.h"
 #include "basics/hybrid_logical_clock.h"
+#include "basics/lifecycle.h"
 #include "basics/logger/logger.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
@@ -437,7 +438,7 @@ template<SocketType T>
 Flow GeneralCommTask<T>::PrepareExecution(
   const auth::TokenCache::Entry& /*auth_token*/, GeneralRequest& req,
   ServerState::Mode /*mode*/) {
-  if (this->_server.server().isStopping()) {
+  if (lifecycle::IsStopping()) {
     this->SendErrorResponse(ResponseCode::ServiceUnavailable,
                             req.contentTypeResponse(), req.messageId(),
                             ERROR_SHUTTING_DOWN);
@@ -645,7 +646,7 @@ void GeneralCommTask<T>::HandleRequestSync(
 template<SocketType T>
 bool GeneralCommTask<T>::HandleRequestAsync(
   std::shared_ptr<RestHandler> handler, uint64_t* job_id) {
-  if (this->_server.server().isStopping()) {
+  if (lifecycle::IsStopping()) {
     return false;
   }
 

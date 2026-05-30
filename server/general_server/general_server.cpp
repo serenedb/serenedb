@@ -28,6 +28,7 @@
 #include "app/app_server.h"
 #include "basics/application-exit.h"
 #include "basics/exitcodes.h"
+#include "basics/lifecycle.h"
 #include "basics/logger/logger.h"
 #include "endpoint/endpoint.h"
 #include "endpoint/endpoint_list.h"
@@ -66,7 +67,7 @@ bool GeneralServer::allowEarlyConnections() const noexcept {
 }
 
 void GeneralServer::registerTask(std::shared_ptr<CommTask> task) {
-  if (_feature.server().isStopping()) {
+  if (lifecycle::IsStopping()) {
     SDB_THROW(sdb::ERROR_SHUTTING_DOWN);
   }
   auto* t = task.get();

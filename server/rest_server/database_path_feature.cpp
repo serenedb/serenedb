@@ -31,6 +31,7 @@
 #include "basics/exitcodes.h"
 #include "basics/file_utils.h"
 #include "basics/files.h"
+#include "basics/lifecycle.h"
 #include "basics/logger/logger.h"
 #include "basics/operating-system.h"
 #include "basics/string_utils.h"
@@ -54,8 +55,8 @@ DatabasePathFeature::~DatabasePathFeature() { gInstance = nullptr; }
 void DatabasePathFeature::validateOptions() {
   _directory = absl::GetFlag(FLAGS_database_directory);
 
-  // Positional arg (server.positionalArgs()[1]) wins over the flag if given.
-  const auto& positionals = server().positionalArgs();
+  // Positional arg (PositionalArgs()[1]) wins over the flag if given.
+  const auto& positionals = lifecycle::PositionalArgs();
   if (positionals.size() == 2) {
     _directory = positionals[1];
   } else if (positionals.size() > 2) {

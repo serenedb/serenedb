@@ -265,13 +265,7 @@ void GeneralServerFeature::buildServers() {
 
   // check if endpointList contains ssl featured server
   if (endpoint_list.hasSsl()) {
-    if (!server().hasFeature<SslServerFeature>()) {
-      SDB_FATAL(GENERAL,
-                "no ssl context is known, cannot create https server, "
-                "please enable SSL");
-    }
-    SslServerFeature& ssl = SslServerFeature::instance();
-    ssl.verifySslOptions();
+    SslServerFeature::instance().verifySslOptions();
   }
 
   _servers.emplace_back(std::make_unique<GeneralServer>(

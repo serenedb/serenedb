@@ -27,6 +27,7 @@
 
 #include "app/app_server.h"
 #include "basics/exceptions.h"
+#include "basics/lifecycle.h"
 #include "basics/logger/logger.h"
 #include "basics/random/random_generator.h"
 #include "basics/string_utils.h"
@@ -377,8 +378,7 @@ double Scheduler::unavailabilityQueueFillGrade() const {
 }
 
 Scheduler* GetScheduler() noexcept {
-  return SerenedServer::Instance().isStopping() ? nullptr
-                                                : SchedulerFeature::gScheduler;
+  return lifecycle::IsStopping() ? nullptr : SchedulerFeature::gScheduler;
 }
 
 }  // namespace sdb

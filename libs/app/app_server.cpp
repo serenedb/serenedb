@@ -40,6 +40,7 @@
 #include "basics/debugging.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
+#include "basics/lifecycle.h"
 #include "basics/logger/logger.h"
 #include "basics/result.h"
 #include "basics/string_utils.h"
@@ -80,6 +81,8 @@ void AppServer::beginShutdown() {
                                          std::memory_order_release,
                                          std::memory_order_acquire));
 
+  lifecycle::BeginShutdown();
+
   // make sure that we advance the state when we get out of here
   absl::Cleanup wait_aborter = [this] noexcept {
     absl::MutexLock guard{&_shutdown_condition.mutex};
@@ -109,6 +112,7 @@ void AppServer::parseOptions(int argc, char* argv[]) {
   // parser and stash positional args (e.g. positional data-dir) for
   // features to pick up.
   auto positionals = absl::ParseCommandLine(argc, argv);
+  lifecycle::SetPositionalArgs(positionals);
   _positional_args.clear();
   _positional_args.reserve(positionals.size());
   for (auto* p : positionals) {

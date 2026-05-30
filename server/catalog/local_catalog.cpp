@@ -33,11 +33,11 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <duckdb/common/exception/parser_exception.hpp>
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/function/scalar_macro_function.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
-#include <duckdb/common/exception/parser_exception.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <iterator>
 #include <magic_enum/magic_enum.hpp>

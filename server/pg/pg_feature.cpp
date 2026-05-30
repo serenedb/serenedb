@@ -48,8 +48,8 @@ PostgresFeature::PostgresFeature() {
 
   // DuckDB has to exist before CatalogFeature::start() runs (it attaches
   // each database into DuckDB during Open()). pg.start() is sequenced
-  // last in RunServer, so doing it here in the ctor — which is sequenced
-  // after CatalogFeature's ctor but before any start() — is the right
+  // last in RunServer, so doing it here in the ctor -- which is sequenced
+  // after CatalogFeature's ctor but before any start() -- is the right
   // hook.
   query::DuckDBEngine::Instance().Initialize();
 

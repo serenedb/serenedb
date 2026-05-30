@@ -694,11 +694,10 @@ void HttpCommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> base_res) {
             "\"");
 
   // sendResponse is always called from a scheduler thread
-  boost::asio::post(
-    this->_protocol->context.io_context,
-    [self = this->shared_from_this()]() mutable {
-      static_cast<HttpCommTask<T>&>(*self).WriteResponse();
-    });
+  boost::asio::post(this->_protocol->context.io_context,
+                    [self = this->shared_from_this()]() mutable {
+                      static_cast<HttpCommTask<T>&>(*self).WriteResponse();
+                    });
 }
 
 // called on IO context thread
@@ -715,7 +714,8 @@ void HttpCommTask<T>::WriteResponse() {
   this->_writing = true;
   asio_ns::async_write(
     this->_protocol->socket, buffers,
-    [self = this->shared_from_this()](asio_ns::error_code ec, size_t /*nwrite*/) {
+    [self = this->shared_from_this()](asio_ns::error_code ec,
+                                      size_t /*nwrite*/) {
       auto& me = static_cast<HttpCommTask<T>&>(*self);
       me._writing = false;
 

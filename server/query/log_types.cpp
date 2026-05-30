@@ -20,11 +20,10 @@
 
 #include "query/log_types.h"
 
+#include <atomic>
 #include <duckdb/logging/log_manager.hpp>
 #include <duckdb/logging/log_type.hpp>
 #include <duckdb/logging/logger.hpp>
-
-#include <atomic>
 #include <string>
 
 #include "basics/logger/logger.h"

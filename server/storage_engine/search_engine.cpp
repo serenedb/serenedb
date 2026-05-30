@@ -163,8 +163,8 @@ void SearchEngine::start() {
   InitInvertedIndexes(_skip_wal_recovery);
 
   SDB_INFO(SEARCH, "Search maintenance: [", _commit_threads, "..",
-           _commit_threads, "] commit thread(s), [", _compaction_threads,
-           "..", _compaction_threads,
+           _commit_threads, "] commit thread(s), [", _compaction_threads, "..",
+           _compaction_threads,
            "] compaction thread(s). Search execution parallel threads "
            "limit: ",
            _search_execution_threads_limit);

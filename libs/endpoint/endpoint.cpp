@@ -254,8 +254,8 @@ std::unique_ptr<Endpoint> Endpoint::serverFactory(
       uint16_t port = static_cast<uint16_t>(value);
       std::string host = copy.substr(1, found - 1);
 
-      return std::make_unique<EndpointIpV6>(protocol, encryption, listen_backlog,
-                                            reuse_address, host, port);
+      return std::make_unique<EndpointIpV6>(
+        protocol, encryption, listen_backlog, reuse_address, host, port);
     }
 
     found = copy.find("]", 1);
@@ -264,8 +264,9 @@ std::unique_ptr<Endpoint> Endpoint::serverFactory(
     if (found != std::string::npos && found > 2 && found + 1 == copy.size()) {
       std::string host = copy.substr(1, found - 1);
 
-      return std::make_unique<EndpointIpV6>(protocol, encryption, listen_backlog,
-                                            reuse_address, host, default_port);
+      return std::make_unique<EndpointIpV6>(protocol, encryption,
+                                            listen_backlog, reuse_address, host,
+                                            default_port);
     }
 
     // invalid address specification

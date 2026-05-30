@@ -74,9 +74,9 @@ static std::string BuildSpecification(Endpoint::DomainType domain_type,
 ////////////////////////////////////////////////////////////////////////////////
 
 EndpointIp::EndpointIp(DomainType domain_type, TransportType transport,
-                      EncryptionType encryption, int listen_backlog,
-                      bool reuse_address, const std::string& host,
-                      const uint16_t port)
+                       EncryptionType encryption, int listen_backlog,
+                       bool reuse_address, const std::string& host,
+                       const uint16_t port)
   : Endpoint(domain_type, transport, encryption,
              BuildSpecification(domain_type, transport, encryption, host, port),
              listen_backlog),

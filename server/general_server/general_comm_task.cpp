@@ -413,7 +413,7 @@ void GeneralCommTask<T>::ExecuteRequest(
                         ERROR_QUEUE_FULL);
     }
   } else {
-    // synchronous request — HandleRequestSync adds an error response
+    // synchronous request -- HandleRequestSync adds an error response
     HandleRequestSync(std::move(handler));
   }
 }

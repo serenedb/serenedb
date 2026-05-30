@@ -132,12 +132,8 @@ void SchedulerFeature::prepare() {
   SDB_ASSERT(_nr_minimal_threads <= _nr_maximal_threads);
   SDB_ASSERT(_queue_size > 0);
 
-  // single and coordinator are trottle users requests
-  uint64_t ongoing_low_priority_limit =
-    ServerState::instance()->IsDBServer() || ServerState::instance()->IsAgent()
-      ? 0
-      : static_cast<uint64_t>(_ongoing_low_priority_multiplier *
-                              _nr_maximal_threads);
+  uint64_t ongoing_low_priority_limit = static_cast<uint64_t>(
+    _ongoing_low_priority_multiplier * _nr_maximal_threads);
 
   auto sched = std::make_unique<Scheduler>(
     SerenedServer::Instance(), _nr_minimal_threads, _nr_maximal_threads,

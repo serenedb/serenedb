@@ -48,7 +48,6 @@ ABSL_FLAG(bool, search_skip_wal_recovery, false,
 #include "catalog/index.h"
 #include "catalog/search_common.h"
 #include "catalog/view.h"
-#include "general_server/state.h"
 #include "metrics/gauge_builder.h"
 #include "metrics/metrics_feature.h"
 #include "rest_server/database_path_feature.h"
@@ -159,25 +158,22 @@ void SearchEngine::prepare() {
 }
 
 void SearchEngine::start() {
-  if (ServerState::instance()->IsDBServer() ||
-      ServerState::instance()->IsSingle()) {
-    SDB_ASSERT(_commit_threads);
-    SDB_ASSERT(_compaction_threads);
+  SDB_ASSERT(_commit_threads);
+  SDB_ASSERT(_compaction_threads);
 
-    _thread_pools->Get(ThreadGroup::Refresh)
-      .start(_commit_threads, IR_NATIVE_STRING("search:commit"));
-    _thread_pools->Get(ThreadGroup::Compaction)
-      .start(_compaction_threads, IR_NATIVE_STRING("search:compact"));
+  _thread_pools->Get(ThreadGroup::Refresh)
+    .start(_commit_threads, IR_NATIVE_STRING("search:commit"));
+  _thread_pools->Get(ThreadGroup::Compaction)
+    .start(_compaction_threads, IR_NATIVE_STRING("search:compact"));
 
-    InitInvertedIndexes(_skip_wal_recovery);
+  InitInvertedIndexes(_skip_wal_recovery);
 
-    SDB_INFO(SEARCH, "Search maintenance: [", _commit_threads, "..",
-             _commit_threads, "] commit thread(s), [", _compaction_threads,
-             "..", _compaction_threads,
-             "] compaction thread(s). Search execution parallel threads "
-             "limit: ",
-             _search_execution_threads_limit);
-  }
+  SDB_INFO(SEARCH, "Search maintenance: [", _commit_threads, "..",
+           _commit_threads, "] commit thread(s), [", _compaction_threads,
+           "..", _compaction_threads,
+           "] compaction thread(s). Search execution parallel threads "
+           "limit: ",
+           _search_execution_threads_limit);
 }
 
 void SearchEngine::stop() { _thread_pools->Stop(); }

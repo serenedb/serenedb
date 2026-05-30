@@ -24,7 +24,6 @@
 #include "app/app_server.h"
 #include "basics/encoding.h"
 #include "basics/logger/logger.h"
-#include "general_server/state.h"
 #include "metrics/gauge_builder.h"
 #include "metrics/metrics_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -94,19 +93,13 @@ std::tuple<size_t, size_t, Tick> FlushFeature::releaseUnusedTicks() {
   SDB_ASSERT(min_tick <= engine.currentTick());
 
   SDB_IF_FAILURE("FlushCrashBeforeSyncingMinTick") {
-    if (ServerState::instance()->IsDBServer() ||
-        ServerState::instance()->IsSingle()) {
-      TerminateDebugging("crashing before syncing min tick");
-    }
+    TerminateDebugging("crashing before syncing min tick");
   }
 
   engine.releaseTick(min_tick);
 
   SDB_IF_FAILURE("FlushCrashAfterReleasingMinTick") {
-    if (ServerState::instance()->IsDBServer() ||
-        ServerState::instance()->IsSingle()) {
-      TerminateDebugging("crashing after releasing min tick");
-    }
+    TerminateDebugging("crashing after releasing min tick");
   }
 
   SDB_DEBUG(STORAGE, "Flush tick released: ", min_tick,

@@ -61,7 +61,6 @@
 #include "catalog/view.h"
 #include "folly/Function.h"
 #include "general_server/scheduler.h"
-#include "general_server/state.h"
 #include "query/duckdb_engine.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -704,15 +703,9 @@ void CatalogFeature::unprepare() {
 }
 
 Result CatalogFeature::Open() {
-  if (ServerState::instance()->IsCoordinator()) {
-    return {};
-  }
-
   OpenDatabase open_db{Local()};
-  if (ServerState::instance()->IsSingle()) {
-    if (auto r = open_db.AddRoles(); !r.ok()) {
-      return r;
-    }
+  if (auto r = open_db.AddRoles(); !r.ok()) {
+    return r;
   }
 
   auto r = open_db();
@@ -758,9 +751,7 @@ ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name) {
 }
 
 LogicalCatalog& GetCatalog() {
-  auto& catalogs = catalog::CatalogFeature::instance();
-  return ServerState::instance()->IsCoordinator() ? catalogs.Global()
-                                                  : catalogs.Local();
+  return catalog::CatalogFeature::instance().Local();
 }
 
 }  // namespace sdb::catalog

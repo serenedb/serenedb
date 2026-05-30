@@ -47,7 +47,6 @@
 #include "catalog/table.h"
 #include "database/ticks.h"
 #include "general_server/scheduler_feature.h"
-#include "general_server/state.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -66,10 +65,7 @@ RocksDBRecoveryManager::RocksDBRecoveryManager()
 
 RocksDBRecoveryManager::~RocksDBRecoveryManager() { gInstance = nullptr; }
 
-void RocksDBRecoveryManager::prepare() {
-  // ServerState::Role is hard-pinned to Single; the coordinator-disable
-  // branch is dead.
-}
+void RocksDBRecoveryManager::prepare() {}
 
 void RocksDBRecoveryManager::start() {
   // synchronizes with acquire inRecovery()
@@ -464,7 +460,6 @@ Result RocksDBRecoveryManager::parseRocksWAL() {
 }
 
 void RocksDBRecoveryManager::recoveryDone() {
-  SDB_ASSERT(!ServerState::instance()->IsCoordinator());
   SDB_ASSERT(!EngineFeature::instance().engine().inRecovery());
 
   // '_pending_recovery_callbacks' will not change because

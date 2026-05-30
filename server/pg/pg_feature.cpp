@@ -82,12 +82,9 @@ void PostgresFeature::prepare() {
 }
 
 void PostgresFeature::start() {
-  if (ServerState::instance()->IsDBServer() ||
-      ServerState::instance()->IsSingle()) {
-    auto* cf = RocksDBColumnFamilyManager::get(
-      RocksDBColumnFamilyManager::Family::Default);
-    SDB_ASSERT(cf);
-  }
+  auto* cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Default);
+  SDB_ASSERT(cf);
 }
 
 void PostgresFeature::unprepare() {

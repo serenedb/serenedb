@@ -73,6 +73,7 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
+
 namespace sdb::connector {
 namespace {
 
@@ -1304,16 +1305,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         duckdb::Value::LIST(duckdb::LogicalType::UBIGINT,
                             std::move(kept_values));
     }
-    // Bind each parsed expression and remap col-ref bindings to
-    // (TableIndex(0), narrowed_position) so ColumnBindingResolver matches them
-    // and BoundReferenceExpression indices land within the narrowed row.
-    containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> full_to_narrowed;
-    if (kept_view_positions) {
-      full_to_narrowed.reserve(kept_view_positions->size());
-      for (size_t i = 0; i < kept_view_positions->size(); ++i) {
-        full_to_narrowed[(*kept_view_positions)[i]] = i;
-      }
-    }
+    // Remap col-ref bindings to (TableIndex(0), narrowed_position): the
+    // resolver matches LOGICAL_CREATE_INDEX exprs against TableIndex(0), and
+    // chunk positions follow kept_view_positions' (sorted) order.
     duckdb::IndexBinder index_binder(binder, binder.context, nullptr,
                                      create_index_info.get());
     expressions.reserve(create_index_info->expressions.size());
@@ -1325,13 +1319,14 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
           auto& cref = e.Cast<duckdb::BoundColumnRefExpression>();
           auto col_idx = cref.binding.column_index.GetIndex();
           if (kept_view_positions) {
-            auto it = full_to_narrowed.find(col_idx);
-            SDB_ASSERT(it != full_to_narrowed.end(),
+            auto it = std::ranges::lower_bound(*kept_view_positions, col_idx);
+            SDB_ASSERT(it != kept_view_positions->end() && *it == col_idx,
                        "view col ref references a non-kept position");
-            col_idx = it->second;
+            col_idx = static_cast<duckdb::idx_t>(
+              std::distance(kept_view_positions->begin(), it));
           }
-          cref.binding = duckdb::ColumnBinding(duckdb::TableIndex(0),
-                                               duckdb::ProjectionIndex(col_idx));
+          cref.binding = duckdb::ColumnBinding(
+            duckdb::TableIndex(0), duckdb::ProjectionIndex(col_idx));
         }
         duckdb::ExpressionIterator::EnumerateChildren(
           e, [&](duckdb::Expression& c) { self(c); });

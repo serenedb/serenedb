@@ -23,7 +23,6 @@
 
 #include <atomic>
 
-#include "basics/debugging.h"
 #include "metrics/metric.h"
 
 namespace sdb::metrics {
@@ -33,11 +32,8 @@ class Gauge : public Metric {
  public:
   using Value = T;
 
-  Gauge(T t, std::string_view name, std::string_view help,
-        std::string_view labels)
-    : Metric{name, help, labels}, _g{t} {}
-
-  [[nodiscard]] std::string_view type() const noexcept final { return "gauge"; }
+  Gauge(T t, std::string_view name, std::string_view labels)
+    : Metric{name, labels}, _g{t} {}
 
   [[nodiscard]] T load(
     std::memory_order mo = std::memory_order_relaxed) const noexcept {
@@ -71,22 +67,6 @@ class Gauge : public Metric {
       return tmp;
     }
   }
-  T fetch_mul(T t, std::memory_order mo) noexcept {
-    T tmp(_g.load(std::memory_order_relaxed));
-    while (
-      !_g.compare_exchange_weak(tmp, tmp * t, mo, std::memory_order_relaxed)) {
-    }
-    return tmp;
-  }
-
-  T fetch_div(T t, std::memory_order mo) noexcept {
-    SDB_ASSERT(t != T(0));
-    T tmp(_g.load(std::memory_order_relaxed));
-    while (
-      !_g.compare_exchange_weak(tmp, tmp / t, mo, std::memory_order_relaxed)) {
-    }
-    return tmp;
-  }
 
   bool compare_exchange_weak(
     T& expected, T desired,
@@ -109,16 +89,6 @@ class Gauge : public Metric {
 
   Gauge<T>& operator-=(T t) noexcept {
     fetch_sub(t, std::memory_order_relaxed);
-    return *this;
-  }
-
-  Gauge<T>& operator*=(T t) noexcept {
-    fetch_mul(t, std::memory_order_seq_cst);
-    return *this;
-  }
-
-  Gauge<T>& operator/=(T t) noexcept {
-    fetch_div(t, std::memory_order_seq_cst);
     return *this;
   }
 

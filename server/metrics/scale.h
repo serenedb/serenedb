@@ -56,10 +56,4 @@ class Scale {
   T _high;
 };
 
-enum class ScaleType {
-  Fixed,
-  Linear,
-  Logarithmic,
-};
-
 }  // namespace sdb::metrics

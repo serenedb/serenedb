@@ -21,17 +21,12 @@
 
 #include "metrics/counter.h"
 
-#include <ostream>
-
 namespace sdb::metrics {
 
-Counter::Counter(uint64_t n, std::string_view name, std::string_view help,
-                 std::string_view labels)
-  : Metric{name, help, labels}, _c{n} {}
+Counter::Counter(uint64_t n, std::string_view name, std::string_view labels)
+  : Metric{name, labels}, _c{n} {}
 
 Counter::~Counter() = default;
-
-std::string_view Counter::type() const noexcept { return "counter"; }
 
 uint64_t Counter::load() const noexcept {
   if (_b.load(std::memory_order_relaxed)) {
@@ -62,10 +57,6 @@ Counter& Counter::operator+=(uint64_t n) noexcept {
 Counter& Counter::operator++() noexcept {
   count();
   return *this;
-}
-
-std::ostream& Counter::print(std::ostream& output) const {
-  return output << _c;
 }
 
 }  // namespace sdb::metrics

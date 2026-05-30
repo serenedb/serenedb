@@ -32,7 +32,6 @@ template<typename T>
 class LogScale final : public Scale<T> {
  public:
   using Value = T;
-  static constexpr ScaleType kScaleType = ScaleType::Logarithmic;
 
   static constexpr T getHighFromSmallestBucket(T smallest_bucket_size, T base,
                                                T low, size_t n) {

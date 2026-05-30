@@ -36,8 +36,7 @@ class CounterBuilder : public GenericBuilder<Derived> {
   }
 
   [[nodiscard]] std::shared_ptr<Metric> build() const final {
-    return std::make_shared<MetricT>(0, this->_name, this->_help,
-                                     this->_labels);
+    return std::make_shared<MetricT>(0, this->_name, std::string_view{});
   }
 };
 
@@ -45,8 +44,5 @@ class CounterBuilder : public GenericBuilder<Derived> {
 
 #define DECLARE_COUNTER(name, help)                  \
   struct name : sdb::metrics::CounterBuilder<name> { \
-    name() {                                         \
-      _name = #name;                                 \
-      _help = help;                                  \
-    }                                                \
+    name() { _name = #name; }                        \
   }

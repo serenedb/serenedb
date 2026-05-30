@@ -21,9 +21,7 @@
 
 #pragma once
 
-#include <cstddef>
 #include <memory>
-#include <string>
 #include <string_view>
 
 #include "metrics/metric.h"
@@ -38,27 +36,12 @@ class Builder {
   [[nodiscard]] virtual std::shared_ptr<Metric> build() const = 0;
 
   [[nodiscard]] std::string_view name() const noexcept;
-  [[nodiscard]] std::string_view labels() const noexcept;
-
-  void addLabel(std::string_view key, std::string_view value);
-
-  void reserveSpaceForLabels(size_t bytes);
 
  protected:
   std::string_view _name;
-  std::string _help;    // TODO(mbkkt) remove
-  std::string _labels;  // TODO(mbkkt) const semantic
 };
 
 template<typename Derived>
-class GenericBuilder : public Builder {
- public:
-  Derived&& self() { return static_cast<Derived&&>(std::move(*this)); }
-
-  Derived&& withLabel(std::string_view key, std::string_view value) && {
-    Builder::addLabel(key, value);
-    return self();
-  }
-};
+class GenericBuilder : public Builder {};
 
 }  // namespace sdb::metrics

@@ -46,10 +46,6 @@ class Endpoint {
     HTTP,
     PGSQL,
   };
-  enum class EndpointType {
-    Server,
-    Client,
-  };
   enum class EncryptionType {
     None = 0,
     SSL,
@@ -59,12 +55,10 @@ class Endpoint {
     UNIX,
     IPv4,
     IPv6,
-    SRV,
   };
 
  protected:
-  Endpoint(DomainType, EndpointType, TransportType, EncryptionType,
-           std::string_view, int);
+  Endpoint(DomainType, TransportType, EncryptionType, std::string_view, int);
 
  public:
   virtual ~Endpoint() = default;
@@ -74,47 +68,27 @@ class Endpoint {
   static std::string unifiedForm(std::string_view);
   static std::unique_ptr<Endpoint> serverFactory(std::string_view, int,
                                                  bool reuse_address);
-  static std::unique_ptr<Endpoint> factory(EndpointType type, std::string_view,
-                                           int, bool);
-  static std::string defaultEndpoint(TransportType);
 
  public:
-  bool operator==(const Endpoint&) const;
   TransportType transport() const { return _transport; }
-  EndpointType type() const { return _type; }
   EncryptionType encryption() const { return _encryption; }
   std::string specification() const { return _specification; }
 
  public:
-  virtual SocketWrapper connect(double, double) = 0;
-  virtual void disconnect() = 0;
-
-  virtual bool setTimeout(SocketWrapper, double);
-  virtual bool isConnected() const { return _connected; }
-  virtual bool setSocketFlags(SocketWrapper);
   virtual DomainType domainType() const { return _domain_type; }
-  virtual bool isBroadcastBind() const { return false; }
 
   virtual int domain() const = 0;
   virtual int port() const = 0;
   virtual std::string host() const = 0;
-  virtual std::string hostAndPort() const = 0;
 
   int listenBacklog() const { return _listen_backlog; }
 
- public:
-  std::string error_message;
-
  protected:
   DomainType _domain_type;
-  EndpointType _type;
   TransportType _transport;
   EncryptionType _encryption;
   std::string _specification;
   int _listen_backlog;
-
-  bool _connected;
-  SocketWrapper _socket;
 };
 
 }  // namespace sdb

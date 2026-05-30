@@ -25,8 +25,6 @@
 
 #include <atomic>
 #include <cstdint>
-#include <iosfwd>
-#include <string>
 #include <string_view>
 
 #include "metrics/metric.h"
@@ -38,11 +36,8 @@ namespace sdb::metrics {
  */
 class Counter final : public Metric {
  public:
-  Counter(uint64_t n, std::string_view name, std::string_view help,
-          std::string_view labels);
+  Counter(uint64_t n, std::string_view name, std::string_view labels);
   ~Counter() final;
-
-  [[nodiscard]] std::string_view type() const noexcept final;
 
   [[nodiscard]] uint64_t load() const noexcept;
   void store(uint64_t n) noexcept;
@@ -51,8 +46,6 @@ class Counter final : public Metric {
   Counter& operator=(uint64_t n) noexcept;
   Counter& operator+=(uint64_t n) noexcept;
   Counter& operator++() noexcept;
-
-  std::ostream& print(std::ostream& output) const;
 
  private:
   // TODO(mbkkt) implementation is pretty naive, better is using sharded

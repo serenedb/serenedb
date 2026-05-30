@@ -34,8 +34,8 @@ class HistogramBuilder : public GenericBuilder<Derived> {
     return "histogram";
   }
   [[nodiscard]] std::shared_ptr<Metric> build() const final {
-    return std::make_shared<MetricT>(Scale::scale(), this->_name, this->_help,
-                                     this->_labels);
+    return std::make_shared<MetricT>(Scale::scale(), this->_name,
+                                     std::string_view{});
   }
 };
 
@@ -43,8 +43,5 @@ class HistogramBuilder : public GenericBuilder<Derived> {
 
 #define DECLARE_HISTOGRAM(name, scale, help)                  \
   struct name : sdb::metrics::HistogramBuilder<name, scale> { \
-    name() {                                                  \
-      _name = #name;                                          \
-      _help = help;                                           \
-    }                                                         \
+    name() { _name = #name; }                                 \
   }

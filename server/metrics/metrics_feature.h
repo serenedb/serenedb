@@ -44,8 +44,6 @@ class MetricsFeature {
     return static_cast<typename MetricBuilder::MetricT&>(*doAdd(builder));
   }
 
-  Metric* get(const MetricKeyView& key) const;
-
  private:
   MetricsFeature() = default;
   std::shared_ptr<Metric> doAdd(Builder& builder);

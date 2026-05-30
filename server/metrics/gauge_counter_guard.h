@@ -44,22 +44,8 @@ struct GaugeCounterGuard {
   GaugeCounterGuard() = default;
 
   explicit GaugeCounterGuard(Gauge<T>& metric, T initial_value = {})
-    : _metric(&metric) {
-    add(initial_value);
-  }
-
-  void add(T delta) noexcept {
-    if (_metric) {
-      _metric->fetch_add(delta);
-      _total_value += delta;
-    }
-  }
-
-  void sub(T delta) noexcept {
-    if (_metric) {
-      _metric->fetch_sub(delta);
-      _total_value -= delta;
-    }
+    : _total_value(initial_value), _metric(&metric) {
+    _metric->fetch_add(initial_value);
   }
 
   void reset(uint64_t new_value = {}) noexcept {

@@ -23,7 +23,6 @@
 
 #include <atomic>
 #include <type_traits>
-#include <vector>
 
 #include "metrics/metric.h"
 
@@ -34,9 +33,8 @@ class Histogram final : public Metric {
  public:
   using ValueType = typename Scale::Value;
 
-  Histogram(Scale scale, std::string_view name, std::string_view help,
-            std::string_view labels)
-    : Metric{name, help, labels},
+  Histogram(Scale scale, std::string_view name, std::string_view labels)
+    : Metric{name, labels},
       _scale{std::move(scale)},
       _n{_scale.n()},
       _c{std::allocator<std::atomic_uint64_t>{}.allocate(_n)} {
@@ -70,8 +68,6 @@ class Histogram final : public Metric {
 #endif
   }
 
-  std::string_view type() const noexcept final { return "histogram"; }
-
   const Scale& scale() const { return _scale; }
 
   size_t pos(ValueType t) const {
@@ -99,26 +95,6 @@ class Histogram final : public Metric {
     }
     track_extremes(t);
   }
-
-  ValueType low() const { return _scale.low(); }
-  ValueType high() const { return _scale.high(); }
-
-  auto& operator[](size_t n) { return _c[n]; }
-
-  std::vector<uint64_t> load() const {
-    std::vector<uint64_t> v(_n);
-    for (size_t i = 0; i < _n; ++i) {
-      v[i] = load(i);
-    }
-    return v;
-  }
-
-  uint64_t load(size_t i) const {
-    SDB_ASSERT(i < _n);
-    return _c[i].load(std::memory_order_relaxed);
-  }
-
-  size_t size() const { return _n; }
 
  private:
   const Scale _scale;

@@ -48,12 +48,4 @@ std::shared_ptr<Metric> MetricsFeature::doAdd(Builder& builder) {
   return it->second;
 }
 
-Metric* MetricsFeature::get(const MetricKeyView& key) const {
-  absl::ReaderMutexLock lock{&_mutex};
-  if (auto it = _registry.find(key); it != _registry.end()) {
-    return it->second.get();
-  }
-  return nullptr;
-}
-
 }  // namespace sdb::metrics

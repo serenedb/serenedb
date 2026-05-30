@@ -27,19 +27,15 @@ namespace sdb::metrics {
 
 class Metric {
  public:
-  Metric(std::string_view name, std::string_view help, std::string_view labels);
+  Metric(std::string_view name, std::string_view labels);
 
   virtual ~Metric();
 
-  [[nodiscard]] std::string_view help() const noexcept;
   [[nodiscard]] std::string_view name() const noexcept;
   [[nodiscard]] std::string_view labels() const noexcept;
 
-  [[nodiscard]] virtual std::string_view type() const noexcept = 0;
-
  private:
   std::string_view _name;
-  std::string _help;
   std::string _labels;
 };
 

@@ -34,8 +34,8 @@ class GaugeBuilder : public GenericBuilder<Derived> {
 
   [[nodiscard]] std::string_view type() const noexcept final { return "gauge"; }
   [[nodiscard]] std::shared_ptr<Metric> build() const final {
-    return std::make_shared<MetricT>(MetricV{}, this->_name, this->_help,
-                                     this->_labels);
+    return std::make_shared<MetricT>(MetricV{}, this->_name,
+                                     std::string_view{});
   }
 };
 
@@ -43,8 +43,5 @@ class GaugeBuilder : public GenericBuilder<Derived> {
 
 #define DECLARE_GAUGE(x, type, help)               \
   struct x : sdb::metrics::GaugeBuilder<x, type> { \
-    x() {                                          \
-      _name = #x;                                  \
-      _help = help;                                \
-    }                                              \
+    x() { _name = #x; }                            \
   }

@@ -22,13 +22,11 @@
 
 namespace sdb::metrics {
 
-Metric::Metric(std::string_view name, std::string_view help,
-               std::string_view labels)
-  : _name{name}, _help{help}, _labels{labels} {}
+Metric::Metric(std::string_view name, std::string_view labels)
+  : _name{name}, _labels{labels} {}
 
 std::string_view Metric::name() const noexcept { return _name; }
 std::string_view Metric::labels() const noexcept { return _labels; }
-std::string_view Metric::help() const noexcept { return _help; }
 
 Metric::~Metric() = default;
 

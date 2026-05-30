@@ -24,32 +24,23 @@
 #include <cstdint>
 #include <string>
 
-#include "basics/socket-utils.h"
 #include "endpoint/endpoint.h"
-
-struct addrinfo;
 
 namespace sdb {
 
 class EndpointIp : public Endpoint {
  protected:
-  EndpointIp(DomainType, EndpointType, TransportType, EncryptionType, int, bool,
+  EndpointIp(DomainType, TransportType, EncryptionType, int, bool,
              const std::string&, const uint16_t);
 
  public:
-  ~EndpointIp() override;
+  ~EndpointIp() override = default;
 
   static constexpr uint16_t kDefaultPortHttp{7890};
   static constexpr uint16_t kDefaultPortPgSql{5432};
   static constexpr std::string_view kDefaultHost{"127.0.0.1"};
 
- private:
-  SocketWrapper connectSocket(const addrinfo*, double, double);
-
  public:
-  SocketWrapper connect(double, double) final;
-  void disconnect() final;
-
   int port() const override { return _port; }
   std::string host() const override { return _host; }
 

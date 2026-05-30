@@ -32,12 +32,6 @@ template<typename T>
 class Gauge;
 
 template<typename T>
-class FixScale;
-
-template<typename T>
-class LinScale;
-
-template<typename T>
 class LogScale;
 
 template<typename Scale>

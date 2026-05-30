@@ -24,19 +24,5 @@
 namespace sdb::metrics {
 
 std::string_view Builder::name() const noexcept { return _name; }
-std::string_view Builder::labels() const noexcept { return _labels; }
-
-void Builder::addLabel(std::string_view key, std::string_view value) {
-  if (!_labels.empty()) {
-    _labels.push_back(',');
-  }
-  _labels.append(key);
-  _labels.push_back('=');
-  _labels.push_back('"');
-  _labels.append(value);
-  _labels.push_back('"');
-}
-
-void Builder::reserveSpaceForLabels(size_t bytes) { _labels.reserve(bytes); }
 
 }  // namespace sdb::metrics

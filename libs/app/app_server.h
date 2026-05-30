@@ -85,11 +85,6 @@ class AppServer {
   /// stopped, aborted etc.)
   bool isStoppingState(State state) const;
 
-  // this method will initialize and validate options
-  // of all feature, start them and wait for a shutdown
-  // signal. after that, it will shutdown all features
-  void run(int argc, char* argv[]);
-
   // signal the server to shut down
   void beginShutdown();
 
@@ -109,8 +104,6 @@ class AppServer {
   const std::vector<std::string>& positionalArgs() const noexcept {
     return _positional_args;
   }
-
-  void SetupFeatures();
 
 #ifdef SDB_GTEST
   auto GetFeatures() noexcept { return _all_features; }
@@ -134,17 +127,20 @@ class AppServer {
     SDB_THROW(sdb::ERROR_INTERNAL, "unknown feature: ", type);
   }
 
+ public:
   void parseOptions(int argc, char* argv[]);
-  void validateOptions();
-  void prepare();
-  void start();
-  void stop();
-  void unprepare();
 
   // after start, the server will wait in this method until
   // beginShutdown is called
   void wait();
 
+  // Advance the lifecycle state (must follow boot/shutdown order).
+  void setState(State new_state) noexcept {
+    _state.store(new_state, std::memory_order_release);
+    reportServerProgress(new_state);
+  }
+
+ private:
   void reportServerProgress(State);
   void reportFeatureProgress(State, std::string_view);
 

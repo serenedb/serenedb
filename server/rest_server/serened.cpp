@@ -51,8 +51,9 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     state.SetRole(ServerState::Role::Single);
 
     server.addReporter(
-      {[&](SerenedServer::State state) {
-         CrashHandler::SetState(magic_enum::enum_name(state));
+      {[&](SerenedServer::State /*state*/) {
+         CrashHandler::SetState(
+           magic_enum::enum_name(server.state()));
        },
        {}});
 
@@ -66,7 +67,99 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     });
 
     try {
-      server.run(argc, argv);
+      // ----------------------------------------------------------------
+      // Explicit boot / shutdown ordering. Each feature's lifecycle
+      // method is invoked here directly; AppServer no longer dispatches.
+      // Boot order matches kSerenedFeatures; shutdown is strict LIFO.
+      // ----------------------------------------------------------------
+
+      // 1. Parse CLI (absl::ParseCommandLine + positional argv stash).
+      server.parseOptions(argc, argv);
+
+      // 2. validateOptions -- pull absl::GetFlag values into fields,
+      //    fail-fast on bad combinations. Order does not matter; we use
+      //    the kSerenedFeatures declaration order.
+      server.setState(SerenedServer::State::InValidateOptions);
+      server.getFeature<SslServerFeature>().validateOptions();
+      server.getFeature<DatabasePathFeature>().validateOptions();
+      server.getFeature<SchedulerFeature>().validateOptions();
+      server.getFeature<RocksDBOptionFeature>().validateOptions();
+      server.getFeature<EngineFeature>().validateOptions();
+      server.getFeature<FlushFeature>().validateOptions();
+      server.getFeature<RocksDBRecoveryManager>().validateOptions();
+      server.getFeature<catalog::CatalogFeature>().validateOptions();
+      server.getFeature<search::SearchEngine>().validateOptions();
+      server.getFeature<EndpointFeature>().validateOptions();
+      server.getFeature<GeneralServerFeature>().validateOptions();
+      server.getFeature<pg::PostgresFeature>().validateOptions();
+
+      // 3. prepare -- non-thread-creating init.
+      server.setState(SerenedServer::State::InPrepare);
+      server.getFeature<SslServerFeature>().prepare();
+      server.getFeature<DatabasePathFeature>().prepare();
+      server.getFeature<SchedulerFeature>().prepare();
+      server.getFeature<RocksDBOptionFeature>().prepare();
+      server.getFeature<EngineFeature>().prepare();
+      server.getFeature<FlushFeature>().prepare();
+      server.getFeature<RocksDBRecoveryManager>().prepare();
+      server.getFeature<catalog::CatalogFeature>().prepare();
+      server.getFeature<search::SearchEngine>().prepare();
+      server.getFeature<EndpointFeature>().prepare();
+      server.getFeature<GeneralServerFeature>().prepare();
+      server.getFeature<pg::PostgresFeature>().prepare();
+
+      // 4. start -- spin up threads, open sockets. AFTER this returns
+      //    successfully, the server is fully accepting clients.
+      server.setState(SerenedServer::State::InStart);
+      server.getFeature<SslServerFeature>().start();
+      server.getFeature<DatabasePathFeature>().start();
+      server.getFeature<SchedulerFeature>().start();
+      server.getFeature<RocksDBOptionFeature>().start();
+      server.getFeature<EngineFeature>().start();
+      server.getFeature<FlushFeature>().start();
+      server.getFeature<RocksDBRecoveryManager>().start();
+      server.getFeature<catalog::CatalogFeature>().start();
+      server.getFeature<search::SearchEngine>().start();
+      server.getFeature<EndpointFeature>().start();
+      server.getFeature<GeneralServerFeature>().start();
+      server.getFeature<pg::PostgresFeature>().start();
+
+      // 5. wait for SIGTERM/SIGINT.
+      server.setState(SerenedServer::State::InWait);
+      server.wait();
+
+      // 6. stop -- strict LIFO of step 4. Threads must exit before
+      //    the call returns.
+      server.setState(SerenedServer::State::InStop);
+      server.getFeature<pg::PostgresFeature>().stop();
+      server.getFeature<GeneralServerFeature>().stop();
+      server.getFeature<EndpointFeature>().stop();
+      server.getFeature<search::SearchEngine>().stop();
+      server.getFeature<catalog::CatalogFeature>().stop();
+      server.getFeature<RocksDBRecoveryManager>().stop();
+      server.getFeature<FlushFeature>().stop();
+      server.getFeature<EngineFeature>().stop();
+      server.getFeature<RocksDBOptionFeature>().stop();
+      server.getFeature<SchedulerFeature>().stop();
+      server.getFeature<DatabasePathFeature>().stop();
+      server.getFeature<SslServerFeature>().stop();
+
+      // 7. unprepare -- final teardown, also LIFO.
+      server.setState(SerenedServer::State::InUnprepare);
+      server.getFeature<pg::PostgresFeature>().unprepare();
+      server.getFeature<GeneralServerFeature>().unprepare();
+      server.getFeature<EndpointFeature>().unprepare();
+      server.getFeature<search::SearchEngine>().unprepare();
+      server.getFeature<catalog::CatalogFeature>().unprepare();
+      server.getFeature<RocksDBRecoveryManager>().unprepare();
+      server.getFeature<FlushFeature>().unprepare();
+      server.getFeature<EngineFeature>().unprepare();
+      server.getFeature<RocksDBOptionFeature>().unprepare();
+      server.getFeature<SchedulerFeature>().unprepare();
+      server.getFeature<DatabasePathFeature>().unprepare();
+      server.getFeature<SslServerFeature>().unprepare();
+      server.setState(SerenedServer::State::Stopped);
+
       ret = EXIT_SUCCESS;
     } catch (const std::exception& ex) {
       SDB_ERROR(GENERAL,

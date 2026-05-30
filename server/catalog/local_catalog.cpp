@@ -37,6 +37,7 @@
 #include <duckdb/function/scalar_macro_function.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
+#include <duckdb/common/exception/parser_exception.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <iterator>
 #include <magic_enum/magic_enum.hpp>
@@ -565,7 +566,12 @@ class SnapshotImpl : public Snapshot {
         continue;
       }
       SDB_ASSERT(!expr->pretty_printed.empty());
-      auto parsed = duckdb::Parser::ParseExpressionList(expr->pretty_printed);
+      duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> parsed;
+      try {
+        parsed = duckdb::Parser::ParseExpressionList(expr->pretty_printed);
+      } catch (const duckdb::ParserException&) {
+        continue;
+      }
       for (const auto& p : parsed) {
         SDB_ASSERT(p);
         for (const auto& ref : ExtractRefs(*p, RefKinds::Functions).functions) {

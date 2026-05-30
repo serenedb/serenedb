@@ -55,7 +55,6 @@ class GeneralServerFeature final : public SerenedFeature {
   void unprepare() final;
 
   double keepAliveTimeout() const noexcept;
-  bool handleContentEncodingForUnauthenticatedRequests() const noexcept;
   bool proxyCheck() const noexcept;
   bool returnQueueTimeHeader() const noexcept;
   std::vector<std::string> trustedProxies() const;
@@ -104,7 +103,6 @@ class GeneralServerFeature final : public SerenedFeature {
   bool _started_listening;
 #endif
   bool _allow_early_connections;
-  bool _handle_content_encoding_for_unauthenticated_requests;
   bool _return_queue_time_header;
   bool _hardened_rest_api = false;
   uint64_t _compress_response_threshold;

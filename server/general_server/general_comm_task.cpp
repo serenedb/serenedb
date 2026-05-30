@@ -185,14 +185,6 @@ Result GeneralCommTask<T>::HandleContentEncoding(GeneralRequest& req) {
   // TODO consider doing the decoding on the fly
   auto decode = [&](const std::string& header,
                     const std::string& encoding) -> Result {
-    if (false && !req.authenticated() &&
-        !this->_general_server_feature
-           .handleContentEncodingForUnauthenticatedRequests()) {
-      return {ERROR_FORBIDDEN,
-              "support for handling Content-Encoding headers is turned off for "
-              "unauthenticated requests"};
-    }
-
     std::string_view raw = req.rawPayload();
     uint8_t* src = reinterpret_cast<uint8_t*>(const_cast<char*>(raw.data()));
     size_t len = raw.size();

@@ -75,7 +75,6 @@ GeneralServerFeature::GeneralServerFeature(Server& server)
     _started_listening(false),
 #endif
     _allow_early_connections(false),
-    _handle_content_encoding_for_unauthenticated_requests(false),
     _return_queue_time_header(true),
     _compress_response_threshold(0),
     _options_api_policy("jwt"),
@@ -154,17 +153,6 @@ Using the value 0 disables the automatic response compression.")");
     sdb::options::MakeFlags(sdb::options::Flags::Default,
                             sdb::options::Flags::Uncommon));
 #endif
-
-  options
-    ->addOption("--http.handle-content-encoding-for-unauthenticated-requests",
-                "Handle Content-Encoding headers for unauthenticated requests.",
-                new BooleanParameter(
-                  &_handle_content_encoding_for_unauthenticated_requests))
-
-    .setLongDescription(
-      R"(If the option is set to `true`, the server will automatically
-uncompress incoming HTTP requests with Content-Encodings gzip and deflate
-even if the request is not authenticated.)");
 
   options->addOption(
     "--server.harden",
@@ -306,11 +294,6 @@ bool GeneralServerFeature::canAccessHardenedApi(
 
 double GeneralServerFeature::keepAliveTimeout() const noexcept {
   return _keep_alive_timeout;
-}
-
-bool GeneralServerFeature::handleContentEncodingForUnauthenticatedRequests()
-  const noexcept {
-  return _handle_content_encoding_for_unauthenticated_requests;
 }
 
 bool GeneralServerFeature::returnQueueTimeHeader() const noexcept {

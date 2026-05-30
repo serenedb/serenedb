@@ -36,7 +36,6 @@
 #include "general_server/scheduler_feature.h"
 #include "general_server/ssl_server_feature.h"
 #include "general_server/state.h"
-#include "metrics/metrics_feature.h"
 #include "pg/pg_feature.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/endpoint_feature.h"

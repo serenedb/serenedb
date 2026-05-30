@@ -120,14 +120,12 @@ SearchEngine::SearchEngine(Server& server)
   : SerenedFeature{server, name()},
     _dir_feature{server.getFeature<DatabasePathFeature>()},
     _thread_pools(std::make_shared<SearchThreadPools>()),
-    _out_of_sync_links(server.getFeature<metrics::MetricsFeature>().add(
+    _out_of_sync_links(metrics::GetMetrics().add(
       serenedb_search_num_out_of_sync_links{})),
-    _columns_cache_memory_used(server.getFeature<metrics::MetricsFeature>().add(
+    _columns_cache_memory_used(metrics::GetMetrics().add(
       serenedb_search_columns_cache_size{})) {
   setOptional(true);
   static_assert(Server::isCreatedAfter<SearchEngine, DatabasePathFeature>());
-  static_assert(
-    Server::isCreatedAfter<SearchEngine, metrics::MetricsFeature>());
 }
 
 void SearchEngine::collectOptions(

@@ -47,7 +47,7 @@ RocksDBBackgroundThread::RocksDBBackgroundThread(RocksDBEngineCatalog& engine,
     _engine(engine),
     _interval(interval),
     _metrics_wal_released_tick_replication(
-      SerenedServer::Instance().getFeature<metrics::MetricsFeature>().add(
+      metrics::GetMetrics().add(
         rocksdb_wal_released_tick_replication{})) {}
 
 RocksDBBackgroundThread::~RocksDBBackgroundThread() { shutdown(); }

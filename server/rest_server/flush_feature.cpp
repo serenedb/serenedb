@@ -45,12 +45,10 @@ FlushFeature::FlushFeature(Server& server)
   : SerenedFeature{server, name()},
     _stopped(false),
     _metrics_flush_subscriptions(
-      server.getFeature<metrics::MetricsFeature>().add(
+      metrics::GetMetrics().add(
         serenedb_flush_subscriptions{})) {
   setOptional(true);
 
-  static_assert(
-    Server::isCreatedAfter<FlushFeature, metrics::MetricsFeature>());
 }
 
 FlushFeature::~FlushFeature() = default;

@@ -20,25 +20,24 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <map>
+#include <memory>
 
 #include "metrics/builder.h"
 #include "metrics/metric.h"
 #include "metrics/metric_key.h"
-#include "rest_server/serened.h"
 
 namespace sdb::metrics {
 
-// Thin registry. No more Prometheus / VPack rendering, no per-server-shortname
-// label, no batch / dynamic metric surface — that machinery served ArangoDB's
-// /_admin/metrics endpoint, which is gone. Counters/Gauges/Histograms still
-// keep state via this registry so AddMetric() returns a stable reference; a
-// proper Prometheus exposition story is a follow-up.
-class MetricsFeature final : public SerenedFeature {
+// Thin process-wide registry. No Prometheus / VPack rendering, no
+// per-server-shortname label, no batch / dynamic metric surface. A proper
+// Prometheus exposition story is a follow-up. The registry is a singleton
+// so metric definitions outside the AppServer lifecycle work uniformly.
+class MetricsFeature {
  public:
-  static constexpr std::string_view name() noexcept { return "Metrics"; }
-
-  explicit MetricsFeature(Server& server);
+  static MetricsFeature& instance();
 
   template<typename MetricBuilder>
   auto add(MetricBuilder&& builder) -> typename MetricBuilder::MetricT& {
@@ -48,13 +47,14 @@ class MetricsFeature final : public SerenedFeature {
   Metric* get(const MetricKeyView& key) const;
 
  private:
+  MetricsFeature() = default;
   std::shared_ptr<Metric> doAdd(Builder& builder);
 
   mutable absl::Mutex _mutex;
   std::map<MetricKeyView, std::shared_ptr<Metric>> _registry;
 };
 
-MetricsFeature& GetMetrics();
+inline MetricsFeature& GetMetrics() { return MetricsFeature::instance(); }
 
 template<typename F>
 auto& AddMetric(F&& builder) {

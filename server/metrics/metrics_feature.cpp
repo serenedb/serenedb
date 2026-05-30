@@ -24,15 +24,14 @@
 
 #include <mutex>
 
-#include "app/app_server.h"
 #include "basics/debugging.h"
 #include "basics/exceptions.h"
 
 namespace sdb::metrics {
 
-MetricsFeature::MetricsFeature(Server& server)
-  : SerenedFeature{server, name()} {
-  setOptional(false);
+MetricsFeature& MetricsFeature::instance() {
+  static MetricsFeature gInstance;
+  return gInstance;
 }
 
 std::shared_ptr<Metric> MetricsFeature::doAdd(Builder& builder) {
@@ -55,10 +54,6 @@ Metric* MetricsFeature::get(const MetricKeyView& key) const {
     return it->second.get();
   }
   return nullptr;
-}
-
-MetricsFeature& GetMetrics() {
-  return SerenedServer::Instance().getFeature<metrics::MetricsFeature>();
 }
 
 }  // namespace sdb::metrics

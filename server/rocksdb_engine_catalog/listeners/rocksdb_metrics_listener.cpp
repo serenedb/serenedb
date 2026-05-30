@@ -37,9 +37,9 @@ namespace sdb {
 
 /// Setup the object, clearing variables, but do no real work
 RocksDBMetricsListener::RocksDBMetricsListener(SerenedServer& server)
-  : _write_stalls(server.getFeature<metrics::MetricsFeature>().add(
+  : _write_stalls(metrics::GetMetrics().add(
       serenedb_rocksdb_write_stalls_total{})),
-    _write_stops(server.getFeature<metrics::MetricsFeature>().add(
+    _write_stops(metrics::GetMetrics().add(
       serenedb_rocksdb_write_stops_total{})) {}
 
 void RocksDBMetricsListener::OnFlushBegin(rocksdb::DB*,

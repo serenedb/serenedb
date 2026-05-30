@@ -32,11 +32,6 @@ template<typename Features>
 class AppServerImpl;
 
 }  // namespace app
-namespace metrics {
-
-class MetricsFeature;
-
-}  // namespace metrics
 namespace catalog {
 
 class CatalogFeature;
@@ -72,7 +67,6 @@ class GeneralServerFeature;
 using SerenedFeaturesList = type::List<
   LoggerFeature,
   SslServerFeature,
-  metrics::MetricsFeature,
   TempPath,
   DatabasePathFeature,
   SchedulerFeature,

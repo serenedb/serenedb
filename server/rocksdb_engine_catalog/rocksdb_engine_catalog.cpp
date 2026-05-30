@@ -353,7 +353,7 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_old_key,
 
 RocksDBEngineCatalog::RocksDBEngineCatalog(SerenedServer& server)
   : RocksDBEngineCatalog(server.getFeature<RocksDBOptionFeature>(),
-                         server.getFeature<metrics::MetricsFeature>()) {}
+                         metrics::GetMetrics()) {}
 
 RocksDBEngineCatalog::RocksDBEngineCatalog(
   const RocksDBOptionFeature& options_provider,

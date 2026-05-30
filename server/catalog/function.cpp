@@ -30,6 +30,7 @@
 #include <duckdb/parser/query_node.hpp>
 
 #include "basics/static_strings.h"
+#include "utils/velox_vpack.h"
 
 namespace sdb::catalog {
 
@@ -66,7 +67,8 @@ void PgSqlFunction::WriteInternal(vpack::Builder& builder) const {
 
   // Serialize CreateMacroInfo via DuckDB BinarySerializer
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer::Serialize(*_info, stream);
+  duckdb::BinarySerializer::Serialize(*_info, stream,
+                                      duckdb::LatestStorageOptions());
   auto data = stream.GetData();
   auto size = stream.GetPosition();
   builder.add("info",
@@ -83,8 +85,7 @@ std::shared_ptr<Object> PgSqlFunction::Clone() const {
                                          std::move(cloned_info));
 }
 
-Refs PgSqlFunction::ExtractRefs(RefKinds kinds) const {
-  using sdb::ExtractRefs;
+Refs PgSqlFunction::GetRefs(RefKinds kinds) const {
   Refs out;
   auto append = [&](Refs body) {
     out.sequences.insert(out.sequences.end(), body.sequences.begin(),
@@ -105,10 +106,10 @@ Refs PgSqlFunction::ExtractRefs(RefKinds kinds) const {
     }
     if (wants_types) {
       for (const auto& t : macro->types) {
-        ::sdb::CollectTypeRefs(t, out);
+        CollectTypeRefs(t, out);
       }
       for (const auto& t : macro->return_types) {
-        ::sdb::CollectTypeRefs(t, out);
+        CollectTypeRefs(t, out);
       }
     }
     if (macro->type == duckdb::MacroType::SCALAR_MACRO) {

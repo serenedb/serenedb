@@ -44,7 +44,7 @@ class PgSqlFunction final : public Object {
   const duckdb::CreateMacroInfo& GetInfo() const noexcept { return *_info; }
   duckdb::CreateMacroInfo& GetInfo() noexcept { return *_info; }
 
-  Refs ExtractRefs(RefKinds kinds) const;
+  Refs GetRefs(RefKinds kinds) const;
 
  private:
   duckdb::unique_ptr<duckdb::CreateMacroInfo> _info;

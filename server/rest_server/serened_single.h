@@ -60,7 +60,6 @@ class FileDescriptorsFeature;
 class TempPath;
 class DatabasePathFeature;
 class SchedulerFeature;
-class AuthenticationFeature;
 class RocksDBOptionFeature;
 class EngineFeature;
 class FlushFeature;
@@ -82,7 +81,6 @@ using SerenedFeaturesList = type::List<
   TempPath,
   DatabasePathFeature,
   SchedulerFeature,
-  AuthenticationFeature,
   RocksDBOptionFeature,
   EngineFeature,
   FlushFeature,

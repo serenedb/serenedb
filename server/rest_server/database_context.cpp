@@ -21,11 +21,8 @@
 
 #include "database_context.h"
 
-#include "auth/role_utils.h"
-#include "basics/logger/logger.h"
 #include "basics/static_strings.h"
 #include "catalog/database.h"
-#include "general_server/authentication_feature.h"
 #include "general_server/state.h"
 
 namespace sdb {
@@ -52,69 +49,12 @@ DatabaseContext::DatabaseContext(ConstructorToken, GeneralRequest& request,
 std::shared_ptr<DatabaseContext> DatabaseContext::create(
   GeneralRequest& req, std::shared_ptr<catalog::Database> database) {
   SDB_ASSERT(database);
-  // superusers will have an empty username. This MUST be invalid
-  // for users authenticating with name / password
-  bool is_super_user =
-    req.authenticated() && req.user().empty() &&
-    req.authenticationMethod() == rest::AuthenticationMethod::Jwt;
-  if (is_super_user) {
-    return std::make_shared<DatabaseContext>(
-      ConstructorToken{}, req, std::move(database), ExecContext::Type::Internal,
-      auth::Level::RW, auth::Level::RW, true);
-  }
-
-  AuthenticationFeature* auth = AuthenticationFeature::instance();
-  SDB_ASSERT(auth != nullptr);
-  if (!auth->isActive()) {
-    if (ServerState::instance()->ReadOnly()) {
-      // special read-only case
-      return std::make_shared<DatabaseContext>(
-        ConstructorToken{}, req, std::move(database),
-        ExecContext::Type::Internal, auth::Level::RO, auth::Level::RO, true);
-    }
-    return std::make_shared<DatabaseContext>(
-      ConstructorToken{}, req, std::move(database),
-      req.user().empty() ? ExecContext::Type::Internal
-                         : ExecContext::Type::Default,
-      auth::Level::RW, auth::Level::RW, true);
-  }
-
-  if (!req.authenticated()) {
-    return std::make_shared<DatabaseContext>(
-      ConstructorToken{}, req, std::move(database), ExecContext::Type::Default,
-      auth::Level::None, auth::Level::None, false);
-  }
-
-  if (req.user().empty()) {
-    std::string msg = "only jwt can be used to authenticate as superuser";
-    SDB_WARN(GENERAL, msg);
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, std::move(msg));
-  }
-
-  if (!ServerState::instance()->IsClientNode()) {
-    SDB_WARN(GENERAL,
-             "users are not supported on this server");
-    return nullptr;
-  }
-
-  auto db_lvl = auth::DatabaseAuthLevel(req.user(), req.databaseName(), false);
-  auto sys_lvl = db_lvl;
-  if (req.databaseName() != StaticStrings::kDefaultDatabase) {
-    sys_lvl = auth::DatabaseAuthLevel(req.user(),
-                                      StaticStrings::kDefaultDatabase, false);
-  }
-  bool is_admin_user = (sys_lvl == auth::Level::RW);
-  if (!is_admin_user && ServerState::instance()->ReadOnly()) {
-    // in case we are in read-only mode, we need to re-check the original
-    // permissions
-    is_admin_user =
-      auth::DatabaseAuthLevel(req.user(), StaticStrings::kDefaultDatabase,
-                              true) == auth::Level::RW;
-  }
-
+  // Auth is intentionally absent until post-RBAC. Every request is admin.
   return std::make_shared<DatabaseContext>(
-    ConstructorToken{}, req, std::move(database), ExecContext::Type::Default,
-    sys_lvl, db_lvl, is_admin_user);
+    ConstructorToken{}, req, std::move(database),
+    req.user().empty() ? ExecContext::Type::Internal
+                       : ExecContext::Type::Default,
+    auth::Level::RW, auth::Level::RW, true);
 }
 
 void DatabaseContext::forceSuperuser() {

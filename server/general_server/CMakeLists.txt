@@ -6,7 +6,6 @@ target_sources(
         acceptor_tcp.cpp
         acceptor_unix_domain.cpp
         async_job_manager.cpp
-        authentication_feature.cpp
         comm_task.cpp
         general_comm_task.cpp
         general_server.cpp

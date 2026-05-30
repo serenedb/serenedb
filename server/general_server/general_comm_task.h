@@ -136,7 +136,6 @@ class GeneralCommTask : public GenericCommTask<T, CommTask> {
     std::string_view protocol,
     const containers::FlatHashMap<std::string, std::string>& headers) const;
 
-  AuthenticationFeature* _auth;
   bool _writing;
   ConnectionStatistics::Item _connection_statistics;
 

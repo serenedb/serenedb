@@ -31,7 +31,6 @@
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "database/ticks.h"
-#include "general_server/authentication_feature.h"
 #include "general_server/general_server.h"
 #include "general_server/general_server_feature.h"
 #include "general_server/rest_handler.h"
@@ -124,10 +123,8 @@ template<SocketType T>
 GeneralCommTask<T>::GeneralCommTask(GeneralServer& server, ConnectionInfo info,
                                     std::shared_ptr<AsioSocket<T>> socket)
   : GenericCommTask<T, CommTask>(server, std::move(info), socket),
-    _auth(AuthenticationFeature::instance()),
     _writing(false),
     _connection_statistics(AcquireConnectionStatistics()) {
-  SDB_ASSERT(_auth != nullptr);
   _connection_statistics.SET_START();
 }
 
@@ -188,7 +185,7 @@ Result GeneralCommTask<T>::HandleContentEncoding(GeneralRequest& req) {
   // TODO consider doing the decoding on the fly
   auto decode = [&](const std::string& header,
                     const std::string& encoding) -> Result {
-    if (this->_auth->isActive() && !req.authenticated() &&
+    if (false && !req.authenticated() &&
         !this->_general_server_feature
            .handleContentEncodingForUnauthenticatedRequests()) {
       return {ERROR_FORBIDDEN,
@@ -258,60 +255,14 @@ Result GeneralCommTask<T>::HandleContentEncoding(GeneralRequest& req) {
 
 template<SocketType T>
 auth::TokenCache::Entry GeneralCommTask<T>::CheckAuthHeader(
-  GeneralRequest& req, ServerState::Mode mode) {
-  bool found;
-  const std::string& auth_str =
-    req.header(StaticStrings::kAuthorization, found);
-  if (!found) {
-    if (_auth->isActive()) {
-      return auth::TokenCache::Entry::Unauthenticated();
-    }
-    return auth::TokenCache::Entry::Superuser();
-  }
-
-  std::string::size_type method_pos = auth_str.find(' ');
-  if (method_pos == std::string::npos) {
-    return auth::TokenCache::Entry::Unauthenticated();
-  }
-
-  // skip over authentication method and following whitespace
-  const char* auth = auth_str.c_str() + method_pos;
-  while (*auth == ' ') {
-    ++auth;
-  }
-
-  SDB_DEBUG_IF(HTTP, log::GetLogRequestParameters(),
-               "\"authorization-header\",\"", reinterpret_cast<size_t>(this),
-               "\",SENSITIVE_DETAILS_HIDDEN");
-
-  AuthenticationMethod auth_method = AuthenticationMethod::None;
-  if (auth_str.size() >= 6) {
-    if (strncasecmp(auth_str.c_str(), "basic ", 6) == 0) {
-      auth_method = AuthenticationMethod::Basic;
-    } else if (strncasecmp(auth_str.c_str(), "bearer ", 7) == 0) {
-      auth_method = AuthenticationMethod::Jwt;
-    }
-  }
-
-  req.setAuthenticationMethod(auth_method);
-  if (auth_method == AuthenticationMethod::None) {
-    return auth::TokenCache::Entry::Unauthenticated();
-  }
-
-  if (auth_method != AuthenticationMethod::Jwt &&
-      mode == ServerState::Mode::Startup) {
-    // during startup, the normal authentication is not available
-    // yet. so we have to refuse all requests that do not use
-    // a JWT.
-    return auth::TokenCache::Entry::Unauthenticated();
-  }
-
-  auto auth_token =
-    _auth->tokenCache().checkAuthentication(auth_method, mode, auth);
-  req.setAuthenticated(auth_token.authenticated());
-  req.setTokenExpiry(auth_token.expiry());
-  req.setUser(auth_token.username());  // do copy here, so that we do not
-  return auth_token;
+  GeneralRequest& req, ServerState::Mode /*mode*/) {
+  // Auth is intentionally absent until post-RBAC. Every HTTP request
+  // is treated as Superuser; the Authorization header (if any) is
+  // ignored.
+  auto entry = auth::TokenCache::Entry::Superuser();
+  req.setAuthenticated(true);
+  req.setUser(entry.username());
+  return entry;
 }
 
 /// Must be called from sendResponse, before response is rendered
@@ -536,7 +487,7 @@ Flow GeneralCommTask<T>::PrepareExecution(
   switch (mode) {
     case ServerState::Mode::Startup: {
       if (!allow_early_connections ||
-          (_auth->isActive() && !req.authenticated())) {
+          (false && !req.authenticated())) {
         if (req.authenticationMethod() == AuthenticationMethod::Basic) {
           // HTTP basic authentication is not supported during the startup
           // phase, as we do not have any access to the database data. However,
@@ -603,7 +554,7 @@ Flow GeneralCommTask<T>::PrepareExecution(
   // Step 3: Try to resolve database and use
   if (!ResolveRequestContext(this->_server.server(),
                              req)) {  // false if db not found
-    if (_auth->isActive()) {
+    if (false) {
       // prevent guessing database names (issue #5030)
       auth::Level lvl = auth::Level::None;
       if (req.authenticated()) {
@@ -888,7 +839,7 @@ bool GeneralCommTask<T>::HandleRequestAsync(
 template<SocketType T>
 Flow GeneralCommTask<T>::CanAccessPath(const auth::TokenCache::Entry& token,
                                        GeneralRequest& req) const {
-  if (!_auth->isActive()) {
+  if (!false) {
     // no authentication required at all
     return Flow::Continue;
   }
@@ -919,13 +870,13 @@ Flow GeneralCommTask<T>::CanAccessPath(const auth::TokenCache::Entry& token,
     // check if we need to run authentication for this type of endpoint
     const auto& ci = req.connectionInfo();
     if (ci.endpoint_type == Endpoint::DomainType::UNIX &&
-        !_auth->authenticationUnixSockets()) {
+        !true) {
       // no authentication required for unix domain socket connections
       result = Flow::Continue;
     }
 #endif
 
-    if (result == Flow::Abort && _auth->authenticationSystemOnly()) {
+    if (result == Flow::Abort && true) {
       // authentication required, but only for /_api, /_admin etc.
       if ((!path.empty() && path[0] != '/') ||
           (path.size() > 1 && path[1] != '_')) {

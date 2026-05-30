@@ -38,7 +38,6 @@
 
 namespace sdb {
 
-class AuthenticationFeature;
 class ConnectionStatistics;
 class GeneralRequest;
 class GeneralResponse;

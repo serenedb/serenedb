@@ -34,7 +34,6 @@
 #include "basics/recursive_locker.h"
 #include "catalog/identifiers/transaction_id.h"
 #include "database/ticks.h"
-#include "general_server/authentication_feature.h"
 #include "general_server/general_server_feature.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"

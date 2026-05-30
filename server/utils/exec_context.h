@@ -76,7 +76,7 @@ class ExecContext : public RequestContext {
 
   ~ExecContext() override = default;
 
-  /// shortcut helper to check the AuthenticationFeature
+  /// Always false until post-RBAC auth lands.
   static bool isAuthEnabled();
 
   static const ExecContext& superuser();

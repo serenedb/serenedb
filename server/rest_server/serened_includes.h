@@ -34,7 +34,6 @@
 #include "basics/file_utils.h"
 #include "basics/operating-system.h"
 #include "catalog/catalog.h"
-#include "general_server/authentication_feature.h"
 #include "general_server/general_server_feature.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/ssl_server_feature.h"

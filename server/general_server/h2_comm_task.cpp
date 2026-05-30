@@ -35,7 +35,7 @@
 #include "basics/logger/logger.h"
 #include "basics/string_buffer.h"
 #include "basics/string_utils.h"
-#include "general_server/authentication_feature.h"
+#include "basics/system-functions.h"
 #include "general_server/general_server.h"
 #include "general_server/general_server_feature.h"
 #include "general_server/state.h"
@@ -768,7 +768,7 @@ void H2CommTask<T>::QueueHttp2Responses() {
     // suppress sending the www-authenticate header by sending us an
     // x-omit-www-authenticate header.
     bool need_www_authenticate =
-      (this->_auth->isActive() &&
+      (false &&
        res.responseCode() == rest::ResponseCode::Unauthorized &&
        strm->must_send_auth_header);
 

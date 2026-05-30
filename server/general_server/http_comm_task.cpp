@@ -29,6 +29,7 @@
 #include "basics/asio_ns.h"
 #include "basics/logger/logger.h"
 #include "basics/string_buffer.h"
+#include "basics/system-functions.h"
 #include "general_server/general_server.h"
 #include "general_server/general_server_feature.h"
 #include "general_server/h2_comm_task.h"

@@ -32,7 +32,6 @@
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
-#include "general_server/authentication_feature.h"
 #include "general_server/state.h"
 #include "storage_engine/engine_feature.h"
 

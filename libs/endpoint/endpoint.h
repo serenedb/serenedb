@@ -74,7 +74,6 @@ class Endpoint {
   static std::string unifiedForm(std::string_view);
   static std::unique_ptr<Endpoint> serverFactory(std::string_view, int,
                                                  bool reuse_address);
-  static std::unique_ptr<Endpoint> clientFactory(std::string_view);
   static std::unique_ptr<Endpoint> factory(EndpointType type, std::string_view,
                                            int, bool);
   static std::string defaultEndpoint(TransportType);

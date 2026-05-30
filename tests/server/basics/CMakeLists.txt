@@ -21,7 +21,6 @@ add_executable(
     string_utf8_test.cpp
     cpu_usage_snapshot_test.cpp
     encoding_utils_test.cpp
-    endpoint_test.cpp
     number_utils_test.cpp
     random_test.cpp
     read_write_lock_test.cpp

@@ -152,7 +152,6 @@ target_compile_definitions(iresearch-static PRIVATE -DDISABLE_EXECINFO)
 
 set(LIB_SERVER_POSIX
     endpoint/endpoint_unix_domain.cpp
-    endpoint/endpoint_srv.cpp
 )
 
 set(LIB_SERVER_DATE ${CMAKE_SOURCE_DIR}/third_party/date/src/tz.cpp)

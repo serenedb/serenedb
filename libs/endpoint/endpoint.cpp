@@ -39,7 +39,6 @@
 #include "endpoint/endpoint_ip.h"
 #include "endpoint/endpoint_ip_v4.h"
 #include "endpoint/endpoint_ip_v6.h"
-#include "endpoint/endpoint_srv.h"
 
 #if SERENEDB_HAVE_DOMAIN_SOCKETS
 #include "endpoint/endpoint_unix_domain.h"
@@ -211,15 +210,6 @@ std::unique_ptr<Endpoint> Endpoint::serverFactory(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// create a client endpoint object from a string value
-////////////////////////////////////////////////////////////////////////////////
-
-std::unique_ptr<Endpoint> Endpoint::clientFactory(
-  std::string_view specification) {
-  return Endpoint::factory(EndpointType::Client, specification, 0, false);
-}
-
-////////////////////////////////////////////////////////////////////////////////
 /// create an endpoint object from a string value
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -262,14 +252,6 @@ std::unique_ptr<Endpoint> Endpoint::factory(Endpoint::EndpointType type,
     // no unix socket for windows
     return nullptr;
 #endif
-  }
-
-  if (copy.starts_with("srv://")) {
-    if (type != EndpointType::Client) {
-      return nullptr;
-    }
-
-    return std::make_unique<EndpointSrv>(copy.substr(6));
   }
 
   if (copy.starts_with("ssl://")) {

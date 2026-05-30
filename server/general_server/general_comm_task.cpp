@@ -43,9 +43,6 @@ namespace sdb::rest {
 namespace {
 
 // some static URL path prefixes
-constexpr std::string_view kPathPrefixApiUser = "/_api/user/";
-constexpr std::string_view kPathPrefixOpen = "/_open/";
-
 bool QueueTimeViolated(const GeneralRequest& req) {
   // check if the client sent the "x-serene-queue-time-seconds" header
   bool found = false;
@@ -438,161 +435,30 @@ void GeneralCommTask<T>::ExecuteRequest(
 /// response if execution is supposed to be aborted
 template<SocketType T>
 Flow GeneralCommTask<T>::PrepareExecution(
-  const auth::TokenCache::Entry& auth_token, GeneralRequest& req,
-  ServerState::Mode mode) {
-  // Step 1: In the shutdown phase we simply return 503:
+  const auth::TokenCache::Entry& /*auth_token*/, GeneralRequest& req,
+  ServerState::Mode /*mode*/) {
   if (this->_server.server().isStopping()) {
     this->SendErrorResponse(ResponseCode::ServiceUnavailable,
                             req.contentTypeResponse(), req.messageId(),
                             ERROR_SHUTTING_DOWN);
     return Flow::Abort;
   }
+  this->_is_user_request = true;  // single-node: every request is user-facing
 
-  this->_request_source = req.header(StaticStrings::kClusterCommSource);
-  SDB_DEBUG_IF(HTTP, !this->_request_source.empty(),
-               "\"request-source\",\"", reinterpret_cast<size_t>(this), "\",\"",
-               this->_request_source, "\"");
-
-  this->_is_user_request = std::invoke([&]() {
-    auto role = ServerState::instance()->GetRole();
-    if (ServerState::IsSingle(role)) {
-      // single server is always user-facing
-      return true;
-    }
-    if (ServerState::IsAgent(role) || ServerState::IsDBServer(role)) {
-      // agents and DB servers are never user-facing
-      return false;
-    }
-
-    SDB_ASSERT(ServerState::IsCoordinator(role));
-    // coordinators are only user-facing if the request is not a
-    // cluster-internal request
-    return !ServerState::IsCoordinatorId(this->_request_source) &&
-           !ServerState::IsDBServerId(this->_request_source);
-  });
-
-  // Step 2: Handle server-modes, i.e. bootstrap / DC2DC stunts
-  const std::string& path = req.requestPath();
-
-  bool allow_early_connections = this->_server.allowEarlyConnections();
-
-  switch (mode) {
-    case ServerState::Mode::Startup: {
-      if (!allow_early_connections ||
-          (false && !req.authenticated())) {
-        if (req.authenticationMethod() == AuthenticationMethod::Basic) {
-          // HTTP basic authentication is not supported during the startup
-          // phase, as we do not have any access to the database data. However,
-          // we must return HTTP 503 because we cannot even verify the
-          // credentials, and let the caller can try again later when the
-          // authentication may be available.
-          SendErrorResponse(ResponseCode::ServiceUnavailable,
-                            req.contentTypeResponse(), req.messageId(),
-                            ERROR_HTTP_SERVICE_UNAVAILABLE,
-                            "service unavailable due to startup");
-        } else {
-          SendErrorResponse(ResponseCode::Unauthorized,
-                            req.contentTypeResponse(), req.messageId(),
-                            ERROR_FORBIDDEN);
-        }
-        return Flow::Abort;
-      }
-
-      // passed authentication!
-      SDB_ASSERT(allow_early_connections);
-      if (path == "/_api/version" || path == "/_admin/version" ||
-#ifdef SDB_FAULT_INJECTION
-          path.starts_with("/_admin/debug/") ||
-#endif
-          path == "/_admin/status") {
-        return Flow::Continue;
-      }
-      // most routes are disallowed during startup, except the ones above.
-      SendErrorResponse(ResponseCode::ServiceUnavailable,
-                        req.contentTypeResponse(), req.messageId(),
-                        ERROR_HTTP_SERVICE_UNAVAILABLE,
-                        "service unavailable due to startup");
-      return Flow::Abort;
-    }
-
-    case ServerState::Mode::Maintenance: {
-      if (allow_early_connections &&
-          (path == "/_api/version" || path == "/_admin/version" ||
-#ifdef SDB_FAULT_INJECTION
-           path.starts_with("/_admin/debug/") ||
-#endif
-           path == "/_admin/status")) {
-        return Flow::Continue;
-      }
-
-      // In the bootstrap phase, we would like that coordinators answer the
-      // following endpoints, but not yet others:
-      if (!ServerState::instance()->IsCoordinator() ||
-          !path.starts_with("/_api/aql")) {
-        SendErrorResponse(
-          ResponseCode::ServiceUnavailable, req.contentTypeResponse(),
-          req.messageId(), ERROR_HTTP_SERVICE_UNAVAILABLE,
-          "service unavailable due to startup or maintenance mode");
-        return Flow::Abort;
-      }
-      break;
-    }
-    case ServerState::Mode::Default:
-    case ServerState::Mode::Invalid:
-      // no special handling required
-      break;
-  }
-
-  // Step 3: Try to resolve database and use
-  if (!ResolveRequestContext(this->_server.server(),
-                             req)) {  // false if db not found
-    if (false) {
-      // prevent guessing database names (issue #5030)
-      auth::Level lvl = auth::Level::None;
-      if (req.authenticated()) {
-        // If we are authenticated and the user name is empty, then we must
-        // have been authenticated with a superuser JWT token. In this case,
-        // we must not check the databaseAuthLevel here.
-        if (!req.user().empty()) {
-          lvl = auth::DatabaseAuthLevel(req.user(), req.databaseName());
-        } else {
-          lvl = auth::Level::RW;
-        }
-      }
-      if (lvl == auth::Level::None) {
-        SendErrorResponse(ResponseCode::Unauthorized, req.contentTypeResponse(),
-                          req.messageId(), ERROR_FORBIDDEN,
-                          "not authorized to execute this request");
-        return Flow::Abort;
-      }
-    }
+  if (!ResolveRequestContext(this->_server.server(), req)) {
     SendErrorResponse(ResponseCode::NotFound, req.contentTypeResponse(),
                       req.messageId(), ERROR_SERVER_DATABASE_NOT_FOUND);
     return Flow::Abort;
   }
   SDB_ASSERT(req.requestContext() != nullptr);
 
-  // Step 4: Check the authentication. Will determine if the user can access
-  // this path checks db permissions and contains exceptions for the
-  // users API to allow logins
-  if (CanAccessPath(auth_token, req) != Flow::Continue) {
-    SendErrorResponse(ResponseCode::Unauthorized, req.contentTypeResponse(),
-                      req.messageId(), ERROR_FORBIDDEN,
-                      "not authorized to execute this request");
-    return Flow::Abort;
-  }
-
-  // Step 5: Update global HLC timestamp from authenticated requests
-  if (req.authenticated()) {  // TODO only from superuser ??
-    // check for an HLC time stamp only with auth
-    bool found;
-    const std::string& time_stamp =
-      req.header(StaticStrings::kHlcHeader, found);
-    if (found) {
-      uint64_t parsed = basics::HybridLogicalClock::decodeTimeStamp(time_stamp);
-      if (parsed != 0 && parsed != UINT64_MAX) {
-        NewTickHybridLogicalClock(parsed);
-      }
+  // Update global HLC timestamp from request header if present.
+  bool found;
+  const std::string& time_stamp = req.header(StaticStrings::kHlcHeader, found);
+  if (found) {
+    uint64_t parsed = basics::HybridLogicalClock::decodeTimeStamp(time_stamp);
+    if (parsed != 0 && parsed != UINT64_MAX) {
+      NewTickHybridLogicalClock(parsed);
     }
   }
 
@@ -829,83 +695,10 @@ bool GeneralCommTask<T>::HandleRequestAsync(
 
 /// checks the access rights for a specified path
 template<SocketType T>
-Flow GeneralCommTask<T>::CanAccessPath(const auth::TokenCache::Entry& token,
-                                       GeneralRequest& req) const {
-  if (!false) {
-    // no authentication required at all
-    return Flow::Continue;
-  }
-
-  const auto& path = req.requestPath();
-
-  const auto& ap = token.allowedPaths();
-  if (!ap.empty() && !absl::c_linear_search(ap, path)) {
-    return Flow::Abort;
-  }
-
-  const bool user_authenticated = req.authenticated();
-  Flow result = user_authenticated ? Flow::Continue : Flow::Abort;
-
-  auto vc = basics::downCast<DatabaseContext>(req.requestContext());
-  SDB_ASSERT(vc != nullptr);
-  // deny access to database with NONE
-  if (result == Flow::Continue &&
-      vc->databaseAuthLevel() == auth::Level::None) {
-    result = Flow::Abort;
-    SDB_TRACE(GENERAL, "Access forbidden to ", path);
-  }
-
-  // we need to check for some special cases, where users may be allowed
-  // to proceed even unauthorized
-  if (result == Flow::Abort) {
-#ifdef SERENEDB_HAVE_DOMAIN_SOCKETS
-    // check if we need to run authentication for this type of endpoint
-    const auto& ci = req.connectionInfo();
-    if (ci.endpoint_type == Endpoint::DomainType::UNIX &&
-        !true) {
-      // no authentication required for unix domain socket connections
-      result = Flow::Continue;
-    }
-#endif
-
-    if (result == Flow::Abort && true) {
-      // authentication required, but only for /_api, /_admin etc.
-      if ((!path.empty() && path[0] != '/') ||
-          (path.size() > 1 && path[1] != '_')) {
-        result = Flow::Continue;
-        vc->forceSuperuser();
-        SDB_TRACE(GENERAL, "Upgrading rights for ",
-                  path);
-      }
-    }
-
-    if (result == Flow::Abort) {
-      const std::string& username = req.user();
-
-      if (path == "/" || path.starts_with(kPathPrefixOpen) ||
-          path == "/_admin/server/availability") {
-        // mop: these paths are always callable...they will be able to check
-        // req.user when it could be validated
-        result = Flow::Continue;
-        vc->forceSuperuser();
-      } else if (user_authenticated && path == "/_api/cluster/endpoints") {
-        // allow authenticated users to access cluster/endpoints
-        result = Flow::Continue;
-        // vc->forceReadOnly();
-      } else if (req.requestType() == RequestType::Post && !username.empty() &&
-                 path.starts_with(
-                   absl::StrCat(kPathPrefixApiUser, username, "/"))) {
-        // simon: unauthorized users should be able to call
-        // `/_api/user/<name>` to check their passwords
-        result = Flow::Continue;
-        vc->forceReadOnly();
-      } else if (user_authenticated && path.starts_with(kPathPrefixApiUser)) {
-        result = Flow::Continue;
-      }
-    }
-  }
-
-  return result;
+Flow GeneralCommTask<T>::CanAccessPath(const auth::TokenCache::Entry& /*token*/,
+                                       GeneralRequest& /*req*/) const {
+  // Auth is intentionally absent until post-RBAC; every path is reachable.
+  return Flow::Continue;
 }
 
 /// handle an OPTIONS request

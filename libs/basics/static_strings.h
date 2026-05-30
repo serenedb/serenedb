@@ -79,7 +79,6 @@ class StaticStrings {
   static const std::string kAuthorization;
   static const std::string kCacheControl;
   static const std::string kChunked;
-  static const std::string kClusterCommSource;
   static const std::string kCode;
   static const std::string kConnection;
   static const std::string kContentEncoding;

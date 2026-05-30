@@ -63,7 +63,6 @@ const std::string StaticStrings::kAsyncId("x-serene-async-id");
 const std::string StaticStrings::kAuthorization("authorization");
 const std::string StaticStrings::kCacheControl("cache-control");
 const std::string StaticStrings::kChunked("chunked");
-const std::string StaticStrings::kClusterCommSource("x-serene-source");
 const std::string StaticStrings::kCode("code");
 const std::string StaticStrings::kConnection("connection");
 const std::string StaticStrings::kContentEncoding("content-encoding");

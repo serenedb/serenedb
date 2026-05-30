@@ -32,15 +32,16 @@
 
 namespace duckdb {
 
-inline duckdb::SerializationOptions LatestStorageOptions() {
+inline duckdb::SerializationOptions VersionStorageOptions() {
   duckdb::SerializationOptions opts;
-  opts.storage_compatibility = duckdb::StorageCompatibility::Latest();
+  opts.storage_compatibility =
+    duckdb::StorageCompatibility::FromString("v2.0.0");
   return opts;
 }
 
 void VPackWrite(auto ctx, const duckdb::LogicalType& type) {
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer::Serialize(type, stream, LatestStorageOptions());
+  duckdb::BinarySerializer::Serialize(type, stream, VersionStorageOptions());
   auto data = stream.GetData();
   auto size = stream.GetPosition();
   ctx.vpack().add(std::string_view{reinterpret_cast<const char*>(data), size});

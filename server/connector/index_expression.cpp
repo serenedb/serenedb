@@ -147,7 +147,7 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
 std::string SerializeBoundExpression(const duckdb::Expression& expr) {
   duckdb::MemoryStream stream;
   duckdb::BinarySerializer::Serialize(expr, stream,
-                                      duckdb::LatestStorageOptions());
+                                      duckdb::VersionStorageOptions());
   return std::string{reinterpret_cast<const char*>(stream.GetData()),
                      stream.GetPosition()};
 }

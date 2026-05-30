@@ -250,7 +250,7 @@ Result ColumnExpr::FromVPack(vpack::Slice slice, ColumnExpr& column_expr) {
 void ColumnExpr::ToVPack(vpack::Builder& builder) const {
   SDB_ASSERT(_expr);
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer(stream, duckdb::LatestStorageOptions());
+  duckdb::BinarySerializer serializer(stream, duckdb::VersionStorageOptions());
   serializer.Begin();
   _expr->Serialize(serializer);
   serializer.End();

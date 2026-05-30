@@ -68,7 +68,7 @@ void PgSqlFunction::WriteInternal(vpack::Builder& builder) const {
   // Serialize CreateMacroInfo via DuckDB BinarySerializer
   duckdb::MemoryStream stream;
   duckdb::BinarySerializer::Serialize(*_info, stream,
-                                      duckdb::LatestStorageOptions());
+                                      duckdb::VersionStorageOptions());
   auto data = stream.GetData();
   auto size = stream.GetPosition();
   builder.add("info",

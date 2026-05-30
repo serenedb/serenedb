@@ -52,11 +52,6 @@ void ServerFeature::collectOptions(std::shared_ptr<ProgramOptions> options) {
   options->addSection("server", "server features");
 
   options->addOption(
-    "--server.rest-server", "Start a REST server.",
-    new BooleanParameter(&_rest_server),
-    sdb::options::MakeDefaultFlags(sdb::options::Flags::Uncommon));
-
-  options->addOption(
     "--server.validate-utf8-strings",
     "Perform UTF-8 string validation for incoming JSON and VPack "
     "data.",
@@ -64,24 +59,7 @@ void ServerFeature::collectOptions(std::shared_ptr<ProgramOptions> options) {
     sdb::options::MakeDefaultFlags(sdb::options::Flags::Uncommon));
 }
 
-void ServerFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
-  if (!_rest_server && !options->processingResult().touched("rocksdb.verify-sst")) {
-    SDB_FATAL(GENERAL, "restServer disabled only for upgrade");
-  }
-
-  auto disable_deamon_and_supervisor = []() {
-    // DaemonFeature + SupervisorFeature both deleted; no-op.
-  };
-
-  if (!_rest_server) {
-    server().disableFeatures({
-      Server::id<HttpEndpointProvider>(),
-      Server::id<GeneralServerFeature>(),
-      Server::id<SslServerFeature>(),
-    });
-    disable_deamon_and_supervisor();
-  }
-}
+void ServerFeature::validateOptions(std::shared_ptr<ProgramOptions>) {}
 
 void ServerFeature::prepare() {
   // adjust global settings for UTF-8 string validation

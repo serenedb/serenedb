@@ -52,7 +52,6 @@ class ServerFeature final : public SerenedFeature {
  private:
   void waitForHeartbeat();
 
-  bool _rest_server = true;
   bool _validate_utf8_strings = false;
   std::atomic_bool _is_stopping = false;
   int* _result;

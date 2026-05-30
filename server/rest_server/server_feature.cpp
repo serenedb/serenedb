@@ -37,7 +37,6 @@
 #include "basics/process-utils.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
-#include "rest_server/upgrade_feature.h"
 
 using namespace sdb::app;
 using namespace sdb::options;
@@ -67,10 +66,8 @@ void ServerFeature::collectOptions(std::shared_ptr<ProgramOptions> options) {
 }
 
 void ServerFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
-  if (!_rest_server && !server().getFeature<UpgradeFeature>().upgrading() &&
-      !options->processingResult().touched("rocksdb.verify-sst")) {
-    SDB_FATAL(GENERAL,
-              "restServer disabled only for upgrade");
+  if (!_rest_server && !options->processingResult().touched("rocksdb.verify-sst")) {
+    SDB_FATAL(GENERAL, "restServer disabled only for upgrade");
   }
 
   auto disable_deamon_and_supervisor = []() {

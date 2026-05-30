@@ -1,15 +1,12 @@
 target_sources(
     sereneserver
     PRIVATE
-        bootstrap_feature.cpp
         database_path_feature.cpp
         endpoint_feature.cpp
         file_descriptors_feature.cpp
         flush_feature.cpp
-        init_database_feature.cpp
         lockfile_feature.cpp
         privilege_feature.cpp
         server_feature.cpp
-        upgrade_feature.cpp
         database_context.cpp
 )

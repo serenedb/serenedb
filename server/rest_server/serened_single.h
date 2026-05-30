@@ -54,7 +54,6 @@ class SearchEngine;
 }  // namespace search
 
 class LoggerFeature;
-class ServerOptionsFeature;
 class SslServerFeature;
 class MaxMapCountFeature;
 class FileDescriptorsFeature;
@@ -63,23 +62,19 @@ class DatabasePathFeature;
 class PrivilegeFeature;
 class SchedulerFeature;
 class AuthenticationFeature;
-class InitDatabaseFeature;
 class RocksDBOptionFeature;
 class EngineFeature;
 class FlushFeature;
 class LockfileFeature;
 class RocksDBRecoveryManager;
-class UpgradeFeature;
 class ServerFeature;
 class HttpEndpointProvider;
 class GeneralServerFeature;
-class BootstrapFeature;
 class ShutdownFeature;
 
 // clang-format off
 using SerenedFeaturesList = type::List<
   LoggerFeature,
-  ServerOptionsFeature,
   SslServerFeature,
   metrics::MetricsFeature,
 #ifdef SERENEDB_HAVE_GETRLIMIT
@@ -90,7 +85,6 @@ using SerenedFeaturesList = type::List<
   PrivilegeFeature,
   SchedulerFeature,
   AuthenticationFeature,
-  InitDatabaseFeature,
   RocksDBOptionFeature,
   EngineFeature,
   FlushFeature,
@@ -98,12 +92,10 @@ using SerenedFeaturesList = type::List<
   RocksDBRecoveryManager,
   catalog::CatalogFeature,
   search::SearchEngine,
-  UpgradeFeature,
   ServerFeature,
   HttpEndpointProvider,
   GeneralServerFeature,
   pg::PostgresFeature,
-  BootstrapFeature,
   ShutdownFeature>;
 // clang-format on
 

@@ -46,7 +46,6 @@
 #include "basics/number_of_cores.h"
 #include "rest/http_response.h"
 #include "rest_server/endpoint_feature.h"
-#include "rest_server/upgrade_feature.h"
 #include "storage_engine/engine_feature.h"
 
 using namespace sdb::rest;

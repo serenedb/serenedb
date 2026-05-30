@@ -21,5 +21,4 @@ target_sources(
         rest_handler.cpp
         rest_handler_factory.cpp
         ssl_server_feature.cpp
-        server_options_feature.cpp
 )

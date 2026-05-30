@@ -34,7 +34,6 @@
 #include "catalog/identifiers/object_id.h"
 #include "general_server/authentication_feature.h"
 #include "general_server/state.h"
-#include "rest_server/init_database_feature.h"
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::auth {
@@ -47,13 +46,12 @@ std::atomic_uint64_t gGlobalVersion = 1;
 Result CreateRootRole(bool skip_if_exists) {
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto& init_db_feature =
-    SerenedServer::Instance().getFeature<InitDatabaseFeature>();
 
   auto create_root = [&]() {
+    // No `--database.password` flag anymore; root role gets an empty
+    // password — auth is intentionally absent until the post-RBAC redesign.
     auto new_role =
-      catalog::Role::NewUser(StaticStrings::kDefaultUser,
-                             init_db_feature.defaultPassword(), id::kRootUser);
+      catalog::Role::NewUser(StaticStrings::kDefaultUser, "", id::kRootUser);
     new_role->grantDatabase(StaticStrings::kDefaultDatabase, Level::RW);
     new_role->grantDatabase("*", Level::RW);
     return new_role;

@@ -36,13 +36,6 @@ using namespace sdb::app;
 
 static_assert(SerenedServer::id<LoggerFeature>() == 0);
 
-constexpr auto kNonServerFeatures = std::array{
-  SerenedServer::id<GeneralServerFeature>(),
-  SerenedServer::id<HttpEndpointProvider>(),
-  SerenedServer::id<ServerFeature>(),
-  SerenedServer::id<SslServerFeature>(),
-};
-
 const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
 
 int RunServer(int argc, char** argv, GlobalContext& context) {
@@ -57,6 +50,9 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     int ret{EXIT_FAILURE};
     SerenedServer server{options, BIN_DIRECTORY};
     ServerState state;
+    // SereneDB is single-node; the cluster topology that the
+    // ArangoDB ServerState modeled never applied.
+    state.SetRole(ServerState::Role::Single);
 
     server.addReporter(
       {[&](SerenedServer::State state) {
@@ -73,10 +69,6 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       []<typename T>(auto& server, type::Tag<T>) {
         return std::make_unique<T>(server);
       },
-      [](auto& server, type::Tag<InitDatabaseFeature>) {
-        return std::make_unique<InitDatabaseFeature>(server,
-                                                     kNonServerFeatures);
-      },
       [](auto& server, type::Tag<LoggerFeature>) {
         return std::make_unique<LoggerFeature>(server);
       },
@@ -88,10 +80,6 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       },
       [](auto& server, type::Tag<SslServerFeature>) {
         return std::make_unique<SslServerFeature>(server);
-      },
-      [&ret](auto& server, type::Tag<UpgradeFeature>) {
-        return std::make_unique<UpgradeFeature>(server, &ret,
-                                                kNonServerFeatures);
       },
       [](auto& server, type::Tag<HttpEndpointProvider>) {
         return std::make_unique<EndpointFeature>(server);

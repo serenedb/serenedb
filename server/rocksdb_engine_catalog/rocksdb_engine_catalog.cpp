@@ -87,7 +87,6 @@
 #include "database/ticks.h"
 #include "general_server/rest_handler_factory.h"
 #include "general_server/scheduler_feature.h"
-#include "general_server/server_options_feature.h"
 #include "general_server/state.h"
 #include "metrics/counter_builder.h"
 #include "metrics/gauge_builder.h"

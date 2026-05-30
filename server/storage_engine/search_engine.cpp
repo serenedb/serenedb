@@ -78,7 +78,6 @@ const std::string kSkipWalRecovery("--search.skip-wal-recovery");
 const std::string kCacheLimit("--search.columns-cache-limit");
 const std::string kCacheOnlyLeader("--search.columns-cache-only-leader");
 const std::string kSearchThreadsLimit("--search.execution-threads-limit");
-const std::string kSearchDefaultParallelism("--search.default-parallelism");
 
 uint32_t ComputeThreadsCount(uint32_t threads, uint32_t threads_limit,
                              uint32_t div) noexcept {
@@ -165,9 +164,6 @@ void SearchEngine::collectOptions(
   // fields stay at defaults.
   // --search.default-parallelism survives as a runtime SET LOCAL setting --
   // a follow-up will register it via DBConfig::AddExtensionOption.
-  options->addOption(
-    kSearchDefaultParallelism, "Default parallelism for Search queries",
-    new options::UInt32Parameter(&_default_parallelism));
 }
 
 void SearchEngine::validateOptions(

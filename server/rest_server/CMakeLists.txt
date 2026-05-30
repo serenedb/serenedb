@@ -3,7 +3,6 @@ target_sources(
     PRIVATE
         database_path_feature.cpp
         endpoint_feature.cpp
-        file_descriptors_feature.cpp
         flush_feature.cpp
         lockfile_feature.cpp
         server_feature.cpp

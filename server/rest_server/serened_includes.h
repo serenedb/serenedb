@@ -40,7 +40,6 @@
 #include "pg/pg_feature.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/endpoint_feature.h"
-#include "rest_server/file_descriptors_feature.h"
 #include "rest_server/flush_feature.h"
 #include "rest_server/lockfile_feature.h"
 #include "rest_server/server_feature.h"

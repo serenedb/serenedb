@@ -72,48 +72,6 @@ ServerState::ServerState() {
   SetRole(Role::Undefined);
 }
 
-void ServerState::FindHost(std::string_view fallback) {
-  // Compute a string identifying the host on which we are running, note
-  // that this is more complicated than immediately obvious, because we
-  // could sit in a container which is deployed by Kubernetes or Mesos or
-  // some other orchestration framework:
-
-  // the following is set by Mesos or by an administrator:
-  char* p = getenv("HOST");
-  if (p != nullptr) {
-    _host = p;
-    return;
-  }
-
-  // the following is set by Kubernetes when using the downward API:
-  p = getenv("NODE_NAME");
-  if (p != nullptr) {
-    _host = p;
-    return;
-  }
-
-  // Now look at the contents of the file /etc/machine-id, if it exists:
-  std::string name = "/etc/machine-id";
-  if (sdb::basics::file_utils::Exists(name)) {
-    try {
-      _host = sdb::basics::file_utils::Slurp(name);
-      while (!_host.empty() && (_host.back() == '\r' || _host.back() == '\n' ||
-                                _host.back() == ' ')) {
-        _host.erase(_host.size() - 1);
-      }
-      if (!_host.empty()) {
-        return;
-      }
-    } catch (...) {
-    }
-  }
-
-  // Finally, as a last resort, take the fallback, coming from
-  // the ClusterFeature with the value of --cluster.my-address
-  // or by the AgencyFeature with the value of --agency.my-address:
-  _host = fallback;
-}
-
 ServerState* ServerState::instance() noexcept {
   SDB_ASSERT(gInstance);
   return gInstance;
@@ -376,27 +334,6 @@ void ServerState::SetShortId(uint32_t id) {
   if (id != 0) {
     _short_id.store(id, std::memory_order_relaxed);
   }
-}
-
-RebootId ServerState::GetRebootId() const {
-  const RebootId reboot_id{_reboot_id.load(std::memory_order_relaxed)};
-  SDB_ASSERT(reboot_id.initialized());
-  return reboot_id;
-}
-
-void ServerState::SetRebootId(RebootId reboot_id) {
-  SDB_ASSERT(reboot_id.initialized());
-  _reboot_id.store(reboot_id.value(), std::memory_order_relaxed);
-}
-
-std::string ServerState::GetEndpoint() {
-  absl::ReaderMutexLock read_locker{&_lock};
-  return _my_endpoint;
-}
-
-std::string ServerState::GetAdvertisedEndpoint() {
-  absl::ReaderMutexLock read_locker{&_lock};
-  return _advertised_endpoint;
 }
 
 ServerState::State ServerState::GetState() {

@@ -6,7 +6,7 @@
 
 namespace sdb::app {
 
-AppServer::AppServer(const char* binary_path) : _binary_path{binary_path} {
+AppServer::AppServer() {
   SDB_ASSERT(gInstance == nullptr, "AppServer is a singleton");
   gInstance = this;
 }

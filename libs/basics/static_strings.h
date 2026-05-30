@@ -132,11 +132,6 @@ class StaticStrings {
   static const std::string kAllowUserKeys;
   static const std::string kObjectId;
 
-  // generic attribute names
-  static constexpr std::string_view kAttrCoordinatorId = "coordinatorId";
-  static constexpr std::string_view kAttrCoordinatorRebootId =
-    "coordinatorRebootId";
-
   // misc strings
   static const std::string kLastValue;
 

@@ -29,14 +29,11 @@
 
 #include "basics/common.h"
 #include "basics/read_write_lock.h"
-#include "basics/reboot_id.h"
 #include "basics/result_or.h"
-#include "catalog/types.h"
 #include "rest_server/serened.h"
 
 namespace sdb {
 
-class AgencyComm;
 class Result;
 
 class ServerState {
@@ -165,22 +162,6 @@ class ServerState {
     return _role.load(std::memory_order_acquire);
   }
 
-  /// register with agency, create / load server ID
-  bool IntegrateIntoCluster(Role role, std::string_view my_addr,
-                            std::string_view my_adv_endpoint);
-
-  /// unregister this server with the agency, removing it from
-  /// the cluster setup.
-  /// the timeout can be used as the max wait time for the agency to
-  /// acknowledge the unregister action.
-  bool Unregister(double timeout);
-
-  /// mark this server as shut down in the agency, without removing it
-  /// from the cluster setup.
-  /// the timeout can be used as the max wait time for the agency to
-  /// acknowledge the logoff action.
-  bool Logoff(double timeout);
-
   void SetRole(Role);
 
   std::string GetId() const;
@@ -193,20 +174,6 @@ class ServerState {
 
   std::string GetShortName() const;
 
-  RebootId GetRebootId() const;
-
-  void SetRebootId(RebootId reboot_id);
-
-  std::string GetEndpoint();
-
-  std::string GetAdvertisedEndpoint();
-
-  /// find a host identification string
-  void FindHost(std::string_view fallback);
-
-  /// get a string to identify the host we are running on
-  std::string GetHost() { return _host; }
-
   State GetState();
 
   void SetState(State state);
@@ -214,9 +181,6 @@ class ServerState {
   bool HasPersistedId();
   bool WritePersistedId(std::string_view id);
   std::string GeneratePersistedId(Role role);
-
-  /// sets server mode and propagates new mode to agency
-  Result PropagateClusterReadOnly(bool);
 
   /// file where the server persists its UUID
   std::string GetUUIDFilename() const;
@@ -234,18 +198,6 @@ class ServerState {
 
   /// validate a state transition for a coordinator server
   bool CheckCoordinatorState(State state);
-
-  /// try to read the rebootID from the Agency
-  ResultOr<uint64_t> ReadRebootIdFromAgency(AgencyComm& comm);
-
-  /// check whether the agency has been initalized
-  bool CheckIfAgencyInitialized(AgencyComm& comm, Role role);
-
-  /// register at agency, might already be done
-  bool RegisterAtAgencyPhase1(AgencyComm& comm, Role role);
-
-  /// write the Current/ServersRegistered entry
-  bool RegisterAtAgencyPhase2(AgencyComm& comm, bool had_persisted_id);
 
   /// whether or not "value" is a server UUID
   bool IsUUID(std::string_view value) const;
@@ -265,23 +217,6 @@ class ServerState {
   /// the server's short id, can be set just once
   std::atomic<uint32_t> _short_id = 0;
 
-  /// the server's rebootId.
-  ///
-  /// A server
-  ///   * ~boots~ if it is started on a new database directory without a UUID
-  ///   persisted
-  ///   * ~reboots~ if it is started on a pre-existing database directory with a
-  ///   UUID present
-  ///
-  /// when integrating into a cluster (via IntegrateIntoCluster), the server
-  /// tries to increment the agency key Current/KnownServers/_id/rebootId; if
-  /// this key did not exist it is created with the value 1, so a valid rebootId
-  /// is always >= 1, and if the server booted must be 1.
-  ///
-  /// Changes of rebootIds (i.e. server reboots) are noticed in ClusterInfo and
-  /// can be used through a notification architecture from there
-  std::atomic<RebootId::value_type> _reboot_id = 0;
-
   /// r/w lock for state
   mutable absl::Mutex _lock;
 
@@ -291,16 +226,6 @@ class ServerState {
   /// the server's id, can be set just once, use GetId and SetId, do not
   /// access directly
   std::string _id;
-
-  /// the server's own endpoint, can be set just once
-  std::string _my_endpoint;
-
-  /// the server's own advertised endpoint, can be set just once,
-  /// if empty, we advertise _address
-  std::string _advertised_endpoint;
-
-  /// an identification string for the host a server is running on
-  std::string _host;
 };
 
 }  // namespace sdb

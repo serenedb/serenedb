@@ -42,7 +42,7 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     log::Initialize();
 
     int ret{EXIT_FAILURE};
-    SerenedServer server{BIN_DIRECTORY};
+    SerenedServer server;
     ServerState state;
     // SereneDB is single-node; the cluster topology that the
     // ArangoDB ServerState modeled never applied.

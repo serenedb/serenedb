@@ -1692,7 +1692,6 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
     return r;
   }
 
-  auth::IncGlobalVersion();
   return {};
 }
 
@@ -2440,7 +2439,6 @@ Result LocalCatalog::ChangeRole(std::string_view name,
     return r;
   }
 
-  auth::IncGlobalVersion();
   return {};
 }
 
@@ -2556,7 +2554,6 @@ Result LocalCatalog::DropRole(std::string_view role) {
     return r;
   }
 
-  auth::IncGlobalVersion();
   return {};
 }
 

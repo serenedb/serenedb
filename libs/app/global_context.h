@@ -36,19 +36,14 @@ class GlobalContext {
   GlobalContext(int argc, char* argv[], const char* install_directory);
   ~GlobalContext();
 
- public:
   const std::string& binaryName() const { return _binary_name; }
-  const std::string& runRoot() const { return _run_root; }
   void normalizePath(std::vector<std::string>& path, const char* which_path,
                      bool fatal);
   void normalizePath(std::string& path, const char* which_path, bool fatal);
-  const std::string& getBinaryPath() const { return _binary_path; }
   int exit(int ret);
-  void installHup();
 
  private:
   const std::string _binary_name;
-  const std::string _binary_path;
   const std::string _run_root;
   int _ret;
 };

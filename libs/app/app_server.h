@@ -44,7 +44,7 @@ class AppServer {
     return *gInstance;
   }
 
-  explicit AppServer(const char* binary_path);
+  AppServer();
   ~AppServer();
 
   AppServer(const AppServer&) = delete;
@@ -72,8 +72,6 @@ class AppServer {
     _progress_reports.emplace_back(std::move(reporter));
   }
 
-  const char* getBinaryPath() const noexcept { return _binary_path; }
-
   void parseOptions(int argc, char* argv[]);
 
   // Block until beginShutdown() or SIGTERM/SIGINT.
@@ -88,7 +86,6 @@ class AppServer {
   } _shutdown_condition;
 
   std::vector<ProgressHandler> _progress_reports;
-  const char* _binary_path;
   bool _abort_waiting = false;
 };
 

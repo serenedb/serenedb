@@ -22,6 +22,7 @@
 
 #include <duckdb/main/database_manager.hpp>
 
+#include "basics/result.h"
 #include "utils/exec_context.h"
 
 namespace sdb::catalog {

@@ -54,21 +54,11 @@
 using namespace sdb;
 using namespace sdb::basics;
 
-namespace {
-
-static void ReopenLog(int) {
-  // Logger writes to stderr only; SIGHUP file-rotate is a no-op.
-  // logrotate's `copytruncate` is the supported rotation path.
-}
-
-}  // namespace
-
 GlobalContext* GlobalContext::gContext = nullptr;
 
 GlobalContext::GlobalContext(int /*argc*/, char* argv[],
                              const char* install_directory)
   : _binary_name(SdbBinaryName(argv[0])),
-    _binary_path(SdbLocateBinaryPath(argv[0])),
     _run_root(SdbGetInstallRoot(SdbLocateBinaryPath(argv[0]).c_str(),
                                 install_directory)),
     _ret(EXIT_FAILURE) {
@@ -100,8 +90,6 @@ GlobalContext::GlobalContext(int /*argc*/, char* argv[],
 GlobalContext::~GlobalContext() {
   gContext = nullptr;
 
-  signal(SIGHUP, SIG_IGN);
-
   random::Reset();
   ShutdownProcess();
 }
@@ -110,8 +98,6 @@ int GlobalContext::exit(int ret) {
   _ret = ret;
   return _ret;
 }
-
-void GlobalContext::installHup() { signal(SIGHUP, ReopenLog); }
 
 void GlobalContext::normalizePath(std::vector<std::string>& paths,
                                   const char* which_path, bool fatal) {

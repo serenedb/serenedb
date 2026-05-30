@@ -381,6 +381,7 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
       break;
     }
     case duckdb::LogicalTypeId::LIST: {
+      _list_fmt.children.clear();
       duckdb::Vector::RecursiveToUnifiedFormat(vec, count, _list_fmt);
       if (!SetupListExpressionWriterForChild(
             field_id, have_nulls,
@@ -391,6 +392,7 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
       }
     } break;
     case duckdb::LogicalTypeId::ARRAY: {
+      _list_fmt.children.clear();
       duckdb::Vector::RecursiveToUnifiedFormat(vec, count, _list_fmt);
       if (!SetupListExpressionWriterForChild(
             field_id, have_nulls,

@@ -47,6 +47,7 @@
 #include "pg/system_catalog.h"
 #include "pg/system_table.h"
 #include "query/config.h"
+#include "query/log_types.h"
 
 extern "C" const duckdb::DefaultType* duckdb_external_types(
   duckdb::idx_t* count) {
@@ -223,11 +224,22 @@ void DuckDBEngine::Initialize() {
   // enabled until callers migrate to the new `lambda x: ...` form.
   config.SetOptionByName("lambda_syntax", duckdb::Value{"ENABLE_SINGLE_ARROW"});
 
+  // Seed duckdb's LogManager from this server's defaults (logging enabled,
+  // INFO level, HTTP+SSL muted, stdout sink). Users can mutate at runtime
+  // via SET enable_logging / logging_level / enabled_log_types /
+  // disabled_log_types / logging_storage.
+  ConfigureLogManagerDefaults(config);
+
   connector::RegisterSereneDBStorage(config);
 
   connector::RegisterConfigVariables(config);
 
   _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
+
+  // Wire sdb::log into duckdb::LogManager. After this call every SDB_*
+  // macro flows through the LogManager; before it, log lines go to stderr
+  // via the shim's fallback writer (pre-engine startup logs).
+  InstallLogManagerSink(*_db->instance);
 
   connector::RegisterTokenizerPragma(*_db->instance);
 
@@ -282,7 +294,12 @@ void DuckDBEngine::Initialize() {
   pg::InitSystemViews(parser);
 }
 
-void DuckDBEngine::Shutdown() { _db.reset(); }
+void DuckDBEngine::Shutdown() {
+  // Detach the sink BEFORE destroying the database instance, otherwise any
+  // log line emitted from a destructor would chase a freed LogManager.
+  UninstallLogManagerSink();
+  _db.reset();
+}
 
 duckdb::unique_ptr<duckdb::Connection> DuckDBEngine::CreateConnection() {
   SDB_ASSERT(_db);

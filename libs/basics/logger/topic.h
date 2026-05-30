@@ -23,6 +23,11 @@
 // `SDB_INFO(GENERAL, "...")` and get `::sdb::log::GENERAL` resolved at
 // expansion. Each constant is a `constexpr inline std::string_view`; the
 // runtime entry point takes it by string_view.
+//
+// String values map to DuckDB log type names. They are PascalCase because
+// DuckDB matches enabled/disabled_log_types CASE-SENSITIVELY. `GENERAL` maps
+// to the empty string -- DuckDB's `DefaultLogType` -- so plain SDB_INFO()
+// stays in the unfiltered default bucket.
 
 #pragma once
 
@@ -30,13 +35,13 @@
 
 namespace sdb::log {
 
-inline constexpr std::string_view GENERAL{"general"};
-inline constexpr std::string_view STARTUP{"startup"};
-inline constexpr std::string_view HTTP{"http"};
-inline constexpr std::string_view SSL{"ssl"};
-inline constexpr std::string_view STORAGE{"storage"};
-inline constexpr std::string_view SEARCH{"search"};
-inline constexpr std::string_view IRESEARCH{"iresearch"};
-inline constexpr std::string_view CRASH{"crash"};
+inline constexpr std::string_view GENERAL{""};
+inline constexpr std::string_view STARTUP{"Startup"};
+inline constexpr std::string_view HTTP{"HTTP"};
+inline constexpr std::string_view SSL{"SSL"};
+inline constexpr std::string_view STORAGE{"Storage"};
+inline constexpr std::string_view SEARCH{"Search"};
+inline constexpr std::string_view IRESEARCH{"IResearch"};
+inline constexpr std::string_view CRASH{"Crash"};
 
 }  // namespace sdb::log

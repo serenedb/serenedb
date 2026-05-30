@@ -24,50 +24,30 @@
 #include <absl/synchronization/mutex.h>
 #include <unistd.h>
 
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
+#include <string>
 
 namespace sdb::log {
 namespace {
 
-struct TopicEntry {
-  std::string_view name;
-  std::atomic<LogLevel> level{LogLevel::DEFAULT};
-  std::atomic<LogLevel> default_level{LogLevel::DEFAULT};
-};
+// Process-wide pre-sink level. Lookup in IsEnabled() before InstallSink()
+// has run.
+std::atomic<LogLevel> gInitialLevel{LogLevel::INFO};
 
-// Topic table. Levels can be set via SetLogLevel("name=info") or via the
-// SQL surface (SET sdb_log_level = 'name=info' -- wired in Phase 9).
-// Adding a topic: add it here and to topic.h.
-TopicEntry gTopics[]{
-  {GENERAL, {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
-  {STARTUP, {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
-  {HTTP, {LogLevel::WARN}, {LogLevel::WARN}},
-  {SSL, {LogLevel::WARN}, {LogLevel::WARN}},
-  {STORAGE, {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
-  {SEARCH, {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
-  {IRESEARCH, {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
-  {CRASH, {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
-};
+// Active sink (nullptr -> stderr fallback). Set by InstallSink(). The
+// pointed-to Sink must outlive any thread that calls Log() through it --
+// callers are expected to pass a function-local static const Sink.
+std::atomic<const Sink*> gSink{nullptr};
 
-TopicEntry* FindTopicEntry(std::string_view name) noexcept {
-  for (auto& t : gTopics) {
-    if (t.name == name) {
-      return &t;
-    }
-  }
-  return nullptr;
-}
+// Serializes stderr writes for the fallback path. NOT touched on the CRASH
+// signal-safe path -- there we do a single write(2).
+absl::Mutex gStderrMutex;
 
-std::atomic<LogLevel> gGlobalLevel{LogLevel::INFO};
-std::atomic<bool> gActive{false};
-std::atomic<bool> gLogRequestParameters{true};
-absl::Mutex gWriteMutex;  // serializes formatted writes to stderr
-
-const char* LevelTag(LogLevel l) noexcept {
+constexpr std::string_view LevelTag(LogLevel l) noexcept {
   switch (l) {
     case LogLevel::FATAL:
       return "FATAL";
@@ -102,15 +82,67 @@ void WriteIsoTimestamp(std::string& out) {
   out.append(buf);
 }
 
+// Allocates a std::string, formats, mutex-serialized fwrite. Used while no
+// sink is installed (boot + post-shutdown windows).
+void StderrFallback(LogLevel level, std::string_view topic,
+                    std::string_view message) {
+  std::string out;
+  out.reserve(96 + message.size());
+  WriteIsoTimestamp(out);
+  out.append(" [");
+  out.append(LevelTag(level));
+  out.append("] {");
+  // GENERAL maps to the empty string; print "general" so unmuted lines stay
+  // legible in the fallback writer.
+  out.append(topic.empty() ? std::string_view{"general"} : topic);
+  out.append("} ");
+  // Bound stderr writes.
+  constexpr size_t kCap = 64 * 1024;
+  if (message.size() > kCap) {
+    out.append(message.data(), kCap);
+    out.append("... [truncated]");
+  } else {
+    out.append(message);
+  }
+  if (out.empty() || out.back() != '\n') {
+    out.push_back('\n');
+  }
+  absl::MutexLock guard{&gStderrMutex};
+  ::fwrite(out.data(), 1, out.size(), stderr);
+  ::fflush(stderr);
+}
+
+// Async-signal-safe stderr write used by the CRASH topic. No heap, no mutex,
+// no fwrite buffering -- just write(2). Caps message length to a stack
+// buffer; truncates the rest. Output format mirrors the fallback's "[LEVEL]
+// {topic} message\n" layout so crash log lines remain greppable.
+void SignalSafeWrite(LogLevel level, std::string_view topic,
+                     std::string_view message) noexcept {
+  constexpr size_t kBufCap = 4096;
+  char buf[kBufCap];
+  size_t pos = 0;
+  auto append = [&](std::string_view s) {
+    size_t n = std::min(s.size(), kBufCap - pos);
+    std::memcpy(buf + pos, s.data(), n);
+    pos += n;
+  };
+  append("[");
+  append(LevelTag(level));
+  append("] {");
+  append(topic.empty() ? std::string_view{"crash"} : topic);
+  append("} ");
+  append(message);
+  if (pos == kBufCap) {
+    // Reserve last byte for newline.
+    pos = kBufCap - 1;
+  }
+  buf[pos++] = '\n';
+  // write(2) is async-signal-safe (POSIX.1-2017 Section 2.4.3).
+  ssize_t unused = ::write(STDERR_FILENO, buf, pos);
+  (void)unused;
+}
+
 }  // namespace
-
-LogLevel GetLogLevel() noexcept {
-  return gGlobalLevel.load(std::memory_order_relaxed);
-}
-
-void SetLogLevel(LogLevel level) noexcept {
-  gGlobalLevel.store(level, std::memory_order_relaxed);
-}
 
 LogLevel TranslateLogLevel(std::string_view name) noexcept {
   auto lower = absl::AsciiStrToLower(name);
@@ -142,116 +174,53 @@ std::string_view TranslateLogLevel(LogLevel level) noexcept {
   return LevelTag(level);
 }
 
-void SetLogLevel(std::string_view def) {
-  // Forms accepted: "info", "topic=info", "all=info".
-  auto eq = def.find('=');
-  if (eq == std::string_view::npos) {
-    SetLogLevel(TranslateLogLevel(def));
-    return;
-  }
-  auto name = absl::AsciiStrToLower(def.substr(0, eq));
-  auto level = TranslateLogLevel(def.substr(eq + 1));
-  if (name == "all") {
-    for (auto& t : gTopics) {
-      t.level.store(level, std::memory_order_relaxed);
-    }
-    SetLogLevel(level);
-    return;
-  }
-  if (auto* topic = FindTopicEntry(name); topic != nullptr) {
-    topic->level.store(level, std::memory_order_relaxed);
-  }
+void SetInitialLogLevel(LogLevel level) noexcept {
+  gInitialLevel.store(level, std::memory_order_relaxed);
 }
 
-LogLevel TopicLevel(std::string_view topic) noexcept {
-  if (auto* t = FindTopicEntry(topic); t != nullptr) {
-    return t->level.load(std::memory_order_relaxed);
+LogLevel InitialLogLevel() noexcept {
+  return gInitialLevel.load(std::memory_order_relaxed);
+}
+
+void InstallSink(const Sink* sink) noexcept {
+  gSink.store(sink, std::memory_order_release);
+}
+
+void Initialize() noexcept {}
+void Shutdown() noexcept {
+  // Detach any installed sink so subsequent log calls hit the stderr
+  // fallback. The actual LogManager teardown is owned by DuckDBEngine.
+  gSink.store(nullptr, std::memory_order_release);
+}
+void Flush() noexcept {}
+
+bool IsEnabled(LogLevel level) noexcept {
+  if (const auto* sink = gSink.load(std::memory_order_acquire); sink) {
+    return sink->should_log(level, std::string_view{});
   }
-  return LogLevel::DEFAULT;
+  return level <= gInitialLevel.load(std::memory_order_relaxed);
 }
 
-void TopicSetLevel(std::string_view topic, LogLevel level) noexcept {
-  if (auto* t = FindTopicEntry(topic); t != nullptr) {
-    t->level.store(level, std::memory_order_relaxed);
+bool IsEnabled(LogLevel level, std::string_view topic) noexcept {
+  if (const auto* sink = gSink.load(std::memory_order_acquire); sink) {
+    return sink->should_log(level, topic);
   }
-}
-
-void SnapshotTopicDefaults() {
-  for (auto& t : gTopics) {
-    t.default_level.store(t.level.load(std::memory_order_relaxed),
-                          std::memory_order_relaxed);
-  }
-}
-
-void ResetLogLevels() {
-  for (auto& t : gTopics) {
-    t.level.store(t.default_level.load(std::memory_order_relaxed),
-                  std::memory_order_relaxed);
-  }
-}
-
-std::vector<std::string_view> KnownTopics() noexcept {
-  std::vector<std::string_view> result;
-  result.reserve(std::size(gTopics));
-  for (const auto& t : gTopics) {
-    result.push_back(t.name);
-  }
-  return result;
-}
-
-std::string LogLevelString() {
-  std::string result;
-  for (const auto& t : gTopics) {
-    auto level = t.level.load(std::memory_order_relaxed);
-    if (level == LogLevel::DEFAULT) {
-      continue;
-    }
-    if (!result.empty()) {
-      result.push_back(',');
-    }
-    result.append(t.name);
-    result.push_back('=');
-    result.append(LevelTag(level));
-  }
-  return result;
-}
-
-bool IsActive() noexcept { return gActive.load(std::memory_order_acquire); }
-void Initialize() noexcept { gActive.store(true, std::memory_order_release); }
-void Shutdown() noexcept { gActive.store(false, std::memory_order_release); }
-void Flush() noexcept {}           // sync logger; nothing to flush.
-void ClearCachedPid() noexcept {}  // PID is fetched per-call; no cache.
-
-bool GetLogRequestParameters() noexcept {
-  return gLogRequestParameters.load(std::memory_order_relaxed);
-}
-void SetLogRequestParameters(bool v) noexcept {
-  gLogRequestParameters.store(v, std::memory_order_relaxed);
+  return level <= gInitialLevel.load(std::memory_order_relaxed);
 }
 
 void Log(LogLevel level, std::string_view topic, std::string_view message) try {
-  std::string out;
-  out.reserve(96 + message.size());
-  WriteIsoTimestamp(out);
-  out.append(" [");
-  out.append(LevelTag(level));
-  out.append("] {");
-  out.append(topic);
-  out.append("} ");
-  // Bound stderr writes.
-  static constexpr size_t kCap = 64 * 1024;
-  if (message.size() > kCap) {
-    out.append(message.data(), kCap);
-    out.append("... [truncated]");
-  } else {
-    out.append(message);
+  // CRASH topic ALWAYS bypasses the sink. Async-signal-safe path: no heap,
+  // no mutex, no LogManager state. Today's CRASH callers (crash_handler.cpp)
+  // are invoked from a signal handler.
+  if (topic == CRASH) {
+    SignalSafeWrite(level, topic, message);
+    return;
   }
-  if (out.empty() || out.back() != '\n') {
-    out.push_back('\n');
+  if (const auto* sink = gSink.load(std::memory_order_acquire); sink) {
+    sink->write(level, topic, message);
+    return;
   }
-  absl::MutexLock guard{&gWriteMutex};
-  ::fwrite(out.data(), 1, out.size(), stderr);
-  ::fflush(stderr);
+  StderrFallback(level, topic, message);
 } catch (...) {
   // Logging itself must never throw.
 }

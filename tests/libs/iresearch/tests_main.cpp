@@ -115,7 +115,7 @@ bool TestEnv::prepare(const cmdline::parser& parser) {
 
   auto log_level =
     parser.get<std::underlying_type_t<sdb::LogLevel>>(kIresLogLevel);
-  sdb::log::TopicSetLevel(sdb::log::IRESEARCH, sdb::LogLevel{log_level});
+  sdb::log::SetInitialLogLevel(sdb::LogLevel{log_level});
 
   if (parser.exist(kIresOutput)) {
     std::unique_ptr<char*[]> argv(new char*[2 + gArgc]);

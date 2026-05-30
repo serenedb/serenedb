@@ -18,11 +18,14 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 //
-// Minimal synchronous logger. Writes formatted lines to stderr. The
-// SDB_TRACE/DEBUG/INFO/WARN/ERROR/FATAL macros take a topic *identifier*
-// (e.g. GENERAL / STARTUP -- see topic.h) plus absl::StrCat-style args.
-// The macro prepends `::sdb::log::` to the topic name so call sites are
-// short.
+// Thin shim over DuckDB's LogManager. SDB_TRACE/DEBUG/INFO/WARN/ERROR/FATAL
+// take a topic *identifier* (see topic.h) plus absl::StrCat-style args.
+// Before the DuckDB instance is up, and after it has been torn down, log
+// lines are written synchronously to stderr. Once `InstallSink()` is called
+// (DuckDBEngine::Initialize), records flow through duckdb::LogManager and
+// honour `enable_logging` / `logging_level` / `enabled_log_types` /
+// `disabled_log_types` SET-options. The CRASH topic always bypasses the
+// sink: signal-safe write(2) to stderr only.
 
 #pragma once
 
@@ -33,9 +36,7 @@
 #include <absl/functional/any_invocable.h>
 #include <absl/strings/str_cat.h>
 
-#include <string>
 #include <string_view>
-#include <vector>
 
 #include "basics/application-exit.h"
 #include "basics/containers/flat_hash_set.h"
@@ -46,59 +47,51 @@ namespace sdb::log {
 
 // ---- runtime configuration ------------------------------------------------
 
-LogLevel GetLogLevel() noexcept;
-void SetLogLevel(LogLevel) noexcept;
-// Accepts "info" or "topic=info"; "all=info" sets every topic.
-void SetLogLevel(std::string_view);
-void ResetLogLevels();
-// Internal: called by SetLogLevels<>.
-void SnapshotTopicDefaults();
-
-// Initial-pass setter: applies one or more level definitions and snapshots
-// each as the topic's default level so a later ResetLogLevels() returns
-// to *this* set rather than the topic-default.
-template<typename C>
-void SetLogLevels(const C& defs) {
-  for (const auto& def : defs) {
-    SetLogLevel(def);
-  }
-  SnapshotTopicDefaults();
-}
-
-// Topic-level helpers.
-LogLevel TopicLevel(std::string_view topic) noexcept;
-void TopicSetLevel(std::string_view topic, LogLevel) noexcept;
-std::vector<std::string_view> KnownTopics() noexcept;
+// Translate between string spelling and the LogLevel enum. Kept because the
+// gtest entry-point still parses a `--log-level <name>` flag.
 LogLevel TranslateLogLevel(std::string_view name) noexcept;
 std::string_view TranslateLogLevel(LogLevel level) noexcept;
-std::string LogLevelString();
 
-bool IsActive() noexcept;
+// Process-wide initial level. Used as the ShouldLog comparand BEFORE the
+// DuckDB sink is installed (and after it is uninstalled at shutdown). After
+// InstallSink() runs, ShouldLog defers to duckdb's MutableLogger.
+void SetInitialLogLevel(LogLevel level) noexcept;
+LogLevel InitialLogLevel() noexcept;
+
+// Lifecycle. Kept as no-ops for source-compat with the rest of the codebase
+// (rest_server/serened.cpp, application-exit.cpp, crash_handler.cpp,
+// rocksdb_engine_catalog.cpp). All real work happens via InstallSink / the
+// LogManager.
 void Initialize() noexcept;
 void Shutdown() noexcept;
 void Flush() noexcept;
-void ClearCachedPid() noexcept;  // kept as no-op for source compat
+inline bool IsActive() noexcept { return true; }
 
-bool GetLogRequestParameters() noexcept;
-void SetLogRequestParameters(bool) noexcept;
+// Always-on getter; no-one currently flips this off. Kept as a function so
+// the HTTP/h2 call sites compile unchanged.
+inline bool GetLogRequestParameters() noexcept { return true; }
 
-// SET-setting name used by the SQL surface to mutate the log level at
-// runtime. Set by Phase 9 (DuckDB SET registration) in a follow-up.
-inline constexpr std::string_view kLogLevelVariable = "sdb_log_level";
+// ---- sink installation (called by DuckDBEngine) --------------------------
+
+struct Sink {
+  // Return true if a record at `level`/`topic` should be emitted.
+  bool (*should_log)(LogLevel level, std::string_view topic) noexcept;
+  // Write the record. Must be thread-safe.
+  void (*write)(LogLevel level, std::string_view topic,
+                std::string_view message) noexcept;
+};
+
+// `sink` must point to storage with static lifetime; callers typically pass
+// a pointer to a static const Sink. Pass nullptr to revert to the stderr
+// fallback.
+void InstallSink(const Sink* sink) noexcept;
 
 // ---- entry point ----------------------------------------------------------
 
 void Log(LogLevel level, std::string_view topic, std::string_view message);
 
-inline bool IsEnabled(LogLevel level) noexcept {
-  return level <= GetLogLevel();
-}
-
-inline bool IsEnabled(LogLevel level, std::string_view topic) noexcept {
-  const auto topic_level = TopicLevel(topic);
-  return level <=
-         (topic_level == LogLevel::DEFAULT ? GetLogLevel() : topic_level);
-}
+bool IsEnabled(LogLevel level) noexcept;
+bool IsEnabled(LogLevel level, std::string_view topic) noexcept;
 
 }  // namespace sdb::log
 

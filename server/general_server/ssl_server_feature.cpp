@@ -265,7 +265,7 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
         throw std::runtime_error("cannot create SSL context");
       }
 
-      if (log::GetLogLevel() == sdb::LogLevel::TRACE) {
+      if (log::IsEnabled(sdb::LogLevel::TRACE, log::SSL)) {
         for (int i = 0; i < sk_X509_NAME_num(cert_names); ++i) {
           X509_NAME* cert = sk_X509_NAME_value(cert_names, i);
 

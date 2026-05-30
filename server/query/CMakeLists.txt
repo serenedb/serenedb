@@ -5,5 +5,6 @@ target_sources(
         config.cpp
         utils.cpp
         config_variables.cpp
+        log_types.cpp
         transaction.cpp
 )

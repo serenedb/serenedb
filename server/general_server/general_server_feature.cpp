@@ -77,7 +77,6 @@ GeneralServerFeature::GeneralServerFeature(Server& server)
     _allow_early_connections(false),
     _return_queue_time_header(true),
     _compress_response_threshold(0),
-    _options_api_policy("jwt"),
     _num_io_threads(
       std::max(uint64_t(1), uint64_t(number_of_cores::GetValue() / 4))),
     _request_body_size_http1(AddMetric(serenedb_request_body_size_http1{})),
@@ -296,10 +295,6 @@ Result GeneralServerFeature::reloadTLS() {  // reload TLS data from disk
     }
   }
   return res;
-}
-
-const std::string& GeneralServerFeature::optionsApiPolicy() const noexcept {
-  return _options_api_policy;
 }
 
 uint64_t GeneralServerFeature::compressResponseThreshold() const noexcept {

@@ -55,12 +55,9 @@ class GeneralServerFeature final : public SerenedFeature {
   void unprepare() final;
 
   double keepAliveTimeout() const noexcept;
-  bool proxyCheck() const noexcept;
   bool returnQueueTimeHeader() const noexcept;
-  std::vector<std::string> trustedProxies() const;
   const std::vector<std::string>& accessControlAllowOrigins() const;
   Result reloadTLS();
-  const std::string& optionsApiPolicy() const noexcept;
   uint64_t compressResponseThreshold() const noexcept;
 
   std::shared_ptr<rest::RestHandlerFactory> handlerFactory() const;
@@ -78,10 +75,6 @@ class GeneralServerFeature final : public SerenedFeature {
 
   void countHttp2Connection() { _http2_connections.count(); }
 
-  uint64_t telemetricsMaxRequestsPerInterval() const noexcept {
-    return _telemetrics_max_requests_per_interval;
-  }
-
   metrics::Gauge<uint64_t>& current_requests_size;
 
  private:
@@ -95,7 +88,6 @@ class GeneralServerFeature final : public SerenedFeature {
   void defineRemainingHandlers(rest::RestHandlerFactory& f);
 
   double _keep_alive_timeout = 300.0;
-  uint64_t _telemetrics_max_requests_per_interval;
 #ifdef SDB_DEV
   bool _started_listening;
 #endif
@@ -103,7 +95,6 @@ class GeneralServerFeature final : public SerenedFeature {
   bool _return_queue_time_header;
   uint64_t _compress_response_threshold;
   std::vector<std::string> _access_control_allow_origins;
-  std::string _options_api_policy;
   std::shared_ptr<rest::RestHandlerFactory> _handler_factory;
   std::unique_ptr<rest::AsyncJobManager> _job_manager;
   std::vector<std::unique_ptr<rest::GeneralServer>> _servers;

@@ -45,7 +45,6 @@ class RocksDBOptionFeature final : public SerenedFeature {
 
   explicit RocksDBOptionFeature(Server& server);
 
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
 
   const rocksdb::Options& getOptions() const;

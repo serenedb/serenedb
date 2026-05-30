@@ -53,10 +53,6 @@ EndpointFeature::EndpointFeature(SerenedServer& server)
   }
 }
 
-void EndpointFeature::collectOptions(
-  std::shared_ptr<ProgramOptions> /*options*/) {
-}
-
 void EndpointFeature::validateOptions(std::shared_ptr<ProgramOptions>) {
   _endpoints = absl::GetFlag(FLAGS_server_endpoint);
   if (_backlog_size > SOMAXCONN) {

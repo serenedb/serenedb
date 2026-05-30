@@ -129,12 +129,6 @@ SearchEngine::SearchEngine(Server& server)
   static_assert(Server::isCreatedAfter<SearchEngine, DatabasePathFeature>());
 }
 
-void SearchEngine::collectOptions(
-  std::shared_ptr<options::ProgramOptions> /*options*/) {
-  // Surviving search knobs declared as ABSL_FLAGs at the top of the file;
-  // fields are populated from absl::GetFlag in validateOptions.
-}
-
 void SearchEngine::validateOptions(
   std::shared_ptr<options::ProgramOptions> options) {
   // Pull surviving search knobs from absl flags.

@@ -46,7 +46,6 @@ class GeneralServerFeature final : public SerenedFeature {
 
   explicit GeneralServerFeature(Server& server);
 
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
   void prepare() final;
   void start() final;

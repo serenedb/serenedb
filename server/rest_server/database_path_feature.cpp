@@ -52,11 +52,6 @@ DatabasePathFeature::DatabasePathFeature(Server& server)
   setOptional(false);
 }
 
-void DatabasePathFeature::collectOptions(
-  std::shared_ptr<ProgramOptions> /*options*/) {
-  // --database-directory is declared as ABSL_FLAG above.
-}
-
 void DatabasePathFeature::validateOptions(
   std::shared_ptr<ProgramOptions> /*options*/) {
   _directory = absl::GetFlag(FLAGS_database_directory);

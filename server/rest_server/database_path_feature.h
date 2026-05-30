@@ -32,7 +32,6 @@ class DatabasePathFeature final : public SerenedFeature {
 
   explicit DatabasePathFeature(Server& server);
 
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
   void prepare() final;
   void start() final;

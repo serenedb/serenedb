@@ -356,7 +356,6 @@ class CatalogFeature final : public SerenedFeature {
 
   explicit CatalogFeature(Server& server);
 
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void start() final;
   void unprepare() final;
   void prepare() final;

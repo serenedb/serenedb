@@ -81,11 +81,6 @@ SslServerFeature::SslServerFeature(Server& server)
   setOptional(true);
 }
 
-void SslServerFeature::collectOptions(
-  std::shared_ptr<ProgramOptions> /*options*/) {
-  // SSL knobs are declared as ABSL_FLAGs in the global block below.
-}
-
 void SslServerFeature::validateOptions(
   std::shared_ptr<ProgramOptions> options) {
   _cafile = absl::GetFlag(FLAGS_ssl_cafile);

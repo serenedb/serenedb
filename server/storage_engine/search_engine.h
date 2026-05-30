@@ -63,7 +63,6 @@ class SearchEngine final : public SerenedFeature {
 
   explicit SearchEngine(Server& server);
 
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void prepare() final;
   void start() final;
   void stop() final;

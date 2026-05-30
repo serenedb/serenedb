@@ -102,11 +102,6 @@ GeneralServerFeature::GeneralServerFeature(Server& server)
   setOptional(true);
 }
 
-void GeneralServerFeature::collectOptions(
-  std::shared_ptr<ProgramOptions> /*options*/) {
-  // Knobs declared as ABSL_FLAGs above.
-}
-
 void GeneralServerFeature::validateOptions(std::shared_ptr<ProgramOptions>) {
   if (auto io = absl::GetFlag(FLAGS_server_io_threads); io > 0) {
     _num_io_threads = io;

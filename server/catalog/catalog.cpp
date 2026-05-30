@@ -685,11 +685,6 @@ ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
 CatalogFeature::CatalogFeature(Server& server)
   : SerenedFeature{server, name()} {}
 
-void CatalogFeature::collectOptions(
-  std::shared_ptr<options::ProgramOptions> /*options*/) {
-  // No catalog options. --skip-background-errors had no reader.
-}
-
 void CatalogFeature::prepare() {
   auto catalog = std::make_shared<LocalCatalog>();
   _global = catalog;

@@ -82,11 +82,6 @@ SchedulerFeature::SchedulerFeature(Server& server)
 
 SchedulerFeature::~SchedulerFeature() = default;
 
-void SchedulerFeature::collectOptions(
-  std::shared_ptr<options::ProgramOptions> /*options*/) {
-  // Scheduler tuning is auto-detected; no user-facing knobs.
-}
-
 void SchedulerFeature::validateOptions(
   std::shared_ptr<options::ProgramOptions> options) {
   const auto n = number_of_cores::GetValue();

@@ -383,11 +383,6 @@ bool RocksDBOptionFeature::ioUringEnabled() const noexcept {
   return _io_uring == kIoUringEnabled;
 }
 
-void RocksDBOptionFeature::collectOptions(std::shared_ptr<ProgramOptions> /*options*/) {
-  // All RocksDB tuning options dropped; the RocksDB engine itself
-  // is slated for deletion. Field defaults stand.
-}
-
 void RocksDBOptionFeature::validateOptions(
   std::shared_ptr<ProgramOptions> options) {
   transaction::Options::setLimits(_max_transaction_size,

@@ -206,10 +206,8 @@ class AppServer {
 
   void disableFeatures(std::span<const size_t> types, bool force);
 
-  void collectOptions();
   void parseOptions(int argc, char* argv[]);
   void validateOptions();
-  void daemonize();
   void prepare();
   void start();
   void stop();

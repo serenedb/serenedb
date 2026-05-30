@@ -38,7 +38,7 @@ class SchedulerFeature final : public SerenedFeature {
   SchedulerFeature(Server& server);
   ~SchedulerFeature() final;
 
-  void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
+  void validateOptions() final;
   void prepare() final;
   void start() final;
   void stop() final;

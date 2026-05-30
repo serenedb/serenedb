@@ -32,7 +32,7 @@ class EndpointFeature final : public SerenedFeature {
 
   explicit EndpointFeature(SerenedServer& server);
 
-  void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
+  void validateOptions() final;
 
   std::vector<std::string> httpEndpoints();
   EndpointList& endpointList() { return _endpoint_list; }

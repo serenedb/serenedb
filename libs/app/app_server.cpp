@@ -88,34 +88,16 @@ void AppServer::disableFeatures(std::span<const size_t> types, bool force) {
 // of all feature, start them and wait for a shutdown
 // signal. after that, it will shutdown all features
 void AppServer::run(int argc, char* argv[]) {
-  // collect options from all features
-  // in this phase, all features are order-independent
-  _state.store(State::InCollectOptions, std::memory_order_release);
-  reportServerProgress(State::InCollectOptions);
-  collectOptions();
-
-  // setup dependency, but ignore any failure for now
+  // dependency setup
   SetupFeatures();
 
-  // parse the command line parameters and load any configuration
-  // file(s)
+  // parse the command line via absl::flags
   parseOptions(argc, argv);
 
-  if (!_help_section.empty()) {
-    // help shown. we can exit early
-    return;
-  }
-
-  // seal the options
-  _options->seal();
-
-  // validate options of all features
+  // validate options pulled from absl::GetFlag by each feature
   _state.store(State::InValidateOptions, std::memory_order_release);
   reportServerProgress(State::InValidateOptions);
   validateOptions();
-
-  // allows process control
-  daemonize();
 
   // now the features will actually do some preparation work
   // in the preparation phase, the features must not start any threads
@@ -206,32 +188,16 @@ void AppServer::beginShutdown() {
 
 void AppServer::shutdownFatalError() { reportServerProgress(State::Aborted); }
 
-void AppServer::collectOptions() {
-  _options->addSection(options::Section{"", "general settings", "",
-                                        "general options", false, false});
-
-  for (auto& feature : EnabledFeatures()) {
-    reportFeatureProgress(_state.load(std::memory_order_relaxed),
-                          feature.name());
-    feature.collectOptions(_options);
-  }
-}
-
 void AppServer::parseOptions(int argc, char* argv[]) {
-  // CLI parsing has moved to absl::flags; surviving knobs are declared as
-  // ABSL_FLAGs in the feature .cpp files that own them and read via
-  // absl::GetFlag during validateOptions/prepare. Here we run absl's parser
-  // and stash the positional args so features can pull e.g. the data-dir
-  // positional from `positionalArgs()`.
+  // All CLI knobs are declared as ABSL_FLAGs in their owning .cpp files
+  // and read via absl::GetFlag during validateOptions/prepare. Run absl's
+  // parser and stash positional args (e.g. positional data-dir) for
+  // features to pick up.
   auto positionals = absl::ParseCommandLine(argc, argv);
   _positional_args.clear();
   _positional_args.reserve(positionals.size());
   for (auto* p : positionals) {
     _positional_args.emplace_back(p);
-  }
-
-  for (auto& feature : EnabledFeatures()) {
-    feature.loadOptions(_options, _binary_path);
   }
 }
 
@@ -239,7 +205,7 @@ void AppServer::validateOptions() {
   for (auto& feature : EnabledFeatures()) {
     reportFeatureProgress(_state.load(std::memory_order_relaxed),
                           feature.name());
-    feature.validateOptions(_options);
+    feature.validateOptions();
     feature.state(AppFeature::State::Validated);
   }
 }
@@ -247,12 +213,6 @@ void AppServer::validateOptions() {
 void AppServer::SetupFeatures() {
   for (auto& feature : EnabledFeatures()) {
     feature.state(AppFeature::State::Initialized);
-  }
-}
-
-void AppServer::daemonize() {
-  for (auto& feature : EnabledFeatures()) {
-    feature.daemonize();
   }
 }
 

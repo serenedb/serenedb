@@ -59,8 +59,7 @@ uint64_t PostgresFeature::RegisterTask(PgSQLCommTaskBase& task) {
   }
 }
 
-void PostgresFeature::validateOptions(
-  std::shared_ptr<options::ProgramOptions> options) {
+void PostgresFeature::validateOptions() {
   const auto& endpoint_list =
     server().getFeature<EndpointFeature>().endpointList();
   const bool needs_disable = std::ranges::none_of(

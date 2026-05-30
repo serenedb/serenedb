@@ -82,20 +82,13 @@ SchedulerFeature::SchedulerFeature(Server& server)
 
 SchedulerFeature::~SchedulerFeature() = default;
 
-void SchedulerFeature::validateOptions(
-  std::shared_ptr<options::ProgramOptions> options) {
+void SchedulerFeature::validateOptions() {
   const auto n = number_of_cores::GetValue();
 
   SDB_DEBUG(GENERAL, "Detected number of processors: ", n);
 
   SDB_ASSERT(n > 0);
-  if (options->processingResult().touched("server.maximal-threads") &&
-      _nr_maximal_threads > 8 * n) {
-    SDB_WARN(GENERAL, "--server.maximal-threads (",
-             _nr_maximal_threads,
-             ") is more than eight times the number of cores (", n,
-             "), this might overload the server");
-  } else if (_nr_maximal_threads == 0) {
+  if (_nr_maximal_threads == 0) {
     _nr_maximal_threads = DefaultNumberOfThreads();
   }
 

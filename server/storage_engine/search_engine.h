@@ -68,7 +68,7 @@ class SearchEngine final : public SerenedFeature {
   void stop() final;
   void unprepare() final;
   void beginShutdown() final;
-  void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
+  void validateOptions() final;
 
   std::tuple<size_t, size_t, size_t> stats(ThreadGroup id) const;
   std::pair<size_t, size_t> limits(ThreadGroup id) const;

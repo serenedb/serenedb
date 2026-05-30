@@ -53,7 +53,7 @@ EndpointFeature::EndpointFeature(SerenedServer& server)
   }
 }
 
-void EndpointFeature::validateOptions(std::shared_ptr<ProgramOptions>) {
+void EndpointFeature::validateOptions() {
   _endpoints = absl::GetFlag(FLAGS_server_endpoint);
   if (_backlog_size > SOMAXCONN) {
     SDB_WARN(GENERAL,

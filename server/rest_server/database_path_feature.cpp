@@ -52,8 +52,7 @@ DatabasePathFeature::DatabasePathFeature(Server& server)
   setOptional(false);
 }
 
-void DatabasePathFeature::validateOptions(
-  std::shared_ptr<ProgramOptions> /*options*/) {
+void DatabasePathFeature::validateOptions() {
   _directory = absl::GetFlag(FLAGS_database_directory);
 
   // Positional arg (server.positionalArgs()[1]) wins over the flag if given.

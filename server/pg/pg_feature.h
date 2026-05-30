@@ -35,7 +35,7 @@ class PostgresFeature final : public SerenedFeature {
 
   explicit PostgresFeature(SerenedServer& server);
 
-  void validateOptions(std::shared_ptr<options::ProgramOptions> options) final;
+  void validateOptions() final;
   void prepare() final;
   void start() final;
   void unprepare() final;

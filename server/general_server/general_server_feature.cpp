@@ -102,7 +102,7 @@ GeneralServerFeature::GeneralServerFeature(Server& server)
   setOptional(true);
 }
 
-void GeneralServerFeature::validateOptions(std::shared_ptr<ProgramOptions>) {
+void GeneralServerFeature::validateOptions() {
   if (auto io = absl::GetFlag(FLAGS_server_io_threads); io > 0) {
     _num_io_threads = io;
   }

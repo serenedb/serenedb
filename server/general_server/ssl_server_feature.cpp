@@ -81,8 +81,7 @@ SslServerFeature::SslServerFeature(Server& server)
   setOptional(true);
 }
 
-void SslServerFeature::validateOptions(
-  std::shared_ptr<ProgramOptions> options) {
+void SslServerFeature::validateOptions() {
   _cafile = absl::GetFlag(FLAGS_ssl_cafile);
   _keyfile = absl::GetFlag(FLAGS_ssl_keyfile);
   _cipher_list = absl::GetFlag(FLAGS_ssl_cipher_list);

@@ -129,24 +129,16 @@ SearchEngine::SearchEngine(Server& server)
   static_assert(Server::isCreatedAfter<SearchEngine, DatabasePathFeature>());
 }
 
-void SearchEngine::validateOptions(
-  std::shared_ptr<options::ProgramOptions> options) {
-  // Pull surviving search knobs from absl flags.
+void SearchEngine::validateOptions() {
   _skip_wal_recovery = absl::GetFlag(FLAGS_search_skip_wal_recovery);
-
-  const auto& args = options->processingResult();
 
   uint32_t threads_limit =
     static_cast<uint32_t>(4 * number_of_cores::GetValue());
-
   _commit_threads = ComputeThreadsCount(_commit_threads, threads_limit, 6);
   _compaction_threads =
     ComputeThreadsCount(_compaction_threads, threads_limit, 6);
-
-  if (!args.touched(kSearchThreadsLimit)) {
-    _search_execution_threads_limit =
-      static_cast<uint32_t>(number_of_cores::GetValue());
-  }
+  _search_execution_threads_limit =
+    static_cast<uint32_t>(number_of_cores::GetValue());
 }
 
 SearchEngine& GetSearchEngine() {

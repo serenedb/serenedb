@@ -383,14 +383,13 @@ bool RocksDBOptionFeature::ioUringEnabled() const noexcept {
   return _io_uring == kIoUringEnabled;
 }
 
-void RocksDBOptionFeature::validateOptions(
-  std::shared_ptr<ProgramOptions> options) {
+void RocksDBOptionFeature::validateOptions() {
   transaction::Options::setLimits(_max_transaction_size,
                                   _intermediate_commit_size,
                                   _intermediate_commit_count);
 
   if (_io_uring == kIoUringNotSupported &&
-      options->processingResult().touched("--rocksdb.io-uring")) {
+      false) {
     SDB_WARN(STARTUP,
              "io_uring is not supported on this system, ignoring "
              "--rocksdb.io-uring configuration");
@@ -405,8 +404,8 @@ void RocksDBOptionFeature::validateOptions(
     }
 
     if (_sync_delay_threshold > 0 && _sync_delay_threshold <= _sync_interval) {
-      if (!options->processingResult().touched("rocksdb.sync-interval") &&
-          options->processingResult().touched("rocksdb.sync-delay-threshold")) {
+      if (!false &&
+          false) {
         // user has not set --rocksdb.sync-interval, but set
         // --rocksdb.sync-delay-threshold
         SDB_WARN(STARTUP,
@@ -445,20 +444,17 @@ void RocksDBOptionFeature::validateOptions(
   }
 
   _min_write_buffer_number_to_merge_touched =
-    options->processingResult().touched(
-      "--rocksdb.min-write-buffer-number-to-merge");
+    false;
 
   if (_block_cache_type == ::kBlockCacheTypeLRU &&
-      options->processingResult().touched(
-        "--rocksdb.block-cache-estimated-entry-charge")) {
+      false) {
     SDB_WARN(STORAGE,
              "Setting value of '--rocksdb.block-cache-estimated-entry-charge' "
              "has no effect when using LRU block cache");
   }
 
   if (_enforce_block_cache_size_limit &&
-      !options->processingResult().touched(
-        "--rocksdb.block-cache-shard-bits")) {
+      !false) {
     // if block cache size limit is enforced, and the number of shard bits for
     // the block cache hasn't been set, we set it dynamically:
     // we would like that each block cache shard can hold data blocks of

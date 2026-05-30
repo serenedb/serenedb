@@ -414,9 +414,7 @@ std::optional<ExternalProcessStatus> LookupSpawnedProcessStatus(pid_t pid) {
 
 #ifdef SERENEDB_HAVE_LINUX_PROC
 
-ProcessInfo GetProcessInfoSelf() {
-  return GetProcessInfo(CurrentProcessId());
-}
+ProcessInfo GetProcessInfoSelf() { return GetProcessInfo(CurrentProcessId()); }
 
 #elif SERENEDB_HAVE_GETRUSAGE
 

@@ -60,8 +60,8 @@ bool RocksDBBackgroundThread::start() {
     try {
       run();
     } catch (const std::exception& ex) {
-      SDB_WARN(STORAGE, "caught exception in rocksdb background thread: ",
-               ex.what());
+      SDB_WARN(STORAGE,
+               "caught exception in rocksdb background thread: ", ex.what());
     } catch (...) {
       SDB_WARN(STORAGE, "caught unknown exception in rocksdb background");
     }

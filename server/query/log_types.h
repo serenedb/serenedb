@@ -17,15 +17,15 @@
 ///
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
-//
+
+#pragma once
+
 // Glue between the sdb::log shim and duckdb::LogManager. Installs the sink
 // that the SDB_* macros dispatch through after the DuckDB instance has been
 // constructed, registers the SereneDB-specific log types so they can be
 // referenced by SET enabled_log_types/disabled_log_types, and seeds an
 // initial LogConfig that mirrors the pre-migration behaviour (HTTP+SSL muted
 // by default, everything else at INFO).
-
-#pragma once
 
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>

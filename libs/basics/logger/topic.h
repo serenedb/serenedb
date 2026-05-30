@@ -17,7 +17,9 @@
 ///
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
-//
+
+#pragma once
+
 // Topic constants for SDB_LOG / SDB_INFO / etc. The SDB_* macros prepend
 // `::sdb::log::` to the topic argument, so call sites write
 // `SDB_INFO(GENERAL, "...")` and get `::sdb::log::GENERAL` resolved at
@@ -28,8 +30,6 @@
 // DuckDB matches enabled/disabled_log_types CASE-SENSITIVELY. `GENERAL` maps
 // to the empty string -- DuckDB's `DefaultLogType` -- so plain SDB_INFO()
 // stays in the unfiltered default bucket.
-
-#pragma once
 
 #include <string_view>
 

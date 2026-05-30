@@ -142,8 +142,7 @@ void BuildLogMessage(SmallString& buffer, std::string_view context, int signal,
   }
 
   // append thread id
-  buffer.append(", thread ")
-    .appendUInt64(uint64_t(CurrentThreadNumber()));
+  buffer.append(", thread ").appendUInt64(uint64_t(CurrentThreadNumber()));
 
 #ifdef __linux__
   // append thread name

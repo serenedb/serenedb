@@ -340,7 +340,7 @@ DROP TYPE shred_pair_kind CASCADE;
 statement error
 INSERT INTO shred_pair_t VALUES ('x', NULL);
 ----
-db error: ERROR:
+db error: ERROR: new row for relation "shred_pair_t" violates check constraint "shred_pair_t_n_check"
 <slt:ignore>
 
 
@@ -405,7 +405,7 @@ DROP TYPE shred_view_kind CASCADE;
 statement error
 SELECT * FROM shred_view_v;
 ----
-db error: ERROR:
+db error: ERROR: Table with name shred_view_v does not exist!
 <slt:ignore>
 
 
@@ -437,4 +437,5 @@ DROP TYPE shred_fn_kind CASCADE;
 statement error
 SELECT shred_fn_use('m');
 ----
-db error: ERROR:
+db error: ERROR: Scalar Function with name shred_fn_use does not exist!
+<slt:ignore>

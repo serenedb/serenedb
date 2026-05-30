@@ -33,7 +33,6 @@
 #include "metrics/gauge_counter_guard.h"
 #include "rest/general_response.h"
 #include "rest_server/serened.h"
-#include "statistics/request_statistics.h"
 
 namespace sdb {
 namespace app {
@@ -46,7 +45,6 @@ class Exception;
 }
 
 class GeneralRequest;
-class RequestStatistics;
 class Result;
 
 enum class RestStatus {
@@ -91,13 +89,6 @@ class RestHandler : public std::enable_shared_from_this<RestHandler> {
 
   SerenedServer& server() noexcept { return _server; }
   const SerenedServer& server() const noexcept { return _server; }
-
-  [[nodiscard]] const RequestStatistics::Item& requestStatistics()
-    const noexcept {
-    return _statistics;
-  }
-  [[nodiscard]] RequestStatistics::Item&& StealRequestStatistics();
-  void SetRequestStatistics(RequestStatistics::Item&& stat);
 
   void setIsAsyncRequest() noexcept { _is_async_request = true; }
 
@@ -190,7 +181,6 @@ class RestHandler : public std::enable_shared_from_this<RestHandler> {
   std::unique_ptr<GeneralRequest> _request;
   std::unique_ptr<GeneralResponse> _response;
   SerenedServer& _server;
-  RequestStatistics::Item _statistics;
 
  private:
   mutable absl::Mutex _execution_mutex;

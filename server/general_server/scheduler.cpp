@@ -40,7 +40,6 @@
 #include "metrics/gauge_builder.h"
 #include "metrics/metrics_feature.h"
 #include "rest/general_response.h"
-#include "statistics/request_statistics.h"
 
 namespace sdb {
 namespace {

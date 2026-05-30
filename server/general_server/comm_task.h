@@ -33,15 +33,11 @@
 #include "basics/result.h"
 #include "endpoint/connection_info.h"
 #include "general_server/state.h"
-#include "statistics/connection_statistics.h"
-#include "statistics/request_statistics.h"
 
 namespace sdb {
 
-class ConnectionStatistics;
 class GeneralRequest;
 class GeneralResponse;
-class RequestStatistics;
 
 namespace rest {
 

@@ -41,8 +41,6 @@
 #include "general_server/state.h"
 #include "rest/http_request.h"
 #include "rest/http_response.h"
-#include "statistics/connection_statistics.h"
-#include "statistics/request_statistics.h"
 
 using namespace sdb::basics;
 using std::string_view;
@@ -64,8 +62,6 @@ namespace sdb::rest {
 struct H2Response : public HttpResponse {
   H2Response(ResponseCode code, uint64_t mid)
     : HttpResponse(code, mid, nullptr, rest::ResponseCompressionType::Unset) {}
-
-  RequestStatistics::Item statistics;
 };
 
 template<SocketType T>
@@ -80,7 +76,6 @@ template<SocketType T>
   }
 
   const int32_t sid = frame->hd.stream_id;
-  me->AcquireRequestStatistics(sid).SET_READ_START(utilities::GetMicrotime());
   auto req =
     std::make_unique<HttpRequest>(me->_connection_info, /*messageId*/ sid);
   me->CreateStream(sid, std::move(req));
@@ -196,17 +191,7 @@ template<SocketType T>
                                               uint32_t error_code,
                                               void* user_data) try {
   H2CommTask<T>* me = static_cast<H2CommTask<T>*>(user_data);
-  auto it = me->_streams.find(stream_id);
-  if (it != me->_streams.end()) {
-    Stream& strm = it->second;
-    if (strm.response) {
-      auto* h2_response = dynamic_cast<H2Response*>(strm.response.get());
-      if (h2_response != nullptr) {
-        h2_response->statistics.SET_WRITE_END();
-      }
-    }
-    me->_streams.erase(it);
-  }
+  me->_streams.erase(stream_id);
 
   if (error_code != NGHTTP2_NO_ERROR) {
     SDB_DEBUG(HTTP, "<http2> closing stream ", stream_id, " with error '",
@@ -256,7 +241,6 @@ template<SocketType T>
 H2CommTask<T>::H2CommTask(GeneralServer& server, ConnectionInfo info,
                           std::shared_ptr<AsioSocket<T>> so)
   : GeneralCommTask<T>(server, std::move(info), std::move(so)) {
-  this->_connection_statistics.SET_HTTP();
   this->_general_server_feature.countHttp2Connection();
   InitNgHttp2Session();
 }
@@ -598,11 +582,6 @@ void H2CommTask<T>::ProcessRequest(Stream& stream,
   // store origin header for later use
   stream.origin = req->header(StaticStrings::kOrigin);
   auto message_id = req->messageId();
-  const auto& stat = this->GetRequestStatistics(message_id);
-  stat.SET_REQUEST_TYPE(req->requestType());
-  stat.ADD_RECEIVED_BYTES(stream.header_buff_size + req->body().size());
-  stat.SET_READ_END();
-  stat.SET_WRITE_START();
 
   // OPTIONS requests currently go unauthenticated
   if (req->requestType() == rest::RequestType::Options) {
@@ -614,11 +593,6 @@ void H2CommTask<T>::ProcessRequest(Stream& stream,
 
   // scrape the auth headers to determine and authenticate the user
   auto auth_token = this->CheckAuthHeader(*req, mode);
-
-  // We want to separate superuser token traffic:
-  if (req->authenticated() && req->user().empty()) {
-    stat.SET_SUPERUSER();
-  }
 
   // first check whether we allow the request to continue
   Flow cont = this->PrepareExecution(auth_token, *req, mode);
@@ -641,8 +615,7 @@ void H2CommTask<T>::ProcessRequest(Stream& stream,
 }
 
 template<SocketType T>
-void H2CommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> res,
-                                 RequestStatistics::Item stat) {
+void H2CommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> res) {
   unsigned n = _num_processing.fetch_sub(1, std::memory_order_relaxed);
   SDB_ASSERT(n > 0);
 
@@ -672,14 +645,7 @@ void H2CommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> res,
   // and give some request information
   SDB_DEBUG(HTTP, "\"h2-request-end\",\"", std::bit_cast<size_t>(this), "\",\"",
             this->_connection_info.client_address, "\",\"", url(nullptr),
-            "\",\"", static_cast<int>(res->responseCode()), "\",",
-            absl::StrFormat("%.6f", stat.ELAPSED_SINCE_READ_START()), ",",
-            absl::StrFormat("%.6f", stat.ELAPSED_WHILE_QUEUED()));
-
-  auto* h2_response = dynamic_cast<H2Response*>(tmp);
-  if (h2_response != nullptr) {
-    h2_response->statistics = std::move(stat);
-  }
+            "\",\"", static_cast<int>(res->responseCode()), "\"");
 
   // this uses a fixed capacity queue, push might fail (unlikely, we limit max
   // streams)
@@ -857,13 +823,6 @@ void H2CommTask<T>::QueueHttp2Responses() {
         return static_cast<ssize_t>(nread);
       };
       prd_ptr = &prd;
-    }
-
-    // we may have an HTTP/1 response here or an HTTP/2 response.
-    // try if upcasting works, and only if so, treat it as HTTP/2.
-    auto* h2_response = dynamic_cast<H2Response*>(&res);
-    if (h2_response != nullptr) {
-      h2_response->statistics.ADD_SENT_BYTES(res.bodySize());
     }
 
     int rv = nghttp2_submit_response(this->_session, stream_id, nva.data(),

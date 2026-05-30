@@ -38,7 +38,6 @@
 #include "general_server/state.h"
 #include "rest/general_request.h"
 #include "rest/http_response.h"
-#include "statistics/request_statistics.h"
 #include "utils/exec_context.h"
 
 using namespace sdb;
@@ -50,7 +49,6 @@ RestHandler::RestHandler(SerenedServer& server, GeneralRequest* request,
   : _request(request),
     _response(response),
     _server(server),
-    _statistics(),
     _handler_id(0),
     _state(HandlerState::Prepare),
     _tracked_as_ongoing_low_prio(false),
@@ -129,10 +127,9 @@ RequestLane RestHandler::determineRequestLane() {
 
 void RestHandler::trackQueueStart() noexcept {
   SDB_ASSERT(SchedulerFeature::gScheduler != nullptr);
-  _statistics.SET_QUEUE_START();
 }
 
-void RestHandler::trackQueueEnd() noexcept { _statistics.SET_QUEUE_END(); }
+void RestHandler::trackQueueEnd() noexcept {}
 
 void RestHandler::trackTaskStart() noexcept {
   SDB_ASSERT(!_tracked_as_ongoing_low_prio);
@@ -151,22 +148,7 @@ void RestHandler::trackTaskEnd() noexcept {
     SDB_ASSERT(SchedulerFeature::gScheduler != nullptr);
     SchedulerFeature::gScheduler->trackEndOngoingLowPriorityTask();
     _tracked_as_ongoing_low_prio = false;
-
-    // update the time the last low priority item spent waiting in the queue.
-
-    // the queueing time is in ms
-    uint64_t queue_time_ms =
-      static_cast<uint64_t>(_statistics.ELAPSED_WHILE_QUEUED() * 1000.0);
-    SchedulerFeature::gScheduler->setLastLowPriorityDequeueTime(queue_time_ms);
   }
-}
-
-RequestStatistics::Item&& RestHandler::StealRequestStatistics() {
-  return std::move(_statistics);
-}
-
-void RestHandler::SetRequestStatistics(RequestStatistics::Item&& stat) {
-  _statistics = std::move(stat);
 }
 
 yaclib::Future<Result> RestHandler::forwardRequest(bool& forwarded) {
@@ -263,8 +245,6 @@ void RestHandler::runHandlerStateMachine() {
         break;
 
       case HandlerState::Finalize:
-        _statistics.SET_REQUEST_END();
-
         // shutdownExecute is noexcept
         shutdownExecute(true);  // may not be moved down
 
@@ -272,13 +252,10 @@ void RestHandler::runHandlerStateMachine() {
 
         // compress response if required
         compressResponse();
-        // Callback may stealStatistics!
         _send_response_callback(this);
         break;
 
       case HandlerState::Failed:
-        _statistics.SET_REQUEST_END();
-        // Callback may stealStatistics!
         _send_response_callback(this);
 
         shutdownExecute(false);
@@ -291,9 +268,6 @@ void RestHandler::runHandlerStateMachine() {
 }
 
 void RestHandler::prepareEngine() {
-  // set end immediately so we do not get negative statistics
-  _statistics.SET_REQUEST_START_END();
-
   if (_canceled) {
     _state = HandlerState::Failed;
 

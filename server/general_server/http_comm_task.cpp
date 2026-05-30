@@ -36,8 +36,6 @@
 #include "general_server/state.h"
 #include "rest/http_request.h"
 #include "rest/http_response.h"
-#include "statistics/connection_statistics.h"
-#include "statistics/request_statistics.h"
 
 using namespace sdb;
 using namespace sdb::basics;
@@ -105,9 +103,6 @@ int HttpCommTask<T>::on_message_began(llhttp_t* p) try {
   me->_last_header_was_value = false;
   me->_should_keep_alive = false;
   me->_message_done = false;
-
-  // acquire a new statistics entry for the request
-  me->AcquireRequestStatistics(1UL).SET_READ_START(utilities::GetMicrotime());
   return HPE_OK;
 } catch (...) {
   // the caller of this function is a C function, which doesn't know
@@ -124,7 +119,6 @@ int HttpCommTask<T>::on_url(llhttp_t* p, const char* at, size_t len) try {
                            rest::ContentType::Unset, 1, vpack::BufferUInt8());
     return HPE_USER;
   }
-  me->GetRequestStatistics(1UL).SET_REQUEST_TYPE(me->_request->requestType());
 
   me->_url.append(at, len);
   return HPE_OK;
@@ -247,8 +241,6 @@ template<SocketType T>
 int HttpCommTask<T>::on_message_complete(llhttp_t* p) try {
   HttpCommTask<T>* me = static_cast<HttpCommTask<T>*>(p->data);
   me->_request->parseUrl(me->_url.data(), me->_url.size());
-
-  me->GetRequestStatistics(1UL).SET_READ_END();
   me->_message_done = true;
 
   return HPE_PAUSED;
@@ -265,8 +257,6 @@ HttpCommTask<T>::HttpCommTask(GeneralServer& server, ConnectionInfo info,
     _last_header_was_value(false),
     _should_keep_alive(false),
     _message_done(false) {
-  this->_connection_statistics.SET_HTTP();
-
   // initialize http parsing code
   llhttp_settings_init(&_parser_settings);
   _parser_settings.on_message_begin = HttpCommTask<T>::on_message_began;
@@ -335,8 +325,6 @@ bool HttpCommTask<T>::ReadCallback(asio_ns::error_code ec) {
     SDB_ASSERT(nparsed < std::numeric_limits<size_t>::max());
     // Remove consumed data from receive buffer.
     this->_protocol->buffer.consume(nparsed);
-    // And count it in the statistics:
-    this->GetRequestStatistics(1UL).ADD_RECEIVED_BYTES(nparsed);
 
     if (_message_done) {
       SDB_ASSERT(err == HPE_PAUSED);
@@ -416,7 +404,6 @@ void HttpCommTask<T>::CheckProtocolUpgrade() {
       // do not remove preface here, H2CommTask will read it from buffer
       auto comm_task = std::make_unique<H2CommTask<T>>(
         me._server, me._connection_info, std::move(me._protocol));
-      comm_task->SetRequestStatistics(1UL, me.StealRequestStatistics(1UL));
       me._server.registerTask(std::move(comm_task));
       me.Close(ec);
       return;
@@ -487,7 +474,6 @@ void HttpCommTask<T>::DoProcessRequest() {
     if (h2 == "h2c" && found && !settings.empty()) {
       auto task = std::make_shared<H2CommTask<T>>(
         this->_server, this->_connection_info, std::move(this->_protocol));
-      task->SetRequestStatistics(1UL, this->StealRequestStatistics(1UL));
       task->UpgradeHttp1(std::move(_request));
       this->Close();
       return;
@@ -532,11 +518,6 @@ void HttpCommTask<T>::DoProcessRequest() {
   // scrape the auth headers to determine and authenticate the user
   auto auth_token = this->CheckAuthHeader(*_request, mode);
 
-  // We want to separate superuser token traffic:
-  if (_request->authenticated() && _request->user().empty()) {
-    this->GetRequestStatistics(1UL).SET_SUPERUSER();
-  }
-
   // first check whether we allow the request to continue
   Flow cont = this->PrepareExecution(auth_token, *_request, mode);
   if (cont != Flow::Continue) {
@@ -560,8 +541,7 @@ void HttpCommTask<T>::DoProcessRequest() {
 }
 
 template<SocketType T>
-void HttpCommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> base_res,
-                                   RequestStatistics::Item stat) {
+void HttpCommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> base_res) {
   if (this->Stopped()) {
     return;
   }
@@ -690,7 +670,6 @@ void HttpCommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> base_res,
 
   SDB_ASSERT(_response == nullptr);
   _response = response.stealBody();
-  // append write buffer and statistics
   SDB_ASSERT(response.responseCode() != rest::ResponseCode::NoContent ||
                _response->empty(),
              "response code 204 requires body length to be zero");
@@ -712,23 +691,20 @@ void HttpCommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> base_res,
             "\",\"", this->_connection_info.client_address, "\",\"",
             GeneralRequest::translateMethod(::LlhttpToRequestType(&_parser)),
             "\",\"", url(), "\",\"", static_cast<int>(response.responseCode()),
-            "\",", absl::StrFormat("%.6f", stat.ELAPSED_SINCE_READ_START()),
-            ",", absl::StrFormat("%.6f", stat.ELAPSED_WHILE_QUEUED()));
+            "\"");
 
   // sendResponse is always called from a scheduler thread
   boost::asio::post(
     this->_protocol->context.io_context,
-    [self = this->shared_from_this(), stat = std::move(stat)]() mutable {
-      static_cast<HttpCommTask<T>&>(*self).WriteResponse(std::move(stat));
+    [self = this->shared_from_this()]() mutable {
+      static_cast<HttpCommTask<T>&>(*self).WriteResponse();
     });
 }
 
 // called on IO context thread
 template<SocketType T>
-void HttpCommTask<T>::WriteResponse(RequestStatistics::Item stat) {
+void HttpCommTask<T>::WriteResponse() {
   SDB_ASSERT(!_header.empty());
-
-  stat.SET_WRITE_START();
 
   std::array<asio_ns::const_buffer, 2> buffers;
   buffers[0] = asio_ns::buffer(_header.data(), _header.size());
@@ -739,13 +715,9 @@ void HttpCommTask<T>::WriteResponse(RequestStatistics::Item stat) {
   this->_writing = true;
   asio_ns::async_write(
     this->_protocol->socket, buffers,
-    [self = this->shared_from_this(), stat = std::move(stat)](
-      asio_ns::error_code ec, size_t nwrite) {
+    [self = this->shared_from_this()](asio_ns::error_code ec, size_t /*nwrite*/) {
       auto& me = static_cast<HttpCommTask<T>&>(*self);
       me._writing = false;
-
-      stat.SET_WRITE_END();
-      stat.ADD_SENT_BYTES(nwrite);
 
       me._response.reset();
 

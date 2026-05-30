@@ -122,10 +122,7 @@ template<SocketType T>
 GeneralCommTask<T>::GeneralCommTask(GeneralServer& server, ConnectionInfo info,
                                     std::shared_ptr<AsioSocket<T>> socket)
   : GenericCommTask<T, CommTask>(server, std::move(info), socket),
-    _writing(false),
-    _connection_statistics(AcquireConnectionStatistics()) {
-  _connection_statistics.SET_START();
-}
+    _writing(false) {}
 
 template<SocketType T>
 void GeneralCommTask<T>::LogRequestHeaders(
@@ -355,8 +352,6 @@ void GeneralCommTask<T>::ExecuteRequest(
   }
 
   if (mode == ServerState::Mode::Startup) {
-    // request during startup phase
-    handler->SetRequestStatistics(StealRequestStatistics(message_id));
     HandleRequestStartup(std::move(handler));
     return;
   }
@@ -365,13 +360,11 @@ void GeneralCommTask<T>::ExecuteRequest(
   bool forwarded;
   auto res = handler->forwardRequest(forwarded);
   if (forwarded) {
-    GetRequestStatistics(message_id).SET_SUPERUSER();
     std::move(res).DetachInline(
-      [self(this->shared_from_this()), h(std::move(handler)),
-       message_id](yaclib::Result<Result>&& /*ignored*/) -> void {
+      [self(this->shared_from_this()),
+       h(std::move(handler))](yaclib::Result<Result>&& /*ignored*/) -> void {
         auto gct = static_cast<GeneralCommTask<T>*>(self.get());
-        gct->SendResponse(h->stealResponse(),
-                          gct->StealRequestStatistics(message_id));
+        gct->SendResponse(h->stealResponse());
       });
     return;
   }
@@ -388,9 +381,6 @@ void GeneralCommTask<T>::ExecuteRequest(
 
   // asynchronous request
   if (found && (async_exec == "true" || async_exec == "store")) {
-    RequestStatistics::Item stats = StealRequestStatistics(message_id);
-    stats.SET_ASYNC();
-    handler->SetRequestStatistics(std::move(stats));
     handler->setIsAsyncRequest();
 
     uint64_t job_id = 0;
@@ -417,15 +407,13 @@ void GeneralCommTask<T>::ExecuteRequest(
         resp->setHeaderNC(StaticStrings::kAsyncId,
                           basics::string_utils::Itoa(job_id));
       }
-      SendResponse(std::move(resp), RequestStatistics::Item());
+      SendResponse(std::move(resp));
     } else {
       SendErrorResponse(ResponseCode::ServiceUnavailable, resp_type, message_id,
                         ERROR_QUEUE_FULL);
     }
   } else {
-    // synchronous request
-    handler->SetRequestStatistics(StealRequestStatistics(message_id));
-    // HandleRequestSync adds an error response
+    // synchronous request — HandleRequestSync adds an error response
     HandleRequestSync(std::move(handler));
   }
 }
@@ -475,7 +463,7 @@ void GeneralCommTask<T>::SendSimpleResponse(ResponseCode code,
     if (!buffer.empty()) {
       resp->setPayload(std::move(buffer), vpack::Options::gDefaults);
     }
-    SendResponse(std::move(resp), StealRequestStatistics(mid));
+    SendResponse(std::move(resp));
   } catch (...) {
     SDB_WARN(HTTP,
              "addSimpleResponse received an exception, closing connection");
@@ -582,8 +570,7 @@ void GeneralCommTask<T>::HandleRequestStartup(
     try {
       // Pass the response to the io context
       static_cast<GeneralCommTask<T>*>(self.get())
-        ->SendResponse(handler->stealResponse(),
-                       handler->StealRequestStatistics());
+        ->SendResponse(handler->stealResponse());
     } catch (...) {
       SDB_WARN(HTTP,
                "got an exception while sending response, closing connection");
@@ -618,8 +605,7 @@ void GeneralCommTask<T>::HandleRequestSync(
       try {
         // Pass the response to the io context
         static_cast<GeneralCommTask<T>*>(self.get())
-          ->SendResponse(handler->stealResponse(),
-                         handler->StealRequestStatistics());
+          ->SendResponse(handler->stealResponse());
       } catch (...) {
         SDB_WARN(HTTP,
                  "got an exception while sending response, closing connection");
@@ -729,49 +715,7 @@ void GeneralCommTask<T>::ProcessCorsOptions(std::unique_ptr<GeneralRequest> req,
   }
 
   // discard request and send response
-  SendResponse(std::move(resp), StealRequestStatistics(req->messageId()));
-}
-
-template<SocketType T>
-void GeneralCommTask<T>::SetRequestStatistics(uint64_t id,
-                                              RequestStatistics::Item&& stat) {
-  std::lock_guard guard{_statistics_mutex};
-  _statistics_map.insert_or_assign(id, std::move(stat));
-}
-
-template<SocketType T>
-ConnectionStatistics::Item GeneralCommTask<T>::AcquireConnectionStatistics() {
-  return ConnectionStatistics::acquire();  // no-op stub
-}
-
-template<SocketType T>
-RequestStatistics::ItemView GeneralCommTask<T>::AcquireRequestStatistics(
-  uint64_t id) {
-  std::lock_guard guard(_statistics_mutex);
-  return _statistics_map.insert_or_assign(id, RequestStatistics::acquire())
-    .first->second;
-}
-
-template<SocketType T>
-RequestStatistics::ItemView GeneralCommTask<T>::GetRequestStatistics(
-  uint64_t id) {
-  std::lock_guard guard(_statistics_mutex);
-  return _statistics_map[id];
-}
-
-template<SocketType T>
-RequestStatistics::Item GeneralCommTask<T>::StealRequestStatistics(
-  uint64_t id) {
-  RequestStatistics::Item result;
-  std::lock_guard guard(_statistics_mutex);
-
-  auto iter = _statistics_map.find(id);
-  if (iter != _statistics_map.end()) {
-    result = std::move(iter->second);
-    _statistics_map.erase(iter);
-  }
-
-  return result;
+  SendResponse(std::move(resp));
 }
 
 template class GeneralCommTask<SocketType::Tcp>;

@@ -26,7 +26,6 @@
 #include <thread>
 
 #include "app/app_server.h"
-#include "app/http_endpoint_provider.h"
 #include "app/options/parameters.h"
 #include "app/options/program_options.h"
 #include "app/options/section.h"
@@ -298,7 +297,7 @@ rest::AsyncJobManager& GeneralServerFeature::jobManager() {
 
 void GeneralServerFeature::buildServers() {
   EndpointFeature& endpoint =
-    server().getFeature<HttpEndpointProvider, EndpointFeature>();
+    server().getFeature<EndpointFeature>();
   const auto& endpoint_list = endpoint.endpointList();
 
   // check if endpointList contains ssl featured server
@@ -322,7 +321,7 @@ void GeneralServerFeature::startListening() {
 #endif
 
   EndpointFeature& endpoint =
-    server().getFeature<HttpEndpointProvider, EndpointFeature>();
+    server().getFeature<EndpointFeature>();
   auto& endpoint_list = endpoint.endpointList();
 
   for (auto& server : _servers) {

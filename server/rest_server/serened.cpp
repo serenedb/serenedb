@@ -67,9 +67,6 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       [](auto& server, type::Tag<SslServerFeature>) {
         return std::make_unique<SslServerFeature>(server);
       },
-      [](auto& server, type::Tag<HttpEndpointProvider>) {
-        return std::make_unique<EndpointFeature>(server);
-      },
     });
 
     try {

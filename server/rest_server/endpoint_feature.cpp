@@ -36,7 +36,7 @@ using namespace sdb::options;
 namespace sdb {
 
 EndpointFeature::EndpointFeature(SerenedServer& server)
-  : HttpEndpointProvider{server, name()} {
+  : SerenedFeature{server, name()} {
   setOptional(true);
 
   // if our default value is too high, we'll use half of the max value provided

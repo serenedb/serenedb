@@ -56,7 +56,7 @@ class RocksDBOptionFeature;
 class EngineFeature;
 class FlushFeature;
 class RocksDBRecoveryManager;
-class HttpEndpointProvider;
+class EndpointFeature;
 class GeneralServerFeature;
 
 // clang-format off
@@ -70,7 +70,7 @@ using SerenedFeaturesList = type::List<
   RocksDBRecoveryManager,
   catalog::CatalogFeature,
   search::SearchEngine,
-  HttpEndpointProvider,
+  EndpointFeature,
   GeneralServerFeature,
   pg::PostgresFeature>;
 // clang-format on

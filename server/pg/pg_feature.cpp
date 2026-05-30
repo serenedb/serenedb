@@ -62,7 +62,7 @@ uint64_t PostgresFeature::RegisterTask(PgSQLCommTaskBase& task) {
 void PostgresFeature::validateOptions(
   std::shared_ptr<options::ProgramOptions> options) {
   const auto& endpoint_list =
-    server().getFeature<HttpEndpointProvider, EndpointFeature>().endpointList();
+    server().getFeature<EndpointFeature>().endpointList();
   const bool needs_disable = std::ranges::none_of(
     endpoint_list | std::views::values, [](const auto& endpoint) {
       return endpoint->transport() == Endpoint::TransportType::PGSQL;

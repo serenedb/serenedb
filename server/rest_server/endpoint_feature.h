@@ -21,13 +21,12 @@
 
 #pragma once
 
-#include "app/http_endpoint_provider.h"
 #include "endpoint/endpoint_list.h"
 #include "rest_server/serened.h"
 
 namespace sdb {
 
-class EndpointFeature final : public HttpEndpointProvider {
+class EndpointFeature final : public SerenedFeature {
  public:
   static constexpr std::string_view name() noexcept { return "Endpoint"; }
 
@@ -36,7 +35,7 @@ class EndpointFeature final : public HttpEndpointProvider {
   void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
 
-  std::vector<std::string> httpEndpoints() final;
+  std::vector<std::string> httpEndpoints();
   EndpointList& endpointList() { return _endpoint_list; }
   const EndpointList& endpointList() const { return _endpoint_list; }
 

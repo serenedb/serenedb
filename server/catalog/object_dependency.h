@@ -300,6 +300,7 @@ struct PgSqlTypeDependency : ObjectDependencyBase {
 struct PgSqlFunctionDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> views;
   containers::FlatHashSet<ObjectId> functions;
+  containers::FlatHashSet<ObjectId> indexes;
   containers::FlatHashSet<std::pair<ObjectId, ObjectId>> constraints;
   containers::FlatHashSet<ObjectId> column_defaults;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
@@ -311,6 +312,9 @@ struct PgSqlFunctionDependency : ObjectDependencyBase {
     }
     for (auto id : functions) {
       e.EmitCascadeFunctionDrop(id);
+    }
+    for (auto id : indexes) {
+      e.EmitCascadeIndexDrop(id);
     }
     for (const auto& [tid, cid] : constraints) {
       e.EmitCascadeCheckConstraintDrop(tid, cid);

@@ -40,6 +40,7 @@
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/parser/tableref/subqueryref.hpp>
 
+#include "catalog/user_type.h"
 #include "connector/functions/sequence.h"
 
 namespace sdb {
@@ -69,11 +70,50 @@ std::optional<QualifiedRef> ExtractUnboundTypeName(
   return QualifiedRef{te.GetCatalog(), te.GetSchema(), te.GetTypeName()};
 }
 
+}  // namespace
+
 void CollectTypeRefs(const duckdb::LogicalType& type, Refs& out) {
+  // CAST(x AS T) where T isn't resolved yet: parser-level TypeExpression.
   if (auto qr = ExtractUnboundTypeName(type)) {
     out.unbound_types.push_back(std::move(*qr));
+    return;
+  }
+  // CREATE-time-resolved user type: binder stamped the OID on the extension
+  // info (catalog::PgSqlType ctor).
+  if (auto ext = type.GetExtensionInfo()) {
+    if (auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
+        it != ext->properties.end()) {
+      out.types.push_back(ObjectId{it->second.GetValue<uint64_t>()});
+      return;
+    }
+  }
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::LIST:
+      CollectTypeRefs(duckdb::ListType::GetChildType(type), out);
+      break;
+    case duckdb::LogicalTypeId::ARRAY:
+      CollectTypeRefs(duckdb::ArrayType::GetChildType(type), out);
+      break;
+    case duckdb::LogicalTypeId::STRUCT:
+      for (const auto& child : duckdb::StructType::GetChildTypes(type)) {
+        CollectTypeRefs(child.second, out);
+      }
+      break;
+    case duckdb::LogicalTypeId::MAP:
+      CollectTypeRefs(duckdb::MapType::KeyType(type), out);
+      CollectTypeRefs(duckdb::MapType::ValueType(type), out);
+      break;
+    case duckdb::LogicalTypeId::UNION:
+      for (idx_t i = 0; i < duckdb::UnionType::GetMemberCount(type); ++i) {
+        CollectTypeRefs(duckdb::UnionType::GetMemberType(type, i), out);
+      }
+      break;
+    default:
+      break;
   }
 }
+
+namespace {
 
 void WalkExpr(const duckdb::ParsedExpression& expr, RefKinds kinds, Refs& out) {
   if (RefKinds::None != (kinds & RefKinds::Types) &&
@@ -181,6 +221,12 @@ Refs ColumnExpr::ExtractRefs(RefKinds kinds) const {
 Refs ExtractRefs(const duckdb::ParsedExpression& expr, RefKinds kinds) {
   Refs out;
   WalkExpr(expr, kinds, out);
+  return out;
+}
+
+Refs ExtractRefs(const duckdb::QueryNode& node, RefKinds kinds) {
+  Refs out;
+  WalkQueryNode(node, kinds, out);
   return out;
 }
 

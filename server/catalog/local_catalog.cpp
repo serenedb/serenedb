@@ -37,6 +37,7 @@
 #include <duckdb/function/scalar_macro_function.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
+#include <duckdb/parser/parser.hpp>
 #include <iterator>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
@@ -367,7 +368,7 @@ class SnapshotImpl : public Snapshot {
       // unset target: pg_catalog/information_schema ref -- no edge to track.
       // missing Dep: graph traversal reached the same target twice, fine
       // on Delete (firstly we delete auto drop dependencies and then cascade).
-      SDB_ASSERT(action == EdgeAction::Delete || !target.isSet());
+      SDB_ASSERT(_in_load || action == EdgeAction::Delete || !target.isSet());
       return;
     }
     auto d = GetDependencyForWrite<Dep>(target);
@@ -389,16 +390,15 @@ class SnapshotImpl : public Snapshot {
         database_id, schema_id, ref.catalog, ref.schema, ref.name);
     };
     for (const auto& col : table.Columns()) {
-      if (auto ext = col.type.GetExtensionInfo()) {
-        if (auto it = ext->properties.find(kPgSqlTypeOidProp);
-            it != ext->properties.end()) {
-          ObjectId type_id{it->second.GetValue<uint64_t>()};
-          ModifyDependency(type_id, &PgSqlTypeDependency::column_types,
-                           col.GetId(), action);
-        }
+      Refs type_refs;
+      CollectTypeRefs(col.type, type_refs);
+      for (auto type_id : type_refs.types) {
+        ModifyDependency(type_id, &PgSqlTypeDependency::column_types,
+                         col.GetId(), action);
       }
       if (col.expr && col.expr->HasExpr() && !col.IsGenerated()) {
-        auto refs = col.expr->ExtractRefs(RefKinds::All);
+        auto refs = col.expr->ExtractRefs(
+          RefKinds::Sequences | RefKinds::Functions | RefKinds::Types);
         for (const auto& ref : refs.sequences) {
           ModifyDependency(resolve_seq(ref),
                            &SequenceDependency::column_defaults, col.GetId(),
@@ -422,7 +422,8 @@ class SnapshotImpl : public Snapshot {
       if (!c.expr || !c.expr->HasExpr()) {
         continue;
       }
-      auto refs = c.expr->ExtractRefs(RefKinds::All);
+      auto refs = c.expr->ExtractRefs(RefKinds::Sequences |
+                                      RefKinds::Functions | RefKinds::Types);
       auto edge = std::pair{table.GetId(), c.id};
       for (const auto& ref : refs.functions) {
         ModifyDependency(
@@ -514,9 +515,6 @@ class SnapshotImpl : public Snapshot {
           database_id, schema_id, ref.catalog, ref.schema, ref.name),
         &PgSqlTypeDependency::views, view_id, action);
     }
-    for (auto type_id : refs.bound_types) {
-      ModifyDependency(type_id, &PgSqlTypeDependency::views, view_id, action);
-    }
   }
 
   void ModifyFunctionDependencies(ObjectId schema_id, const PgSqlFunction& func,
@@ -552,8 +550,32 @@ class SnapshotImpl : public Snapshot {
           database_id, schema_id, ref.catalog, ref.schema, ref.name),
         &PgSqlTypeDependency::functions, fn_id, action);
     }
-    for (auto type_id : refs.bound_types) {
+    for (auto type_id : refs.types) {
       ModifyDependency(type_id, &PgSqlTypeDependency::functions, fn_id, action);
+    }
+  }
+
+  void ModifyInvertedIndexDependencies(const InvertedIndex& index,
+                                       ObjectId index_id, EdgeAction action) {
+    auto database_id = GetDatabaseId(index);
+    auto schema_id = index.GetParentId();
+    for (const auto& entry : index.GetEntries()) {
+      const auto* expr = entry.second.GetExpressionData();
+      if (!expr) {
+        continue;
+      }
+      SDB_ASSERT(!expr->pretty_printed.empty());
+      auto parsed = duckdb::Parser::ParseExpressionList(expr->pretty_printed);
+      for (const auto& p : parsed) {
+        SDB_ASSERT(p);
+        auto refs = ::sdb::ExtractRefs(*p, RefKinds::Functions);
+        for (const auto& ref : refs.functions) {
+          ModifyDependency(
+            Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
+              database_id, schema_id, ref.catalog, ref.schema, ref.name),
+            &PgSqlFunctionDependency::indexes, index_id, action);
+        }
+      }
     }
   }
 
@@ -627,12 +649,16 @@ class SnapshotImpl : public Snapshot {
       } break;
       case ObjectType::SecondaryIndex:
       case ObjectType::InvertedIndex: {
-        GetDependencyForWrite<RelationDependency>(parent_id)->indexes.insert(
-          id);
         const auto& index = basics::downCast<Index>(obj);
+        GetDependencyForWrite<RelationDependency>(index.GetRelationId())
+          ->indexes.insert(id);
         for (auto tokenizer_id : index.GetTokenizers()) {
           GetDependencyForWrite<TokenizerDependency>(tokenizer_id)
             ->indexes.insert(id);
+        }
+        if (obj.GetType() == ObjectType::InvertedIndex) {
+          ModifyInvertedIndexDependencies(
+            basics::downCast<InvertedIndex>(index), id, EdgeAction::Add);
         }
       } break;
       case ObjectType::TableShard:
@@ -1264,14 +1290,18 @@ class SnapshotImpl : public Snapshot {
         } break;
         case ObjectType::SecondaryIndex:
         case ObjectType::InvertedIndex: {
-          auto relation_deps =
-            GetDependencyForWrite<RelationDependency>(parent_id);
-          relation_deps->indexes.erase(id);
           const auto& index = basics::downCast<Index>(*obj);
+          auto relation_deps =
+            GetDependencyForWrite<RelationDependency>(index.GetRelationId());
+          relation_deps->indexes.erase(id);
           for (auto tokenizer_id : index.GetTokenizers()) {
             auto dep = GetDependencyForWrite<TokenizerDependency>(tokenizer_id);
             SDB_ASSERT(dep);
             dep->indexes.erase(obj->GetId());
+          }
+          if (obj->GetType() == ObjectType::InvertedIndex) {
+            ModifyInvertedIndexDependencies(
+              basics::downCast<InvertedIndex>(index), id, EdgeAction::Delete);
           }
         } break;
         case ObjectType::PgSqlFunction: {
@@ -1977,6 +2007,12 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
     _snapshot,
     [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
       if (existed_id.isSet()) {
+        if (auto deps =
+              clone->GetDependency<PgSqlFunctionDependency>(existed_id);
+            deps && !deps->indexes.empty()) {
+          return Result{ERROR_BAD_PARAMETER, "cannot replace function \"",
+                        function->GetName(), "\" because indexes depend on it"};
+        }
         function->SetId(existed_id);
         if (auto r = clone->ReplaceObject<ResolveType::Function>(
               *schema_id, function->GetName(), function);

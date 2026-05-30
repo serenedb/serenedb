@@ -276,9 +276,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       opclass_options = _info->column_opclass_options[i];
     }
 
-    // Pre-bind: macros inline at bind, so the bound tree wouldn't see them.
-    RejectUserDefinedFunctions(*expr, context);
-
     if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
       auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
       auto col_name = col_ref.GetColumnName();
@@ -302,7 +299,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
     auto normalized = NormalizeBoundExpression(*bound_expr, relation_id,
                                                col_index_to_id, context);
-    RejectUserDefinedFunctions(*normalized, context);
     std::string serialized = SerializeBoundExpression(*normalized);
     auto dependent_columns = CollectDependentColumns(*normalized);
     if (dependent_columns.empty()) {

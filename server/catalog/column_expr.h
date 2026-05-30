@@ -35,8 +35,10 @@
 namespace duckdb {
 
 class SelectStatement;
-}
+class QueryNode;
+class LogicalType;
 
+}  // namespace duckdb
 namespace sdb {
 
 struct QualifiedRef {
@@ -61,8 +63,8 @@ struct Refs {
   std::vector<QualifiedRef> functions;
   // Types named by CAST in expression bodies; caller resolves by name.
   std::vector<QualifiedRef> unbound_types;
-  // Types resolved at CREATE time (function param/return); id is final.
-  std::vector<ObjectId> bound_types;
+  // Types already resolved (column types, function param/return); id is final.
+  std::vector<ObjectId> types;
 };
 
 // Column expression (default value, computed column).
@@ -91,6 +93,9 @@ class ColumnExpr {
 
 Refs ExtractRefs(const duckdb::SelectStatement& stmt, RefKinds kinds);
 Refs ExtractRefs(const duckdb::ParsedExpression& expr, RefKinds kinds);
+Refs ExtractRefs(const duckdb::QueryNode& node, RefKinds kinds);
+
+void CollectTypeRefs(const duckdb::LogicalType& type, Refs& out);
 
 void VPackWrite(auto ctx, const ColumnExpr& column_expr) {
   column_expr.ToVPack(ctx.vpack());

@@ -65,19 +65,6 @@ bool AppServer::isStoppingState(State state) const {
          state == State::Aborted;
 }
 
-void AppServer::disableFeatures(std::span<const size_t> types, bool force) {
-  for (const size_t type : types) {
-    if (hasFeature(type)) {
-      auto& feature = *_all_features[type];
-      if (force) {
-        feature.forceDisable();
-      } else {
-        feature.disable();
-      }
-    }
-  }
-}
-
 // this method will initialize and validate options
 // of all feature, start them and wait for a shutdown
 // signal. after that, it will shutdown all features

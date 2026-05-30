@@ -57,24 +57,12 @@ class AppFeature {
 
   std::string_view name() const noexcept { return _name; }
 
-  bool isOptional() const { return _optional; }
-
   State state() const { return _state.load(std::memory_order_acquire); }
 
-  bool isEnabled() const { return _enabled; }
+  // Always true now; the disable / setOptional surface is gone.
+  bool isEnabled() const { return true; }
 
-  void enable() { setEnabled(true); }
-
-  // disable the feature entirely. if disabled, the feature's options will be
-  // ignored and no methods apart from `collectOptions` will be called for the
-  // feature
-  void disable() { setEnabled(false); }
-
-  // disable the feature, and perform no checks if it's optional
-  void forceDisable() { _enabled = false; }
-
-  // validate options pulled from absl::GetFlag during init. Called for active
-  // features after the AppServer has determined which are enabled.
+  // validate options pulled from absl::GetFlag during init.
   virtual void validateOptions() {}
 
   // preparation phase for feature in the preparation phase, the features must
@@ -102,18 +90,11 @@ class AppFeature {
   AppFeature(AppServer& server, std::string_view name)
     : _server{server}, _name{name} {}
 
-  void setOptional(bool value) { _optional = value; }
+  // No-op shim so existing setOptional(true)/(false) call sites compile.
+  void setOptional(bool /*value*/) {}
 
  private:
   friend class AppServer;
-
-  void setEnabled(bool value) {
-    if (!value && !isOptional()) {
-      SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-                "cannot disable non-optional feature: ", name());
-    }
-    _enabled = value;
-  }
 
   // set a feature's state. this method should be called by the
   // application server only
@@ -124,10 +105,6 @@ class AppFeature {
   std::string_view _name;
 
   std::atomic<State> _state{State::Uninitialized};
-
-  bool _enabled = true;
-
-  bool _optional = false;
 };
 
 template<typename ServerT>

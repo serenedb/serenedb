@@ -173,13 +173,6 @@ class AppServer {
 
   void SetupFeatures();
 
-  void disableFeatures(std::span<const size_t> types) {
-    disableFeatures(types, false);
-  }
-  void forceDisableFeatures(std::span<const size_t> types) {
-    disableFeatures(types, true);
-  }
-
 #ifdef SDB_GTEST
   auto GetFeatures() noexcept { return _all_features; }
   void setBinaryPath(const char* path) { _binary_path = path; }
@@ -201,8 +194,6 @@ class AppServer {
     }
     SDB_THROW(sdb::ERROR_INTERNAL, "unknown feature: ", type);
   }
-
-  void disableFeatures(std::span<const size_t> types, bool force);
 
   void parseOptions(int argc, char* argv[]);
   void validateOptions();
@@ -340,13 +331,6 @@ class AppServerImpl : public AppServer {
   template<typename T>
   bool isEnabled() const {
     return getFeature<T>().isEnabled();
-  }
-
-  // Return whether or not a feature is optional
-  // will throw when called for a non-existing feature.
-  template<typename T>
-  bool isOptional() const {
-    return getFeature<T>().isOptional();
   }
 
   // Checks for the existence of a feature. will not throw when used for

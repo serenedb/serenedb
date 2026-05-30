@@ -67,9 +67,8 @@ RocksDBRecoveryManager::RocksDBRecoveryManager(Server& server)
 }
 
 void RocksDBRecoveryManager::prepare() {
-  if (ServerState::instance()->IsCoordinator()) {
-    disable();
-  }
+  // ServerState::Role is hard-pinned to Single; the coordinator-disable
+  // branch is dead.
 }
 
 void RocksDBRecoveryManager::start() {

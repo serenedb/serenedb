@@ -61,7 +61,11 @@ class SearchEngine final : public SerenedFeature {
  public:
   static constexpr std::string_view name() noexcept { return "Search"; }
 
+  inline static SearchEngine* gInstance = nullptr;
+  static SearchEngine& instance() noexcept { return *gInstance; }
+
   explicit SearchEngine(Server& server);
+  ~SearchEngine();
 
   void prepare() final;
   void start() final;

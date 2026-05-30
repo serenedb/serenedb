@@ -51,7 +51,11 @@ class RocksDBRecoveryManager final : public SerenedFeature {
  public:
   static constexpr std::string_view name() { return "RocksDBRecoveryManager"; }
 
+  inline static RocksDBRecoveryManager* gInstance = nullptr;
+  static RocksDBRecoveryManager& instance() noexcept { return *gInstance; }
+
   explicit RocksDBRecoveryManager(Server& server);
+  ~RocksDBRecoveryManager();
 
   void prepare() final;
   void unprepare() final;

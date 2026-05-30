@@ -45,11 +45,10 @@ FlushFeature::FlushFeature(Server& server)
     _metrics_flush_subscriptions(
       metrics::GetMetrics().add(
         serenedb_flush_subscriptions{})) {
-  setOptional(true);
-
+  gInstance = this;
 }
 
-FlushFeature::~FlushFeature() = default;
+FlushFeature::~FlushFeature() { gInstance = nullptr; }
 
 void FlushFeature::registerFlushSubscription(
   const std::shared_ptr<FlushSubscription>& subscription) {

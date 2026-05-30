@@ -122,9 +122,11 @@ SearchEngine::SearchEngine(Server& server)
       serenedb_search_num_out_of_sync_links{})),
     _columns_cache_memory_used(metrics::GetMetrics().add(
       serenedb_search_columns_cache_size{})) {
-  setOptional(true);
+  gInstance = this;
   static_assert(Server::isCreatedAfter<SearchEngine, DatabasePathFeature>());
 }
+
+SearchEngine::~SearchEngine() { gInstance = nullptr; }
 
 void SearchEngine::validateOptions() {
   _skip_wal_recovery = absl::GetFlag(FLAGS_search_skip_wal_recovery);

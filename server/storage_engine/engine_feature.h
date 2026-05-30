@@ -31,7 +31,11 @@ class EngineFeature final : public SerenedFeature {
  public:
   static constexpr std::string_view name() noexcept { return "Engine"; }
 
+  inline static EngineFeature* gInstance = nullptr;
+  static EngineFeature& instance() noexcept { return *gInstance; }
+
   explicit EngineFeature(Server& server);
+  ~EngineFeature();
 
   void start() final;
   void stop() final;

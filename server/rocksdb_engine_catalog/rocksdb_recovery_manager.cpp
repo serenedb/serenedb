@@ -63,8 +63,10 @@ RocksDBRecoveryManager::RocksDBRecoveryManager(Server& server)
   : SerenedFeature{server, name()},
     _current_sequence_number(0),
     _recovery_state(RecoveryState::Before) {
-  setOptional(true);
+  gInstance = this;
 }
+
+RocksDBRecoveryManager::~RocksDBRecoveryManager() { gInstance = nullptr; }
 
 void RocksDBRecoveryManager::prepare() {
   // ServerState::Role is hard-pinned to Single; the coordinator-disable

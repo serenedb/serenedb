@@ -46,8 +46,10 @@ namespace sdb {
 
 DatabasePathFeature::DatabasePathFeature(Server& server)
   : SerenedFeature{server, name()} {
-  setOptional(false);
+  gInstance = this;
 }
+
+DatabasePathFeature::~DatabasePathFeature() { gInstance = nullptr; }
 
 void DatabasePathFeature::validateOptions() {
   _directory = absl::GetFlag(FLAGS_database_directory);

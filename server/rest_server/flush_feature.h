@@ -84,9 +84,11 @@ class FlushFeature final : public SerenedFeature {
  public:
   static constexpr std::string_view name() noexcept { return "Flush"; }
 
-  explicit FlushFeature(Server& server);
+  inline static FlushFeature* gInstance = nullptr;
+  static FlushFeature& instance() noexcept { return *gInstance; }
 
-  ~FlushFeature() final;
+  explicit FlushFeature(Server& server);
+  ~FlushFeature();
 
   /// register a flush subscription that will ensure replay of all WAL
   ///        entries after the latter of registration or the last successful

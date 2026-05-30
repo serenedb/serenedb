@@ -44,7 +44,11 @@ class GeneralServerFeature final : public SerenedFeature {
  public:
   static constexpr std::string_view name() noexcept { return "GeneralServer"; }
 
+  inline static GeneralServerFeature* gInstance = nullptr;
+  static GeneralServerFeature& instance() noexcept { return *gInstance; }
+
   explicit GeneralServerFeature(Server& server);
+  ~GeneralServerFeature();
 
   void validateOptions() final;
   void prepare() final;

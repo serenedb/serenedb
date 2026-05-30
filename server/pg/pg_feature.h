@@ -33,7 +33,11 @@ class PostgresFeature final : public SerenedFeature {
  public:
   static constexpr std::string_view name() noexcept { return "postgres"; }
 
+  inline static PostgresFeature* gInstance = nullptr;
+  static PostgresFeature& instance() noexcept { return *gInstance; }
+
   explicit PostgresFeature(SerenedServer& server);
+  ~PostgresFeature();
 
   void validateOptions() final;
   void prepare() final;

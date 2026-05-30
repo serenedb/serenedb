@@ -30,7 +30,11 @@ class DatabasePathFeature final : public SerenedFeature {
  public:
   static constexpr std::string_view name() { return "DatabasePath"; }
 
+  inline static DatabasePathFeature* gInstance = nullptr;
+  static DatabasePathFeature& instance() noexcept { return *gInstance; }
+
   explicit DatabasePathFeature(Server& server);
+  ~DatabasePathFeature();
 
   void validateOptions() final;
   void prepare() final;

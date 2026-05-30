@@ -31,8 +31,10 @@ namespace sdb {
 EngineFeature::EngineFeature(Server& server)
   : SerenedFeature{server, name()},
     _engine{std::make_shared<RocksDBEngineCatalog>(server)} {
-  setOptional(false);
+  gInstance = this;
 }
+
+EngineFeature::~EngineFeature() { gInstance = nullptr; }
 
 RocksDBEngineCatalog& GetServerEngine() {
   return SerenedServer::Instance().getFeature<EngineFeature>().engine();

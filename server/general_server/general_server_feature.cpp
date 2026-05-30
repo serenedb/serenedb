@@ -95,9 +95,10 @@ GeneralServerFeature::GeneralServerFeature(Server& server)
     _request_body_size_http2(AddMetric(serenedb_request_body_size_http2{})),
     _http1_connections(AddMetric(serenedb_http1_connections_total{})),
     _http2_connections(AddMetric(serenedb_http2_connections_total{})) {
-
-  setOptional(true);
+  gInstance = this;
 }
+
+GeneralServerFeature::~GeneralServerFeature() { gInstance = nullptr; }
 
 void GeneralServerFeature::validateOptions() {
   if (auto io = absl::GetFlag(FLAGS_server_io_threads); io > 0) {

@@ -31,7 +31,6 @@
 #include "app/options/parameters.h"
 #include "app/options/program_options.h"
 #include "app/options/section.h"
-#include "app/shutdown.h"
 #include "basics/application-exit.h"
 #include "basics/logger/logger.h"
 #include "basics/process-utils.h"
@@ -82,7 +81,6 @@ void ServerFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
     });
     disable_deamon_and_supervisor();
   }
-  server().getFeature<ShutdownFeature>().disable();
 }
 
 void ServerFeature::prepare() {

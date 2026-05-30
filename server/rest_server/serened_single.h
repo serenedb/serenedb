@@ -68,7 +68,6 @@ class RocksDBRecoveryManager;
 class ServerFeature;
 class HttpEndpointProvider;
 class GeneralServerFeature;
-class ShutdownFeature;
 
 // clang-format off
 using SerenedFeaturesList = type::List<
@@ -91,8 +90,7 @@ using SerenedFeaturesList = type::List<
   ServerFeature,
   HttpEndpointProvider,
   GeneralServerFeature,
-  pg::PostgresFeature,
-  ShutdownFeature>;
+  pg::PostgresFeature>;
 // clang-format on
 
 struct SerenedFeatures : SerenedFeaturesList {};

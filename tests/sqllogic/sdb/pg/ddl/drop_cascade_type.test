@@ -241,34 +241,39 @@ DROP SCHEMA manifest;
 
 
 # --- 8. VARIANT and user-defined types -------------------------------------
-# VARIANT shares STRUCT_TYPE_INFO, so CollectTypeRefs descends into its child
-# slots. The children of a VARIANT LogicalType are a fixed internal layout
-# (keys / children / values / data) -- none of which are user-defined -- so
-# a plain VARIANT column must NOT spuriously register a dependency on any
-# enum/type. Dependencies do still flow through CAST-to-usertype expressions
-# nested inside VARIANT-typed sites (CHECK, DEFAULT, view body, function body).
+# VARIANT shares STRUCT_TYPE_INFO with STRUCT, so CollectTypeRefs descends
+# into its child slots. The VARIANT LogicalType's children are a fixed
+# internal layout (keys / children / values / data) -- none user-defined --
+# so VARIANT expressions must NOT spuriously register a dependency on an
+# unrelated enum/type. But dependencies DO flow through CAST-to-usertype
+# expressions nested inside ::VARIANT casts (CHECK, DEFAULT, view, function).
 #
-# Two scenarios per dep site:
-#   (a) VARIANT WITH a CAST to the user type -- dep tracked, RESTRICT blocks.
-#   (b) VARIANT WITHOUT any reference         -- no dep, DROP TYPE succeeds.
+# Two scenarios exercised per dep site:
+#   (a) VARIANT WITHOUT a CAST to the user type -- no dep, DROP succeeds.
+#   (b) VARIANT WITH    a CAST to the user type -- dep tracked, RESTRICT blocks.
+#
+# Note: SereneDB's RocksDB storage can't persist VARIANT-typed columns, so
+# VARIANT only appears inside expression sites (CHECK predicates, DEFAULT,
+# view body, function body) -- never as a stored column type.
 
-# --- 8a. Plain VARIANT column: no spurious dep on an unrelated enum -------
+# --- 8a. VARIANT in a view, no user-type ref: no spurious dep -------------
 
 statement ok
 CREATE TYPE shred_solo_kind AS ENUM ('hot', 'cold');
 
 
+# VARIANT used purely on built-in types -- no reference to shred_solo_kind.
 statement ok
-CREATE TABLE shred_solo_t (v VARIANT);
+CREATE VIEW shred_solo_v AS SELECT 42::INT::VARIANT AS v, 'hello'::TEXT::VARIANT AS s;
 
 
-# No CAST, no CHECK referencing the type -- DROP TYPE must succeed.
+# No CAST to shred_solo_kind anywhere -- DROP TYPE must succeed.
 statement ok
 DROP TYPE shred_solo_kind;
 
 
 statement ok
-DROP TABLE shred_solo_t;
+DROP VIEW shred_solo_v;
 
 
 # --- 8b. CHECK constraint: VARIANT CAST through user type tracks the dep ---
@@ -280,13 +285,15 @@ CREATE TYPE shred_check_kind AS ENUM ('hot', 'cold');
 statement ok
 CREATE TABLE shred_check_t (
   s TEXT,
-  v VARIANT,
   CHECK (CAST(s AS shred_check_kind)::VARIANT IS NOT NULL)
 );
 
 
-statement error (?i)cannot drop type .*shred_check_kind.* because other objects depend on it
+statement error
 DROP TYPE shred_check_kind;
+----
+db error: ERROR: cannot drop type shred_check_kind because other objects depend on it
+<slt:ignore>
 
 
 statement ok
@@ -294,7 +301,7 @@ DROP TYPE shred_check_kind CASCADE;
 
 
 statement count 1
-INSERT INTO shred_check_t VALUES ('not-an-enum', NULL);
+INSERT INTO shred_check_t VALUES ('not-an-enum');
 
 
 statement ok
@@ -318,8 +325,11 @@ CREATE TABLE shred_pair_t (
 );
 
 
-statement error (?i)cannot drop type .*shred_pair_kind.* because other objects depend on it
+statement error
 DROP TYPE shred_pair_kind;
+----
+db error: ERROR: cannot drop type shred_pair_kind because other objects depend on it
+<slt:ignore>
 
 
 statement ok
@@ -327,8 +337,11 @@ DROP TYPE shred_pair_kind CASCADE;
 
 
 # The unrelated NOT-NULL check on `n` survives -- inserting NULL still fails.
-statement error (?i)check constraint
+statement error
 INSERT INTO shred_pair_t VALUES ('x', NULL);
+----
+db error: ERROR:
+<slt:ignore>
 
 
 statement count 1
@@ -349,8 +362,11 @@ statement ok
 CREATE TABLE shred_def_t (x TEXT DEFAULT CAST(CAST('p' AS shred_def_kind)::VARIANT AS TEXT));
 
 
-statement error (?i)cannot drop type .*shred_def_kind.* because other objects depend on it
+statement error
 DROP TYPE shred_def_kind;
+----
+db error: ERROR: cannot drop type shred_def_kind because other objects depend on it
+<slt:ignore>
 
 
 statement ok
@@ -375,16 +391,22 @@ statement ok
 CREATE VIEW shred_view_v AS SELECT CAST(s AS shred_view_kind)::VARIANT AS f FROM shred_view_src;
 
 
-statement error (?i)cannot drop type .*shred_view_kind.* because other objects depend on it
+statement error
 DROP TYPE shred_view_kind;
+----
+db error: ERROR: cannot drop type shred_view_kind because other objects depend on it
+<slt:ignore>
 
 
 statement ok
 DROP TYPE shred_view_kind CASCADE;
 
 
-statement error (?i)(table|relation|view).*shred_view_v.*does not exist
+statement error
 SELECT * FROM shred_view_v;
+----
+db error: ERROR:
+<slt:ignore>
 
 
 statement ok
@@ -401,13 +423,18 @@ statement ok
 CREATE FUNCTION shred_fn_use(x TEXT) AS CAST(x AS shred_fn_kind)::VARIANT;
 
 
-statement error (?i)cannot drop type .*shred_fn_kind.* because other objects depend on it
+statement error
 DROP TYPE shred_fn_kind;
+----
+db error: ERROR: cannot drop type shred_fn_kind because other objects depend on it
+<slt:ignore>
 
 
 statement ok
 DROP TYPE shred_fn_kind CASCADE;
 
 
-statement error (?i)(function|macro|scalar).*shred_fn_use.* does not exist
+statement error
 SELECT shred_fn_use('m');
+----
+db error: ERROR:

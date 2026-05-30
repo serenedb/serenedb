@@ -35,6 +35,10 @@ class SchedulerFeature final : public SerenedFeature {
 
   inline static Scheduler* gScheduler = nullptr;
 
+  // Single-instance accessor; valid between ctor and dtor.
+  inline static SchedulerFeature* gInstance = nullptr;
+  static SchedulerFeature& instance() noexcept { return *gInstance; }
+
   SchedulerFeature(Server& server);
   ~SchedulerFeature() final;
 

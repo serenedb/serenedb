@@ -74,10 +74,10 @@ SchedulerFeature::SchedulerFeature(Server& server)
     _scheduler(nullptr),
     _metrics_feature(sdb::metrics::GetMetrics()),
     _asio_handler(std::make_unique<AsioHandler>()) {
-  setOptional(false);
+  gInstance = this;
 }
 
-SchedulerFeature::~SchedulerFeature() = default;
+SchedulerFeature::~SchedulerFeature() { gInstance = nullptr; }
 
 void SchedulerFeature::validateOptions() {
   const auto n = number_of_cores::GetValue();

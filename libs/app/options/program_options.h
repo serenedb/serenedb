@@ -40,13 +40,6 @@ struct Parameter;
 // typically an application will have a single instance of this
 class ProgramOptions {
  public:
-  // filter function to hide certain options in the outputs of
-  // - JavaScript options api: require("internal").options()
-  // - HTTP REST API: GET /_admin/options
-  // filter function returns false for any option to be filtered out,
-  // and true for all options to include in the output.
-  static const std::function<bool(const std::string&)> kDefaultOptionsFilter;
-
   // struct containing the option processing result
   class ProcessingResult {
    public:
@@ -172,14 +165,6 @@ class ProgramOptions {
 
   // prints the names for all section help options
   void printSectionsHelp() const;
-
-  // returns a VPack representation of the option values, with optional
-  // filters applied to filter out specific options.
-  // the filter function is expected to return true
-  // for any options that should become part of the result
-  vpack::Builder toVPack(
-    bool only_touched, bool detailed,
-    const std::function<bool(const std::string&)>& filter) const;
 
   // translate a shorthand option
   std::string translateShorthand(const std::string& name) const;

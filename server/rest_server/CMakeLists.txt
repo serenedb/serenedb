@@ -5,6 +5,5 @@ target_sources(
         endpoint_feature.cpp
         flush_feature.cpp
         lockfile_feature.cpp
-        server_feature.cpp
         database_context.cpp
 )

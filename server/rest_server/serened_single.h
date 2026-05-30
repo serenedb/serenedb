@@ -57,7 +57,6 @@ class EngineFeature;
 class FlushFeature;
 class LockfileFeature;
 class RocksDBRecoveryManager;
-class ServerFeature;
 class HttpEndpointProvider;
 class GeneralServerFeature;
 
@@ -73,7 +72,6 @@ using SerenedFeaturesList = type::List<
   RocksDBRecoveryManager,
   catalog::CatalogFeature,
   search::SearchEngine,
-  ServerFeature,
   HttpEndpointProvider,
   GeneralServerFeature,
   pg::PostgresFeature>;

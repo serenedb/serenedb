@@ -39,7 +39,6 @@
 #include "general_server/scheduler.h"
 #include "general_server/state.h"
 #include "metrics/metrics_feature.h"
-#include "rest_server/server_feature.h"
 
 namespace sdb {
 namespace {
@@ -174,6 +173,9 @@ void SchedulerFeature::start() {
     SDB_FATAL(GENERAL, "the scheduler cannot be started");
   }
   SDB_DEBUG(STARTUP, "scheduler has started");
+
+  // Install the SIGINT handler now that the scheduler is up.
+  buildControlCHandler();
 }
 
 void SchedulerFeature::stop() {

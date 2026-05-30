@@ -64,9 +64,6 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       []<typename T>(auto& server, type::Tag<T>) {
         return std::make_unique<T>(server);
       },
-      [&ret](auto& server, type::Tag<ServerFeature>) {
-        return std::make_unique<ServerFeature>(server, &ret);
-      },
       [](auto& server, type::Tag<SslServerFeature>) {
         return std::make_unique<SslServerFeature>(server);
       },
@@ -79,6 +76,8 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       server.run(argc, argv);
       if (server.helpShown()) {
         // --help was displayed
+        ret = EXIT_SUCCESS;
+      } else {
         ret = EXIT_SUCCESS;
       }
     } catch (const std::exception& ex) {

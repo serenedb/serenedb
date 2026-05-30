@@ -132,23 +132,8 @@ void SearchEngine::collectOptions(
   std::shared_ptr<options::ProgramOptions> options) {
   options->addSection("search", absl::StrCat(name(), " feature"));
 
-  options
-    ->addOption(kCompactionThreadsParam,
-                "The upper limit to the allowed number of compaction threads "
-                "(0 = auto-detect).",
-                new options::UInt32Parameter(&_compaction_threads))
-    .setLongDescription(R"(The option value must fall in the range
-`[ 1..search.compaction-threads ]`. Set it to `0` to automatically
-choose a sensible number based on the number of cores in the system.)");
-
-  options
-    ->addOption(kCommitThreadsParam,
-                "The upper limit to the allowed number of commit threads "
-                "(0 = auto-detect).",
-                new options::UInt32Parameter(&_commit_threads))
-    .setLongDescription(R"(The option value must fall in the range
-`[ 1..4 * NumberOfCores ]`. Set it to `0` to automatically choose a sensible
-number based on the number of cores in the system.)");
+  // --search.compaction-threads / --search.commit-threads were upper limits
+  // tuned per-cluster; defaults are auto-detected from cpu count.
 
   options->addOption(
     kSkipRecovery,

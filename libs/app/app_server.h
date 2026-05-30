@@ -259,9 +259,6 @@ class AppServer {
   // the condition variable protects access to this flag
   // the flag is set to true when beginShutdown finishes
   bool _abort_waiting = false;
-
-  // whether or not to dump configuration options
-  bool _dump_options = false;
 };
 
 template<typename Features>

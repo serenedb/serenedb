@@ -209,13 +209,6 @@ void AppServer::collectOptions() {
   _options->addSection(options::Section{"", "general settings", "",
                                         "general options", false, false});
 
-  _options->addOption(
-    "--dump-options",
-    "Dump all available startup options in JSON format and exit.",
-    new options::BooleanParameter(&_dump_options),
-    options::MakeDefaultFlags(options::Flags::Uncommon,
-                              options::Flags::Command));
-
   for (auto& feature : EnabledFeatures()) {
     reportFeatureProgress(_state.load(std::memory_order_relaxed),
                           feature.name());
@@ -247,15 +240,6 @@ void AppServer::parseOptions(int argc, char* argv[]) {
 
   for (auto& feature : EnabledFeatures()) {
     feature.loadOptions(_options, _binary_path);
-  }
-
-  if (_dump_options) {
-    auto builder =
-      _options->toVPack(false, true, [](const std::string&) { return true; });
-    vpack::Options options;
-    options.pretty_print = true;
-    std::cout << builder.slice().toJson(&options) << std::endl;
-    exit(EXIT_SUCCESS);
   }
 }
 

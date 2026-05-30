@@ -87,87 +87,14 @@ GeneralServerFeature::GeneralServerFeature(Server& server)
 }
 
 void GeneralServerFeature::collectOptions(
-  std::shared_ptr<ProgramOptions> options) {
-  options->addOption(
-    "--server.io-threads", "The number of threads used to handle I/O.",
-    new UInt64Parameter(&_num_io_threads, /*base*/ 1, /*minValue*/ 1),
-    options::MakeDefaultFlags(options::Flags::Dynamic));
-
-  options->addSection("http", "HTTP server features");
-
-  options
-    ->addOption("--http.keep-alive-timeout",
-                "The keep-alive timeout for HTTP connections (in seconds).",
-                new DoubleParameter(&_keep_alive_timeout))
-    .setLongDescription(R"(Idle keep-alive connections are closed by the
-server automatically when the timeout is reached. A keep-alive-timeout value of
-`0` disables the keep-alive feature entirely.)");
-
-  options->addOption(
-    "--http.trusted-origin",
-    "The trusted origin URLs for CORS requests with credentials.",
-    new VectorParameter<StringParameter>(&_access_control_allow_origins));
-
-  options
-    ->addOption("--http.return-queue-time-header",
-                "Whether to return the `x-serene-queue-time-seconds` header "
-                "in all responses.",
-                new BooleanParameter(&_return_queue_time_header))
-
-    .setLongDescription(R"(The value contained in this header indicates the
-current queueing/dequeuing time for requests in the scheduler (in seconds).
-Client applications and drivers can use this value to control the server load
-and also react on overload.)");
-
-  options
-    ->addOption("--http.compress-response-threshold",
-                "The HTTP response body size from which on responses are "
-                "transparently compressed in case the client asks for it.",
-                new UInt64Parameter(&_compress_response_threshold))
-
-    .setLongDescription(
-      R"(Automatically compress outgoing HTTP responses with the
-deflate or gzip compression format, in case the client request advertises
-support for this. Compression will only happen for HTTP/1.1 and HTTP/2
-connections, if the size of the uncompressed response body exceeds
-the threshold value controlled by this startup option,
-and if the response body size after compression is less than the original
-response body size.
-Using the value 0 disables the automatic response compression.")");
-
-  // --server.early-connections (cluster early-start) and
-  // --server.failure-point (no test coverage) dropped per plan.
+  std::shared_ptr<ProgramOptions> /*options*/) {
+  // All HTTP/server tuning knobs dropped per plan; field defaults stand:
+  // _num_io_threads = max(1, cpu_count/4), _keep_alive_timeout = 300s,
+  // _access_control_allow_origins = {}, _return_queue_time_header = true,
+  // _compress_response_threshold = 0 (disabled).
 }
 
 void GeneralServerFeature::validateOptions(std::shared_ptr<ProgramOptions>) {
-  if (!_access_control_allow_origins.empty()) {
-    // trim trailing slash from all members
-    for (auto& it : _access_control_allow_origins) {
-      if (it == "*" || it == "all") {
-        // special members "*" or "all" means all origins are allowed
-        _access_control_allow_origins.clear();
-        _access_control_allow_origins.push_back("*");
-        break;
-      } else if (it == "none") {
-        // "none" means no origins are allowed
-        _access_control_allow_origins.clear();
-        break;
-      } else if (it.ends_with('/')) {
-        // strip trailing slash
-        it = it.substr(0, it.size() - 1);
-      }
-    }
-
-    // remove empty members
-    _access_control_allow_origins.erase(
-      std::remove_if(_access_control_allow_origins.begin(),
-                     _access_control_allow_origins.end(),
-                     [](const std::string& value) {
-                       return basics::string_utils::Trim(value).empty();
-                     }),
-      _access_control_allow_origins.end());
-  }
-
 #ifdef SDB_FAULT_INJECTION
   for (const auto& it : _failure_points) {
     AddFailurePointDebugging(it);

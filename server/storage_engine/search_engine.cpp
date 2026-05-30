@@ -21,9 +21,14 @@
 
 #include "search_engine.h"
 
+#include <absl/flags/flag.h>
 #include <absl/functional/any_invocable.h>
 #include <absl/strings/escaping.h>
 #include <absl/time/time.h>
+
+ABSL_FLAG(bool, search_skip_wal_recovery, false,
+          "Skip the entire WAL replay phase for inverted indexes on startup. "
+          "Diagnostic only -- data loss is permanent for the skipped delta.");
 
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/fast_text_model.hpp>
@@ -72,9 +77,6 @@ DECLARE_GAUGE(serenedb_search_columns_cache_size, LimitedResourceManager,
 
 const std::string kCommitThreadsParam("--search.commit-threads");
 const std::string kCompactionThreadsParam("--search.compaction-threads");
-const std::string kFailOnOutOfSync("--search.fail-queries-on-out-of-sync");
-const std::string kSkipRecovery("--search.skip-recovery");
-const std::string kSkipWalRecovery("--search.skip-wal-recovery");
 const std::string kCacheLimit("--search.columns-cache-limit");
 const std::string kCacheOnlyLeader("--search.columns-cache-only-leader");
 const std::string kSearchThreadsLimit("--search.execution-threads-limit");
@@ -128,66 +130,15 @@ SearchEngine::SearchEngine(Server& server)
 }
 
 void SearchEngine::collectOptions(
-  std::shared_ptr<options::ProgramOptions> options) {
-  options->addSection("search", absl::StrCat(name(), " feature"));
-
-  // --search.compaction-threads / --search.commit-threads were upper limits
-  // tuned per-cluster; defaults are auto-detected from cpu count.
-
-  options->addOption(
-    kSkipRecovery,
-    "Skip the data recovery for the specified View link or inverted "
-    "index on startup. The value for this option needs to have the "
-    "format '<collection-name>/<index-id>' or "
-    "'<collection-name>/<index-name>'. You can use the option multiple "
-    "times, for each View link and inverted index to skip the recovery "
-    "for. The pseudo-value 'all' disables the recovery for all View "
-    "links and inverted indexes. The links/indexes skipped during the "
-    "recovery are marked as out-of-sync when the recovery completes. You "
-    "need to recreate them manually afterwards.\n"
-    "WARNING: Using this option causes data of affected links/indexes to "
-    "become incomplete or more incomplete until they have been manually "
-    "recreated.",
-    new options::VectorParameter<options::StringParameter>(
-      &_skip_recovery_items));
-
-  options->addOption(
-    kSkipWalRecovery,
-    "Skip the entire WAL replay phase for inverted indexes on startup. "
-    "Lagging shards will start serving queries with stale content; the "
-    "missing WAL delta will not be applied. Intended for diagnostics -- "
-    "data loss is permanent for the skipped delta unless you crash again "
-    "with a longer recovery window.",
-    new options::BooleanParameter(&_skip_wal_recovery));
-
-  // --search.fail-on-out-of-sync, --search.search-threads-limit:
-  // fields stay at defaults.
-  // --search.default-parallelism survives as a runtime SET LOCAL setting --
-  // a follow-up will register it via DBConfig::AddExtensionOption.
+  std::shared_ptr<options::ProgramOptions> /*options*/) {
+  // Surviving search knobs declared as ABSL_FLAGs at the top of the file;
+  // fields are populated from absl::GetFlag in validateOptions.
 }
 
 void SearchEngine::validateOptions(
   std::shared_ptr<options::ProgramOptions> options) {
-  auto check_format = [](const auto& item) {
-    auto r = item.find('/');
-    if (r == std::string_view::npos) {
-      return false;
-    }
-    r = item.find('/', r);
-    if (r == std::string_view::npos) {
-      return true;
-    }
-    return false;
-  };
-  for (const auto& item : _skip_recovery_items) {
-    if (item != "all" && check_format(item)) {
-      SDB_FATAL(SEARCH, "invalid format for '", kSkipRecovery,
-                "' parameter. expecting '",
-                "<collection-name>/<index-id>' or "
-                "'<collection-name>/<index-name>' or ",
-                "'all', got: '", item, "'");
-    }
-  }
+  // Pull surviving search knobs from absl flags.
+  _skip_wal_recovery = absl::GetFlag(FLAGS_search_skip_wal_recovery);
 
   const auto& args = options->processingResult();
 

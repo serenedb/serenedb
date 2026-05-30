@@ -98,8 +98,6 @@ class SearchEngine final : public SerenedFeature {
   bool _fail_queries_on_out_of_sync{false};
   bool _skip_wal_recovery{false};
 
-  std::vector<std::string> _skip_recovery_items;
-
   metrics::Gauge<uint64_t>& _out_of_sync_links;
   irs::IResourceManager& _columns_cache_memory_used;
 

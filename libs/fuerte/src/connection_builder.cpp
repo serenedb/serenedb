@@ -38,7 +38,7 @@ std::shared_ptr<Connection> ConnectionBuilder::connect(EventLoopService& loop) {
   std::shared_ptr<Connection> result;
 
   if (_conf.protocol_type == ProtocolType::Http) {
-    SDB_DEBUG("xxxxx", Logger::FUERTE, "fuerte - creating http 1.1 connection");
+    SDB_DEBUG(GENERAL, "fuerte - creating http 1.1 connection");
     if (_conf.socket_type == SocketType::Tcp) {
       result =
         std::make_shared<http::H1Connection<SocketType::Tcp>>(loop, _conf);
@@ -53,7 +53,7 @@ std::shared_ptr<Connection> ConnectionBuilder::connect(EventLoopService& loop) {
     }
 #endif
   } else if (_conf.protocol_type == ProtocolType::Http2) {
-    SDB_DEBUG("xxxxx", Logger::FUERTE, "fuerte - creating http 2 connection");
+    SDB_DEBUG(GENERAL, "fuerte - creating http 2 connection");
     if (_conf.socket_type == SocketType::Tcp) {
       result =
         std::make_shared<http::H2Connection<SocketType::Tcp>>(loop, _conf);

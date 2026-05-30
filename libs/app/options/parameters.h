@@ -288,7 +288,7 @@ struct DiscreteValuesParameter : public T {
       msg.append(StringifyValue(*ptr));
       msg.append("'. ");
       msg.append(description());
-      SDB_THROW(ERROR_INTERNAL, msg);
+      SDB_THROW(sdb::ERROR_INTERNAL, msg);
     }
   }
 
@@ -372,7 +372,7 @@ struct DiscreteValuesVectorParameter : public Parameter {
         msg.append(StringifyValue(ptr->at(i)));
         msg.append("'. ");
         msg.append(description());
-        SDB_THROW(ERROR_INTERNAL, msg);
+        SDB_THROW(sdb::ERROR_INTERNAL, msg);
       }
     }
   }

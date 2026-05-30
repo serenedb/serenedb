@@ -97,7 +97,7 @@ void ServerOptionsFeature::validateOptions(
   if (_options.descriptors_minimum > 0 &&
       (_options.descriptors_minimum < FileDescriptors::kRequiredMinimum ||
        _options.descriptors_minimum > FileDescriptors::kMaximumValue)) {
-    SDB_FATAL("xxxxx", Logger::STARTUP,
+    SDB_FATAL(STARTUP,
               "invalid value for --server.descriptors-minimum",
               ". must be between ", FileDescriptors::kRequiredMinimum, " and ",
               FileDescriptors::kMaximumValue);
@@ -106,16 +106,16 @@ void ServerOptionsFeature::validateOptions(
   if (auto r = FileDescriptors::adjustTo(
         static_cast<FileDescriptors::ValueType>(_options.descriptors_minimum));
       !r.ok()) {
-    SDB_FATAL_EXIT_CODE("xxxxx", Logger::SYSCALL, EXIT_RESOURCES_TOO_LOW, r);
+    SDB_FATAL_EXIT_CODE(GENERAL, EXIT_RESOURCES_TOO_LOW, r);
   }
 
   FileDescriptors current;
   if (auto r = FileDescriptors::load(current); !r.ok()) {
-    SDB_FATAL_EXIT_CODE("xxxxx", Logger::SYSCALL, EXIT_RESOURCES_TOO_LOW,
+    SDB_FATAL_EXIT_CODE(GENERAL, EXIT_RESOURCES_TOO_LOW,
                         "cannot get the file descriptors limit value: ", r);
   }
 
-  SDB_INFO("xxxxx", Logger::SYSCALL,
+  SDB_INFO(GENERAL,
            "file-descriptors (nofiles) hard limit is ",
            FileDescriptors::stringify(current.hard), ", soft limit is ",
            FileDescriptors::stringify(current.soft));
@@ -132,25 +132,25 @@ void ServerOptionsFeature::validateOptions(
       ") or adjust the value of the startup option "
       "--server.descriptors-minimum");
     if (_options.descriptors_minimum == 0) {
-      SDB_WARN("xxxxx", Logger::SYSCALL, message);
+      SDB_WARN(GENERAL, message);
     } else {
-      SDB_FATAL_EXIT_CODE("xxxxx", Logger::SYSCALL, EXIT_RESOURCES_TOO_LOW,
+      SDB_FATAL_EXIT_CODE(GENERAL, EXIT_RESOURCES_TOO_LOW,
                           message);
     }
   }
 }
 
 void ServerOptionsFeature::prepare() {
-  SDB_INFO("xxxxx", Logger::FIXME, rest::Version::getVerboseVersionString());
+  SDB_INFO(GENERAL, rest::Version::getVerboseVersionString());
 #ifdef __GLIBC__
-  SDB_INFO("xxxxx", Logger::FIXME, StaticStrings::kLgplNotice);
+  SDB_INFO(GENERAL, StaticStrings::kLgplNotice);
 #endif
 
   const auto& options = server().options();
 
 #if defined(SDB_DEV) || defined(SDB_GTEST)
-  SDB_WARN("xxxxx", Logger::FIXME, "This version is FOR DEVELOPMENT ONLY!");
-  SDB_WARN("xxxxx", Logger::FIXME,
+  SDB_WARN(GENERAL, "This version is FOR DEVELOPMENT ONLY!");
+  SDB_WARN(GENERAL,
            "==================================================================="
            "================");
 
@@ -162,19 +162,19 @@ void ServerOptionsFeature::prepare() {
   if (const auto& modernized_options = options->modernizedOptions();
       !modernized_options.empty()) {
     for (const auto& it : modernized_options) {
-      SDB_WARN("xxxxx", Logger::STARTUP,
+      SDB_WARN(STARTUP,
                "please note that the specified option '--", it.first,
                " has been renamed to '--", it.second, "'");
     }
 
-    SDB_INFO("xxxxx", Logger::STARTUP,
+    SDB_INFO(STARTUP,
              "please read the release notes about changed options");
   }
 
   options->walk(
     [](const auto&, const auto& option) {
       if (option.hasDeprecatedIn()) {
-        SDB_WARN("xxxxx", Logger::STARTUP, "option '", option.displayName(),
+        SDB_WARN(STARTUP, "option '", option.displayName(),
                  "' is deprecated since ", option.deprecatedInString(),
                  " and may be removed or unsupported in a future version");
       }
@@ -184,7 +184,7 @@ void ServerOptionsFeature::prepare() {
   options->walk(
     [](const auto&, const auto& option) {
       if (option.hasFlag(sdb::options::Flags::Obsolete)) {
-        SDB_WARN("xxxxx", Logger::STARTUP, "obsolete option '",
+        SDB_WARN(STARTUP, "obsolete option '",
                  option.displayName(), "' used in configuration. ",
                  "Setting this option does not have any effect.");
       }
@@ -194,7 +194,7 @@ void ServerOptionsFeature::prepare() {
   options->walk(
     [](const auto&, const auto& option) {
       if (option.hasFlag(sdb::options::Flags::Experimental)) {
-        SDB_WARN("xxxxx", Logger::STARTUP, "experimental option '",
+        SDB_WARN(STARTUP, "experimental option '",
                  option.displayName(), "' used in configuration.");
       }
     },
@@ -202,7 +202,7 @@ void ServerOptionsFeature::prepare() {
 }
 
 void ServerOptionsFeature::unprepare() {
-  SDB_INFO("xxxxx", Logger::FIXME, "SereneDB has been shut down");
+  SDB_INFO(GENERAL, "SereneDB has been shut down");
 }
 
 const ServerOptions& GetServerOptions() {

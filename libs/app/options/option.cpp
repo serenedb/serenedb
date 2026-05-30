@@ -56,7 +56,7 @@ Option::Option(const std::string& value, const std::string& description,
   if (!hasFlag(sdb::options::Flags::OsLinux) &&
       !hasFlag(sdb::options::Flags::OsMac) &&
       !hasFlag(sdb::options::Flags::Obsolete)) {
-    SDB_THROW(ERROR_INTERNAL, std::string("option ") + value +
+    SDB_THROW(sdb::ERROR_INTERNAL, std::string("option ") + value +
                                 " needs to be supported on at least one OS");
   }
 #endif

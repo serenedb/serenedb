@@ -33,7 +33,7 @@ void SegmentPkSequentialFetcher::Fetch(
   if (sorted_docs.empty()) {
     return;
   }
-  SDB_IF_FAILURE("SearchPkFetchFault") { SDB_THROW(ERROR_DEBUG); }
+  SDB_IF_FAILURE("SearchPkFetchFault") { SDB_THROW(sdb::ERROR_DEBUG); }
   SDB_ASSERT(absl::c_is_sorted(sorted_docs));
 
   struct RowView {

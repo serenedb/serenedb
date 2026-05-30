@@ -82,7 +82,7 @@ bool Utf8Helper::setCollatorLanguage(const std::string& lang, LanguageType type,
   if (icu != nullptr) {
     udata_setCommonData(reinterpret_cast<void*>(icu), &status);
     if (U_FAILURE(status)) {
-      SDB_ERROR("xxxxx", Logger::FIXME,
+      SDB_ERROR(GENERAL,
                 "error while udata_setCommonData(...): ", u_errorName(status));
       return false;
     }
@@ -93,7 +93,7 @@ bool Utf8Helper::setCollatorLanguage(const std::string& lang, LanguageType type,
     const auto& locale = _coll->getLocale(type, status);
 
     if (U_FAILURE(status)) {
-      SDB_ERROR("xxxxx", Logger::FIXME,
+      SDB_ERROR(GENERAL,
                 "error in Collator::getLocale(...): ", u_errorName(status));
       return false;
     }
@@ -115,7 +115,7 @@ bool Utf8Helper::setCollatorLanguage(const std::string& lang, LanguageType type,
   }
 
   if (U_FAILURE(status)) {
-    SDB_ERROR("xxxxx", Logger::FIXME, "error in Collator::createInstance('",
+    SDB_ERROR(GENERAL, "error in Collator::createInstance('",
               lang, "'): ", u_errorName(status));
     return false;
   }
@@ -129,7 +129,7 @@ bool Utf8Helper::setCollatorLanguage(const std::string& lang, LanguageType type,
     coll->setAttribute(UCOL_STRENGTH, UCOL_IDENTICAL, status);
 
     if (U_FAILURE(status)) {
-      SDB_ERROR("xxxxx", Logger::FIXME,
+      SDB_ERROR(GENERAL,
                 "error in Collator::setAttribute(...): ", u_errorName(status));
       return false;
     }
@@ -148,7 +148,7 @@ std::string Utf8Helper::getCollatorLanguage() {
   ULocDataLocaleType type = ULOC_VALID_LOCALE;
   const auto& locale = _coll->getLocale(type, status);
   if (U_FAILURE(status)) {
-    SDB_ERROR("xxxxx", Logger::FIXME,
+    SDB_ERROR(GENERAL,
               "error in Collator::getLocale(...): ", u_errorName(status));
     return {};
   }
@@ -163,7 +163,7 @@ std::string Utf8Helper::getCollatorCountry() {
     const icu::Locale& locale = _coll->getLocale(type, status);
 
     if (U_FAILURE(status)) {
-      SDB_ERROR("xxxxx", Logger::FIXME,
+      SDB_ERROR(GENERAL,
                 "error in Collator::getLocale(...): ", u_errorName(status));
       return "";
     }
@@ -422,10 +422,10 @@ std::string NormalizeUtf8ToNFC(std::string_view value) {
     deleter);
   if (normalized == nullptr) {
     if (status != U_ZERO_ERROR) {
-      SDB_THROW(ERROR_BAD_PARAMETER,
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER,
                 std::string("invalid UTF-8 string: ") + u_errorName(status));
     }
-    SDB_THROW(ERROR_OUT_OF_MEMORY);
+    SDB_THROW(sdb::ERROR_OUT_OF_MEMORY);
   }
   return std::string(normalized.get(), out_length);
 }

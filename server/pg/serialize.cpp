@@ -1138,7 +1138,7 @@ void SerializeOidBinary(SerializationContext& context,
   const auto oid =
     vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
   if (oid != static_cast<int32_t>(oid)) {
-    SDB_WARN("xxxxx", Logger::COMMUNICATION, "reg* OID ", oid,
+    SDB_WARN(HTTP, "reg* OID ", oid,
              " truncated to 32-bit for binary wire protocol");
   }
   absl::big_endian::Store32(context.buffer->GetContiguousData(4),

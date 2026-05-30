@@ -49,13 +49,13 @@ std::string UrlDecode(const char* begin, const char* end) {
         int h = string_utils::Hex2int(i[1], 256) << 4;
         h += string_utils::Hex2int(i[2], 256);
         if (h >= 256) {
-          SDB_THROW(ERROR_BAD_PARAMETER,
+          SDB_THROW(sdb::ERROR_BAD_PARAMETER,
                     "invalid encoding value in request URL");
         }
         out.push_back(static_cast<char>(h & 0xFF));
         i += 2;
       } else {
-        SDB_THROW(ERROR_BAD_PARAMETER, "invalid encoding value in request URL");
+        SDB_THROW(sdb::ERROR_BAD_PARAMETER, "invalid encoding value in request URL");
       }
     } else if (c == '+') {
       out.push_back(' ');
@@ -166,7 +166,7 @@ void HttpRequest::parseUrl(const char* path, size_t length) {
       SDB_ASSERT(q >= start);
       setDatabaseName(::UrlDecode(start, q));
       if (_database_name != NormalizeUtf8ToNFC(_database_name)) {
-        SDB_THROW(ERROR_SERVER_ILLEGAL_NAME,
+        SDB_THROW(sdb::ERROR_SERVER_ILLEGAL_NAME,
                   "database name is not properly UTF-8 NFC-normalized");
       }
       setFullUrl(std::string_view(q, end - q));

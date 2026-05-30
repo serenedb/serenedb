@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,585 +15,222 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "logger.h"
+#include "basics/logger/logger.h"
 
-#include <absl/strings/str_cat.h>
+#include <absl/strings/ascii.h>
+#include <absl/synchronization/mutex.h>
 
-#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
-#include <cstring>
-#include <string>
-#include <string_view>
-#include <thread>
-
-#ifdef SERENEDB_HAVE_UNISTD_H
+#include <cstdio>
+#include <ctime>
 #include <unistd.h>
-#endif
 
-#include <absl/hash/hash.h>
-#include <absl/strings/str_split.h>
+namespace sdb::log {
 
-#include "basics/application-exit.h"
-#include "basics/containers/flat_hash_set.h"
-#include "basics/debugging.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
-#include "basics/logger/appender.h"
-#include "basics/logger/appender_file.h"
-#include "basics/logger/escaper.h"
-#include "basics/logger/log_group.h"
-#include "basics/logger/log_level.h"
-#include "basics/logger/logger.h"
-#include "basics/operating-system.h"
-#include "basics/sink.h"
-#include "basics/string_utils.h"
-#include "basics/system-functions.h"
-#include "basics/thread.h"
-
-namespace sdb {
-
-LogTopic Logger::AUTHENTICATION{"authentication", LogLevel::WARN};
-LogTopic Logger::AUTHORIZATION{"authorization"};
-LogTopic Logger::COMMUNICATION{"communication", LogLevel::INFO};
-LogTopic Logger::CONFIG{"config"};
-LogTopic Logger::CRASH{"crash"};
-LogTopic Logger::ENGINES{"engines", LogLevel::INFO};
-LogTopic Logger::FIXME{"general", LogLevel::INFO};
-LogTopic Logger::FLUSH{"flush", LogLevel::INFO};
-LogTopic Logger::HTTPCLIENT{"httpclient", LogLevel::WARN};
-LogTopic Logger::MEMORY{"memory", LogLevel::INFO};
-LogTopic Logger::REPLICATION{"replication", LogLevel::INFO};
-LogTopic Logger::REQUESTS{"requests", LogLevel::FATAL};
-LogTopic Logger::ROCKSDB{"rocksdb", LogLevel::WARN};
-LogTopic Logger::SSL{"ssl", LogLevel::WARN};
-LogTopic Logger::STARTUP{"startup", LogLevel::INFO};
-LogTopic Logger::STATISTICS{"statistics", LogLevel::INFO};
-LogTopic Logger::SYSCALL{"syscall", LogLevel::INFO};
-LogTopic Logger::THREADS{"threads", LogLevel::WARN};
-LogTopic Logger::SEARCH{"search", LogLevel::INFO};
-LogTopic Logger::IRESEARCH{"iresearch", LogLevel::INFO};
-LogTopic Logger::FUERTE{"fuerte", LogLevel::INFO};
-
-namespace log {
 namespace {
 
-struct TopicHashEq {
-  using is_transparent = void;
-
-  size_t operator()(const LogTopic* topic) const {
-    return absl::HashOf(topic->GetName());
-  }
-
-  size_t operator()(const std::string_view topic) const {
-    return absl::HashOf(topic);
-  }
-
-  bool operator()(const LogTopic* l, std::string_view r) const {
-    return l->GetName() == r;
-  }
-
-  bool operator()(const LogTopic* l, const LogTopic* r) const { return l == r; }
+struct TopicEntry {
+  std::string_view name;
+  std::atomic<LogLevel> level{LogLevel::DEFAULT};
+  std::atomic<LogLevel> default_level{LogLevel::DEFAULT};
 };
 
-const containers::FlatHashSet<LogTopic*, TopicHashEq, TopicHashEq> kTopics{
-  &Logger::AUTHENTICATION, &Logger::AUTHORIZATION, &Logger::COMMUNICATION,
-  &Logger::CONFIG,         &Logger::CRASH,         &Logger::ENGINES,
-  &Logger::FIXME,          &Logger::FLUSH,         &Logger::HTTPCLIENT,
-  &Logger::MEMORY,         &Logger::REPLICATION,   &Logger::REQUESTS,
-  &Logger::ROCKSDB,        &Logger::SSL,           &Logger::STARTUP,
-  &Logger::STATISTICS,     &Logger::SYSCALL,       &Logger::THREADS,
+// Topic table. Levels can be set via SetLogLevel("name=info") or via the
+// SQL surface (SET sdb_log_level = 'name=info' — wired in Phase 9).
+// Adding a topic: add it here and to topic.h.
+TopicEntry gTopics[]{
+  {GENERAL,   {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
+  {STARTUP,   {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
+  {HTTP,      {LogLevel::WARN},    {LogLevel::WARN}},
+  {SSL,       {LogLevel::WARN},    {LogLevel::WARN}},
+  {STORAGE,   {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
+  {SEARCH,    {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
+  {IRESEARCH, {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
+  {CRASH,     {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
 };
 
-constinit LogGroup gDefaultLogGroupInstance{0};
-
-// these variables might be changed asynchronously
-std::atomic<bool> gActive = false;
-std::atomic<LogLevel> gLevel = LogLevel::INFO;
-
-log_time_formats::TimeFormat gTimeFormat =
-  log_time_formats::TimeFormat::UTCDateString;
-bool gShowLineNumber = false;
-bool gShortenFilenames = true;
-bool gShowProcessIdentifier = true;
-bool gShowThreadIdentifier = false;
-bool gShowThreadName = false;
-bool gUseColor = true;
-bool gUseControlEscaped = true;
-bool gUseUnicodeEscaped = false;
-bool gKeepLogRotate = false;
-bool gLogRequestParameters = true;
-bool gShowIds = false;
-std::atomic<pid_t> gCachedPid = 0;
-std::string gOutputPrefix;
-std::string gHostname;
-void (*gWriterFn)(std::string_view, std::string&) =
-  &Escaper<ControlCharsEscaper, UnicodeCharsRetainer>::writeIntoOutputBuffer;
-
-void Append(LogGroup& group, std::unique_ptr<Message> msg, bool /*force_direct*/) {
-  SDB_ASSERT(msg != nullptr);
-
-  // check if we need to shrink the message here
-  if (!msg->shrunk) {
-    msg->shrink(group.maxLogEntryLength());
+TopicEntry* FindTopicEntry(std::string_view name) noexcept {
+  for (auto& t : gTopics) {
+    if (t.name == name) return &t;
   }
+  return nullptr;
+}
 
-  // first log to all "global" appenders.
-  Appender::logGlobal(group, *msg);
+std::atomic<LogLevel> gGlobalLevel{LogLevel::INFO};
+std::atomic<bool> gActive{false};
+std::atomic<bool> gLogRequestParameters{true};
+absl::Mutex gWriteMutex;  // serializes formatted writes to stderr
 
-  if (!gActive.load(std::memory_order_acquire)) {
-    // logging is still turned off. now use hard-coded to-stderr logging
-    AppenderStdStream::writeLogMessage(
-      STDERR_FILENO, (isatty(STDERR_FILENO) == 1), msg->level, msg->message);
-  } else {
-    SDB_IF_FAILURE("log::Append") {
-      // cut off all logging
-      return;
-    }
-    Appender::log(group, *msg);
+const char* LevelTag(LogLevel l) noexcept {
+  switch (l) {
+    case LogLevel::FATAL:   return "FATAL";
+    case LogLevel::ERR:     return "ERROR";
+    case LogLevel::WARN:    return "WARNING";
+    case LogLevel::INFO:    return "INFO";
+    case LogLevel::DEB:     return "DEBUG";
+    case LogLevel::TRACE:   return "TRACE";
+    case LogLevel::DEFAULT: return "DEFAULT";
   }
+  return "?";
+}
+
+void WriteIsoTimestamp(std::string& out) {
+  using namespace std::chrono;
+  auto now = system_clock::now();
+  auto time_t_s = system_clock::to_time_t(now);
+  auto us = duration_cast<microseconds>(now.time_since_epoch()).count() %
+            1'000'000;
+  std::tm tm{};
+  gmtime_r(&time_t_s, &tm);
+  char buf[40];
+  std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.%06ldZ",
+                tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour,
+                tm.tm_min, tm.tm_sec, static_cast<long>(us));
+  out.append(buf);
 }
 
 }  // namespace
 
-void Message::shrink(size_t max_length) {
-  // no need to shrink an already shrunk message
-  if (!shrunk && message.size() > max_length) {
-    message.resize(max_length);
-
-    // normally, offset should be around 20 to 30 bytes,
-    // whereas the minimum for maxLength should be around 256 bytes.
-    SDB_ASSERT(max_length > offset);
-    if (offset > message.size()) {
-      // we need to make sure that the offset is not outside of the message
-      // after shrinking
-      offset = static_cast<uint32_t>(message.size());
-    }
-    message.append("...\n", 4);
-    shrunk = true;
-  }
+LogLevel GetLogLevel() noexcept {
+  return gGlobalLevel.load(std::memory_order_relaxed);
 }
 
 void SetLogLevel(LogLevel level) noexcept {
-  gLevel.store(level, std::memory_order_relaxed);
+  gGlobalLevel.store(level, std::memory_order_relaxed);
 }
 
-LogGroup& GetDefaultLogGroup() noexcept { return gDefaultLogGroupInstance; }
-
-LogLevel GetLogLevel() noexcept {
-  return gLevel.load(std::memory_order_relaxed);
+LogLevel TranslateLogLevel(std::string_view name) noexcept {
+  auto lower = absl::AsciiStrToLower(name);
+  if (lower == "trace") return LogLevel::TRACE;
+  if (lower == "debug") return LogLevel::DEB;
+  if (lower == "info") return LogLevel::INFO;
+  if (lower == "warning" || lower == "warn") return LogLevel::WARN;
+  if (lower == "error" || lower == "err") return LogLevel::ERR;
+  if (lower == "fatal") return LogLevel::FATAL;
+  if (lower == "default") return LogLevel::DEFAULT;
+  return LogLevel::INFO;
 }
 
-void SetShowIds(bool show) { gShowIds = show; }
+std::string_view TranslateLogLevel(LogLevel level) noexcept {
+  return LevelTag(level);
+}
 
-void SetLogLevel(std::string_view level_assign) {
-  const auto level_assign_lower = absl::AsciiStrToLower(level_assign);
-  std::vector<std::string_view> v = absl::StrSplit(level_assign_lower, '=');
-
-  if (v.empty() || v.size() > 2) {
-    SetLogLevel(LogLevel::INFO);
-    SDB_ERROR("xxxxx", Logger::FIXME, "strange log level '", level_assign,
-              "', using log level 'info'");
+void SetLogLevel(std::string_view def) {
+  // Forms accepted: "info", "topic=info", "all=info".
+  auto eq = def.find('=');
+  if (eq == std::string_view::npos) {
+    SetLogLevel(TranslateLogLevel(def));
     return;
   }
-
-  // if log level is "foo = bar", we better get rid of the whitespace
-  v[0] = basics::string_utils::Trim(v[0]);
-  auto input_level = v[0];
-  bool is_general = v.size() == 1;
-
-  if (!is_general) {
-    v[1] = basics::string_utils::Trim(v[1]);
-    input_level = v[1];
-  }
-
-  LogLevel level;
-  bool is_valid = log::TranslateLogLevel(input_level, is_general, level);
-
-  if (!is_valid) {
-    if (!is_general) {
-      SDB_WARN("xxxxx", Logger::FIXME, "strange log level '", level_assign,
-               "'");
-      return;
+  auto name = absl::AsciiStrToLower(def.substr(0, eq));
+  auto level = TranslateLogLevel(def.substr(eq + 1));
+  if (name == "all") {
+    for (auto& t : gTopics) {
+      t.level.store(level, std::memory_order_relaxed);
     }
-    level = LogLevel::INFO;
-    SDB_WARN("xxxxx", Logger::FIXME, "strange log level '", level_assign,
-             "', using log level 'info'");
-  }
-
-  if (is_general) {
-    // set the log level globally (e.g. `--log.level info`). note that
-    // this does not set the log level for all log topics, but only the
-    // log level for the "general" log topic.
     SetLogLevel(level);
-    // setting the log level for topic "general" is required here, too,
-    // as "fixme" is the previous general log topic...
-    SetLogLevel("general", level);
-  } else if (v[0] == LogTopic::kAll) {
-    // handle pseudo log-topic "all": this will set the log level for
-    // all existing topics
-    for (auto* topic : GetTopics()) {
-      topic->SetLevel(level);
-    }
-  } else {
-    // handle a topic-specific request (e.g. `--log.level requests=info`).
-    SetLogLevel(v[0], level);
-  }
-}
-
-
-// NOTE: this function should not be called if the logging is active.
-void SetOutputPrefix(std::string_view prefix) {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-
-  gOutputPrefix = prefix;
-}
-
-// NOTE: this function should not be called if the logging is active.
-void SetHostname(std::string_view hostname) {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-
-  if (hostname == "auto") {
-    gHostname = utilities::Hostname();
-  } else {
-    gHostname = hostname;
-  }
-}
-
-// NOTE: this function should not be called if the logging is active.
-void SetShowLineNumber(bool show) {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-
-  gShowLineNumber = show;
-}
-
-// NOTE: this function should not be called if the logging is active.
-void SetShortenFilenames(bool shorten) {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-
-  gShortenFilenames = shorten;
-}
-
-// NOTE: this function should not be called if the logging is active.
-void SetShowProcessIdentifier(bool show) {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-
-  gShowProcessIdentifier = show;
-}
-
-// NOTE: this function should not be called if the logging is active.
-void SetShowThreadIdentifier(bool show) {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-
-  gShowThreadIdentifier = show;
-}
-
-// NOTE: this function should not be called if the logging is active.
-void SetShowThreadName(bool show) {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-
-  gShowThreadName = show;
-}
-
-// NOTE: this function should not be called if the logging is active.
-void SetUseColor(bool value) {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-
-  gUseColor = value;
-}
-
-bool GetKeepRotate() noexcept { return gKeepLogRotate; }
-bool IsActive() noexcept { return gActive.load(std::memory_order_acquire); }
-void Deactive() noexcept { gActive.store(false, std::memory_order_release); }
-
-bool GetUseColor() { return gUseColor; }
-
-bool GetUseControlEscaped() { return gUseControlEscaped; };
-bool GetUseUnicodeEscaped() { return gUseUnicodeEscaped; };
-
-bool GetUseLocalTime() { return log_time_formats::IsLocalFormat(gTimeFormat); }
-
-bool GetLogRequestParameters() { return gLogRequestParameters; }
-
-log_time_formats::TimeFormat GetTtimeFormat() { return gTimeFormat; }
-
-void ClearCachedPid() { gCachedPid.store(0, std::memory_order_relaxed); }
-
-// NOTE: this function should not be called if the logging is active.
-void SetUseControlEscaped(bool value) {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-  gUseControlEscaped = value;
-}
-// NOTE: this function should not be called if the logging is active.
-void SetUseUnicodeEscaped(bool value) {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-  gUseUnicodeEscaped = value;
-}
-
-// alerts that startup parameters for escaping have already been assigned
-void SetEscaping() {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-
-  if (gUseControlEscaped) {
-    if (gUseUnicodeEscaped) {
-      gWriterFn = &Escaper<ControlCharsEscaper,
-                           UnicodeCharsEscaper>::writeIntoOutputBuffer;
-    } else {
-      gWriterFn = &Escaper<ControlCharsEscaper,
-                           UnicodeCharsRetainer>::writeIntoOutputBuffer;
-    }
-  } else {
-    if (gUseUnicodeEscaped) {
-      gWriterFn = &Escaper<ControlCharsSuppressor,
-                           UnicodeCharsEscaper>::writeIntoOutputBuffer;
-    } else {
-      gWriterFn = &Escaper<ControlCharsSuppressor,
-                           UnicodeCharsRetainer>::writeIntoOutputBuffer;
-    }
-  }
-}
-
-// NOTE: this function should not be called if the logging is active.
-void SetTimeFormat(log_time_formats::TimeFormat format) {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-
-  gTimeFormat = format;
-}
-
-// NOTE: this function should not be called if the logging is active.
-void SetKeepLogrotate(bool keep) {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-
-  gKeepLogRotate = keep;
-}
-
-// NOTE: this function should not be called if the logging is active.
-void SetLogRequestParameters(bool log) {
-  if (gActive) {
-    SDB_THROW(ERROR_INTERNAL, "cannot change settings once logging is active");
-  }
-
-  gLogRequestParameters = log;
-}
-
-void Log(const char* logid, const char* function, const char* file, int line,
-         LogLevel level, const LogTopic& topic, std::string_view message) try {
-  SDB_ASSERT(logid != nullptr);
-  // we only determine our pid once, as currentProcessId() will
-  // likely do a syscall.
-  // this read-check-update sequence is not thread-safe, but this
-  // should not matter, as the pid value is only changed from 0 to the
-  // actual pid and never changes afterwards
-  if (gCachedPid.load(std::memory_order_relaxed) == 0) {
-    gCachedPid.store(Thread::currentProcessId(), std::memory_order_relaxed);
-  }
-
-  basics::StrSink sink;
-  auto& out = sink.Impl();
-  out.reserve(256 + message.size());
-
-  uint32_t offset = 0;
-  bool shrunk = false;
-
-  {
-    // hostname
-    if (!gHostname.empty()) {
-      out.append(gHostname);
-      out.push_back(' ');
-    }
-
-    // human readable format
-    log_time_formats::WriteTime(out, gTimeFormat,
-                                std::chrono::system_clock::now());
-    out.push_back(' ');
-
-    // output prefix
-    if (!gOutputPrefix.empty()) {
-      out.append(gOutputPrefix);
-      out.push_back(' ');
-    }
-
-    // [pid-tid-threadname], all components are optional
-    bool have_process_output = false;
-    if (gShowProcessIdentifier) {
-      // append the process / thread identifier
-      SDB_ASSERT(gCachedPid.load(std::memory_order_relaxed) != 0);
-      out.push_back('[');
-      basics::string_utils::Itoa(
-        uint64_t(gCachedPid.load(std::memory_order_relaxed)), out);
-      have_process_output = true;
-    }
-
-    if (gShowThreadIdentifier) {
-      out.push_back(have_process_output ? '-' : '[');
-      basics::string_utils::Itoa(uint64_t(Thread::currentThreadNumber()), out);
-      have_process_output = true;
-    }
-
-    // log thread name
-    if (gShowThreadName) {
-      ThreadNameFetcher name_fetcher;
-      std::string_view thread_name = name_fetcher.get();
-
-      out.push_back(have_process_output ? '-' : '[');
-      out.append(thread_name.data(), thread_name.size());
-      have_process_output = true;
-    }
-
-    if (have_process_output) {
-      out.append("] ", 2);
-    }
-
-    // log level
-    out.append(log::TranslateLogLevel(level));
-    out.push_back(' ');
-
-    // check if we must display the line number
-    if (gShowLineNumber && file != nullptr && function != nullptr) {
-      const char* filename = file;
-
-      if (gShortenFilenames) {
-        // shorten file names from `/home/.../file.cpp` to just `file.cpp`
-        const char* shortened = strrchr(filename, SERENEDB_DIR_SEPARATOR_CHR);
-        if (shortened != nullptr) {
-          filename = shortened + 1;
-        }
-      }
-      out.push_back('[');
-      out.append(function);
-      out.push_back('@');
-      out.append(filename);
-      out.push_back(':');
-      basics::string_utils::Itoa(uint64_t(line), out);
-      out.append("] ", 2);
-    }
-
-    // the offset is used by the in-memory logger, and it cuts off everything
-    // from the start of the concatenated log string until the offset. only
-    // what's after the offset gets displayed in the web interface
-    SDB_ASSERT(out.size() < static_cast<size_t>(UINT32_MAX));
-    offset = static_cast<uint32_t>(out.size());
-
-    if (gShowIds) {
-      out.push_back('[');
-      out.append(logid);
-      out.append("] ", 2);
-    }
-
-    {
-      out.push_back('{');
-      out.append(topic.GetName());
-      out.append("} ", 2);
-    }
-
-    gWriterFn(message, out);
-  }
-
-  // append final newline
-  out.push_back('\n');
-
-  auto msg =
-    std::make_unique<Message>(level, std::move(out), offset, topic, shrunk);
-
-  Append(GetDefaultLogGroup(), std::move(msg), false);
-} catch (...) {
-  // logging itself must never cause an exeption to escape
-}
-
-void Initialize() {
-  if (gActive.exchange(true, std::memory_order_acquire)) {
-    SDB_THROW(ERROR_INTERNAL, "Logger already initialized");
-  }
-}
-
-void Shutdown() {
-  if (!gActive.exchange(false, std::memory_order_acquire)) {
-    // if logging not activated or already shut down, then we can abort here
     return;
   }
-
-  // cleanup appenders
-  Appender::shutdown();
-
-  gCachedPid.store(0, std::memory_order_relaxed);
+  if (auto* topic = FindTopicEntry(name); topic != nullptr) {
+    topic->level.store(level, std::memory_order_relaxed);
+  }
 }
 
-void Flush() noexcept {
-  // Sync logger: nothing to flush — every Append() returns after writing.
+LogLevel TopicLevel(std::string_view topic) noexcept {
+  if (auto* t = FindTopicEntry(topic); t != nullptr) {
+    return t->level.load(std::memory_order_relaxed);
+  }
+  return LogLevel::DEFAULT;
 }
 
-std::vector<LogTopic*> GetTopics() { return {kTopics.begin(), kTopics.end()}; }
+void TopicSetLevel(std::string_view topic, LogLevel level) noexcept {
+  if (auto* t = FindTopicEntry(topic); t != nullptr) {
+    t->level.store(level, std::memory_order_relaxed);
+  }
+}
 
-std::string LogLevelString() {
-  auto topics = GetTopics();
-  std::ranges::sort(topics, {}, &LogTopic::GetName);
+void SnapshotTopicDefaults() {
+  for (auto& t : gTopics) {
+    t.default_level.store(t.level.load(std::memory_order_relaxed),
+                          std::memory_order_relaxed);
+  }
+}
 
-  std::string result;
-  auto global_level = GetLogLevel();
-  for (auto* topic : topics) {
-    auto level = topic->GetLevel();
-    if (level == LogLevel::DEFAULT) {
-      level = global_level;
-    }
-    if (!result.empty()) {
-      absl::StrAppend(&result, ",");
-    }
-    absl::StrAppend(&result, topic->GetName(), "=",
-                    absl::AsciiStrToLower(TranslateLogLevel(level)));
+void ResetLogLevels() {
+  for (auto& t : gTopics) {
+    t.level.store(t.default_level.load(std::memory_order_relaxed),
+                  std::memory_order_relaxed);
+  }
+}
+
+std::vector<std::string_view> KnownTopics() noexcept {
+  std::vector<std::string_view> result;
+  result.reserve(std::size(gTopics));
+  for (const auto& t : gTopics) {
+    result.push_back(t.name);
   }
   return result;
 }
 
-void ResetLogLevels() noexcept {
-  for (auto* topic : GetTopics()) {
-    topic->ResetLevel();
+std::string LogLevelString() {
+  std::string result;
+  for (const auto& t : gTopics) {
+    auto level = t.level.load(std::memory_order_relaxed);
+    if (level == LogLevel::DEFAULT) continue;
+    if (!result.empty()) result.push_back(',');
+    result.append(t.name);
+    result.push_back('=');
+    result.append(LevelTag(level));
   }
+  return result;
 }
 
-void SetLogLevel(std::string_view name, LogLevel level) noexcept {
-  auto* topic = FindTopic(name);
+bool IsActive() noexcept {
+  return gActive.load(std::memory_order_acquire);
+}
+void Initialize() noexcept { gActive.store(true, std::memory_order_release); }
+void Shutdown() noexcept { gActive.store(false, std::memory_order_release); }
+void Flush() noexcept {}  // sync logger; nothing to flush.
+void ClearCachedPid() noexcept {}  // PID is fetched per-call; no cache.
 
-  if (!topic) [[unlikely]] {
-    SDB_WARN("xxxxx", sdb::Logger::FIXME, "strange topic '", name, "'");
-    return;
+bool GetLogRequestParameters() noexcept {
+  return gLogRequestParameters.load(std::memory_order_relaxed);
+}
+void SetLogRequestParameters(bool v) noexcept {
+  gLogRequestParameters.store(v, std::memory_order_relaxed);
+}
+
+void Log(LogLevel level, std::string_view topic,
+         std::string_view message) try {
+  std::string out;
+  out.reserve(96 + message.size());
+  WriteIsoTimestamp(out);
+  out.append(" [");
+  out.append(LevelTag(level));
+  out.append("] {");
+  out.append(topic);
+  out.append("} ");
+  // Bound stderr writes.
+  static constexpr size_t kCap = 64 * 1024;
+  if (message.size() > kCap) {
+    out.append(message.data(), kCap);
+    out.append("... [truncated]");
+  } else {
+    out.append(message);
   }
-
-  topic->SetLevel(level);
+  if (out.empty() || out.back() != '\n') {
+    out.push_back('\n');
+  }
+  absl::MutexLock guard{&gWriteMutex};
+  ::fwrite(out.data(), 1, out.size(), stderr);
+  ::fflush(stderr);
+} catch (...) {
+  // Logging itself must never throw.
 }
 
-LogTopic* FindTopic(std::string_view name) noexcept {
-  auto it = kTopics.find(name);
-  return it == kTopics.end() ? nullptr : *it;
-}
-
-}  // namespace log
-}  // namespace sdb
+}  // namespace sdb::log

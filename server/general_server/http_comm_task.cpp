@@ -287,7 +287,7 @@ HttpCommTask<T>::~HttpCommTask() = default;
 
 template<SocketType T>
 void HttpCommTask<T>::Start() {
-  SDB_DEBUG("xxxxx", Logger::REQUESTS, "<http> opened connection \"",
+  SDB_DEBUG(HTTP, "<http> opened connection \"",
             std::bit_cast<size_t>(this), "\"");
 
   asio_ns::post(
@@ -349,7 +349,7 @@ bool HttpCommTask<T>::ReadCallback(asio_ns::error_code ec) {
     if (ec == asio_ns::error::misc_errors::eof) {
       err = llhttp_finish(&_parser);
     } else {
-      SDB_DEBUG("xxxxx", Logger::REQUESTS, "Error while reading from socket: '",
+      SDB_DEBUG(HTTP, "Error while reading from socket: '",
                 ec.message(), "'");
       err = HPE_INVALID_EOF_STATE;
     }
@@ -357,11 +357,11 @@ bool HttpCommTask<T>::ReadCallback(asio_ns::error_code ec) {
 
   if (err != HPE_OK && err != HPE_USER && err != HPE_CB_HEADERS_COMPLETE) {
     if (err == HPE_INVALID_EOF_STATE) {
-      SDB_TRACE("xxxxx", Logger::REQUESTS,
+      SDB_TRACE(HTTP,
                 "Connection closed by peer, with ptr ",
                 std::bit_cast<size_t>(this));
     } else {
-      SDB_TRACE("xxxxx", Logger::REQUESTS, "HTTP parse failure: '",
+      SDB_TRACE(HTTP, "HTTP parse failure: '",
                 llhttp_get_error_reason(&_parser), "'");
     }
     this->Close(ec);
@@ -392,7 +392,7 @@ void HttpCommTask<T>::SetIOTimeout() {
 
       auto& me = static_cast<HttpCommTask<T>&>(*s);
       if ((was_reading && me._reading) || (was_writing && me._writing)) {
-        SDB_INFO("xxxxx", Logger::REQUESTS,
+        SDB_INFO(HTTP,
                  "keep alive timeout, closing stream!");
         static_cast<GeneralCommTask<T>&>(*s).Close(ec);
       }
@@ -462,12 +462,12 @@ void HttpCommTask<T>::ProcessRequest() {
   try {
     DoProcessRequest();
   } catch (const sdb::basics::Exception& ex) {
-    SDB_WARN("xxxxx", Logger::REQUESTS, "request failed with error ", ex.code(),
+    SDB_WARN(HTTP, "request failed with error ", ex.code(),
              " ", ex.message());
     this->SendErrorResponse(GeneralResponse::responseCode(ex.code()),
                             resp_content_type, msg_id, ex.code(), ex.message());
   } catch (const std::exception& ex) {
-    SDB_WARN("xxxxx", Logger::REQUESTS, "request failed with error ",
+    SDB_WARN(HTTP, "request failed with error ",
              ex.what());
     this->SendErrorResponse(ResponseCode::ServerError, resp_content_type,
                             msg_id, ErrorCode(ERROR_FAILED), ex.what());
@@ -484,7 +484,7 @@ void HttpCommTask<T>::DoProcessRequest() {
 
   // we may have gotten an H2 Upgrade request
   if (_parser.upgrade) [[unlikely]] {
-    SDB_INFO("xxxxx", Logger::REQUESTS, "detected an 'Upgrade' header");
+    SDB_INFO(HTTP, "detected an 'Upgrade' header");
     bool found;
     const std::string& h2 = _request->header("upgrade");
     const std::string& settings = _request->header("http2-settings", found);
@@ -503,7 +503,7 @@ void HttpCommTask<T>::DoProcessRequest() {
   _request->appendNullTerminator();
   // no need to increase memory usage here!
   {
-    SDB_INFO("xxxxx", Logger::REQUESTS, "\"http-request-begin\",\"",
+    SDB_INFO(HTTP, "\"http-request-begin\",\"",
              std::bit_cast<size_t>(this), "\",\"",
              this->_connection_info.client_address, "\",\"",
              HttpRequest::translateMethod(_request->requestType()), "\",\"",
@@ -512,7 +512,7 @@ void HttpCommTask<T>::DoProcessRequest() {
     std::string_view body = _request->rawPayload();
     this->_general_server_feature.countHttp1Request(body.size());
 
-    if (log::IsEnabled(LogLevel::TRACE, Logger::REQUESTS) &&
+    if (log::IsEnabled(LogLevel::TRACE, log::HTTP) &&
         log::GetLogRequestParameters()) {
       // Log HTTP headers:
       this->LogRequestHeaders("http", _request->headers());
@@ -700,7 +700,7 @@ void HttpCommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> base_res,
                _response->empty(),
              "response code 204 requires body length to be zero");
 
-  if (log::IsEnabled(LogLevel::TRACE, Logger::REQUESTS) &&
+  if (log::IsEnabled(LogLevel::TRACE, log::HTTP) &&
       log::GetLogRequestParameters()) {
     // Log HTTP headers:
     this->LogResponseHeaders("http", response.headers());
@@ -713,7 +713,7 @@ void HttpCommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> base_res,
   }
 
   // and give some request information
-  SDB_DEBUG("xxxxx", Logger::REQUESTS, "\"http-request-end\",\"",
+  SDB_DEBUG(HTTP, "\"http-request-end\",\"",
             std::bit_cast<size_t>(this), "\",\"",
             this->_connection_info.client_address, "\",\"",
             GeneralRequest::translateMethod(::LlhttpToRequestType(&_parser)),

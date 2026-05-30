@@ -42,7 +42,7 @@ bool HexDecode(std::string& buf, std::string_view value) {
   if (absl::HexStringToBytes(value, &buf)) {
     return true;
   }
-  SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+  SDB_WARN(IRESEARCH,
            "Invalid HEX masked token: ", value);
   return false;
 }
@@ -54,8 +54,7 @@ Analyzer::ptr Construct(const vpack::ArrayIterator& mask, bool hex) {
   std::string token;
   for (auto itr = mask.begin(); itr.valid(); ++itr, ++offset) {
     if (!(*itr).isString()) {
-      SDB_WARN(
-        "xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
         "Non-string value in 'mask' at offset '", offset,
         "' while constructing token_stopwords_stream from VPack arguments");
 
@@ -88,7 +87,7 @@ Analyzer::ptr MakeVPack(const vpack::Slice slice) {
     case vpack::ValueType::Object: {
       auto hex_slice = slice.get(kHexParamName);
       if (!hex_slice.isBool() && !hex_slice.isNone()) {
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+        SDB_ERROR(IRESEARCH,
                   absl::StrCat("Invalid vpack while constructing "
                                "token_stopwords_stream from VPack arguments. ",
                                kHexParamName, " value should be boolean."));
@@ -99,15 +98,14 @@ Analyzer::ptr MakeVPack(const vpack::Slice slice) {
       if (mask_slice.isArray()) {
         return Construct(vpack::ArrayIterator(mask_slice), hex);
       }
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 absl::StrCat("Invalid vpack while constructing "
                              "token_stopwords_stream from VPack arguments. ",
                              kStopwordsParamName, " value should be array."));
       return nullptr;
     }
     default: {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
         "Invalid vpack while constructing token_stopwords_stream from VPack "
         "arguments. Array or Object was expected.");
     }
@@ -123,20 +121,18 @@ Analyzer::ptr MakeVPack(std::string_view args) {
 Analyzer::ptr MakeJson(std::string_view args) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Null arguments while constructing token_stopwords_stream ");
       return nullptr;
     }
     auto vpack = vpack::Parser::fromJson(args.data());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing token_stopwords_stream from JSON"));
   } catch (...) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
       "Caught error while constructing token_stopwords_stream from JSON");
   }
   return nullptr;
@@ -155,8 +151,7 @@ bool NormalizeVPackConfig(const vpack::Slice slice, vpack::Builder* builder) {
     case vpack::ValueType::Object: {
       auto hex_slice = slice.get(kHexParamName);
       if (!hex_slice.isBool() && !hex_slice.isNone()) {
-        SDB_ERROR(
-          "xxxxx", sdb::Logger::IRESEARCH,
+        SDB_ERROR(IRESEARCH,
           absl::StrCat("Invalid vpack while normalizing token_stopwords_stream "
                        "from VPack arguments. ",
                        kHexParamName, " value should be boolean."));
@@ -171,15 +166,14 @@ bool NormalizeVPackConfig(const vpack::Slice slice, vpack::Builder* builder) {
         builder->close();
         return true;
       }
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 absl::StrCat("Invalid vpack while constructing "
                              "token_stopwords_stream from VPack arguments. ",
                              kStopwordsParamName, " value should be array."));
       return false;
     }
     default: {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
         "Invalid vpack while normalizing token_stopwords_stream from VPack "
         "arguments. Array or Object was expected.");
     }
@@ -200,7 +194,7 @@ bool NormalizeVPackConfig(std::string_view args, std::string& config) {
 bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Null arguments while normalizing token_stopwords_stream");
       return false;
     }
@@ -211,13 +205,11 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
       return true;
     }
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while normalizing token_stopwords_stream from JSON"));
   } catch (...) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
       "Caught error while normalizing token_stopwords_stream from JSON");
   }
   return false;

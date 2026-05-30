@@ -145,7 +145,7 @@ bool ParseOptionsVPack(std::string_view args,
     r = FromVPack(object, options);
   }
   if (!r.ok()) {
-    SDB_WARN("xxxxx", Logger::SEARCH, "Failed to read options for '",
+    SDB_WARN(SEARCH, "Failed to read options for '",
              irs::Type<Analyzer>::name(), "' analyzer, error: '",
              r.errorMessage(), "'");
     return false;

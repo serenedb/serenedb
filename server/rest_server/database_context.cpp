@@ -87,12 +87,12 @@ std::shared_ptr<DatabaseContext> DatabaseContext::create(
 
   if (req.user().empty()) {
     std::string msg = "only jwt can be used to authenticate as superuser";
-    SDB_WARN("xxxxx", Logger::AUTHENTICATION, msg);
-    SDB_THROW(ERROR_BAD_PARAMETER, std::move(msg));
+    SDB_WARN(GENERAL, msg);
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, std::move(msg));
   }
 
   if (!ServerState::instance()->IsClientNode()) {
-    SDB_WARN("xxxxx", Logger::AUTHENTICATION,
+    SDB_WARN(GENERAL,
              "users are not supported on this server");
     return nullptr;
   }

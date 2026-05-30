@@ -230,7 +230,7 @@ void LogCrashInfo(std::string_view context, int signal, siginfo_t* info,
 
   BuildLogMessage(buffer, context, signal, info, ucontext);
   // note: SDB_FATAL() can allocate memory
-  SDB_LOG("xxxxx", FATAL, Logger::CRASH, buffer.view());
+  SDB_LOG(FATAL, CRASH, buffer.view());
 } catch (...) {
   // we better not throw an exception from inside a signal handler
 }
@@ -250,7 +250,7 @@ void LogStacktrace(void* ucontext = nullptr) try {
   buffer.appendUInt64(Thread::currentThreadNumber());
   buffer.append(" [").append(current_thread_name).append("]");
 
-  SDB_INFO("xxxxx", Logger::CRASH, buffer.view());
+  SDB_INFO(CRASH, buffer.view());
 
   // number of frames to skip in backtrace output
   static constexpr int kSkipFrames = 1;
@@ -283,7 +283,7 @@ void LogStacktrace(void* ucontext = nullptr) try {
     } else {
       buffer.append("*no symbol name available for this frame");
     }
-    SDB_INFO("xxxxx", Logger::CRASH, buffer.view());
+    SDB_INFO(CRASH, buffer.view());
   }
   log::Flush();
 } catch (...) {
@@ -305,7 +305,7 @@ void LogProcessInfo() {
   buffer.append(", threads: ")
     .appendUInt64(uint64_t(process_info.number_threads));
 
-  SDB_INFO("xxxxx", Logger::CRASH, buffer.view());
+  SDB_INFO(CRASH, buffer.view());
 }
 
 /// Logs the reception of a signal to the logfile.

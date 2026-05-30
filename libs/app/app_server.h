@@ -197,7 +197,7 @@ class AppServer {
     if (hasFeature(type)) [[likely]] {
       return *_all_features[type];
     }
-    SDB_THROW(ERROR_INTERNAL, "unknown feature: ", type);
+    SDB_THROW(sdb::ERROR_INTERNAL, "unknown feature: ", type);
   }
 
   void disableFeatures(std::span<const size_t> types, bool force);

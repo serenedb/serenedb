@@ -249,7 +249,7 @@ void FlushShard(ShardState& s,
       get_key_buffer.append(pk.data(), pk.size());
       value_buffer.Reset();
       auto status = db.Get(read_opts, &cf, get_key_buffer, &value_buffer);
-      SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
+      SDB_FATAL_IF(SEARCH, !status.ok(),
                    "WAL recovery: rocksdb Get failed for index '",
                    s.shard->GetId().id(),
                    "' col=", s.indexed_columns[col_idx].id, ": ",
@@ -352,7 +352,7 @@ void FlushShard(ShardState& s,
 
   SDB_ASSERT(last_tick != 0);
   const bool committed = trx.Commit(last_tick);
-  SDB_FATAL_IF("xxxxx", Logger::SEARCH, !committed,
+  SDB_FATAL_IF(SEARCH, !committed,
                "WAL recovery: iresearch trx Commit failed for index '",
                s.shard->GetId().id(), "' last_tick=", last_tick, kSkipHint);
 }
@@ -583,14 +583,14 @@ void RunWalRecovery(std::vector<ShardState>& shards,
   SDB_ASSERT(default_cf);
   const uint32_t default_cf_id = default_cf->GetID();
 
-  SDB_INFO("xxxxx", Logger::SEARCH,
+  SDB_INFO(SEARCH,
            "Starting WAL recovery, to skip it use the flag: "
            "\"--search.skip-wal-recovery\"");
 
   std::unique_ptr<rocksdb::TransactionLogIterator> iter;
   rocksdb::TransactionLogIterator::ReadOptions opts{true};
   auto s = db.GetUpdatesSince(min_start_tick, &iter, opts);
-  SDB_FATAL_IF("xxxxx", Logger::SEARCH, !s.ok(),
+  SDB_FATAL_IF(SEARCH, !s.ok(),
                "WAL recovery: failed to open WAL iterator from tick ",
                min_start_tick, ": ", s.ToString(), kSkipHint);
   SDB_ASSERT(iter);
@@ -606,7 +606,7 @@ void RunWalRecovery(std::vector<ShardState>& shards,
 
   while (iter->Valid()) {
     auto status = iter->status();
-    SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
+    SDB_FATAL_IF(SEARCH, !status.ok(),
                  "WAL recovery: iterator error: ", status.ToString(),
                  kSkipHint);
 
@@ -615,7 +615,7 @@ void RunWalRecovery(std::vector<ShardState>& shards,
     WalBatchReplay handler{table2shards, default_cf_id, batch.sequence,
                            kFlushThreshold};
     status = batch.writeBatchPtr->Iterate(&handler);
-    SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
+    SDB_FATAL_IF(SEARCH, !status.ok(),
                  "WAL recovery: batch iterate failed at seq ", batch.sequence,
                  ": ", status.ToString(), kSkipHint);
 
@@ -629,7 +629,7 @@ void RunWalRecovery(std::vector<ShardState>& shards,
   }
 
   auto status = iter->status();
-  SDB_FATAL_IF("xxxxx", Logger::SEARCH, !iter->status().ok(),
+  SDB_FATAL_IF(SEARCH, !iter->status().ok(),
                "WAL recovery: iterator error after last batch: ",
                status.ToString(), kSkipHint);
 
@@ -644,7 +644,7 @@ void RunWalRecovery(std::vector<ShardState>& shards,
   yaclib::Wait(commits.begin(), commits.end());
 
   for (auto& shard : shards) {
-    SDB_INFO_IF("xxxxx", Logger::SEARCH,
+    SDB_INFO_IF(SEARCH,
                 shard.total_deleted > 0 || shard.total_inserted > 0,
                 "WAL recovery: index '", shard.shard->GetId().id(),
                 "' replayed (", shard.start_tick, ", ", end_tick,
@@ -682,7 +682,7 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
         SDB_ASSERT(inv_shard);
         const Tick persisted = inv_shard->GetRecoveryTick();
         if (persisted > end_tick) {
-          SDB_WARN("xxxxx", Logger::SEARCH, "Inverted index '",
+          SDB_WARN(SEARCH, "Inverted index '",
                    inv_shard->GetId().id(), "' is recovered at tick ",
                    persisted, " greater than storage engine tick ", end_tick,
                    ", it seems WAL tail was lost and index is out of sync");
@@ -704,7 +704,7 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
         ShardState state;
         state.shard = std::move(inv_shard);
         state.start_tick = persisted;
-        SDB_FATAL_IF("xxxxx", Logger::SEARCH,
+        SDB_FATAL_IF(SEARCH,
                      !ResolveShardMetadata(state, *snapshot),
                      "WAL recovery: could not resolve catalog metadata for "
                      "inverted index '",
@@ -731,7 +731,7 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
 
   const auto duration =
     absl::FromChrono(std::chrono::steady_clock::now() - begin);
-  SDB_INFO("xxxxx", Logger::SEARCH, "WAL recovery: completed in ",
+  SDB_INFO(SEARCH, "WAL recovery: completed in ",
            absl::FormatDuration(duration),
            ", indexes=", recovery_shards.size());
 }

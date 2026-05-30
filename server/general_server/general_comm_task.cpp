@@ -73,8 +73,7 @@ bool QueueTimeViolated(const GeneralRequest& req) {
         // INFO level, it would effectively be suppressed. thus we are using the
         // Scheduler's log topic here, which is somewhat related.
         SchedulerFeature::gScheduler->trackQueueTimeViolation();
-        SDB_WARN(
-          "xxxxx", Logger::THREADS,
+        SDB_WARN(GENERAL,
           "dropping incoming request because the client-specified maximum "
           "queue time requirement (",
           requested_queue_time, "s) would be violated by current queue time (",
@@ -138,7 +137,7 @@ void GeneralCommTask<T>::LogRequestHeaders(
   const containers::FlatHashMap<std::string, std::string>& headers) const {
   std::string headers_for_logging =
     basics::string_utils::HeadersToString(headers);
-  SDB_TRACE("xxxxx", Logger::REQUESTS, "\"", protocol, "-request-headers\",\"",
+  SDB_TRACE(HTTP, "\"", protocol, "-request-headers\",\"",
             std::bit_cast<size_t>(this), "\",\"", headers_for_logging, "\"");
 }
 
@@ -166,7 +165,7 @@ void GeneralCommTask<T>::LogRequestBody(std::string_view protocol,
     }
   }
 
-  SDB_TRACE("xxxxx", Logger::REQUESTS, "\"", protocol,
+  SDB_TRACE(HTTP, "\"", protocol,
             (is_response ? "-response" : "-request"), "-body\",\"",
             std::bit_cast<size_t>(this), "\",\"",
             ContentTypeToString(content_type), "\",\"", body.size(), "\",\"",
@@ -179,7 +178,7 @@ void GeneralCommTask<T>::LogResponseHeaders(
   const containers::FlatHashMap<std::string, std::string>& headers) const {
   std::string headers_for_logging =
     basics::string_utils::HeadersToString(headers);
-  SDB_TRACE("xxxxx", Logger::REQUESTS, "\"", protocol, "-response-headers\",\"",
+  SDB_TRACE(HTTP, "\"", protocol, "-response-headers\",\"",
             std::bit_cast<size_t>(this), "\",\"", headers_for_logging, "\"");
 }
 
@@ -281,7 +280,7 @@ auth::TokenCache::Entry GeneralCommTask<T>::CheckAuthHeader(
     ++auth;
   }
 
-  SDB_DEBUG_IF("xxxxx", Logger::REQUESTS, log::GetLogRequestParameters(),
+  SDB_DEBUG_IF(HTTP, log::GetLogRequestParameters(),
                "\"authorization-header\",\"", reinterpret_cast<size_t>(this),
                "\",SENSITIVE_DETAILS_HIDDEN");
 
@@ -325,7 +324,7 @@ void GeneralCommTask<T>::FinishExecution(GeneralResponse& res,
     if (!origin.empty()) {
       // the request contained an Origin header. We have to send back the
       // access-control-allow-origin header now
-      SDB_DEBUG("xxxxx", Logger::REQUESTS,
+      SDB_DEBUG(HTTP,
                 "handling CORS response for origin '", origin, "'");
 
       // send back original value of "Origin" header
@@ -379,7 +378,7 @@ void GeneralCommTask<T>::ExecuteRequest(
   SDB_ASSERT(response != nullptr);
 
   if (request == nullptr || response == nullptr) {
-    SDB_THROW(ERROR_INTERNAL, "invalid object setup for ExecuteRequest");
+    SDB_THROW(sdb::ERROR_INTERNAL, "invalid object setup for ExecuteRequest");
   }
 
   response->setContentTypeRequested(request->contentTypeResponse());
@@ -507,7 +506,7 @@ Flow GeneralCommTask<T>::PrepareExecution(
   }
 
   this->_request_source = req.header(StaticStrings::kClusterCommSource);
-  SDB_DEBUG_IF("xxxxx", Logger::REQUESTS, !this->_request_source.empty(),
+  SDB_DEBUG_IF(HTTP, !this->_request_source.empty(),
                "\"request-source\",\"", reinterpret_cast<size_t>(this), "\",\"",
                this->_request_source, "\"");
 
@@ -670,7 +669,7 @@ void GeneralCommTask<T>::SendSimpleResponse(ResponseCode code,
     }
     SendResponse(std::move(resp), StealRequestStatistics(mid));
   } catch (...) {
-    SDB_WARN("xxxxx", Logger::REQUESTS,
+    SDB_WARN(HTTP,
              "addSimpleResponse received an exception, closing connection");
     this->Stop();
   }
@@ -765,7 +764,7 @@ void GeneralCommTask<T>::HandleRequestStartup(
   // requests to any other handlers will be responded to with HTTP 503.
 
   handler->trackQueueStart();
-  SDB_DEBUG("xxxxx", Logger::REQUESTS, "Handling startup request ",
+  SDB_DEBUG(HTTP, "Handling startup request ",
             std::bit_cast<size_t>(this), " on path ",
             handler->request()->requestPath(), " on lane ", lane);
 
@@ -780,7 +779,7 @@ void GeneralCommTask<T>::HandleRequestStartup(
         ->SendResponse(handler->stealResponse(),
                        handler->StealRequestStatistics());
     } catch (...) {
-      SDB_WARN("xxxxx", Logger::REQUESTS,
+      SDB_WARN(HTTP,
                "got an exception while sending response, closing connection");
       self->Stop();
     }
@@ -796,7 +795,7 @@ void GeneralCommTask<T>::HandleRequestSync(
   handler->trackQueueStart();
   // We just injected the request pointer before calling this method
   SDB_ASSERT(handler->request() != nullptr);
-  SDB_DEBUG("xxxxx", Logger::REQUESTS, "Handling request ",
+  SDB_DEBUG(HTTP, "Handling request ",
             std::bit_cast<size_t>(this), " on path ",
             handler->request()->requestPath(), " on lane ", lane);
 
@@ -817,7 +816,7 @@ void GeneralCommTask<T>::HandleRequestSync(
           ->SendResponse(handler->stealResponse(),
                          handler->StealRequestStatistics());
       } catch (...) {
-        SDB_WARN("xxxxx", Logger::REQUESTS,
+        SDB_WARN(HTTP,
                  "got an exception while sending response, closing connection");
         self->Stop();
       }
@@ -856,7 +855,7 @@ bool GeneralCommTask<T>::HandleRequestAsync(
       // out of memory situation, so we better handle this anyway.
       job_manager.initAsyncJob(handler);
     } catch (const std::exception& exc) {
-      SDB_INFO("xxxxx", Logger::STARTUP,
+      SDB_INFO(STARTUP,
                "Async job rejected, exception: ", exc.what());
       return false;
     }
@@ -910,7 +909,7 @@ Flow GeneralCommTask<T>::CanAccessPath(const auth::TokenCache::Entry& token,
   if (result == Flow::Continue &&
       vc->databaseAuthLevel() == auth::Level::None) {
     result = Flow::Abort;
-    SDB_TRACE("xxxxx", Logger::AUTHORIZATION, "Access forbidden to ", path);
+    SDB_TRACE(GENERAL, "Access forbidden to ", path);
   }
 
   // we need to check for some special cases, where users may be allowed
@@ -932,7 +931,7 @@ Flow GeneralCommTask<T>::CanAccessPath(const auth::TokenCache::Entry& token,
           (path.size() > 1 && path[1] != '_')) {
         result = Flow::Continue;
         vc->forceSuperuser();
-        SDB_TRACE("xxxxx", Logger::AUTHORIZATION, "Upgrading rights for ",
+        SDB_TRACE(GENERAL, "Upgrading rights for ",
                   path);
       }
     }
@@ -974,7 +973,7 @@ void GeneralCommTask<T>::ProcessCorsOptions(std::unique_ptr<GeneralRequest> req,
   resp->setHeaderNCIfNotSet(StaticStrings::kAllow, StaticStrings::kCorsMethods);
 
   if (!origin.empty()) {
-    SDB_DEBUG("xxxxx", Logger::REQUESTS, "got CORS preflight request");
+    SDB_DEBUG(HTTP, "got CORS preflight request");
     const std::string_view allow_headers = basics::string_utils::Trim(
       req->header(StaticStrings::kAccessControlRequestHeaders));
 
@@ -991,7 +990,7 @@ void GeneralCommTask<T>::ProcessCorsOptions(std::unique_ptr<GeneralRequest> req,
       resp->setHeaderNCIfNotSet(StaticStrings::kAccessControlAllowHeaders,
                                 allow_headers);
 
-      SDB_TRACE("xxxxx", Logger::REQUESTS,
+      SDB_TRACE(HTTP,
                 "client requested validation of the following headers: ",
                 allow_headers);
     }

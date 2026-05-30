@@ -211,9 +211,9 @@ static void ThrowFileReadError(std::string_view filename) {
 
   auto message =
     absl::StrCat("read failed for file '", filename, "': ", LastError());
-  SDB_TRACE("xxxxx", sdb::Logger::FIXME, message);
+  SDB_TRACE(GENERAL, message);
 
-  SDB_THROW(ERROR_SYS_ERROR, std::move(message));
+  SDB_THROW(sdb::ERROR_SYS_ERROR, std::move(message));
 }
 
 static void ThrowFileWriteError(std::string_view filename) {
@@ -221,9 +221,9 @@ static void ThrowFileWriteError(std::string_view filename) {
 
   auto message =
     absl::StrCat("write failed for file '", filename, "': ", LastError());
-  SDB_TRACE("xxxxx", sdb::Logger::FIXME, "", message);
+  SDB_TRACE(GENERAL, "", message);
 
-  SDB_THROW(ERROR_SYS_ERROR, message);
+  SDB_THROW(sdb::ERROR_SYS_ERROR, message);
 }
 
 static void ThrowFileCreateError(std::string_view filename) {
@@ -231,9 +231,9 @@ static void ThrowFileCreateError(std::string_view filename) {
 
   auto message =
     absl::StrCat("failed to create file '", filename, "': ", LastError());
-  SDB_TRACE("xxxxx", sdb::Logger::FIXME, "", message);
+  SDB_TRACE(GENERAL, "", message);
 
-  SDB_THROW(ERROR_SYS_ERROR, message);
+  SDB_THROW(sdb::ERROR_SYS_ERROR, message);
 }
 
 static void FillString(int fd, std::string_view filename, size_t filesize,
@@ -666,7 +666,7 @@ std::string SlurpProgramInternal(std::string_view program,
     auto res = ERROR_SYS_ERROR;
     SetError(res);
 
-    SDB_TRACE("xxxxx", sdb::Logger::FIXME, "open failed for file '", program,
+    SDB_TRACE(GENERAL, "open failed for file '", program,
               "': ", LastError());
     SDB_THROW(res);
   }
@@ -675,7 +675,7 @@ std::string SlurpProgramInternal(std::string_view program,
     auto res = ERROR_SYS_ERROR;
     SetError(res);
 
-    SDB_TRACE("xxxxx", sdb::Logger::FIXME, "process gone? '", program,
+    SDB_TRACE(GENERAL, "process gone? '", program,
               "': ", LastError());
     SDB_THROW(res);
   }
@@ -692,7 +692,7 @@ std::string SlurpProgramInternal(std::string_view program,
   }
   res = CheckExternalProcess(external, true, 0, NoDeadLine);
   if (error) {
-    SDB_THROW(ERROR_SYS_ERROR);
+    SDB_THROW(sdb::ERROR_SYS_ERROR);
   }
   // Note that we intentionally ignore the exit code of the sub process here
   // since we have always done so and do not want to break things.

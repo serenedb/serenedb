@@ -507,8 +507,7 @@ doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
     doc_id_map.resize(reader.docs_count() + doc_limits::min(),
                       doc_limits::eof());
   } catch (...) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
       "Failed to resize merge_writer::doc_id_map to accommodate element: ",
       reader.docs_count() + doc_limits::min());
     return doc_limits::invalid();

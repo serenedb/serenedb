@@ -95,15 +95,15 @@ VersionResult Version::check(ObjectId database) {
   auto& engine = SerenedServer::Instance().getFeature<EngineFeature>().engine();
   std::string version_file = engine.versionFilename(database);
   if (!basics::file_utils::Exists(version_file)) {
-    SDB_DEBUG("xxxxx", Logger::STARTUP, "VERSION file '", version_file,
+    SDB_DEBUG(STARTUP, "VERSION file '", version_file,
               "' not found");
     return VersionResult{VersionResult::kNoVersionFile, 0, 0, {}};
   }
   std::string version_info = basics::file_utils::Slurp(version_file);
-  SDB_DEBUG("xxxxx", Logger::STARTUP, "found VERSION file '", version_file,
+  SDB_DEBUG(STARTUP, "found VERSION file '", version_file,
             "', content: ", version_info);
   if (version_info.empty()) {
-    SDB_ERROR("xxxxx", Logger::STARTUP, "VERSION file '", version_file,
+    SDB_ERROR(STARTUP, "VERSION file '", version_file,
               "' is empty");
     return VersionResult{VersionResult::kCannotReadVersionFile, 0, 0, {}};
   }
@@ -113,14 +113,14 @@ VersionResult Version::check(ObjectId database) {
       vpack::Parser::fromJson(version_info);
     vpack::Slice version_vals = parsed->slice();
     if (!version_vals.isObject() || !version_vals.get("version").isNumber()) {
-      SDB_ERROR("xxxxx", Logger::STARTUP, "cannot parse VERSION file '",
+      SDB_ERROR(STARTUP, "cannot parse VERSION file '",
                 version_file, "' content: ", version_info);
       return VersionResult{VersionResult::kCannotParseVersionFile, 0, 0, tasks};
     }
     last_version = version_vals.get("version").getUInt();
     vpack::Slice run = version_vals.get("tasks");
     if (run.isNone() || !run.isObject()) {
-      SDB_ERROR("xxxxx", Logger::STARTUP, "invalid VERSION file '",
+      SDB_ERROR(STARTUP, "invalid VERSION file '",
                 version_file, "' content: ", version_info);
       return VersionResult{VersionResult::kCannotParseVersionFile, 0, 0, tasks};
     }
@@ -128,7 +128,7 @@ VersionResult Version::check(ObjectId database) {
       tasks.try_emplace(pair.key.copyString(), pair.value().getBool());
     }
   } catch (const vpack::Exception& e) {
-    SDB_ERROR("xxxxx", Logger::STARTUP, "cannot parse VERSION file '",
+    SDB_ERROR(STARTUP, "cannot parse VERSION file '",
               version_file, "': ", e.what(), ". file content: ", version_info);
 
     return VersionResult{VersionResult::kCannotParseVersionFile, 0, 0, tasks};
@@ -140,22 +140,22 @@ VersionResult Version::check(ObjectId database) {
 
   switch (compare(last_version, server_version)) {
     case VersionResult::kVersionMatch:
-      SDB_DEBUG("xxxxx", Logger::STARTUP, "version match: last version ",
+      SDB_DEBUG(STARTUP, "version match: last version ",
                 last_version, ", current version ", server_version);
       res.status = VersionResult::kVersionMatch;
       break;
     case VersionResult::kDowngradeNeeded:
-      SDB_DEBUG("xxxxx", Logger::STARTUP, "downgrade: last version ",
+      SDB_DEBUG(STARTUP, "downgrade: last version ",
                 last_version, ", current version ", server_version);
       res.status = VersionResult::kDowngradeNeeded;
       break;
     case VersionResult::kUpgradeNeeded:
-      SDB_DEBUG("xxxxx", Logger::STARTUP, "upgrade: last version ",
+      SDB_DEBUG(STARTUP, "upgrade: last version ",
                 last_version, ", current version ", server_version);
       res.status = VersionResult::kUpgradeNeeded;
       break;
     default:
-      SDB_ERROR("xxxxx", Logger::STARTUP, "should not happen: last version ",
+      SDB_ERROR(STARTUP, "should not happen: last version ",
                 last_version);
   }
 
@@ -184,7 +184,7 @@ Result Version::write(ObjectId database,
   builder.close();
 
   if (!basics::VPackHelper::vpackToFile(version_file, builder.slice(), sync)) {
-    SDB_ERROR("xxxxx", Logger::STARTUP, "writing VERSION file '", version_file,
+    SDB_ERROR(STARTUP, "writing VERSION file '", version_file,
               "' failed: ", LastError());
     return Result(GetError(), LastError());
   }

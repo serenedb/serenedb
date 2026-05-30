@@ -221,7 +221,7 @@ std::string EscapeUnicode(std::string_view value, bool escape_slash) {
   }
 
   if (len >= (SIZE_MAX - 1) / 6) {
-    SDB_THROW(ERROR_OUT_OF_MEMORY);
+    SDB_THROW(sdb::ERROR_OUT_OF_MEMORY);
   }
 
   bool corrupted = false;
@@ -396,7 +396,7 @@ std::string EscapeUnicode(std::string_view value, bool escape_slash) {
   std::string result(buffer.get(), qtr - buffer.get());
 
   if (corrupted) {
-    SDB_DEBUG("xxxxx", Logger::FIXME, "escaped corrupted unicode string");
+    SDB_DEBUG(GENERAL, "escaped corrupted unicode string");
   }
 
   return result;
@@ -554,7 +554,7 @@ std::string UrlEncode(const char* src, const size_t len) {
   const char* end = src + len;
 
   if (len >= (SIZE_MAX - 1) / 3) {
-    SDB_THROW(ERROR_OUT_OF_MEMORY);
+    SDB_THROW(sdb::ERROR_OUT_OF_MEMORY);
   }
 
   std::string result;
@@ -595,7 +595,7 @@ void EncodeUriComponent(std::string& result, const char* src, size_t len) {
   const char* end = src + len;
 
   if (result.size() + len >= (SIZE_MAX - 1) / 3) {
-    SDB_THROW(ERROR_OUT_OF_MEMORY);
+    SDB_THROW(sdb::ERROR_OUT_OF_MEMORY);
   }
 
   result.reserve(result.size() + 3 * len);
@@ -692,26 +692,26 @@ std::vector<uint32_t> CharacterCodes(const char* s, size_t length) {
     } else if ((c & 0xE0U) == 0xC0U) {
       // two-byte character
       if (s >= e) {
-        SDB_THROW(ERROR_INTERNAL, "invalid UTF-8 sequence");
+        SDB_THROW(sdb::ERROR_INTERNAL, "invalid UTF-8 sequence");
       }
       char_nums.push_back((n << 8U) + uint32_t(::Consume(s)));
     } else if ((c & 0xF0U) == 0xE0U) {
       // three-byte character
       if (s + 1 >= e) {
-        SDB_THROW(ERROR_INTERNAL, "invalid UTF-8 sequence");
+        SDB_THROW(sdb::ERROR_INTERNAL, "invalid UTF-8 sequence");
       }
       char_nums.push_back((n << 16U) + (uint32_t(::Consume(s)) << 8U) +
                           (uint32_t(::Consume(s))));
     } else if ((c & 0xF8U) == 0XF0U) {
       // four-byte character
       if (s + 2 >= e) {
-        SDB_THROW(ERROR_INTERNAL, "invalid UTF-8 sequence");
+        SDB_THROW(sdb::ERROR_INTERNAL, "invalid UTF-8 sequence");
       }
       char_nums.push_back((n << 24U) + (uint32_t(::Consume(s)) << 16U) +
                           (uint32_t(::Consume(s)) << 8U) +
                           (uint32_t(::Consume(s))));
     } else {
-      SDB_THROW(ERROR_INTERNAL, "invalid UTF-8 sequence");
+      SDB_THROW(sdb::ERROR_INTERNAL, "invalid UTF-8 sequence");
     }
   }
 
@@ -1118,7 +1118,7 @@ void EscapeJsonStr(std::string_view str, Sink* sink,
     } else if ((c & 0xe0U) == 0xc0U) {
       // two-byte sequence
       if (p + 1 >= e) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "invalid UTF-8 sequence");
+        SDB_THROW(sdb::ERROR_BAD_PARAMETER, "invalid UTF-8 sequence");
       }
 
       if (options.escape_unicode) {
@@ -1133,7 +1133,7 @@ void EscapeJsonStr(std::string_view str, Sink* sink,
     } else if ((c & 0xf0U) == 0xe0U) {
       // three-byte sequence
       if (p + 2 >= e) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "invalid UTF-8 sequence");
+        SDB_THROW(sdb::ERROR_BAD_PARAMETER, "invalid UTF-8 sequence");
       }
 
       if (options.escape_unicode) {
@@ -1148,7 +1148,7 @@ void EscapeJsonStr(std::string_view str, Sink* sink,
     } else if ((c & 0xf8U) == 0xf0U) {
       // four-byte sequence
       if (p + 3 >= e) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "invalid UTF-8 sequence");
+        SDB_THROW(sdb::ERROR_BAD_PARAMETER, "invalid UTF-8 sequence");
       }
 
       if (options.escape_unicode) {

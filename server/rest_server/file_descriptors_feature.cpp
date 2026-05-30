@@ -91,8 +91,7 @@ void FileDescriptorsFeature::validateOptions(
   constexpr uint64_t kLowerBound = 10000;
   if (_count_descriptors_interval > 0 &&
       _count_descriptors_interval < kLowerBound) {
-    SDB_WARN(
-      "xxxxx", Logger::SYSCALL,
+    SDB_WARN(GENERAL,
       "too low value for `--server.count-descriptors-interval`. Should be "
       "at least ",
       kLowerBound);
@@ -115,11 +114,10 @@ void FileDescriptorsFeature::countOpenFiles() {
     size_t num_files = file_utils::CountFiles("/proc/self/fd");
     _file_descriptors_current.store(num_files, std::memory_order_relaxed);
   } catch (const std::exception& ex) {
-    SDB_DEBUG(
-      "xxxxx", Logger::SYSCALL,
+    SDB_DEBUG(GENERAL,
       "unable to count number of open files for serened process: ", ex.what());
   } catch (...) {
-    SDB_DEBUG("xxxxx", Logger::SYSCALL,
+    SDB_DEBUG(GENERAL,
               "unable to count number of open files for serened process");
   }
 #endif

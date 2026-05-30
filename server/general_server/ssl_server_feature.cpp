@@ -220,18 +220,18 @@ void SslServerFeature::validateOptions(
   std::shared_ptr<ProgramOptions> options) {
   // check for SSLv2
   if (_ssl_protocol == SslProtocol::kSslV2) {
-    SDB_FATAL("xxxxx", sdb::Logger::SSL,
+    SDB_FATAL(SSL,
               "SSLv2 is not supported any longer because of security "
               "vulnerabilities in this protocol");
   }
 }
 
 void SslServerFeature::prepare() {
-  SDB_INFO("xxxxx", sdb::Logger::SSL,
+  SDB_INFO(SSL,
            "using SSL options: ", stringifySslOptions(_ssl_options));
 
   if (!_cipher_list.empty()) {
-    SDB_INFO("xxxxx", sdb::Logger::SSL, "using SSL cipher-list '", _cipher_list,
+    SDB_INFO(SSL, "using SSL cipher-list '", _cipher_list,
              "'");
   }
 
@@ -241,29 +241,29 @@ void SslServerFeature::prepare() {
 }
 
 void SslServerFeature::unprepare() {
-  SDB_TRACE("xxxxx", sdb::Logger::SSL,
+  SDB_TRACE(SSL,
             "unpreparing ssl: ", stringifySslOptions(_ssl_options));
 }
 
 void SslServerFeature::verifySslOptions() {
   // check keyfile
   if (_keyfile.empty()) {
-    SDB_FATAL("xxxxx", sdb::Logger::SSL,
+    SDB_FATAL(SSL,
               "no value specified for '--ssl.keyfile'");
   }
 
   // validate protocol
   if (_ssl_protocol <= kSslUnknown || _ssl_protocol >= kSslLast) {
-    SDB_FATAL("xxxxx", sdb::Logger::SSL,
+    SDB_FATAL(SSL,
               "invalid SSL protocol version specified. Please use a valid "
               "value for '--ssl.protocol'");
   }
 
-  SDB_DEBUG("xxxxx", sdb::Logger::SSL, "using SSL protocol version '",
+  SDB_DEBUG(SSL, "using SSL protocol version '",
             ProtocolName(SslProtocol(_ssl_protocol)), "'");
 
   if (!file_utils::Exists(_keyfile)) {
-    SDB_FATAL("xxxxx", sdb::Logger::SSL, "unable to find SSL keyfile '",
+    SDB_FATAL(SSL, "unable to find SSL keyfile '",
               _keyfile, "'");
   }
 
@@ -274,7 +274,7 @@ void SslServerFeature::verifySslOptions() {
   try {
     createSslContexts();  // just to test if everything works
   } catch (...) {
-    SDB_FATAL("xxxxx", sdb::Logger::SSL, "cannot create SSL context");
+    SDB_FATAL(SSL, "cannot create SSL context");
   }
 }
 
@@ -356,7 +356,7 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
                                                      : SSL_SESS_CACHE_OFF);
 
     if (_session_cache) {
-      SDB_TRACE("xxxxx", sdb::Logger::SSL, "using SSL session caching");
+      SDB_TRACE(SSL, "using SSL session caching");
     }
 
     // set options
@@ -364,7 +364,7 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
 
     if (!_cipher_list.empty()) {
       if (SSL_CTX_set_cipher_list(native_context, _cipher_list.c_str()) != 1) {
-        SDB_ERROR("xxxxx", sdb::Logger::SSL, "cannot set SSL cipher list '",
+        SDB_ERROR(SSL, "cannot set SSL cipher list '",
                   _cipher_list, "': ", LastSslError());
         throw std::runtime_error("cannot create SSL context");
       }
@@ -372,7 +372,7 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
 
     if (!_ecdh_curve.empty()) {
       if (SSL_CTX_set1_groups_list(native_context, _ecdh_curve.c_str()) != 1) {
-        SDB_ERROR("xxxxx", sdb::Logger::SSL, "cannot set ECDH option",
+        SDB_ERROR(SSL, "cannot set ECDH option",
                   LastSslError());
         throw std::runtime_error("cannot create SSL context");
       }
@@ -384,7 +384,7 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
       native_context, (const unsigned char*)_rctx.c_str(), (int)_rctx.size());
 
     if (res != 1) {
-      SDB_ERROR("xxxxx", sdb::Logger::SSL,
+      SDB_ERROR(SSL,
                 "cannot set SSL session id context '", _rctx,
                 "': ", LastSslError());
       throw std::runtime_error("cannot create SSL context");
@@ -392,14 +392,14 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
 
     // check CA
     if (!_cafile.empty()) {
-      SDB_TRACE("xxxxx", sdb::Logger::SSL,
+      SDB_TRACE(SSL,
                 "trying to load CA certificates from '", _cafile, "'");
 
       res =
         SSL_CTX_load_verify_locations(native_context, _cafile.c_str(), nullptr);
 
       if (res == 0) {
-        SDB_ERROR("xxxxx", sdb::Logger::SSL,
+        SDB_ERROR(SSL,
                   "cannot load CA certificates from '", _cafile,
                   "': ", LastSslError());
         throw std::runtime_error("cannot create SSL context");
@@ -412,7 +412,7 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
       _cafile_content = cafile_content;
 
       if (cert_names == nullptr) {
-        SDB_ERROR("xxxxx", sdb::Logger::SSL,
+        SDB_ERROR(SSL,
                   "cannot load CA certificates from '", _cafile,
                   "': ", LastSslError());
         throw std::runtime_error("cannot create SSL context");
@@ -433,7 +433,7 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
             char* r;
             long len = BIO_get_mem_data(bout.bio, &r);
 
-            SDB_TRACE("xxxxx", sdb::Logger::SSL, "name: ", std::string(r, len));
+            SDB_TRACE(SSL, "name: ", std::string(r, len));
           }
         }
       }
@@ -448,11 +448,11 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
 
     return ssl_context;
   } catch (const std::exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::SSL,
+    SDB_ERROR(SSL,
               "failed to create SSL context: ", ex.what());
     throw std::runtime_error("cannot create SSL context");
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::SSL,
+    SDB_ERROR(SSL,
               "failed to create SSL context, cannot create HTTPS server");
     throw std::runtime_error("cannot create SSL context");
   }
@@ -761,7 +761,7 @@ static void SplitPem(const std::string& pem, std::vector<std::string>& certs,
     } else if (type.find("PRIVATE KEY") != std::string::npos) {
       keys.emplace_back(pem.c_str() + pos, pos_end_footer - pos);
     } else {
-      SDB_INFO("xxxxx", Logger::SSL, "Found part of type ", type,
+      SDB_INFO(SSL, "Found part of type ", type,
                " in PEM file, ignoring it...");
     }
     pos = pos_end_footer;

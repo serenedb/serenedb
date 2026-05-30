@@ -91,8 +91,7 @@ void RocksDBRecoveryManager::start() {
 void RocksDBRecoveryManager::runRecovery() {
   auto res = parseRocksWAL();
   if (res.fail()) {
-    SDB_FATAL_EXIT_CODE(
-      "xxxxx", Logger::ENGINES, EXIT_RECOVERY,
+    SDB_FATAL_EXIT_CODE(STORAGE, EXIT_RECOVERY,
       "failed during rocksdb WAL recovery: ", res.errorMessage());
   }
 
@@ -182,7 +181,7 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
       // report only every 5%, so that we don't flood the log with micro
       // progress
       if (progress >= 5 && progress >= _progress_state.progress_value + 5) {
-        SDB_INFO("xxxxx", Logger::ENGINES, "Recovering from sequence number ",
+        SDB_INFO(STORAGE, "Recovering from sequence number ",
                  start_sequence, " (", progress, "% of WAL)...");
 
         _progress_state.progress_value = progress;
@@ -198,7 +197,7 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
   Result ShutdownWbReader() {
     Result rv = basics::SafeCall([&] {
       if (_engine.dbExisted()) {
-        SDB_INFO("xxxxx", Logger::ENGINES, "RocksDB recovery finished, ",
+        SDB_INFO(STORAGE, "RocksDB recovery finished, ",
                  "WAL entries scanned: ", _entries_scanned,
                  ", recovery start sequence number: ",
                  _progress_state.recovery_start_sequence,
@@ -404,7 +403,7 @@ Result RocksDBRecoveryManager::parseRocksWAL() {
         // archive
       }
 
-      SDB_INFO("xxxxx", Logger::ENGINES,
+      SDB_INFO(STORAGE,
                "RocksDB recovery starting, scanning WAL starting from sequence "
                "number ",
                recovery_start_sequence,
@@ -440,7 +439,7 @@ Result RocksDBRecoveryManager::parseRocksWAL() {
         if (!s.ok()) {
           rv = rocksutils::ConvertStatus(s);
           auto msg = absl::StrCat("error during WAL scan: ", rv.errorMessage());
-          SDB_ERROR("xxxxx", Logger::ENGINES, msg);
+          SDB_ERROR(STORAGE, msg);
           rv.reset(rv.errorNumber(), std::move(msg));  // update message
           break;
         }
@@ -487,7 +486,7 @@ void RocksDBRecoveryManager::recoveryDone() {
   for (auto& future : futures) {
     auto r = std::move(future).Touch().Ok();
     if (!r.ok()) {
-      SDB_ERROR("xxxxx", Logger::FIXME,
+      SDB_ERROR(GENERAL,
                 "recovery failure due to error from callback, error '",
                 GetErrorStr(r.errorNumber()), "' message: ", r.errorMessage());
 

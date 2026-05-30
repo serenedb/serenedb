@@ -36,15 +36,15 @@ void AcceptorUnixDomain::open() {
   std::string path(((EndpointUnixDomain*)_endpoint)->path());
   if (basics::file_utils::Exists(path)) {
     // socket file already exists
-    SDB_WARN("xxxxx", sdb::Logger::FIXME, "socket file '", path,
+    SDB_WARN(GENERAL, "socket file '", path,
              "' already exists.");
 
     // delete previously existing socket file
     if (basics::file_utils::Remove(path) == ERROR_OK) {
-      SDB_WARN("xxxxx", sdb::Logger::FIXME,
+      SDB_WARN(GENERAL,
                "deleted previously existing socket file '", path, "'");
     } else {
-      SDB_ERROR("xxxxx", sdb::Logger::FIXME,
+      SDB_ERROR(GENERAL,
                 "unable to delete previously existing socket file '", path,
                 "'");
     }
@@ -105,7 +105,7 @@ void AcceptorUnixDomain::close() {
       _acceptor.close();
       auto path = basics::downCast<EndpointUnixDomain>(_endpoint)->path();
       if (basics::file_utils::Remove(path) != ERROR_OK) {
-        SDB_TRACE("xxxxx", sdb::Logger::FIXME, "unable to remove socket file '",
+        SDB_TRACE(GENERAL, "unable to remove socket file '",
                   path, "'");
       }
     });

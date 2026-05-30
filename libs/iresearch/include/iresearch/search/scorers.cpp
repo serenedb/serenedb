@@ -77,7 +77,7 @@ Scorer::ptr scorers::Get(std::string_view name, const TypeInfo& args_format,
 
     return factory ? factory(args) : nullptr;
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught exception while getting a scorer instance");
   }
 
@@ -123,23 +123,23 @@ ScorerRegistrar::ScorerRegistrar(const TypeInfo& type,
       ScorerRegister::instance().tag(Key{type.name(), args_format});
 
     if (source && registered_source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering scorer, "
                "ignoring: type '",
                type.name(), "' from ", source_ref, ", previously from ",
                *registered_source);
     } else if (source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering scorer, "
                "ignoring: type '",
                type.name(), "' from ", source_ref);
     } else if (registered_source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering scorer, "
                "ignoring: type '",
                type.name(), "', previously from ", *registered_source);
     } else {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering scorer, "
                "ignoring: type '",
                type.name(), "'");

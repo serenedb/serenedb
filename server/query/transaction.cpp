@@ -229,7 +229,7 @@ catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
   // TODO(codeworse): manage catalog snapshot in transaction
   auto table_shard = EnsureCatalogSnapshot()->GetTableShard(table_id);
   if (!table_shard) {
-    SDB_THROW(ERROR_BAD_PARAMETER,
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
               "Table shard not found for table id: ", table_id);
   }
   return table_shard->GetTableStats();

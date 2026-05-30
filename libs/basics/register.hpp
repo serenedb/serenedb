@@ -70,7 +70,7 @@ class GenericRegister : public Singleton<RegisterType> {
       return load_entry_from_so(key);
     }
 
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "key not found");
+    SDB_ERROR(IRESEARCH, "key not found");
 
     return entry_type{};
   }
@@ -101,7 +101,7 @@ class GenericRegister : public Singleton<RegisterType> {
     void* handle = LoadLibrary(file.c_str(), 1);
 
     if (nullptr == handle) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "load failed");
+      SDB_ERROR(IRESEARCH, "load failed");
       return entry_type();
     }
 
@@ -116,7 +116,7 @@ class GenericRegister : public Singleton<RegisterType> {
     }
 
     if (!this_ptr->add_so_handle(handle)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 absl::StrCat("init failed in shared object : ", file));
       return entry_type();
     }
@@ -125,7 +125,7 @@ class GenericRegister : public Singleton<RegisterType> {
     // that performs registration
     const entry_type* entry = lookup(key);
     if (nullptr == entry) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 absl::StrCat("lookup failed in shared object : ", file));
       return entry_type{};
     }

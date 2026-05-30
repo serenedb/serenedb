@@ -187,7 +187,7 @@ class VPackHelper {
   template<typename T>
   static T getNumber(vpack::Slice slice, T default_value) {
     return getNumberImpl(slice, default_value, [&] {
-      SDB_THROW(ERROR_BAD_PARAMETER,
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER,
                 absl::StrCat("invalid value ", slice.getNumber<double>(),
                              " for ", numberTypeName<T>()));
     });

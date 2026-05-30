@@ -115,7 +115,7 @@ class PositionImpl final : public PosAttr {
 
     if (!_pos_in) {
       // implementation returned wrong pointer
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Failed to reopen positions input");
 
       throw IoError("failed to reopen positions input");
@@ -133,7 +133,7 @@ class PositionImpl final : public PosAttr {
 
       if (!_pay_in) {
         // implementation returned wrong pointer
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+        SDB_ERROR(IRESEARCH,
                   "Failed to reopen payload input");
 
         throw IoError("failed to reopen payload input");

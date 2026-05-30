@@ -729,7 +729,7 @@ Result CatalogFeature::Open() {
   auto r = open_db();
 
   if (!r.ok()) {
-    SDB_FATAL("xxxxx", Logger::FIXME, "Failed to open database, ",
+    SDB_FATAL(GENERAL, "Failed to open database, ",
               r.errorMessage());
   }
 
@@ -739,7 +739,7 @@ Result CatalogFeature::Open() {
   }
 
   if (!catalog::GetDatabase(StaticStrings::kDefaultDatabase)) {
-    SDB_FATAL("xxxxx", Logger::FIXME, "No ", StaticStrings::kDefaultDatabase,
+    SDB_FATAL(GENERAL, "No ", StaticStrings::kDefaultDatabase,
               " database found in database directory");
   }
 
@@ -752,7 +752,7 @@ Result CatalogFeature::Open() {
                                 db->GetName(), "\" (TYPE serenedb)");
       auto result = conn->Query(query);
       if (result->HasError()) {
-        SDB_FATAL("xxxxx", Logger::FIXME, "Failed to attach database ",
+        SDB_FATAL(GENERAL, "Failed to attach database ",
                   db->GetName(), ": ", result->GetError());
       }
     }

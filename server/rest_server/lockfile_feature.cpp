@@ -55,14 +55,12 @@ void LockfileFeature::start() {
     } catch (...) {
     }
     if (other_pid.empty()) {
-      SDB_FATAL_EXIT_CODE(
-        "xxxxx", sdb::Logger::FIXME, EXIT_COULD_NOT_LOCK,
+      SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
         "failed to read/write lockfile, please check the file permissions "
         "of the lockfile '",
         _lock_filename, "'");
     } else {
-      SDB_FATAL_EXIT_CODE(
-        "xxxxx", sdb::Logger::FIXME, EXIT_COULD_NOT_LOCK,
+      SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
         "database is locked by process ", other_pid,
         "; please stop it first and check that the lockfile '", _lock_filename,
         "' goes away. If you are sure no other serened process is ",
@@ -75,8 +73,7 @@ void LockfileFeature::start() {
     res = SdbUnlinkFile(_lock_filename.c_str());
 
     if (res != ERROR_OK) {
-      SDB_FATAL_EXIT_CODE(
-        "xxxxx", sdb::Logger::FIXME, EXIT_COULD_NOT_LOCK,
+      SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
         "failed to remove an abandoned lockfile in the database "
         "directory, please check the file permissions of the lockfile '",
         _lock_filename, "': ", GetErrorStr(res));
@@ -85,7 +82,7 @@ void LockfileFeature::start() {
   res = SdbCreateLockFile(_lock_filename.c_str());
 
   if (res != ERROR_OK) {
-    SDB_FATAL_EXIT_CODE("xxxxx", sdb::Logger::FIXME, EXIT_COULD_NOT_LOCK,
+    SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
                         "failed to lock the database directory using '",
                         _lock_filename, "': ", GetErrorStr(res));
   }

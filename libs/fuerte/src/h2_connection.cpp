@@ -39,7 +39,7 @@ template<SocketType T>
 int H2Connection<T>::on_begin_headers(nghttp2_session* session,
                                       const nghttp2_frame* frame,
                                       void* user_data) {
-  SDB_TRACE("xxxxx", Logger::FUERTE, "on_begin_headers ", frame->hd.stream_id);
+  SDB_TRACE(GENERAL, "on_begin_headers ", frame->hd.stream_id);
 
   // only care about (first) response headers
   if (frame->hd.type != NGHTTP2_HEADERS ||
@@ -65,18 +65,18 @@ template<SocketType T>
                                           uint8_t flags, void* user_data) {
   H2Connection<T>* me = static_cast<H2Connection<T>*>(user_data);
   int32_t stream_id = frame->hd.stream_id;
-  SDB_TRACE("xxxxx", Logger::FUERTE, "on_header ", stream_id);
+  SDB_TRACE(GENERAL, "on_header ", stream_id);
 
   if (frame->hd.type != NGHTTP2_HEADERS ||
       frame->headers.cat != NGHTTP2_HCAT_RESPONSE) {
     return 0;
   }
 
-  SDB_TRACE("xxxxx", Logger::FUERTE, "got HEADER frame for stream ", stream_id);
+  SDB_TRACE(GENERAL, "got HEADER frame for stream ", stream_id);
 
   Stream* strm = me->FindStream(stream_id);
   if (!strm) {
-    SDB_TRACE("xxxxx", Logger::FUERTE, "HEADER frame for unkown stream ",
+    SDB_TRACE(GENERAL, "HEADER frame for unkown stream ",
               stream_id);
     return 0;
   }
@@ -109,7 +109,7 @@ int H2Connection<T>::on_frame_recv(nghttp2_session* session,
   H2Connection<T>* me = static_cast<H2Connection<T>*>(user_data);
 
   const int32_t sid = frame->hd.stream_id;
-  SDB_TRACE("xxxxx", Logger::FUERTE, "on_frame_recv ", sid);
+  SDB_TRACE(GENERAL, "on_frame_recv ", sid);
 
   switch (frame->hd.type) {
     case NGHTTP2_DATA:
@@ -117,7 +117,7 @@ int H2Connection<T>::on_frame_recv(nghttp2_session* session,
       if (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) {
         auto strm = me->EraseStream(sid);
         if (strm) {
-          SDB_TRACE("xxxxx", Logger::FUERTE, "got response on stream ", sid);
+          SDB_TRACE(GENERAL, "got response on stream ", sid);
           strm->response->setPayload(std::move(strm->data), /*offset*/ 0);
           strm->callback(Error::NoError, std::move(strm->request),
                          std::move(strm->response));
@@ -134,7 +134,7 @@ template<SocketType T>
 /*static*/ int H2Connection<T>::on_data_chunk_recv(
   nghttp2_session* session, uint8_t flags, int32_t stream_id,
   const uint8_t* data, size_t len, void* user_data) {
-  SDB_TRACE("xxxxx", Logger::FUERTE, "DATA frame for stream ", stream_id);
+  SDB_TRACE(GENERAL, "DATA frame for stream ", stream_id);
 
   H2Connection<T>* me = static_cast<H2Connection<T>*>(user_data);
   Stream* strm = me->FindStream(stream_id);
@@ -150,14 +150,14 @@ template<SocketType T>
                                                 int32_t stream_id,
                                                 uint32_t error_code,
                                                 void* user_data) {
-  SDB_TRACE("xxxxx", Logger::FUERTE, "closing stream ", stream_id, " error '",
+  SDB_TRACE(GENERAL, "closing stream ", stream_id, " error '",
             nghttp2_http2_strerror(error_code), "' (", error_code, ")");
   H2Connection<T>* me = static_cast<H2Connection<T>*>(user_data);
 
   auto strm = me->EraseStream(stream_id);
   if (error_code != NGHTTP2_NO_ERROR && strm != nullptr) {
     if (strm->request) {  // abortRequest() may have closed the stream
-      SDB_ERROR("xxxxx", Logger::FUERTE, "http2 closing stream '", stream_id,
+      SDB_ERROR(GENERAL, "http2 closing stream '", stream_id,
                 "' with error ", nghttp2_http2_strerror(error_code), " (",
                 error_code, ")");
       strm->invokeOnError(fuerte::Error::ProtocolError);
@@ -175,7 +175,7 @@ template<SocketType T>
   if (frame->hd.type != NGHTTP2_HEADERS) {
     return 0;
   }
-  SDB_TRACE("xxxxx", Logger::FUERTE, "frame not send: '",
+  SDB_TRACE(GENERAL, "frame not send: '",
             nghttp2_strerror(lib_error_code), "' (", lib_error_code, ")");
 
   // Issue RST_STREAM so that stream does not hang around.
@@ -189,14 +189,14 @@ namespace {
 
 int OnErrorCallback(nghttp2_session* session, int lib_error_code,
                     const char* msg, size_t len, void*) {
-  SDB_ERROR("xxxxx", Logger::FUERTE, "http2 error: \"", std::string(msg, len),
+  SDB_ERROR(GENERAL, "http2 error: \"", std::string(msg, len),
             "\" (", lib_error_code, ")");
   return 0;
 }
 
 int OnInvalidFrameRecv(nghttp2_session* session, const nghttp2_frame* frame,
                        int lib_error_code, void* user_data) {
-  SDB_DEBUG("xxxxx", Logger::FUERTE, "received illegal data frame on stream ",
+  SDB_DEBUG(GENERAL, "received illegal data frame on stream ",
             frame->hd.stream_id, ": '", nghttp2_strerror(lib_error_code), "' (",
             lib_error_code, ")");
   return 0;
@@ -303,7 +303,7 @@ void H2Connection<T>::InitNgHttp2Session() {
 // socket connection is used without TLS
 template<SocketType T>
 void H2Connection<T>::finishConnect() {
-  SDB_TRACE("xxxxx", Logger::FUERTE, "finishInitialization (h2)");
+  SDB_TRACE(GENERAL, "finishInitialization (h2)");
   if (this->state() != Connection::State::Connecting) {
     return;
   }
@@ -332,7 +332,7 @@ void H2Connection<T>::finishConnect() {
 
 template<>
 void H2Connection<SocketType::Tcp>::ReadSwitchingProtocolsResponse() {
-  SDB_TRACE("xxxxx", Logger::FUERTE, "readSwitchingProtocolsResponse)");
+  SDB_TRACE(GENERAL, "readSwitchingProtocolsResponse)");
 
   auto self = Connection::shared_from_this();
   this->_proto.timer.expires_after(std::chrono::seconds(5));
@@ -422,7 +422,7 @@ void H2Connection<SocketType::Tcp>::SendHttp1UpgradeRequest() {
 // socket connection is up (with optional SSL), now initiate the H2 protocol.
 template<>
 void H2Connection<SocketType::Ssl>::finishConnect() {
-  SDB_TRACE("xxxxx", Logger::FUERTE, "finishInitialization (h2)\n");
+  SDB_TRACE(GENERAL, "finishInitialization (h2)\n");
   if (this->state() != Connection::State::Connecting) {
     return;
   }
@@ -432,7 +432,7 @@ void H2Connection<SocketType::Ssl>::finishConnect() {
   SSL_get0_alpn_selected(this->_proto.socket.native_handle(), &alpn, &alpnlen);
 
   if (alpn == NULL || alpnlen != 2 || memcmp("h2", alpn, 2) != 0) {
-    SDB_ERROR("xxxxx", Logger::FUERTE, "h2 is not negotiated");
+    SDB_ERROR(GENERAL, "h2 is not negotiated");
     shutdownConnection(Error::ProtocolError, "h2 is not negotiated");
     return;
   }
@@ -466,7 +466,7 @@ void H2Connection<T>::QueueHttp2Requests() {
     uint32_t q = this->_num_queued.fetch_sub(1, std::memory_order_relaxed);
     SDB_ASSERT(q > 0);
 
-    SDB_TRACE("xxxxx", Logger::FUERTE,
+    SDB_TRACE(GENERAL,
               "queued request this=", reinterpret_cast<uintptr_t>(this));
 
     fuerte::Request& req = *strm->request;
@@ -580,11 +580,11 @@ void H2Connection<T>::QueueHttp2Requests() {
                                          /*stream_user_data*/ nullptr);
 
     if (sid < 0) {
-      SDB_ERROR("xxxxx", Logger::FUERTE, "illegal stream id");
+      SDB_ERROR(GENERAL, "illegal stream id");
       this->shutdownConnection(Error::ProtocolError, "illegal stream id");
       return;
     }
-    SDB_TRACE("xxxxx", Logger::FUERTE, "enqueuing stream ", sid, " to ",
+    SDB_TRACE(GENERAL, "enqueuing stream ", sid, " to ",
               req.header.path);
     this->_streams.emplace(sid, std::move(strm));
     this->_stream_count.fetch_add(1, std::memory_order_relaxed);
@@ -594,7 +594,7 @@ void H2Connection<T>::QueueHttp2Requests() {
 // writes data from task queue to network using asio_ns::async_write
 template<SocketType T>
 void H2Connection<T>::DoWrite() {
-  SDB_TRACE("xxxxx", Logger::FUERTE, "DoWrite");
+  SDB_TRACE(GENERAL, "DoWrite");
 
   if (this->_writing) {
     return;
@@ -614,7 +614,7 @@ void H2Connection<T>::DoWrite() {
     if (rv < 0) {  // error
       this->_writing = false;
       this->_active.store(false);
-      SDB_ERROR("xxxxx", Logger::FUERTE, "http2 framing error");
+      SDB_ERROR(GENERAL, "http2 framing error");
       this->shutdownConnection(Error::ProtocolError, "http2 framing error");
       return;
     } else if (rv == 0) {  // done
@@ -659,7 +659,7 @@ void H2Connection<T>::DoWrite() {
       }
     });
 
-  SDB_TRACE("xxxxx", Logger::FUERTE, "DoWrite: done");
+  SDB_TRACE(GENERAL, "DoWrite: done");
 }
 
 // ------------------------------------
@@ -670,8 +670,7 @@ void H2Connection<T>::DoWrite() {
 template<SocketType T>
 void H2Connection<T>::asyncReadCallback(const asio_ns::error_code& ec) {
   if (ec) {
-    SDB_DEBUG(
-      "xxxxx", Logger::FUERTE,
+    SDB_DEBUG(GENERAL,
       "asyncReadCallback: Error while reading from socket: ", ec.message());
     this->shutdownConnection(this->translateError(ec, Error::ReadError));
     return;
@@ -687,7 +686,7 @@ void H2Connection<T>::asyncReadCallback(const asio_ns::error_code& ec) {
 
     ssize_t rv = nghttp2_session_mem_recv(_session, data, it->size());
     if (rv < 0) {
-      SDB_ERROR("xxxxx", Logger::FUERTE, "http2 parsing error");
+      SDB_ERROR(GENERAL, "http2 parsing error");
       this->shutdownConnection(Error::ProtocolError, "http2 parsing error");
       return;  // stop read loop
     }
@@ -699,7 +698,7 @@ void H2Connection<T>::asyncReadCallback(const asio_ns::error_code& ec) {
 
   // Remove consumed data from receive buffer.
   this->_receive_buffer.consume(parsed_bytes);
-  SDB_TRACE("xxxxx", Logger::FUERTE, "parsed ", parsed_bytes, " bytes");
+  SDB_TRACE(GENERAL, "parsed ", parsed_bytes, " bytes");
 
   DoWrite();
 

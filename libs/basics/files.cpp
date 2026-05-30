@@ -564,7 +564,7 @@ ErrorCode SdbRemoveEmptyDirectory(const char* filename) {
   int res = SERENEDB_RMDIR(filename);
 
   if (res != 0) {
-    SDB_TRACE("xxxxx", Logger::FIXME, "cannot remove directory '", filename,
+    SDB_TRACE(GENERAL, "cannot remove directory '", filename,
               "': ", SERENEDB_ERRORNO_STR);
     SetError(ERROR_SYS_ERROR);
     return ERROR_SYS_ERROR;
@@ -575,11 +575,11 @@ ErrorCode SdbRemoveEmptyDirectory(const char* filename) {
 
 ErrorCode SdbRemoveDirectory(const char* filename) {
   if (SdbIsSymbolicLink(filename)) {
-    SDB_TRACE("xxxxx", Logger::FIXME, "removing symbolic link '", filename,
+    SDB_TRACE(GENERAL, "removing symbolic link '", filename,
               "'");
     return SdbUnlinkFile(filename);
   } else if (SdbIsDirectory(filename)) {
-    SDB_TRACE("xxxxx", Logger::FIXME, "removing directory '", filename, "'");
+    SDB_TRACE(GENERAL, "removing directory '", filename, "'");
 
     auto res = ERROR_OK;
     std::vector<std::string> files = SdbFilesDirectory(filename);
@@ -599,11 +599,11 @@ ErrorCode SdbRemoveDirectory(const char* filename) {
 
     return res;
   } else if (SdbExistsFile(filename)) {
-    SDB_TRACE("xxxxx", Logger::FIXME, "removing file '", filename, "'");
+    SDB_TRACE(GENERAL, "removing file '", filename, "'");
 
     return SdbUnlinkFile(filename);
   } else {
-    SDB_TRACE("xxxxx", Logger::FIXME,
+    SDB_TRACE(GENERAL,
               "attempt to remove non-existing file/directory '", filename, "'");
 
     // TODO: why do we actually return "no error" here?
@@ -745,7 +745,7 @@ ErrorCode SdbUnlinkFile(const char* filename) {
   if (res != 0) {
     int e = errno;
     SetError(ERROR_SYS_ERROR);
-    SDB_TRACE("xxxxx", Logger::FIXME, "cannot unlink file '", filename,
+    SDB_TRACE(GENERAL, "cannot unlink file '", filename,
               "': ", SERENEDB_ERRORNO_STR);
     if (e == ENOENT) {
       return ERROR_FILE_NOT_FOUND;
@@ -771,7 +771,7 @@ ssize_t SdbReadPointer(int fd, char* buffer, size_t length) {
         continue;
       }
       SetError(ERROR_SYS_ERROR);
-      SDB_ERROR("xxxxx", Logger::FIXME, "cannot read: ", SERENEDB_ERRORNO_STR);
+      SDB_ERROR(GENERAL, "cannot read: ", SERENEDB_ERRORNO_STR);
       return n;  // always negative
     } else if (n == 0) {
       break;
@@ -793,7 +793,7 @@ bool SdbWritePointer(int fd, const void* buffer, size_t length) {
 
     if (n < 0) {
       SetError(ERROR_SYS_ERROR);
-      SDB_ERROR("xxxxx", Logger::FIXME, "cannot write: ", SERENEDB_ERRORNO_STR);
+      SDB_ERROR(GENERAL, "cannot write: ", SERENEDB_ERRORNO_STR);
       return false;
     }
 
@@ -968,7 +968,7 @@ ErrorCode SdbVerifyLockFile(const char* filename) {
 
   if (fd < 0) {
     SetError(ERROR_SYS_ERROR);
-    SDB_WARN("xxxxx", Logger::FIXME, "cannot open lockfile '", filename,
+    SDB_WARN(GENERAL, "cannot open lockfile '", filename,
              "' in write mode: ", LastError());
 
     if (errno == EACCES) {
@@ -1005,11 +1005,11 @@ ErrorCode SdbVerifyLockFile(const char* filename) {
   //   are still performed; this can be used to check for the existence of a
   //   process ID or process group ID that the caller is permitted to signal.
   if (kill(pid, 0) == -1) {
-    SDB_WARN("xxxxx", Logger::FIXME, "found existing lockfile '", filename,
+    SDB_WARN(GENERAL, "found existing lockfile '", filename,
              "' of previous process with pid ", pid,
              ", but that process seems to be dead already");
   } else {
-    SDB_WARN("xxxxx", Logger::FIXME, "found existing lockfile '", filename,
+    SDB_WARN(GENERAL, "found existing lockfile '", filename,
              "' of previous process with pid ", pid,
              ", and that process seems to be still running");
   }
@@ -1028,7 +1028,7 @@ ErrorCode SdbVerifyLockFile(const char* filename) {
     // lock.l_type = F_UNLCK;
     if (0 != fcntl(fd, F_GETLK, &lock)) {
       SetError(ERROR_SYS_ERROR);
-      SDB_WARN("xxxxx", Logger::FIXME, "fcntl on lockfile '", filename,
+      SDB_WARN(GENERAL, "fcntl on lockfile '", filename,
                "' failed: ", LastError());
     }
 
@@ -1042,7 +1042,7 @@ ErrorCode SdbVerifyLockFile(const char* filename) {
   // from man 2 fcntl: "If a conflicting lock is held by another process,
   // this call returns -1 and sets errno to EACCES or EAGAIN."
   if (can_lock != EACCES && can_lock != EAGAIN) {
-    SDB_WARN("xxxxx", Logger::FIXME, "fcntl on lockfile '", filename,
+    SDB_WARN(GENERAL, "fcntl on lockfile '", filename,
              "' failed: ", LastError(),
              ". a possible reason is that the filesystem does not support "
              "file-locking");
@@ -1433,12 +1433,12 @@ std::string SdbGetTempPath() {
       // this may be a race, a permissions problem or something else
       if (++tries >= 10) {
 #ifdef SDB_DEV
-        SDB_ERROR("xxxxx", Logger::FIXME, "UserTempPath: ", gUserTempPath,
+        SDB_ERROR(GENERAL, "UserTempPath: ", gUserTempPath,
                   ", system: ", system, ", user temp path exists: ",
                   SdbIsDirectory(gUserTempPath.c_str()), ", res: ", res,
                   ", SystemTempPath: ", gSystemTempPath.get());
 #endif
-        SDB_FATAL("xxxxx", Logger::FIXME,
+        SDB_FATAL(GENERAL,
                   "failed to create a temporary directory - giving up!");
         FatalErrorAbort();
       }
@@ -1621,7 +1621,7 @@ Sha256Functor::Sha256Functor()
 #endif
   auto* context = static_cast<EVP_MD_CTX*>(_context);
   if (context == nullptr) {
-    SDB_THROW(ERROR_OUT_OF_MEMORY);
+    SDB_THROW(sdb::ERROR_OUT_OF_MEMORY);
   }
   if (EVP_DigestInit_ex(context, EVP_sha256(), nullptr) == 0) {
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
@@ -1629,7 +1629,7 @@ Sha256Functor::Sha256Functor()
 #else
     EVP_MD_CTX_destroy(_context);
 #endif
-    SDB_THROW(ERROR_INTERNAL, "unable to initialize SHA256 processor");
+    SDB_THROW(sdb::ERROR_INTERNAL, "unable to initialize SHA256 processor");
   }
 }
 

@@ -160,7 +160,7 @@ void AppServer::initiateSoftShutdown() {
     auto r = basics::SafeCall([&] { feature.initiateSoftShutdown(); });
 
     if (!r.ok()) {
-      SDB_ERROR("xxxxx", Logger::STARTUP,
+      SDB_ERROR(STARTUP,
                 "caught exception during initiateSoftShutdown of feature '",
                 feature.name(), "': ", r.errorMessage());
     }
@@ -196,7 +196,7 @@ void AppServer::beginShutdown() {
     auto r = basics::SafeCall([&] { feature.beginShutdown(); });
 
     if (!r.ok()) {
-      SDB_ERROR("xxxxx", Logger::STARTUP,
+      SDB_ERROR(STARTUP,
                 "caught exception during beginShutdown of feature '",
                 feature.name(), "': ", r.errorMessage());
     }
@@ -288,7 +288,7 @@ void AppServer::prepare() {
     auto r = basics::SafeCall([&] { feature.prepare(); });
 
     if (!r.ok()) {
-      SDB_ERROR("xxxxx", Logger::STARTUP,
+      SDB_ERROR(STARTUP,
                 "caught exception during prepare of feature '", feature.name(),
                 "': ", r.errorMessage());
     }
@@ -313,7 +313,7 @@ void AppServer::start() {
       });
 
     if (!r.ok()) {
-      SDB_ERROR("xxxxx", Logger::STARTUP, r.errorMessage(), ". shutting down");
+      SDB_ERROR(STARTUP, r.errorMessage(), ". shutting down");
 
       auto started_features =
         EnabledFeaturesReverse() | std::views::filter([](const auto& feature) {
@@ -326,7 +326,7 @@ void AppServer::start() {
 
         if (!r.ok()) {
           // ignore errors on shutdown
-          SDB_ERROR("xxxxx", Logger::STARTUP,
+          SDB_ERROR(STARTUP,
                     "caught exception while stopping feature '", feature.name(),
                     "', error: ", r.errorMessage());
         }
@@ -338,7 +338,7 @@ void AppServer::start() {
 
         if (!r.ok()) {
           // if something goes wrong, we simply rethrow to abort!
-          SDB_FATAL("xxxxx", Logger::STARTUP,
+          SDB_FATAL(STARTUP,
                     "caught exception while stopping feature '", feature.name(),
                     "', error: ", r.errorMessage());
           SDB_THROW(std::move(r));
@@ -360,7 +360,7 @@ void AppServer::start() {
 
         if (!r.ok()) {
           // if something goes wrong, we simply rethrow to abort!
-          SDB_FATAL("xxxxx", Logger::STARTUP,
+          SDB_FATAL(STARTUP,
                     "caught exception while unpreparing feature '",
                     feature.name(), "', error: ", r.errorMessage());
           SDB_THROW(std::move(r));
@@ -387,7 +387,7 @@ void AppServer::stop() {
     auto r = basics::SafeCall([&] { feature.stop(); });
 
     if (!r.ok()) {
-      SDB_ERROR("xxxxx", Logger::STARTUP,
+      SDB_ERROR(STARTUP,
                 "caught exception during stop of feature '", feature.name(),
                 "': ", r.errorMessage());
     }
@@ -404,7 +404,7 @@ void AppServer::unprepare() {
     auto r = basics::SafeCall([&] { feature.unprepare(); });
 
     if (!r.ok()) {
-      SDB_ERROR("xxxxx", Logger::STARTUP,
+      SDB_ERROR(STARTUP,
                 "caught exception during unprepare of feature '",
                 feature.name(), "': ", r.errorMessage());
     }

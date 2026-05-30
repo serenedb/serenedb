@@ -5,7 +5,6 @@ target_link_libraries(serene_tests_basics_deps INTERFACE sereneserver)
 add_executable(
     serenedb-tests_basics
     conversions_test.cpp
-    escaper_test.cpp
     endian_test.cpp
     parameters_test.cpp
     assertions_tests.cpp
@@ -23,7 +22,6 @@ add_executable(
     cpu_usage_snapshot_test.cpp
     encoding_utils_test.cpp
     endpoint_test.cpp
-    logger_test.cpp
     number_utils_test.cpp
     random_test.cpp
     read_write_lock_test.cpp

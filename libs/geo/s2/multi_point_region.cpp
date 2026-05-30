@@ -41,7 +41,7 @@ S2Point S2MultiPointRegion::GetCentroid() const noexcept {
 }
 
 S2Region* S2MultiPointRegion::Clone() const {
-  SDB_THROW(ERROR_NOT_IMPLEMENTED);
+  SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED);
 }
 
 S2Cap S2MultiPointRegion::GetCapBound() const {

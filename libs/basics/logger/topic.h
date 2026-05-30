@@ -17,36 +17,26 @@
 ///
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
+//
+// Topic constants for SDB_LOG / SDB_INFO / etc. The SDB_* macros prepend
+// `::sdb::log::` to the topic argument, so call sites write
+// `SDB_INFO(GENERAL, "...")` and get `::sdb::log::GENERAL` resolved at
+// expansion. Each constant is a `constexpr inline std::string_view`; the
+// runtime entry point takes it by string_view.
 
 #pragma once
 
-#include <string>
-#include <vector>
+#include <string_view>
 
-#include "app/app_feature.h"
+namespace sdb::log {
 
-namespace sdb {
-namespace app {
-class AppServer;
-}
-namespace options {
-class ProgramOptions;
-}
+inline constexpr std::string_view GENERAL{"general"};
+inline constexpr std::string_view STARTUP{"startup"};
+inline constexpr std::string_view HTTP{"http"};
+inline constexpr std::string_view SSL{"ssl"};
+inline constexpr std::string_view STORAGE{"storage"};
+inline constexpr std::string_view SEARCH{"search"};
+inline constexpr std::string_view IRESEARCH{"iresearch"};
+inline constexpr std::string_view CRASH{"crash"};
 
-class LoggerFeature final : public app::AppFeature {
- public:
-  static constexpr std::string_view name() { return "Logger"; }
-
-  explicit LoggerFeature(app::AppServer& server);
-  ~LoggerFeature() final;
-
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
-  void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
-  void prepare() final;
-  void unprepare() final;
-
- private:
-  std::vector<std::string> _levels;
-};
-
-}  // namespace sdb
+}  // namespace sdb::log

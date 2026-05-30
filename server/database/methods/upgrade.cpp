@@ -82,13 +82,13 @@ UpgradeResult Upgrade::startup(catalog::Database& database, bool is_upgrade,
                                   true)
             .ok()) {
         // give it another try
-        SDB_WARN("xxxxx", Logger::STARTUP,
+        SDB_WARN(STARTUP,
                  "overwriting unparsable VERSION file with default value ",
                  "because option `--database.ignore-datafile-errors` is set");
         vinfo = methods::Version::check(database_id);
       }
     } else {
-      SDB_WARN("xxxxx", Logger::STARTUP,
+      SDB_WARN(STARTUP,
                "in order to automatically fix the VERSION file on startup, ",
                "please start the server with option "
                "`--database.ignore-datafile-errors true`");
@@ -109,24 +109,22 @@ UpgradeResult Upgrade::startup(catalog::Database& database, bool is_upgrade,
     case VersionResult::kUpgradeNeeded: {
       if (!is_upgrade) {
         // we do not perform upgrades without being told so during startup
-        SDB_ERROR("xxxxx", Logger::STARTUP, "Database directory version (",
+        SDB_ERROR(STARTUP, "Database directory version (",
                   vinfo.database_version,
                   ") is lower than current executable version (",
                   vinfo.server_version, ").");
 
-        SDB_ERROR(
-          "xxxxx", Logger::STARTUP,
+        SDB_ERROR(STARTUP,
           "---------------------------------------------------------------"
           "-------");
-        SDB_ERROR("xxxxx", Logger::STARTUP,
+        SDB_ERROR(STARTUP,
                   "It seems like you have upgraded the SereneDB executable.");
-        SDB_ERROR("xxxxx", Logger::STARTUP,
+        SDB_ERROR(STARTUP,
                   "If this is what you wanted to do, please restart with the");
-        SDB_ERROR("xxxxx", Logger::STARTUP, "  --database.auto-upgrade true");
-        SDB_ERROR("xxxxx", Logger::STARTUP,
+        SDB_ERROR(STARTUP, "  --database.auto-upgrade true");
+        SDB_ERROR(STARTUP,
                   "option to upgrade the data in the database directory.");
-        SDB_ERROR(
-          "xxxxx", Logger::STARTUP,
+        SDB_ERROR(STARTUP,
           "---------------------------------------------------------------"
           "-------");
         return UpgradeResult(ERROR_BAD_PARAMETER, vinfo.status);
@@ -137,12 +135,11 @@ UpgradeResult Upgrade::startup(catalog::Database& database, bool is_upgrade,
     }
     case VersionResult::kDowngradeNeeded: {
       // we do not support downgrades, just error out
-      SDB_ERROR("xxxxx", Logger::STARTUP, "Database directory version (",
+      SDB_ERROR(STARTUP, "Database directory version (",
                 vinfo.database_version,
                 ") is higher than current executable version (",
                 vinfo.server_version, ").");
-      SDB_ERROR(
-        "xxxxx", Logger::STARTUP,
+      SDB_ERROR(STARTUP,
         "It seems like you are running SereneDB on a database directory",
         " that was created with a newer version of SereneDB. Maybe this",
         " is what you wanted but it is not supported by SereneDB.");
@@ -151,7 +148,7 @@ UpgradeResult Upgrade::startup(catalog::Database& database, bool is_upgrade,
     case VersionResult::kCannotParseVersionFile:
     case VersionResult::kCannotReadVersionFile:
     case VersionResult::kNoServerVersion: {
-      SDB_DEBUG("xxxxx", Logger::STARTUP, "Error reading version file");
+      SDB_DEBUG(STARTUP, "Error reading version file");
       return UpgradeResult{
         .result = {ERROR_INTERNAL, "error during ",
                    (is_upgrade ? "upgrade" : "startup")},
@@ -159,7 +156,7 @@ UpgradeResult Upgrade::startup(catalog::Database& database, bool is_upgrade,
       };
     }
     case VersionResult::kNoVersionFile:
-      SDB_DEBUG("xxxxx", Logger::STARTUP, "No VERSION file found");
+      SDB_DEBUG(STARTUP, "No VERSION file found");
       // VERSION file does not exist, we are running on a new database
       dbflag = kDatabaseInit;
       break;
@@ -206,20 +203,20 @@ UpgradeResult methods::Upgrade::runTasks(catalog::Database& database,
   for (const Task& t : tasks) {
     // check for system database
     if (t.system_flag == kDatabaseSystem && database.GetId() != id::kSystemDB) {
-      SDB_DEBUG("xxxxx", Logger::STARTUP, "Upgrade: DB not system, skipping ",
+      SDB_DEBUG(STARTUP, "Upgrade: DB not system, skipping ",
                 t.name);
       continue;
     }
     if (t.system_flag == kDatabaseExceptSystem &&
         database.GetId() == id::kSystemDB) {
-      SDB_DEBUG("xxxxx", Logger::STARTUP, "Upgrade: DB system, skipping ",
+      SDB_DEBUG(STARTUP, "Upgrade: DB system, skipping ",
                 t.name);
       continue;
     }
 
     // check that the cluster occurs in the cluster list
     if (!(t.cluster_flags & cluster_flag)) {
-      SDB_DEBUG("xxxxx", Logger::STARTUP,
+      SDB_DEBUG(STARTUP,
                 "Upgrade: cluster mismatch, skipping ", t.name);
       continue;
     }
@@ -227,7 +224,7 @@ UpgradeResult methods::Upgrade::runTasks(catalog::Database& database,
     const auto& it = vinfo.tasks.find(t.name);
     if (it != vinfo.tasks.end()) {
       if (it->second) {
-        SDB_DEBUG("xxxxx", Logger::STARTUP,
+        SDB_DEBUG(STARTUP,
                   "Upgrade: already executed, skipping ", t.name);
         continue;
       }
@@ -242,19 +239,19 @@ UpgradeResult methods::Upgrade::runTasks(catalog::Database& database,
           (t.database_flags & kDatabaseOnlyOnce)) {
         vinfo.tasks.try_emplace(t.name, true);
       }
-      SDB_DEBUG("xxxxx", Logger::STARTUP,
+      SDB_DEBUG(STARTUP,
                 "Upgrade: db flag mismatch, skipping ", t.name);
       continue;
     }
 
-    SDB_DEBUG("xxxxx", Logger::STARTUP, "Upgrade: executing ", t.name);
+    SDB_DEBUG(STARTUP, "Upgrade: executing ", t.name);
     try {
       Result res = t.action(database, params);
       if (res.fail()) {
         std::string msg =
           absl::StrCat("executing ", t.name, " (", t.description,
                        ") failed: ", res.errorMessage());
-        SDB_ERROR("xxxxx", Logger::STARTUP, msg,
+        SDB_ERROR(STARTUP, msg,
                   " aborting upgrade procedure.");
         return {
           .result = {ERROR_INTERNAL, std::move(msg)},
@@ -262,7 +259,7 @@ UpgradeResult methods::Upgrade::runTasks(catalog::Database& database,
         };
       }
     } catch (const std::exception& e) {
-      SDB_ERROR("xxxxx", Logger::STARTUP, "executing ", t.name, " (",
+      SDB_ERROR(STARTUP, "executing ", t.name, " (",
                 t.description, ") failed with error: ", e.what(),
                 ". aborting upgrade procedure.");
       return {
@@ -291,7 +288,7 @@ UpgradeResult methods::Upgrade::runTasks(catalog::Database& database,
 
   if (is_local) {  // no need to write this for cluster bootstrap
     // save even if no tasks were executed
-    SDB_DEBUG("xxxxx", Logger::STARTUP, "Upgrade: writing VERSION file");
+    SDB_DEBUG(STARTUP, "Upgrade: writing VERSION file");
     auto res = methods::Version::write(database.GetId(), vinfo.tasks,
                                        /*sync*/ ran_once);
 

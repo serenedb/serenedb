@@ -133,7 +133,7 @@ SocketWrapper EndpointIp::connectSocket(const struct addrinfo* aip,
   if (::getnameinfo(aip->ai_addr, (socklen_t)aip->ai_addrlen, host,
                     sizeof(host), serv, sizeof(serv),
                     NI_NUMERICHOST | NI_NUMERICSERV) == 0) {
-    SDB_TRACE("xxxxx", sdb::Logger::FIXME, "bind to address '", host,
+    SDB_TRACE(GENERAL, "bind to address '", host,
               "', port ", _port);
   }
 
@@ -185,7 +185,7 @@ SocketWrapper EndpointIp::connectSocket(const struct addrinfo* aip,
     }
 
     // listen for new connection, executed for server endpoints only
-    SDB_TRACE("xxxxx", sdb::Logger::FIXME, "using backlog size ",
+    SDB_TRACE(GENERAL, "using backlog size ",
               _listen_backlog);
     result = Sdblisten(listen_socket, _listen_backlog);
 
@@ -252,7 +252,7 @@ SocketWrapper EndpointIp::connect(double connect_timeout,
   SocketWrapper listen_socket;
   Sdbinvalidatesocket(&listen_socket);
 
-  SDB_DEBUG("xxxxx", sdb::Logger::FIXME, "connecting to ip endpoint '",
+  SDB_DEBUG(GENERAL, "connecting to ip endpoint '",
             _specification, "'");
 
   SDB_ASSERT(!Sdbisvalidsocket(_socket));

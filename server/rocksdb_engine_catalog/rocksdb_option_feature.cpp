@@ -125,7 +125,7 @@ rocksdb::CompressionType CompressionTypeFromString(std::string_view type) {
     return rocksdb::kLZ4HCCompression;
   }
   SDB_ASSERT(false);
-  SDB_FATAL("xxxxx", sdb::Logger::STARTUP, "unexpected compression type '",
+  SDB_FATAL(STARTUP, "unexpected compression type '",
             type, "'");
 }
 
@@ -179,7 +179,7 @@ rocksdb::CompactionStyle CompactionStyleFromString(std::string_view type) {
   }
 
   SDB_ASSERT(false);
-  SDB_FATAL("xxxxx", sdb::Logger::STARTUP, "unexpected compaction style '",
+  SDB_FATAL(STARTUP, "unexpected compaction style '",
             type, "'");
 }
 
@@ -1418,7 +1418,7 @@ void RocksDBOptionFeature::validateOptions(
 
   if (_io_uring == kIoUringNotSupported &&
       options->processingResult().touched("--rocksdb.io-uring")) {
-    SDB_WARN("xxxxx", sdb::Logger::STARTUP,
+    SDB_WARN(STARTUP,
              "io_uring is not supported on this system, ignoring "
              "--rocksdb.io-uring configuration");
   }
@@ -1426,8 +1426,7 @@ void RocksDBOptionFeature::validateOptions(
   if (_sync_interval > 0) {
     if (_sync_interval < kMinSyncInterval) {
       // _sync_interval = 0 means turned off!
-      SDB_FATAL(
-        "xxxxx", Logger::CONFIG,
+      SDB_FATAL(STARTUP,
         "invalid value for --rocksdb.sync-interval. Please use a value ",
         "of at least ", kMinSyncInterval);
     }
@@ -1437,7 +1436,7 @@ void RocksDBOptionFeature::validateOptions(
           options->processingResult().touched("rocksdb.sync-delay-threshold")) {
         // user has not set --rocksdb.sync-interval, but set
         // --rocksdb.sync-delay-threshold
-        SDB_WARN("xxxxx", Logger::CONFIG,
+        SDB_WARN(STARTUP,
                  "invalid value for --rocksdb.sync-delay-threshold. should be "
                  "higher ",
                  "than the value of --rocksdb.sync-interval (", _sync_interval,
@@ -1445,30 +1444,30 @@ void RocksDBOptionFeature::validateOptions(
       }
 
       _sync_delay_threshold = 10 * _sync_interval;
-      SDB_WARN("xxxxx", Logger::CONFIG,
+      SDB_WARN(STARTUP,
                "auto-adjusting value of --rocksdb.sync-delay-threshold to ",
                _sync_delay_threshold, " ms");
     }
   }
 
   if (_prune_wait_time_initial < 10) {
-    SDB_WARN("xxxxx", Logger::ENGINES,
+    SDB_WARN(STORAGE,
              "consider increasing the value for "
              "--rocksdb.wal-file-timeout-initial. ",
              "Replication clients might have trouble to get in sync");
   }
 
   if (_write_buffer_size > 0 && _write_buffer_size < 1024 * 1024) {
-    SDB_FATAL("xxxxx", sdb::Logger::STARTUP,
+    SDB_FATAL(STARTUP,
               "invalid value for '--rocksdb.write-buffer-size'");
   }
   if (_total_write_buffer_size > 0 &&
       _total_write_buffer_size < 64 * 1024 * 1024) {
-    SDB_FATAL("xxxxx", sdb::Logger::STARTUP,
+    SDB_FATAL(STARTUP,
               "invalid value for '--rocksdb.total-write-buffer-size'");
   }
   if (_max_background_jobs != -1 && _max_background_jobs < 1) {
-    SDB_FATAL("xxxxx", sdb::Logger::STARTUP,
+    SDB_FATAL(STARTUP,
               "invalid value for '--rocksdb.max-background-jobs'");
   }
 
@@ -1479,7 +1478,7 @@ void RocksDBOptionFeature::validateOptions(
   if (_block_cache_type == ::kBlockCacheTypeLRU &&
       options->processingResult().touched(
         "--rocksdb.block-cache-estimated-entry-charge")) {
-    SDB_WARN("xxxxx", Logger::ENGINES,
+    SDB_WARN(STORAGE,
              "Setting value of '--rocksdb.block-cache-estimated-entry-charge' "
              "has no effect when using LRU block cache");
   }
@@ -1512,8 +1511,7 @@ void RocksDBOptionFeature::validateOptions(
   // environment, turn off the option automatically
   if (_use_jemalloc_allocator) {
     _use_jemalloc_allocator = false;
-    SDB_INFO(
-      "xxxxx", Logger::STARTUP,
+    SDB_INFO(STARTUP,
       "disabling jemalloc allocator for RocksDB - jemalloc not compiled");
   }
 #endif
@@ -1533,7 +1531,7 @@ void RocksDBOptionFeature::validateOptions(
     // or Status::MemoryLimit() error and fail the entire read.
     // warn the user about it!
     if (shard_size < ::kMinShardSize) {
-      SDB_WARN("xxxxx", Logger::ENGINES,
+      SDB_WARN(STORAGE,
                "size of RocksDB block cache shards seems to be too low. ",
                "block cache size: ", _block_cache_size,
                ", shard bits: ", _block_cache_shard_bits,
@@ -1558,7 +1556,7 @@ void RocksDBOptionFeature::validateOptions(
   if (_max_subcompactions > _num_threads_low) {
     if (server().options()->processingResult().touched(
           "--rocksdb.max-subcompactions")) {
-      SDB_WARN("xxxxx", Logger::ENGINES,
+      SDB_WARN(STORAGE,
                "overriding value for option `--rocksdb.max-subcompactions` to ",
                _num_threads_low,
                " because the specified value is greater than the number of "
@@ -1567,8 +1565,7 @@ void RocksDBOptionFeature::validateOptions(
     _max_subcompactions = _num_threads_low;
   }
 
-  SDB_TRACE(
-    "xxxxx", Logger::ENGINES, "using RocksDB options: wal_dir: '",
+  SDB_TRACE(STORAGE, "using RocksDB options: wal_dir: '",
     _wal_directory, "'", ", compression type: ", _compression_type,
     ", write_buffer_size: ", _write_buffer_size,
     ", total_write_buffer_size: ", _total_write_buffer_size,
@@ -1785,7 +1782,7 @@ rocksdb::Options RocksDBOptionFeature::doGetOptions() const {
   } else if (result.max_write_buffer_number < 4) {
     // user set the value explicitly, and it is lower than recommended
     result.max_write_buffer_number = 4;
-    SDB_WARN("xxxxx", Logger::ENGINES,
+    SDB_WARN(STORAGE,
              "overriding value for option `--rocksdb.max-write-buffer-number` "
              "to 4 because it is lower than recommended");
   }
@@ -1818,8 +1815,7 @@ rocksdb::BlockBasedTableOptions RocksDBOptionFeature::doGetTableOptions()
       rocksdb::Status s =
         rocksdb::NewJemallocNodumpAllocator(jopts, &allocator);
       if (!s.ok()) {
-        SDB_FATAL(
-          "xxxxx", Logger::STARTUP,
+        SDB_FATAL(STARTUP,
           "unable to use jemalloc allocator for RocksDB: ", s.ToString());
       }
     }
@@ -1885,7 +1881,7 @@ rocksdb::BlockBasedTableOptions RocksDBOptionFeature::doGetTableOptions()
     result.checksum = rocksdb::ChecksumType::kXXH3;
   } else {
     SDB_ASSERT(false);
-    SDB_WARN("xxxxx", sdb::Logger::STARTUP,
+    SDB_WARN(STARTUP,
              "unexpected value for '--rocksdb.checksum-type'");
   }
 

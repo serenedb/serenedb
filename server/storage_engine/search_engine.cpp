@@ -221,7 +221,7 @@ void SearchEngine::validateOptions(
   };
   for (const auto& item : _skip_recovery_items) {
     if (item != "all" && check_format(item)) {
-      SDB_FATAL("xxxxx", Logger::SEARCH, "invalid format for '", kSkipRecovery,
+      SDB_FATAL(SEARCH, "invalid format for '", kSkipRecovery,
                 "' parameter. expecting '",
                 "<collection-name>/<index-id>' or "
                 "'<collection-name>/<index-name>' or ",
@@ -282,7 +282,7 @@ void SearchEngine::start() {
 
     InitInvertedIndexes(_skip_wal_recovery);
 
-    SDB_INFO("xxxxx", Logger::SEARCH, "Search maintenance: [", _commit_threads,
+    SDB_INFO(SEARCH, "Search maintenance: [", _commit_threads,
              "..", _commit_threads, "] commit thread(s), [",
              _compaction_threads, "..", _compaction_threads,
              "] compaction thread(s). Search execution parallel threads "
@@ -311,7 +311,7 @@ bool SearchEngine::Queue(ThreadGroup id, absl::Duration delay,
   }
 
   if (!server().isStopping()) {
-    SDB_WARN("xxxxx", Logger::SEARCH,
+    SDB_WARN(SEARCH,
              "Caught exception while sumbitting a task to thread group '",
              std::underlying_type_t<ThreadGroup>(id),
              "', error: ", r.errorMessage());

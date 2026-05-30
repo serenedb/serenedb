@@ -361,7 +361,7 @@ void GeneralServerFeature::buildServers() {
   // check if endpointList contains ssl featured server
   if (endpoint_list.hasSsl()) {
     if (!server().hasFeature<SslServerFeature>()) {
-      SDB_FATAL("xxxxx", sdb::Logger::FIXME,
+      SDB_FATAL(GENERAL,
                 "no ssl context is known, cannot create https server, "
                 "please enable SSL");
     }

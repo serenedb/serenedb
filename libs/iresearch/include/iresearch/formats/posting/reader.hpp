@@ -295,7 +295,7 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
 
   if (!doc_in) {
     // implementation returned wrong pointer
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Failed to reopen document input");
 
     throw IoError("failed to reopen document input");

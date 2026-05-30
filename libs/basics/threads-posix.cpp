@@ -97,7 +97,7 @@ bool SdbStartThread(pthread_t* thread, const char* name, void (*starter)(void*),
   try {
     d.reset(new ThreadDataT(starter, data, name));
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::FIXME,
+    SDB_ERROR(GENERAL,
               "could not start thread: out of memory");
     return false;
   }
@@ -109,13 +109,13 @@ bool SdbStartThread(pthread_t* thread, const char* name, void (*starter)(void*),
 
   auto err = pthread_attr_init(&stack_size_attribute);
   if (err) {
-    SDB_ERROR("xxxxx", sdb::Logger::FIXME,
+    SDB_ERROR(GENERAL,
               "could not initialize stack size attribute.");
     return false;
   }
   err = pthread_attr_getstacksize(&stack_size_attribute, &stack_size);
   if (err) {
-    SDB_ERROR("xxxxx", sdb::Logger::FIXME,
+    SDB_ERROR(GENERAL,
               "could not acquire stack size from pthread.");
     return false;
   }
@@ -123,7 +123,7 @@ bool SdbStartThread(pthread_t* thread, const char* name, void (*starter)(void*),
   if (stack_size < 8388608) {  // 8MB
     err = pthread_attr_setstacksize(&stack_size_attribute, 8388608);
     if (err) {
-      SDB_ERROR("xxxxx", sdb::Logger::FIXME,
+      SDB_ERROR(GENERAL,
                 "could not assign new stack size in pthread.");
       return false;
     }
@@ -135,7 +135,7 @@ bool SdbStartThread(pthread_t* thread, const char* name, void (*starter)(void*),
   if (rc != 0) {
     errno = rc;
     SetError(ERROR_SYS_ERROR);
-    SDB_ERROR("xxxxx", sdb::Logger::FIXME,
+    SDB_ERROR(GENERAL,
               "could not start thread: ", strerror(errno));
 
     return false;
@@ -156,7 +156,7 @@ ErrorCode SdbJoinThread(pthread_t* thread) {
   int res = pthread_join(*thread, nullptr);
 
   if (res != 0) {
-    SDB_WARN("xxxxx", sdb::Logger::THREADS,
+    SDB_WARN(GENERAL,
              "cannot join thread: ", strerror(res));
     return ERROR_FAILED;
   } else {
@@ -177,7 +177,7 @@ ErrorCode SdbJoinThreadWithTimeout(pthread_t* thread, uint32_t timeout) {
 
   timespec ts;
   if (!timespec_get(&ts, TIME_UTC)) {
-    SDB_FATAL("xxxxx", sdb::Logger::FIXME,
+    SDB_FATAL(GENERAL,
               "could not initialize timespec with current time");
     FatalErrorAbort();
   }
@@ -186,7 +186,7 @@ ErrorCode SdbJoinThreadWithTimeout(pthread_t* thread, uint32_t timeout) {
 
   int res = pthread_timedjoin_np(*thread, nullptr, &ts);
   if (res != 0) {
-    SDB_WARN("xxxxx", sdb::Logger::THREADS,
+    SDB_WARN(GENERAL,
              "cannot join thread: ", strerror(res));
     return ERROR_FAILED;
   }
@@ -201,7 +201,7 @@ bool SdbDetachThread(pthread_t* thread) {
   int res = pthread_detach(*thread);
 
   if (res != 0) {
-    SDB_WARN("xxxxx", sdb::Logger::THREADS,
+    SDB_WARN(GENERAL,
              "cannot detach thread: ", strerror(res));
     return false;
   } else {

@@ -55,7 +55,7 @@ void ResolveConnect(const detail::ConnectionConfiguration& config,
     }
 
     if (ec) {  // error in address resolver
-      SDB_DEBUG("xxxxx", Logger::FUERTE,
+      SDB_DEBUG(GENERAL,
                 "received error during address resolving: ", ec.message());
       done(ec);
       return;
@@ -66,10 +66,10 @@ void ResolveConnect(const detail::ConnectionConfiguration& config,
       // non-empty range to the handler.
       asio_ns::async_connect(socket, it, [done](auto ec, auto it) mutable {
         if (ec) {
-          SDB_DEBUG("xxxxx", Logger::FUERTE,
+          SDB_DEBUG(GENERAL,
                     "executing async connect callback, error: ", ec.message());
         } else {
-          SDB_DEBUG("xxxxx", Logger::FUERTE,
+          SDB_DEBUG(GENERAL,
                     "executing async connect callback, no error");
         }
         std::forward<F>(done)(ec);
@@ -93,7 +93,7 @@ void ResolveConnect(const detail::ConnectionConfiguration& config,
   cb(ec, it);
 #else
   // Resolve the host asynchronously into a series of endpoints
-  SDB_DEBUG("xxxxx", Logger::FUERTE, "scheduled callback to resolve host ",
+  SDB_DEBUG(GENERAL, "scheduled callback to resolve host ",
             config.host, ":", config.port);
   resolver.async_resolve(config.host, config.port, std::move(cb));
 #endif
@@ -116,7 +116,7 @@ struct Socket<SocketType::Tcp> {
     try {
       this->cancel();
     } catch (const std::exception& ex) {
-      SDB_ERROR("xxxxx", Logger::FUERTE,
+      SDB_ERROR(GENERAL,
                 "caught exception during tcp socket shutdown: ", ex.what());
     }
   }
@@ -126,7 +126,7 @@ struct Socket<SocketType::Tcp> {
     ResolveConnect(
       config, resolver, socket,
       [this, done = std::forward<F>(done)](asio_ns::error_code ec) mutable {
-        SDB_DEBUG("xxxxx", Logger::FUERTE,
+        SDB_DEBUG(GENERAL,
                   "executing tcp connect callback, ec: ", ec.message(),
                   ", canceled: ", this->canceled);
         if (canceled) {
@@ -138,8 +138,7 @@ struct Socket<SocketType::Tcp> {
           // set TCP_NODELAY option on socket to disable Nagle's algorithm.
           socket.set_option(asio_ns::ip::tcp::no_delay(true), ec);
           if (ec) {
-            SDB_ERROR(
-              "xxxxx", Logger::FUERTE,
+            SDB_ERROR(GENERAL,
               "error setting no_delay option on socket: ", ec.message());
             SDB_ASSERT(false);
           }
@@ -163,7 +162,7 @@ struct Socket<SocketType::Tcp> {
         socket.close(ec);
       }
     } catch (const std::exception& ex) {
-      SDB_ERROR("xxxxx", Logger::FUERTE,
+      SDB_ERROR(GENERAL,
                 "caught exception during tcp socket cancelation: ", ex.what());
     }
   }
@@ -184,7 +183,7 @@ struct Socket<SocketType::Tcp> {
     } catch (const std::exception& ex) {
       // an exception is unlikely to occur here, as we are using the error-code
       // variants of cancel/shutdown/close above
-      SDB_ERROR("xxxxx", Logger::FUERTE,
+      SDB_ERROR(GENERAL,
                 "caught exception during tcp socket shutdown: ", ex.what());
     }
     std::forward<F>(cb)(ec);
@@ -211,7 +210,7 @@ struct Socket<fuerte::SocketType::Ssl> {
     try {
       this->cancel();
     } catch (const std::exception& ex) {
-      SDB_ERROR("xxxxx", Logger::FUERTE,
+      SDB_ERROR(GENERAL,
                 "caught exception during ssl socket shutdown: ", ex.what());
     }
   }
@@ -222,7 +221,7 @@ struct Socket<fuerte::SocketType::Ssl> {
     ResolveConnect(
       config, resolver, socket.next_layer(),
       [=, this](asio_ns::error_code ec) mutable {
-        SDB_DEBUG("xxxxx", Logger::FUERTE,
+        SDB_DEBUG(GENERAL,
                   "executing ssl connect callback, ec: ", ec.message(),
                   ", canceled: ", this->canceled);
         if (canceled) {
@@ -295,7 +294,7 @@ struct Socket<fuerte::SocketType::Ssl> {
         socket.lowest_layer().close(ec);
       }
     } catch (const std::exception& ex) {
-      SDB_ERROR("xxxxx", Logger::FUERTE,
+      SDB_ERROR(GENERAL,
                 "caught exception during ssl socket cancelation: ", ex.what());
     }
   }
@@ -370,7 +369,7 @@ struct Socket<fuerte::SocketType::Unix> {
     try {
       this->cancel();
     } catch (const std::exception& ex) {
-      SDB_ERROR("xxxxx", Logger::FUERTE,
+      SDB_ERROR(GENERAL,
                 "caught exception during unix socket shutdown: ", ex.what());
     }
   }
@@ -400,7 +399,7 @@ struct Socket<fuerte::SocketType::Unix> {
         socket.close(ec);
       }
     } catch (const std::exception& ex) {
-      SDB_ERROR("xxxxx", Logger::FUERTE,
+      SDB_ERROR(GENERAL,
                 "caught exception during unix socket cancelation: ", ex.what());
     }
   }
@@ -421,7 +420,7 @@ struct Socket<fuerte::SocketType::Unix> {
     } catch (const std::exception& ex) {
       // an exception is unlikely to occur here, as we are using the error-code
       // variants of cancel/shutdown/close above
-      SDB_ERROR("xxxxx", Logger::FUERTE,
+      SDB_ERROR(GENERAL,
                 "caught exception during unix socket shutdown: ", ex.what());
     }
     std::forward<F>(cb)(ec);

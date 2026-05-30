@@ -69,7 +69,7 @@ void ServerFeature::collectOptions(std::shared_ptr<ProgramOptions> options) {
 void ServerFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
   if (!_rest_server && !server().getFeature<UpgradeFeature>().upgrading() &&
       !options->processingResult().touched("rocksdb.verify-sst")) {
-    SDB_FATAL("xxxxx", sdb::Logger::FIXME,
+    SDB_FATAL(GENERAL,
               "restServer disabled only for upgrade");
   }
 

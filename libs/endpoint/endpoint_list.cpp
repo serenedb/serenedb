@@ -98,7 +98,7 @@ bool EndpointList::hasSsl() const {
 void EndpointList::dump() const {
   for (const auto& it : _endpoints) {
     SDB_ASSERT(it.second != nullptr);
-    SDB_INFO("xxxxx", sdb::Logger::FIXME, "using endpoint '", it.first,
+    SDB_INFO(GENERAL, "using endpoint '", it.first,
              "' for ", encryptionName(it.second->encryption()), " requests");
   }
 }

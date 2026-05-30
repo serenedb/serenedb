@@ -103,7 +103,7 @@ constexpr std::string_view kDelimiterParamName{"delimiter"};
 
 bool ParseVPackOptions(const vpack::Slice slice, std::string& delimiter) {
   if (!slice.isObject() && !slice.isString()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Slice for delimited_token_stream is not an object or string");
     return false;
   }
@@ -116,7 +116,7 @@ bool ParseVPackOptions(const vpack::Slice slice, std::string& delimiter) {
       if (auto delim_type_slice = slice.get(kDelimiterParamName);
           !delim_type_slice.isNone()) {
         if (!delim_type_slice.isString()) {
-          SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid type '",
+          SDB_WARN(IRESEARCH, "Invalid type '",
                    kDelimiterParamName,
                    "' (string expected) for delimited_token_stream from "
                    "VPack arguments");
@@ -130,8 +130,7 @@ bool ParseVPackOptions(const vpack::Slice slice, std::string& delimiter) {
       break;
   }
 
-  SDB_ERROR(
-    "xxxxx", sdb::Logger::IRESEARCH,
+  SDB_ERROR(IRESEARCH,
     absl::StrCat(
       "Missing '", kDelimiterParamName,
       "' while constructing delimited_token_stream from VPack arguments"));
@@ -191,20 +190,18 @@ bool NormalizeVPackConfig(std::string_view args, std::string& definition) {
 Analyzer::ptr MakeJson(std::string_view args) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Null arguments while constructing delimited_token_stream");
       return nullptr;
     }
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing delimited_token_stream from JSON"));
   } catch (...) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
       "Caught error while constructing delimited_token_stream from JSON");
   }
   return nullptr;
@@ -213,7 +210,7 @@ Analyzer::ptr MakeJson(std::string_view args) {
 bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Null arguments while normalizing delimited_token_stream");
       return false;
     }
@@ -224,13 +221,11 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
       return !definition.empty();
     }
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while normalizing delimited_token_stream from JSON"));
   } catch (...) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
       "Caught error while normalizing delimited_token_stream from JSON");
   }
   return false;

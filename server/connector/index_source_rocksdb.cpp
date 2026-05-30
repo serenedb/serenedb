@@ -182,7 +182,7 @@ void RocksDBIndexSource::IterateColumnKeys(
     auto s = _txn ? _txn->Get(_read_options, _cf, key, &_value_buffer)
                   : _db->Get(_read_options, _cf, key, &_value_buffer);
     if (s.IsNotFound()) {
-      SDB_THROW(ERROR_INTERNAL, "Missing row for PK in RocksDB");
+      SDB_THROW(sdb::ERROR_INTERNAL, "Missing row for PK in RocksDB");
     }
     SDB_ASSERT(s.ok(), "RocksDB Get failed: ", s.ToString());
     decode(idx, _value_buffer);
@@ -222,7 +222,7 @@ void RocksDBIndexSource::MultiGetIterateColumnKeys(
   auto callback = [&](rocksdb::Slice, const rocksdb::PinnableSlice& value,
                       rocksdb::Status status) {
     if (status.IsNotFound()) {
-      SDB_THROW(ERROR_INTERNAL, "Missing row for PK in RocksDB");
+      SDB_THROW(sdb::ERROR_INTERNAL, "Missing row for PK in RocksDB");
     }
     SDB_ASSERT(status.ok(), "RocksDB MultiGet failed: ", status.ToString());
     decode(_read_idxs[sorted_pos++], value.ToStringView());
@@ -263,7 +263,7 @@ void RocksDBIndexSource::SeekIterateColumnKeys(
     const rocksdb::Slice key{gap, kPrefixGap + pk_bytes[idx].size()};
     column_iterator->Seek(key);
     if (!column_iterator->Valid() || column_iterator->key() != key) {
-      SDB_THROW(ERROR_INTERNAL, "Missing row for PK in RocksDB (Seek)");
+      SDB_THROW(sdb::ERROR_INTERNAL, "Missing row for PK in RocksDB (Seek)");
     }
     rocksutils::CheckIteratorStatus(*column_iterator);
     decode(idx, column_iterator->value().ToStringView());

@@ -949,7 +949,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
         case duckdb::MergeActionType::MERGE_DO_NOTHING:
           break;
         default:
-          SDB_THROW(ERROR_BAD_PARAMETER,
+          SDB_THROW(sdb::ERROR_BAD_PARAMETER,
                     "Unsupported MERGE INTO action type for SereneDB");
       }
       planned_actions.push_back(std::move(result));

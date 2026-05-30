@@ -94,13 +94,13 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
         continue;
       }
       if (!r.ok()) {
-        SDB_ERROR("xxxxx", Logger::THREADS, "Failed to execute ",
+        SDB_ERROR(GENERAL, "Failed to execute ",
                   task->GetContext(), ", error: ", r.errorMessage());
       }
       co_return r;
     }
   } catch (std::exception& e) {
-    SDB_ERROR("xxxxx", Logger::THREADS, "Unable to schedule ", task->GetName(),
+    SDB_ERROR(GENERAL, "Unable to schedule ", task->GetName(),
               ": \"", e.what(), "\"");
     co_return Result{ERROR_INTERNAL,
                      "Unable to schedule ",

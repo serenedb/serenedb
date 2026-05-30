@@ -185,7 +185,7 @@ class GeoIterator : public DocIterator {
     // OR analyzer wrote zero bytes -- either way nothing to match.
     const auto bytes = _cursor.FetchDoc(doc);
     if (bytes.empty()) {
-      SDB_DEBUG("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_DEBUG(IRESEARCH,
                 "Missing stored geo value, doc='", doc, "'");
       return false;
     }

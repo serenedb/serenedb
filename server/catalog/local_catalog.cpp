@@ -1538,7 +1538,7 @@ LocalCatalog::LocalCatalog()
   : _snapshot(std::make_shared<SnapshotImpl>()), _engine{&GetServerEngine()} {}
 
 Result LocalCatalog::RegisterRole(std::shared_ptr<Role> role) {
-  SDB_INFO("xxxxx", Logger::FIXME, "Register role ", role->GetName());
+  SDB_INFO(GENERAL, "Register role ", role->GetName());
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(std::move(role), id::kInstance, false);
@@ -1671,7 +1671,7 @@ Result LocalCatalog::CreateSchema(ObjectId database_id,
 }
 
 Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
-  SDB_INFO("xxxxx", Logger::FIXME, "Creating role: ", role->GetName());
+  SDB_INFO(GENERAL, "Creating role: ", role->GetName());
   absl::MutexLock lock{&_mutex};
   auto r = Apply(
     _snapshot,

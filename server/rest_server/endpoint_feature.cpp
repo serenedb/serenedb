@@ -145,15 +145,14 @@ may also be silently truncated on some platforms (this happens inside the
 
 void EndpointFeature::validateOptions(std::shared_ptr<ProgramOptions>) {
   if (_backlog_size > SOMAXCONN) {
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
+    SDB_WARN(GENERAL,
              "value for --tcp.backlog-size exceeds default system "
              "header SOMAXCONN value ",
              SOMAXCONN, ". trying to use ", SOMAXCONN, " anyway");
   }
   if (_endpoints.empty()) {
     _endpoints.emplace_back("pgsql+tcp://127.0.0.1:7890");
-    SDB_INFO(
-      "xxxxx", sdb::Logger::FIXME,
+    SDB_INFO(GENERAL,
       "no endpoints have been specified, using default: ", _endpoints.back());
   }
   buildEndpointLists();
@@ -180,7 +179,7 @@ void EndpointFeature::buildEndpointLists() {
       _endpoint_list.add(it, static_cast<int>(_backlog_size), _reuse_address);
 
     if (!ok) {
-      SDB_FATAL("xxxxx", sdb::Logger::FIXME, "invalid endpoint '", it, "'");
+      SDB_FATAL(GENERAL, "invalid endpoint '", it, "'");
     }
   }
 }

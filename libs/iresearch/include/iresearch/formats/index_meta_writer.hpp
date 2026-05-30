@@ -152,20 +152,19 @@ inline void IndexMetaWriterImpl::rollback() noexcept {
   try {
     seg_file = PendingFileName(_pending_gen);
   } catch (const std::exception& e) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
       absl::StrCat(
         "Caught error while generating file name for index meta, reason: ",
         e.what()));
     return;
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught error while generating file name for index meta");
     return;
   }
 
   if (!_dir->remove(seg_file)) {  // suppress all errors
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("Failed to remove file, path: ", seg_file));
   }
 

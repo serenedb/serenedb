@@ -328,18 +328,18 @@ Result AnalyzerImpl::init(std::string_view type, vpack::Slice properties,
 AnalyzerImpl::CacheType::ptr AnalyzerImpl::Get() const noexcept try {
   return _cache.emplace(_type, _properties);
 } catch (const basics::Exception& e) {
-  SDB_WARN("xxxxx", Logger::SEARCH,
+  SDB_WARN(SEARCH,
            "caught exception while instantiating an search analyzer type '",
            _type, "' properties '", _properties.toJson(), "': ", e.code(), " ",
            e.what());
   return {};
 } catch (const std::exception& e) {
-  SDB_WARN("xxxxx", Logger::SEARCH,
+  SDB_WARN(SEARCH,
            "caught exception while instantiating an search analyzer type '",
            _type, "' properties '", _properties.toJson(), "': ", e.what());
   return {};
 } catch (...) {
-  SDB_WARN("xxxxx", Logger::SEARCH,
+  SDB_WARN(SEARCH,
            "caught exception while instantiating an search analyzer type '",
            _type, "' properties '", _properties.toJson(), "'");
   return {};
@@ -402,7 +402,7 @@ bool AnalyzerEquals(const AnalyzerImpl& analyzer, std::string_view type,
                     vpack::Slice properties, Features features) {
   std::string normalized_properties;
   if (!Normalize(normalized_properties, type, properties)) {
-    SDB_WARN("xxxxx", Logger::SEARCH,
+    SDB_WARN(SEARCH,
              "failed to normalize properties for analyzer type '", type,
              "' properties '", properties.toString(), "'");
     return false;
@@ -432,7 +432,7 @@ bool AnalyzerEquals(const AnalyzerImpl& analyzer, std::string_view type,
     // failed to re-normalize definition - strange. It was already normalized
     // once. Some bug in load/store?
     SDB_ASSERT(false);
-    SDB_WARN("xxxxx", Logger::SEARCH,
+    SDB_WARN(SEARCH,
              "failed to re-normalize properties for analyzer type '",
              analyzer.GetType(), "' properties '",
              analyzer.GetProperties().toJson(), "'");

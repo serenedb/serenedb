@@ -123,7 +123,7 @@ class GeneralConnection : public fuerte::Connection {
     // Prepare a new request
     this->_num_queued.fetch_add(1, std::memory_order_relaxed);
     if (!this->_queue.push(item.get())) {
-      SDB_ERROR("xxxxx", Logger::FUERTE, "connection queue capacity exceeded");
+      SDB_ERROR(GENERAL, "connection queue capacity exceeded");
       uint32_t q = this->_num_queued.fetch_sub(1, std::memory_order_relaxed);
       SDB_ASSERT(q > 0);
       item->invokeOnError(Error::QueueCapacityExceeded);
@@ -131,7 +131,7 @@ class GeneralConnection : public fuerte::Connection {
     }
     item.release();  // queue owns this now
 
-    SDB_DEBUG("xxxxx", Logger::FUERTE,
+    SDB_DEBUG(GENERAL,
               "queued item: this=", reinterpret_cast<uintptr_t>(this));
 
     // Note that we have first posted on the queue with
@@ -151,7 +151,7 @@ class GeneralConnection : public fuerte::Connection {
 
   /// @brief cancel the connection, unusable afterwards
   void cancel() override {
-    SDB_DEBUG("xxxxx", Logger::FUERTE,
+    SDB_DEBUG(GENERAL,
               "cancel: this=", reinterpret_cast<uintptr_t>(this));
     asio_ns::post(*_io_context, [weak = weak_from_this()] {
       if (auto self = weak.lock()) {
@@ -169,12 +169,12 @@ class GeneralConnection : public fuerte::Connection {
     SDB_ASSERT(this->_active.load());
     Connection::State exp = Connection::State::Created;
     if (_state.compare_exchange_strong(exp, Connection::State::Connecting)) {
-      SDB_DEBUG("xxxxx", Logger::FUERTE,
+      SDB_DEBUG(GENERAL,
                 "startConnection: this=", reinterpret_cast<uintptr_t>(this));
       SDB_ASSERT(_config.max_connect_retries > 0);
       tryConnect(_config.max_connect_retries);
     } else {
-      SDB_DEBUG("xxxxx", Logger::FUERTE,
+      SDB_DEBUG(GENERAL,
                 "startConnection: this=", reinterpret_cast<uintptr_t>(this),
                 " found unexpected state ", static_cast<int>(exp),
                 " not equal to 'Created'");
@@ -184,18 +184,18 @@ class GeneralConnection : public fuerte::Connection {
 
   // shutdown connection, cancel async operations
   void shutdownConnection(fuerte::Error err, const std::string& msg = "") {
-    SDB_DEBUG("xxxxx", Logger::FUERTE, "shutdownConnection: err = '",
+    SDB_DEBUG(GENERAL, "shutdownConnection: err = '",
               ToString(err), "' ");
     if (!msg.empty()) {
-      SDB_DEBUG("xxxxx", Logger::FUERTE, ", msg = '", msg, "' ");
+      SDB_DEBUG(GENERAL, ", msg = '", msg, "' ");
     }
-    SDB_DEBUG("xxxxx", Logger::FUERTE,
+    SDB_DEBUG(GENERAL,
               "this=", reinterpret_cast<uintptr_t>(this));
 
     auto exp = _state.load();
     if (exp == Connection::State::Closed ||
         !_state.compare_exchange_strong(exp, Connection::State::Closed)) {
-      SDB_DEBUG("xxxxx", Logger::FUERTE, "connection is already shutdown this=",
+      SDB_DEBUG(GENERAL, "connection is already shutdown this=",
                 reinterpret_cast<uintptr_t>(this));
       return;
     }
@@ -211,7 +211,7 @@ class GeneralConnection : public fuerte::Connection {
 
   // Call on IO-Thread: read from socket
   void AsyncReadSome() {
-    SDB_TRACE("xxxxx", Logger::FUERTE,
+    SDB_TRACE(GENERAL,
               "AsyncReadSome: this=", reinterpret_cast<uintptr_t>(this));
 
     // TODO perform a non-blocking read on linux
@@ -225,7 +225,7 @@ class GeneralConnection : public fuerte::Connection {
     setIOTimeout();  // must be after setting _reading
     _proto.socket.async_read_some(
       mutable_buff, [self = shared_from_this()](const auto& ec, size_t nread) {
-        SDB_TRACE("xxxxx", Logger::FUERTE, "received ", nread, " bytes");
+        SDB_TRACE(GENERAL, "received ", nread, " bytes");
 
         // received data is "committed" from output sequence to input sequence
         auto& me = static_cast<GeneralConnection<ST, RT>&>(*self);
@@ -237,7 +237,7 @@ class GeneralConnection : public fuerte::Connection {
 
   /// abort all requests lingering in the queue
   void drainQueue(const fuerte::Error ec) {
-    SDB_DEBUG("xxxxx", Logger::FUERTE,
+    SDB_DEBUG(GENERAL,
               "drain queue this=", reinterpret_cast<uintptr_t>(this));
     RT* item = nullptr;
     while (_queue.pop(item)) {
@@ -253,13 +253,13 @@ class GeneralConnection : public fuerte::Connection {
     Connection::State state = this->_state.load();
     SDB_ASSERT(state != Connection::State::Connecting);
     if (state == Connection::State::Connected) {
-      SDB_DEBUG("xxxxx", Logger::FUERTE, "activate: connected");
+      SDB_DEBUG(GENERAL, "activate: connected");
       this->DoWrite();
     } else if (state == Connection::State::Created) {
-      SDB_DEBUG("xxxxx", Logger::FUERTE, "activate: not connected");
+      SDB_DEBUG(GENERAL, "activate: not connected");
       this->startConnection();
     } else if (state == Connection::State::Closed) {
-      SDB_ERROR("xxxxx", Logger::FUERTE,
+      SDB_ERROR(GENERAL,
                 "activate: queued request on failed connection");
       this->drainQueue(fuerte::Error::ConnectionClosed);
       this->_active.store(false);  // No more activity from our side
@@ -279,7 +279,7 @@ class GeneralConnection : public fuerte::Connection {
     // case we call this method here. In this case it is OK to simply proceed,
     // therefore no assertion on `_active`.
     SDB_ASSERT(this->_state.load() == Connection::State::Closed);
-    SDB_DEBUG("xxxxx", Logger::FUERTE, "terminateActivity: active=true, this=",
+    SDB_DEBUG(GENERAL, "terminateActivity: active=true, this=",
               reinterpret_cast<uintptr_t>(this));
     while (true) {
       this->drainQueue(err);
@@ -296,7 +296,7 @@ class GeneralConnection : public fuerte::Connection {
     try {
       this->_proto.timer.cancel();
     } catch (const std::exception& ex) {
-      SDB_ERROR("xxxxx", Logger::FUERTE,
+      SDB_ERROR(GENERAL,
                 "caught exception during timer cancelation: ", ex.what());
     }
   }
@@ -327,7 +327,7 @@ class GeneralConnection : public fuerte::Connection {
       return;
     }
 
-    SDB_DEBUG("xxxxx", Logger::FUERTE, "tryConnect (", retries,
+    SDB_DEBUG(GENERAL, "tryConnect (", retries,
               ") this=", reinterpret_cast<uintptr_t>(this));
     auto self = Connection::shared_from_this();
 
@@ -348,7 +348,7 @@ class GeneralConnection : public fuerte::Connection {
         ec = asio_ns::error::operation_aborted;
       }
       if (!ec) {
-        SDB_DEBUG("xxxxx", Logger::FUERTE, "tryConnect (", retries,
+        SDB_DEBUG(GENERAL, "tryConnect (", retries,
                   ") established connection this=",
                   reinterpret_cast<uintptr_t>(self.get()));
         me.finishConnect();
@@ -361,10 +361,10 @@ class GeneralConnection : public fuerte::Connection {
       }
 #endif
 
-      SDB_DEBUG("xxxxx", Logger::FUERTE, "tryConnect (", retries,
+      SDB_DEBUG(GENERAL, "tryConnect (", retries,
                 "), connecting failed: ", ec.message());
       if (retries > 1 && ec != asio_ns::error::operation_aborted) {
-        SDB_DEBUG("xxxxx", Logger::FUERTE, "tryConnect (", retries,
+        SDB_DEBUG(GENERAL, "tryConnect (", retries,
                   "), scheduling retry operation. this=",
                   reinterpret_cast<uintptr_t>(self.get()));
         me._proto.connect_timer_role = ConnectTimerRole::Reconnect;
@@ -373,7 +373,7 @@ class GeneralConnection : public fuerte::Connection {
           [self = std::move(self), retries](asio_ns::error_code ec) mutable {
             auto& me = static_cast<GeneralConnection<ST, RT>&>(*self);
             if (ec) {
-              SDB_DEBUG("xxxxx", Logger::FUERTE,
+              SDB_DEBUG(GENERAL,
                         "tryConnect, retry timer canceled. this=",
                         reinterpret_cast<uintptr_t>(self.get()));
               me.shutdownConnection(Error::CouldNotConnect,
@@ -381,7 +381,7 @@ class GeneralConnection : public fuerte::Connection {
               return;
             }
             // rearm socket so that we can use it again
-            SDB_DEBUG("xxxxx", Logger::FUERTE,
+            SDB_DEBUG(GENERAL,
                       "tryConnect, rearming connection this=",
                       reinterpret_cast<uintptr_t>(self.get()));
             me._proto.rearm();
@@ -391,7 +391,7 @@ class GeneralConnection : public fuerte::Connection {
         std::string msg("connecting failed: ");
         msg.append((ec != asio_ns::error::operation_aborted) ? ec.message()
                                                              : "timeout");
-        SDB_DEBUG("xxxxx", Logger::FUERTE,
+        SDB_DEBUG(GENERAL,
                   "tryConnect, calling shutdownConnection: ", msg,
                   " this=", reinterpret_cast<uintptr_t>(self.get()));
         me.shutdownConnection(Error::CouldNotConnect, msg);
@@ -413,7 +413,7 @@ class GeneralConnection : public fuerte::Connection {
           // otherwise, we are in the reconnect phase already, and we
           // do not want to cancel the socket.
           if (me._proto.connect_timer_role == ConnectTimerRole::Connect) {
-            SDB_DEBUG("xxxxx", Logger::FUERTE,
+            SDB_DEBUG(GENERAL,
                       "tryConnect, connect timeout this=",
                       reinterpret_cast<uintptr_t>(self.get()));
             me._proto.cancel();
@@ -512,7 +512,7 @@ struct MultiConnection : public GeneralConnection<ST, RT> {
 
     auto tp = Clock::time_point::max();
     if (was_idle) {  // use default connection timeout
-      SDB_TRACE("xxxxx", Logger::FUERTE, "setting idle keep alive timer, this=",
+      SDB_TRACE(GENERAL, "setting idle keep alive timer, this=",
                 reinterpret_cast<uintptr_t>(this));
       tp = now + this->_config.idle_timeout;
     } else {
@@ -546,7 +546,7 @@ struct MultiConnection : public GeneralConnection<ST, RT> {
           // reading may take longer than kIOTimeout
           // users may adjust request timeout accordingly
           if (now - _last_io > kIOTimeout && me._streams.empty()) {
-            SDB_DEBUG("xxxxx", Logger::FUERTE, "IO read timeout",
+            SDB_DEBUG(GENERAL, "IO read timeout",
                       " this=", reinterpret_cast<uintptr_t>(&me));
             me._timeout_on_read_write = true;
             me._proto.cancel();
@@ -557,7 +557,7 @@ struct MultiConnection : public GeneralConnection<ST, RT> {
             setTimeout(/*setIOBegin*/ false);
           }
         } else if (was_writing && me._writing && now - _last_io > kIOTimeout) {
-          SDB_DEBUG("xxxxx", Logger::FUERTE, "IO write timeout",
+          SDB_DEBUG(GENERAL, "IO write timeout",
                     " this=", reinterpret_cast<uintptr_t>(&me));
           me._timeout_on_read_write = true;
           me._proto.cancel();
@@ -566,7 +566,7 @@ struct MultiConnection : public GeneralConnection<ST, RT> {
 
         } else if (was_idle && is_idle) {
           if (!me._active && me._state == Connection::State::Connected) {
-            SDB_DEBUG("xxxxx", Logger::FUERTE, "HTTP-Request idle timeout",
+            SDB_DEBUG(GENERAL, "HTTP-Request idle timeout",
                       " this=", reinterpret_cast<uintptr_t>(&me));
             me.shutdownConnection(Error::CloseRequested);
           }

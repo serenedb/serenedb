@@ -104,7 +104,7 @@ int H1Connection<ST>::on_header_value(llhttp_t* parser, const char* at,
 template<SocketType ST>
 int H1Connection<ST>::on_headers_complete(llhttp_t* parser) try {
   H1Connection<ST>* self = static_cast<H1Connection<ST>*>(parser->data);
-  SDB_TRACE("xxxxx", Logger::FUERTE,
+  SDB_TRACE(GENERAL,
             "on_headers_complete this=", reinterpret_cast<uintptr_t>(self));
 
   self->_response->header.response_code =
@@ -134,7 +134,7 @@ int H1Connection<ST>::on_headers_complete(llhttp_t* parser) try {
 template<SocketType ST>
 int H1Connection<ST>::on_body(llhttp_t* parser, const char* at,
                               size_t len) try {
-  SDB_TRACE("xxxxx", Logger::FUERTE, "on_body len=", len,
+  SDB_TRACE(GENERAL, "on_body len=", len,
             " this=", reinterpret_cast<uintptr_t>(parser->data));
   static_cast<H1Connection<ST>*>(parser->data)
     ->_response_buffer.append(at, len);
@@ -145,7 +145,7 @@ int H1Connection<ST>::on_body(llhttp_t* parser, const char* at,
 
 template<SocketType ST>
 int H1Connection<ST>::on_message_complete(llhttp_t* parser) try {
-  SDB_TRACE("xxxxx", Logger::FUERTE, "on_message_complete this=",
+  SDB_TRACE(GENERAL, "on_message_complete this=",
             reinterpret_cast<uintptr_t>(parser->data));
   static_cast<H1Connection<ST>*>(parser->data)->_message_complete = true;
   return HPE_OK;
@@ -187,7 +187,7 @@ H1Connection<ST>::H1Connection(EventLoopService& loop,
     _auth_header.append("\r\n");
   }
 
-  SDB_TRACE("xxxxx", Logger::FUERTE, "creating http connection: this=",
+  SDB_TRACE(GENERAL, "creating http connection: this=",
             reinterpret_cast<uintptr_t>(this));
 }
 
@@ -217,7 +217,7 @@ void H1Connection<ST>::finishConnect() {
     SDB_ASSERT(this->_active.load());
     this->AsyncWriteNextRequest();  // starts writing if queue non-empty
   } else {
-    SDB_ERROR("xxxxx", Logger::FUERTE,
+    SDB_ERROR(GENERAL,
               "finishConnect: found state other than 'Connecting': ",
               static_cast<int>(exp));
     SDB_ASSERT(exp == Connection::State::Closed);
@@ -291,7 +291,7 @@ std::string H1Connection<ST>::BuildRequestHeader(const Request& req) {
 // writes data from task queue to network using asio_ns::async_write
 template<SocketType ST>
 void H1Connection<ST>::AsyncWriteNextRequest() {
-  SDB_TRACE("xxxxx", Logger::FUERTE,
+  SDB_TRACE(GENERAL,
             "asyncWriteNextRequest: this=", reinterpret_cast<uintptr_t>(this));
   SDB_ASSERT(this->_active.load());
   auto state = this->_state.load();
@@ -302,13 +302,13 @@ void H1Connection<ST>::AsyncWriteNextRequest() {
   if (!this->_queue.pop(ptr)) {  // check
     this->_active.store(false);  // set
     if (this->_queue.empty()) {  // check again
-      SDB_TRACE("xxxxx", Logger::FUERTE,
+      SDB_TRACE(GENERAL,
                 "asyncWriteNextRequest: stopped writing, this=",
                 reinterpret_cast<uintptr_t>(this));
       if (_should_keep_alive) {
         this->setIOTimeout();
       } else {
-        SDB_TRACE("xxxxx", Logger::FUERTE, "no keep-alive set, this=",
+        SDB_TRACE(GENERAL, "no keep-alive set, this=",
                   reinterpret_cast<uintptr_t>(this));
         this->shutdownConnection(Error::CloseRequested);
       }
@@ -345,7 +345,7 @@ void H1Connection<ST>::AsyncWriteNextRequest() {
       static_cast<H1Connection<ST>&>(*self).AsyncWriteCallback(ec, nwrite);
     });
   this->_item->request->setTimeAsyncWrite();
-  SDB_TRACE("xxxxx", Logger::FUERTE, "asyncWriteNextRequest: done, this=",
+  SDB_TRACE(GENERAL, "asyncWriteNextRequest: done, this=",
             reinterpret_cast<uintptr_t>(this));
 }
 
@@ -366,10 +366,10 @@ void H1Connection<ST>::AsyncWriteCallback(const asio_ns::error_code& ec,
   const auto now = Clock::now();
   if (ec || _item == nullptr || _item->expires < now) {
     // Send failed
-    SDB_DEBUG("xxxxx", Logger::FUERTE, "asyncWriteCallback (http): error '",
+    SDB_DEBUG(GENERAL, "asyncWriteCallback (http): error '",
               ec.message(), "', this=", reinterpret_cast<uintptr_t>(this));
     if (_item != nullptr) {
-      SDB_DEBUG("xxxxx", Logger::FUERTE,
+      SDB_DEBUG(GENERAL,
                 "asyncWriteCallback (http): timeoutLeft: ",
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                   _item->expires - now)
@@ -383,7 +383,7 @@ void H1Connection<ST>::AsyncWriteCallback(const asio_ns::error_code& ec,
   SDB_ASSERT(_item != nullptr);
 
   // Send succeeded
-  SDB_TRACE("xxxxx", Logger::FUERTE, "asyncWriteCallback: send succeeded ",
+  SDB_TRACE(GENERAL, "asyncWriteCallback: send succeeded ",
             "this=", reinterpret_cast<uintptr_t>(this));
   this->_item->request->setTimeSent();
 
@@ -422,7 +422,7 @@ void H1Connection<ST>::asyncReadCallback(const asio_ns::error_code& ec) {
       auto msg = absl::StrCat("Invalid HTTP response in parser: '",
                               llhttp_errno_name(err), "' reason: '",
                               llhttp_get_error_reason(&_parser), "'");
-      SDB_ERROR("xxxxx", Logger::FUERTE, msg,
+      SDB_ERROR(GENERAL, msg,
                 ", this=", reinterpret_cast<uintptr_t>(this));
       // will cleanup _item
       this->shutdownConnection(Error::ProtocolError, msg);
@@ -459,12 +459,12 @@ void H1Connection<ST>::asyncReadCallback(const asio_ns::error_code& ec) {
       _item->callback(Error::NoError, std::move(_item->request),
                       std::move(_response));
     } catch (...) {
-      SDB_ERROR("xxxxx", Logger::FUERTE,
+      SDB_ERROR(GENERAL,
                 "unhandled exception in fuerte callback");
     }
 
     _item.reset();
-    SDB_TRACE("xxxxx", Logger::FUERTE,
+    SDB_TRACE(GENERAL,
               "asyncReadCallback: completed parsing "
               "response this=",
               reinterpret_cast<uintptr_t>(this));
@@ -476,12 +476,12 @@ void H1Connection<ST>::asyncReadCallback(const asio_ns::error_code& ec) {
   }
 
   if (ec) {
-    SDB_DEBUG("xxxxx", Logger::FUERTE,
+    SDB_DEBUG(GENERAL,
               "asyncReadCallback: Error while reading from socket: '",
               ec.message(), "' , this=", reinterpret_cast<uintptr_t>(this));
     this->shutdownConnection(TranslateError(ec, Error::ReadError));
   } else {
-    SDB_TRACE("xxxxx", Logger::FUERTE,
+    SDB_TRACE(GENERAL,
               "asyncReadCallback: response not complete yet this=",
               reinterpret_cast<uintptr_t>(this));
 
@@ -526,7 +526,7 @@ void H1Connection<ST>::setIOTimeout() {
 
       auto& me = static_cast<H1Connection<ST>&>(*s);
       if ((was_writing && me._writing) || (was_reading && me._reading)) {
-        SDB_DEBUG("xxxxx", Logger::FUERTE, "HTTP-Request timeout",
+        SDB_DEBUG(GENERAL, "HTTP-Request timeout",
                   " this=", reinterpret_cast<uintptr_t>(&me));
         me._timeout_on_read_write = true;
         me._proto.cancel();
@@ -535,7 +535,7 @@ void H1Connection<ST>::setIOTimeout() {
         return;
       } else if (is_idle && !me._writing & !me._reading) {
         if (!me._active && me._state == Connection::State::Connected) {
-          SDB_DEBUG("xxxxx", Logger::FUERTE, "HTTP-Request idle timeout",
+          SDB_DEBUG(GENERAL, "HTTP-Request idle timeout",
                     " this=", reinterpret_cast<uintptr_t>(&me));
           me.shutdownConnection(Error::CloseRequested);
         }

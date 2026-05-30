@@ -135,12 +135,12 @@ T ReadEntry(const char*& p, const char* e) {
 
 bool CreatePipes(int* pipe_server_to_child, int* pipe_child_to_server) {
   if (pipe(pipe_server_to_child) == -1) {
-    SDB_ERROR("xxxxx", sdb::Logger::FIXME, "cannot create pipe");
+    SDB_ERROR(GENERAL, "cannot create pipe");
     return false;
   }
 
   if (pipe(pipe_child_to_server) == -1) {
-    SDB_ERROR("xxxxx", sdb::Logger::FIXME, "cannot create pipe");
+    SDB_ERROR(GENERAL, "cannot create pipe");
 
     close(pipe_server_to_child[0]);
     close(pipe_server_to_child[1]);
@@ -278,12 +278,12 @@ void StartExternalProcessPosixSpawn(
       // We fake the old legacy behaviour here from the fork/exec times:
       external->status = kExtTerminated;
       external->exit_status = 1;
-      SDB_ERROR("xxxxx", Logger::FIXME, "spawn failed: executable '",
+      SDB_ERROR(GENERAL, "spawn failed: executable '",
                 external->executable, "' not found");
     } else {
       external->status = kExtForkFailed;
 
-      SDB_ERROR("xxxxx", Logger::FIXME, "spawning of executable '",
+      SDB_ERROR(GENERAL, "spawning of executable '",
                 external->executable, "' failed: ", strerror(errno_copy));
     }
     if (use_pipes) {
@@ -296,7 +296,7 @@ void StartExternalProcessPosixSpawn(
     return;
   }
 
-  SDB_DEBUG("xxxxx", Logger::FIXME, "spawning executable '",
+  SDB_DEBUG(GENERAL, "spawning executable '",
             external->executable, "' succeeded, child pid: ", external->pid);
 
   if (use_pipes) {
@@ -339,7 +339,7 @@ ExternalProcess* GetExternalProcess(pid_t pid) {
     return external;
   }
 
-  SDB_WARN("xxxxx", sdb::Logger::FIXME, "checking for external process: '", pid,
+  SDB_WARN(GENERAL, "checking for external process: '", pid,
            "' failed with error: ", strerror(errno));
   return nullptr;
 }
@@ -352,7 +352,7 @@ bool KillProcess(ExternalProcess* pid, int signal) {
     return false;
   }
   if (signal == SIGKILL) {
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
+    SDB_WARN(GENERAL,
              "sending SIGKILL signal to process: ", pid->pid);
   }
   if (kill(pid->pid, signal) == 0) {
@@ -568,12 +568,12 @@ static ProcessInfo GetProcessInfoH(HANDLE processHandle, pid_t pid) {
         }
       }
     } else {
-      SDB_ERROR("xxxxx", sdb::Logger::FIXME,
+      SDB_ERROR(GENERAL,
                 "failed to acquire thread from snapshot - ", GetLastError());
     }
     CloseHandle(snapShot);
   } else {
-    SDB_ERROR("xxxxx", sdb::Logger::FIXME,
+    SDB_ERROR(GENERAL,
               "failed to acquire process threads count - ", GetLastError());
   }
 
@@ -736,7 +736,7 @@ void CreateExternalProcess(std::string_view executable,
     return;
   }
 
-  SDB_DEBUG("xxxxx", sdb::Logger::FIXME, "adding process ", external->pid,
+  SDB_DEBUG(GENERAL, "adding process ", external->pid,
             " to list");
 
   // Note that the following deals with different types under windows,
@@ -802,7 +802,7 @@ ExternalProcessStatus CheckExternalProcess(
   auto status = LookupSpawnedProcessStatus(pid.pid);
 
   if (!status.has_value()) {
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
+    SDB_WARN(GENERAL,
              "checkExternal: pid not found: ", pid.pid);
     return ExternalProcessStatus{
       kExtNotFound, -1,
@@ -881,7 +881,7 @@ ExternalProcessStatus CheckExternalProcess(
         status->status = kExtNotFound;
       }
       SetError(ERROR_SYS_ERROR);
-      SDB_WARN("xxxxx", sdb::Logger::FIXME, "waitpid returned error for pid ",
+      SDB_WARN(GENERAL, "waitpid returned error for pid ",
                pid.pid, " (", wait, "): ", LastError());
       status->error_message = absl::StrCat("waitpid returned error for pid ",
                                            pid.pid, ": ", LastError());
@@ -903,13 +903,13 @@ ExternalProcessStatus CheckExternalProcess(
         status->exit_status = 0;
       }
     } else {
-      SDB_WARN("xxxxx", sdb::Logger::FIXME,
+      SDB_WARN(GENERAL,
                "unexpected waitpid result for pid ", pid.pid, ": ", res);
       status->error_message =
         absl::StrCat("unexpected waitpid result for pid ", pid.pid, ": ", res);
     }
   } else {
-    SDB_WARN("xxxxx", sdb::Logger::FIXME, "unexpected process status ",
+    SDB_WARN(GENERAL, "unexpected process status ",
              status->status, ": ", status->exit_status);
     status->error_message = absl::StrCat(
       "unexpected process status ", status->status, ": ", status->exit_status);
@@ -944,7 +944,7 @@ ExternalProcessStatus CheckExternalProcess(
 
 ExternalProcessStatus KillExternalProcess(ExternalId pid, int signal,
                                           bool is_terminal) {
-  SDB_DEBUG("xxxxx", sdb::Logger::FIXME, "Sending process: ", pid.pid,
+  SDB_DEBUG(GENERAL, "Sending process: ", pid.pid,
             " the signal: ", signal);
 
   ExternalProcess* external = nullptr;
@@ -964,7 +964,7 @@ ExternalProcessStatus KillExternalProcess(ExternalId pid, int signal,
   if (!is_child) {
     external = GetExternalProcess(pid.pid);
     if (external == nullptr) {
-      SDB_DEBUG("xxxxx", sdb::Logger::FIXME,
+      SDB_DEBUG(GENERAL,
                 "kill: process not found: ", pid.pid,
                 " in our starting table and it doesn't exist.");
       ExternalProcessStatus status;
@@ -972,7 +972,7 @@ ExternalProcessStatus KillExternalProcess(ExternalId pid, int signal,
       status.exit_status = -1;
       return status;
     }
-    SDB_DEBUG("xxxxx", sdb::Logger::FIXME, "kill: process not found: ", pid.pid,
+    SDB_DEBUG(GENERAL, "kill: process not found: ", pid.pid,
               " in our starting table - adding");
 
     // ok, we didn't spawn it, but now we claim the
@@ -1025,7 +1025,7 @@ ExternalProcessStatus KillExternalProcess(ExternalId pid, int signal,
       std::this_thread::sleep_for(std::chrono::seconds(1));
       if (count >= 13) {
         SDB_ASSERT(external != nullptr);
-        SDB_WARN("xxxxx", sdb::Logger::FIXME,
+        SDB_WARN(GENERAL,
                  "about to send SIGKILL signal to process: ", external->pid,
                  ", status: ", (int)status.status);
         KillProcess(external, SIGKILL);
@@ -1040,13 +1040,13 @@ ExternalProcessStatus KillExternalProcess(ExternalId pid, int signal,
 }
 
 bool SuspendExternalProcess(ExternalId pid) {
-  SDB_DEBUG("xxxxx", sdb::Logger::FIXME, "suspending process: ", pid.pid);
+  SDB_DEBUG(GENERAL, "suspending process: ", pid.pid);
 
   return 0 == kill(pid.pid, SIGSTOP);
 }
 
 bool ContinueExternalProcess(ExternalId pid) {
-  SDB_DEBUG("xxxxx", sdb::Logger::FIXME, "continueing process: ", pid.pid);
+  SDB_DEBUG(GENERAL, "continueing process: ", pid.pid);
 
   return 0 == kill(pid.pid, SIGCONT);
 }

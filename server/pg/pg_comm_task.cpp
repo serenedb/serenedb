@@ -297,7 +297,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
     ParseClientParameters(packet.substr(8));
     if (UserName().empty()) {
       // user name is mandatory and should always be present
-      SDB_WARN("xxxxx", Logger::REQUESTS,
+      SDB_WARN(HTTP,
                "User name not set. Terminating connection ",
                std::bit_cast<size_t>(this));
       return;
@@ -444,7 +444,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       SendError("NO IMPLEMENTED", ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION);
     }
   } else {
-    SDB_WARN("xxxxx", Logger::REQUESTS, "Unknown packet:", protocol_ver,
+    SDB_WARN(HTTP, "Unknown packet:", protocol_ver,
              " connection aborted");
   }
 }
@@ -1706,7 +1706,7 @@ void PgSQLCommTaskBase::FinishPacket() noexcept try {
     SetIOTimeoutImpl();
   }
 } catch (...) {
-  SDB_ERROR("xxxxx", Logger::REQUESTS,
+  SDB_ERROR(HTTP,
             "<pgsql> connection closed due to exception in finalizing ",
             std::bit_cast<size_t>(this));
   Stop();
@@ -1792,7 +1792,7 @@ PgSQLCommTask<T>::PgSQLCommTask(rest::GeneralServer& server,
 
 template<rest::SocketType T>
 void PgSQLCommTask<T>::Start() {
-  SDB_DEBUG("xxxxx", Logger::REQUESTS, "<pgsql> opened connection ",
+  SDB_DEBUG(HTTP, "<pgsql> opened connection ",
             std::bit_cast<size_t>(this));
   asio_ns::post(this->_protocol->context.io_context,
                 [self = this->shared_from_this()] {
@@ -1857,7 +1857,7 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
         data += datasize;
         if (this->_state.load() == State::ClientHello &&
             _packet.size() > MAX_STARTUP_PACKET_LENGTH) {
-          SDB_DEBUG("xxxxx", Logger::REQUESTS,
+          SDB_DEBUG(HTTP,
                     "Too long startup packet. Dropping connection ptr",
                     std::bit_cast<size_t>(this));
           this->Close();
@@ -1894,7 +1894,7 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
           }());
           const auto hello_passed = this->_state.load() != State::ClientHello;
           if (hello_passed && _packet[0] == PQ_MSG_TERMINATE) {
-            SDB_DEBUG("xxxxx", Logger::REQUESTS, "Termination request for ",
+            SDB_DEBUG(HTTP, "Termination request for ",
                       std::bit_cast<size_t>(this));
             this->Stop();
             _packet.clear();
@@ -1912,7 +1912,7 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
                                  asio_ns::buffer(kYes));
                   auto cb = [this](const asio_ns::error_code& ec) mutable {
                     if (ec) {
-                      SDB_DEBUG("xxxxx", sdb::Logger::COMMUNICATION,
+                      SDB_DEBUG(HTTP,
                                 "error during TLS handshake: '", ec.message(),
                                 "'");
                       this->Stop();
@@ -1972,10 +1972,10 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
   } else {
     // got a connection error
     if (ec == asio_ns::error::misc_errors::eof) {
-      SDB_TRACE("xxxxx", Logger::REQUESTS, "Eof with ptr ",
+      SDB_TRACE(HTTP, "Eof with ptr ",
                 std::bit_cast<size_t>(this));
     } else {
-      SDB_DEBUG("xxxxx", Logger::REQUESTS, "Error while reading from socket: '",
+      SDB_DEBUG(HTTP, "Error while reading from socket: '",
                 ec.message(), "'");
       this->Close(ec);
       return false;
@@ -2013,7 +2013,7 @@ void PgSQLCommTask<T>::TimeoutStop() {
   if (!this->_queue.empty() || this->Stopped()) {
     return;
   }
-  SDB_INFO("xxxxx", Logger::REQUESTS, "keep alive timeout, closing stream!");
+  SDB_INFO(HTTP, "keep alive timeout, closing stream!");
   SDB_ASSERT(!this->_current_portal);
   this->_send.Write(ToBuffer(kTimeoutTermination), true);
   CloseImpl({});

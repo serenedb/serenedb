@@ -203,7 +203,7 @@ int VPackHelper::compareUIntDouble(uint64_t l, double r) noexcept {
 
 /// static initializer for all VPack values
 void VPackHelper::initialize() {
-  SDB_TRACE("xxxxx", sdb::Logger::FIXME, "initializing vpack");
+  SDB_TRACE(GENERAL, "initializing vpack");
 
   // set the attribute translator in the global options
   vpack::Options::gDefaults.unsupported_type_behavior =
@@ -323,7 +323,7 @@ std::string_view VPackHelper::checkAndGetString(vpack::Slice slice,
   SDB_ASSERT(slice.isObject());
   slice = slice.get(name);
   if (!slice.isString()) [[unlikely]] {
-    SDB_THROW(ERROR_BAD_PARAMETER, "attribute '", name,
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "attribute '", name,
               slice.isNone() ? "' was not found" : "' is not a string");
   }
   return slice.stringViewUnchecked();
@@ -411,7 +411,7 @@ bool VPackHelper::vpackToFile(const std::string& filename, vpack::Slice slice,
 
   if (fd < 0) {
     SetError(ERROR_SYS_ERROR);
-    SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot create json file '", tmp,
+    SDB_WARN(GENERAL, "cannot create json file '", tmp,
              "': ", SERENEDB_ERRORNO_STR);
     return false;
   }
@@ -419,7 +419,7 @@ bool VPackHelper::vpackToFile(const std::string& filename, vpack::Slice slice,
   if (!PrintVPack(fd, slice, true)) {
     SERENEDB_CLOSE(fd);
     SetError(ERROR_SYS_ERROR);
-    SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot write to json file '", tmp,
+    SDB_WARN(GENERAL, "cannot write to json file '", tmp,
              "': ", SERENEDB_ERRORNO_STR);
     // TODO(mbkkt) why ignore?
     std::ignore = SdbUnlinkFile(tmp.c_str());
@@ -427,12 +427,12 @@ bool VPackHelper::vpackToFile(const std::string& filename, vpack::Slice slice,
   }
 
   if (sync_file) {
-    SDB_TRACE("xxxxx", sdb::Logger::FIXME, "syncing tmp file '", tmp, "'");
+    SDB_TRACE(GENERAL, "syncing tmp file '", tmp, "'");
 
     if (!Sdbfsync(fd)) {
       SERENEDB_CLOSE(fd);
       SetError(ERROR_SYS_ERROR);
-      SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot sync saved json '", tmp,
+      SDB_WARN(GENERAL, "cannot sync saved json '", tmp,
                "': ", SERENEDB_ERRORNO_STR);
       // TODO(mbkkt) why ignore?
       std::ignore = SdbUnlinkFile(tmp.c_str());
@@ -442,7 +442,7 @@ bool VPackHelper::vpackToFile(const std::string& filename, vpack::Slice slice,
 
   if (int res = SERENEDB_CLOSE(fd); res < 0) {
     SetError(ERROR_SYS_ERROR);
-    SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot close saved file '", tmp,
+    SDB_WARN(GENERAL, "cannot close saved file '", tmp,
              "': ", SERENEDB_ERRORNO_STR);
     // TODO(mbkkt) why ignore?
     std::ignore = SdbUnlinkFile(tmp.c_str());
@@ -452,7 +452,7 @@ bool VPackHelper::vpackToFile(const std::string& filename, vpack::Slice slice,
   if (auto res = SdbRenameFile(tmp.c_str(), filename.c_str());
       res != ERROR_OK) {
     SetError(res);
-    SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot rename saved file '", tmp,
+    SDB_WARN(GENERAL, "cannot rename saved file '", tmp,
              "' to '", filename, "': ", SERENEDB_ERRORNO_STR);
     // TODO(mbkkt) why ignore?
     std::ignore = SdbUnlinkFile(tmp.c_str());
@@ -465,18 +465,18 @@ bool VPackHelper::vpackToFile(const std::string& filename, vpack::Slice slice,
     fd = SERENEDB_OPEN(dir.c_str(), O_RDONLY | SERENEDB_O_CLOEXEC);
     if (fd < 0) {
       SetError(ERROR_SYS_ERROR);
-      SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot sync directory '", filename,
+      SDB_WARN(GENERAL, "cannot sync directory '", filename,
                "': ", SERENEDB_ERRORNO_STR);
     } else {
       if (fsync(fd) < 0) {
         SetError(ERROR_SYS_ERROR);
-        SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot sync directory '",
+        SDB_WARN(GENERAL, "cannot sync directory '",
                  filename, "': ", SERENEDB_ERRORNO_STR);
       }
       int res = SERENEDB_CLOSE(fd);
       if (res < 0) {
         SetError(ERROR_SYS_ERROR);
-        SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot close directory '",
+        SDB_WARN(GENERAL, "cannot close directory '",
                  filename, "': ", SERENEDB_ERRORNO_STR);
       }
     }
@@ -682,7 +682,7 @@ uint64_t VPackHelper::extractIdValue(vpack::Slice slice) {
   } else if (id.isNone()) {
     return 0;
   }
-  SDB_THROW(ERROR_BAD_PARAMETER, absl::StrCat("invalid type ", id.typeName(),
+  SDB_THROW(sdb::ERROR_BAD_PARAMETER, absl::StrCat("invalid type ", id.typeName(),
                                               " for 'id' attribute"));
 }
 

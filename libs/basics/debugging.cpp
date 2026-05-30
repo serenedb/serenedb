@@ -116,7 +116,7 @@ bool AddFailurePointDebugging(std::string_view value) {
     gHasFailurePoints.store(true, std::memory_order_relaxed);
   }
   if (added) {
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
+    SDB_WARN(GENERAL,
              "activating intentional failure point '", value,
              "'. the server will misbehave!");
   }
@@ -134,7 +134,7 @@ bool RemoveFailurePointDebugging(std::string_view value) {
   }
 
   if (removed) {
-    SDB_INFO("xxxxx", sdb::Logger::FIXME, "cleared failure point ", value);
+    SDB_INFO(GENERAL, "cleared failure point ", value);
   }
   return removed;
 }
@@ -149,7 +149,7 @@ void ClearFailurePointsDebugging() noexcept {
   }
 
   if (num_existing > 0) {
-    SDB_INFO("xxxxx", sdb::Logger::FIXME, "cleared ", num_existing,
+    SDB_INFO(GENERAL, "cleared ", num_existing,
              " failure point(s)");
   }
 }

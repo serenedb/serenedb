@@ -386,7 +386,7 @@ size_t DuckDBWriteConflictResolver::HandleWriteConflicts(
       continue;
     }
     if (!status.ok()) {
-      SDB_THROW(ERROR_INTERNAL, "RocksDB error: ", status.ToString());
+      SDB_THROW(sdb::ERROR_INTERNAL, "RocksDB error: ", status.ToString());
     }
 
     if (_on_conflict == duckdb::OnConflictAction::NOTHING) {

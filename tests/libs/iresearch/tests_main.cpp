@@ -115,7 +115,7 @@ bool TestEnv::prepare(const cmdline::parser& parser) {
 
   auto log_level =
     parser.get<std::underlying_type_t<sdb::LogLevel>>(kIresLogLevel);
-  sdb::Logger::IRESEARCH.SetLevel(sdb::LogLevel{log_level});
+  sdb::log::TopicSetLevel(sdb::log::IRESEARCH, sdb::LogLevel{log_level});
 
   if (parser.exist(kIresOutput)) {
     std::unique_ptr<char*[]> argv(new char*[2 + gArgc]);
@@ -192,9 +192,7 @@ void TestEnv::parse_command_line(cmdline::parser& cmd) {
   cmd.add(kIresLogLevel, 0,
           "threshold log level <FATAL|ERROR|WARN|INFO|DEBUG|TRACE>", false,
           std::to_underlying(sdb::LogLevel::FATAL), [](std::string_view s) {
-            auto level = sdb::LogLevel::FATAL;
-            sdb::log::TranslateLogLevel(s, false, level);
-            return std::to_underlying(level);
+            return std::to_underlying(sdb::log::TranslateLogLevel(s));
           });
   cmd.add(kIresLogStack, 0, "always log stack trace", false, false);
   cmd.add(kIresOutput, 0, "generate an XML report");
@@ -265,7 +263,7 @@ int main(int argc, char* argv[]) {
   sdb::log::Initialize();
   const int code = TestEnv::initialize(argc, argv);
 
-  SDB_INFO("xxxxx", sdb::Logger::IRESEARCH, "Path to test result directory: ",
+  SDB_INFO(IRESEARCH, "Path to test result directory: ",
            TestEnv::test_results_dir().string());
 
   size_t all_paths = 0;

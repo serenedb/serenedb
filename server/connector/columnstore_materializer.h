@@ -68,7 +68,7 @@ class ColumnstoreMaterializer {
                           duckdb::Vector& out_vec,
                           duckdb::idx_t output_start) const {
     SDB_ASSERT(i < _bound.size());
-    SDB_IF_FAILURE("SearchIncludeFetchFault") { SDB_THROW(ERROR_DEBUG); }
+    SDB_IF_FAILURE("SearchIncludeFetchFault") { SDB_THROW(sdb::ERROR_DEBUG); }
     const auto& b = _bound[i];
     irs::columnstore::MaterializeNode(*b.reader, *b.state, doc_ids, out_vec,
                                       output_start);
@@ -80,7 +80,7 @@ class ColumnstoreMaterializer {
     if (_bound.empty() || doc_ids.empty()) {
       return;
     }
-    SDB_IF_FAILURE("SearchIncludeFetchFault") { SDB_THROW(ERROR_DEBUG); }
+    SDB_IF_FAILURE("SearchIncludeFetchFault") { SDB_THROW(sdb::ERROR_DEBUG); }
     for (const auto& b : _bound) {
       auto& out_vec = output.data[b.output_slot];
       const auto type_id = b.reader->Type().id();
@@ -98,7 +98,7 @@ class ColumnstoreMaterializer {
     if (_bound.empty() || count == 0) {
       return;
     }
-    SDB_IF_FAILURE("SearchIncludeFetchFault") { SDB_THROW(ERROR_DEBUG); }
+    SDB_IF_FAILURE("SearchIncludeFetchFault") { SDB_THROW(sdb::ERROR_DEBUG); }
     for (const auto& b : _bound) {
       auto& out_vec = output.data[b.output_slot];
       const auto type_id = b.reader->Type().id();

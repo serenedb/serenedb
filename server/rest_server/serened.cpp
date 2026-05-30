@@ -105,11 +105,11 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
         ret = EXIT_SUCCESS;
       }
     } catch (const std::exception& ex) {
-      SDB_ERROR("xxxxx", Logger::FIXME,
+      SDB_ERROR(GENERAL,
                 "serened terminated because of an exception: ", ex.what());
       ret = EXIT_FAILURE;
     } catch (...) {
-      SDB_ERROR("xxxxx", Logger::FIXME,
+      SDB_ERROR(GENERAL,
                 "serened terminated because of an exception of "
                 "unknown type");
       ret = EXIT_FAILURE;
@@ -117,10 +117,10 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     log::Flush();
     return context.exit(ret);
   } catch (const std::exception& ex) {
-    SDB_ERROR("xxxxx", Logger::FIXME,
+    SDB_ERROR(GENERAL,
               "serened terminated because of an exception: ", ex.what());
   } catch (...) {
-    SDB_ERROR("xxxxx", Logger::FIXME,
+    SDB_ERROR(GENERAL,
               "serened terminated because of an exception of "
               "unknown type");
   }

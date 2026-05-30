@@ -71,7 +71,7 @@ void RefreshTask::Finalize(
 }
 
 void RefreshTask::operator()() {
-  SDB_TRACE("xxxxx", Logger::SEARCH, "RefreshTask started");
+  SDB_TRACE(SEARCH, "RefreshTask started");
   const char run_id = 0;
   auto data = _inverted_index_shard.lock();
   absl::Cleanup set_promise = [promise = std::move(_promise)]() mutable {
@@ -80,7 +80,7 @@ void RefreshTask::operator()() {
   };
   SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
   if (!data) {
-    SDB_TRACE("xxxxx", Logger::SEARCH, "InvertedIndexShard ", _id,
+    SDB_TRACE(SEARCH, "InvertedIndexShard ", _id,
               " is deleted");
     return;
   }
@@ -92,7 +92,7 @@ void RefreshTask::operator()() {
     try {
       Finalize(std::move(data), code);
     } catch (const std::exception& ex) {
-      SDB_ERROR("xxxxx", Logger::SEARCH,
+      SDB_ERROR(SEARCH,
                 "failed to call finalize: ", ex.what());
     }
   };
@@ -100,7 +100,7 @@ void RefreshTask::operator()() {
   // reload RuntimeState
   {
     SDB_IF_FAILURE("SearchRefreshTask::lockInvertedIndexShard") {
-      SDB_THROW(ERROR_DEBUG);
+      SDB_THROW(sdb::ERROR_DEBUG);
     }
     absl::ReaderMutexLock lock{data->GetMutex()};
     auto& settings = data->GetTasksSettings();
@@ -118,20 +118,20 @@ void RefreshTask::operator()() {
   // when `_wait` is set even if background scheduling is off.
   if (absl::ZeroDuration() == _refresh_interval_msec && !_wait) {
     std::move(reschedule).Cancel();
-    SDB_DEBUG("xxxxx", Logger::SEARCH, "sync is disabled for the index '",
+    SDB_DEBUG(SEARCH, "sync is disabled for the index '",
               id.id(), "', runId '", size_t(&run_id), "'");
     return;
   }
 
-  SDB_IF_FAILURE("SearchRefreshTask::commitUnsafe") { SDB_THROW(ERROR_DEBUG); }
+  SDB_IF_FAILURE("SearchRefreshTask::commitUnsafe") { SDB_THROW(sdb::ERROR_DEBUG); }
   auto [res, timeMs] = data->CommitUnsafe(_wait, nullptr, code);
 
   if (res.ok()) {
-    SDB_TRACE("xxxxx", Logger::SEARCH, "successful sync of Search index '",
+    SDB_TRACE(SEARCH, "successful sync of Search index '",
               id.id(), "', run id '", size_t(&run_id), "', took: ", timeMs,
               "ms");
   } else {
-    SDB_WARN("xxxxx", Logger::SEARCH, "error after running for ", timeMs,
+    SDB_WARN(SEARCH, "error after running for ", timeMs,
              "ms while committing Search index '", id.id(), "', run id '",
              size_t(&run_id), "': ", res.errorNumber(), " ",
              res.errorMessage());
@@ -140,17 +140,17 @@ void RefreshTask::operator()() {
       ++_cleanup_interval_count >= _cleanup_interval_step) {  // if enabled
     _cleanup_interval_count = 0;
     SDB_IF_FAILURE("SearchRefreshTask::cleanupUnsafe") {
-      SDB_THROW(ERROR_DEBUG);
+      SDB_THROW(sdb::ERROR_DEBUG);
     }
 
     auto [res, timeMs] = data->CleanupUnsafe();
 
     if (res.ok()) {
-      SDB_TRACE("xxxxx", Logger::SEARCH, "successful cleanup of Search index '",
+      SDB_TRACE(SEARCH, "successful cleanup of Search index '",
                 id.id(), "', run id '", size_t(&run_id), "', took: ", timeMs,
                 "ms");
     } else {
-      SDB_WARN("xxxxx", Logger::SEARCH, "error after running for ", timeMs,
+      SDB_WARN(SEARCH, "error after running for ", timeMs,
                "ms while cleaning up Search index '", id.id(), "', run id '",
                size_t(&run_id), "': ", res.errorNumber(), " ",
                res.errorMessage());
@@ -159,7 +159,7 @@ void RefreshTask::operator()() {
 }
 
 void CompactionTask::operator()() {
-  SDB_TRACE("xxxxx", Logger::SEARCH, "CompactionTask started");
+  SDB_TRACE(SEARCH, "CompactionTask started");
   const char run_id = 0;
   auto data = _inverted_index_shard.lock();
   absl::Cleanup set_promise = [promise = std::move(_promise)]() mutable {
@@ -167,7 +167,7 @@ void CompactionTask::operator()() {
   };
   SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
   if (!data) {
-    SDB_WARN("xxxxx", Logger::SEARCH,
+    SDB_WARN(SEARCH,
              "CompactionTask: inverted index shard is deleted");
     return;
   }
@@ -186,14 +186,14 @@ void CompactionTask::operator()() {
         }
       }
     } catch (const std::exception& ex) {
-      SDB_ERROR("xxxxx", Logger::SEARCH, "failed to reschedule: ", ex.what());
+      SDB_ERROR(SEARCH, "failed to reschedule: ", ex.what());
     }
   };
 
   // reload RuntimeState
   {
     SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexShard") {
-      SDB_THROW(ERROR_DEBUG);
+      SDB_THROW(sdb::ERROR_DEBUG);
     }
 
     absl::ReaderMutexLock lock{data->GetMutex()};
@@ -207,7 +207,7 @@ void CompactionTask::operator()() {
       !_compaction_policy) {
     std::move(reschedule).Cancel();
 
-    SDB_DEBUG("xxxxx", Logger::SEARCH, "compaction is disabled for the index '",
+    SDB_DEBUG(SEARCH, "compaction is disabled for the index '",
               id.id(), "', runId '", size_t(&run_id), "'");
     return;
   }
@@ -222,7 +222,7 @@ void CompactionTask::operator()() {
     std::move(reschedule).Cancel();
   }
   SDB_IF_FAILURE("SearchCompactionTask::compactUnsafe") {
-    SDB_THROW(ERROR_DEBUG);
+    SDB_THROW(sdb::ERROR_DEBUG);
   }
 
   bool empty_compaction = false;
@@ -235,11 +235,11 @@ void CompactionTask::operator()() {
     } else {
       _state->noop_compaction_count.store(0, std::memory_order_release);
     }
-    SDB_TRACE("xxxxx", Logger::SEARCH,
+    SDB_TRACE(SEARCH,
               "successful compaction of Search index '", id.id(), "', run id '",
               size_t(&run_id), "', took: ", timeMs, "ms");
   } else {
-    SDB_DEBUG("xxxxx", Logger::SEARCH, "error after running for ", timeMs,
+    SDB_DEBUG(SEARCH, "error after running for ", timeMs,
               "ms while compacting Search index '", id.id(), "', run id '",
               size_t(&run_id), "': ", res.errorNumber(), " ",
               res.errorMessage());

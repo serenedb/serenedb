@@ -126,23 +126,23 @@ AnalyzerRegistrar::AnalyzerRegistrar(
       AnalyzerRegister::instance().tag(Key{type.name(), args_format});
 
     if (source && registered_source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering analyzer, "
                "ignoring: type '",
                type.name(), "' from ", source, ", previously from ",
                *registered_source);
     } else if (source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering analyzer, "
                "ignoring: type '",
                type.name(), "' from ", source);
     } else if (registered_source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering analyzer, "
                "ignoring: type '",
                type.name(), "', previously from ", *registered_source);
     } else {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering analyzer, "
                "ignoring: type '",
                type.name(), "'");
@@ -169,7 +169,7 @@ bool Normalize(std::string& out, std::string_view name,
 
     return normalizer ? normalizer(args, out) : false;
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught exception while normalizing analyzer '", name,
               "' arguments");
   }
@@ -187,7 +187,7 @@ Analyzer::ptr Get(std::string_view name, const TypeInfo& args_format,
 
     return factory ? factory(args) : nullptr;
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught exception while getting an analyzer instance");
   }
 

@@ -42,7 +42,7 @@ void IoContext::IoThread::run() {
   try {
     _iocontext.io_context.run();
   } catch (const std::exception& ex) {
-    SDB_WARN("xxxxx", Logger::THREADS,
+    SDB_WARN(GENERAL,
              "caught exception in IO thread: ", ex.what());
   }
 }

@@ -124,7 +124,7 @@ class AppFeature {
 
   void setEnabled(bool value) {
     if (!value && !isOptional()) {
-      SDB_THROW(ERROR_BAD_PARAMETER,
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER,
                 "cannot disable non-optional feature: ", name());
     }
     _enabled = value;

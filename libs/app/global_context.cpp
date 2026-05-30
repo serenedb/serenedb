@@ -31,7 +31,6 @@
 #include "basics/error.h"
 #include "basics/file_utils.h"
 #include "basics/files.h"
-#include "basics/logger/appender.h"
 #include "basics/logger/logger.h"
 #include "basics/operating-system.h"
 #include "basics/process-utils.h"
@@ -57,7 +56,10 @@ using namespace sdb::basics;
 
 namespace {
 
-static void ReopenLog(int) { log::Appender::reopen(); }
+static void ReopenLog(int) {
+  // Logger writes to stderr only; SIGHUP file-rotate is a no-op.
+  // logrotate's `copytruncate` is the supported rotation path.
+}
 
 }  // namespace
 
@@ -129,7 +131,7 @@ void GlobalContext::normalizePath(std::string& path, const char* which_path,
       if (!fatal) {
         return;
       }
-      SDB_FATAL("xxxxx", sdb::Logger::FIXME, "failed to locate ", which_path,
+      SDB_FATAL(GENERAL, "failed to locate ", which_path,
                 " directory, its neither available in '", path, "' nor in '",
                 directory, "'");
     }

@@ -30,13 +30,13 @@
 namespace sdb::fuerte {
 
 Connection::~Connection() {
-  SDB_DEBUG("xxxxx", Logger::FUERTE, "Destroying Connection");
+  SDB_DEBUG(GENERAL, "Destroying Connection");
 }
 
 // sendRequest and wait for it to finished.
 std::unique_ptr<Response> Connection::sendRequest(
   std::unique_ptr<Request> request) {
-  SDB_TRACE("xxxxx", Logger::FUERTE, "sendRequest (sync): before send");
+  SDB_TRACE(GENERAL, "sendRequest (sync): before send");
 
   // TODO(mbkkt) just atomic, aka one shot event without multiple wait
   yaclib::OneShotEvent wg;
@@ -55,11 +55,11 @@ std::unique_ptr<Response> Connection::sendRequest(
     sendRequest(std::move(request), cb);
 
     // Wait for request to finish.
-    SDB_TRACE("xxxxx", Logger::FUERTE, "sendRequest (sync): before wait");
+    SDB_TRACE(GENERAL, "sendRequest (sync): before wait");
     wg.Wait();
   }
 
-  SDB_TRACE("xxxxx", Logger::FUERTE, "sendRequest (sync): done");
+  SDB_TRACE(GENERAL, "sendRequest (sync): done");
 
   if (error != Error::NoError) {
     throw error;

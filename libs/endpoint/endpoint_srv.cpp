@@ -85,7 +85,7 @@ static std::vector<SrvRecord> SrvRecords(const std::string& specification) {
       n = dn_expand(msg, eom, cp, hostbuf, 256);
 
       if (n < 0) {
-        SDB_WARN("xxxxx", sdb::Logger::FIXME, "DNS record for '", specification,
+        SDB_WARN(GENERAL, "DNS record for '", specification,
                  "' is corrupt");
         return {};
       }
@@ -98,7 +98,7 @@ static std::vector<SrvRecord> SrvRecords(const std::string& specification) {
       n = dn_expand(msg, eom, cp, hostbuf, 256);
 
       if (n < 0) {
-        SDB_WARN("xxxxx", sdb::Logger::FIXME, "DNS record for '", specification,
+        SDB_WARN(GENERAL, "DNS record for '", specification,
                  "' is corrupt");
         return {};
       }
@@ -129,14 +129,14 @@ static std::vector<SrvRecord> SrvRecords(const std::string& specification) {
       n = dn_expand(msg, eom, cp, hostbuf, 256);
 
       if (n < 0) {
-        SDB_WARN("xxxxx", sdb::Logger::FIXME, "DNS record for '", specification,
+        SDB_WARN(GENERAL, "DNS record for '", specification,
                  "' is corrupt");
         break;
       }
 
       cp += n;
 
-      SDB_TRACE("xxxxx", sdb::Logger::FIXME, "DNS record for '", specification,
+      SDB_TRACE(GENERAL, "DNS record for '", specification,
                 "': type ", type, ", typename ", nclass, ", ttl ", ttl,
                 ", len ", dlen, ", prio ", priority, ", weight ", weight,
                 ", port ", port, ", host '", hostbuf, "'");
@@ -155,7 +155,7 @@ static std::vector<SrvRecord> SrvRecords(const std::string& specification) {
       services.push_back(srv);
     }
   } else {
-    SDB_WARN("xxxxx", sdb::Logger::FIXME, "DNS record for '", specification,
+    SDB_WARN(GENERAL, "DNS record for '", specification,
              "' not found");
   }
 

@@ -67,7 +67,7 @@ bool GeneralServer::allowEarlyConnections() const noexcept {
 
 void GeneralServer::registerTask(std::shared_ptr<CommTask> task) {
   if (_feature.server().isStopping()) {
-    SDB_THROW(ERROR_SHUTTING_DOWN);
+    SDB_THROW(sdb::ERROR_SHUTTING_DOWN);
   }
   auto* t = task.get();
   {
@@ -99,11 +99,10 @@ void GeneralServer::startListening(EndpointList& list) {
     bool ok = openEndpoint(io_context, &ep);
 
     if (ok) {
-      SDB_DEBUG("xxxxx", sdb::Logger::FIXME, "bound to endpoint '",
+      SDB_DEBUG(GENERAL, "bound to endpoint '",
                 specification, "'");
     } else {
-      SDB_FATAL_EXIT_CODE(
-        "xxxxx", sdb::Logger::FIXME, EXIT_COULD_NOT_BIND_PORT,
+      SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_BIND_PORT,
         "failed to bind to endpoint '", specification,
         "'. Please check whether another instance is already "
         "running using this endpoint and review your endpoints "
@@ -215,8 +214,7 @@ Result GeneralServer::reloadTLS() {
     }
     return {};
   } catch (std::exception& e) {
-    SDB_ERROR(
-      "xxxxx", Logger::SSL,
+    SDB_ERROR(SSL,
       "Could not reload TLS context from files, got exception with this "
       "error: ",
       e.what());

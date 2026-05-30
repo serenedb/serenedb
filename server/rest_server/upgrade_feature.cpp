@@ -91,19 +91,18 @@ in the `VERSION` file, the server refuses to start.)");
 
 void UpgradeFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
   if (_upgrade && !_upgrade_check) {
-    SDB_FATAL_EXIT_CODE(
-      "xxxxx", sdb::Logger::FIXME, EXIT_INVALID_OPTION_VALUE,
+    SDB_FATAL_EXIT_CODE(GENERAL, EXIT_INVALID_OPTION_VALUE,
       "cannot specify both '--database.auto-upgrade true' and "
       "'--database.upgrade-check false'");
   }
 
   if (!_upgrade) {
-    SDB_TRACE("xxxxx", sdb::Logger::FIXME,
+    SDB_TRACE(GENERAL,
               "executing upgrade check: not disabling server features");
     return;
   }
 
-  SDB_INFO("xxxxx", sdb::Logger::FIXME,
+  SDB_INFO(GENERAL,
            "executing upgrade procedure: disabling server features");
 
   // if we run the upgrade, we need to disable a few features that may get
@@ -145,7 +144,7 @@ void UpgradeFeature::start() {
         // for coordinators, the default password will be installed by the
         // BootstrapFeature later.
         if (auto res = auth::CreateRootRole(false); res.fail()) {
-          SDB_ERROR("xxxxx", sdb::Logger::FIXME,
+          SDB_ERROR(GENERAL,
                     "failed to set default password: ", res.errorMessage());
           *_result = EXIT_FAILURE;
         }
@@ -156,7 +155,7 @@ void UpgradeFeature::start() {
     if (init.restoreAdmin() && ServerState::instance()->IsClientNode()) {
       auto r = auth::RemoveAllRoles();
       if (!r.ok()) {
-        SDB_ERROR("xxxxx", sdb::Logger::FIXME,
+        SDB_ERROR(GENERAL,
                   "failed to clear users: ", r.errorMessage());
         *_result = EXIT_FAILURE;
         return;
@@ -165,15 +164,15 @@ void UpgradeFeature::start() {
       r = auth::CreateRootRole(false);
 
       if (!r.ok()) {
-        SDB_ERROR("xxxxx", sdb::Logger::FIXME,
+        SDB_ERROR(GENERAL,
                   "failed to create root user: ", r.errorMessage());
         *_result = EXIT_FAILURE;
         return;
       }
-      auto old_level = sdb::Logger::FIXME.GetLevel();
-      sdb::Logger::FIXME.SetLevel(sdb::LogLevel::INFO);
-      SDB_INFO("xxxxx", sdb::Logger::FIXME, "Password changed.");
-      sdb::Logger::FIXME.SetLevel(old_level);
+      auto old_level = sdb::log::TopicLevel(sdb::log::GENERAL);
+      sdb::log::TopicSetLevel(sdb::log::GENERAL, sdb::LogLevel::INFO);
+      SDB_INFO(GENERAL, "Password changed.");
+      sdb::log::TopicSetLevel(sdb::log::GENERAL, old_level);
       *_result = EXIT_SUCCESS;
     }
   }
@@ -185,8 +184,7 @@ void UpgradeFeature::start() {
     }
 
     if (!ServerState::instance()->IsCoordinator() || !_upgrade) {
-      SDB_INFO(
-        "xxxxx", sdb::Logger::STARTUP,
+      SDB_INFO(STARTUP,
         "server will now shut down due to upgrade, database initialization "
         "or admin restoration.");
 
@@ -199,7 +197,7 @@ void UpgradeFeature::start() {
 }
 
 void UpgradeFeature::upgradeLocalDatabase() {
-  SDB_TRACE("xxxxx", sdb::Logger::FIXME, "starting database init/upgrade");
+  SDB_TRACE(GENERAL, "starting database init/upgrade");
 
   const bool ignore_datafile_errors =
     GetServerOptions().database_ignore_datafile_errors;
@@ -221,7 +219,7 @@ void UpgradeFeature::upgradeLocalDatabase() {
 
         if (!_upgrade) {
           exit_code = EXIT_UPGRADE_REQUIRED;
-          SDB_ERROR("xxxxx", sdb::Logger::FIXME, "Database '",
+          SDB_ERROR(GENERAL, "Database '",
                     database->GetName(), "' needs upgrade. ",
                     "Please start the server with --database.auto-upgrade");
         } else {
@@ -234,7 +232,7 @@ void UpgradeFeature::upgradeLocalDatabase() {
         exit_code = EXIT_VERSION_CHECK_FAILED;
       }
 
-      SDB_FATAL_EXIT_CODE("xxxxx", sdb::Logger::FIXME, exit_code, "Database '",
+      SDB_FATAL_EXIT_CODE(GENERAL, exit_code, "Database '",
                           database->GetName(), "' ", type_name, " failed (",
                           res.result.errorMessage(),
                           "). Please inspect the logs from the ", type_name,
@@ -244,11 +242,11 @@ void UpgradeFeature::upgradeLocalDatabase() {
 
   if (_upgrade) {
     *_result = EXIT_SUCCESS;
-    SDB_INFO("xxxxx", sdb::Logger::FIXME, "database upgrade passed");
+    SDB_INFO(GENERAL, "database upgrade passed");
   }
 
   // and return from the context
-  SDB_TRACE("xxxxx", sdb::Logger::FIXME, "finished database init/upgrade");
+  SDB_TRACE(GENERAL, "finished database init/upgrade");
 }
 
 }  // namespace sdb

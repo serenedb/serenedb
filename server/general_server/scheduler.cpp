@@ -207,7 +207,7 @@ void Scheduler::runCronThread() {
             item->run();
           }
         } catch (const std::exception& ex) {
-          SDB_WARN("xxxxx", Logger::THREADS,
+          SDB_WARN(GENERAL,
                    "caught exception in runCronThread: ", ex.what());
         }
 
@@ -286,7 +286,7 @@ Scheduler::WorkHandle Scheduler::queueDelayed(
   std::shared_ptr<DelayedWorkItem> item;
 
   try {
-    SDB_IF_FAILURE("Scheduler::queueDelayedFail1") { SDB_THROW(ERROR_DEBUG); }
+    SDB_IF_FAILURE("Scheduler::queueDelayedFail1") { SDB_THROW(sdb::ERROR_DEBUG); }
 
     item =
       std::make_shared<DelayedWorkItem>(name, std::move(handler), lane, this);
@@ -295,7 +295,7 @@ Scheduler::WorkHandle Scheduler::queueDelayed(
   }
 
   try {
-    SDB_IF_FAILURE("Scheduler::queueDelayedFail2") { SDB_THROW(ERROR_DEBUG); }
+    SDB_IF_FAILURE("Scheduler::queueDelayedFail2") { SDB_THROW(sdb::ERROR_DEBUG); }
     auto point = clock::now() + delay;
     absl::MutexLock guard{&_cron_queue_mutex};
     _cron_queue.emplace(point, item);

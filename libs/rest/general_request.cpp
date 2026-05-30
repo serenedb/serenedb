@@ -86,7 +86,7 @@ std::string_view GeneralRequest::translateMethod(RequestType method) {
     case RequestType::Put:
       return "PUT";
     default:
-      SDB_WARN("xxxxx", Logger::FIXME,
+      SDB_WARN(GENERAL,
                "illegal http request method encountered in switch");
       return "UNKNOWN";
   }

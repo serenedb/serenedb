@@ -64,13 +64,13 @@ void FlushFeature::registerFlushSubscription(
   std::lock_guard lock{_flush_subscriptions_mutex};
 
   if (_stopped) {
-    SDB_ERROR("xxxxx", Logger::FLUSH, "FlushFeature not running");
+    SDB_ERROR(STORAGE, "FlushFeature not running");
     return;
   }
 
   _flush_subscriptions.emplace_back(subscription);
 
-  SDB_DEBUG("xxxxx", sdb::Logger::FLUSH,
+  SDB_DEBUG(STORAGE,
             "registered flush subscription: ", subscription->name(), ", tick ",
             subscription->tick());
 }
@@ -117,7 +117,7 @@ std::tuple<size_t, size_t, Tick> FlushFeature::releaseUnusedTicks() {
     }
   }
 
-  SDB_DEBUG("xxxxx", sdb::Logger::FLUSH, "Flush tick released: ", min_tick,
+  SDB_DEBUG(STORAGE, "Flush tick released: ", min_tick,
             ", stale flush subscription(s) released: ", stale,
             ", active flush subscription(s): ", active,
             ", initial engine tick: ", initial_tick);

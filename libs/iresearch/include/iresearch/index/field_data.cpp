@@ -906,14 +906,14 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
   const OffsAttr* offs = nullptr;
 
   if (!inc) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "field '", _meta.name,
+    SDB_ERROR(IRESEARCH, "field '", _meta.name,
               "' missing required token_stream attribute '",
               Type<IncAttr>::name(), "'");
     return false;
   }
 
   if (!term) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "field '", _meta.name,
+    SDB_ERROR(IRESEARCH, "field '", _meta.name,
               "' missing required token_stream attribute '",
               Type<TermAttr>::name(), "'");
     return false;
@@ -929,13 +929,13 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
     _pos += inc->value;
 
     if (_pos < _last_pos) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "invalid position ", _pos,
+      SDB_ERROR(IRESEARCH, "invalid position ", _pos,
                 " < ", _last_pos, " in field '", _meta.name, "'");
       return false;
     }
 
     if (_pos >= pos_limits::eof()) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "invalid position ", _pos,
+      SDB_ERROR(IRESEARCH, "invalid position ", _pos,
                 " >= ", pos_limits::eof(), " in field '", _meta.name, "'");
       return false;
     }
@@ -949,7 +949,7 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
       const uint32_t end_offset = _offs + offs->end;
 
       if (start_offset < _last_start_offs || end_offset < start_offset) {
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+        SDB_ERROR(IRESEARCH,
                   "invalid offset start=", start_offset, " end=", end_offset,
                   " in field '", _meta.name, "'");
         return false;
@@ -961,10 +961,10 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
     auto* p = _terms.emplace(term->value);
 
     if (p == nullptr) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "skipping too long term of size: ", term->value.size(),
                " in field: ", _meta.name);
-      SDB_TRACE("xxxxx", sdb::Logger::IRESEARCH, "field: ", _meta.name,
+      SDB_TRACE(IRESEARCH, "field: ", _meta.name,
                 " contains too long term: ", ViewCast<char>(term->value));
       continue;
     }
@@ -973,7 +973,7 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
     SDB_ASSERT(doc_limits::valid(p->doc));
 
     if (0 == ++_stats.len) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "too many tokens in field: ", _meta.name, ", document: ", id);
       return false;
     }

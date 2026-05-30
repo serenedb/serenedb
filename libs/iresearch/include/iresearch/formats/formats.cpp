@@ -49,7 +49,7 @@ Format::ptr formats::Get(std::string_view name,
 
     return factory ? factory() : nullptr;
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught exception while getting a format instance");
   }
 
@@ -79,23 +79,23 @@ FormatRegistrar::FormatRegistrar(const TypeInfo& type, Format::ptr (*factory)(),
     const auto* registered_source = FormatRegister::instance().tag(type.name());
 
     if (source && registered_source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering format, "
                "ignoring: type '",
                type.name(), "' from ", source, ", previously from ",
                *registered_source);
     } else if (source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering format, "
                "ignoring: type '",
                type.name(), "' from ", source);
     } else if (registered_source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering format, "
                "ignoring: type '",
                type.name(), "', previously from ", *registered_source);
     } else {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering format, "
                "ignoring: type '",
                type.name(), "'");

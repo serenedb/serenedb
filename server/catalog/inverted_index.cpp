@@ -314,7 +314,7 @@ ColumnTokenizer InvertedIndex::GetColumnTokenizer(
   catalog::Column::Id column_id) const {
   const auto* info = FindColumnInfo(column_id);
   if (!info) {
-    SDB_THROW(ERROR_INTERNAL, "Column id ", column_id,
+    SDB_THROW(sdb::ERROR_INTERNAL, "Column id ", column_id,
               " not found in the index definition");
   }
   auto tokenizer =
@@ -331,7 +331,7 @@ ColumnTokenizer InvertedIndex::GetExprTokenizer(
   std::string_view serialized_expr) const {
   auto it = _expr_to_field.find(serialized_expr);
   if (it == _expr_to_field.end()) {
-    SDB_THROW(ERROR_INTERNAL,
+    SDB_THROW(sdb::ERROR_INTERNAL,
               "Indexed expression not found in the index definition");
   }
   return GetExprTokenizerByFieldId(snapshot, it->second);
@@ -342,7 +342,7 @@ ColumnTokenizer InvertedIndex::GetExprTokenizerByFieldId(
   irs::field_id field_id) const {
   const auto* entry = FindEntry(field_id);
   if (entry == nullptr || !entry->IsExpression()) {
-    SDB_THROW(ERROR_INTERNAL, "Indexed expression with field_id ", field_id,
+    SDB_THROW(sdb::ERROR_INTERNAL, "Indexed expression with field_id ", field_id,
               " not found in the index definition");
   }
   auto tokenizer =

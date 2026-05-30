@@ -234,7 +234,7 @@ void EmitResult(duckdb::ClientContext& context,
   }
 
   if (g.has_external_projections) {
-    SDB_IF_FAILURE("SearchRocksDBLookupFault") { SDB_THROW(ERROR_DEBUG); }
+    SDB_IF_FAILURE("SearchRocksDBLookupFault") { SDB_THROW(sdb::ERROR_DEBUG); }
     g.index_source->Materialize(context, g.pk_batch, batch_start, batch_size,
                                 output);
   }
@@ -522,7 +522,7 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
   std::lock_guard lock{g.m};
   if (g.has_external_projections) {
     SDB_ASSERT(g.index_source);
-    SDB_IF_FAILURE("SearchRocksDBLookupFault") { SDB_THROW(ERROR_DEBUG); }
+    SDB_IF_FAILURE("SearchRocksDBLookupFault") { SDB_THROW(sdb::ERROR_DEBUG); }
     g.index_source->Materialize(context, l.pk_batch, batch_start, batch_size,
                                 output);
   }

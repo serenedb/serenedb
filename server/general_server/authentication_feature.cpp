@@ -152,7 +152,7 @@ You can use this feature to roll out new JWT secrets throughout a cluster.)");
 void AuthenticationFeature::validateOptions(
   std::shared_ptr<options::ProgramOptions> options) {
   if (!_jwt_secret_keyfile.empty() && !_jwt_secret_folder.empty()) {
-    SDB_FATAL("xxxxx", Logger::STARTUP,
+    SDB_FATAL(STARTUP,
               "please specify either '--server.jwt-"
               "secret-keyfile' or '--server.jwt-secret-folder' but not both.");
   }
@@ -160,18 +160,18 @@ void AuthenticationFeature::validateOptions(
   if (!_jwt_secret_keyfile.empty() || !_jwt_secret_folder.empty()) {
     Result res = loadJwtSecretsFromFile();
     if (res.fail()) {
-      SDB_FATAL("xxxxx", Logger::STARTUP, res.errorMessage());
+      SDB_FATAL(STARTUP, res.errorMessage());
     }
   }
   if (!_jwt_secrets.front().empty()) {
     if (_jwt_secrets.front().length() > kMaxSecretLength) {
-      SDB_FATAL("xxxxx", Logger::STARTUP,
+      SDB_FATAL(STARTUP,
                 "Given JWT secret too long. Max length is ", kMaxSecretLength);
     }
   }
 
   if (options->processingResult().touched("server.jwt-secret")) {
-    SDB_WARN("xxxxx", Logger::AUTHENTICATION,
+    SDB_WARN(GENERAL,
              "--server.jwt-secret is insecure. Use --server.jwt-secret-keyfile "
              "instead.");
   }
@@ -184,7 +184,7 @@ void AuthenticationFeature::prepare() {
   _auth_cache = std::make_unique<auth::TokenCache>(_authentication_timeout);
 
   if (_jwt_secrets.front().empty()) {
-    SDB_INFO("xxxxx", Logger::AUTHENTICATION,
+    SDB_INFO(GENERAL,
              "Jwt secret not specified, generating...");
     uint16_t m = 254;
     for (size_t i = 0; i < kMaxSecretLength; i++) {
@@ -213,7 +213,7 @@ void AuthenticationFeature::start() {
       << (_authentication_unix_sockets ? "on" : "off");
 #endif
 
-  SDB_INFO("xxxxx", Logger::AUTHENTICATION, out_str);
+  SDB_INFO(GENERAL, out_str);
 }
 
 void AuthenticationFeature::unprepare() {
@@ -285,7 +285,7 @@ Result AuthenticationFeature::LoadJwtSecretKeyfile() {
 Result AuthenticationFeature::LoadJwtSecretFolder() try {
   SDB_ASSERT(!_jwt_secret_folder.empty());
 
-  SDB_INFO("xxxxx", Logger::AUTHENTICATION, "loading JWT secrets from folder ",
+  SDB_INFO(GENERAL, "loading JWT secrets from folder ",
            _jwt_secret_folder);
 
   auto list = basics::file_utils::ListFiles(_jwt_secret_folder);
@@ -325,7 +325,7 @@ Result AuthenticationFeature::LoadJwtSecretFolder() try {
 
   _jwt_secrets = std::move(secrets);
 
-  SDB_INFO("xxxxx", Logger::AUTHENTICATION, "have ", _jwt_secrets.size() - 1,
+  SDB_INFO(GENERAL, "have ", _jwt_secrets.size() - 1,
            " passive JWT secrets");
   return {};
 } catch (const basics::Exception& e) {

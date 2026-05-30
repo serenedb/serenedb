@@ -109,10 +109,10 @@ void InitDatabaseFeature::prepare() {
           _password = password1;
           break;
         }
-        SDB_ERROR("xxxxx", sdb::Logger::FIXME,
+        SDB_ERROR(GENERAL,
                   "passwords do not match, please repeat");
       } else {
-        SDB_FATAL("xxxxx", sdb::Logger::FIXME,
+        SDB_FATAL(GENERAL,
                   "initialization aborted by user");
       }
     }
@@ -149,7 +149,7 @@ void InitDatabaseFeature::checkEmptyDatabase() {
   int code = EXIT_CODE_RESOLVING_FAILED;
 
   auto do_exit = [&] {
-    SDB_FATAL("xxxxx", sdb::Logger::FIXME, message);
+    SDB_FATAL(GENERAL, message);
 
     auto& logger = server().getFeature<LoggerFeature>();
     logger.unprepare();

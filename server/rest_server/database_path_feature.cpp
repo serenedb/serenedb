@@ -85,14 +85,14 @@ void DatabasePathFeature::validateOptions(
   if (1 == positionals.size()) {
     _directory = positionals[0];
   } else if (1 < positionals.size()) {
-    SDB_FATAL("xxxxx", sdb::Logger::FIXME,
+    SDB_FATAL(GENERAL,
               "expected at most one database directory, got '",
               absl::StrJoin(positionals, ","), "'");
   }
 
   if (_directory.empty()) {
     _directory = "serenedb-data";
-    SDB_INFO("xxxxx", sdb::Logger::FIXME,
+    SDB_INFO(GENERAL,
              "no database path has been supplied, using default '", _directory,
              "'");
   }
@@ -104,7 +104,7 @@ void DatabasePathFeature::validateOptions(
   auto ctx = GlobalContext::gContext;
 
   if (ctx == nullptr) {
-    SDB_FATAL("xxxxx", sdb::Logger::FIXME, "failed to get global context.");
+    SDB_FATAL(GENERAL, "failed to get global context.");
   }
 
   ctx->normalizePath(_directory, "database.directory", false);
@@ -126,8 +126,7 @@ void DatabasePathFeature::prepare() {
         basics::string_utils::RTrim(temp_path_copy, SERENEDB_DIR_SEPARATOR_STR);
 
       if (directory_copy == temp_path_copy) {
-        SDB_FATAL(
-          "xxxxx", sdb::Logger::FIXME, "database directory '", directory_copy,
+        SDB_FATAL(GENERAL, "database directory '", directory_copy,
           "' is identical to the temporary directory. ",
           "This can cause follow-up problems, including data loss. Please "
           "review your setup!");
@@ -142,8 +141,7 @@ void DatabasePathFeature::prepare() {
 
   if (_required_directory_state == "non-existing") {
     if (basics::file_utils::IsDirectory(_directory)) {
-      SDB_FATAL(
-        "xxxxx", sdb::Logger::STARTUP, "database directory '", _directory,
+      SDB_FATAL(STARTUP, "database directory '", _directory,
         "' already exists, but option "
         "'--database.required-directory-state' was set to 'non-existing'");
     }
@@ -152,8 +150,7 @@ void DatabasePathFeature::prepare() {
 
   // existing, empty, populated when we get here
   if (!basics::file_utils::IsDirectory(_directory)) {
-    SDB_FATAL(
-      "xxxxx", sdb::Logger::STARTUP, "database directory '", _directory,
+    SDB_FATAL(STARTUP, "database directory '", _directory,
       "' does not exist, but option '--database.required-directory-state' "
       "was set to '",
       _required_directory_state, "'");
@@ -175,8 +172,7 @@ void DatabasePathFeature::prepare() {
   }
 
   if (_required_directory_state == "empty" && !files.empty()) {
-    SDB_FATAL(
-      "xxxxx", sdb::Logger::STARTUP, "database directory '", _directory,
+    SDB_FATAL(STARTUP, "database directory '", _directory,
       "' is not empty, but option '--database.required-directory-state' "
       "was set to '",
       _required_directory_state, "'");
@@ -185,7 +181,7 @@ void DatabasePathFeature::prepare() {
   if (_required_directory_state == "populated" &&
       (std::find(files.begin(), files.end(), "ENGINE") == files.end() ||
        std::find(files.begin(), files.end(), "SERVER") == files.end())) {
-    SDB_FATAL("xxxxx", sdb::Logger::STARTUP, "database directory '", _directory,
+    SDB_FATAL(STARTUP, "database directory '", _directory,
               "' is not properly populated, but option "
               "'--database.required-directory-state' was set to '",
               _required_directory_state, "'");
@@ -204,10 +200,10 @@ void DatabasePathFeature::start() {
       SdbCreateRecursiveDirectory(_directory, error_no, system_error_str);
 
     if (res == ERROR_OK) {
-      SDB_INFO("xxxxx", sdb::Logger::FIXME,
+      SDB_INFO(GENERAL,
                "Created database directory: ", _directory);
     } else {
-      SDB_FATAL("xxxxx", sdb::Logger::FIXME,
+      SDB_FATAL(GENERAL,
                 "Unable to create database directory '", _directory,
                 "': ", system_error_str);
     }

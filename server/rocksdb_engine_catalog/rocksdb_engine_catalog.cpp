@@ -141,19 +141,19 @@ void StartupVersionCheck(SerenedServer& server, rocksdb::TransactionDB* db,
               version_key.GetBuffer(), &old_version);
 
     if (s.IsNotFound() || old_version.size() != 1) {
-      SDB_FATAL("xxxxx", Logger::ENGINES,
+      SDB_FATAL(STORAGE,
                 "Error reading stored version from database: ",
                 rocksutils::ConvertStatus(s).errorMessage());
     } else if (old_version.data()[0] < kRocksDBFormatVersion) {
       // Performing 'upgrade' routine
       if (old_version.data()[0] != '0' || kRocksDBFormatVersion != '1') {
-        SDB_FATAL("xxxxx", Logger::ENGINES, "Your database is in an old ",
+        SDB_FATAL(STORAGE, "Your database is in an old ",
                   "format. Please downgrade the server, ",
                   "dump & restore the data");
       }
 
     } else if (old_version.data()[0] > kRocksDBFormatVersion) {
-      SDB_FATAL("xxxxx", Logger::ENGINES,
+      SDB_FATAL(STORAGE,
                 "You are using an old version of SereneDB, please update ",
                 "before opening this database");
     } else {
@@ -171,7 +171,7 @@ void StartupVersionCheck(SerenedServer& server, rocksdb::TransactionDB* db,
       rocksdb::Slice{&kRocksDBFormatVersion, sizeof(kRocksDBFormatVersion)});
 
     if (!s.ok()) {
-      SDB_FATAL("xxxxx", Logger::ENGINES, "Error storing endianess/version: ",
+      SDB_FATAL(STORAGE, "Error storing endianess/version: ",
                 rocksutils::ConvertStatus(s).errorMessage());
     }
   }
@@ -430,7 +430,7 @@ void RocksDBEngineCatalog::shutdownRocksDBInstance() noexcept {
     // do a final WAL sync here before shutting down
     Result res = RocksDBSyncThread::sync(_db->GetBaseDB());
     if (res.fail()) {
-      SDB_WARN("xxxxx", Logger::ENGINES,
+      SDB_WARN(STORAGE,
                "could not sync RocksDB WAL: ", res.errorMessage());
     }
 
@@ -438,7 +438,7 @@ void RocksDBEngineCatalog::shutdownRocksDBInstance() noexcept {
 
     if (!status.ok()) {
       Result res = rocksutils::ConvertStatus(status);
-      SDB_ERROR("xxxxx", Logger::ENGINES,
+      SDB_ERROR(STORAGE,
                 "could not shutdown RocksDB: ", res.errorMessage());
     }
   } catch (...) {
@@ -461,13 +461,13 @@ void RocksDBEngineCatalog::flushOpenFilesIfRequired() {
       (now - _auto_flush_last_executed) >=
         std::chrono::duration<double>(
           _options_provider._auto_flush_check_interval)) {
-    SDB_INFO("xxxxx", Logger::ENGINES,
+    SDB_INFO(STORAGE,
              "auto flushing RocksDB wal and column families because number of "
              "live WAL files is ",
              _metrics_live_wal_files.load());
     Result res = flushWal(/*waitForSync*/ true, /*flushColumnFamilies*/ true);
     if (res.fail()) {
-      SDB_WARN("xxxxx", Logger::ENGINES,
+      SDB_WARN(STORAGE,
                "unable to flush RocksDB wal: ", res.errorMessage());
     }
     // set _auto_flush_last_executed regardless of whether flushing has worked
@@ -487,7 +487,7 @@ void RocksDBEngineCatalog::prepare() {
 void RocksDBEngineCatalog::verifySstFiles() const {
   SDB_ASSERT(!_path.empty());
 
-  SDB_INFO("xxxxx", Logger::STARTUP, "verifying RocksDB .sst files in path '",
+  SDB_INFO(STARTUP, "verifying RocksDB .sst files in path '",
            _path, "'");
 
   rocksdb::Options options;
@@ -503,13 +503,13 @@ void RocksDBEngineCatalog::verifySstFiles() const {
     }
     if (!res.ok()) {
       auto result = rocksutils::ConvertStatus(res);
-      SDB_FATAL_EXIT_CODE("xxxxx", Logger::STARTUP, EXIT_SST_FILE_CHECK,
+      SDB_FATAL_EXIT_CODE(STARTUP, EXIT_SST_FILE_CHECK,
                           "error when verifying .sst file '", filename,
                           "': ", result.errorMessage());
     }
   }
 
-  SDB_INFO("xxxxx", Logger::STARTUP,
+  SDB_INFO(STARTUP,
            "verification of RocksDB .sst files in path '", _path,
            "' completed successfully");
   log::Flush();
@@ -529,7 +529,7 @@ rocksdb::Options RocksDBEngineCatalog::makeOptions(bool is_new_dir) {
 }
 
 void RocksDBEngineCatalog::start() {
-  SDB_TRACE("xxxxx", Logger::ENGINES, "rocksdb version ",
+  SDB_TRACE(STORAGE, "rocksdb version ",
             rest::Version::getRocksDBVersion(),
             ", supported compression types: ", getCompressionSupport());
 
@@ -545,11 +545,11 @@ void RocksDBEngineCatalog::start() {
     auto res = SdbCreateRecursiveDirectory(_path, error_no, system_error_str);
 
     if (res == ERROR_OK) {
-      SDB_TRACE("xxxxx", Logger::ENGINES, "created RocksDB data directory '",
+      SDB_TRACE(STORAGE, "created RocksDB data directory '",
                 _path, "'");
       created_engine_dir = true;
     } else {
-      SDB_FATAL("xxxxx", Logger::ENGINES,
+      SDB_FATAL(STORAGE,
                 "unable to create RocksDB data directory '", _path,
                 "': ", system_error_str);
     }
@@ -560,7 +560,7 @@ void RocksDBEngineCatalog::start() {
     auto bulk_insert_dir =
       std::filesystem::path(_path) / connector::kBulkInsertDir;
     auto removed = std::filesystem::remove_all(bulk_insert_dir, ec);
-    SDB_INFO_IF("xxxxx", Logger::ENGINES, removed != 0 && !ec,
+    SDB_INFO_IF(STORAGE, removed != 0 && !ec,
                 "removed bulk insert directory '", bulk_insert_dir.c_str(),
                 "'");
   }
@@ -569,7 +569,7 @@ void RocksDBEngineCatalog::start() {
   uint64_t free_space;
   if (SdbGetDiskSpaceInfo(_path.c_str(), total_space, free_space).ok() &&
       total_space != 0) {
-    SDB_DEBUG("xxxxx", Logger::ENGINES,
+    SDB_DEBUG(STORAGE,
               "total disk space for database directory mount: ",
               basics::string_utils::FormatSize(total_space),
               ", free disk space for database directory mount: ",
@@ -581,7 +581,7 @@ void RocksDBEngineCatalog::start() {
 
   _db_options = makeOptions(created_engine_dir);
 
-  SDB_TRACE("xxxxx", Logger::ENGINES, "initializing RocksDB, path: '", _path,
+  SDB_TRACE(STORAGE, "initializing RocksDB, path: '", _path,
             "', WAL directory '", _db_options.wal_dir, "'");
 
   if (_options_provider._verify_sst) {
@@ -620,7 +620,7 @@ void RocksDBEngineCatalog::start() {
 
   bool db_existed = checkExistingDB(cf_families);
 
-  SDB_DEBUG("xxxxx", Logger::STARTUP, "opening RocksDB instance in '", _path,
+  SDB_DEBUG(STARTUP, "opening RocksDB instance in '", _path,
             "'");
 
   std::vector<rocksdb::ColumnFamilyHandle*> cf_handles;
@@ -636,17 +636,17 @@ void RocksDBEngineCatalog::start() {
         "NFS?)";
     }
 
-    SDB_FATAL("xxxxx", Logger::STARTUP,
+    SDB_FATAL(STARTUP,
               "unable to initialize RocksDB engine: ", status.ToString(),
               error);
   }
   if (cf_families.size() != cf_handles.size()) {
-    SDB_FATAL("xxxxx", Logger::STARTUP,
+    SDB_FATAL(STARTUP,
               "unable to initialize RocksDB column families");
   }
   if (cf_handles.size() <
       RocksDBColumnFamilyManager::kMinNumberOfColumnFamilies) {
-    SDB_FATAL("xxxxx", Logger::STARTUP,
+    SDB_FATAL(STARTUP,
               "unexpected number of column families found in database. got ",
               cf_handles.size(), ", expecting at least ",
               RocksDBColumnFamilyManager::kMinNumberOfColumnFamilies);
@@ -700,7 +700,7 @@ void RocksDBEngineCatalog::start() {
       *this, std::chrono::milliseconds(_options_provider._sync_interval),
       std::chrono::milliseconds(_options_provider._sync_delay_threshold));
     if (!_sync_thread->start()) {
-      SDB_FATAL("xxxxx", Logger::ENGINES,
+      SDB_FATAL(STORAGE,
                 "could not start rocksdb sync thread");
     }
   }
@@ -713,7 +713,7 @@ void RocksDBEngineCatalog::start() {
   _background_thread =
     std::make_unique<RocksDBBackgroundThread>(*this, counter_sync_seconds);
   if (!_background_thread->start()) {
-    SDB_FATAL("xxxxx", Logger::ENGINES,
+    SDB_FATAL(STORAGE,
               "could not start rocksdb counter manager thread");
   }
 
@@ -721,7 +721,7 @@ void RocksDBEngineCatalog::start() {
 
   // to populate initial health check data
   if (auto hd = healthCheck(); hd.res.fail()) {
-    SDB_ERROR("xxxxx", Logger::ENGINES, hd.res.errorMessage());
+    SDB_ERROR(STORAGE, hd.res.errorMessage());
   }
 
   // make an initial inventory of WAL files, so that all WAL files
@@ -745,7 +745,7 @@ void RocksDBEngineCatalog::stop() {
     if (_settings_manager) {
       auto sync_res = _settings_manager->sync(/*force*/ true);
       if (!sync_res) {
-        SDB_WARN("xxxxx", Logger::ENGINES,
+        SDB_WARN(STORAGE,
                  "caught exception while shutting down RocksDB engine: ",
                  sync_res.error().errorMessage());
       }
@@ -948,7 +948,7 @@ void RocksDBEngineCatalog::determineWalFilesInitial() {
   rocksdb::VectorLogPtr files;
   auto status = _db->GetSortedWalFiles(files);
   if (!status.ok()) {
-    SDB_WARN("xxxxx", Logger::ENGINES,
+    SDB_WARN(STORAGE,
              "could not get WAL files: ", status.ToString());
     return;
   }
@@ -991,7 +991,7 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
       static_cast<uint64_t>(basics::string_utils::Int64(v));
   }
 
-  SDB_DEBUG("xxxxx", Logger::ENGINES,
+  SDB_DEBUG(STORAGE,
             "determining prunable WAL files, minTickToKeep: ", min_tick_to_keep,
             ", minTickExternal: ", min_tick_external,
             ", releasedTick: ", _released_tick,
@@ -1001,7 +1001,7 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
   rocksdb::VectorLogPtr files;
   auto status = _db->GetSortedWalFiles(files);
   if (!status.ok()) {
-    SDB_WARN("xxxxx", Logger::ENGINES,
+    SDB_WARN(STORAGE,
              "could not get WAL files: ", status.ToString());
     return;
   }
@@ -1021,7 +1021,7 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
     if (f->Type() == rocksdb::WalFileType::kAliveLogFile) {
       ++live_files;
       live_files_size += f->SizeFileBytes();
-      SDB_TRACE("xxxxx", Logger::ENGINES, "live WAL file #", current, "/",
+      SDB_TRACE(STORAGE, "live WAL file #", current, "/",
                 files.size(), ", filename: '", f->PathName(),
                 "', start sequence: ", f->StartSequence());
       continue;
@@ -1057,13 +1057,13 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
           _prunable_wal_files.try_emplace(f->PathName(), stamp);
 
         if (emplaced) {
-          SDB_DEBUG("xxxxx", Logger::ENGINES, "RocksDB WAL file '",
+          SDB_DEBUG(STORAGE, "RocksDB WAL file '",
                     f->PathName(), "' with start sequence ", f->StartSequence(),
                     ", expire stamp ", stamp,
                     " added to prunable list because it is not needed anymore");
           SDB_ASSERT(it != _prunable_wal_files.end());
         } else {
-          SDB_TRACE("xxxxx", Logger::ENGINES, "unable to add WAL file #",
+          SDB_TRACE(STORAGE, "unable to add WAL file #",
                     current, "/", files.size(), ", filename: '", f->PathName(),
                     "', start sequence: ", f->StartSequence(),
                     " to list of prunable WAL files. file already present in "
@@ -1074,14 +1074,14 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
       }
     }
 
-    SDB_TRACE("xxxxx", Logger::ENGINES, "inspected WAL file #", current, "/",
+    SDB_TRACE(STORAGE, "inspected WAL file #", current, "/",
               files.size(), ", filename: '", f->PathName(),
               "', start sequence: ", f->StartSequence(),
               ", eligible step1: ", eligible_step1,
               ", step2: ", eligible_step2);
   }
 
-  SDB_DEBUG("xxxxx", Logger::ENGINES, "found ", files.size(),
+  SDB_DEBUG(STORAGE, "found ", files.size(),
             " WAL file(s), with ", live_files, " live file(s) and ",
             archived_files, " file(s) in the archive, ",
             "number of prunable files: ", _prunable_wal_files.size(),
@@ -1093,8 +1093,7 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
     // size of the archive is restricted, and we overflowed the limit.
 
     // print current archive size
-    SDB_TRACE(
-      "xxxxx", Logger::ENGINES,
+    SDB_TRACE(STORAGE,
       "total size of the RocksDB WAL file archive: ", archived_files_size,
       ", limit: ", _options_provider._max_wal_archive_size_limit);
 
@@ -1131,7 +1130,7 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
 
         // never change this id without adjusting wal-archive-size-limit tests
         // in tests/js/client/server-parameters
-        SDB_WARN("xxxxx", Logger::ENGINES,
+        SDB_WARN(STORAGE,
                  "forcing removal of RocksDB WAL file '", f->PathName(),
                  "' with start sequence ", f->StartSequence(),
                  " because of overflowing archive. configured maximum archive "
@@ -1192,11 +1191,11 @@ void RocksDBEngineCatalog::pruneWalFiles() {
        /* no hoisting */) {
     // check if WAL file is expired
     auto delete_file = purge_enabler.canPurge();
-    SDB_TRACE("xxxxx", Logger::ENGINES, "pruneWalFiles checking file '",
+    SDB_TRACE(STORAGE, "pruneWalFiles checking file '",
               (*it).first, "', canPurge: ", delete_file);
 
     if (delete_file) {
-      SDB_DEBUG("xxxxx", Logger::ENGINES, "deleting RocksDB WAL file '",
+      SDB_DEBUG(STORAGE, "deleting RocksDB WAL file '",
                 (*it).first, "'");
       rocksdb::Status s;
       if (basics::file_utils::Exists(basics::file_utils::BuildFilename(
@@ -1205,11 +1204,11 @@ void RocksDBEngineCatalog::pruneWalFiles() {
         // otherwise RocksDB may complain about non-existing files and log a
         // big error message
         s = _db->DeleteFile((*it).first);
-        SDB_DEBUG("xxxxx", Logger::ENGINES,
+        SDB_DEBUG(STORAGE,
                   "calling RocksDB DeleteFile for WAL file '", (*it).first,
                   "'. status: ", rocksutils::ConvertStatus(s).errorMessage());
       } else {
-        SDB_DEBUG("xxxxx", Logger::ENGINES, "to-be-deleted RocksDB WAL file '",
+        SDB_DEBUG(STORAGE, "to-be-deleted RocksDB WAL file '",
                   (*it).first, "' does not exist. skipping deletion");
       }
       // apparently there is a case where a file was already deleted
@@ -1219,8 +1218,7 @@ void RocksDBEngineCatalog::pruneWalFiles() {
         _prunable_wal_files.erase(it++);
         continue;
       } else {
-        SDB_WARN(
-          "xxxxx", Logger::ENGINES, "attempt to prune RocksDB WAL file '",
+        SDB_WARN(STORAGE, "attempt to prune RocksDB WAL file '",
           (*it).first,
           "' failed with error: ", rocksutils::ConvertStatus(s).errorMessage());
       }
@@ -1234,8 +1232,7 @@ void RocksDBEngineCatalog::pruneWalFiles() {
   _metrics_prunable_wal_files.store(_prunable_wal_files.size(),
                                     std::memory_order_relaxed);
 
-  SDB_TRACE(
-    "xxxxx", Logger::ENGINES, "prune WAL files started with ", initial_size,
+  SDB_TRACE(STORAGE, "prune WAL files started with ", initial_size,
     " prunable WAL files, ",
     "current number of prunable WAL files: ", _prunable_wal_files.size());
 }
@@ -1250,7 +1247,7 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
                      });
 
   if (has_system) {
-    SDB_TRACE("xxxxx", Logger::STARTUP, "Found system database");
+    SDB_TRACE(STARTUP, "Found system database");
     return;
   }
 
@@ -1261,7 +1258,7 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
     CreateDefinition(id::kInstance, catalog::ObjectType::Database,
                      id::kSystemDB, [&](bool) { return builder.slice(); });
   if (!r.ok()) {
-    SDB_FATAL("xxxxx", Logger::STARTUP,
+    SDB_FATAL(STARTUP,
               "unable to write database marker: ", r.errorMessage());
   }
 
@@ -1275,7 +1272,7 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
     CreateDefinition(id::kSystemDB, catalog::ObjectType::Schema,
                      schema_options.id, [&](bool) { return builder.slice(); });
   if (!r.ok()) {
-    SDB_FATAL("xxxxx", Logger::STARTUP,
+    SDB_FATAL(STARTUP,
               "unable to write schema marker: ", r.errorMessage());
   }
 }
@@ -1912,7 +1909,7 @@ HealthData RocksDBEngineCatalog::healthCheck() {
           (now - _last_health_log_warning_timestamp >=
            std::chrono::minutes(15));
         if (last_log_warning_long_ago) {
-          SDB_WARN("xxxxx", Logger::ENGINES,
+          SDB_WARN(STORAGE,
                    "free disk space capacity is low, ",
                    "bytes free: ", free_space, ", % free: ",
                    absl::StrFormat("%.1f", disk_free_percentage * 100.0));
@@ -1926,7 +1923,7 @@ HealthData RocksDBEngineCatalog::healthCheck() {
   _last_health_check_successful = _health_data.res.ok();
 
   if (_health_data.res.fail() && last_log_message_long_ago) {
-    SDB_ERROR("xxxxx", Logger::ENGINES, _health_data.res.errorMessage());
+    SDB_ERROR(STORAGE, _health_data.res.errorMessage());
 
     // update timestamp of last log message
     _last_health_log_message_timestamp = now;
@@ -1955,7 +1952,7 @@ bool RocksDBEngineCatalog::checkExistingDB(
     Result res = rocksutils::ConvertStatus(status);
     if (res.isNot(ERROR_SERVER_IO_ERROR)) {
       // not an I/O error. so we better report the error and abort here
-      SDB_FATAL("xxxxx", Logger::STARTUP,
+      SDB_FATAL(STARTUP,
                 "unable to initialize RocksDB engine: ", res.errorMessage());
     }
   }
@@ -1972,13 +1969,12 @@ bool RocksDBEngineCatalog::checkExistingDB(
       names.append(it);
     }
 
-    SDB_DEBUG("xxxxx", Logger::STARTUP,
+    SDB_DEBUG(STARTUP,
               "found existing column families: ", names);
 
     for (const auto& it : cf_families) {
       if (!absl::c_contains(existing_column_families, it.name)) {
-        SDB_FATAL(
-          "xxxxx", Logger::STARTUP, "column family '", it.name,
+        SDB_FATAL(STARTUP, "column family '", it.name,
           "' is missing in database",
           ". if you are upgrading from an earlier alpha or beta version "
           "of SereneDB, it is required to restart with a new database "
@@ -1989,7 +1985,7 @@ bool RocksDBEngineCatalog::checkExistingDB(
 
     if (existing_column_families.size() <
         RocksDBColumnFamilyManager::kMinNumberOfColumnFamilies) {
-      SDB_FATAL("xxxxx", Logger::STARTUP,
+      SDB_FATAL(STARTUP,
                 "unexpected number of column families found in database (",
                 existing_column_families.size(), "). expecting at least ",
                 RocksDBColumnFamilyManager::kMinNumberOfColumnFamilies,

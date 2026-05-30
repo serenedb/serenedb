@@ -60,7 +60,7 @@ inline int GetPosixFadvice(IOAdvice advice) noexcept {
       return IR_FADVICE_RANDOM | IR_FADVICE_NOREUSE;
   }
 
-  SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "fadvice '",
+  SDB_ERROR(IRESEARCH, "fadvice '",
             static_cast<uint32_t>(advice),
             "' is not valid (RANDOM|SEQUENTIAL), fallback to NORMAL");
 
@@ -90,13 +90,13 @@ class FsLock : public IndexLock {
     bool exists;
 
     if (!file_utils::Exists(exists, _dir.c_str())) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error caught");
+      SDB_ERROR(IRESEARCH, "Error caught");
       return false;
     }
 
     // create directory if it is not exists
     if (!exists && !file_utils::Mkdir(_dir.c_str(), true)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error caught");
+      SDB_ERROR(IRESEARCH, "Error caught");
       return false;
     }
 
@@ -106,7 +106,7 @@ class FsLock : public IndexLock {
     if (!file_utils::VerifyLockFile(path.c_str())) {
       if (!file_utils::Exists(exists, path.c_str()) ||
           (exists && !file_utils::Remove(path.c_str()))) {
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error caught");
+        SDB_ERROR(IRESEARCH, "Error caught");
         return false;
       }
 
@@ -178,7 +178,7 @@ class FSIndexOutput final : public IndexOutput {
         return ptr;
       }
 
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Failed to open output file, error: ", GET_ERROR(),
                 ", path: ", file_utils::ToStr(name));
     } catch (...) {
@@ -327,14 +327,14 @@ class FsIndexInput : public BufferedIndexInput {
                                       GetPosixFadvice(handle->io_advice));
 
     if (nullptr == handle->handle) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Failed to open input file, error: ", GET_ERROR(),
                 ", path: ", file_utils::ToStr(name));
       return nullptr;
     }
     uint64_t size;
     if (!file_utils::ByteSize(size, *handle)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Failed to get stat for input file, error: ", GET_ERROR(),
                 ", path: ", file_utils::ToStr(name));
       return nullptr;
@@ -556,7 +556,7 @@ IndexOutput::ptr FSDirectory::create(std::string_view name) noexcept {
     auto out = FSIndexOutput::Open(path.c_str(), ResourceManager());
 
     if (!out) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Failed to open output file, path: ", name);
     }
 
@@ -616,7 +616,7 @@ bool FSDirectory::rename(std::string_view src, std::string_view dst) noexcept {
   const auto dst_path = _dir / dst;
   const bool r = file_utils::Move(src_path.c_str(), dst_path.c_str());
   if (!r) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Unable to move file: '",
+    SDB_ERROR(IRESEARCH, "Unable to move file: '",
               src_path.c_str(), "' to '", dst_path.c_str(),
               "', error: ", GET_ERROR());
   }

@@ -61,7 +61,7 @@ bool MMapHandle::open(const path_char_t* path) noexcept try {
   _rm.Increase(1);
   const int fd = ::POSIX_OPEN(path, O_RDONLY);
   if (fd < 0) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("Failed to open input file, error: ", errno,
                            ", path: ", file_utils::ToStr(path)));
     _rm.Decrease(1);
@@ -73,7 +73,7 @@ bool MMapHandle::open(const path_char_t* path) noexcept try {
   uint64_t size;
 
   if (!file_utils::ByteSize(size, fd)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("Failed to get stats for input file, error: ", errno,
                            ", path: ", file_utils::ToStr(path)));
     close();
@@ -91,7 +91,7 @@ bool MMapHandle::open(const path_char_t* path) noexcept try {
     void* addr = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
 
     if (MAP_FAILED == addr) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 absl::StrCat("Failed to mmap input file, error: ", errno,
                              ", path: ", file_utils::ToStr(path)));
       close();

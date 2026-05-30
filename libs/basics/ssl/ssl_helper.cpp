@@ -53,7 +53,7 @@ asio_ns::ssl::context sdb::SslContext(SslProtocol protocol,
 
   switch (protocol) {
     case kSslV2:
-      SDB_THROW(ERROR_NOT_IMPLEMENTED, "support for SSLv2 has been dropped");
+      SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED, "support for SSLv2 has been dropped");
 
 #ifndef OPENSSL_NO_SSL3_METHOD
     case SSL_V3:
@@ -81,7 +81,7 @@ asio_ns::ssl::context sdb::SslContext(SslProtocol protocol,
       break;
 
     default:
-      SDB_THROW(ERROR_NOT_IMPLEMENTED, "unknown SSL protocol method");
+      SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED, "unknown SSL protocol method");
   }
 
   asio_ns::ssl::context sslctx(meth);
@@ -89,24 +89,24 @@ asio_ns::ssl::context sdb::SslContext(SslProtocol protocol,
   if (sslctx.native_handle() == nullptr) {
     // could not create SSL context - this is mostly due to the OpenSSL
     // library not having been initialized
-    SDB_THROW(ERROR_INTERNAL, "unable to create SSL context");
+    SDB_THROW(sdb::ERROR_INTERNAL, "unable to create SSL context");
   }
 
   // load our keys and certificates
   boost::system::error_code ec;
   sslctx.use_certificate_chain_file(keyfile, ec);
   if (ec) {
-    SDB_ERROR("xxxxx", sdb::Logger::SSL, "cannot read certificate from '",
+    SDB_ERROR(SSL, "cannot read certificate from '",
               keyfile, "': ", ec.to_string());
-    SDB_THROW(ERROR_BAD_PARAMETER, "unable to read certificate from file");
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "unable to read certificate from file");
   }
 
   sslctx.use_private_key_file(keyfile, asio_ns::ssl::context::file_format::pem,
                               ec);
   if (ec) {
-    SDB_ERROR("xxxxx", sdb::Logger::FIXME, "cannot read key from '", keyfile,
+    SDB_ERROR(GENERAL, "cannot read key from '", keyfile,
               "': ", ec.to_string());
-    SDB_THROW(ERROR_BAD_PARAMETER, "unable to read key from keyfile");
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "unable to read key from keyfile");
   }
 
   return sslctx;

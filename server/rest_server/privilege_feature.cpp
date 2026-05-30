@@ -129,7 +129,7 @@ void PrivilegeFeature::extractPrivileges() {
 #ifdef SERENEDB_HAVE_GETGRGID
       std::optional<gid_t> gid = file_utils::FindGroup(_gid);
       if (!gid) {
-        SDB_FATAL("xxxxx", sdb::Logger::FIXME, "unknown numeric gid '", _gid,
+        SDB_FATAL(GENERAL, "unknown numeric gid '", _gid,
                   "'");
       }
 #endif
@@ -140,11 +140,11 @@ void PrivilegeFeature::extractPrivileges() {
         gid_number = gid.value();
       } else {
         SetError(ERROR_SYS_ERROR);
-        SDB_FATAL("xxxxx", sdb::Logger::FIXME, "cannot convert groupname '",
+        SDB_FATAL(GENERAL, "cannot convert groupname '",
                   _gid, "' to numeric gid: ", LastError());
       }
 #else
-      SDB_FATAL("xxxxx", sdb::Logger::FIXME, "cannot convert groupname '", _gid,
+      SDB_FATAL(GENERAL, "cannot convert groupname '", _gid,
                 "' to numeric gid");
 #endif
     }
@@ -165,7 +165,7 @@ void PrivilegeFeature::extractPrivileges() {
 #ifdef SERENEDB_HAVE_GETPWUID
       std::optional<uid_t> uid = file_utils::FindUser(_uid);
       if (!uid) {
-        SDB_FATAL("xxxxx", sdb::Logger::FIXME, "unknown numeric uid '", _uid,
+        SDB_FATAL(GENERAL, "unknown numeric uid '", _uid,
                   "'");
       }
 #endif
@@ -175,11 +175,11 @@ void PrivilegeFeature::extractPrivileges() {
       if (uid) {
         uid_number = uid.value();
       } else {
-        SDB_FATAL("xxxxx", sdb::Logger::FIXME, "cannot convert username '",
+        SDB_FATAL(GENERAL, "cannot convert username '",
                   _uid, "' to numeric uid");
       }
 #else
-      SDB_FATAL("xxxxx", sdb::Logger::FIXME, "cannot convert username '", _uid,
+      SDB_FATAL(GENERAL, "cannot convert username '", _uid,
                 "' to numeric uid");
 #endif
     }
@@ -205,13 +205,13 @@ void PrivilegeFeature::dropPrivilegesPermanently() {
 #ifdef SERENEDB_HAVE_SETGID
   // first GID
   if (!_gid.empty()) {
-    SDB_DEBUG("xxxxx", sdb::Logger::FIXME, "permanently changing the gid to ",
+    SDB_DEBUG(GENERAL, "permanently changing the gid to ",
               _numeric_gid);
 
     int res = setgid(_numeric_gid);
 
     if (res != 0) {
-      SDB_FATAL("xxxxx", sdb::Logger::FIXME, "cannot set gid ", _numeric_gid,
+      SDB_FATAL(GENERAL, "cannot set gid ", _numeric_gid,
                 ": ", strerror(errno));
     }
   }
@@ -220,13 +220,13 @@ void PrivilegeFeature::dropPrivilegesPermanently() {
 #ifdef SERENEDB_HAVE_SETUID
   // then UID (because we are dropping)
   if (!_uid.empty()) {
-    SDB_DEBUG("xxxxx", sdb::Logger::FIXME, "permanently changing the uid to ",
+    SDB_DEBUG(GENERAL, "permanently changing the uid to ",
               _numeric_uid);
 
     int res = setuid(_numeric_uid);
 
     if (res != 0) {
-      SDB_FATAL("xxxxx", sdb::Logger::FIXME, "cannot set uid '", _uid,
+      SDB_FATAL(GENERAL, "cannot set uid '", _uid,
                 "': ", strerror(errno));
     }
   }

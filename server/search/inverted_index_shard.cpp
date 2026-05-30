@@ -148,14 +148,14 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   std::error_code ec;
   bool path_exists = std::filesystem::exists(path, ec);
   if (ec) {
-    SDB_THROW(ERROR_INTERNAL, "Failed to check existence of path '",
+    SDB_THROW(sdb::ERROR_INTERNAL, "Failed to check existence of path '",
               path.string(), "' while initializing data store '", _id,
               "': ", ec.message());
   }
   if (!path_exists) {
     std::filesystem::create_directories(path, ec);
     if (ec) {
-      SDB_THROW(ERROR_INTERNAL, "Failed to create directory '", path.string(),
+      SDB_THROW(sdb::ERROR_INTERNAL, "Failed to create directory '", path.string(),
                 "' while initializing data store '", _id, "': ", ec.message());
     }
   }
@@ -273,7 +273,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
     auto payload = irs::GetPayload(reader.Meta().index_meta);
     if (!payload.empty()) {
       if (!ReadCommitMeta(payload, _recovery_tick, _iceberg_snapshot_id)) {
-        SDB_WARN("xxxxx", Logger::SEARCH,
+        SDB_WARN(SEARCH,
                  "Failed to read commit meta from inverted index '",
                  GetId().id(), "'");
       }
@@ -282,7 +282,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   }
   auto engine_snapshot = _engine.currentSnapshot();
   if (!engine_snapshot) {
-    SDB_THROW(ERROR_INTERNAL, "Search index '", _id,
+    SDB_THROW(sdb::ERROR_INTERNAL, "Search index '", _id,
               "' cannot acquire snapshot");
   }
   _snapshot = std::make_shared<InvertedIndexSnapshot>(
@@ -314,7 +314,7 @@ void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
 
   SDB_IF_FAILURE("SereneSearchTruncateFailure") {
     CrashHandler::setHardKill();
-    SDB_THROW(ERROR_DEBUG);
+    SDB_THROW(sdb::ERROR_DEBUG);
   }
 
   SDB_ASSERT(_writer);
@@ -358,7 +358,7 @@ void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
         engine_snapshot = prev->snapshot;
       }
       if (!engine_snapshot) {
-        SDB_THROW(ERROR_INTERNAL,
+        SDB_THROW(sdb::ERROR_INTERNAL,
                   "Failed to get engine snapshot while truncating Search "
                   "index '",
                   GetId().id(), "'");
@@ -379,12 +379,12 @@ void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
     subscription.tick(_last_committed_tick);
     ok = true;
   } catch (const std::exception& e) {
-    SDB_ERROR("xxxxx", Logger::SEARCH,
+    SDB_ERROR(SEARCH,
               "caught exception while truncating Search index '", GetId().id(),
               "': ", e.what());
     throw;
   } catch (...) {
-    SDB_WARN("xxxxx", Logger::SEARCH,
+    SDB_WARN(SEARCH,
              "caught exception while truncating Search index '", GetId().id(),
              "'");
     throw;
@@ -551,14 +551,14 @@ Result InvertedIndexShard::CommitUnsafeImpl(
     std::unique_lock commit_lock{_commit_mutex, std::try_to_lock};
     if (!commit_lock.owns_lock()) {
       if (!wait) {
-        SDB_TRACE("xxxxx", Logger::SEARCH, "Commit for Search index '",
+        SDB_TRACE(SEARCH, "Commit for Search index '",
                   GetId().id(), "' is already in progress, skipping");
 
         code = CommitResult::InProgress;
         return {};
       }
 
-      SDB_TRACE("xxxxx", Logger::SEARCH, "Commit for Search index '",
+      SDB_TRACE(SEARCH, "Commit for Search index '",
                 GetId().id(), "' is already in progress, waiting");
 
       commit_lock.lock();
@@ -597,7 +597,7 @@ Result InvertedIndexShard::CommitUnsafeImpl(
     SDB_ASSERT(reader != nullptr);
     std::move(commit_guard).Cancel();
     if (!were_changes) {
-      SDB_TRACE("xxxxx", Logger::SEARCH, "Commit for Search index '",
+      SDB_TRACE(SEARCH, "Commit for Search index '",
                 GetId().id(), "' is no changes, tick ", before_commit, "'");
       // While Recovering, the flush subscription must not claim more than
       // what's actually flushed -- otherwise rocksdb could truncate WAL we
@@ -633,7 +633,7 @@ Result InvertedIndexShard::CommitUnsafeImpl(
 
     UpdateStatsUnsafe(std::move(data));
 
-    SDB_DEBUG("xxxxx", Logger::SEARCH, "successful sync of Search index '",
+    SDB_DEBUG(SEARCH, "successful sync of Search index '",
               GetId().id(), "', segments '", reader_size, "', docs count '",
               docs_count, "', live docs count '", live_docs_count,
               "', last operation tick '", _last_committed_tick, "'");

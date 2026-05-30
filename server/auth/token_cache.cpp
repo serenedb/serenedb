@@ -107,7 +107,7 @@ TokenCache::Entry TokenCache::checkAuthenticationBasic(
   const std::string& secret) {
   if (!ServerState::instance()->IsClientNode()) {
     // server does not support users
-    SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, "Basic auth not supported");
+    SDB_DEBUG(GENERAL, "Basic auth not supported");
     return TokenCache::Entry::Unauthenticated();
   }
 
@@ -132,7 +132,7 @@ TokenCache::Entry TokenCache::checkAuthenticationBasic(
   absl::Base64Unescape(secret, &up);
   std::string::size_type n = up.find(':', 0);
   if (n == std::string::npos || n == 0 || n + 1 > up.size()) {
-    SDB_TRACE("xxxxx", sdb::Logger::AUTHENTICATION,
+    SDB_TRACE(GENERAL,
               "invalid authentication data found, cannot extract "
               "username/password");
     return TokenCache::Entry::Unauthenticated();
@@ -173,7 +173,7 @@ TokenCache::Entry TokenCache::checkAuthenticationJWT(const std::string& jwt) {
       // would have thrown if not found
       if (entry->expired()) {
         _jwt_cache.remove(jwt);
-        SDB_TRACE("xxxxx", Logger::AUTHENTICATION, "JWT Token expired");
+        SDB_TRACE(GENERAL, "JWT Token expired");
         return TokenCache::Entry::Unauthenticated();
       }
       return *entry;
@@ -181,7 +181,7 @@ TokenCache::Entry TokenCache::checkAuthenticationJWT(const std::string& jwt) {
   }
   const std::vector<std::string_view> parts = absl::StrSplit(jwt, '.');
   if (parts.size() != 3) {
-    SDB_TRACE("xxxxx", sdb::Logger::AUTHENTICATION, "Secret contains ",
+    SDB_TRACE(GENERAL, "Secret contains ",
               parts.size(), " parts");
     return TokenCache::Entry::Unauthenticated();
   }
@@ -191,21 +191,21 @@ TokenCache::Entry TokenCache::checkAuthenticationJWT(const std::string& jwt) {
   auto signature = parts[2];
 
   if (!validateJwtHeader(header)) {
-    SDB_TRACE("xxxxx", sdb::Logger::AUTHENTICATION,
+    SDB_TRACE(GENERAL,
               "Couldn't validate jwt header: SENSITIVE_DETAILS_HIDDEN");
     return TokenCache::Entry::Unauthenticated();
   }
 
   const auto message = absl::StrCat(header, ".", body);
   if (!validateJwtHMAC256Signature(message, signature)) {
-    SDB_TRACE("xxxxx", sdb::Logger::AUTHENTICATION,
+    SDB_TRACE(GENERAL,
               "Couldn't validate jwt signature against given secret");
     return TokenCache::Entry::Unauthenticated();
   }
 
   TokenCache::Entry new_entry = validateJwtBody(body);
   if (!new_entry.authenticated()) {
-    SDB_TRACE("xxxxx", sdb::Logger::AUTHENTICATION,
+    SDB_TRACE(GENERAL,
               "Couldn't validate jwt body: SENSITIVE_DETAILS_HIDDEN");
     return TokenCache::Entry::Unauthenticated();
   }
@@ -225,13 +225,13 @@ std::shared_ptr<vpack::Builder> TokenCache::parseJson(std::string_view str,
     parser.parse(str);
     result = parser.steal();
   } catch (const std::bad_alloc&) {
-    SDB_ERROR("xxxxx", sdb::Logger::AUTHENTICATION, "Out of memory parsing ",
+    SDB_ERROR(GENERAL, "Out of memory parsing ",
               hint, "!");
   } catch (const vpack::Exception& ex) {
-    SDB_DEBUG("xxxxx", sdb::Logger::AUTHENTICATION, "Couldn't parse ", hint,
+    SDB_DEBUG(GENERAL, "Couldn't parse ", hint,
               ": ", ex.what());
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::AUTHENTICATION,
+    SDB_ERROR(GENERAL,
               "Got unknown exception trying to parse ", hint);
   }
 
@@ -276,24 +276,24 @@ TokenCache::Entry TokenCache::validateJwtBody(
   absl::WebSafeBase64Unescape(body_web_base64, &body);
   std::shared_ptr<vpack::Builder> body_builder = parseJson(body, "jwt body");
   if (body_builder == nullptr) {
-    SDB_TRACE("xxxxx", Logger::AUTHENTICATION, "invalid JWT body");
+    SDB_TRACE(GENERAL, "invalid JWT body");
     return TokenCache::Entry::Unauthenticated();
   }
 
   const vpack::Slice body_slice = body_builder->slice();
   if (!body_slice.isObject()) {
-    SDB_TRACE("xxxxx", Logger::AUTHENTICATION, "invalid JWT value");
+    SDB_TRACE(GENERAL, "invalid JWT value");
     return TokenCache::Entry::Unauthenticated();
   }
 
   const vpack::Slice iss_slice = body_slice.get("iss");
   if (!iss_slice.isString()) {
-    SDB_TRACE("xxxxx", sdb::Logger::AUTHENTICATION, "missing iss value");
+    SDB_TRACE(GENERAL, "missing iss value");
     return TokenCache::Entry::Unauthenticated();
   }
 
   if (!iss_slice.isEqualString(std::string_view("serenedb"))) {
-    SDB_TRACE("xxxxx", sdb::Logger::AUTHENTICATION, "invalid iss value");
+    SDB_TRACE(GENERAL, "invalid iss value");
     return TokenCache::Entry::Unauthenticated();
   }
 
@@ -311,7 +311,7 @@ TokenCache::Entry TokenCache::validateJwtBody(
   } else if (body_slice.hasKey("server_id")) {
     // mop: hmm...nothing to do here :D
   } else {
-    SDB_TRACE("xxxxx", sdb::Logger::AUTHENTICATION,
+    SDB_TRACE(GENERAL,
               "Lacking preferred_username or server_id");
     return TokenCache::Entry::Unauthenticated();
   }
@@ -319,18 +319,18 @@ TokenCache::Entry TokenCache::validateJwtBody(
   const vpack::Slice paths = body_slice.get("allowed_paths");
   if (!paths.isNone()) {
     if (!paths.isArray()) {
-      SDB_TRACE("xxxxx", sdb::Logger::AUTHENTICATION,
+      SDB_TRACE(GENERAL,
                 "allowed_paths must be an array");
       return TokenCache::Entry::Unauthenticated();
     }
     if (paths.length() == 0) {
-      SDB_TRACE("xxxxx", sdb::Logger::AUTHENTICATION,
+      SDB_TRACE(GENERAL,
                 "allowed_paths may not be empty");
       return TokenCache::Entry::Unauthenticated();
     }
     for (const auto& path : vpack::ArrayIterator(paths)) {
       if (!path.isString()) {
-        SDB_TRACE("xxxxx", sdb::Logger::AUTHENTICATION,
+        SDB_TRACE(GENERAL,
                   "allowed_paths may only contain strings");
         return TokenCache::Entry::Unauthenticated();
       }
@@ -342,7 +342,7 @@ TokenCache::Entry TokenCache::validateJwtBody(
   const vpack::Slice exp_slice = body_slice.get("exp");
   if (!exp_slice.isNone()) {
     if (!exp_slice.isNumber()) {
-      SDB_TRACE("xxxxx", Logger::AUTHENTICATION, "invalid exp value");
+      SDB_TRACE(GENERAL, "invalid exp value");
       return auth_result;  // unauthenticated
     }
 
@@ -350,7 +350,7 @@ TokenCache::Entry TokenCache::validateJwtBody(
     double expires_secs = exp_slice.getNumber<double>();
     double now = utilities::GetMicrotime();
     if (now >= expires_secs || expires_secs == 0) {
-      SDB_TRACE("xxxxx", Logger::AUTHENTICATION, "expired JWT token");
+      SDB_TRACE(GENERAL, "expired JWT token");
       return auth_result;  // unauthenticated
     }
     auth_result._expiry = expires_secs;

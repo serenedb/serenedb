@@ -38,8 +38,7 @@ namespace {
 bool ParseVPackOptions(const vpack::Slice slice,
                        PathHierarchyTokenizer::Options& options) {
   if (!slice.isObject()) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
       "Slice for path_hierarchy_token_stream is not an object or string");
     return false;
   }
@@ -58,14 +57,14 @@ bool ParseVPackOptions(const vpack::Slice slice,
                                       .strict = false,
                                     });
   if (!r.ok()) {
-    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_WARN(IRESEARCH,
              "Failed to parse path_hierarchy_token_stream options: ",
              r.errorMessage());
     return false;
   }
 
   if (temp.delimiter.empty()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "path_hierarchy_token_stream delimiter must not be empty");
     return false;
   }
@@ -101,20 +100,19 @@ Analyzer::ptr MakeVPack(std::string_view args) {
 Analyzer::ptr MakeJson(std::string_view args) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
         "Null arguments while constructing path_hierarchy_token_stream");
       return nullptr;
     }
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("Caught error '", ex.what(),
                            "' while constructing path_hierarchy_token_stream "
                            "from JSON"));
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught error while constructing path_hierarchy_token_stream "
               "from JSON");
   }
@@ -148,7 +146,7 @@ bool NormalizeVPackConfig(std::string_view args, std::string& config) {
 bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Null arguments while normalizing path_hierarchy_token_stream");
       return false;
     }
@@ -159,12 +157,12 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
       return !definition.empty();
     }
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("Caught error '", ex.what(),
                            "' while normalizing path_hierarchy_token_stream "
                            "from JSON"));
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught error while normalizing path_hierarchy_token_stream "
               "from JSON");
   }

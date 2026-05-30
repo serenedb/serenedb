@@ -136,7 +136,7 @@ void Thread::startThread(void* arg) {
   try {
     ptr->runMe();
   } catch (const std::exception& ex) {
-    SDB_WARN("xxxxx", Logger::THREADS, "caught exception in thread '",
+    SDB_WARN(GENERAL, "caught exception in thread '",
              ptr->_name, "': ", ex.what());
     throw;
   }
@@ -187,11 +187,11 @@ Thread::~Thread() {
   SDB_ASSERT(_refs.load() == 0);
 
   auto state = _state.load();
-  SDB_TRACE("xxxxx", Logger::THREADS, "delete(", _name,
+  SDB_TRACE(GENERAL, "delete(", _name,
             "), state: ", stringify(state));
 
   if (state != ThreadState::Stopped && state != ThreadState::Created) {
-    SDB_FATAL("xxxxx", Logger::FIXME, "thread '", _name,
+    SDB_FATAL(GENERAL, "thread '", _name,
               "' is not stopped but ", stringify(state),
               ". shutting down hard");
     FatalErrorAbort();
@@ -200,7 +200,7 @@ Thread::~Thread() {
 
 /// flags the thread as stopping
 void Thread::beginShutdown() {
-  SDB_TRACE("xxxxx", Logger::THREADS, "beginShutdown(", _name, ") in state ",
+  SDB_TRACE(GENERAL, "beginShutdown(", _name, ") in state ",
             stringify(_state.load()));
 
   ThreadState state = _state.load();
@@ -213,13 +213,13 @@ void Thread::beginShutdown() {
     _state.compare_exchange_weak(state, ThreadState::Stopping);
   }
 
-  SDB_TRACE("xxxxx", Logger::THREADS, "beginShutdown(", _name,
+  SDB_TRACE(GENERAL, "beginShutdown(", _name,
             ") reached state ", stringify(_state.load()));
 }
 
 /// MUST be called from the destructor of the MOST DERIVED class
 void Thread::shutdown() {
-  SDB_TRACE("xxxxx", Logger::THREADS, "shutdown(", _name, ")");
+  SDB_TRACE(GENERAL, "shutdown(", _name, ")");
 
   beginShutdown();
   if (_thread_struct_initialized.exchange(false, std::memory_order_acquire)) {
@@ -230,7 +230,7 @@ void Thread::shutdown() {
       auto ret = SdbJoinThreadWithTimeout(&_thread, _termination_timeout);
 
       if (ret != ERROR_OK) {
-        SDB_FATAL("xxxxx", sdb::Logger::FIXME, "cannot shutdown thread '",
+        SDB_FATAL(GENERAL, "cannot shutdown thread '",
                   _name, "', giving up");
         FatalErrorAbort();
       }
@@ -252,8 +252,7 @@ bool Thread::isStopping() const noexcept {
 /// starts the thread
 bool Thread::start(ConditionVariable* finished_condition) {
   if (!isSystem() && !_server.isPrepared()) {
-    SDB_FATAL(
-      "xxxxx", sdb::Logger::FIXME, "trying to start a thread '", _name,
+    SDB_FATAL(GENERAL, "trying to start a thread '", _name,
       "' before prepare has finished, current state: ", (int)_server.state());
     FatalErrorAbort();
   }
@@ -262,7 +261,7 @@ bool Thread::start(ConditionVariable* finished_condition) {
   ThreadState state = _state.load();
 
   if (state != ThreadState::Created) {
-    SDB_FATAL("xxxxx", Logger::THREADS,
+    SDB_FATAL(GENERAL,
               "called started on an already started thread '", _name,
               "', thread is in state ", stringify(state));
     FatalErrorAbort();
@@ -272,7 +271,7 @@ bool Thread::start(ConditionVariable* finished_condition) {
   if (!_state.compare_exchange_strong(expected, ThreadState::Starting)) {
     // This should never happen! If it does, it means we have multiple calls to
     // start().
-    SDB_WARN("xxxxx", Logger::THREADS, "failed to set thread '", _name,
+    SDB_WARN(GENERAL, "failed to set thread '", _name,
              "' to state 'starting'; thread is in unexpected state ",
              stringify(expected));
     FatalErrorAbort();
@@ -291,7 +290,7 @@ bool Thread::start(ConditionVariable* finished_condition) {
     // could not start the thread -> decrement ref for the foreign thread
     _refs.fetch_sub(1);
     _state.store(ThreadState::Stopped);
-    SDB_ERROR("xxxxx", Logger::THREADS, "could not start thread '", _name,
+    SDB_ERROR(GENERAL, "could not start thread '", _name,
               "': ", LastError());
   } else {
     _thread_struct_initialized.store(true, std::memory_order_release);
@@ -319,13 +318,13 @@ void Thread::runMe() {
     run();
   } catch (const std::exception& ex) {
     if (!isSilent()) {
-      SDB_ERROR("xxxxx", Logger::THREADS, "exception caught in thread '", _name,
+      SDB_ERROR(GENERAL, "exception caught in thread '", _name,
                 "': ", ex.what());
     }
     throw;
   } catch (...) {
     if (!isSilent()) {
-      SDB_ERROR("xxxxx", Logger::THREADS,
+      SDB_ERROR(GENERAL,
                 "unknown exception caught in thread '", _name, "'");
     }
     throw;

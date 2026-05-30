@@ -67,7 +67,7 @@ Result CreateRootRole(bool skip_if_exists) {
     return r;
   }
 
-  SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, "Creating user \"",
+  SDB_DEBUG(GENERAL, "Creating user \"",
             StaticStrings::kDefaultUser, "\"");
   return catalog.CreateRole(create_root());
 }

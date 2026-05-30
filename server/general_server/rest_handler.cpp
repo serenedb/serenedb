@@ -87,7 +87,7 @@ uint64_t RestHandler::messageId() const {
   } else if (res) {
     message_id = res->messageId();
   } else {
-    SDB_WARN("xxxxx", Logger::COMMUNICATION,
+    SDB_WARN(HTTP,
              "could not find corresponding request/response");
   }
 
@@ -187,7 +187,7 @@ void RestHandler::handleExceptionPtr(std::exception_ptr eptr) noexcept try {
   auto build_exception = [this](ErrorCode code, std::string message,
                                 std::source_location location) {
 #ifdef SDB_DEV
-    SDB_WARN("xxxxx", sdb::Logger::FIXME, "maintainer mode: ", message);
+    SDB_WARN(GENERAL, "maintainer mode: ", message);
 #endif
     Exception err(code, std::move(message), location);
     handleError(err);
@@ -244,7 +244,7 @@ void RestHandler::runHandlerStateMachine() {
         executeEngine(/*isContinue*/ false);
         if (_state == HandlerState::Paused) {
           shutdownExecute(false);
-          SDB_DEBUG("xxxxx", Logger::COMMUNICATION,
+          SDB_DEBUG(HTTP,
                     "Pausing rest handler execution ",
                     std::bit_cast<size_t>(this));
           return;  // stop state machine
@@ -256,7 +256,7 @@ void RestHandler::runHandlerStateMachine() {
         executeEngine(/*isContinue*/ true);
         if (_state == HandlerState::Paused) {
           shutdownExecute(/*isFinalized*/ false);
-          SDB_DEBUG("xxxxx", Logger::COMMUNICATION,
+          SDB_DEBUG(HTTP,
                     "Pausing rest handler execution ",
                     std::bit_cast<size_t>(this));
           return;  // stop state machine
@@ -265,7 +265,7 @@ void RestHandler::runHandlerStateMachine() {
       }
 
       case HandlerState::Paused:
-        SDB_DEBUG("xxxxx", Logger::COMMUNICATION,
+        SDB_DEBUG(HTTP,
                   "Resuming rest handler execution ",
                   std::bit_cast<size_t>(this));
         _state = HandlerState::Continued;
@@ -370,13 +370,13 @@ void RestHandler::executeEngine(bool is_continue) {
     return;
   } catch (const Exception& ex) {
 #ifdef SDB_DEV
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
+    SDB_WARN(GENERAL,
              "maintainer mode: caught exception in ", name(), ": ", ex.what());
 #endif
     handleError(ex);
   } catch (const vpack::Exception& ex) {
 #ifdef SDB_DEV
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
+    SDB_WARN(GENERAL,
              "maintainer mode: caught vpack exception in ", name(), ": ",
              ex.what());
 #endif
@@ -389,7 +389,7 @@ void RestHandler::executeEngine(bool is_continue) {
     handleError(err);
   } catch (const std::bad_alloc& ex) {
 #ifdef SDB_DEV
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
+    SDB_WARN(GENERAL,
              "maintainer mode: caught memory exception in ", name(), ": ",
              ex.what());
 #endif
@@ -398,14 +398,14 @@ void RestHandler::executeEngine(bool is_continue) {
     handleError(err);
   } catch (const std::exception& ex) {
 #ifdef SDB_DEV
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
+    SDB_WARN(GENERAL,
              "maintainer mode: caught exception in ", name(), ": ", ex.what());
 #endif
     Exception err(ERROR_INTERNAL, ex.what(), std::source_location::current());
     handleError(err);
   } catch (...) {
 #ifdef SDB_DEV
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
+    SDB_WARN(GENERAL,
              "maintainer mode: caught unknown exception in ", name());
 #endif
     Exception err(ERROR_INTERNAL, std::source_location::current());
@@ -592,7 +592,7 @@ void RestHandler::resetResponse(rest::ResponseCode code) {
 }
 
 yaclib::Future<> RestHandler::executeAsync() {
-  SDB_THROW(ERROR_NOT_IMPLEMENTED);
+  SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED);
 }
 
 RestStatus RestHandler::execute() { return waitForFuture(executeAsync()); }

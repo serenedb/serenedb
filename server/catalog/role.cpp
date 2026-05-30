@@ -76,7 +76,7 @@ ErrorCode HexHashFromData(std::string_view hash_method, std::string_view str,
     crypted_length = 16;
   } else {
     // invalid algorithm...
-    SDB_DEBUG("xxxxx", Logger::AUTHENTICATION,
+    SDB_DEBUG(GENERAL,
               "invalid algorithm for hexHashFromData: ", hash_method);
     return ERROR_BAD_PARAMETER;
   }
@@ -198,7 +198,7 @@ void catalog::Role::fromDocumentDatabases(catalog::Role& role,
       try {
         role.grantDatabase(db_name, database_auth);
       } catch (const basics::Exception& e) {
-        SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, e.message());
+        SDB_DEBUG(GENERAL, e.message());
       }
     } else {
       auto value = obj_value.stringView();
@@ -289,15 +289,15 @@ void catalog::Role::updatePassword(std::string_view password) {
 void catalog::Role::grantDatabase(std::string_view database,
                                   auth::Level level) {
   if (database.empty() || level == auth::Level::Undefined) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "Cannot set rights for empty db name");
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "Cannot set rights for empty db name");
   }
   if (_name == StaticStrings::kDefaultUser &&
       database == StaticStrings::kDefaultDatabase && level != auth::Level::RW) {
-    SDB_THROW(ERROR_FORBIDDEN, "Cannot lower access level of '",
+    SDB_THROW(sdb::ERROR_FORBIDDEN, "Cannot lower access level of '",
               StaticStrings::kDefaultUser, "' to ",
               StaticStrings::kDefaultDatabase);
   }
-  SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, _name, ": Granting ",
+  SDB_DEBUG(GENERAL, _name, ": Granting ",
             ConvertFromAuthLevel(level), " on ", database);
 
   auto it = _db_access.find(database);
@@ -314,15 +314,15 @@ void catalog::Role::grantDatabase(std::string_view database,
 /// Removes the entry, returns true if entry existed
 bool catalog::Role::removeDatabase(std::string_view database) {
   if (database.empty()) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "Cannot remove rights for empty db name");
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "Cannot remove rights for empty db name");
   }
   if (_name == StaticStrings::kDefaultUser &&
       database == StaticStrings::kDefaultDatabase) {
-    SDB_THROW(ERROR_FORBIDDEN, "Cannot remove access level of '",
+    SDB_THROW(sdb::ERROR_FORBIDDEN, "Cannot remove access level of '",
               StaticStrings::kDefaultUser, "' to ",
               StaticStrings::kDefaultDatabase);
   }
-  SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, _name, ": Removing grant on ",
+  SDB_DEBUG(GENERAL, _name, ": Removing grant on ",
             database);
   return _db_access.erase(database) > 0;
 }

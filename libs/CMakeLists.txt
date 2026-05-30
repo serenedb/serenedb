@@ -61,11 +61,7 @@ add_library(
     basics/units_helper.cpp
     basics/random/random_generator.cpp
     basics/random/uniform_character.cpp
-    basics/logger/escaper.cpp
-    basics/logger/appender.cpp
-    basics/logger/appender_file.cpp
     basics/logger/logger.cpp
-    basics/logger/log_time_format.cpp
     basics/ssl/ssl_interface.cpp
     basics/ssl/ssl_helper.cpp
     basics/message_buffer.cpp

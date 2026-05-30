@@ -60,13 +60,13 @@ Exception::Exception(ErrorCode code, std::string&& error_message,
 }
 
 [[noreturn]] void helper::DieWithLogMessage(const char* error_message) {
-  SDB_FATAL("xxxxx", Logger::FIXME,
+  SDB_FATAL(GENERAL,
             "Failed to create an error message, giving up. ", error_message);
 }
 
 [[noreturn]] void helper::LogAndAbort(const char* what) {
   SDB_ASSERT(false, what);
-  SDB_FATAL("xxxxx", ::sdb::Logger::CRASH, what);
+  SDB_FATAL(CRASH, what);
 }
 
 Result TryToResult(yaclib::Result<Result>&& try_result) noexcept {

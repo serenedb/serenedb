@@ -54,7 +54,7 @@ void BootstrapFeature::start() {
       // only creates root user if it does not exist, will be overwritten on
       // slaves
       if (auto r = auth::CreateRootRole(true); !r.ok()) {
-        SDB_ERROR("xxxxx", Logger::AUTHENTICATION, "unable to create user \"",
+        SDB_ERROR(GENERAL, "unable to create user \"",
                   StaticStrings::kDefaultUser, "\": ", r.errorMessage());
       }
     }
@@ -64,7 +64,7 @@ void BootstrapFeature::start() {
   ServerState::instance()->SetMode(ServerState::Mode::Default);
 
   if (!server().getFeature<UpgradeFeature>().upgrading()) {
-    SDB_INFO("xxxxx", sdb::Logger::FIXME, "SereneDB (version ",
+    SDB_INFO(GENERAL, "SereneDB (version ",
              SERENEDB_VERSION_FULL, ") is ready for business. Have fun!");
   }
 

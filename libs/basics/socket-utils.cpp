@@ -48,7 +48,7 @@ int Sdbclosesocket(SocketWrapper s) {
 
     if (res == -1) {
       int myerrno = errno;
-      SDB_WARN("xxxxx", sdb::Logger::FIXME, "socket close error: ", myerrno,
+      SDB_WARN(GENERAL, "socket close error: ", myerrno,
                ": ", strerror(myerrno));
     }
   }

@@ -32,7 +32,6 @@
 #include "app/options/section.h"
 #include "basics/application-exit.h"
 #include "basics/asio_ns.h"
-#include "basics/logger/appender.h"
 #include "basics/logger/logger.h"
 #include "basics/number_of_cores.h"
 #include "basics/signals.h"
@@ -222,12 +221,12 @@ void SchedulerFeature::validateOptions(
   std::shared_ptr<options::ProgramOptions> options) {
   const auto n = number_of_cores::GetValue();
 
-  SDB_DEBUG("xxxxx", Logger::THREADS, "Detected number of processors: ", n);
+  SDB_DEBUG(GENERAL, "Detected number of processors: ", n);
 
   SDB_ASSERT(n > 0);
   if (options->processingResult().touched("server.maximal-threads") &&
       _nr_maximal_threads > 8 * n) {
-    SDB_WARN("xxxxx", Logger::THREADS, "--server.maximal-threads (",
+    SDB_WARN(GENERAL, "--server.maximal-threads (",
              _nr_maximal_threads,
              ") is more than eight times the number of cores (", n,
              "), this might overload the server");
@@ -236,13 +235,13 @@ void SchedulerFeature::validateOptions(
   }
 
   if (_nr_minimal_threads < 4) {
-    SDB_WARN("xxxxx", Logger::THREADS, "--server.minimal-threads (",
+    SDB_WARN(GENERAL, "--server.minimal-threads (",
              _nr_minimal_threads, ") must be at least 4");
     _nr_minimal_threads = 4;
   }
 
   if (_ongoing_low_priority_multiplier < 1.0) {
-    SDB_WARN("xxxxx", Logger::THREADS,
+    SDB_WARN(GENERAL,
              "--server.ongoing-low-priority-multiplier (",
              _ongoing_low_priority_multiplier,
              ") is less than 1.0, setting to default (4.0)");
@@ -250,7 +249,7 @@ void SchedulerFeature::validateOptions(
   }
 
   if (_nr_minimal_threads >= _nr_maximal_threads) {
-    SDB_WARN("xxxxx", Logger::THREADS, "--server.maximal-threads (",
+    SDB_WARN(GENERAL, "--server.maximal-threads (",
              _nr_maximal_threads, ") should be at least ",
              (_nr_minimal_threads + 1), ", raising it");
     _nr_maximal_threads = _nr_minimal_threads;
@@ -301,9 +300,9 @@ void SchedulerFeature::start() {
 
   bool ok = _scheduler->start();
   if (!ok) {
-    SDB_FATAL("xxxxx", Logger::FIXME, "the scheduler cannot be started");
+    SDB_FATAL(GENERAL, "the scheduler cannot be started");
   }
-  SDB_DEBUG("xxxxx", Logger::STARTUP, "scheduler has started");
+  SDB_DEBUG(STARTUP, "scheduler has started");
 }
 
 void SchedulerFeature::stop() {
@@ -348,7 +347,7 @@ void SchedulerFeature::signalStuffInit() {
   int res = sigaction(SIGPIPE, &action, nullptr);
 
   if (res < 0) {
-    SDB_ERROR("xxxxx", Logger::FIXME,
+    SDB_ERROR(GENERAL,
               "cannot initialize signal handler for SIGPIPE");
   }
 
@@ -372,12 +371,12 @@ void SchedulerFeature::signalStuffDeinit() {
 extern "C" void CExitHandler(int signal, siginfo_t* info, void*) {
   if (signal == SIGQUIT || signal == SIGTERM || signal == SIGINT) {
     if (!gReceivedShutdownRequest.exchange(true)) {
-      SDB_INFO("xxxxx", Logger::FIXME, signals::Name(signal),
+      SDB_INFO(GENERAL, signals::Name(signal),
                " received (sender pid ", (info ? info->si_pid : 0),
                "), beginning shut down sequence");
       app::AppServer::gCtrlC.store(true);
     } else {
-      SDB_FATAL("xxxxx", Logger::FIXME, signals::Name(signal),
+      SDB_FATAL(GENERAL, signals::Name(signal),
                 " received during shutdown sequence (sender pid ", info->si_pid,
                 "), terminating!");
     }
@@ -408,18 +407,12 @@ extern "C" void CHangupHandler(int signal, siginfo_t* info, void*) {
     return;
   }
 
-  // no log rotate request queued before. now issue one.
+  // SIGHUP: nothing to reopen (logger writes to stderr only).
+  // Keep the rate-limit dance so callers stop re-queuing.
   SchedulerFeature::gScheduler->queue(
     RequestLane::ClientSlow, [process_id_requesting] {
-      try {
-        SDB_INFO("xxxxx", Logger::FIXME,
-                 "hangup received, about to reopen logfile (sender pid ",
-                 process_id_requesting, ")");
-        log::Appender::reopen();
-        SDB_INFO("xxxxx", Logger::FIXME, "hangup received, reopened logfile");
-      } catch (...) {
-        // cannot do much if log rotate request goes wrong
-      }
+      SDB_INFO(GENERAL, "hangup received (sender pid ", process_id_requesting,
+               "); no log file to rotate");
       gProcessIdRequestingLogRotate.store(kProcessIdUnspecified);
     });
 }
@@ -434,7 +427,7 @@ void SchedulerFeature::buildHangupHandler() {
   int res = sigaction(SIGHUP, &action, nullptr);
 
   if (res < 0) {
-    SDB_ERROR("xxxxx", Logger::FIXME,
+    SDB_ERROR(GENERAL,
               "cannot initialize signal handler for hang up");
   }
 }
@@ -462,7 +455,7 @@ void SchedulerFeature::buildControlCHandler() {
     }
   }
   if (res < 0) {
-    SDB_ERROR("xxxxx", Logger::FIXME,
+    SDB_ERROR(GENERAL,
               "cannot initialize signal handlers for SIGINT/SIGQUIT/SIGTERM");
   }
 }

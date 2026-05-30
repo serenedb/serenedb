@@ -967,7 +967,7 @@ void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::Prepare(
       _doc_in = doc_in->Reopen();
 
       if (!_doc_in) {
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+        SDB_ERROR(IRESEARCH,
                   "Failed to reopen document input");
         throw IoError("failed to reopen document input");
       }
@@ -1038,7 +1038,7 @@ void SingleWandIterator<FormatTraits, Root, Pos, Offs,
   std::unique_ptr<InputType> skip_in_ptr{
     sdb::basics::downCast<InputType>(GetDocIn().Dup().release())};
   if (!skip_in_ptr) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Failed to duplicate document input");
     throw IoError("Failed to duplicate document input");
   }

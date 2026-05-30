@@ -339,13 +339,12 @@ IndexInput::ptr MemoryDirectory::open(std::string_view name,
   if (it != _files.end()) {
     return std::make_unique<MemoryIndexInput>(*it->second);
   }
-  SDB_ERROR(
-    "xxxxx", sdb::Logger::IRESEARCH,
+  SDB_ERROR(IRESEARCH,
     absl::StrCat("Failed to open input file, error: File not found, path: ",
                  name));
   return nullptr;
 } catch (...) {
-  SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+  SDB_ERROR(IRESEARCH,
             absl::StrCat("Failed to open input file, path: ", name));
   return nullptr;
 }

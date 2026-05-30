@@ -73,14 +73,14 @@ Result FileDescriptors::adjustTo(FileDescriptors::ValueType value) {
       return res;
     }
 
-    SDB_DEBUG("xxxxx", Logger::SYSCALL,
+    SDB_DEBUG(GENERAL,
               "file-descriptors (nofiles) hard limit is ",
               FileDescriptors::stringify(current.hard), ", soft limit is ",
               FileDescriptors::stringify(current.soft));
 
     if (recommended > 0) {
       if (current.hard < recommended) {
-        SDB_DEBUG("xxxxx", Logger::SYSCALL, "hard limit ", current.hard,
+        SDB_DEBUG(GENERAL, "hard limit ", current.hard,
                   " is too small, trying to raise");
 
         FileDescriptors copy = current;
@@ -95,13 +95,13 @@ Result FileDescriptors::adjustTo(FileDescriptors::ValueType value) {
       }
 
       if (current.soft < recommended) {
-        SDB_DEBUG("xxxxx", Logger::SYSCALL, "soft limit ", current.soft,
+        SDB_DEBUG(GENERAL, "soft limit ", current.soft,
                   " is too small, trying to raise");
 
         FileDescriptors copy = current;
         copy.soft = recommended;
         if (Result res = FileDescriptors::store(copy); res.fail()) {
-          SDB_WARN("xxxxx", Logger::SYSCALL,
+          SDB_WARN(GENERAL,
                    "cannot raise the file descriptors limit to ", recommended,
                    ": ", res);
           return res;

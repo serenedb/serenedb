@@ -61,7 +61,7 @@ void BuildSettings(auto& engine, vpack::Builder& b, uint64_t seq_number) {
 }
 
 Result WriteSettings(vpack::Slice slice, rocksdb::WriteBatch& batch) {
-  SDB_DEBUG("xxxxx", Logger::ENGINES, "writing settings: ", slice.toJson());
+  SDB_DEBUG(STORAGE, "writing settings: ", slice.toJson());
 
   RocksDBKeyWithBuffer<SettingsKey> key{RocksDBSettingsType::ServerTick};
   rocksdb::Slice value(slice.startAs<char>(), slice.byteSize());
@@ -71,7 +71,7 @@ Result WriteSettings(vpack::Slice slice, rocksdb::WriteBatch& batch) {
                 RocksDBColumnFamilyManager::Family::Definitions),
               key.GetBuffer(), value);
   if (!s.ok()) {
-    SDB_WARN("xxxxx", Logger::ENGINES,
+    SDB_WARN(STORAGE,
              "writing settings failed: ", s.ToString());
     return rocksutils::ConvertStatus(s);
   }
@@ -142,13 +142,13 @@ ResultOr<bool> RocksDBSettingsManager::sync(bool force) {
 
     const auto last_sync = _last_sync.load();
 
-    SDB_TRACE("xxxxx", Logger::ENGINES,
+    SDB_TRACE(STORAGE,
               "about to store lastSync. previous value: ", last_sync,
               ", current value: ", min_seq_nr);
 
     if (min_seq_nr < last_sync && !force) {
       if (min_seq_nr != 0) {
-        SDB_ERROR("xxxxx", Logger::ENGINES,
+        SDB_ERROR(STORAGE,
                   "min tick is smaller than "
                   "safe delete tick (minSeqNr: ",
                   min_seq_nr, ") < (lastSync = ", last_sync, ")");
@@ -159,7 +159,7 @@ ResultOr<bool> RocksDBSettingsManager::sync(bool force) {
 
     SDB_ASSERT(last_sync <= min_seq_nr);
     if (!did_work && !force) {
-      SDB_TRACE("xxxxx", Logger::ENGINES,
+      SDB_TRACE(STORAGE,
                 "no collection data to serialize, updating lastSync to ",
                 min_seq_nr);
       _last_sync.store(min_seq_nr);
@@ -182,7 +182,7 @@ ResultOr<bool> RocksDBSettingsManager::sync(bool force) {
     SDB_ASSERT(batch.Count() == 0);
     auto r = WriteSettings(_tmp_builder.slice(), batch);
     if (r.fail()) {
-      SDB_WARN("xxxxx", Logger::ENGINES, "could not write metadata settings ",
+      SDB_WARN(STORAGE, "could not write metadata settings ",
                r.errorMessage());
       return std::unexpected{std::move(r)};
     }
@@ -197,7 +197,7 @@ ResultOr<bool> RocksDBSettingsManager::sync(bool force) {
       return std::unexpected{rocksutils::ConvertStatus(s)};
     }
 
-    SDB_TRACE("xxxxx", Logger::ENGINES, "updating lastSync to ", new_last_sync);
+    SDB_TRACE(STORAGE, "updating lastSync to ", new_last_sync);
     _last_sync.store(new_last_sync);
 
     // we have written the settings!
@@ -223,7 +223,7 @@ void RocksDBSettingsManager::loadSettings() {
     vpack::Slice slice =
       vpack::Slice(reinterpret_cast<const uint8_t*>(result.data()));
     SDB_ASSERT(slice.isObject());
-    SDB_TRACE("xxxxx", Logger::ENGINES,
+    SDB_TRACE(STORAGE,
               "read initial settings: ", slice.toJson());
 
     if (!result.empty()) {
@@ -231,36 +231,36 @@ void RocksDBSettingsManager::loadSettings() {
         if (slice.hasKey("tick")) {
           uint64_t last_tick =
             basics::VPackHelper::stringUInt64(slice.get("tick"));
-          SDB_TRACE("xxxxx", Logger::ENGINES, "using last tick: ", last_tick);
+          SDB_TRACE(STORAGE, "using last tick: ", last_tick);
           UpdateTickServer(last_tick);
         }
 
         if (slice.hasKey("hlc")) {
           uint64_t last_hlc =
             basics::VPackHelper::stringUInt64(slice.get("hlc"));
-          SDB_TRACE("xxxxx", Logger::ENGINES, "using last hlc: ", last_hlc);
+          SDB_TRACE(STORAGE, "using last hlc: ", last_hlc);
           NewTickHybridLogicalClock(last_hlc);
         }
 
         if (slice.hasKey("releasedTick")) {
           _initial_released_tick =
             basics::VPackHelper::stringUInt64(slice.get("releasedTick"));
-          SDB_TRACE("xxxxx", Logger::ENGINES,
+          SDB_TRACE(STORAGE,
                     "using released tick: ", _initial_released_tick);
           _engine.releaseTick(_initial_released_tick);
         }
 
         if (slice.hasKey("lastSync")) {
           _last_sync = basics::VPackHelper::stringUInt64(slice.get("lastSync"));
-          SDB_TRACE("xxxxx", Logger::ENGINES,
+          SDB_TRACE(STORAGE,
                     "last background settings sync: ", _last_sync.load());
         }
       } catch (...) {
-        SDB_WARN("xxxxx", Logger::ENGINES,
+        SDB_WARN(STORAGE,
                  "unable to read initial settings: invalid data");
       }
     } else {
-      SDB_TRACE("xxxxx", Logger::ENGINES, "no initial settings found");
+      SDB_TRACE(STORAGE, "no initial settings found");
     }
   }
 }

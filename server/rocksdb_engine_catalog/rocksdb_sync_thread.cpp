@@ -76,7 +76,7 @@ Result RocksDBSyncThread::syncWal() {
 }
 
 Result RocksDBSyncThread::sync(rocksdb::DB* db) {
-  SDB_TRACE("xxxxx", Logger::ENGINES, "syncing RocksDB WAL");
+  SDB_TRACE(STORAGE, "syncing RocksDB WAL");
 
   rocksdb::Status status = db->SyncWAL();
   if (!status.ok()) {
@@ -96,7 +96,7 @@ void RocksDBSyncThread::beginShutdown() {
 void RocksDBSyncThread::run() {
   auto db = _engine.db()->GetBaseDB();
 
-  SDB_TRACE("xxxxx", Logger::ENGINES,
+  SDB_TRACE(STORAGE,
             "starting RocksDB sync thread with interval ", _interval.count(),
             " milliseconds");
 
@@ -142,7 +142,7 @@ void RocksDBSyncThread::run() {
       {
         if (_delay_threshold.count() > 0 &&
             (last_sync_time - previous_last_sync_time) > _delay_threshold) {
-          SDB_INFO("xxxxx", Logger::ENGINES,
+          SDB_INFO(STORAGE,
                    "last RocksDB WAL sync happened longer ago than configured "
                    "threshold. ",
                    "last sync happened ",
@@ -170,14 +170,14 @@ void RocksDBSyncThread::run() {
       } else {
         // could not sync... in this case, don't advance our last
         // sync time and last synced sequence number
-        SDB_ERROR("xxxxx", Logger::ENGINES,
+        SDB_ERROR(STORAGE,
                   "could not sync RocksDB WAL: ", res.errorMessage());
       }
     } catch (const std::exception& ex) {
-      SDB_ERROR("xxxxx", Logger::ENGINES,
+      SDB_ERROR(STORAGE,
                 "caught exception in RocksDBSyncThread: ", ex.what());
     } catch (...) {
-      SDB_ERROR("xxxxx", Logger::ENGINES,
+      SDB_ERROR(STORAGE,
                 "caught unknown exception in RocksDBSyncThread");
     }
   }

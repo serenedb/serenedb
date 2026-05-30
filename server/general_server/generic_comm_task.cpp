@@ -59,7 +59,7 @@ void GenericCommTask<SocketType, Base>::Close(asio_ns::error_code ec) {
     // stream_truncated will occur when a peer closes an SSL/TLS connection
     // without performing a proper connection shutdown. unfortunately that
     // can happen at any time, and we have no control over it.
-    SDB_WARN("xxxxx", Logger::REQUESTS, "asio IO error: '", ec.message(), "'");
+    SDB_WARN(HTTP, "asio IO error: '", ec.message(), "'");
   }
 
   if (_protocol) {
@@ -67,7 +67,7 @@ void GenericCommTask<SocketType, Base>::Close(asio_ns::error_code ec) {
     _protocol->shutdown(
       [self = this->shared_from_this(), this](asio_ns::error_code ec) {
         if (ec) {
-          SDB_INFO("xxxxx", Logger::REQUESTS,
+          SDB_INFO(HTTP,
                    "error shutting down asio socket: '", ec.message(), "'");
         }
         this->_server.unregisterTask(this);
@@ -128,7 +128,7 @@ void GenericCommTask<SocketType, Base>::AsyncReadSome() try {
         me.template AsyncReadSome<UseRaw>();
       }
     } catch (...) {
-      SDB_ERROR("xxxxx", Logger::REQUESTS,
+      SDB_ERROR(HTTP,
                 "unhandled protocol exception, closing connection");
       me.Close(ec);
     }
@@ -139,7 +139,7 @@ void GenericCommTask<SocketType, Base>::AsyncReadSome() try {
     _protocol->socket.async_read_some(mutable_buff, std::move(cb));
   }
 } catch (...) {
-  SDB_ERROR("xxxxx", Logger::REQUESTS,
+  SDB_ERROR(HTTP,
             "unhandled protocol exception, closing connection");
   Close();
 }

@@ -293,7 +293,7 @@ std::unique_ptr<Endpoint> Endpoint::factory(Endpoint::EndpointType type,
       // check port over-/underrun
       if (value < (std::numeric_limits<uint16_t>::min)() ||
           value > (std::numeric_limits<uint16_t>::max)()) {
-        SDB_ERROR("xxxxx", sdb::Logger::FIXME, "specified port number '", value,
+        SDB_ERROR(GENERAL, "specified port number '", value,
                   "' is outside the allowed range");
         return nullptr;
       }
@@ -328,7 +328,7 @@ std::unique_ptr<Endpoint> Endpoint::factory(Endpoint::EndpointType type,
     // check port over-/underrun
     if (value < (std::numeric_limits<uint16_t>::min)() ||
         value > (std::numeric_limits<uint16_t>::max)()) {
-      SDB_ERROR("xxxxx", sdb::Logger::FIXME, "specified port number '", value,
+      SDB_ERROR(GENERAL, "specified port number '", value,
                 "' is outside the allowed range");
       return nullptr;
     }
@@ -351,7 +351,7 @@ std::string Endpoint::defaultEndpoint(TransportType type) {
       return absl::StrCat("http+tcp://", EndpointIp::kDefaultHost, ":",
                           EndpointIp::kDefaultPortHttp);
     default:
-      SDB_THROW(ERROR_INTERNAL, "invalid transport type");
+      SDB_THROW(sdb::ERROR_INTERNAL, "invalid transport type");
   }
 }
 
@@ -385,7 +385,7 @@ bool Endpoint::setSocketFlags(SocketWrapper s) {
   bool ok = SdbSetNonBlockingSocket(s);
 
   if (!ok) {
-    SDB_ERROR("xxxxx", sdb::Logger::FIXME,
+    SDB_ERROR(GENERAL,
               "cannot switch to non-blocking: ", errno, " (", strerror(errno),
               ")");
 
@@ -396,7 +396,7 @@ bool Endpoint::setSocketFlags(SocketWrapper s) {
   ok = SdbSetCloseOnExecSocket(s);
 
   if (!ok) {
-    SDB_ERROR("xxxxx", sdb::Logger::FIXME, "cannot set close-on-exit: ", errno,
+    SDB_ERROR(GENERAL, "cannot set close-on-exit: ", errno,
               " (", strerror(errno), ")");
 
     return false;

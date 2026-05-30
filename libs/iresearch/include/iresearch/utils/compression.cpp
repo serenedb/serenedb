@@ -84,23 +84,23 @@ CompressionRegistrar::CompressionRegistrar(
       CompressionRegister::instance().tag(type.name());
 
     if (source != nullptr && registered_source != nullptr) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering "
                "compression, ignoring: type '",
                type.name(), "' from ", source_ref, ", previously from ",
                *registered_source);
     } else if (source != nullptr) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering "
                "compression, ignoring: type '",
                type.name(), "' from ", source_ref);
     } else if (registered_source != nullptr) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering "
                "compression, ignoring: type '",
                type.name(), "' previously from ", *registered_source);
     } else {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering "
                "compression, ignoring: type '",
                type.name(), "'");
@@ -121,7 +121,7 @@ Compressor::ptr GetCompressor(std::string_view name, const Options& opts,
 
     return factory != nullptr ? factory(opts) : nullptr;
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught exception while getting an analyzer instance");
   }
 
@@ -137,7 +137,7 @@ Decompressor::ptr GetDecompressor(std::string_view name,
 
     return factory != nullptr ? factory() : nullptr;
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught exception while getting an analyzer instance");
   }
 

@@ -21,10 +21,6 @@
 
 #pragma once
 
-#include <absl/strings/str_cat.h>
-#include <vpack/builder.h>
-#include <vpack/value.h>
-
 #include <atomic>
 
 #include "basics/debugging.h"
@@ -42,27 +38,6 @@ class Gauge : public Metric {
     : Metric{name, help, labels}, _g{t} {}
 
   [[nodiscard]] std::string_view type() const noexcept final { return "gauge"; }
-
-  void toPrometheus(std::string& result, std::string_view globals,
-                    bool ensure_whitespace) const final {
-    Metric::addMark(result, name(), globals, labels());
-    if constexpr (std::is_integral_v<T>) {
-      absl::StrAppend(&result, ensure_whitespace ? " " : "", load(), "\n");
-    } else {
-      // must use std::to_string() here because it produces a different
-      // string representation of large floating-point numbers than absl
-      // does. absl uses scientific notation for numbers that exceed 6
-      // digits, and std::to_string() doesn't.
-      absl::StrAppend(&result, ensure_whitespace ? " " : "",
-                      std::to_string(load()), "\n");
-    }
-  }
-
-  void toVPack(vpack::Builder& builder, SerenedServer&) const final {
-    builder.add(name());
-    builder.add(labels());
-    builder.add(load(std::memory_order_relaxed));
-  }
 
   [[nodiscard]] T load(
     std::memory_order mo = std::memory_order_relaxed) const noexcept {

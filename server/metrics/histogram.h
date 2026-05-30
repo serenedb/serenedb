@@ -21,10 +21,7 @@
 
 #pragma once
 
-#include <absl/strings/str_format.h>
-
 #include <atomic>
-#include <ostream>  // TODO(mbkkt) replace to iosfwd, compile error now
 #include <type_traits>
 #include <vector>
 
@@ -122,47 +119,6 @@ class Histogram final : public Metric {
   }
 
   size_t size() const { return _n; }
-
-  void toPrometheus(std::string& result, std::string_view globals,
-                    bool ensure_whitespace) const final {
-    auto append_value = [&](ValueType v) {
-      if (ensure_whitespace) {
-        result.push_back(' ');
-      }
-
-      if constexpr (std::is_floating_point_v<ValueType>) {
-        absl::StrAppendFormat(&result, "%f\n", v);
-      } else {
-        absl::StrAppend(&result, v, "\n");
-      }
-    };
-
-    const auto globals_size = globals.size();
-    const auto labels_size = labels().size();
-
-    std::string ls;
-    ls.reserve(globals_size + labels_size + 1);
-    ls.append(globals);
-    if (globals_size != 0 && labels_size != 0) {
-      ls.push_back(',');
-    }
-    ls.append(labels());
-
-    uint64_t sum = 0;
-    for (size_t i = 0; i != _n; ++i) {
-      sum += load(i);
-      absl::StrAppend(&result, name(), "_bucket{");
-      if (!ls.empty()) {
-        absl::StrAppend(&result, ls, ",");
-      }
-      absl::StrAppend(&result, "le=\"", _scale.delim(i), "\"}");
-      append_value(sum);
-    }
-    absl::StrAppend(&result, name(), "_count", "{", ls, "}");
-    append_value(sum);
-    absl::StrAppend(&result, name(), "_sum", "{", ls, "}");
-    append_value(_sum.load(std::memory_order_relaxed));
-  }
 
  private:
   const Scale _scale;

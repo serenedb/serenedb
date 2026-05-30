@@ -172,8 +172,6 @@ class RocksDBEngineCatalog {
   HealthData healthCheck();
 
   void getStatistics(vpack::Builder& builder) const;
-  void toPrometheus(std::string& result, std::string_view globals,
-                    bool ensure_whitespace) const;
 
   std::string versionFilename(ObjectId id) const;
   std::string databasePath() const { return _base_path; }

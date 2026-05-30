@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,20 +15,16 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
-#include <vpack/builder.h>
-#include <vpack/value.h>
-
 #include <cstddef>
-#include <iosfwd>
+#include <string>
 #include <vector>
 
 #include "basics/debugging.h"
-#include "metrics/metric.h"
 
 namespace sdb::metrics {
 
@@ -45,9 +40,6 @@ class Scale {
 
   virtual ~Scale() = default;
 
-  /**
-   * number of buckets
-   */
   [[nodiscard]] size_t n() const noexcept { return _n; }
   [[nodiscard]] T low() const { return _low; }
   [[nodiscard]] T high() const { return _high; }
@@ -56,33 +48,6 @@ class Scale {
   }
 
   [[nodiscard]] const std::vector<T>& delims() const { return _delim; }
-
-  /**
-   * dump to builder
-   */
-  virtual void toVPack(vpack::Builder& b) const {
-    SDB_ASSERT(b.isOpenObject());
-    b.add("lower-limit", _low);
-    b.add("upper-limit", _high);
-    b.add("value-type", typeid(T).name());
-    b.add("range");
-    vpack::ArrayBuilder abb(&b);
-    for (const auto& i : _delim) {
-      b.add(i);
-    }
-  }
-
-  /**
-   * dump to std::ostream
-   */
-  std::ostream& print(std::ostream& output) const {
-    vpack::Builder b;
-    {
-      vpack::ObjectBuilder bb(&b);
-      toVPack(b);
-    }
-    return output << b.toJson();
-  }
 
  protected:
   std::vector<T> _delim;

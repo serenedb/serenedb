@@ -50,11 +50,6 @@ class FixScale final : public Scale<T> {
     return this->_delim.size();
   }
 
-  void toVPack(vpack::Builder& b) const final {
-    b.add("scale-type", "fixed");
-    Scale<T>::toVPack(b);
-  }
-
  private:
   T _base;
   T _div;

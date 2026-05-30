@@ -21,8 +21,6 @@
 
 #include "metrics/builder.h"
 
-#include "metrics/ibatch.h"
-
 namespace sdb::metrics {
 
 std::string_view Builder::name() const noexcept { return _name; }
@@ -40,7 +38,5 @@ void Builder::addLabel(std::string_view key, std::string_view value) {
 }
 
 void Builder::reserveSpaceForLabels(size_t bytes) { _labels.reserve(bytes); }
-
-IBatch::~IBatch() = default;
 
 }  // namespace sdb::metrics

@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,41 +15,20 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "metrics/metric.h"
 
-#include <absl/strings/str_cat.h>
-
-#include <ostream>
-
 namespace sdb::metrics {
 
-void Metric::addInfo(std::string& result, std::string_view name,
-                     std::string_view help, std::string_view type) {
-  absl::StrAppend(&result, "# HELP ", name, " ", help, "\n", "# TYPE ", name,
-                  " ", type, "\n");
-}
-
-void Metric::addMark(std::string& result, std::string_view name,
-                     std::string_view globals, std::string_view labels) {
-  absl::StrAppend(&result, name, "{", globals,
-                  ((labels.empty() || globals.empty()) ? "" : ","), labels,
-                  "}");
-}
-
 Metric::Metric(std::string_view name, std::string_view help,
-               std::string_view labels, bool dynamic)
-  : _name{name}, _help{help}, _labels{labels}, _dynamic(dynamic) {}
+               std::string_view labels)
+  : _name{name}, _help{help}, _labels{labels} {}
 
 std::string_view Metric::name() const noexcept { return _name; }
-
 std::string_view Metric::labels() const noexcept { return _labels; }
-
 std::string_view Metric::help() const noexcept { return _help; }
-
-void Metric::toVPack(vpack::Builder& builder, SerenedServer& server) const {}
 
 Metric::~Metric() = default;
 

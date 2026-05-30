@@ -1554,34 +1554,6 @@ DECLARE_GAUGE(rocksdb_live_blob_file_garbage_size, uint64_t,
               "rocksdb_live_blob_file_garbage_size");
 DECLARE_GAUGE(rocksdb_num_blob_files, uint64_t, "rocksdb_num_blob_files");
 
-void RocksDBEngineCatalog::toPrometheus(std::string& result,
-                                        std::string_view globals,
-                                        bool ensure_whitespace) const {
-  vpack::BufferUInt8 buffer;
-  vpack::Builder stats(buffer);
-  getStatistics(stats);
-  vpack::Slice sslice = stats.slice();
-
-  SDB_ASSERT(sslice.isObject());
-  for (auto [a_key, a_value] : vpack::ObjectIterator(sslice)) {
-    if (a_value.isNumber()) {
-      std::string name = a_key.copyString();
-      std::replace(name.begin(), name.end(), '.', '_');
-      std::replace(name.begin(), name.end(), '-', '_');
-      if (!name.empty() && name.front() != 'r') {
-        // prepend name with "rocksdb_"
-        name = absl::StrCat(kEngineName, "_", name);
-      }
-
-      metrics::Metric::addInfo(result, name, /*help*/ name,
-                               name.ends_with("_total") ? "counter" : "gauge");
-      metrics::Metric::addMark(result, name, globals, "");
-      absl::StrAppend(&result, ensure_whitespace ? " " : "",
-                      a_value.getNumber<uint64_t>(), "\n");
-    }
-  }
-}
-
 void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {
   // add int properties
   auto add_int = [&](const std::string& s) {

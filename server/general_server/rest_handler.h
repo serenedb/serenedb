@@ -32,6 +32,7 @@
 #include "general_server/request_lane.h"
 #include "metrics/gauge_counter_guard.h"
 #include "rest/general_response.h"
+#include "rest_server/serened.h"
 #include "statistics/request_statistics.h"
 
 namespace sdb {

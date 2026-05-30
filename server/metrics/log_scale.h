@@ -63,21 +63,6 @@ class LogScale final : public Scale<T> {
     _lbase = std::log(_base);
   }
 
-  /**
-   * Dump to builder
-   * b Envelope
-   */
-  void toVPack(vpack::Builder& b) const final {
-    b.add("scale-type", "logarithmic");
-    b.add("base", _base);
-    Scale<T>::toVPack(b);
-  }
-
-  /**
-   * index for val
-   * val value
-   * Return    index
-   */
   size_t pos(T val) const {
     return static_cast<size_t>(
       1 + std::floor(std::log((val - this->_low) / _div) / _lbase));

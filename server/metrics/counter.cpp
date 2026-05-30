@@ -21,8 +21,6 @@
 
 #include "metrics/counter.h"
 
-#include <absl/strings/str_cat.h>
-
 #include <ostream>
 
 namespace sdb::metrics {
@@ -31,15 +29,9 @@ Counter::Counter(uint64_t n, std::string_view name, std::string_view help,
                  std::string_view labels)
   : Metric{name, help, labels}, _c{n} {}
 
-Counter::~Counter() {}
+Counter::~Counter() = default;
 
 std::string_view Counter::type() const noexcept { return "counter"; }
-
-void Counter::toPrometheus(std::string& result, std::string_view globals,
-                           bool ensure_whitespace) const {
-  Metric::addMark(result, name(), globals, labels());
-  absl::StrAppend(&result, ensure_whitespace ? " " : "", load(), "\n");
-}
 
 uint64_t Counter::load() const noexcept {
   if (_b.load(std::memory_order_relaxed)) {

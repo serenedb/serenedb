@@ -97,7 +97,7 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
 
       // Check constraints
       for (const auto& check : table->CheckConstraints()) {
-        conname_storage.push_back(check.GetName());
+        conname_storage.emplace_back(check.GetName());
         conkey_storage.emplace_back();
         values.push_back({
           .oid = check.GetId().id(),

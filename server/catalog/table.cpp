@@ -71,7 +71,7 @@ std::shared_ptr<Table> Table::ReadInternal(vpack::Slice slice,
   }
   std::vector<CheckConstraint> check_constraints;
   if (auto r = vpack::ReadTupleNothrow(slice.get("check_constraints"),
-                                       check_constraints);
+                                       check_constraints, ctx.id);
       !r.ok()) {
     return nullptr;
   }
@@ -129,10 +129,10 @@ Result Table::RenameConstraint(std::shared_ptr<Table>& result,
   auto constraint_it = _check_constraints.end();
   for (auto it = _check_constraints.begin(); it != _check_constraints.end();
        ++it) {
-    if (it->name == new_name) {
+    if (it->GetName() == new_name) {
       return Result{ERROR_SERVER_DUPLICATE_NAME};
     }
-    if (it->name == old_name) {
+    if (it->GetName() == old_name) {
       constraint_it = it;
     }
   }
@@ -144,7 +144,7 @@ Result Table::RenameConstraint(std::shared_ptr<Table>& result,
   new_table
     ->_check_constraints[std::distance(_check_constraints.begin(),
                                        constraint_it)]
-    .name = new_name;
+    .SetName(new_name);
   result = std::move(new_table);
   return {};
 }

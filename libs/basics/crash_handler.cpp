@@ -41,7 +41,6 @@
 #include <string_view>
 #include <thread>
 
-#include "app/logger_feature.h"
 #include "basics/application-exit.h"
 #include "basics/files.h"
 #include "basics/logger/logger.h"

@@ -23,7 +23,6 @@
 
 #include "app/app_server.h"
 #include "app/global_context.h"
-#include "app/logger_feature.h"
 #include "app/options/program_options.h"
 #include "basics/common.h"
 #include "basics/crash_handler.h"

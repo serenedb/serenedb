@@ -34,8 +34,6 @@ namespace {
 using namespace sdb;
 using namespace sdb::app;
 
-static_assert(SerenedServer::id<LoggerFeature>() == 0);
-
 const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
 
 int RunServer(int argc, char** argv, GlobalContext& context) {
@@ -43,6 +41,7 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     CrashHandler::installCrashHandler();
     std::string name = context.binaryName();
     SdbSetApplicationName(name);
+    log::Initialize();
 
     auto options = std::make_shared<sdb::options::ProgramOptions>(
       argv[0], "Usage: " + name + " [<options>]",
@@ -64,9 +63,6 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     server.addFeatures(absl::Overload{
       []<typename T>(auto& server, type::Tag<T>) {
         return std::make_unique<T>(server);
-      },
-      [](auto& server, type::Tag<LoggerFeature>) {
-        return std::make_unique<LoggerFeature>(server);
       },
       [&ret](auto& server, type::Tag<ServerFeature>) {
         return std::make_unique<ServerFeature>(server, &ret);
@@ -95,7 +91,7 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
                 "unknown type");
       ret = EXIT_FAILURE;
     }
-    log::Flush();
+    log::Shutdown();
     return context.exit(ret);
   } catch (const std::exception& ex) {
     SDB_ERROR(GENERAL,

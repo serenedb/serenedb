@@ -48,7 +48,6 @@ class SearchEngine;
 
 }  // namespace search
 
-class LoggerFeature;
 class SslServerFeature;
 class MaxMapCountFeature;
 class DatabasePathFeature;
@@ -64,7 +63,6 @@ class GeneralServerFeature;
 
 // clang-format off
 using SerenedFeaturesList = type::List<
-  LoggerFeature,
   SslServerFeature,
   DatabasePathFeature,
   SchedulerFeature,

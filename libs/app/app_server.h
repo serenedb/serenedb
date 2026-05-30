@@ -26,7 +26,6 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include "app/app_feature.h"
-#include "app/logger_feature.h"
 #include "basics/down_cast.h"
 #include "basics/type_traits.h"
 

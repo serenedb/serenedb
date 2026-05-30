@@ -23,7 +23,6 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include "app/app_server.h"
-#include "app/logger_feature.h"
 #include "basics/logger/logger.h"
 #include "storage_engine/search_engine.h"
 namespace sdb::pg {

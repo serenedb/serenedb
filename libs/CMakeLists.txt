@@ -163,7 +163,6 @@ add_library(
     app/app_feature.cpp
     app/app_server.cpp
     app/global_context.cpp
-    app/logger_feature.cpp
     app/name_validator.cpp
     app/options/option.cpp
     app/options/program_options.cpp

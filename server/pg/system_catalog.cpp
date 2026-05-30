@@ -254,7 +254,6 @@ const VirtualTable* GetSystemTable(std::string_view schema,
   }
 }
 const VirtualTable* GetTable(std::string_view name) {
-
   if (name.starts_with("pg_") || name.starts_with("sdb_")) {
     return GetTableFromSchema(name, kPgCatalog);
   }

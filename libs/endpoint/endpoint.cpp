@@ -367,9 +367,8 @@ bool Endpoint::setSocketFlags(SocketWrapper s) {
   bool ok = SdbSetNonBlockingSocket(s);
 
   if (!ok) {
-    SDB_ERROR(GENERAL,
-              "cannot switch to non-blocking: ", errno, " (", strerror(errno),
-              ")");
+    SDB_ERROR(GENERAL, "cannot switch to non-blocking: ", errno, " (",
+              strerror(errno), ")");
 
     return false;
   }
@@ -378,8 +377,8 @@ bool Endpoint::setSocketFlags(SocketWrapper s) {
   ok = SdbSetCloseOnExecSocket(s);
 
   if (!ok) {
-    SDB_ERROR(GENERAL, "cannot set close-on-exit: ", errno,
-              " (", strerror(errno), ")");
+    SDB_ERROR(GENERAL, "cannot set close-on-exit: ", errno, " (",
+              strerror(errno), ")");
 
     return false;
   }

@@ -424,8 +424,7 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       // no more docs in merged reader
       if (!merged_itr->next()) {
         if (current_itr->next()) {
-          SDB_WARN(IRESEARCH,
-                   "Failed to map removals for compacted segment '",
+          SDB_WARN(IRESEARCH, "Failed to map removals for compacted segment '",
                    old_meta.name, "' version '", old_meta.version,
                    "' from current segment '", new_meta.name, "' version '",
                    new_meta.version, "', current segment has doc_id '",
@@ -456,21 +455,19 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
           docs_mask.insert(merge_ctx.remap.Remap(merged_itr->value()));
 
           if (!merged_itr->next()) {
-            SDB_WARN(IRESEARCH,
-                     "Failed to map removals for compacted segment '",
-                     old_meta.name, "' version '", old_meta.version,
-                     "' from current segment '", new_meta.name, "' version '",
-                     new_meta.version, "', current segment has doc_id '",
-                     current_itr->value(),
-                     "' not present in the compacted segment");
+            SDB_WARN(
+              IRESEARCH, "Failed to map removals for compacted segment '",
+              old_meta.name, "' version '", old_meta.version,
+              "' from current segment '", new_meta.name, "' version '",
+              new_meta.version, "', current segment has doc_id '",
+              current_itr->value(), "' not present in the compacted segment");
 
             return false;  // current reader has unmerged docs
           }
         }
 
         if (merged_itr->value() > current_itr->value()) {
-          SDB_WARN(IRESEARCH,
-                   "Failed to map removals for compacted segment '",
+          SDB_WARN(IRESEARCH, "Failed to map removals for compacted segment '",
                    old_meta.name, "' version '", old_meta.version,
                    "' from current segment '", new_meta.name, "' version '",
                    new_meta.version, "', current segment has doc_id '",
@@ -483,13 +480,12 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
         // no more docs in merged reader
         if (!merged_itr->next()) {
           if (current_itr->next()) {
-            SDB_WARN(IRESEARCH,
-                     "Failed to map removals for compacted segment '",
-                     old_meta.name, "' version '", old_meta.version,
-                     "' from current segment '", new_meta.name, "' version '",
-                     new_meta.version, "', current segment has doc_id '",
-                     current_itr->value(),
-                     "' not present in the compacted segment");
+            SDB_WARN(
+              IRESEARCH, "Failed to map removals for compacted segment '",
+              old_meta.name, "' version '", old_meta.version,
+              "' from current segment '", new_meta.name, "' version '",
+              new_meta.version, "', current segment has doc_id '",
+              current_itr->value(), "' not present in the compacted segment");
 
             return false;  // current reader has unmerged docs
           }
@@ -726,8 +722,8 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
       return;
     }
     // Force flush of a full segment
-    SDB_TRACE(IRESEARCH, "Flushing segment '",
-              writer.name(), "', docs=", writer.buffered_docs(),
+    SDB_TRACE(IRESEARCH, "Flushing segment '", writer.name(),
+              "', docs=", writer.buffered_docs(),
               ", memory=", writer.memory_active(),
               ", docs limit=", _writer->_segment_limits.Docs(),
               ", memory limit=", _writer->_segment_limits.Memory());
@@ -735,9 +731,9 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
     try {
       segment.Flush();
     } catch (...) {
-      SDB_ERROR(IRESEARCH,
-        absl::StrCat("while flushing segment '", segment.writer_meta.meta.name,
-                     "', error: failed to flush segment"));
+      SDB_ERROR(IRESEARCH, absl::StrCat("while flushing segment '",
+                                        segment.writer_meta.meta.name,
+                                        "', error: failed to flush segment"));
       // TODO(mbkkt) What the goal are we want to achieve
       //  with keeping already flushed data?
       segment.Reset(true);
@@ -1351,8 +1347,8 @@ CompactionResult IndexWriter::Compact(
   }
 #endif
 
-  SDB_TRACE(IRESEARCH, "Starting compaction id='", run_id,
-            "':\n", ToString(candidates));
+  SDB_TRACE(IRESEARCH, "Starting compaction id='", run_id, "':\n",
+            ToString(candidates));
 
   // do lock-free merge
 
@@ -1403,11 +1399,10 @@ CompactionResult IndexWriter::Compact(
               // FIXME(gnusi): compare pointers?
               return id == s.Meta().name;
             })) {
-          SDB_DEBUG(IRESEARCH,
-                    "Failed to start compaction for index generation '",
-                    committed_reader->Meta().index_meta.gen,
-                    "', not found segment ", candidate->Meta().name,
-                    " in committed state");
+          SDB_DEBUG(
+            IRESEARCH, "Failed to start compaction for index generation '",
+            committed_reader->Meta().index_meta.gen, "', not found segment ",
+            candidate->Meta().name, " in committed state");
           return result;
         }
       }
@@ -1438,10 +1433,10 @@ CompactionResult IndexWriter::Compact(
       MapCandidates(mappings, candidates, *current_committed_reader);
     if (count != candidates.size()) {
       // at least one candidate is missing can't finish compaction
-      SDB_DEBUG(IRESEARCH,
-                "Failed to finish compaction id='", run_id, "' for segment '",
-                compaction_segment.meta.name, "', found only '", count,
-                "' out of '", candidates.size(), "' candidates");
+      SDB_DEBUG(IRESEARCH, "Failed to finish compaction id='", run_id,
+                "' for segment '", compaction_segment.meta.name,
+                "', found only '", count, "' out of '", candidates.size(),
+                "' candidates");
       return result;
     }
 
@@ -1452,9 +1447,8 @@ CompactionResult IndexWriter::Compact(
       if (!MapRemovals(mappings, merger, *docs_mask)) {
         // compacted segment has docs missing from
         // current_committed_meta->segments()
-        SDB_DEBUG(IRESEARCH,
-                  "Failed to finish compaction id='", run_id, "' for segment '",
-                  compaction_segment.meta.name,
+        SDB_DEBUG(IRESEARCH, "Failed to finish compaction id='", run_id,
+                  "' for segment '", compaction_segment.meta.name,
                   "', due removed documents still present "
                   "the compaction candidates");
 
@@ -1826,8 +1820,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       if (count != candidates.size()) {
         // At least one candidate is missing in pending meta can't finish
         // compaction
-        SDB_DEBUG(IRESEARCH,
-                  "Failed to finish merge for segment '", meta.name,
+        SDB_DEBUG(IRESEARCH, "Failed to finish merge for segment '", meta.name,
                   "', found only '", count, "' out of '", candidates.size(),
                   "' candidates");
 
@@ -1856,8 +1849,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
         if (!success) {
           // Compacted segment has docs missing from 'segments'
-          SDB_WARN(IRESEARCH,
-                   "Failed to finish merge for segment '", meta.name,
+          SDB_WARN(IRESEARCH, "Failed to finish merge for segment '", meta.name,
                    "', due to removed documents still present "
                    "the compaction candidates");
 

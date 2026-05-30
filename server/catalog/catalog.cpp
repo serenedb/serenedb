@@ -669,8 +669,7 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
 
 template<typename T>
 ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
-  auto& catalog =
-    catalog::CatalogFeature::instance().Global();
+  auto& catalog = catalog::CatalogFeature::instance().Global();
   auto database = catalog.GetCatalogSnapshot()->GetDatabase(key);
   if (!database) [[unlikely]] {
     return std::unexpected<Result>(std::in_place,
@@ -680,9 +679,7 @@ ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
   return database;
 }
 
-CatalogFeature::CatalogFeature() {
-  gInstance = this;
-}
+CatalogFeature::CatalogFeature() { gInstance = this; }
 
 CatalogFeature::~CatalogFeature() { gInstance = nullptr; }
 
@@ -721,8 +718,7 @@ Result CatalogFeature::Open() {
   auto r = open_db();
 
   if (!r.ok()) {
-    SDB_FATAL(GENERAL, "Failed to open database, ",
-              r.errorMessage());
+    SDB_FATAL(GENERAL, "Failed to open database, ", r.errorMessage());
   }
 
   if (auto fr = Local().FinalizeLoad(); !fr.ok()) {
@@ -744,8 +740,8 @@ Result CatalogFeature::Open() {
                                 db->GetName(), "\" (TYPE serenedb)");
       auto result = conn->Query(query);
       if (result->HasError()) {
-        SDB_FATAL(GENERAL, "Failed to attach database ",
-                  db->GetName(), ": ", result->GetError());
+        SDB_FATAL(GENERAL, "Failed to attach database ", db->GetName(), ": ",
+                  result->GetError());
       }
     }
   }
@@ -762,8 +758,7 @@ ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name) {
 }
 
 LogicalCatalog& GetCatalog() {
-  auto& catalogs =
-    catalog::CatalogFeature::instance();
+  auto& catalogs = catalog::CatalogFeature::instance();
   return ServerState::instance()->IsCoordinator() ? catalogs.Global()
                                                   : catalogs.Local();
 }

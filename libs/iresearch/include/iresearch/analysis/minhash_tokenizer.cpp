@@ -68,9 +68,8 @@ bool ParseOptions(vpack::Slice slice, MinHashTokenizer::Options& options) {
     return false;
   }
   if (!analyzers::MakeAnalyzer(slice, options.analyzer)) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("Invalid analyzer definition in ",
-                           slice_to_string(slice), kParseError));
+    SDB_ERROR(IRESEARCH, absl::StrCat("Invalid analyzer definition in ",
+                                      slice_to_string(slice), kParseError));
     return false;
   }
   return true;
@@ -83,8 +82,7 @@ std::shared_ptr<vpack::Builder> ParseArgs(std::string_view args) try {
             absl::StrCat("Caught exception: ", e.what(), kParseError));
   return {};
 } catch (...) {
-  SDB_ERROR(IRESEARCH,
-            absl::StrCat("Caught unknown exception", kParseError));
+  SDB_ERROR(IRESEARCH, absl::StrCat("Caught unknown exception", kParseError));
   return {};
 }
 
@@ -106,9 +104,8 @@ bool NormalizeImpl(vpack::Slice input, vpack::Builder& output) {
   vpack::ObjectBuilder scope{&output};
   output.add(kNumHashes, num_hashes);
   if (!analyzers::NormalizeAnalyzer(input, output)) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("Invalid analyzer definition in ",
-                           slice_to_string(input), kParseError));
+    SDB_ERROR(IRESEARCH, absl::StrCat("Invalid analyzer definition in ",
+                                      slice_to_string(input), kParseError));
     return false;
   }
   return true;
@@ -116,8 +113,7 @@ bool NormalizeImpl(vpack::Slice input, vpack::Builder& output) {
 
 Analyzer::ptr MakeVPack(std::string_view args) {
   if (args.empty()) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("Empty arguments", kParseError));
+    SDB_ERROR(IRESEARCH, absl::StrCat("Empty arguments", kParseError));
     return {};
   }
   vpack::Slice slice{reinterpret_cast<const uint8_t*>(args.data())};
@@ -126,8 +122,7 @@ Analyzer::ptr MakeVPack(std::string_view args) {
 
 Analyzer::ptr MakeJson(std::string_view args) {
   if (args.empty()) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("Empty arguments", kParseError));
+    SDB_ERROR(IRESEARCH, absl::StrCat("Empty arguments", kParseError));
     return {};
   }
   auto builder = ParseArgs(args);
@@ -139,8 +134,7 @@ Analyzer::ptr MakeJson(std::string_view args) {
 
 bool NormalizeVPack(std::string_view args, std::string& definition) {
   if (args.empty()) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("Empty arguments", kParseError));
+    SDB_ERROR(IRESEARCH, absl::StrCat("Empty arguments", kParseError));
     return false;
   }
   vpack::Slice input{reinterpret_cast<const uint8_t*>(args.data())};
@@ -154,8 +148,7 @@ bool NormalizeVPack(std::string_view args, std::string& definition) {
 
 bool NormalizeJson(std::string_view args, std::string& definition) {
   if (args.empty()) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("Empty arguments", kParseError));
+    SDB_ERROR(IRESEARCH, absl::StrCat("Empty arguments", kParseError));
     return false;
   }
   auto input = ParseArgs(args);

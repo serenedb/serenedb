@@ -280,7 +280,8 @@ duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
         case duckdb::PhysicalType::UINT32:
           return ReadScalarColumn<uint32_t>(it, output, max_rows);
         default:
-          SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED, "Unsupported ENUM physical type");
+          SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED,
+                    "Unsupported ENUM physical type");
       }
     default:
       SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED, "Unsupported vector type");
@@ -457,7 +458,8 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
           duckdb::FlatVector::GetDataMutable<uint32_t>(output)[idx] = v;
         } break;
         default:
-          SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED, "Unsupported ENUM physical type");
+          SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED,
+                    "Unsupported ENUM physical type");
       }
     } break;
     default:

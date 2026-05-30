@@ -152,7 +152,8 @@ inline void IndexMetaWriterImpl::rollback() noexcept {
   try {
     seg_file = PendingFileName(_pending_gen);
   } catch (const std::exception& e) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat(
         "Caught error while generating file name for index meta, reason: ",
         e.what()));

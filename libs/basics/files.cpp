@@ -575,8 +575,7 @@ ErrorCode SdbRemoveEmptyDirectory(const char* filename) {
 
 ErrorCode SdbRemoveDirectory(const char* filename) {
   if (SdbIsSymbolicLink(filename)) {
-    SDB_TRACE(GENERAL, "removing symbolic link '", filename,
-              "'");
+    SDB_TRACE(GENERAL, "removing symbolic link '", filename, "'");
     return SdbUnlinkFile(filename);
   } else if (SdbIsDirectory(filename)) {
     SDB_TRACE(GENERAL, "removing directory '", filename, "'");
@@ -603,8 +602,8 @@ ErrorCode SdbRemoveDirectory(const char* filename) {
 
     return SdbUnlinkFile(filename);
   } else {
-    SDB_TRACE(GENERAL,
-              "attempt to remove non-existing file/directory '", filename, "'");
+    SDB_TRACE(GENERAL, "attempt to remove non-existing file/directory '",
+              filename, "'");
 
     // TODO: why do we actually return "no error" here?
     return ERROR_OK;
@@ -1433,10 +1432,10 @@ std::string SdbGetTempPath() {
       // this may be a race, a permissions problem or something else
       if (++tries >= 10) {
 #ifdef SDB_DEV
-        SDB_ERROR(GENERAL, "UserTempPath: ", gUserTempPath,
-                  ", system: ", system, ", user temp path exists: ",
-                  SdbIsDirectory(gUserTempPath.c_str()), ", res: ", res,
-                  ", SystemTempPath: ", gSystemTempPath.get());
+        SDB_ERROR(
+          GENERAL, "UserTempPath: ", gUserTempPath, ", system: ", system,
+          ", user temp path exists: ", SdbIsDirectory(gUserTempPath.c_str()),
+          ", res: ", res, ", SystemTempPath: ", gSystemTempPath.get());
 #endif
         SDB_FATAL(GENERAL,
                   "failed to create a temporary directory - giving up!");

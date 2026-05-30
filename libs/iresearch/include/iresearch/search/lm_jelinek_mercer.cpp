@@ -72,8 +72,7 @@ Scorer::ptr MakeFromObject(const vpack::Slice slice) {
   }
   if (params.lambda <= 0.f || params.lambda > 1.f ||
       !std::isfinite(params.lambda)) {
-    SDB_ERROR(IRESEARCH,
-              "lm_jm lambda must be in (0, 1]");
+    SDB_ERROR(IRESEARCH, "lm_jm lambda must be in (0, 1]");
     return {};
   }
   return std::make_unique<LMJelinekMercer>(params.lambda);
@@ -89,8 +88,7 @@ Scorer::ptr MakeFromArray(const vpack::Slice slice) {
   }
   if (params.lambda <= 0.f || params.lambda > 1.f ||
       !std::isfinite(params.lambda)) {
-    SDB_ERROR(IRESEARCH,
-              "lm_jm lambda must be in (0, 1]");
+    SDB_ERROR(IRESEARCH, "lm_jm lambda must be in (0, 1]");
     return {};
   }
   return std::make_unique<LMJelinekMercer>(params.lambda);
@@ -103,8 +101,7 @@ Scorer::ptr MakeVPack(const vpack::Slice slice) {
     case vpack::ValueType::Array:
       return MakeFromArray(slice);
     default:
-      SDB_ERROR(IRESEARCH,
-                "Invalid VPack arguments for lm_jm scorer");
+      SDB_ERROR(IRESEARCH, "Invalid VPack arguments for lm_jm scorer");
       return nullptr;
   }
 }

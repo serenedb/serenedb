@@ -100,11 +100,11 @@ void GeneralServer::startListening(EndpointList& list) {
     bool ok = openEndpoint(io_context, &ep);
 
     if (ok) {
-      SDB_DEBUG(GENERAL, "bound to endpoint '",
-                specification, "'");
+      SDB_DEBUG(GENERAL, "bound to endpoint '", specification, "'");
     } else {
-      SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_BIND_PORT,
-        "failed to bind to endpoint '", specification,
+      SDB_FATAL_EXIT_CODE(
+        GENERAL, EXIT_COULD_NOT_BIND_PORT, "failed to bind to endpoint '",
+        specification,
         "'. Please check whether another instance is already "
         "running using this endpoint and review your endpoints "
         "configuration.");
@@ -198,8 +198,7 @@ Result GeneralServer::reloadTLS() {
   try {
     {
       std::lock_guard guard(_ssl_context_mutex);
-      _ssl_contexts =
-        SslServerFeature::instance().createSslContexts();
+      _ssl_contexts = SslServerFeature::instance().createSslContexts();
       if (_ssl_contexts->size() > 0) {
         // Set a client hello callback such that we have a chance to change the
         // SSL context:
@@ -215,7 +214,8 @@ Result GeneralServer::reloadTLS() {
     }
     return {};
   } catch (std::exception& e) {
-    SDB_ERROR(SSL,
+    SDB_ERROR(
+      SSL,
       "Could not reload TLS context from files, got exception with this "
       "error: ",
       e.what());

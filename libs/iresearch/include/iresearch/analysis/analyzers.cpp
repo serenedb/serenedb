@@ -169,8 +169,7 @@ bool Normalize(std::string& out, std::string_view name,
 
     return normalizer ? normalizer(args, out) : false;
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught exception while normalizing analyzer '", name,
+    SDB_ERROR(IRESEARCH, "Caught exception while normalizing analyzer '", name,
               "' arguments");
   }
 
@@ -187,8 +186,7 @@ Analyzer::ptr Get(std::string_view name, const TypeInfo& args_format,
 
     return factory ? factory(args) : nullptr;
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught exception while getting an analyzer instance");
+    SDB_ERROR(IRESEARCH, "Caught exception while getting an analyzer instance");
   }
 
   return nullptr;

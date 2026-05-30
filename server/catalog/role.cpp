@@ -76,8 +76,7 @@ ErrorCode HexHashFromData(std::string_view hash_method, std::string_view str,
     crypted_length = 16;
   } else {
     // invalid algorithm...
-    SDB_DEBUG(GENERAL,
-              "invalid algorithm for hexHashFromData: ", hash_method);
+    SDB_DEBUG(GENERAL, "invalid algorithm for hexHashFromData: ", hash_method);
     return ERROR_BAD_PARAMETER;
   }
 
@@ -297,8 +296,8 @@ void catalog::Role::grantDatabase(std::string_view database,
               StaticStrings::kDefaultUser, "' to ",
               StaticStrings::kDefaultDatabase);
   }
-  SDB_DEBUG(GENERAL, _name, ": Granting ",
-            ConvertFromAuthLevel(level), " on ", database);
+  SDB_DEBUG(GENERAL, _name, ": Granting ", ConvertFromAuthLevel(level), " on ",
+            database);
 
   auto it = _db_access.find(database);
   if (it != _db_access.end()) {
@@ -314,7 +313,8 @@ void catalog::Role::grantDatabase(std::string_view database,
 /// Removes the entry, returns true if entry existed
 bool catalog::Role::removeDatabase(std::string_view database) {
   if (database.empty()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "Cannot remove rights for empty db name");
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              "Cannot remove rights for empty db name");
   }
   if (_name == StaticStrings::kDefaultUser &&
       database == StaticStrings::kDefaultDatabase) {
@@ -322,8 +322,7 @@ bool catalog::Role::removeDatabase(std::string_view database) {
               StaticStrings::kDefaultUser, "' to ",
               StaticStrings::kDefaultDatabase);
   }
-  SDB_DEBUG(GENERAL, _name, ": Removing grant on ",
-            database);
+  SDB_DEBUG(GENERAL, _name, ": Removing grant on ", database);
   return _db_access.erase(database) > 0;
 }
 

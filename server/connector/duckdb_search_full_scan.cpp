@@ -417,7 +417,9 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
     }
 
     if (gstate.has_external_projections) {
-      SDB_IF_FAILURE("SearchRocksDBLookupFault") { SDB_THROW(sdb::ERROR_DEBUG); }
+      SDB_IF_FAILURE("SearchRocksDBLookupFault") {
+        SDB_THROW(sdb::ERROR_DEBUG);
+      }
       gstate.index_source->Materialize(context, gstate.pk_batch,
                                        gstate.topk_offset, num_rows, output);
     }
@@ -657,7 +659,9 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
 
   if (collected > 0) {
     if (gstate.has_external_projections) {
-      SDB_IF_FAILURE("SearchRocksDBLookupFault") { SDB_THROW(sdb::ERROR_DEBUG); }
+      SDB_IF_FAILURE("SearchRocksDBLookupFault") {
+        SDB_THROW(sdb::ERROR_DEBUG);
+      }
       gstate.index_source->Materialize(context, gstate.pk_batch, 0, collected,
                                        output);
     }

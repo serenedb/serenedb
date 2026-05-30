@@ -271,7 +271,8 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
       key_utils::SetupColumnForKey(key_buffer, col.id);
       auto status = txn->Delete(gstate.cf, key_buffer);
       if (!status.ok()) {
-        SDB_THROW(sdb::ERROR_INTERNAL, "RocksDB delete failed: ", status.ToString());
+        SDB_THROW(sdb::ERROR_INTERNAL,
+                  "RocksDB delete failed: ", status.ToString());
       }
     }
 

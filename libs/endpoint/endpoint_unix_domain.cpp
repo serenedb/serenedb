@@ -56,16 +56,15 @@ SocketWrapper EndpointUnixDomain::connect(double connect_timeout,
   SocketWrapper listen_socket;
   Sdbinvalidatesocket(&listen_socket);
 
-  SDB_DEBUG(GENERAL, "connecting to unix endpoint '",
-            _specification, "'");
+  SDB_DEBUG(GENERAL, "connecting to unix endpoint '", _specification, "'");
 
   SDB_ASSERT(!Sdbisvalidsocket(_socket));
   SDB_ASSERT(!_connected);
 
   listen_socket = Sdbsocket(AF_UNIX, SOCK_STREAM, 0);
   if (!Sdbisvalidsocket(listen_socket)) {
-    SDB_ERROR(GENERAL, "socket() failed with ", errno, " (",
-              strerror(errno), ")");
+    SDB_ERROR(GENERAL, "socket() failed with ", errno, " (", strerror(errno),
+              ")");
     return listen_socket;
   }
 
@@ -80,21 +79,20 @@ SocketWrapper EndpointUnixDomain::connect(double connect_timeout,
                          (int)SUN_LEN(&address));
     if (result != 0) {
       // bind error
-      SDB_ERROR(GENERAL, "bind() failed with ", errno, " (",
-                strerror(errno), ")");
+      SDB_ERROR(GENERAL, "bind() failed with ", errno, " (", strerror(errno),
+                ")");
       Sdbclosesocket(listen_socket);
       Sdbinvalidatesocket(&listen_socket);
       return listen_socket;
     }
 
     // listen for new connection, executed for server endpoints only
-    SDB_TRACE(GENERAL, "using backlog size ",
-              _listen_backlog);
+    SDB_TRACE(GENERAL, "using backlog size ", _listen_backlog);
     result = Sdblisten(listen_socket, _listen_backlog);
 
     if (result < 0) {
-      SDB_ERROR(GENERAL, "listen() failed with ", errno,
-                " (", strerror(errno), ")");
+      SDB_ERROR(GENERAL, "listen() failed with ", errno, " (", strerror(errno),
+                ")");
       Sdbclosesocket(listen_socket);
       Sdbinvalidatesocket(&listen_socket);
       return listen_socket;
@@ -142,8 +140,8 @@ void EndpointUnixDomain::disconnect() {
 
     if (_type == EndpointType::Server) {
       if (file_utils::Remove(_path) != ERROR_OK) {
-        SDB_TRACE(GENERAL, "unable to remove socket file '",
-                  _path, "': ", LastError());
+        SDB_TRACE(GENERAL, "unable to remove socket file '", _path,
+                  "': ", LastError());
       }
     }
   }

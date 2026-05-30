@@ -297,17 +297,15 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
     ParseClientParameters(packet.substr(8));
     if (UserName().empty()) {
       // user name is mandatory and should always be present
-      SDB_WARN(HTTP,
-               "User name not set. Terminating connection ",
+      SDB_WARN(HTTP, "User name not set. Terminating connection ",
                std::bit_cast<size_t>(this));
       return;
     }
 
     // Pin the catalog snapshot at connection time -- all operations
     // on this connection use the same snapshot until statement/transaction end.
-    auto snapshot = catalog::CatalogFeature::instance()
-                      .Global()
-                      .GetCatalogSnapshot();
+    auto snapshot =
+      catalog::CatalogFeature::instance().Global().GetCatalogSnapshot();
     auto database = snapshot->GetDatabase(DatabaseName());
     if (!database) {
       return SendError(
@@ -443,8 +441,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       SendError("NO IMPLEMENTED", ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION);
     }
   } else {
-    SDB_WARN(HTTP, "Unknown packet:", protocol_ver,
-             " connection aborted");
+    SDB_WARN(HTTP, "Unknown packet:", protocol_ver, " connection aborted");
   }
 }
 
@@ -1705,8 +1702,7 @@ void PgSQLCommTaskBase::FinishPacket() noexcept try {
     SetIOTimeoutImpl();
   }
 } catch (...) {
-  SDB_ERROR(HTTP,
-            "<pgsql> connection closed due to exception in finalizing ",
+  SDB_ERROR(HTTP, "<pgsql> connection closed due to exception in finalizing ",
             std::bit_cast<size_t>(this));
   Stop();
 }
@@ -1791,8 +1787,7 @@ PgSQLCommTask<T>::PgSQLCommTask(rest::GeneralServer& server,
 
 template<rest::SocketType T>
 void PgSQLCommTask<T>::Start() {
-  SDB_DEBUG(HTTP, "<pgsql> opened connection ",
-            std::bit_cast<size_t>(this));
+  SDB_DEBUG(HTTP, "<pgsql> opened connection ", std::bit_cast<size_t>(this));
   asio_ns::post(this->_protocol->context.io_context,
                 [self = this->shared_from_this()] {
                   if constexpr (T == rest::SocketType::Ssl) {
@@ -1856,8 +1851,7 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
         data += datasize;
         if (this->_state.load() == State::ClientHello &&
             _packet.size() > MAX_STARTUP_PACKET_LENGTH) {
-          SDB_DEBUG(HTTP,
-                    "Too long startup packet. Dropping connection ptr",
+          SDB_DEBUG(HTTP, "Too long startup packet. Dropping connection ptr",
                     std::bit_cast<size_t>(this));
           this->Close();
           return false;
@@ -1911,9 +1905,8 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
                                  asio_ns::buffer(kYes));
                   auto cb = [this](const asio_ns::error_code& ec) mutable {
                     if (ec) {
-                      SDB_DEBUG(HTTP,
-                                "error during TLS handshake: '", ec.message(),
-                                "'");
+                      SDB_DEBUG(HTTP, "error during TLS handshake: '",
+                                ec.message(), "'");
                       this->Stop();
                       return;
                     }
@@ -1971,11 +1964,9 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
   } else {
     // got a connection error
     if (ec == asio_ns::error::misc_errors::eof) {
-      SDB_TRACE(HTTP, "Eof with ptr ",
-                std::bit_cast<size_t>(this));
+      SDB_TRACE(HTTP, "Eof with ptr ", std::bit_cast<size_t>(this));
     } else {
-      SDB_DEBUG(HTTP, "Error while reading from socket: '",
-                ec.message(), "'");
+      SDB_DEBUG(HTTP, "Error while reading from socket: '", ec.message(), "'");
       this->Close(ec);
       return false;
     }

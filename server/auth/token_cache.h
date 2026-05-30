@@ -38,7 +38,9 @@ struct TokenCache {
     void setExpiry(double expiry) noexcept { _expiry = expiry; }
     double expiry() const noexcept { return _expiry; }
     bool expired() const noexcept { return false; }
-    const std::vector<std::string>& allowedPaths() const { return _allowed_paths; }
+    const std::vector<std::string>& allowedPaths() const {
+      return _allowed_paths;
+    }
 
     std::string _username;
     std::vector<std::string> _allowed_paths;

@@ -118,10 +118,10 @@ class SearchThreadPools {
 SearchEngine::SearchEngine()
   : _dir_feature{DatabasePathFeature::instance()},
     _thread_pools(std::make_shared<SearchThreadPools>()),
-    _out_of_sync_links(metrics::GetMetrics().add(
-      serenedb_search_num_out_of_sync_links{})),
-    _columns_cache_memory_used(metrics::GetMetrics().add(
-      serenedb_search_columns_cache_size{})) {
+    _out_of_sync_links(
+      metrics::GetMetrics().add(serenedb_search_num_out_of_sync_links{})),
+    _columns_cache_memory_used(
+      metrics::GetMetrics().add(serenedb_search_columns_cache_size{})) {
   gInstance = this;
 }
 
@@ -139,12 +139,9 @@ void SearchEngine::validateOptions() {
     static_cast<uint32_t>(number_of_cores::GetValue());
 }
 
-SearchEngine& GetSearchEngine() {
-  return SearchEngine::instance();
-}
+SearchEngine& GetSearchEngine() { return SearchEngine::instance(); }
 
 void SearchEngine::prepare() {
-
   ::irs::analysis::ClassificationTokenizer::set_model_provider(
     &fast_text::CreateModel<fasttext::FastText>);
   ::irs::analysis::NearestNeighborsTokenizer::set_model_provider(
@@ -162,7 +159,6 @@ void SearchEngine::prepare() {
 }
 
 void SearchEngine::start() {
-
   if (ServerState::instance()->IsDBServer() ||
       ServerState::instance()->IsSingle()) {
     SDB_ASSERT(_commit_threads);
@@ -175,18 +171,16 @@ void SearchEngine::start() {
 
     InitInvertedIndexes(_skip_wal_recovery);
 
-    SDB_INFO(SEARCH, "Search maintenance: [", _commit_threads,
-             "..", _commit_threads, "] commit thread(s), [",
-             _compaction_threads, "..", _compaction_threads,
+    SDB_INFO(SEARCH, "Search maintenance: [", _commit_threads, "..",
+             _commit_threads, "] commit thread(s), [", _compaction_threads,
+             "..", _compaction_threads,
              "] compaction thread(s). Search execution parallel threads "
              "limit: ",
              _search_execution_threads_limit);
   }
 }
 
-void SearchEngine::stop() {
-  _thread_pools->Stop();
-}
+void SearchEngine::stop() { _thread_pools->Stop(); }
 
 void SearchEngine::unprepare() {}
 
@@ -203,10 +197,9 @@ bool SearchEngine::Queue(ThreadGroup id, absl::Duration delay,
   }
 
   if (!lifecycle::IsStopping()) {
-    SDB_WARN(SEARCH,
-             "Caught exception while sumbitting a task to thread group '",
-             std::underlying_type_t<ThreadGroup>(id),
-             "', error: ", r.errorMessage());
+    SDB_WARN(
+      SEARCH, "Caught exception while sumbitting a task to thread group '",
+      std::underlying_type_t<ThreadGroup>(id), "', error: ", r.errorMessage());
   }
 
   return false;

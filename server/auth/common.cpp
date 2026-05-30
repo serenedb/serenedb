@@ -41,7 +41,8 @@ auth::Level sdb::auth::ConvertToAuthLevel(std::string_view grants) {
   } else if (grants == "none" || grants.empty()) {
     return auth::Level::None;
   }
-  SDB_THROW(sdb::ERROR_BAD_PARAMETER, "expecting access type 'rw', 'ro' or 'none'");
+  SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+            "expecting access type 'rw', 'ro' or 'none'");
 }
 
 std::string_view sdb::auth::ConvertFromAuthLevel(auth::Level lvl) {

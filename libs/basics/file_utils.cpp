@@ -666,8 +666,7 @@ std::string SlurpProgramInternal(std::string_view program,
     auto res = ERROR_SYS_ERROR;
     SetError(res);
 
-    SDB_TRACE(GENERAL, "open failed for file '", program,
-              "': ", LastError());
+    SDB_TRACE(GENERAL, "open failed for file '", program, "': ", LastError());
     SDB_THROW(res);
   }
   process = LookupSpawnedProcess(external.pid);
@@ -675,8 +674,7 @@ std::string SlurpProgramInternal(std::string_view program,
     auto res = ERROR_SYS_ERROR;
     SetError(res);
 
-    SDB_TRACE(GENERAL, "process gone? '", program,
-              "': ", LastError());
+    SDB_TRACE(GENERAL, "process gone? '", program, "': ", LastError());
     SDB_THROW(res);
   }
   bool error = false;

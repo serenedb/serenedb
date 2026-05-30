@@ -115,8 +115,8 @@ bool Utf8Helper::setCollatorLanguage(const std::string& lang, LanguageType type,
   }
 
   if (U_FAILURE(status)) {
-    SDB_ERROR(GENERAL, "error in Collator::createInstance('",
-              lang, "'): ", u_errorName(status));
+    SDB_ERROR(GENERAL, "error in Collator::createInstance('", lang,
+              "'): ", u_errorName(status));
     return false;
   }
 

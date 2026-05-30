@@ -39,7 +39,6 @@ using namespace sdb::basics;
 namespace sdb {
 
 EndpointFeature::EndpointFeature() {
-
   // if our default value is too high, we'll use half of the max value provided
   // by the system
   if (_backlog_size > SOMAXCONN) {
@@ -60,8 +59,8 @@ void EndpointFeature::validateOptions() {
   }
   if (_endpoints.empty()) {
     _endpoints.emplace_back("pgsql+tcp://127.0.0.1:7890");
-    SDB_INFO(GENERAL,
-      "no endpoints have been specified, using default: ", _endpoints.back());
+    SDB_INFO(GENERAL, "no endpoints have been specified, using default: ",
+             _endpoints.back());
   }
   buildEndpointLists();
 }

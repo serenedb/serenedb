@@ -20,7 +20,7 @@
 //
 // Minimal synchronous logger. Writes formatted lines to stderr. The
 // SDB_TRACE/DEBUG/INFO/WARN/ERROR/FATAL macros take a topic *identifier*
-// (e.g. GENERAL / STARTUP — see topic.h) plus absl::StrCat-style args.
+// (e.g. GENERAL / STARTUP -- see topic.h) plus absl::StrCat-style args.
 // The macro prepends `::sdb::log::` to the topic name so call sites are
 // short.
 
@@ -96,66 +96,71 @@ inline bool IsEnabled(LogLevel level) noexcept {
 
 inline bool IsEnabled(LogLevel level, std::string_view topic) noexcept {
   const auto topic_level = TopicLevel(topic);
-  return level <= (topic_level == LogLevel::DEFAULT ? GetLogLevel()
-                                                    : topic_level);
+  return level <=
+         (topic_level == LogLevel::DEFAULT ? GetLogLevel() : topic_level);
 }
 
 }  // namespace sdb::log
 
 // ---- macros ---------------------------------------------------------------
 
-#define SDB_LOG_INTERNAL(LEVEL_TAG, TOPIC, ...)                                \
-  do {                                                                         \
-    constexpr ::sdb::LogLevel kSdbLevel = ::sdb::LogLevel::LEVEL_TAG;          \
-    if (::sdb::log::IsEnabled(kSdbLevel, ::sdb::log::TOPIC)) {                 \
-      ::sdb::log::Log(kSdbLevel, ::sdb::log::TOPIC,                            \
-                      ::absl::StrCat(__VA_ARGS__));                            \
-    }                                                                          \
+#define SDB_LOG_INTERNAL(LEVEL_TAG, TOPIC, ...)                       \
+  do {                                                                \
+    constexpr ::sdb::LogLevel kSdbLevel = ::sdb::LogLevel::LEVEL_TAG; \
+    if (::sdb::log::IsEnabled(kSdbLevel, ::sdb::log::TOPIC)) {        \
+      ::sdb::log::Log(kSdbLevel, ::sdb::log::TOPIC,                   \
+                      ::absl::StrCat(__VA_ARGS__));                   \
+    }                                                                 \
   } while (0)
 
-#define SDB_LOG_INTERNAL_IF(LEVEL_TAG, TOPIC, COND, ...)                       \
-  do {                                                                         \
-    if ((COND)) {                                                              \
-      SDB_LOG_INTERNAL(LEVEL_TAG, TOPIC, __VA_ARGS__);                         \
-    }                                                                          \
+#define SDB_LOG_INTERNAL_IF(LEVEL_TAG, TOPIC, COND, ...) \
+  do {                                                   \
+    if ((COND)) {                                        \
+      SDB_LOG_INTERNAL(LEVEL_TAG, TOPIC, __VA_ARGS__);   \
+    }                                                    \
   } while (0)
 
 #define SDB_TRACE(TOPIC, ...) SDB_LOG_INTERNAL(TRACE, TOPIC, __VA_ARGS__)
-#define SDB_DEBUG(TOPIC, ...) SDB_LOG_INTERNAL(DEB,   TOPIC, __VA_ARGS__)
-#define SDB_INFO(TOPIC,  ...) SDB_LOG_INTERNAL(INFO,  TOPIC, __VA_ARGS__)
-#define SDB_WARN(TOPIC,  ...) SDB_LOG_INTERNAL(WARN,  TOPIC, __VA_ARGS__)
-#define SDB_ERROR(TOPIC, ...) SDB_LOG_INTERNAL(ERR,   TOPIC, __VA_ARGS__)
+#define SDB_DEBUG(TOPIC, ...) SDB_LOG_INTERNAL(DEB, TOPIC, __VA_ARGS__)
+#define SDB_INFO(TOPIC, ...) SDB_LOG_INTERNAL(INFO, TOPIC, __VA_ARGS__)
+#define SDB_WARN(TOPIC, ...) SDB_LOG_INTERNAL(WARN, TOPIC, __VA_ARGS__)
+#define SDB_ERROR(TOPIC, ...) SDB_LOG_INTERNAL(ERR, TOPIC, __VA_ARGS__)
 
-#define SDB_FATAL(TOPIC, ...)                                                  \
-  do {                                                                         \
-    SDB_LOG_INTERNAL(FATAL, TOPIC, __VA_ARGS__);                               \
-    ::sdb::FatalErrorExit();                                                   \
+#define SDB_FATAL(TOPIC, ...)                    \
+  do {                                           \
+    SDB_LOG_INTERNAL(FATAL, TOPIC, __VA_ARGS__); \
+    ::sdb::FatalErrorExit();                     \
   } while (0)
 
-#define SDB_FATAL_EXIT_CODE(TOPIC, CODE, ...)                                  \
-  do {                                                                         \
-    SDB_LOG_INTERNAL(FATAL, TOPIC, __VA_ARGS__);                               \
-    ::sdb::FatalErrorExitCode(CODE);                                           \
+#define SDB_FATAL_EXIT_CODE(TOPIC, CODE, ...)    \
+  do {                                           \
+    SDB_LOG_INTERNAL(FATAL, TOPIC, __VA_ARGS__); \
+    ::sdb::FatalErrorExitCode(CODE);             \
   } while (0)
 
 // Generic (level supplied by caller). LEVEL_TAG must be one of TRACE/DEB/
-// INFO/WARN/ERR/FATAL — the symbolic part of `LogLevel::LEVEL_TAG`.
+// INFO/WARN/ERR/FATAL -- the symbolic part of `LogLevel::LEVEL_TAG`.
 #define SDB_LOG(LEVEL_TAG, TOPIC, ...) \
   SDB_LOG_INTERNAL(LEVEL_TAG, TOPIC, __VA_ARGS__)
 #define SDB_LOG_IF(LEVEL_TAG, TOPIC, COND, ...) \
   SDB_LOG_INTERNAL_IF(LEVEL_TAG, TOPIC, COND, __VA_ARGS__)
 
-#define SDB_TRACE_IF(TOPIC, COND, ...) SDB_LOG_INTERNAL_IF(TRACE, TOPIC, COND, __VA_ARGS__)
-#define SDB_DEBUG_IF(TOPIC, COND, ...) SDB_LOG_INTERNAL_IF(DEB,   TOPIC, COND, __VA_ARGS__)
-#define SDB_INFO_IF(TOPIC,  COND, ...) SDB_LOG_INTERNAL_IF(INFO,  TOPIC, COND, __VA_ARGS__)
-#define SDB_WARN_IF(TOPIC,  COND, ...) SDB_LOG_INTERNAL_IF(WARN,  TOPIC, COND, __VA_ARGS__)
-#define SDB_ERROR_IF(TOPIC, COND, ...) SDB_LOG_INTERNAL_IF(ERR,   TOPIC, COND, __VA_ARGS__)
-#define SDB_FATAL_IF(TOPIC, COND, ...)                                         \
-  do {                                                                         \
-    if ((COND)) {                                                              \
-      SDB_LOG_INTERNAL(FATAL, TOPIC, __VA_ARGS__);                             \
-      ::sdb::FatalErrorExit();                                                 \
-    }                                                                          \
+#define SDB_TRACE_IF(TOPIC, COND, ...) \
+  SDB_LOG_INTERNAL_IF(TRACE, TOPIC, COND, __VA_ARGS__)
+#define SDB_DEBUG_IF(TOPIC, COND, ...) \
+  SDB_LOG_INTERNAL_IF(DEB, TOPIC, COND, __VA_ARGS__)
+#define SDB_INFO_IF(TOPIC, COND, ...) \
+  SDB_LOG_INTERNAL_IF(INFO, TOPIC, COND, __VA_ARGS__)
+#define SDB_WARN_IF(TOPIC, COND, ...) \
+  SDB_LOG_INTERNAL_IF(WARN, TOPIC, COND, __VA_ARGS__)
+#define SDB_ERROR_IF(TOPIC, COND, ...) \
+  SDB_LOG_INTERNAL_IF(ERR, TOPIC, COND, __VA_ARGS__)
+#define SDB_FATAL_IF(TOPIC, COND, ...)             \
+  do {                                             \
+    if ((COND)) {                                  \
+      SDB_LOG_INTERNAL(FATAL, TOPIC, __VA_ARGS__); \
+      ::sdb::FatalErrorExit();                     \
+    }                                              \
   } while (0)
 
 #ifdef SDB_DEV
@@ -164,7 +169,7 @@ inline bool IsEnabled(LogLevel level, std::string_view topic) noexcept {
 #define SDB_PRINT_LEVEL TRACE
 #endif
 
-#define SDB_PRINT(...)                                                         \
+#define SDB_PRINT(...) \
   SDB_LOG_INTERNAL(SDB_PRINT_LEVEL, GENERAL, "###### ", __VA_ARGS__)
-#define SDB_PRINT_IF(COND, ...)                                                \
+#define SDB_PRINT_IF(COND, ...) \
   SDB_LOG_INTERNAL_IF(SDB_PRINT_LEVEL, GENERAL, (COND), "###### ", __VA_ARGS__)

@@ -82,8 +82,7 @@ uint64_t RestHandler::messageId() const {
   } else if (res) {
     message_id = res->messageId();
   } else {
-    SDB_WARN(HTTP,
-             "could not find corresponding request/response");
+    SDB_WARN(HTTP, "could not find corresponding request/response");
   }
 
   return message_id;
@@ -171,7 +170,7 @@ void RestHandler::SetRequestStatistics(RequestStatistics::Item&& stat) {
 }
 
 yaclib::Future<Result> RestHandler::forwardRequest(bool& forwarded) {
-  // The full forwarding path was an ArangoDB Coordinator → DBServer hop
+  // The full forwarding path was an ArangoDB Coordinator -> DBServer hop
   // through the cluster-internal fuerte RPC pool. SereneDB has no
   // Coordinator role, so the function short-circuits.
   forwarded = false;
@@ -239,8 +238,7 @@ void RestHandler::runHandlerStateMachine() {
         executeEngine(/*isContinue*/ false);
         if (_state == HandlerState::Paused) {
           shutdownExecute(false);
-          SDB_DEBUG(HTTP,
-                    "Pausing rest handler execution ",
+          SDB_DEBUG(HTTP, "Pausing rest handler execution ",
                     std::bit_cast<size_t>(this));
           return;  // stop state machine
         }
@@ -251,8 +249,7 @@ void RestHandler::runHandlerStateMachine() {
         executeEngine(/*isContinue*/ true);
         if (_state == HandlerState::Paused) {
           shutdownExecute(/*isFinalized*/ false);
-          SDB_DEBUG(HTTP,
-                    "Pausing rest handler execution ",
+          SDB_DEBUG(HTTP, "Pausing rest handler execution ",
                     std::bit_cast<size_t>(this));
           return;  // stop state machine
         }
@@ -260,8 +257,7 @@ void RestHandler::runHandlerStateMachine() {
       }
 
       case HandlerState::Paused:
-        SDB_DEBUG(HTTP,
-                  "Resuming rest handler execution ",
+        SDB_DEBUG(HTTP, "Resuming rest handler execution ",
                   std::bit_cast<size_t>(this));
         _state = HandlerState::Continued;
         break;
@@ -365,15 +361,14 @@ void RestHandler::executeEngine(bool is_continue) {
     return;
   } catch (const Exception& ex) {
 #ifdef SDB_DEV
-    SDB_WARN(GENERAL,
-             "maintainer mode: caught exception in ", name(), ": ", ex.what());
+    SDB_WARN(GENERAL, "maintainer mode: caught exception in ", name(), ": ",
+             ex.what());
 #endif
     handleError(ex);
   } catch (const vpack::Exception& ex) {
 #ifdef SDB_DEV
-    SDB_WARN(GENERAL,
-             "maintainer mode: caught vpack exception in ", name(), ": ",
-             ex.what());
+    SDB_WARN(GENERAL, "maintainer mode: caught vpack exception in ", name(),
+             ": ", ex.what());
 #endif
     const bool is_parse_error =
       (ex.errorCode() == vpack::Exception::kParseError ||
@@ -384,24 +379,22 @@ void RestHandler::executeEngine(bool is_continue) {
     handleError(err);
   } catch (const std::bad_alloc& ex) {
 #ifdef SDB_DEV
-    SDB_WARN(GENERAL,
-             "maintainer mode: caught memory exception in ", name(), ": ",
-             ex.what());
+    SDB_WARN(GENERAL, "maintainer mode: caught memory exception in ", name(),
+             ": ", ex.what());
 #endif
     Exception err(ERROR_OUT_OF_MEMORY, ex.what(),
                   std::source_location::current());
     handleError(err);
   } catch (const std::exception& ex) {
 #ifdef SDB_DEV
-    SDB_WARN(GENERAL,
-             "maintainer mode: caught exception in ", name(), ": ", ex.what());
+    SDB_WARN(GENERAL, "maintainer mode: caught exception in ", name(), ": ",
+             ex.what());
 #endif
     Exception err(ERROR_INTERNAL, ex.what(), std::source_location::current());
     handleError(err);
   } catch (...) {
 #ifdef SDB_DEV
-    SDB_WARN(GENERAL,
-             "maintainer mode: caught unknown exception in ", name());
+    SDB_WARN(GENERAL, "maintainer mode: caught unknown exception in ", name());
 #endif
     Exception err(ERROR_INTERNAL, std::source_location::current());
     handleError(err);

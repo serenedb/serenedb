@@ -151,9 +151,7 @@ target_compile_definitions(iresearch-static PRIVATE -DDISABLE_EXECINFO)
 ## serene
 ################################################################################
 
-set(LIB_SERVER_POSIX
-    endpoint/endpoint_unix_domain.cpp
-)
+set(LIB_SERVER_POSIX endpoint/endpoint_unix_domain.cpp)
 
 set(LIB_SERVER_DATE ${CMAKE_SOURCE_DIR}/third_party/date/src/tz.cpp)
 
@@ -178,10 +176,7 @@ add_library(
     rest/version.cpp
 )
 
-target_link_libraries(
-    serene
-    PUBLIC s2 boost_boost vpack date_interface
-)
+target_link_libraries(serene PUBLIC s2 boost_boost vpack date_interface)
 
 # this is "."
 target_include_directories(serene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

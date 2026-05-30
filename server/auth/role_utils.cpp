@@ -43,12 +43,11 @@ std::atomic_uint64_t gGlobalVersion = 1;
 }  // namespace
 
 Result CreateRootRole(bool skip_if_exists) {
-  auto& catalog =
-    catalog::CatalogFeature::instance().Global();
+  auto& catalog = catalog::CatalogFeature::instance().Global();
 
   auto create_root = [&]() {
     // No `--database.password` flag anymore; root role gets an empty
-    // password — auth is intentionally absent until the post-RBAC redesign.
+    // password -- auth is intentionally absent until the post-RBAC redesign.
     auto new_role =
       catalog::Role::NewUser(StaticStrings::kDefaultUser, "", id::kRootUser);
     new_role->grantDatabase(StaticStrings::kDefaultDatabase, Level::RW);
@@ -64,8 +63,7 @@ Result CreateRootRole(bool skip_if_exists) {
     return r;
   }
 
-  SDB_DEBUG(GENERAL, "Creating user \"",
-            StaticStrings::kDefaultUser, "\"");
+  SDB_DEBUG(GENERAL, "Creating user \"", StaticStrings::kDefaultUser, "\"");
   return catalog.CreateRole(create_root());
 }
 
@@ -75,8 +73,7 @@ Result StoreRole(bool replace, std::string_view name, std::string_view password,
     return {ERROR_USER_INVALID_NAME};
   }
 
-  auto& catalog =
-    catalog::CatalogFeature::instance().Global();
+  auto& catalog = catalog::CatalogFeature::instance().Global();
 
   auto create_role = [&]() {
     auto new_role = catalog::Role::NewUser(name, password);
@@ -104,8 +101,7 @@ Result UpdateRole(std::string_view name,
     return {ERROR_USER_INVALID_NAME};
   }
 
-  auto& catalog =
-    catalog::CatalogFeature::instance().Global();
+  auto& catalog = catalog::CatalogFeature::instance().Global();
 
   return catalog.ChangeRole(
     name,
@@ -124,14 +120,12 @@ Result RemoveRole(std::string_view name) {
     return {ERROR_FORBIDDEN};
   }
 
-  auto& catalog =
-    catalog::CatalogFeature::instance().Global();
+  auto& catalog = catalog::CatalogFeature::instance().Global();
   return catalog.DropRole(name);
 }
 
 Result RemoveAllRoles() {
-  auto& catalog =
-    catalog::CatalogFeature::instance().Global();
+  auto& catalog = catalog::CatalogFeature::instance().Global();
   while (true) {
     const auto roles = GetRoles();
     if (roles.empty()) {

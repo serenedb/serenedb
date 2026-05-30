@@ -48,8 +48,8 @@ int Sdbclosesocket(SocketWrapper s) {
 
     if (res == -1) {
       int myerrno = errno;
-      SDB_WARN(GENERAL, "socket close error: ", myerrno,
-               ": ", strerror(myerrno));
+      SDB_WARN(GENERAL, "socket close error: ", myerrno, ": ",
+               strerror(myerrno));
     }
   }
   return res;

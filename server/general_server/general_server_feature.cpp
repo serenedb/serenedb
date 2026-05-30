@@ -44,6 +44,7 @@ ABSL_FLAG(uint64_t, http_compress_response_threshold, 0,
 #include "app/app_server.h"
 #include "basics/application-exit.h"
 #include "basics/debugging.h"
+#include "basics/number_of_cores.h"
 #include "basics/string_utils.h"
 #include "general_server/general_server.h"
 #include "general_server/rest_handler_factory.h"
@@ -55,7 +56,6 @@ ABSL_FLAG(uint64_t, http_compress_response_threshold, 0,
 #include "metrics/gauge_builder.h"
 #include "metrics/histogram_builder.h"
 #include "metrics/metrics_feature.h"
-#include "basics/number_of_cores.h"
 #include "rest/http_response.h"
 #include "rest_server/endpoint_feature.h"
 #include "storage_engine/engine_feature.h"
@@ -81,8 +81,7 @@ DECLARE_GAUGE(serenedb_requests_memory_usage, uint64_t,
               "Memory consumed by incoming requests");
 
 GeneralServerFeature::GeneralServerFeature()
-  :
-    current_requests_size(AddMetric(serenedb_requests_memory_usage{})),
+  : current_requests_size(AddMetric(serenedb_requests_memory_usage{})),
 #ifdef SDB_DEV
     _started_listening(false),
 #endif
@@ -106,7 +105,8 @@ void GeneralServerFeature::validateOptions() {
   }
   _keep_alive_timeout = absl::GetFlag(FLAGS_http_keep_alive_timeout);
   _access_control_allow_origins = absl::GetFlag(FLAGS_http_trusted_origin);
-  _return_queue_time_header = absl::GetFlag(FLAGS_http_return_queue_time_header);
+  _return_queue_time_header =
+    absl::GetFlag(FLAGS_http_return_queue_time_header);
   _compress_response_threshold =
     absl::GetFlag(FLAGS_http_compress_response_threshold);
 
@@ -259,8 +259,7 @@ rest::AsyncJobManager& GeneralServerFeature::jobManager() {
 }
 
 void GeneralServerFeature::buildServers() {
-  EndpointFeature& endpoint =
-    EndpointFeature::instance();
+  EndpointFeature& endpoint = EndpointFeature::instance();
   const auto& endpoint_list = endpoint.endpointList();
 
   // check if endpointList contains ssl featured server
@@ -277,8 +276,7 @@ void GeneralServerFeature::startListening() {
   SDB_ASSERT(!_started_listening);
 #endif
 
-  EndpointFeature& endpoint =
-    EndpointFeature::instance();
+  EndpointFeature& endpoint = EndpointFeature::instance();
   auto& endpoint_list = endpoint.endpointList();
 
   for (auto& server : _servers) {

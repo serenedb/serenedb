@@ -288,8 +288,8 @@ HttpCommTask<T>::~HttpCommTask() = default;
 
 template<SocketType T>
 void HttpCommTask<T>::Start() {
-  SDB_DEBUG(HTTP, "<http> opened connection \"",
-            std::bit_cast<size_t>(this), "\"");
+  SDB_DEBUG(HTTP, "<http> opened connection \"", std::bit_cast<size_t>(this),
+            "\"");
 
   asio_ns::post(
     this->_protocol->context.io_context, [self = this->shared_from_this()] {
@@ -350,16 +350,14 @@ bool HttpCommTask<T>::ReadCallback(asio_ns::error_code ec) {
     if (ec == asio_ns::error::misc_errors::eof) {
       err = llhttp_finish(&_parser);
     } else {
-      SDB_DEBUG(HTTP, "Error while reading from socket: '",
-                ec.message(), "'");
+      SDB_DEBUG(HTTP, "Error while reading from socket: '", ec.message(), "'");
       err = HPE_INVALID_EOF_STATE;
     }
   }
 
   if (err != HPE_OK && err != HPE_USER && err != HPE_CB_HEADERS_COMPLETE) {
     if (err == HPE_INVALID_EOF_STATE) {
-      SDB_TRACE(HTTP,
-                "Connection closed by peer, with ptr ",
+      SDB_TRACE(HTTP, "Connection closed by peer, with ptr ",
                 std::bit_cast<size_t>(this));
     } else {
       SDB_TRACE(HTTP, "HTTP parse failure: '",
@@ -393,8 +391,7 @@ void HttpCommTask<T>::SetIOTimeout() {
 
       auto& me = static_cast<HttpCommTask<T>&>(*s);
       if ((was_reading && me._reading) || (was_writing && me._writing)) {
-        SDB_INFO(HTTP,
-                 "keep alive timeout, closing stream!");
+        SDB_INFO(HTTP, "keep alive timeout, closing stream!");
         static_cast<GeneralCommTask<T>&>(*s).Close(ec);
       }
     });
@@ -463,13 +460,11 @@ void HttpCommTask<T>::ProcessRequest() {
   try {
     DoProcessRequest();
   } catch (const sdb::basics::Exception& ex) {
-    SDB_WARN(HTTP, "request failed with error ", ex.code(),
-             " ", ex.message());
+    SDB_WARN(HTTP, "request failed with error ", ex.code(), " ", ex.message());
     this->SendErrorResponse(GeneralResponse::responseCode(ex.code()),
                             resp_content_type, msg_id, ex.code(), ex.message());
   } catch (const std::exception& ex) {
-    SDB_WARN(HTTP, "request failed with error ",
-             ex.what());
+    SDB_WARN(HTTP, "request failed with error ", ex.what());
     this->SendErrorResponse(ResponseCode::ServerError, resp_content_type,
                             msg_id, ErrorCode(ERROR_FAILED), ex.what());
   }
@@ -504,9 +499,8 @@ void HttpCommTask<T>::DoProcessRequest() {
   _request->appendNullTerminator();
   // no need to increase memory usage here!
   {
-    SDB_INFO(HTTP, "\"http-request-begin\",\"",
-             std::bit_cast<size_t>(this), "\",\"",
-             this->_connection_info.client_address, "\",\"",
+    SDB_INFO(HTTP, "\"http-request-begin\",\"", std::bit_cast<size_t>(this),
+             "\",\"", this->_connection_info.client_address, "\",\"",
              HttpRequest::translateMethod(_request->requestType()), "\",\"",
              url(), "\"");
 
@@ -714,9 +708,8 @@ void HttpCommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> base_res,
   }
 
   // and give some request information
-  SDB_DEBUG(HTTP, "\"http-request-end\",\"",
-            std::bit_cast<size_t>(this), "\",\"",
-            this->_connection_info.client_address, "\",\"",
+  SDB_DEBUG(HTTP, "\"http-request-end\",\"", std::bit_cast<size_t>(this),
+            "\",\"", this->_connection_info.client_address, "\",\"",
             GeneralRequest::translateMethod(::LlhttpToRequestType(&_parser)),
             "\",\"", url(), "\",\"", static_cast<int>(response.responseCode()),
             "\",", absl::StrFormat("%.6f", stat.ELAPSED_SINCE_READ_START()),

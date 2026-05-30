@@ -342,8 +342,8 @@ ColumnTokenizer InvertedIndex::GetExprTokenizerByFieldId(
   irs::field_id field_id) const {
   const auto* entry = FindEntry(field_id);
   if (entry == nullptr || !entry->IsExpression()) {
-    SDB_THROW(sdb::ERROR_INTERNAL, "Indexed expression with field_id ", field_id,
-              " not found in the index definition");
+    SDB_THROW(sdb::ERROR_INTERNAL, "Indexed expression with field_id ",
+              field_id, " not found in the index definition");
   }
   auto tokenizer =
     BuildColumnTokenizer(snapshot, entry->text_dictionary, entry->features);

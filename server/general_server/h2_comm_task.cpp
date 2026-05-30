@@ -176,8 +176,7 @@ template<SocketType T>
 /*static*/ int H2CommTask<T>::on_data_chunk_recv(
   nghttp2_session* session, uint8_t flags, int32_t stream_id,
   const uint8_t* data, size_t len, void* user_data) try {
-  SDB_TRACE(HTTP, "<http2> received data for stream ",
-            stream_id);
+  SDB_TRACE(HTTP, "<http2> received data for stream ", stream_id);
   H2CommTask<T>* me = static_cast<H2CommTask<T>*>(user_data);
   Stream* strm = me->FindStream(stream_id);
   if (strm) {
@@ -210,9 +209,8 @@ template<SocketType T>
   }
 
   if (error_code != NGHTTP2_NO_ERROR) {
-    SDB_DEBUG(HTTP, "<http2> closing stream ", stream_id,
-              " with error '", nghttp2_http2_strerror(error_code), "' (",
-              error_code, ")");
+    SDB_DEBUG(HTTP, "<http2> closing stream ", stream_id, " with error '",
+              nghttp2_http2_strerror(error_code), "' (", error_code, ")");
   }
 
   return HPE_OK;
@@ -240,9 +238,8 @@ template<SocketType T>
   }
 
   const int32_t sid = frame->hd.stream_id;
-  SDB_DEBUG(HTTP, "sending RST on stream ", sid,
-            " with error '", nghttp2_strerror(lib_error_code), "' (",
-            lib_error_code, ")");
+  SDB_DEBUG(HTTP, "sending RST on stream ", sid, " with error '",
+            nghttp2_strerror(lib_error_code), "' (", lib_error_code, ")");
 
   // Issue RST_STREAM so that stream does not hang around.
   nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, sid,
@@ -269,16 +266,15 @@ H2CommTask<T>::~H2CommTask() {
   nghttp2_session_del(_session);
   _session = nullptr;
   if (!_streams.empty()) {
-    SDB_DEBUG(HTTP, "<http2> got ", _streams.size(),
-              " remaining streams");
+    SDB_DEBUG(HTTP, "<http2> got ", _streams.size(), " remaining streams");
   }
   HttpResponse* res = nullptr;
   while (_responses.pop(res)) {
     delete res;
   }
 
-  SDB_DEBUG(HTTP, "<http2> closing connection \"",
-            std::bit_cast<size_t>(this), "\"");
+  SDB_DEBUG(HTTP, "<http2> closing connection \"", std::bit_cast<size_t>(this),
+            "\"");
 }
 
 namespace {
@@ -286,8 +282,8 @@ namespace {
 int OnErrorCallback(nghttp2_session* session, int lib_error_code,
                     const char* msg, size_t len, void*) try {
   // use INFO log level, its still hidden by default
-  SDB_INFO(HTTP, "http2 connection error: \"",
-           std::string_view(msg, len), "\" (", lib_error_code, ")");
+  SDB_INFO(HTTP, "http2 connection error: \"", std::string_view(msg, len),
+           "\" (", lib_error_code, ")");
   return HPE_OK;
 } catch (...) {
   // the caller of this function is a C function, which doesn't know
@@ -297,9 +293,8 @@ int OnErrorCallback(nghttp2_session* session, int lib_error_code,
 
 int OnInvalidFrameRecv(nghttp2_session* session, const nghttp2_frame* frame,
                        int lib_error_code, void* user_data) try {
-  SDB_INFO(HTTP, "received illegal data frame on stream ",
-           frame->hd.stream_id, ": '", nghttp2_strerror(lib_error_code), "' (",
-           lib_error_code, ")");
+  SDB_INFO(HTTP, "received illegal data frame on stream ", frame->hd.stream_id,
+           ": '", nghttp2_strerror(lib_error_code), "' (", lib_error_code, ")");
   return HPE_OK;
 } catch (...) {
   // the caller of this function is a C function, which doesn't know
@@ -331,8 +326,7 @@ ssize_t DataSourceReadLengthCallback(nghttp2_session* session,
                                      int32_t stream_remote_window_size,
                                      uint32_t remote_max_frame_size,
                                      void* user_data) {
-  SDB_TRACE(HTTP,
-            "session_remote_window_size: ", session_remote_window_size,
+  SDB_TRACE(HTTP, "session_remote_window_size: ", session_remote_window_size,
             ", stream_remote_window_size: ", stream_remote_window_size,
             ", remote_max_frame_size: ", remote_max_frame_size);
   return (1 << 16);  // 64kB
@@ -393,8 +387,8 @@ void H2CommTask<T>::UpgradeHttp1(std::unique_ptr<HttpRequest> req) {
 
   if (rv != 0) {
     // The settings_payload is badly formed.
-    SDB_INFO(HTTP, "error during HTTP2 upgrade: \"",
-             nghttp2_strerror((int)rv), "\" (", rv, ")");
+    SDB_INFO(HTTP, "error during HTTP2 upgrade: \"", nghttp2_strerror((int)rv),
+             "\" (", rv, ")");
     this->Close();
     return;
   }
@@ -433,8 +427,8 @@ void H2CommTask<T>::UpgradeHttp1(std::unique_ptr<HttpRequest> req) {
 
 template<SocketType T>
 void H2CommTask<T>::Start() {
-  SDB_DEBUG(HTTP, "<http2> opened connection \"",
-            std::bit_cast<size_t>(this), "\"");
+  SDB_DEBUG(HTTP, "<http2> opened connection \"", std::bit_cast<size_t>(this),
+            "\"");
 
   asio_ns::post(this->_protocol->context.io_context,
                 [self = this->shared_from_this()] {
@@ -465,8 +459,8 @@ bool H2CommTask<T>::ReadCallback(asio_ns::error_code ec) {
 
     auto rv = nghttp2_session_mem_recv(_session, data, it->size());
     if (rv < 0 || static_cast<size_t>(rv) != it->size()) {
-      SDB_INFO(HTTP, "HTTP2 parsing error: \"",
-               nghttp2_strerror((int)rv), "\" (", rv, ")");
+      SDB_INFO(HTTP, "HTTP2 parsing error: \"", nghttp2_strerror((int)rv),
+               "\" (", rv, ")");
       this->Close(ec);
       return false;  // stop read loop
     }
@@ -519,8 +513,7 @@ void H2CommTask<T>::SetIOTimeout() {
       if (idle || write_timeout) {
         // _num_processing == 0 also if responses wait for writing
         if (me._num_processing.load(std::memory_order_relaxed) == 0) {
-          SDB_INFO(HTTP,
-                   "keep alive timeout, closing stream!");
+          SDB_INFO(HTTP, "keep alive timeout, closing stream!");
           static_cast<GeneralCommTask<T>&>(*s).Close(ec);
         } else {
           SetIOTimeout();
@@ -559,13 +552,11 @@ void H2CommTask<T>::ProcessStream(Stream& stream) {
   try {
     ProcessRequest(stream, std::move(req));
   } catch (const sdb::basics::Exception& ex) {
-    SDB_WARN(HTTP, "request failed with error ", ex.code(),
-             " ", ex.message());
+    SDB_WARN(HTTP, "request failed with error ", ex.code(), " ", ex.message());
     this->SendErrorResponse(GeneralResponse::responseCode(ex.code()),
                             resp_content_type, msg_id, ex.code(), ex.message());
   } catch (const std::exception& ex) {
-    SDB_WARN(HTTP, "request failed with error ",
-             ex.what());
+    SDB_WARN(HTTP, "request failed with error ", ex.what());
     this->SendErrorResponse(ResponseCode::ServerError, resp_content_type,
                             msg_id, ErrorCode(ERROR_FAILED), ex.what());
   }
@@ -586,9 +577,8 @@ void H2CommTask<T>::ProcessRequest(Stream& stream,
   // from here on we will send a response, the connection is not IDLE
   _num_processing.fetch_add(1, std::memory_order_relaxed);
   {
-    SDB_INFO(HTTP, "\"h2-request-begin\",\"",
-             std::bit_cast<size_t>(this), "\",\"",
-             this->_connection_info.client_address, "\",\"",
+    SDB_INFO(HTTP, "\"h2-request-begin\",\"", std::bit_cast<size_t>(this),
+             "\",\"", this->_connection_info.client_address, "\",\"",
              HttpRequest::translateMethod(req->requestType()), "\",\"",
              url(req.get()), "\"");
 
@@ -680,8 +670,7 @@ void H2CommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> res,
   }
 
   // and give some request information
-  SDB_DEBUG(HTTP, "\"h2-request-end\",\"",
-            std::bit_cast<size_t>(this), "\",\"",
+  SDB_DEBUG(HTTP, "\"h2-request-end\",\"", std::bit_cast<size_t>(this), "\",\"",
             this->_connection_info.client_address, "\",\"", url(nullptr),
             "\",\"", static_cast<int>(res->responseCode()), "\",",
             absl::StrFormat("%.6f", stat.ELAPSED_SINCE_READ_START()), ",",
@@ -739,8 +728,8 @@ void H2CommTask<T>::QueueHttp2Responses() {
     int32_t stream_id = static_cast<int32_t>(response->messageId());
     Stream* strm = FindStream(stream_id);
     if (strm == nullptr) {  // stream was already closed for some reason
-      SDB_DEBUG(HTTP, "response with message id '",
-                stream_id, "' has no H2 stream on server");
+      SDB_DEBUG(HTTP, "response with message id '", stream_id,
+                "' has no H2 stream on server");
       return;
     }
     strm->response = std::move(guard);
@@ -768,8 +757,7 @@ void H2CommTask<T>::QueueHttp2Responses() {
     // suppress sending the www-authenticate header by sending us an
     // x-omit-www-authenticate header.
     bool need_www_authenticate =
-      (false &&
-       res.responseCode() == rest::ResponseCode::Unauthorized &&
+      (false && res.responseCode() == rest::ResponseCode::Unauthorized &&
        strm->must_send_auth_header);
 
     bool seen_server_header = false;
@@ -881,9 +869,8 @@ void H2CommTask<T>::QueueHttp2Responses() {
     int rv = nghttp2_submit_response(this->_session, stream_id, nva.data(),
                                      nva.size(), prd_ptr);
     if (rv != 0) {
-      SDB_INFO(HTTP,
-               "HTTP2 submit_response error: \"", nghttp2_strerror((int)rv),
-               "\" (", rv, ")");
+      SDB_INFO(HTTP, "HTTP2 submit_response error: \"",
+               nghttp2_strerror((int)rv), "\" (", rv, ")");
       this->Close();
       return;
     }
@@ -911,8 +898,8 @@ void H2CommTask<T>::DoWrite() {
     auto rv = nghttp2_session_mem_send(_session, &data);
     if (rv < 0) {  // error
       this->_writing = false;
-      SDB_INFO(HTTP, "HTTP2 framing error: \"",
-               nghttp2_strerror((int)rv), "\" (", rv, ")");
+      SDB_INFO(HTTP, "HTTP2 framing error: \"", nghttp2_strerror((int)rv),
+               "\" (", rv, ")");
       this->Close();
       return;
     }

@@ -32,9 +32,7 @@
 
 namespace sdb::pg {
 
-PostgresFeature::PostgresFeature() {
-  gInstance = this;
-}
+PostgresFeature::PostgresFeature() { gInstance = this; }
 
 PostgresFeature::~PostgresFeature() { gInstance = nullptr; }
 
@@ -61,14 +59,14 @@ uint64_t PostgresFeature::RegisterTask(PgSQLCommTaskBase& task) {
 }
 
 void PostgresFeature::validateOptions() {
-  const auto& endpoint_list =
-    EndpointFeature::instance().endpointList();
+  const auto& endpoint_list = EndpointFeature::instance().endpointList();
   const bool has_pgsql = std::ranges::any_of(
     endpoint_list | std::views::values, [](const auto& endpoint) {
       return endpoint->transport() == Endpoint::TransportType::PGSQL;
     });
   if (!has_pgsql) {
-    SDB_FATAL(GENERAL, "no pgsql endpoint configured; --server_endpoint "
+    SDB_FATAL(GENERAL,
+              "no pgsql endpoint configured; --server_endpoint "
               "must include a pgsql+tcp:// entry");
   }
 }

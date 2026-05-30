@@ -98,9 +98,8 @@ void* LoadLibrary(const char* soname, int mode /* = 2 */) {
 #endif
 
   if (!handle) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("load failed of shared object: ", name.string(),
-                           " error: ", dlerror()));
+    SDB_ERROR(IRESEARCH, absl::StrCat("load failed of shared object: ",
+                                      name.string(), " error: ", dlerror()));
   }
 
   return handle;
@@ -141,8 +140,7 @@ void LoadLibraries(std::string_view path, std::string_view prefix,
     const auto path = plugin_path / name;
 
     if (!file_utils::ExistsFile(result, path.c_str())) {
-      SDB_ERROR(IRESEARCH,
-                "Failed to identify plugin file: ", path.string());
+      SDB_ERROR(IRESEARCH, "Failed to identify plugin file: ", path.string());
 
       return false;
     }
@@ -174,8 +172,8 @@ void LoadLibraries(std::string_view path, std::string_view prefix,
     const void* handle = LoadLibrary(path_stem.string().c_str(), 1);
 
     if (!handle) {
-      SDB_ERROR(IRESEARCH,
-        absl::StrCat("library load failed for path: ", path_stem.string()));
+      SDB_ERROR(IRESEARCH, absl::StrCat("library load failed for path: ",
+                                        path_stem.string()));
     }
 
     return true;

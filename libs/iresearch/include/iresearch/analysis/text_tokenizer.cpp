@@ -181,8 +181,8 @@ bool GetStopwords(TextTokenizer::stopwords_t& buf, std::string_view language,
       const auto path = stopword_path / name;
 
       if (!file_utils::ExistsFile(result, path.c_str())) {
-        SDB_ERROR(IRESEARCH,
-          absl::StrCat("Failed to identify stopword path: ", path.string()));
+        SDB_ERROR(IRESEARCH, absl::StrCat("Failed to identify stopword path: ",
+                                          path.string()));
 
         return false;
       }
@@ -194,7 +194,8 @@ bool GetStopwords(TextTokenizer::stopwords_t& buf, std::string_view language,
       std::ifstream in(path.native());
 
       if (!in) {
-        SDB_ERROR(IRESEARCH,
+        SDB_ERROR(
+          IRESEARCH,
           absl::StrCat("Failed to load stopwords from path: ", path.string()));
 
         return false;
@@ -503,8 +504,7 @@ bool LocaleFromString(const std::string& locale_name, icu::Locale& locale) {
 
 bool LocaleFromSlice(vpack::Slice slice, icu::Locale& locale) {
   if (!slice.isString()) {
-    SDB_WARN(IRESEARCH, "Non-string value in '",
-             kLocaleParamName,
+    SDB_WARN(IRESEARCH, "Non-string value in '", kLocaleParamName,
              "' while constructing text_token_stream from VPack arguments");
 
     return false;
@@ -532,8 +532,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
     if (auto case_convert_slice = slice.get(kCaseConvertParamName);
         !case_convert_slice.isNone()) {
       if (!case_convert_slice.isString()) {
-        SDB_WARN(IRESEARCH, "Non-string value in '",
-                 kCaseConvertParamName,
+        SDB_WARN(IRESEARCH, "Non-string value in '", kCaseConvertParamName,
                  "' while constructing text_token_stream from VPack arguments");
 
         return false;
@@ -543,8 +542,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
         case_convert_slice.stringView(), magic_enum::case_insensitive);
 
       if (!case_value) {
-        SDB_WARN(IRESEARCH, "Invalid value in '",
-                 kCaseConvertParamName,
+        SDB_WARN(IRESEARCH, "Invalid value in '", kCaseConvertParamName,
                  "' while constructing text_token_stream from VPack arguments");
 
         return false;
@@ -556,8 +554,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
     if (auto stop_words_slice = slice.get(kStopwordsParamName);
         !stop_words_slice.isNone()) {
       if (!stop_words_slice.isArray()) {
-        SDB_WARN(IRESEARCH, "Invalid value in '",
-                 kStopwordsParamName,
+        SDB_WARN(IRESEARCH, "Invalid value in '", kStopwordsParamName,
                  "' while constructing text_token_stream from VPack arguments");
 
         return false;
@@ -566,8 +563,8 @@ bool ParseVPackOptions(const vpack::Slice slice,
       options.explicit_stopwords_set = true;
       for (const auto itr : vpack::ArrayIterator(stop_words_slice)) {
         if (!itr.isString()) {
-          SDB_WARN(IRESEARCH, "Non-string value in '",
-            kStopwordsParamName,
+          SDB_WARN(
+            IRESEARCH, "Non-string value in '", kStopwordsParamName,
             "' while constructing text_token_stream from VPack arguments");
 
           return false;
@@ -579,8 +576,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
     if (auto ignored_words_path_slice = slice.get(kStopwordsPathParamName);
         !ignored_words_path_slice.isNone()) {
       if (!ignored_words_path_slice.isString()) {
-        SDB_WARN(IRESEARCH, "Non-string value in '",
-                 kStopwordsPathParamName,
+        SDB_WARN(IRESEARCH, "Non-string value in '", kStopwordsPathParamName,
                  "' while constructing text_token_stream from VPack arguments");
 
         return false;
@@ -591,8 +587,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
     if (auto accent_slice = slice.get(kAccentParamName);
         !accent_slice.isNone()) {
       if (!accent_slice.isBool()) {
-        SDB_WARN(IRESEARCH, "Non-boolean value in '",
-                 kAccentParamName,
+        SDB_WARN(IRESEARCH, "Non-boolean value in '", kAccentParamName,
                  "' while constructing text_token_stream from VPack arguments");
 
         return false;
@@ -603,8 +598,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
     if (auto stemming_slice = slice.get(kStemmingParamName);
         !stemming_slice.isNone()) {
       if (!stemming_slice.isBool()) {
-        SDB_WARN(IRESEARCH, "Non-boolean value in '",
-                 kStemmingParamName,
+        SDB_WARN(IRESEARCH, "Non-boolean value in '", kStemmingParamName,
                  "' while constructing text_token_stream from VPack arguments");
 
         return false;
@@ -616,8 +610,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
     if (auto ngram_slice = slice.get(kEdgeNGramParamName);
         !ngram_slice.isNone()) {
       if (!ngram_slice.isObject()) {
-        SDB_WARN(IRESEARCH, "Non-object value in '",
-                 kEdgeNGramParamName,
+        SDB_WARN(IRESEARCH, "Non-object value in '", kEdgeNGramParamName,
                  "' while constructing text_token_stream from VPack arguments");
 
         return false;
@@ -650,7 +643,8 @@ bool ParseVPackOptions(const vpack::Slice slice,
 
     return true;
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing text_token_stream from VPack"));
   } catch (...) {
@@ -676,7 +670,8 @@ bool MakeVPackConfig(const TextTokenizer::OptionsT& options,
     // case convert
     const auto case_name_sv = magic_enum::enum_name(options.case_convert);
     if (case_name_sv.empty()) {
-      SDB_ERROR(IRESEARCH,
+      SDB_ERROR(
+        IRESEARCH,
         absl::StrCat("Invalid case_convert value in text analyzer options: ",
                      static_cast<int>(options.case_convert)));
       return false;
@@ -853,7 +848,8 @@ Analyzer::ptr MakeJson(std::string_view args) {
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing normalizing_tokenizer from JSON"));
   } catch (...) {
@@ -878,7 +874,8 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
       return !definition.empty();
     }
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while normalizing normalizing_tokenizer from JSON"));
   } catch (...) {

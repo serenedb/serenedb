@@ -278,13 +278,13 @@ void StartExternalProcessPosixSpawn(
       // We fake the old legacy behaviour here from the fork/exec times:
       external->status = kExtTerminated;
       external->exit_status = 1;
-      SDB_ERROR(GENERAL, "spawn failed: executable '",
-                external->executable, "' not found");
+      SDB_ERROR(GENERAL, "spawn failed: executable '", external->executable,
+                "' not found");
     } else {
       external->status = kExtForkFailed;
 
-      SDB_ERROR(GENERAL, "spawning of executable '",
-                external->executable, "' failed: ", strerror(errno_copy));
+      SDB_ERROR(GENERAL, "spawning of executable '", external->executable,
+                "' failed: ", strerror(errno_copy));
     }
     if (use_pipes) {
       close(pipe_server_to_child[0]);
@@ -296,8 +296,8 @@ void StartExternalProcessPosixSpawn(
     return;
   }
 
-  SDB_DEBUG(GENERAL, "spawning executable '",
-            external->executable, "' succeeded, child pid: ", external->pid);
+  SDB_DEBUG(GENERAL, "spawning executable '", external->executable,
+            "' succeeded, child pid: ", external->pid);
 
   if (use_pipes) {
     close(pipe_server_to_child[0]);
@@ -352,8 +352,7 @@ bool KillProcess(ExternalProcess* pid, int signal) {
     return false;
   }
   if (signal == SIGKILL) {
-    SDB_WARN(GENERAL,
-             "sending SIGKILL signal to process: ", pid->pid);
+    SDB_WARN(GENERAL, "sending SIGKILL signal to process: ", pid->pid);
   }
   if (kill(pid->pid, signal) == 0) {
     return true;
@@ -568,13 +567,13 @@ static ProcessInfo GetProcessInfoH(HANDLE processHandle, pid_t pid) {
         }
       }
     } else {
-      SDB_ERROR(GENERAL,
-                "failed to acquire thread from snapshot - ", GetLastError());
+      SDB_ERROR(GENERAL, "failed to acquire thread from snapshot - ",
+                GetLastError());
     }
     CloseHandle(snapShot);
   } else {
-    SDB_ERROR(GENERAL,
-              "failed to acquire process threads count - ", GetLastError());
+    SDB_ERROR(GENERAL, "failed to acquire process threads count - ",
+              GetLastError());
   }
 
   return result;
@@ -736,8 +735,7 @@ void CreateExternalProcess(std::string_view executable,
     return;
   }
 
-  SDB_DEBUG(GENERAL, "adding process ", external->pid,
-            " to list");
+  SDB_DEBUG(GENERAL, "adding process ", external->pid, " to list");
 
   // Note that the following deals with different types under windows,
   // however, this code here can be written in a platform-independent
@@ -802,8 +800,7 @@ ExternalProcessStatus CheckExternalProcess(
   auto status = LookupSpawnedProcessStatus(pid.pid);
 
   if (!status.has_value()) {
-    SDB_WARN(GENERAL,
-             "checkExternal: pid not found: ", pid.pid);
+    SDB_WARN(GENERAL, "checkExternal: pid not found: ", pid.pid);
     return ExternalProcessStatus{
       kExtNotFound, -1,
       absl::StrCat("the pid you're looking for is not in our list: ", pid.pid)};
@@ -881,8 +878,8 @@ ExternalProcessStatus CheckExternalProcess(
         status->status = kExtNotFound;
       }
       SetError(ERROR_SYS_ERROR);
-      SDB_WARN(GENERAL, "waitpid returned error for pid ",
-               pid.pid, " (", wait, "): ", LastError());
+      SDB_WARN(GENERAL, "waitpid returned error for pid ", pid.pid, " (", wait,
+               "): ", LastError());
       status->error_message = absl::StrCat("waitpid returned error for pid ",
                                            pid.pid, ": ", LastError());
     } else if (static_cast<pid_t>(pid.pid) == static_cast<pid_t>(res)) {
@@ -903,14 +900,14 @@ ExternalProcessStatus CheckExternalProcess(
         status->exit_status = 0;
       }
     } else {
-      SDB_WARN(GENERAL,
-               "unexpected waitpid result for pid ", pid.pid, ": ", res);
+      SDB_WARN(GENERAL, "unexpected waitpid result for pid ", pid.pid, ": ",
+               res);
       status->error_message =
         absl::StrCat("unexpected waitpid result for pid ", pid.pid, ": ", res);
     }
   } else {
-    SDB_WARN(GENERAL, "unexpected process status ",
-             status->status, ": ", status->exit_status);
+    SDB_WARN(GENERAL, "unexpected process status ", status->status, ": ",
+             status->exit_status);
     status->error_message = absl::StrCat(
       "unexpected process status ", status->status, ": ", status->exit_status);
   }
@@ -944,8 +941,7 @@ ExternalProcessStatus CheckExternalProcess(
 
 ExternalProcessStatus KillExternalProcess(ExternalId pid, int signal,
                                           bool is_terminal) {
-  SDB_DEBUG(GENERAL, "Sending process: ", pid.pid,
-            " the signal: ", signal);
+  SDB_DEBUG(GENERAL, "Sending process: ", pid.pid, " the signal: ", signal);
 
   ExternalProcess* external = nullptr;
   {
@@ -964,8 +960,7 @@ ExternalProcessStatus KillExternalProcess(ExternalId pid, int signal,
   if (!is_child) {
     external = GetExternalProcess(pid.pid);
     if (external == nullptr) {
-      SDB_DEBUG(GENERAL,
-                "kill: process not found: ", pid.pid,
+      SDB_DEBUG(GENERAL, "kill: process not found: ", pid.pid,
                 " in our starting table and it doesn't exist.");
       ExternalProcessStatus status;
       status.status = kExtNotFound;

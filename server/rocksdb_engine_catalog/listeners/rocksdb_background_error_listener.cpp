@@ -69,8 +69,8 @@ void RocksDBBackgroundErrorListener::OnBackgroundError(
       }
     }
 
-    SDB_ERROR(STORAGE,
-      "RocksDB encountered a background error during a ", operation,
+    SDB_ERROR(
+      STORAGE, "RocksDB encountered a background error during a ", operation,
       " operation: ",
       (status != nullptr ? status->ToString() : "unknown error"),
       "; The database will be put in read-only mode, and subsequent write "
@@ -83,8 +83,7 @@ void RocksDBBackgroundErrorListener::OnErrorRecoveryCompleted(
   rocksdb::Status /* old_bg_error */) {
   _called.store(false, std::memory_order_relaxed);
 
-  SDB_INFO(STORAGE,
-           "RocksDB resuming operations after background error");
+  SDB_INFO(STORAGE, "RocksDB resuming operations after background error");
 }
 
 }  // namespace sdb

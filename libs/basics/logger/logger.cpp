@@ -22,16 +22,15 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/synchronization/mutex.h>
+#include <unistd.h>
 
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
-#include <unistd.h>
 
 namespace sdb::log {
-
 namespace {
 
 struct TopicEntry {
@@ -41,22 +40,24 @@ struct TopicEntry {
 };
 
 // Topic table. Levels can be set via SetLogLevel("name=info") or via the
-// SQL surface (SET sdb_log_level = 'name=info' — wired in Phase 9).
+// SQL surface (SET sdb_log_level = 'name=info' -- wired in Phase 9).
 // Adding a topic: add it here and to topic.h.
 TopicEntry gTopics[]{
-  {GENERAL,   {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
-  {STARTUP,   {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
-  {HTTP,      {LogLevel::WARN},    {LogLevel::WARN}},
-  {SSL,       {LogLevel::WARN},    {LogLevel::WARN}},
-  {STORAGE,   {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
-  {SEARCH,    {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
+  {GENERAL, {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
+  {STARTUP, {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
+  {HTTP, {LogLevel::WARN}, {LogLevel::WARN}},
+  {SSL, {LogLevel::WARN}, {LogLevel::WARN}},
+  {STORAGE, {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
+  {SEARCH, {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
   {IRESEARCH, {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
-  {CRASH,     {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
+  {CRASH, {LogLevel::DEFAULT}, {LogLevel::DEFAULT}},
 };
 
 TopicEntry* FindTopicEntry(std::string_view name) noexcept {
   for (auto& t : gTopics) {
-    if (t.name == name) return &t;
+    if (t.name == name) {
+      return &t;
+    }
   }
   return nullptr;
 }
@@ -68,13 +69,20 @@ absl::Mutex gWriteMutex;  // serializes formatted writes to stderr
 
 const char* LevelTag(LogLevel l) noexcept {
   switch (l) {
-    case LogLevel::FATAL:   return "FATAL";
-    case LogLevel::ERR:     return "ERROR";
-    case LogLevel::WARN:    return "WARNING";
-    case LogLevel::INFO:    return "INFO";
-    case LogLevel::DEB:     return "DEBUG";
-    case LogLevel::TRACE:   return "TRACE";
-    case LogLevel::DEFAULT: return "DEFAULT";
+    case LogLevel::FATAL:
+      return "FATAL";
+    case LogLevel::ERR:
+      return "ERROR";
+    case LogLevel::WARN:
+      return "WARNING";
+    case LogLevel::INFO:
+      return "INFO";
+    case LogLevel::DEB:
+      return "DEBUG";
+    case LogLevel::TRACE:
+      return "TRACE";
+    case LogLevel::DEFAULT:
+      return "DEFAULT";
   }
   return "?";
 }
@@ -83,8 +91,8 @@ void WriteIsoTimestamp(std::string& out) {
   using namespace std::chrono;
   auto now = system_clock::now();
   auto time_t_s = system_clock::to_time_t(now);
-  auto us = duration_cast<microseconds>(now.time_since_epoch()).count() %
-            1'000'000;
+  auto us =
+    duration_cast<microseconds>(now.time_since_epoch()).count() % 1'000'000;
   std::tm tm{};
   gmtime_r(&time_t_s, &tm);
   char buf[40];
@@ -106,13 +114,27 @@ void SetLogLevel(LogLevel level) noexcept {
 
 LogLevel TranslateLogLevel(std::string_view name) noexcept {
   auto lower = absl::AsciiStrToLower(name);
-  if (lower == "trace") return LogLevel::TRACE;
-  if (lower == "debug") return LogLevel::DEB;
-  if (lower == "info") return LogLevel::INFO;
-  if (lower == "warning" || lower == "warn") return LogLevel::WARN;
-  if (lower == "error" || lower == "err") return LogLevel::ERR;
-  if (lower == "fatal") return LogLevel::FATAL;
-  if (lower == "default") return LogLevel::DEFAULT;
+  if (lower == "trace") {
+    return LogLevel::TRACE;
+  }
+  if (lower == "debug") {
+    return LogLevel::DEB;
+  }
+  if (lower == "info") {
+    return LogLevel::INFO;
+  }
+  if (lower == "warning" || lower == "warn") {
+    return LogLevel::WARN;
+  }
+  if (lower == "error" || lower == "err") {
+    return LogLevel::ERR;
+  }
+  if (lower == "fatal") {
+    return LogLevel::FATAL;
+  }
+  if (lower == "default") {
+    return LogLevel::DEFAULT;
+  }
   return LogLevel::INFO;
 }
 
@@ -181,8 +203,12 @@ std::string LogLevelString() {
   std::string result;
   for (const auto& t : gTopics) {
     auto level = t.level.load(std::memory_order_relaxed);
-    if (level == LogLevel::DEFAULT) continue;
-    if (!result.empty()) result.push_back(',');
+    if (level == LogLevel::DEFAULT) {
+      continue;
+    }
+    if (!result.empty()) {
+      result.push_back(',');
+    }
     result.append(t.name);
     result.push_back('=');
     result.append(LevelTag(level));
@@ -190,12 +216,10 @@ std::string LogLevelString() {
   return result;
 }
 
-bool IsActive() noexcept {
-  return gActive.load(std::memory_order_acquire);
-}
+bool IsActive() noexcept { return gActive.load(std::memory_order_acquire); }
 void Initialize() noexcept { gActive.store(true, std::memory_order_release); }
 void Shutdown() noexcept { gActive.store(false, std::memory_order_release); }
-void Flush() noexcept {}  // sync logger; nothing to flush.
+void Flush() noexcept {}           // sync logger; nothing to flush.
 void ClearCachedPid() noexcept {}  // PID is fetched per-call; no cache.
 
 bool GetLogRequestParameters() noexcept {
@@ -205,8 +229,7 @@ void SetLogRequestParameters(bool v) noexcept {
   gLogRequestParameters.store(v, std::memory_order_relaxed);
 }
 
-void Log(LogLevel level, std::string_view topic,
-         std::string_view message) try {
+void Log(LogLevel level, std::string_view topic, std::string_view message) try {
   std::string out;
   out.reserve(96 + message.size());
   WriteIsoTimestamp(out);

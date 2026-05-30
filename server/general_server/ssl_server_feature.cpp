@@ -64,8 +64,7 @@ using namespace sdb::basics;
 using namespace sdb::options;
 
 SslServerFeature::SslServerFeature()
-  :
-    _cafile(),
+  : _cafile(),
     _keyfile(),
     _cipher_list("HIGH:!EXPORT:!aNULL@STRENGTH"),
     _ssl_protocol(kTlsGeneric),
@@ -92,12 +91,10 @@ void SslServerFeature::validateOptions() {
 }
 
 void SslServerFeature::prepare() {
-  SDB_INFO(SSL,
-           "using SSL options: ", stringifySslOptions(_ssl_options));
+  SDB_INFO(SSL, "using SSL options: ", stringifySslOptions(_ssl_options));
 
   if (!_cipher_list.empty()) {
-    SDB_INFO(SSL, "using SSL cipher-list '", _cipher_list,
-             "'");
+    SDB_INFO(SSL, "using SSL cipher-list '", _cipher_list, "'");
   }
 
   random::UniformCharacter r(
@@ -106,15 +103,13 @@ void SslServerFeature::prepare() {
 }
 
 void SslServerFeature::unprepare() {
-  SDB_TRACE(SSL,
-            "unpreparing ssl: ", stringifySslOptions(_ssl_options));
+  SDB_TRACE(SSL, "unpreparing ssl: ", stringifySslOptions(_ssl_options));
 }
 
 void SslServerFeature::verifySslOptions() {
   // check keyfile
   if (_keyfile.empty()) {
-    SDB_FATAL(SSL,
-              "no value specified for '--ssl.keyfile'");
+    SDB_FATAL(SSL, "no value specified for '--ssl.keyfile'");
   }
 
   // validate protocol
@@ -128,8 +123,7 @@ void SslServerFeature::verifySslOptions() {
             ProtocolName(SslProtocol(_ssl_protocol)), "'");
 
   if (!file_utils::Exists(_keyfile)) {
-    SDB_FATAL(SSL, "unable to find SSL keyfile '",
-              _keyfile, "'");
+    SDB_FATAL(SSL, "unable to find SSL keyfile '", _keyfile, "'");
   }
 
   // Set up first _sni_entry:
@@ -229,16 +223,15 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
 
     if (!_cipher_list.empty()) {
       if (SSL_CTX_set_cipher_list(native_context, _cipher_list.c_str()) != 1) {
-        SDB_ERROR(SSL, "cannot set SSL cipher list '",
-                  _cipher_list, "': ", LastSslError());
+        SDB_ERROR(SSL, "cannot set SSL cipher list '", _cipher_list,
+                  "': ", LastSslError());
         throw std::runtime_error("cannot create SSL context");
       }
     }
 
     if (!_ecdh_curve.empty()) {
       if (SSL_CTX_set1_groups_list(native_context, _ecdh_curve.c_str()) != 1) {
-        SDB_ERROR(SSL, "cannot set ECDH option",
-                  LastSslError());
+        SDB_ERROR(SSL, "cannot set ECDH option", LastSslError());
         throw std::runtime_error("cannot create SSL context");
       }
       SSL_CTX_set_options(native_context, SSL_OP_SINGLE_ECDH_USE);
@@ -249,23 +242,20 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
       native_context, (const unsigned char*)_rctx.c_str(), (int)_rctx.size());
 
     if (res != 1) {
-      SDB_ERROR(SSL,
-                "cannot set SSL session id context '", _rctx,
+      SDB_ERROR(SSL, "cannot set SSL session id context '", _rctx,
                 "': ", LastSslError());
       throw std::runtime_error("cannot create SSL context");
     }
 
     // check CA
     if (!_cafile.empty()) {
-      SDB_TRACE(SSL,
-                "trying to load CA certificates from '", _cafile, "'");
+      SDB_TRACE(SSL, "trying to load CA certificates from '", _cafile, "'");
 
       res =
         SSL_CTX_load_verify_locations(native_context, _cafile.c_str(), nullptr);
 
       if (res == 0) {
-        SDB_ERROR(SSL,
-                  "cannot load CA certificates from '", _cafile,
+        SDB_ERROR(SSL, "cannot load CA certificates from '", _cafile,
                   "': ", LastSslError());
         throw std::runtime_error("cannot create SSL context");
       }
@@ -277,8 +267,7 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
       _cafile_content = cafile_content;
 
       if (cert_names == nullptr) {
-        SDB_ERROR(SSL,
-                  "cannot load CA certificates from '", _cafile,
+        SDB_ERROR(SSL, "cannot load CA certificates from '", _cafile,
                   "': ", LastSslError());
         throw std::runtime_error("cannot create SSL context");
       }
@@ -313,12 +302,10 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
 
     return ssl_context;
   } catch (const std::exception& ex) {
-    SDB_ERROR(SSL,
-              "failed to create SSL context: ", ex.what());
+    SDB_ERROR(SSL, "failed to create SSL context: ", ex.what());
     throw std::runtime_error("cannot create SSL context");
   } catch (...) {
-    SDB_ERROR(SSL,
-              "failed to create SSL context, cannot create HTTPS server");
+    SDB_ERROR(SSL, "failed to create SSL context, cannot create HTTPS server");
     throw std::runtime_error("cannot create SSL context");
   }
 }

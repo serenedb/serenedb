@@ -70,7 +70,8 @@ bool QueueTimeViolated(const GeneralRequest& req) {
         // INFO level, it would effectively be suppressed. thus we are using the
         // Scheduler's log topic here, which is somewhat related.
         SchedulerFeature::gScheduler->trackQueueTimeViolation();
-        SDB_WARN(GENERAL,
+        SDB_WARN(
+          GENERAL,
           "dropping incoming request because the client-specified maximum "
           "queue time requirement (",
           requested_queue_time, "s) would be violated by current queue time (",
@@ -160,9 +161,8 @@ void GeneralCommTask<T>::LogRequestBody(std::string_view protocol,
     }
   }
 
-  SDB_TRACE(HTTP, "\"", protocol,
-            (is_response ? "-response" : "-request"), "-body\",\"",
-            std::bit_cast<size_t>(this), "\",\"",
+  SDB_TRACE(HTTP, "\"", protocol, (is_response ? "-response" : "-request"),
+            "-body\",\"", std::bit_cast<size_t>(this), "\",\"",
             ContentTypeToString(content_type), "\",\"", body.size(), "\",\"",
             body_for_logging, "\"");
 }
@@ -265,8 +265,7 @@ void GeneralCommTask<T>::FinishExecution(GeneralResponse& res,
     if (!origin.empty()) {
       // the request contained an Origin header. We have to send back the
       // access-control-allow-origin header now
-      SDB_DEBUG(HTTP,
-                "handling CORS response for origin '", origin, "'");
+      SDB_DEBUG(HTTP, "handling CORS response for origin '", origin, "'");
 
       // send back original value of "Origin" header
       res.setHeaderNCIfNotSet(StaticStrings::kAccessControlAllowOrigin, origin);
@@ -344,8 +343,7 @@ void GeneralCommTask<T>::ExecuteRequest(
 
   // create a handler, this takes ownership of request and response
   auto& server = this->_server.server();
-  auto factory =
-    GeneralServerFeature::instance().handlerFactory();
+  auto factory = GeneralServerFeature::instance().handlerFactory();
   auto handler =
     factory->createHandler(server, std::move(request), std::move(response));
 
@@ -519,8 +517,7 @@ bool GeneralCommTask<T>::AllowCorsCredentials(const std::string& origin) const {
 
   // if the request asks to allow credentials, we'll check against the
   // configured allowed list of origins
-  const auto& gs =
-    GeneralServerFeature::instance();
+  const auto& gs = GeneralServerFeature::instance();
   const std::vector<std::string>& access_control_allow_origins =
     gs.accessControlAllowOrigins();
 
@@ -574,9 +571,8 @@ void GeneralCommTask<T>::HandleRequestStartup(
   // requests to any other handlers will be responded to with HTTP 503.
 
   handler->trackQueueStart();
-  SDB_DEBUG(HTTP, "Handling startup request ",
-            std::bit_cast<size_t>(this), " on path ",
-            handler->request()->requestPath(), " on lane ", lane);
+  SDB_DEBUG(HTTP, "Handling startup request ", std::bit_cast<size_t>(this),
+            " on path ", handler->request()->requestPath(), " on lane ", lane);
 
   handler->trackQueueEnd();
   handler->trackTaskStart();
@@ -605,8 +601,7 @@ void GeneralCommTask<T>::HandleRequestSync(
   handler->trackQueueStart();
   // We just injected the request pointer before calling this method
   SDB_ASSERT(handler->request() != nullptr);
-  SDB_DEBUG(HTTP, "Handling request ",
-            std::bit_cast<size_t>(this), " on path ",
+  SDB_DEBUG(HTTP, "Handling request ", std::bit_cast<size_t>(this), " on path ",
             handler->request()->requestPath(), " on lane ", lane);
 
   ContentType resp_type = handler->request()->contentTypeResponse();
@@ -656,16 +651,14 @@ bool GeneralCommTask<T>::HandleRequestAsync(
   SDB_ASSERT(SchedulerFeature::gScheduler != nullptr);
 
   if (job_id != nullptr) {
-    auto& job_manager = GeneralServerFeature::instance()
-                          .jobManager();
+    auto& job_manager = GeneralServerFeature::instance().jobManager();
     try {
       // This will throw if a soft shutdown is already going on on a
       // coordinator. But this can also throw if we have an
       // out of memory situation, so we better handle this anyway.
       job_manager.initAsyncJob(handler);
     } catch (const std::exception& exc) {
-      SDB_INFO(STARTUP,
-               "Async job rejected, exception: ", exc.what());
+      SDB_INFO(STARTUP, "Async job rejected, exception: ", exc.what());
       return false;
     }
     *job_id = handler->handlerId();
@@ -726,8 +719,7 @@ void GeneralCommTask<T>::ProcessCorsOptions(std::unique_ptr<GeneralRequest> req,
       resp->setHeaderNCIfNotSet(StaticStrings::kAccessControlAllowHeaders,
                                 allow_headers);
 
-      SDB_TRACE(HTTP,
-                "client requested validation of the following headers: ",
+      SDB_TRACE(HTTP, "client requested validation of the following headers: ",
                 allow_headers);
     }
 

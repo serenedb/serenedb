@@ -90,23 +90,22 @@ void SchedulerFeature::validateOptions() {
   }
 
   if (_nr_minimal_threads < 4) {
-    SDB_WARN(GENERAL, "--server.minimal-threads (",
-             _nr_minimal_threads, ") must be at least 4");
+    SDB_WARN(GENERAL, "--server.minimal-threads (", _nr_minimal_threads,
+             ") must be at least 4");
     _nr_minimal_threads = 4;
   }
 
   if (_ongoing_low_priority_multiplier < 1.0) {
-    SDB_WARN(GENERAL,
-             "--server.ongoing-low-priority-multiplier (",
+    SDB_WARN(GENERAL, "--server.ongoing-low-priority-multiplier (",
              _ongoing_low_priority_multiplier,
              ") is less than 1.0, setting to default (4.0)");
     _ongoing_low_priority_multiplier = 4.0;
   }
 
   if (_nr_minimal_threads >= _nr_maximal_threads) {
-    SDB_WARN(GENERAL, "--server.maximal-threads (",
-             _nr_maximal_threads, ") should be at least ",
-             (_nr_minimal_threads + 1), ", raising it");
+    SDB_WARN(GENERAL, "--server.maximal-threads (", _nr_maximal_threads,
+             ") should be at least ", (_nr_minimal_threads + 1),
+             ", raising it");
     _nr_maximal_threads = _nr_minimal_threads;
   }
 
@@ -142,9 +141,9 @@ void SchedulerFeature::prepare() {
 
   auto sched = std::make_unique<Scheduler>(
     SerenedServer::Instance(), _nr_minimal_threads, _nr_maximal_threads,
-    _queue_size,
-    _fifo1_size, _fifo2_size, _fifo3_size, ongoing_low_priority_limit,
-    _unavailability_queue_fill_grade, _metrics_feature);
+    _queue_size, _fifo1_size, _fifo2_size, _fifo3_size,
+    ongoing_low_priority_limit, _unavailability_queue_fill_grade,
+    _metrics_feature);
 
   gScheduler = sched.get();
 
@@ -206,8 +205,7 @@ void SchedulerFeature::signalStuffInit() {
   int res = sigaction(SIGPIPE, &action, nullptr);
 
   if (res < 0) {
-    SDB_ERROR(GENERAL,
-              "cannot initialize signal handler for SIGPIPE");
+    SDB_ERROR(GENERAL, "cannot initialize signal handler for SIGPIPE");
   }
 
   buildHangupHandler();
@@ -230,9 +228,8 @@ void SchedulerFeature::signalStuffDeinit() {
 extern "C" void CExitHandler(int signal, siginfo_t* info, void*) {
   if (signal == SIGQUIT || signal == SIGTERM || signal == SIGINT) {
     if (!gReceivedShutdownRequest.exchange(true)) {
-      SDB_INFO(GENERAL, signals::Name(signal),
-               " received (sender pid ", (info ? info->si_pid : 0),
-               "), beginning shut down sequence");
+      SDB_INFO(GENERAL, signals::Name(signal), " received (sender pid ",
+               (info ? info->si_pid : 0), "), beginning shut down sequence");
       lifecycle::gCtrlC.store(true);
     } else {
       SDB_FATAL(GENERAL, signals::Name(signal),
@@ -286,8 +283,7 @@ void SchedulerFeature::buildHangupHandler() {
   int res = sigaction(SIGHUP, &action, nullptr);
 
   if (res < 0) {
-    SDB_ERROR(GENERAL,
-              "cannot initialize signal handler for hang up");
+    SDB_ERROR(GENERAL, "cannot initialize signal handler for hang up");
   }
 }
 

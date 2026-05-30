@@ -413,14 +413,14 @@ constexpr std::string_view kDelimiterParamName{"delimiters"};
 bool ParseVPackOptions(vpack::Slice slice,
                        MultiDelimitedTokenizer::Options& options) {
   if (!slice.isObject()) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       "Slice for multi_delimited_token_stream is not an object or string");
     return false;
   }
   auto delim_array_slice = slice.get(kDelimiterParamName);
   if (!delim_array_slice.isArray()) {
-    SDB_WARN(IRESEARCH, "Invalid type or missing '",
-             kDelimiterParamName,
+    SDB_WARN(IRESEARCH, "Invalid type or missing '", kDelimiterParamName,
              "' (array expected) for multi_delimited_token_stream from "
              "VPack arguments");
     return false;
@@ -428,8 +428,7 @@ bool ParseVPackOptions(vpack::Slice slice,
 
   for (auto delim : vpack::ArrayIterator(delim_array_slice)) {
     if (!delim.isString()) {
-      SDB_WARN(IRESEARCH, "Invalid type in '",
-               kDelimiterParamName,
+      SDB_WARN(IRESEARCH, "Invalid type in '", kDelimiterParamName,
                "' (string expected) for multi_delimited_token_stream from "
                "VPack arguments");
       return false;
@@ -437,8 +436,7 @@ bool ParseVPackOptions(vpack::Slice slice,
     auto view = ViewCast<byte_type>(delim.stringView());
 
     if (view.empty()) {
-      SDB_ERROR(IRESEARCH,
-                "Delimiter list contains an empty string.");
+      SDB_ERROR(IRESEARCH, "Delimiter list contains an empty string.");
       return false;
     }
 

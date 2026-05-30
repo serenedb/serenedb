@@ -59,8 +59,7 @@ constexpr std::string_view kAccentParamName = "accent";
 
 bool LocaleFromSlice(vpack::Slice slice, icu::Locale& locale) {
   if (!slice.isString()) {
-    SDB_WARN(IRESEARCH, "Non-string value in '",
-             kLocaleParamName,
+    SDB_WARN(IRESEARCH, "Non-string value in '", kLocaleParamName,
              "' while constructing normalizing_tokenizer from "
              "VPack arguments");
 
@@ -92,8 +91,7 @@ bool LocaleFromSlice(vpack::Slice slice, icu::Locale& locale) {
 bool ParseVPackOptions(const vpack::Slice slice,
                        NormalizingTokenizer::OptionsT& options) {
   if (!slice.isObject()) {
-    SDB_ERROR(IRESEARCH,
-              "Slice for normalizing_tokenizer is not an object");
+    SDB_ERROR(IRESEARCH, "Slice for normalizing_tokenizer is not an object");
     return false;
   }
 
@@ -109,8 +107,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
       if (auto case_convert_slice = slice.get(kCaseConvertParamName);
           !case_convert_slice.isNone()) {
         if (!case_convert_slice.isString()) {
-          SDB_WARN(IRESEARCH, "Non-string value in '",
-                   kCaseConvertParamName,
+          SDB_WARN(IRESEARCH, "Non-string value in '", kCaseConvertParamName,
                    "' while constructing normalizing_tokenizer "
                    "from VPack arguments");
 
@@ -121,8 +118,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
           case_convert_slice.stringView(), magic_enum::case_insensitive);
 
         if (!case_value) {
-          SDB_WARN(IRESEARCH, "Invalid value in '",
-                   kCaseConvertParamName,
+          SDB_WARN(IRESEARCH, "Invalid value in '", kCaseConvertParamName,
                    "' while constructing normalizing_tokenizer "
                    "from VPack arguments");
 
@@ -136,8 +132,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
       if (auto accent_slice = slice.get(kAccentParamName);
           !accent_slice.isNone()) {
         if (!accent_slice.isBool()) {
-          SDB_WARN(IRESEARCH, "Non-boolean value in '",
-                   kAccentParamName,
+          SDB_WARN(IRESEARCH, "Non-boolean value in '", kAccentParamName,
                    "' while constructing normalizing_tokenizer "
                    "from VPack arguments");
 
@@ -155,7 +150,8 @@ bool ParseVPackOptions(const vpack::Slice slice,
                            "' while constructing normalizing_tokenizer from "
                            "VPack arguments"));
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing normalizing_tokenizer from VPack"));
   } catch (...) {
@@ -197,7 +193,8 @@ bool MakeVPackConfig(const NormalizingTokenizer::OptionsT& options,
     // case convert
     const auto case_name_sv = magic_enum::enum_name(options.case_convert);
     if (case_name_sv.empty()) {
-      SDB_ERROR(IRESEARCH,
+      SDB_ERROR(
+        IRESEARCH,
         absl::StrCat("Invalid case_convert value in text analyzer options: ",
                      static_cast<int>(options.case_convert)));
       return false;
@@ -241,7 +238,8 @@ Analyzer::ptr MakeJson(std::string_view args) {
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing normalizing_tokenizer from JSON"));
   } catch (...) {
@@ -266,7 +264,8 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
       return !definition.empty();
     }
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while normalizing normalizing_tokenizer from JSON"));
   } catch (...) {

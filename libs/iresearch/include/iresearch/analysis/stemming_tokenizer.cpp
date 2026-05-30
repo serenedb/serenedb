@@ -40,8 +40,7 @@ constexpr std::string_view kLocaleParamName = "locale";
 
 bool LocaleFromSlice(vpack::Slice slice, icu::Locale& locale) {
   if (!slice.isString()) {
-    SDB_WARN(IRESEARCH, "Non-string value in '",
-             kLocaleParamName,
+    SDB_WARN(IRESEARCH, "Non-string value in '", kLocaleParamName,
              "' while constructing stemming_tokenizer from VPack arguments");
 
     return false;
@@ -68,8 +67,8 @@ bool LocaleFromSlice(vpack::Slice slice, icu::Locale& locale) {
   stemmer_ptr stemmer = make_stemmer_ptr(locale.getLanguage(), nullptr);
 
   if (!stemmer) {
-    SDB_WARN(IRESEARCH,
-             "Failed to instantiate sb_stemmer from locale '", locale_name,
+    SDB_WARN(IRESEARCH, "Failed to instantiate sb_stemmer from locale '",
+             locale_name,
              "' while constructing stemming_token_stream from VPack arguments");
   }
 
@@ -79,8 +78,7 @@ bool LocaleFromSlice(vpack::Slice slice, icu::Locale& locale) {
 bool ParseVPackOptions(const vpack::Slice slice,
                        StemmingTokenizer::OptionsT& opts) {
   if (!slice.isObject()) {
-    SDB_ERROR(IRESEARCH,
-              "Slice for stemming_tokenizer  is not an object");
+    SDB_ERROR(IRESEARCH, "Slice for stemming_tokenizer  is not an object");
     return false;
   }
 
@@ -98,7 +96,8 @@ bool ParseVPackOptions(const vpack::Slice slice,
 
     return LocaleFromSlice(locale_slice, opts.locale);
   } catch (const std::exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing stemming_tokenizer from VPack"));
   } catch (...) {
@@ -171,7 +170,8 @@ Analyzer::ptr MakeJson(std::string_view args) {
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing normalizing_tokenizer from JSON"));
   } catch (...) {
@@ -196,7 +196,8 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
       return !definition.empty();
     }
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while normalizing normalizing_tokenizer from JSON"));
   } catch (...) {

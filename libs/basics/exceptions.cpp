@@ -60,8 +60,8 @@ Exception::Exception(ErrorCode code, std::string&& error_message,
 }
 
 [[noreturn]] void helper::DieWithLogMessage(const char* error_message) {
-  SDB_FATAL(GENERAL,
-            "Failed to create an error message, giving up. ", error_message);
+  SDB_FATAL(GENERAL, "Failed to create an error message, giving up. ",
+            error_message);
 }
 
 [[noreturn]] void helper::LogAndAbort(const char* what) {

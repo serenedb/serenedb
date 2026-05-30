@@ -510,8 +510,7 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
       this->_doc_in = doc_in->Reopen();  // Reopen thread-safe stream
 
       if (!this->_doc_in) {
-        SDB_ERROR(IRESEARCH,
-                  "Failed to reopen document input");
+        SDB_ERROR(IRESEARCH, "Failed to reopen document input");
         throw IoError("failed to reopen document input");
       }
     }
@@ -807,8 +806,7 @@ bool PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
   std::unique_ptr<InputType> skip_in_ptr{
     sdb::basics::downCast<InputType>(this->_doc_in->Dup().release())};
   if (!skip_in_ptr) [[unlikely]] {
-    SDB_ERROR(IRESEARCH,
-              "Failed to duplicate document input");
+    SDB_ERROR(IRESEARCH, "Failed to duplicate document input");
     throw IoError("Failed to duplicate document input");
   }
   auto& skip_in = *skip_in_ptr;

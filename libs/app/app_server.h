@@ -62,7 +62,9 @@ class AppServer {
   void setState(State new_state) noexcept {
     _state.store(new_state, std::memory_order_release);
     for (auto& r : _progress_reports) {
-      if (r.state) r.state(new_state);
+      if (r.state) {
+        r.state(new_state);
+      }
     }
   }
 
@@ -91,7 +93,6 @@ class AppServer {
 };
 
 }  // namespace sdb::app
-
 namespace magic_enum {
 
 template<>
@@ -100,16 +101,26 @@ customize::enum_name<sdb::app::AppServer::State>(
   sdb::app::AppServer::State state) noexcept {
   using State = sdb::app::AppServer::State;
   switch (state) {
-    case State::Uninitialized:    return "uninitialized";
-    case State::InValidateOptions:return "in validate options";
-    case State::InPrepare:        return "in prepare";
-    case State::InStart:          return "in start";
-    case State::InWait:           return "in wait";
-    case State::InShutdown:       return "in beginShutdown";
-    case State::InStop:           return "in stop";
-    case State::InUnprepare:      return "in unprepare";
-    case State::Stopped:          return "in stopped";
-    case State::Aborted:          return "in aborted";
+    case State::Uninitialized:
+      return "uninitialized";
+    case State::InValidateOptions:
+      return "in validate options";
+    case State::InPrepare:
+      return "in prepare";
+    case State::InStart:
+      return "in start";
+    case State::InWait:
+      return "in wait";
+    case State::InShutdown:
+      return "in beginShutdown";
+    case State::InStop:
+      return "in stop";
+    case State::InUnprepare:
+      return "in unprepare";
+    case State::Stopped:
+      return "in stopped";
+    case State::Aborted:
+      return "in aborted";
   }
   return invalid_tag;
 }

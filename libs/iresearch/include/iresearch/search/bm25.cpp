@@ -110,7 +110,8 @@ Scorer::ptr MakeVPack(const vpack::Slice slice) {
     case vpack::ValueType::Array:
       return MakeFromArray(slice);
     default:  // wrong type
-      SDB_ERROR(IRESEARCH,
+      SDB_ERROR(
+        IRESEARCH,
         "Invalid VPack arguments passed while constructing bm25 scorer");
       return nullptr;
   }
@@ -134,11 +135,13 @@ Scorer::ptr MakeJson(std::string_view args) {
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing VPack from JSON for bm25 scorer"));
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       "Caught error while constructing VPack from JSON for bm25 scorer");
   }
   return nullptr;

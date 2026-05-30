@@ -60,9 +60,7 @@
 namespace sdb {
 
 RocksDBRecoveryManager::RocksDBRecoveryManager()
-  :
-    _current_sequence_number(0),
-    _recovery_state(RecoveryState::Before) {
+  : _current_sequence_number(0), _recovery_state(RecoveryState::Before) {
   gInstance = this;
 }
 
@@ -74,7 +72,6 @@ void RocksDBRecoveryManager::prepare() {
 }
 
 void RocksDBRecoveryManager::start() {
-
   // synchronizes with acquire inRecovery()
   _recovery_state.store(RecoveryState::InProgress, std::memory_order_release);
 
@@ -91,7 +88,8 @@ void RocksDBRecoveryManager::start() {
 void RocksDBRecoveryManager::runRecovery() {
   auto res = parseRocksWAL();
   if (res.fail()) {
-    SDB_FATAL_EXIT_CODE(STORAGE, EXIT_RECOVERY,
+    SDB_FATAL_EXIT_CODE(
+      STORAGE, EXIT_RECOVERY,
       "failed during rocksdb WAL recovery: ", res.errorMessage());
   }
 
@@ -181,8 +179,8 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
       // report only every 5%, so that we don't flood the log with micro
       // progress
       if (progress >= 5 && progress >= _progress_state.progress_value + 5) {
-        SDB_INFO(STORAGE, "Recovering from sequence number ",
-                 start_sequence, " (", progress, "% of WAL)...");
+        SDB_INFO(STORAGE, "Recovering from sequence number ", start_sequence,
+                 " (", progress, "% of WAL)...");
 
         _progress_state.progress_value = progress;
       }
@@ -486,8 +484,7 @@ void RocksDBRecoveryManager::recoveryDone() {
   for (auto& future : futures) {
     auto r = std::move(future).Touch().Ok();
     if (!r.ok()) {
-      SDB_ERROR(GENERAL,
-                "recovery failure due to error from callback, error '",
+      SDB_ERROR(GENERAL, "recovery failure due to error from callback, error '",
                 GetErrorStr(r.errorNumber()), "' message: ", r.errorMessage());
 
       SDB_THROW(std::move(r));

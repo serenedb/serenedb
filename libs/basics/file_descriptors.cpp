@@ -73,8 +73,7 @@ Result FileDescriptors::adjustTo(FileDescriptors::ValueType value) {
       return res;
     }
 
-    SDB_DEBUG(GENERAL,
-              "file-descriptors (nofiles) hard limit is ",
+    SDB_DEBUG(GENERAL, "file-descriptors (nofiles) hard limit is ",
               FileDescriptors::stringify(current.hard), ", soft limit is ",
               FileDescriptors::stringify(current.soft));
 
@@ -101,9 +100,8 @@ Result FileDescriptors::adjustTo(FileDescriptors::ValueType value) {
         FileDescriptors copy = current;
         copy.soft = recommended;
         if (Result res = FileDescriptors::store(copy); res.fail()) {
-          SDB_WARN(GENERAL,
-                   "cannot raise the file descriptors limit to ", recommended,
-                   ": ", res);
+          SDB_WARN(GENERAL, "cannot raise the file descriptors limit to ",
+                   recommended, ": ", res);
           return res;
         }
       }

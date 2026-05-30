@@ -65,17 +65,14 @@ void Acceptor::handleError(const asio_ns::error_code& ec) {
   // continue after an error.
   if (!_open && ec == asio_ns::error::operation_aborted) {
     // this "error" is accepted, so it doesn't justify a warning
-    SDB_DEBUG(HTTP,
-              "accept failed: ", ec.message());
+    SDB_DEBUG(HTTP, "accept failed: ", ec.message());
     return;
   }
 
   if (++_accept_failures <= kMaxAcceptErrors) {
-    SDB_WARN(HTTP,
-             "accept failed: ", ec.message());
+    SDB_WARN(HTTP, "accept failed: ", ec.message());
     if (_accept_failures == kMaxAcceptErrors) {
-      SDB_WARN(HTTP,
-               "too many accept failures, stopping to report");
+      SDB_WARN(HTTP, "too many accept failures, stopping to report");
     }
   }
   asyncAccept();  // retry

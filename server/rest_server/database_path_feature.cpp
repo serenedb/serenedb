@@ -44,9 +44,7 @@ using namespace sdb::basics;
 
 namespace sdb {
 
-DatabasePathFeature::DatabasePathFeature() {
-  gInstance = this;
-}
+DatabasePathFeature::DatabasePathFeature() { gInstance = this; }
 
 DatabasePathFeature::~DatabasePathFeature() { gInstance = nullptr; }
 
@@ -65,9 +63,8 @@ void DatabasePathFeature::validateOptions() {
 
   if (_directory.empty()) {
     _directory = "serenedb-data";
-    SDB_INFO(GENERAL,
-             "no database path has been supplied, using default '", _directory,
-             "'");
+    SDB_INFO(GENERAL, "no database path has been supplied, using default '",
+             _directory, "'");
   }
 
   // strip trailing separators
@@ -98,11 +95,9 @@ void DatabasePathFeature::start() {
       SdbCreateRecursiveDirectory(_directory, error_no, system_error_str);
 
     if (res == ERROR_OK) {
-      SDB_INFO(GENERAL,
-               "Created database directory: ", _directory);
+      SDB_INFO(GENERAL, "Created database directory: ", _directory);
     } else {
-      SDB_FATAL(GENERAL,
-                "Unable to create database directory '", _directory,
+      SDB_FATAL(GENERAL, "Unable to create database directory '", _directory,
                 "': ", system_error_str);
     }
   }
@@ -119,23 +114,24 @@ void DatabasePathFeature::start() {
     } catch (...) {
     }
     if (other_pid.empty()) {
-      SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
+      SDB_FATAL_EXIT_CODE(
+        GENERAL, EXIT_COULD_NOT_LOCK,
         "failed to read/write lockfile, please check the file permissions "
         "of the lockfile '",
         lock_filename, "'");
     } else {
-      SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
-        "database is locked by process ", other_pid,
-        "; please stop it first and check that the lockfile '", lock_filename,
-        "' goes away.");
+      SDB_FATAL_EXIT_CODE(
+        GENERAL, EXIT_COULD_NOT_LOCK, "database is locked by process ",
+        other_pid, "; please stop it first and check that the lockfile '",
+        lock_filename, "' goes away.");
     }
   }
   if (SdbExistsFile(lock_filename.c_str())) {
     res = SdbUnlinkFile(lock_filename.c_str());
     if (res != ERROR_OK) {
       SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
-        "failed to remove an abandoned lockfile '", lock_filename,
-        "': ", GetErrorStr(res));
+                          "failed to remove an abandoned lockfile '",
+                          lock_filename, "': ", GetErrorStr(res));
     }
   }
   res = SdbCreateLockFile(lock_filename.c_str());

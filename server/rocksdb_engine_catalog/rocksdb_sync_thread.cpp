@@ -96,9 +96,8 @@ void RocksDBSyncThread::beginShutdown() {
 void RocksDBSyncThread::run() {
   auto db = _engine.db()->GetBaseDB();
 
-  SDB_TRACE(STORAGE,
-            "starting RocksDB sync thread with interval ", _interval.count(),
-            " milliseconds");
+  SDB_TRACE(STORAGE, "starting RocksDB sync thread with interval ",
+            _interval.count(), " milliseconds");
 
   while (!isStopping()) {
     try {
@@ -170,15 +169,12 @@ void RocksDBSyncThread::run() {
       } else {
         // could not sync... in this case, don't advance our last
         // sync time and last synced sequence number
-        SDB_ERROR(STORAGE,
-                  "could not sync RocksDB WAL: ", res.errorMessage());
+        SDB_ERROR(STORAGE, "could not sync RocksDB WAL: ", res.errorMessage());
       }
     } catch (const std::exception& ex) {
-      SDB_ERROR(STORAGE,
-                "caught exception in RocksDBSyncThread: ", ex.what());
+      SDB_ERROR(STORAGE, "caught exception in RocksDBSyncThread: ", ex.what());
     } catch (...) {
-      SDB_ERROR(STORAGE,
-                "caught unknown exception in RocksDBSyncThread");
+      SDB_ERROR(STORAGE, "caught unknown exception in RocksDBSyncThread");
     }
   }
 }

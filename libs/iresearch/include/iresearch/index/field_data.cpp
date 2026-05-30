@@ -929,14 +929,14 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
     _pos += inc->value;
 
     if (_pos < _last_pos) {
-      SDB_ERROR(IRESEARCH, "invalid position ", _pos,
-                " < ", _last_pos, " in field '", _meta.name, "'");
+      SDB_ERROR(IRESEARCH, "invalid position ", _pos, " < ", _last_pos,
+                " in field '", _meta.name, "'");
       return false;
     }
 
     if (_pos >= pos_limits::eof()) {
-      SDB_ERROR(IRESEARCH, "invalid position ", _pos,
-                " >= ", pos_limits::eof(), " in field '", _meta.name, "'");
+      SDB_ERROR(IRESEARCH, "invalid position ", _pos, " >= ", pos_limits::eof(),
+                " in field '", _meta.name, "'");
       return false;
     }
 
@@ -949,9 +949,8 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
       const uint32_t end_offset = _offs + offs->end;
 
       if (start_offset < _last_start_offs || end_offset < start_offset) {
-        SDB_ERROR(IRESEARCH,
-                  "invalid offset start=", start_offset, " end=", end_offset,
-                  " in field '", _meta.name, "'");
+        SDB_ERROR(IRESEARCH, "invalid offset start=", start_offset,
+                  " end=", end_offset, " in field '", _meta.name, "'");
         return false;
       }
 
@@ -973,8 +972,8 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
     SDB_ASSERT(doc_limits::valid(p->doc));
 
     if (0 == ++_stats.len) {
-      SDB_ERROR(IRESEARCH,
-                "too many tokens in field: ", _meta.name, ", document: ", id);
+      SDB_ERROR(IRESEARCH, "too many tokens in field: ", _meta.name,
+                ", document: ", id);
       return false;
     }
 

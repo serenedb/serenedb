@@ -452,8 +452,8 @@ bool VPackHelper::vpackToFile(const std::string& filename, vpack::Slice slice,
   if (auto res = SdbRenameFile(tmp.c_str(), filename.c_str());
       res != ERROR_OK) {
     SetError(res);
-    SDB_WARN(GENERAL, "cannot rename saved file '", tmp,
-             "' to '", filename, "': ", SERENEDB_ERRORNO_STR);
+    SDB_WARN(GENERAL, "cannot rename saved file '", tmp, "' to '", filename,
+             "': ", SERENEDB_ERRORNO_STR);
     // TODO(mbkkt) why ignore?
     std::ignore = SdbUnlinkFile(tmp.c_str());
     return false;
@@ -470,14 +470,14 @@ bool VPackHelper::vpackToFile(const std::string& filename, vpack::Slice slice,
     } else {
       if (fsync(fd) < 0) {
         SetError(ERROR_SYS_ERROR);
-        SDB_WARN(GENERAL, "cannot sync directory '",
-                 filename, "': ", SERENEDB_ERRORNO_STR);
+        SDB_WARN(GENERAL, "cannot sync directory '", filename,
+                 "': ", SERENEDB_ERRORNO_STR);
       }
       int res = SERENEDB_CLOSE(fd);
       if (res < 0) {
         SetError(ERROR_SYS_ERROR);
-        SDB_WARN(GENERAL, "cannot close directory '",
-                 filename, "': ", SERENEDB_ERRORNO_STR);
+        SDB_WARN(GENERAL, "cannot close directory '", filename,
+                 "': ", SERENEDB_ERRORNO_STR);
       }
     }
   }
@@ -682,8 +682,9 @@ uint64_t VPackHelper::extractIdValue(vpack::Slice slice) {
   } else if (id.isNone()) {
     return 0;
   }
-  SDB_THROW(sdb::ERROR_BAD_PARAMETER, absl::StrCat("invalid type ", id.typeName(),
-                                              " for 'id' attribute"));
+  SDB_THROW(
+    sdb::ERROR_BAD_PARAMETER,
+    absl::StrCat("invalid type ", id.typeName(), " for 'id' attribute"));
 }
 
 }  // namespace sdb::basics

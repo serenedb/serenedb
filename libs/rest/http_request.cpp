@@ -54,7 +54,8 @@ std::string UrlDecode(const char* begin, const char* end) {
         out.push_back(static_cast<char>(h & 0xFF));
         i += 2;
       } else {
-        SDB_THROW(sdb::ERROR_BAD_PARAMETER, "invalid encoding value in request URL");
+        SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+                  "invalid encoding value in request URL");
       }
     } else if (c == '+') {
       out.push_back(' ');
@@ -589,11 +590,21 @@ EncodingType HttpRequest::parseAcceptEncoding(std::string_view value) const {
     if (auto semi = current.find(';'); semi != std::string_view::npos) {
       current = current.substr(0, semi);
     }
-    while (!current.empty() && current.front() == ' ') current.remove_prefix(1);
-    while (!current.empty() && current.back() == ' ') current.remove_suffix(1);
-    if (current == "x-serene-lz4") return EncodingType::Lz4;
-    if (current == "gzip") return EncodingType::GZip;
-    if (current == "deflate") return EncodingType::Deflate;
+    while (!current.empty() && current.front() == ' ') {
+      current.remove_prefix(1);
+    }
+    while (!current.empty() && current.back() == ' ') {
+      current.remove_suffix(1);
+    }
+    if (current == "x-serene-lz4") {
+      return EncodingType::Lz4;
+    }
+    if (current == "gzip") {
+      return EncodingType::GZip;
+    }
+    if (current == "deflate") {
+      return EncodingType::Deflate;
+    }
   }
   return EncodingType::Unset;
 }

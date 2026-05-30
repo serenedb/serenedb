@@ -53,7 +53,9 @@ void AppServer::wait() {
       beginShutdown();
     }
     absl::MutexLock guard{&_shutdown_condition.mutex};
-    if (_abort_waiting) break;
+    if (_abort_waiting) {
+      break;
+    }
     _shutdown_condition.cv.WaitWithTimeout(&_shutdown_condition.mutex,
                                            absl::Milliseconds(100));
   }

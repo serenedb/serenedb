@@ -53,7 +53,8 @@ asio_ns::ssl::context sdb::SslContext(SslProtocol protocol,
 
   switch (protocol) {
     case kSslV2:
-      SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED, "support for SSLv2 has been dropped");
+      SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED,
+                "support for SSLv2 has been dropped");
 
 #ifndef OPENSSL_NO_SSL3_METHOD
     case SSL_V3:
@@ -96,8 +97,8 @@ asio_ns::ssl::context sdb::SslContext(SslProtocol protocol,
   boost::system::error_code ec;
   sslctx.use_certificate_chain_file(keyfile, ec);
   if (ec) {
-    SDB_ERROR(SSL, "cannot read certificate from '",
-              keyfile, "': ", ec.to_string());
+    SDB_ERROR(SSL, "cannot read certificate from '", keyfile,
+              "': ", ec.to_string());
     SDB_THROW(sdb::ERROR_BAD_PARAMETER, "unable to read certificate from file");
   }
 

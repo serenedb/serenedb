@@ -69,8 +69,7 @@ class DropTask {
   static AsyncResult ExecuteTask(std::shared_ptr<DropTask> task) {
     SDB_ASSERT(task);
     if (!task->AllowToDrop()) {
-      SDB_TRACE(STORAGE,
-                "Waiting till the snapshots will free the object ",
+      SDB_TRACE(STORAGE, "Waiting till the snapshots will free the object ",
                 task->GetContext());
       return yaclib::MakeFuture<Result>(ERROR_LOCKED);
     }

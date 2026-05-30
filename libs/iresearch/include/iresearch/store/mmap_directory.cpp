@@ -49,7 +49,8 @@ inline int GetPosixMadvice(IOAdvice advice) {
       return IR_MADVICE_RANDOM;
   }
 
-  SDB_ERROR(IRESEARCH,
+  SDB_ERROR(
+    IRESEARCH,
     absl::StrCat("madvice '", static_cast<uint32_t>(advice),
                  "' is not valid (RANDOM|SEQUENTIAL), fallback to NORMAL"));
 

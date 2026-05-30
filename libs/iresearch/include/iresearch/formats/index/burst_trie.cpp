@@ -1840,8 +1840,7 @@ class TermIteratorImpl : public TermIteratorBase {
 
       if (!_terms_in) {
         // implementation returned wrong pointer
-        SDB_ERROR(IRESEARCH,
-                  "Failed to reopen terms input");
+        SDB_ERROR(IRESEARCH, "Failed to reopen terms input");
 
         throw IoError("failed to reopen terms input");
       }
@@ -2685,8 +2684,7 @@ class FieldReaderImpl final : public FieldReader {
 
         if (!terms_in) {
           // implementation returned wrong pointer
-          SDB_ERROR(IRESEARCH,
-                    "Failed to reopen terms input");
+          SDB_ERROR(IRESEARCH, "Failed to reopen terms input");
 
           throw IoError("failed to reopen terms input");
         }
@@ -2783,8 +2781,7 @@ class FieldReaderImpl final : public FieldReader {
 
       if (!terms_in) {
         // implementation returned wrong pointer
-        SDB_ERROR(IRESEARCH,
-                  "Failed to reopen terms input");
+        SDB_ERROR(IRESEARCH, "Failed to reopen terms input");
 
         throw IoError{"Failed to reopen terms input"};  // FIXME
       }

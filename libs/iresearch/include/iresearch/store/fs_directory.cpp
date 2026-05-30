@@ -60,8 +60,7 @@ inline int GetPosixFadvice(IOAdvice advice) noexcept {
       return IR_FADVICE_RANDOM | IR_FADVICE_NOREUSE;
   }
 
-  SDB_ERROR(IRESEARCH, "fadvice '",
-            static_cast<uint32_t>(advice),
+  SDB_ERROR(IRESEARCH, "fadvice '", static_cast<uint32_t>(advice),
             "' is not valid (RANDOM|SEQUENTIAL), fallback to NORMAL");
 
   return IR_FADVICE_NORMAL;
@@ -178,8 +177,7 @@ class FSIndexOutput final : public IndexOutput {
         return ptr;
       }
 
-      SDB_ERROR(IRESEARCH,
-                "Failed to open output file, error: ", GET_ERROR(),
+      SDB_ERROR(IRESEARCH, "Failed to open output file, error: ", GET_ERROR(),
                 ", path: ", file_utils::ToStr(name));
     } catch (...) {
     }
@@ -327,8 +325,7 @@ class FsIndexInput : public BufferedIndexInput {
                                       GetPosixFadvice(handle->io_advice));
 
     if (nullptr == handle->handle) {
-      SDB_ERROR(IRESEARCH,
-                "Failed to open input file, error: ", GET_ERROR(),
+      SDB_ERROR(IRESEARCH, "Failed to open input file, error: ", GET_ERROR(),
                 ", path: ", file_utils::ToStr(name));
       return nullptr;
     }
@@ -556,8 +553,7 @@ IndexOutput::ptr FSDirectory::create(std::string_view name) noexcept {
     auto out = FSIndexOutput::Open(path.c_str(), ResourceManager());
 
     if (!out) {
-      SDB_ERROR(IRESEARCH,
-                "Failed to open output file, path: ", name);
+      SDB_ERROR(IRESEARCH, "Failed to open output file, path: ", name);
     }
 
     return out;
@@ -616,9 +612,8 @@ bool FSDirectory::rename(std::string_view src, std::string_view dst) noexcept {
   const auto dst_path = _dir / dst;
   const bool r = file_utils::Move(src_path.c_str(), dst_path.c_str());
   if (!r) {
-    SDB_ERROR(IRESEARCH, "Unable to move file: '",
-              src_path.c_str(), "' to '", dst_path.c_str(),
-              "', error: ", GET_ERROR());
+    SDB_ERROR(IRESEARCH, "Unable to move file: '", src_path.c_str(), "' to '",
+              dst_path.c_str(), "', error: ", GET_ERROR());
   }
   return r;
 }

@@ -402,8 +402,7 @@ bool AnalyzerEquals(const AnalyzerImpl& analyzer, std::string_view type,
                     vpack::Slice properties, Features features) {
   std::string normalized_properties;
   if (!Normalize(normalized_properties, type, properties)) {
-    SDB_WARN(SEARCH,
-             "failed to normalize properties for analyzer type '", type,
+    SDB_WARN(SEARCH, "failed to normalize properties for analyzer type '", type,
              "' properties '", properties.toString(), "'");
     return false;
   }
@@ -432,8 +431,7 @@ bool AnalyzerEquals(const AnalyzerImpl& analyzer, std::string_view type,
     // failed to re-normalize definition - strange. It was already normalized
     // once. Some bug in load/store?
     SDB_ASSERT(false);
-    SDB_WARN(SEARCH,
-             "failed to re-normalize properties for analyzer type '",
+    SDB_WARN(SEARCH, "failed to re-normalize properties for analyzer type '",
              analyzer.GetType(), "' properties '",
              analyzer.GetProperties().toJson(), "'");
     return false;

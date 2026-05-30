@@ -91,12 +91,14 @@ IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const Directory& dir,
 
       return ref;
     } catch (const std::exception& e) {
-      SDB_ERROR(IRESEARCH,
+      SDB_ERROR(
+        IRESEARCH,
         absl::StrCat("Caught exception while reading index meta with codec ''",
                      codec->type()().name(), "', error '", e.what(), "'"));
       return nullptr;
     } catch (...) {
-      SDB_ERROR(IRESEARCH,
+      SDB_ERROR(
+        IRESEARCH,
         absl::StrCat("Caught exception while reading index meta with codec ''",
                      codec->type()().name(), "'"));
 

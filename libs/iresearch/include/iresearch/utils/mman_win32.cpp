@@ -56,9 +56,8 @@ DWORD page_protection(int prot) noexcept {
       return PAGE_EXECUTE_READWRITE;
   }
 
-  SDB_ERROR(IRESEARCH,
-            absl::StrCat("Can't convert protection level ", prot,
-                         ", use PAGE_NOACCESS"));
+  SDB_ERROR(IRESEARCH, absl::StrCat("Can't convert protection level ", prot,
+                                    ", use PAGE_NOACCESS"));
 
   return PAGE_NOACCESS;  // fallback
 }

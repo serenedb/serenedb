@@ -249,11 +249,10 @@ void FlushShard(ShardState& s,
       get_key_buffer.append(pk.data(), pk.size());
       value_buffer.Reset();
       auto status = db.Get(read_opts, &cf, get_key_buffer, &value_buffer);
-      SDB_FATAL_IF(SEARCH, !status.ok(),
-                   "WAL recovery: rocksdb Get failed for index '",
-                   s.shard->GetId().id(),
-                   "' col=", s.indexed_columns[col_idx].id, ": ",
-                   status.ToString(), kSkipHint);
+      SDB_FATAL_IF(
+        SEARCH, !status.ok(), "WAL recovery: rocksdb Get failed for index '",
+        s.shard->GetId().id(), "' col=", s.indexed_columns[col_idx].id, ": ",
+        status.ToString(), kSkipHint);
       return std::string_view{value_buffer.data(), value_buffer.size()};
     };
     for (size_t col_idx = 0; col_idx < s.indexed_columns.size(); ++col_idx) {
@@ -644,8 +643,7 @@ void RunWalRecovery(std::vector<ShardState>& shards,
   yaclib::Wait(commits.begin(), commits.end());
 
   for (auto& shard : shards) {
-    SDB_INFO_IF(SEARCH,
-                shard.total_deleted > 0 || shard.total_inserted > 0,
+    SDB_INFO_IF(SEARCH, shard.total_deleted > 0 || shard.total_inserted > 0,
                 "WAL recovery: index '", shard.shard->GetId().id(),
                 "' replayed (", shard.start_tick, ", ", end_tick,
                 "], inserted=", shard.total_inserted,
@@ -681,9 +679,9 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
         SDB_ASSERT(inv_shard);
         const Tick persisted = inv_shard->GetRecoveryTick();
         if (persisted > end_tick) {
-          SDB_WARN(SEARCH, "Inverted index '",
-                   inv_shard->GetId().id(), "' is recovered at tick ",
-                   persisted, " greater than storage engine tick ", end_tick,
+          SDB_WARN(SEARCH, "Inverted index '", inv_shard->GetId().id(),
+                   "' is recovered at tick ", persisted,
+                   " greater than storage engine tick ", end_tick,
                    ", it seems WAL tail was lost and index is out of sync");
         }
         inv_shard->StartTasks();
@@ -703,8 +701,7 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
         ShardState state;
         state.shard = std::move(inv_shard);
         state.start_tick = persisted;
-        SDB_FATAL_IF(SEARCH,
-                     !ResolveShardMetadata(state, *snapshot),
+        SDB_FATAL_IF(SEARCH, !ResolveShardMetadata(state, *snapshot),
                      "WAL recovery: could not resolve catalog metadata for "
                      "inverted index '",
                      state.shard->GetId().id(), "'", kSkipHint);

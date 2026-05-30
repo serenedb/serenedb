@@ -38,7 +38,8 @@ namespace {
 bool ParseVPackOptions(const vpack::Slice slice,
                        PathHierarchyTokenizer::Options& options) {
   if (!slice.isObject()) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       "Slice for path_hierarchy_token_stream is not an object or string");
     return false;
   }
@@ -57,8 +58,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
                                       .strict = false,
                                     });
   if (!r.ok()) {
-    SDB_WARN(IRESEARCH,
-             "Failed to parse path_hierarchy_token_stream options: ",
+    SDB_WARN(IRESEARCH, "Failed to parse path_hierarchy_token_stream options: ",
              r.errorMessage());
     return false;
   }
@@ -100,7 +100,8 @@ Analyzer::ptr MakeVPack(std::string_view args) {
 Analyzer::ptr MakeJson(std::string_view args) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR(IRESEARCH,
+      SDB_ERROR(
+        IRESEARCH,
         "Null arguments while constructing path_hierarchy_token_stream");
       return nullptr;
     }

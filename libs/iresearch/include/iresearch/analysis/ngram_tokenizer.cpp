@@ -54,8 +54,7 @@ constexpr sdb::containers::TrivialBiMap kStreamTypeConvertMap =
 bool ParseVPackOptions(const vpack::Slice slice,
                        NGramTokenizerBase::Options& options) {
   if (!slice.isObject()) {
-    SDB_ERROR(IRESEARCH,
-              "Slice for ngram_token_stream is not an object");
+    SDB_ERROR(IRESEARCH, "Slice for ngram_token_stream is not an object");
     return false;
   }
 
@@ -75,7 +74,8 @@ bool ParseVPackOptions(const vpack::Slice slice,
   }
 
   if (!min_type_slice.isNumber()) {
-    SDB_WARN(IRESEARCH, "Invalid type '", kMinParamName,
+    SDB_WARN(
+      IRESEARCH, "Invalid type '", kMinParamName,
       "' (unsigned int expected) for ngram_token_stream from VPack arguments");
     return false;
   }
@@ -91,7 +91,8 @@ bool ParseVPackOptions(const vpack::Slice slice,
     return false;
   }
   if (!max_type_slice.isNumber()) {
-    SDB_WARN(IRESEARCH, "Invalid type '", kMaxParamName,
+    SDB_WARN(
+      IRESEARCH, "Invalid type '", kMaxParamName,
       "' (unsigned int expected) for ngram_token_stream from VPack arguments");
     return false;
   }
@@ -113,8 +114,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
     return false;
   }
   if (!preserve_type_slice.isBool()) {
-    SDB_WARN(IRESEARCH, "Invalid type '",
-             kPreserveOriginalParamName,
+    SDB_WARN(IRESEARCH, "Invalid type '", kPreserveOriginalParamName,
              "' (bool expected) for ngram_token_stream from VPack arguments");
     return false;
   }
@@ -125,8 +125,8 @@ bool ParseVPackOptions(const vpack::Slice slice,
   if (auto start_marker_type_slice = slice.get(kStartMarkerParamName);
       !start_marker_type_slice.isNone()) {
     if (!start_marker_type_slice.isString()) {
-      SDB_WARN(IRESEARCH, "Invalid type '",
-        kStartMarkerParamName,
+      SDB_WARN(
+        IRESEARCH, "Invalid type '", kStartMarkerParamName,
         "' (string expected) for ngram_token_stream from VPack arguments");
       return false;
     }
@@ -138,7 +138,8 @@ bool ParseVPackOptions(const vpack::Slice slice,
   if (auto end_marker_type_slice = slice.get(kEndMarkerParamName);
       !end_marker_type_slice.isNone()) {
     if (!end_marker_type_slice.isString()) {
-      SDB_WARN(IRESEARCH, "Invalid type '", kEndMarkerParamName,
+      SDB_WARN(
+        IRESEARCH, "Invalid type '", kEndMarkerParamName,
         "' (string expected) for ngram_token_stream from VPack arguments");
       return false;
     }
@@ -150,16 +151,14 @@ bool ParseVPackOptions(const vpack::Slice slice,
   if (auto stream_type_slice = slice.get(kStreamTypeParamName);
       !stream_type_slice.isNone()) {
     if (!stream_type_slice.isString()) {
-      SDB_WARN(IRESEARCH, "Non-string value in '",
-               kStreamTypeParamName,
+      SDB_WARN(IRESEARCH, "Non-string value in '", kStreamTypeParamName,
                "' while constructing ngram_token_stream from VPack arguments");
       return false;
     }
     auto stream_type = stream_type_slice.stringView();
     auto itr = kStreamTypeConvertMap.TryFindByFirst(stream_type);
     if (!itr) {
-      SDB_WARN(IRESEARCH, "Invalid value in '",
-               kStreamTypeParamName,
+      SDB_WARN(IRESEARCH, "Invalid value in '", kStreamTypeParamName,
                "' while constructing ngram_token_stream from VPack arguments");
       return false;
     }
@@ -271,7 +270,8 @@ Analyzer::ptr MakeJson(std::string_view args) {
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing ngram_token_stream from JSON"));
   } catch (...) {

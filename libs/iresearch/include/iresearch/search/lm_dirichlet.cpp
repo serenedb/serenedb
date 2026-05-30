@@ -71,8 +71,7 @@ Scorer::ptr MakeFromObject(const vpack::Slice slice) {
     return {};
   }
   if (!std::isfinite(params.mu) || params.mu < 0.f) {
-    SDB_ERROR(IRESEARCH,
-              "lm_dirichlet mu must be a non-negative finite value");
+    SDB_ERROR(IRESEARCH, "lm_dirichlet mu must be a non-negative finite value");
     return {};
   }
   return std::make_unique<LMDirichlet>(params.mu);
@@ -87,8 +86,7 @@ Scorer::ptr MakeFromArray(const vpack::Slice slice) {
     return {};
   }
   if (!std::isfinite(params.mu) || params.mu < 0.f) {
-    SDB_ERROR(IRESEARCH,
-              "lm_dirichlet mu must be a non-negative finite value");
+    SDB_ERROR(IRESEARCH, "lm_dirichlet mu must be a non-negative finite value");
     return {};
   }
   return std::make_unique<LMDirichlet>(params.mu);
@@ -101,8 +99,7 @@ Scorer::ptr MakeVPack(const vpack::Slice slice) {
     case vpack::ValueType::Array:
       return MakeFromArray(slice);
     default:
-      SDB_ERROR(IRESEARCH,
-                "Invalid VPack arguments for lm_dirichlet scorer");
+      SDB_ERROR(IRESEARCH, "Invalid VPack arguments for lm_dirichlet scorer");
       return nullptr;
   }
 }
@@ -126,7 +123,8 @@ Scorer::ptr MakeJson(std::string_view args) {
     SDB_ERROR(IRESEARCH, "Caught error '", ex.what(),
               "' while constructing VPack from JSON for lm_dirichlet");
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       "Caught error while constructing VPack from JSON for lm_dirichlet");
   }
   return nullptr;

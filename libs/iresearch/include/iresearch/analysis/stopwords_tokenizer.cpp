@@ -42,8 +42,7 @@ bool HexDecode(std::string& buf, std::string_view value) {
   if (absl::HexStringToBytes(value, &buf)) {
     return true;
   }
-  SDB_WARN(IRESEARCH,
-           "Invalid HEX masked token: ", value);
+  SDB_WARN(IRESEARCH, "Invalid HEX masked token: ", value);
   return false;
 }
 
@@ -54,8 +53,8 @@ Analyzer::ptr Construct(const vpack::ArrayIterator& mask, bool hex) {
   std::string token;
   for (auto itr = mask.begin(); itr.valid(); ++itr, ++offset) {
     if (!(*itr).isString()) {
-      SDB_WARN(IRESEARCH,
-        "Non-string value in 'mask' at offset '", offset,
+      SDB_WARN(
+        IRESEARCH, "Non-string value in 'mask' at offset '", offset,
         "' while constructing token_stopwords_stream from VPack arguments");
 
       return nullptr;
@@ -105,7 +104,8 @@ Analyzer::ptr MakeVPack(const vpack::Slice slice) {
       return nullptr;
     }
     default: {
-      SDB_ERROR(IRESEARCH,
+      SDB_ERROR(
+        IRESEARCH,
         "Invalid vpack while constructing token_stopwords_stream from VPack "
         "arguments. Array or Object was expected.");
     }
@@ -128,11 +128,13 @@ Analyzer::ptr MakeJson(std::string_view args) {
     auto vpack = vpack::Parser::fromJson(args.data());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing token_stopwords_stream from JSON"));
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       "Caught error while constructing token_stopwords_stream from JSON");
   }
   return nullptr;
@@ -151,7 +153,8 @@ bool NormalizeVPackConfig(const vpack::Slice slice, vpack::Builder* builder) {
     case vpack::ValueType::Object: {
       auto hex_slice = slice.get(kHexParamName);
       if (!hex_slice.isBool() && !hex_slice.isNone()) {
-        SDB_ERROR(IRESEARCH,
+        SDB_ERROR(
+          IRESEARCH,
           absl::StrCat("Invalid vpack while normalizing token_stopwords_stream "
                        "from VPack arguments. ",
                        kHexParamName, " value should be boolean."));
@@ -173,7 +176,8 @@ bool NormalizeVPackConfig(const vpack::Slice slice, vpack::Builder* builder) {
       return false;
     }
     default: {
-      SDB_ERROR(IRESEARCH,
+      SDB_ERROR(
+        IRESEARCH,
         "Invalid vpack while normalizing token_stopwords_stream from VPack "
         "arguments. Array or Object was expected.");
     }
@@ -205,11 +209,13 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
       return true;
     }
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while normalizing token_stopwords_stream from JSON"));
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       "Caught error while normalizing token_stopwords_stream from JSON");
   }
   return false;

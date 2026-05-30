@@ -47,14 +47,13 @@ bool ParseNgramSize(vpack::Slice input, size_t& ngram_size) {
   SDB_ASSERT(input.isObject());
   input = input.get(kNgramSize);
   if (!input.isNumber<size_t>()) {
-    SDB_ERROR(IRESEARCH, kNgramSize,
-              " attribute must be size_t", kParseError);
+    SDB_ERROR(IRESEARCH, kNgramSize, " attribute must be size_t", kParseError);
     return false;
   }
   ngram_size = input.getNumber<size_t>();
   if (ngram_size < kMinNgram) {
-    SDB_ERROR(IRESEARCH, kNgramSize,
-              " attribute must be at least ", kMinNgram, kParseError);
+    SDB_ERROR(IRESEARCH, kNgramSize, " attribute must be at least ", kMinNgram,
+              kParseError);
     return false;
   }
   return true;
@@ -68,9 +67,8 @@ bool ParseOptions(vpack::Slice slice, WildcardAnalyzer::Options& options) {
     return false;
   }
   if (!analyzers::MakeAnalyzer(slice, options.base_analyzer)) {
-    SDB_ERROR(IRESEARCH,
-              "Invalid analyzer definition in ", slice_to_string(slice),
-              kParseError);
+    SDB_ERROR(IRESEARCH, "Invalid analyzer definition in ",
+              slice_to_string(slice), kParseError);
     return false;
   }
   return true;
@@ -95,9 +93,8 @@ bool NormalizeImpl(vpack::Slice input, vpack::Builder& output) {
   vpack::ObjectBuilder scope{&output};
   output.add(kNgramSize, ngram_size);
   if (!analyzers::NormalizeAnalyzer(input, output)) {
-    SDB_ERROR(IRESEARCH,
-              "Invalid analyzer definition in ", slice_to_string(input),
-              kParseError);
+    SDB_ERROR(IRESEARCH, "Invalid analyzer definition in ",
+              slice_to_string(input), kParseError);
     return false;
   }
   return true;
@@ -155,8 +152,7 @@ bool WildcardAnalyzer::reset(std::string_view data) {
     auto size = _term->value.size();
     if (size > std::numeric_limits<int32_t>::max()) {
       // icu doesn't support more
-      SDB_WARN(IRESEARCH,
-               "too long input for wildcard analyzer: ", size);
+      SDB_WARN(IRESEARCH, "too long input for wildcard analyzer: ", size);
       continue;
     }
     auto idx = _terms.size();

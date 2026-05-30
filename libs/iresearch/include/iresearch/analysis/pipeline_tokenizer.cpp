@@ -49,7 +49,8 @@ bool ParseVPackOptions(const vpack::Slice slice, T& options) {
     SDB_ASSERT(options.empty());
   }
   if (!slice.isObject()) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       "Not a VPack object passed while constructing pipeline_token_stream ");
     return false;
   }
@@ -65,7 +66,8 @@ bool ParseVPackOptions(const vpack::Slice slice, T& options) {
             if (type_attr_slice.isString()) {
               type = type_attr_slice.stringView();
             } else {
-              SDB_ERROR(IRESEARCH,
+              SDB_ERROR(
+                IRESEARCH,
                 absl::StrCat("Failed to read '", kTypeParamName,
                              "' attribute of '", kPipelineParamName,
                              "' member as string while constructing "
@@ -73,7 +75,8 @@ bool ParseVPackOptions(const vpack::Slice slice, T& options) {
               return false;
             }
           } else {
-            SDB_ERROR(IRESEARCH,
+            SDB_ERROR(
+              IRESEARCH,
               absl::StrCat("Failed to get '", kTypeParamName,
                            "' attribute of '", kPipelineParamName,
                            "' member while constructing pipeline_token_stream "
@@ -98,7 +101,8 @@ bool ParseVPackOptions(const vpack::Slice slice, T& options) {
               if (analyzer) {
                 options.push_back(std::move(analyzer));
               } else {
-                SDB_ERROR(IRESEARCH,
+                SDB_ERROR(
+                  IRESEARCH,
                   absl::StrCat("Failed to create pipeline member of type '",
                                type, "' with properties '",
                                slice_to_string(properties_attr_slice),
@@ -132,7 +136,8 @@ bool ParseVPackOptions(const vpack::Slice slice, T& options) {
                   std::forward_as_tuple(vpack->slice().startAs<char>(),
                                         vpack->slice().byteSize()));
               } else {
-                SDB_ERROR(IRESEARCH,
+                SDB_ERROR(
+                  IRESEARCH,
                   absl::StrCat("Failed to normalize pipeline member of type '",
                                type, "' with properties '",
                                slice_to_string(properties_attr_slice),
@@ -142,7 +147,8 @@ bool ParseVPackOptions(const vpack::Slice slice, T& options) {
               }
             }
           } else {
-            SDB_ERROR(IRESEARCH,
+            SDB_ERROR(
+              IRESEARCH,
               absl::StrCat("Failed to get '", kPropertiesParamName,
                            "' attribute of '", kPipelineParamName,
                            "' member while constructing pipeline_token_stream "
@@ -240,11 +246,13 @@ Analyzer::ptr MakeJson(std::string_view args) {
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing pipeline_token_stream from JSON"));
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       "Caught error while constructing pipeline_token_stream from JSON");
   }
   return nullptr;
@@ -264,7 +272,8 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
       return !definition.empty();
     }
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while normalizing pipeline_token_stream from JSON"));
   } catch (...) {

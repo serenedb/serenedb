@@ -126,7 +126,8 @@ Scorer::ptr MakeJson(std::string_view args) {
     SDB_ERROR(IRESEARCH, "Caught error '", ex.what(),
               "' while constructing VPack from JSON for indri_dirichlet");
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       "Caught error while constructing VPack from JSON for indri_dirichlet");
   }
   return nullptr;

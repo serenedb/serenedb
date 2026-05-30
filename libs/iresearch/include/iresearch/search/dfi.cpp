@@ -128,8 +128,7 @@ Scorer::ptr MakeVPack(const vpack::Slice slice) {
     case vpack::ValueType::Array:
       return MakeFromArray(slice);
     default:
-      SDB_ERROR(IRESEARCH,
-                "Invalid VPack arguments for dfi scorer");
+      SDB_ERROR(IRESEARCH, "Invalid VPack arguments for dfi scorer");
       return nullptr;
   }
 }

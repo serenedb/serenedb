@@ -159,8 +159,7 @@ constexpr std::string_view kSynonymsField = "synonyms";
 
 bool ParseVPackOptions(const vpack::Slice slice, std::string& synonyms_text) {
   if (!slice.isObject()) {
-    SDB_ERROR(IRESEARCH,
-              "Slice for solr_synonyms is not an object");
+    SDB_ERROR(IRESEARCH, "Slice for solr_synonyms is not an object");
     return false;
   }
 
@@ -199,8 +198,7 @@ Analyzer::ptr MakeVPack(std::string_view args) {
 Analyzer::ptr MakeJson(std::string_view args) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR(IRESEARCH,
-                "Null arguments while constructing solr_synonyms");
+      SDB_ERROR(IRESEARCH, "Null arguments while constructing solr_synonyms");
       return nullptr;
     }
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
@@ -247,8 +245,7 @@ bool NormalizeVPackConfig(std::string_view args, std::string& config) {
 bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR(IRESEARCH,
-                "Null arguments while normalizing solr_synonyms");
+      SDB_ERROR(IRESEARCH, "Null arguments while normalizing solr_synonyms");
       return false;
     }
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());

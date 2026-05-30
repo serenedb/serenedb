@@ -154,8 +154,9 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   if (!path_exists) {
     std::filesystem::create_directories(path, ec);
     if (ec) {
-      SDB_THROW(sdb::ERROR_INTERNAL, "Failed to create directory '", path.string(),
-                "' while initializing data store '", _id, "': ", ec.message());
+      SDB_THROW(sdb::ERROR_INTERNAL, "Failed to create directory '",
+                path.string(), "' while initializing data store '", _id,
+                "': ", ec.message());
     }
   }
   auto codec = irs::formats::Get("1_5simd");
@@ -272,8 +273,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
     auto payload = irs::GetPayload(reader.Meta().index_meta);
     if (!payload.empty()) {
       if (!ReadCommitMeta(payload, _recovery_tick, _iceberg_snapshot_id)) {
-        SDB_WARN(SEARCH,
-                 "Failed to read commit meta from inverted index '",
+        SDB_WARN(SEARCH, "Failed to read commit meta from inverted index '",
                  GetId().id(), "'");
       }
       _last_committed_tick = _recovery_tick;
@@ -374,14 +374,12 @@ void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
     subscription.tick(_last_committed_tick);
     ok = true;
   } catch (const std::exception& e) {
-    SDB_ERROR(SEARCH,
-              "caught exception while truncating Search index '", GetId().id(),
-              "': ", e.what());
+    SDB_ERROR(SEARCH, "caught exception while truncating Search index '",
+              GetId().id(), "': ", e.what());
     throw;
   } catch (...) {
-    SDB_WARN(SEARCH,
-             "caught exception while truncating Search index '", GetId().id(),
-             "'");
+    SDB_WARN(SEARCH, "caught exception while truncating Search index '",
+             GetId().id(), "'");
     throw;
   }
 }
@@ -546,15 +544,15 @@ Result InvertedIndexShard::CommitUnsafeImpl(
     std::unique_lock commit_lock{_commit_mutex, std::try_to_lock};
     if (!commit_lock.owns_lock()) {
       if (!wait) {
-        SDB_TRACE(SEARCH, "Commit for Search index '",
-                  GetId().id(), "' is already in progress, skipping");
+        SDB_TRACE(SEARCH, "Commit for Search index '", GetId().id(),
+                  "' is already in progress, skipping");
 
         code = CommitResult::InProgress;
         return {};
       }
 
-      SDB_TRACE(SEARCH, "Commit for Search index '",
-                GetId().id(), "' is already in progress, waiting");
+      SDB_TRACE(SEARCH, "Commit for Search index '", GetId().id(),
+                "' is already in progress, waiting");
 
       commit_lock.lock();
     }
@@ -592,8 +590,8 @@ Result InvertedIndexShard::CommitUnsafeImpl(
     SDB_ASSERT(reader != nullptr);
     std::move(commit_guard).Cancel();
     if (!were_changes) {
-      SDB_TRACE(SEARCH, "Commit for Search index '",
-                GetId().id(), "' is no changes, tick ", before_commit, "'");
+      SDB_TRACE(SEARCH, "Commit for Search index '", GetId().id(),
+                "' is no changes, tick ", before_commit, "'");
       // While Recovering, the flush subscription must not claim more than
       // what's actually flushed -- otherwise rocksdb could truncate WAL we
       // still need to replay on a later restart.
@@ -628,9 +626,9 @@ Result InvertedIndexShard::CommitUnsafeImpl(
 
     UpdateStatsUnsafe(std::move(data));
 
-    SDB_DEBUG(SEARCH, "successful sync of Search index '",
-              GetId().id(), "', segments '", reader_size, "', docs count '",
-              docs_count, "', live docs count '", live_docs_count,
+    SDB_DEBUG(SEARCH, "successful sync of Search index '", GetId().id(),
+              "', segments '", reader_size, "', docs count '", docs_count,
+              "', live docs count '", live_docs_count,
               "', last operation tick '", _last_committed_tick, "'");
   } catch (const basics::Exception& e) {
     return {e.code(), "caught exception while committing Search index '",

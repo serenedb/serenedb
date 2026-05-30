@@ -49,8 +49,7 @@ Format::ptr formats::Get(std::string_view name,
 
     return factory ? factory() : nullptr;
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught exception while getting a format instance");
+    SDB_ERROR(IRESEARCH, "Caught exception while getting a format instance");
   }
 
   return nullptr;

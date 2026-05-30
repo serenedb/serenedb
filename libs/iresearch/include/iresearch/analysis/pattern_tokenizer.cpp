@@ -35,8 +35,7 @@ namespace {
 bool ParseVPackOptions(const vpack::Slice slice,
                        PatternTokenizer::Options& options) {
   if (!slice.isObject()) {
-    SDB_ERROR(IRESEARCH,
-              "Slice for pattern_token_stream is not an object");
+    SDB_ERROR(IRESEARCH, "Slice for pattern_token_stream is not an object");
     return false;
   }
 
@@ -46,8 +45,8 @@ bool ParseVPackOptions(const vpack::Slice slice,
                                       .strict = false,
                                     });
   if (!r.ok()) {
-    SDB_WARN(IRESEARCH,
-      "Failed to parse pattern_token_stream options: ", r.errorMessage());
+    SDB_WARN(IRESEARCH, "Failed to parse pattern_token_stream options: ",
+             r.errorMessage());
     return false;
   }
 
@@ -140,7 +139,8 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
       return !definition.empty();
     }
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while normalizing pattern_token_stream from JSON"));
   } catch (...) {

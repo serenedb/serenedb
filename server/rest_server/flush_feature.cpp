@@ -40,11 +40,9 @@ DECLARE_GAUGE(serenedb_flush_subscriptions, uint64_t,
 namespace sdb {
 
 FlushFeature::FlushFeature()
-  :
-    _stopped(false),
+  : _stopped(false),
     _metrics_flush_subscriptions(
-      metrics::GetMetrics().add(
-        serenedb_flush_subscriptions{})) {
+      metrics::GetMetrics().add(serenedb_flush_subscriptions{})) {
   gInstance = this;
 }
 
@@ -65,9 +63,8 @@ void FlushFeature::registerFlushSubscription(
 
   _flush_subscriptions.emplace_back(subscription);
 
-  SDB_DEBUG(STORAGE,
-            "registered flush subscription: ", subscription->name(), ", tick ",
-            subscription->tick());
+  SDB_DEBUG(STORAGE, "registered flush subscription: ", subscription->name(),
+            ", tick ", subscription->tick());
 }
 
 std::tuple<size_t, size_t, Tick> FlushFeature::releaseUnusedTicks() {

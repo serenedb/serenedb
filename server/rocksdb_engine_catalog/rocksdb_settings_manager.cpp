@@ -71,8 +71,7 @@ Result WriteSettings(vpack::Slice slice, rocksdb::WriteBatch& batch) {
                 RocksDBColumnFamilyManager::Family::Definitions),
               key.GetBuffer(), value);
   if (!s.ok()) {
-    SDB_WARN(STORAGE,
-             "writing settings failed: ", s.ToString());
+    SDB_WARN(STORAGE, "writing settings failed: ", s.ToString());
     return rocksutils::ConvertStatus(s);
   }
 
@@ -142,8 +141,7 @@ ResultOr<bool> RocksDBSettingsManager::sync(bool force) {
 
     const auto last_sync = _last_sync.load();
 
-    SDB_TRACE(STORAGE,
-              "about to store lastSync. previous value: ", last_sync,
+    SDB_TRACE(STORAGE, "about to store lastSync. previous value: ", last_sync,
               ", current value: ", min_seq_nr);
 
     if (min_seq_nr < last_sync && !force) {
@@ -182,8 +180,7 @@ ResultOr<bool> RocksDBSettingsManager::sync(bool force) {
     SDB_ASSERT(batch.Count() == 0);
     auto r = WriteSettings(_tmp_builder.slice(), batch);
     if (r.fail()) {
-      SDB_WARN(STORAGE, "could not write metadata settings ",
-               r.errorMessage());
+      SDB_WARN(STORAGE, "could not write metadata settings ", r.errorMessage());
       return std::unexpected{std::move(r)};
     }
 
@@ -223,8 +220,7 @@ void RocksDBSettingsManager::loadSettings() {
     vpack::Slice slice =
       vpack::Slice(reinterpret_cast<const uint8_t*>(result.data()));
     SDB_ASSERT(slice.isObject());
-    SDB_TRACE(STORAGE,
-              "read initial settings: ", slice.toJson());
+    SDB_TRACE(STORAGE, "read initial settings: ", slice.toJson());
 
     if (!result.empty()) {
       try {
@@ -245,8 +241,7 @@ void RocksDBSettingsManager::loadSettings() {
         if (slice.hasKey("releasedTick")) {
           _initial_released_tick =
             basics::VPackHelper::stringUInt64(slice.get("releasedTick"));
-          SDB_TRACE(STORAGE,
-                    "using released tick: ", _initial_released_tick);
+          SDB_TRACE(STORAGE, "using released tick: ", _initial_released_tick);
           _engine.releaseTick(_initial_released_tick);
         }
 
@@ -256,8 +251,7 @@ void RocksDBSettingsManager::loadSettings() {
                     "last background settings sync: ", _last_sync.load());
         }
       } catch (...) {
-        SDB_WARN(STORAGE,
-                 "unable to read initial settings: invalid data");
+        SDB_WARN(STORAGE, "unable to read initial settings: invalid data");
       }
     } else {
       SDB_TRACE(STORAGE, "no initial settings found");

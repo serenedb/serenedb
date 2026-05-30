@@ -121,8 +121,7 @@ Compressor::ptr GetCompressor(std::string_view name, const Options& opts,
 
     return factory != nullptr ? factory(opts) : nullptr;
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught exception while getting an analyzer instance");
+    SDB_ERROR(IRESEARCH, "Caught exception while getting an analyzer instance");
   }
 
   return nullptr;
@@ -137,8 +136,7 @@ Decompressor::ptr GetDecompressor(std::string_view name,
 
     return factory != nullptr ? factory() : nullptr;
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught exception while getting an analyzer instance");
+    SDB_ERROR(IRESEARCH, "Caught exception while getting an analyzer instance");
   }
 
   return nullptr;

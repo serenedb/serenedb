@@ -46,7 +46,8 @@ bool ParseVPackOptions(const vpack::Slice slice,
   if (vpack::ValueType::Object == slice.type()) {
     auto model_location_slice = slice.get(kModelLocationParamName);
     if (!model_location_slice.isString()) {
-      SDB_ERROR(IRESEARCH,
+      SDB_ERROR(
+        IRESEARCH,
         absl::StrCat("Invalid vpack while ", action,
                      " classification_tokenizer from VPack arguments. ",
                      kModelLocationParamName, " value should be a string."));
@@ -56,7 +57,8 @@ bool ParseVPackOptions(const vpack::Slice slice,
     auto top_k_slice = slice.get(kTopKParamName);
     if (!top_k_slice.isNone()) {
       if (!top_k_slice.isNumber<int32_t>()) {
-        SDB_ERROR(IRESEARCH,
+        SDB_ERROR(
+          IRESEARCH,
           absl::StrCat("Invalid value provided while ", action,
                        " classification_tokenizer from VPack arguments. ",
                        kTopKParamName,
@@ -65,7 +67,8 @@ bool ParseVPackOptions(const vpack::Slice slice,
       }
       options.top_k = top_k_slice.getNumber<int32_t>();
       if (options.top_k < 0) {
-        SDB_ERROR(IRESEARCH,
+        SDB_ERROR(
+          IRESEARCH,
           absl::StrCat("Invalid value provided while ", action,
                        " classification_tokenizer from VPack arguments. ",
                        kTopKParamName,
@@ -77,7 +80,8 @@ bool ParseVPackOptions(const vpack::Slice slice,
     auto threshold_slice = slice.get(kThresholdParamName);
     if (!threshold_slice.isNone()) {
       if (!threshold_slice.isNumber()) {
-        SDB_ERROR(IRESEARCH,
+        SDB_ERROR(
+          IRESEARCH,
           absl::StrCat("Invalid vpack while ", action,
                        " classification_tokenizer from VPack arguments. ",
                        kThresholdParamName, " value should be a double."));
@@ -85,7 +89,8 @@ bool ParseVPackOptions(const vpack::Slice slice,
       }
       const auto threshold = threshold_slice.getNumber<double>();
       if (threshold < 0.0 || threshold > 1.0) {
-        SDB_ERROR(IRESEARCH,
+        SDB_ERROR(
+          IRESEARCH,
           absl::StrCat("Invalid value provided while ", action,
                        " classification_tokenizer from VPack arguments. ",
                        kTopKParamName,
@@ -97,7 +102,8 @@ bool ParseVPackOptions(const vpack::Slice slice,
     return true;
   }
 
-  SDB_ERROR(IRESEARCH,
+  SDB_ERROR(
+    IRESEARCH,
     absl::StrCat(
       "Invalid vpack while ", action,
       " classification_tokenizer from VPack arguments. Object was expected."));
@@ -120,11 +126,13 @@ Analyzer::ptr Construct(const ClassificationTokenizer::Options& options) {
       model = new_model;
     }
   } catch (const std::exception& e) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Failed to load fasttext classification model from: ",
                    options.model_location, ", error: ", e.what()));
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Failed to load fasttext classification model from: ",
                    options.model_location));
   }
@@ -159,11 +167,13 @@ Analyzer::ptr MakeJson(std::string_view args) {
     auto vpack = vpack::Parser::fromJson(args.data());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing classification_tokenizer from JSON"));
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       "Caught error while constructing classification_tokenizer from JSON");
   }
   return nullptr;
@@ -212,11 +222,13 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
       return !definition.empty();
     }
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while normalizing classification_tokenizer from JSON"));
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
+    SDB_ERROR(
+      IRESEARCH,
       "Caught error while normalizing classification_tokenizer from JSON");
   }
   return false;

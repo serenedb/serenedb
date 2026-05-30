@@ -320,8 +320,8 @@ bool ServerState::WritePersistedId(std::string_view id) {
   try {
     sdb::basics::file_utils::Spit(uuid_filename, id, true);
   } catch (const sdb::basics::Exception& ex) {
-    SDB_FATAL(GENERAL, "Cannot write UUID file '",
-              uuid_filename, "': ", ex.what());
+    SDB_FATAL(GENERAL, "Cannot write UUID file '", uuid_filename,
+              "': ", ex.what());
   }
 
   return true;
@@ -423,9 +423,8 @@ void ServerState::SetState(State state) {
   }
 
   if (result) {
-    SDB_DEBUG(STARTUP, "changing state of ",
-              ServerState::RoleToStr(role), " server from ",
-              ServerState::StateToStr(_state), " to ",
+    SDB_DEBUG(STARTUP, "changing state of ", ServerState::RoleToStr(role),
+              " server from ", ServerState::StateToStr(_state), " to ",
               ServerState::StateToStr(state));
 
     _state = state;

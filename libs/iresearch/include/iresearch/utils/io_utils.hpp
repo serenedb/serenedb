@@ -37,11 +37,11 @@
         p->method();                                                           \
         std::default_delete<T>::operator()(p);                                 \
       } catch (const std::exception& e) {                                      \
-        SDB_ERROR(IRESEARCH,                             \
+        SDB_ERROR(IRESEARCH,                                                   \
                   absl::StrCat("caught exception while closing i/o stream: '", \
                                e.what(), "'"));                                \
       } catch (...) {                                                          \
-        SDB_ERROR(IRESEARCH,                             \
+        SDB_ERROR(IRESEARCH,                                                   \
                   "caught an unspecified exception while closing i/o stream"); \
       }                                                                        \
     }                                                                          \

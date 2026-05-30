@@ -560,7 +560,8 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
         key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
         auto s = txn->Delete(gstate.cf, gstate.row_keys[row]);
         if (!s.ok()) {
-          SDB_THROW(sdb::ERROR_INTERNAL, "RocksDB Delete error: ", s.ToString());
+          SDB_THROW(sdb::ERROR_INTERNAL,
+                    "RocksDB Delete error: ", s.ToString());
         }
       }
       // Row-level marker for indexes that normal WAL replay would miss;

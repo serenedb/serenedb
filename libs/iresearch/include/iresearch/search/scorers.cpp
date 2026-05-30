@@ -77,8 +77,7 @@ Scorer::ptr scorers::Get(std::string_view name, const TypeInfo& args_format,
 
     return factory ? factory(args) : nullptr;
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught exception while getting a scorer instance");
+    SDB_ERROR(IRESEARCH, "Caught exception while getting a scorer instance");
   }
 
   return nullptr;

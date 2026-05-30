@@ -136,8 +136,8 @@ void Thread::startThread(void* arg) {
   try {
     ptr->runMe();
   } catch (const std::exception& ex) {
-    SDB_WARN(GENERAL, "caught exception in thread '",
-             ptr->_name, "': ", ex.what());
+    SDB_WARN(GENERAL, "caught exception in thread '", ptr->_name,
+             "': ", ex.what());
     throw;
   }
 }
@@ -187,13 +187,11 @@ Thread::~Thread() {
   SDB_ASSERT(_refs.load() == 0);
 
   auto state = _state.load();
-  SDB_TRACE(GENERAL, "delete(", _name,
-            "), state: ", stringify(state));
+  SDB_TRACE(GENERAL, "delete(", _name, "), state: ", stringify(state));
 
   if (state != ThreadState::Stopped && state != ThreadState::Created) {
-    SDB_FATAL(GENERAL, "thread '", _name,
-              "' is not stopped but ", stringify(state),
-              ". shutting down hard");
+    SDB_FATAL(GENERAL, "thread '", _name, "' is not stopped but ",
+              stringify(state), ". shutting down hard");
     FatalErrorAbort();
   }
 }
@@ -213,8 +211,8 @@ void Thread::beginShutdown() {
     _state.compare_exchange_weak(state, ThreadState::Stopping);
   }
 
-  SDB_TRACE(GENERAL, "beginShutdown(", _name,
-            ") reached state ", stringify(_state.load()));
+  SDB_TRACE(GENERAL, "beginShutdown(", _name, ") reached state ",
+            stringify(_state.load()));
 }
 
 /// MUST be called from the destructor of the MOST DERIVED class
@@ -230,8 +228,7 @@ void Thread::shutdown() {
       auto ret = SdbJoinThreadWithTimeout(&_thread, _termination_timeout);
 
       if (ret != ERROR_OK) {
-        SDB_FATAL(GENERAL, "cannot shutdown thread '",
-                  _name, "', giving up");
+        SDB_FATAL(GENERAL, "cannot shutdown thread '", _name, "', giving up");
         FatalErrorAbort();
       }
     }
@@ -253,12 +250,11 @@ bool Thread::isStopping() const noexcept {
 bool Thread::start(ConditionVariable* finished_condition) {
   using State = app::AppServer::State;
   const auto s = _server.state();
-  const bool prepared =
-    s == State::InStart || s == State::InWait || s == State::InShutdown ||
-    s == State::InStop;
+  const bool prepared = s == State::InStart || s == State::InWait ||
+                        s == State::InShutdown || s == State::InStop;
   if (!isSystem() && !prepared) {
     SDB_FATAL(GENERAL, "trying to start a thread '", _name,
-      "' before prepare has finished, current state: ", (int)s);
+              "' before prepare has finished, current state: ", (int)s);
     FatalErrorAbort();
   }
 
@@ -266,8 +262,7 @@ bool Thread::start(ConditionVariable* finished_condition) {
   ThreadState state = _state.load();
 
   if (state != ThreadState::Created) {
-    SDB_FATAL(GENERAL,
-              "called started on an already started thread '", _name,
+    SDB_FATAL(GENERAL, "called started on an already started thread '", _name,
               "', thread is in state ", stringify(state));
     FatalErrorAbort();
   }
@@ -295,8 +290,7 @@ bool Thread::start(ConditionVariable* finished_condition) {
     // could not start the thread -> decrement ref for the foreign thread
     _refs.fetch_sub(1);
     _state.store(ThreadState::Stopped);
-    SDB_ERROR(GENERAL, "could not start thread '", _name,
-              "': ", LastError());
+    SDB_ERROR(GENERAL, "could not start thread '", _name, "': ", LastError());
   } else {
     _thread_struct_initialized.store(true, std::memory_order_release);
   }
@@ -329,8 +323,7 @@ void Thread::runMe() {
     throw;
   } catch (...) {
     if (!isSilent()) {
-      SDB_ERROR(GENERAL,
-                "unknown exception caught in thread '", _name, "'");
+      SDB_ERROR(GENERAL, "unknown exception caught in thread '", _name, "'");
     }
     throw;
   }

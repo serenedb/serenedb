@@ -95,15 +95,14 @@ void AcceptorTcp<T>::open() {
     }();
 
     if (ec) {
-      SDB_ERROR(HTTP,
-                "unable to to resolve endpoint ' ", _endpoint->specification(),
-                "': ", ec.message());
+      SDB_ERROR(HTTP, "unable to to resolve endpoint ' ",
+                _endpoint->specification(), "': ", ec.message());
       throw std::runtime_error(ec.message());
     }
 
     if (results.empty()) {
-      SDB_ERROR(HTTP,
-        "unable to to resolve endpoint: endpoint is default constructed");
+      SDB_ERROR(
+        HTTP, "unable to to resolve endpoint: endpoint is default constructed");
     } else {
       asio_endpoint = results.begin()->endpoint();
     }
@@ -115,8 +114,8 @@ void AcceptorTcp<T>::open() {
 
   _acceptor.bind(asio_endpoint, ec);
   if (ec) {
-    SDB_ERROR(HTTP, "unable to bind to endpoint '",
-              _endpoint->specification(), "': ", ec.message());
+    SDB_ERROR(HTTP, "unable to bind to endpoint '", _endpoint->specification(),
+              "': ", ec.message());
     throw std::runtime_error(ec.message());
   }
 
@@ -129,8 +128,7 @@ void AcceptorTcp<T>::open() {
   }
   _open = true;
 
-  SDB_DEBUG(HTTP,
-            "successfully opened acceptor TCP");
+  SDB_DEBUG(HTTP, "successfully opened acceptor TCP");
 
   asyncAccept();
 }
@@ -168,8 +166,8 @@ void AcceptorTcp<SocketType::Tcp>::asyncAccept() {
     // set the endpoint
     ConnectionInfo info = CreateConnectionInfo(*asio_socket, *_endpoint);
 
-    SDB_DEBUG(HTTP, "accepted connection from ",
-              info.client_address, ":", info.client_port);
+    SDB_DEBUG(HTTP, "accepted connection from ", info.client_address, ":",
+              info.client_port);
 
     if (_endpoint->transport() == Endpoint::TransportType::HTTP) {
       auto comm_task = std::make_shared<HttpCommTask<SocketType::Tcp>>(
@@ -204,8 +202,7 @@ void AcceptorTcp<SocketType::Ssl>::PerformHandshake(
              as = std::move(proto)](const asio_ns::error_code& ec) mutable {
     as->timer.cancel();
     if (ec) {
-      SDB_DEBUG(HTTP,
-                "error during TLS handshake: '", ec.message(), "'");
+      SDB_DEBUG(HTTP, "error during TLS handshake: '", ec.message(), "'");
       as.reset();  // ungraceful shutdown
       return;
     }

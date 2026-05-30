@@ -25,7 +25,9 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/common/storage_compatibility.hpp>
 #include <duckdb/common/types.hpp>
+#include <duckdb/storage/storage_info.hpp>
 
 #include "basics/errors.h"
 #include "basics/exceptions.h"
@@ -35,7 +37,7 @@ namespace duckdb {
 inline duckdb::SerializationOptions VersionStorageOptions() {
   duckdb::SerializationOptions opts;
   opts.storage_compatibility =
-    duckdb::StorageCompatibility::FromString("v2.0.0");
+    duckdb::StorageCompatibility::FromIndex(duckdb::StorageVersion::V2_0_0);
   return opts;
 }
 

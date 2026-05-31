@@ -24,7 +24,6 @@
 #include "app/name_validator.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
-#include "rest_server/serened.h"
 
 namespace sdb::catalog {
 

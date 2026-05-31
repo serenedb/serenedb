@@ -25,7 +25,6 @@
 #include <string>
 
 #include "basics/asio_ns.h"
-#include "rest_server/serened.h"
 
 namespace sdb {
 namespace options {

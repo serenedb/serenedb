@@ -30,13 +30,6 @@
 
 namespace sdb::app {
 
-AppServer::AppServer() {
-  SDB_ASSERT(gInstance == nullptr, "AppServer is a singleton");
-  gInstance = this;
-}
-
-AppServer::~AppServer() { gInstance = nullptr; }
-
 void AppServer::parseOptions(int argc, char* argv[]) {
   // All CLI knobs are ABSL_FLAGs declared in their owning .cpp files
   // and read via absl::GetFlag during validateOptions/prepare. Run

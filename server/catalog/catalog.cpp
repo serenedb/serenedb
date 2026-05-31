@@ -62,7 +62,6 @@
 #include "folly/Function.h"
 #include "general_server/scheduler.h"
 #include "query/duckdb_engine.h"
-#include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"

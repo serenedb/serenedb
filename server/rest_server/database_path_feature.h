@@ -21,7 +21,8 @@
 
 #pragma once
 
-#include "rest_server/serened.h"
+#include <string>
+#include <string_view>
 
 namespace sdb {
 

@@ -34,7 +34,6 @@
 #include "metrics/gauge.h"
 #include "metrics/histogram.h"
 #include "metrics/log_scale.h"
-#include "rest_server/serened.h"
 
 namespace sdb {
 

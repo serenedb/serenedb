@@ -51,7 +51,6 @@
 #include "catalog/table.h"
 #include "catalog/types.h"
 #include "metrics/fwd.h"
-#include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"

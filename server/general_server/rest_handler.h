@@ -32,7 +32,6 @@
 #include "general_server/request_lane.h"
 #include "metrics/gauge_counter_guard.h"
 #include "rest/general_response.h"
-#include "rest_server/serened.h"
 
 namespace sdb {
 namespace app {
@@ -62,7 +61,7 @@ class RestHandler : public std::enable_shared_from_this<RestHandler> {
   RestHandler& operator=(const RestHandler&) = delete;
 
  public:
-  RestHandler(SerenedServer&, GeneralRequest*, GeneralResponse*);
+  RestHandler(app::AppServer&, GeneralRequest*, GeneralResponse*);
   virtual ~RestHandler();
 
   void assignHandlerId();
@@ -87,8 +86,8 @@ class RestHandler : public std::enable_shared_from_this<RestHandler> {
     return std::move(_response);
   }
 
-  SerenedServer& server() noexcept { return _server; }
-  const SerenedServer& server() const noexcept { return _server; }
+  app::AppServer& server() noexcept { return _server; }
+  const app::AppServer& server() const noexcept { return _server; }
 
   void setIsAsyncRequest() noexcept { _is_async_request = true; }
 
@@ -180,7 +179,7 @@ class RestHandler : public std::enable_shared_from_this<RestHandler> {
  protected:
   std::unique_ptr<GeneralRequest> _request;
   std::unique_ptr<GeneralResponse> _response;
-  SerenedServer& _server;
+  app::AppServer& _server;
 
  private:
   mutable absl::Mutex _execution_mutex;

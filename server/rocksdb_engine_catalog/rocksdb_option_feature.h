@@ -29,7 +29,6 @@
 #include <string>
 
 #include "basics/common.h"
-#include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_comparator.h"
 

@@ -39,7 +39,6 @@
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
-#include "rest_server/serened.h"
 
 namespace sdb::connector {
 namespace {

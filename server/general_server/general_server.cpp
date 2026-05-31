@@ -185,6 +185,6 @@ SSL_CTX* GeneralServer::getSSL_CTX(size_t index) {
   return (*_ssl_contexts)[index].native_handle();
 }
 
-SerenedServer& GeneralServer::server() const {
-  return SerenedServer::Instance();
+app::AppServer& GeneralServer::server() const {
+  return app::AppServer::Instance();
 }

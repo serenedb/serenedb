@@ -27,7 +27,6 @@
 #include <string_view>
 
 #include "metrics/fwd.h"
-#include "rest_server/serened.h"
 
 namespace rocksdb {
 
@@ -46,7 +45,7 @@ class AppServer;
 /// alone.
 class RocksDBMetricsListener : public rocksdb::EventListener {
  public:
-  explicit RocksDBMetricsListener(SerenedServer&);
+  explicit RocksDBMetricsListener(app::AppServer&);
 
   void OnFlushBegin(rocksdb::DB*, const rocksdb::FlushJobInfo& info) final;
   void OnFlushCompleted(rocksdb::DB*, const rocksdb::FlushJobInfo& info) final;

@@ -25,7 +25,6 @@
 #include <memory>
 
 #include "general_server/scheduler.h"
-#include "rest_server/serened.h"
 
 namespace sdb {
 

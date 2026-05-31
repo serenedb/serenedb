@@ -63,7 +63,7 @@ class GeneralServer {
   SslServerFeature::SslContextList sslContexts();
   SSL_CTX* getSSL_CTX(size_t index);
 
-  SerenedServer& server() const;
+  app::AppServer& server() const;
 
  protected:
   bool openEndpoint(IoContext& io_context, Endpoint* endpoint);

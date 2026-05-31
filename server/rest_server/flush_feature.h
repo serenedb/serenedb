@@ -30,9 +30,9 @@
 #include <tuple>
 #include <vector>
 
+#include "basics/assert.h"
 #include "catalog/types.h"
 #include "metrics/fwd.h"
-#include "rest_server/serened.h"
 
 namespace sdb {
 

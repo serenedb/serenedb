@@ -52,7 +52,6 @@
 #include "connector/key_utils.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "query/duckdb_engine.h"
-#include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"

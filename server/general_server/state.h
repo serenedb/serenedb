@@ -30,7 +30,6 @@
 #include "basics/common.h"
 #include "basics/read_write_lock.h"
 #include "basics/result_or.h"
-#include "rest_server/serened.h"
 
 namespace sdb {
 

@@ -44,7 +44,7 @@ using namespace sdb;
 using namespace sdb::basics;
 using namespace sdb::rest;
 
-RestHandler::RestHandler(SerenedServer& server, GeneralRequest* request,
+RestHandler::RestHandler(app::AppServer& server, GeneralRequest* request,
                          GeneralResponse* response)
   : _request(request),
     _response(response),

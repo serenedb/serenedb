@@ -84,7 +84,7 @@ bool QueueTimeViolated(const GeneralRequest& req) {
 }
 
 std::shared_ptr<catalog::Database> LookupDatabaseFromRequest(
-  SerenedServer& server, GeneralRequest& req) {
+  app::AppServer& server, GeneralRequest& req) {
   // get database name from request
   if (ServerState::instance()->IsDBServer() || req.databaseName().empty()) {
     // if no database name was specified in the request, use system database
@@ -98,7 +98,7 @@ std::shared_ptr<catalog::Database> LookupDatabaseFromRequest(
     ->GetDatabase(req.databaseName());
 }
 
-bool ResolveRequestContext(SerenedServer& server, GeneralRequest& req) {
+bool ResolveRequestContext(app::AppServer& server, GeneralRequest& req) {
   auto database = LookupDatabaseFromRequest(server, req);
   // invalid database name specified, database not found etc.
   if (!database) {

@@ -38,18 +38,18 @@
 #include <yaclib/async/make.hpp>
 #include <yaclib/util/type_traits.hpp>
 
+#include "app/app_server.h"
 #include "basics/exceptions.h"
 #include "basics/system-compiler.h"
 #include "general_server/request_lane.h"
 #include "metrics/fwd.h"
-#include "rest_server/serened.h"
 #include "utils/coro_helper.h"
 
 namespace sdb {
 
 class Scheduler {
  public:
-  explicit Scheduler(SerenedServer& server, uint64_t min_threads,
+  explicit Scheduler(app::AppServer& server, uint64_t min_threads,
                      uint64_t max_threads, uint64_t max_queue_size,
                      uint64_t fifo1_size, uint64_t fifo2_size,
                      uint64_t fifo3_size,
@@ -104,7 +104,7 @@ class Scheduler {
     absl::AnyInvocable<void(bool canceled)> handler) noexcept;
 
   // Returns the scheduler's server object
-  SerenedServer& server() noexcept { return _server; }
+  app::AppServer& server() noexcept { return _server; }
 
   class DelayedWorkItem {
    public:
@@ -189,7 +189,7 @@ class Scheduler {
 
   static constexpr const uint64_t kNumberOfQueues = 4;
 
-  SerenedServer& _server;
+  app::AppServer& _server;
   const uint64_t _min_threads;
   const uint64_t _max_threads;
   std::unique_ptr<folly::CPUThreadPoolExecutor> _executor_handle;

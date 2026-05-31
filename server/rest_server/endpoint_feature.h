@@ -22,7 +22,6 @@
 #pragma once
 
 #include "endpoint/endpoint_list.h"
-#include "rest_server/serened.h"
 
 namespace sdb {
 

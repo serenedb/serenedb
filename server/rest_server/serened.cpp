@@ -19,8 +19,6 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "rest_server/serened.h"
-
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -28,9 +26,27 @@
 #include <utility>
 #include <vector>
 
+#include "app/app_server.h"
+#include "app/global_context.h"
+#include "basics/crash_handler.h"
+#include "basics/directories.h"
+#include "basics/files.h"
+#include "basics/logger/logger.h"
+#include "catalog/catalog.h"
 #include "duckdb_shell.hpp"
+#include "general_server/general_server_feature.h"
+#include "general_server/scheduler_feature.h"
+#include "general_server/ssl_server_feature.h"
+#include "general_server/state.h"
+#include "pg/pg_feature.h"
 #include "query/duckdb_engine.h"
-#include "rest_server/serened_includes.h"
+#include "rest_server/database_path_feature.h"
+#include "rest_server/endpoint_feature.h"
+#include "rest_server/flush_feature.h"
+#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
+#include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
+#include "storage_engine/engine_feature.h"
+#include "storage_engine/search_engine.h"
 
 namespace {
 
@@ -46,13 +62,13 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     SdbSetApplicationName(name);
 
     int ret{EXIT_FAILURE};
-    SerenedServer server;
+    AppServer server;
     ServerState state;
     // SereneDB is single-node; the cluster topology that the
     // ArangoDB ServerState modeled never applied.
     state.SetRole(ServerState::Role::Single);
 
-    server.setStateHook([&](SerenedServer::State /*state*/) {
+    server.setStateHook([&](AppServer::State /*state*/) {
       CrashHandler::SetState(magic_enum::enum_name(server.state()));
     });
 
@@ -115,7 +131,7 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       try {
         // 4. start -- after a successful pass the server is fully
         //    accepting clients.
-        server.setState(SerenedServer::State::InStart);
+        server.setState(AppServer::State::InStart);
         start_one(ssl, [&] { ssl.stop(); });
         start_one(db_path, [&] { db_path.stop(); });
         start_one(scheduler, [&] { scheduler.stop(); });
@@ -130,15 +146,15 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
         start_one(pg, [&] { pg.stop(); });
 
         // 5. wait for SIGTERM/SIGINT.
-        server.setState(SerenedServer::State::InWait);
+        server.setState(AppServer::State::InWait);
         server.wait();
 
         // 6. stop -- strict LIFO. Each feature's stop() first nudges any
         //    long-running threads to exit, then blocks on the joins and
         //    finishes its own teardown.
-        server.setState(SerenedServer::State::InStop);
+        server.setState(AppServer::State::InStop);
         drain_stoppers();
-        server.setState(SerenedServer::State::Stopped);
+        server.setState(AppServer::State::Stopped);
 
         ret = EXIT_SUCCESS;
       } catch (const std::exception& ex) {

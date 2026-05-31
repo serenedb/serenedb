@@ -33,7 +33,7 @@ using namespace sdb::rest;
 RestHandlerFactory::RestHandlerFactory() : _sealed(false) {}
 
 std::shared_ptr<RestHandler> RestHandlerFactory::createHandler(
-  SerenedServer& server, std::unique_ptr<GeneralRequest> req,
+  app::AppServer& server, std::unique_ptr<GeneralRequest> req,
   std::unique_ptr<GeneralResponse> res) const {
   SDB_ASSERT(_sealed);
 

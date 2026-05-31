@@ -60,7 +60,7 @@ void SchedulerFeature::start() {
   SDB_ASSERT(_queue_size > 0);
 
   auto sched = std::make_unique<Scheduler>(
-    SerenedServer::Instance(), _nr_minimal_threads, _nr_maximal_threads,
+    app::AppServer::Instance(), _nr_minimal_threads, _nr_maximal_threads,
     _queue_size, _fifo1_size, _fifo2_size, _fifo3_size,
     _unavailability_queue_fill_grade, _metrics_feature);
 

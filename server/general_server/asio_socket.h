@@ -24,6 +24,7 @@
 #include <memory>
 
 #include "basics/asio_ns.h"
+#include "basics/assert.h"
 #include "general_server/io_context.h"
 #include "general_server/ssl_server_feature.h"
 

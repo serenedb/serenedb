@@ -40,7 +40,6 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "general_server/scheduler.h"
-#include "rest_server/serened_single.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/table_shard.h"

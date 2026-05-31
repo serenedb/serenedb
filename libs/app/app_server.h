@@ -37,22 +37,22 @@ namespace sdb::app {
 class AppServer {
  public:
   enum class State : int {
-    Uninitialized = 0,
     InStart,
     InWait,
     InStop,
     Stopped,
-    Aborted,
   };
 
-  inline static AppServer* gInstance = nullptr;
   static AppServer& Instance() noexcept {
     SDB_ASSERT(gInstance);
     return *gInstance;
   }
 
-  AppServer();
-  ~AppServer();
+  AppServer() {
+    SDB_ASSERT(gInstance == nullptr, "AppServer is a singleton");
+    gInstance = this;
+  }
+  ~AppServer() { gInstance = nullptr; }
 
   AppServer(const AppServer&) = delete;
   AppServer& operator=(const AppServer&) = delete;
@@ -82,7 +82,9 @@ class AppServer {
   void wait();
 
  private:
-  std::atomic<State> _state{State::Uninitialized};
+  inline static AppServer* gInstance = nullptr;
+
+  std::atomic<State> _state{State::InStart};
   std::function<void(State)> _state_hook;
 };
 
@@ -95,8 +97,6 @@ customize::enum_name<sdb::app::AppServer::State>(
   sdb::app::AppServer::State state) noexcept {
   using State = sdb::app::AppServer::State;
   switch (state) {
-    case State::Uninitialized:
-      return "uninitialized";
     case State::InStart:
       return "in start";
     case State::InWait:
@@ -105,8 +105,6 @@ customize::enum_name<sdb::app::AppServer::State>(
       return "in stop";
     case State::Stopped:
       return "in stopped";
-    case State::Aborted:
-      return "in aborted";
   }
   return invalid_tag;
 }

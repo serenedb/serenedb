@@ -52,7 +52,6 @@
 #include "query/duckdb_engine.h"
 #include "query/transaction.h"
 #include "rest_server/flush_feature.h"
-#include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "search/task.h"

@@ -27,7 +27,6 @@
 
 #include "basics/common.h"
 #include "basics/result.h"
-#include "rest_server/serened.h"
 
 namespace rocksdb {
 

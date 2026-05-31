@@ -93,7 +93,6 @@
 #include "rest/version.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/flush_feature.h"
-#include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/listeners/rocksdb_background_error_listener.h"
 #include "rocksdb_engine_catalog/listeners/rocksdb_metrics_listener.h"
 #include "rocksdb_engine_catalog/options.h"
@@ -123,7 +122,7 @@
 namespace sdb {
 namespace {
 
-void StartupVersionCheck(SerenedServer& server, rocksdb::TransactionDB* db,
+void StartupVersionCheck(app::AppServer& server, rocksdb::TransactionDB* db,
                          bool db_existed) {
   // try to find version, using the version key
   RocksDBKeyWithBuffer<SettingsKey> version_key{RocksDBSettingsType::Version};
@@ -585,7 +584,7 @@ void RocksDBEngineCatalog::start() {
   _error_listener = std::make_shared<RocksDBBackgroundErrorListener>();
   _db_options.listeners.push_back(_error_listener);
   _db_options.listeners.push_back(
-    std::make_shared<RocksDBMetricsListener>(SerenedServer::Instance()));
+    std::make_shared<RocksDBMetricsListener>(app::AppServer::Instance()));
 
   // create column families
   std::vector<rocksdb::ColumnFamilyDescriptor> cf_families;
@@ -651,7 +650,7 @@ void RocksDBEngineCatalog::start() {
       RocksDBColumnFamilyManager::Family::Sequences)]);
 
   // will crash the process if version does not match
-  StartupVersionCheck(SerenedServer::Instance(), _db, db_existed);
+  StartupVersionCheck(app::AppServer::Instance(), _db, db_existed);
 
   _db_existed = db_existed;
 

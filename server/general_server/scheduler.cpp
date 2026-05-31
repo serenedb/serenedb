@@ -68,7 +68,7 @@ DECLARE_GAUGE(
   serenedb_scheduler_maintenance_prio_queue_length, uint64_t,
   "Current queue length of the maintenance priority queue in the scheduler");
 
-Scheduler::Scheduler(SerenedServer& server, uint64_t min_threads,
+Scheduler::Scheduler(app::AppServer& server, uint64_t min_threads,
                      uint64_t max_threads, uint64_t max_queue_size,
                      uint64_t fifo1_size, uint64_t fifo2_size,
                      uint64_t fifo3_size,

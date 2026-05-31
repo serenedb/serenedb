@@ -98,13 +98,13 @@ customize::enum_name<sdb::app::AppServer::State>(
   using State = sdb::app::AppServer::State;
   switch (state) {
     case State::InStart:
-      return "in start";
+      return "start";
     case State::InWait:
-      return "in wait";
+      return "wait";
     case State::InStop:
-      return "in stop";
+      return "stop";
     case State::Stopped:
-      return "in stopped";
+      return "stopped";
   }
   return invalid_tag;
 }

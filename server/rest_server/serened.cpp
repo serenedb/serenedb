@@ -86,7 +86,7 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     try {
       // 3. Construct features in dependency order. Each ctor reads its
       //    own flags, runs validation, and sets its static gInstance
-      //    pointer; SerenedFeature::instance() works from here on.
+      //    pointer; Feature::instance() works from here on.
       SslServerFeature ssl;
       DatabasePathFeature db_path;
       SchedulerFeature scheduler;

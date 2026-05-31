@@ -29,11 +29,6 @@
 
 #pragma once
 
-// Re-exported by transitive include from the previous (heavier) logger.h.
-// Several files lean on these symbols without their own direct include;
-// keep them here until each is patched.
-#include <absl/algorithm/container.h>
-#include <absl/functional/any_invocable.h>
 #include <absl/strings/str_cat.h>
 
 #include <string_view>
@@ -52,9 +47,10 @@ namespace sdb::log {
 LogLevel TranslateLogLevel(std::string_view name) noexcept;
 std::string_view TranslateLogLevel(LogLevel level) noexcept;
 
-// Process-wide initial level. Used as the ShouldLog comparand BEFORE the
-// DuckDB sink is installed (and after it is uninstalled at shutdown). After
-// InstallSink() runs, ShouldLog defers to duckdb's MutableLogger.
+// Process-wide initial level. Used by IsEnabled() BEFORE InstallSink() runs
+// (and after it is reverted to nullptr at shutdown). Once a Sink is
+// installed, IsEnabled() and Log() defer to the installed Sink's
+// should_log/write hooks.
 void SetInitialLogLevel(LogLevel level) noexcept;
 
 // ---- sink installation (called by DuckDBEngine) --------------------------

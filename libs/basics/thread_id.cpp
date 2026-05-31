@@ -59,8 +59,8 @@ ThreadNameFetcher::ThreadNameFetcher() noexcept {
   memset(&_buffer[0], 0, sizeof(_buffer));
 
 #ifdef SERENEDB_HAVE_SYS_PRCTL_H
-  // PR_GET_NAME reads at most 16 bytes into the buffer; glibc documents this
-  // call as async-signal-safe.
+  // PR_GET_NAME reads at most 16 bytes into the buffer; the call is
+  // async-signal-safe in practice on Linux.
   prctl(PR_GET_NAME, &_buffer, 0, 0, 0);
   // be extra cautious about null-termination
   _buffer[sizeof(_buffer) - 1] = '\0';
@@ -78,11 +78,9 @@ std::string_view ThreadNameFetcher::get() const noexcept {
 }
 
 void InitThread(const char* name) noexcept {
-  signals::MaskAllSignals();
+  signals::MaskAllSignalsServer();
 #ifdef SERENEDB_HAVE_SYS_PRCTL_H
-  if (name != nullptr) {
-    prctl(PR_SET_NAME, name, 0, 0, 0);
-  }
+  prctl(PR_SET_NAME, name, 0, 0, 0);
 #endif
   // touch the thread-local counter so the thread acquires a stable number
   (void)gLocalThreadNumber.value;

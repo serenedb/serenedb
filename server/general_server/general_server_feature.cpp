@@ -121,9 +121,8 @@ GeneralServerFeature::~GeneralServerFeature() { gInstance = nullptr; }
 
 void GeneralServerFeature::start() {
   // Mode flips to Startup so the still-empty HTTP listener serves the
-  // narrow "startup" surface (general_comm_task.cpp's
-  // HandleRequestStartup); once the server + startListening complete
-  // we move to Maintenance for normal traffic.
+  // narrow "startup" request surface; once the server + startListening
+  // complete we move to Maintenance for normal traffic.
   ServerState::instance()->SetMode(ServerState::Mode::Startup);
 
   _job_manager = std::make_unique<AsyncJobManager>();

@@ -80,10 +80,6 @@ void SchedulerFeature::stop() {
   signal_handling::Shutdown();
   _scheduler->shutdown();
   gScheduler = nullptr;
-  // TSAN: setting this global pointer to nullptr at shutdown is a
-  // synchronization point that the sanitizer doesn't always pick up via
-  // implicit happens-before edges. We use std::atomic_ref at the read
-  // sites to silence it.
   _scheduler.reset();
 }
 

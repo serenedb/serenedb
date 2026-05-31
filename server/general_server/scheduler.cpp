@@ -145,9 +145,11 @@ void Scheduler::shutdown() {
   _cron_thread.join();
 
 #ifdef SDB_DEV
-  // At this point the cron thread has been stopped
-  // And there will be no other people posting on the queue
-  // Lets make sure that all items on the queue are disabled
+  // Drain the queue while we are still alive. A surviving queued item's
+  // destructor would call cancel() and (if not yet disabled) reach back
+  // into the Scheduler -- which would have already been torn down,
+  // producing a UAF. Asserting isDisabled() makes the violation loud
+  // instead of corrupting memory.
   while (!_cron_queue.empty()) {
     const auto& top = _cron_queue.top();
     auto item = top.second.lock();

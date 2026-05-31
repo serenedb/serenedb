@@ -39,8 +39,7 @@ DECLARE_GAUGE(serenedb_flush_subscriptions, uint64_t,
 namespace sdb {
 
 FlushFeature::FlushFeature()
-  : _stopped(false),
-    _metrics_flush_subscriptions(
+  : _metrics_flush_subscriptions(
       metrics::GetMetrics().add(serenedb_flush_subscriptions{})) {
   gInstance = this;
 }
@@ -54,12 +53,6 @@ void FlushFeature::registerFlushSubscription(
   }
 
   std::lock_guard lock{_flush_subscriptions_mutex};
-
-  if (_stopped) {
-    SDB_ERROR(STORAGE, "FlushFeature not running");
-    return;
-  }
-
   _flush_subscriptions.emplace_back(subscription);
 
   SDB_DEBUG(STORAGE, "registered flush subscription: ", subscription->name(),
@@ -114,9 +107,7 @@ std::tuple<size_t, size_t, Tick> FlushFeature::releaseUnusedTicks() {
 
 void FlushFeature::stop() {
   std::lock_guard lock{_flush_subscriptions_mutex};
-
   _flush_subscriptions.clear();
-  _stopped = true;
 }
 
 }  // namespace sdb

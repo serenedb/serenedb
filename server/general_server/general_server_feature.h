@@ -74,8 +74,6 @@ class GeneralServerFeature final {
   metrics::Gauge<uint64_t>& current_requests_size;
 
  private:
-  // build HTTP server(s)
-  void buildServers();
   // open REST interface for listening
   void startListening();
 
@@ -86,7 +84,7 @@ class GeneralServerFeature final {
   mutable std::shared_mutex _handler_factory_mutex;
   std::shared_ptr<rest::RestHandlerFactory> _handler_factory;
   std::unique_ptr<rest::AsyncJobManager> _job_manager;
-  std::vector<std::unique_ptr<rest::GeneralServer>> _servers;
+  std::unique_ptr<rest::GeneralServer> _server;
   uint64_t _num_io_threads;
 
 #ifdef SDB_FAULT_INJECTION

@@ -128,13 +128,18 @@ GeneralServerFeature::~GeneralServerFeature() { gInstance = nullptr; }
 void GeneralServerFeature::start() {
   // Mode flips to Startup so the still-empty HTTP listener serves the
   // narrow "startup" surface (general_comm_task.cpp's
-  // HandleRequestStartup); once buildServers + startListening complete
+  // HandleRequestStartup); once the server + startListening complete
   // we move to Maintenance for normal traffic.
   ServerState::instance()->SetMode(ServerState::Mode::Startup);
 
   _job_manager = std::make_unique<AsyncJobManager>();
 
-  buildServers();
+  // check if endpointList contains ssl featured server
+  const auto& endpoint_list = EndpointFeature::instance().endpointList();
+  if (endpoint_list.hasSsl()) {
+    SslServerFeature::instance().verifySslOptions();
+  }
+  _server = std::make_unique<GeneralServer>(*this, _num_io_threads);
 
   auto hf = std::make_shared<RestHandlerFactory>();
   hf->seal();
@@ -151,17 +156,11 @@ void GeneralServerFeature::start() {
 void GeneralServerFeature::stop() {
   // Nudge listeners off the accept loop first so stop()'s join-style
   // shutdown of connections doesn't race new accepts.
-  for (auto& server : _servers) {
-    server->stopListening();
-  }
+  _server->stopListening();
   _job_manager->deleteJobs(ExecContext::superuser());
-  for (auto& server : _servers) {
-    server->stopConnections();
-  }
-  for (auto& server : _servers) {
-    server->stopWorking();
-  }
-  _servers.clear();
+  _server->stopConnections();
+  _server->stopWorking();
+  _server.reset();
   _job_manager.reset();
 }
 
@@ -192,26 +191,8 @@ rest::AsyncJobManager& GeneralServerFeature::jobManager() {
   return *_job_manager;
 }
 
-void GeneralServerFeature::buildServers() {
-  EndpointFeature& endpoint = EndpointFeature::instance();
-  const auto& endpoint_list = endpoint.endpointList();
-
-  // check if endpointList contains ssl featured server
-  if (endpoint_list.hasSsl()) {
-    SslServerFeature::instance().verifySslOptions();
-  }
-
-  _servers.emplace_back(
-    std::make_unique<GeneralServer>(*this, _num_io_threads));
-}
-
 void GeneralServerFeature::startListening() {
-  EndpointFeature& endpoint = EndpointFeature::instance();
-  auto& endpoint_list = endpoint.endpointList();
-
-  for (auto& server : _servers) {
-    server->startListening(endpoint_list);
-  }
+  _server->startListening(EndpointFeature::instance().endpointList());
 }
 
 }  // namespace sdb

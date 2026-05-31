@@ -23,6 +23,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <shared_mutex>
 #include <string>
 #include <vector>
 
@@ -82,6 +83,7 @@ class GeneralServerFeature final {
   bool _return_queue_time_header;
   uint64_t _compress_response_threshold;
   std::vector<std::string> _access_control_allow_origins;
+  mutable std::shared_mutex _handler_factory_mutex;
   std::shared_ptr<rest::RestHandlerFactory> _handler_factory;
   std::unique_ptr<rest::AsyncJobManager> _job_manager;
   std::vector<std::unique_ptr<rest::GeneralServer>> _servers;

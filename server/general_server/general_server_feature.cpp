@@ -138,7 +138,10 @@ void GeneralServerFeature::start() {
 
   auto hf = std::make_shared<RestHandlerFactory>();
   hf->seal();
-  std::atomic_store(&_handler_factory, std::move(hf));
+  {
+    std::unique_lock guard{_handler_factory_mutex};
+    _handler_factory = std::move(hf);
+  }
 
   startListening();
 
@@ -181,8 +184,8 @@ uint64_t GeneralServerFeature::compressResponseThreshold() const noexcept {
 
 std::shared_ptr<rest::RestHandlerFactory> GeneralServerFeature::handlerFactory()
   const {
-  return std::atomic_load_explicit(&_handler_factory,
-                                   std::memory_order_relaxed);
+  std::shared_lock guard{_handler_factory_mutex};
+  return _handler_factory;
 }
 
 rest::AsyncJobManager& GeneralServerFeature::jobManager() {

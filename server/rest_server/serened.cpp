@@ -68,10 +68,6 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     // ArangoDB ServerState modeled never applied.
     state.SetRole(ServerState::Role::Single);
 
-    server.setStateHook([&](AppServer::State /*state*/) {
-      CrashHandler::SetState(magic_enum::enum_name(server.state()));
-    });
-
     // 1. Parse CLI before constructing any feature (ctors read flags).
     server.parseOptions(argc, argv);
 
@@ -130,8 +126,10 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
 
       try {
         // 4. start -- after a successful pass the server is fully
-        //    accepting clients.
-        server.setState(AppServer::State::InStart);
+        //    accepting clients. The CrashHandler state strings get
+        //    stamped into /tmp/crash bundles so a fatal signal during
+        //    boot lands with a phase tag.
+        CrashHandler::SetState("starting");
         start_one(ssl, [&] { ssl.stop(); });
         start_one(db_path, [&] { db_path.stop(); });
         start_one(scheduler, [&] { scheduler.stop(); });
@@ -150,15 +148,15 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
         SDB_INFO(GENERAL, "SereneDB is ready for business. Have fun!");
 
         // 5. wait for SIGTERM/SIGINT.
-        server.setState(AppServer::State::InWait);
+        CrashHandler::SetState("running");
         server.wait();
 
         // 6. stop -- strict LIFO. Each feature's stop() first nudges any
         //    long-running threads to exit, then blocks on the joins and
         //    finishes its own teardown.
-        server.setState(AppServer::State::InStop);
+        CrashHandler::SetState("stopping");
         drain_stoppers();
-        server.setState(AppServer::State::Stopped);
+        CrashHandler::SetState("stopped");
 
         ret = EXIT_SUCCESS;
       } catch (const std::exception& ex) {

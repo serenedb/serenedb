@@ -20,29 +20,17 @@
 
 #pragma once
 
-#include <atomic>
-#include <functional>
-#include <magic_enum/magic_enum.hpp>
-#include <string_view>
-
 #include "basics/assert.h"
 
 namespace sdb::app {
 
-// Lifecycle state-machine + signal-driven wait loop. RunServer drives
-// each feature's start/stop directly; AppServer no longer owns or
-// iterates features. What's left:
-//   - state() and setState() for diagnostics (CrashHandler reporter)
-//   - wait() that blocks until SIGTERM/SIGINT (polls lifecycle::IsStopping)
+// Lifecycle entry points: CLI parsing + signal-driven shutdown wait.
+// RunServer drives each feature's start/stop directly. The class is
+// retained only because a handful of subsystems (RestHandler, Scheduler,
+// RocksDBMetricsListener, ...) accept an `AppServer&` as a pass-through
+// context token; their references resolve back to Instance().
 class AppServer {
  public:
-  enum class State : int {
-    InStart,
-    InWait,
-    InStop,
-    Stopped,
-  };
-
   static AppServer& Instance() noexcept {
     SDB_ASSERT(gInstance);
     return *gInstance;
@@ -57,56 +45,13 @@ class AppServer {
   AppServer(const AppServer&) = delete;
   AppServer& operator=(const AppServer&) = delete;
 
-  State state() const noexcept {
-    return _state.load(std::memory_order_acquire);
-  }
-
-  void setState(State new_state) noexcept {
-    _state.store(new_state, std::memory_order_release);
-    if (_state_hook) {
-      _state_hook(new_state);
-    }
-  }
-
-  // Install a single state-change observer. Today's only caller wires
-  // CrashHandler::SetState() so /tmp/crash bundles record where in the
-  // lifecycle we were when something blew up. setState() invokes the
-  // hook synchronously; the hook MUST be noexcept-equivalent.
-  void setStateHook(std::function<void(State)> hook) noexcept {
-    _state_hook = std::move(hook);
-  }
-
   void parseOptions(int argc, char* argv[]);
 
-  // Block until lifecycle::IsStopping() flips (signal handler).
+  // Block until BeginShutdown() (signal handler) wakes the eventfd.
   void wait();
 
  private:
   inline static AppServer* gInstance = nullptr;
-
-  std::atomic<State> _state{State::InStart};
-  std::function<void(State)> _state_hook;
 };
 
 }  // namespace sdb::app
-namespace magic_enum {
-
-template<>
-[[maybe_unused]] constexpr customize::customize_t
-customize::enum_name<sdb::app::AppServer::State>(
-  sdb::app::AppServer::State state) noexcept {
-  using State = sdb::app::AppServer::State;
-  switch (state) {
-    case State::InStart:
-      return "start";
-    case State::InWait:
-      return "wait";
-    case State::InStop:
-      return "stop";
-    case State::Stopped:
-      return "stopped";
-  }
-  return invalid_tag;
-}
-
-}  // namespace magic_enum

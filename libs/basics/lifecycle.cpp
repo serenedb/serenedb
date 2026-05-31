@@ -21,12 +21,13 @@
 #include "basics/lifecycle.h"
 
 #include <atomic>
+#include <string>
 
 namespace sdb::lifecycle {
 namespace {
 
 std::atomic_bool gIsStopping = false;
-std::vector<std::string> gPositionalArgs;
+std::string gDataDirArg;
 
 }  // namespace
 
@@ -38,16 +39,8 @@ void BeginShutdown() noexcept {
   gIsStopping.store(true, std::memory_order_release);
 }
 
-void SetPositionalArgs(std::span<char* const> positionals) {
-  gPositionalArgs.clear();
-  gPositionalArgs.reserve(positionals.size());
-  for (auto* p : positionals) {
-    gPositionalArgs.emplace_back(p);
-  }
-}
+void SetDataDirArg(std::string_view arg) { gDataDirArg = arg; }
 
-const std::vector<std::string>& PositionalArgs() noexcept {
-  return gPositionalArgs;
-}
+std::string_view DataDirArg() noexcept { return gDataDirArg; }
 
 }  // namespace sdb::lifecycle

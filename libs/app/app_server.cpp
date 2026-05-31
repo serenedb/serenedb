@@ -33,10 +33,15 @@ namespace sdb::app {
 void AppServer::parseOptions(int argc, char* argv[]) {
   // All CLI knobs are ABSL_FLAGs declared in their owning .cpp files
   // and read via absl::GetFlag during validateOptions/prepare. Run
-  // absl's parser; positional args land in lifecycle:: for features
-  // (DatabasePathFeature) to pick up.
+  // absl's parser; the lone positional (data-dir) is stashed for
+  // DatabasePathFeature to pick up.
   auto positionals = absl::ParseCommandLine(argc, argv);
-  lifecycle::SetPositionalArgs(positionals);
+  // positionals[0] is argv[0]; we accept at most one further arg.
+  if (positionals.size() == 2) {
+    lifecycle::SetDataDirArg(positionals[1]);
+  } else if (positionals.size() > 2) {
+    SDB_FATAL(GENERAL, "expected at most one positional data-dir arg");
+  }
 }
 
 void AppServer::wait() {

@@ -22,9 +22,7 @@
 #include "database_path_feature.h"
 
 #include <absl/flags/flag.h>
-#include <absl/strings/str_join.h>
 
-#include "app/app_server.h"
 #include "app/global_context.h"
 #include "basics/application-exit.h"
 #include "basics/cleanup_functions.h"
@@ -39,21 +37,16 @@
 ABSL_FLAG(std::string, database_directory, "",
           "Path to the database directory. Overrides any positional arg.");
 
-using namespace sdb::app;
 using namespace sdb::basics;
 
 namespace sdb {
 
 DatabasePathFeature::DatabasePathFeature()
   : _directory(absl::GetFlag(FLAGS_database_directory)) {
-  // Positional arg (PositionalArgs()[1]) wins over the flag if given.
-  const auto& positionals = lifecycle::PositionalArgs();
-  if (positionals.size() == 2) {
-    _directory = positionals[1];
-  } else if (positionals.size() > 2) {
-    SDB_FATAL(GENERAL, "expected at most one positional data-dir arg, got '",
-              absl::StrJoin(positionals.begin() + 1, positionals.end(), ","),
-              "'");
+  // Positional arg wins over the flag if given (size-check ran in
+  // AppServer::parseOptions).
+  if (auto p = lifecycle::DataDirArg(); !p.empty()) {
+    _directory = std::string(p);
   }
 
   if (_directory.empty()) {

@@ -20,9 +20,7 @@
 
 #pragma once
 
-#include <span>
-#include <string>
-#include <vector>
+#include <string_view>
 
 namespace sdb::lifecycle {
 
@@ -35,8 +33,10 @@ bool IsStopping() noexcept;
 // Marks the server as stopping. Idempotent.
 void BeginShutdown() noexcept;
 
-// Positional argv (post absl::ParseCommandLine). [0] is argv[0].
-void SetPositionalArgs(std::span<char* const> positionals);
-const std::vector<std::string>& PositionalArgs() noexcept;
+// The optional positional data-dir argument (the single positional
+// after absl::ParseCommandLine strips argv[0]). Empty when no
+// positional was supplied.
+void SetDataDirArg(std::string_view arg);
+std::string_view DataDirArg() noexcept;
 
 }  // namespace sdb::lifecycle

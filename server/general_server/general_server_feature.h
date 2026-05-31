@@ -87,10 +87,6 @@ class GeneralServerFeature final {
   std::unique_ptr<rest::GeneralServer> _server;
   uint64_t _num_io_threads;
 
-#ifdef SDB_FAULT_INJECTION
-  std::vector<std::string> _failure_points;
-#endif
-
   // Some metrics about requests and connections
   metrics::Histogram<metrics::LogScale<uint64_t>>& _request_body_size_http1;
   metrics::Histogram<metrics::LogScale<uint64_t>>& _request_body_size_http2;

@@ -39,7 +39,6 @@ ABSL_FLAG(uint64_t, http_compress_response_threshold, 0,
 
 #include "app/app_server.h"
 #include "basics/application-exit.h"
-#include "basics/debugging.h"
 #include "basics/number_of_cores.h"
 #include "basics/string_utils.h"
 #include "general_server/general_server.h"
@@ -115,11 +114,6 @@ GeneralServerFeature::GeneralServerFeature()
                      }),
       _access_control_allow_origins.end());
   }
-#ifdef SDB_FAULT_INJECTION
-  for (const auto& it : _failure_points) {
-    AddFailurePointDebugging(it);
-  }
-#endif
   gInstance = this;
 }
 

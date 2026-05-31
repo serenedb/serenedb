@@ -33,16 +33,16 @@ Temporary file; delete at end of this work.
 
 ### Batch D -- Small surface (medium)
 
-- [ ] **D1. Deprecated `std::atomic_store(shared_ptr)`** -- C++26 removes the free-function overloads (we set `CXX_STANDARD 26`). Migrate `_handler_factory` (and 2 other sites in `inverted_index_shard.h`, `local_catalog.cpp`) to `std::atomic<std::shared_ptr<T>>`. Fix the current `memory_order_relaxed` -> acquire/release.
-- [ ] **D2. `EngineFeature(SerenedServer&)` discards param** + `IoContext::_server` never read. Drop both; make all 12 features default-constructible; simplify `IoContext` ctors and drop the AppServer& parameter; drop explicit IoContext copy ctor (`std::atomic<unsigned> _clients` already makes it non-copyable; vector uses `emplace_back` into reserved capacity).
-- [ ] **D3. Per-iter mutex thrash in jthread holders** -- `rocksdb_background_thread.cpp:112-115` takes the mutex 3x per iteration to read a bool. Collapse to one lock per iteration. In `scheduler.cpp:139-142` use `absl::MutexLock guard` instead of raw `Lock()/Unlock()`. Drop `joinable()` guard in scheduler.cpp:145-147.
-- [ ] **D4. `SchedulerFeature` ctor over-clamps** -- 50 lines clamping members that aren't bound by any flag; `SDB_WARN` refs nonexistent flags. Reduce to ~4 lines.
-- [ ] **D5. `EndpointFeature` double-clamp + dead state** -- `endpoint_feature.cpp:48-53` second `_backlog_size > SOMAXCONN` check is unreachable. Inline `buildEndpointLists()` into ctor. Demote `_endpoints`/`_reuse_address`/`_backlog_size` to ctor locals.
-- [ ] **D6. `GeneralServerFeature::_servers` vector with 1 element** -- `buildServers()` always emplaces exactly one. Replace `std::vector<std::unique_ptr<rest::GeneralServer>>` with `std::unique_ptr<rest::GeneralServer>`. Drop buildServers; drop for-loops in start/stop.
-- [ ] **D7. `FlushFeature::_stopped` is unreachable** -- strict LIFO means all `registerFlushSubscription` callers torn down before flush.stop(). Delete field, branch, assignment.
-- [ ] **D8. Dead `#ifdef SDB_FAULT_INJECTION _failure_points`** in GeneralServerFeature -- vector never written; failure-point config runs through `config_variables.cpp`.
-- [ ] **D9. `SerenedServer` alias shim** -- delete `serened.h`/`serened_single.h`/`serened_includes.h`. Use `app::AppServer` directly. Move AppServer ctor/dtor inline. Move `gInstance` to private. Drop dead `State::Uninitialized`/`State::Aborted` + magic_enum cases.
-- [ ] **D10. lifecycle positional-args API** -- over-engineered. Replace `SetPositionalArgs(span)`/`PositionalArgs()` with `SetDataDirArg(string_view)`/`DataDirArg()`; size-check in parseOptions.
+- [x] **D1. Deprecated `std::atomic_store(shared_ptr)`** -- C++26 removes the free-function overloads (we set `CXX_STANDARD 26`). Migrate `_handler_factory` (and 2 other sites in `inverted_index_shard.h`, `local_catalog.cpp`) to `std::atomic<std::shared_ptr<T>>`. Fix the current `memory_order_relaxed` -> acquire/release.
+- [x] **D2. `EngineFeature(SerenedServer&)` discards param** + `IoContext::_server` never read. Drop both; make all 12 features default-constructible; simplify `IoContext` ctors and drop the AppServer& parameter; drop explicit IoContext copy ctor (`std::atomic<unsigned> _clients` already makes it non-copyable; vector uses `emplace_back` into reserved capacity).
+- [x] **D3. Per-iter mutex thrash in jthread holders** -- `rocksdb_background_thread.cpp:112-115` takes the mutex 3x per iteration to read a bool. Collapse to one lock per iteration. In `scheduler.cpp:139-142` use `absl::MutexLock guard` instead of raw `Lock()/Unlock()`. Drop `joinable()` guard in scheduler.cpp:145-147.
+- [x] **D4. `SchedulerFeature` ctor over-clamps** -- 50 lines clamping members that aren't bound by any flag; `SDB_WARN` refs nonexistent flags. Reduce to ~4 lines.
+- [x] **D5. `EndpointFeature` double-clamp + dead state** -- `endpoint_feature.cpp:48-53` second `_backlog_size > SOMAXCONN` check is unreachable. Inline `buildEndpointLists()` into ctor. Demote `_endpoints`/`_reuse_address`/`_backlog_size` to ctor locals.
+- [x] **D6. `GeneralServerFeature::_servers` vector with 1 element** -- `buildServers()` always emplaces exactly one. Replace `std::vector<std::unique_ptr<rest::GeneralServer>>` with `std::unique_ptr<rest::GeneralServer>`. Drop buildServers; drop for-loops in start/stop.
+- [x] **D7. `FlushFeature::_stopped` is unreachable** -- strict LIFO means all `registerFlushSubscription` callers torn down before flush.stop(). Delete field, branch, assignment.
+- [x] **D8. Dead `#ifdef SDB_FAULT_INJECTION _failure_points`** in GeneralServerFeature -- vector never written; failure-point config runs through `config_variables.cpp`.
+- [x] **D9. `SerenedServer` alias shim** -- delete `serened.h`/`serened_single.h`/`serened_includes.h`. Use `app::AppServer` directly. Move AppServer ctor/dtor inline. Move `gInstance` to private. Drop dead `State::Uninitialized`/`State::Aborted` + magic_enum cases.
+- [x] **D10. lifecycle positional-args API** -- over-engineered. Replace `SetPositionalArgs(span)`/`PositionalArgs()` with `SetDataDirArg(string_view)`/`DataDirArg()`; size-check in parseOptions.
 
 ### Batch E -- Polish (low)
 

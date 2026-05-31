@@ -21,14 +21,10 @@
 
 #include "rocksdb_background_thread.h"
 
-#include <atomic>
-
 #include "basics/logger/logger.h"
 #include "basics/system-functions.h"
 #include "basics/thread_id.h"
 #include "catalog/catalog.h"
-#include "metrics/gauge_builder.h"
-#include "metrics/metrics_feature.h"
 #include "rest_server/flush_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -37,15 +33,9 @@
 
 using namespace sdb;
 
-DECLARE_GAUGE(rocksdb_wal_released_tick_replication, uint64_t,
-              "Released tick for RocksDB WAL deletion (replication-induced)");
-
 RocksDBBackgroundThread::RocksDBBackgroundThread(RocksDBEngineCatalog& engine,
                                                  double interval)
-  : _engine(engine),
-    _interval(interval),
-    _metrics_wal_released_tick_replication(
-      metrics::GetMetrics().add(rocksdb_wal_released_tick_replication{})) {}
+  : _engine(engine), _interval(interval) {}
 
 RocksDBBackgroundThread::~RocksDBBackgroundThread() {
   beginShutdown();
@@ -190,16 +180,8 @@ void RocksDBBackgroundThread::run() {
         min_tick = earliest_seq_needed;
       }
 
-      uint64_t min_tick_for_replication = latest_seq_no;
-
-      min_tick = std::min(min_tick, min_tick_for_replication);
-
-      _metrics_wal_released_tick_replication.store(min_tick_for_replication,
-                                                   std::memory_order_relaxed);
-
       SDB_DEBUG(STORAGE, "latest seq number: ", latest_seq_no,
-                ", earliest seq needed: ", earliest_seq_needed,
-                ", min tick for replication: ", min_tick_for_replication);
+                ", earliest seq needed: ", earliest_seq_needed);
 
       try {
         _engine.flushOpenFilesIfRequired();

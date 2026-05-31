@@ -61,13 +61,6 @@ SchedulerFeature::SchedulerFeature()
     _nr_minimal_threads = 4;
   }
 
-  if (_ongoing_low_priority_multiplier < 1.0) {
-    SDB_WARN(GENERAL, "--server.ongoing-low-priority-multiplier (",
-             _ongoing_low_priority_multiplier,
-             ") is less than 1.0, setting to default (4.0)");
-    _ongoing_low_priority_multiplier = 4.0;
-  }
-
   if (_nr_minimal_threads >= _nr_maximal_threads) {
     SDB_WARN(GENERAL, "--server.maximal-threads (", _nr_maximal_threads,
              ") should be at least ", (_nr_minimal_threads + 1),
@@ -101,14 +94,10 @@ void SchedulerFeature::start() {
   SDB_ASSERT(_nr_minimal_threads <= _nr_maximal_threads);
   SDB_ASSERT(_queue_size > 0);
 
-  uint64_t ongoing_low_priority_limit = static_cast<uint64_t>(
-    _ongoing_low_priority_multiplier * _nr_maximal_threads);
-
   auto sched = std::make_unique<Scheduler>(
     SerenedServer::Instance(), _nr_minimal_threads, _nr_maximal_threads,
     _queue_size, _fifo1_size, _fifo2_size, _fifo3_size,
-    ongoing_low_priority_limit, _unavailability_queue_fill_grade,
-    _metrics_feature);
+    _unavailability_queue_fill_grade, _metrics_feature);
 
   gScheduler = sched.get();
 

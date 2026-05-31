@@ -52,7 +52,7 @@ class Scheduler {
   explicit Scheduler(SerenedServer& server, uint64_t min_threads,
                      uint64_t max_threads, uint64_t max_queue_size,
                      uint64_t fifo1_size, uint64_t fifo2_size,
-                     uint64_t fifo3_size, uint64_t ongoing_low_priority_limit,
+                     uint64_t fifo3_size,
                      double unavailability_queue_fill_grade,
                      metrics::MetricsFeature& metrics);
 
@@ -224,7 +224,6 @@ class Scheduler {
     std::atomic<uint64_t> num_counted_items{0};
   } _queues[kNumberOfQueues];
   const uint64_t _max_fifo_sizes[kNumberOfQueues];
-  const uint64_t _ongoing_low_priority_limit;
   /// fill grade of the scheduler's queue (in %) from which onwards
   /// the server is considered unavailable (because of overload)
   const double _unavailability_queue_fill_grade;

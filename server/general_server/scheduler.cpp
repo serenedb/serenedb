@@ -71,14 +71,13 @@ DECLARE_GAUGE(
 Scheduler::Scheduler(SerenedServer& server, uint64_t min_threads,
                      uint64_t max_threads, uint64_t max_queue_size,
                      uint64_t fifo1_size, uint64_t fifo2_size,
-                     uint64_t fifo3_size, uint64_t ongoing_low_priority_limit,
+                     uint64_t fifo3_size,
                      double unavailability_queue_fill_grade,
                      metrics::MetricsFeature& metrics)
   : _server{server},
     _min_threads{min_threads},
     _max_threads{max_threads},
     _max_fifo_sizes{max_queue_size, fifo1_size, fifo2_size, fifo3_size},
-    _ongoing_low_priority_limit{ongoing_low_priority_limit},
     _unavailability_queue_fill_grade{unavailability_queue_fill_grade},
     _metrics_handler_tasks_created(
       metrics.add(serenedb_scheduler_handler_tasks_created_total{})),
@@ -206,28 +205,7 @@ void Scheduler::runCronThread() {
 }
 
 void Scheduler::queue(RequestPriority prio, folly::Func func) noexcept {
-  if (prio == RequestPriority::Low) {
-    func = [this, func = std::move(func)] mutable {
-      const bool needs_reschedule = [&] {
-        if (_ongoing_low_priority_limit == 0) {
-          return false;
-        }
-        const auto ongoing = _ongoing_low_priority_gauge.load();
-        if (ongoing < _ongoing_low_priority_limit) {
-          return false;
-        }
-        // Cluster-RPC saturation backpressure was the old reason to refuse
-        // a dequeue here; without a cluster RPC pool the only backpressure
-        // is the ongoing-low-priority-limit checked above.
-        return false;
-      }();
-      if (needs_reschedule) {
-        queue(RequestPriority::Low, std::move(func));
-      } else {
-        func();
-      }
-    };
-  } else if (prio == RequestPriority::Med) {
+  if (prio == RequestPriority::Med) {
     SDB_IF_FAILURE("BlockSchedulerMediumQueue") {
       func = [this, func = std::move(func)] mutable {
         queue(RequestPriority::Med, std::move(func));

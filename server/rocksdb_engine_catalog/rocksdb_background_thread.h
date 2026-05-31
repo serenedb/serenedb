@@ -25,8 +25,6 @@
 
 #include <thread>
 
-#include "metrics/fwd.h"
-
 namespace sdb {
 
 class RocksDBEngineCatalog;
@@ -58,8 +56,6 @@ class RocksDBBackgroundThread {
   } _condition;
 
   bool _stopping{false};
-
-  metrics::Gauge<uint64_t>& _metrics_wal_released_tick_replication;
 
   // Declared last so it joins first on destruction.
   std::jthread _thread;

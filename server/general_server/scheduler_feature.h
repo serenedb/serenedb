@@ -54,7 +54,6 @@ class SchedulerFeature final {
   uint64_t _fifo1_size = 4096;
   uint64_t _fifo2_size = 4096;
   uint64_t _fifo3_size = 4096;
-  double _ongoing_low_priority_multiplier = 4.0;
   double _unavailability_queue_fill_grade = 0.75;
 
   std::unique_ptr<Scheduler> _scheduler;

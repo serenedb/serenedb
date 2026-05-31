@@ -145,6 +145,10 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
         start_one(general, [&] { general.stop(); });
         start_one(pg, [&] { pg.stop(); });
 
+        // Boot completed; emit a recognisable banner so operators tailing
+        // logs (and the sdb_log smoke test) can confirm the server is up.
+        SDB_INFO(GENERAL, "SereneDB is ready for business. Have fun!");
+
         // 5. wait for SIGTERM/SIGINT.
         server.setState(AppServer::State::InWait);
         server.wait();

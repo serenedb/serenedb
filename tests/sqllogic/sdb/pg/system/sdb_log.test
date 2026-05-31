@@ -1,5 +1,5 @@
 query
-select * from sdb_log where message like '%Have fun%';
+select * from sdb_log where message = 'SereneDB is ready for business. Have fun!';
 ----
 id	timestamp	topic	level	message
-<slt:ignore>	<slt:ignore>	general	INFO	[xxxxx] {general} SereneDB (version <slt:ignore> [linux]) is ready for business. Have fun!\n
+<slt:ignore>	<slt:ignore>	(empty)	INFO	SereneDB is ready for business. Have fun!

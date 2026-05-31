@@ -141,7 +141,11 @@ void InstallLogManagerSink(duckdb::DatabaseInstance& db) {
   cfg.mode = duckdb::LogMode::DISABLE_SELECTED;
   cfg.disabled_log_types = {std::string{::sdb::log::HTTP},
                             std::string{::sdb::log::SSL}};
-  cfg.storage = duckdb::LogConfig::STDOUT_STORAGE_NAME;
+  // In-memory storage so duckdb_logs() (and our sdb_log catalog view that
+  // wraps it) can scan log entries from SQL. Stdout storage can't be scanned
+  // -- entries fly straight to the terminal and are gone -- which breaks the
+  // sdb_log smoke test that queries the startup banner.
+  cfg.storage = duckdb::LogConfig::IN_MEMORY_STORAGE_NAME;
   manager.SetConfig(db, cfg);
 
   {

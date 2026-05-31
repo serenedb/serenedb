@@ -501,7 +501,6 @@ void RocksDBEngineCatalog::verifySstFiles() const {
 
   SDB_INFO(STARTUP, "verification of RocksDB .sst files in path '", _path,
            "' completed successfully");
-  log::Flush();
   // exit with status code = 0, without leaking
   int exit_code = static_cast<int>(ERROR_OK);
   gExitFunction(exit_code, nullptr);

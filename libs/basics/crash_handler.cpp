@@ -283,7 +283,6 @@ void LogStacktrace(void* ucontext = nullptr) try {
     }
     SDB_INFO(CRASH, buffer.view());
   }
-  log::Flush();
 } catch (...) {
   // we better not throw an exception from inside a signal handler
 }
@@ -331,8 +330,6 @@ void CrashHandlerSignalHandler(int signal, siginfo_t* info, void* ucontext) {
     LogCrashInfo("signal handler invoked", signal, info, ucontext);
     LogStacktrace(ucontext);
     LogProcessInfo();
-    log::Flush();
-    log::Shutdown();
   } else {
     // signal handler was already entered by another thread...
     // there is not so much we can do here except waiting and then finally let
@@ -349,10 +346,7 @@ void CrashHandlerSignalHandler(int signal, siginfo_t* info, void* ucontext) {
 
 }  // namespace
 
-void CrashHandler::logBacktrace() {
-  LogStacktrace();
-  log::Flush();
-}
+void CrashHandler::logBacktrace() { LogStacktrace(); }
 
 /// logs a fatal message and crashes the program
 void CrashHandler::crash(std::string_view context) {
@@ -360,8 +354,6 @@ void CrashHandler::crash(std::string_view context) {
                /*no context*/ nullptr);
   LogStacktrace();
   LogProcessInfo();
-  log::Flush();
-  log::Shutdown();
 
   // crash from here
   KillProcess(SIGABRT);

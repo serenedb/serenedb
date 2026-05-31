@@ -44,7 +44,6 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     CrashHandler::installCrashHandler();
     std::string name = context.binaryName();
     SdbSetApplicationName(name);
-    log::Initialize();
 
     int ret{EXIT_FAILURE};
     SerenedServer server;
@@ -166,7 +165,6 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     //     get here on that path.
     query::DuckDBEngine::Instance().Shutdown();
 
-    log::Shutdown();
     return context.exit(ret);
   } catch (const std::exception& ex) {
     SDB_ERROR(GENERAL,

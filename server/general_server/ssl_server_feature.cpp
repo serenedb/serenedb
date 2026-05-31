@@ -554,4 +554,3 @@ std::string SslServerFeature::stringifySslOptions(uint64_t opts) const {
   // strip initial comma
   return result.substr(2);
 }
-

@@ -516,8 +516,7 @@ std::string H2CommTask<T>::url(const HttpRequest* req) const {
              (req->databaseName().empty()
                 ? ""
                 : "/_db/" + string_utils::UrlEncode(req->databaseName()))) +
-           (log::GetLogRequestParameters() ? req->fullUrl()
-                                           : req->requestPath());
+           req->fullUrl();
   }
   return "";
 }
@@ -568,8 +567,7 @@ void H2CommTask<T>::ProcessRequest(Stream& stream,
 
     std::string_view body = req->rawPayload();
     this->_general_server_feature.countHttp2Request(body.size());
-    if (log::IsEnabled(LogLevel::TRACE, log::HTTP) &&
-        log::GetLogRequestParameters()) {
+    if (log::IsEnabled(LogLevel::TRACE, log::HTTP)) {
       // Log HTTP headers:
       this->LogRequestHeaders("h2", req->headers());
 
@@ -632,8 +630,7 @@ void H2CommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> res) {
     tmp->clearBody();
   }
 
-  if (log::IsEnabled(LogLevel::TRACE, log::HTTP) &&
-      log::GetLogRequestParameters()) {
+  if (log::IsEnabled(LogLevel::TRACE, log::HTTP)) {
     const auto& body_buf = tmp->body();
     std::string_view body{body_buf.data(), body_buf.size()};
     if (!body.empty()) {
@@ -704,8 +701,7 @@ void H2CommTask<T>::QueueHttp2Responses() {
     // will add CORS headers if necessary
     this->FinishExecution(res, strm->origin);
 
-    if (log::IsEnabled(LogLevel::TRACE, log::HTTP) &&
-        log::GetLogRequestParameters()) {
+    if (log::IsEnabled(LogLevel::TRACE, log::HTTP)) {
       this->LogResponseHeaders("h2", res.headers());
     }
 

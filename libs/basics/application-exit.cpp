@@ -23,7 +23,6 @@
 
 #include "basics/cleanup_functions.h"
 #include "basics/common.h"
-#include "basics/logger/logger.h"
 
 #ifdef SERENEDB_HAVE_UNISTD_H
 #include <unistd.h>
@@ -49,8 +48,6 @@ void ApplicationExitSetExit(ExitFunction exit_function) {
 [[noreturn]] void FatalErrorExitCode(int code) noexcept {
   try {
     sdb::basics::CleanupFunctions::run(code, nullptr);
-    sdb::log::Flush();
-    sdb::log::Shutdown();
     gExitFunction(code, nullptr);
   } catch (...) {
   }
@@ -64,8 +61,6 @@ void ApplicationExitSetExit(ExitFunction exit_function) {
 [[noreturn]] void FatalErrorAbort() noexcept {
   try {
     sdb::basics::CleanupFunctions::run(500, nullptr);
-    sdb::log::Flush();
-    sdb::log::Shutdown();
   } catch (...) {
   }
   std::abort();

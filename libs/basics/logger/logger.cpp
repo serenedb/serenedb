@@ -128,17 +128,9 @@ void SetInitialLogLevel(LogLevel level) noexcept {
   gInitialLevel.store(level, std::memory_order_relaxed);
 }
 
-LogLevel InitialLogLevel() noexcept {
-  return gInitialLevel.load(std::memory_order_relaxed);
-}
-
 void InstallSink(const Sink* sink) noexcept {
   gSink.store(sink, std::memory_order_release);
 }
-
-void Initialize() noexcept {}
-void Shutdown() noexcept {}
-void Flush() noexcept {}
 
 bool IsEnabled(LogLevel level) noexcept {
   if (const auto* sink = gSink.load(std::memory_order_acquire); sink) {

@@ -56,20 +56,6 @@ std::string_view TranslateLogLevel(LogLevel level) noexcept;
 // DuckDB sink is installed (and after it is uninstalled at shutdown). After
 // InstallSink() runs, ShouldLog defers to duckdb's MutableLogger.
 void SetInitialLogLevel(LogLevel level) noexcept;
-LogLevel InitialLogLevel() noexcept;
-
-// Lifecycle. Kept as no-ops for source-compat with the rest of the codebase
-// (rest_server/serened.cpp, application-exit.cpp, crash_handler.cpp,
-// rocksdb_engine_catalog.cpp). All real work happens via InstallSink / the
-// LogManager.
-void Initialize() noexcept;
-void Shutdown() noexcept;
-void Flush() noexcept;
-inline bool IsActive() noexcept { return true; }
-
-// Always-on getter; no-one currently flips this off. Kept as a function so
-// the HTTP/h2 call sites compile unchanged.
-inline bool GetLogRequestParameters() noexcept { return true; }
 
 // ---- sink installation (called by DuckDBEngine) --------------------------
 

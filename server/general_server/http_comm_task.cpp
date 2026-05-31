@@ -433,8 +433,7 @@ std::string HttpCommTask<T>::url() const {
              _request->databaseName().empty()
                ? ""
                : "/_db/" + string_utils::UrlEncode(_request->databaseName()))) +
-           (log::GetLogRequestParameters() ? _request->fullUrl()
-                                           : _request->requestPath());
+           _request->fullUrl();
   }
   return "";
 }
@@ -493,8 +492,7 @@ void HttpCommTask<T>::DoProcessRequest() {
     std::string_view body = _request->rawPayload();
     this->_general_server_feature.countHttp1Request(body.size());
 
-    if (log::IsEnabled(LogLevel::TRACE, log::HTTP) &&
-        log::GetLogRequestParameters()) {
+    if (log::IsEnabled(LogLevel::TRACE, log::HTTP)) {
       // Log HTTP headers:
       this->LogRequestHeaders("http", _request->headers());
 
@@ -674,8 +672,7 @@ void HttpCommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> base_res) {
                _response->empty(),
              "response code 204 requires body length to be zero");
 
-  if (log::IsEnabled(LogLevel::TRACE, log::HTTP) &&
-      log::GetLogRequestParameters()) {
+  if (log::IsEnabled(LogLevel::TRACE, log::HTTP)) {
     // Log HTTP headers:
     this->LogResponseHeaders("http", response.headers());
 

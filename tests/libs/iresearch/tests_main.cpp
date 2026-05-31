@@ -260,7 +260,6 @@ void TestBase::TearDown() {
 }
 
 int main(int argc, char* argv[]) {
-  sdb::log::Initialize();
   const int code = TestEnv::initialize(argc, argv);
 
   SDB_INFO(IRESEARCH, "Path to test result directory: ",

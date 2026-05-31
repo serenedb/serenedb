@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,7 +15,7 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
@@ -26,20 +25,26 @@
 
 namespace sdb {
 
+// Thin wrapper over absl::InstallFailureSignalHandler. absl owns the
+// SIGSEGV/SIGBUS/SIGFPE/SIGILL/SIGABRT/SIGTRAP handlers (alternate stack,
+// symbolized stack dump, watchdog alarm). The bits we still own are:
+//   - SetState: stamps a short server-state tag that the writerfn callback
+//     prepends to every crash line, so logs say "[state=running] ..." rather
+//     than just the bare stack.
+//   - assertionFailure: SDB_ASSERT/SDB_VERIFY landing pad -- logs the
+//     condition + message through the signal-safe CRASH topic and then
+//     std::abort()s, which absl catches and dumps.
 class CrashHandler {
  public:
-  /// log backtrace for current thread to logfile
-  static void logBacktrace();
-
-  /// set server state string as context for crash messages.
-  /// state string will be advanced whenever the application server
-  /// changes its state. state string must be null-terminated!
+  // Set server-state string (e.g. "starting", "running", "stopping"). The
+  // pointer must remain valid for the rest of the process lifetime -- the
+  // writerfn reads it from a signal handler, so callers must pass a string
+  // literal or an object with static storage duration.
   static void SetState(std::string_view state);
 
-  /// logs a fatal message and crashes the program
-  [[noreturn]] static void crash(std::string_view context);
-
-  /// logs an assertion failure and crashes the program
+  // SDB_ASSERT / SDB_VERIFY landing pad. Logs the assertion through the
+  // CRASH topic (signal-safe write to stderr) and then std::abort()s, which
+  // raises SIGABRT and trips absl's failure signal handler.
   [[noreturn]] static void assertionFailure(const char* file, int line,
                                             const char* func,
                                             const char* context,
@@ -51,14 +56,8 @@ class CrashHandler {
                      location.function_name(), context, message);
   }
 
-  /// set flag to kill process hard using SIGKILL, in order to circumvent
-  /// core file generation etc.
-  static void setHardKill();
-
-  /// disable printing of backtraces
-  static void disableBacktraces();
-
-  /// installs the crash handler globally
+  // Wire absl::InstallFailureSignalHandler. Must be called after
+  // absl::InitializeSymbolizer (GlobalContext ctor handles that).
   static void installCrashHandler();
 };
 

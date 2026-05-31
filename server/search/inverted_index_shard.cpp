@@ -305,10 +305,7 @@ void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
     }
   };
 
-  SDB_IF_FAILURE("SereneSearchTruncateFailure") {
-    CrashHandler::setHardKill();
-    SDB_THROW(ERROR_DEBUG);
-  }
+  SDB_IF_FAILURE("SereneSearchTruncateFailure") { SDB_THROW(ERROR_DEBUG); }
 
   SDB_ASSERT(_writer);
 

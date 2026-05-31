@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,22 +15,22 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
 namespace sdb::signal_handling {
 
-// Install POSIX signal handlers for SIGPIPE (ignored), SIGHUP (log-rotate
-// no-op), and SIGINT/SIGQUIT/SIGTERM (shutdown). Must be called after the
-// Scheduler is up because the SIGHUP handler queues onto it.
+// Install the shutdown signal handlers (SIGTERM/SIGINT/SIGQUIT -> eventfd
+// wakeup via lifecycle::BeginShutdown) plus SIG_IGN for SIGPIPE. Must run
+// AFTER absl::InstallFailureSignalHandler so SIGTERM lands on our handler
+// (abseil treats SIGTERM as a fatal stack-dump signal otherwise) and AFTER
+// the eventfd is created by lifecycle::InitShutdown.
 void Install();
 
-// Restore SIG_IGN on the signals we previously installed handlers for.
-// Safe to call after Install(). Must be called before the Scheduler is
-// torn down so a late SIGHUP/SIGTERM/SIGINT/SIGQUIT cannot dereference
-// freed feature state.
+// Restore SIG_IGN on the signals we installed handlers for, so a late
+// SIGTERM/SIGINT/SIGQUIT during teardown cannot dereference freed state.
 void Shutdown();
 
 }  // namespace sdb::signal_handling

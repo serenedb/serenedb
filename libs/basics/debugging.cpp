@@ -29,7 +29,6 @@
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/crash_handler.h"
 #include "basics/logger/logger.h"
 
 #ifdef SERENEDB_HAVE_UNISTD_H
@@ -54,8 +53,6 @@ containers::FlatHashSet<std::string> gFailurePoints;
 /// this is used for crash and recovery tests
 void TerminateDebugging(std::string_view message) {
 #ifdef SDB_DEV
-  CrashHandler::setHardKill();
-
   // there are some reserved crash messages we use in testing the
   // crash handler
   if (message == "CRASH-HANDLER-TEST-ABORT") {
@@ -95,9 +92,10 @@ void TerminateDebugging(std::string_view message) {
 
 #endif
 
-  // intentional crash - no need for a backtrace here
-  CrashHandler::disableBacktraces();
-  CrashHandler::crash(message);
+  // Generic path: log the message through the signal-safe CRASH topic, then
+  // abort() so absl's failure signal handler prints a symbolized stack.
+  ::sdb::log::LogCrash(::sdb::LogLevel::FATAL, message);
+  std::abort();
 }
 
 bool ShouldFailDebugging(std::string_view value) noexcept {

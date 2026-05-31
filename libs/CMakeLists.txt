@@ -113,7 +113,12 @@ target_link_libraries(
         # SDB_INFO / SDB_TRACE inline gets the duckdb headers it needs.
         duckdb_static
         ${SYSTEM_LIBRARIES}
-    PRIVATE date_interface boost_boost absl::stacktrace absl::symbolize
+    PRIVATE
+        date_interface
+        boost_boost
+        absl::stacktrace
+        absl::symbolize
+        absl::failure_signal_handler
 )
 
 ################################################################################

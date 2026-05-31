@@ -22,6 +22,9 @@
 
 #include <absl/flags/parse.h>
 
+#include <chrono>
+#include <thread>
+
 #include "basics/lifecycle.h"
 #include "basics/logger/logger.h"
 
@@ -34,22 +37,6 @@ AppServer::AppServer() {
 
 AppServer::~AppServer() { gInstance = nullptr; }
 
-bool AppServer::isStopping() const noexcept {
-  auto s = state();
-  return s == State::InStop || s == State::Stopped || s == State::Aborted;
-}
-
-void AppServer::beginShutdown() noexcept {
-  // Idempotent: lifecycle::BeginShutdown / the condvar notify are safe
-  // to call repeatedly. State transitions are owned by RunServer; we
-  // only nudge the wait loop here.
-  lifecycle::BeginShutdown();
-
-  absl::MutexLock guard{&_shutdown_condition.mutex};
-  _abort_waiting = true;
-  _shutdown_condition.cv.notify_one();
-}
-
 void AppServer::parseOptions(int argc, char* argv[]) {
   // All CLI knobs are ABSL_FLAGs declared in their owning .cpp files
   // and read via absl::GetFlag during validateOptions/prepare. Run
@@ -60,28 +47,19 @@ void AppServer::parseOptions(int argc, char* argv[]) {
 }
 
 void AppServer::wait() {
-  bool shutdown_logged = false;
-  while (true) {
-    if (lifecycle::gCtrlC.load()) {
-      if (!shutdown_logged) {
-        // Log the signal-driven transition from non-handler context. The
-        // signal handler itself is async-signal-safe and only flips the
-        // gCtrlC flag; the SDB_INFO here covers what it used to log
-        // (legibly) without the mutex / allocations.
-        SDB_INFO(GENERAL,
-                 "received shutdown signal, beginning shut down "
-                 "sequence");
-        shutdown_logged = true;
-      }
-      beginShutdown();
-    }
-    absl::MutexLock guard{&_shutdown_condition.mutex};
-    if (_abort_waiting) {
-      break;
-    }
-    _shutdown_condition.cv.WaitWithTimeout(&_shutdown_condition.mutex,
-                                           absl::Milliseconds(100));
+  // The signal handler is async-signal-safe and flips
+  // lifecycle::IsStopping() via BeginShutdown(); we poll the flag every
+  // 100ms here. A condvar+mutex would shave the worst-case wakeup
+  // latency at the cost of a non-AS-safe notify path inside the
+  // handler, which we're not willing to pay -- shutdown latency of
+  // <100ms is plenty.
+  while (!lifecycle::IsStopping()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
+  // Log from non-handler context (the handler can't allocate / lock).
+  SDB_INFO(GENERAL,
+           "received shutdown signal, beginning shut down "
+           "sequence");
 }
 
 }  // namespace sdb::app

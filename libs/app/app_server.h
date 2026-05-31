@@ -20,13 +20,10 @@
 
 #pragma once
 
-#include <absl/synchronization/mutex.h>
-
 #include <atomic>
 #include <functional>
 #include <magic_enum/magic_enum.hpp>
 #include <string_view>
-#include <vector>
 
 #include "basics/assert.h"
 
@@ -36,8 +33,7 @@ namespace sdb::app {
 // each feature's start/stop directly; AppServer no longer owns or
 // iterates features. What's left:
 //   - state() and setState() for diagnostics (CrashHandler reporter)
-//   - wait() that blocks until SIGTERM/SIGINT or explicit beginShutdown
-//   - isStopping() for callers that still ask "is the process winding down"
+//   - wait() that blocks until SIGTERM/SIGINT (polls lifecycle::IsStopping)
 class AppServer {
  public:
   enum class State : int {
@@ -47,11 +43,6 @@ class AppServer {
     InStop,
     Stopped,
     Aborted,
-  };
-
-  class ProgressHandler {
-   public:
-    std::function<void(State)> state;
   };
 
   inline static AppServer* gInstance = nullptr;
@@ -66,46 +57,33 @@ class AppServer {
   AppServer(const AppServer&) = delete;
   AppServer& operator=(const AppServer&) = delete;
 
-  bool isStopping() const noexcept;
-
-  // Prod the wait loop into returning. Idempotent. Triggered from the
-  // signal handler / Ctrl-C path; RunServer then drives the LIFO of
-  // stop() calls. State stays InWait until RunServer flips it to
-  // InStop.
-  void beginShutdown() noexcept;
-
   State state() const noexcept {
     return _state.load(std::memory_order_acquire);
   }
 
   void setState(State new_state) noexcept {
     _state.store(new_state, std::memory_order_release);
-    for (auto& r : _progress_reports) {
-      if (r.state) {
-        r.state(new_state);
-      }
+    if (_state_hook) {
+      _state_hook(new_state);
     }
   }
 
-  void addReporter(ProgressHandler reporter) {
-    _progress_reports.emplace_back(std::move(reporter));
+  // Install a single state-change observer. Today's only caller wires
+  // CrashHandler::SetState() so /tmp/crash bundles record where in the
+  // lifecycle we were when something blew up. setState() invokes the
+  // hook synchronously; the hook MUST be noexcept-equivalent.
+  void setStateHook(std::function<void(State)> hook) noexcept {
+    _state_hook = std::move(hook);
   }
 
   void parseOptions(int argc, char* argv[]);
 
-  // Block until beginShutdown() or SIGTERM/SIGINT.
+  // Block until lifecycle::IsStopping() flips (signal handler).
   void wait();
 
  private:
   std::atomic<State> _state{State::Uninitialized};
-
-  struct {
-    absl::CondVar cv;
-    absl::Mutex mutex;
-  } _shutdown_condition;
-
-  std::vector<ProgressHandler> _progress_reports;
-  bool _abort_waiting = false;
+  std::function<void(State)> _state_hook;
 };
 
 }  // namespace sdb::app

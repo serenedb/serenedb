@@ -53,9 +53,9 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     // ArangoDB ServerState modeled never applied.
     state.SetRole(ServerState::Role::Single);
 
-    server.addReporter({[&](SerenedServer::State /*state*/) {
+    server.setStateHook([&](SerenedServer::State /*state*/) {
       CrashHandler::SetState(magic_enum::enum_name(server.state()));
-    }});
+    });
 
     // 1. Parse CLI before constructing any feature (ctors read flags).
     server.parseOptions(argc, argv);

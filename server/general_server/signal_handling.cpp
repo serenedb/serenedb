@@ -51,12 +51,11 @@ std::atomic<pid_t> gProcessIdRequestingLogRotate{kProcessIdUnspecified};
 extern "C" void CExitHandler(int signal, siginfo_t* info, void*) {
   if (signal == SIGQUIT || signal == SIGTERM || signal == SIGINT) {
     if (!gReceivedShutdownRequest.exchange(true)) {
-      // First signal: just flip the wait-loop flag. The SDB_INFO line that
-      // used to live here was not async-signal-safe (absl::Mutex in the
-      // stderr fallback, std::string allocations); AppServer::wait()
-      // observes the flip and logs the transition from non-handler
-      // context.
-      lifecycle::gCtrlC.store(true);
+      // First signal: flip the lifecycle "stopping" flag. A single
+      // relaxed atomic store is async-signal-safe; AppServer::wait()
+      // polls lifecycle::IsStopping() and logs the transition from
+      // non-handler context.
+      lifecycle::BeginShutdown();
     } else {
       // Second signal: fast-path abort. Build a fixed-size message on the
       // stack and ship it through the CRASH topic so it hits

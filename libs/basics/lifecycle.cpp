@@ -20,6 +20,8 @@
 
 #include "basics/lifecycle.h"
 
+#include <atomic>
+
 namespace sdb::lifecycle {
 namespace {
 

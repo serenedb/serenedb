@@ -46,7 +46,6 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "database/ticks.h"
-#include "general_server/scheduler_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -54,7 +53,6 @@
 #include "rocksdb_engine_catalog/rocksdb_log_value.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_helper.h"
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb {
 
@@ -74,9 +72,6 @@ void RocksDBRecoveryManager::start() {
 
   // synchronizes with acquire inRecovery()
   _recovery_state.store(RecoveryState::Done, std::memory_order_release);
-
-  // notify everyone that recovery is now done
-  recoveryDone();
 }
 
 void RocksDBRecoveryManager::runRecovery() {
@@ -420,45 +415,6 @@ Result RocksDBRecoveryManager::parseRocksWAL() {
   return res;
 }
 
-void RocksDBRecoveryManager::recoveryDone() {
-  SDB_ASSERT(!EngineFeature::instance().engine().inRecovery());
-
-  // '_pending_recovery_callbacks' will not change because
-  // !StorageEngine.inRecovery()
-  // It's single active thread before recovery done,
-  // so we could use general purpose thread pool for this
-  std::vector<yaclib::Future<Result>> futures;
-  futures.reserve(_pending_recovery_callbacks.size());
-  for (auto& entry : _pending_recovery_callbacks) {
-    futures.emplace_back(SchedulerFeature::gScheduler->queueWithFuture(
-      RequestLane::ClientSlow, std::move(entry)));
-  }
-  _pending_recovery_callbacks.clear();
-  // TODO(mbkkt) use single wait with early termination
-  // when it would be available
-  yaclib::Wait(futures.begin(), futures.end());
-  for (auto& future : futures) {
-    auto r = std::move(future).Touch().Ok();
-    if (!r.ok()) {
-      SDB_ERROR(GENERAL, "recovery failure due to error from callback, error '",
-                GetErrorStr(r.errorNumber()), "' message: ", r.errorMessage());
-
-      SDB_THROW(std::move(r));
-    }
-  }
-}
-
-Result RocksDBRecoveryManager::registerPostRecoveryCallback(
-  std::function<Result()>&& callback) {
-  if (!EngineFeature::instance().engine().inRecovery()) {
-    return callback();  // if no engine then can't be in recovery
-  }
-
-  // do not need a lock since single-thread access during recovery
-  _pending_recovery_callbacks.emplace_back(std::move(callback));
-  return {};
-}
-
-void RocksDBRecoveryManager::stop() { _pending_recovery_callbacks.clear(); }
+void RocksDBRecoveryManager::stop() {}
 
 }  // namespace sdb

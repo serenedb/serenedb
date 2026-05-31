@@ -65,14 +65,10 @@ class RocksDBRecoveryManager final {
   // current recovery sequence number
   rocksdb::SequenceNumber recoverySequenceNumber() const noexcept;
 
-  Result registerPostRecoveryCallback(std::function<Result()>&& callback);
-
  private:
   Result parseRocksWAL();
   void runRecovery();
-  void recoveryDone();
 
-  std::vector<std::function<Result()>> _pending_recovery_callbacks;
   std::atomic<rocksdb::SequenceNumber> _current_sequence_number;
   std::atomic<RecoveryState> _recovery_state;
 };

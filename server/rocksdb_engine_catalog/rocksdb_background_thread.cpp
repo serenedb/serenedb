@@ -44,7 +44,7 @@ RocksDBBackgroundThread::~RocksDBBackgroundThread() {
   }
 }
 
-bool RocksDBBackgroundThread::start() {
+void RocksDBBackgroundThread::start() {
   _thread = std::jthread{[this] {
     InitThread("RocksDBThread");
     try {
@@ -56,7 +56,6 @@ bool RocksDBBackgroundThread::start() {
       SDB_WARN(STORAGE, "caught unknown exception in rocksdb background");
     }
   }};
-  return true;
 }
 
 void RocksDBBackgroundThread::beginShutdown() {

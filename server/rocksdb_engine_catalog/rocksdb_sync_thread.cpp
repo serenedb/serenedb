@@ -47,7 +47,7 @@ RocksDBSyncThread::~RocksDBSyncThread() {
   }
 }
 
-bool RocksDBSyncThread::start() {
+void RocksDBSyncThread::start() {
   _thread = std::jthread{[this] {
     InitThread("RocksDBSync");
     try {
@@ -58,7 +58,6 @@ bool RocksDBSyncThread::start() {
       SDB_ERROR(STORAGE, "caught unknown exception in RocksDBSyncThread");
     }
   }};
-  return true;
 }
 
 Result RocksDBSyncThread::syncWal() {

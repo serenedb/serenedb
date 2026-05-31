@@ -676,9 +676,7 @@ void RocksDBEngineCatalog::start() {
     _sync_thread = std::make_unique<RocksDBSyncThread>(
       *this, std::chrono::milliseconds(_options_provider._sync_interval),
       std::chrono::milliseconds(_options_provider._sync_delay_threshold));
-    if (!_sync_thread->start()) {
-      SDB_FATAL(STORAGE, "could not start rocksdb sync thread");
-    }
+    _sync_thread->start();
   }
 
   SDB_ASSERT(_db != nullptr);
@@ -688,9 +686,7 @@ void RocksDBEngineCatalog::start() {
   const double counter_sync_seconds = 2.5;
   _background_thread =
     std::make_unique<RocksDBBackgroundThread>(*this, counter_sync_seconds);
-  if (!_background_thread->start()) {
-    SDB_FATAL(STORAGE, "could not start rocksdb counter manager thread");
-  }
+  _background_thread->start();
 
   EnsureSystemDatabase();
 

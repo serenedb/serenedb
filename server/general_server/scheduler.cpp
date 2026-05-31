@@ -120,7 +120,7 @@ void Scheduler::JobObserver::taskDequeued(
 void Scheduler::JobObserver::taskProcessed(
   const folly::ThreadPoolExecutor::ProcessedTaskInfo& info) noexcept {}
 
-bool Scheduler::start() {
+void Scheduler::start() {
   _executor_handle = std::make_unique<folly::CPUThreadPoolExecutor>(
     std::pair{_max_threads, _min_threads},
     folly::CPUThreadPoolExecutor::makeLifoSemPriorityQueue(4));
@@ -129,7 +129,6 @@ bool Scheduler::start() {
     InitThread("SchedCron");
     runCronThread();
   }};
-  return true;
 }
 
 void Scheduler::shutdown() {

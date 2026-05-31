@@ -34,8 +34,8 @@ class RocksDBBackgroundThread {
   RocksDBBackgroundThread(RocksDBEngineCatalog& eng, double interval);
   ~RocksDBBackgroundThread();
 
-  // start the background thread. Returns true on success.
-  bool start();
+  // start the background thread.
+  void start();
 
   // request the thread to stop and notify it; idempotent.
   void beginShutdown();

@@ -153,7 +153,7 @@ class Scheduler {
   // Throws a logic error if delay was cancelled.
   yaclib::Future<> delay(std::string_view name, clock::duration d);
 
-  bool start();
+  void start();
   void shutdown();
 
   void trackCreateHandlerTask() noexcept;

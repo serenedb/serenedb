@@ -103,10 +103,7 @@ void SchedulerFeature::start() {
 
   _scheduler = std::move(sched);
 
-  bool ok = _scheduler->start();
-  if (!ok) {
-    SDB_FATAL(GENERAL, "the scheduler cannot be started");
-  }
+  _scheduler->start();
   SDB_DEBUG(STARTUP, "scheduler has started");
 
   // Install signal handlers now that the scheduler is up (SIGHUP queues

@@ -26,7 +26,6 @@
 #include <string>
 #include <vector>
 
-#include "basics/result.h"
 #include "general_server/async_job_manager.h"
 #include "general_server/general_server.h"
 #include "general_server/rest_handler_factory.h"
@@ -42,8 +41,6 @@ class RestServerThread;
 
 class GeneralServerFeature final {
  public:
-  static constexpr std::string_view name() noexcept { return "GeneralServer"; }
-
   inline static GeneralServerFeature* gInstance = nullptr;
   static GeneralServerFeature& instance() noexcept { return *gInstance; }
 
@@ -56,7 +53,6 @@ class GeneralServerFeature final {
   double keepAliveTimeout() const noexcept;
   bool returnQueueTimeHeader() const noexcept;
   const std::vector<std::string>& accessControlAllowOrigins() const;
-  Result reloadTLS();
   uint64_t compressResponseThreshold() const noexcept;
 
   std::shared_ptr<rest::RestHandlerFactory> handlerFactory() const;

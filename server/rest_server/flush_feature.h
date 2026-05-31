@@ -81,8 +81,6 @@ class LowerBoundSubscription final : public FlushSubscription {
 
 class FlushFeature final {
  public:
-  static constexpr std::string_view name() noexcept { return "Flush"; }
-
   inline static FlushFeature* gInstance = nullptr;
   static FlushFeature& instance() noexcept { return *gInstance; }
 

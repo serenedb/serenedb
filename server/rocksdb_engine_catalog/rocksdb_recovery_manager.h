@@ -49,8 +49,6 @@ enum class RecoveryState : uint32_t {
 
 class RocksDBRecoveryManager final {
  public:
-  static constexpr std::string_view name() { return "RocksDBRecoveryManager"; }
-
   inline static RocksDBRecoveryManager* gInstance = nullptr;
   static RocksDBRecoveryManager& instance() noexcept { return *gInstance; }
 

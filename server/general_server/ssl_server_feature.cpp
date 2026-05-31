@@ -255,9 +255,7 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
 
       STACK_OF(X509_NAME) * cert_names;
 
-      std::string cafile_content = file_utils::Slurp(_cafile);
       cert_names = SSL_load_client_CA_file(_cafile.c_str());
-      _cafile_content = cafile_content;
 
       if (cert_names == nullptr) {
         SDB_ERROR(SSL, "cannot load CA certificates from '", _cafile,
@@ -310,19 +308,6 @@ SslServerFeature::SslContextList SslServerFeature::createSslContexts() {
                                       entry.keyfile_content);
     }) |
     std::ranges::to<std::vector>());
-}
-
-size_t SslServerFeature::chooseSslContext(
-  const std::string& server_name) const {
-  // Note that the map _sni_server_index is basically immutable after the
-  // startup phase, since the number of SNI entries cannot be changed
-  // at runtime. Therefore, we do not need any protection here.
-  auto it = _sni_server_index.find(server_name);
-  if (it == _sni_server_index.end()) {
-    return 0;
-  } else {
-    return it->second;
-  }
 }
 
 std::string SslServerFeature::stringifySslOptions(uint64_t opts) const {
@@ -570,99 +555,3 @@ std::string SslServerFeature::stringifySslOptions(uint64_t opts) const {
   return result.substr(2);
 }
 
-static void SplitPem(const std::string& pem, std::vector<std::string>& certs,
-                     std::vector<std::string>& keys) {
-  std::vector<std::string> result;
-  size_t pos = 0;
-  while (pos < pem.size()) {
-    pos = pem.find("-----", pos);
-    if (pos == std::string::npos) {
-      return;
-    }
-    if (pem.compare(pos, 11, "-----BEGIN ") != 0) {
-      return;
-    }
-    size_t pos_end_header = pem.find('\n', pos);
-    if (pos_end_header == std::string::npos) {
-      return;
-    }
-    size_t pos_start_footer = pem.find("-----END ", pos_end_header);
-    if (pos_start_footer == std::string::npos) {
-      return;
-    }
-    size_t pos_end_footer = pem.find("-----", pos_start_footer + 9);
-    if (pos_end_footer == std::string::npos) {
-      return;
-    }
-    pos_end_footer += 5;  // Point to line end, typically or end of file
-    size_t p = pos_end_header;
-    while (p > pos + 11 && (pem[p] == '\n' || pem[p] == '-' || pem[p] == '\r' ||
-                            pem[p] == ' ')) {
-      --p;
-    }
-    std::string_view type(pem.c_str() + pos + 11, (p + 1) - (pos + 11));
-    if (type == "CERTIFICATE") {
-      certs.emplace_back(pem.c_str() + pos, pos_end_footer - pos);
-    } else if (type.find("PRIVATE KEY") != std::string::npos) {
-      keys.emplace_back(pem.c_str() + pos, pos_end_footer - pos);
-    } else {
-      SDB_INFO(SSL, "Found part of type ", type,
-               " in PEM file, ignoring it...");
-    }
-    pos = pos_end_footer;
-  }
-}
-
-static void DumpPem(const std::string& pem, vpack::Builder& builder,
-                    std::string attr_name) {
-  if (pem.empty()) {
-    {
-      vpack::ObjectBuilder guard(&builder, attr_name);
-      return;
-    }
-  }
-  // Compute a SHA256 of the whole file:
-  Sha256Functor func;
-  func(pem.c_str(), pem.size());
-
-  // Now split into certs and key:
-  std::vector<std::string> certs;
-  std::vector<std::string> keys;
-  SplitPem(pem, certs, keys);
-
-  // Now dump the certs and the hash of the key:
-  {
-    vpack::ObjectBuilder guard2(&builder, attr_name);
-    auto sha256 = func.finalize();
-    builder.add("sha256", sha256);
-    {
-      vpack::ArrayBuilder guard3(&builder, "certificates");
-      for (const auto& c : certs) {
-        builder.add(c);
-      }
-    }
-    if (!keys.empty()) {
-      Sha256Functor func2;
-      func2(keys[0].c_str(), keys[0].size());
-      sha256 = func2.finalize();
-      builder.add("privateKeySha256", sha256);
-    }
-  }
-}
-
-// Dump all SSL related data into a builder, private keys are hashed.
-void SslServerFeature::dumpTLSData(vpack::Builder& builder) const {
-  vpack::ObjectBuilder guard(&builder);
-  if (_sni_entries.empty()) {
-    return;
-  }
-  DumpPem(_sni_entries[0].keyfile_content, builder, "keyfile");
-  DumpPem(_cafile_content, builder, "clientCA");
-  if (_sni_entries.size() > 1) {
-    vpack::ObjectBuilder guard2(&builder, "SNI");
-    for (size_t i = 1; i < _sni_entries.size(); ++i) {
-      DumpPem(_sni_entries[i].keyfile_content, builder,
-              _sni_entries[i].server_name);
-    }
-  }
-}

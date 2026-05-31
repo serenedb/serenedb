@@ -188,36 +188,6 @@ SSL_CTX* GeneralServer::getSSL_CTX(size_t index) {
   return (*_ssl_contexts)[index].native_handle();
 }
 
-Result GeneralServer::reloadTLS() {
-  try {
-    {
-      std::lock_guard guard(_ssl_context_mutex);
-      _ssl_contexts = SslServerFeature::instance().createSslContexts();
-      if (_ssl_contexts->size() > 0) {
-        // Set a client hello callback such that we have a chance to change the
-        // SSL context:
-        SSL_CTX_set_client_hello_cb((*_ssl_contexts)[0].native_handle(),
-                                    &ClientHelloCallback, (void*)this);
-      }
-    }
-    // Now cancel every acceptor once, such that a new AsioSocket is generated
-    // which will use the new context. Otherwise, the first connection will
-    // still use the old certs:
-    for (auto& a : _acceptors) {
-      a->cancel();
-    }
-    return {};
-  } catch (std::exception& e) {
-    SDB_ERROR(
-      SSL,
-      "Could not reload TLS context from files, got exception with this "
-      "error: ",
-      e.what());
-    return Result(ERROR_CANNOT_READ_FILE,
-                  "Could not reload TLS context from files.");
-  }
-}
-
 SerenedServer& GeneralServer::server() const {
   return SerenedServer::Instance();
 }

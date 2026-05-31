@@ -61,8 +61,6 @@ SearchEngine& GetSearchEngine();
 
 class SearchEngine final {
  public:
-  static constexpr std::string_view name() noexcept { return "Search"; }
-
   inline static SearchEngine* gInstance = nullptr;
   static SearchEngine& instance() noexcept { return *gInstance; }
 
@@ -79,15 +77,9 @@ class SearchEngine final {
   void trackOutOfSyncLink() noexcept;
   void untrackOutOfSyncLink() noexcept;
 
-  bool failQueriesOnOutOfSync() const noexcept;
-
   irs::IResourceManager& getCachedColumnsManager() const noexcept {
     return _columns_cache_memory_used;
   }
-
-#ifdef SDB_GTEST
-  void setDefaultParallelism(uint32_t v) noexcept { _default_parallelism = v; }
-#endif
 
   std::filesystem::path GetPersistedPath(ObjectId database_id) const;
 
@@ -96,16 +88,11 @@ class SearchEngine final {
 
   std::shared_ptr<SearchThreadPools> _thread_pools;
 
-  bool _fail_queries_on_out_of_sync{false};
-  bool _skip_wal_recovery{false};
-
   metrics::Gauge<uint64_t>& _out_of_sync_links;
   irs::IResourceManager& _columns_cache_memory_used;
 
   uint32_t _compaction_threads{0};
   uint32_t _commit_threads{0};
-  uint32_t _search_execution_threads_limit{0};
-  uint32_t _default_parallelism{1};
 };
 
 }  // namespace search

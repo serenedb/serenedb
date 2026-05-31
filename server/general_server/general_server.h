@@ -21,10 +21,11 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <map>
 #include <mutex>
 
-#include "basics/result.h"
 #include "general_server/io_context.h"
 #include "general_server/ssl_server_feature.h"
 
@@ -62,8 +63,6 @@ class GeneralServer {
   SSL_CTX* getSSL_CTX(size_t index);
 
   SerenedServer& server() const;
-
-  Result reloadTLS();
 
  protected:
   bool openEndpoint(IoContext& io_context, Endpoint* endpoint);

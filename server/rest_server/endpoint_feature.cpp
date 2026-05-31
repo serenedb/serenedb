@@ -26,7 +26,6 @@
 #include "app/app_server.h"
 #include "basics/application-exit.h"
 #include "basics/logger/logger.h"
-#include "endpoint/endpoint.h"
 #include "general_server/scheduler_feature.h"
 
 ABSL_FLAG(std::vector<std::string>, server_endpoint, {},
@@ -61,21 +60,6 @@ EndpointFeature::EndpointFeature()
 }
 
 EndpointFeature::~EndpointFeature() { gInstance = nullptr; }
-
-std::vector<std::string> EndpointFeature::httpEndpoints() {
-  auto http_entries = _endpoint_list.all(Endpoint::TransportType::HTTP);
-  std::vector<std::string> result;
-
-  for (auto http : http_entries) {
-    auto uri = Endpoint::uriForm(http);
-
-    if (!uri.empty()) {
-      result.emplace_back(uri);
-    }
-  }
-
-  return result;
-}
 
 void EndpointFeature::buildEndpointLists() {
   for (const auto& it : _endpoints) {

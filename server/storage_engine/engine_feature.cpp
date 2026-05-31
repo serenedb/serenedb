@@ -42,7 +42,6 @@ RocksDBEngineCatalog& GetServerEngine() {
 void EngineFeature::start() {
   _engine->prepare();
   _engine->start();
-  _started.store(true);
 }
 
 void EngineFeature::stop() {

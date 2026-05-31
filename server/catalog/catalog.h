@@ -352,8 +352,6 @@ struct LogicalCatalog {
 
 class CatalogFeature final {
  public:
-  static constexpr std::string_view name() noexcept { return "Catalog"; }
-
   inline static CatalogFeature* gInstance = nullptr;
   static CatalogFeature& instance() noexcept { return *gInstance; }
 
@@ -362,11 +360,6 @@ class CatalogFeature final {
 
   void start();
   void stop() {}
-
-  void Cleanup() {
-    _local.reset();
-    _global.reset();
-  }
 
   Result Open();
 

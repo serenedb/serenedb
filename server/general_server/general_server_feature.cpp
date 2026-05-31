@@ -175,18 +175,6 @@ GeneralServerFeature::accessControlAllowOrigins() const {
   return _access_control_allow_origins;
 }
 
-Result GeneralServerFeature::reloadTLS() {  // reload TLS data from disk
-  Result res;
-  for (auto& up : _servers) {
-    Result res2 = up->reloadTLS();
-    if (res2.fail()) {
-      // yes, we only report the last error if there is one
-      res = std::move(res2);
-    }
-  }
-  return res;
-}
-
 uint64_t GeneralServerFeature::compressResponseThreshold() const noexcept {
   return _compress_response_threshold;
 }

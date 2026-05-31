@@ -21,15 +21,10 @@
 
 #pragma once
 
-#include <vpack/builder.h>
-#include <vpack/options.h>
-#include <vpack/slice.h>
-
 #include <memory>
 #include <string>
 
 #include "basics/asio_ns.h"
-#include "basics/containers/flat_hash_map.h"
 #include "rest_server/serened.h"
 
 namespace sdb {
@@ -41,8 +36,6 @@ class ProgramOptions;
 class SslServerFeature {
  public:
   typedef std::shared_ptr<std::vector<asio_ns::ssl::context>> SslContextList;
-
-  static constexpr std::string_view name() noexcept { return "SslServer"; }
 
   inline static SslServerFeature* gInstance = nullptr;
   static SslServerFeature& instance() noexcept { return *gInstance; }
@@ -57,11 +50,6 @@ class SslServerFeature {
 
   SslContextList createSslContexts();
 
-  size_t chooseSslContext(const std::string& server_name) const;
-
-  // Dump all SSL related data into a builder, private keys are hashed.
-  void dumpTLSData(vpack::Builder& builder) const;
-
  protected:
   struct SNIEntry {
     std::string server_name;      // empty for default
@@ -72,14 +60,11 @@ class SslServerFeature {
   };
 
   std::string _cafile;
-  std::string _cafile_content;  // the actual cert file
-  std::string _keyfile;         // name of default keyfile
+  std::string _keyfile;  // name of default keyfile
   // For SNI, we have two maps, one mapping to the filename for a certain
   // server, another, to keep the actual keyfile in memory.
   std::vector<SNIEntry>
     _sni_entries;  // the first entry is the default server keyfile
-  containers::FlatHashMap<std::string, size_t>
-    _sni_server_index;  // map server names to indices in _sni_entries
   std::string _cipher_list;
   uint64_t _ssl_protocol;
   uint64_t _ssl_options;

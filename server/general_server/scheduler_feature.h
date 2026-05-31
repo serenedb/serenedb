@@ -31,8 +31,6 @@ namespace sdb {
 
 class SchedulerFeature final {
  public:
-  static constexpr std::string_view name() noexcept { return "Scheduler"; }
-
   inline static Scheduler* gScheduler = nullptr;
 
   // Single-instance accessor; valid between ctor and dtor.
@@ -44,8 +42,6 @@ class SchedulerFeature final {
 
   void start();
   void stop();
-
-  uint64_t maximalThreads() const noexcept;
 
  private:
   uint64_t _nr_minimal_threads = 4;

@@ -27,8 +27,6 @@ namespace sdb {
 
 class DatabasePathFeature final {
  public:
-  static constexpr std::string_view name() { return "DatabasePath"; }
-
   inline static DatabasePathFeature* gInstance = nullptr;
   static DatabasePathFeature& instance() noexcept { return *gInstance; }
 
@@ -40,12 +38,6 @@ class DatabasePathFeature final {
 
   const std::string& directory() const { return _directory; }
   std::string subdirectoryName(std::string_view sub_directory) const;
-  void setDirectory(const std::string& path) {
-    // This is only needed in the catch tests, where we initialize the
-    // feature with no CLI parsed (and therefore no flag-derived
-    // _directory). Please do not use it from other code.
-    _directory = path;
-  }
 
  private:
   std::string _directory;

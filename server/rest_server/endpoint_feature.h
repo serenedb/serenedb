@@ -28,8 +28,6 @@ namespace sdb {
 
 class EndpointFeature final {
  public:
-  static constexpr std::string_view name() noexcept { return "Endpoint"; }
-
   inline static EndpointFeature* gInstance = nullptr;
   static EndpointFeature& instance() noexcept { return *gInstance; }
 
@@ -39,7 +37,6 @@ class EndpointFeature final {
   void start() {}
   void stop() {}
 
-  std::vector<std::string> httpEndpoints();
   EndpointList& endpointList() { return _endpoint_list; }
   const EndpointList& endpointList() const { return _endpoint_list; }
 

@@ -30,8 +30,6 @@ namespace sdb::pg {
 
 class PostgresFeature final {
  public:
-  static constexpr std::string_view name() noexcept { return "postgres"; }
-
   inline static PostgresFeature* gInstance = nullptr;
   static PostgresFeature& instance() noexcept { return *gInstance; }
 

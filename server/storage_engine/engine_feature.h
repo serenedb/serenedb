@@ -29,8 +29,6 @@ class RocksDBEngineCatalog;
 
 class EngineFeature final {
  public:
-  static constexpr std::string_view name() noexcept { return "Engine"; }
-
   inline static EngineFeature* gInstance = nullptr;
   static EngineFeature& instance() noexcept { return *gInstance; }
 
@@ -41,11 +39,9 @@ class EngineFeature final {
   void stop();
 
   RocksDBEngineCatalog& engine() { return *_engine; }
-  bool started() const { return _started.load(std::memory_order_relaxed); }
 
  protected:
   std::shared_ptr<RocksDBEngineCatalog> _engine;
-  std::atomic_bool _started = false;
 };
 
 RocksDBEngineCatalog& GetServerEngine();

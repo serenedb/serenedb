@@ -125,8 +125,4 @@ void SchedulerFeature::stop() {
   _scheduler.reset();
 }
 
-uint64_t SchedulerFeature::maximalThreads() const noexcept {
-  return _nr_maximal_threads;
-}
-
 }  // namespace sdb

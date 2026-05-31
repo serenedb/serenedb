@@ -117,7 +117,6 @@ class SearchThreadPools {
 SearchEngine::SearchEngine()
   : _dir_feature{DatabasePathFeature::instance()},
     _thread_pools(std::make_shared<SearchThreadPools>()),
-    _skip_wal_recovery(absl::GetFlag(FLAGS_search_skip_wal_recovery)),
     _out_of_sync_links(
       metrics::GetMetrics().add(serenedb_search_num_out_of_sync_links{})),
     _columns_cache_memory_used(
@@ -127,8 +126,6 @@ SearchEngine::SearchEngine()
   _commit_threads = ComputeThreadsCount(_commit_threads, threads_limit, 6);
   _compaction_threads =
     ComputeThreadsCount(_compaction_threads, threads_limit, 6);
-  _search_execution_threads_limit =
-    static_cast<uint32_t>(number_of_cores::GetValue());
   gInstance = this;
 }
 
@@ -160,14 +157,17 @@ void SearchEngine::start() {
   _thread_pools->Get(ThreadGroup::Compaction)
     .start(_compaction_threads, IR_NATIVE_STRING("search:compact"));
 
-  InitInvertedIndexes(_skip_wal_recovery);
+  const bool skip_wal_recovery = absl::GetFlag(FLAGS_search_skip_wal_recovery);
+  InitInvertedIndexes(skip_wal_recovery);
 
+  const uint32_t search_execution_threads_limit =
+    static_cast<uint32_t>(number_of_cores::GetValue());
   SDB_INFO(SEARCH, "Search maintenance: [", _commit_threads, "..",
            _commit_threads, "] commit thread(s), [", _compaction_threads, "..",
            _compaction_threads,
            "] compaction thread(s). Search execution parallel threads "
            "limit: ",
-           _search_execution_threads_limit);
+           search_execution_threads_limit);
 }
 
 void SearchEngine::stop() {
@@ -212,11 +212,6 @@ void SearchEngine::trackOutOfSyncLink() noexcept { ++_out_of_sync_links; }
 void SearchEngine::untrackOutOfSyncLink() noexcept {
   uint64_t previous = _out_of_sync_links.fetch_sub(1);
   SDB_ASSERT(previous > 0);
-}
-
-bool SearchEngine::failQueriesOnOutOfSync() const noexcept {
-  SDB_IF_FAILURE("Search::FailQueriesOnOutOfSync") { return true; }
-  return _fail_queries_on_out_of_sync;
 }
 
 std::filesystem::path SearchEngine::GetPersistedPath(

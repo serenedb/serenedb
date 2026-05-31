@@ -155,8 +155,6 @@ class RocksDBEngineCatalog {
  public:
   static constexpr std::string_view kEngineName = "rocksdb";
 
-  static constexpr std::string_view name() noexcept { return "RocksDBEngine"; }
-
   RocksDBEngineCatalog(SerenedServer& server);
   RocksDBEngineCatalog(const RocksDBOptionFeature& options_provider,
                        metrics::MetricsFeature& metrics);

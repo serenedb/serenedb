@@ -24,6 +24,8 @@
 #include <duckdb/logging/log_manager.hpp>
 #include <duckdb/logging/log_type.hpp>
 #include <duckdb/logging/logger.hpp>
+#include <memory>
+#include <shared_mutex>
 #include <string>
 
 #include "basics/logger/logger.h"
@@ -31,9 +33,23 @@
 namespace sdb::query {
 namespace {
 
-// Cache the LogManager pointer once and read it lock-free from every Log()
-// call.
-std::atomic<duckdb::LogManager*> gManager{nullptr};
+// Cache the global Logger once at sink-install time and read it from every
+// Log() call. The reader grabs a shared_ptr snapshot under a shared lock,
+// then releases the lock before calling into duckdb -- so the Logger stays
+// alive past _db.reset() until the snapshot itself is dropped. The writer
+// (UninstallLogManagerSink) clears the slot under the exclusive lock, which
+// drains in-flight readers. We can't use std::atomic<std::shared_ptr<T>>
+// directly because libc++ does not implement P0718 yet (the primary
+// std::atomic template asserts is_trivially_copyable). DuckDB uses its
+// own shared_ptr type (see common/shared_ptr.hpp) which is what
+// GlobalLoggerReference() returns.
+std::shared_mutex gLoggerMutex;
+duckdb::shared_ptr<duckdb::Logger> gLogger;
+
+duckdb::shared_ptr<duckdb::Logger> LoadLogger() noexcept {
+  std::shared_lock guard{gLoggerMutex};
+  return gLogger;
+}
 
 duckdb::LogLevel ToDuckLevel(LogLevel level) noexcept {
   switch (level) {
@@ -56,8 +72,8 @@ duckdb::LogLevel ToDuckLevel(LogLevel level) noexcept {
 }
 
 bool ShouldLog(LogLevel level, std::string_view topic) noexcept {
-  auto* mgr = gManager.load(std::memory_order_acquire);
-  if (!mgr) {
+  auto logger = LoadLogger();
+  if (!logger) {
     return false;
   }
   // duckdb's ShouldLog expects a null-terminated string. For PascalCase
@@ -65,20 +81,19 @@ bool ShouldLog(LogLevel level, std::string_view topic) noexcept {
   // an actual std::string for the empty (DefaultLogType) case to feed
   // ShouldLog a stable c_str().
   std::string topic_str{topic};
-  return mgr->GlobalLogger().ShouldLog(topic_str.c_str(), ToDuckLevel(level));
+  return logger->ShouldLog(topic_str.c_str(), ToDuckLevel(level));
 }
 
 void Write(LogLevel level, std::string_view topic,
            std::string_view message) noexcept {
-  auto* mgr = gManager.load(std::memory_order_acquire);
-  if (!mgr) {
+  auto logger = LoadLogger();
+  if (!logger) {
     return;
   }
   try {
     std::string topic_str{topic};
     std::string msg_str{message};
-    mgr->GlobalLogger().WriteLog(topic_str.c_str(), ToDuckLevel(level),
-                                 msg_str.c_str());
+    logger->WriteLog(topic_str.c_str(), ToDuckLevel(level), msg_str.c_str());
   } catch (...) {
     // Logging must never propagate.
   }
@@ -180,13 +195,21 @@ void InstallLogManagerSink(duckdb::DatabaseInstance& db) {
   cfg.storage = duckdb::LogConfig::STDOUT_STORAGE_NAME;
   manager.SetConfig(db, cfg);
 
-  gManager.store(&manager, std::memory_order_release);
+  {
+    std::unique_lock guard{gLoggerMutex};
+    gLogger = manager.GlobalLoggerReference();
+  }
   ::sdb::log::InstallSink(&kSink);
 }
 
 void UninstallLogManagerSink() noexcept {
   ::sdb::log::InstallSink(nullptr);
-  gManager.store(nullptr, std::memory_order_release);
+  // Exclusive lock drains in-flight readers; once it's acquired no reader
+  // is holding the old shared_ptr from inside the mutex. Each in-flight
+  // reader that already extracted its snapshot keeps the Logger alive
+  // past _db.reset() until that snapshot itself is dropped.
+  std::unique_lock guard{gLoggerMutex};
+  gLogger.reset();
 }
 
 }  // namespace sdb::query

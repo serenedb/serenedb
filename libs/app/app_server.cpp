@@ -23,6 +23,7 @@
 #include <absl/flags/parse.h>
 
 #include "basics/lifecycle.h"
+#include "basics/logger/logger.h"
 
 namespace sdb::app {
 
@@ -59,8 +60,19 @@ void AppServer::parseOptions(int argc, char* argv[]) {
 }
 
 void AppServer::wait() {
+  bool shutdown_logged = false;
   while (true) {
     if (lifecycle::gCtrlC.load()) {
+      if (!shutdown_logged) {
+        // Log the signal-driven transition from non-handler context. The
+        // signal handler itself is async-signal-safe and only flips the
+        // gCtrlC flag; the SDB_INFO here covers what it used to log
+        // (legibly) without the mutex / allocations.
+        SDB_INFO(GENERAL,
+                 "received shutdown signal, beginning shut down "
+                 "sequence");
+        shutdown_logged = true;
+      }
       beginShutdown();
     }
     absl::MutexLock guard{&_shutdown_condition.mutex};

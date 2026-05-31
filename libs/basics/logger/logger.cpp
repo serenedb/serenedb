@@ -122,7 +122,9 @@ void SignalSafeWrite(LogLevel level, std::string_view topic,
   char buf[kBufCap];
   size_t pos = 0;
   auto append = [&](std::string_view s) {
-    size_t n = std::min(s.size(), kBufCap - pos);
+    // Reserve the last byte for the trailing newline so the append never
+    // fills past `kBufCap - 1`.
+    size_t n = std::min(s.size(), kBufCap - 1 - pos);
     std::memcpy(buf + pos, s.data(), n);
     pos += n;
   };
@@ -132,10 +134,6 @@ void SignalSafeWrite(LogLevel level, std::string_view topic,
   append(topic.empty() ? std::string_view{"crash"} : topic);
   append("} ");
   append(message);
-  if (pos == kBufCap) {
-    // Reserve last byte for newline.
-    pos = kBufCap - 1;
-  }
   buf[pos++] = '\n';
   // write(2) is async-signal-safe (POSIX.1-2017 Section 2.4.3).
   ssize_t unused = ::write(STDERR_FILENO, buf, pos);

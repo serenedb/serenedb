@@ -120,10 +120,6 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
   // minimum server tick we are going to accept (initialized to
   // NewTickServer())
   const uint64_t _minimum_server_tick;
-  // max tick value found in WAL
-  uint64_t _max_tick_found;
-  // max HLC value found in WAL
-  uint64_t _max_hlc_found;
   // number of WAL entries scanned
   uint64_t _entries_scanned;
   // start of batch sequence number (currently only set, but not read back -
@@ -143,8 +139,6 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
                     std::atomic<rocksdb::SequenceNumber>& current_sequence)
     : _progress_state{recovery_start_sequence, latest_sequence},
       _minimum_server_tick(NewTickServer()),
-      _max_tick_found(0),
-      _max_hlc_found(0),
       _entries_scanned(0),
       _batch_start_sequence(0),
       _current_sequence(current_sequence),
@@ -194,46 +188,17 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
                  ", recovery start sequence number: ",
                  _progress_state.recovery_start_sequence,
                  ", latest WAL sequence number: ",
-                 _engine.db()->GetLatestSequenceNumber(),
-                 ", max tick value found in WAL: ", _max_tick_found,
-                 ", last HLC value found in WAL: ", _max_hlc_found);
+                 _engine.db()->GetLatestSequenceNumber());
       }
-
-      // update ticks after parsing wal
-      UpdateTickServer(_max_tick_found);
-
-      NewTickHybridLogicalClock(_max_hlc_found);
+      // Tick / HLC recovery is owned by RocksDBSettingsManager::loadSettings;
+      // the WAL-walk used to derive a max-tick / max-HLC here, but the
+      // extraction logic was never implemented and the values would always
+      // have been 0.
     });
     return rv;
   }
 
  private:
-  void StoreMaxHlc(uint64_t hlc) {
-    if (hlc > _max_hlc_found) {
-      _max_hlc_found = hlc;
-    }
-  }
-
-  void StoreMaxTick(uint64_t tick) {
-    if (tick > _max_tick_found) {
-      _max_tick_found = tick;
-    }
-  }
-
-  void UpdateMaxTick(uint32_t column_family_id, const rocksdb::Slice& key,
-                     const rocksdb::Slice& value) {
-    // RETURN (side-effect): update _max_tick_found
-    //
-    // extract max tick from Markers and store them as side-effect in
-    // _max_tick_found member variable that can be used later (dtor) to call
-    // SdbUpdateTickServer (ticks.h)
-    // Markers: - collections (id,objectid) as tick and max tick in indexes
-    // array
-    //          - documents - _rev (revision as maxtick)
-    //          - databases
-    // TODO(codeworse): implement recovery logic
-  }
-
   // tick function that is called before each new WAL entry
   void IncTick() {
     if (_start_of_batch) {
@@ -251,8 +216,6 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
     ++_entries_scanned;
 
     IncTick();
-
-    UpdateMaxTick(column_family_id, key, value);
 
     for (auto helper : _engine.recoveryHelpers()) {
       helper->PutCF(column_family_id, key, value, _current_sequence);

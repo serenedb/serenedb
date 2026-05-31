@@ -28,7 +28,10 @@ namespace sdb::signal_handling {
 // Scheduler is up because the SIGHUP handler queues onto it.
 void Install();
 
-// Cancel installed handlers. Call before the Scheduler is torn down.
+// Restore SIG_IGN on the signals we previously installed handlers for.
+// Safe to call after Install(). Must be called before the Scheduler is
+// torn down so a late SIGHUP/SIGTERM/SIGINT/SIGQUIT cannot dereference
+// freed feature state.
 void Shutdown();
 
 }  // namespace sdb::signal_handling

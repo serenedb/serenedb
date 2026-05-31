@@ -23,6 +23,10 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <exception>
+#include <functional>
+#include <utility>
+#include <vector>
 
 #include "duckdb_shell.hpp"
 #include "rest_server/serened_includes.h"
@@ -71,29 +75,50 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     GeneralServerFeature general;
     pg::PostgresFeature pg;
 
-    try {
-      // ----------------------------------------------------------------
-      // Two-method lifecycle: start() does non-IO setup + spin-up of
-      // threads / sockets; stop() drains long-running threads then
-      // tears down. Construction order doubles as boot order; shutdown
-      // is strict LIFO.
-      // ----------------------------------------------------------------
+    // ----------------------------------------------------------------
+    // Two-method lifecycle: start() does non-IO setup + spin-up of
+    // threads / sockets; stop() drains long-running threads then
+    // tears down. Construction order doubles as boot order; shutdown
+    // is strict LIFO. A `stoppers` stack tracks every feature that
+    // successfully started so a throw mid-start unwinds exactly the
+    // already-started subset; on the happy path we drain it after
+    // wait() in the same reverse order.
+    // ----------------------------------------------------------------
+    std::vector<std::function<void()>> stoppers;
+    stoppers.reserve(12);
+    auto start_one = [&](auto& feature, std::function<void()> stop_fn) {
+      feature.start();
+      stoppers.push_back(std::move(stop_fn));
+    };
+    auto drain_stoppers = [&]() noexcept {
+      while (!stoppers.empty()) {
+        try {
+          stoppers.back()();
+        } catch (const std::exception& ex) {
+          SDB_ERROR(GENERAL, "exception during stop: ", ex.what());
+        } catch (...) {
+          SDB_ERROR(GENERAL, "exception of unknown type during stop");
+        }
+        stoppers.pop_back();
+      }
+    };
 
+    try {
       // 3. start -- after a successful pass the server is fully
       //    accepting clients.
       server.setState(SerenedServer::State::InStart);
-      ssl.start();
-      db_path.start();
-      scheduler.start();
-      rocksdb_opt.start();
-      engine.start();
-      flush.start();
-      recovery.start();
-      catalog.start();
-      search.start();
-      endpoint.start();
-      general.start();
-      pg.start();
+      start_one(ssl, [&] { ssl.stop(); });
+      start_one(db_path, [&] { db_path.stop(); });
+      start_one(scheduler, [&] { scheduler.stop(); });
+      start_one(rocksdb_opt, [&] { rocksdb_opt.stop(); });
+      start_one(engine, [&] { engine.stop(); });
+      start_one(flush, [&] { flush.stop(); });
+      start_one(recovery, [&] { recovery.stop(); });
+      start_one(catalog, [&] { catalog.stop(); });
+      start_one(search, [&] { search.stop(); });
+      start_one(endpoint, [&] { endpoint.stop(); });
+      start_one(general, [&] { general.stop(); });
+      start_one(pg, [&] { pg.stop(); });
 
       // 4. wait for SIGTERM/SIGINT.
       server.setState(SerenedServer::State::InWait);
@@ -103,29 +128,20 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       //    long-running threads to exit, then blocks on the joins and
       //    finishes its own teardown.
       server.setState(SerenedServer::State::InStop);
-      pg.stop();
-      general.stop();
-      endpoint.stop();
-      search.stop();
-      catalog.stop();
-      recovery.stop();
-      flush.stop();
-      engine.stop();
-      rocksdb_opt.stop();
-      scheduler.stop();
-      db_path.stop();
-      ssl.stop();
+      drain_stoppers();
       server.setState(SerenedServer::State::Stopped);
 
       ret = EXIT_SUCCESS;
     } catch (const std::exception& ex) {
       SDB_ERROR(GENERAL,
                 "serened terminated because of an exception: ", ex.what());
+      drain_stoppers();
       ret = EXIT_FAILURE;
     } catch (...) {
       SDB_ERROR(GENERAL,
                 "serened terminated because of an exception of "
                 "unknown type");
+      drain_stoppers();
       ret = EXIT_FAILURE;
     }
     log::Shutdown();

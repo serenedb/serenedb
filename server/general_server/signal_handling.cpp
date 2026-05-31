@@ -22,6 +22,7 @@
 #include "signal_handling.h"
 
 #include <signal.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <cstring>
@@ -50,13 +51,34 @@ std::atomic<pid_t> gProcessIdRequestingLogRotate{kProcessIdUnspecified};
 extern "C" void CExitHandler(int signal, siginfo_t* info, void*) {
   if (signal == SIGQUIT || signal == SIGTERM || signal == SIGINT) {
     if (!gReceivedShutdownRequest.exchange(true)) {
-      SDB_INFO(GENERAL, signals::Name(signal), " received (sender pid ",
-               (info ? info->si_pid : 0), "), beginning shut down sequence");
+      // First signal: just flip the wait-loop flag. The SDB_INFO line that
+      // used to live here was not async-signal-safe (absl::Mutex in the
+      // stderr fallback, std::string allocations); AppServer::wait()
+      // observes the flip and logs the transition from non-handler
+      // context.
       lifecycle::gCtrlC.store(true);
     } else {
-      SDB_FATAL(GENERAL, signals::Name(signal),
-                " received during shutdown sequence (sender pid ", info->si_pid,
-                "), terminating!");
+      // Second signal: fast-path abort. Build a fixed-size message on the
+      // stack and ship it through the CRASH topic so it hits
+      // SignalSafeWrite (write(2) only -- no heap, no mutex, no
+      // FatalErrorExit). Then `_exit(2)` (async-signal-safe) to skip
+      // global destructors.
+      char buf[64];
+      size_t pos = 0;
+      auto append = [&](std::string_view s) noexcept {
+        size_t n = std::min(s.size(), sizeof(buf) - pos);
+        std::memcpy(buf + pos, s.data(), n);
+        pos += n;
+      };
+      append(signals::Name(signal));
+      append(" received during shutdown sequence, terminating");
+      ::sdb::log::Log(::sdb::LogLevel::FATAL, ::sdb::log::CRASH,
+                      std::string_view{buf, pos});
+      // Suppress "unused" on `info` -- we deliberately don't dereference
+      // it on this path; the second-signal log line is intentionally
+      // pid-less to keep the formatting fully async-signal-safe.
+      (void)info;
+      ::_exit(EXIT_FAILURE);
     }
   }
 }
@@ -160,10 +182,20 @@ void Install() {
 }
 
 void Shutdown() {
-  // Nothing to do: handlers are installed via sigaction(2) and will be
-  // torn down by process exit. The previous SchedulerFeature variant
-  // attempted to cancel asio_ns::signal_set members that were never
-  // populated, so it was effectively a no-op too.
+  // Restore SIG_IGN on every signal we installed a handler for. The
+  // installed handlers dereference SchedulerFeature::gScheduler /
+  // lifecycle:: state that the caller is about to tear down, so a
+  // late-arriving signal during shutdown would otherwise be a UAF.
+  struct sigaction action;
+  memset(&action, 0, sizeof(action));
+  sigfillset(&action.sa_mask);
+  action.sa_handler = SIG_IGN;
+  // SIGHUP, SIGINT, SIGQUIT, SIGTERM are the four we installed in
+  // Install() / BuildControlCHandler() / BuildHangupHandler().
+  ::sigaction(SIGHUP, &action, nullptr);
+  ::sigaction(SIGINT, &action, nullptr);
+  ::sigaction(SIGQUIT, &action, nullptr);
+  ::sigaction(SIGTERM, &action, nullptr);
 }
 
 }  // namespace sdb::signal_handling

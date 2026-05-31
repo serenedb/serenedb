@@ -134,15 +134,15 @@ void Scheduler::start() {
 void Scheduler::shutdown() {
   _executor_handle->join();
 
-  _cron_queue_mutex.Lock();
-  _cron_stopping = true;
-  _croncv.notify_one();
-  _cron_queue_mutex.Unlock();
-
-  // Joins the cron thread.
-  if (_cron_thread.joinable()) {
-    _cron_thread.join();
+  {
+    absl::MutexLock guard{&_cron_queue_mutex};
+    _cron_stopping = true;
+    _croncv.notify_one();
   }
+
+  // Joins the cron thread. start() unconditionally creates _cron_thread,
+  // so it is always joinable here.
+  _cron_thread.join();
 
 #ifdef SDB_DEV
   // At this point the cron thread has been stopped

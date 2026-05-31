@@ -59,15 +59,12 @@ void RocksDBBackgroundThread::start() {
 }
 
 void RocksDBBackgroundThread::beginShutdown() {
-  {
-    absl::MutexLock guard{&_condition.mutex};
-    if (_stopping) {
-      return;
-    }
-    _stopping = true;
-    _condition.cv.notify_all();
+  absl::MutexLock guard{&_condition.mutex};
+  if (_stopping) {
+    return;
   }
-  SyncStats();
+  _stopping = true;
+  _condition.cv.notify_all();
 }
 
 void RocksDBBackgroundThread::SyncStats() {
@@ -98,16 +95,17 @@ void RocksDBBackgroundThread::run() {
   uint64_t runs_until_sync_forced = 1;
   constexpr uint64_t kMaxRunsUntilSyncForced = 5;
 
-  auto isStopping = [this] {
-    absl::MutexLock guard{&_condition.mutex};
-    return _stopping;
-  };
-
-  while (!isStopping()) {
+  while (true) {
     {
       absl::MutexLock guard{&_condition.mutex};
+      if (_stopping) {
+        break;
+      }
       _condition.cv.WaitWithTimeout(&_condition.mutex,
                                     absl::Seconds(_interval));
+      if (_stopping) {
+        break;
+      }
     }
 
     if (_engine.inRecovery()) {
@@ -117,56 +115,54 @@ void RocksDBBackgroundThread::run() {
     SDB_IF_FAILURE("RocksDBBackgroundThread::run") { continue; }
 
     try {
-      if (!isStopping()) {
-        flush_feature.releaseUnusedTicks();
+      flush_feature.releaseUnusedTicks();
 
-        // it is important that we wrap the sync operation inside a
-        // try..catch of its own, because we still want the following
-        // garbage collection operations to be carried out even if
-        // the sync fails.
-        try {
-          // forceSync will effectively be true for the initial run that
-          // will happen when the recovery has finished. that way we
-          // can quickly push forward the WAL lower bound value after
-          // the recovery
-          bool force_sync = false;
+      // it is important that we wrap the sync operation inside a
+      // try..catch of its own, because we still want the following
+      // garbage collection operations to be carried out even if
+      // the sync fails.
+      try {
+        // forceSync will effectively be true for the initial run that
+        // will happen when the recovery has finished. that way we
+        // can quickly push forward the WAL lower bound value after
+        // the recovery
+        bool force_sync = false;
 
-          // force a sync after at most x iterations (or initial run)
-          if (runs_until_sync_forced > 0 && --runs_until_sync_forced == 0) {
-            SDB_ASSERT(runs_until_sync_forced == 0);
-            force_sync = true;
-          }
-
-          SDB_IF_FAILURE("BuilderIndex::purgeWal") { force_sync = true; }
-
-          SDB_TRACE(STORAGE, "running ", (force_sync ? "forced " : ""),
-                    "background settings sync");
-
-          double start = utilities::GetMicrotime();
-          auto sync_res = _engine.settingsManager()->sync(force_sync);
-          SyncStats();
-          double end = utilities::GetMicrotime();
-
-          if (!sync_res) {
-            SDB_WARN(STORAGE, "background settings sync failed: ",
-                     sync_res.error().errorMessage());
-          } else if (*sync_res) {
-            // reset our counter
-            runs_until_sync_forced = kMaxRunsUntilSyncForced;
-          }
-
-          if (end - start > 5.0) {
-            SDB_WARN(STORAGE, "slow background settings sync took: ",
-                     absl::StrFormat("%.6f", end - start), " s");
-          } else if (end - start > 0.75) {
-            SDB_DEBUG(STORAGE, "slow background settings sync took: ",
-                      absl::StrFormat("%.6f", end - start), " s");
-          }
-        } catch (const std::exception& ex) {
-          SDB_WARN(STORAGE,
-                   "caught exception in rocksdb background sync operation: ",
-                   ex.what());
+        // force a sync after at most x iterations (or initial run)
+        if (runs_until_sync_forced > 0 && --runs_until_sync_forced == 0) {
+          SDB_ASSERT(runs_until_sync_forced == 0);
+          force_sync = true;
         }
+
+        SDB_IF_FAILURE("BuilderIndex::purgeWal") { force_sync = true; }
+
+        SDB_TRACE(STORAGE, "running ", (force_sync ? "forced " : ""),
+                  "background settings sync");
+
+        double start = utilities::GetMicrotime();
+        auto sync_res = _engine.settingsManager()->sync(force_sync);
+        SyncStats();
+        double end = utilities::GetMicrotime();
+
+        if (!sync_res) {
+          SDB_WARN(STORAGE, "background settings sync failed: ",
+                   sync_res.error().errorMessage());
+        } else if (*sync_res) {
+          // reset our counter
+          runs_until_sync_forced = kMaxRunsUntilSyncForced;
+        }
+
+        if (end - start > 5.0) {
+          SDB_WARN(STORAGE, "slow background settings sync took: ",
+                   absl::StrFormat("%.6f", end - start), " s");
+        } else if (end - start > 0.75) {
+          SDB_DEBUG(STORAGE, "slow background settings sync took: ",
+                    absl::StrFormat("%.6f", end - start), " s");
+        }
+      } catch (const std::exception& ex) {
+        SDB_WARN(
+          STORAGE,
+          "caught exception in rocksdb background sync operation: ", ex.what());
       }
 
       const uint64_t latest_seq_no = _engine.db()->GetLatestSequenceNumber();
@@ -225,4 +221,7 @@ void RocksDBBackgroundThread::run() {
     SDB_WARN(STORAGE, "caught exception during final RocksDB sync operation: ",
              sync_res.error().errorMessage());
   }
+  // Final stats sync after settings sync, so the catalog-iteration race
+  // with the run-loop is gone (this used to run from beginShutdown()).
+  SyncStats();
 }

@@ -50,6 +50,7 @@
 #include "catalog/inverted_index.h"
 #include "catalog/local_catalog.h"
 #include "catalog/object.h"
+#include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/secondary_index.h"
 #include "catalog/sequence.h"
@@ -701,6 +702,18 @@ Result CatalogFeature::Open() {
   OpenDatabase open_db{Local()};
   if (auto r = open_db.AddRoles(); !r.ok()) {
     return r;
+  }
+
+  // Bootstrap the default `postgres` role on first start. AddRoles() has
+  // already loaded any persisted roles; if none exist we mint the root user
+  // and persist it via Local().CreateRole(), which writes it to RocksDB so it
+  // survives across restarts. RBAC isn't implemented yet, so the password is
+  // empty and auth checks are skipped.
+  if (Local().GetCatalogSnapshot()->GetRoles().empty()) {
+    auto root = Role::NewUser(StaticStrings::kDefaultUser, "", id::kRootUser);
+    if (auto br = Local().CreateRole(std::move(root)); !br.ok()) {
+      return br;
+    }
   }
 
   auto r = open_db();

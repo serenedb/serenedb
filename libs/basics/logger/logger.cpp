@@ -21,31 +21,28 @@
 #include "basics/logger/logger.h"
 
 #include <absl/strings/ascii.h>
-#include <absl/synchronization/mutex.h>
 #include <unistd.h>
 
 #include <atomic>
-#include <chrono>
-#include <cstdio>
 #include <cstring>
-#include <ctime>
-#include <string>
+
+#include "basics/assert.h"
 
 namespace sdb::log {
 namespace {
 
-// Process-wide pre-sink level. Lookup in IsEnabled() before InstallSink()
-// has run.
+// Process-wide initial level. Used as the ShouldLog comparand before the
+// DuckDB sink is installed (the gtest entrypoint sets this before calling
+// log::Initialize() on the test rig). After InstallSink() runs, IsEnabled()
+// defers to the sink's should_log.
 std::atomic<LogLevel> gInitialLevel{LogLevel::INFO};
 
-// Active sink (nullptr -> stderr fallback). Set by InstallSink(). The
-// pointed-to Sink must outlive any thread that calls Log() through it --
-// callers are expected to pass a function-local static const Sink.
+// Active sink. Set by InstallSink() (called from DuckDBEngine::Initialize)
+// at the very top of RunServer, cleared by UninstallLogManagerSink() at the
+// very bottom. The pointed-to Sink must outlive any thread that calls Log()
+// through it -- callers are expected to pass a function-local static const
+// Sink.
 std::atomic<const Sink*> gSink{nullptr};
-
-// Serializes stderr writes for the fallback path. NOT touched on the CRASH
-// signal-safe path -- there we do a single write(2).
-absl::Mutex gStderrMutex;
 
 constexpr std::string_view LevelTag(LogLevel l) noexcept {
   switch (l) {
@@ -67,55 +64,10 @@ constexpr std::string_view LevelTag(LogLevel l) noexcept {
   return "?";
 }
 
-void WriteIsoTimestamp(std::string& out) {
-  using namespace std::chrono;
-  auto now = system_clock::now();
-  auto time_t_s = system_clock::to_time_t(now);
-  auto us =
-    duration_cast<microseconds>(now.time_since_epoch()).count() % 1'000'000;
-  std::tm tm{};
-  gmtime_r(&time_t_s, &tm);
-  char buf[40];
-  std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.%06ldZ",
-                tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour,
-                tm.tm_min, tm.tm_sec, static_cast<long>(us));
-  out.append(buf);
-}
-
-// Allocates a std::string, formats, mutex-serialized fwrite. Used while no
-// sink is installed (boot + post-shutdown windows).
-void StderrFallback(LogLevel level, std::string_view topic,
-                    std::string_view message) {
-  std::string out;
-  out.reserve(96 + message.size());
-  WriteIsoTimestamp(out);
-  out.append(" [");
-  out.append(LevelTag(level));
-  out.append("] {");
-  // GENERAL maps to the empty string; print "general" so unmuted lines stay
-  // legible in the fallback writer.
-  out.append(topic.empty() ? std::string_view{"general"} : topic);
-  out.append("} ");
-  // Bound stderr writes.
-  constexpr size_t kCap = 64 * 1024;
-  if (message.size() > kCap) {
-    out.append(message.data(), kCap);
-    out.append("... [truncated]");
-  } else {
-    out.append(message);
-  }
-  if (out.empty() || out.back() != '\n') {
-    out.push_back('\n');
-  }
-  absl::MutexLock guard{&gStderrMutex};
-  ::fwrite(out.data(), 1, out.size(), stderr);
-  ::fflush(stderr);
-}
-
 // Async-signal-safe stderr write used by the CRASH topic. No heap, no mutex,
 // no fwrite buffering -- just write(2). Caps message length to a stack
-// buffer; truncates the rest. Output format mirrors the fallback's "[LEVEL]
-// {topic} message\n" layout so crash log lines remain greppable.
+// buffer; truncates the rest. Output format "[LEVEL] {topic} message\n" so
+// crash log lines remain greppable.
 void SignalSafeWrite(LogLevel level, std::string_view topic,
                      std::string_view message) noexcept {
   constexpr size_t kBufCap = 4096;
@@ -185,17 +137,17 @@ void InstallSink(const Sink* sink) noexcept {
 }
 
 void Initialize() noexcept {}
-void Shutdown() noexcept {
-  // Detach any installed sink so subsequent log calls hit the stderr
-  // fallback. The actual LogManager teardown is owned by DuckDBEngine.
-  gSink.store(nullptr, std::memory_order_release);
-}
+void Shutdown() noexcept {}
 void Flush() noexcept {}
 
 bool IsEnabled(LogLevel level) noexcept {
   if (const auto* sink = gSink.load(std::memory_order_acquire); sink) {
     return sink->should_log(level, std::string_view{});
   }
+  // Pre-sink window (between main() entry and DuckDBEngine::Initialize() in
+  // RunServer). Compare against the initial level so SDB_FATAL during
+  // parseOptions still produces the line; the CRASH topic short-circuits
+  // to SignalSafeWrite regardless.
   return level <= gInitialLevel.load(std::memory_order_relaxed);
 }
 
@@ -214,11 +166,14 @@ void Log(LogLevel level, std::string_view topic, std::string_view message) try {
     SignalSafeWrite(level, topic, message);
     return;
   }
+  // DuckDBEngine::Initialize() installs the sink at the top of RunServer
+  // and UninstallLogManagerSink() removes it as the very last step before
+  // main returns. Every non-CRASH SDB_* macro from a serened binary runs
+  // inside that window. Gtest entry points that don't construct a
+  // DuckDBEngine drop log lines silently.
   if (const auto* sink = gSink.load(std::memory_order_acquire); sink) {
     sink->write(level, topic, message);
-    return;
   }
-  StderrFallback(level, topic, message);
 } catch (...) {
   // Logging itself must never throw.
 }

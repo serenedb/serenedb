@@ -24,7 +24,6 @@
 #include "basics/down_cast.h"
 #include "basics/random/random_generator.h"
 #include "pg/system_catalog.h"
-#include "query/duckdb_engine.h"
 #include "rest_server/endpoint_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -45,13 +44,6 @@ PostgresFeature::PostgresFeature() {
               "no pgsql endpoint configured; --server_endpoint "
               "must include a pgsql+tcp:// entry");
   }
-
-  // DuckDB has to exist before CatalogFeature::start() runs (it attaches
-  // each database into DuckDB during Open()). pg.start() is sequenced
-  // last in RunServer, so doing it here in the ctor -- which is sequenced
-  // after CatalogFeature's ctor but before any start() -- is the right
-  // hook.
-  query::DuckDBEngine::Instance().Initialize();
 
   gInstance = this;
 }
@@ -92,6 +84,6 @@ void PostgresFeature::start() {
   SDB_ASSERT(cf);
 }
 
-void PostgresFeature::stop() { query::DuckDBEngine::Instance().Shutdown(); }
+void PostgresFeature::stop() {}
 
 }  // namespace sdb::pg

@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "duckdb_shell.hpp"
+#include "query/duckdb_engine.h"
 #include "rest_server/serened_includes.h"
 
 namespace {
@@ -59,91 +60,112 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     // 1. Parse CLI before constructing any feature (ctors read flags).
     server.parseOptions(argc, argv);
 
-    // 2. Construct features in dependency order. Each ctor reads its
-    //    own flags, runs validation, and sets its static gInstance
-    //    pointer; SerenedFeature::instance() works from here on.
-    SslServerFeature ssl;
-    DatabasePathFeature db_path;
-    SchedulerFeature scheduler;
-    RocksDBOptionFeature rocksdb_opt;
-    EngineFeature engine{server};
-    FlushFeature flush;
-    RocksDBRecoveryManager recovery;
-    catalog::CatalogFeature catalog;
-    search::SearchEngine search;
-    EndpointFeature endpoint;
-    GeneralServerFeature general;
-    pg::PostgresFeature pg;
-
-    // ----------------------------------------------------------------
-    // Two-method lifecycle: start() does non-IO setup + spin-up of
-    // threads / sockets; stop() drains long-running threads then
-    // tears down. Construction order doubles as boot order; shutdown
-    // is strict LIFO. A `stoppers` stack tracks every feature that
-    // successfully started so a throw mid-start unwinds exactly the
-    // already-started subset; on the happy path we drain it after
-    // wait() in the same reverse order.
-    // ----------------------------------------------------------------
-    std::vector<std::function<void()>> stoppers;
-    stoppers.reserve(12);
-    auto start_one = [&](auto& feature, std::function<void()> stop_fn) {
-      feature.start();
-      stoppers.push_back(std::move(stop_fn));
-    };
-    auto drain_stoppers = [&]() noexcept {
-      while (!stoppers.empty()) {
-        try {
-          stoppers.back()();
-        } catch (const std::exception& ex) {
-          SDB_ERROR(GENERAL, "exception during stop: ", ex.what());
-        } catch (...) {
-          SDB_ERROR(GENERAL, "exception of unknown type during stop");
-        }
-        stoppers.pop_back();
-      }
-    };
-
+    // 2. Bring DuckDB up FIRST: it has no feature dependencies, and once
+    //    InstallLogManagerSink() runs every SDB_* macro flows through
+    //    duckdb's LogManager. Mirrored by DuckDBEngine::Shutdown() after
+    //    every feature has stopped (see below). The Shutdown() call must
+    //    be reachable on both happy-path and exception-unwind, so wrap
+    //    the feature lifecycle in its own try and rely on the outer
+    //    try/catch only for exceptions outside the DuckDB window.
+    query::DuckDBEngine::Instance().Initialize();
     try {
-      // 3. start -- after a successful pass the server is fully
-      //    accepting clients.
-      server.setState(SerenedServer::State::InStart);
-      start_one(ssl, [&] { ssl.stop(); });
-      start_one(db_path, [&] { db_path.stop(); });
-      start_one(scheduler, [&] { scheduler.stop(); });
-      start_one(rocksdb_opt, [&] { rocksdb_opt.stop(); });
-      start_one(engine, [&] { engine.stop(); });
-      start_one(flush, [&] { flush.stop(); });
-      start_one(recovery, [&] { recovery.stop(); });
-      start_one(catalog, [&] { catalog.stop(); });
-      start_one(search, [&] { search.stop(); });
-      start_one(endpoint, [&] { endpoint.stop(); });
-      start_one(general, [&] { general.stop(); });
-      start_one(pg, [&] { pg.stop(); });
+      // 3. Construct features in dependency order. Each ctor reads its
+      //    own flags, runs validation, and sets its static gInstance
+      //    pointer; SerenedFeature::instance() works from here on.
+      SslServerFeature ssl;
+      DatabasePathFeature db_path;
+      SchedulerFeature scheduler;
+      RocksDBOptionFeature rocksdb_opt;
+      EngineFeature engine{server};
+      FlushFeature flush;
+      RocksDBRecoveryManager recovery;
+      catalog::CatalogFeature catalog;
+      search::SearchEngine search;
+      EndpointFeature endpoint;
+      GeneralServerFeature general;
+      pg::PostgresFeature pg;
 
-      // 4. wait for SIGTERM/SIGINT.
-      server.setState(SerenedServer::State::InWait);
-      server.wait();
+      // --------------------------------------------------------------
+      // Two-method lifecycle: start() does non-IO setup + spin-up of
+      // threads / sockets; stop() drains long-running threads then
+      // tears down. Construction order doubles as boot order; shutdown
+      // is strict LIFO. A `stoppers` stack tracks every feature that
+      // successfully started so a throw mid-start unwinds exactly the
+      // already-started subset; on the happy path we drain it after
+      // wait() in the same reverse order.
+      // --------------------------------------------------------------
+      std::vector<std::function<void()>> stoppers;
+      stoppers.reserve(12);
+      auto start_one = [&](auto& feature, std::function<void()> stop_fn) {
+        feature.start();
+        stoppers.push_back(std::move(stop_fn));
+      };
+      auto drain_stoppers = [&]() noexcept {
+        while (!stoppers.empty()) {
+          try {
+            stoppers.back()();
+          } catch (const std::exception& ex) {
+            SDB_ERROR(GENERAL, "exception during stop: ", ex.what());
+          } catch (...) {
+            SDB_ERROR(GENERAL, "exception of unknown type during stop");
+          }
+          stoppers.pop_back();
+        }
+      };
 
-      // 5. stop -- strict LIFO. Each feature's stop() first nudges any
-      //    long-running threads to exit, then blocks on the joins and
-      //    finishes its own teardown.
-      server.setState(SerenedServer::State::InStop);
-      drain_stoppers();
-      server.setState(SerenedServer::State::Stopped);
+      try {
+        // 4. start -- after a successful pass the server is fully
+        //    accepting clients.
+        server.setState(SerenedServer::State::InStart);
+        start_one(ssl, [&] { ssl.stop(); });
+        start_one(db_path, [&] { db_path.stop(); });
+        start_one(scheduler, [&] { scheduler.stop(); });
+        start_one(rocksdb_opt, [&] { rocksdb_opt.stop(); });
+        start_one(engine, [&] { engine.stop(); });
+        start_one(flush, [&] { flush.stop(); });
+        start_one(recovery, [&] { recovery.stop(); });
+        start_one(catalog, [&] { catalog.stop(); });
+        start_one(search, [&] { search.stop(); });
+        start_one(endpoint, [&] { endpoint.stop(); });
+        start_one(general, [&] { general.stop(); });
+        start_one(pg, [&] { pg.stop(); });
 
-      ret = EXIT_SUCCESS;
-    } catch (const std::exception& ex) {
-      SDB_ERROR(GENERAL,
-                "serened terminated because of an exception: ", ex.what());
-      drain_stoppers();
-      ret = EXIT_FAILURE;
+        // 5. wait for SIGTERM/SIGINT.
+        server.setState(SerenedServer::State::InWait);
+        server.wait();
+
+        // 6. stop -- strict LIFO. Each feature's stop() first nudges any
+        //    long-running threads to exit, then blocks on the joins and
+        //    finishes its own teardown.
+        server.setState(SerenedServer::State::InStop);
+        drain_stoppers();
+        server.setState(SerenedServer::State::Stopped);
+
+        ret = EXIT_SUCCESS;
+      } catch (const std::exception& ex) {
+        SDB_ERROR(GENERAL,
+                  "serened terminated because of an exception: ", ex.what());
+        drain_stoppers();
+        ret = EXIT_FAILURE;
+      } catch (...) {
+        SDB_ERROR(GENERAL,
+                  "serened terminated because of an exception of "
+                  "unknown type");
+        drain_stoppers();
+        ret = EXIT_FAILURE;
+      }
     } catch (...) {
-      SDB_ERROR(GENERAL,
-                "serened terminated because of an exception of "
-                "unknown type");
-      drain_stoppers();
-      ret = EXIT_FAILURE;
+      // 7a. Anything thrown from a feature ctor (before we entered the
+      //     start/wait/stop try) still has to flow through DuckDB
+      //     teardown before propagating to the outer handler.
+      query::DuckDBEngine::Instance().Shutdown();
+      throw;
     }
+    // 7b. DuckDB last; mirrors the Initialize() call above. The inner
+    //     try/catch swallows feature start/stop exceptions so we always
+    //     get here on that path.
+    query::DuckDBEngine::Instance().Shutdown();
+
     log::Shutdown();
     return context.exit(ret);
   } catch (const std::exception& ex) {

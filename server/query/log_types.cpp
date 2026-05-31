@@ -76,12 +76,9 @@ bool ShouldLog(LogLevel level, std::string_view topic) noexcept {
   if (!logger) {
     return false;
   }
-  // duckdb's ShouldLog expects a null-terminated string. For PascalCase
-  // topic constants this is a no-op copy (small string), but we still need
-  // an actual std::string for the empty (DefaultLogType) case to feed
-  // ShouldLog a stable c_str().
-  std::string topic_str{topic};
-  return logger->ShouldLog(topic_str.c_str(), ToDuckLevel(level));
+  // Safe because every topic constant in topic.h is initialized from a
+  // string literal, so its data() is NUL-terminated.
+  return logger->ShouldLog(topic.data(), ToDuckLevel(level));
 }
 
 void Write(LogLevel level, std::string_view topic,
@@ -109,80 +106,30 @@ constexpr ::sdb::log::Sink kSink{
 // case-sensitively by duckdb's enabled/disabled_log_types sets, so they must
 // agree with the PascalCase strings in topic.h.
 
-class StartupLogType : public duckdb::LogType {
- public:
-  static constexpr const char* NAME = "Startup";
-  static constexpr duckdb::LogLevel LEVEL = duckdb::LogLevel::LOG_INFO;
-  StartupLogType() : LogType(NAME, LEVEL) {}
+struct SdbLogType {
+  const char* name;
+  duckdb::LogLevel level;
 };
 
-class SslLogType : public duckdb::LogType {
- public:
-  static constexpr const char* NAME = "SSL";
-  static constexpr duckdb::LogLevel LEVEL = duckdb::LogLevel::LOG_WARNING;
-  SslLogType() : LogType(NAME, LEVEL) {}
-};
-
-class StorageLogType : public duckdb::LogType {
- public:
-  static constexpr const char* NAME = "Storage";
-  static constexpr duckdb::LogLevel LEVEL = duckdb::LogLevel::LOG_INFO;
-  StorageLogType() : LogType(NAME, LEVEL) {}
-};
-
-class SearchLogType : public duckdb::LogType {
- public:
-  static constexpr const char* NAME = "Search";
-  static constexpr duckdb::LogLevel LEVEL = duckdb::LogLevel::LOG_INFO;
-  SearchLogType() : LogType(NAME, LEVEL) {}
-};
-
-class IResearchLogType : public duckdb::LogType {
- public:
-  static constexpr const char* NAME = "IResearch";
-  static constexpr duckdb::LogLevel LEVEL = duckdb::LogLevel::LOG_INFO;
-  IResearchLogType() : LogType(NAME, LEVEL) {}
-};
-
-class CrashLogType : public duckdb::LogType {
- public:
-  static constexpr const char* NAME = "Crash";
-  static constexpr duckdb::LogLevel LEVEL = duckdb::LogLevel::LOG_FATAL;
-  CrashLogType() : LogType(NAME, LEVEL) {}
+constexpr SdbLogType kSdbLogTypes[] = {
+  {"Startup", duckdb::LogLevel::LOG_INFO},
+  {"SSL", duckdb::LogLevel::LOG_WARNING},
+  {"Storage", duckdb::LogLevel::LOG_INFO},
+  {"Search", duckdb::LogLevel::LOG_INFO},
+  {"IResearch", duckdb::LogLevel::LOG_INFO},
 };
 
 }  // namespace
-
-void ConfigureLogManagerDefaults(duckdb::DBConfig& config) {
-  // DatabaseInstance's ctor (third_party/duckdb/src/main/database.cpp)
-  // currently constructs LogManager from a fresh LogConfig() instead of
-  // honouring config.options.log_config, so populating this field is a
-  // best-effort signal -- the post-construction SetConfig() in
-  // InstallLogManagerSink does the actual work. Set it anyway so anything
-  // that looks at config.options before the engine boots sees the right
-  // values.
-  auto& log_config = config.options.log_config;
-  log_config.enabled = true;
-  // Per-topic default-level history: HTTP+SSL stayed quiet until the user
-  // explicitly turned them up. DuckDB has a single global level so we
-  // approximate by setting the global to INFO and listing HTTP+SSL in
-  // disabled_log_types. Users can re-enable by RESETting that knob.
-  log_config.level = duckdb::LogLevel::LOG_INFO;
-  log_config.mode = duckdb::LogMode::DISABLE_SELECTED;
-  log_config.disabled_log_types = {"HTTP", "SSL"};
-  log_config.storage = duckdb::LogConfig::STDOUT_STORAGE_NAME;
-}
 
 void InstallLogManagerSink(duckdb::DatabaseInstance& db) {
   auto& manager = db.GetLogManager();
   // HTTPLogType comes from duckdb's built-in default registration -- don't
   // re-register it (LogManager::RegisterLogType throws on collision).
-  manager.RegisterLogType(duckdb::make_uniq<StartupLogType>());
-  manager.RegisterLogType(duckdb::make_uniq<SslLogType>());
-  manager.RegisterLogType(duckdb::make_uniq<StorageLogType>());
-  manager.RegisterLogType(duckdb::make_uniq<SearchLogType>());
-  manager.RegisterLogType(duckdb::make_uniq<IResearchLogType>());
-  manager.RegisterLogType(duckdb::make_uniq<CrashLogType>());
+  // The CRASH topic short-circuits to SignalSafeWrite in logger.cpp and
+  // never reaches LogManager, so no CrashLogType registration is needed.
+  for (const auto& t : kSdbLogTypes) {
+    manager.RegisterLogType(duckdb::make_uniq<duckdb::LogType>(t.name, t.level));
+  }
 
   // DatabaseInstance::Configure ignores config.options.log_config and seeds
   // the LogManager with LogConfig() (disabled). Apply our serenedb defaults
@@ -191,7 +138,8 @@ void InstallLogManagerSink(duckdb::DatabaseInstance& db) {
   cfg.enabled = true;
   cfg.level = duckdb::LogLevel::LOG_INFO;
   cfg.mode = duckdb::LogMode::DISABLE_SELECTED;
-  cfg.disabled_log_types = {"HTTP", "SSL"};
+  cfg.disabled_log_types = {std::string{::sdb::log::HTTP},
+                            std::string{::sdb::log::SSL}};
   cfg.storage = duckdb::LogConfig::STDOUT_STORAGE_NAME;
   manager.SetConfig(db, cfg);
 

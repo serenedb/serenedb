@@ -27,20 +27,13 @@
 // initial LogConfig that mirrors the pre-migration behaviour (HTTP+SSL muted
 // by default, everything else at INFO).
 
-#include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
 
 namespace sdb::query {
 
-// Mutate `config.options.log_config` so logging is enabled with the level
-// the user picked at startup (or the default INFO), mode = DISABLE_SELECTED
-// with HTTP+SSL pre-muted, and storage = stdout. Called from
-// `DuckDBEngine::Initialize()` BEFORE constructing duckdb::DuckDB.
-void ConfigureLogManagerDefaults(duckdb::DBConfig& config);
-
-// Register the 7 SereneDB log types (Startup, SSL, Storage, Search,
-// IResearch, Crash; the existing duckdb HTTPLogType covers HTTP) and
-// install the sink so SDB_* writes flow through duckdb::LogManager.
+// Register the SereneDB log types (Startup, SSL, Storage, Search,
+// IResearch; the existing duckdb HTTPLogType covers HTTP) and install
+// the sink so SDB_* writes flow through duckdb::LogManager.
 void InstallLogManagerSink(duckdb::DatabaseInstance& db);
 
 // Detach the sink before destroying the DatabaseInstance so any logging

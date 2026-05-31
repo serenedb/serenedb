@@ -30,6 +30,12 @@
 // DuckDB matches enabled/disabled_log_types CASE-SENSITIVELY. `GENERAL` maps
 // to the empty string -- DuckDB's `DefaultLogType` -- so plain SDB_INFO()
 // stays in the unfiltered default bucket.
+//
+// INVARIANT: every constant below MUST be initialized from a string literal
+// so that `.data()` returns a NUL-terminated pointer. ShouldLog() / Write()
+// in log_types.cpp pass topic.data() directly to duckdb APIs that expect a
+// null-terminated string -- never construct one of these from a non-literal
+// source.
 
 #include <string_view>
 

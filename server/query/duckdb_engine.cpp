@@ -224,12 +224,6 @@ void DuckDBEngine::Initialize() {
   // enabled until callers migrate to the new `lambda x: ...` form.
   config.SetOptionByName("lambda_syntax", duckdb::Value{"ENABLE_SINGLE_ARROW"});
 
-  // Seed duckdb's LogManager from this server's defaults (logging enabled,
-  // INFO level, HTTP+SSL muted, stdout sink). Users can mutate at runtime
-  // via SET enable_logging / logging_level / enabled_log_types /
-  // disabled_log_types / logging_storage.
-  ConfigureLogManagerDefaults(config);
-
   connector::RegisterSereneDBStorage(config);
 
   connector::RegisterConfigVariables(config);

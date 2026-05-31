@@ -45,45 +45,10 @@ size_t DefaultNumberOfThreads() {
 }  // namespace
 
 SchedulerFeature::SchedulerFeature()
-  : _scheduler(nullptr), _metrics_feature(sdb::metrics::GetMetrics()) {
-  const auto n = number_of_cores::GetValue();
-
-  SDB_DEBUG(GENERAL, "Detected number of processors: ", n);
-
-  SDB_ASSERT(n > 0);
+  : _metrics_feature(sdb::metrics::GetMetrics()) {
   if (_nr_maximal_threads == 0) {
     _nr_maximal_threads = DefaultNumberOfThreads();
   }
-
-  if (_nr_minimal_threads < 4) {
-    SDB_WARN(GENERAL, "--server.minimal-threads (", _nr_minimal_threads,
-             ") must be at least 4");
-    _nr_minimal_threads = 4;
-  }
-
-  if (_nr_minimal_threads >= _nr_maximal_threads) {
-    SDB_WARN(GENERAL, "--server.maximal-threads (", _nr_maximal_threads,
-             ") should be at least ", (_nr_minimal_threads + 1),
-             ", raising it");
-    _nr_maximal_threads = _nr_minimal_threads;
-  }
-
-  if (_queue_size == 0) {
-    // Note that this is way smaller than the default of 4096!
-    SDB_ASSERT(_nr_maximal_threads > 0);
-    _queue_size = _nr_maximal_threads * 8;
-    SDB_ASSERT(_queue_size > 0);
-  }
-
-  if (_fifo1_size < 1) {
-    _fifo1_size = 1;
-  }
-
-  if (_fifo2_size < 1) {
-    _fifo2_size = 1;
-  }
-
-  SDB_ASSERT(_queue_size > 0);
   gInstance = this;
 }
 

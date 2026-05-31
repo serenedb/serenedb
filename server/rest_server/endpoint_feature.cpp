@@ -37,39 +37,31 @@ using namespace sdb::basics;
 
 namespace sdb {
 
-EndpointFeature::EndpointFeature()
-  : _endpoints(absl::GetFlag(FLAGS_server_endpoint)) {
+EndpointFeature::EndpointFeature() {
+  auto endpoints = absl::GetFlag(FLAGS_server_endpoint);
   // if our default value is too high, we'll use half of the max value provided
   // by the system
-  if (_backlog_size > SOMAXCONN) {
-    _backlog_size = SOMAXCONN / 2;
+  constexpr uint64_t kDefaultBacklog = 64;
+  uint64_t backlog_size = kDefaultBacklog;
+  if (backlog_size > SOMAXCONN) {
+    backlog_size = SOMAXCONN / 2;
   }
-  if (_backlog_size > SOMAXCONN) {
-    SDB_WARN(GENERAL,
-             "value for --tcp.backlog-size exceeds default system "
-             "header SOMAXCONN value ",
-             SOMAXCONN, ". trying to use ", SOMAXCONN, " anyway");
-  }
-  if (_endpoints.empty()) {
-    _endpoints.emplace_back("pgsql+tcp://127.0.0.1:7890");
+  constexpr bool kReuseAddress = true;
+  if (endpoints.empty()) {
+    endpoints.emplace_back("pgsql+tcp://127.0.0.1:7890");
     SDB_INFO(GENERAL, "no endpoints have been specified, using default: ",
-             _endpoints.back());
+             endpoints.back());
   }
-  buildEndpointLists();
-  gInstance = this;
-}
-
-EndpointFeature::~EndpointFeature() { gInstance = nullptr; }
-
-void EndpointFeature::buildEndpointLists() {
-  for (const auto& it : _endpoints) {
+  for (const auto& it : endpoints) {
     bool ok =
-      _endpoint_list.add(it, static_cast<int>(_backlog_size), _reuse_address);
-
+      _endpoint_list.add(it, static_cast<int>(backlog_size), kReuseAddress);
     if (!ok) {
       SDB_FATAL(GENERAL, "invalid endpoint '", it, "'");
     }
   }
+  gInstance = this;
 }
+
+EndpointFeature::~EndpointFeature() { gInstance = nullptr; }
 
 }  // namespace sdb

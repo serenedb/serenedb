@@ -41,12 +41,6 @@ class EndpointFeature final {
   const EndpointList& endpointList() const { return _endpoint_list; }
 
  private:
-  void buildEndpointLists();
-
-  std::vector<std::string> _endpoints;
-  bool _reuse_address = true;
-  uint64_t _backlog_size = 64;
-
   EndpointList _endpoint_list;
 };
 

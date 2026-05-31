@@ -22,9 +22,6 @@
 
 #include <absl/flags/parse.h>
 
-#include <chrono>
-#include <thread>
-
 #include "basics/lifecycle.h"
 #include "basics/logger/logger.h"
 
@@ -45,15 +42,10 @@ void AppServer::parseOptions(int argc, char* argv[]) {
 }
 
 void AppServer::wait() {
-  // The signal handler is async-signal-safe and flips
-  // lifecycle::IsStopping() via BeginShutdown(); we poll the flag every
-  // 100ms here. A condvar+mutex would shave the worst-case wakeup
-  // latency at the cost of a non-AS-safe notify path inside the
-  // handler, which we're not willing to pay -- shutdown latency of
-  // <100ms is plenty.
-  while (!lifecycle::IsStopping()) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  }
+  // Blocks until the signal handler (or any other thread) calls
+  // lifecycle::BeginShutdown(). The wakeup is delivered through an
+  // eventfd write -- async-signal-safe and zero-latency.
+  lifecycle::WaitForShutdown();
   // Log from non-handler context (the handler can't allocate / lock).
   SDB_INFO(GENERAL,
            "received shutdown signal, beginning shut down "

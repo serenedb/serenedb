@@ -26,12 +26,21 @@ namespace sdb::lifecycle {
 
 // True once shutdown has begun. Background tasks poll this to bail
 // out of long-running loops promptly. Also serves as the "Ctrl-C
-// observed" flag for the AppServer wait loop -- the signal handler
-// flips it via BeginShutdown().
+// observed" flag -- the signal handler flips it via BeginShutdown().
 bool IsStopping() noexcept;
 
-// Marks the server as stopping. Idempotent.
+// Marks the server as stopping and wakes any thread waiting in
+// WaitForShutdown(). Idempotent and async-signal-safe (the wakeup
+// is an 8-byte write(2) to an eventfd, which POSIX guarantees is
+// AS-safe).
 void BeginShutdown() noexcept;
+
+// Block until BeginShutdown() has been called. Single-thread caller;
+// safe to call before any other thread can invoke BeginShutdown().
+// The eventfd is created lazily; callers must invoke this (or
+// BeginShutdown) before installing signal handlers if they want the
+// handler's BeginShutdown wakeup to be observed.
+void WaitForShutdown() noexcept;
 
 // The optional positional data-dir argument (the single positional
 // after absl::ParseCommandLine strips argv[0]). Empty when no

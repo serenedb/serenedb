@@ -27,23 +27,8 @@
 using namespace sdb;
 using namespace sdb::rest;
 
-IoContext::IoContext(app::AppServer& server)
+IoContext::IoContext()
   : io_context(1),  // only a single thread per context
-    _server(server),
-    _work(io_context.get_executor()),
-    _clients(0),
-    _io_thread([this] {
-      InitThread("Io");
-      try {
-        io_context.run();
-      } catch (const std::exception& ex) {
-        SDB_WARN(GENERAL, "caught exception in IO thread: ", ex.what());
-      }
-    }) {}
-
-IoContext::IoContext(const IoContext& other)
-  : io_context(1),
-    _server(other._server),
     _work(io_context.get_executor()),
     _clients(0),
     _io_thread([this] {

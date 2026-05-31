@@ -28,10 +28,6 @@
 #include "basics/common.h"
 
 namespace sdb {
-namespace app {
-
-class AppServer;
-}
 namespace rest {
 
 class IoContext {
@@ -39,7 +35,6 @@ class IoContext {
   asio_ns::io_context io_context;
 
  private:
-  app::AppServer& _server;
   asio_ns::executor_work_guard<asio_ns::io_context::executor_type> _work;
   std::atomic<unsigned> _clients;
   // jthread is declared last so it is destroyed first: this joins the IO
@@ -47,8 +42,7 @@ class IoContext {
   std::jthread _io_thread;
 
  public:
-  explicit IoContext(app::AppServer&);
-  explicit IoContext(const IoContext&);
+  IoContext();
   ~IoContext();
 
   unsigned clients() const noexcept {

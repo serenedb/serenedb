@@ -75,7 +75,7 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
       DatabasePathFeature db_path;
       SchedulerFeature scheduler;
       RocksDBOptionFeature rocksdb_opt;
-      EngineFeature engine{server};
+      EngineFeature engine;
       FlushFeature flush;
       RocksDBRecoveryManager recovery;
       catalog::CatalogFeature catalog;

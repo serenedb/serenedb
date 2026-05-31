@@ -347,7 +347,7 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_old_key,
   return rocksutils::ConvertStatus(db->Write(wo, &batch));
 }
 
-RocksDBEngineCatalog::RocksDBEngineCatalog(SerenedServer& server)
+RocksDBEngineCatalog::RocksDBEngineCatalog()
   : RocksDBEngineCatalog(RocksDBOptionFeature::instance(),
                          metrics::GetMetrics()) {}
 

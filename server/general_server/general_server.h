@@ -23,6 +23,7 @@
 
 #include <absl/synchronization/mutex.h>
 
+#include <deque>
 #include <map>
 #include <mutex>
 
@@ -68,7 +69,7 @@ class GeneralServer {
   bool openEndpoint(IoContext& io_context, Endpoint* endpoint);
 
  private:
-  std::vector<IoContext> _contexts;
+  std::deque<IoContext> _contexts;
 
   std::recursive_mutex _tasks_lock;
   std::vector<std::unique_ptr<Acceptor>> _acceptors;

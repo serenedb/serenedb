@@ -22,14 +22,13 @@
 
 #include <memory>
 
-#include "app/app_server.h"
 #include "catalog/catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 
 namespace sdb {
 
-EngineFeature::EngineFeature(SerenedServer& server)
-  : _engine{std::make_shared<RocksDBEngineCatalog>(server)} {
+EngineFeature::EngineFeature()
+  : _engine{std::make_shared<RocksDBEngineCatalog>()} {
   gInstance = this;
 }
 

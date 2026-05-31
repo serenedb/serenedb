@@ -50,11 +50,8 @@ int ClientHelloCallback(SSL* ssl, int* al, void* arg) { return 1; }
 
 GeneralServer::GeneralServer(GeneralServerFeature& feature,
                              uint64_t num_io_threads) {
-  auto& server = SerenedServer::Instance();
-
-  _contexts.reserve(num_io_threads);
   for (size_t i = 0; i < num_io_threads; ++i) {
-    _contexts.emplace_back(server);
+    _contexts.emplace_back();
   }
 }
 

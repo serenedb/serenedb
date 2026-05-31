@@ -21,7 +21,6 @@
 #pragma once
 
 #include "basics/down_cast.h"
-#include "rest_server/serened.h"
 
 namespace sdb {
 
@@ -32,7 +31,7 @@ class EngineFeature final {
   inline static EngineFeature* gInstance = nullptr;
   static EngineFeature& instance() noexcept { return *gInstance; }
 
-  explicit EngineFeature(SerenedServer& server);
+  EngineFeature();
   ~EngineFeature();
 
   void start();

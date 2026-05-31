@@ -107,6 +107,11 @@ target_link_libraries(
         lz4_static
         minizip
         serene_build_id
+        # The SDB_* logger hot path forwards directly to duckdb::Logger
+        # virtuals; we need duckdb's headers (and the Logger vtable) at
+        # link time. Pulled in PUBLICly so any target that uses
+        # SDB_INFO / SDB_TRACE inline gets the duckdb headers it needs.
+        duckdb_static
         ${SYSTEM_LIBRARIES}
     PRIVATE date_interface boost_boost absl::stacktrace absl::symbolize
 )

@@ -25,24 +25,28 @@
 
 #include <atomic>
 #include <cstring>
+#include <duckdb/logging/logger.hpp>
+#include <duckdb/logging/logging.hpp>
 
 #include "basics/assert.h"
 
 namespace sdb::log {
 namespace {
 
-// Process-wide initial level. Used as the ShouldLog comparand before the
-// DuckDB sink is installed (the gtest entrypoint sets this before calling
-// log::Initialize() on the test rig). After InstallSink() runs, IsEnabled()
-// defers to the sink's should_log.
+// Process-wide initial level. Used as the ShouldLog comparand before
+// SetLogger() is called (the gtest entrypoint sets this on the test rig
+// before running tests). After SetLogger() runs, IsEnabled() defers to
+// duckdb::Logger::ShouldLog.
 std::atomic<LogLevel> gInitialLevel{LogLevel::INFO};
 
-// Active sink. Set by InstallSink() (called from DuckDBEngine::Initialize)
-// at the very top of RunServer, cleared by UninstallLogManagerSink() at the
-// very bottom. The pointed-to Sink must outlive any thread that calls Log()
-// through it -- callers are expected to pass a function-local static const
-// Sink.
-std::atomic<const Sink*> gSink{nullptr};
+// Active duckdb::Logger. Set by SetLogger() (called from
+// DuckDBEngine::Initialize -> InstallLogManagerSink) at the very top of
+// RunServer, cleared by UninstallLogManagerSink() at the very bottom. The
+// pointee is owned by LogManager which lives inside DatabaseInstance; the
+// DuckDBEngine::Shutdown() runs after every feature has joined its
+// workers, so by the time SetLogger(nullptr) lands no live thread can be
+// dereferencing the pointer.
+std::atomic<duckdb::Logger*> gLogger{nullptr};
 
 constexpr std::string_view LevelTag(LogLevel l) noexcept {
   switch (l) {
@@ -62,6 +66,26 @@ constexpr std::string_view LevelTag(LogLevel l) noexcept {
       return "DEFAULT";
   }
   return "?";
+}
+
+constexpr duckdb::LogLevel ToDuckLevel(LogLevel level) noexcept {
+  switch (level) {
+    case LogLevel::FATAL:
+      return duckdb::LogLevel::LOG_FATAL;
+    case LogLevel::ERR:
+      return duckdb::LogLevel::LOG_ERROR;
+    case LogLevel::WARN:
+      return duckdb::LogLevel::LOG_WARNING;
+    case LogLevel::INFO:
+      return duckdb::LogLevel::LOG_INFO;
+    case LogLevel::DEB:
+      return duckdb::LogLevel::LOG_DEBUG;
+    case LogLevel::TRACE:
+      return duckdb::LogLevel::LOG_TRACE;
+    case LogLevel::DEFAULT:
+      return duckdb::LogLevel::LOG_INFO;
+  }
+  return duckdb::LogLevel::LOG_INFO;
 }
 
 // Async-signal-safe stderr write used by the CRASH topic. No heap, no mutex,
@@ -128,46 +152,44 @@ void SetInitialLogLevel(LogLevel level) noexcept {
   gInitialLevel.store(level, std::memory_order_relaxed);
 }
 
-void InstallSink(const Sink* sink) noexcept {
-  gSink.store(sink, std::memory_order_release);
+void SetLogger(duckdb::Logger* logger) noexcept {
+  gLogger.store(logger, std::memory_order_release);
 }
 
-bool IsEnabled(LogLevel level) noexcept {
-  if (const auto* sink = gSink.load(std::memory_order_acquire); sink) {
-    return sink->should_log(level, std::string_view{});
+bool IsEnabled(LogLevel level, std::string_view topic) noexcept {
+  if (auto* logger = gLogger.load(std::memory_order_acquire); logger) {
+    // Every topic constant in topic.h is initialized from a string literal
+    // (.data() is NUL-terminated, see invariant in topic.h).
+    return logger->ShouldLog(topic.data(), ToDuckLevel(level));
   }
-  // Pre-sink window (between main() entry and DuckDBEngine::Initialize() in
-  // RunServer). Compare against the initial level so SDB_FATAL during
+  // Pre-Logger window (between main() entry and DuckDBEngine::Initialize()
+  // in RunServer) plus gtest entrypoints that don't construct a
+  // DuckDBEngine. Compare against the initial level so SDB_FATAL during
   // parseOptions still produces the line; the CRASH topic short-circuits
   // to SignalSafeWrite regardless.
   return level <= gInitialLevel.load(std::memory_order_relaxed);
 }
 
-bool IsEnabled(LogLevel level, std::string_view topic) noexcept {
-  if (const auto* sink = gSink.load(std::memory_order_acquire); sink) {
-    return sink->should_log(level, topic);
-  }
-  return level <= gInitialLevel.load(std::memory_order_relaxed);
-}
-
-void Log(LogLevel level, std::string_view topic, std::string_view message) try {
-  // CRASH topic ALWAYS bypasses the sink. Async-signal-safe path: no heap,
-  // no mutex, no LogManager state. Today's CRASH callers (crash_handler.cpp)
-  // are invoked from a signal handler.
+void Log(LogLevel level, std::string_view topic,
+         const std::string& message) try {
+  // CRASH topic ALWAYS bypasses the Logger. Async-signal-safe path: no
+  // heap, no mutex, no LogManager state. Today's CRASH callers
+  // (crash_handler.cpp) are invoked from a signal handler.
   if (topic == CRASH) {
     SignalSafeWrite(level, topic, message);
     return;
   }
-  // DuckDBEngine::Initialize() installs the sink at the top of RunServer
-  // and UninstallLogManagerSink() removes it as the very last step before
-  // main returns. Every non-CRASH SDB_* macro from a serened binary runs
-  // inside that window. Gtest entry points that don't construct a
-  // DuckDBEngine drop log lines silently.
-  if (const auto* sink = gSink.load(std::memory_order_acquire); sink) {
-    sink->write(level, topic, message);
+  if (auto* logger = gLogger.load(std::memory_order_acquire); logger) {
+    // .data() is NUL-terminated per the topic.h invariant; .c_str() is
+    // free on the rvalue std::string that absl::StrCat() produces.
+    logger->WriteLog(topic.data(), ToDuckLevel(level), message.c_str());
   }
 } catch (...) {
   // Logging itself must never throw.
+}
+
+void LogCrash(LogLevel level, std::string_view message) noexcept {
+  SignalSafeWrite(level, CRASH, message);
 }
 
 }  // namespace sdb::log

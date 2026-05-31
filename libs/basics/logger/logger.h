@@ -20,23 +20,31 @@
 //
 // Thin shim over DuckDB's LogManager. SDB_TRACE/DEBUG/INFO/WARN/ERROR/FATAL
 // take a topic *identifier* (see topic.h) plus absl::StrCat-style args.
-// Before the DuckDB instance is up, and after it has been torn down, log
-// lines are written synchronously to stderr. Once `InstallSink()` is called
-// (DuckDBEngine::Initialize), records flow through duckdb::LogManager and
-// honour `enable_logging` / `logging_level` / `enabled_log_types` /
-// `disabled_log_types` SET-options. The CRASH topic always bypasses the
-// sink: signal-safe write(2) to stderr only.
+// Once `SetLogger()` has been called (DuckDBEngine::Initialize) records flow
+// through duckdb::Logger directly and honour `enable_logging` /
+// `logging_level` / `enabled_log_types` / `disabled_log_types` SET-options.
+// Before the DuckDB instance is up and after it has been torn down,
+// non-CRASH records are silently dropped (apart from a level-only
+// IsEnabled() that compares against the initial level so gtest-only
+// binaries can gate on --log-level without installing a Logger). The CRASH
+// topic always bypasses the Logger: signal-safe write(2) to stderr only.
 
 #pragma once
 
 #include <absl/strings/str_cat.h>
 
+#include <string>
 #include <string_view>
 
 #include "basics/application-exit.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/logger/log_level.h"
 #include "basics/logger/topic.h"
+
+namespace duckdb {
+
+class Logger;
+}
 
 namespace sdb::log {
 
@@ -47,32 +55,31 @@ namespace sdb::log {
 LogLevel TranslateLogLevel(std::string_view name) noexcept;
 std::string_view TranslateLogLevel(LogLevel level) noexcept;
 
-// Process-wide initial level. Used by IsEnabled() BEFORE InstallSink() runs
-// (and after it is reverted to nullptr at shutdown). Once a Sink is
-// installed, IsEnabled() and Log() defer to the installed Sink's
-// should_log/write hooks.
+// Process-wide initial level. Used by IsEnabled() BEFORE SetLogger() runs
+// (and after it is reverted to nullptr at shutdown). Once a Logger is
+// installed, IsEnabled() and Log() defer to duckdb::Logger.
 void SetInitialLogLevel(LogLevel level) noexcept;
 
-// ---- sink installation (called by DuckDBEngine) --------------------------
+// ---- duckdb::Logger installation (called by DuckDBEngine) ----------------
 
-struct Sink {
-  // Return true if a record at `level`/`topic` should be emitted.
-  bool (*should_log)(LogLevel level, std::string_view topic) noexcept;
-  // Write the record. Must be thread-safe.
-  void (*write)(LogLevel level, std::string_view topic,
-                std::string_view message) noexcept;
-};
-
-// `sink` must point to storage with static lifetime; callers typically pass
-// a pointer to a static const Sink. Pass nullptr to revert to the stderr
-// fallback.
-void InstallSink(const Sink* sink) noexcept;
+// Install the duckdb::Logger that all SDB_* sites will dispatch through.
+// `logger` must outlive every thread that can call Log() / IsEnabled();
+// callers are expected to clear it back to nullptr BEFORE destroying the
+// duckdb::DatabaseInstance that owns the Logger. The contract is upheld in
+// RunServer: DuckDBEngine::Shutdown() runs after every feature's stop()
+// has joined its workers, so no live thread can dereference the pointer
+// once we clear it.
+void SetLogger(duckdb::Logger* logger) noexcept;
 
 // ---- entry point ----------------------------------------------------------
 
-void Log(LogLevel level, std::string_view topic, std::string_view message);
+void Log(LogLevel level, std::string_view topic, const std::string& message);
 
-bool IsEnabled(LogLevel level) noexcept;
+// Async-signal-safe variant for the CRASH topic. write(2) to stderr only,
+// no heap, no Logger lookup. Intended for signal-handler callers that
+// already have a fixed-size stack buffer assembled.
+void LogCrash(LogLevel level, std::string_view message) noexcept;
+
 bool IsEnabled(LogLevel level, std::string_view topic) noexcept;
 
 }  // namespace sdb::log

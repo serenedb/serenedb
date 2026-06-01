@@ -45,6 +45,7 @@ class Block:
     leading_comments: list[str]
     skipifs: set[str]
     skip_lines: list[int]  # 1-based golden line numbers excluded from compare
+    skip_rows: list[str]   # regex patterns; matching rows dropped from compare
     cmd: str
     golden: str  # joined with '\n', no trailing newline
     line: int    # 1-based start line of the block (for error messages)
@@ -80,14 +81,19 @@ def parse_file(path: Path) -> tuple[list[Block], list[str]]:
         start_line = i + 1
         skipifs: set[str] = set()
         skip_lines: list[int] = []
+        skip_rows: list[str] = []
         while i < len(raw):
             m_skipif = re.match(r"^skipif\s+(\S+)\s*$", raw[i])
             m_skipline = re.match(r"^skip-line:\s*(\d+)\s*$", raw[i])
+            m_skiprow = re.match(r"^skip-row:\s*(.+)$", raw[i])
             if m_skipif:
                 skipifs.add(m_skipif.group(1))
                 i += 1
             elif m_skipline:
                 skip_lines.append(int(m_skipline.group(1)))
+                i += 1
+            elif m_skiprow:
+                skip_rows.append(m_skiprow.group(1))
                 i += 1
             else:
                 break
@@ -116,6 +122,7 @@ def parse_file(path: Path) -> tuple[list[Block], list[str]]:
             leading_comments=pending_comments,
             skipifs=skipifs,
             skip_lines=skip_lines,
+            skip_rows=skip_rows,
             cmd=cmd,
             golden="\n".join(golden_lines),
             line=start_line,
@@ -136,6 +143,8 @@ def emit_file(path: Path, blocks: list[Block], trailing_comments: list[str]) -> 
             out.append(f"skipif {engine}")
         for n in blk.skip_lines:
             out.append(f"skip-line: {n}")
+        for pat in blk.skip_rows:
+            out.append(f"skip-row: {pat}")
         out.append(blk.cmd)
         out.append("----")
         out.extend(_quote_golden(blk.golden))
@@ -217,24 +226,33 @@ def make_diff(expected: str, actual: str) -> str:
     return "\n".join(list(diff)[:300])
 
 
-def drop_lines(text: str, skip_lines: list[int]) -> str:
-    """Drop the lines listed by 1-based index from `text`. Used at compare
-    time to exclude non-deterministic lines (e.g. \\conninfo's Backend PID)
-    from the diff. Both sides go through this so the comparison is
-    apples-to-apples.
+def drop_lines(text: str, skip_lines: list[int], skip_rows: list[str]) -> str:
+    """Drop lines from `text` for compare. Two mechanisms:
+      - skip_lines: 1-based line indices (positional; same index dropped on
+        both sides).
+      - skip_rows: regex patterns; lines matching any pattern are dropped.
+        Useful when row presence varies across environments (e.g. psql's
+        \\conninfo GSSAPI row is absent when libpq was built without krb5).
 
-    Also block-localized: when skip_lines is non-empty we additionally
-    collapse psql's cell trailing-pad and border-dash runs so that the
-    column-width drift caused by the dropped (variable) cell doesn't
-    ripple through every surrounding line. Other tests (no skip_lines)
-    keep their nicely-aligned goldens."""
-    if not skip_lines:
+    Block-localized: when either list is non-empty, we additionally collapse
+    psql's cell trailing-pad and border-dash runs so that column-width
+    drift caused by dropped (variable) cells doesn't ripple through every
+    surrounding line."""
+    if not skip_lines and not skip_rows:
         return text
-    skip = {n - 1 for n in skip_lines}  # 1-based -> 0-based
     text = re.sub(r"\| {2,}", "| ", text)   # collapse leading cell-pad
     text = re.sub(r" {2,}\|", " |", text)   # collapse trailing cell-pad
     text = re.sub(r"\+-{2,}", "+-", text)   # collapse border-dash runs
-    return "\n".join(ln for i, ln in enumerate(text.splitlines()) if i not in skip)
+    skip_idx = {n - 1 for n in skip_lines}
+    row_res = [re.compile(p) for p in skip_rows]
+    kept = []
+    for i, ln in enumerate(text.splitlines()):
+        if i in skip_idx:
+            continue
+        if any(r.search(ln) for r in row_res):
+            continue
+        kept.append(ln)
+    return "\n".join(kept)
 
 
 def all_help_tokens(host: str, port: str, db: str, user: str) -> set[str]:
@@ -345,8 +363,8 @@ def main() -> int:
                 cases.append(f'  <testcase name="{xml_escape(name)}" classname="psql"/>\n')
                 continue
 
-            actual_cmp = drop_lines(actual, blk.skip_lines)
-            golden_cmp = drop_lines(blk.golden, blk.skip_lines)
+            actual_cmp = drop_lines(actual, blk.skip_lines, blk.skip_rows)
+            golden_cmp = drop_lines(blk.golden, blk.skip_lines, blk.skip_rows)
             if actual_cmp == golden_cmp:
                 ntests += 1
                 cases.append(f'  <testcase name="{xml_escape(name)}" classname="psql"/>\n')

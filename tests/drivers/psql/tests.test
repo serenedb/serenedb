@@ -987,15 +987,19 @@ skipif postgres
 ----
 > \unrestrict: missing required argument
 
-# Skip line 1 (centered title -- leading spaces depend on total table
-# width), line 8 (Server Port -- environmental, not parity-relevant), and
-# line 13 (Backend PID -- random per connection). Cell-pad and border-dash
-# collapse is applied automatically when skip-line is present, so the
-# surrounding column-width drift is also absorbed.
+# skip-line 1 (centered title -- leading spaces depend on total table
+# width). skip-row drops rows whose value or presence is environment-
+# dependent:
+#   Host          -- 127.0.0.1 (dev) vs container hostname (CI)
+#   Server Port   -- 5433 (dev) vs 5432/7777 (CI)
+#   Backend PID   -- random per connection
+#   GSSAPI / SSL  -- present only when libpq was built with krb5 / openssl
+#   (N rows)      -- the count drifts when GSSAPI/SSL rows come and go
+# Block-local cell-pad + border-dash collapse is applied automatically.
 skipif postgres
 skip-line: 1
-skip-line: 8
-skip-line: 13
+skip-row: ^\| (Host|Server Port|Backend PID|GSSAPI Authenticated|SSL Connection)
+skip-row: ^\(\d+ rows?\)$
 \conninfo
 ----
 >        Connection Information

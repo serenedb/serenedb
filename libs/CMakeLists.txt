@@ -34,7 +34,6 @@ add_library(
     basics/files.cpp
     basics/levenshtein.cpp
     basics/memory.cpp
-    basics/process-utils.cpp
     basics/signals.cpp
     basics/system-functions.cpp
     basics/terminal-utils-posix.cpp

@@ -28,7 +28,6 @@
 #include <yaclib/log.hpp>
 
 #include "basics/crash_handler.h"
-#include "basics/process-utils.h"
 #include "basics/random/random_generator.h"
 #include "rest/version.h"
 #define ZLIB_COMPAT
@@ -58,9 +57,6 @@ void InitProcess(const char* argv0) {
   });
 }
 
-void ShutdownGlobals() {
-  random::Reset();
-  ShutdownProcess();
-}
+void ShutdownGlobals() { random::Reset(); }
 
 }  // namespace sdb::app

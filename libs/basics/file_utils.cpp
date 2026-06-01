@@ -23,7 +23,6 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_split.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
@@ -34,9 +33,6 @@
 #include <functional>
 #include <memory>
 #include <utility>
-
-#include "basics/number_utils.h"
-#include "basics/process-utils.h"
 
 #ifdef SERENEDB_HAVE_DIRENT_H
 #include <dirent.h>
@@ -647,157 +643,5 @@ void MakePathAbsolute(std::string& path) {
     }
   }
 }
-
-namespace {
-
-std::string SlurpProgramInternal(std::string_view program,
-                                 std::span<const std::string_view> more_args) {
-  const ExternalProcess* process;
-  ExternalId external;
-  ExternalProcessStatus res;
-  std::string output;
-  std::vector<std::string_view> additional_env;
-  char buf[1024];
-
-  CreateExternalProcess(program, more_args, additional_env, true, &external);
-  if (external.pid == SERENEDB_INVALID_PROCESS_ID) {
-    auto res = ERROR_SYS_ERROR;
-    SetError(res);
-
-    SDB_TRACE(GENERAL, "open failed for file '", program, "': ", LastError());
-    SDB_THROW(res);
-  }
-  process = LookupSpawnedProcess(external.pid);
-  if (process == nullptr) {
-    auto res = ERROR_SYS_ERROR;
-    SetError(res);
-
-    SDB_TRACE(GENERAL, "process gone? '", program, "': ", LastError());
-    SDB_THROW(res);
-  }
-  bool error = false;
-  while (true) {
-    auto n_read = ReadPipe(process, buf, sizeof(buf));
-    if (n_read <= 0) {
-      if (n_read < 0) {
-        error = true;
-      }
-      break;
-    }
-    output.append(buf, n_read);
-  }
-  res = CheckExternalProcess(external, true, 0, NoDeadLine);
-  if (error) {
-    SDB_THROW(ERROR_SYS_ERROR);
-  }
-  // Note that we intentionally ignore the exit code of the sub process here
-  // since we have always done so and do not want to break things.
-  return output;
-}
-
-}  // namespace
-
-std::string SlurpProgram(std::string_view program) {
-  static constexpr std::array<std::string_view, 1> kMoreArgs = {"version"};
-  return SlurpProgramInternal(program, kMoreArgs);
-}
-
-#ifdef SERENEDB_HAVE_GETPWUID
-std::optional<uid_t> FindUser(std::string_view name_or_id) noexcept {
-  // We avoid getpwuid and getpwnam because they pose problems when
-  // we build static binaries with glibc (because of /etc/nsswitch.conf).
-  // However, we know that `id` exists for basically all Linux variants
-  // and for Mac.
-  try {
-    const std::array<std::string_view, 2> args{"-u", name_or_id};
-    auto output = SlurpProgramInternal("/usr/bin/id", args);
-    string_utils::TrimInPlace(output);
-    bool valid = false;
-    uid_t uid_number = number_utils::AtoiPositive<int>(
-      output.data(), output.data() + output.size(), valid);
-    if (valid) {
-      return {uid_number};
-    }
-  } catch (const std::exception&) {
-  }
-  return {std::nullopt};
-}
-
-std::optional<std::string> FindUserName(uid_t id) noexcept {
-  // For Linux (and other Unixes), we avoid this function because it
-  // poses problems when we build static binaries with glibc (because of
-  // /etc/nsswitch.conf).
-  try {
-    absl::AlphaNum id_str(id);
-    const std::array<std::string_view, 2> args{"passwd", id_str.Piece()};
-    std::string output = SlurpProgramInternal("/usr/bin/getent", args);
-    string_utils::TrimInPlace(output);
-    std::vector<std::string_view> parts = absl::StrSplit(output, ':');
-    if (parts.size() >= 1) {
-      return {std::string{parts[0]}};
-    }
-  } catch (const std::exception&) {
-  }
-  return {std::nullopt};
-}
-#endif
-
-#ifdef SERENEDB_HAVE_GETGRGID
-std::optional<gid_t> FindGroup(std::string_view name_or_id) noexcept {
-  // For Linux (and other Unixes), we avoid these functions because they
-  // pose problems when we build static binaries with glibc (because of
-  // /etc/nsswitch.conf).
-  try {
-    const std::array<std::string_view, 2> args{"group", name_or_id};
-    std::string output = SlurpProgramInternal("/usr/bin/getent", args);
-    string_utils::TrimInPlace(output);
-    std::vector<std::string_view> parts = absl::StrSplit(output, ':');
-    if (parts.size() >= 3) {
-      bool valid = false;
-      uid_t gid_number = number_utils::AtoiPositive<int>(
-        parts[2].data(), parts[2].data() + parts[2].size(), valid);
-      if (valid) {
-        return {gid_number};
-      }
-    }
-  } catch (const std::exception&) {
-  }
-  return {std::nullopt};
-}
-#endif
-
-#ifdef SERENEDB_HAVE_INITGROUPS
-void InitGroups(std::string_view user_name, gid_t group_id) noexcept {
-#ifdef __linux__
-  // For Linux, calling initgroups poses problems with statically linked
-  // binaries, since /etc/nsswitch.conf can then lead to crashes on
-  // older Linux distributions. Therefore, we need to do the groups lookup
-  // ourselves using the groups command. Then we can use setgroups to
-  // achieve the desired result.
-  try {
-    const std::array<std::string_view, 1> args{user_name};
-    std::string output = SlurpProgramInternal("/usr/bin/groups", args);
-    string_utils::TrimInPlace(output);
-    auto pos = output.find(':');
-    if (pos != std::string::npos) {
-      output = output.substr(pos + 1);
-    }
-    std::vector<std::string_view> parts = absl::StrSplit(output, ' ');
-    std::vector<gid_t> group_ids{group_id};
-    for (const auto& part : parts) {
-      std::optional<gid_t> gid_number = FindGroup(part);
-      if (gid_number && gid_number.value() != group_id) {
-        group_ids.push_back(gid_number.value());
-      }
-    }
-    setgroups(group_ids.size(), group_ids.data());
-  } catch (const std::exception&) {
-  }
-#else
-  // For other unixes (including Mac), we can use the OS call.
-  initgroups(userName.c_str(), groupId);
-#endif
-}
-#endif
 
 }  // namespace sdb::basics::file_utils

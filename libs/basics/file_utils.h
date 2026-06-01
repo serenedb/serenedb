@@ -24,7 +24,6 @@
 #include <stddef.h>
 
 #include <functional>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -33,14 +32,6 @@
 #include "basics/file_result_string.h"
 #include "basics/operating-system.h"
 #include "basics/result.h"
-
-#ifdef SERENEDB_HAVE_GETGRGID
-#include <grp.h>
-#endif
-
-#ifdef SERENEDB_HAVE_GETPWNAM
-#include <pwd.h>
-#endif
 
 namespace sdb::basics::file_utils {
 
@@ -177,19 +168,5 @@ std::string ConfigDirectory(const char* binary_path);
 
 // returns the dir name of a path
 std::string_view Dirname(std::string_view);
-
-// returns the output of a program
-std::string SlurpProgram(std::string_view program);
-
-#ifdef SERENEDB_HAVE_GETPWUID
-std::optional<uid_t> FindUser(std::string_view name_or_id) noexcept;
-std::optional<std::string> FindUserName(uid_t id) noexcept;
-#endif
-#ifdef SERENEDB_HAVE_GETGRGID
-std::optional<gid_t> FindGroup(std::string_view name_or_id) noexcept;
-#endif
-#ifdef SERENEDB_HAVE_INITGROUPS
-void InitGroups(std::string_view user_name, gid_t group_id) noexcept;
-#endif
 
 }  // namespace sdb::basics::file_utils

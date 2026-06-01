@@ -104,7 +104,7 @@ its ~1GB output).
 ```
 
 The serened-level postgres_scanner tests
-(`tests/sqllogic/sdb/pg/duckdb_postgres/*_pgscan.test`) ride the regular
+(`tests/sqllogic/sdb/pg/duckdb_postgres/*_pgscan.test_slow`) ride the regular
 sqllogic runner -- the `_pgscan.` filename suffix triggers
 `launch_postgres()` in `tests/sqllogic/run.sh` automatically.
 

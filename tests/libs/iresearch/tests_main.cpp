@@ -45,6 +45,7 @@
 #include <vector>
 
 #include "basics/containers/bitset.hpp"
+#include "basics/duckdb_engine.h"
 #include "basics/file_utils_ext.hpp"
 #include "basics/logger/logger.h"
 #include "basics/network_utils.hpp"
@@ -53,7 +54,6 @@
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/utils/attributes.hpp"
 #include "iresearch/utils/mmap_utils.hpp"
-#include "basics/duckdb_engine.h"
 #include "tests_config.hpp"
 #include "tests_shared.hpp"
 

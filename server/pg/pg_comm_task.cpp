@@ -50,6 +50,7 @@
 #include "basics/application-exit.h"
 #include "basics/assert.h"
 #include "basics/dtoa.h"
+#include "basics/duckdb_engine.h"
 #include "basics/endian.h"
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
@@ -67,7 +68,6 @@
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
-#include "basics/duckdb_engine.h"
 #include "search/inverted_index_shard.h"
 
 #define SDB_LOG_PGSQL(...) SDB_PRINT_IF(false, __VA_ARGS__)

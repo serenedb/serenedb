@@ -25,8 +25,8 @@
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 
-#include "executor.h"
 #include "basics/duckdb_engine.h"
+#include "executor.h"
 
 enum class QueryType {
   Count,

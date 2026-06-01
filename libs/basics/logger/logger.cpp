@@ -152,8 +152,7 @@ void LogCrash(LogLevel level, std::string_view message) noexcept {
   append(message);
   buf[pos++] = '\n';
   // write(2) is async-signal-safe (POSIX.1-2017 Section 2.4.3).
-  ssize_t unused = ::write(STDERR_FILENO, buf, pos);
-  (void)unused;
+  [[maybe_unused]] ssize_t unused = ::write(STDERR_FILENO, buf, pos);
 }
 
 }  // namespace sdb::log

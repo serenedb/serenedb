@@ -36,6 +36,7 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
+#include "basics/duckdb_engine.h"
 #include "basics/string_utils.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table_options.h"
@@ -49,7 +50,6 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "basics/duckdb_engine.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"

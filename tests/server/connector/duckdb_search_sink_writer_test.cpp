@@ -31,6 +31,7 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/bytes_utils.hpp>
 
+#include "basics/duckdb_engine.h"
 #include "basics/endian.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
@@ -38,7 +39,6 @@
 #include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
-#include "basics/duckdb_engine.h"
 
 namespace {
 

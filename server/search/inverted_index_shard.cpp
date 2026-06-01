@@ -41,6 +41,7 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
+#include "basics/duckdb_engine.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
@@ -49,7 +50,6 @@
 #include "catalog/scorer_options.h"
 #include "metrics/gauge.h"
 #include "metrics/guard.h"
-#include "basics/duckdb_engine.h"
 #include "query/transaction.h"
 #include "rest_server/flush_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"

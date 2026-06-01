@@ -27,7 +27,6 @@ namespace duckdb {
 struct DBConfig;
 
 }  // namespace duckdb
-
 namespace sdb::server::query {
 
 // Pre-construct mutator handed to sdb::DuckDBEngine::Initialize.

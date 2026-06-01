@@ -46,56 +46,6 @@ containers::FlatHashSet<std::string> gFailurePoints;
 
 }  // namespace
 
-/// intentionally cause a segmentation violation or other failures
-/// this is used for crash and recovery tests
-void TerminateDebugging(std::string_view message) {
-#ifdef SDB_DEV
-  // there are some reserved crash messages we use in testing the
-  // crash handler
-  if (message == "CRASH-HANDLER-TEST-ABORT") {
-    // intentionally crashes the program!
-    std::abort();
-  } else if (message == "CRASH-HANDLER-TEST-TERMINATE") {
-    // intentionally crashes the program!
-    std::terminate();
-  } else if (message == "CRASH-HANDLER-TEST-TERMINATE-ACTIVE") {
-    // intentionally crashes the program!
-    // note: when using ASan/UBSan, this actually does not crash
-    // the program but continues.
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wexceptions"
-#endif
-
-    auto f = [] noexcept {
-      // intentionally crashes the program!
-      throw std::runtime_error("Intentional test error");
-    };
-    f();
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
-    // we will get here at least with ASan/UBSan.
-    std::terminate();
-  } else if (message == "CRASH-HANDLER-TEST-SEGFAULT") {
-    // intentionally crashes the program!
-    // If we instead try to dereference a nullptr, macOS might do SIGABRT
-    raise(SIGSEGV);
-  } else if (message == "CRASH-HANDLER-TEST-ASSERT") {
-    int a = 1;
-    // intentionally crashes the program!
-    SDB_ASSERT(a == 2);
-  }
-
-#endif
-
-  // Generic path: log the message via LogCrash (signal-safe write(2) to
-  // stderr), then abort() so absl's failure signal handler prints a
-  // symbolized stack.
-  ::sdb::log::LogCrash(::sdb::LogLevel::FATAL, message);
-  std::abort();
-}
-
 bool ShouldFailDebugging(std::string_view value) noexcept {
   if (gHasFailurePoints.load(std::memory_order_relaxed)) {
     absl::ReaderMutexLock read_locker{&gFailurePointsLock};

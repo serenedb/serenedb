@@ -231,79 +231,79 @@ int main() {
   // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
   // down the duckdb::DuckDB they were dispatching through.
   {
-  auto docs = vpack::Parser::fromJson(kCorpus);
-  std::vector<std::string> names;
+    auto docs = vpack::Parser::fromJson(kCorpus);
+    std::vector<std::string> names;
 
-  irs::MemoryDirectory dir;
-  auto reader = BuildIndex(dir, docs, names);
-  std::cout << "Indexed " << reader.docs_count() << " points across "
-            << reader.size() << " segment(s).\n\n";
+    irs::MemoryDirectory dir;
+    auto reader = BuildIndex(dir, docs, names);
+    std::cout << "Indexed " << reader.docs_count() << " points across "
+              << reader.size() << " segment(s).\n\n";
 
-  // 1) Distance query: everything within 300m of a center point.
-  {
-    std::cout << "=== GeoDistanceFilter (radius 300m) ===\n";
-    irs::GeoDistanceFilter q;
-    *q.mutable_field() = "geometry";
-    q.mutable_options()->store_field_id = kGeoColumnId;
-    q.mutable_options()->origin =
-      S2LatLng::FromDegrees(55.70892, 37.607768).ToPoint();
-    auto& range = q.mutable_options()->range;
-    range.max_type = irs::BoundType::Inclusive;
-    range.max = 300;  // meters
+    // 1) Distance query: everything within 300m of a center point.
+    {
+      std::cout << "=== GeoDistanceFilter (radius 300m) ===\n";
+      irs::GeoDistanceFilter q;
+      *q.mutable_field() = "geometry";
+      q.mutable_options()->store_field_id = kGeoColumnId;
+      q.mutable_options()->origin =
+        S2LatLng::FromDegrees(55.70892, 37.607768).ToPoint();
+      auto& range = q.mutable_options()->range;
+      range.max_type = irs::BoundType::Inclusive;
+      range.max = 300;  // meters
 
-    PrintHits("origin=(55.70892, 37.607768), max=300m",
-              RunFilter(reader, q, names));
-  }
-
-  // 2) Annulus query: 1km <= distance <= 5km from a different center.
-  {
-    std::cout << "\n=== GeoDistanceFilter (annulus 1km..5km) ===\n";
-    irs::GeoDistanceFilter q;
-    *q.mutable_field() = "geometry";
-    q.mutable_options()->store_field_id = kGeoColumnId;
-    q.mutable_options()->origin =
-      S2LatLng::FromDegrees(55.704, 37.615).ToPoint();
-    auto& range = q.mutable_options()->range;
-    range.min_type = irs::BoundType::Inclusive;
-    range.min = 1000;
-    range.max_type = irs::BoundType::Inclusive;
-    range.max = 5000;
-
-    PrintHits("origin=(55.704, 37.615), 1km <= d <= 5km",
-              RunFilter(reader, q, names));
-  }
-
-  // 3) Polygon query: points falling inside an arbitrary quadrilateral
-  //    covering the central cluster (lat/lon corners chosen to enclose
-  //    the tightly clustered first 16 points).
-  {
-    std::cout << "\n=== GeoFilter (Intersects polygon) ===\n";
-    std::vector<S2LatLng> corners{
-      S2LatLng::FromDegrees(55.7030, 37.6130),
-      S2LatLng::FromDegrees(55.7030, 37.6175),
-      S2LatLng::FromDegrees(55.7050, 37.6175),
-      S2LatLng::FromDegrees(55.7050, 37.6130),
-    };
-    std::vector<S2Point> points;
-    points.reserve(corners.size());
-    for (const auto& ll : corners) {
-      points.push_back(ll.ToPoint());
+      PrintHits("origin=(55.70892, 37.607768), max=300m",
+                RunFilter(reader, q, names));
     }
-    auto loop = std::make_unique<S2Loop>(points);
-    loop->Normalize();
 
-    sdb::geo::ShapeContainer shape;
-    shape.reset(std::make_unique<S2Polygon>(std::move(loop)),
-                sdb::geo::ShapeContainer::Type::S2Polygon);
+    // 2) Annulus query: 1km <= distance <= 5km from a different center.
+    {
+      std::cout << "\n=== GeoDistanceFilter (annulus 1km..5km) ===\n";
+      irs::GeoDistanceFilter q;
+      *q.mutable_field() = "geometry";
+      q.mutable_options()->store_field_id = kGeoColumnId;
+      q.mutable_options()->origin =
+        S2LatLng::FromDegrees(55.704, 37.615).ToPoint();
+      auto& range = q.mutable_options()->range;
+      range.min_type = irs::BoundType::Inclusive;
+      range.min = 1000;
+      range.max_type = irs::BoundType::Inclusive;
+      range.max = 5000;
 
-    irs::GeoFilter q;
-    *q.mutable_field() = "geometry";
-    q.mutable_options()->store_field_id = kGeoColumnId;
-    q.mutable_options()->type = irs::GeoFilterType::Intersects;
-    q.mutable_options()->shape = std::move(shape);
+      PrintHits("origin=(55.704, 37.615), 1km <= d <= 5km",
+                RunFilter(reader, q, names));
+    }
 
-    PrintHits("polygon over central cluster", RunFilter(reader, q, names));
-  }
+    // 3) Polygon query: points falling inside an arbitrary quadrilateral
+    //    covering the central cluster (lat/lon corners chosen to enclose
+    //    the tightly clustered first 16 points).
+    {
+      std::cout << "\n=== GeoFilter (Intersects polygon) ===\n";
+      std::vector<S2LatLng> corners{
+        S2LatLng::FromDegrees(55.7030, 37.6130),
+        S2LatLng::FromDegrees(55.7030, 37.6175),
+        S2LatLng::FromDegrees(55.7050, 37.6175),
+        S2LatLng::FromDegrees(55.7050, 37.6130),
+      };
+      std::vector<S2Point> points;
+      points.reserve(corners.size());
+      for (const auto& ll : corners) {
+        points.push_back(ll.ToPoint());
+      }
+      auto loop = std::make_unique<S2Loop>(points);
+      loop->Normalize();
+
+      sdb::geo::ShapeContainer shape;
+      shape.reset(std::make_unique<S2Polygon>(std::move(loop)),
+                  sdb::geo::ShapeContainer::Type::S2Polygon);
+
+      irs::GeoFilter q;
+      *q.mutable_field() = "geometry";
+      q.mutable_options()->store_field_id = kGeoColumnId;
+      q.mutable_options()->type = irs::GeoFilterType::Intersects;
+      q.mutable_options()->shape = std::move(shape);
+
+      PrintHits("polygon over central cluster", RunFilter(reader, q, names));
+    }
   }
 
   engine.Shutdown();

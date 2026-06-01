@@ -30,6 +30,7 @@
 #include <string>
 #include <string_view>
 
+#include "basics/duckdb_engine.h"
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/columnstore/column_writer.hpp"
 #include "iresearch/columnstore/format.hpp"
@@ -42,7 +43,6 @@
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
-#include "basics/duckdb_engine.h"
 
 namespace irs::tests {
 

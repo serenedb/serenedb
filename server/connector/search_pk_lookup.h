@@ -34,8 +34,8 @@
 #include <string_view>
 #include <vector>
 
-#include "catalog/table_options.h"
 #include "basics/duckdb_engine.h"
+#include "catalog/table_options.h"
 
 namespace sdb::connector {
 

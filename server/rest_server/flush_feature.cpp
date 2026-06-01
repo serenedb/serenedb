@@ -85,15 +85,7 @@ std::tuple<size_t, size_t, Tick> FlushFeature::releaseUnusedTicks() {
 
   SDB_ASSERT(min_tick <= engine.currentTick());
 
-  SDB_IF_FAILURE("FlushCrashBeforeSyncingMinTick") {
-    TerminateDebugging("crashing before syncing min tick");
-  }
-
   engine.releaseTick(min_tick);
-
-  SDB_IF_FAILURE("FlushCrashAfterReleasingMinTick") {
-    TerminateDebugging("crashing after releasing min tick");
-  }
 
   SDB_DEBUG(STORAGE, "Flush tick released: ", min_tick,
             ", stale flush subscription(s) released: ", stale,

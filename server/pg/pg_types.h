@@ -24,7 +24,7 @@
 #include <expected>
 #include <magic_enum/magic_enum.hpp>
 
-#include "basics/exceptions.h"
+#include "catalog/identifiers/object_id.h"
 
 namespace sdb {
 namespace catalog {
@@ -40,7 +40,6 @@ namespace pg {
 using ParamIndex = int16_t;
 
 inline constexpr uint64_t kInvalidOid = 0;
-inline constexpr int32_t kCustomOidBase = 90'000;
 
 // Postgres stores date/time/timestamp from 2000-01-01
 inline constexpr int64_t kGapDays =
@@ -242,9 +241,12 @@ enum PgTypeOID : int32_t {
   kAnycompatiblemultirange = 4538,
   kPgBrinBloomSummary = 4600,
   kPgBrinMinmaxMultiSummary = 4601,
-  kVariant = kCustomOidBase,
+  kVariant = id::kCustomOidBase.id(),
   kVariantArray,
+  kMaxPgTypeOID,
 };
+
+static_assert(kMaxPgTypeOID < id::kCustomOidMax.id());
 
 int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array = false);
 duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot);

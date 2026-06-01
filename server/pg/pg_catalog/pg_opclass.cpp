@@ -23,7 +23,6 @@
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "pg/pg_catalog/fwd.h"
-#include "pg/pg_catalog/pg_am.h"
 #include "pg/pg_types.h"
 
 namespace sdb::pg {
@@ -36,7 +35,7 @@ catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
 
   values.push_back({
     .oid = id::kPgOpclassHnsw.id(),
-    .opcmethod = PgAm::kInvertedOid,
+    .opcmethod = id::kPgAmInverted.id(),
     .opcname = "hnsw",
     .opcnamespace = id::kPgCatalogSchema.id(),
     .opcowner = id::kRootUser.id(),
@@ -48,7 +47,7 @@ catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
 
   values.push_back({
     .oid = id::kPgOpclassIncluded.id(),
-    .opcmethod = PgAm::kInvertedOid,
+    .opcmethod = id::kPgAmInverted.id(),
     .opcname = "included",
     .opcnamespace = id::kPgCatalogSchema.id(),
     .opcowner = id::kRootUser.id(),
@@ -63,7 +62,7 @@ catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
          catalog->GetTokenizers(GetDatabaseId(), schema->GetName())) {
       values.push_back({
         .oid = tokenizer->GetId().id(),
-        .opcmethod = PgAm::kInvertedOid,
+        .opcmethod = id::kPgAmInverted.id(),
         .opcname = tokenizer->GetName(),
         .opcnamespace = tokenizer->GetParentId().id(),
         .opcowner = id::kRootUser.id(),

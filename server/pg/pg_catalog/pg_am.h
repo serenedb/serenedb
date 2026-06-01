@@ -35,13 +35,6 @@ struct PgAm {
     Index = 'i',
   };
 
-  enum Oids : uint32_t {
-    kInvertedOid = 5001,
-    kIresearchOid = 5002,
-    kRocksdbOid = 5003,
-    kSecondaryOid = 5004,
-  };
-
   Oid oid;
   Name amname;
   Regproc amhandler;

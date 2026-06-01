@@ -20,6 +20,7 @@
 
 #include "pg/pg_catalog/pg_am.h"
 
+#include "catalog/identifiers/object_id.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -27,25 +28,25 @@ namespace {
 
 constexpr auto kSampleData = std::to_array<PgAm>({
   {
-    .oid = PgAm::kInvertedOid,
+    .oid = id::kPgAmInverted.id(),
     .amname = "inverted",
     .amhandler = 0,
     .amtype = PgAm::Amtype::Index,
   },
   {
-    .oid = PgAm::kIresearchOid,
+    .oid = id::kPgAmIresearch.id(),
     .amname = "iresearch",
     .amhandler = 0,
     .amtype = PgAm::Amtype::Table,
   },
   {
-    .oid = PgAm::kRocksdbOid,
+    .oid = id::kPgAmRocksdb.id(),
     .amname = "rocksdb",
     .amhandler = 0,
     .amtype = PgAm::Amtype::Table,
   },
   {
-    .oid = PgAm::kSecondaryOid,
+    .oid = id::kPgAmSecondary.id(),
     .amname = "secondary",
     .amhandler = 0,
     .amtype = PgAm::Amtype::Index,

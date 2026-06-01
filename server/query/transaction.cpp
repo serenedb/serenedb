@@ -77,9 +77,18 @@ Result Transaction::Commit() {
       // index writer to wait, we are safe.
       search_transaction.second->RegisterFlush();
     }
+    // Parallel search-table INSERT contributes N per-shard transactions
+    // (see Transaction::AddParallelSearchTransaction); register each so the
+    // writer waits for it before committing on tick.
+    for (auto& trx : _parallel_search_transactions) {
+      trx->RegisterFlush();
+    }
     absl::Cleanup rollback = [&] {
       for (auto& search_transaction : _search_transactions) {
         search_transaction.second->Abort();
+      }
+      for (auto& trx : _parallel_search_transactions) {
+        trx->Abort();
       }
       // PreCommit already ran CommitVariables, which cleared the txn map
       // after restoring SET LOCAL overlays. Nothing left to roll back here
@@ -105,6 +114,13 @@ Result Transaction::Commit() {
     SDB_ASSERT(absl::c_all_of(_search_transactions, [&](const auto& p) {
       return p.second->GetQueries() < num_ops;
     }));
+    // Parallel search-table transactions are used only for insert-only
+    // CTAS/COPY, so they carry no removes. With zero queries first_tick ==
+    // post_commit_seq, which is strictly > committed_tick (guaranteed by the
+    // monotonic rocksdb seq), satisfying the commit-on-tick ordering.
+    SDB_ASSERT(
+      absl::c_all_of(_parallel_search_transactions,
+                     [&](const auto& t) { return t->GetQueries() == 0; }));
 
     SDB_IF_FAILURE("crash_before_rocksdb_commit") { SDB_IMMEDIATE_ABORT(); }
     auto status = _rocksdb_transaction->Commit();
@@ -125,6 +141,13 @@ Result Transaction::Commit() {
     for (auto& search_transaction : _search_transactions) {
       search_transaction.second->Commit(post_commit_seq);
     }
+    // Commit every parallel search-table segment with the SAME tick; they
+    // are insert-only siblings on one shard, so a single RefreshCommit at
+    // post_commit_seq publishes them all (verified against iresearch's
+    // commit/flush tick handling).
+    for (auto& trx : _parallel_search_transactions) {
+      trx->Commit(post_commit_seq);
+    }
   }
   ApplyTableStatsDiffs();
   Destroy();
@@ -136,6 +159,9 @@ Result Transaction::Rollback() {
   absl::Cleanup rollback = [&] {
     for (auto& search_transaction : _search_transactions) {
       search_transaction.second->Abort();
+    }
+    for (auto& trx : _parallel_search_transactions) {
+      trx->Abort();
     }
     RollbackVariables();
     Destroy();
@@ -221,6 +247,7 @@ void Transaction::Destroy() noexcept {
   _rocksdb_transaction.reset();
   _rocksdb_snapshot = nullptr;
   _search_transactions.clear();
+  _parallel_search_transactions.clear();
   _table_rows_deltas.clear();
   _search_snapshots.clear();
   _search_table_readers.clear();

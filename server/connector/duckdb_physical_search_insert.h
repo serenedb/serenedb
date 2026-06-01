@@ -78,11 +78,26 @@ class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
 
   // Sink interface
   bool IsSink() const final { return true; }
+  // Parallel: each sink thread writes its own iresearch segment via its own
+  // IndexWriter::Transaction (see GetLocalSinkState), handed to
+  // query::Transaction at Combine and committed on the shared tick. The
+  // engine fans out based on source parallelism, so INSERT...VALUES still
+  // runs single-threaded while INSERT...SELECT / COPY / CTAS parallelise.
+  // Always insert-only (UPDATE/DELETE on search tables land in M6), so no
+  // removes ever flow through here -- the zero-queries invariant asserted in
+  // Transaction::Commit holds. Order-independent (PK is identity, not row
+  // order), so no batch index / SinkOrderDependent needed.
+  bool ParallelSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
     duckdb::ClientContext& context) const final;
+  duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(
+    duckdb::ExecutionContext& context) const final;
   duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
                               duckdb::DataChunk& chunk,
                               duckdb::OperatorSinkInput& input) const final;
+  duckdb::SinkCombineResultType Combine(
+    duckdb::ExecutionContext& context,
+    duckdb::OperatorSinkCombineInput& input) const final;
   duckdb::SinkFinalizeType Finalize(
     duckdb::Pipeline& pipeline, duckdb::Event& event,
     duckdb::ClientContext& context,

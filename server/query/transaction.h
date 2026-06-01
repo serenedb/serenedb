@@ -57,6 +57,7 @@ class Transaction : public Config {
     // reasons) So if we get here explicit Commit/Rollback should be already
     // called. Otherwise we might have some unexpected data
     SDB_ASSERT(_search_transactions.empty());
+    SDB_ASSERT(_parallel_search_transactions.empty());
     // RocksDB transactions aborts itself in destructor but just for consistency
     // we should do Commit/Rollback explicitly
     SDB_ASSERT(!_rocksdb_transaction);
@@ -127,6 +128,22 @@ class Transaction : public Config {
       it->second = std::make_unique<irs::IndexWriter::Transaction>(make_trx());
     }
     return *it->second;
+  }
+
+  // Parallel search-table INSERT (SereneDBSearchInsert): each sink thread
+  // creates its own iresearch IndexWriter::Transaction (one segment) and
+  // hands it off here at Combine. Unlike _search_transactions (one trx per
+  // shard, used by the inverted-index path), a single search-table INSERT
+  // contributes N transactions on the same shard. They are committed
+  // together with the shared post_commit_seq tick in Commit() -- valid
+  // because these writes are insert-only (no removes), so all N segments
+  // share first_tick and one RefreshCommit publishes them.
+  //
+  // The operator serialises calls with its own sink-state mutex; this is the
+  // only concurrent mutator of the container during the parallel Sink phase.
+  void AddParallelSearchTransaction(
+    std::unique_ptr<irs::IndexWriter::Transaction> trx) {
+    _parallel_search_transactions.push_back(std::move(trx));
   }
 
   // Pins a SearchTableShard's DirectoryReader for the lifetime of this
@@ -217,6 +234,11 @@ class Transaction : public Config {
   containers::FlatHashMap<ObjectId,
                           std::unique_ptr<irs::IndexWriter::Transaction>>
     _search_transactions;
+  // Per-thread iresearch transactions from a parallel search-table INSERT.
+  // See AddParallelSearchTransaction. Flush-registered/committed/aborted
+  // alongside _search_transactions in Commit/Rollback; cleared in Destroy.
+  std::vector<std::unique_ptr<irs::IndexWriter::Transaction>>
+    _parallel_search_transactions;
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   // Per-(sdb txn, SearchTableShard) DirectoryReader cache. shared_ptr so

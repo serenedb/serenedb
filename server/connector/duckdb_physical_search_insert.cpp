@@ -24,6 +24,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <memory>
+#include <mutex>
 #include <shared_mutex>
 #include <string>
 #include <utility>
@@ -62,11 +63,14 @@ namespace {
 struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   ObjectId table_id;
   std::shared_ptr<TableShard> table_shard;
-  // Borrowed -- both live on the connection's query::Transaction, which
-  // outlives this state (the sdb-side commit happens after Finalize and
-  // owns the iresearch trx via _search_transactions).
+  // Borrowed -- lives on the connection's query::Transaction, which outlives
+  // this state (the sdb-side commit happens after Finalize and owns the
+  // per-thread iresearch trxs via _parallel_search_transactions).
   query::Transaction* sdb_txn = nullptr;
-  irs::IndexWriter::Transaction* search_trx = nullptr;
+  // The kSearch shard, downcast once here. Each sink thread opens its own
+  // IndexWriter::Transaction from it in GetLocalSinkState (one segment per
+  // thread); table_shard's shared_ptr keeps it alive.
+  search::SearchTableShard* search_shard = nullptr;
 
   // Catalog column ids in input-chunk order (skips the synthetic
   // generated-PK column). Used both as the SearchTableSinkWriter
@@ -86,6 +90,12 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   std::shared_ptr<catalog::Sequence> generated_pk_seq;
 
   std::shared_lock<std::shared_mutex> table_lock;
+
+  // Serialises the two cross-thread mutations on query::Transaction:
+  // registering a per-thread collection (GetLocalSinkState) and handing off
+  // the per-thread trx + summing insert_count (Combine). Both are
+  // once-per-thread, so contention is negligible.
+  std::mutex combine_mu;
   duckdb::idx_t insert_count = 0;
 
   // CTAS bookkeeping. ctas_mode=false for plain INSERT/COPY. On the
@@ -115,6 +125,25 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
 
 struct SearchInsertSourceState : duckdb::GlobalSourceState {
   bool finished = false;
+};
+
+// Per-sink-thread state. Each thread owns one iresearch segment (its own
+// IndexWriter::Transaction) and writes its chunks directly into it during
+// Sink. The transaction is handed to query::Transaction at Combine and
+// committed on the shared tick at txn commit -- NOT here, so it must survive
+// Combine (we must not let its destructor auto-commit, which would assign an
+// unrelated _tick-derived tick).
+struct SearchInsertLocalState : duckdb::LocalSinkState {
+  // search_trx must outlive `sink` (the writer holds a reference to it).
+  std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
+  std::unique_ptr<SearchTableSinkWriter> sink;
+  // This thread's in-flight buffer. Owned by query::Transaction
+  // (LocalTableChangesEntry::insert_collections); referenced here. Used for
+  // WAL-marker emission at Finalize and (future) the RYOW scan overlay.
+  duckdb::ColumnDataCollection* collection = nullptr;
+  duckdb::idx_t insert_count = 0;
+  // Reused per-row PK scratch buffer.
+  std::string pk_buffer;
 };
 
 // CTAS-mode helper: creates the target table (tombstoned) from the bound
@@ -287,50 +316,128 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->pk_columns = duckdb_primary_key::BuildPKColumns(*table);
 
   state->sdb_txn = &conn_ctx;
-  auto& search_shard =
-    basics::downCast<search::SearchTableShard>(*state->table_shard);
-  state->search_trx = &state->sdb_txn->EnsureSearchTransaction(
-    state->table_shard->GetId(), [&] { return search_shard.GetTransaction(); });
+  state->search_shard =
+    &basics::downCast<search::SearchTableShard>(*state->table_shard);
 
   return state;
+}
+
+duckdb::unique_ptr<duckdb::LocalSinkState>
+SereneDBSearchInsert::GetLocalSinkState(
+  duckdb::ExecutionContext& context) const {
+  auto* gstate =
+    sink_state ? &sink_state->Cast<SearchInsertGlobalState>() : nullptr;
+  // Guards the CTAS IF-NOT-EXISTS path where GetGlobalSinkState returned
+  // nullptr: hand back a plain LocalSinkState; Sink/Combine no-op on it.
+  if (gstate == nullptr || gstate->search_shard == nullptr) {
+    return duckdb::make_uniq<duckdb::LocalSinkState>();
+  }
+
+  auto lstate = duckdb::make_uniq<SearchInsertLocalState>();
+  lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
+    gstate->search_shard->GetTransaction());
+  lstate->sink = std::make_unique<SearchTableSinkWriter>(*lstate->search_trx);
+
+  // Register this thread's collection on query::Transaction so it outlives
+  // the local state (read single-threaded at Finalize for marker emission;
+  // future RYOW overlay). unique_ptr keeps the pointer stable across vector
+  // growth.
+  auto collection = std::make_unique<duckdb::ColumnDataCollection>(
+    duckdb::BufferManager::GetBufferManager(context.client),
+    gstate->chunk_types);
+  {
+    std::lock_guard<std::mutex> lock(gstate->combine_mu);
+    auto& entry = gstate->sdb_txn->GetLocalTableChanges()[gstate->table_id];
+    entry.insert_collections.push_back(std::move(collection));
+    lstate->collection = entry.insert_collections.back().get();
+  }
+  return lstate;
 }
 
 duckdb::SinkResultType SereneDBSearchInsert::Sink(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
+  auto* lstate = dynamic_cast<SearchInsertLocalState*>(&input.local_state);
 
   const auto num_rows = chunk.size();
-  if (num_rows == 0) {
+  if (num_rows == 0 || lstate == nullptr || !lstate->sink) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
-  // Append the chunk to the per-(txn, table) buffer. No iresearch write
-  // here: the buffer is drained in Finalize so the per-batch SwitchColumn
-  // / per-row Write loop sees all chunks in one pass against one iresearch
-  // Document.
-  auto& entry = gstate.sdb_txn->GetLocalTableChanges()[gstate.table_id];
-  if (!entry.inserts) {
-    entry.inserts = std::make_unique<duckdb::ColumnDataCollection>(
-      duckdb::BufferManager::GetBufferManager(context.client),
-      gstate.chunk_types);
+  // Write this chunk straight into the thread's own iresearch segment: one
+  // Init/SwitchColumn/Write/Finish cycle per chunk. Init's batch_size must
+  // be the exact row count -- iresearch pre-allocates that many DocContext
+  // slots per Insert(false, batch_size), and the segment's docs_count
+  // reflects the allocation, not the NextDocument calls.
+  auto& sink = *lstate->sink;
+  sink.Init(num_rows);
+  for (duckdb::idx_t col_idx = 0; col_idx < gstate.column_ids.size();
+       ++col_idx) {
+    sink.SwitchColumn(gstate.column_ids[col_idx], gstate.chunk_types[col_idx],
+                      chunk.data[col_idx], num_rows);
   }
 
-  // For generated-PK tables, reserve a contiguous PK range now (in Sink
-  // arrival order) so the per-chunk assignment order matches
-  // duckdb_physical_insert's behaviour even though our row writes don't
-  // happen until Finalize. CDC may consolidate Sink chunks during
-  // iteration, so the ranges are aligned to *Sink arrivals*, not to
-  // Chunks() iteration boundaries; Finalize walks them via a cursor.
-  if (gstate.generated_pk_seq) {
-    auto base = gstate.generated_pk_seq->ReserveWriteUnsafe(num_rows);
-    entry.reserved_pk_ranges.push_back(
-      {base, static_cast<duckdb::idx_t>(num_rows)});
+  // Per-row PK. Explicit-PK reads the key from chunk columns
+  // (pk_columns/pk_formats); generated-PK reserves a contiguous range from
+  // the sequence -- this thread's range is disjoint from every other
+  // thread's because ReserveWriteUnsafe is atomic.
+  std::vector<duckdb::UnifiedVectorFormat> pk_formats;
+  duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
+  const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;
+  const uint64_t pk_base =
+    uses_generated_pk ? gstate.generated_pk_seq->ReserveWriteUnsafe(num_rows)
+                      : 0;
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    const uint64_t generated_pk = uses_generated_pk ? pk_base + row : 0;
+    lstate->pk_buffer.clear();
+    duckdb_primary_key::MakeColumnKey(
+      pk_formats, gstate.pk_columns, row, generated_pk, gstate.table_key,
+      [](std::string_view) {}, lstate->pk_buffer);
+    // The PK field indexes only the row-key portion (bytes after the
+    // table_id + column_id prefix); pass it directly.
+    sink.Write(key_utils::ExtractRowKey(lstate->pk_buffer));
   }
-  entry.inserts->Append(chunk);
-
-  gstate.insert_count += num_rows;
+  sink.Finish();
+  // Retain the chunk in this thread's collection for WAL-marker emission at
+  // Finalize (and future RYOW). Lock-free -- the collection is this thread's.
+  lstate->collection->Append(chunk);
+  lstate->insert_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;
+}
+
+duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
+  duckdb::ExecutionContext& /*context*/,
+  duckdb::OperatorSinkCombineInput& input) const {
+  auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
+  auto* lstate = dynamic_cast<SearchInsertLocalState*>(&input.local_state);
+  if (lstate == nullptr || !lstate->search_trx) {
+    return duckdb::SinkCombineResultType::FINISHED;
+  }
+
+  // The writer holds a reference to search_trx -- destroy it first (its
+  // Document was already released by the last Sink's Finish).
+  lstate->sink.reset();
+
+  // A thread that received no rows has an empty transaction (no segment was
+  // ever acquired). Discard it instead of handing it off: destructing it is
+  // a no-op (mirrors CREATE INDEX's unconditional reset of per-thread trxs),
+  // and its empty collection is skipped at Finalize. Only segments that hold
+  // rows are committed on tick.
+  if (lstate->insert_count == 0) {
+    lstate->search_trx.reset();
+    return duckdb::SinkCombineResultType::FINISHED;
+  }
+
+  // Hand the populated segment to query::Transaction. We do NOT commit it
+  // here: the commit-on-tick (Commit(post_commit_seq)) happens in
+  // Transaction::Commit. Letting the destructor auto-commit would advance
+  // the writer's internal _tick and assign an unrelated tick, breaking the
+  // single-RefreshCommit-publishes-all-segments invariant.
+  std::lock_guard<std::mutex> lock(gstate.combine_mu);
+  gstate.insert_count += lstate->insert_count;
+  gstate.sdb_txn->AddParallelSearchTransaction(std::move(lstate->search_trx));
+  return duckdb::SinkCombineResultType::FINISHED;
 }
 
 duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
@@ -344,102 +451,31 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
     return duckdb::SinkFinalizeType::READY;
   }
 
-  auto it = gstate.sdb_txn->GetLocalTableChanges().find(gstate.table_id);
-  SDB_ASSERT(it != gstate.sdb_txn->GetLocalTableChanges().end() &&
-             it->second.inserts);
-  auto& buffer = *it->second.inserts;
-  auto& reserved_ranges = it->second.reserved_pk_ranges;
-
-  // Generated-PK cursor: walks the per-Sink-call reservations as we
-  // iterate buffer rows. The reservations were pushed in Sink-arrival
-  // order; CDC may consolidate Sink chunks into different sizes during
-  // Chunks() iteration, so we can't 1:1-align chunks and ranges --
-  // instead advance the cursor row-by-row through the flat range list.
-  // Unused for explicit-PK tables (reserved_ranges is empty).
-  const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;
-  SDB_ASSERT(!uses_generated_pk ||
-             !reserved_ranges.empty() == (gstate.insert_count > 0));
-  size_t range_idx = 0;
-  duckdb::idx_t row_in_range = 0;
-
-  // Drain the buffer through the sink: per-chunk Init/Finish cycle, with
-  // one SwitchColumn per column + one per-row PK Write between them.
+  // The iresearch writes already happened in the parallel Sink phase; the
+  // per-thread trxs were handed to query::Transaction at Combine and are
+  // committed on the shared tick by query::Transaction::Commit. All Combines
+  // have run (event-DAG barrier), so every per-thread collection is
+  // registered and fully populated.
   //
-  // Init's batch_size is the *exact* row count for the upcoming chunk:
-  // iresearch's Transaction::Insert(false, batch_size) pre-allocates that
-  // many DocContext slots in the segment, and the segment's docs_count
-  // reflects the allocation, not the number of NextDocument calls
-  // (over-allocation by N leaves the segment claiming N extra docs with
-  // no columnstore data behind them). Using STANDARD_VECTOR_SIZE once
-  // across all chunks produced docs_count=2048 with 3 row of cs data
-  // before this was fixed.
-  SearchTableSinkWriter sink{*gstate.search_trx};
-
-  // Reusable per-row PK buffer. Per-chunk PK formats prepared each
-  // iteration (Vector::Reference inside the chunk iterator -- the formats
-  // are bound to that vector's underlying buffer).
-  std::string pk_buffer;
-
-  for (auto& chunk : buffer.Chunks()) {
-    const auto num_rows = chunk.size();
-    if (num_rows == 0) {
-      continue;
-    }
-
-    sink.Init(num_rows);
-
-    // SwitchColumn per input column: opens (or reuses) the columnstore
-    // writer for the column and batch-appends the Vector.
-    for (duckdb::idx_t col_idx = 0; col_idx < gstate.column_ids.size();
-         ++col_idx) {
-      sink.SwitchColumn(gstate.column_ids[col_idx], gstate.chunk_types[col_idx],
-                        chunk.data[col_idx], num_rows);
-    }
-
-    // Per-row PK injection. For explicit-PK tables, MakeColumnKey reads
-    // the PK from chunk columns via pk_columns/pk_formats; generated_pk
-    // arg is ignored. For generated-PK tables, pk_columns is empty and
-    // generated_pk supplies the row's PK -- pulled from the cursor walk
-    // over reserved_ranges (advanced one slot per row).
-    std::vector<duckdb::UnifiedVectorFormat> pk_formats;
-    duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      uint64_t generated_pk = 0;
-      if (uses_generated_pk) {
-        while (range_idx < reserved_ranges.size() &&
-               row_in_range >= reserved_ranges[range_idx].count) {
-          ++range_idx;
-          row_in_range = 0;
-        }
-        SDB_ASSERT(range_idx < reserved_ranges.size(),
-                   "reserved_pk_ranges exhausted before buffer rows did "
-                   "-- Sink/Finalize accounting bug");
-        generated_pk = reserved_ranges[range_idx].base + row_in_range;
-        ++row_in_range;
+  // Emit the WAL marker(s) here, single-threaded: PutLogData mutates the
+  // shared rocksdb WriteBatch and is NOT concurrency-safe, so marker
+  // emission must stay out of the parallel Sink phase. One marker set per
+  // per-thread collection (EmitInsertsForBuffer picks CDC vs per-chunk by
+  // size); recovery replays them and re-feeds the rows into iresearch.
+  auto& local_changes = gstate.sdb_txn->GetLocalTableChanges();
+  auto it = local_changes.find(gstate.table_id);
+  if (it != local_changes.end()) {
+    for (auto& collection : it->second.insert_collections) {
+      if (collection && collection->Count() > 0) {
+        search_table_marker::EmitInsertsForBuffer(
+          *gstate.sdb_txn, gstate.table_id, gstate.column_ids, *collection);
       }
-      pk_buffer.clear();
-      duckdb_primary_key::MakeColumnKey(
-        pk_formats, gstate.pk_columns, row, generated_pk, gstate.table_key,
-        [](std::string_view) {}, pk_buffer);
-      // The sink's PK field indexes only the row-key portion (the bytes
-      // after the table_id + column_id prefix); pass it directly.
-      sink.Write(key_utils::ExtractRowKey(pk_buffer));
     }
-
-    sink.Finish();
+    // Collections consumed; drop them so a later statement in the same txn
+    // starts fresh. (RYOW would instead retain them with an emitted
+    // watermark; deferred.)
+    local_changes.erase(it);
   }
-
-  // Emit the buffer as WAL marker(s) -- one CDC marker below the split
-  // threshold, per-chunk markers above. EmitInsertsForBuffer rides the
-  // markers into the sdb_txn's rocksdb WriteBatch via PutLogData; the
-  // iresearch trx is committed later by query::Transaction::Commit (same
-  // path InvertedIndexShard's trxs go through).
-  search_table_marker::EmitInsertsForBuffer(*gstate.sdb_txn, gstate.table_id,
-                                            gstate.column_ids, buffer);
-
-  // Buffer is consumed; drop it so concurrent / subsequent statements in
-  // the same txn see a fresh entry.
-  gstate.sdb_txn->GetLocalTableChanges().erase(it);
 
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.UpdateNumRows(gstate.table_id, gstate.insert_count);

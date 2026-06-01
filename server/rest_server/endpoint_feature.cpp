@@ -21,6 +21,8 @@
 
 #include "endpoint_feature.h"
 
+#include <sys/socket.h>
+
 #include <absl/flags/flag.h>
 
 #include "app/app_server.h"

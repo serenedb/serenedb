@@ -13,7 +13,6 @@ add_executable(
     http_request_test.cpp
     error_test.cpp
     build_id_test.cpp
-    datetime.cpp
     files_test.cpp
     fp_conv_test.cpp
     hashes_test.cpp
@@ -21,7 +20,6 @@ add_executable(
     size_limited_string_test.cpp
     string_utf8_normalize_test.cpp
     string_utf8_test.cpp
-    cpu_usage_snapshot_test.cpp
     encoding_utils_test.cpp
     number_utils_test.cpp
     random_test.cpp

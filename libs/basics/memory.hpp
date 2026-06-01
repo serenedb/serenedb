@@ -40,9 +40,6 @@ constexpr size_t AlignUp(size_t size, size_t alignment) noexcept {
   return (size + alignment - 1) & (0 - alignment);
 }
 
-// Dump memory statistics and stack trace to stderr
-void DumpMemStatsTrace() noexcept;
-
 template<typename Alloc>
 class AllocatorDeallocator {
  public:

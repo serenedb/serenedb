@@ -28,13 +28,6 @@
 #include "basics/common.h"
 #include "basics/operating-system.h"
 
-#ifdef SERENEDB_HAVE_WINSOCK2_H
-#include <WS2tcpip.h>
-#include <WinSock2.h>
-#endif
-
-#include "basics/socket-utils.h"
-
 namespace sdb {
 
 inline constexpr std::string_view kPgSql = "pgsql+";

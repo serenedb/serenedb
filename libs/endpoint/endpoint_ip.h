@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include <sys/socket.h>
+
 #include <cstdint>
 #include <string>
 

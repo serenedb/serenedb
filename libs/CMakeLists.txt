@@ -19,7 +19,6 @@ add_library(
     basics/file_result.cpp
     basics/file_utils.cpp
     basics/number_of_cores.cpp
-    basics/page_size.cpp
     basics/physical_memory.cpp
     basics/read_write_lock.cpp
     basics/result.cpp
@@ -33,20 +32,12 @@ add_library(
     basics/error.cpp
     basics/files.cpp
     basics/levenshtein.cpp
-    basics/memory.cpp
     basics/signals.cpp
     basics/system-functions.cpp
-    basics/terminal-utils-posix.cpp
     basics/strings.cpp
-    basics/zip.cpp
-    basics/datetime.cpp
     basics/hashes.cpp
     basics/utf8_helper.cpp
-    basics/cpu_usage_snapshot.cpp
-    basics/file_descriptors.cpp
     basics/hybrid_logical_clock.cpp
-    basics/socket-utils.cpp
-    basics/terminal-utils.cpp
     basics/thread_utils.cpp
     basics/async_utils.cpp
     basics/dtoa.cpp
@@ -55,7 +46,6 @@ add_library(
     basics/file_utils_ext.cpp
     basics/process_utils.cpp
     basics/network_utils.cpp
-    basics/memory.cpp
     basics/crash_handler.cpp
     basics/units_helper.cpp
     basics/random/random_generator.cpp
@@ -106,7 +96,6 @@ target_link_libraries(
         zlib
         icu
         lz4_static
-        minizip
         serene_build_id
         # The SDB_* logger hot path forwards directly to duckdb::Logger
         # virtuals; we need duckdb's headers (and the Logger vtable) at

@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include <sys/socket.h>
+
 #include <cstring>
 
 #include "basics/common.h"

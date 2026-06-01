@@ -39,12 +39,12 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <duckdb/logging/logging.hpp>
 #include <string>
 #include <string_view>
 
 #include "basics/application-exit.h"
 #include "basics/containers/flat_hash_set.h"
-#include "basics/logger/log_level.h"
 #include "basics/logger/topic.h"
 
 namespace duckdb {
@@ -54,105 +54,91 @@ class Logger;
 
 namespace sdb::log {
 
-// ---- runtime configuration ------------------------------------------------
-
-// Translate between string spelling and the LogLevel enum. Kept because the
-// gtest entry-point still parses a `--log-level <name>` flag.
-LogLevel TranslateLogLevel(std::string_view name) noexcept;
-std::string_view TranslateLogLevel(LogLevel level) noexcept;
-
-// ---- duckdb::Logger installation (called by DuckDBEngine) ----------------
-
 // Install the duckdb::Logger that all SDB_* sites will dispatch through.
-// Called once from DuckDBEngine::Initialize() (via InstallLogManagerSink)
-// and once with nullptr from DuckDBEngine::Shutdown() (via
-// UninstallLogManagerSink). Both calls run on the main thread before /
+// Called once from DuckDBEngine::Initialize() and once with nullptr from
+// DuckDBEngine::Shutdown(). Both calls run on the main thread before /
 // after every worker thread; no atomic / acquire-release.
 void SetLogger(duckdb::Logger* logger) noexcept;
 
-// ---- entry points ---------------------------------------------------------
-
 // Forward to duckdb::Logger::WriteLog. Requires gLogger to be installed --
 // see the contract at the top of the file. Never throws.
-void Log(LogLevel level, std::string_view topic,
+void Log(duckdb::LogLevel level, std::string_view topic,
          const std::string& message) noexcept;
 
 // Async-signal-safe stderr write. write(2) only -- no heap, no LogManager
 // lookup, no atomic. Used by the crash handler / signal handler /
 // assertionFailure. Safe to call BEFORE DuckDBEngine::Initialize() and
 // AFTER DuckDBEngine::Shutdown(), because it does not touch gLogger.
-void LogCrash(LogLevel level, std::string_view message) noexcept;
+void LogCrash(duckdb::LogLevel level, std::string_view message) noexcept;
 
 // Forward to duckdb::Logger::ShouldLog. Requires gLogger to be installed.
-bool IsEnabled(LogLevel level, std::string_view topic) noexcept;
+bool IsEnabled(duckdb::LogLevel level, std::string_view topic) noexcept;
 
 }  // namespace sdb::log
 
 // ---- macros ---------------------------------------------------------------
 
-#define SDB_LOG_INTERNAL(LEVEL_TAG, TOPIC, ...)                       \
-  do {                                                                \
-    constexpr ::sdb::LogLevel kSdbLevel = ::sdb::LogLevel::LEVEL_TAG; \
-    if (::sdb::log::IsEnabled(kSdbLevel, ::sdb::log::TOPIC)) {        \
-      ::sdb::log::Log(kSdbLevel, ::sdb::log::TOPIC,                   \
-                      ::absl::StrCat(__VA_ARGS__));                   \
-    }                                                                 \
+#define SDB_LOG_INTERNAL(LEVEL, TOPIC, ...)                       \
+  do {                                                            \
+    constexpr ::duckdb::LogLevel kSdbLevel = (LEVEL);             \
+    if (::sdb::log::IsEnabled(kSdbLevel, ::sdb::log::TOPIC)) {    \
+      ::sdb::log::Log(kSdbLevel, ::sdb::log::TOPIC,               \
+                      ::absl::StrCat(__VA_ARGS__));               \
+    }                                                             \
   } while (0)
 
-#define SDB_LOG_INTERNAL_IF(LEVEL_TAG, TOPIC, COND, ...) \
-  do {                                                   \
-    if ((COND)) {                                        \
-      SDB_LOG_INTERNAL(LEVEL_TAG, TOPIC, __VA_ARGS__);   \
-    }                                                    \
+#define SDB_LOG_INTERNAL_IF(LEVEL, TOPIC, COND, ...) \
+  do {                                               \
+    if ((COND)) {                                    \
+      SDB_LOG_INTERNAL(LEVEL, TOPIC, __VA_ARGS__);   \
+    }                                                \
   } while (0)
 
-#define SDB_TRACE(TOPIC, ...) SDB_LOG_INTERNAL(TRACE, TOPIC, __VA_ARGS__)
-#define SDB_DEBUG(TOPIC, ...) SDB_LOG_INTERNAL(DEB, TOPIC, __VA_ARGS__)
-#define SDB_INFO(TOPIC, ...) SDB_LOG_INTERNAL(INFO, TOPIC, __VA_ARGS__)
-#define SDB_WARN(TOPIC, ...) SDB_LOG_INTERNAL(WARN, TOPIC, __VA_ARGS__)
-#define SDB_ERROR(TOPIC, ...) SDB_LOG_INTERNAL(ERR, TOPIC, __VA_ARGS__)
+#define SDB_TRACE(TOPIC, ...) \
+  SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_TRACE, TOPIC, __VA_ARGS__)
+#define SDB_DEBUG(TOPIC, ...) \
+  SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_DEBUG, TOPIC, __VA_ARGS__)
+#define SDB_INFO(TOPIC, ...) \
+  SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_INFO, TOPIC, __VA_ARGS__)
+#define SDB_WARN(TOPIC, ...) \
+  SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_WARNING, TOPIC, __VA_ARGS__)
+#define SDB_ERROR(TOPIC, ...) \
+  SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_ERROR, TOPIC, __VA_ARGS__)
 
-#define SDB_FATAL(TOPIC, ...)                    \
-  do {                                           \
-    SDB_LOG_INTERNAL(FATAL, TOPIC, __VA_ARGS__); \
-    ::sdb::FatalErrorExit();                     \
+#define SDB_FATAL(TOPIC, ...)                                              \
+  do {                                                                     \
+    SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_FATAL, TOPIC, __VA_ARGS__);   \
+    ::sdb::FatalErrorExit();                                               \
   } while (0)
 
-#define SDB_FATAL_EXIT_CODE(TOPIC, CODE, ...)    \
-  do {                                           \
-    SDB_LOG_INTERNAL(FATAL, TOPIC, __VA_ARGS__); \
-    ::sdb::FatalErrorExitCode(CODE);             \
+#define SDB_FATAL_EXIT_CODE(TOPIC, CODE, ...)                              \
+  do {                                                                     \
+    SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_FATAL, TOPIC, __VA_ARGS__);   \
+    ::sdb::FatalErrorExitCode(CODE);                                       \
   } while (0)
-
-// Generic (level supplied by caller). LEVEL_TAG must be one of TRACE/DEB/
-// INFO/WARN/ERR/FATAL -- the symbolic part of `LogLevel::LEVEL_TAG`.
-#define SDB_LOG(LEVEL_TAG, TOPIC, ...) \
-  SDB_LOG_INTERNAL(LEVEL_TAG, TOPIC, __VA_ARGS__)
-#define SDB_LOG_IF(LEVEL_TAG, TOPIC, COND, ...) \
-  SDB_LOG_INTERNAL_IF(LEVEL_TAG, TOPIC, COND, __VA_ARGS__)
 
 #define SDB_TRACE_IF(TOPIC, COND, ...) \
-  SDB_LOG_INTERNAL_IF(TRACE, TOPIC, COND, __VA_ARGS__)
+  SDB_LOG_INTERNAL_IF(::duckdb::LogLevel::LOG_TRACE, TOPIC, COND, __VA_ARGS__)
 #define SDB_DEBUG_IF(TOPIC, COND, ...) \
-  SDB_LOG_INTERNAL_IF(DEB, TOPIC, COND, __VA_ARGS__)
+  SDB_LOG_INTERNAL_IF(::duckdb::LogLevel::LOG_DEBUG, TOPIC, COND, __VA_ARGS__)
 #define SDB_INFO_IF(TOPIC, COND, ...) \
-  SDB_LOG_INTERNAL_IF(INFO, TOPIC, COND, __VA_ARGS__)
+  SDB_LOG_INTERNAL_IF(::duckdb::LogLevel::LOG_INFO, TOPIC, COND, __VA_ARGS__)
 #define SDB_WARN_IF(TOPIC, COND, ...) \
-  SDB_LOG_INTERNAL_IF(WARN, TOPIC, COND, __VA_ARGS__)
+  SDB_LOG_INTERNAL_IF(::duckdb::LogLevel::LOG_WARNING, TOPIC, COND, __VA_ARGS__)
 #define SDB_ERROR_IF(TOPIC, COND, ...) \
-  SDB_LOG_INTERNAL_IF(ERR, TOPIC, COND, __VA_ARGS__)
-#define SDB_FATAL_IF(TOPIC, COND, ...)             \
-  do {                                             \
-    if ((COND)) {                                  \
-      SDB_LOG_INTERNAL(FATAL, TOPIC, __VA_ARGS__); \
-      ::sdb::FatalErrorExit();                     \
-    }                                              \
+  SDB_LOG_INTERNAL_IF(::duckdb::LogLevel::LOG_ERROR, TOPIC, COND, __VA_ARGS__)
+#define SDB_FATAL_IF(TOPIC, COND, ...)                                       \
+  do {                                                                       \
+    if ((COND)) {                                                            \
+      SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_FATAL, TOPIC, __VA_ARGS__);   \
+      ::sdb::FatalErrorExit();                                               \
+    }                                                                        \
   } while (0)
 
 #ifdef SDB_DEV
-#define SDB_PRINT_LEVEL ERR
+#define SDB_PRINT_LEVEL ::duckdb::LogLevel::LOG_ERROR
 #else
-#define SDB_PRINT_LEVEL TRACE
+#define SDB_PRINT_LEVEL ::duckdb::LogLevel::LOG_TRACE
 #endif
 
 #define SDB_PRINT(...) \

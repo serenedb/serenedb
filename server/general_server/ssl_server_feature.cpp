@@ -53,7 +53,6 @@ ABSL_FLAG(std::string, ssl_cipher_list, "",
 #include "basics/application-exit.h"
 #include "basics/file_utils.h"
 #include "basics/files.h"
-#include "basics/logger/log_level.h"
 #include "basics/logger/logger.h"
 #include "basics/random/uniform_character.h"
 #include "basics/ssl/ssl_helper.h"
@@ -263,7 +262,7 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
         throw std::runtime_error("cannot create SSL context");
       }
 
-      if (log::IsEnabled(sdb::LogLevel::TRACE, log::SSL)) {
+      if (log::IsEnabled(duckdb::LogLevel::LOG_TRACE, log::SSL)) {
         for (int i = 0; i < sk_X509_NAME_num(cert_names); ++i) {
           X509_NAME* cert = sk_X509_NAME_value(cert_names, i);
 

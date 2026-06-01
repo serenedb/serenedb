@@ -20,8 +20,11 @@
 
 #include "basics/duckdb_engine.h"
 
+#include <duckdb/logging/log_manager.hpp>
+#include <duckdb/logging/logger.hpp>
+
 #include "basics/assert.h"
-#include "basics/logger/log_types.h"
+#include "basics/logger/logger.h"
 
 namespace sdb {
 
@@ -47,16 +50,23 @@ void DuckDBEngine::Initialize(DBConfigMutator mutator) {
 
   _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
 
-  // Wire sdb::log into duckdb::LogManager. After this call every SDB_*
-  // macro dispatches through LogManager.
-  log::InstallLogManagerSink(*_db->instance);
+  // DatabaseInstance::Configure seeds the LogManager with LogConfig() which
+  // has enabled=false; flip enabled on so SDB_* (and duckdb's own log sites)
+  // fire by default. Everything else (level, mode, storage) keeps duckdb's
+  // defaults. No type pre-registration -- duckdb accepts arbitrary topic
+  // strings and gates them via cfg.level alone.
+  auto& manager = _db->instance->GetLogManager();
+  duckdb::LogConfig cfg;
+  cfg.enabled = true;
+  manager.SetConfig(*_db->instance, cfg);
+  log::SetLogger(&manager.GlobalLogger());
 }
 
 void DuckDBEngine::Shutdown() {
-  // Detach the logger sink BEFORE destroying the DuckDB; any late log
-  // line during teardown of duckdb internals would otherwise chase a
-  // freed LogManager.
-  log::UninstallLogManagerSink();
+  // Detach the logger pointer BEFORE destroying the DuckDB; any late log
+  // line during teardown of duckdb internals would otherwise chase a freed
+  // LogManager.
+  log::SetLogger(nullptr);
   _db.reset();
 }
 

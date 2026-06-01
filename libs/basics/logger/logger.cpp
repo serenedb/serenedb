@@ -20,21 +20,19 @@
 
 #include "basics/logger/logger.h"
 
-#include <absl/strings/ascii.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <cstring>
 #include <duckdb/logging/logger.hpp>
-#include <duckdb/logging/logging.hpp>
 
 namespace sdb::log {
 namespace {
 
 // Active duckdb::Logger. Set ONCE by SetLogger() from
-// DuckDBEngine::Initialize -> InstallLogManagerSink at the very top of
-// the process, cleared ONCE by UninstallLogManagerSink() at the very
-// bottom. Both writes are single-threaded -- no atomic / acquire-release.
+// DuckDBEngine::Initialize at the very top of the process, cleared ONCE by
+// DuckDBEngine::Shutdown at the very bottom. Both writes are single-threaded
+// -- no atomic / acquire-release.
 //
 // Contract (see logger.h): every binary that uses SDB_* must call
 // DuckDBEngine::Initialize() before any SDB_* macro fires and
@@ -43,97 +41,45 @@ namespace {
 // dereference in Log() / IsEnabled() is UB -- by design.
 duckdb::Logger* gLogger = nullptr;
 
-constexpr std::string_view LevelTag(LogLevel l) noexcept {
+constexpr std::string_view LevelTag(duckdb::LogLevel l) noexcept {
   switch (l) {
-    case LogLevel::FATAL:
+    case duckdb::LogLevel::LOG_FATAL:
       return "FATAL";
-    case LogLevel::ERR:
+    case duckdb::LogLevel::LOG_ERROR:
       return "ERROR";
-    case LogLevel::WARN:
+    case duckdb::LogLevel::LOG_WARNING:
       return "WARNING";
-    case LogLevel::INFO:
+    case duckdb::LogLevel::LOG_INFO:
       return "INFO";
-    case LogLevel::DEB:
+    case duckdb::LogLevel::LOG_DEBUG:
       return "DEBUG";
-    case LogLevel::TRACE:
+    case duckdb::LogLevel::LOG_TRACE:
       return "TRACE";
-    case LogLevel::DEFAULT:
-      return "DEFAULT";
   }
   return "?";
 }
 
-constexpr duckdb::LogLevel ToDuckLevel(LogLevel level) noexcept {
-  switch (level) {
-    case LogLevel::FATAL:
-      return duckdb::LogLevel::LOG_FATAL;
-    case LogLevel::ERR:
-      return duckdb::LogLevel::LOG_ERROR;
-    case LogLevel::WARN:
-      return duckdb::LogLevel::LOG_WARNING;
-    case LogLevel::INFO:
-      return duckdb::LogLevel::LOG_INFO;
-    case LogLevel::DEB:
-      return duckdb::LogLevel::LOG_DEBUG;
-    case LogLevel::TRACE:
-      return duckdb::LogLevel::LOG_TRACE;
-    case LogLevel::DEFAULT:
-      return duckdb::LogLevel::LOG_INFO;
-  }
-  return duckdb::LogLevel::LOG_INFO;
-}
-
 }  // namespace
-
-LogLevel TranslateLogLevel(std::string_view name) noexcept {
-  auto lower = absl::AsciiStrToLower(name);
-  if (lower == "trace") {
-    return LogLevel::TRACE;
-  }
-  if (lower == "debug") {
-    return LogLevel::DEB;
-  }
-  if (lower == "info") {
-    return LogLevel::INFO;
-  }
-  if (lower == "warning" || lower == "warn") {
-    return LogLevel::WARN;
-  }
-  if (lower == "error" || lower == "err") {
-    return LogLevel::ERR;
-  }
-  if (lower == "fatal") {
-    return LogLevel::FATAL;
-  }
-  if (lower == "default") {
-    return LogLevel::DEFAULT;
-  }
-  return LogLevel::INFO;
-}
-
-std::string_view TranslateLogLevel(LogLevel level) noexcept {
-  return LevelTag(level);
-}
 
 void SetLogger(duckdb::Logger* logger) noexcept { gLogger = logger; }
 
-bool IsEnabled(LogLevel level, std::string_view topic) noexcept {
+bool IsEnabled(duckdb::LogLevel level, std::string_view topic) noexcept {
   // Every topic constant in topic.h is initialized from a string literal
   // (.data() is NUL-terminated, see invariant in topic.h).
-  return gLogger->ShouldLog(topic.data(), ToDuckLevel(level));
+  return gLogger->ShouldLog(topic.data(), level);
 }
 
-void Log(LogLevel level, std::string_view topic,
+void Log(duckdb::LogLevel level, std::string_view topic,
          const std::string& message) noexcept try {
   // .data() is NUL-terminated per the topic.h invariant; .c_str() is
   // free on the rvalue std::string that absl::StrCat() produces.
-  gLogger->WriteLog(topic.data(), ToDuckLevel(level), message.c_str());
+  gLogger->WriteLog(topic.data(), level, message.c_str());
 } catch (...) {
   // duckdb's writer may throw on backing-store errors. Logging itself
   // must never propagate.
 }
 
-void LogCrash(LogLevel level, std::string_view message) noexcept {
+void LogCrash(duckdb::LogLevel level, std::string_view message) noexcept {
   // Async-signal-safe path: stack buffer + write(2). No heap, no mutex,
   // no LogManager lookup. Truncates at 4KiB minus the trailing newline.
   constexpr size_t kBufCap = 4096;

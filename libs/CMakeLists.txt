@@ -57,7 +57,6 @@ add_library(
     basics/message_chunk.cpp
     basics/message_sequence_view.cpp
     basics/duckdb_engine.cpp
-    basics/logger/log_types.cpp
 )
 
 set(FUNCTION2_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/function2")

@@ -30,6 +30,7 @@
 #include <utility>
 
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/logger/logger.h"
 
 #ifdef SDB_FAULT_INJECTION

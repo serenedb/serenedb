@@ -31,7 +31,6 @@
 
 #include <string_view>
 
-#include "basics/logger/log_level.h"
 #include "basics/logger/logger.h"
 #include "collation_tokenizer_encoder.hpp"
 #include "iresearch/utils/vpack_utils.hpp"

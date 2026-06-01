@@ -26,9 +26,9 @@
 namespace sdb {
 
 // Process-wide duckdb::DuckDB owner. Owns the single duckdb::DuckDB that
-// every SDB_* call dispatches through (after InstallLogManagerSink wires
-// the LogManager) and that connector/catalog/pg code holds CreateConnection
-// handles to.
+// every SDB_* call dispatches through (Initialize installs the GlobalLogger
+// pointer on sdb::log) and that connector/catalog/pg code holds
+// CreateConnection handles to.
 //
 // Lifecycle is bracketed by Initialize() / Shutdown() at the very edges of
 // the process:

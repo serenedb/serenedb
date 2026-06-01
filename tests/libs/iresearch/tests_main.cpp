@@ -27,7 +27,6 @@
 #include <utility>
 
 #include "basics/application-exit.h"
-#include "basics/logger/log_level.h"
 #include "basics/runtime_utils.hpp"
 #include "iresearch/search/scorers.hpp"
 
@@ -79,7 +78,6 @@ struct IterationTracker final : ::testing::Environment {
 uint32_t IterationTracker::gSIteration = (std::numeric_limits<uint32_t>::max)();
 
 const std::string kIresHelp("help");
-const std::string kIresLogLevel("ires_log_level");
 const std::string kIresLogStack("ires_log_stack");
 const std::string kIresOutput("ires_output");
 const std::string kIresOutputPath("ires_output_path");
@@ -191,11 +189,6 @@ void TestEnv::make_directories() {
 
 void TestEnv::parse_command_line(cmdline::parser& cmd) {
   cmd.add(kIresHelp, '?', "print this message");
-  cmd.add(kIresLogLevel, 0,
-          "threshold log level <FATAL|ERROR|WARN|INFO|DEBUG|TRACE>", false,
-          std::to_underlying(sdb::LogLevel::FATAL), [](std::string_view s) {
-            return std::to_underlying(sdb::log::TranslateLogLevel(s));
-          });
   cmd.add(kIresLogStack, 0, "always log stack trace", false, false);
   cmd.add(kIresOutput, 0, "generate an XML report");
   cmd.add(kIresOutputPath, 0, "output directory", false, gOutDir.string());

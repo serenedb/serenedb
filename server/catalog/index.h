@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "basics/containers/flat_hash_set.h"
 #include "catalog/object.h"
 #include "catalog/scorer_options.h"
 #include "catalog/table_options.h"

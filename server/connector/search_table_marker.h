@@ -73,7 +73,7 @@ namespace sdb::connector::search_table_marker {
 // Above this AllocationSize, switch from one CDC marker to per-chunk
 // markers. Arbitrary upper bound on transient commit-time memory per
 // marker; may become a session/instance setting later.
-inline constexpr size_t kSplitThreshold = 64 * 1024 * 1024;
+inline constexpr size_t kSplitThreshold = 2 * 1024 * 1024;
 
 namespace detail {
 

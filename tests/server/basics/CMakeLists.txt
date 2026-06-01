@@ -7,7 +7,6 @@ add_executable(
     # Custom main (NOT gtest_main): brings up DuckDBEngine before any
     # SDB_* macro fires -- see tests_main.cpp comment.
     tests_main.cpp
-    conversions_test.cpp
     endian_test.cpp
     assertions_tests.cpp
     http_request_test.cpp
@@ -18,7 +17,6 @@ add_executable(
     hybrid_logical_clock_test.cpp
     size_limited_string_test.cpp
     string_utf8_normalize_test.cpp
-    string_utf8_test.cpp
     encoding_utils_test.cpp
     number_utils_test.cpp
     random_test.cpp

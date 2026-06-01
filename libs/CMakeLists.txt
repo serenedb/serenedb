@@ -35,7 +35,6 @@ add_library(
     basics/lockfile.cpp
     basics/signals.cpp
     basics/system-functions.cpp
-    basics/strings.cpp
     basics/hashes.cpp
     basics/utf8_helper.cpp
     basics/hybrid_logical_clock.cpp

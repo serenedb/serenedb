@@ -21,7 +21,6 @@
 
 #include "basics/common.h"
 #include "basics/directories.h"
-#include "basics/strings.h"
 #include "basics/utf8_helper.h"
 #include "gtest/gtest.h"
 #include "icu-helper.h"
@@ -68,5 +67,5 @@ TEST(CNormalizeStringTest, tst_1) {
   size_t l2 = strlen(result);
   EXPECT_TRUE(l1 == l2);
   EXPECT_TRUE(std::string((char*)kComposed, l1) == std::string(result, l2));
-  FreeString(result);
+  delete[] result;
 }

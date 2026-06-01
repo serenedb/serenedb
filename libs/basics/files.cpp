@@ -32,7 +32,6 @@
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "basics/operating-system.h"
-#include "basics/strings.h"
 #include "basics/string_utils.h"
 
 namespace sdb {

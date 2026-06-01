@@ -51,9 +51,8 @@ inline constexpr ObjectId kSystemDB{kMinSystem.id() + 2};
 inline constexpr ObjectId kPgCatalogSchema{11};
 inline constexpr ObjectId kPgInformationSchema{kMinSystem.id() + 3};
 
-// Types IDs
-inline constexpr ObjectId kCustomOidBase{kMinSystem.id() + 100};
-inline constexpr ObjectId kCustomOidMax{kMinSystem.id() + 200};
+// Type IDs
+inline constexpr ObjectId kVariant{kMinSystem.id() + 100};
 
 }  // namespace id
 }  // namespace sdb

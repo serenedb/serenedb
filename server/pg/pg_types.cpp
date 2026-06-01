@@ -380,9 +380,8 @@ std::string RegtypeOut(uint64_t oid) {
     SDB_REGTYPE_OUT(kPgBrinBloomSummary, "pg_brin_bloom_summary")
     SDB_REGTYPE_OUT(kPgBrinMinmaxMultiSummary, "pg_brin_minmax_multi_summary")
     SDB_REGTYPE_WITH_ARRAY_OUT(kVariant, "variant")
-    default:
-      return absl::StrCat(oid);
   }
+  return absl::StrCat(oid);
 }
 
 uint64_t RegtypeIn(std::string_view name) {

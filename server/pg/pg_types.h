@@ -241,12 +241,9 @@ enum PgTypeOID : int32_t {
   kAnycompatiblemultirange = 4538,
   kPgBrinBloomSummary = 4600,
   kPgBrinMinmaxMultiSummary = 4601,
-  kVariant = id::kCustomOidBase.id(),
+  kVariant = id::kVariant.id(),
   kVariantArray,
-  kMaxPgTypeOID,
 };
-
-static_assert(kMaxPgTypeOID < id::kCustomOidMax.id());
 
 int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array = false);
 duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot);

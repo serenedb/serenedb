@@ -61,8 +61,9 @@
 #include <process.h>  // _getpid
 #include <tlhelp32.h>
 #else
-#include <csignal>
 #include <unistd.h>  // getpid
+
+#include <csignal>
 #endif
 
 #include <cstdlib>
@@ -106,7 +107,6 @@ bool IsValidPid(const char* buf) {
 }
 
 }  // namespace irs
-
 namespace {
 
 #ifdef _WIN32

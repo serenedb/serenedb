@@ -31,7 +31,6 @@ target_sources(
         serialize.cpp
         system_catalog.cpp
         progress_tracker.cpp
-        sdb_catalog/sdb_log.cpp
         sql_utils.cpp
         option_help.cpp
         tokenizer_options.cpp

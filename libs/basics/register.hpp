@@ -24,13 +24,12 @@
 
 #include <absl/container/node_hash_map.h>
 #include <absl/strings/str_cat.h>
+#include <dlfcn.h>
 
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
-
-#include <dlfcn.h>
 
 #include "basics/containers/node_hash_map.h"
 #include "basics/logger/logger.h"
@@ -112,8 +111,8 @@ class GenericRegister : public Singleton<RegisterType> {
     {
       std::lock_guard lock(_mutex);
 
-      this_ptr->_so_handles.emplace_back(
-        handle, [](void* h) -> void { ::dlclose(h); });
+      this_ptr->_so_handles.emplace_back(handle,
+                                         [](void* h) -> void { ::dlclose(h); });
     }
 
     if (!this_ptr->add_so_handle(handle)) {

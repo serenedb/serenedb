@@ -21,10 +21,10 @@
 
 #include "rocksdb_engine_catalog.h"
 
-#include <absl/time/clock.h>
-#include <absl/time/time.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 #include <rocksdb/advanced_cache.h>
 #include <rocksdb/convenience.h>
 #include <rocksdb/db.h>
@@ -1012,8 +1012,8 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
         // still need
         eligible_step2 = true;
 
-        double stamp =
-          absl::ToDoubleSeconds(absl::Now() - absl::UnixEpoch()) + _options_provider._prune_wait_time;
+        double stamp = absl::ToDoubleSeconds(absl::Now() - absl::UnixEpoch()) +
+                       _options_provider._prune_wait_time;
         const auto [it, emplaced] =
           _prunable_wal_files.try_emplace(f->PathName(), stamp);
 

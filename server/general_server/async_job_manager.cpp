@@ -21,9 +21,9 @@
 
 #include "async_job_manager.h"
 
+#include <absl/strings/str_cat.h>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
-#include <absl/strings/str_cat.h>
 
 #include "basics/errors.h"
 #include "basics/logger/logger.h"
@@ -180,7 +180,8 @@ void AsyncJobManager::finishAsyncJob(RestHandler* handler) {
   }
   it->second.second.response = std::move(response);
   it->second.second.status = AsyncJobResult::kJobDone;
-  it->second.second.stamp = absl::ToDoubleSeconds(absl::Now() - absl::UnixEpoch());
+  it->second.second.stamp =
+    absl::ToDoubleSeconds(absl::Now() - absl::UnixEpoch());
 }
 
 }  // namespace sdb::rest

@@ -104,7 +104,6 @@ inline bool Exists(const std::string& path) { return Exists(path.c_str()); }
 std::string_view StripExtension(std::string_view path,
                                 std::string_view extension);
 
-
 // returns the home directory
 std::string HomeDirectory();
 

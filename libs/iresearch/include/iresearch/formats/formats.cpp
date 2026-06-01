@@ -30,7 +30,6 @@
 namespace irs {
 namespace {
 
-
 class FormatRegister
   : public TaggedGenericRegister<std::string_view, Format::ptr (*)(),
                                  std::string_view, FormatRegister> {};
@@ -55,7 +54,8 @@ Format::ptr formats::Get(std::string_view name,
 }
 
 void formats::LoadAll(std::string_view path) {
-  (void)path;  // plugin loading via .so removed; SereneDB ships no out-of-tree iresearch plugins
+  (void)path;  // plugin loading via .so removed; SereneDB ships no out-of-tree
+               // iresearch plugins
 }
 
 bool formats::Visit(const std::function<bool(std::string_view)>& visitor) {

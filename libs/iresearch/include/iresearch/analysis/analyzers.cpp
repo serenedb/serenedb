@@ -79,7 +79,6 @@ struct Value {
   const normalizer_f normalizer;
 };
 
-
 class AnalyzerRegister final
   : public TaggedGenericRegister<Key, Value, std::string_view,
                                  AnalyzerRegister> {};
@@ -192,7 +191,8 @@ Analyzer::ptr Get(std::string_view name, const TypeInfo& args_format,
 }
 
 void LoadAll(std::string_view path) {
-  (void)path;  // plugin loading via .so removed; SereneDB ships no out-of-tree iresearch plugins
+  (void)path;  // plugin loading via .so removed; SereneDB ships no out-of-tree
+               // iresearch plugins
 }
 
 bool Visit(

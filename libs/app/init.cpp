@@ -39,7 +39,6 @@
 #include <functable.h>
 
 namespace sdb::app {
-
 namespace {
 
 // Raise the soft NOFILE limit up to min(kTarget, hard). Hard-limit bumps

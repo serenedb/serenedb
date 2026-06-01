@@ -55,7 +55,6 @@ struct Key {
   TypeInfo args_format;
 };
 
-
 class ScorerRegister
   : public TaggedGenericRegister<Key, Scorer::ptr (*)(std::string_view args),
                                  std::string_view, ScorerRegister> {};
@@ -95,7 +94,8 @@ void scorers::Init() {
 }
 
 void scorers::LoadAll(std::string_view path) {
-  (void)path;  // plugin loading via .so removed; SereneDB ships no out-of-tree iresearch plugins
+  (void)path;  // plugin loading via .so removed; SereneDB ships no out-of-tree
+               // iresearch plugins
 }
 
 bool scorers::Visit(

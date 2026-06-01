@@ -44,9 +44,16 @@ void DuckDBEngine::Initialize(DBConfigMutator mutator) {
 
   _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
 
+  // Default to stdout so Docker / systemd / k8s log drivers capture the
+  // stream as soon as the process starts. Operators who want to query logs
+  // from SQL can flip to memory at any time:
+  //   SET enable_logging = true;
+  //   SET logging_storage = 'memory';
+  //   SELECT * FROM duckdb_logs();
   auto& manager = _db->instance->GetLogManager();
   duckdb::LogConfig cfg;
   cfg.enabled = true;
+  cfg.storage = duckdb::LogConfig::STDOUT_STORAGE_NAME;
   manager.SetConfig(*_db->instance, cfg);
   log::SetLogger(&manager.GlobalLogger());
 }

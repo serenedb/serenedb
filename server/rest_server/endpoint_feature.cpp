@@ -21,9 +21,8 @@
 
 #include "endpoint_feature.h"
 
-#include <sys/socket.h>
-
 #include <absl/flags/flag.h>
+#include <sys/socket.h>
 
 #include "app/app_server.h"
 #include "basics/application-exit.h"

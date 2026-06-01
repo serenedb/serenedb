@@ -344,15 +344,17 @@ Result RocksDBRecoveryManager::parseRocksWAL() {
       // number of active log files
       for (auto it =
              std::filesystem::directory_iterator{db->GetOptions().wal_dir, ec};
-           !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
+           !ec && it != std::filesystem::directory_iterator{};
+           it.increment(ec)) {
         ++files_active;
       }
       // number of log files in the archive
       ec.clear();
-      const std::string archive = basics::file_utils::BuildFilename(
-        db->GetOptions().wal_dir, "archive");
+      const std::string archive =
+        basics::file_utils::BuildFilename(db->GetOptions().wal_dir, "archive");
       for (auto it = std::filesystem::directory_iterator{archive, ec};
-           !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
+           !ec && it != std::filesystem::directory_iterator{};
+           it.increment(ec)) {
         ++files_in_archive;
       }
 

@@ -50,7 +50,6 @@ struct Value {
   const decompressor_factory_f decompressor_factory;
 };
 
-
 class CompressionRegister
   : public TaggedGenericRegister<std::string_view, Value, std::string_view,
                                  CompressionRegister> {};
@@ -148,7 +147,8 @@ void Init() {
 }
 
 void LoadAll(std::string_view path) {
-  (void)path;  // plugin loading via .so removed; SereneDB ships no out-of-tree iresearch plugins
+  (void)path;  // plugin loading via .so removed; SereneDB ships no out-of-tree
+               // iresearch plugins
 }
 
 bool Visit(const std::function<bool(std::string_view)>& visitor) {

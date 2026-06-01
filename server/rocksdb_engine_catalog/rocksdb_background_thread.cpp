@@ -93,7 +93,8 @@ void RocksDBBackgroundThread::SyncStats() {
 void RocksDBBackgroundThread::run() {
   auto& flush_feature = FlushFeature::instance();
 
-  const double start_time = absl::ToDoubleSeconds(absl::Now() - absl::UnixEpoch());
+  const double start_time =
+    absl::ToDoubleSeconds(absl::Now() - absl::UnixEpoch());
   uint64_t runs_until_sync_forced = 1;
   constexpr uint64_t kMaxRunsUntilSyncForced = 5;
 

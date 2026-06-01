@@ -21,8 +21,8 @@
 
 #include "encoding_utils.h"
 
-#include <zconf.h>
 #include <absl/base/internal/endian.h>
+#include <zconf.h>
 #include <zlib.h>
 
 #include "basics/buffer.h"

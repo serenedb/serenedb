@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/base/internal/endian.h>
+
 #include <duckdb.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/main/config.hpp>
@@ -32,7 +34,6 @@
 #include <iresearch/utils/bytes_utils.hpp>
 
 #include "basics/duckdb_engine.h"
-#include <absl/base/internal/endian.h>
 #include "catalog/table_options.h"
 #include "connector/common.h"
 #include "connector/duckdb_search_sink_writer.h"

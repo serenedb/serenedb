@@ -22,6 +22,7 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <absl/synchronization/mutex.h>
 #include <rocksdb/db.h>
 #include <rocksdb/env.h>
 #include <rocksdb/options.h>
@@ -40,8 +41,6 @@
 #include <string_view>
 #include <tuple>
 #include <vector>
-
-#include <absl/synchronization/mutex.h>
 
 #include "app/app_server.h"
 #include "basics/common.h"

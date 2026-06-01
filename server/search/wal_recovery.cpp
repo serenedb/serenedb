@@ -67,7 +67,7 @@ constexpr size_t kKeyPrefixSize =
 
 constexpr std::string_view kSkipHint =
   ". To skip WAL recovery and proceed with stale index content, restart "
-  "with --search.skip-wal-recovery (data loss for the unreplayed delta).";
+  "with --server_skip_search_recovery (data loss for the unreplayed delta).";
 
 enum class RowOp : uint8_t {
   Invalid,
@@ -583,7 +583,7 @@ void RunWalRecovery(std::vector<ShardState>& shards,
 
   SDB_INFO(SEARCH,
            "Starting WAL recovery, to skip it use the flag: "
-           "\"--search.skip-wal-recovery\"");
+           "\"--server_skip_search_recovery\"");
 
   std::unique_ptr<rocksdb::TransactionLogIterator> iter;
   rocksdb::TransactionLogIterator::ReadOptions opts{true};

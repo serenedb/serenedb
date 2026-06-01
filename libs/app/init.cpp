@@ -26,14 +26,18 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <charconv>
 #include <cstddef>
 #include <cstring>
+#include <string>
 #include <string_view>
 #include <yaclib/log.hpp>
 
 #include "basics/crash_handler.h"
+#include "basics/files.h"
 #include "basics/log.h"
 #include "basics/random/random_generator.h"
+#include "basics/string_utils.h"
 #include "rest/version.h"
 #define ZLIB_COMPAT
 #include <functable.h>
@@ -63,6 +67,29 @@ void RaiseFdLimit() {
   }
 }
 
+void CheckMaxMapCount() {
+  constexpr uint64_t kExpected = 262144;
+  std::string s;
+  if (!SlurpFile("/proc/sys/vm/max_map_count", s)) {
+    return;
+  }
+  const auto trimmed = basics::string_utils::Trim(s);
+  uint64_t actual = 0;
+  if (auto [p, ec] = std::from_chars(trimmed.data(),
+                                     trimmed.data() + trimmed.size(), actual);
+      ec != std::errc{}) {
+    return;
+  }
+  if (actual >= kExpected) {
+    return;
+  }
+  SDB_WARN(STARTUP, "vm.max_map_count is ", actual,
+           ", which is below the recommended minimum of ", kExpected,
+           " for iresearch-backed indexes; large segment counts may fail "
+           "to mmap. Run: sudo sysctl -w vm.max_map_count=",
+           kExpected);
+}
+
 }  // namespace
 
 void InitProcess(const char* argv0) {
@@ -75,6 +102,7 @@ void InitProcess(const char* argv0) {
   //   * InitializeSymbolizer      lets the absl crash handler symbolize
   //   * YACLIB_INIT_DEBUG         routes yaclib's debug-asserts through us
   RaiseFdLimit();
+  CheckMaxMapCount();
   random::Reset();
   rest::Version::initialize();
   basics::VPackHelper::initialize();

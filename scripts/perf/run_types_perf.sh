@@ -75,8 +75,7 @@ start_server() {
 	killall -9 serened >/dev/null 2>&1 || true
 	sleep 1
 	"${SERENED_BIN}" "${SERENED_DATA_DIR}" \
-		--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
-		--log.foreground-tty true \
+		--server_endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
 		>"${LOG}" 2>&1 &
 	disown
 	for _ in $(seq 1 30); do
@@ -207,8 +206,7 @@ if [[ "${NEED_PARQUET}" == "1" ]]; then
 
 	echo "generating ${PARQUET_FILE} (${N} rows) via temporary serened"
 	"${SERENED_BIN}" "${RESULTS_DIR}/types_genparquet_data" \
-		--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
-		--log.foreground-tty true \
+		--server_endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
 		>"${LOG}" 2>&1 &
 	disown
 	for _ in $(seq 1 30); do

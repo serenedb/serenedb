@@ -114,8 +114,7 @@ echo "  perf:   ${PERF_DATA}"
 echo "  query:  ${QUERY_KIND} (threads=${QUERY_THREADS}, repeats=${QUERY_REPEAT})"
 echo "  dict:   ${DICT_TEMPLATE}"
 "${SERENED_BIN}" "${DATA_DIR}" \
-	--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
-	--log.foreground-tty true \
+	--server_endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
 	>"${OUT_DIR}/serened.log" 2>&1 &
 SERENED_PID=$!
 trap "kill -INT ${SERENED_PID} 2>/dev/null || true" EXIT

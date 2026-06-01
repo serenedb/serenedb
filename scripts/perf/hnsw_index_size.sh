@@ -54,9 +54,8 @@ trap cleanup EXIT
 
 # Start serened on a private port + data dir.
 "$SERENED" "$DATA_DIR" \
-	--server.endpoint "pgsql+tcp://127.0.0.1:${PORT}" \
-	--log.foreground-tty true >"/tmp/hnsw_size_${PORT}.log" 2>&1 &
-SERENED_PID=$!
+	--server_endpoint "pgsql+tcp://127.0.0.1:${PORT}" \
+	SERENED_PID=$!
 
 PG_ADMIN=(psql -v ON_ERROR_STOP=1 -X -q
 	"host=127.0.0.1 port=${PORT} dbname=postgres user=postgres")

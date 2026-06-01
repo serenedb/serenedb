@@ -31,9 +31,8 @@ run_test() {
 	rm -rf /tmp/serened_perf_6161
 	cd "$REPO"
 	./build_perf/bin/serened /tmp/serened_perf_6161 \
-		--server.endpoint pgsql+tcp://0.0.0.0:6161 \
-		--log.foreground-tty true >/tmp/${USER}-serened.log 2>&1 &
-	sleep 4
+		--server_endpoint pgsql+tcp://0.0.0.0:6161 \
+		sleep 4
 
 	local out
 	out=$(./tests/sqllogic/run.sh --single-port 6161 --test "$TEST" \

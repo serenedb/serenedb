@@ -26,7 +26,7 @@
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/store/store_utils.hpp>
 
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 
 namespace bench {
 
@@ -42,7 +42,7 @@ Executor::Executor(std::string_view path, const BenchConfig& config)
     _reader{irs::DirectoryReader(
       _dir, _format,
       {.scorer = _scorer_ptr,
-       .db = &::sdb::query::DuckDBEngine::Instance().instance()})} {}
+       .db = &::sdb::DuckDBEngine::Instance().instance()})} {}
 
 size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
   ResetResults(k);

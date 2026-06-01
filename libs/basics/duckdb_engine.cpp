@@ -18,12 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 
 #include "basics/assert.h"
-#include "query/log_types.h"
+#include "basics/logger/log_types.h"
 
-namespace sdb::query {
+namespace sdb {
 
 DuckDBEngine& DuckDBEngine::Instance() {
   static DuckDBEngine gInstance;
@@ -49,14 +49,14 @@ void DuckDBEngine::Initialize(DBConfigMutator mutator) {
 
   // Wire sdb::log into duckdb::LogManager. After this call every SDB_*
   // macro dispatches through LogManager.
-  InstallLogManagerSink(*_db->instance);
+  log::InstallLogManagerSink(*_db->instance);
 }
 
 void DuckDBEngine::Shutdown() {
   // Detach the logger sink BEFORE destroying the DuckDB; any late log
   // line during teardown of duckdb internals would otherwise chase a
   // freed LogManager.
-  UninstallLogManagerSink();
+  log::UninstallLogManagerSink();
   _db.reset();
 }
 
@@ -70,4 +70,4 @@ duckdb::unique_ptr<duckdb::Connection> DuckDBEngine::CreateConnection() {
   return duckdb::make_uniq<duckdb::Connection>(*_db);
 }
 
-}  // namespace sdb::query
+}  // namespace sdb

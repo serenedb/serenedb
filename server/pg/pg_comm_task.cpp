@@ -67,7 +67,7 @@
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 #include "search/inverted_index_shard.h"
 
 #define SDB_LOG_PGSQL(...) SDB_PRINT_IF(false, __VA_ARGS__)
@@ -313,7 +313,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
         ERRCODE_INVALID_SCHEMA_NAME);
     }
 
-    _duckdb_conn = query::DuckDBEngine::Instance().CreateConnection();
+    _duckdb_conn = sdb::DuckDBEngine::Instance().CreateConnection();
 
     _connection_ctx = std::make_shared<ConnectionContext>(
       *_duckdb_conn->context, UserName(), DatabaseName(), database->GetId(),

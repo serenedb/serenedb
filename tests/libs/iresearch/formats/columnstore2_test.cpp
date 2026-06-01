@@ -71,7 +71,7 @@ namespace {
 class Columnstore2TestCase : public ::testing::TestWithParam<bool> {
  protected:
   irs::MemoryDirectory _dir;
-  duckdb::DatabaseInstance& Db() { return ::sdb::query::DuckDBEngine::Instance().instance(); }
+  duckdb::DatabaseInstance& Db() { return ::sdb::DuckDBEngine::Instance().instance(); }
 
   // Open a BLOB column and write every doc in [lo, hi] as an empty BLOB
   // (validity bit = present, payload = empty bytes) -- the new-cs analog

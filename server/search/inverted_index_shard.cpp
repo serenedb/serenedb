@@ -49,7 +49,7 @@
 #include "catalog/scorer_options.h"
 #include "metrics/gauge.h"
 #include "metrics/guard.h"
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 #include "query/transaction.h"
 #include "rest_server/flush_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -187,7 +187,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = 256 * (size_t{1} << 20);  // 256MB
   writer_options.lock_repository = false;  // RocksDB has its own lock
-  writer_options.db = &query::DuckDBEngine::Instance().instance();
+  writer_options.db = &sdb::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
   writer_options.column_options = [&](irs::field_id id) -> irs::ColumnOptions {
     if (const auto* entry = index.FindEntry(id)) {

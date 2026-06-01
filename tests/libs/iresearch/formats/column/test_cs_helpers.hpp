@@ -42,7 +42,7 @@
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 
 namespace irs::tests {
 
@@ -60,7 +60,7 @@ inline NormColumnOptionsProvider MakeNormColumnOptionsProvider() {
 }
 
 // Default IndexWriterOptions / IndexReaderOptions wired to the process-wide
-// DuckDB DatabaseInstance held by sdb::query::DuckDBEngine. tests_main brings
+// DuckDB DatabaseInstance held by sdb::DuckDBEngine. tests_main brings
 // the engine up before RUN_ALL_TESTS and tears it down afterwards. Legacy
 // tests that just called `IndexWriter::Make(dir, codec, mode)` would skip
 // opening a cs writer because `opts.db == nullptr`. Tests ported off legacy
@@ -68,7 +68,7 @@ inline NormColumnOptionsProvider MakeNormColumnOptionsProvider() {
 // behaviour; using these defaults plumbs the engine instance in without
 // every call site re-typing it.
 inline IndexWriterOptions DefaultWriterOptions() {
-  auto* db = &::sdb::query::DuckDBEngine::Instance().instance();
+  auto* db = &::sdb::DuckDBEngine::Instance().instance();
   IndexWriterOptions opts;
   opts.db = db;
   opts.reader_options.db = db;
@@ -77,7 +77,7 @@ inline IndexWriterOptions DefaultWriterOptions() {
 }
 inline IndexReaderOptions DefaultReaderOptions() {
   IndexReaderOptions opts;
-  opts.db = &::sdb::query::DuckDBEngine::Instance().instance();
+  opts.db = &::sdb::DuckDBEngine::Instance().instance();
   return opts;
 }
 

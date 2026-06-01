@@ -1273,7 +1273,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   const auto norm_column_options = irs::tests::MakeNormColumnOptionsProvider();
   const irs::SegmentWriterOptions options{
     .scorers_features = {},
-    .db = &::sdb::query::DuckDBEngine::Instance().instance(),
+    .db = &::sdb::DuckDBEngine::Instance().instance(),
     .norm_column_options = &norm_column_options,
   };
   irs::MergeWriter writer(dir, options);

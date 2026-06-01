@@ -27,7 +27,7 @@
 
 #include <gtest/gtest.h>
 
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
@@ -41,8 +41,8 @@ int main(int argc, char** argv) {
   // dtor reads a thread_local cache that libc destroys *before* static
   // dtors, so any duckdb::DuckDB instance whose lifetime extends to the
   // static-dtor phase trips heap-use-after-free.
-  sdb::query::DuckDBEngine::Instance().Initialize();
+  sdb::DuckDBEngine::Instance().Initialize();
   const int rc = RUN_ALL_TESTS();
-  sdb::query::DuckDBEngine::Instance().Shutdown();
+  sdb::DuckDBEngine::Instance().Shutdown();
   return rc;
 }

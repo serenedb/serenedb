@@ -21,7 +21,6 @@
 #include <vpack/iterator.h>
 #include <vpack/parser.h>
 
-#include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
 #include <iostream>
 #include <iresearch/analysis/analyzers.hpp>
@@ -39,6 +38,7 @@
 #include <iresearch/utils/vpack_utils.hpp>
 #include <memory>
 
+#include "basics/duckdb_engine.h"
 #include "geo/shape_container.h"
 #include "s2/s2latlng.h"
 #include "s2/s2loop.h"
@@ -56,15 +56,10 @@
 namespace {
 
 // Per-segment columnstore needs a duckdb::DatabaseInstance for codec lookup
-// and the buffer manager. C++11 thread-safe local statics keep this lazy
-// and process-wide; a real app would wire its own DatabaseInstance.
+// and the buffer manager. main() brackets Initialize / Shutdown on the
+// process-wide sdb::DuckDBEngine; this helper just hands out a reference.
 duckdb::DatabaseInstance& Db() {
-  static std::unique_ptr<duckdb::DuckDB> kDb = [] {
-    duckdb::DBConfig cfg;
-    cfg.options.access_mode = duckdb::AccessMode::AUTOMATIC;
-    return std::make_unique<duckdb::DuckDB>(":memory:", &cfg);
-  }();
-  return *kDb->instance;
+  return sdb::DuckDBEngine::Instance().instance();
 }
 
 // Stored-geometry column id. The geo filter reads this column back to
@@ -224,11 +219,18 @@ void PrintHits(std::string_view label, const std::vector<std::string>& hits) {
 }  // namespace
 
 int main() {
+  // Bracket the process-wide duckdb::DuckDB lifetime; Db() reads it back.
+  auto& engine = sdb::DuckDBEngine::Instance();
+  engine.Initialize();
+
   irs::analysis::analyzers::Init();
   irs::formats::Init();
   irs::scorers::Init();
   irs::compression::Init();
 
+  // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
+  // down the duckdb::DuckDB they were dispatching through.
+  {
   auto docs = vpack::Parser::fromJson(kCorpus);
   std::vector<std::string> names;
 
@@ -302,6 +304,8 @@ int main() {
 
     PrintHits("polygon over central cluster", RunFilter(reader, q, names));
   }
+  }
 
+  engine.Shutdown();
   return 0;
 }

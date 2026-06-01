@@ -20,7 +20,7 @@
 
 #include "pg/sdb_catalog/sdb_log.h"
 
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 
 namespace sdb::pg {
 namespace {
@@ -43,7 +43,7 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 // of duckdb_logs.timestamp.
 template<>
 catalog::MaterializedData SystemTableSnapshot<SdbLog>::GetTableData() {
-  auto conn = query::DuckDBEngine::Instance().CreateConnection();
+  auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
   auto result = conn->Query(
     "SELECT timestamp, type, log_level, message FROM duckdb_logs()");
 

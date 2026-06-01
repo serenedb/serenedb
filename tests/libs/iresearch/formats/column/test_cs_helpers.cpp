@@ -29,14 +29,14 @@
 
 #include "basics/assert.h"
 #include "iresearch/utils/type_limits.hpp"
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 
 namespace irs::tests {
 
 std::unique_ptr<columnstore::Writer> MakeCsWriter(
   Directory& dir, std::string_view segment_name) {
   return std::make_unique<columnstore::Writer>(
-    dir, segment_name, ::sdb::query::DuckDBEngine::Instance().instance());
+    dir, segment_name, ::sdb::DuckDBEngine::Instance().instance());
 }
 
 std::unique_ptr<columnstore::Reader> MakeCsReader(
@@ -54,7 +54,7 @@ std::unique_ptr<columnstore::Reader> MakeCsReader(
     return nullptr;
   }
   return std::make_unique<columnstore::Reader>(
-    dir, segment_name, ::sdb::query::DuckDBEngine::Instance().instance());
+    dir, segment_name, ::sdb::DuckDBEngine::Instance().instance());
 }
 
 columnstore::ColumnWriter& OpenBlobColumn(columnstore::Writer& w, field_id id) {

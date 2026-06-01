@@ -22,7 +22,6 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
-#include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
 #include <iostream>
 #include <iresearch/analysis/analyzer.hpp>
@@ -48,21 +47,18 @@
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
 
+#include "basics/duckdb_engine.h"
+
 // This example demonstrates the core iresearch workflow:
 //   1. Create a directory and index writer
 //   2. Define fields and index documents (inverted index + cs stored values)
 //   3. Parse Lucene-syntax queries and execute them (count + top-K with BM25)
 
 // Per-segment columnstore needs a duckdb::DatabaseInstance for codec lookup
-// and the buffer manager. C++11 thread-safe local statics keep this lazy
-// and process-wide; a real app would wire its own DatabaseInstance.
+// and the buffer manager. main() brackets Initialize / Shutdown on the
+// process-wide sdb::DuckDBEngine; this helper just hands out a reference.
 duckdb::DatabaseInstance& Db() {
-  static std::unique_ptr<duckdb::DuckDB> kDb = []() {
-    duckdb::DBConfig cfg;
-    cfg.options.access_mode = duckdb::AccessMode::AUTOMATIC;
-    return std::make_unique<duckdb::DuckDB>(":memory:", &cfg);
-  }();
-  return *kDb->instance;
+  return sdb::DuckDBEngine::Instance().instance();
 }
 
 // Stored-value column ids. Field-name -> field_id mapping is the caller's
@@ -399,54 +395,63 @@ void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
 }
 
 int main() {
+  // Bracket the process-wide duckdb::DuckDB lifetime; Db() reads it back.
+  auto& engine = sdb::DuckDBEngine::Instance();
+  engine.Initialize();
+
   // Initialize subsystems (required once per process).
   irs::analysis::analyzers::Init();
   irs::formats::Init();
   irs::scorers::Init();
   irs::compression::Init();
 
-  auto format = irs::formats::Get("1_5simd");
-  auto scorer =
-    irs::scorers::Get("bm25", irs::Type<irs::text_format::Json>::get(), "{}");
-  auto tokenizer = irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(), "{}");
+  // Nested scope so writer/reader/dir destruct before DuckDBEngine::Shutdown
+  // tears down the duckdb::DuckDB they were dispatching through.
+  {
+    auto format = irs::formats::Get("1_5simd");
+    auto scorer =
+      irs::scorers::Get("bm25", irs::Type<irs::text_format::Json>::get(), "{}");
+    auto tokenizer = irs::analysis::analyzers::Get(
+      "segmentation", irs::Type<irs::text_format::Json>::get(), "{}");
 
-  irs::MemoryDirectory dir;
-  // cs needs a DatabaseInstance plumbed through both the writer (for
-  // OpenColumn) and the reader_options (for CsReader on the snapshot).
-  // Norm-featured fields additionally require a norm_column_options
-  // callback that allocates a (column id, row-group size) pair per field.
-  irs::IndexWriterOptions options;
-  options.db = &Db();
-  options.reader_options.db = &Db();
-  options.column_options = [](irs::field_id) -> irs::ColumnOptions {
-    return {.row_group_size = DEFAULT_ROW_GROUP_SIZE};
-  };
-  options.norm_column_options =
-    [next = std::make_shared<std::atomic<irs::field_id>>(0)](
-      std::string_view) -> irs::NormColumnOptions {
-    return {
-      .id = next->fetch_add(1, std::memory_order_relaxed),
-      .row_group_size = DEFAULT_ROW_GROUP_SIZE,
+    irs::MemoryDirectory dir;
+    // cs needs a DatabaseInstance plumbed through both the writer (for
+    // OpenColumn) and the reader_options (for CsReader on the snapshot).
+    // Norm-featured fields additionally require a norm_column_options
+    // callback that allocates a (column id, row-group size) pair per field.
+    irs::IndexWriterOptions options;
+    options.db = &Db();
+    options.reader_options.db = &Db();
+    options.column_options = [](irs::field_id) -> irs::ColumnOptions {
+      return {.row_group_size = DEFAULT_ROW_GROUP_SIZE};
     };
-  };
-  auto writer = irs::IndexWriter::Make(dir, format, irs::kOmCreate, options);
+    options.norm_column_options =
+      [next = std::make_shared<std::atomic<irs::field_id>>(0)](
+        std::string_view) -> irs::NormColumnOptions {
+      return {
+        .id = next->fetch_add(1, std::memory_order_relaxed),
+        .row_group_size = DEFAULT_ROW_GROUP_SIZE,
+      };
+    };
+    auto writer = irs::IndexWriter::Make(dir, format, irs::kOmCreate, options);
 
-  BuildIndex(*writer);
+    BuildIndex(*writer);
 
-  auto reader = writer->GetSnapshot();
+    auto reader = writer->GetSnapshot();
 
-  PrintIndexStats(reader);
-  QuerySingleTerm(reader, *tokenizer);
-  QueryTopK(reader, *scorer, *tokenizer);
-  QueryBooleanAnd(reader, *tokenizer);
-  QueryBooleanOr(reader, *tokenizer);
-  QueryPhrase(reader, *tokenizer);
-  QueryPrefix(reader, *tokenizer);
-  QueryExclusion(reader, *tokenizer);
-  ReadStoredFields(reader);
-  RemoveDocuments(*writer, *tokenizer);
-  CompactIndex(*writer, dir);
+    PrintIndexStats(reader);
+    QuerySingleTerm(reader, *tokenizer);
+    QueryTopK(reader, *scorer, *tokenizer);
+    QueryBooleanAnd(reader, *tokenizer);
+    QueryBooleanOr(reader, *tokenizer);
+    QueryPhrase(reader, *tokenizer);
+    QueryPrefix(reader, *tokenizer);
+    QueryExclusion(reader, *tokenizer);
+    ReadStoredFields(reader);
+    RemoveDocuments(*writer, *tokenizer);
+    CompactIndex(*writer, dir);
+  }
 
+  engine.Shutdown();
   return 0;
 }

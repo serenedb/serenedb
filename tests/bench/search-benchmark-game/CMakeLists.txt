@@ -1,14 +1,13 @@
 add_compile_options(-Wno-error)
 
 add_library(search-benchmark-common OBJECT executor.cpp index_builder.cpp)
-# serene_query_lite (libs/query) gives bench code access to the
-# DuckDBEngine singleton -- both build/query binaries Initialize / Shutdown
-# it in their respective main(). Replaces the leaking bench::CsDb() static.
+# serene_base owns sdb::DuckDBEngine; the build/query binaries Initialize /
+# Shutdown it in their respective main(). Replaces the leaking bench::CsDb().
 target_link_libraries(
     search-benchmark-common
     iresearch-static
     simdjson
-    serene_query_lite
+    serene_base
 )
 target_include_directories(
     search-benchmark-common

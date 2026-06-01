@@ -39,7 +39,7 @@
 #include "general_server/ssl_server_feature.h"
 #include "general_server/state.h"
 #include "pg/pg_feature.h"
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 #include "query/server_engine.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/endpoint_feature.h"
@@ -208,12 +208,12 @@ int main(int argc, char* argv[]) {
   // LogCrash, which is safe but the SDB_TRACE is not. Bracket the whole
   // GlobalContext + RunServer lifetime so the contract holds.
   //
-  // Two-step boot: the lite Initialize (libs/query) installs the storage
+  // Two-step boot: the lite Initialize (serene_base) installs the storage
   // extension via the ConfigureServerDBConfig mutator BEFORE the duckdb
   // ctor runs (storage extensions must be registered pre-construct), then
   // RegisterServerExtensions fills connector/pg/index types on the live
   // DatabaseInstance.
-  auto& engine = query::DuckDBEngine::Instance();
+  auto& engine = sdb::DuckDBEngine::Instance();
   engine.Initialize(&server::query::ConfigureServerDBConfig);
   server::query::RegisterServerExtensions(engine.instance());
   int rc;

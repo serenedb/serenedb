@@ -38,18 +38,18 @@
 #include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 
 namespace {
 
 using namespace sdb;
 using namespace connector;
 
-// Process-wide DuckDB instance, owned by sdb::query::DuckDBEngine. tests_main
+// Process-wide DuckDB instance, owned by sdb::DuckDBEngine. tests_main
 // brings it up before RUN_ALL_TESTS and tears it down before main returns,
 // so the lifetime envelope strictly covers every test body.
 duckdb::DatabaseInstance& TestDb() {
-  return ::sdb::query::DuckDBEngine::Instance().instance();
+  return ::sdb::DuckDBEngine::Instance().instance();
 }
 
 class DuckDBSearchSinkWriterTest : public ::testing::Test {

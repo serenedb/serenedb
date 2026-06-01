@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "query/log_types.h"
+#include "basics/logger/log_types.h"
 
 #include <duckdb/logging/log_manager.hpp>
 #include <duckdb/logging/log_type.hpp>
@@ -27,7 +27,7 @@
 
 #include "basics/logger/logger.h"
 
-namespace sdb::query {
+namespace sdb::log {
 namespace {
 
 // ---- SereneDB-specific log types ---------------------------------------
@@ -87,4 +87,4 @@ void InstallLogManagerSink(duckdb::DatabaseInstance& db) {
 
 void UninstallLogManagerSink() noexcept { ::sdb::log::SetLogger(nullptr); }
 
-}  // namespace sdb::query
+}  // namespace sdb::log

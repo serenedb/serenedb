@@ -66,7 +66,7 @@
 #include "connector/search_pk_lookup.h"
 #include "connector/search_remove_filter.hpp"
 #include "pg/connection_context.h"
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 #include "rocksdb/db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"

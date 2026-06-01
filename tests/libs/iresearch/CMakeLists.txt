@@ -165,10 +165,10 @@ endif()
 
 target_link_libraries(
     iresearch-tests
-    # serene_query_lite (libs/query) brings DuckDBEngine so tests_main can
-    # Initialize / Shutdown the LogManager that backs SDB_*. It PUBLICly
-    # re-exports serene_base + duckdb_static.
-    serene_query_lite
+    # serene_base brings sdb::DuckDBEngine so tests_main can Initialize /
+    # Shutdown the LogManager that backs SDB_*. It re-exports duckdb_static
+    # PUBLICly.
+    serene_base
     iresearch-static
     search-benchmark-common
     gtest
@@ -209,8 +209,8 @@ add_executable(
 
 target_link_libraries(
     iresearch-load-tests
-    # See iresearch-tests note above re: serene_query_lite dependency.
-    serene_query_lite
+    # See iresearch-tests note above re: serene_base dependency.
+    serene_base
     iresearch-static
     search-benchmark-common
     gtest

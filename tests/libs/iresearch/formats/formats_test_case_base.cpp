@@ -1495,7 +1495,7 @@ template<typename Populate, typename Verify>
 void RoundTrip(std::string_view segment_name, uint64_t row_count,
                Populate&& populate, Verify&& verify) {
   irs::MemoryDirectory dir;
-  auto& db = ::sdb::query::DuckDBEngine::Instance().instance();
+  auto& db = ::sdb::DuckDBEngine::Instance().instance();
   {
     irs::columnstore::Writer w{dir, segment_name, db};
     populate(w);
@@ -1621,7 +1621,7 @@ TEST_P(FormatTestCase, columns_rw) {
   // to mirror "two segments", and rebuild the multivalue case using the
   // length-prefixed WriteStr layout the legacy reader assumed.
   irs::MemoryDirectory dir;
-  auto& db = ::sdb::query::DuckDBEngine::Instance().instance();
+  auto& db = ::sdb::DuckDBEngine::Instance().instance();
 
   // Build segment _1 -----------------------------------------------------
   // ids in this segment: 0,1,2 (empty),3,4,5; segment row count = 34.
@@ -2006,7 +2006,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
   constexpr irs::field_id kIntId = 2;
   constexpr irs::field_id kStrId = 3;
   irs::MemoryDirectory dir;
-  auto& db = ::sdb::query::DuckDBEngine::Instance().instance();
+  auto& db = ::sdb::DuckDBEngine::Instance().instance();
   {
     irs::columnstore::Writer w{dir, "columns_rw_typed", db};
 
@@ -2420,7 +2420,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
   constexpr uint64_t kBigRows = 2048;
   constexpr irs::field_id kBigId = 200;
   irs::MemoryDirectory dir;
-  auto& db = ::sdb::query::DuckDBEngine::Instance().instance();
+  auto& db = ::sdb::DuckDBEngine::Instance().instance();
   {
     irs::columnstore::Writer w{dir, "columns_rw_bit_mask_rg", db};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
@@ -2593,7 +2593,7 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
   constexpr uint64_t kBigRows = 2048;
   constexpr irs::field_id kBigId = 300;
   irs::MemoryDirectory dir;
-  auto& db = ::sdb::query::DuckDBEngine::Instance().instance();
+  auto& db = ::sdb::DuckDBEngine::Instance().instance();
   {
     irs::columnstore::Writer w{dir, "columns_rw_dense_mask_rg", db};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
@@ -2791,7 +2791,7 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
   constexpr size_t kSmallPayloadSize = 1024;
   constexpr irs::field_id kBigId = 400;
   irs::MemoryDirectory dir;
-  auto& db = ::sdb::query::DuckDBEngine::Instance().instance();
+  auto& db = ::sdb::DuckDBEngine::Instance().instance();
   {
     irs::columnstore::Writer w{dir, "columns_rw_big_document_rg", db};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
@@ -2851,7 +2851,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   //  * a fresh writer at the rolled-back name produces a clean file,
   //  * three independent segments with id+name BLOB columns round-trip.
   irs::MemoryDirectory dir;
-  auto& db = ::sdb::query::DuckDBEngine::Instance().instance();
+  auto& db = ::sdb::DuckDBEngine::Instance().instance();
 
   // Rollback path: the eagerly-created `.cs` stays on disk as an orphan;
   // the directory cleaner sweeps it later (matches legacy `.csd`).
@@ -3182,7 +3182,7 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
   constexpr irs::field_id kBigIdCol = 500;
   constexpr irs::field_id kBigNameCol = 501;
   irs::MemoryDirectory dir;
-  auto& db = ::sdb::query::DuckDBEngine::Instance().instance();
+  auto& db = ::sdb::DuckDBEngine::Instance().instance();
   {
     irs::columnstore::Writer w{dir, "same_col_empty_repeat_rg", db};
     auto& id_w = w.OpenColumn(kBigIdCol, duckdb::LogicalType::BLOB,
@@ -3381,7 +3381,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
   constexpr uint64_t kBigRows = 2049;
   constexpr irs::field_id kBigId = 600;
   irs::MemoryDirectory dir;
-  auto& db = ::sdb::query::DuckDBEngine::Instance().instance();
+  auto& db = ::sdb::DuckDBEngine::Instance().instance();
   {
     irs::columnstore::Writer w{dir, "sparse_dense_block_rg", db};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
@@ -3620,7 +3620,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
   constexpr irs::field_id kBigDenseId = 700;
   constexpr irs::field_id kBigSparseId = 701;
   irs::MemoryDirectory dir;
-  auto& db = ::sdb::query::DuckDBEngine::Instance().instance();
+  auto& db = ::sdb::DuckDBEngine::Instance().instance();
   {
     irs::columnstore::Writer w{dir, "border_case_rg", db};
     auto& dense = w.OpenColumn(kBigDenseId, duckdb::LogicalType::BLOB,
@@ -3825,7 +3825,7 @@ TEST_P(FormatTestCase, columns_issue700) {
   constexpr uint64_t kBigRows = STANDARD_VECTOR_SIZE * 2 + 1;  // 4097
   constexpr irs::field_id kBigColId = 800;
   irs::MemoryDirectory dir;
-  auto& db = ::sdb::query::DuckDBEngine::Instance().instance();
+  auto& db = ::sdb::DuckDBEngine::Instance().instance();
   {
     irs::columnstore::Writer w{dir, "issue700_rg", db};
     auto& cw = w.OpenColumn(kBigColId, duckdb::LogicalType::BLOB,

@@ -62,7 +62,7 @@
 #include "catalog/view.h"
 #include "folly/Function.h"
 #include "general_server/scheduler.h"
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -734,7 +734,7 @@ Result CatalogFeature::Open() {
   // Attach all existing databases into DuckDB
   {
     auto snapshot = GetCatalog().GetCatalogSnapshot();
-    auto conn = query::DuckDBEngine::Instance().CreateConnection();
+    auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
     for (auto& db : snapshot->GetDatabases()) {
       auto query = absl::StrCat("ATTACH '", db->GetId().id(), "' AS \"",
                                 db->GetName(), "\" (TYPE serenedb)");

@@ -24,7 +24,7 @@
 
 #include "executor.h"
 #include "index_builder.h"
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 
 int main(int argc, const char* argv[]) {
   // DuckDBEngine owns the process-wide DuckDB the cs codec / writer use.
@@ -33,7 +33,7 @@ int main(int argc, const char* argv[]) {
   // thread_local cache libc destroys *before* static dtors, so any
   // DuckDB instance whose lifetime extends into the static-dtor phase
   // trips heap-use-after-free.
-  sdb::query::DuckDBEngine::Instance().Initialize();
+  sdb::DuckDBEngine::Instance().Initialize();
   int exit_code = 0;
   try {
   irs::timer_utils::InitStats(true);
@@ -99,6 +99,6 @@ int main(int argc, const char* argv[]) {
     exit_code = 1;
   }
   // MUST run before main() returns -- see comment at top of main().
-  sdb::query::DuckDBEngine::Instance().Shutdown();
+  sdb::DuckDBEngine::Instance().Shutdown();
   return exit_code;
 }

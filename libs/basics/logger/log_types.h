@@ -29,7 +29,7 @@
 
 #include <duckdb/main/database.hpp>
 
-namespace sdb::query {
+namespace sdb::log {
 
 // Register the SereneDB log types (Startup, SSL, Storage, Search,
 // IResearch; the existing duckdb HTTPLogType covers HTTP) and install
@@ -40,4 +40,4 @@ void InstallLogManagerSink(duckdb::DatabaseInstance& db);
 // line during shutdown doesn't chase a freed LogManager.
 void UninstallLogManagerSink() noexcept;
 
-}  // namespace sdb::query
+}  // namespace sdb::log

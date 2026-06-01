@@ -51,7 +51,7 @@
 #include "connector/indexonly_marker.h"
 #include "connector/key_utils.hpp"
 #include "connector/search_sink_writer.hpp"
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
@@ -198,7 +198,7 @@ void FlushShard(ShardState& s,
     connector::MakeIsTextIndexedProvider(*s.index);
   auto hnsw_info_provider = connector::MakeHNSWInfoProvider(*s.index);
   // Private read-only txn: expression deserialise + execute need one.
-  auto conn = query::DuckDBEngine::Instance().CreateConnection();
+  auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
   conn->BeginTransaction();
   irs::Finally rollback_on_exit = [&]() noexcept {
     try {

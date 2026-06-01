@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
 #include <iostream>
 #include <iresearch/analysis/analyzer.hpp>
@@ -40,6 +39,8 @@
 #include <iresearch/utils/text_format.hpp>
 #include <memory>
 
+#include "basics/duckdb_engine.h"
+
 // This example shows direct construction of the advanced text filters:
 //   - ByPhrase            (positional, "quick brown fox")
 //   - ByNGramSimilarity   (fuzzy multi-token match with threshold)
@@ -55,14 +56,10 @@
 namespace {
 
 // Per-segment columnstore needs a duckdb::DatabaseInstance for codec lookup
-// and the buffer manager.
+// and the buffer manager. main() brackets Initialize / Shutdown on the
+// process-wide sdb::DuckDBEngine; this helper just hands out a reference.
 duckdb::DatabaseInstance& Db() {
-  static std::unique_ptr<duckdb::DuckDB> kDb = [] {
-    duckdb::DBConfig cfg;
-    cfg.options.access_mode = duckdb::AccessMode::AUTOMATIC;
-    return std::make_unique<duckdb::DuckDB>(":memory:", &cfg);
-  }();
-  return *kDb->instance;
+  return sdb::DuckDBEngine::Instance().instance();
 }
 
 // Tokenizes a text value into the inverted index. Lowercase whitespace
@@ -181,11 +178,18 @@ irs::bytes_view Bytes(std::string_view s) noexcept {
 }  // namespace
 
 int main() {
+  // Bracket the process-wide duckdb::DuckDB lifetime; Db() reads it back.
+  auto& engine = sdb::DuckDBEngine::Instance();
+  engine.Initialize();
+
   irs::analysis::analyzers::Init();
   irs::formats::Init();
   irs::scorers::Init();
   irs::compression::Init();
 
+  // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
+  // down the duckdb::DuckDB they were dispatching through.
+  {
   std::vector<std::string> names;
   irs::MemoryDirectory dir;
   auto reader = BuildIndex(dir, names);
@@ -262,6 +266,8 @@ int main() {
     PrintHits("expect d0, d2, d4, d5 (fox, fox, foxy, fix)",
               RunFilter(reader, q, names));
   }
+  }
 
+  engine.Shutdown();
   return 0;
 }

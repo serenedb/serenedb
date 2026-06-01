@@ -26,7 +26,7 @@
 #include <string>
 
 #include "executor.h"
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 
 enum class QueryType {
   Count,
@@ -117,7 +117,7 @@ int main(int argc, const char* argv[]) {
   // Bracket the executor lifetime so the DuckDB instance is destroyed
   // BEFORE static dtors fire (see build_index.cpp main() for the
   // BlockAllocator/thread_local UAF rationale).
-  sdb::query::DuckDBEngine::Instance().Initialize();
+  sdb::DuckDBEngine::Instance().Initialize();
   int exit_code = 0;
   try {
     irs::DefaultPDP(1, false);
@@ -144,6 +144,6 @@ int main(int argc, const char* argv[]) {
     std::cerr << "fatal: " << ex.what() << std::endl;
     exit_code = 1;
   }
-  sdb::query::DuckDBEngine::Instance().Shutdown();
+  sdb::DuckDBEngine::Instance().Shutdown();
   return exit_code;
 }

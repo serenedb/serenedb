@@ -27,7 +27,7 @@
 #include <iresearch/utils/index_utils.hpp>
 #include <memory>
 
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 
 namespace bench {
 
@@ -36,7 +36,7 @@ static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
                                                  size_t segment_mem_max,
                                                  uint32_t row_group_size,
                                                  uint32_t norm_row_group_size) {
-  auto* db = &::sdb::query::DuckDBEngine::Instance().instance();
+  auto* db = &::sdb::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
   writer_opts.reader_options.scorer = scorer_ptr;
   writer_opts.segment_pool_size = segment_pool_size;

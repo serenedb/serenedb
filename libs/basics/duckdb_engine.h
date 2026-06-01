@@ -23,7 +23,7 @@
 #include <duckdb.hpp>
 #include <memory>
 
-namespace sdb::query {
+namespace sdb {
 
 // Process-wide duckdb::DuckDB owner. Owns the single duckdb::DuckDB that
 // every SDB_* call dispatches through (after InstallLogManagerSink wires
@@ -73,4 +73,4 @@ class DuckDBEngine {
   std::unique_ptr<duckdb::DuckDB> _db;
 };
 
-}  // namespace sdb::query
+}  // namespace sdb

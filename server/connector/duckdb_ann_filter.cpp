@@ -26,7 +26,7 @@
 #include "connector/index_source_factory.h"
 #include "connector/pk_batch_helpers.h"
 #include "connector/search_pk_lookup.h"
-#include "query/duckdb_engine.h"
+#include "basics/duckdb_engine.h"
 
 namespace sdb::connector {
 

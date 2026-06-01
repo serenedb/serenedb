@@ -17,23 +17,6 @@
 ///
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
-//
-// Thin shim over DuckDB's LogManager. SDB_TRACE/DEBUG/INFO/WARN/ERROR/FATAL
-// take a topic *identifier* (see topic.h) plus absl::StrCat-style args and
-// forward to duckdb::Logger::WriteLog via a single function-pointer hop.
-// IsEnabled() honours the runtime `enable_logging` / `logging_level` /
-// `enabled_log_types` / `disabled_log_types` SET-options.
-//
-// Contract: every binary that emits SDB_* MUST call
-// DuckDBEngine::Initialize() before the first macro fires, and
-// DuckDBEngine::Shutdown() only AFTER the last thread that could emit
-// has joined. No atomic guard, no null-check on the hot path -- the
-// pointer is set once at Initialize and cleared once at Shutdown.
-//
-// LogCrash() is the exception: an async-signal-safe entry point that
-// goes straight to write(2) on stderr. Reachable from signal handlers
-// (crash_handler / signal_handling / SDB_ASSERT) and therefore safe to
-// invoke outside the DuckDB window.
 
 #pragma once
 

@@ -30,8 +30,8 @@ ABSL_FLAG(bool, server_skip_search_recovery, false,
           "Skip the entire WAL replay phase for inverted indexes on startup. "
           "Diagnostic only -- data loss is permanent for the skipped delta.");
 ABSL_FLAG(uint32_t, server_refresh_threads, 0,
-          "Threads in the iresearch refresh (commit) pool (0 = auto-derive "
-          "from cores, clamped to [1, 4 * cores]).");
+          "Threads in the iresearch refresh pool (0 = auto-derive from cores, "
+          "clamped to [1, 4 * cores]).");
 ABSL_FLAG(uint32_t, server_compaction_threads, 0,
           "Threads in the iresearch compaction pool (0 = auto-derive from "
           "cores, clamped to [1, 4 * cores]).");

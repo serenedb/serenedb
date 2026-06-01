@@ -37,8 +37,7 @@ namespace sdb {
 namespace {
 
 duckdb::LogLevel ParseLogLevel(std::string_view raw) {
-  std::string s{raw};
-  absl::AsciiStrToLower(&s);
+  auto s = absl::AsciiStrToLower(raw);
   if (s == "trace") {
     return duckdb::LogLevel::LOG_TRACE;
   }
@@ -57,8 +56,6 @@ duckdb::LogLevel ParseLogLevel(std::string_view raw) {
   if (s == "fatal") {
     return duckdb::LogLevel::LOG_FATAL;
   }
-  // Unknown value: fall back to the duckdb default rather than aborting --
-  // logging shouldn't be the reason a server can't boot.
   return duckdb::LogConfig::DEFAULT_LOG_LEVEL;
 }
 
@@ -80,10 +77,6 @@ void DuckDBEngine::Initialize(DBConfigMutator mutator) {
 
   _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
 
-  // Operators who want to query logs from SQL can flip storage at any time:
-  //   SET enable_logging = true;
-  //   SET logging_storage = 'memory';
-  //   SELECT * FROM duckdb_logs();
   auto& manager = _db->instance->GetLogManager();
   duckdb::LogConfig cfg;
   cfg.enabled = true;

@@ -27,7 +27,7 @@ declare -A defaults=(
 	[port]='5432'
 	[database]='postgres'
 	[user]='postgres'
-	[lang]='python,java,js,go,rust,php,csharp,c,ruby,r,sqlsmith'
+	[lang]='python,java,js,go,rust,php,csharp,c,ruby'
 	[driver]=''
 	[protocols]='simple,extended-noparam,extended-text,extended-binary'
 	[types]='.*'
@@ -50,7 +50,8 @@ usage() {
 
 		Selection:
 		  --lang LIST          comma list: python,java,js,go,rust,php,csharp,c,ruby,r
-		                       (default: all)
+		                       (default: all except r; r is slow, so pass --lang r
+		                        explicitly -- in CI it rides the sqlsmith tier)
 		  --driver LIST        comma list of <lang>_<driver> filters,
 		                       e.g. python_psycopg3,go_pgx
 		  --protocols LIST     simple,extended-noparam,extended-text,extended-binary

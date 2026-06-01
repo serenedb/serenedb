@@ -7,7 +7,7 @@ services:
       - /var/log/serenedb
     volumes:
       - "${WORKSPACE}:/workspace:ro"
-      - "${WORKSPACE}/logs:/logs"
+      - "${WORKSPACE}/out/logs:/logs"
     environment:
       - HOME=/tmp
       - TARBALL_NAME
@@ -31,7 +31,7 @@ services:
     volumes:
       - "${WORKSPACE}/tests/sqllogic:/sqllogic"
       - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
-      - "${WORKSPACE}/logs:/logs"
+      - "${WORKSPACE}/out/logs:/logs"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
     environment:
       - HOME=/sqllogic
@@ -49,7 +49,7 @@ services:
         pg_isready -h serenedb -p 7890 -U postgres &&
 
         cd /sqllogic &&
-        exec ./run_sdb_tests.sh \
+        exec env SDB_SQLLOGIC_SCOPE=ours ./run_sdb_tests.sh \
           --host serenedb \
           --single-port 7890 \
           --fast \

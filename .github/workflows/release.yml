@@ -196,7 +196,11 @@ jobs:
         if: >-
           inputs.PUSH_IMAGES_2_REGISTRY &&
           steps.docker_build.outcome == 'success' &&
-          (inputs.RTA != 'required' || steps.docker_rta.outcome == 'success')
+          (inputs.RTA != 'required' || (
+            steps.docker_rta.outcome == 'success' &&
+            !(needs.build-amd64.outputs.packages_ok == 'true' && needs.build-amd64.outputs.rta_ok != 'true') &&
+            !(needs.build-arm64.outputs.packages_ok == 'true' && needs.build-arm64.outputs.rta_ok != 'true')
+          ))
         env:
           DOCKER_REGISTRY: serenedb
           DOCKER_USERNAME: serenedb
@@ -213,7 +217,11 @@ jobs:
         if: >-
           inputs.CREATE_GITHUB_RELEASE &&
           steps.prepare.outputs.has_tarballs == 'true' &&
-          (inputs.RTA != 'required' || steps.docker_rta.outcome == 'success')
+          (inputs.RTA != 'required' || (
+            steps.docker_rta.outcome == 'success' &&
+            !(needs.build-amd64.outputs.packages_ok == 'true' && needs.build-amd64.outputs.rta_ok != 'true') &&
+            !(needs.build-arm64.outputs.packages_ok == 'true' && needs.build-arm64.outputs.rta_ok != 'true')
+          ))
         env:
           GH_TOKEN: ${{ github.token }}
           DOCKER_TAG: ${{ env.DOCKER_TAG }}
@@ -263,12 +271,15 @@ jobs:
           BRANCH: ${{ github.ref_name }}
           JOB_STATUS: >-
             ${{
-              (needs.build-amd64.result == 'success' || needs.build-amd64.result == 'skipped') &&
-              (needs.build-arm64.result == 'success' || needs.build-arm64.result == 'skipped')
-                && 'success'
-                || (needs.build-amd64.outputs.packages_ok == 'true' || needs.build-arm64.outputs.packages_ok == 'true')
-                  && 'warning'
-                  || 'failure'
+              job.status != 'success' && 'failure'
+              || (
+                (needs.build-amd64.result == 'success' || needs.build-amd64.result == 'skipped') &&
+                (needs.build-arm64.result == 'success' || needs.build-arm64.result == 'skipped')
+                  && 'success'
+                  || (needs.build-amd64.outputs.packages_ok == 'true' || needs.build-arm64.outputs.packages_ok == 'true')
+                    && 'warning'
+                    || 'failure'
+              )
             }}
           ACTOR: ${{ github.actor }}
           RUN_NAME: "serenedb | make release"

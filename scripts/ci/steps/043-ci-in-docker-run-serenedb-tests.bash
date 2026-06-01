@@ -16,7 +16,7 @@ if ! docker run --rm \
 	bash -c '
     set -o pipefail
     cd /serenedb
-    LANG="en_US" ./scripts/gtest-parallel/gtest-parallel ./${BUILD_DIR}/bin/serenedb-tests* 2>&1 | tee -a /serenedb/serenedb-tests.log
+    LANG="en_US" ./scripts/gtest-parallel/gtest-parallel ./${BUILD_DIR}/bin/serenedb-tests* 2>&1 | tee -a /serenedb/out/logs/serenedb-tests.log
   '; then
 	echo "UNIT_TESTS=FAILED"
 	exit 123

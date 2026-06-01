@@ -57,3 +57,6 @@ tests/drivers/c/harness
 
 /.claude/*
 !/.claude/skills/
+
+# Local act secrets (fakes for local CI runs)
+.secrets

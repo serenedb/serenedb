@@ -32,7 +32,7 @@
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
 #include "basics/containers/monotonic_buffer.hpp"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/memory.hpp"
 #include "basics/noncopyable.hpp"
 #include "basics/string_utils.h"

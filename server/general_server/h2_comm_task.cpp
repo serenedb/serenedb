@@ -32,7 +32,7 @@
 #include "app/app_server.h"
 #include "basics/asio_ns.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/string_buffer.h"
 #include "basics/string_utils.h"
 #include "general_server/general_server.h"

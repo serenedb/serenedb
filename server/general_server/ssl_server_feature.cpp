@@ -32,6 +32,17 @@ ABSL_FLAG(std::string, ssl_keyfile, "",
           "for SSL endpoints.");
 ABSL_FLAG(std::string, ssl_cipher_list, "",
           "OpenSSL cipher list to restrict the server to. See OpenSSL docs.");
+ABSL_FLAG(std::string, ssl_protocol, "tls",
+          "TLS protocol selector: 'tls' (generic, OpenSSL negotiates), "
+          "'tls1.2', or 'tls1.3'. Legacy SSLv2/v3/TLSv1 are rejected.");
+ABSL_FLAG(std::string, ssl_ecdh_curve, "x25519:prime256v1",
+          "Colon-separated list of TLS key-exchange groups passed to "
+          "SSL_CTX_set1_groups_list. Empty disables the call.");
+ABSL_FLAG(bool, ssl_prefer_http1_in_alpn, false,
+          "Prefer HTTP/1.1 over HTTP/2 in the ALPN selection callback.");
+ABSL_FLAG(bool, ssl_session_cache, false,
+          "Enable OpenSSL server-side session caching "
+          "(SSL_SESS_CACHE_SERVER); off = SSL_SESS_CACHE_OFF.");
 #include <openssl/asn1.h>
 #include <openssl/bio.h>
 #include <openssl/ec.h>
@@ -52,7 +63,7 @@ ABSL_FLAG(std::string, ssl_cipher_list, "",
 #include "app/app_server.h"
 #include "basics/application-exit.h"
 #include "basics/file_utils.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/random/uniform_character.h"
 #include "basics/ssl/ssl_helper.h"
 #include "general_server/general_server.h"
@@ -61,21 +72,34 @@ using namespace sdb;
 using namespace sdb::basics;
 using namespace sdb::options;
 
+namespace {
+
+uint64_t ParseSslProtocolFlag(std::string_view raw) {
+  if (raw == "tls") {
+    return kTlsGeneric;
+  }
+  if (raw == "tls1.2") {
+    return kTlsV12;
+  }
+  if (raw == "tls1.3") {
+    return kTlsV13;
+  }
+  SDB_FATAL(SSL, "invalid --ssl_protocol '", raw,
+            "'; expected one of: tls, tls1.2, tls1.3");
+}
+
+}  // namespace
+
 SslServerFeature::SslServerFeature()
   : _cafile(absl::GetFlag(FLAGS_ssl_cafile)),
     _keyfile(absl::GetFlag(FLAGS_ssl_keyfile)),
     _cipher_list(absl::GetFlag(FLAGS_ssl_cipher_list)),
-    _ssl_protocol(kTlsGeneric),
+    _ssl_protocol(ParseSslProtocolFlag(absl::GetFlag(FLAGS_ssl_protocol))),
     _ssl_options(asio_ns::ssl::context::default_workarounds |
                  asio_ns::ssl::context::single_dh_use),
-    _ecdh_curve("x25519:prime256v1"),
-    _session_cache(false),
-    _prefer_http11_in_alpn(false) {
-  if (_ssl_protocol == SslProtocol::kSslV2) {
-    SDB_FATAL(SSL,
-              "SSLv2 is not supported any longer because of security "
-              "vulnerabilities in this protocol");
-  }
+    _ecdh_curve(absl::GetFlag(FLAGS_ssl_ecdh_curve)),
+    _session_cache(absl::GetFlag(FLAGS_ssl_session_cache)),
+    _prefer_http11_in_alpn(absl::GetFlag(FLAGS_ssl_prefer_http1_in_alpn)) {
   gInstance = this;
 }
 

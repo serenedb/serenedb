@@ -46,9 +46,6 @@ class RocksDBOptionFeature final {
   RocksDBOptionFeature();
   ~RocksDBOptionFeature();
 
-  void start() {}
-  void stop() {}
-
   const rocksdb::Options& getOptions() const;
   const rocksdb::BlockBasedTableOptions& getTableOptions() const;
 

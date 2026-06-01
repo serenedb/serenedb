@@ -25,35 +25,10 @@
 
 namespace sdb {
 
-// Process-wide duckdb::DuckDB owner. Owns the single duckdb::DuckDB that
-// every SDB_* call dispatches through (Initialize installs the GlobalLogger
-// pointer on sdb::log) and that connector/catalog/pg code holds
-// CreateConnection handles to.
-//
-// Lifecycle is bracketed by Initialize() / Shutdown() at the very edges of
-// the process:
-//   * serened main()           : Initialize before process-wide init, Shutdown
-//   after RunServer
-//   * gtest test_main          : Initialize before RUN_ALL_TESTS, Shutdown
-//   after
-//   * search-benchmark-game    : Initialize at top of main(), Shutdown before
-//   return
-// Within that window gLogger (libs/basics/logger) is non-null and the
-// SDB_* hot path skips its null-check.
-//
-// The Initialize() overload takes an optional pre-construct mutator: the
-// server build hands in `sdb::server::query::ConfigureServerDBConfig` to
-// register the SereneDB storage extension and config variables before the
-// duckdb::DuckDB ctor runs. Tests / benches that don't care leave it at
-// the default no-op.
 class DuckDBEngine {
  public:
   static DuckDBEngine& Instance();
 
-  // Pre-construct hook: invoked AFTER the lite defaults have been applied
-  // to `config` but BEFORE `duckdb::DuckDB` is constructed. The server
-  // build uses this to install the `serenedb` storage extension and the
-  // SET config variables that the storage extension reads at attach time.
   using DBConfigMutator = void (*)(duckdb::DBConfig&);
   static void NoopMutator(duckdb::DBConfig&) noexcept {}
 

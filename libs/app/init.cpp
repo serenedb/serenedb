@@ -32,7 +32,7 @@
 #include <yaclib/log.hpp>
 
 #include "basics/crash_handler.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/random/random_generator.h"
 #include "rest/version.h"
 #define ZLIB_COMPAT

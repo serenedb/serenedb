@@ -40,7 +40,7 @@
 #include "basics/exceptions.h"
 #include "basics/exitcodes.h"
 #include "basics/file_utils.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/number_utils.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
@@ -419,7 +419,5 @@ Result RocksDBRecoveryManager::parseRocksWAL() {
 
   return res;
 }
-
-void RocksDBRecoveryManager::stop() {}
 
 }  // namespace sdb

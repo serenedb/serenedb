@@ -23,7 +23,7 @@
 
 #include "basics/common.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "endpoint/connection_info.h"
 #include "endpoint/endpoint_ip.h"
 #include "general_server/general_server.h"

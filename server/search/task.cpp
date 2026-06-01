@@ -27,7 +27,7 @@
 #include <exception>
 
 #include "basics/assert.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/system-compiler.h"
 #include "search/inverted_index_shard.h"
 

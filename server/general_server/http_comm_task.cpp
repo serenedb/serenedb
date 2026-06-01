@@ -27,7 +27,7 @@
 
 #include "app/app_server.h"
 #include "basics/asio_ns.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/string_buffer.h"
 #include "general_server/general_server.h"
 #include "general_server/general_server_feature.h"

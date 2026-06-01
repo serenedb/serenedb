@@ -32,7 +32,7 @@
 #include <vector>
 
 #include "basics/containers/node_hash_map.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/singleton.hpp"
 
 namespace irs {

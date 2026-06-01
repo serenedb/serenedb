@@ -52,7 +52,7 @@
 #include "basics/dtoa.h"
 #include "basics/duckdb_engine.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"

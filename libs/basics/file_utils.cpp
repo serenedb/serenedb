@@ -50,7 +50,7 @@
 #include "basics/error.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/string_utils.h"
 
 using namespace sdb;

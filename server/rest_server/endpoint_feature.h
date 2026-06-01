@@ -25,22 +25,10 @@
 
 namespace sdb {
 
-class EndpointFeature final {
- public:
-  inline static EndpointFeature* gInstance = nullptr;
-  static EndpointFeature& instance() noexcept { return *gInstance; }
-
-  EndpointFeature();
-  ~EndpointFeature();
-
-  void start() {}
-  void stop() {}
-
-  EndpointList& endpointList() { return _endpoint_list; }
-  const EndpointList& endpointList() const { return _endpoint_list; }
-
- private:
-  EndpointList _endpoint_list;
-};
+// Process-wide endpoint list parsed from --server_endpoint. Lazily
+// initialized on first call (must be invoked after absl::ParseCommandLine).
+// No start/stop ceremony -- there is no IO or thread setup to do here, just
+// CLI parsing. Replaced the old EndpointFeature class.
+EndpointList& Endpoints();
 
 }  // namespace sdb

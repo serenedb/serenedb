@@ -26,7 +26,7 @@
 #include <absl/time/time.h>
 
 #include "basics/errors.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "general_server/rest_handler.h"
 #include "general_server/state.h"
 #include "rest/general_response.h"

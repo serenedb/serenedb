@@ -23,7 +23,7 @@
 
 #include "app/app_server.h"
 #include "basics/debugging.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "metrics/counter_builder.h"
 #include "metrics/metrics_feature.h"
 

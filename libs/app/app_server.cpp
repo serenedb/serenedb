@@ -21,13 +21,73 @@
 #include "app_server.h"
 
 #include <absl/flags/parse.h>
+#include <absl/flags/usage.h>
+#include <absl/flags/usage_config.h>
+
+#include <string>
 
 #include "basics/lifecycle.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 
 namespace sdb::app {
 
 void AppServer::parseOptions(int argc, char* argv[]) {
+  absl::FlagsUsageConfig usage_config;
+  usage_config.contains_help_flags = [](std::string_view file) {
+    return file.find("third_party/") == std::string_view::npos;
+  };
+  usage_config.contains_helpshort_flags = usage_config.contains_help_flags;
+  usage_config.contains_helppackage_flags = usage_config.contains_help_flags;
+  usage_config.normalize_filename = [](std::string_view file) -> std::string {
+    struct CategoryRule {
+      std::string_view file_suffix;
+      std::string_view category;
+    };
+    static constexpr CategoryRule kRules[] = {
+      {"server/rest_server/database_path_feature.cpp", "server"},
+      {"server/rest_server/endpoint_feature.cpp", "server"},
+      {"server/general_server/scheduler_feature.cpp", "server"},
+      {"server/storage_engine/search_engine.cpp", "server"},
+      {"server/general_server/general_server_feature.cpp", "http"},
+      {"server/general_server/ssl_server_feature.cpp", "ssl"},
+      {"libs/basics/log_flags.cpp", "log"},
+    };
+    for (const auto& [suffix, category] : kRules) {
+      if (file.ends_with(suffix)) {
+        return std::string{category};
+      }
+    }
+    constexpr std::string_view kMarker = "/serenedb/";
+    if (auto pos = file.rfind(kMarker); pos != std::string_view::npos) {
+      return std::string{file.substr(pos + kMarker.size())};
+    }
+    return std::string{file};
+  };
+  absl::SetFlagsUsageConfig(usage_config);
+  absl::SetProgramUsageMessage(
+    "serened -- SereneDB pg-wire server\n\n"
+    "Usage:\n"
+    "  serened <data-dir> [--flag=value ...]\n"
+    "  serened shell [duckdb-shell args ...]\n"
+    "  serened psql  [psql args ...]\n\n"
+    "Flag sources (absl built-in, full definitions under --helpfull):\n"
+    "  --flagfile=path1,path2     Read flags from one or more files (one\n"
+    "                             '--flag=value' per line, '#' comments OK).\n"
+    "  --fromenv=name1,name2      Read each listed flag from FLAGS_<name>;\n"
+    "                             missing env vars are an error.\n"
+    "  --tryfromenv=name1,name2   Same as --fromenv but silently skip\n"
+    "                             flags whose env var is unset.\n"
+    "  --undefok=name1,name2      Tolerate '--name1=...' even when no flag\n"
+    "                             with that name exists (useful for shared\n"
+    "                             flagfiles across binaries).\n\n"
+    "Help variants:\n"
+    "  --help                     This filtered banner.\n"
+    "  --helpfull                 Every absl-managed flag.\n"
+    "  --help=<substring>         Flags whose name or description matches.\n"
+    "  --helpshort                Project-defined flags only (no absl/gtest).\n"
+    "  --helppackage              Flags grouped by source-tree location.\n"
+    "  --version                  Print the build banner and exit.");
+
   auto positionals = absl::ParseCommandLine(argc, argv);
   if (positionals.size() == 2) {
     lifecycle::SetDataDirArg(positionals[1]);

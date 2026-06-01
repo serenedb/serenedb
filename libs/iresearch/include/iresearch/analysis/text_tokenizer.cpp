@@ -48,7 +48,7 @@
 #include "absl/strings/str_cat.h"
 #include "basics/containers/node_hash_map.h"
 #include "basics/file_utils_ext.hpp"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/misc.hpp"
 #include "basics/thread_utils.hpp"
 #include "iresearch/analysis/tokenizer.hpp"

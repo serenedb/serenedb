@@ -31,7 +31,7 @@
 #include <string_view>
 #include <utility>
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "iresearch/analysis/pipeline_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/string.hpp"

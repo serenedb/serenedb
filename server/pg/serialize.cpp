@@ -50,7 +50,7 @@
 
 #include "basics/assert.h"
 #include "basics/dtoa.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/misc.hpp"
 #include "connector/pg_logical_types.h"
 #include "pg/errcodes.h"

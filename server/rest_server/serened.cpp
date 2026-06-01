@@ -32,7 +32,7 @@
 #include "app/init.h"
 #include "basics/crash_handler.h"
 #include "basics/duckdb_engine.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "catalog/catalog.h"
 #include "duckdb_shell.hpp"
 #include "general_server/general_server_feature.h"
@@ -41,7 +41,6 @@
 #include "pg/pg_feature.h"
 #include "query/server_engine.h"
 #include "rest_server/database_path_feature.h"
-#include "rest_server/endpoint_feature.h"
 #include "rest_server/flush_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
@@ -78,7 +77,6 @@ int RunServer(int argc, char** argv) {
     RocksDBRecoveryManager recovery;
     catalog::CatalogFeature catalog;
     search::SearchEngine search;
-    EndpointFeature endpoint;
     GeneralServerFeature general;
     pg::PostgresFeature pg;
 
@@ -116,17 +114,18 @@ int RunServer(int argc, char** argv) {
     //    boot lands with a phase tag.
     CrashHandler::SetState("starting");
     start_one(ssl, [&] { ssl.stop(); });
-    start_one(db_path, [&] { db_path.stop(); });
     start_one(scheduler, [&] { scheduler.stop(); });
-    start_one(rocksdb_opt, [&] { rocksdb_opt.stop(); });
     start_one(engine, [&] { engine.stop(); });
-    start_one(flush, [&] { flush.stop(); });
-    start_one(recovery, [&] { recovery.stop(); });
+    // flush has no start() work; ctor already registered metrics + gInstance,
+    // but stop() clears subscriptions so it needs a LIFO slot here.
+    stoppers.push_back([&] { flush.stop(); });
+    // recovery + pg only have start() work (no stop counterpart): WAL replay
+    // and engine-ready assertion respectively. No teardown needed.
+    recovery.start();
     start_one(catalog, [&] { catalog.stop(); });
     start_one(search, [&] { search.stop(); });
-    start_one(endpoint, [&] { endpoint.stop(); });
     start_one(general, [&] { general.stop(); });
-    start_one(pg, [&] { pg.stop(); });
+    pg.start();
 
     // Boot completed; emit a recognisable banner so operators tailing
     // logs (and the sdb_log smoke test) can confirm the server is up.

@@ -31,7 +31,7 @@
 #include <utility>
 
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/result.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/string.hpp"

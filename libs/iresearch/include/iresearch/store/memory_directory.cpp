@@ -28,7 +28,7 @@
 
 #include "basics/assert.h"
 #include "basics/crc.hpp"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "iresearch/utils/bytes_utils.hpp"
 
 namespace irs {

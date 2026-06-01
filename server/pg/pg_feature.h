@@ -37,7 +37,6 @@ class PostgresFeature final {
   ~PostgresFeature();
 
   void start();
-  void stop();
 
   uint64_t RegisterTask(PgSQLCommTaskBase& task);
   void UnregisterTask(uint64_t key);

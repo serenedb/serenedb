@@ -45,8 +45,8 @@
 
 #include "basics/application-exit.h"
 #include "basics/containers/flat_hash_set.h"
-#include "basics/logger/topic.h"
 #include "basics/shared.hpp"
+#include "basics/topic.h"
 
 namespace duckdb {
 

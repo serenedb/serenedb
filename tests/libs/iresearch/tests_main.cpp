@@ -45,7 +45,7 @@
 #include "basics/containers/bitset.hpp"
 #include "basics/duckdb_engine.h"
 #include "basics/file_utils_ext.hpp"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/network_utils.hpp"
 #include "index/doc_generator.hpp"
 #include "iresearch/analysis/analyzers.hpp"

@@ -21,11 +21,11 @@
 
 #include "general_server_feature.h"
 
+#include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
 
-ABSL_FLAG(uint64_t, server_io_threads, 0,
-          "Number of IO threads for HTTP and pg-wire connections "
-          "(0 = max(1, cpu_count/4)).");
+ABSL_DECLARE_FLAG(uint64_t, server_io_threads);
+
 ABSL_FLAG(double, http_keep_alive_timeout, 300.0,
           "Keep-alive timeout for HTTP and pg-wire connections (in seconds; "
           "0 disables keep-alive).");
@@ -128,7 +128,7 @@ void GeneralServerFeature::start() {
   _job_manager = std::make_unique<AsyncJobManager>();
 
   // check if endpointList contains ssl featured server
-  const auto& endpoint_list = EndpointFeature::instance().endpointList();
+  const auto& endpoint_list = Endpoints();
   if (endpoint_list.hasSsl()) {
     SslServerFeature::instance().verifySslOptions();
   }
@@ -185,7 +185,7 @@ rest::AsyncJobManager& GeneralServerFeature::jobManager() {
 }
 
 void GeneralServerFeature::startListening() {
-  _server->startListening(EndpointFeature::instance().endpointList());
+  _server->startListening(Endpoints());
 }
 
 }  // namespace sdb

@@ -32,7 +32,7 @@
 
 #include "basics/error.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/number_utils.h"
 #include "basics/operating-system.h"
 #include "basics/sink.h"

@@ -24,7 +24,7 @@
 
 #include <absl/strings/str_cat.h>
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/memory.hpp"
 #include "iresearch/utils/string.hpp"
 

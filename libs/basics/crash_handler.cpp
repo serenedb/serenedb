@@ -27,7 +27,7 @@
 #include <cstring>
 #include <string_view>
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 
 namespace sdb {
 namespace {

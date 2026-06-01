@@ -22,7 +22,7 @@
 #include "flush_feature.h"
 
 #include "app/app_server.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "metrics/gauge_builder.h"
 #include "metrics/metrics_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"

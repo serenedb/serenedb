@@ -25,7 +25,7 @@
 #include "auth/role_utils.h"
 #include "basics/encoding_utils.h"
 #include "basics/lifecycle.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"

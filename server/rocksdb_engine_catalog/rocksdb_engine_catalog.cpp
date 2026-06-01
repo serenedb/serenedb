@@ -67,7 +67,7 @@
 #include "basics/exceptions.h"
 #include "basics/exitcodes.h"
 #include "basics/file_utils.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/result.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"

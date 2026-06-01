@@ -55,7 +55,6 @@ class RocksDBRecoveryManager final {
   ~RocksDBRecoveryManager();
 
   void start();
-  void stop();
 
   RecoveryState recoveryState() const noexcept;
 

@@ -28,7 +28,7 @@
 #include <cstring>
 
 #include "basics/lifecycle.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/signals.h"
 
 namespace sdb::signal_handling {

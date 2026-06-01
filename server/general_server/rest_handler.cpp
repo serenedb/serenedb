@@ -29,7 +29,7 @@
 #include "app/app_server.h"
 #include "auth/token_cache.h"
 #include "basics/debugging.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "database/ticks.h"
 #include "general_server/general_server_feature.h"
 #include "general_server/scheduler_feature.h"

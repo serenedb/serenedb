@@ -64,7 +64,7 @@
 #include "basics/error_code.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/misc.hpp"
 #include "basics/result.h"
 #include "basics/result_or.h"

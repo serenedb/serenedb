@@ -29,7 +29,7 @@
 #include "basics/application-exit.h"
 #include "basics/exitcodes.h"
 #include "basics/lifecycle.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "endpoint/endpoint.h"
 #include "endpoint/endpoint_list.h"
 #include "general_server/acceptor.h"

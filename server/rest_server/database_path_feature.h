@@ -34,9 +34,6 @@ class DatabasePathFeature final {
   DatabasePathFeature();
   ~DatabasePathFeature();
 
-  void start();
-  void stop() {}
-
   const std::string& directory() const { return _directory; }
   std::string subdirectoryName(std::string_view sub_directory) const;
 

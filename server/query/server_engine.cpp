@@ -20,6 +20,9 @@
 
 #include "query/server_engine.h"
 
+#include <absl/flags/declare.h>
+#include <absl/flags/flag.h>
+
 #include <duckdb.hpp>
 #include <duckdb/catalog/default/default_functions.hpp>
 #include <duckdb/catalog/default/default_types.hpp>
@@ -205,11 +208,16 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
   return kExternalTypes;
 }
 
+ABSL_DECLARE_FLAG(uint64_t, server_cpu_threads);
+
 namespace sdb::server::query {
 
 void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   connector::RegisterSereneDBStorage(config);
   connector::RegisterConfigVariables(config);
+  if (const auto t = absl::GetFlag(FLAGS_server_cpu_threads); t > 0) {
+    config.SetOptionByName("threads", duckdb::Value::UBIGINT(t));
+  }
 }
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {

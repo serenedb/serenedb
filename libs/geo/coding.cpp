@@ -32,7 +32,7 @@
 #include "basics/assert.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/result.h"
 #include "geo/shape_container.h"
 #include "geo_json.h"

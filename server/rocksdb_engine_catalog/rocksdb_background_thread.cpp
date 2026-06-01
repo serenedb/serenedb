@@ -24,7 +24,7 @@
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/thread_id.h"
 #include "catalog/catalog.h"
 #include "rest_server/flush_feature.h"

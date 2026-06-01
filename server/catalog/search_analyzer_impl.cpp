@@ -32,7 +32,7 @@
 
 #include "basics/containers/trivial_map.h"
 #include "basics/down_cast.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/static_strings.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/identity_analyzer.h"

@@ -34,7 +34,7 @@
 
 #include "basics/error_code.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_comparator.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"

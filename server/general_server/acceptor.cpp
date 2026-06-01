@@ -21,7 +21,7 @@
 
 #include "general_server/acceptor.h"
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/operating-system.h"
 #include "general_server/acceptor_tcp.h"
 

@@ -20,13 +20,49 @@
 
 #include "basics/duckdb_engine.h"
 
+#include <absl/flags/declare.h>
+#include <absl/flags/flag.h>
+#include <absl/strings/ascii.h>
+
 #include <duckdb/logging/log_manager.hpp>
 #include <duckdb/logging/logger.hpp>
 
 #include "basics/assert.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
+
+ABSL_DECLARE_FLAG(std::string, log_storage);
+ABSL_DECLARE_FLAG(std::string, log_level);
 
 namespace sdb {
+namespace {
+
+duckdb::LogLevel ParseLogLevel(std::string_view raw) {
+  std::string s{raw};
+  absl::AsciiStrToLower(&s);
+  if (s == "trace") {
+    return duckdb::LogLevel::LOG_TRACE;
+  }
+  if (s == "debug") {
+    return duckdb::LogLevel::LOG_DEBUG;
+  }
+  if (s == "info") {
+    return duckdb::LogLevel::LOG_INFO;
+  }
+  if (s == "warn" || s == "warning") {
+    return duckdb::LogLevel::LOG_WARNING;
+  }
+  if (s == "error") {
+    return duckdb::LogLevel::LOG_ERROR;
+  }
+  if (s == "fatal") {
+    return duckdb::LogLevel::LOG_FATAL;
+  }
+  // Unknown value: fall back to the duckdb default rather than aborting --
+  // logging shouldn't be the reason a server can't boot.
+  return duckdb::LogConfig::DEFAULT_LOG_LEVEL;
+}
+
+}  // namespace
 
 DuckDBEngine& DuckDBEngine::Instance() {
   static DuckDBEngine gInstance;
@@ -44,16 +80,15 @@ void DuckDBEngine::Initialize(DBConfigMutator mutator) {
 
   _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
 
-  // Default to stdout so Docker / systemd / k8s log drivers capture the
-  // stream as soon as the process starts. Operators who want to query logs
-  // from SQL can flip to memory at any time:
+  // Operators who want to query logs from SQL can flip storage at any time:
   //   SET enable_logging = true;
   //   SET logging_storage = 'memory';
   //   SELECT * FROM duckdb_logs();
   auto& manager = _db->instance->GetLogManager();
   duckdb::LogConfig cfg;
   cfg.enabled = true;
-  cfg.storage = duckdb::LogConfig::STDOUT_STORAGE_NAME;
+  cfg.storage = absl::GetFlag(FLAGS_log_storage);
+  cfg.level = ParseLogLevel(absl::GetFlag(FLAGS_log_level));
   manager.SetConfig(*_db->instance, cfg);
   log::SetLogger(&manager.GlobalLogger());
 }

@@ -33,7 +33,7 @@
 
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 
 using namespace sdb;
 

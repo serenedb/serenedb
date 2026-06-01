@@ -53,7 +53,7 @@
 
 #endif  // _WIN32
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/network_utils.hpp"
 
 #ifdef _WIN32

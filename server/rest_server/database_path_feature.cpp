@@ -31,11 +31,11 @@
 #include "basics/file_utils.h"
 #include "basics/lifecycle.h"
 #include "basics/lockfile.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/operating-system.h"
 #include "basics/string_utils.h"
 
-ABSL_FLAG(std::string, database_directory, "",
+ABSL_FLAG(std::string, server_directory, "",
           "Path to the database directory. Overrides any positional arg.");
 
 using namespace sdb::basics;
@@ -43,7 +43,7 @@ using namespace sdb::basics;
 namespace sdb {
 
 DatabasePathFeature::DatabasePathFeature()
-  : _directory(absl::GetFlag(FLAGS_database_directory)) {
+  : _directory(absl::GetFlag(FLAGS_server_directory)) {
   // Positional arg wins over the flag if given (size-check ran in
   // AppServer::parseOptions).
   if (auto p = lifecycle::DataDirArg(); !p.empty()) {
@@ -65,15 +65,7 @@ DatabasePathFeature::DatabasePathFeature()
     _directory = abs.string();
   }
 
-  gInstance = this;
-}
-
-DatabasePathFeature::~DatabasePathFeature() { gInstance = nullptr; }
-
-void DatabasePathFeature::start() {
-  // Create base directory if it does not exist.
   if (!basics::file_utils::IsDirectory(_directory)) {
-    std::error_code ec;
     std::filesystem::create_directories(_directory, ec);
     if (!ec) {
       SDB_INFO(GENERAL, "Created database directory: ", _directory);
@@ -84,7 +76,11 @@ void DatabasePathFeature::start() {
   }
 
   // Acquire the LOCK file in the data directory. The lockfile guards against
-  // a second serened starting on the same data dir.
+  // a second serened starting on the same data dir. No explicit shutdown hook
+  // needed: libs/basics/lockfile.cpp owns a LockfileRemover whose static dtor
+  // runs on normal exit and releases / unlinks every lockfile we acquired.
+  // Fatal paths (_exit / abort) skip static dtors; the stale lockfile that
+  // remains is handled by VerifyLockFile on the next start.
   std::string lock_filename =
     basics::file_utils::BuildFilename(_directory, "LOCK");
   auto res = VerifyLockFile(lock_filename.c_str());
@@ -107,15 +103,12 @@ void DatabasePathFeature::start() {
         lock_filename, "' goes away.");
     }
   }
-  {
-    std::error_code ec;
-    if (std::filesystem::exists(lock_filename, ec) && !ec) {
-      std::filesystem::remove(lock_filename, ec);
-      if (ec) {
-        SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
-                            "failed to remove an abandoned lockfile '",
-                            lock_filename, "': ", ec.message());
-      }
+  if (std::filesystem::exists(lock_filename, ec) && !ec) {
+    std::filesystem::remove(lock_filename, ec);
+    if (ec) {
+      SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
+                          "failed to remove an abandoned lockfile '",
+                          lock_filename, "': ", ec.message());
     }
   }
   res = CreateLockFile(lock_filename.c_str());
@@ -124,12 +117,11 @@ void DatabasePathFeature::start() {
                         "failed to lock the database directory using '",
                         lock_filename, "': ", GetErrorStr(res));
   }
-  // No explicit shutdown hook needed: libs/basics/lockfile.cpp owns a
-  // LockfileRemover whose static dtor runs on normal exit and releases /
-  // unlinks every lockfile we acquired. Fatal paths (_exit / abort) skip
-  // static dtors; the stale lockfile that remains is handled by
-  // VerifyLockFile on the next start.
+
+  gInstance = this;
 }
+
+DatabasePathFeature::~DatabasePathFeature() { gInstance = nullptr; }
 
 std::string DatabasePathFeature::subdirectoryName(
   std::string_view sub_directory) const {

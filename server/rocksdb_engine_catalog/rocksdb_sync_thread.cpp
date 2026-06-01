@@ -24,7 +24,7 @@
 #include <rocksdb/status.h>
 #include <rocksdb/utilities/transaction_db.h>
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/thread_id.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"

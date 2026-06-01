@@ -22,12 +22,6 @@
 
 namespace sdb::app {
 
-// Process-wide one-time init / teardown. Called once at the top of main()
-// and once at the bottom respectively. Order inside InitProcess matters --
-// see init.cpp for the rationale.
-//
-// Must run AFTER DuckDBEngine::Initialize() because some of the steps emit
-// SDB_TRACE, which requires the engine-owned gLogger.
 void InitProcess(const char* argv0);
 void ShutdownGlobals();
 

@@ -28,7 +28,7 @@
 
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/memory.hpp"
 #include "basics/object_pool.hpp"
 #include "basics/shared.hpp"

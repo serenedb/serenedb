@@ -21,12 +21,30 @@
 
 #include "scheduler_feature.h"
 
+#include <absl/flags/flag.h>
+
 #include "app/app_server.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/number_of_cores.h"
 #include "general_server/scheduler.h"
 #include "general_server/signal_handling.h"
 #include "metrics/metrics_feature.h"
+
+ABSL_FLAG(uint64_t, server_io_threads, 0,
+          "IO threads for HTTP and pg-wire connections "
+          "(0 = max(1, cpu_count / 4)).");
+ABSL_FLAG(uint64_t, server_request_threads, 0,
+          "Maximum worker threads for the SchedulerFeature pool (the legacy "
+          "ArangoDB scheduler used for HTTP/REST work; distinct from "
+          "server_io_threads and server_cpu_threads). 0 = auto-detect "
+          "(max(32, 2 * cpu_count)).");
+ABSL_FLAG(uint64_t, server_maximal_queue_size, 4096,
+          "Maximum FIFO queue depth per priority in the SchedulerFeature "
+          "scheduler; controls backpressure for the HTTP/REST work queue.");
+ABSL_FLAG(uint64_t, server_cpu_threads, 0,
+          "DuckDB executor pool size at process start. 0 = let DuckDB "
+          "auto-detect from cpu_count. The SQL-level `SET threads = N` "
+          "continues to win at runtime.");
 
 namespace sdb {
 namespace {
@@ -45,7 +63,9 @@ size_t DefaultNumberOfThreads() {
 }  // namespace
 
 SchedulerFeature::SchedulerFeature()
-  : _metrics_feature(sdb::metrics::GetMetrics()) {
+  : _nr_maximal_threads(absl::GetFlag(FLAGS_server_request_threads)),
+    _queue_size(absl::GetFlag(FLAGS_server_maximal_queue_size)),
+    _metrics_feature(sdb::metrics::GetMetrics()) {
   if (_nr_maximal_threads == 0) {
     _nr_maximal_threads = DefaultNumberOfThreads();
   }

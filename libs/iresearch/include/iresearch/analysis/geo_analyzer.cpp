@@ -34,7 +34,7 @@
 
 #include "basics/down_cast.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/result.h"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"

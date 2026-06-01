@@ -27,7 +27,7 @@
 
 #include "basics/crc.hpp"
 #include "basics/file_utils_ext.hpp"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/object_pool.hpp"
 #include "basics/shared.hpp"
 #include "basics/system-compiler.h"

@@ -24,45 +24,37 @@
 #include <absl/flags/flag.h>
 #include <sys/socket.h>
 
-#include "app/app_server.h"
 #include "basics/application-exit.h"
-#include "basics/logger/logger.h"
-#include "general_server/scheduler_feature.h"
+#include "basics/log.h"
 
 ABSL_FLAG(std::vector<std::string>, server_endpoint, {},
           "Endpoint for client requests (e.g. `pgsql+tcp://127.0.0.1:7890`). "
           "Repeat for multiple. Supported schemes: pgsql+tcp, tcp, ssl, "
           "unix.");
 
-using namespace sdb::basics;
-
 namespace sdb {
 
-EndpointFeature::EndpointFeature() {
-  auto endpoints = absl::GetFlag(FLAGS_server_endpoint);
-  // if our default value is too high, we'll use half of the max value provided
-  // by the system
-  constexpr uint64_t kDefaultBacklog = 64;
-  uint64_t backlog_size = kDefaultBacklog;
-  if (backlog_size > SOMAXCONN) {
-    backlog_size = SOMAXCONN / 2;
-  }
-  constexpr bool kReuseAddress = true;
-  if (endpoints.empty()) {
-    endpoints.emplace_back("pgsql+tcp://127.0.0.1:7890");
-    SDB_INFO(GENERAL, "no endpoints have been specified, using default: ",
-             endpoints.back());
-  }
-  for (const auto& it : endpoints) {
-    bool ok =
-      _endpoint_list.add(it, static_cast<int>(backlog_size), kReuseAddress);
-    if (!ok) {
-      SDB_FATAL(GENERAL, "invalid endpoint '", it, "'");
+EndpointList& Endpoints() {
+  static EndpointList list = [] {
+    EndpointList l;
+    auto endpoints = absl::GetFlag(FLAGS_server_endpoint);
+    constexpr uint64_t kDefaultBacklog = 64;
+    const uint64_t backlog_size =
+      kDefaultBacklog <= SOMAXCONN ? kDefaultBacklog : SOMAXCONN / 2;
+    constexpr bool kReuseAddress = true;
+    if (endpoints.empty()) {
+      endpoints.emplace_back("pgsql+tcp://127.0.0.1:7890");
+      SDB_INFO(GENERAL, "no endpoints have been specified, using default: ",
+               endpoints.back());
     }
-  }
-  gInstance = this;
+    for (const auto& ep : endpoints) {
+      if (!l.add(ep, static_cast<int>(backlog_size), kReuseAddress)) {
+        SDB_FATAL(GENERAL, "invalid endpoint '", ep, "'");
+      }
+    }
+    return l;
+  }();
+  return list;
 }
-
-EndpointFeature::~EndpointFeature() { gInstance = nullptr; }
 
 }  // namespace sdb

@@ -24,7 +24,7 @@
 #include <vpack/vpack_helper.h>
 
 #include "basics/debugging.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "rest/request_context.h"

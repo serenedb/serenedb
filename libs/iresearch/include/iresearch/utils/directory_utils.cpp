@@ -23,7 +23,7 @@
 
 #include "iresearch/utils/directory_utils.hpp"
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/directory_attributes.hpp"

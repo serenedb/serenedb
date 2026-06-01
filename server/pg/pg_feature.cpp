@@ -32,9 +32,7 @@
 namespace sdb::pg {
 
 PostgresFeature::PostgresFeature() {
-  // EndpointFeature is constructed earlier in RunServer, so
-  // endpointList() is populated by the time we get here.
-  const auto& endpoint_list = EndpointFeature::instance().endpointList();
+  const auto& endpoint_list = Endpoints();
   const bool has_pgsql = std::ranges::any_of(
     endpoint_list | std::views::values, [](const auto& endpoint) {
       return endpoint->transport() == Endpoint::TransportType::PGSQL;
@@ -83,7 +81,5 @@ void PostgresFeature::start() {
     RocksDBColumnFamilyManager::Family::Default);
   SDB_ASSERT(cf);
 }
-
-void PostgresFeature::stop() {}
 
 }  // namespace sdb::pg

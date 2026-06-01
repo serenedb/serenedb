@@ -87,7 +87,6 @@ class FlushFeature final {
   FlushFeature();
   ~FlushFeature();
 
-  void start() {}
   void stop();
 
   /// register a flush subscription that will ensure replay of all WAL

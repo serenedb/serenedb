@@ -28,7 +28,7 @@
 #include <string_view>
 
 #include "app/app_server.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/random/uniform_character.h"
 #include "basics/ssl/ssl_interface.h"
 #include "basics/static_strings.h"

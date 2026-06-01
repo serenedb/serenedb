@@ -27,7 +27,7 @@
 #include <cerrno>
 #include <string>
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 
 namespace sdb::lifecycle {
 namespace {

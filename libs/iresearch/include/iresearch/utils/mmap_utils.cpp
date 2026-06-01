@@ -26,7 +26,7 @@
 
 #include "basics/assert.h"
 #include "basics/file_utils_ext.hpp"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/shared.hpp"
 
 namespace irs::mmap_utils {

@@ -31,7 +31,7 @@
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 
 #ifdef SDB_FAULT_INJECTION
 namespace sdb {

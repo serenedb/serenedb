@@ -39,13 +39,14 @@ add_library(
     basics/crash_handler.cpp
     basics/random/random_generator.cpp
     basics/random/uniform_character.cpp
-    basics/logger/logger.cpp
     basics/ssl/ssl_interface.cpp
     basics/ssl/ssl_helper.cpp
     basics/message_buffer.cpp
     basics/message_chunk.cpp
     basics/message_sequence_view.cpp
     basics/duckdb_engine.cpp
+    basics/log.cpp
+    basics/log_flags.cpp
 )
 
 set(FUNCTION2_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/function2")

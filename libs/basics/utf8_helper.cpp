@@ -44,7 +44,7 @@
 
 #include "basics/debugging.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/static_strings.h"
 #include "basics/system-compiler.h"
 

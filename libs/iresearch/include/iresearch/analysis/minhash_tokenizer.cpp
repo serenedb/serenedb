@@ -26,7 +26,7 @@
 #include <vpack/parser.h>
 #include <vpack/slice.h>
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "iresearch/analysis/analyzers.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/utils/vpack_utils.hpp"

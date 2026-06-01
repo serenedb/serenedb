@@ -26,9 +26,15 @@
 #include <absl/strings/escaping.h>
 #include <absl/time/time.h>
 
-ABSL_FLAG(bool, search_skip_wal_recovery, false,
+ABSL_FLAG(bool, server_skip_search_recovery, false,
           "Skip the entire WAL replay phase for inverted indexes on startup. "
           "Diagnostic only -- data loss is permanent for the skipped delta.");
+ABSL_FLAG(uint32_t, server_refresh_threads, 0,
+          "Threads in the iresearch refresh (commit) pool (0 = auto-derive "
+          "from cores, clamped to [1, 4 * cores]).");
+ABSL_FLAG(uint32_t, server_compaction_threads, 0,
+          "Threads in the iresearch compaction pool (0 = auto-derive from "
+          "cores, clamped to [1, 4 * cores]).");
 
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/fast_text_model.hpp>
@@ -41,7 +47,7 @@ ABSL_FLAG(bool, search_skip_wal_recovery, false,
 #include "basics/down_cast.h"
 #include "basics/exceptions.h"
 #include "basics/lifecycle.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/number_of_cores.h"
 #include "catalog/catalog.h"
 #include "catalog/identity_analyzer.h"
@@ -71,12 +77,6 @@ DECLARE_GAUGE(serenedb_search_num_out_of_sync_links, uint64_t,
               "Number of inverted indexes currently out of sync");
 DECLARE_GAUGE(serenedb_search_columns_cache_size, LimitedResourceManager,
               "Search columns cache usage in bytes");
-
-const std::string kCommitThreadsParam("--search.commit-threads");
-const std::string kCompactionThreadsParam("--search.compaction-threads");
-const std::string kCacheLimit("--search.columns-cache-limit");
-const std::string kCacheOnlyLeader("--search.columns-cache-only-leader");
-const std::string kSearchThreadsLimit("--search.execution-threads-limit");
 
 uint32_t ComputeThreadsCount(uint32_t threads, uint32_t threads_limit,
                              uint32_t div) noexcept {
@@ -121,11 +121,12 @@ SearchEngine::SearchEngine()
       metrics::GetMetrics().add(serenedb_search_num_out_of_sync_links{})),
     _columns_cache_memory_used(
       metrics::GetMetrics().add(serenedb_search_columns_cache_size{})) {
-  uint32_t threads_limit =
+  const uint32_t threads_limit =
     static_cast<uint32_t>(4 * number_of_cores::GetValue());
-  _commit_threads = ComputeThreadsCount(_commit_threads, threads_limit, 6);
-  _compaction_threads =
-    ComputeThreadsCount(_compaction_threads, threads_limit, 6);
+  _commit_threads = ComputeThreadsCount(
+    absl::GetFlag(FLAGS_server_refresh_threads), threads_limit, 6);
+  _compaction_threads = ComputeThreadsCount(
+    absl::GetFlag(FLAGS_server_compaction_threads), threads_limit, 6);
   gInstance = this;
 }
 
@@ -157,17 +158,13 @@ void SearchEngine::start() {
   _thread_pools->Get(ThreadGroup::Compaction)
     .start(_compaction_threads, IR_NATIVE_STRING("search:compact"));
 
-  const bool skip_wal_recovery = absl::GetFlag(FLAGS_search_skip_wal_recovery);
+  const bool skip_wal_recovery =
+    absl::GetFlag(FLAGS_server_skip_search_recovery);
   InitInvertedIndexes(skip_wal_recovery);
 
-  const uint32_t search_execution_threads_limit =
-    static_cast<uint32_t>(number_of_cores::GetValue());
-  SDB_INFO(SEARCH, "Search maintenance: [", _commit_threads, "..",
-           _commit_threads, "] commit thread(s), [", _compaction_threads, "..",
-           _compaction_threads,
-           "] compaction thread(s). Search execution parallel threads "
-           "limit: ",
-           search_execution_threads_limit);
+  SDB_INFO(SEARCH, "Search maintenance: ", _commit_threads,
+           " refresh thread(s), ", _compaction_threads,
+           " compaction thread(s)");
 }
 
 void SearchEngine::stop() {

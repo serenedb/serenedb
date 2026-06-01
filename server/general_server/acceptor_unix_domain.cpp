@@ -24,7 +24,7 @@
 #include "basics/down_cast.h"
 #include "basics/exceptions.h"
 #include "basics/file_utils.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "endpoint/connection_info.h"
 #include "endpoint/endpoint_unix_domain.h"
 #include "general_server/general_server.h"

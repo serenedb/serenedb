@@ -21,7 +21,7 @@
 
 #include "io_context.h"
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/thread_id.h"
 
 using namespace sdb;

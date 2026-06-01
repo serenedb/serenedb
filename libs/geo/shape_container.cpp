@@ -34,7 +34,7 @@
 #include "basics/application-exit.h"
 #include "basics/down_cast.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "geo/geo_params.h"
 #include "geo/s2/multi_point_region.h"
 #include "geo/s2/multi_polyline_region.h"

@@ -28,7 +28,7 @@
 #include "app/app_server.h"
 #include "basics/exceptions.h"
 #include "basics/lifecycle.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/random/random_generator.h"
 #include "basics/string_utils.h"
 #include "basics/thread_id.h"

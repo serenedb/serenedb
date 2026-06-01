@@ -26,7 +26,7 @@
 #include <memory>
 
 #include "basics/assert.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/math_utils.hpp"
 #include "basics/noncopyable.hpp"
 #include "basics/resource_manager.hpp"

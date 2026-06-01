@@ -46,7 +46,7 @@
 
 #include "app/app_server.h"
 #include "basics/application-exit.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/number_of_cores.h"
 #include "basics/physical_memory.h"
 #include "catalog/table_options.h"

@@ -35,7 +35,7 @@
 #include "basics/application-exit.h"
 #include "basics/debugging.h"
 #include "basics/error.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "exceptions.h"
 
 namespace sdb::basics {

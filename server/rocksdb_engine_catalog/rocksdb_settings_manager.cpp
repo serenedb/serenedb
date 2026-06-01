@@ -34,7 +34,7 @@
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/random/random_generator.h"
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"

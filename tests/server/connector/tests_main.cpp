@@ -18,29 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-// Custom test entrypoint -- replaces the default gtest_main() so we can
-// stand up a DuckDBEngine before any SDB_* macro fires (logger.h contract:
-// gLogger is a plain pointer, not an atomic, and the hot path no longer
-// null-checks it). Shutdown() runs after RUN_ALL_TESTS returns so the
-// duckdb::DuckDB tears down BEFORE static dtors (BlockAllocator dtor reads
-// a thread_local cache libc destroys before static dtors).
-
 #include <gtest/gtest.h>
 
 #include "basics/duckdb_engine.h"
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
-
-  // Bring up DuckDBEngine BEFORE RUN_ALL_TESTS so SDB_* macros that fire
-  // inside test code dispatch through duckdb::LogManager (logger.h
-  // contract: gLogger is a plain pointer, no nullptr check on the hot
-  // path).
-  //
-  // Tear DuckDBEngine DOWN before main returns -- duckdb's BlockAllocator
-  // dtor reads a thread_local cache that libc destroys *before* static
-  // dtors, so any duckdb::DuckDB instance whose lifetime extends to the
-  // static-dtor phase trips heap-use-after-free.
   sdb::DuckDBEngine::Instance().Initialize();
   const int rc = RUN_ALL_TESTS();
   sdb::DuckDBEngine::Instance().Shutdown();

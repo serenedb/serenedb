@@ -53,6 +53,7 @@
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/utils/attributes.hpp"
 #include "iresearch/utils/mmap_utils.hpp"
+#include "query/duckdb_engine.h"
 #include "tests_config.hpp"
 #include "tests_shared.hpp"
 
@@ -113,9 +114,10 @@ bool TestEnv::prepare(const cmdline::parser& parser) {
 
   make_directories();
 
-  auto log_level =
-    parser.get<std::underlying_type_t<sdb::LogLevel>>(kIresLogLevel);
-  sdb::log::SetInitialLogLevel(sdb::LogLevel{log_level});
+  // NOTE: --ires_log_level is parsed but currently has no effect: SDB_*
+  // levels are now driven by the duckdb LogManager config installed at
+  // DuckDBEngine::Initialize() (default: INFO with HTTP+SSL muted). Adjust
+  // via SET logging_level inside the engine if needed.
 
   if (parser.exist(kIresOutput)) {
     std::unique_ptr<char*[]> argv(new char*[2 + gArgc]);
@@ -260,6 +262,14 @@ void TestBase::TearDown() {
 }
 
 int main(int argc, char* argv[]) {
+  // SDB_* needs a Logger installed before it fires. DuckDBEngine wires
+  // duckdb::LogManager into the shim during Initialize(). Tear it down
+  // before main returns -- duckdb's BlockAllocator dtor reads a
+  // thread_local cache that libc destroys *before* static dtors, so any
+  // duckdb::DuckDB whose lifetime extends to the static-dtor phase trips
+  // heap-use-after-free.
+  sdb::query::DuckDBEngine::Instance().Initialize();
+
   const int code = TestEnv::initialize(argc, argv);
 
   SDB_INFO(IRESEARCH, "Path to test result directory: ",
@@ -286,5 +296,6 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  sdb::query::DuckDBEngine::Instance().Shutdown();
   return code;
 }

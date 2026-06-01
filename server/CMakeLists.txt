@@ -33,6 +33,10 @@ target_link_libraries(
         serene
         serene_geo
         serene_connector
+        # Lite DuckDB engine + LogManager sink. PUBLIC so binaries linking
+        # sereneserver (incl. test executables) see sdb::query::DuckDBEngine
+        # without having to re-list serene_query_lite.
+        serene_query_lite
         # TODO
         date_interface
         rocksdb_interface

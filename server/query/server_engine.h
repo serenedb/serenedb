@@ -20,24 +20,27 @@
 
 #pragma once
 
-// Glue between the sdb::log shim and duckdb::LogManager. Installs the sink
-// that the SDB_* macros dispatch through after the DuckDB instance has been
-// constructed, registers the SereneDB-specific log types so they can be
-// referenced by SET enabled_log_types/disabled_log_types, and seeds an
-// initial LogConfig that mirrors the pre-migration behaviour (HTTP+SSL muted
-// by default, everything else at INFO).
-
 #include <duckdb/main/database.hpp>
 
-namespace sdb::query {
+namespace duckdb {
 
-// Register the SereneDB log types (Startup, SSL, Storage, Search,
-// IResearch; the existing duckdb HTTPLogType covers HTTP) and install
-// the sink so SDB_* writes flow through duckdb::LogManager.
-void InstallLogManagerSink(duckdb::DatabaseInstance& db);
+struct DBConfig;
 
-// Detach the sink before destroying the DatabaseInstance so any logging
-// during shutdown reverts to the stderr fallback.
-void UninstallLogManagerSink() noexcept;
+}  // namespace duckdb
 
-}  // namespace sdb::query
+namespace sdb::server::query {
+
+// Pre-construct mutator handed to sdb::query::DuckDBEngine::Initialize.
+// Installs the `serenedb` storage extension and the SET-config variables
+// it reads at attach time. Runs AFTER the lite defaults and BEFORE the
+// duckdb::DuckDB ctor.
+void ConfigureServerDBConfig(duckdb::DBConfig& config);
+
+// Post-construct fill on a live DatabaseInstance: every connector
+// function/cast/optimiser registration, the SereneDBCreateIndexPlan
+// index-type loop, the SereneDBCopyFileSystem subsystem install, and the
+// pg::InitSystemFunctions / pg::InitSystemViews caches. Called from
+// serened main() right after DuckDBEngine::Initialize().
+void RegisterServerExtensions(duckdb::DatabaseInstance& db);
+
+}  // namespace sdb::server::query

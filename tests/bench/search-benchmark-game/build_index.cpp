@@ -24,8 +24,18 @@
 
 #include "executor.h"
 #include "index_builder.h"
+#include "query/duckdb_engine.h"
 
 int main(int argc, const char* argv[]) {
+  // DuckDBEngine owns the process-wide DuckDB the cs codec / writer use.
+  // Bring it up before the first iresearch construction and tear it down
+  // before main returns -- duckdb's BlockAllocator dtor reads a
+  // thread_local cache libc destroys *before* static dtors, so any
+  // DuckDB instance whose lifetime extends into the static-dtor phase
+  // trips heap-use-after-free.
+  sdb::query::DuckDBEngine::Instance().Initialize();
+  int exit_code = 0;
+  try {
   irs::timer_utils::InitStats(true);
   irs::Finally output_stats = [] noexcept {
     std::vector<std::tuple<std::string, size_t, size_t>> output;
@@ -84,6 +94,11 @@ int main(int argc, const char* argv[]) {
 
   std::cout << "Number of documents: " << builder.GetReader().docs_count()
             << std::endl;
-
-  return 0;
+  } catch (const std::exception& ex) {
+    std::cerr << "fatal: " << ex.what() << std::endl;
+    exit_code = 1;
+  }
+  // MUST run before main() returns -- see comment at top of main().
+  sdb::query::DuckDBEngine::Instance().Shutdown();
+  return exit_code;
 }

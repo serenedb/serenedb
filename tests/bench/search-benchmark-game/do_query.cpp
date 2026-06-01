@@ -26,6 +26,7 @@
 #include <string>
 
 #include "executor.h"
+#include "query/duckdb_engine.h"
 
 enum class QueryType {
   Count,
@@ -112,25 +113,37 @@ size_t ExecuteQuery(bench::Executor& executor, Query q) {
 }  // namespace
 
 int main(int argc, const char* argv[]) {
-  irs::DefaultPDP(1, false);
-  irs::DefaultPDP(1, true);
-  irs::DefaultPDP(2, false);
-  irs::DefaultPDP(2, true);
-  irs::analysis::analyzers::Init();
-  irs::formats::Init();
-  irs::scorers::Init();
-  irs::compression::Init();
+  // DuckDBEngine owns the process-wide DuckDB the cs codec / reader use.
+  // Bracket the executor lifetime so the DuckDB instance is destroyed
+  // BEFORE static dtors fire (see build_index.cpp main() for the
+  // BlockAllocator/thread_local UAF rationale).
+  sdb::query::DuckDBEngine::Instance().Initialize();
+  int exit_code = 0;
+  try {
+    irs::DefaultPDP(1, false);
+    irs::DefaultPDP(1, true);
+    irs::DefaultPDP(2, false);
+    irs::DefaultPDP(2, true);
+    irs::analysis::analyzers::Init();
+    irs::formats::Init();
+    irs::scorers::Init();
+    irs::compression::Init();
 
-  bench::Executor executor{argv[1]};
+    bench::Executor executor{argv[1]};
 
-  std::string data;
-  while (std::getline(std::cin, data)) {
-    const auto count = ExecuteQuery(executor, ParseQuery(data));
-    if (!count) {
-      std::cout << magic_enum::enum_name(QueryType::Unsupported) << "\n";
-    } else {
-      std::cout << count << "\n";
+    std::string data;
+    while (std::getline(std::cin, data)) {
+      const auto count = ExecuteQuery(executor, ParseQuery(data));
+      if (!count) {
+        std::cout << magic_enum::enum_name(QueryType::Unsupported) << "\n";
+      } else {
+        std::cout << count << "\n";
+      }
     }
+  } catch (const std::exception& ex) {
+    std::cerr << "fatal: " << ex.what() << std::endl;
+    exit_code = 1;
   }
-  return 0;
+  sdb::query::DuckDBEngine::Instance().Shutdown();
+  return exit_code;
 }

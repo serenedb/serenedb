@@ -4,6 +4,9 @@ target_link_libraries(serene_tests_basics_deps INTERFACE sereneserver)
 
 add_executable(
     serenedb-tests_basics
+    # Custom main (NOT gtest_main): brings up DuckDBEngine before any
+    # SDB_* macro fires -- see tests_main.cpp comment.
+    tests_main.cpp
     conversions_test.cpp
     endian_test.cpp
     assertions_tests.cpp
@@ -34,5 +37,5 @@ add_executable(
 
 target_link_libraries(
     serenedb-tests_basics
-    PUBLIC serene_tests_connector_deps gtest gtest_main
+    PUBLIC serene_tests_connector_deps gtest
 )

@@ -157,6 +157,15 @@ add_subdirectory(iresearch "${IRESEARCH_BUILD_DIR}" EXCLUDE_FROM_ALL)
 target_compile_definitions(iresearch-static PRIVATE -DDISABLE_EXECINFO)
 
 ################################################################################
+## serene_query_lite -- lite DuckDB process-wide engine + LogManager sink.
+## Owns the duckdb::DuckDB the SDB_* macros dispatch through; the server build
+## fills the heavy connector / pg / index bits on top via
+## server/query (sdb::server::query::RegisterServerExtensions).
+################################################################################
+
+add_subdirectory(query)
+
+################################################################################
 ## serene
 ################################################################################
 

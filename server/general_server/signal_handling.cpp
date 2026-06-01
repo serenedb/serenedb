@@ -28,6 +28,7 @@
 #include <cstring>
 
 #include "basics/lifecycle.h"
+#include "basics/logger/logger.h"
 #include "basics/signals.h"
 
 namespace sdb::signal_handling {
@@ -48,12 +49,10 @@ extern "C" void CExitHandler(int /*signal*/, siginfo_t* /*info*/,
     lifecycle::BeginShutdown();
     return;
   }
-  // Second signal: fast-path abort. write(2) is async-signal-safe; no heap
-  // touch, no mutex, no FatalErrorExit. _exit skips global destructors.
-  static constexpr char kMsg[] =
-    "[FATAL] {crash} second shutdown signal received, terminating\n";
-  ssize_t unused = ::write(STDERR_FILENO, kMsg, sizeof(kMsg) - 1);
-  (void)unused;
+  // Second signal: fast-path abort. LogCrash is async-signal-safe (write(2)
+  // to stderr, fixed-size stack buffer, no heap, no LogManager lookup), so
+  // it's reachable from a signal context. _exit skips global destructors.
+  log::LogCrash(LogLevel::FATAL, "second shutdown signal received, terminating");
   ::_exit(EXIT_FAILURE);
 }
 

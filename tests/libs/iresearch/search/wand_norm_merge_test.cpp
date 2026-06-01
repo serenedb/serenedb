@@ -181,7 +181,7 @@ class WandNormMergeCase : public tests::IndexTestBase {
   }
 
   irs::IndexReaderOptions MakeReaderOpts(irs::Scorer* scorer) {
-    return irs::IndexReaderOptions{.scorer = scorer, .db = &irs::tests::CsDb()};
+    return irs::IndexReaderOptions{.scorer = scorer, .db = &::sdb::query::DuckDBEngine::Instance().instance()};
   }
 
   // doc with one NormField "body" of `count` tokens + a unique id.

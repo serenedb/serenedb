@@ -92,8 +92,9 @@ void TerminateDebugging(std::string_view message) {
 
 #endif
 
-  // Generic path: log the message through the signal-safe CRASH topic, then
-  // abort() so absl's failure signal handler prints a symbolized stack.
+  // Generic path: log the message via LogCrash (signal-safe write(2) to
+  // stderr), then abort() so absl's failure signal handler prints a
+  // symbolized stack.
   ::sdb::log::LogCrash(::sdb::LogLevel::FATAL, message);
   std::abort();
 }

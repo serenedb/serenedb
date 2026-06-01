@@ -40,6 +40,7 @@
 #include "general_server/state.h"
 #include "pg/pg_feature.h"
 #include "query/duckdb_engine.h"
+#include "query/server_engine.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/endpoint_feature.h"
 #include "rest_server/flush_feature.h"
@@ -69,130 +70,117 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     state.SetRole(ServerState::Role::Single);
 
     // 1. Parse CLI before constructing any feature (ctors read flags).
+    //    parseOptions can SDB_FATAL on bad CLI -- DuckDB is already up
+    //    by the time we get here (Initialize ran in main(), see below).
     server.parseOptions(argc, argv);
 
-    // 2. Bring DuckDB up FIRST: it has no feature dependencies, and once
-    //    InstallLogManagerSink() runs every SDB_* macro flows through
-    //    duckdb's LogManager. Mirrored by DuckDBEngine::Shutdown() after
-    //    every feature has stopped (see below). The Shutdown() call must
-    //    be reachable on both happy-path and exception-unwind, so wrap
-    //    the feature lifecycle in its own try and rely on the outer
-    //    try/catch only for exceptions outside the DuckDB window.
-    query::DuckDBEngine::Instance().Initialize();
-    try {
-      // 3. Construct features in dependency order. Each ctor reads its
-      //    own flags, runs validation, and sets its static gInstance
-      //    pointer; Feature::instance() works from here on.
-      SslServerFeature ssl;
-      DatabasePathFeature db_path;
-      SchedulerFeature scheduler;
-      RocksDBOptionFeature rocksdb_opt;
-      EngineFeature engine;
-      FlushFeature flush;
-      RocksDBRecoveryManager recovery;
-      catalog::CatalogFeature catalog;
-      search::SearchEngine search;
-      EndpointFeature endpoint;
-      GeneralServerFeature general;
-      pg::PostgresFeature pg;
+    // 2. Construct features in dependency order. Each ctor reads its
+    //    own flags, runs validation, and sets its static gInstance
+    //    pointer; Feature::instance() works from here on.
+    SslServerFeature ssl;
+    DatabasePathFeature db_path;
+    SchedulerFeature scheduler;
+    RocksDBOptionFeature rocksdb_opt;
+    EngineFeature engine;
+    FlushFeature flush;
+    RocksDBRecoveryManager recovery;
+    catalog::CatalogFeature catalog;
+    search::SearchEngine search;
+    EndpointFeature endpoint;
+    GeneralServerFeature general;
+    pg::PostgresFeature pg;
 
-      // --------------------------------------------------------------
-      // Two-method lifecycle: start() does non-IO setup + spin-up of
-      // threads / sockets; stop() drains long-running threads then
-      // tears down. Construction order doubles as boot order; shutdown
-      // is strict LIFO. A `stoppers` stack tracks every feature that
-      // successfully started so a throw mid-start unwinds exactly the
-      // already-started subset; on the happy path we drain it after
-      // wait() in the same reverse order.
-      // --------------------------------------------------------------
-      std::vector<std::function<void()>> stoppers;
-      stoppers.reserve(12);
-      auto start_one = [&](auto& feature, std::function<void()> stop_fn) {
-        feature.start();
-        stoppers.push_back(std::move(stop_fn));
-      };
-      auto drain_stoppers = [&]() noexcept {
-        while (!stoppers.empty()) {
-          try {
-            stoppers.back()();
-          } catch (const std::exception& ex) {
-            SDB_ERROR(GENERAL, "exception during stop: ", ex.what());
-          } catch (...) {
-            SDB_ERROR(GENERAL, "exception of unknown type during stop");
-          }
-          stoppers.pop_back();
+    // --------------------------------------------------------------
+    // Two-method lifecycle: start() does non-IO setup + spin-up of
+    // threads / sockets; stop() drains long-running threads then
+    // tears down. Construction order doubles as boot order; shutdown
+    // is strict LIFO. A `stoppers` stack tracks every feature that
+    // successfully started so a throw mid-start unwinds exactly the
+    // already-started subset; on the happy path we drain it after
+    // wait() in the same reverse order.
+    // --------------------------------------------------------------
+    std::vector<std::function<void()>> stoppers;
+    stoppers.reserve(12);
+    auto start_one = [&](auto& feature, std::function<void()> stop_fn) {
+      feature.start();
+      stoppers.push_back(std::move(stop_fn));
+    };
+    auto drain_stoppers = [&]() noexcept {
+      while (!stoppers.empty()) {
+        try {
+          stoppers.back()();
+        } catch (const std::exception& ex) {
+          SDB_ERROR(GENERAL, "exception during stop: ", ex.what());
+        } catch (...) {
+          SDB_ERROR(GENERAL, "exception of unknown type during stop");
         }
-      };
-
-      try {
-        // 4. start -- after a successful pass the server is fully
-        //    accepting clients. The CrashHandler state strings get
-        //    stamped into /tmp/crash bundles so a fatal signal during
-        //    boot lands with a phase tag.
-        CrashHandler::SetState("starting");
-        start_one(ssl, [&] { ssl.stop(); });
-        start_one(db_path, [&] { db_path.stop(); });
-        start_one(scheduler, [&] { scheduler.stop(); });
-        start_one(rocksdb_opt, [&] { rocksdb_opt.stop(); });
-        start_one(engine, [&] { engine.stop(); });
-        start_one(flush, [&] { flush.stop(); });
-        start_one(recovery, [&] { recovery.stop(); });
-        start_one(catalog, [&] { catalog.stop(); });
-        start_one(search, [&] { search.stop(); });
-        start_one(endpoint, [&] { endpoint.stop(); });
-        start_one(general, [&] { general.stop(); });
-        start_one(pg, [&] { pg.stop(); });
-
-        // Boot completed; emit a recognisable banner so operators tailing
-        // logs (and the sdb_log smoke test) can confirm the server is up.
-        SDB_INFO(GENERAL, "SereneDB is ready for business. Have fun!");
-
-        // 5. wait for SIGTERM/SIGINT.
-        CrashHandler::SetState("running");
-        server.wait();
-
-        // 6. stop -- strict LIFO. Each feature's stop() first nudges any
-        //    long-running threads to exit, then blocks on the joins and
-        //    finishes its own teardown.
-        CrashHandler::SetState("stopping");
-        drain_stoppers();
-        CrashHandler::SetState("stopped");
-
-        ret = EXIT_SUCCESS;
-      } catch (const std::exception& ex) {
-        SDB_ERROR(GENERAL,
-                  "serened terminated because of an exception: ", ex.what());
-        drain_stoppers();
-        ret = EXIT_FAILURE;
-      } catch (...) {
-        SDB_ERROR(GENERAL,
-                  "serened terminated because of an exception of "
-                  "unknown type");
-        drain_stoppers();
-        ret = EXIT_FAILURE;
+        stoppers.pop_back();
       }
+    };
+
+    try {
+      // 3. start -- after a successful pass the server is fully
+      //    accepting clients. The CrashHandler state strings get
+      //    stamped into /tmp/crash bundles so a fatal signal during
+      //    boot lands with a phase tag.
+      CrashHandler::SetState("starting");
+      start_one(ssl, [&] { ssl.stop(); });
+      start_one(db_path, [&] { db_path.stop(); });
+      start_one(scheduler, [&] { scheduler.stop(); });
+      start_one(rocksdb_opt, [&] { rocksdb_opt.stop(); });
+      start_one(engine, [&] { engine.stop(); });
+      start_one(flush, [&] { flush.stop(); });
+      start_one(recovery, [&] { recovery.stop(); });
+      start_one(catalog, [&] { catalog.stop(); });
+      start_one(search, [&] { search.stop(); });
+      start_one(endpoint, [&] { endpoint.stop(); });
+      start_one(general, [&] { general.stop(); });
+      start_one(pg, [&] { pg.stop(); });
+
+      // Boot completed; emit a recognisable banner so operators tailing
+      // logs (and the sdb_log smoke test) can confirm the server is up.
+      SDB_INFO(GENERAL, "SereneDB is ready for business. Have fun!");
+
+      // 4. wait for SIGTERM/SIGINT.
+      CrashHandler::SetState("running");
+      server.wait();
+
+      // 5. stop -- strict LIFO. Each feature's stop() first nudges any
+      //    long-running threads to exit, then blocks on the joins and
+      //    finishes its own teardown.
+      CrashHandler::SetState("stopping");
+      drain_stoppers();
+      CrashHandler::SetState("stopped");
+
+      ret = EXIT_SUCCESS;
+    } catch (const std::exception& ex) {
+      SDB_ERROR(GENERAL,
+                "serened terminated because of an exception: ", ex.what());
+      drain_stoppers();
+      ret = EXIT_FAILURE;
     } catch (...) {
-      // 7a. Anything thrown from a feature ctor (before we entered the
-      //     start/wait/stop try) still has to flow through DuckDB
-      //     teardown before propagating to the outer handler.
-      query::DuckDBEngine::Instance().Shutdown();
-      throw;
+      SDB_ERROR(GENERAL,
+                "serened terminated because of an exception of "
+                "unknown type");
+      drain_stoppers();
+      ret = EXIT_FAILURE;
     }
-    // 7b. DuckDB last; mirrors the Initialize() call above. The inner
-    //     try/catch swallows feature start/stop exceptions so we always
-    //     get here on that path.
-    query::DuckDBEngine::Instance().Shutdown();
+    // DuckDBEngine Initialize() / Shutdown() bracket this whole function
+    // from main(), so we don't need a Shutdown() on the unwind path here.
 
     return context.exit(ret);
   } catch (const std::exception& ex) {
+    // gLogger is still up (Shutdown runs in main() after RunServer
+    // returns), but go through SDB_ERROR so the line lands in the same
+    // duckdb_logs() store as everything else.
     SDB_ERROR(GENERAL,
               "serened terminated because of an exception: ", ex.what());
   } catch (...) {
     SDB_ERROR(GENERAL,
-              "serened terminated because of an exception of "
-              "unknown type");
+              "serened terminated because of an exception of unknown type");
   }
-  exit(EXIT_FAILURE);
+  // Return non-zero -- main() will run DuckDBEngine::Shutdown() before exit.
+  return EXIT_FAILURE;
 }
 
 // Trim argv in place: overwrite argv[1] with argv[0] and hand the shell
@@ -207,12 +195,32 @@ int RunSubcommand(int argc, char* argv[],
 
 int main(int argc, char* argv[]) {
   if (argc >= 2 && std::strcmp(argv[1], "shell") == 0) {
+    // Pure duckdb shell -- manages its own DuckDB instance, no SDB_*.
     return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::SHELL);
   }
   if (argc >= 2 && std::strcmp(argv[1], "psql") == 0) {
     return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::PSQL);
   }
 
-  GlobalContext context(argc, argv, BIN_DIRECTORY);
-  return RunServer(argc, argv, context);
+  // DuckDBEngine must be up BEFORE the first SDB_* fires. GlobalContext's
+  // ctor calls VPackHelper::initialize() which does SDB_TRACE; the absl
+  // failure-signal handler installed inside GlobalContext also relies on
+  // LogCrash, which is safe but the SDB_TRACE is not. Bracket the whole
+  // GlobalContext + RunServer lifetime so the contract holds.
+  //
+  // Two-step boot: the lite Initialize (libs/query) installs the storage
+  // extension via the ConfigureServerDBConfig mutator BEFORE the duckdb
+  // ctor runs (storage extensions must be registered pre-construct), then
+  // RegisterServerExtensions fills connector/pg/index types on the live
+  // DatabaseInstance.
+  auto& engine = query::DuckDBEngine::Instance();
+  engine.Initialize(&server::query::ConfigureServerDBConfig);
+  server::query::RegisterServerExtensions(engine.instance());
+  int rc;
+  {
+    GlobalContext context(argc, argv, BIN_DIRECTORY);
+    rc = RunServer(argc, argv, context);
+  }
+  engine.Shutdown();
+  return rc;
 }

@@ -32,8 +32,8 @@ namespace sdb {
 //     prepends to every crash line, so logs say "[state=running] ..." rather
 //     than just the bare stack.
 //   - assertionFailure: SDB_ASSERT/SDB_VERIFY landing pad -- logs the
-//     condition + message through the signal-safe CRASH topic and then
-//     std::abort()s, which absl catches and dumps.
+//     condition + message via LogCrash (signal-safe write(2) to stderr) and
+//     then std::abort()s, which absl catches and dumps.
 class CrashHandler {
  public:
   // Set server-state string (e.g. "starting", "running", "stopping"). The
@@ -42,9 +42,9 @@ class CrashHandler {
   // literal or an object with static storage duration.
   static void SetState(std::string_view state);
 
-  // SDB_ASSERT / SDB_VERIFY landing pad. Logs the assertion through the
-  // CRASH topic (signal-safe write to stderr) and then std::abort()s, which
-  // raises SIGABRT and trips absl's failure signal handler.
+  // SDB_ASSERT / SDB_VERIFY landing pad. Logs the assertion via LogCrash
+  // (signal-safe write(2) to stderr) and then std::abort()s, which raises
+  // SIGABRT and trips absl's failure signal handler.
   [[noreturn]] static void assertionFailure(const char* file, int line,
                                             const char* func,
                                             const char* context,

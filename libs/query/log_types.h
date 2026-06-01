@@ -20,25 +20,24 @@
 
 #pragma once
 
-#include <duckdb.hpp>
-#include <memory>
+// Glue between the sdb::log shim and duckdb::LogManager. Installs the sink
+// that the SDB_* macros dispatch through after the DuckDB instance has been
+// constructed, registers the SereneDB-specific log types so they can be
+// referenced by SET enabled_log_types/disabled_log_types, and seeds an
+// initial LogConfig that mirrors the pre-migration behaviour (HTTP+SSL muted
+// by default, everything else at INFO).
+
+#include <duckdb/main/database.hpp>
 
 namespace sdb::query {
 
-class DuckDBEngine {
- public:
-  static DuckDBEngine& Instance();
+// Register the SereneDB log types (Startup, SSL, Storage, Search,
+// IResearch; the existing duckdb HTTPLogType covers HTTP) and install
+// the sink so SDB_* writes flow through duckdb::LogManager.
+void InstallLogManagerSink(duckdb::DatabaseInstance& db);
 
-  void Initialize();
-  void Shutdown();
-
-  duckdb::DuckDB& GetDB() { return *_db; }
-
-  duckdb::unique_ptr<duckdb::Connection> CreateConnection();
-
- private:
-  DuckDBEngine() = default;
-  std::unique_ptr<duckdb::DuckDB> _db;
-};
+// Detach the sink before destroying the DatabaseInstance so any late log
+// line during shutdown doesn't chase a freed LogManager.
+void UninstallLogManagerSink() noexcept;
 
 }  // namespace sdb::query

@@ -18,13 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "query/duckdb_engine.h"
+#include "query/server_engine.h"
 
+#include <duckdb.hpp>
 #include <duckdb/catalog/default/default_functions.hpp>
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
 
-#include "basics/assert.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_storage_extension.h"
@@ -47,7 +47,6 @@
 #include "pg/system_catalog.h"
 #include "pg/system_table.h"
 #include "query/config.h"
-#include "query/log_types.h"
 
 extern "C" const duckdb::DefaultType* duckdb_external_types(
   duckdb::idx_t* count) {
@@ -206,69 +205,48 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
   return kExternalTypes;
 }
 
-namespace sdb::query {
+namespace sdb::server::query {
 
-DuckDBEngine& DuckDBEngine::Instance() {
-  static DuckDBEngine gInstance;
-  return gInstance;
+void ConfigureServerDBConfig(duckdb::DBConfig& config) {
+  connector::RegisterSereneDBStorage(config);
+  connector::RegisterConfigVariables(config);
 }
 
-void DuckDBEngine::Initialize() {
-  SDB_ASSERT(!_db);
-  duckdb::DBConfig config;
-  // PG folds unquoted identifiers to lowercase
-  config.SetOptionByName("preserve_identifier_case", duckdb::Value{false});
-  config.SetOptionByName("disable_database_invalidation", duckdb::Value{true});
-  // Existing serenedb code (array_remove etc.) uses the single-arrow lambda
-  // syntax (`x -> ...`) which duckdb now warns about by default. Keep it
-  // enabled until callers migrate to the new `lambda x: ...` form.
-  config.SetOptionByName("lambda_syntax", duckdb::Value{"ENABLE_SINGLE_ARROW"});
+void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
+  connector::RegisterTokenizerPragma(db);
 
-  connector::RegisterSereneDBStorage(config);
+  connector::RegisterPgCasts(db);
 
-  connector::RegisterConfigVariables(config);
+  connector::RegisterPgMathFunctions(db);
 
-  _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
+  connector::RegisterPgSystemFunctions(db);
 
-  // Wire sdb::log into duckdb::LogManager. After this call every SDB_*
-  // macro flows through the LogManager; before it, log lines go to stderr
-  // via the shim's fallback writer (pre-engine startup logs).
-  InstallLogManagerSink(*_db->instance);
+  connector::RegisterSequenceFunctions(db);
 
-  connector::RegisterTokenizerPragma(*_db->instance);
+  connector::RegisterPgInOutFunctions(db);
 
-  connector::RegisterPgCasts(*_db->instance);
+  connector::RegisterPgStringFunctions(db);
 
-  connector::RegisterPgMathFunctions(*_db->instance);
+  connector::RegisterPgArrayFunctions(db);
 
-  connector::RegisterPgSystemFunctions(*_db->instance);
+  connector::RegisterPgJsonFunctions(db);
 
-  connector::RegisterSequenceFunctions(*_db->instance);
+  connector::RegisterVacuumFunction(db);
 
-  connector::RegisterPgInOutFunctions(*_db->instance);
+  connector::RegisterTruncateFunction(db);
 
-  connector::RegisterPgStringFunctions(*_db->instance);
+  connector::RegisterSearchFunctions(db);
 
-  connector::RegisterPgArrayFunctions(*_db->instance);
+  connector::RegisterVectorFunctions(db);
 
-  connector::RegisterPgJsonFunctions(*_db->instance);
+  connector::RegisterEmbeddingFunctions(db);
 
-  connector::RegisterVacuumFunction(*_db->instance);
-
-  connector::RegisterTruncateFunction(*_db->instance);
-
-  connector::RegisterSearchFunctions(*_db->instance);
-
-  connector::RegisterVectorFunctions(*_db->instance);
-
-  connector::RegisterEmbeddingFunctions(*_db->instance);
-
-  connector::RegisterSereneDBOptimizers(*_db->instance);
+  connector::RegisterSereneDBOptimizers(db);
 
   // Register SereneDB index types.
   // These provide create_plan callbacks that bypass DuckDB's native
   // PhysicalCreateIndex (which requires DuckTableEntry).
-  auto& index_types = _db->instance->config.GetIndexTypes();
+  auto& index_types = db.config.GetIndexTypes();
   for (auto& name : {"secondary", "btree", "inverted"}) {
     index_types.RegisterIndexType({
       .name = name,
@@ -278,7 +256,7 @@ void DuckDBEngine::Initialize() {
 
   // Register filesystem for COPY FROM STDIN support.
   // Intercepts "/dev/stdin" and reads from PG CopyData messages.
-  auto& fs = duckdb::FileSystem::GetFileSystem(*_db->instance);
+  auto& fs = duckdb::FileSystem::GetFileSystem(db);
   fs.RegisterSubSystem(duckdb::make_uniq<connector::SereneDBCopyFileSystem>());
 
   // Parse and cache system functions/views
@@ -288,16 +266,4 @@ void DuckDBEngine::Initialize() {
   pg::InitSystemViews(parser);
 }
 
-void DuckDBEngine::Shutdown() {
-  // Detach the sink BEFORE destroying the database instance, otherwise any
-  // log line emitted from a destructor would chase a freed LogManager.
-  UninstallLogManagerSink();
-  _db.reset();
-}
-
-duckdb::unique_ptr<duckdb::Connection> DuckDBEngine::CreateConnection() {
-  SDB_ASSERT(_db);
-  return duckdb::make_uniq<duckdb::Connection>(*_db);
-}
-
-}  // namespace sdb::query
+}  // namespace sdb::server::query

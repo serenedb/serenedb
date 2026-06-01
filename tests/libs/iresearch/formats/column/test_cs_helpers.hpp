@@ -42,19 +42,9 @@
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
-
-namespace duckdb {
-
-class DatabaseInstance;
-}
+#include "query/duckdb_engine.h"
 
 namespace irs::tests {
-
-// Process-wide DuckDB DatabaseInstance for cs codec lookups / buffer
-// manager. Lazy first-use. Safe to call concurrently (static-local
-// initialization is C++11 thread-safe, and DatabaseInstance is the same
-// shape used by production code -- it tolerates parallel access).
-duckdb::DatabaseInstance& CsDb();
 
 // Production code reserves norm ids on the catalog side and the writer
 // asserts `norm_column_options` returned a valid id; iresearch gtests have
@@ -69,27 +59,31 @@ inline NormColumnOptionsProvider MakeNormColumnOptionsProvider() {
   };
 }
 
-// Default IndexWriterOptions / IndexReaderOptions wired to CsDb(). Legacy
+// Default IndexWriterOptions / IndexReaderOptions wired to the process-wide
+// DuckDB DatabaseInstance held by sdb::query::DuckDBEngine. tests_main brings
+// the engine up before RUN_ALL_TESTS and tears it down afterwards. Legacy
 // tests that just called `IndexWriter::Make(dir, codec, mode)` would skip
-// opening a cs writer because `opts.db == nullptr`. Tests ported off
-// legacy STORE -> column(name) need a cs writer to keep the same write/
-// read-back behaviour; using these defaults plumbs CsDb() in without
+// opening a cs writer because `opts.db == nullptr`. Tests ported off legacy
+// STORE -> column(name) need a cs writer to keep the same write / read-back
+// behaviour; using these defaults plumbs the engine instance in without
 // every call site re-typing it.
 inline IndexWriterOptions DefaultWriterOptions() {
+  auto* db = &::sdb::query::DuckDBEngine::Instance().instance();
   IndexWriterOptions opts;
-  opts.db = &CsDb();
-  opts.reader_options.db = &CsDb();
+  opts.db = db;
+  opts.reader_options.db = db;
   opts.norm_column_options = MakeNormColumnOptionsProvider();
   return opts;
 }
 inline IndexReaderOptions DefaultReaderOptions() {
   IndexReaderOptions opts;
-  opts.db = &CsDb();
+  opts.db = &::sdb::query::DuckDBEngine::Instance().instance();
   return opts;
 }
 
-// Convenience: construct a new-cs Writer over `dir`/`segment_name`,
-// using the shared CsDb(). Matches the production constructor.
+// Convenience: construct a new-cs Writer over `dir`/`segment_name`, wired
+// to the process-wide DuckDBEngine instance. Matches the production
+// constructor.
 std::unique_ptr<columnstore::Writer> MakeCsWriter(
   Directory& dir, std::string_view segment_name);
 

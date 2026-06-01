@@ -44,7 +44,7 @@ namespace {
 
 class BufferedColumnTestCase : public ::testing::TestWithParam<bool> {
  protected:
-  duckdb::DatabaseInstance& Db() { return irs::tests::CsDb(); }
+  duckdb::DatabaseInstance& Db() { return ::sdb::query::DuckDBEngine::Instance().instance(); }
 };
 
 // Returns true iff `dir` contains a file named `segment_name + ".cs"`.

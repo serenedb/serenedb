@@ -19,15 +19,21 @@
 ////////////////////////////////////////////////////////////////////////////////
 //
 // Thin shim over DuckDB's LogManager. SDB_TRACE/DEBUG/INFO/WARN/ERROR/FATAL
-// take a topic *identifier* (see topic.h) plus absl::StrCat-style args.
-// Once `SetLogger()` has been called (DuckDBEngine::Initialize) records flow
-// through duckdb::Logger directly and honour `enable_logging` /
-// `logging_level` / `enabled_log_types` / `disabled_log_types` SET-options.
-// Before the DuckDB instance is up and after it has been torn down,
-// non-CRASH records are silently dropped (apart from a level-only
-// IsEnabled() that compares against the initial level so gtest-only
-// binaries can gate on --log-level without installing a Logger). The CRASH
-// topic always bypasses the Logger: signal-safe write(2) to stderr only.
+// take a topic *identifier* (see topic.h) plus absl::StrCat-style args and
+// forward to duckdb::Logger::WriteLog via a single function-pointer hop.
+// IsEnabled() honours the runtime `enable_logging` / `logging_level` /
+// `enabled_log_types` / `disabled_log_types` SET-options.
+//
+// Contract: every binary that emits SDB_* MUST call
+// DuckDBEngine::Initialize() before the first macro fires, and
+// DuckDBEngine::Shutdown() only AFTER the last thread that could emit
+// has joined. No atomic guard, no null-check on the hot path -- the
+// pointer is set once at Initialize and cleared once at Shutdown.
+//
+// LogCrash() is the exception: an async-signal-safe entry point that
+// goes straight to write(2) on stderr. Reachable from signal handlers
+// (crash_handler / signal_handling / SDB_ASSERT) and therefore safe to
+// invoke outside the DuckDB window.
 
 #pragma once
 
@@ -55,31 +61,29 @@ namespace sdb::log {
 LogLevel TranslateLogLevel(std::string_view name) noexcept;
 std::string_view TranslateLogLevel(LogLevel level) noexcept;
 
-// Process-wide initial level. Used by IsEnabled() BEFORE SetLogger() runs
-// (and after it is reverted to nullptr at shutdown). Once a Logger is
-// installed, IsEnabled() and Log() defer to duckdb::Logger.
-void SetInitialLogLevel(LogLevel level) noexcept;
-
 // ---- duckdb::Logger installation (called by DuckDBEngine) ----------------
 
 // Install the duckdb::Logger that all SDB_* sites will dispatch through.
-// `logger` must outlive every thread that can call Log() / IsEnabled();
-// callers are expected to clear it back to nullptr BEFORE destroying the
-// duckdb::DatabaseInstance that owns the Logger. The contract is upheld in
-// RunServer: DuckDBEngine::Shutdown() runs after every feature's stop()
-// has joined its workers, so no live thread can dereference the pointer
-// once we clear it.
+// Called once from DuckDBEngine::Initialize() (via InstallLogManagerSink)
+// and once with nullptr from DuckDBEngine::Shutdown() (via
+// UninstallLogManagerSink). Both calls run on the main thread before /
+// after every worker thread; no atomic / acquire-release.
 void SetLogger(duckdb::Logger* logger) noexcept;
 
-// ---- entry point ----------------------------------------------------------
+// ---- entry points ---------------------------------------------------------
 
-void Log(LogLevel level, std::string_view topic, const std::string& message);
+// Forward to duckdb::Logger::WriteLog. Requires gLogger to be installed --
+// see the contract at the top of the file. Never throws.
+void Log(LogLevel level, std::string_view topic,
+         const std::string& message) noexcept;
 
-// Async-signal-safe variant for the CRASH topic. write(2) to stderr only,
-// no heap, no Logger lookup. Intended for signal-handler callers that
-// already have a fixed-size stack buffer assembled.
+// Async-signal-safe stderr write. write(2) only -- no heap, no LogManager
+// lookup, no atomic. Used by the crash handler / signal handler /
+// assertionFailure. Safe to call BEFORE DuckDBEngine::Initialize() and
+// AFTER DuckDBEngine::Shutdown(), because it does not touch gLogger.
 void LogCrash(LogLevel level, std::string_view message) noexcept;
 
+// Forward to duckdb::Logger::ShouldLog. Requires gLogger to be installed.
 bool IsEnabled(LogLevel level, std::string_view topic) noexcept;
 
 }  // namespace sdb::log

@@ -48,6 +48,5 @@ inline constexpr std::string_view SSL{"SSL"};
 inline constexpr std::string_view STORAGE{"Storage"};
 inline constexpr std::string_view SEARCH{"Search"};
 inline constexpr std::string_view IRESEARCH{"IResearch"};
-inline constexpr std::string_view CRASH{"Crash"};
 
 }  // namespace sdb::log

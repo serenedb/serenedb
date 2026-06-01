@@ -65,8 +65,12 @@ Exception::Exception(ErrorCode code, std::string&& error_message,
 }
 
 [[noreturn]] void helper::LogAndAbort(const char* what) {
+  // In SDB_DEV, SDB_ASSERT already routes through CrashHandler::assertionFailure
+  // -> LogCrash -> std::abort(). In non-DEV it is a no-op, so emit the crash
+  // line directly and abort here.
   SDB_ASSERT(false, what);
-  SDB_FATAL(CRASH, what);
+  log::LogCrash(LogLevel::FATAL, what != nullptr ? what : "LogAndAbort");
+  std::abort();
 }
 
 Result TryToResult(yaclib::Result<Result>&& try_result) noexcept {

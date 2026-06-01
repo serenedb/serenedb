@@ -38,9 +38,9 @@ namespace {
 std::atomic<const char*> gStateString{nullptr};
 
 // Writerfn for absl::InstallFailureSignalHandler. Each abseil-emitted line
-// arrives here (plus a final nullptr-as-flush-hint). We route it through the
-// signal-safe CRASH topic so it lands in the same stderr stream as our other
-// crash records, prefixed with the server-state tag for context.
+// arrives here (plus a final nullptr-as-flush-hint). We route it via
+// LogCrash (signal-safe write(2) to stderr) so it lands in the same stderr
+// stream as our other crash records, prefixed with the server-state tag.
 void CrashWriter(const char* data) noexcept {
   // absl uses a nullptr argument as a "flush" hint; nothing to flush here.
   if (data == nullptr) {
@@ -66,8 +66,8 @@ void CrashWriter(const char* data) noexcept {
     append("[state=");
     append(state);
     append("] ");
-    // Emit prefix and abseil line as a single CRASH record so they share
-    // one "[FATAL] {crash} " header.
+    // Emit prefix + abseil line as a single LogCrash call so they share one
+    // "[FATAL] " header rather than producing two separate log lines.
     char buf[4096];
     size_t out = 0;
     auto buf_append = [&](std::string_view s) noexcept {
@@ -95,8 +95,8 @@ void CrashHandler::SetState(std::string_view state) {
                                                  std::string_view message) {
   // Format on the stack: "assertion failed in <file>:<line> [<func>]: <expr>
   // ; <message>". No heap touch -- this path is reachable from signal-adjacent
-  // contexts via SDB_ASSERT, and the message arrives through the CRASH topic
-  // which itself takes the async-signal-safe write(2) route.
+  // contexts via SDB_ASSERT, and LogCrash takes the async-signal-safe
+  // write(2) route directly.
   char buf[2048];
   size_t pos = 0;
   auto append = [&](std::string_view s) noexcept {

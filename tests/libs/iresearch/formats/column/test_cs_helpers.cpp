@@ -29,25 +29,14 @@
 
 #include "basics/assert.h"
 #include "iresearch/utils/type_limits.hpp"
+#include "query/duckdb_engine.h"
 
 namespace irs::tests {
 
-duckdb::DatabaseInstance& CsDb() {
-  // C++11 guarantees thread-safe initialization of function-local
-  // statics; DatabaseInstance is the same singleton-style object
-  // serened uses and tolerates concurrent reads/writes. Lazy: we only
-  // pay for DB construction in test binaries that actually touch cs.
-  static std::unique_ptr<duckdb::DuckDB> kDb = []() {
-    duckdb::DBConfig cfg;
-    cfg.options.access_mode = duckdb::AccessMode::AUTOMATIC;
-    return std::make_unique<duckdb::DuckDB>(":memory:", &cfg);
-  }();
-  return *kDb->instance;
-}
-
 std::unique_ptr<columnstore::Writer> MakeCsWriter(
   Directory& dir, std::string_view segment_name) {
-  return std::make_unique<columnstore::Writer>(dir, segment_name, CsDb());
+  return std::make_unique<columnstore::Writer>(
+    dir, segment_name, ::sdb::query::DuckDBEngine::Instance().instance());
 }
 
 std::unique_ptr<columnstore::Reader> MakeCsReader(
@@ -64,7 +53,8 @@ std::unique_ptr<columnstore::Reader> MakeCsReader(
   if (!dir.exists(exists, filename) || !exists) {
     return nullptr;
   }
-  return std::make_unique<columnstore::Reader>(dir, segment_name, CsDb());
+  return std::make_unique<columnstore::Reader>(
+    dir, segment_name, ::sdb::query::DuckDBEngine::Instance().instance());
 }
 
 columnstore::ColumnWriter& OpenBlobColumn(columnstore::Writer& w, field_id id) {

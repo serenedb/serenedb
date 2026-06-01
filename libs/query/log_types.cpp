@@ -54,8 +54,8 @@ void InstallLogManagerSink(duckdb::DatabaseInstance& db) {
   auto& manager = db.GetLogManager();
   // HTTPLogType comes from duckdb's built-in default registration -- don't
   // re-register it (LogManager::RegisterLogType throws on collision).
-  // The CRASH topic short-circuits to SignalSafeWrite in logger.cpp and
-  // never reaches LogManager, so no CrashLogType registration is needed.
+  // No CRASH/Crash log type to register -- LogCrash bypasses LogManager
+  // entirely (signal-safe write(2) straight to stderr).
   for (const auto& t : kSdbLogTypes) {
     manager.RegisterLogType(
       duckdb::make_uniq<duckdb::LogType>(t.name, t.level));
@@ -79,7 +79,7 @@ void InstallLogManagerSink(duckdb::DatabaseInstance& db) {
 
   // Hand the GlobalLogger over to sdb::log as a raw pointer. The Logger is
   // owned by LogManager (inside DatabaseInstance); DuckDBEngine::Shutdown()
-  // runs LAST in RunServer -- after every feature has joined its workers --
+  // runs LAST in main() -- after every thread that could log has joined --
   // so by the time UninstallLogManagerSink() clears the slot no thread can
   // be dereferencing the pointer.
   ::sdb::log::SetLogger(&manager.GlobalLogger());

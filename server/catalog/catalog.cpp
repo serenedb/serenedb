@@ -733,6 +733,11 @@ Result CatalogFeature::Open() {
               r.errorMessage());
   }
 
+  if (auto fr = Local().FinalizeLoad(); !fr.ok()) {
+    SDB_FATAL("xxxxx", Logger::FIXME,
+              "FinalizeLoad failed: ", fr.errorMessage());
+  }
+
   if (!catalog::GetDatabase(StaticStrings::kDefaultDatabase)) {
     SDB_FATAL("xxxxx", Logger::FIXME, "No ", StaticStrings::kDefaultDatabase,
               " database found in database directory");

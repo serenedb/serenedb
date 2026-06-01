@@ -59,6 +59,8 @@ class SereneDBCatalog final : public duckdb::Catalog {
 
   void DropSchema(duckdb::ClientContext& context, duckdb::DropInfo& info) final;
 
+  void OnDetach(duckdb::ClientContext& context) final;
+
   duckdb::PhysicalOperator& PlanCreateTableAs(
     duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
     duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) final;

@@ -169,31 +169,36 @@ class PhraseTermVisitor final : public FilterVisitor,
   }
 
   void Visit(score_t boost) final {
-    SDB_ASSERT(_terms && _collectors && _segment && _reader);
+    SDB_ASSERT(_terms && _segment && _reader);
 
     // disallow negative boost
     boost = std::max(0.f, boost);
 
-    if (_stats_size <= _term_offset) {
-      // variadic phrase case
-      _collectors->push_back();
-      SDB_ASSERT(_stats_size == _term_offset);
-      ++_stats_size;
-      _volatile_boost |= (boost != kNoBoost);
-    }
+    // Only if it has scorer
+    if (_collectors) {
+      if (_stats_size <= _term_offset) {
+        // variadic phrase case
+        _collectors->PushBack();
+        SDB_ASSERT(_stats_size == _term_offset);
+        ++_stats_size;
+        _volatile_boost |= (boost != kNoBoost);
+      }
 
-    _collectors->collect(*_segment, *_reader, _term_offset++, *_terms);
+      _collectors->Collect(_term_offset++, *_terms);
+    }
     _phrase_states.emplace_back(_terms->cookie(), boost);
   }
 
   void Reset() noexcept { _volatile_boost = false; }
 
-  void Reset(TermCollectors& collectors) noexcept {
+  void Reset(FlatTermBuffer* collectors) noexcept {
     _found = false;
     _terms = nullptr;
     _term_offset = 0;
-    _collectors = &collectors;
-    _stats_size = collectors.size();
+    _collectors = collectors;
+    if (_collectors) {
+      _stats_size = collectors->Size();
+    }
   }
 
   bool Found() const noexcept { return _found; }
@@ -206,7 +211,7 @@ class PhraseTermVisitor final : public FilterVisitor,
   const SubReader* _segment{};
   const TermReader* _reader{};
   PhraseStates& _phrase_states;
-  TermCollectors* _collectors = nullptr;
+  FlatTermBuffer* _collectors = nullptr;
   const SeekTermIterator* _terms = nullptr;
   bool _found = false;
   bool _volatile_boost = false;
@@ -228,8 +233,8 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
   const auto is_ord_empty = !ctx.scorer;
 
   // stats collectors
-  FieldCollectors field_stats(ctx.scorer);
-  TermCollectors term_stats(ctx.scorer, phrase_size);
+  FieldCollector field_stats;
+  TermCollectorsFlat term_stats{ctx.scorer, phrase_size};
 
   // per segment phrase states
   FixedPhraseQuery::states_t phrase_states{ctx.memory, ctx.index.size()};
@@ -249,8 +254,8 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
     }
 
     // collect field statistics once per segment
-    field_stats.collect(segment, *reader);
-    ptv.Reset(term_stats);
+    field_stats.Collect(*reader);
+    ptv.Reset(&term_stats);
 
     for (const auto& word : options) {
       SDB_ASSERT(std::get_if<ByTermOptions>(&word.part));
@@ -297,7 +302,7 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
     pos_itr->offs_max = term.offs_max;
     pos_itr->offs_min = term.offs_min;
     pos_itr->lead_offset = look_back += term.offs_max;
-    term_stats.finish(stats_buf, term_idx, field_stats, ctx.index);
+    term_stats.Finish(stats_buf, term_idx, &field_stats);
     ++pos_itr;
     ++term_idx;
   }
@@ -312,18 +317,16 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
                                           const ByPhraseOptions& options) {
   const auto phrase_size = options.size();
   // stats collectors
-  FieldCollectors field_stats{ctx.scorer};
+  FieldCollector field_stats;
 
   std::vector<field_visitor> phrase_part_visitors;
   phrase_part_visitors.reserve(phrase_size);
-  std::vector<TermCollectors> phrase_part_stats;
-  phrase_part_stats.reserve(phrase_size);
+  TermCollectorsVariadic phrase_part_stats{ctx.scorer, phrase_size};
 
   std::vector<field_visitor*> all_terms_visitors;
   std::vector<TopTermsCollectorImpl> top_terms_collectors;
 
   for (const auto& word : options) {
-    phrase_part_stats.emplace_back(ctx.scorer, 0);
     auto& visitor =
       phrase_part_visitors.emplace_back(std::visit(GetVisitor{}, word.part));
     if (!visitor) {
@@ -376,13 +379,13 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
     }
 
     // collect field statistics once per segment
-    field_stats.collect(segment, *reader);
+    field_stats.Collect(*reader);
     ptv.Reset();  // reset boost volaitility mark
 
     size_t found_parts = 0;
     for (const auto& visitor : phrase_part_visitors) {
       const auto was_terms_count = phrase_terms.size();
-      ptv.Reset(phrase_part_stats[found_parts]);
+      ptv.Reset(phrase_part_stats.GetCollector(found_parts));
       visitor(segment, *reader, ptv);
       const auto new_terms_count = phrase_terms.size() - was_terms_count;
       // TODO(mbkkt) Avoid unnecessary work for min_match > 1 queries
@@ -422,24 +425,22 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
   // offset of the first term in a phrase
   SDB_ASSERT(!options.empty());
   // finish stats
-  SDB_ASSERT(phrase_size == phrase_part_stats.size());
+  SDB_ASSERT(phrase_size == phrase_part_stats.Size());
   bstring stats(GetStatsSize(ctx.scorer), 0);
   auto* stats_buf = stats.data();
-  auto collector = phrase_part_stats.begin();
 
   VariadicPhraseQuery::positions_t positions(phrase_size);
   auto position = positions.begin();
   PosAttr::value_t look_back = 0;
+  size_t part_idx = 0;
   for (const auto& term : options) {
     SDB_ASSERT(position != positions.end());
     position->offs_max = term.offs_max;
     position->offs_min = term.offs_min;
     position->lead_offset = look_back += term.offs_max;
-    for (size_t i = 0, size = collector->size(); i < size; ++i) {
-      collector->finish(stats_buf, i, field_stats, ctx.index);
-    }
+    phrase_part_stats.Finish(stats_buf, part_idx, &field_stats);
     ++position;
-    ++collector;
+    ++part_idx;
   }
 
   return memory::make_tracked<VariadicPhraseQuery>(

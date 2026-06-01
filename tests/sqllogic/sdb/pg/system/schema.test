@@ -33,10 +33,10 @@ a
 2
 
 statement ok
-drop table t;
+drop function f1;
 
 statement ok
-drop function f1;
+drop table t;
 
 statement ok
 drop schema s2;

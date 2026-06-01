@@ -37,14 +37,11 @@ namespace sdb {
 
 TableShard::TableShard(ObjectId id, ObjectId table_id,
                        const catalog::TableStats& stats)
-  : catalog::Object{ObjectId{0}, id, "", catalog::ObjectType::TableShard},
-    _table_id{table_id},
+  : catalog::Object{table_id, id, "", catalog::ObjectType::TableShard},
     _num_rows{stats.num_rows} {}
 
 TableShard::TableShard(ObjectId table_id, const catalog::TableStats& stats)
-  : catalog::Object{ObjectId{0}, ObjectId{0}, "",
-                    catalog::ObjectType::TableShard},
-    _table_id{table_id},
+  : catalog::Object{table_id, ObjectId{0}, "", catalog::ObjectType::TableShard},
     _num_rows{stats.num_rows} {}
 
 }  // namespace sdb

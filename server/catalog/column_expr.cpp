@@ -23,12 +23,16 @@
 #include <absl/algorithm/container.h>
 #include <vpack/vpack_helper.h>
 
+#include <duckdb/common/extra_type_info.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/parser/expression/cast_expression.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/expression/subquery_expression.hpp>
+#include <duckdb/parser/expression/type_expression.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/query_node.hpp>
 #include <duckdb/parser/statement/select_statement.hpp>
@@ -36,7 +40,9 @@
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/parser/tableref/subqueryref.hpp>
 
+#include "catalog/user_type.h"
 #include "connector/functions/sequence.h"
+#include "utils/velox_vpack.h"
 
 namespace sdb {
 namespace {
@@ -47,7 +53,72 @@ bool IsSequenceFunctionName(std::string_view fn_name) {
 
 void WalkSelect(const duckdb::SelectStatement& stmt, RefKinds kinds, Refs& out);
 
+std::optional<QualifiedRef> ExtractUnboundTypeName(
+  const duckdb::LogicalType& type) {
+  if (type.id() != duckdb::LogicalTypeId::UNBOUND) {
+    return std::nullopt;
+  }
+  auto info = type.AuxInfo();
+  if (!info) {
+    return std::nullopt;
+  }
+  const auto& unbound = info->Cast<duckdb::UnboundTypeInfo>();
+  if (!unbound.expr ||
+      unbound.expr->GetExpressionType() != duckdb::ExpressionType::TYPE) {
+    return std::nullopt;
+  }
+  const auto& te = unbound.expr->Cast<duckdb::TypeExpression>();
+  return QualifiedRef{te.GetCatalog(), te.GetSchema(), te.GetTypeName()};
+}
+
+}  // namespace
+
+void CollectTypeRefs(const duckdb::LogicalType& type, Refs& out) {
+  if (auto qr = ExtractUnboundTypeName(type)) {
+    out.unbound_types.push_back(std::move(*qr));
+    return;
+  }
+  if (auto ext = type.GetExtensionInfo()) {
+    if (auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
+        it != ext->properties.end()) {
+      out.types.push_back(ObjectId{it->second.GetValue<uint64_t>()});
+      return;
+    }
+  }
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::LIST:
+      CollectTypeRefs(duckdb::ListType::GetChildType(type), out);
+      break;
+    case duckdb::LogicalTypeId::ARRAY:
+      CollectTypeRefs(duckdb::ArrayType::GetChildType(type), out);
+      break;
+    case duckdb::LogicalTypeId::STRUCT:
+    case duckdb::LogicalTypeId::VARIANT:
+      for (const auto& child : duckdb::StructType::GetChildTypes(type)) {
+        CollectTypeRefs(child.second, out);
+      }
+      break;
+    case duckdb::LogicalTypeId::MAP:
+      CollectTypeRefs(duckdb::MapType::KeyType(type), out);
+      CollectTypeRefs(duckdb::MapType::ValueType(type), out);
+      break;
+    case duckdb::LogicalTypeId::UNION:
+      for (idx_t i = 0; i < duckdb::UnionType::GetMemberCount(type); ++i) {
+        CollectTypeRefs(duckdb::UnionType::GetMemberType(type, i), out);
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+namespace {
+
 void WalkExpr(const duckdb::ParsedExpression& expr, RefKinds kinds, Refs& out) {
+  if (RefKinds::None != (kinds & RefKinds::Types) &&
+      expr.GetExpressionType() == duckdb::ExpressionType::OPERATOR_CAST) {
+    CollectTypeRefs(expr.Cast<duckdb::CastExpression>().cast_type, out);
+  }
   if (expr.GetExpressionType() == duckdb::ExpressionType::FUNCTION) {
     const auto& fn = expr.Cast<duckdb::FunctionExpression>();
     if (IsSequenceFunctionName(fn.function_name)) {
@@ -138,7 +209,7 @@ Refs ExtractRefs(const duckdb::SelectStatement& stmt, RefKinds kinds) {
   return out;
 }
 
-Refs ColumnExpr::ExtractRefs(RefKinds kinds) const {
+Refs ColumnExpr::GetRefs(RefKinds kinds) const {
   Refs out;
   if (HasExpr()) {
     WalkExpr(GetExpr(), kinds, out);
@@ -149,6 +220,12 @@ Refs ColumnExpr::ExtractRefs(RefKinds kinds) const {
 Refs ExtractRefs(const duckdb::ParsedExpression& expr, RefKinds kinds) {
   Refs out;
   WalkExpr(expr, kinds, out);
+  return out;
+}
+
+Refs ExtractRefs(const duckdb::QueryNode& node, RefKinds kinds) {
+  Refs out;
+  WalkQueryNode(node, kinds, out);
   return out;
 }
 
@@ -173,7 +250,7 @@ Result ColumnExpr::FromVPack(vpack::Slice slice, ColumnExpr& column_expr) {
 void ColumnExpr::ToVPack(vpack::Builder& builder) const {
   SDB_ASSERT(_expr);
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer(stream);
+  duckdb::BinarySerializer serializer(stream, duckdb::VersionStorageOptions());
   serializer.Begin();
   _expr->Serialize(serializer);
   serializer.End();

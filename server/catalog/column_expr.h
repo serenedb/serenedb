@@ -30,12 +30,15 @@
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
 #include "basics/result.h"
+#include "catalog/identifiers/object_id.h"
 
 namespace duckdb {
 
 class SelectStatement;
-}
+class QueryNode;
+class LogicalType;
 
+}  // namespace duckdb
 namespace sdb {
 
 struct QualifiedRef {
@@ -49,7 +52,8 @@ enum class RefKinds : uint8_t {
   Sequences = 1U << 0,
   Relations = 1U << 1,
   Functions = 1U << 2,
-  All = Sequences | Relations | Functions,
+  Types = 1U << 3,
+  All = Sequences | Relations | Functions | Types,
 };
 ENABLE_BITMASK_ENUM(RefKinds);
 
@@ -57,6 +61,10 @@ struct Refs {
   std::vector<QualifiedRef> sequences;
   std::vector<QualifiedRef> relations;
   std::vector<QualifiedRef> functions;
+  // Types named by CAST in expression bodies; caller resolves by name.
+  std::vector<QualifiedRef> unbound_types;
+  // Types already resolved (column types, function param/return); id is final.
+  std::vector<ObjectId> types;
 };
 
 // Column expression (default value, computed column).
@@ -77,7 +85,7 @@ class ColumnExpr {
 
   bool HasExpr() const { return _expr != nullptr; }
 
-  Refs ExtractRefs(RefKinds kinds) const;
+  Refs GetRefs(RefKinds kinds) const;
 
  private:
   duckdb::unique_ptr<duckdb::ParsedExpression> _expr;
@@ -85,6 +93,9 @@ class ColumnExpr {
 
 Refs ExtractRefs(const duckdb::SelectStatement& stmt, RefKinds kinds);
 Refs ExtractRefs(const duckdb::ParsedExpression& expr, RefKinds kinds);
+Refs ExtractRefs(const duckdb::QueryNode& node, RefKinds kinds);
+
+void CollectTypeRefs(const duckdb::LogicalType& type, Refs& out);
 
 void VPackWrite(auto ctx, const ColumnExpr& column_expr) {
   column_expr.ToVPack(ctx.vpack());

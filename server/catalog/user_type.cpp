@@ -30,6 +30,7 @@
 
 #include "basics/static_strings.h"
 #include "database/ticks.h"
+#include "utils/velox_vpack.h"
 
 namespace sdb::catalog {
 
@@ -76,7 +77,8 @@ void PgSqlType::WriteInternal(vpack::Builder& builder) const {
 
   // Serialize CreateTypeInfo via DuckDB BinarySerializer
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer::Serialize(*_info, stream);
+  duckdb::BinarySerializer::Serialize(*_info, stream,
+                                      duckdb::VersionStorageOptions());
   auto data = stream.GetData();
   auto size = stream.GetPosition();
   builder.add("info",

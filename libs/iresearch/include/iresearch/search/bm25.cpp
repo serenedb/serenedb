@@ -43,10 +43,10 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_impl.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 
@@ -61,43 +61,6 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
   return nullptr;
 }
-
-struct BM25FieldCollector final : FieldCollector {
-  // number of documents containing the matched field
-  // (possibly without matching terms)
-  uint64_t docs_with_field = 0;
-  // number of terms for processed field
-  uint64_t total_term_freq = 0;
-
-  void collect(const SubReader& /*segment*/,
-               const TermReader& field) noexcept final {
-    docs_with_field += field.docs_count();
-    if (const auto* freq = irs::get<FreqAttr>(field)) {
-      total_term_freq += freq->value;
-    }
-  }
-
-  void reset() noexcept final {
-    docs_with_field = 0;
-    total_term_freq = 0;
-  }
-
-  void collect(bytes_view in) final {
-    ByteRefIterator itr{in};
-    const auto docs_with_field_value = vread<uint64_t>(itr);
-    const auto total_term_freq_value = vread<uint64_t>(itr);
-    if (itr.pos != itr.end) {
-      throw IoError{"input not read fully"};
-    }
-    docs_with_field += docs_with_field_value;
-    total_term_freq += total_term_freq_value;
-  }
-
-  void write(DataOutput& out) const final {
-    out.WriteV64(docs_with_field);
-    out.WriteV64(total_term_freq);
-  }
-};
 
 struct ObjectParams {
   score_t k = BM25::K();
@@ -407,15 +370,9 @@ void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
                    const irs::TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 
-  const auto* field_ptr = sdb::basics::downCast<BM25FieldCollector>(field);
-  const auto* term_ptr = sdb::basics::downCast<TermCollectorImpl>(term);
-
-  // nullptr possible if e.g. 'all' filter
-  const auto docs_with_field = field_ptr ? field_ptr->docs_with_field : 0;
-  // nullptr possible if e.g.'by_column_existence' filter
-  const auto docs_with_term = term_ptr ? term_ptr->docs_with_term : 0;
-  // nullptr possible if e.g. 'all' filter
-  const auto total_term_freq = field_ptr ? field_ptr->total_term_freq : 0;
+  const auto docs_with_field = field ? field->docs_with_field : 0;
+  const auto docs_with_term = term ? term->docs_with_term : 0;
+  const auto total_term_freq = field ? field->total_term_freq : 0;
 
   // precomputed idf value
   stats->idf += score_t(
@@ -440,10 +397,6 @@ void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
   } else {
     stats->norm_length = kb;
   }
-}
-
-FieldCollector::ptr BM25::PrepareFieldCollector() const {
-  return std::make_unique<BM25FieldCollector>();
 }
 
 ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
@@ -540,10 +493,6 @@ WandSource::ptr BM25::prepare_wand_source() const {
     return std::make_unique<FreqNormSource<kWandTagFreq>>();
   }
   return std::make_unique<FreqNormSource<kWandTagNorm>>();
-}
-
-TermCollector::ptr BM25::PrepareTermCollector() const {
-  return std::make_unique<TermCollectorImpl>();
 }
 
 Scorer::WandType BM25::wand_type() const noexcept {

@@ -220,7 +220,7 @@ class TableMatcher final : public MatcherBase<typename F::Arc> {
     }
   }
 
-  StateId Peek(StateId s, Label label) noexcept {
+  StateId Peek(StateId s, Label label) const noexcept {
     SDB_ASSERT(!_error);
 
     size_t label_offset;

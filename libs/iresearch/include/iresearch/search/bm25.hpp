@@ -85,15 +85,11 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
     return IndexFeatures::Freq;
   }
 
-  FieldCollector::ptr PrepareFieldCollector() const final;
-
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
   WandWriter::ptr prepare_wand_writer(size_t max_levels) const final;
 
   WandSource::ptr prepare_wand_source() const final;
-
-  TermCollector::ptr PrepareTermCollector() const final;
 
   WandType wand_type() const noexcept final;
 

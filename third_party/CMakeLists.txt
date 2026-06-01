@@ -105,29 +105,6 @@ if(SDB_IOURING)
 endif()
 
 ################################################################################
-## V8
-################################################################################
-
-if(USE_V8)
-    option(USE_PRECOMPILED_V8 "use a precompiled V8" OFF)
-
-    set(V8_VERSION "12.1.165" CACHE INTERNAL "${PROJECT_NAME}: Version" FORCE)
-    set(V8_VERSION ${V8_VERSION} PARENT_SCOPE)
-    set(V8_SUB_DIR "v8")
-    add_subdirectory(v8-build)
-    add_library(v8_interface INTERFACE)
-    target_include_directories(v8_interface SYSTEM INTERFACE ${V8_INCLUDE_DIR})
-
-    add_library(icu INTERFACE)
-    target_link_libraries(icu INTERFACE ${ICU_LIBS})
-    target_include_directories(icu SYSTEM INTERFACE ${ICU_INCLUDE_DIR})
-
-    # For re2
-    add_library(icu-uc ALIAS icu)
-    add_library(ICU::uc ALIAS icu)
-endif()
-
-################################################################################
 ## ZLIB-NG
 ################################################################################
 
@@ -570,25 +547,6 @@ target_include_directories(
 target_link_libraries(date_interface INTERFACE absl::base)
 
 ################################################################################
-## Linenoise
-################################################################################
-if(USE_V8)
-    add_library(
-        linenoise-ng
-        STATIC
-        linenoise-ng/src/ConvertUTF.cpp
-        linenoise-ng/src/linenoise.cpp
-        linenoise-ng/src/wcwidth.cpp
-    )
-
-    target_include_directories(
-        linenoise-ng
-        SYSTEM
-        PUBLIC ${PROJECT_SOURCE_DIR}/third_party/linenoise-ng/include
-    )
-endif()
-
-################################################################################
 ## LINK_DIRECTORIES
 ################################################################################
 
@@ -781,6 +739,7 @@ set(AWSSDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/aws-cmake" CACHE PATH "" FORCE)
 ################################################################################
 
 set(BUILD_SHELL FALSE CACHE BOOL "" FORCE)
+set(BUILD_SHELL_STATIC_LIB TRUE CACHE BOOL "" FORCE)
 option(
     SDB_BUILD_DUCKDB_UNITTESTS
     "Build DuckDB's unittest binary for vendored-extension test suites"
@@ -800,10 +759,11 @@ set(ENABLE_UBSAN FALSE CACHE BOOL "" FORCE)
 set(ENABLE_THREAD_SANITIZER FALSE CACHE BOOL "" FORCE)
 set(EXPORT_DLL_SYMBOLS FALSE CACHE BOOL "" FORCE)
 set(DUCKDB_SKIP_INSTALL TRUE CACHE BOOL "" FORCE)
+set(LATEST_STORAGE TRUE CACHE BOOL "" FORCE)
 # Suppress the per-extension "vcpkg.json present but VCPKG_BUILD not set" warning.
 set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner"
+    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete"
     CACHE STRING
     ""
     FORCE
@@ -816,6 +776,11 @@ sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR}
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
 add_subdirectory(duckdb)
+
+target_compile_definitions(
+    duckdb_shell_static
+    PRIVATE SERENEDB_SHELL_VERSION="${SERENEDB_VERSION}"
+)
 
 target_include_directories(
     duckdb_static
@@ -837,6 +802,7 @@ target_link_libraries(
         avro_extension
         iceberg_extension
         postgres_scanner_extension
+        autocomplete_extension
 )
 
 # !!! KEEP THIS LAST !!!

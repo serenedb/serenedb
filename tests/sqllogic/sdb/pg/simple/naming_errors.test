@@ -32,7 +32,7 @@ db error: ERROR: Referenced column "column1" not found in FROM clause!
 Candidate bindings: "kostya"
 
 
-query ??
+query
 SELECT kostya as non_kostya, non_kostya
 FROM
 (
@@ -44,7 +44,7 @@ non_kostya	non_kostya
 clickclack	clickclack
 deadinside	deadinside
 
-query ?
+query
 SELECT vedernikoff
 FROM
 (
@@ -74,7 +74,7 @@ db error: ERROR: Referenced column "kostya" not found in FROM clause!
 Candidate bindings: "lmao"
 
 
-query ?
+query
 SELECT vedernikoff
 FROM
 (
@@ -85,7 +85,7 @@ vedernikoff
 clickclack
 deadinside
 
-query ?
+query
 SELECT lol.vedernikoff
 FROM
 (
@@ -111,7 +111,7 @@ db error: ERROR: Referenced table "lol" not found!
 Candidate tables: "unnamed_subquery"
 
 
-query ?
+query
 SELECT lmao
 FROM
 (
@@ -126,7 +126,7 @@ lmao
 clickclack
 deadinside
 
-query ?
+query
 SELECT vedernikoff
 FROM
 (
@@ -155,7 +155,7 @@ FROM
 db error: ERROR: Ambiguous reference to column name "vedernikoff" (use: "lol.vedernikoff" or "kek.vedernikoff")
 
 
-query ????
+query
 SELECT *, sas + vedernikoff as kostya
 FROM
 (
@@ -169,7 +169,7 @@ clickclafk	666	228	894
 salam	993	222	1215
 clickclack	993	333	1326
 
-query ????
+query
 SELECT *, vedernikoff as gul
 FROM
 (
@@ -218,7 +218,7 @@ db error: ERROR: Referenced table "lol" not found!
 Candidate tables: "unnamed_subquery"
 
 
-query ??
+query
 SELECT vedernikoff, kostya as vedernikoff
 FROM
 (
@@ -399,7 +399,7 @@ db error: ERROR: Referenced table "man2" not found!
 Candidate tables: "unnamed_subquery"
 
 
-query ???
+query
 SELECT man1.lmao, kek, lol
 FROM
 (
@@ -561,7 +561,7 @@ db error: ERROR: Referenced table "d" not found!
 Candidate tables: "vedernikoff"
 
 
-query ??
+query
 SELECT *
 FROM
 (

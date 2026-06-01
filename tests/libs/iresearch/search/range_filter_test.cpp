@@ -964,32 +964,21 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Docs docs{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17};
       Costs costs{docs.size()};
 
-      size_t collect_field_count = 0;
-      size_t collect_term_count = 0;
       size_t finish_count = 0;
+      uint64_t finish_docs_with_field = 0;
+      uint64_t finish_docs_with_term = 0;
 
       irs::Scorer::ptr sort{std::make_unique<tests::sort::CustomSort>()};
       auto& scorer = static_cast<tests::sort::CustomSort&>(*sort);
 
-      scorer.collector_collect_field = [&collect_field_count](
-                                         const irs::SubReader&,
-                                         const irs::TermReader&) -> void {
-        ++collect_field_count;
-      };
-      scorer.collector_collect_term =
-        [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                              const irs::AttributeProvider&) -> void {
-        ++collect_term_count;
-      };
-      scorer.collectors_collect =
-        [&finish_count](irs::byte_type*, const irs::FieldCollector*,
-                        const irs::TermCollector*) -> void { ++finish_count; };
-      scorer.prepare_field_collector = [&scorer]() -> irs::FieldCollector::ptr {
-        return std::make_unique<tests::sort::CustomSort::FieldCollector>(
-          scorer);
-      };
-      scorer.prepare_term_collector = [&scorer]() -> irs::TermCollector::ptr {
-        return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
+      scorer.collectors_collect = [&](irs::byte_type*,
+                                      const irs::FieldCollector* field,
+                                      const irs::TermCollector* term) -> void {
+        ++finish_count;
+        ASSERT_NE(nullptr, field);
+        ASSERT_NE(nullptr, term);
+        finish_docs_with_field += field->docs_with_field;
+        finish_docs_with_term += term->docs_with_term;
       };
 
       irs::ByRange filter;
@@ -1002,9 +991,9 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
       CheckQuery(tests::FilterWrapper{filter}, std::span{&sort, 1}, docs, rdr);
-      ASSERT_EQ(11, collect_field_count);  // 1 field in 1 segment
-      ASSERT_EQ(11, collect_term_count);   // 11 different terms
-      ASSERT_EQ(11, finish_count);         // 11 different terms
+      ASSERT_EQ(11, finish_count);
+      ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+      ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
     }
 
     // value = (..;..)
@@ -1197,6 +1186,148 @@ TEST_P(RangeFilterTestCase, by_range) { ByRangeSequentialCost(); }
 TEST_P(RangeFilterTestCase, by_range_numeric) { ByRangeSequentialNumeric(); }
 
 TEST_P(RangeFilterTestCase, by_range_order) { ByRangeSequentialOrder(); }
+
+TEST_P(RangeFilterTestCase, by_range_order_multi_segment_field_stats) {
+  // two segments, both holding the queried field
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+    gen.reset();
+    add_segment(gen, irs::kOmAppend);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_EQ(2, rdr.size());
+
+  // field stats are summed across every segment that has the field
+  uint64_t expected_docs_with_field = 0;
+  for (const auto& segment : rdr) {
+    if (const auto* field = segment.field("value")) {
+      expected_docs_with_field += field->docs_count();
+    }
+  }
+  ASSERT_GT(expected_docs_with_field, 0u);
+
+  const irs::FieldCollector* shared_field = nullptr;
+  size_t finish_count = 0;
+
+  irs::Scorer::ptr sort{std::make_unique<tests::sort::CustomSort>()};
+  auto& scorer = static_cast<tests::sort::CustomSort&>(*sort);
+  scorer.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector* field,
+                                  const irs::TermCollector* term) -> void {
+    ++finish_count;
+    ASSERT_NE(nullptr, field);
+    ASSERT_NE(nullptr, term);
+    if (shared_field == nullptr) {
+      shared_field = field;
+    } else {
+      ASSERT_EQ(shared_field, field);  // same collector reused for every term
+    }
+    ASSERT_EQ(expected_docs_with_field, field->docs_with_field);
+  };
+
+  irs::ByRange filter;
+  *filter.mutable_field() = "value";
+  filter.mutable_options()->range.min =
+    irs::numeric_utils::numeric_traits<double_t>::ninf();
+  filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
+  filter.mutable_options()->range.max =
+    irs::numeric_utils::numeric_traits<double_t>::inf();
+  filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+
+  auto q = filter.prepare({.index = rdr, .scorer = sort.get()});
+  ASSERT_NE(nullptr, q);
+
+  ASSERT_GT(finish_count, 1u);       // multiple scored terms
+  ASSERT_NE(nullptr, shared_field);  // field stats were collected
+}
+
+TEST_P(RangeFilterTestCase, by_range_order_limit_field_stats) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+    gen.reset();
+    add_segment(gen, irs::kOmAppend);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_EQ(2, rdr.size());
+
+  const irs::FieldCollector* shared_field = nullptr;
+  size_t finish_count = 0;
+
+  irs::Scorer::ptr sort{std::make_unique<tests::sort::CustomSort>()};
+  auto& scorer = static_cast<tests::sort::CustomSort&>(*sort);
+  scorer.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector* field,
+                                  const irs::TermCollector* term) -> void {
+    ++finish_count;
+    ASSERT_NE(nullptr, field);
+    ASSERT_NE(nullptr, term);
+    if (shared_field == nullptr) {
+      shared_field = field;
+    } else {
+      ASSERT_EQ(shared_field, field);
+    }
+  };
+
+  irs::ByRange filter;
+  *filter.mutable_field() = "value";
+  filter.mutable_options()->range.min =
+    irs::numeric_utils::numeric_traits<double_t>::ninf();
+  filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
+  filter.mutable_options()->range.max =
+    irs::numeric_utils::numeric_traits<double_t>::inf();
+  filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+  filter.mutable_options()->scored_terms_limit = 2;
+
+  auto q = filter.prepare({.index = rdr, .scorer = sort.get()});
+  ASSERT_NE(nullptr, q);
+
+  ASSERT_GT(finish_count, 0u);
+  ASSERT_LE(finish_count, 2u);  // capped by scored_terms_limit
+}
+
+TEST_P(RangeFilterTestCase, by_range_order_no_match_field_stats) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+    gen.reset();
+    add_segment(gen, irs::kOmAppend);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_EQ(2, rdr.size());
+
+  size_t finish_count = 0;
+  irs::Scorer::ptr sort{std::make_unique<tests::sort::CustomSort>()};
+  auto& scorer = static_cast<tests::sort::CustomSort&>(*sort);
+  scorer.collectors_collect = [&](irs::byte_type*, const irs::FieldCollector*,
+                                  const irs::TermCollector*) -> void {
+    ++finish_count;
+  };
+
+  irs::NumericTokenizer min_stream;
+  min_stream.reset((double_t)1e9);
+  auto* min_term = irs::get<irs::TermAttr>(min_stream);
+  ASSERT_TRUE(min_stream.next());
+
+  irs::ByRange filter;
+  *filter.mutable_field() = "value";
+  filter.mutable_options()->range.min = min_term->value;
+  filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
+  filter.mutable_options()->range.max =
+    irs::numeric_utils::numeric_traits<double_t>::inf();
+  filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+
+  auto q = filter.prepare({.index = rdr, .scorer = sort.get()});
+  ASSERT_NE(nullptr, q);
+  ASSERT_EQ(0u, finish_count);  // nothing scored, no field stats collected
+}
 
 TEST_P(RangeFilterTestCase, visit) {
   // add segment

@@ -27,6 +27,7 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 
 #include "basics/static_strings.h"
+#include "utils/velox_vpack.h"
 
 namespace sdb::catalog {
 
@@ -62,7 +63,8 @@ void PgSqlView::WriteInternal(vpack::Builder& builder) const {
 
   // Serialize CreateViewInfo via DuckDB BinarySerializer
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer::Serialize(*_info, stream);
+  duckdb::BinarySerializer::Serialize(*_info, stream,
+                                      duckdb::VersionStorageOptions());
   auto data = stream.GetData();
   auto size = stream.GetPosition();
   builder.add("info",
@@ -77,6 +79,13 @@ std::shared_ptr<Object> PgSqlView::Clone() const {
       _info->Copy());
   return std::make_shared<PgSqlView>(GetParentId(), GetId(), GetName(),
                                      std::move(cloned_info));
+}
+
+Refs PgSqlView::GetRefs(RefKinds kinds) const {
+  if (!_info->query) {
+    return {};
+  }
+  return ExtractRefs(*_info->query, kinds);
 }
 
 }  // namespace sdb::catalog

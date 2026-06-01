@@ -22,6 +22,7 @@
 
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 
+#include "catalog/column_expr.h"
 #include "catalog/object.h"
 
 namespace sdb::catalog {
@@ -42,6 +43,8 @@ class PgSqlFunction final : public Object {
 
   const duckdb::CreateMacroInfo& GetInfo() const noexcept { return *_info; }
   duckdb::CreateMacroInfo& GetInfo() noexcept { return *_info; }
+
+  Refs GetRefs(RefKinds kinds) const;
 
  private:
   duckdb::unique_ptr<duckdb::CreateMacroInfo> _info;

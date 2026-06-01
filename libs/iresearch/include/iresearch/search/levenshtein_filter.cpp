@@ -78,9 +78,8 @@ inline auto ExecuteLevenshtein(uint8_t max_distance,
 
 template<typename StatesType>
 struct AggregatedStatsVisitor : util::Noncopyable {
-  AggregatedStatsVisitor(StatesType& states,
-                         const TermCollectors& term_stats) noexcept
-    : term_stats(term_stats), states(states) {}
+  AggregatedStatsVisitor(StatesType& states, TermCollectorsFlat& stats) noexcept
+    : stats(stats), states(states) {}
 
   void operator()(const irs::SubReader& segment, const irs::TermReader& field,
                   uint32_t docs_count) const {
@@ -94,11 +93,11 @@ struct AggregatedStatsVisitor : util::Noncopyable {
   void operator()(SeekCookie::ptr& cookie) const {
     SDB_ASSERT(segment);
     SDB_ASSERT(field);
-    term_stats.collect(*segment, *field, 0, *cookie);
+    stats.Collect(0, *cookie);
     state->scored_states.emplace_back(std::move(cookie), 0, boost);
   }
 
-  const TermCollectors& term_stats;
+  TermCollectorsFlat& stats;
   StatesType& states;
   mutable typename StatesType::state_type* state{};
   mutable const SubReader* segment{};
@@ -111,17 +110,17 @@ class TopTermsCollectorImpl
  public:
   using BaseType = irs::TopTermsCollector<TopTermState<score_t>>;
 
-  TopTermsCollectorImpl(size_t size, FieldCollectors& field_stats)
-    : BaseType(size), _field_stats(field_stats) {}
+  TopTermsCollectorImpl(size_t size, FieldCollector& stats)
+    : BaseType(size), _stats(stats) {}
 
   void Prepare(const SubReader& segment, const TermReader& field,
                const SeekTermIterator& terms) {
-    _field_stats.collect(segment, field);
+    _stats.Collect(field);
     BaseType::Prepare(segment, field, terms);
   }
 
  private:
-  FieldCollectors& _field_stats;
+  FieldCollector& _stats;
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -134,7 +133,7 @@ class TopTermsCollectorImpl
 template<typename Visitor>
 void VisitImpl(const SubReader& segment, const TermReader& reader,
                const byte_type no_distance, const uint32_t utf8_target_size,
-               automaton_table_matcher& matcher, Visitor&& visitor) {
+               const automaton_table_matcher& matcher, Visitor&& visitor) {
   SDB_ASSERT(fst::kError != matcher.Properties(0));
   auto terms = reader.iterator(matcher);
 
@@ -196,8 +195,8 @@ Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
                                             bytes_view prefix, bytes_view term,
                                             size_t terms_limit,
                                             const ParametricDescription& d) {
-  FieldCollectors field_stats{ctx.scorer};
-  TermCollectors term_stats{ctx.scorer, 1};
+  FieldCollector field_stats;
+  TermCollectorsFlat term_stats{ctx.scorer, 1};
   MultiTermQuery::States states{ctx.memory, ctx.index.size()};
 
   if (!terms_limit) {
@@ -225,7 +224,7 @@ Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
     1, MultiTermQuery::Stats::allocator_type{ctx.memory});
   stats.back().resize(GetStatsSize(ctx.scorer), 0);
   auto* stats_buf = stats[0].data();
-  term_stats.finish(stats_buf, 0, field_stats, ctx.index);
+  term_stats.Finish(stats_buf, 0, &field_stats);
 
   return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),
                                               std::move(stats), ctx.boost,

@@ -1,0 +1,87 @@
+control substitution on
+
+
+# The index->function dependency edge is captured pre-bind on the index entry
+# (ExpressionData::dependent_functions) and persisted in a sibling vpack tuple
+# (`expression_function_refs`). After a crash + restart, the side-table refs
+# must be re-attached to entries during ReadInternal and AddDependencies must
+# rebuild the PgSqlFunctionDependency::indexes edge -- so DROP FUNCTION RESTRICT
+# remains blocked and CASCADE still drops the index.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY clickclack_dict(template = 'keyword');
+
+
+statement ok
+CREATE FUNCTION babsky(x INT) AS x * 2;
+
+
+statement ok
+CREATE TABLE vedernikoff_t (id INT PRIMARY KEY, n INT);
+
+
+statement count 2
+INSERT INTO vedernikoff_t VALUES (1, 5), (2, 9);
+
+
+statement ok
+CREATE INDEX vedernikoff_idx ON vedernikoff_t USING inverted(id, (babsky(n)) clickclack_dict);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vedernikoff_t;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# The index still works after recovery -- expression refs survived the restart.
+connection after_crash
+query
+SELECT id FROM vedernikoff_idx WHERE babsky(n) = 10 ORDER BY id;
+----
+id
+1
+
+
+# The reloaded dependency graph still blocks RESTRICT.
+connection after_crash
+statement error (?i)cannot drop function .*babsky.* because other objects depend on it
+DROP FUNCTION babsky(INT);
+
+
+connection after_crash
+query
+SELECT count(*) FROM pg_indexes WHERE indexname = 'vedernikoff_idx';
+----
+count
+1
+
+
+# CASCADE still drops the dependent index.
+connection after_crash
+statement ok
+DROP FUNCTION babsky(INT) CASCADE;
+
+
+connection after_crash
+query
+SELECT count(*) FROM pg_indexes WHERE indexname = 'vedernikoff_idx';
+----
+count
+0
+
+
+connection after_crash
+statement ok
+DROP TABLE vedernikoff_t;

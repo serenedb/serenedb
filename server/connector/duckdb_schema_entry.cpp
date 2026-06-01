@@ -182,7 +182,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     }
     auto name_exists = [&](std::string_view candidate) {
       return std::ranges::any_of(options.check_constraints, [&](const auto& c) {
-        return c.name == candidate;
+        return c.GetName() == candidate;
       });
     };
     if (!name_exists(base_name)) {
@@ -241,10 +241,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     auto is_not_null = duckdb::make_uniq<duckdb::OperatorExpression>(
       duckdb::ExpressionType::OPERATOR_IS_NOT_NULL, std::move(col_ref));
     options.check_constraints.push_back(catalog::CheckConstraint{
-      .id = catalog::NextId(),
-      .name = choose_constraint_name(table_info.table, col_name, "not_null"),
-      .expr = std::make_shared<ColumnExpr>(std::move(is_not_null)),
-    });
+      ObjectId{}, catalog::NextId(),
+      choose_constraint_name(table_info.table, col_name, "not_null"),
+      std::make_shared<ColumnExpr>(std::move(is_not_null))});
   };
 
   // SERIAL expands to base int + nextval default + NOT NULL. The sequence
@@ -339,10 +338,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
           name = choose_constraint_name(table_info.table, col, "check");
         }
         options.check_constraints.push_back(catalog::CheckConstraint{
-          .id = catalog::NextId(),
-          .name = std::move(name),
-          .expr = std::make_shared<ColumnExpr>(check.expression->Copy()),
-        });
+          ObjectId{}, catalog::NextId(), std::move(name),
+          std::make_shared<ColumnExpr>(check.expression->Copy())});
         break;
       }
       default:

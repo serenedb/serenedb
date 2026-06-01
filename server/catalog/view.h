@@ -23,6 +23,7 @@
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <string>
 
+#include "catalog/column_expr.h"
 #include "catalog/object.h"
 
 namespace sdb::catalog {
@@ -42,6 +43,8 @@ class PgSqlView final : public Object {
   std::shared_ptr<Object> Clone() const final;
 
   const duckdb::CreateViewInfo& GetInfo() const noexcept { return *_info; }
+
+  Refs GetRefs(RefKinds kinds) const;
 
  private:
   duckdb::unique_ptr<duckdb::CreateViewInfo> _info;

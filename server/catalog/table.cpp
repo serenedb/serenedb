@@ -47,6 +47,9 @@ Table::Table(ObjectId schema_id, ObjectId id, std::string_view name,
   for (auto& col : _columns) {
     col.SetParentId(_id);
   }
+  for (auto& c : _check_constraints) {
+    c.SetParentId(_id);
+  }
 }
 
 std::shared_ptr<Table> Table::ReadInternal(vpack::Slice slice,
@@ -68,7 +71,7 @@ std::shared_ptr<Table> Table::ReadInternal(vpack::Slice slice,
   }
   std::vector<CheckConstraint> check_constraints;
   if (auto r = vpack::ReadTupleNothrow(slice.get("check_constraints"),
-                                       check_constraints);
+                                       check_constraints, ctx.id);
       !r.ok()) {
     return nullptr;
   }
@@ -126,10 +129,10 @@ Result Table::RenameConstraint(std::shared_ptr<Table>& result,
   auto constraint_it = _check_constraints.end();
   for (auto it = _check_constraints.begin(); it != _check_constraints.end();
        ++it) {
-    if (it->name == new_name) {
+    if (it->GetName() == new_name) {
       return Result{ERROR_SERVER_DUPLICATE_NAME};
     }
-    if (it->name == old_name) {
+    if (it->GetName() == old_name) {
       constraint_it = it;
     }
   }
@@ -141,7 +144,7 @@ Result Table::RenameConstraint(std::shared_ptr<Table>& result,
   new_table
     ->_check_constraints[std::distance(_check_constraints.begin(),
                                        constraint_it)]
-    .name = new_name;
+    .SetName(new_name);
   result = std::move(new_table);
   return {};
 }
@@ -149,7 +152,7 @@ Result Table::RenameConstraint(std::shared_ptr<Table>& result,
 Result Table::DropCheckConstraint(std::shared_ptr<Table>& result,
                                   std::string_view constraint_name) const {
   auto it = absl::c_find_if(_check_constraints, [&](const CheckConstraint& c) {
-    return c.name == constraint_name;
+    return c.GetName() == constraint_name;
   });
   if (it == _check_constraints.end()) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
@@ -198,7 +201,7 @@ std::shared_ptr<Table> Table::DropCheckConstraint(
   ObjectId constraint_id) const {
   auto cloned = basics::downCast<Table>(Clone());
   std::erase_if(cloned->_check_constraints, [&](const CheckConstraint& c) {
-    return c.id == constraint_id;
+    return c.GetId() == constraint_id;
   });
   return cloned;
 }

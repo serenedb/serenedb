@@ -8,7 +8,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/")
 
 add_executable(serened rest_server/serened.cpp ${ProductVersionFiles})
 
-target_link_libraries(serened sereneserver)
+target_link_libraries(serened sereneserver duckdb_shell_static)
 
 ################################################################################
 ## installation

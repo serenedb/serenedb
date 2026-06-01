@@ -639,7 +639,7 @@ std::shared_ptr<Tokenizer> LookupTokenizer(const Snapshot& snapshot,
 Result MakeUnknownOpclassError(std::string_view opclass,
                                std::string_view owner_label,
                                std::string_view schema_name) {
-  auto object_name = pg::ParseObjectName(std::string{opclass}, schema_name);
+  auto object_name = pg::ParseObjectName(opclass, schema_name);
   if (object_name.schema != schema_name) {
     return {ERROR_BAD_PARAMETER,
             "Accessing text dictionary from different schema is not supported"};

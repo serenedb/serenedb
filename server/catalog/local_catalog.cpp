@@ -33,10 +33,12 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <duckdb/common/exception/parser_exception.hpp>
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/function/scalar_macro_function.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
+#include <duckdb/parser/parser.hpp>
 #include <iterator>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
@@ -143,16 +145,19 @@ class SnapshotImpl : public Snapshot {
     result->_resolution_table = _resolution_table;
     result->_objects = _objects;
     result->_deps = _deps;
+    result->_in_load = _in_load;
     // New snapshot starts with empty DuckDB cache (lazily populated)
     return result;
   }
+
+  void EndLoad() noexcept { _in_load = false; }
 
   connector::DuckDBEntryCache& GetDuckDBEntryCache() const final {
     return _duckdb_cache;
   }
 
   std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(
-    const std::shared_ptr<Database>& db) {
+    const std::shared_ptr<Database>& db, duckdb::shared_ptr<void> keep_alive) {
     auto db_deps = GetDependency<DatabaseDependency>(db->GetId());
     auto schemas_drop = db_deps->schemas |
                         std::views::transform([&](ObjectId id) {
@@ -161,8 +166,8 @@ class SnapshotImpl : public Snapshot {
                           return CreateSchemaDrop(db->GetId(), schema, false);
                         }) |
                         std::ranges::to<std::vector>();
-    auto drop_task =
-      std::make_shared<DatabaseDrop>(db, std::move(schemas_drop));
+    auto drop_task = std::make_shared<DatabaseDrop>(db, std::move(schemas_drop),
+                                                    std::move(keep_alive));
     return drop_task;
   }
 
@@ -208,8 +213,7 @@ class SnapshotImpl : public Snapshot {
     const std::shared_ptr<Index>& index, bool is_root) {
     auto index_deps = GetDependency<IndexDependency>(index->GetId());
     auto shard = GetObject<IndexShard>(index_deps->shard_id);
-    auto shard_drop = std::make_shared<IndexShardDrop>(shard);
-    return std::make_shared<IndexDrop>(index, std::move(shard_drop), db_id,
+    return std::make_shared<IndexDrop>(index, std::move(shard), db_id,
                                        schema_id, table_id, is_root);
   }
 
@@ -365,7 +369,7 @@ class SnapshotImpl : public Snapshot {
       // unset target: pg_catalog/information_schema ref -- no edge to track.
       // missing Dep: graph traversal reached the same target twice, fine
       // on Delete (firstly we delete auto drop dependencies and then cascade).
-      SDB_ASSERT(action == EdgeAction::Delete || !target.isSet());
+      SDB_ASSERT(_in_load || action == EdgeAction::Delete || !target.isSet());
       return;
     }
     auto d = GetDependencyForWrite<Dep>(target);
@@ -387,17 +391,15 @@ class SnapshotImpl : public Snapshot {
         database_id, schema_id, ref.catalog, ref.schema, ref.name);
     };
     for (const auto& col : table.Columns()) {
-      if (auto ext = col.type.GetExtensionInfo()) {
-        if (auto it = ext->properties.find(kPgSqlTypeOidProp);
-            it != ext->properties.end()) {
-          ObjectId type_id{it->second.GetValue<uint64_t>()};
-          ModifyDependency(type_id, &PgSqlTypeDependency::column_types,
-                           col.GetId(), action);
-        }
+      Refs type_refs;
+      CollectTypeRefs(col.type, type_refs);
+      for (auto type_id : type_refs.types) {
+        ModifyDependency(type_id, &PgSqlTypeDependency::column_types,
+                         col.GetId(), action);
       }
       if (col.expr && col.expr->HasExpr() && !col.IsGenerated()) {
-        auto refs =
-          col.expr->ExtractRefs(RefKinds::Sequences | RefKinds::Functions);
+        auto refs = col.expr->GetRefs(RefKinds::Sequences |
+                                      RefKinds::Functions | RefKinds::Types);
         for (const auto& ref : refs.sequences) {
           ModifyDependency(resolve_seq(ref),
                            &SequenceDependency::column_defaults, col.GetId(),
@@ -409,15 +411,21 @@ class SnapshotImpl : public Snapshot {
               database_id, schema_id, ref.catalog, ref.schema, ref.name),
             &PgSqlFunctionDependency::column_defaults, col.GetId(), action);
         }
+        for (const auto& ref : refs.unbound_types) {
+          ModifyDependency(
+            Resolve<ResolveType::Type, ObjectType::PgSqlType>(
+              database_id, schema_id, ref.catalog, ref.schema, ref.name),
+            &PgSqlTypeDependency::column_defaults, col.GetId(), action);
+        }
       }
     }
     for (const auto& c : table.CheckConstraints()) {
       if (!c.expr || !c.expr->HasExpr()) {
         continue;
       }
-      auto refs =
-        c.expr->ExtractRefs(RefKinds::Sequences | RefKinds::Functions);
-      auto edge = std::pair{table.GetId(), c.id};
+      auto refs = c.expr->GetRefs(RefKinds::Sequences | RefKinds::Functions |
+                                  RefKinds::Types);
+      auto edge = c.GetId();
       for (const auto& ref : refs.functions) {
         ModifyDependency(
           Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
@@ -427,6 +435,12 @@ class SnapshotImpl : public Snapshot {
       for (const auto& ref : refs.sequences) {
         ModifyDependency(resolve_seq(ref), &SequenceDependency::constraints,
                          edge, action);
+      }
+      for (const auto& ref : refs.unbound_types) {
+        ModifyDependency(
+          Resolve<ResolveType::Type, ObjectType::PgSqlType>(
+            database_id, schema_id, ref.catalog, ref.schema, ref.name),
+          &PgSqlTypeDependency::constraints, edge, action);
       }
     }
   }
@@ -473,13 +487,9 @@ class SnapshotImpl : public Snapshot {
 
   void ModifyViewDependencies(ObjectId schema_id, const PgSqlView& view,
                               RefKinds kinds, EdgeAction action) {
-    const auto& info = view.GetInfo();
-    if (!info.query) {
-      return;
-    }
     auto database_id = GetDatabaseId(view);
     auto view_id = view.GetId();
-    auto refs = ExtractRefs(*info.query, kinds);
+    auto refs = view.GetRefs(kinds);
     for (const auto& ref : refs.sequences) {
       ModifyDependency(
         Resolve<ResolveType::Relation, ObjectType::Sequence>(
@@ -500,39 +510,81 @@ class SnapshotImpl : public Snapshot {
           database_id, schema_id, ref.catalog, ref.schema, ref.name),
         &PgSqlFunctionDependency::views, view_id, action);
     }
+    for (const auto& ref : refs.unbound_types) {
+      ModifyDependency(
+        Resolve<ResolveType::Type, ObjectType::PgSqlType>(
+          database_id, schema_id, ref.catalog, ref.schema, ref.name),
+        &PgSqlTypeDependency::views, view_id, action);
+    }
   }
 
   void ModifyFunctionDependencies(ObjectId schema_id, const PgSqlFunction& func,
                                   EdgeAction action) {
     auto database_id = GetDatabaseId(func);
     auto fn_id = func.GetId();
-    for (const auto& macro : func.GetInfo().macros) {
-      if (!macro || macro->type != duckdb::MacroType::SCALAR_MACRO) {
+    auto refs = func.GetRefs(RefKinds::All);
+    for (const auto& ref : refs.sequences) {
+      ModifyDependency(
+        Resolve<ResolveType::Relation, ObjectType::Sequence>(
+          database_id, schema_id, ref.catalog, ref.schema, ref.name),
+        &SequenceDependency::functions, fn_id, action);
+    }
+    for (const auto& ref : refs.relations) {
+      ModifyDependency(
+        Resolve<ResolveType::Relation, ObjectType::Table,
+                ObjectType::PgSqlView>(database_id, schema_id, ref.catalog,
+                                       ref.schema, ref.name),
+        &RelationDependency::functions, fn_id, action);
+    }
+    for (const auto& ref : refs.functions) {
+      auto target = Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
+        database_id, schema_id, ref.catalog, ref.schema, ref.name);
+      if (target == fn_id) {
+        continue;  // skip self
+      }
+      ModifyDependency(target, &PgSqlFunctionDependency::functions, fn_id,
+                       action);
+    }
+    for (const auto& ref : refs.unbound_types) {
+      ModifyDependency(
+        Resolve<ResolveType::Type, ObjectType::PgSqlType>(
+          database_id, schema_id, ref.catalog, ref.schema, ref.name),
+        &PgSqlTypeDependency::functions, fn_id, action);
+    }
+    for (auto type_id : refs.types) {
+      ModifyDependency(type_id, &PgSqlTypeDependency::functions, fn_id, action);
+    }
+  }
+
+  void ModifyInvertedIndexDependencies(const InvertedIndex& index,
+                                       ObjectId index_id, EdgeAction action) {
+    auto database_id = GetDatabaseId(index);
+    auto schema_id = index.GetParentId();
+    for (const auto& entry : index.GetEntries()) {
+      const auto* expr = entry.second.GetExpressionData();
+      if (!expr) {
         continue;
       }
-      const auto& sm = macro->Cast<duckdb::ScalarMacroFunction>();
-      if (!sm.expression) {
+      SDB_ASSERT(!expr->pretty_printed.empty());
+      duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> parsed;
+      try {
+        parsed = duckdb::Parser::ParseExpressionList(expr->pretty_printed);
+      } catch (const duckdb::ParserException&) {
         continue;
       }
-      auto refs =
-        ExtractRefs(*sm.expression, RefKinds::Sequences | RefKinds::Functions);
-      for (const auto& ref : refs.sequences) {
-        ModifyDependency(
-          Resolve<ResolveType::Relation, ObjectType::Sequence>(
-            database_id, schema_id, ref.catalog, ref.schema, ref.name),
-          &SequenceDependency::functions, fn_id, action);
-      }
-      for (const auto& ref : refs.functions) {
-        auto target = Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
-          database_id, schema_id, ref.catalog, ref.schema, ref.name);
-        if (target == fn_id) {
-          continue;  // skip self
+      for (const auto& p : parsed) {
+        SDB_ASSERT(p);
+        for (const auto& ref : ExtractRefs(*p, RefKinds::Functions).functions) {
+          ModifyDependency(
+            Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
+              database_id, schema_id, ref.catalog, ref.schema, ref.name),
+            &PgSqlFunctionDependency::indexes, index_id, action);
         }
-        ModifyDependency(target, &PgSqlFunctionDependency::functions, fn_id,
-                         action);
       }
     }
   }
+
+  const auto& Objects() const noexcept { return _objects; }
 
   template<typename DependencyType = void>
   Result AddObjectDefinition(ObjectId parent_id,
@@ -570,6 +622,11 @@ class SnapshotImpl : public Snapshot {
             _objects.insert(std::make_shared<Column>(col));
           }
         }
+        for (const auto& c : table.CheckConstraints()) {
+          if (_objects.find(c.GetId()) == _objects.end()) {
+            _objects.insert(std::make_shared<CheckConstraint>(c));
+          }
+        }
         ModifyTableDependencies(parent_id, table, EdgeAction::Add);
       } break;
       case ObjectType::PgSqlView:
@@ -602,12 +659,16 @@ class SnapshotImpl : public Snapshot {
       } break;
       case ObjectType::SecondaryIndex:
       case ObjectType::InvertedIndex: {
-        GetDependencyForWrite<RelationDependency>(parent_id)->indexes.insert(
-          id);
         const auto& index = basics::downCast<Index>(obj);
+        GetDependencyForWrite<RelationDependency>(index.GetRelationId())
+          ->indexes.insert(id);
         for (auto tokenizer_id : index.GetTokenizers()) {
           GetDependencyForWrite<TokenizerDependency>(tokenizer_id)
             ->indexes.insert(id);
+        }
+        if (obj.GetType() == ObjectType::InvertedIndex) {
+          ModifyInvertedIndexDependencies(
+            basics::downCast<InvertedIndex>(index), id, EdgeAction::Add);
         }
       } break;
       case ObjectType::TableShard:
@@ -617,10 +678,13 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::InvertedIndexShard:
         GetDependencyForWrite<IndexDependency>(parent_id)->shard_id = id;
         break;
+      case ObjectType::Virtual:
+      case ObjectType::Column:
+      case ObjectType::CheckConstraint:
+        SDB_ASSERT(_in_load);
+        break;
       case ObjectType::Invalid:
       case ObjectType::Tombstone:
-      case ObjectType::Column:
-      case ObjectType::Virtual:
         SDB_UNREACHABLE();
     }
   }
@@ -699,6 +763,22 @@ class SnapshotImpl : public Snapshot {
                std::ranges::to<std::vector>();
       })
       .value_or(std::vector<std::shared_ptr<PgSqlView>>{});
+  }
+
+  std::vector<std::shared_ptr<Sequence>> GetSequences(
+    ObjectId db_id, std::string_view schema) const final {
+    return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+      .transform([&](ObjectId schema_id) {
+        const auto& schema_deps = GetDependency<SchemaDependency>(schema_id);
+        return schema_deps->sequences |
+               std::views::transform([&](ObjectId sequence_id) {
+                 auto it = _objects.find(sequence_id);
+                 SDB_ASSERT(it != _objects.end());
+                 return basics::downCast<Sequence>(*it);
+               }) |
+               std::ranges::to<std::vector>();
+      })
+      .value_or(std::vector<std::shared_ptr<Sequence>>{});
   }
 
   std::vector<std::shared_ptr<PgSqlFunction>> GetFunctions(
@@ -1221,14 +1301,18 @@ class SnapshotImpl : public Snapshot {
         } break;
         case ObjectType::SecondaryIndex:
         case ObjectType::InvertedIndex: {
-          auto relation_deps =
-            GetDependencyForWrite<RelationDependency>(parent_id);
-          relation_deps->indexes.erase(id);
           const auto& index = basics::downCast<Index>(*obj);
+          auto relation_deps =
+            GetDependencyForWrite<RelationDependency>(index.GetRelationId());
+          relation_deps->indexes.erase(id);
           for (auto tokenizer_id : index.GetTokenizers()) {
             auto dep = GetDependencyForWrite<TokenizerDependency>(tokenizer_id);
             SDB_ASSERT(dep);
             dep->indexes.erase(obj->GetId());
+          }
+          if (obj->GetType() == ObjectType::InvertedIndex) {
+            ModifyInvertedIndexDependencies(
+              basics::downCast<InvertedIndex>(index), id, EdgeAction::Delete);
           }
         } break;
         case ObjectType::PgSqlFunction: {
@@ -1248,6 +1332,9 @@ class SnapshotImpl : public Snapshot {
           ModifyTableDependencies(parent_id, t, EdgeAction::Delete);
           for (const auto& col : t.Columns()) {
             _objects.erase(col.GetId());
+          }
+          for (const auto& c : t.CheckConstraints()) {
+            _objects.erase(c.GetId());
           }
         } break;
         case ObjectType::PgSqlView: {
@@ -1281,6 +1368,7 @@ class SnapshotImpl : public Snapshot {
         case ObjectType::Invalid:
         case ObjectType::Tombstone:
         case ObjectType::Column:
+        case ObjectType::CheckConstraint:
         case ObjectType::Virtual:
           SDB_UNREACHABLE();
       }
@@ -1357,6 +1445,7 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::Invalid:
       case ObjectType::Tombstone:
       case ObjectType::Column:
+      case ObjectType::CheckConstraint:
       case ObjectType::Virtual:
         SDB_UNREACHABLE();
     }
@@ -1411,6 +1500,7 @@ class SnapshotImpl : public Snapshot {
   ObjectDependencies _deps;
   ObjectSetById<Object> _objects;
   mutable connector::DuckDBEntryCache _duckdb_cache;
+  bool _in_load = true;
 };
 
 std::string DropPlan::FormatDependentsDetail(const Snapshot& snap,
@@ -1933,6 +2023,12 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
     _snapshot,
     [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
       if (existed_id.isSet()) {
+        if (auto deps =
+              clone->GetDependency<PgSqlFunctionDependency>(existed_id);
+            deps && !deps->indexes.empty()) {
+          return Result{ERROR_BAD_PARAMETER, "cannot replace function \"",
+                        function->GetName(), "\" because indexes depend on it"};
+        }
         function->SetId(existed_id);
         if (auto r = clone->ReplaceObject<ResolveType::Function>(
               *schema_id, function->GetName(), function);
@@ -2464,7 +2560,8 @@ Result LocalCatalog::DropRole(std::string_view role) {
   return {};
 }
 
-Result LocalCatalog::DropDatabase(std::string_view name) {
+Result LocalCatalog::DropDatabase(std::string_view name,
+                                  duckdb::shared_ptr<void> keep_alive) {
   absl::MutexLock lock{&_mutex};
   auto database_id =
     _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, name);
@@ -2479,7 +2576,7 @@ Result LocalCatalog::DropDatabase(std::string_view name) {
     SDB_ASSERT(clone);
     auto database = clone->GetObject<Database>(*database_id);
     SDB_ASSERT(database);
-    auto task = clone->CreateDatabaseDrop(database);
+    auto task = clone->CreateDatabaseDrop(database, std::move(keep_alive));
     auto wr = _engine->Write([&](auto& ctx) {
       ctx.WriteTombstone(id::kInstance, *database_id);
       clone->CommitDropPlan(ctx, plan);
@@ -2919,6 +3016,17 @@ Result LocalCatalog::DropTokenizer(std::string_view database,
     clone->UnregisterObject(std::move(tokenizer), *schema_id);
     clone->ApplyDropPlan(*database_id, plan);
     return Result{};
+  });
+}
+
+Result LocalCatalog::FinalizeLoad() {
+  absl::MutexLock lock{&_mutex};
+  return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
+    for (const auto& obj : clone->Objects()) {
+      clone->AddDependencies(obj->GetParentId(), *obj);
+    }
+    clone->EndLoad();
+    return {};
   });
 }
 

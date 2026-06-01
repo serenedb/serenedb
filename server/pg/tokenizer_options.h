@@ -232,8 +232,13 @@ inline constexpr OptionInfo kFeaturesOptions[] = {kNormFeature, kOffsetFeature,
 inline constexpr OptionInfo kTextOptions[] = {
   kLocale, kAccent, kStemming, kStopwords, kStopwordsPath, kCase};
 
+inline constexpr OptionInfo kMode{
+  "mode", "all"sv,
+  "Mode of generation: all, only_prefix, only_suffix, only_prefix_and_suffix"};
+
 inline constexpr OptionInfo kNGramOptions[] = {
-  kMinGram, kMaxGram, kPreserveOriginal, kInputType, kStartMarker, kEndMarker};
+  kMinGram,   kMaxGram, kPreserveOriginal, kInputType, kStartMarker,
+  kEndMarker, kMode};
 
 inline constexpr OptionInfo kNearestNeighborsOptions[] = {kModelLocation,
                                                           kTopK};

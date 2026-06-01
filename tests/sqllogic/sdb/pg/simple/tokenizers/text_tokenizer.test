@@ -2238,6 +2238,7 @@ Text Search Dictionary:
     inputtype (string) [default: utf8] - Input stream encoding: binary, utf8
     startmarker (string) - Prefix marker appended at n-gram boundary
     endmarker (string) - Suffix marker appended at n-gram boundary
+    mode (string) [default: all] - Mode of generation: all, only_prefix, only_suffix, only_prefix_and_suffix
   nearest_neighbors:
     modellocation (string) - Path to the ML model file
     topk (integer) [default: 1] - Number of top results to return

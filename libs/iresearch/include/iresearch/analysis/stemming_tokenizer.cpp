@@ -31,8 +31,6 @@
 
 #include <string_view>
 
-#include "iresearch/utils/vpack_utils.hpp"
-
 namespace irs::analysis {
 namespace {
 
@@ -230,9 +228,10 @@ bool StemmingTokenizer::next() {
 }
 
 bool StemmingTokenizer::reset(std::string_view data) {
-  if (!_stemmer) {
+  if (!_stemmer_initialized) {
     // defaults to utf-8
     _stemmer = make_stemmer_ptr(_options.locale.getLanguage(), nullptr);
+    _stemmer_initialized = true;
   }
 
   auto& term = std::get<TermAttr>(_attrs);

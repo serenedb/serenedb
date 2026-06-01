@@ -42,29 +42,41 @@ class NGramTokenizerBase : public TypedAnalyzer<NGramTokenizerBase>,
     UTF8,    // input is treaten as ut8-encoded symbols
   };
 
+  enum class NGramMode : uint8_t {
+    All,     // Produces all valid n-grams for the input
+    Prefix,  // Produces only n-grams starting from the beginning of the input
+    Suffix,  // Produces only n-grams ending at the end of the input
+    PrefixAndSuffix  // Produces n-grams starting from the beginning and ending
+                     // at the end of the input
+  };
+
   struct Options {
     Options() noexcept = default;
     Options(size_t min, size_t max, bool original,
-            InputType stream_type = InputType::Binary) noexcept
+            InputType stream_type = InputType::Binary,
+            NGramMode mode = NGramMode::All) noexcept
       : min_gram{min},
         max_gram{max},
         preserve_original{original},
-        stream_bytes_type{stream_type} {}
+        stream_bytes_type{stream_type},
+        ngram_mode{mode} {}
     Options(size_t min, size_t max, bool original, InputType stream_type,
-            bytes_view start, bytes_view end)
+            bytes_view start, bytes_view end, NGramMode mode = NGramMode::All)
       : min_gram{min},
         max_gram{max},
         preserve_original{original},
         stream_bytes_type{stream_type},
         start_marker{start},
-        end_marker{end} {}
+        end_marker{end},
+        ngram_mode{mode} {}
 
-    size_t min_gram{0};
-    size_t max_gram{0};
-    bool preserve_original{true};  // emit input data as a token
-    InputType stream_bytes_type{InputType::Binary};
+    size_t min_gram = 0;
+    size_t max_gram = 0;
+    bool preserve_original = true;  // emit input data as a token
+    InputType stream_bytes_type = InputType::Binary;
     irs::bstring start_marker;  // marker of ngrams at the beginning of stream
     irs::bstring end_marker;    // marker of ngrams at the end of strem
+    NGramMode ngram_mode = NGramMode::All;
   };
 
   static constexpr std::string_view type_name() noexcept { return "ngram"; }
@@ -77,18 +89,19 @@ class NGramTokenizerBase : public TypedAnalyzer<NGramTokenizerBase>,
     return irs::GetMutable(_attrs, type);
   }
 
-  size_t min_gram() const noexcept { return _options.min_gram; }
-  size_t max_gram() const noexcept { return _options.max_gram; }
-  bool preserve_original() const noexcept { return _options.preserve_original; }
+  size_t MinGram() const noexcept { return _options.min_gram; }
+  size_t MaxGram() const noexcept { return _options.max_gram; }
+  bool PreserveOriginal() const noexcept { return _options.preserve_original; }
 
  protected:
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
+  using Attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
 
-  void emit_original() noexcept;
+  void EmitOriginal() noexcept;
+  bool EmitTerm() noexcept;
 
   Options _options;
   bytes_view _data;  // data to process
-  attributes _attrs;
+  Attributes _attrs;
   const byte_type* _begin{};
   const byte_type* _data_end{};
   const byte_type* _ngram_end{};
@@ -101,7 +114,10 @@ class NGramTokenizerBase : public TypedAnalyzer<NGramTokenizerBase>,
     WithEndMarker
   };
 
-  EmitOriginal _emit_original{EmitOriginal::None};
+  enum class ExecState { All, Prefix, Suffix, Done };
+
+  enum EmitOriginal _emit_original = EmitOriginal::None;
+  ExecState _exec_state = ExecState::Done;
 
   // buffer for emitting ngram with start/stop marker
   // we need continious memory for value so can not use
@@ -109,7 +125,7 @@ class NGramTokenizerBase : public TypedAnalyzer<NGramTokenizerBase>,
   bstring _marked_term_buffer;
 
   // increment value for next token
-  uint32_t _next_inc_val{0};
+  uint32_t _next_inc_val = 0;
 
   // Aux flags to speed up marker properties access;
   bool _start_marker_empty;
@@ -127,6 +143,12 @@ class NGramTokenizer : public NGramTokenizerBase {
 
  private:
   inline bool NextSymbol(const byte_type*& it) const noexcept;
+  inline bool PrevSymbol(const byte_type*& it) const noexcept;
+
+  bool NextAll() noexcept;
+  bool NextPrefix() noexcept;
+  bool NextSuffix() noexcept;
+  void TransitionToSuffix() noexcept;
 };
 
 }  // namespace analysis

@@ -344,6 +344,43 @@ bool NormalizingTokenizer::reset(std::string_view data) {
     return false;
   }
 
+  bool is_ascii = true;
+  for (char c : data) {
+    if ((static_cast<unsigned char>(c) & 0x80) != 0) {
+      is_ascii = false;
+      break;
+    }
+  }
+
+  // fast path for ascii symbols
+  if (is_ascii) {
+    _state->term_buf.clear();
+
+    if (_state->options.case_convert == Case::Lower) {
+      _state->term_buf.reserve(data.size());
+      for (char c : data) {
+        _state->term_buf.push_back(
+          absl::ascii_tolower(static_cast<unsigned char>(c)));
+      }
+    } else if (_state->options.case_convert == Case::Upper) {
+      _state->term_buf.reserve(data.size());
+      for (char c : data) {
+        _state->term_buf.push_back(
+          absl::ascii_toupper(static_cast<unsigned char>(c)));
+      }
+    } else {
+      _state->term_buf.assign(data.data(), data.size());
+    }
+
+    std::get<TermAttr>(_attrs).value =
+      ViewCast<byte_type>(std::string_view{_state->term_buf});
+    auto& offset = std::get<OffsAttr>(_attrs);
+    offset.start = 0;
+    offset.end = static_cast<uint32_t>(data.size());
+    _term_eof = false;
+    return true;
+  }
+
   _state->data = icu::UnicodeString::fromUTF8(
     icu::StringPiece{data.data(), static_cast<int32_t>(data.size())});
 

@@ -41,6 +41,7 @@ constexpr std::string_view kMinParamName = "min";
 constexpr std::string_view kMaxParamName = "max";
 constexpr std::string_view kPreserveOriginalParamName = "preserveOriginal";
 constexpr std::string_view kStreamTypeParamName = "streamType";
+constexpr std::string_view kModeParamName = "mode";
 constexpr std::string_view kStartMarkerParamName = "startMarker";
 constexpr std::string_view kEndMarkerParamName = "endMarker";
 
@@ -50,6 +51,15 @@ constexpr sdb::containers::TrivialBiMap kStreamTypeConvertMap =
       .Case("binary", NGramTokenizerBase::InputType::Binary)
       .Case("utf8", NGramTokenizerBase::InputType::UTF8);
   };
+
+constexpr sdb::containers::TrivialBiMap kModeConvertMap = [](auto selector) {
+  return selector()
+    .Case("all", NGramTokenizerBase::NGramMode::All)
+    .Case("only_prefix", NGramTokenizerBase::NGramMode::Prefix)
+    .Case("only_suffix", NGramTokenizerBase::NGramMode::Suffix)
+    .Case("only_prefix_and_suffix",
+          NGramTokenizerBase::NGramMode::PrefixAndSuffix);
+};
 
 bool ParseVPackOptions(const vpack::Slice slice,
                        NGramTokenizerBase::Options& options) {
@@ -171,6 +181,27 @@ bool ParseVPackOptions(const vpack::Slice slice,
   }
   options.stream_bytes_type = stream_bytes_type;
 
+  auto ngram_mode = NGramTokenizerBase::NGramMode::All;
+  if (auto mode_type_slice = slice.get(kModeParamName);
+      !mode_type_slice.isNone()) {
+    if (!mode_type_slice.isString()) {
+      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Non-string value in '",
+               kModeParamName,
+               "' while constructing ngram_token_stream from VPack arguments");
+      return false;
+    }
+    auto mode_str = mode_type_slice.stringView();
+    auto itr = kModeConvertMap.TryFindByFirst(mode_str);
+    if (!itr) {
+      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
+               kModeParamName,
+               "' while constructing ngram_token_stream from VPack arguments");
+      return false;
+    }
+    ngram_mode = *itr;
+  }
+  options.ngram_mode = ngram_mode;
+
   return true;
 }
 
@@ -203,6 +234,19 @@ bool MakeVPackConfig(const NGramTokenizerBase::Options& options,
                 absl::StrCat("Invalid ", kStreamTypeParamName,
                              " value in ngram analyzer options: ",
                              static_cast<int>(options.stream_bytes_type)));
+      return false;
+    }
+
+    // mode
+    auto mode_value = kModeConvertMap.TryFindBySecond(options.ngram_mode);
+
+    if (mode_value) {
+      builder->add(kModeParamName, *mode_value);
+    } else {
+      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+                absl::StrCat("Invalid ", kModeParamName,
+                             " value in ngram analyzer options: ",
+                             static_cast<int>(options.ngram_mode)));
       return false;
     }
 
@@ -336,7 +380,7 @@ NGramTokenizer<StreamType>::NGramTokenizer(const Options& options)
   SDB_ASSERT(StreamType == _options.stream_bytes_type);
 }
 
-void NGramTokenizerBase::emit_original() noexcept {
+void NGramTokenizerBase::EmitOriginal() noexcept {
   auto& term = std::get<TermAttr>(_attrs);
   auto& offset = std::get<OffsAttr>(_attrs);
   auto& inc = std::get<IncAttr>(_attrs);
@@ -345,6 +389,7 @@ void NGramTokenizerBase::emit_original() noexcept {
     case EmitOriginal::WithoutMarkers:
       term.value = _data;
       SDB_ASSERT(_data.size() <= std::numeric_limits<uint32_t>::max());
+      offset.start = 0;
       offset.end = uint32_t(_data.size());
       _emit_original = EmitOriginal::None;
       inc.value = _next_inc_val;
@@ -389,6 +434,60 @@ void NGramTokenizerBase::emit_original() noexcept {
   _next_inc_val = 0;
 }
 
+bool NGramTokenizerBase::EmitTerm() noexcept {
+  auto& term = std::get<TermAttr>(_attrs);
+  auto& offset = std::get<OffsAttr>(_attrs);
+  auto& inc = std::get<IncAttr>(_attrs);
+
+  SDB_ASSERT(_begin <= _ngram_end);
+  SDB_ASSERT(static_cast<size_t>(std::distance(_begin, _ngram_end)) <=
+             std::numeric_limits<uint32_t>::max());
+  const auto ngram_byte_len =
+    static_cast<uint32_t>(std::distance(_begin, _ngram_end));
+
+  offset.start = static_cast<uint32_t>(std::distance(_data.data(), _begin));
+
+  if (EmitOriginal::None == _emit_original || 0 != offset.start ||
+      ngram_byte_len != _data.size()) {
+    offset.end = offset.start + ngram_byte_len;
+    inc.value = _next_inc_val;
+    _next_inc_val = 0;
+    if ((0 != offset.start || _start_marker_empty) &&
+        (_end_marker_empty || _ngram_end != _data_end)) {
+      term.value = irs::bytes_view(_begin, ngram_byte_len);
+    } else if (0 == offset.start && !_start_marker_empty) {
+      _marked_term_buffer.clear();
+      SDB_ASSERT(_marked_term_buffer.capacity() >=
+                 (_options.start_marker.size() + ngram_byte_len));
+      _marked_term_buffer.append(_options.start_marker.begin(),
+                                 _options.start_marker.end());
+      _marked_term_buffer.append(_begin, ngram_byte_len);
+      term.value = _marked_term_buffer;
+      SDB_ASSERT(_marked_term_buffer.size() <=
+                 std::numeric_limits<uint32_t>::max());
+      if (ngram_byte_len == _data.size() && !_end_marker_empty) {
+        // this term is whole original stream and we have end marker, so
+        // we need to emit this term again with end marker just like
+        // original, so pretend we need to emit original
+        _emit_original = EmitOriginal::WithEndMarker;
+      }
+    } else {
+      SDB_ASSERT(!_end_marker_empty && _ngram_end == _data_end);
+      _marked_term_buffer.clear();
+      SDB_ASSERT(_marked_term_buffer.capacity() >=
+                 (_options.end_marker.size() + ngram_byte_len));
+      _marked_term_buffer.append(_begin, ngram_byte_len);
+      _marked_term_buffer.append(_options.end_marker.begin(),
+                                 _options.end_marker.end());
+      term.value = _marked_term_buffer;
+    }
+  } else {
+    // if ngram covers original stream we need to process it specially
+    EmitOriginal();
+  }
+  return true;
+}
+
 bool NGramTokenizerBase::reset(std::string_view value) noexcept {
   if (value.size() > std::numeric_limits<uint32_t>::max()) {
     // can't handle data which is longer than
@@ -425,6 +524,24 @@ bool NGramTokenizerBase::reset(std::string_view value) noexcept {
     _emit_original = EmitOriginal::None;
   }
   _next_inc_val = 1;
+
+  switch (_options.ngram_mode) {
+    case NGramMode::All:
+      _exec_state = ExecState::All;
+      break;
+    case NGramMode::Prefix:
+      _exec_state = ExecState::Prefix;
+      break;
+    case NGramMode::Suffix:
+      _exec_state = ExecState::Suffix;
+      _begin = _data_end;
+      _ngram_end = _data_end;
+      break;
+    case NGramMode::PrefixAndSuffix:
+      _exec_state = ExecState::Prefix;
+      break;
+  }
+
   SDB_ASSERT(_length < _options.min_gram);
   const size_t max_marker_size =
     std::max(_options.start_marker.size(), _options.end_marker.size());
@@ -459,76 +576,142 @@ bool NGramTokenizer<StreamType>::NextSymbol(
 }
 
 template<NGramTokenizerBase::InputType StreamType>
-bool NGramTokenizer<StreamType>::next() noexcept {
-  auto& term = std::get<TermAttr>(_attrs);
-  auto& offset = std::get<OffsAttr>(_attrs);
-  auto& inc = std::get<IncAttr>(_attrs);
+bool NGramTokenizer<StreamType>::PrevSymbol(
+  const byte_type*& it) const noexcept {
+  SDB_ASSERT(it);
+  if (it == _data.data()) [[unlikely]] {
+    return false;
+  }
+  if constexpr (StreamType == InputType::Binary) {
+    --it;
+  } else if constexpr (StreamType == InputType::UTF8) {
+    it = utf8_utils::Prev(_data.data(), it);
+  }
+  return true;
+}
 
-  while (_begin < _data_end) {
-    if (_length < _options.max_gram && NextSymbol(_ngram_end)) {
-      // we have next ngram from current position
-      ++_length;
-      if (_length >= _options.min_gram) {
-        SDB_ASSERT(_begin <= _ngram_end);
-        SDB_ASSERT(static_cast<size_t>(std::distance(_begin, _ngram_end)) <=
-                   std::numeric_limits<uint32_t>::max());
-        const auto ngram_byte_len =
-          static_cast<uint32_t>(std::distance(_begin, _ngram_end));
-        if (EmitOriginal::None == _emit_original || 0 != offset.start ||
-            ngram_byte_len != _data.size()) {
-          offset.end = offset.start + ngram_byte_len;
-          inc.value = _next_inc_val;
-          _next_inc_val = 0;
-          if ((0 != offset.start || _start_marker_empty) &&
-              (_end_marker_empty || _ngram_end != _data_end)) {
-            term.value = irs::bytes_view(_begin, ngram_byte_len);
-          } else if (0 == offset.start && !_start_marker_empty) {
-            _marked_term_buffer.clear();
-            SDB_ASSERT(_marked_term_buffer.capacity() >=
-                       (_options.start_marker.size() + ngram_byte_len));
-            _marked_term_buffer.append(_options.start_marker.begin(),
-                                       _options.start_marker.end());
-            _marked_term_buffer.append(_begin, ngram_byte_len);
-            term.value = _marked_term_buffer;
-            SDB_ASSERT(_marked_term_buffer.size() <=
-                       std::numeric_limits<uint32_t>::max());
-            if (ngram_byte_len == _data.size() && !_end_marker_empty) {
-              // this term is whole original stream and we have end marker, so
-              // we need to emit this term again with end marker just like
-              // original, so pretend we need to emit original
-              _emit_original = EmitOriginal::WithEndMarker;
-            }
-          } else {
-            SDB_ASSERT(!_end_marker_empty && _ngram_end == _data_end);
-            _marked_term_buffer.clear();
-            SDB_ASSERT(_marked_term_buffer.capacity() >=
-                       (_options.end_marker.size() + ngram_byte_len));
-            _marked_term_buffer.append(_begin, ngram_byte_len);
-            _marked_term_buffer.append(_options.end_marker.begin(),
-                                       _options.end_marker.end());
-            term.value = _marked_term_buffer;
-          }
-        } else {
-          // if ngram covers original stream we need to process it specially
-          emit_original();
+template<NGramTokenizerBase::InputType StreamType>
+void NGramTokenizer<StreamType>::TransitionToSuffix() noexcept {
+  _exec_state = ExecState::Suffix;
+  _begin = _data_end;
+  _ngram_end = _data_end;
+  _length = 0;
+  _next_inc_val = 1;
+}
+
+template<NGramTokenizerBase::InputType StreamType>
+bool NGramTokenizer<StreamType>::NextAll() noexcept {
+  if (_begin >= _data_end) {
+    _exec_state = ExecState::Done;
+    return false;
+  }
+
+  if (_length < _options.max_gram && NextSymbol(_ngram_end)) {
+    ++_length;
+    if (_length >= _options.min_gram) {
+      return EmitTerm();
+    }
+    return false;
+  }
+
+  if (EmitOriginal::None != _emit_original) {
+    EmitOriginal();
+    return true;
+  }
+
+  if (!NextSymbol(_begin)) [[unlikely]] {
+    _exec_state = ExecState::Done;
+    return false;
+  }
+
+  _next_inc_val = 1;
+  _length = 0;
+  _ngram_end = _begin;
+  return false;
+}
+
+template<NGramTokenizerBase::InputType StreamType>
+bool NGramTokenizer<StreamType>::NextPrefix() noexcept {
+  if (_begin >= _data_end) {
+    _exec_state = ExecState::Done;
+    return false;
+  }
+
+  if (_length < _options.max_gram && NextSymbol(_ngram_end)) {
+    ++_length;
+    if (_length >= _options.min_gram) {
+      return EmitTerm();
+    }
+    return false;
+  }
+
+  if (_options.ngram_mode == NGramMode::PrefixAndSuffix) {
+    TransitionToSuffix();
+    return false;  // continue loop to start emitting suffixes
+  }
+
+  if (EmitOriginal::None != _emit_original) {
+    EmitOriginal();
+    if (EmitOriginal::None == _emit_original) {
+      _exec_state = ExecState::Done;
+    }
+    return true;
+  }
+
+  _exec_state = ExecState::Done;
+  return false;
+}
+
+template<NGramTokenizerBase::InputType StreamType>
+bool NGramTokenizer<StreamType>::NextSuffix() noexcept {
+  if (_length < _options.max_gram && PrevSymbol(_begin)) {
+    ++_length;
+    if (_length >= _options.min_gram) {
+      // For PrefixAndSuffix, we don't want to emit duplicates if the suffix
+      // is exactly the whole word and we already emitted it as a prefix.
+      if (_options.ngram_mode == NGramMode::PrefixAndSuffix &&
+          _begin == _data.data()) {
+        _exec_state = ExecState::Done;
+        return false;
+      }
+      return EmitTerm();
+    }
+    return false;
+  }
+
+  if (EmitOriginal::None != _emit_original) {
+    EmitOriginal();
+    if (EmitOriginal::None == _emit_original) {
+      _exec_state = ExecState::Done;
+    }
+    return true;
+  }
+
+  _exec_state = ExecState::Done;
+  return false;
+}
+
+template<NGramTokenizerBase::InputType StreamType>
+bool NGramTokenizer<StreamType>::next() noexcept {
+  while (_exec_state != ExecState::Done) {
+    switch (_exec_state) {
+      case ExecState::All:
+        if (NextAll()) {
+          return true;
         }
-        return true;
-      }
-    } else if (EmitOriginal::None == _emit_original) {
-      // need to move to next position
-      if (!NextSymbol(_begin)) [[unlikely]] {
-        return false;  // stream exhausted
-      }
-      _next_inc_val = 1;
-      _length = 0;
-      _ngram_end = _begin;
-      offset.start = static_cast<uint32_t>(std::distance(_data.data(), _begin));
-    } else {
-      // as stream has unsigned incremet attribute
-      // we cannot go back, so we must emit original before we leave start pos
-      // in stream (as it starts from pos=0 in stream)
-      emit_original();
-      return true;
+        break;
+      case ExecState::Prefix:
+        if (NextPrefix()) {
+          return true;
+        }
+        break;
+      case ExecState::Suffix:
+        if (NextSuffix()) {
+          return true;
+        }
+        break;
+      case ExecState::Done:
+        return false;
     }
   }
   return false;

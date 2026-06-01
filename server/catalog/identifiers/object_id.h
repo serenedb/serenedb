@@ -53,6 +53,7 @@ inline constexpr ObjectId kPgInformationSchema{kMinSystem.id() + 3};
 
 // Type IDs
 inline constexpr ObjectId kVariant{kMinSystem.id() + 100};
+inline constexpr ObjectId kVariantArray{kMinSystem.id() + 101};
 
 }  // namespace id
 }  // namespace sdb

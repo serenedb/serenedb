@@ -37,7 +37,6 @@
 #include "general_server/general_server_feature.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/ssl_server_feature.h"
-#include "general_server/state.h"
 #include "pg/pg_feature.h"
 #include "query/server_engine.h"
 #include "rest_server/database_path_feature.h"
@@ -62,10 +61,6 @@ int RunServer(int argc, char** argv) {
 
     int ret{EXIT_FAILURE};
     AppServer server;
-    ServerState state;
-    // SereneDB is single-node; the cluster topology that the
-    // ArangoDB ServerState modeled never applied.
-    state.SetRole(ServerState::Role::Single);
 
     // 1. Parse CLI before constructing any feature (ctors read flags).
     //    parseOptions can SDB_FATAL on bad CLI -- DuckDB is already up

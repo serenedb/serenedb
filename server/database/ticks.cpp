@@ -27,7 +27,6 @@
 
 #include "basics/hybrid_logical_clock.h"
 #include "catalog/identifiers/object_id.h"
-#include "general_server/state.h"
 
 namespace sdb {
 namespace {
@@ -64,29 +63,18 @@ Tick GetCurrentTickServer() { return gCurrentTick; }
 
 Tick NewServerSpecificTick() {
   static constexpr uint64_t kLowerMask{0x000000FFFFFFFFFF};
-  static constexpr uint64_t kUpperMask{0xFFFFFF0000000000};
-  static constexpr size_t kUpperShift{40};
 
-  uint64_t lower = NewTickServer() & kLowerMask;
-  uint64_t upper = (static_cast<uint64_t>(ServerState::instance()->GetShortId())
-                    << kUpperShift) &
-                   kUpperMask;
-  uint64_t tick = (upper | lower);
-  return static_cast<Tick>(tick);
+  // Upper bits encoded the server's short id in cluster mode; in single-node
+  // mode they are always zero, so we only carry the lower 40 bits.
+  return static_cast<Tick>(NewTickServer() & kLowerMask);
 }
 
 Tick NewServerSpecificTickMod4() {
   static constexpr uint64_t kLowerMask{0x000000FFFFFFFFFC};
-  static constexpr uint64_t kUpperMask{0xFFFFFF0000000000};
   static constexpr size_t kLowerShift{2};
-  static constexpr size_t kUpperShift{40};
 
-  const uint64_t lower = (NewTickServer() << kLowerShift) & kLowerMask;
-  const uint64_t upper =
-    (static_cast<uint64_t>(ServerState::instance()->GetShortId())
-     << kUpperShift) &
-    kUpperMask;
-  return static_cast<Tick>(upper | lower);
+  // See NewServerSpecificTick() -- short id contribution is always zero.
+  return static_cast<Tick>((NewTickServer() << kLowerShift) & kLowerMask);
 }
 
 uint32_t ExtractServerIdFromTick(Tick tick) {

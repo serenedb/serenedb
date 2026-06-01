@@ -84,7 +84,6 @@
 #include "database/ticks.h"
 #include "general_server/rest_handler_factory.h"
 #include "general_server/scheduler_feature.h"
-#include "general_server/state.h"
 #include "metrics/counter_builder.h"
 #include "metrics/gauge_builder.h"
 #include "metrics/histogram_builder.h"
@@ -272,14 +271,10 @@ RocksDBFilePurgeEnabler::RocksDBFilePurgeEnabler(
 Result DeleteDefinition(rocksdb::DB* db, auto&& make_key,
                         auto&& make_log_value) {
   rocksdb::WriteBatch batch;
-  if (ServerState::instance()->IsSingle()) {
-    // No need to write DDL events in cluster mode,
-    // as they are not replicated.
-    auto log_value = make_log_value();
+  auto log_value = make_log_value();
 
-    if (!log_value.empty()) [[likely]] {
-      batch.PutLogData({log_value.data(), log_value.size()});
-    }
+  if (!log_value.empty()) [[likely]] {
+    batch.PutLogData({log_value.data(), log_value.size()});
   }
 
   auto key = make_key();
@@ -295,14 +290,10 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_key, auto&& make_value,
                        auto&& make_log_value) {
   rocksdb::WriteBatch batch;
 
-  if (ServerState::instance()->IsSingle()) {
-    // No need to write DDL events in cluster mode,
-    // as they are not replicated.
-    auto log_value = make_log_value();
+  auto log_value = make_log_value();
 
-    if (!log_value.empty()) [[likely]] {
-      batch.PutLogData({log_value.data(), log_value.size()});
-    }
+  if (!log_value.empty()) [[likely]] {
+    batch.PutLogData({log_value.data(), log_value.size()});
   }
 
   auto key = make_key();
@@ -322,14 +313,10 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_old_key,
                        auto&& make_log_value) {
   rocksdb::WriteBatch batch;
 
-  if (ServerState::instance()->IsSingle()) {
-    // No need to write DDL events in cluster mode,
-    // as they are not replicated.
-    auto log_value = make_log_value();
+  auto log_value = make_log_value();
 
-    if (!log_value.empty()) [[likely]] {
-      batch.PutLogData({log_value.data(), log_value.size()});
-    }
+  if (!log_value.empty()) [[likely]] {
+    batch.PutLogData({log_value.data(), log_value.size()});
   }
 
   auto* column = RocksDBColumnFamilyManager::get(
@@ -665,11 +652,6 @@ void RocksDBEngineCatalog::start() {
                       std::to_string(_options_provider.maxTotalWalSize())}});
 
   _use_released_tick = true;  // FlushFeature is always present + enabled
-
-  // useReleasedTick should be true on DB servers and single servers
-  SDB_ASSERT((ServerState::instance()->IsCoordinator() ||
-              ServerState::instance()->IsAgent()) ||
-             _use_released_tick);
 
   if (_options_provider._sync_interval > 0) {
     _sync_thread = std::make_unique<RocksDBSyncThread>(

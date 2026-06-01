@@ -86,7 +86,7 @@ bool QueueTimeViolated(const GeneralRequest& req) {
 std::shared_ptr<catalog::Database> LookupDatabaseFromRequest(
   app::AppServer& server, GeneralRequest& req) {
   // get database name from request
-  if (ServerState::instance()->IsDBServer() || req.databaseName().empty()) {
+  if (req.databaseName().empty()) {
     // if no database name was specified in the request, use system database
     // name as a fallback
     req.setDatabaseName(StaticStrings::kDefaultDatabase);

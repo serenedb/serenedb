@@ -41,10 +41,11 @@
 #include <tuple>
 #include <vector>
 
+#include <absl/synchronization/mutex.h>
+
 #include "app/app_server.h"
 #include "basics/common.h"
 #include "basics/containers/flat_hash_set.h"
-#include "basics/read_write_lock.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/index_id.h"
 #include "catalog/identifiers/object_id.h"
@@ -437,7 +438,7 @@ class RocksDBEngineCatalog {
   /// a non-recoverable error
   std::shared_ptr<RocksDBBackgroundErrorListener> _error_listener;
 
-  basics::ReadWriteLock _purge_lock;
+  absl::Mutex _purge_lock;
 
   /// mutex that protects the storage engine health check
   absl::Mutex _health_mutex;

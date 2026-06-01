@@ -27,7 +27,6 @@
 #include <utility>
 
 #include "basics/application-exit.h"
-#include "basics/runtime_utils.hpp"
 #include "iresearch/search/scorers.hpp"
 
 #if !defined(_WIN32)
@@ -163,8 +162,8 @@ void TestEnv::make_directories() {
   // add timestamp to res_dir_
   {
     std::tm tinfo;
-
-    if (irs::Localtime(tinfo, std::time(nullptr))) {
+    const std::time_t now = std::time(nullptr);
+    if (::localtime_r(&now, &tinfo) != nullptr) {
       char buf[21]{};
 
       strftime(buf, sizeof buf, "_%Y_%m_%d_%H_%M_%S", &tinfo);

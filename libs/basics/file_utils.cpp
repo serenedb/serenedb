@@ -397,24 +397,6 @@ std::string_view StripExtension(std::string_view path,
   return path;
 }
 
-FileResultString CurrentDirectory() {
-  size_t len = 1000;
-  std::unique_ptr<char[]> current(new char[len]);
-
-  while (SERENEDB_GETCWD(current.get(), (int)len) == nullptr) {
-    if (errno == ERANGE) {
-      len += 1000;
-      current.reset(new char[len]);
-    } else {
-      return FileResultString(errno, ".");
-    }
-  }
-
-  std::string result = current.get();
-
-  return FileResultString(result);
-}
-
 std::string HomeDirectory() {
   const char* home = std::getenv("HOME");
   return home == nullptr ? std::string{"."} : std::string{home};
@@ -441,7 +423,9 @@ std::string ConfigDirectory(const char* /*binary_path*/) {
     return r;
   }
 #endif
-  return CurrentDirectory().result();
+  std::error_code ec;
+  auto cwd = std::filesystem::current_path(ec);
+  return ec ? std::string{"."} : cwd.string();
 }
 
 std::string_view Dirname(std::string_view path) {
@@ -471,18 +455,6 @@ std::string_view Dirname(std::string_view path) {
     return *p == SERENEDB_DIR_SEPARATOR_CHR ? SERENEDB_DIR_SEPARATOR_STR : ".";
   }
   return path.substr(0, p - path.data());
-}
-
-void MakePathAbsolute(std::string& path) {
-  if (path.empty()) {
-    path = file_utils::CurrentDirectory().result();
-    return;
-  }
-  std::error_code ec;
-  auto abs = std::filesystem::absolute(path, ec);
-  if (!ec) {
-    path = abs.string();
-  }
 }
 
 }  // namespace sdb::basics::file_utils

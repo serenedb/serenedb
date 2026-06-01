@@ -21,8 +21,10 @@
 
 #include "rocksdb_background_thread.h"
 
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
+
 #include "basics/logger/logger.h"
-#include "basics/system-functions.h"
 #include "basics/thread_id.h"
 #include "catalog/catalog.h"
 #include "rest_server/flush_feature.h"
@@ -91,7 +93,7 @@ void RocksDBBackgroundThread::SyncStats() {
 void RocksDBBackgroundThread::run() {
   auto& flush_feature = FlushFeature::instance();
 
-  const double start_time = utilities::GetMicrotime();
+  const double start_time = absl::ToDoubleSeconds(absl::Now() - absl::UnixEpoch());
   uint64_t runs_until_sync_forced = 1;
   constexpr uint64_t kMaxRunsUntilSyncForced = 5;
 
@@ -139,10 +141,10 @@ void RocksDBBackgroundThread::run() {
         SDB_TRACE(STORAGE, "running ", (force_sync ? "forced " : ""),
                   "background settings sync");
 
-        double start = utilities::GetMicrotime();
+        double start = absl::ToDoubleSeconds(absl::Now() - absl::UnixEpoch());
         auto sync_res = _engine.settingsManager()->sync(force_sync);
         SyncStats();
-        double end = utilities::GetMicrotime();
+        double end = absl::ToDoubleSeconds(absl::Now() - absl::UnixEpoch());
 
         if (!sync_res) {
           SDB_WARN(STORAGE, "background settings sync failed: ",
@@ -185,7 +187,7 @@ void RocksDBBackgroundThread::run() {
         // the following operations
       }
 
-      bool can_prune = utilities::GetMicrotime() >=
+      bool can_prune = absl::ToDoubleSeconds(absl::Now() - absl::UnixEpoch()) >=
                        start_time + _engine.pruneWaitTimeInitial();
       SDB_IF_FAILURE("BuilderIndex::purgeWal") { can_prune = true; }
 

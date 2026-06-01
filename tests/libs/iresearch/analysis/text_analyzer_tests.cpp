@@ -31,7 +31,6 @@
 #include <unordered_set>
 
 #include "basics/file_utils_ext.hpp"
-#include "basics/runtime_utils.hpp"
 #include "gtest/gtest.h"
 #include "iresearch/analysis/text_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
@@ -47,20 +46,20 @@ class TextAnalyzerParserTestSuite : public ::testing::Test {
     _old_stopwords_path_set = false;
 
     const char* old_stopwords_path =
-      irs::Getenv(irs::analysis::TextTokenizer::gStopwordPathEnvVariable);
+      std::getenv(irs::analysis::TextTokenizer::gStopwordPathEnvVariable);
     if (old_stopwords_path) {
       _old_stopwords_path = old_stopwords_path;
       _old_stopwords_path_set = true;
     }
 
     if (path) {
-      irs::Setenv(irs::analysis::TextTokenizer::gStopwordPathEnvVariable, path,
-                  true);
+      ::setenv(irs::analysis::TextTokenizer::gStopwordPathEnvVariable, path,
+               /*overwrite=*/1);
     } else {
-      irs::Unsetenv(irs::analysis::TextTokenizer::gStopwordPathEnvVariable);
+      ::unsetenv(irs::analysis::TextTokenizer::gStopwordPathEnvVariable);
       ASSERT_EQ(
         nullptr,
-        irs::Getenv(irs::analysis::TextTokenizer::gStopwordPathEnvVariable));
+        std::getenv(irs::analysis::TextTokenizer::gStopwordPathEnvVariable));
     }
   }
 
@@ -69,10 +68,10 @@ class TextAnalyzerParserTestSuite : public ::testing::Test {
   void TearDown() final {
     if (_stopwords_path_set) {
       if (_old_stopwords_path_set) {
-        irs::Setenv(irs::analysis::TextTokenizer::gStopwordPathEnvVariable,
-                    _old_stopwords_path.data(), true);
+        ::setenv(irs::analysis::TextTokenizer::gStopwordPathEnvVariable,
+                 _old_stopwords_path.data(), /*overwrite=*/1);
       } else {
-        irs::Unsetenv(irs::analysis::TextTokenizer::gStopwordPathEnvVariable);
+        ::unsetenv(irs::analysis::TextTokenizer::gStopwordPathEnvVariable);
       }
     }
   }

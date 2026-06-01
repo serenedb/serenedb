@@ -13,14 +13,10 @@ add_library(
     serene_base
     STATIC
     basics/encoding_utils.cpp
-    basics/number_utils.cpp
-    basics/cleanup_functions.cpp
     basics/exceptions.cpp
-    basics/file_result.cpp
     basics/file_utils.cpp
     basics/number_of_cores.cpp
     basics/physical_memory.cpp
-    basics/read_write_lock.cpp
     basics/result.cpp
     basics/result_error.cpp
     basics/string_utils.cpp
@@ -31,23 +27,16 @@ add_library(
     basics/debugging.cpp
     basics/error.cpp
     basics/files.cpp
-    basics/levenshtein.cpp
     basics/lockfile.cpp
     basics/signals.cpp
-    basics/system-functions.cpp
-    basics/hashes.cpp
     basics/utf8_helper.cpp
-    basics/hybrid_logical_clock.cpp
     basics/thread_utils.cpp
     basics/async_utils.cpp
     basics/dtoa.cpp
     basics/bit_packing.cpp
-    basics/so_utils.cpp
     basics/file_utils_ext.cpp
-    basics/process_utils.cpp
     basics/network_utils.cpp
     basics/crash_handler.cpp
-    basics/units_helper.cpp
     basics/random/random_generator.cpp
     basics/random/uniform_character.cpp
     basics/logger/logger.cpp

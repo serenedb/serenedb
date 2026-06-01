@@ -40,7 +40,6 @@
 #include <utility>
 #include <vector>
 
-#include "basics/arithmetic.h"
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/errors.h"
@@ -49,124 +48,7 @@
 #include "basics/sink.h"
 #include "basics/static_strings.h"
 
-namespace sdb {
-
-int CompareIgnoreCase(std::string_view lhs, std::string_view rhs) noexcept {
-  auto size = std::min(lhs.size(), rhs.size());
-  if (int r =
-        absl::strings_internal::memcasecmp(lhs.data(), rhs.data(), size)) {
-    return r;
-  }
-  if (lhs.size() != rhs.size()) {
-    return lhs.size() < rhs.size() ? -1 : 1;
-  }
-  return 0;
-}
-
-}  // namespace sdb
 namespace {
-
-static const char* gHexValuesUpper = "0123456789ABCDEF";
-
-char SoundexCode(char c) {
-  switch (c) {
-    case 'b':
-    case 'f':
-    case 'p':
-    case 'v':
-      return '1';
-    case 'c':
-    case 'g':
-    case 'j':
-    case 'k':
-    case 'q':
-    case 's':
-    case 'x':
-    case 'z':
-      return '2';
-    case 'd':
-    case 't':
-      return '3';
-    case 'l':
-      return '4';
-    case 'm':
-    case 'n':
-      return '5';
-    case 'r':
-      return '6';
-    default:
-      return '\0';
-  }
-}
-
-unsigned char Consume(const char*& s) {
-  return *reinterpret_cast<const unsigned char*>(s++);
-}
-
-template<typename InputType>
-inline bool IsEqual(const InputType& c1, const InputType& c2) {
-  return c1 == c2;
-}
-
-template<typename InputType, typename LengthType>
-LengthType Levenshtein(const InputType* lhs, const InputType* rhs,
-                       LengthType lhs_size, LengthType rhs_size) {
-  SDB_ASSERT(lhs_size >= rhs_size);
-
-  std::vector<LengthType> costs;
-  costs.resize(rhs_size + 1);
-
-  for (LengthType i = 0; i < rhs_size; ++i) {
-    costs[i] = i;
-  }
-
-  LengthType next = 0;
-
-  for (LengthType i = 0; i < lhs_size; ++i) {
-    LengthType current = i + 1;
-
-    for (LengthType j = 0; j < rhs_size; ++j) {
-      LengthType cost = !(::IsEqual<InputType>(lhs[i], rhs[j]) ||
-                          (i && j && ::IsEqual<InputType>(lhs[i - 1], rhs[j]) &&
-                           ::IsEqual<InputType>(lhs[i], rhs[j - 1])));
-      next = std::min(std::min(costs[j + 1] + 1, current + 1), costs[j] + cost);
-      costs[j] = current;
-      current = next;
-    }
-    costs[rhs_size] = next;
-  }
-  return next;
-}
-
-size_t LevenshteinDistance(std::vector<uint32_t>& vect1,
-                           std::vector<uint32_t>& vect2) {
-  if (vect1.empty() || vect2.empty()) {
-    return vect1.size() ? vect1.size() : vect2.size();
-  }
-
-  if (vect1.size() < vect2.size()) {
-    vect1.swap(vect2);
-  }
-
-  size_t lhs_size = vect1.size();
-  size_t rhs_size = vect2.size();
-
-  const uint32_t* l = vect1.data();
-  const uint32_t* r = vect2.data();
-
-  if (lhs_size < std::numeric_limits<uint8_t>::max()) {
-    return static_cast<size_t>(::Levenshtein<uint32_t, uint8_t>(
-      l, r, static_cast<uint8_t>(lhs_size), static_cast<uint8_t>(rhs_size)));
-  } else if (lhs_size < std::numeric_limits<uint16_t>::max()) {
-    return static_cast<size_t>(::Levenshtein<uint32_t, uint16_t>(
-      l, r, static_cast<uint16_t>(lhs_size), static_cast<uint16_t>(rhs_size)));
-  } else if (lhs_size < std::numeric_limits<uint32_t>::max()) {
-    return static_cast<size_t>(::Levenshtein<uint32_t, uint32_t>(
-      l, r, static_cast<uint32_t>(lhs_size), static_cast<uint32_t>(rhs_size)));
-  }
-  return static_cast<size_t>(::Levenshtein<uint32_t, uint64_t>(
-    l, r, static_cast<uint64_t>(lhs_size), static_cast<uint64_t>(rhs_size)));
-}
 
 // TODO(gnusi) escaping from simdjson!
 static char constexpr kEscapeTable[256] = {
@@ -425,23 +307,9 @@ void TrimInPlace(std::string& str, std::string_view trim_str) {
   }
 }
 
-std::string_view LTrim(std::string_view source_str, std::string_view trim_str) {
-  auto s = source_str.find_first_not_of(trim_str);
-  if (s == std::string_view::npos) {
-    return {};
-  }
-  source_str.remove_prefix(s);
-  return source_str;
-}
-
 std::string_view RTrim(std::string_view source_str, std::string_view trim_str) {
   auto e = source_str.find_last_not_of(trim_str);
   return {source_str.data(), e + 1};
-}
-
-std::string Replace(std::string_view source_str, std::string_view from_str,
-                    std::string_view to_str) {
-  return absl::StrReplaceAll(source_str, {{from_str, to_str}});
 }
 
 std::string UrlDecodePath(std::string_view str) {
@@ -490,63 +358,6 @@ std::string UrlDecodePath(std::string_view str) {
   return result;
 }
 
-std::string UrlDecode(std::string_view str) {
-  std::string result;
-  // reserve enough room so we do not need to re-alloc
-  result.reserve(str.size() + 16);
-
-  const char* src = str.data();
-  const char* end = src + str.size();
-
-  for (; src < end && *src != '%'; ++src) {
-    if (*src == '+') {
-      result.push_back(' ');
-    } else {
-      result.push_back(*src);
-    }
-  }
-
-  while (src < end) {
-    if (src + 2 < end) {
-      int h1 = Hex2int(src[1], -1);
-      int h2 = Hex2int(src[2], -1);
-
-      if (h1 == -1) {
-        src += 1;
-      } else {
-        if (h2 == -1) {
-          result.push_back(h1);
-          src += 2;
-        } else {
-          result.push_back(h1 << 4 | h2);
-          src += 3;
-        }
-      }
-    } else if (src + 1 < end) {
-      int h1 = Hex2int(src[1], -1);
-
-      if (h1 == -1) {
-        src += 1;
-      } else {
-        result.push_back(h1);
-        src += 2;
-      }
-    } else {
-      src += 1;
-    }
-
-    for (; src < end && *src != '%'; ++src) {
-      if (*src == '+') {
-        result.push_back(' ');
-      } else {
-        result.push_back(*src);
-      }
-    }
-  }
-
-  return result;
-}
-
 std::string UrlEncode(const char* src, const size_t len) {
   static char gHexChars[16] = {'0', '1', '2', '3', '4', '5', '6', '7',
                                '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
@@ -589,133 +400,6 @@ std::string UrlEncode(const char* src, const size_t len) {
   }
 
   return result;
-}
-
-void EncodeUriComponent(std::string& result, const char* src, size_t len) {
-  const char* end = src + len;
-
-  if (result.size() + len >= (SIZE_MAX - 1) / 3) {
-    SDB_THROW(ERROR_OUT_OF_MEMORY);
-  }
-
-  result.reserve(result.size() + 3 * len);
-
-  for (; src < end; ++src) {
-    if (*src == '-' || *src == '_' || *src == '.' || *src == '!' ||
-        *src == '~' || *src == '*' || *src == '(' || *src == ')' ||
-        *src == '\'' || (*src >= 'a' && *src <= 'z') ||
-        (*src >= 'A' && *src <= 'Z') || (*src >= '0' && *src <= '9')) {
-      // no need to encode this character
-      result.push_back(*src);
-    } else {
-      // hex-encode the following character
-      result.push_back('%');
-      auto c = static_cast<unsigned char>(*src);
-      result.push_back(::gHexValuesUpper[c >> 4]);
-      result.push_back(::gHexValuesUpper[c % 16]);
-    }
-  }
-}
-
-static std::string Soundex(const char* src, size_t len) {
-  const char* end = src + len;
-
-  while (src < end) {
-    // skip over characters (e.g. whitespace and other non-ASCII letters)
-    // until we find something sensible
-    if ((*src >= 'a' && *src <= 'z') || (*src >= 'A' && *src <= 'Z')) {
-      break;
-    }
-    ++src;
-  }
-
-  std::string result;
-
-  if (src != end) {
-    // emit an upper-case character
-    result.push_back(absl::ascii_toupper(*src));
-    src++;
-    char previous_code = '\0';
-
-    while (src < end) {
-      char current_code = ::SoundexCode(*src);
-      if (current_code != '\0' && current_code != previous_code) {
-        result.push_back(current_code);
-        if (result.length() >= 4) {
-          break;
-        }
-      }
-      previous_code = current_code;
-      src++;
-    }
-
-    // pad result string with '0' chars up to a length of 4
-    while (result.length() < 4) {
-      result.push_back('0');
-    }
-  }
-
-  return result;
-}
-
-std::string Soundex(std::string_view value) {
-  return Soundex(value.data(), value.size());
-}
-
-unsigned int LevenshteinDistance(const char* s1, size_t l1, const char* s2,
-                                 size_t l2) {
-  // convert input strings to vectors of (multi-byte) character numbers
-  std::vector<uint32_t> vect1 = CharacterCodes(s1, l1);
-  std::vector<uint32_t> vect2 = CharacterCodes(s2, l2);
-
-  // calculate levenshtein distance on vectors of character numbers
-  return static_cast<unsigned int>(::LevenshteinDistance(vect1, vect2));
-}
-
-std::vector<uint32_t> CharacterCodes(const char* s, size_t length) {
-  const char* e = s + length;
-
-  std::vector<uint32_t> char_nums;
-  // be conservative, and reserve space for one number of input
-  // string byte. this may be too much, but it avoids later
-  // reallocation of the vector
-  char_nums.reserve(length);
-
-  while (s < e) {
-    // note: consume advances the *s* pointer by one byte
-    unsigned char c = ::Consume(s);
-    uint32_t n = uint32_t(c);
-
-    if ((c & 0x80U) == 0U) {
-      // single-byte character
-      char_nums.push_back(n);
-    } else if ((c & 0xE0U) == 0xC0U) {
-      // two-byte character
-      if (s >= e) {
-        SDB_THROW(ERROR_INTERNAL, "invalid UTF-8 sequence");
-      }
-      char_nums.push_back((n << 8U) + uint32_t(::Consume(s)));
-    } else if ((c & 0xF0U) == 0xE0U) {
-      // three-byte character
-      if (s + 1 >= e) {
-        SDB_THROW(ERROR_INTERNAL, "invalid UTF-8 sequence");
-      }
-      char_nums.push_back((n << 16U) + (uint32_t(::Consume(s)) << 8U) +
-                          (uint32_t(::Consume(s))));
-    } else if ((c & 0xF8U) == 0XF0U) {
-      // four-byte character
-      if (s + 2 >= e) {
-        SDB_THROW(ERROR_INTERNAL, "invalid UTF-8 sequence");
-      }
-      char_nums.push_back((n << 24U) + (uint32_t(::Consume(s)) << 16U) +
-                          (uint32_t(::Consume(s)) << 8U) +
-                          (uint32_t(::Consume(s))));
-    } else {
-      SDB_THROW(ERROR_INTERNAL, "invalid UTF-8 sequence");
-    }
-  }
-
-  return char_nums;
 }
 
 std::string Itoa(int16_t attr) { return absl::StrCat(attr); }
@@ -781,80 +465,6 @@ ResultOr<uint64_t> TryUint64(const char* value, size_t size) noexcept {
 
 ResultOr<uint64_t> TryUint64(std::string_view value) noexcept {
   return TryUint64(value.data(), value.size());
-}
-
-uint64_t Uint64Trusted(const char* value, size_t length) noexcept {
-  uint64_t result = 0;
-
-  switch (length) {
-    case 20:
-      result += (value[length - 20] - '0') * 10000000000000000000ULL;
-      [[fallthrough]];
-    case 19:
-      result += (value[length - 19] - '0') * 1000000000000000000ULL;
-      [[fallthrough]];
-    case 18:
-      result += (value[length - 18] - '0') * 100000000000000000ULL;
-      [[fallthrough]];
-    case 17:
-      result += (value[length - 17] - '0') * 10000000000000000ULL;
-      [[fallthrough]];
-    case 16:
-      result += (value[length - 16] - '0') * 1000000000000000ULL;
-      [[fallthrough]];
-    case 15:
-      result += (value[length - 15] - '0') * 100000000000000ULL;
-      [[fallthrough]];
-    case 14:
-      result += (value[length - 14] - '0') * 10000000000000ULL;
-      [[fallthrough]];
-    case 13:
-      result += (value[length - 13] - '0') * 1000000000000ULL;
-      [[fallthrough]];
-    case 12:
-      result += (value[length - 12] - '0') * 100000000000ULL;
-      [[fallthrough]];
-    case 11:
-      result += (value[length - 11] - '0') * 10000000000ULL;
-      [[fallthrough]];
-    case 10:
-      result += (value[length - 10] - '0') * 1000000000ULL;
-      [[fallthrough]];
-    case 9:
-      result += (value[length - 9] - '0') * 100000000ULL;
-      [[fallthrough]];
-    case 8:
-      result += (value[length - 8] - '0') * 10000000ULL;
-      [[fallthrough]];
-    case 7:
-      result += (value[length - 7] - '0') * 1000000ULL;
-      [[fallthrough]];
-    case 6:
-      result += (value[length - 6] - '0') * 100000ULL;
-      [[fallthrough]];
-    case 5:
-      result += (value[length - 5] - '0') * 10000ULL;
-      [[fallthrough]];
-    case 4:
-      result += (value[length - 4] - '0') * 1000ULL;
-      [[fallthrough]];
-    case 3:
-      result += (value[length - 3] - '0') * 100ULL;
-      [[fallthrough]];
-    case 2:
-      result += (value[length - 2] - '0') * 10ULL;
-      [[fallthrough]];
-    case 1:
-      result += (value[length - 1] - '0');
-  }
-
-  return result;
-}
-
-int32_t Int32(const char* value, size_t size) noexcept {
-  int32_t result = 0;
-  std::from_chars(value, value + size, result);
-  return result;
 }
 
 uint32_t Uint32(const char* value, size_t size) noexcept {
@@ -941,32 +551,6 @@ std::string EncodeHex(const char* value, size_t length) {
   return absl::BytesToHexString({value, length});
 }
 
-std::string DecodeHex(std::string_view value) {
-  if (std::string r; absl::HexStringToBytes(value, &r)) {
-    return r;
-  }
-  return {};
-}
-
-void EscapeRegexParams(std::string& out, const char* ptr, size_t length) {
-  for (size_t i = 0; i < length; ++i) {
-    const char c = ptr[i];
-    if (c == '?' || c == '+' || c == '[' || c == '(' || c == ')' || c == '{' ||
-        c == '}' || c == '^' || c == '$' || c == '|' || c == '.' || c == '*' ||
-        c == '\\') {
-      // character with special meaning in a regex
-      out.push_back('\\');
-    }
-    out.push_back(c);
-  }
-}
-
-std::string EscapeRegexParams(std::string_view in) {
-  std::string out;
-  EscapeRegexParams(out, in.data(), in.size());
-  return out;
-}
-
 std::string FormatSize(uint64_t value) {
   std::string out, label;
   if (value < 1000) {
@@ -990,7 +574,10 @@ std::string FormatSize(uint64_t value) {
     out = std::to_string((double)value / 1e12);
     label = "TB";
   }
-  out = Replace(out, ",", ".");
+  // Normalise the decimal separator in case the C locale ever flips on us.
+  if (auto comma = out.find(','); comma != std::string::npos) {
+    out[comma] = '.';
+  }
   auto pos = out.find('.');
   if (pos != std::string::npos) {
     out.resize(pos + 2);
@@ -1015,26 +602,6 @@ std::string HeadersToString(
     headers_for_logging.pop_back();
   }
   return headers_for_logging;
-}
-
-std::string_view GetEndpointFromUrl(std::string_view url) {
-  const char* p = url.data();
-  const char* e = p + url.size();
-  size_t slashes = 0;
-
-  while (p < e) {
-    if (*p == '?') {
-      // http(s)://example.com?foo=bar
-      return url.substr(0, p - url.data());
-    } else if (*p == '/') {
-      if (++slashes == 3) {
-        return url.substr(0, p - url.data());
-      }
-    }
-    ++p;
-  }
-
-  return url;
 }
 
 std::string RemoveWhitespaceAndComments(const std::string& value) {

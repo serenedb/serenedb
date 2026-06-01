@@ -77,9 +77,9 @@ void CrashWriter(const char* data) noexcept {
     };
     buf_append(std::string_view{prefix, pos});
     buf_append(sv);
-    log::LogCrash(duckdb::LogLevel::LOG_FATAL, std::string_view{buf, out});
+    log::LogCrash(std::string_view{buf, out});
   } else {
-    log::LogCrash(duckdb::LogLevel::LOG_FATAL, sv);
+    log::LogCrash(sv);
   }
 }
 
@@ -130,7 +130,7 @@ void CrashHandler::SetState(std::string_view state) {
     append(message);
   }
 
-  log::LogCrash(duckdb::LogLevel::LOG_FATAL, std::string_view{buf, pos});
+  log::LogCrash(std::string_view{buf, pos});
 
   // Raise SIGABRT -- absl::InstallFailureSignalHandler catches it and dumps
   // a symbolized stack trace before terminating the process.

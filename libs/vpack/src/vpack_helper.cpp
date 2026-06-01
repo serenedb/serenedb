@@ -24,6 +24,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cstdint>
 #include <memory>
 #include <set>
@@ -324,8 +325,9 @@ std::string_view VPackHelper::checkAndGetString(vpack::Slice slice,
 uint64_t VPackHelper::stringUInt64(vpack::Slice slice) {
   if (slice.isString()) {
     auto str = slice.stringViewUnchecked();
-    return number_utils::AtoiZero<uint64_t>(str.data(),
-                                            str.data() + str.size());
+    uint64_t v = 0;
+    std::from_chars(str.data(), str.data() + str.size(), v);
+    return v;
   } else if (slice.isNumber<uint64_t>()) {
     return slice.getNumber<uint64_t>();
   }
@@ -522,8 +524,9 @@ uint64_t VPackHelper::extractIdValue(vpack::Slice slice) {
   // TODO(mbkkt) invalid string or invalid number is not really checked
   if (id.isString()) {
     auto str = id.stringViewUnchecked();  // string "id", e.g. "9988488"
-    return number_utils::AtoiZero<uint64_t>(str.data(),
-                                            str.data() + str.size());
+    uint64_t v = 0;
+    std::from_chars(str.data(), str.data() + str.size(), v);
+    return v;
   } else if (id.isNumber()) {
     return id.getNumber<uint64_t>();  // numeric "id", e.g. 9988488
   } else if (id.isNone()) {

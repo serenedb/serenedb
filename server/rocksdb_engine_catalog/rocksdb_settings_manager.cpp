@@ -54,7 +54,6 @@ void BuildSettings(auto& engine, vpack::Builder& b, uint64_t seq_number) {
   b.clear();
   b.openObject();
   b.add("tick", std::to_string(GetCurrentTickServer()));
-  b.add("hlc", std::to_string(NewTickHybridLogicalClock()));
   b.add("releasedTick", std::to_string(engine.releasedTick()));
   b.add("lastSync", std::to_string(seq_number));
   b.close();
@@ -229,13 +228,6 @@ void RocksDBSettingsManager::loadSettings() {
             basics::VPackHelper::stringUInt64(slice.get("tick"));
           SDB_TRACE(STORAGE, "using last tick: ", last_tick);
           UpdateTickServer(last_tick);
-        }
-
-        if (slice.hasKey("hlc")) {
-          uint64_t last_hlc =
-            basics::VPackHelper::stringUInt64(slice.get("hlc"));
-          SDB_TRACE(STORAGE, "using last hlc: ", last_hlc);
-          NewTickHybridLogicalClock(last_hlc);
         }
 
         if (slice.hasKey("releasedTick")) {

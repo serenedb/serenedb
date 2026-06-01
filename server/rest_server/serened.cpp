@@ -19,12 +19,14 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
+
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <exception>
 #include <functional>
 #include <utility>
-#include <vector>
 
 #include "app/app_server.h"
 #include "app/init.h"
@@ -57,7 +59,6 @@ int RunServer(int argc, char** argv) {
   try {
     CrashHandler::installCrashHandler();
 
-    int ret{EXIT_FAILURE};
     AppServer server;
 
     // 1. Parse CLI before constructing any feature (ctors read flags).
@@ -85,18 +86,14 @@ int RunServer(int argc, char** argv) {
     // Two-method lifecycle: start() does non-IO setup + spin-up of
     // threads / sockets; stop() drains long-running threads then
     // tears down. Construction order doubles as boot order; shutdown
-    // is strict LIFO. A `stoppers` stack tracks every feature that
-    // successfully started so a throw mid-start unwinds exactly the
-    // already-started subset; on the happy path we drain it after
-    // wait() in the same reverse order.
+    // is strict LIFO. `stoppers` holds the stop closures of every
+    // feature that successfully started; the absl::Cleanup below
+    // drains them on scope exit -- whether that's a normal return
+    // after wait() OR an exception thrown mid-start. Either path
+    // unwinds exactly the already-started subset in reverse order.
     // --------------------------------------------------------------
-    std::vector<std::function<void()>> stoppers;
-    stoppers.reserve(12);
-    auto start_one = [&](auto& feature, std::function<void()> stop_fn) {
-      feature.start();
-      stoppers.push_back(std::move(stop_fn));
-    };
-    auto drain_stoppers = [&]() noexcept {
+    std::deque<std::function<void()>> stoppers;
+    absl::Cleanup drain = [&]() noexcept {
       while (!stoppers.empty()) {
         try {
           stoppers.back()();
@@ -108,58 +105,43 @@ int RunServer(int argc, char** argv) {
         stoppers.pop_back();
       }
     };
+    auto start_one = [&](auto& feature, std::function<void()> stop_fn) {
+      feature.start();
+      stoppers.push_back(std::move(stop_fn));
+    };
 
-    try {
-      // 3. start -- after a successful pass the server is fully
-      //    accepting clients. The CrashHandler state strings get
-      //    stamped into /tmp/crash bundles so a fatal signal during
-      //    boot lands with a phase tag.
-      CrashHandler::SetState("starting");
-      start_one(ssl, [&] { ssl.stop(); });
-      start_one(db_path, [&] { db_path.stop(); });
-      start_one(scheduler, [&] { scheduler.stop(); });
-      start_one(rocksdb_opt, [&] { rocksdb_opt.stop(); });
-      start_one(engine, [&] { engine.stop(); });
-      start_one(flush, [&] { flush.stop(); });
-      start_one(recovery, [&] { recovery.stop(); });
-      start_one(catalog, [&] { catalog.stop(); });
-      start_one(search, [&] { search.stop(); });
-      start_one(endpoint, [&] { endpoint.stop(); });
-      start_one(general, [&] { general.stop(); });
-      start_one(pg, [&] { pg.stop(); });
+    // 3. start -- after a successful pass the server is fully
+    //    accepting clients. The CrashHandler state strings get
+    //    stamped into /tmp/crash bundles so a fatal signal during
+    //    boot lands with a phase tag.
+    CrashHandler::SetState("starting");
+    start_one(ssl, [&] { ssl.stop(); });
+    start_one(db_path, [&] { db_path.stop(); });
+    start_one(scheduler, [&] { scheduler.stop(); });
+    start_one(rocksdb_opt, [&] { rocksdb_opt.stop(); });
+    start_one(engine, [&] { engine.stop(); });
+    start_one(flush, [&] { flush.stop(); });
+    start_one(recovery, [&] { recovery.stop(); });
+    start_one(catalog, [&] { catalog.stop(); });
+    start_one(search, [&] { search.stop(); });
+    start_one(endpoint, [&] { endpoint.stop(); });
+    start_one(general, [&] { general.stop(); });
+    start_one(pg, [&] { pg.stop(); });
 
-      // Boot completed; emit a recognisable banner so operators tailing
-      // logs (and the sdb_log smoke test) can confirm the server is up.
-      SDB_INFO(GENERAL, "SereneDB is ready for business. Have fun!");
+    // Boot completed; emit a recognisable banner so operators tailing
+    // logs (and the sdb_log smoke test) can confirm the server is up.
+    SDB_INFO(GENERAL, "SereneDB is ready for business. Have fun!");
 
-      // 4. wait for SIGTERM/SIGINT.
-      CrashHandler::SetState("running");
-      server.wait();
+    // 4. wait for SIGTERM/SIGINT.
+    CrashHandler::SetState("running");
+    server.wait();
 
-      // 5. stop -- strict LIFO. Each feature's stop() first nudges any
-      //    long-running threads to exit, then blocks on the joins and
-      //    finishes its own teardown.
-      CrashHandler::SetState("stopping");
-      drain_stoppers();
-      CrashHandler::SetState("stopped");
-
-      ret = EXIT_SUCCESS;
-    } catch (const std::exception& ex) {
-      SDB_ERROR(GENERAL,
-                "serened terminated because of an exception: ", ex.what());
-      drain_stoppers();
-      ret = EXIT_FAILURE;
-    } catch (...) {
-      SDB_ERROR(GENERAL,
-                "serened terminated because of an exception of "
-                "unknown type");
-      drain_stoppers();
-      ret = EXIT_FAILURE;
-    }
-    // DuckDBEngine Initialize() / Shutdown() bracket this whole function
-    // from main(), so we don't need a Shutdown() on the unwind path here.
-
-    return ret;
+    // 5. stop -- the absl::Cleanup runs stoppers in strict LIFO on
+    //    scope exit; the SetState below paints the bucket so a fatal
+    //    signal during shutdown tags the right phase. DuckDBEngine
+    //    Initialize/Shutdown brackets this whole function from main().
+    CrashHandler::SetState("stopping");
+    return EXIT_SUCCESS;
   } catch (const std::exception& ex) {
     // gLogger is still up (Shutdown runs in main() after RunServer
     // returns), but go through SDB_ERROR so the line lands in the same

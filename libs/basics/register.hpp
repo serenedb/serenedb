@@ -30,10 +30,11 @@
 #include <string>
 #include <vector>
 
+#include <dlfcn.h>
+
 #include "basics/containers/node_hash_map.h"
 #include "basics/logger/logger.h"
 #include "basics/singleton.hpp"
-#include "basics/so_utils.hpp"
 
 namespace irs {
 
@@ -98,7 +99,7 @@ class GenericRegister : public Singleton<RegisterType> {
   virtual entry_type load_entry_from_so(const key_type& key) const {
     const auto file = key_to_filename(key);
 
-    void* handle = LoadLibrary(file.c_str(), 1);
+    void* handle = ::dlopen(file.c_str(), RTLD_LAZY | RTLD_LOCAL);
 
     if (nullptr == handle) {
       SDB_ERROR(IRESEARCH, "load failed");
@@ -112,7 +113,7 @@ class GenericRegister : public Singleton<RegisterType> {
       std::lock_guard lock(_mutex);
 
       this_ptr->_so_handles.emplace_back(
-        handle, [](void* h) -> void { irs::FreeLibrary(h); });
+        handle, [](void* h) -> void { ::dlclose(h); });
     }
 
     if (!this_ptr->add_so_handle(handle)) {

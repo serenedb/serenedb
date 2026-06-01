@@ -49,7 +49,6 @@
 #include "basics/logger/logger.h"
 #include "basics/number_of_cores.h"
 #include "basics/physical_memory.h"
-#include "basics/system-functions.h"
 #include "catalog/table_options.h"
 #include "rocksdb_engine_catalog/options.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"

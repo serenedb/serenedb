@@ -70,8 +70,7 @@ Exception::Exception(ErrorCode code, std::string&& error_message,
   // -> LogCrash -> std::abort(). In non-DEV it is a no-op, so emit the crash
   // line directly and abort here.
   SDB_ASSERT(false, what);
-  log::LogCrash(duckdb::LogLevel::LOG_FATAL,
-                what != nullptr ? what : "LogAndAbort");
+  log::LogCrash(what != nullptr ? what : "LogAndAbort");
   std::abort();
 }
 

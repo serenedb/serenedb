@@ -35,7 +35,6 @@
 #include "basics/logger/logger.h"
 #include "basics/string_buffer.h"
 #include "basics/string_utils.h"
-#include "basics/system-functions.h"
 #include "general_server/general_server.h"
 #include "general_server/general_server_feature.h"
 #include "general_server/state.h"

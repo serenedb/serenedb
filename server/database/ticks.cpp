@@ -25,22 +25,14 @@
 
 #include <atomic>
 
-#include "basics/hybrid_logical_clock.h"
 #include "catalog/identifiers/object_id.h"
 
 namespace sdb {
 namespace {
 
 std::atomic<uint64_t> gCurrentTick = id::kMaxSystem.id();
-basics::HybridLogicalClock gHybridLogicalClock;
 
 }  // namespace
-
-Tick NewTickHybridLogicalClock() { return gHybridLogicalClock.getTimeStamp(); }
-
-Tick NewTickHybridLogicalClock(Tick received) {
-  return gHybridLogicalClock.getTimeStamp(received);
-}
 
 Tick NewTickServer(uint64_t count) {
   return gCurrentTick.fetch_add(count, std::memory_order_relaxed) + 1;
@@ -60,29 +52,5 @@ void UpdateTickServer(Tick tick) {
 }
 
 Tick GetCurrentTickServer() { return gCurrentTick; }
-
-Tick NewServerSpecificTick() {
-  static constexpr uint64_t kLowerMask{0x000000FFFFFFFFFF};
-
-  // Upper bits encoded the server's short id in cluster mode; in single-node
-  // mode they are always zero, so we only carry the lower 40 bits.
-  return static_cast<Tick>(NewTickServer() & kLowerMask);
-}
-
-Tick NewServerSpecificTickMod4() {
-  static constexpr uint64_t kLowerMask{0x000000FFFFFFFFFC};
-  static constexpr size_t kLowerShift{2};
-
-  // See NewServerSpecificTick() -- short id contribution is always zero.
-  return static_cast<Tick>((NewTickServer() << kLowerShift) & kLowerMask);
-}
-
-uint32_t ExtractServerIdFromTick(Tick tick) {
-  static constexpr uint64_t kMask{0x0000000000FFFFFF};
-  static constexpr size_t kShift{40};
-
-  uint32_t short_id = static_cast<uint32_t>((tick >> kShift) & kMask);
-  return short_id;
-}
 
 }  // namespace sdb

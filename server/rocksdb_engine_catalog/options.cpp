@@ -85,8 +85,7 @@ void Options::fromVPack(vpack::Slice slice) {
   if (auto value = slice.get("allowImplicit"); value.isBool()) {
     allow_implicit_collections_for_read = value.isTrue();
   }
-  if (auto value = slice.get(StaticStrings::kWaitForSyncString);
-      value.isBool()) {
+  if (auto value = slice.get("waitForSync"); value.isBool()) {
     wait_for_sync = value.isTrue();
   }
   if (auto value = slice.get("fillBlockCache"); value.isBool()) {
@@ -120,7 +119,7 @@ void Options::toVPack(vpack::Builder& builder) const {
   builder.add("intermediateCommitSize", intermediate_commit_size);
   builder.add("intermediateCommitCount", intermediate_commit_count);
   builder.add("allowImplicit", allow_implicit_collections_for_read);
-  builder.add(StaticStrings::kWaitForSyncString, wait_for_sync);
+  builder.add("waitForSync", wait_for_sync);
   builder.add("fillBlockCache", fill_block_cache);
   // we are intentionally *not* writing allowImplicitCollectionForWrite here.
   // this is an internal option only used in replication

@@ -24,7 +24,6 @@
 #include "app/app_server.h"
 #include "auth/role_utils.h"
 #include "basics/encoding_utils.h"
-#include "basics/hybrid_logical_clock.h"
 #include "basics/lifecycle.h"
 #include "basics/logger/logger.h"
 #include "basics/static_strings.h"
@@ -438,17 +437,6 @@ Flow GeneralCommTask<T>::PrepareExecution(
     return Flow::Abort;
   }
   SDB_ASSERT(req.requestContext() != nullptr);
-
-  // Update global HLC timestamp from request header if present.
-  bool found;
-  const std::string& time_stamp = req.header(StaticStrings::kHlcHeader, found);
-  if (found) {
-    uint64_t parsed = basics::HybridLogicalClock::decodeTimeStamp(time_stamp);
-    if (parsed != 0 && parsed != UINT64_MAX) {
-      NewTickHybridLogicalClock(parsed);
-    }
-  }
-
   return Flow::Continue;
 }
 
@@ -710,8 +698,7 @@ void GeneralCommTask<T>::ProcessCorsOptions(std::unique_ptr<GeneralRequest> req,
     }
 
     // set caching time (hard-coded value)
-    resp->setHeaderNCIfNotSet(StaticStrings::kAccessControlMaxAge,
-                              StaticStrings::kN1800);
+    resp->setHeaderNCIfNotSet(StaticStrings::kAccessControlMaxAge, "1800");
   }
 
   // discard request and send response

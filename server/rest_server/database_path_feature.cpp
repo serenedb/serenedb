@@ -27,7 +27,6 @@
 #include <system_error>
 
 #include "basics/application-exit.h"
-#include "basics/cleanup_functions.h"
 #include "basics/exitcodes.h"
 #include "basics/file_utils.h"
 #include "basics/lifecycle.h"
@@ -61,7 +60,10 @@ DatabasePathFeature::DatabasePathFeature()
   // error messages aren't ambiguous about which directory we're touching.
   _directory =
     basics::string_utils::RTrim(_directory, SERENEDB_DIR_SEPARATOR_STR);
-  basics::file_utils::MakePathAbsolute(_directory);
+  std::error_code ec;
+  if (auto abs = std::filesystem::absolute(_directory, ec); !ec) {
+    _directory = abs.string();
+  }
 
   gInstance = this;
 }
@@ -122,11 +124,11 @@ void DatabasePathFeature::start() {
                         "failed to lock the database directory using '",
                         lock_filename, "': ", GetErrorStr(res));
   }
-  basics::CleanupFunctions::registerFunction(
-    std::make_unique<basics::CleanupFunctions::CleanupFunction>(
-      [lock_filename](int, void*) {
-        std::ignore = DestroyLockFile(lock_filename.c_str());
-      }));
+  // No explicit shutdown hook needed: libs/basics/lockfile.cpp owns a
+  // LockfileRemover whose static dtor runs on normal exit and releases /
+  // unlinks every lockfile we acquired. Fatal paths (_exit / abort) skip
+  // static dtors; the stale lockfile that remains is handled by
+  // VerifyLockFile on the next start.
 }
 
 std::string DatabasePathFeature::subdirectoryName(

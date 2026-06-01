@@ -55,7 +55,6 @@ struct Key {
   TypeInfo args_format;
 };
 
-constexpr std::string_view kFileNamePrefix = "libscorer-";
 
 class ScorerRegister
   : public TaggedGenericRegister<Key, Scorer::ptr (*)(std::string_view args),
@@ -96,7 +95,7 @@ void scorers::Init() {
 }
 
 void scorers::LoadAll(std::string_view path) {
-  LoadLibraries(path, kFileNamePrefix, "");
+  (void)path;  // plugin loading via .so removed; SereneDB ships no out-of-tree iresearch plugins
 }
 
 bool scorers::Visit(

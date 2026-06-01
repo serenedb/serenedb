@@ -28,7 +28,6 @@
 #include <iresearch/utils/numeric_utils.hpp>
 
 #include "basics/assert.h"
-#include "basics/endian.h"
 #include "basics/string_utils.h"
 #include "connector/common.h"
 #include "connector/indexonly_marker.h"
@@ -234,7 +233,7 @@ size_t DuckDBColumnSerializer::WritePrimitive<duckdb::string_t>(
 template<typename T>
 size_t DuckDBColumnSerializer::WritePrimitive(const T& value) {
   static_assert(std::is_trivially_copyable_v<T>);
-  static_assert(basics::IsLittleEndian());
+  static_assert(std::endian::native == std::endian::little);
   _row_slices.emplace_back(reinterpret_cast<const char*>(&value), sizeof(T));
   return sizeof(T);
 }
@@ -768,7 +767,7 @@ size_t DuckDBColumnSerializer::WriteSubVectorPrimitive(
 
   size_t null_bytes = WriteNullBitmap(fmt, offset, count);
 
-  static_assert(basics::IsLittleEndian());
+  static_assert(std::endian::native == std::endian::little);
   if (fmt.sel == duckdb::FlatVector::IncrementalSelectionVector()) {
     _row_slices.emplace_back(reinterpret_cast<const char*>(&raw[offset]),
                              count * sizeof(T));

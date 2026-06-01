@@ -21,6 +21,8 @@
 
 #include "rocksdb_engine_catalog.h"
 
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 #include <rocksdb/advanced_cache.h>
@@ -38,15 +40,14 @@
 #include <rocksdb/transaction_log.h>
 #include <rocksdb/utilities/transaction_db.h>
 #include <rocksdb/write_batch.h>
+#include <sys/statvfs.h>
+#include <unistd.h>
 #include <vpack/builder.h>
 #include <vpack/collection.h>
 #include <vpack/iterator.h>
 #include <vpack/serializer.h>
 #include <vpack/slice.h>
 #include <vpack/vpack_helper.h>
-
-#include <sys/statvfs.h>
-#include <unistd.h>
 
 #include <atomic>
 #include <filesystem>
@@ -71,7 +72,6 @@
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "basics/system-compiler.h"
-#include "basics/system-functions.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "catalog/function.h"
@@ -254,12 +254,12 @@ RocksDBFilePurgePreventer::RocksDBFilePurgePreventer(
   RocksDBEngineCatalog* engine)
   : _engine(engine) {
   SDB_ASSERT(_engine != nullptr);
-  _engine->_purge_lock.lockRead();
+  _engine->_purge_lock.ReaderLock();
 }
 
 RocksDBFilePurgePreventer::~RocksDBFilePurgePreventer() {
   if (_engine != nullptr) {
-    _engine->_purge_lock.unlockRead();
+    _engine->_purge_lock.ReaderUnlock();
   }
 }
 
@@ -274,7 +274,7 @@ RocksDBFilePurgeEnabler::RocksDBFilePurgeEnabler(RocksDBEngineCatalog* engine)
   : _engine(nullptr) {
   SDB_ASSERT(engine != nullptr);
 
-  if (engine->_purge_lock.tryLockWrite()) {
+  if (engine->_purge_lock.WriterTryLock()) {
     // we got the lock
     _engine = engine;
   }
@@ -282,7 +282,7 @@ RocksDBFilePurgeEnabler::RocksDBFilePurgeEnabler(RocksDBEngineCatalog* engine)
 
 RocksDBFilePurgeEnabler::~RocksDBFilePurgeEnabler() {
   if (_engine != nullptr) {
-    _engine->_purge_lock.unlockWrite();
+    _engine->_purge_lock.WriterUnlock();
   }
 }
 
@@ -515,10 +515,7 @@ void RocksDBEngineCatalog::verifySstFiles() const {
 
   SDB_INFO(STARTUP, "verification of RocksDB .sst files in path '", _path,
            "' completed successfully");
-  // exit with status code = 0, without leaking
-  int exit_code = static_cast<int>(ERROR_OK);
-  gExitFunction(exit_code, nullptr);
-  exit(exit_code);
+  FatalErrorExitCode(0);
 }
 
 rocksdb::Options RocksDBEngineCatalog::makeOptions(bool is_new_dir) {
@@ -1016,7 +1013,7 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
         eligible_step2 = true;
 
         double stamp =
-          utilities::GetMicrotime() + _options_provider._prune_wait_time;
+          absl::ToDoubleSeconds(absl::Now() - absl::UnixEpoch()) + _options_provider._prune_wait_time;
         const auto [it, emplaced] =
           _prunable_wal_files.try_emplace(f->PathName(), stamp);
 

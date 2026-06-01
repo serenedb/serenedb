@@ -27,6 +27,8 @@
 #include <vpack/validator.h>
 #include <vpack/vpack_helper.h>
 
+#include <charconv>
+
 #include "basics/debugging.h"
 #include "basics/number_utils.h"
 #include "basics/static_strings.h"
@@ -237,8 +239,8 @@ void HttpRequest::setHeader(std::string key, std::string value) {
   absl::AsciiStrToLower(&key);
 
   if (key == StaticStrings::kContentLength) {
-    size_t len = number_utils::AtoiZero<uint64_t>(value.c_str(),
-                                                  value.c_str() + value.size());
+    uint64_t len = 0;
+    std::from_chars(value.c_str(), value.c_str() + value.size(), len);
     if (_payload.capacity() < len) {
       // lets not reserve more than 64MB at once
       uint64_t max_reserve = std::min<uint64_t>(2 << 26, len);

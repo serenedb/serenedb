@@ -50,7 +50,6 @@
 #include "basics/file_utils_ext.hpp"
 #include "basics/logger/logger.h"
 #include "basics/misc.hpp"
-#include "basics/runtime_utils.hpp"
 #include "basics/thread_utils.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/hash_utils.hpp"
@@ -142,7 +141,7 @@ bool GetStopwords(TextTokenizer::stopwords_t& buf, std::string_view language,
 
   const auto* custom_stopword_path =
     !IsNull(path) ? path.data()
-                  : irs::Getenv(TextTokenizer::gStopwordPathEnvVariable);
+                  : std::getenv(TextTokenizer::gStopwordPathEnvVariable);
 
   if (custom_stopword_path) {
     stopword_path.assign(custom_stopword_path);

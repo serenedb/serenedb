@@ -66,7 +66,6 @@
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
 #include "basics/misc.hpp"
-#include "basics/recursive_locker.h"
 #include "basics/result.h"
 #include "basics/result_or.h"
 #include "basics/static_strings.h"

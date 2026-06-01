@@ -30,7 +30,6 @@
 namespace irs {
 namespace {
 
-constexpr std::string_view kFileNamePrefix = "libformat-";
 
 class FormatRegister
   : public TaggedGenericRegister<std::string_view, Format::ptr (*)(),
@@ -56,7 +55,7 @@ Format::ptr formats::Get(std::string_view name,
 }
 
 void formats::LoadAll(std::string_view path) {
-  LoadLibraries(path, kFileNamePrefix, "");
+  (void)path;  // plugin loading via .so removed; SereneDB ships no out-of-tree iresearch plugins
 }
 
 bool formats::Visit(const std::function<bool(std::string_view)>& visitor) {

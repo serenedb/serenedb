@@ -28,12 +28,7 @@
 namespace sdb::app {
 
 void AppServer::parseOptions(int argc, char* argv[]) {
-  // All CLI knobs are ABSL_FLAGs declared in their owning .cpp files
-  // and read via absl::GetFlag during validateOptions/prepare. Run
-  // absl's parser; the lone positional (data-dir) is stashed for
-  // DatabasePathFeature to pick up.
   auto positionals = absl::ParseCommandLine(argc, argv);
-  // positionals[0] is argv[0]; we accept at most one further arg.
   if (positionals.size() == 2) {
     lifecycle::SetDataDirArg(positionals[1]);
   } else if (positionals.size() > 2) {
@@ -42,14 +37,8 @@ void AppServer::parseOptions(int argc, char* argv[]) {
 }
 
 void AppServer::wait() {
-  // Blocks until the signal handler (or any other thread) calls
-  // lifecycle::BeginShutdown(). The wakeup is delivered through an
-  // eventfd write -- async-signal-safe and zero-latency.
   lifecycle::WaitForShutdown();
-  // Log from non-handler context (the handler can't allocate / lock).
-  SDB_INFO(GENERAL,
-           "received shutdown signal, beginning shut down "
-           "sequence");
+  SDB_INFO(GENERAL, "received shutdown signal, beginning shut down sequence");
 }
 
 }  // namespace sdb::app

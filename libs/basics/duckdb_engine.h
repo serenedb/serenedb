@@ -57,15 +57,8 @@ class DuckDBEngine {
   using DBConfigMutator = void (*)(duckdb::DBConfig&);
   static void NoopMutator(duckdb::DBConfig&) noexcept {}
 
-  // 1) Apply lite defaults (preserve_identifier_case=false,
-  //    disable_database_invalidation=true, lambda_syntax=ENABLE_SINGLE_ARROW).
-  // 2) Run `mutator(config)`.
-  // 3) Construct duckdb::DuckDB(nullptr, &config).
-  // 4) InstallLogManagerSink() -- hand the GlobalLogger pointer to
-  //    sdb::log so SDB_* macros start flowing through LogManager.
   void Initialize(DBConfigMutator mutator = &NoopMutator);
 
-  // UninstallLogManagerSink() (clears gLogger) then drop the DuckDB.
   void Shutdown();
 
   duckdb::DatabaseInstance& instance();

@@ -52,8 +52,7 @@ extern "C" void CExitHandler(int /*signal*/, siginfo_t* /*info*/,
   // Second signal: fast-path abort. LogCrash is async-signal-safe (write(2)
   // to stderr, fixed-size stack buffer, no heap, no LogManager lookup), so
   // it's reachable from a signal context. _exit skips global destructors.
-  log::LogCrash(duckdb::LogLevel::LOG_FATAL,
-                "second shutdown signal received, terminating");
+  log::LogCrash("second shutdown signal received, terminating");
   ::_exit(EXIT_FAILURE);
 }
 

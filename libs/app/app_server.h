@@ -24,11 +24,6 @@
 
 namespace sdb::app {
 
-// Lifecycle entry points: CLI parsing + signal-driven shutdown wait.
-// RunServer drives each feature's start/stop directly. The class is
-// retained only because a handful of subsystems (RestHandler, Scheduler,
-// RocksDBMetricsListener, ...) accept an `AppServer&` as a pass-through
-// context token; their references resolve back to Instance().
 class AppServer {
  public:
   static AppServer& Instance() noexcept {
@@ -47,7 +42,6 @@ class AppServer {
 
   void parseOptions(int argc, char* argv[]);
 
-  // Block until BeginShutdown() (signal handler) wakes the eventfd.
   void wait();
 
  private:

@@ -22,7 +22,6 @@
 #include "flush_feature.h"
 
 #include "app/app_server.h"
-#include "basics/encoding.h"
 #include "basics/logger/logger.h"
 #include "metrics/gauge_builder.h"
 #include "metrics/metrics_feature.h"

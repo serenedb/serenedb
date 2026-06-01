@@ -29,35 +29,7 @@
 namespace sdb::log {
 namespace {
 
-// Active duckdb::Logger. Set ONCE by SetLogger() from
-// DuckDBEngine::Initialize at the very top of the process, cleared ONCE by
-// DuckDBEngine::Shutdown at the very bottom. Both writes are single-threaded
-// -- no atomic / acquire-release.
-//
-// Contract (see logger.h): every binary that uses SDB_* must call
-// DuckDBEngine::Initialize() before any SDB_* macro fires and
-// DuckDBEngine::Shutdown() only after every thread that could log has
-// joined. Within that window gLogger is non-null; outside it the
-// dereference in Log() / IsEnabled() is UB -- by design.
 duckdb::Logger* gLogger = nullptr;
-
-constexpr std::string_view LevelTag(duckdb::LogLevel l) noexcept {
-  switch (l) {
-    case duckdb::LogLevel::LOG_FATAL:
-      return "FATAL";
-    case duckdb::LogLevel::LOG_ERROR:
-      return "ERROR";
-    case duckdb::LogLevel::LOG_WARNING:
-      return "WARNING";
-    case duckdb::LogLevel::LOG_INFO:
-      return "INFO";
-    case duckdb::LogLevel::LOG_DEBUG:
-      return "DEBUG";
-    case duckdb::LogLevel::LOG_TRACE:
-      return "TRACE";
-  }
-  return "?";
-}
 
 }  // namespace
 
@@ -71,15 +43,11 @@ bool IsEnabled(duckdb::LogLevel level, std::string_view topic) noexcept {
 
 void Log(duckdb::LogLevel level, std::string_view topic,
          const std::string& message) noexcept try {
-  // .data() is NUL-terminated per the topic.h invariant; .c_str() is
-  // free on the rvalue std::string that absl::StrCat() produces.
   gLogger->WriteLog(topic.data(), level, message.c_str());
 } catch (...) {
-  // duckdb's writer may throw on backing-store errors. Logging itself
-  // must never propagate.
 }
 
-void LogCrash(duckdb::LogLevel level, std::string_view message) noexcept {
+void LogCrash(std::string_view message) noexcept {
   // Async-signal-safe path: stack buffer + write(2). No heap, no mutex,
   // no LogManager lookup. Truncates at 4KiB minus the trailing newline.
   constexpr size_t kBufCap = 4096;
@@ -92,9 +60,7 @@ void LogCrash(duckdb::LogLevel level, std::string_view message) noexcept {
     std::memcpy(buf + pos, s.data(), n);
     pos += n;
   };
-  append("[");
-  append(LevelTag(level));
-  append("] ");
+  append("[FATAL] ");
   append(message);
   buf[pos++] = '\n';
   // write(2) is async-signal-safe (POSIX.1-2017 Section 2.4.3).

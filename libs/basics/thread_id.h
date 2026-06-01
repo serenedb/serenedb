@@ -28,36 +28,6 @@
 
 namespace sdb {
 
-/// Returns the current process id (getpid()).
-pid_t CurrentProcessId() noexcept;
-
-/// Returns a per-thread unique number. The first thread to call this gets 1,
-/// the next gets 2, etc. Safe to call from async-signal-handler context.
-uint64_t CurrentThreadNumber() noexcept;
-
-/// Initialize the calling thread: mask asynchronous signals (so the dedicated
-/// signal-handling thread receives them) and set the OS-visible thread name
-/// (visible to `ps -T`, `gdb`, and to ThreadNameFetcher below). Call this
-/// from the first line of any std::jthread body. The `name` must be non-null
-/// and live at least until the call returns -- it is copied into the kernel's
-/// per-thread name slot (max 15 bytes, truncated otherwise).
 void InitThread(const char* name) noexcept;
-
-/// Fetches the current thread's human-readable name into a small fixed
-/// buffer. Designed to be safe to use from a signal handler: no heap
-/// allocation, falls back to prctl(PR_GET_NAME, ...) which is
-/// async-signal-safe in practice on Linux.
-class ThreadNameFetcher {
- public:
-  ThreadNameFetcher() noexcept;
-  ThreadNameFetcher(const ThreadNameFetcher&) = delete;
-  ThreadNameFetcher& operator=(const ThreadNameFetcher&) = delete;
-
-  // The returned view is valid as long as this ThreadNameFetcher lives.
-  std::string_view get() const noexcept;
-
- private:
-  char _buffer[32];
-};
 
 }  // namespace sdb

@@ -30,8 +30,6 @@
 #include "auth/token_cache.h"
 #include "basics/debugging.h"
 #include "basics/logger/logger.h"
-#include "basics/recursive_locker.h"
-#include "catalog/identifiers/transaction_id.h"
 #include "database/ticks.h"
 #include "general_server/general_server_feature.h"
 #include "general_server/scheduler_feature.h"
@@ -69,7 +67,7 @@ RestHandler::~RestHandler() {
   }
 }
 
-void RestHandler::assignHandlerId() { _handler_id = NewServerSpecificTick(); }
+void RestHandler::assignHandlerId() { _handler_id = NewTickServer(); }
 
 uint64_t RestHandler::messageId() const {
   uint64_t message_id = 0UL;
@@ -99,29 +97,11 @@ RequestLane RestHandler::determineRequestLane() {
 
   _lane = lane();
   SDB_ASSERT(_lane != RequestLane::Undefined);
-  if (PriorityRequestLane(_lane) != RequestPriority::Low) {
-    return _lane;
-  }
-
-  // If this is a low-priority request, check if it contains a transaction id,
-  // but is not the start of an AQL query or streaming transaction.
-  // If we find out that the request is part of an already ongoing transaction,
-  // we can now increase its priority, so that ongoing transactions can proceed.
-  // However, we don't want to prioritize the start of new transactions here.
-  found = false;
-  const auto& value = _request->header(StaticStrings::kTransactionId, found);
-  if (found) {
-    auto tid = TransactionId::none();
-    size_t pos = 0;
-    try {
-      tid = TransactionId{std::stoull(value, &pos, 10)};
-    } catch (...) {
-    }
-    if (tid.isSet() && !value.ends_with(" begin") && !value.ends_with(" aql")) {
-      // increase request priority from previously LOW to now MED.
-      _lane = RequestLane::Continuation;
-    }
-  }
+  // ArangoDB-era cluster-coord behaviour upgraded Low->Continuation priority
+  // for requests carrying an ongoing transaction id in the
+  // x-serene-trx-id header. Pg-wire transactions in SereneDB stick to a
+  // single connection (no header-based correlation), so the promotion is
+  // unreachable and gone.
   return _lane;
 }
 

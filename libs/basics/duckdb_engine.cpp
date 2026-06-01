@@ -36,25 +36,14 @@ DuckDBEngine& DuckDBEngine::Instance() {
 void DuckDBEngine::Initialize(DBConfigMutator mutator) {
   SDB_ASSERT(!_db);
   duckdb::DBConfig config;
-  // PG folds unquoted identifiers to lowercase.
   config.SetOptionByName("preserve_identifier_case", duckdb::Value{false});
   config.SetOptionByName("disable_database_invalidation", duckdb::Value{true});
-  // Existing serenedb code (array_remove etc.) uses the single-arrow lambda
-  // syntax (`x -> ...`) which duckdb now warns about by default. Keep it
-  // enabled until callers migrate to the new `lambda x: ...` form.
   config.SetOptionByName("lambda_syntax", duckdb::Value{"ENABLE_SINGLE_ARROW"});
 
-  // Pre-construct hook: server build installs the `serenedb` storage
-  // extension + SET-config variables here. Tests / benches pass no mutator.
   mutator(config);
 
   _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
 
-  // DatabaseInstance::Configure seeds the LogManager with LogConfig() which
-  // has enabled=false; flip enabled on so SDB_* (and duckdb's own log sites)
-  // fire by default. Everything else (level, mode, storage) keeps duckdb's
-  // defaults. No type pre-registration -- duckdb accepts arbitrary topic
-  // strings and gates them via cfg.level alone.
   auto& manager = _db->instance->GetLogManager();
   duckdb::LogConfig cfg;
   cfg.enabled = true;
@@ -63,9 +52,6 @@ void DuckDBEngine::Initialize(DBConfigMutator mutator) {
 }
 
 void DuckDBEngine::Shutdown() {
-  // Detach the logger pointer BEFORE destroying the DuckDB; any late log
-  // line during teardown of duckdb internals would otherwise chase a freed
-  // LogManager.
   log::SetLogger(nullptr);
   _db.reset();
 }

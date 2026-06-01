@@ -23,10 +23,9 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <fcntl.h>
+#include <openssl/evp.h>
 #include <unistd.h>
 #include <zlib.h>
-
-#include <openssl/evp.h>
 
 #include "basics/error.h"
 #include "basics/errors.h"
@@ -36,7 +35,9 @@
 
 namespace sdb {
 
-bool SdbSlurpFile(const char* filename, std::string& result) {
+static constexpr size_t kReadBufferSize = 8192;
+
+bool SlurpFile(const char* filename, std::string& result) {
   SetError(ERROR_OK);
   const int fd = SERENEDB_OPEN(filename, O_RDONLY | SERENEDB_O_CLOEXEC);
   if (fd == -1) {
@@ -62,7 +63,7 @@ bool SdbSlurpFile(const char* filename, std::string& result) {
   }
 }
 
-bool SdbSlurpGzipFile(const char* filename, std::string& result) {
+bool SlurpGzipFile(const char* filename, std::string& result) {
   SetError(ERROR_OK);
   gzFile gz_fd = gzopen(filename, "rb");
   if (!gz_fd) {
@@ -86,15 +87,6 @@ bool SdbSlurpGzipFile(const char* filename, std::string& result) {
     }
     true_size += n;
   }
-}
-
-bool SdbGETENV(const char* which, std::string& value) {
-  const char* v = std::getenv(which);
-  if (v == nullptr) {
-    return false;
-  }
-  value = v;
-  return true;
 }
 
 Sha256Functor::Sha256Functor()
@@ -131,7 +123,7 @@ bool Sha256Functor::operator()(const char* data, size_t size) noexcept {
   return EVP_DigestUpdate(context, static_cast<const void*>(data), size) == 1;
 }
 
-std::string Sha256Functor::finalize() {
+std::string Sha256Functor::Finalize() {
   unsigned char hash[EVP_MAX_MD_SIZE];
   unsigned int length_of_hash = 0;
   auto* context = static_cast<EVP_MD_CTX*>(_context);

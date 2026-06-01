@@ -28,8 +28,6 @@
 #include <vector>
 
 #include "basics/common.h"
-#include "basics/file_result.h"
-#include "basics/file_result_string.h"
 #include "basics/operating-system.h"
 #include "basics/result.h"
 
@@ -40,9 +38,6 @@ std::string_view RemoveTrailingSeparator(std::string_view name);
 
 // normalizes path, path will be modified in-place
 void NormalizePath(std::string& name);
-
-// makes a path absolute, path will be modified in-place
-void MakePathAbsolute(std::string& path);
 
 // creates a filename
 std::string BuildFilename(const char* path, const char* name);
@@ -109,8 +104,6 @@ inline bool Exists(const std::string& path) { return Exists(path.c_str()); }
 std::string_view StripExtension(std::string_view path,
                                 std::string_view extension);
 
-// returns the current directory
-FileResultString CurrentDirectory();
 
 // returns the home directory
 std::string HomeDirectory();

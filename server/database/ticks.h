@@ -27,30 +27,10 @@
 
 namespace sdb {
 
-// create a new tick, using a hybrid logical clock
-Tick NewTickHybridLogicalClock();
-
-// create a new tick, using a hybrid logical clock, this variant
-// is supposed to be called when a time stamp is received in network
-// communications.
-Tick NewTickHybridLogicalClock(Tick received);
-
-// atomically reserve `count` consecutive ticks; return the first reserved.
 Tick NewTickServer(uint64_t count = 1);
 
-// updates the tick counter, with lock
-void UpdateTickServer(Tick);
+void UpdateTickServer(Tick tick);
 
-// returns the current tick counter
 Tick GetCurrentTickServer();
-
-// generates a new tick which also encodes this server's id
-Tick NewServerSpecificTick();
-
-// generates a new tick which also encodes this server's id
-Tick NewServerSpecificTickMod4();
-
-// extracts the server id from a server-specific tick
-uint32_t ExtractServerIdFromTick(Tick);
 
 }  // namespace sdb

@@ -51,32 +51,6 @@ thread_local ThreadNumberHolder gLocalThreadNumber{};
 
 }  // namespace
 
-pid_t CurrentProcessId() noexcept { return ::getpid(); }
-
-uint64_t CurrentThreadNumber() noexcept { return gLocalThreadNumber.value; }
-
-ThreadNameFetcher::ThreadNameFetcher() noexcept {
-  memset(&_buffer[0], 0, sizeof(_buffer));
-
-#ifdef SERENEDB_HAVE_SYS_PRCTL_H
-  // PR_GET_NAME reads at most 16 bytes into the buffer; the call is
-  // async-signal-safe in practice on Linux.
-  prctl(PR_GET_NAME, &_buffer, 0, 0, 0);
-  // be extra cautious about null-termination
-  _buffer[sizeof(_buffer) - 1] = '\0';
-#endif
-
-  if (_buffer[0] == '\0') {
-    // fall back to "main" if no thread name is set
-    memcpy(&_buffer[0], "main", 4);
-  }
-}
-
-std::string_view ThreadNameFetcher::get() const noexcept {
-  // guaranteed to be properly null-terminated
-  return {&_buffer[0]};
-}
-
 void InitThread(const char* name) noexcept {
   signals::MaskAllSignalsServer();
 #ifdef SERENEDB_HAVE_SYS_PRCTL_H

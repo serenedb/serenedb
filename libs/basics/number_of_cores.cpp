@@ -23,14 +23,9 @@
 
 #include <unistd.h>
 
-#include <cstdint>
-#include <string>
 #include <thread>
 
 #include "basics/operating-system.h"
-#include "basics/string_utils.h"
-
-using namespace sdb;
 
 namespace {
 
@@ -50,29 +45,9 @@ size_t NumberOfCoresImpl() {
   return static_cast<size_t>(std::thread::hardware_concurrency());
 }
 
-struct NumberOfCoresCache {
-  NumberOfCoresCache() : cached_value(NumberOfCoresImpl()), overridden(false) {
-    if (const char* env =
-          std::getenv("SERENEDB_OVERRIDE_DETECTED_NUMBER_OF_CORES");
-        env != nullptr && *env != '\0') {
-      uint64_t v = sdb::basics::string_utils::Uint64(env);
-      if (v != 0) {
-        cached_value = static_cast<size_t>(v);
-        overridden = true;
-      }
-    }
-  }
-
-  size_t cached_value;
-  bool overridden;
-};
-
-const NumberOfCoresCache kCache;
-
 }  // namespace
 
-/// return number of cores from cache
-size_t sdb::number_of_cores::GetValue() { return ::kCache.cached_value; }
-
-/// return if number of cores was overridden
-bool sdb::number_of_cores::Overridden() { return ::kCache.overridden; }
+size_t sdb::number_of_cores::GetValue() {
+  static const size_t kCached = NumberOfCoresImpl();
+  return kCached;
+}

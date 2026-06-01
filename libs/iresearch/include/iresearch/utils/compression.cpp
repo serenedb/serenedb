@@ -50,7 +50,6 @@ struct Value {
   const decompressor_factory_f decompressor_factory;
 };
 
-constexpr std::string_view kFileNamePrefix = "libcompression-";
 
 class CompressionRegister
   : public TaggedGenericRegister<std::string_view, Value, std::string_view,
@@ -149,7 +148,7 @@ void Init() {
 }
 
 void LoadAll(std::string_view path) {
-  LoadLibraries(path, kFileNamePrefix, "");
+  (void)path;  // plugin loading via .so removed; SereneDB ships no out-of-tree iresearch plugins
 }
 
 bool Visit(const std::function<bool(std::string_view)>& visitor) {

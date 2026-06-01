@@ -31,13 +31,9 @@
 
 namespace sdb {
 
-inline constexpr size_t kReadBufferSize = 8192;
+bool SlurpFile(const char* filename, std::string& result);
 
-bool SdbSlurpFile(const char* filename, std::string& result);
-
-bool SdbSlurpGzipFile(const char* filename, std::string& result);
-
-bool SdbGETENV(const char* which, std::string& value);
+bool SlurpGzipFile(const char* filename, std::string& result);
 
 struct Sha256Functor {
   Sha256Functor();
@@ -45,7 +41,7 @@ struct Sha256Functor {
 
   bool operator()(const char* data, size_t size) noexcept;
 
-  std::string finalize();
+  std::string Finalize();
 
  private:
   void* _context;

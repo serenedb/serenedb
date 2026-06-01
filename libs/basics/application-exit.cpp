@@ -23,45 +23,16 @@
 
 #include <unistd.h>
 
-#include "basics/cleanup_functions.h"
-#include "basics/common.h"
+#include <cstdlib>
 
 namespace sdb {
 
-static void DefaultExitFunction(int exit_code, void* /*data*/) {
-  sdb::basics::CleanupFunctions::run(exit_code, nullptr);
-  _exit(exit_code);
-}
-
-ExitFunction gExitFunction = DefaultExitFunction;
-
-void ApplicationExitSetExit(ExitFunction exit_function) {
-  if (exit_function != nullptr) {
-    gExitFunction = exit_function;
-  } else {
-    gExitFunction = DefaultExitFunction;
-  }
-}
-
-[[noreturn]] void FatalErrorExitCode(int code) noexcept {
-  try {
-    sdb::basics::CleanupFunctions::run(code, nullptr);
-    gExitFunction(code, nullptr);
-  } catch (...) {
-  }
-  exit(code);
-}
+[[noreturn]] void FatalErrorExitCode(int code) noexcept { std::exit(code); }
 
 [[noreturn]] void FatalErrorExit() noexcept {
   FatalErrorExitCode(EXIT_FAILURE);
 }
 
-[[noreturn]] void FatalErrorAbort() noexcept {
-  try {
-    sdb::basics::CleanupFunctions::run(500, nullptr);
-  } catch (...) {
-  }
-  std::abort();
-}
+[[noreturn]] void FatalErrorAbort() noexcept { std::abort(); }
 
 }  // namespace sdb

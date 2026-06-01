@@ -46,45 +46,33 @@
 #include "basics/application-exit.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/logger/topic.h"
+#include "basics/shared.hpp"
 
 namespace duckdb {
 
 class Logger;
-}
 
+}  // namespace duckdb
 namespace sdb::log {
 
-// Install the duckdb::Logger that all SDB_* sites will dispatch through.
-// Called once from DuckDBEngine::Initialize() and once with nullptr from
-// DuckDBEngine::Shutdown(). Both calls run on the main thread before /
-// after every worker thread; no atomic / acquire-release.
 void SetLogger(duckdb::Logger* logger) noexcept;
 
-// Forward to duckdb::Logger::WriteLog. Requires gLogger to be installed --
-// see the contract at the top of the file. Never throws.
 void Log(duckdb::LogLevel level, std::string_view topic,
          const std::string& message) noexcept;
 
-// Async-signal-safe stderr write. write(2) only -- no heap, no LogManager
-// lookup, no atomic. Used by the crash handler / signal handler /
-// assertionFailure. Safe to call BEFORE DuckDBEngine::Initialize() and
-// AFTER DuckDBEngine::Shutdown(), because it does not touch gLogger.
-void LogCrash(duckdb::LogLevel level, std::string_view message) noexcept;
+IRS_NO_INLINE void LogCrash(std::string_view message) noexcept;
 
-// Forward to duckdb::Logger::ShouldLog. Requires gLogger to be installed.
 bool IsEnabled(duckdb::LogLevel level, std::string_view topic) noexcept;
 
 }  // namespace sdb::log
 
-// ---- macros ---------------------------------------------------------------
-
-#define SDB_LOG_INTERNAL(LEVEL, TOPIC, ...)                       \
-  do {                                                            \
-    constexpr ::duckdb::LogLevel kSdbLevel = (LEVEL);             \
-    if (::sdb::log::IsEnabled(kSdbLevel, ::sdb::log::TOPIC)) {    \
-      ::sdb::log::Log(kSdbLevel, ::sdb::log::TOPIC,               \
-                      ::absl::StrCat(__VA_ARGS__));               \
-    }                                                             \
+#define SDB_LOG_INTERNAL(LEVEL, TOPIC, ...)                    \
+  do {                                                         \
+    constexpr ::duckdb::LogLevel kSdbLevel = (LEVEL);          \
+    if (::sdb::log::IsEnabled(kSdbLevel, ::sdb::log::TOPIC)) { \
+      ::sdb::log::Log(kSdbLevel, ::sdb::log::TOPIC,            \
+                      ::absl::StrCat(__VA_ARGS__));            \
+    }                                                          \
   } while (0)
 
 #define SDB_LOG_INTERNAL_IF(LEVEL, TOPIC, COND, ...) \
@@ -105,16 +93,16 @@ bool IsEnabled(duckdb::LogLevel level, std::string_view topic) noexcept;
 #define SDB_ERROR(TOPIC, ...) \
   SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_ERROR, TOPIC, __VA_ARGS__)
 
-#define SDB_FATAL(TOPIC, ...)                                              \
-  do {                                                                     \
-    SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_FATAL, TOPIC, __VA_ARGS__);   \
-    ::sdb::FatalErrorExit();                                               \
+#define SDB_FATAL(TOPIC, ...)                                            \
+  do {                                                                   \
+    SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_FATAL, TOPIC, __VA_ARGS__); \
+    ::sdb::FatalErrorExit();                                             \
   } while (0)
 
-#define SDB_FATAL_EXIT_CODE(TOPIC, CODE, ...)                              \
-  do {                                                                     \
-    SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_FATAL, TOPIC, __VA_ARGS__);   \
-    ::sdb::FatalErrorExitCode(CODE);                                       \
+#define SDB_FATAL_EXIT_CODE(TOPIC, CODE, ...)                            \
+  do {                                                                   \
+    SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_FATAL, TOPIC, __VA_ARGS__); \
+    ::sdb::FatalErrorExitCode(CODE);                                     \
   } while (0)
 
 #define SDB_TRACE_IF(TOPIC, COND, ...) \
@@ -127,12 +115,12 @@ bool IsEnabled(duckdb::LogLevel level, std::string_view topic) noexcept;
   SDB_LOG_INTERNAL_IF(::duckdb::LogLevel::LOG_WARNING, TOPIC, COND, __VA_ARGS__)
 #define SDB_ERROR_IF(TOPIC, COND, ...) \
   SDB_LOG_INTERNAL_IF(::duckdb::LogLevel::LOG_ERROR, TOPIC, COND, __VA_ARGS__)
-#define SDB_FATAL_IF(TOPIC, COND, ...)                                       \
-  do {                                                                       \
-    if ((COND)) {                                                            \
-      SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_FATAL, TOPIC, __VA_ARGS__);   \
-      ::sdb::FatalErrorExit();                                               \
-    }                                                                        \
+#define SDB_FATAL_IF(TOPIC, COND, ...)                                     \
+  do {                                                                     \
+    if ((COND)) {                                                          \
+      SDB_LOG_INTERNAL(::duckdb::LogLevel::LOG_FATAL, TOPIC, __VA_ARGS__); \
+      ::sdb::FatalErrorExit();                                             \
+    }                                                                      \
   } while (0)
 
 #ifdef SDB_DEV

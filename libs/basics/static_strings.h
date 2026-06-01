@@ -39,11 +39,9 @@ class StaticStrings {
   static const std::string kSereneDBConnector;
 
   // constants
-  static const std::string kEmpty;
-  static const std::string kN1800;
+  inline static const std::string kEmpty;
 
   // URL parameter names
-  static const std::string kWaitForSyncString;
   static const std::string kUserString;
 
   // database names
@@ -58,9 +56,6 @@ class StaticStrings {
   static const std::string kDataSourceId;
   static const std::string kDataSourceName;
   static constexpr std::string_view kDataSourceType = "type";
-
-  // query options
-  static const std::string kFilter;
 
   // HTTP headers
   static const std::string kAccept;
@@ -94,14 +89,11 @@ class StaticStrings {
   static const std::string kErrorCodes;
   static const std::string kExpect;
   static const std::string kExposedCorsHeaders;
-  static const std::string kHlcHeader;
   static const std::string kLocation;
   static const std::string kNoSniff;
   static const std::string kOrigin;
-  static const std::string kRequestForwardedTo;
   static const std::string kServer;
   static const std::string kTransferEncoding;
-  static const std::string kTransactionId;
   static const std::string kWwwAuthenticate;
   static const std::string kXContentTypeOptions;
   static const std::string kXSereneFrontend;

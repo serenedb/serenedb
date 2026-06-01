@@ -33,8 +33,6 @@
 #include "basics/ssl/ssl_interface.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
-#include "basics/system-functions.h"
-#include "basics/write_locker.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
 #include "general_server/general_server_feature.h"

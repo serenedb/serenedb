@@ -55,7 +55,57 @@
 
 #include "basics/logger/logger.h"
 #include "basics/network_utils.hpp"
-#include "basics/process_utils.hpp"
+
+#ifdef _WIN32
+#include <Windows.h>
+#include <process.h>  // _getpid
+#include <tlhelp32.h>
+#else
+#include <csignal>
+#include <unistd.h>  // getpid
+#endif
+
+#include <cstdlib>
+#include <limits>
+
+namespace irs {
+
+bool IsRunning(pid_t pid) {
+#ifdef _WIN32
+  HANDLE ps = CreateToolhelp32Snapshot(TH32CS_SNAPALL, 0);
+  PROCESSENTRY32 pe = {0};
+  pe.dwSize = sizeof(pe);
+  if (Process32First(ps, &pe)) {
+    do {
+      if (pe.th32ProcessID == DWORD(pid)) {
+        CloseHandle(ps);
+        return true;
+      }
+    } while (Process32Next(ps, &pe));
+  }
+  CloseHandle(ps);
+  return false;
+#else
+  return 0 == kill(pid, 0);
+#endif
+}
+
+pid_t GetPid() {
+#ifdef _WIN32
+  return _getpid();
+#else
+  return getpid();
+#endif
+}
+
+bool IsValidPid(const char* buf) {
+  const auto pid = strtol(buf, nullptr, 10);
+  return 0 != pid && pid <= std::numeric_limits<pid_t>::max() &&
+         pid >= std::numeric_limits<pid_t>::min() &&
+         IsRunning(static_cast<pid_t>(pid));
+}
+
+}  // namespace irs
 
 namespace {
 

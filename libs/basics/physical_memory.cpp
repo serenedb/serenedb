@@ -24,8 +24,6 @@
 #include <unistd.h>
 
 #include "basics/operating-system.h"
-#include "basics/string_utils.h"
-#include "basics/units_helper.h"
 
 #ifdef SERENEDB_HAVE_MACH
 #include <mach/mach_host.h>
@@ -39,8 +37,6 @@
 #if defined(SERENEDB_HAVE_MACOS_MEM_STATS)
 #include <sys/sysctl.h>
 #endif
-
-using namespace sdb;
 
 namespace {
 
@@ -75,34 +71,9 @@ uint64_t PhysicalMemoryImpl() {
 #endif
 #endif
 
-struct PhysicalMemoryCache {
-  PhysicalMemoryCache()
-    : cached_value(PhysicalMemoryImpl()), overridden(false) {
-    const char* env = std::getenv("SERENEDB_OVERRIDE_DETECTED_TOTAL_MEMORY");
-    if (env != nullptr) {
-      std::string value =
-        basics::string_utils::RemoveWhitespaceAndComments(env);
-
-      if (!value.empty()) {
-        uint64_t v = sdb::options::units_helper::FromString<uint64_t>(value);
-        if (v != 0) {
-          // value in environment variable must always be > 0
-          cached_value = v;
-          overridden = true;
-        }
-      }
-    }
-  }
-  uint64_t cached_value;
-  bool overridden;
-};
-
-const PhysicalMemoryCache kCache;
-
 }  // namespace
 
-/// return physical memory size from cache
-uint64_t sdb::physical_memory::GetValue() { return ::kCache.cached_value; }
-
-/// return if physical memory size was overridden
-bool sdb::physical_memory::Overridden() { return ::kCache.overridden; }
+uint64_t sdb::physical_memory::GetValue() {
+  static const uint64_t kCachedValue = PhysicalMemoryImpl();
+  return kCachedValue;
+}

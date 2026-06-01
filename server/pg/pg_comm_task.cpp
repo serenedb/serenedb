@@ -51,7 +51,6 @@
 #include "basics/assert.h"
 #include "basics/dtoa.h"
 #include "basics/duckdb_engine.h"
-#include "basics/endian.h"
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
 #include "basics/static_strings.h"

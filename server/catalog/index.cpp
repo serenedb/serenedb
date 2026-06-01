@@ -372,7 +372,6 @@ Result ValidateInvertedIndexColumns(
       // TODO(mbkkt) List of supported instead of list of unsupported
       const bool unsupported =
         kind == duckdb::LogicalTypeId::UNION ||
-        kind == duckdb::LogicalTypeId::VARIANT ||
         kind == duckdb::LogicalTypeId::GEOMETRY ||
         kind == duckdb::LogicalTypeId::TABLE ||
         kind == duckdb::LogicalTypeId::AGGREGATE_STATE ||

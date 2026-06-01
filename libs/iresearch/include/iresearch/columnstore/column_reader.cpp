@@ -89,6 +89,7 @@ ColumnReader::ColumnReader(
       _row_count = _child->RowCount() / _array_size;
       _data_offsets.push_back(0);  // sentinel only
     } break;
+    case duckdb::LogicalTypeId::VARIANT:
     case duckdb::LogicalTypeId::STRUCT: {
       SDB_ASSERT(!_struct_fields.empty());
       SDB_ASSERT(_data_pointers.empty());
@@ -169,7 +170,8 @@ RgWindow LocateInOffsets(uint64_t row_pos, std::span<const uint64_t> offsets,
 
 RgWindow ColumnReader::Locate(uint64_t row_pos, RgWindow hint) const noexcept {
   SDB_ASSERT(_type.id() != duckdb::LogicalTypeId::ARRAY &&
-               _type.id() != duckdb::LogicalTypeId::STRUCT,
+               _type.id() != duckdb::LogicalTypeId::STRUCT &&
+               _type.id() != duckdb::LogicalTypeId::VARIANT,
              "Locate has no meaning on parents with no top-level data");
   SDB_ASSERT(row_pos < _row_count);
   return LocateInOffsets(row_pos, _data_offsets, hint);

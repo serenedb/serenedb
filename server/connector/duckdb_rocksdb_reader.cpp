@@ -266,6 +266,7 @@ duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
       return ReadListColumn(it, output, type, max_rows);
     case duckdb::LogicalTypeId::MAP:
       return ReadMapColumn(it, output, type, max_rows);
+    case duckdb::LogicalTypeId::VARIANT:
     case duckdb::LogicalTypeId::STRUCT:
       return ReadStructColumn(it, output, type, max_rows);
     case duckdb::LogicalTypeId::ARRAY:
@@ -350,6 +351,29 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
       std::memcpy(&v, value.data(), sizeof(v));
       duckdb::FlatVector::GetDataMutable<int64_t>(output)[idx] = v;
     } break;
+    case duckdb::LogicalTypeId::UTINYINT: {
+      SDB_ASSERT(value.size() == sizeof(uint8_t));
+      duckdb::FlatVector::GetDataMutable<uint8_t>(output)[idx] =
+        static_cast<uint8_t>(value[0]);
+    } break;
+    case duckdb::LogicalTypeId::USMALLINT: {
+      SDB_ASSERT(value.size() == sizeof(uint16_t));
+      uint16_t v;
+      std::memcpy(&v, value.data(), sizeof(v));
+      duckdb::FlatVector::GetDataMutable<uint16_t>(output)[idx] = v;
+    } break;
+    case duckdb::LogicalTypeId::UINTEGER: {
+      SDB_ASSERT(value.size() == sizeof(uint32_t));
+      uint32_t v;
+      std::memcpy(&v, value.data(), sizeof(v));
+      duckdb::FlatVector::GetDataMutable<uint32_t>(output)[idx] = v;
+    } break;
+    case duckdb::LogicalTypeId::UBIGINT: {
+      SDB_ASSERT(value.size() == sizeof(uint64_t));
+      uint64_t v;
+      std::memcpy(&v, value.data(), sizeof(v));
+      duckdb::FlatVector::GetDataMutable<uint64_t>(output)[idx] = v;
+    } break;
     case duckdb::LogicalTypeId::FLOAT: {
       SDB_ASSERT(value.size() == sizeof(float));
       float v;
@@ -406,6 +430,7 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
     case duckdb::LogicalTypeId::MAP: {
       DeserializeMapValue(value, output, type, idx);
     } break;
+    case duckdb::LogicalTypeId::VARIANT:
     case duckdb::LogicalTypeId::STRUCT: {
       DeserializeStructValue(value, output, type, idx);
     } break;
@@ -499,6 +524,7 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
         }
       }
     } break;
+    case duckdb::LogicalTypeId::VARIANT:
     case duckdb::LogicalTypeId::STRUCT: {
       const uint8_t* lptr = ptr;
       ptr += length_array_size;
@@ -539,6 +565,18 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
           break;
         case duckdb::LogicalTypeId::BIGINT:
           copy_fixed(static_cast<int64_t*>(nullptr));
+          break;
+        case duckdb::LogicalTypeId::UTINYINT:
+          copy_fixed(static_cast<uint8_t*>(nullptr));
+          break;
+        case duckdb::LogicalTypeId::USMALLINT:
+          copy_fixed(static_cast<uint16_t*>(nullptr));
+          break;
+        case duckdb::LogicalTypeId::UINTEGER:
+          copy_fixed(static_cast<uint32_t*>(nullptr));
+          break;
+        case duckdb::LogicalTypeId::UBIGINT:
+          copy_fixed(static_cast<uint64_t*>(nullptr));
           break;
         case duckdb::LogicalTypeId::FLOAT:
           copy_fixed(static_cast<float*>(nullptr));

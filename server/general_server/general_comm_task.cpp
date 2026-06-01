@@ -64,11 +64,6 @@ bool QueueTimeViolated(const GeneralRequest& req) {
         1000.0;
 
       if (last_dequeue_time > requested_queue_time) {
-        // the log topic should actually be REQUESTS here, but the default log
-        // level for the REQUESTS log topic is FATAL, so if we logged here in
-        // INFO level, it would effectively be suppressed. thus we are using the
-        // Scheduler's log topic here, which is somewhat related.
-        SchedulerFeature::gScheduler->trackQueueTimeViolation();
         SDB_WARN(
           GENERAL,
           "dropping incoming request because the client-specified maximum "
@@ -376,7 +371,6 @@ void GeneralCommTask<T>::ExecuteRequest(
   }
 
   SDB_ASSERT(SchedulerFeature::gScheduler != nullptr);
-  SchedulerFeature::gScheduler->trackCreateHandlerTask();
 
   // asynchronous request
   if (found && (async_exec == "true" || async_exec == "store")) {

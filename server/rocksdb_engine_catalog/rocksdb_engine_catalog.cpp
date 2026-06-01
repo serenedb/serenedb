@@ -87,11 +87,6 @@
 #include "database/ticks.h"
 #include "general_server/rest_handler_factory.h"
 #include "general_server/scheduler_feature.h"
-#include "metrics/counter_builder.h"
-#include "metrics/gauge_builder.h"
-#include "metrics/histogram_builder.h"
-#include "metrics/metric.h"
-#include "metrics/metrics_feature.h"
 #include "rest/version.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/flush_feature.h"
@@ -196,56 +191,6 @@ bool QueryINodes(const char* path, uint64_t& total, uint64_t& free) {
 }
 
 }  // namespace
-
-DECLARE_GAUGE(rocksdb_wal_released_tick_flush, uint64_t,
-              "Released tick for RocksDB WAL deletion (flush-induced)");
-DECLARE_GAUGE(rocksdb_wal_sequence, uint64_t, "Current RocksDB WAL sequence");
-DECLARE_GAUGE(
-  rocksdb_wal_sequence_lower_bound, uint64_t,
-  "RocksDB WAL sequence number until which background thread has caught up");
-DECLARE_GAUGE(rocksdb_live_wal_files, uint64_t,
-              "Number of live RocksDB WAL files");
-DECLARE_GAUGE(rocksdb_live_wal_files_size, uint64_t,
-              "Cumulated size of live RocksDB WAL files");
-DECLARE_GAUGE(rocksdb_archived_wal_files, uint64_t,
-              "Number of archived RocksDB WAL files");
-DECLARE_GAUGE(rocksdb_archived_wal_files_size, uint64_t,
-              "Cumulated size of archived RocksDB WAL files");
-DECLARE_GAUGE(rocksdb_prunable_wal_files, uint64_t,
-              "Number of prunable RocksDB WAL files");
-DECLARE_GAUGE(rocksdb_wal_pruning_active, uint64_t,
-              "Whether or not RocksDB WAL file pruning is active");
-DECLARE_GAUGE(serenedb_revision_tree_memory_usage, uint64_t,
-              "Total memory consumed by all revision trees");
-DECLARE_GAUGE(
-  serenedb_revision_tree_buffered_memory_usage, uint64_t,
-  "Total memory consumed by buffered updates for all revision trees");
-DECLARE_GAUGE(serenedb_index_estimates_memory_usage, uint64_t,
-              "Total memory consumed by all index selectivity estimates");
-DECLARE_COUNTER(serenedb_revision_tree_rebuilds_success_total,
-                "Number of successful revision tree rebuilds");
-DECLARE_COUNTER(serenedb_revision_tree_rebuilds_failure_total,
-                "Number of failed revision tree rebuilds");
-DECLARE_COUNTER(serenedb_revision_tree_hibernations_total,
-                "Number of revision tree hibernations");
-DECLARE_COUNTER(serenedb_revision_tree_resurrections_total,
-                "Number of revision tree resurrections");
-DECLARE_COUNTER(rocksdb_cache_edge_inserts_uncompressed_entries_size_total,
-                "Total gross memory size of all edge cache entries ever stored "
-                "in memory");
-DECLARE_COUNTER(rocksdb_cache_edge_inserts_effective_entries_size_total,
-                "Total effective memory size of all edge cache entries ever "
-                "stored in memory (after compression)");
-DECLARE_GAUGE(rocksdb_cache_edge_compression_ratio, double,
-              "Overall compression ratio for all edge cache entries ever "
-              "stored in memory");
-DECLARE_COUNTER(rocksdb_cache_edge_inserts_total,
-                "Number of inserts into the edge cache");
-DECLARE_COUNTER(rocksdb_cache_edge_compressed_inserts_total,
-                "Number of compressed inserts into the edge cache");
-DECLARE_COUNTER(
-  rocksdb_cache_edge_empty_inserts_total,
-  "Number of inserts into the edge cache that were an empty array");
 
 // global flag to cancel all compactions. will be flipped to true on shutdown
 static std::atomic_bool gCancelCompactions = false;
@@ -359,52 +304,11 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_old_key,
 }
 
 RocksDBEngineCatalog::RocksDBEngineCatalog()
-  : RocksDBEngineCatalog(RocksDBOptionFeature::instance(),
-                         metrics::GetMetrics()) {}
+  : RocksDBEngineCatalog(RocksDBOptionFeature::instance()) {}
 
 RocksDBEngineCatalog::RocksDBEngineCatalog(
-  const RocksDBOptionFeature& options_provider,
-  metrics::MetricsFeature& metrics)
-  : _options_provider(options_provider),
-    _metrics(metrics),
-    _metrics_index_estimator_memory_usage(
-      metrics.add(serenedb_index_estimates_memory_usage{})),
-    _metrics_wal_released_tick_flush(
-      metrics.add(rocksdb_wal_released_tick_flush{})),
-    _metrics_wal_sequence_lower_bound(
-      metrics.add(rocksdb_wal_sequence_lower_bound{})),
-    _metrics_live_wal_files(metrics.add(rocksdb_live_wal_files{})),
-    _metrics_archived_wal_files(metrics.add(rocksdb_archived_wal_files{})),
-    _metrics_live_wal_files_size(metrics.add(rocksdb_live_wal_files_size{})),
-    _metrics_archived_wal_files_size(
-      metrics.add(rocksdb_archived_wal_files_size{})),
-    _metrics_prunable_wal_files(metrics.add(rocksdb_prunable_wal_files{})),
-    _metrics_wal_pruning_active(metrics.add(rocksdb_wal_pruning_active{})),
-    _metrics_tree_memory_usage(
-      metrics.add(serenedb_revision_tree_memory_usage{})),
-    _metrics_tree_buffered_memory_usage(
-      metrics.add(serenedb_revision_tree_buffered_memory_usage{})),
-    _metrics_tree_rebuilds_success(
-      metrics.add(serenedb_revision_tree_rebuilds_success_total{})),
-    _metrics_tree_rebuilds_failure(
-      metrics.add(serenedb_revision_tree_rebuilds_failure_total{})),
-    _metrics_tree_hibernations(
-      metrics.add(serenedb_revision_tree_hibernations_total{})),
-    _metrics_tree_resurrections(
-      metrics.add(serenedb_revision_tree_resurrections_total{})),
-    _metrics_edge_cache_entries_size_initial(metrics.add(
-      rocksdb_cache_edge_inserts_uncompressed_entries_size_total{})),
-    _metrics_edge_cache_entries_size_effective(
-      metrics.add(rocksdb_cache_edge_inserts_effective_entries_size_total{})),
-    _metrics_edge_cache_inserts(
-      metrics.add(rocksdb_cache_edge_inserts_total{})),
-    _metrics_edge_cache_compressed_inserts(
-      metrics.add(rocksdb_cache_edge_compressed_inserts_total{})),
-    _metrics_edge_cache_empty_inserts(
-      metrics.add(rocksdb_cache_edge_empty_inserts_total{})) {
-  // inherits order from StorageEngine but requires "RocksDBOption" that is
-  // used to configure this engine
-}
+  const RocksDBOptionFeature& options_provider)
+  : _options_provider(options_provider) {}
 
 RocksDBEngineCatalog::~RocksDBEngineCatalog() {
   gRecoveryHelpers.clear();
@@ -455,7 +359,7 @@ void RocksDBEngineCatalog::shutdownRocksDBInstance() noexcept {
 }
 
 void RocksDBEngineCatalog::flushOpenFilesIfRequired() {
-  if (_metrics_live_wal_files.load() <
+  if (_live_wal_files_count.load(std::memory_order_relaxed) <
       _options_provider._auto_flush_min_wal_files) {
     return;
   }
@@ -468,7 +372,7 @@ void RocksDBEngineCatalog::flushOpenFilesIfRequired() {
     SDB_INFO(STORAGE,
              "auto flushing RocksDB wal and column families because number of "
              "live WAL files is ",
-             _metrics_live_wal_files.load());
+             _live_wal_files_count.load(std::memory_order_relaxed));
     Result res = flushWal(/*waitForSync*/ true, /*flushColumnFamilies*/ true);
     if (res.fail()) {
       SDB_WARN(STORAGE, "unable to flush RocksDB wal: ", res.errorMessage());
@@ -739,37 +643,6 @@ void RocksDBEngineCatalog::stop() {
 
 void RocksDBEngineCatalog::unprepare() { shutdownRocksDBInstance(); }
 
-void RocksDBEngineCatalog::trackRevisionTreeHibernation() noexcept {
-  ++_metrics_tree_hibernations;
-}
-
-void RocksDBEngineCatalog::trackRevisionTreeResurrection() noexcept {
-  ++_metrics_tree_resurrections;
-}
-
-void RocksDBEngineCatalog::trackRevisionTreeMemoryIncrease(
-  uint64_t value) noexcept {
-  _metrics_tree_memory_usage.fetch_add(value);
-}
-
-void RocksDBEngineCatalog::trackRevisionTreeMemoryDecrease(
-  uint64_t value) noexcept {
-  [[maybe_unused]] auto old = _metrics_tree_memory_usage.fetch_sub(value);
-  SDB_ASSERT(old >= value);
-}
-
-void RocksDBEngineCatalog::trackRevisionTreeBufferedMemoryIncrease(
-  uint64_t value) noexcept {
-  _metrics_tree_buffered_memory_usage.fetch_add(value);
-}
-
-void RocksDBEngineCatalog::trackRevisionTreeBufferedMemoryDecrease(
-  uint64_t value) noexcept {
-  [[maybe_unused]] auto old =
-    _metrics_tree_buffered_memory_usage.fetch_sub(value);
-  SDB_ASSERT(old >= value);
-}
-
 bool RocksDBEngineCatalog::hasBackgroundError() const {
   return _error_listener != nullptr && _error_listener->Called();
 }
@@ -916,28 +789,13 @@ void RocksDBEngineCatalog::determineWalFilesInitial() {
   }
 
   size_t live_files = 0;
-  size_t archived_files = 0;
-  uint64_t live_files_size = 0;
-  uint64_t archived_files_size = 0;
   for (size_t current = 0; current < files.size(); current++) {
     const auto& f = files[current].get();
-
-    if (f->Type() == rocksdb::WalFileType::kArchivedLogFile) {
-      ++archived_files;
-      archived_files_size += f->SizeFileBytes();
-    } else if (f->Type() == rocksdb::WalFileType::kAliveLogFile) {
+    if (f->Type() == rocksdb::WalFileType::kAliveLogFile) {
       ++live_files;
-      live_files_size += f->SizeFileBytes();
     }
   }
-  _metrics_wal_sequence_lower_bound.store(
-    _settings_manager->earliestSeqNeeded(), std::memory_order_relaxed);
-  _metrics_live_wal_files.store(live_files, std::memory_order_relaxed);
-  _metrics_archived_wal_files.store(archived_files, std::memory_order_relaxed);
-  _metrics_live_wal_files_size.store(live_files_size,
-                                     std::memory_order_relaxed);
-  _metrics_archived_wal_files_size.store(archived_files_size,
-                                         std::memory_order_relaxed);
+  _live_wal_files_count.store(live_files, std::memory_order_relaxed);
 }
 
 void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
@@ -1110,17 +968,7 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
     }
   }
 
-  _metrics_wal_sequence_lower_bound.store(
-    _settings_manager->earliestSeqNeeded(), std::memory_order_relaxed);
-  _metrics_live_wal_files.store(live_files, std::memory_order_relaxed);
-  _metrics_archived_wal_files.store(archived_files, std::memory_order_relaxed);
-  _metrics_live_wal_files_size.store(live_files_size,
-                                     std::memory_order_relaxed);
-  _metrics_archived_wal_files_size.store(archived_files_size,
-                                         std::memory_order_relaxed);
-  _metrics_prunable_wal_files.store(_prunable_wal_files.size(),
-                                    std::memory_order_relaxed);
-  _metrics_wal_pruning_active.store(1, std::memory_order_relaxed);
+  _live_wal_files_count.store(live_files, std::memory_order_relaxed);
 }
 
 RocksDBFilePurgePreventer RocksDBEngineCatalog::disallowPurging() noexcept {
@@ -1185,9 +1033,6 @@ void RocksDBEngineCatalog::pruneWalFiles() {
     // endless loop
     ++it;
   }
-
-  _metrics_prunable_wal_files.store(_prunable_wal_files.size(),
-                                    std::memory_order_relaxed);
 
   SDB_TRACE(STORAGE, "prune WAL files started with ", initial_size,
             " prunable WAL files, ", "current number of prunable WAL files: ",
@@ -1386,129 +1231,6 @@ Result RocksDBEngineCatalog::WriteTombstone(ObjectId parent_id, ObjectId id) {
     [] { return vpack::Slice::emptyStringSlice(); },
     [] { return std::string_view{}; });
 }
-
-DECLARE_GAUGE(rocksdb_cache_active_tables, uint64_t,
-              "rocksdb_cache_active_tables");
-DECLARE_GAUGE(rocksdb_cache_allocated, uint64_t, "rocksdb_cache_allocated");
-DECLARE_GAUGE(rocksdb_cache_peak_allocated, uint64_t,
-              "rocksdb_cache_peak_allocated");
-DECLARE_GAUGE(rocksdb_cache_hit_rate_lifetime, uint64_t,
-              "rocksdb_cache_hit_rate_lifetime");
-DECLARE_GAUGE(rocksdb_cache_hit_rate_recent, uint64_t,
-              "rocksdb_cache_hit_rate_recent");
-DECLARE_GAUGE(rocksdb_cache_limit, uint64_t, "rocksdb_cache_limit");
-DECLARE_GAUGE(rocksdb_cache_unused_memory, uint64_t,
-              "rocksdb_cache_unused_memory");
-DECLARE_GAUGE(rocksdb_cache_unused_tables, uint64_t,
-              "rocksdb_cache_unused_tables");
-DECLARE_COUNTER(rocksdb_cache_migrate_tasks_total,
-                "rocksdb_cache_migrate_tasks_total");
-DECLARE_COUNTER(rocksdb_cache_free_memory_tasks_total,
-                "rocksdb_cache_free_memory_tasks_total");
-DECLARE_COUNTER(rocksdb_cache_migrate_tasks_duration_total,
-                "rocksdb_cache_migrate_tasks_duration_total");
-DECLARE_COUNTER(rocksdb_cache_free_memory_tasks_duration_total,
-                "rocksdb_cache_free_memory_tasks_duration_total");
-DECLARE_GAUGE(rocksdb_actual_delayed_write_rate, uint64_t,
-              "rocksdb_actual_delayed_write_rate");
-DECLARE_GAUGE(rocksdb_background_errors, uint64_t, "rocksdb_background_errors");
-DECLARE_GAUGE(rocksdb_base_level, uint64_t, "rocksdb_base_level");
-DECLARE_GAUGE(rocksdb_block_cache_capacity, uint64_t,
-              "rocksdb_block_cache_capacity");
-DECLARE_GAUGE(rocksdb_block_cache_pinned_usage, uint64_t,
-              "rocksdb_block_cache_pinned_usage");
-DECLARE_GAUGE(rocksdb_block_cache_usage, uint64_t, "rocksdb_block_cache_usage");
-DECLARE_GAUGE(rocksdb_block_cache_entries, uint64_t,
-              "rocksdb_block_cache_entries");
-DECLARE_GAUGE(rocksdb_block_cache_charge_per_entry, uint64_t,
-              "rocksdb_block_cache_charge_per_entry");
-DECLARE_GAUGE(rocksdb_compaction_pending, uint64_t,
-              "rocksdb_compaction_pending");
-DECLARE_GAUGE(rocksdb_compression_ratio_at_level0, uint64_t,
-              "rocksdb_compression_ratio_at_level0");
-DECLARE_GAUGE(rocksdb_compression_ratio_at_level1, uint64_t,
-              "rocksdb_compression_ratio_at_level1");
-DECLARE_GAUGE(rocksdb_compression_ratio_at_level2, uint64_t,
-              "rocksdb_compression_ratio_at_level2");
-DECLARE_GAUGE(rocksdb_compression_ratio_at_level3, uint64_t,
-              "rocksdb_compression_ratio_at_level3");
-DECLARE_GAUGE(rocksdb_compression_ratio_at_level4, uint64_t,
-              "rocksdb_compression_ratio_at_level4");
-DECLARE_GAUGE(rocksdb_compression_ratio_at_level5, uint64_t,
-              "rocksdb_compression_ratio_at_level5");
-DECLARE_GAUGE(rocksdb_compression_ratio_at_level6, uint64_t,
-              "rocksdb_compression_ratio_at_level6");
-DECLARE_GAUGE(rocksdb_cur_size_active_mem_table, uint64_t,
-              "rocksdb_cur_size_active_mem_table");
-DECLARE_GAUGE(rocksdb_cur_size_all_mem_tables, uint64_t,
-              "rocksdb_cur_size_all_mem_tables");
-DECLARE_GAUGE(rocksdb_estimate_live_data_size, uint64_t,
-              "rocksdb_estimate_live_data_size");
-DECLARE_GAUGE(rocksdb_estimate_num_keys, uint64_t, "rocksdb_estimate_num_keys");
-DECLARE_GAUGE(rocksdb_estimate_pending_compaction_bytes, uint64_t,
-              "rocksdb_estimate_pending_compaction_bytes");
-DECLARE_GAUGE(rocksdb_estimate_table_readers_mem, uint64_t,
-              "rocksdb_estimate_table_readers_mem");
-DECLARE_GAUGE(rocksdb_free_disk_space, uint64_t, "rocksdb_free_disk_space");
-DECLARE_GAUGE(rocksdb_free_inodes, uint64_t, "rocksdb_free_inodes");
-DECLARE_GAUGE(rocksdb_is_file_deletions_enabled, uint64_t,
-              "rocksdb_is_file_deletions_enabled");
-DECLARE_GAUGE(rocksdb_is_write_stopped, uint64_t, "rocksdb_is_write_stopped");
-DECLARE_GAUGE(rocksdb_live_sst_files_size, uint64_t,
-              "rocksdb_live_sst_files_size");
-DECLARE_GAUGE(rocksdb_mem_table_flush_pending, uint64_t,
-              "rocksdb_mem_table_flush_pending");
-DECLARE_GAUGE(rocksdb_min_log_number_to_keep, uint64_t,
-              "rocksdb_min_log_number_to_keep");
-DECLARE_GAUGE(rocksdb_num_deletes_active_mem_table, uint64_t,
-              "rocksdb_num_deletes_active_mem_table");
-DECLARE_GAUGE(rocksdb_num_deletes_imm_mem_tables, uint64_t,
-              "rocksdb_num_deletes_imm_mem_tables");
-DECLARE_GAUGE(rocksdb_num_entries_active_mem_table, uint64_t,
-              "rocksdb_num_entries_active_mem_table");
-DECLARE_GAUGE(rocksdb_num_entries_imm_mem_tables, uint64_t,
-              "rocksdb_num_entries_imm_mem_tables");
-DECLARE_GAUGE(rocksdb_num_files_at_level0, uint64_t,
-              "rocksdb_num_files_at_level0");
-DECLARE_GAUGE(rocksdb_num_files_at_level1, uint64_t,
-              "rocksdb_num_files_at_level1");
-DECLARE_GAUGE(rocksdb_num_files_at_level2, uint64_t,
-              "rocksdb_num_files_at_level2");
-DECLARE_GAUGE(rocksdb_num_files_at_level3, uint64_t,
-              "rocksdb_num_files_at_level3");
-DECLARE_GAUGE(rocksdb_num_files_at_level4, uint64_t,
-              "rocksdb_num_files_at_level4");
-DECLARE_GAUGE(rocksdb_num_files_at_level5, uint64_t,
-              "rocksdb_num_files_at_level5");
-DECLARE_GAUGE(rocksdb_num_files_at_level6, uint64_t,
-              "rocksdb_num_files_at_level6");
-DECLARE_GAUGE(rocksdb_num_immutable_mem_table, uint64_t,
-              "rocksdb_num_immutable_mem_table");
-DECLARE_GAUGE(rocksdb_num_immutable_mem_table_flushed, uint64_t,
-              "rocksdb_num_immutable_mem_table_flushed");
-DECLARE_GAUGE(rocksdb_num_live_versions, uint64_t, "rocksdb_num_live_versions");
-DECLARE_GAUGE(rocksdb_num_running_compactions, uint64_t,
-              "rocksdb_num_running_compactions");
-DECLARE_GAUGE(rocksdb_num_running_flushes, uint64_t,
-              "rocksdb_num_running_flushes");
-DECLARE_GAUGE(rocksdb_num_snapshots, uint64_t, "rocksdb_num_snapshots");
-DECLARE_GAUGE(rocksdb_oldest_snapshot_time, uint64_t,
-              "rocksdb_oldest_snapshot_time");
-DECLARE_GAUGE(rocksdb_size_all_mem_tables, uint64_t,
-              "rocksdb_size_all_mem_tables");
-DECLARE_GAUGE(rocksdb_total_disk_space, uint64_t, "rocksdb_total_disk_space");
-DECLARE_GAUGE(rocksdb_total_inodes, uint64_t, "rocksdb_total_inodes");
-DECLARE_GAUGE(rocksdb_total_sst_files_size, uint64_t,
-              "rocksdb_total_sst_files_size");
-DECLARE_GAUGE(rocksdb_engine_throttle_bps, uint64_t,
-              "rocksdb_engine_throttle_bps");
-DECLARE_GAUGE(rocksdb_read_only, uint64_t, "rocksdb_read_only");
-DECLARE_GAUGE(rocksdb_total_sst_files, uint64_t, "rocksdb_total_sst_files");
-DECLARE_GAUGE(rocksdb_live_blob_file_size, uint64_t,
-              "rocksdb_live_blob_file_size");
-DECLARE_GAUGE(rocksdb_live_blob_file_garbage_size, uint64_t,
-              "rocksdb_live_blob_file_garbage_size");
-DECLARE_GAUGE(rocksdb_num_blob_files, uint64_t, "rocksdb_num_blob_files");
 
 void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {
   // add int properties
@@ -1745,9 +1467,6 @@ void RocksDBEngineCatalog::releaseTick(Tick tick) {
   if (tick > _released_tick) {
     _released_tick = tick;
     lock.unlock();
-
-    // update metric for released tick
-    _metrics_wal_released_tick_flush.store(tick, std::memory_order_relaxed);
   }
 }
 
@@ -1925,27 +1644,6 @@ std::shared_ptr<StorageSnapshot> RocksDBEngineCatalog::currentSnapshot() {
     return std::make_shared<StorageSnapshot>(*_db);
   } else {
     return nullptr;
-  }
-}
-
-std::tuple<uint64_t, uint64_t, uint64_t, uint64_t, uint64_t>
-RocksDBEngineCatalog::getCacheMetrics() {
-  return {_metrics_edge_cache_entries_size_initial.load(),
-          _metrics_edge_cache_entries_size_effective.load(),
-          _metrics_edge_cache_inserts.load(),
-          _metrics_edge_cache_compressed_inserts.load(),
-          _metrics_edge_cache_empty_inserts.load()};
-}
-
-void RocksDBEngineCatalog::addCacheMetrics(
-  uint64_t initial, uint64_t effective, uint64_t total_inserts,
-  uint64_t total_compressed_inserts, uint64_t total_empty_inserts) noexcept {
-  if (total_inserts > 0) {
-    _metrics_edge_cache_entries_size_initial.count(initial);
-    _metrics_edge_cache_entries_size_effective.count(effective);
-    _metrics_edge_cache_inserts.count(total_inserts);
-    _metrics_edge_cache_compressed_inserts.count(total_compressed_inserts);
-    _metrics_edge_cache_empty_inserts.count(total_empty_inserts);
   }
 }
 

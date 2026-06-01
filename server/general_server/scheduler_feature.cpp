@@ -28,7 +28,6 @@
 #include "basics/number_of_cores.h"
 #include "general_server/scheduler.h"
 #include "general_server/signal_handling.h"
-#include "metrics/metrics_feature.h"
 
 ABSL_FLAG(uint64_t, server_io_threads, 0,
           "IO threads for HTTP and pg-wire connections "
@@ -64,8 +63,7 @@ size_t DefaultNumberOfThreads() {
 
 SchedulerFeature::SchedulerFeature()
   : _nr_maximal_threads(absl::GetFlag(FLAGS_server_request_threads)),
-    _queue_size(absl::GetFlag(FLAGS_server_maximal_queue_size)),
-    _metrics_feature(sdb::metrics::GetMetrics()) {
+    _queue_size(absl::GetFlag(FLAGS_server_maximal_queue_size)) {
   if (_nr_maximal_threads == 0) {
     _nr_maximal_threads = DefaultNumberOfThreads();
   }
@@ -82,7 +80,7 @@ void SchedulerFeature::start() {
   auto sched = std::make_unique<Scheduler>(
     app::AppServer::Instance(), _nr_minimal_threads, _nr_maximal_threads,
     _queue_size, _fifo1_size, _fifo2_size, _fifo3_size,
-    _unavailability_queue_fill_grade, _metrics_feature);
+    _unavailability_queue_fill_grade);
 
   gScheduler = sched.get();
 

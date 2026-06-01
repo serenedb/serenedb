@@ -268,8 +268,6 @@ HttpCommTask<T>::HttpCommTask(GeneralServer& server, ConnectionInfo info,
   _parser_settings.on_message_complete = HttpCommTask<T>::on_message_complete;
   llhttp_init(&_parser, HTTP_REQUEST, &_parser_settings);
   _parser.data = this;
-
-  this->_general_server_feature.countHttp1Connection();
 }
 
 template<SocketType T>
@@ -489,7 +487,6 @@ void HttpCommTask<T>::DoProcessRequest() {
              url(), "\"");
 
     std::string_view body = _request->rawPayload();
-    this->_general_server_feature.countHttp1Request(body.size());
 
     if (log::IsEnabled(duckdb::LogLevel::LOG_TRACE, log::HTTP)) {
       // Log HTTP headers:

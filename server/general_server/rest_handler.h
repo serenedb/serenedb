@@ -30,7 +30,6 @@
 #include "basics/common.h"
 #include "basics/result_or.h"
 #include "general_server/request_lane.h"
-#include "metrics/gauge_counter_guard.h"
 #include "rest/general_response.h"
 
 namespace sdb {
@@ -203,8 +202,6 @@ class RestHandler : public std::enable_shared_from_this<RestHandler> {
   RequestLane _lane;
 
  protected:
-  metrics::GaugeCounterGuard<uint64_t> _current_requests_size_tracker;
-
   std::atomic<bool> _canceled;
 };
 

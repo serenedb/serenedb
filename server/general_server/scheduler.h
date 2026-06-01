@@ -42,7 +42,6 @@
 #include "basics/exceptions.h"
 #include "basics/system-compiler.h"
 #include "general_server/request_lane.h"
-#include "metrics/fwd.h"
 #include "utils/coro_helper.h"
 
 namespace sdb {
@@ -53,8 +52,7 @@ class Scheduler {
                      uint64_t max_threads, uint64_t max_queue_size,
                      uint64_t fifo1_size, uint64_t fifo2_size,
                      uint64_t fifo3_size,
-                     double unavailability_queue_fill_grade,
-                     metrics::MetricsFeature& metrics);
+                     double unavailability_queue_fill_grade);
 
   ~Scheduler();
 
@@ -156,11 +154,8 @@ class Scheduler {
   void start();
   void shutdown();
 
-  void trackCreateHandlerTask() noexcept;
   void trackBeginOngoingLowPriorityTask() noexcept;
   void trackEndOngoingLowPriorityTask() noexcept;
-
-  void trackQueueTimeViolation();
 
   /// returns the last stored dequeue time [ms]
   uint64_t getLastLowPriorityDequeueTime() const noexcept;
@@ -227,15 +222,9 @@ class Scheduler {
   /// fill grade of the scheduler's queue (in %) from which onwards
   /// the server is considered unavailable (because of overload)
   const double _unavailability_queue_fill_grade;
-  metrics::Counter& _metrics_handler_tasks_created;
-  metrics::Counter& _metrics_queue_time_violations;
-  metrics::Gauge<uint64_t>& _ongoing_low_priority_gauge;
-  /// amount of time it took for the last low prio item to be dequeued
-  /// (time between queuing and dequeing) [ms].
-  /// this metric is only updated probabilistically
-  metrics::Gauge<uint64_t>& _metrics_last_low_priority_dequeue_time;
-  std::array<std::reference_wrapper<metrics::Gauge<uint64_t>>, kNumberOfQueues>
-    _metrics_queue_lengths;
+  std::atomic<uint64_t> _ongoing_low_priority{0};
+  std::atomic<uint64_t> _last_low_priority_dequeue_time_ms{0};
+  std::array<std::atomic<uint64_t>, kNumberOfQueues> _queue_lengths{};
 
   // ---------------------------------------------------------------------------
   // CronThread and delayed tasks

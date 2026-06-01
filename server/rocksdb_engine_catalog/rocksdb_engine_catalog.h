@@ -50,7 +50,6 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/types.h"
-#include "metrics/fwd.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -155,8 +154,7 @@ class RocksDBEngineCatalog {
   static constexpr std::string_view kEngineName = "rocksdb";
 
   RocksDBEngineCatalog();
-  RocksDBEngineCatalog(const RocksDBOptionFeature& options_provider,
-                       metrics::MetricsFeature& metrics);
+  explicit RocksDBEngineCatalog(const RocksDBOptionFeature& options_provider);
   ~RocksDBEngineCatalog();
 
   void prepare();
@@ -285,22 +283,6 @@ class RocksDBEngineCatalog {
   /// earlier in the startup sequence
   bool dbExisted() const noexcept { return _db_existed; }
 
-  void trackRevisionTreeHibernation() noexcept;
-  void trackRevisionTreeResurrection() noexcept;
-
-  void trackRevisionTreeMemoryIncrease(uint64_t value) noexcept;
-  void trackRevisionTreeMemoryDecrease(uint64_t value) noexcept;
-
-  void trackRevisionTreeBufferedMemoryIncrease(uint64_t value) noexcept;
-  void trackRevisionTreeBufferedMemoryDecrease(uint64_t value) noexcept;
-
-  void trackIndexSelectivityMemoryIncrease(uint64_t value) noexcept;
-  void trackIndexSelectivityMemoryDecrease(uint64_t value) noexcept;
-
-  metrics::Gauge<uint64_t>& indexEstimatorMemoryUsageMetric() const noexcept {
-    return _metrics_index_estimator_memory_usage;
-  }
-
   rocksdb::Options makeOptions(bool is_new_dir);
 
   const rocksdb::DBOptions& rocksDBOptions() const { return _db_options; }
@@ -345,14 +327,6 @@ class RocksDBEngineCatalog {
 
   std::shared_ptr<StorageSnapshot> currentSnapshot();
 
-  void addCacheMetrics(uint64_t initial, uint64_t effective,
-                       uint64_t total_inserts,
-                       uint64_t total_compressed_inserts,
-                       uint64_t total_empty_inserts) noexcept;
-
-  std::tuple<uint64_t, uint64_t, uint64_t, uint64_t, uint64_t>
-  getCacheMetrics();
-
   Result VisitDefinitions(
     ObjectId parent_id, catalog::ObjectType type,
     absl::FunctionRef<Result(DefinitionKey, vpack::Slice)> visitor);
@@ -375,8 +349,6 @@ class RocksDBEngineCatalog {
     const std::vector<rocksdb::ColumnFamilyDescriptor>& cf_families);
 
   const RocksDBOptionFeature& _options_provider;
-
-  metrics::MetricsFeature& _metrics;
 
   /// single rocksdb database used in this storage engine
   rocksdb::TransactionDB* _db = nullptr;
@@ -469,34 +441,7 @@ class RocksDBEngineCatalog {
   // last point in time when an auto-flush happened
   std::chrono::steady_clock::time_point _auto_flush_last_executed;
 
-  metrics::Gauge<uint64_t>& _metrics_index_estimator_memory_usage;
-  metrics::Gauge<uint64_t>& _metrics_wal_released_tick_flush;
-  metrics::Gauge<uint64_t>& _metrics_wal_sequence_lower_bound;
-  metrics::Gauge<uint64_t>& _metrics_live_wal_files;
-  metrics::Gauge<uint64_t>& _metrics_archived_wal_files;
-  metrics::Gauge<uint64_t>& _metrics_live_wal_files_size;
-  metrics::Gauge<uint64_t>& _metrics_archived_wal_files_size;
-  metrics::Gauge<uint64_t>& _metrics_prunable_wal_files;
-  metrics::Gauge<uint64_t>& _metrics_wal_pruning_active;
-  metrics::Gauge<uint64_t>& _metrics_tree_memory_usage;
-  metrics::Gauge<uint64_t>& _metrics_tree_buffered_memory_usage;
-  metrics::Counter& _metrics_tree_rebuilds_success;
-  metrics::Counter& _metrics_tree_rebuilds_failure;
-  metrics::Counter& _metrics_tree_hibernations;
-  metrics::Counter& _metrics_tree_resurrections;
-
-  // total size of uncompressed values for the edge cache
-  metrics::Counter& _metrics_edge_cache_entries_size_initial;
-  // total size of values stored in the edge cache (can be smaller than the
-  // initial size because of compression)
-  metrics::Counter& _metrics_edge_cache_entries_size_effective;
-
-  // total number of inserts into edge cache
-  metrics::Counter& _metrics_edge_cache_inserts;
-  // total number of inserts into edge cache that were compressed
-  metrics::Counter& _metrics_edge_cache_compressed_inserts;
-  // total number of inserts into edge cache that stored an empty array
-  metrics::Counter& _metrics_edge_cache_empty_inserts;
+  std::atomic<uint64_t> _live_wal_files_count{0};
 
   std::shared_ptr<RocksDBDumpManager> _dump_manager;
 };

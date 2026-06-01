@@ -36,62 +36,20 @@
 #include "general_server/rest_handler.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
-#include "metrics/counter_builder.h"
-#include "metrics/gauge_builder.h"
-#include "metrics/metrics_feature.h"
 #include "rest/general_response.h"
 
 namespace sdb {
-
-DECLARE_COUNTER(serenedb_scheduler_handler_tasks_created_total,
-                "Number of scheduler tasks created");
-DECLARE_COUNTER(serenedb_scheduler_queue_time_violations_total,
-                "Tasks dropped because the client-requested queue time "
-                "restriction would be violated");
-
-DECLARE_GAUGE(
-  serenedb_scheduler_ongoing_low_prio, uint64_t,
-  "Total number of ongoing RestHandlers coming from the low prio queue");
-DECLARE_GAUGE(serenedb_scheduler_low_prio_queue_last_dequeue_time, uint64_t,
-              "Last recorded dequeue time for a low priority queue item [ms]");
-
-DECLARE_GAUGE(
-  serenedb_scheduler_low_prio_queue_length, uint64_t,
-  "Current queue length of the low priority queue in the scheduler");
-DECLARE_GAUGE(
-  serenedb_scheduler_medium_prio_queue_length, uint64_t,
-  "Current queue length of the medium priority queue in the scheduler");
-DECLARE_GAUGE(
-  serenedb_scheduler_high_prio_queue_length, uint64_t,
-  "Current queue length of the high priority queue in the scheduler");
-DECLARE_GAUGE(
-  serenedb_scheduler_maintenance_prio_queue_length, uint64_t,
-  "Current queue length of the maintenance priority queue in the scheduler");
 
 Scheduler::Scheduler(app::AppServer& server, uint64_t min_threads,
                      uint64_t max_threads, uint64_t max_queue_size,
                      uint64_t fifo1_size, uint64_t fifo2_size,
                      uint64_t fifo3_size,
-                     double unavailability_queue_fill_grade,
-                     metrics::MetricsFeature& metrics)
+                     double unavailability_queue_fill_grade)
   : _server{server},
     _min_threads{min_threads},
     _max_threads{max_threads},
     _max_fifo_sizes{max_queue_size, fifo1_size, fifo2_size, fifo3_size},
-    _unavailability_queue_fill_grade{unavailability_queue_fill_grade},
-    _metrics_handler_tasks_created(
-      metrics.add(serenedb_scheduler_handler_tasks_created_total{})),
-    _metrics_queue_time_violations(
-      metrics.add(serenedb_scheduler_queue_time_violations_total{})),
-    _ongoing_low_priority_gauge(
-      metrics.add(serenedb_scheduler_ongoing_low_prio{})),
-    _metrics_last_low_priority_dequeue_time(
-      metrics.add(serenedb_scheduler_low_prio_queue_last_dequeue_time{})),
-    _metrics_queue_lengths{
-      metrics.add(serenedb_scheduler_maintenance_prio_queue_length{}),
-      metrics.add(serenedb_scheduler_high_prio_queue_length{}),
-      metrics.add(serenedb_scheduler_medium_prio_queue_length{}),
-      metrics.add(serenedb_scheduler_low_prio_queue_length{})} {
+    _unavailability_queue_fill_grade{unavailability_queue_fill_grade} {
   SDB_ASSERT(ToQueueNo(std::to_underlying(RequestPriority::Maintenance)) == 0);
   SDB_ASSERT(ToQueueNo(std::to_underlying(RequestPriority::High)) == 1);
   SDB_ASSERT(ToQueueNo(std::to_underlying(RequestPriority::Med)) == 2);
@@ -103,7 +61,7 @@ Scheduler::~Scheduler() = default;
 void Scheduler::JobObserver::taskEnqueued(
   const folly::ThreadPoolExecutor::TaskInfo& info) noexcept {
   const auto queue_no = ToQueueNo(info.priority);
-  _scheduler._metrics_queue_lengths[queue_no].get() += 1;
+  _scheduler._queue_lengths[queue_no].fetch_add(1, std::memory_order_relaxed);
 }
 
 void Scheduler::JobObserver::taskDequeued(
@@ -114,7 +72,7 @@ void Scheduler::JobObserver::taskDequeued(
         .count());
   }
   const auto queue_no = ToQueueNo(info.priority);
-  _scheduler._metrics_queue_lengths[queue_no].get() -= 1;
+  _scheduler._queue_lengths[queue_no].fetch_sub(1, std::memory_order_relaxed);
 }
 
 void Scheduler::JobObserver::taskProcessed(
@@ -295,38 +253,32 @@ yaclib::Future<> Scheduler::delay(std::string_view name, clock::duration d) {
   });
 }
 
-void Scheduler::trackCreateHandlerTask() noexcept {
-  ++_metrics_handler_tasks_created;
-}
-
 void Scheduler::trackBeginOngoingLowPriorityTask() noexcept {
-  ++_ongoing_low_priority_gauge;
+  _ongoing_low_priority.fetch_add(1, std::memory_order_relaxed);
 }
 
 void Scheduler::trackEndOngoingLowPriorityTask() noexcept {
-  --_ongoing_low_priority_gauge;
+  _ongoing_low_priority.fetch_sub(1, std::memory_order_relaxed);
 }
 
-void Scheduler::trackQueueTimeViolation() { ++_metrics_queue_time_violations; }
-
 uint64_t Scheduler::getLastLowPriorityDequeueTime() const noexcept {
-  return _metrics_last_low_priority_dequeue_time.load();
+  return _last_low_priority_dequeue_time_ms.load(std::memory_order_relaxed);
 }
 
 void Scheduler::setLastLowPriorityDequeueTime(uint64_t time) noexcept {
-  _metrics_last_low_priority_dequeue_time = time;
+  _last_low_priority_dequeue_time_ms.store(time, std::memory_order_relaxed);
 }
 
 std::pair<uint64_t, uint64_t> Scheduler::getNumberLowPrioOngoingAndQueued()
   const {
-  return {_ongoing_low_priority_gauge.load(std::memory_order_relaxed),
-          _metrics_queue_lengths.back().get().load(std::memory_order_relaxed)};
+  return {_ongoing_low_priority.load(std::memory_order_relaxed),
+          _queue_lengths.back().load(std::memory_order_relaxed)};
 }
 
 double Scheduler::approximateQueueFillGrade() const {
   const auto max_length = _max_fifo_sizes[kNumberOfQueues - 1];
   const auto q_length =
-    _metrics_queue_lengths[kNumberOfQueues - 1].get().load();
+    _queue_lengths[kNumberOfQueues - 1].load(std::memory_order_relaxed);
   return static_cast<double>(q_length) / static_cast<double>(max_length);
 }
 

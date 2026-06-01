@@ -52,7 +52,6 @@ class SchedulerFeature final {
   double _unavailability_queue_fill_grade = 0.75;
 
   std::unique_ptr<Scheduler> _scheduler;
-  metrics::MetricsFeature& _metrics_feature;
 };
 
 }  // namespace sdb

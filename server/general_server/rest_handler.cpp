@@ -51,11 +51,7 @@ RestHandler::RestHandler(app::AppServer& server, GeneralRequest* request,
     _state(HandlerState::Prepare),
     _tracked_as_ongoing_low_prio(false),
     _lane(RequestLane::Undefined),
-    _canceled(false) {
-  _current_requests_size_tracker = metrics::GaugeCounterGuard<uint64_t>{
-    GeneralServerFeature::instance().current_requests_size,
-    _request->memoryUsage()};
-}
+    _canceled(false) {}
 
 RestHandler::~RestHandler() {
   if (_tracked_as_ongoing_low_prio) {

@@ -288,22 +288,6 @@ class InvertedIndexShard final
   irs::IResourceManager* _compactions_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _file_descriptors_count{&irs::IResourceManager::gNoop};
 
-  // Stats
-  metrics::Gauge<uint64_t>* _mapped_memory{nullptr};
-  metrics::Gauge<uint64_t>* _num_failed_commits{nullptr};
-  metrics::Gauge<uint64_t>* _num_failed_cleanups{nullptr};
-  metrics::Gauge<uint64_t>* _num_failed_compactions{nullptr};
-
-  std::atomic_uint64_t _commit_time_num{0};
-  metrics::Gauge<uint64_t>* _avg_commit_time_ms{nullptr};
-
-  std::atomic_uint64_t _cleanup_time_num{0};
-  metrics::Gauge<uint64_t>* _avg_cleanup_time_ms{nullptr};
-
-  std::atomic_uint64_t _compaction_time_num{0};
-  metrics::Gauge<uint64_t>* _avg_compaction_time_ms{nullptr};
-  metrics::Guard<Stats>* _metric_stats{nullptr};
-
   enum class Error : uint8_t {
     // inverted index shard has no issues
     NoError = 0,

@@ -47,10 +47,6 @@ ABSL_FLAG(uint64_t, http_compress_response_threshold, 0,
 #include "general_server/scheduler_feature.h"
 #include "general_server/ssl_server_feature.h"
 #include "general_server/state.h"
-#include "metrics/counter_builder.h"
-#include "metrics/gauge_builder.h"
-#include "metrics/histogram_builder.h"
-#include "metrics/metrics_feature.h"
 #include "rest/http_response.h"
 #include "rest_server/endpoint_feature.h"
 #include "storage_engine/engine_feature.h"
@@ -60,35 +56,15 @@ using namespace sdb::options;
 
 namespace sdb {
 
-struct RequestBodySizeScale {
-  static metrics::LogScale<uint64_t> scale() { return {2, 64, 65536, 10}; }
-};
-
-DECLARE_HISTOGRAM(serenedb_request_body_size_http1, RequestBodySizeScale,
-                  "Body size of HTTP/1.1 requests");
-DECLARE_HISTOGRAM(serenedb_request_body_size_http2, RequestBodySizeScale,
-                  "Body size of HTTP/2 requests");
-DECLARE_COUNTER(serenedb_http1_connections_total,
-                "Total number of HTTP/1.1 connections");
-DECLARE_COUNTER(serenedb_http2_connections_total,
-                "Total number of HTTP/2 connections");
-DECLARE_GAUGE(serenedb_requests_memory_usage, uint64_t,
-              "Memory consumed by incoming requests");
-
 GeneralServerFeature::GeneralServerFeature()
-  : current_requests_size(AddMetric(serenedb_requests_memory_usage{})),
-    _keep_alive_timeout(absl::GetFlag(FLAGS_http_keep_alive_timeout)),
+  : _keep_alive_timeout(absl::GetFlag(FLAGS_http_keep_alive_timeout)),
     _return_queue_time_header(
       absl::GetFlag(FLAGS_http_return_queue_time_header)),
     _compress_response_threshold(
       absl::GetFlag(FLAGS_http_compress_response_threshold)),
     _access_control_allow_origins(absl::GetFlag(FLAGS_http_trusted_origin)),
     _num_io_threads(
-      std::max(uint64_t(1), uint64_t(number_of_cores::GetValue() / 4))),
-    _request_body_size_http1(AddMetric(serenedb_request_body_size_http1{})),
-    _request_body_size_http2(AddMetric(serenedb_request_body_size_http2{})),
-    _http1_connections(AddMetric(serenedb_http1_connections_total{})),
-    _http2_connections(AddMetric(serenedb_http2_connections_total{})) {
+      std::max(uint64_t(1), uint64_t(number_of_cores::GetValue() / 4))) {
   if (auto io = absl::GetFlag(FLAGS_server_io_threads); io > 0) {
     _num_io_threads = io;
   }

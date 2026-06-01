@@ -240,7 +240,6 @@ template<SocketType T>
 H2CommTask<T>::H2CommTask(GeneralServer& server, ConnectionInfo info,
                           std::shared_ptr<AsioSocket<T>> so)
   : GeneralCommTask<T>(server, std::move(info), std::move(so)) {
-  this->_general_server_feature.countHttp2Connection();
   InitNgHttp2Session();
 }
 
@@ -565,7 +564,6 @@ void H2CommTask<T>::ProcessRequest(Stream& stream,
              url(req.get()), "\"");
 
     std::string_view body = req->rawPayload();
-    this->_general_server_feature.countHttp2Request(body.size());
     if (log::IsEnabled(duckdb::LogLevel::LOG_TRACE, log::HTTP)) {
       // Log HTTP headers:
       this->LogRequestHeaders("h2", req->headers());

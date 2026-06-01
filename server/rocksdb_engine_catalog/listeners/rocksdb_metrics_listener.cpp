@@ -24,23 +24,10 @@
 #include "app/app_server.h"
 #include "basics/debugging.h"
 #include "basics/log.h"
-#include "metrics/counter_builder.h"
-#include "metrics/metrics_feature.h"
-
-DECLARE_COUNTER(
-  serenedb_rocksdb_write_stalls_total,
-  "Number of times RocksDB has entered a stalled (slowed) write state");
-DECLARE_COUNTER(serenedb_rocksdb_write_stops_total,
-                "Number of times RocksDB has entered a stopped write state");
 
 namespace sdb {
 
-/// Setup the object, clearing variables, but do no real work
-RocksDBMetricsListener::RocksDBMetricsListener(app::AppServer& server)
-  : _write_stalls(
-      metrics::GetMetrics().add(serenedb_rocksdb_write_stalls_total{})),
-    _write_stops(
-      metrics::GetMetrics().add(serenedb_rocksdb_write_stops_total{})) {}
+RocksDBMetricsListener::RocksDBMetricsListener(app::AppServer&) {}
 
 void RocksDBMetricsListener::OnFlushBegin(rocksdb::DB*,
                                           const rocksdb::FlushJobInfo& info) {
@@ -72,11 +59,9 @@ void RocksDBMetricsListener::OnStallConditionsChanged(
   // state
 
   if (info.condition.cur == rocksdb::WriteStallCondition::kDelayed) {
-    _write_stalls.count();
     SDB_DEBUG(STORAGE, "rocksdb is slowing incoming writes to column family '",
               info.cf_name, "' to let background writes catch up");
   } else if (info.condition.cur == rocksdb::WriteStallCondition::kStopped) {
-    _write_stops.count();
     SDB_WARN(STORAGE, "rocksdb has stopped incoming writes to column family '",
              info.cf_name, "' to let background writes catch up");
   } else {

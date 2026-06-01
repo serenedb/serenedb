@@ -33,11 +33,9 @@
 #include <vector>
 
 #include "basics/async_utils.hpp"
-#include "basics/resource_manager.hpp"
 #include "catalog/function.h"
 #include "catalog/identifiers/index_id.h"
 #include "catalog/types.h"
-#include "metrics/fwd.h"
 #include "rest_server/database_path_feature.h"
 #include "storage_engine/engine_feature.h"
 
@@ -76,10 +74,6 @@ class SearchEngine final {
   void trackOutOfSyncLink() noexcept;
   void untrackOutOfSyncLink() noexcept;
 
-  irs::IResourceManager& getCachedColumnsManager() const noexcept {
-    return _columns_cache_memory_used;
-  }
-
   std::filesystem::path GetPersistedPath(ObjectId database_id) const;
 
  private:
@@ -87,8 +81,7 @@ class SearchEngine final {
 
   std::shared_ptr<SearchThreadPools> _thread_pools;
 
-  metrics::Gauge<uint64_t>& _out_of_sync_links;
-  irs::IResourceManager& _columns_cache_memory_used;
+  std::atomic<uint64_t> _out_of_sync_links{0};
 
   uint32_t _compaction_threads{0};
   uint32_t _commit_threads{0};

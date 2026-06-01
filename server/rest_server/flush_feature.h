@@ -32,7 +32,6 @@
 
 #include "basics/assert.h"
 #include "catalog/types.h"
-#include "metrics/fwd.h"
 
 namespace sdb {
 
@@ -106,8 +105,6 @@ class FlushFeature final {
  private:
   absl::Mutex _flush_subscriptions_mutex;
   std::vector<std::weak_ptr<FlushSubscription>> _flush_subscriptions;
-
-  metrics::Gauge<uint64_t>& _metrics_flush_subscriptions;
 };
 
 }  // namespace sdb

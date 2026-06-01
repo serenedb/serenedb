@@ -26,8 +26,6 @@
 
 #include <string_view>
 
-#include "metrics/fwd.h"
-
 namespace rocksdb {
 
 struct CompactionJobInfo;
@@ -61,10 +59,6 @@ class RocksDBMetricsListener : public rocksdb::EventListener {
 
   void handleCompaction(std::string_view phase,
                         const rocksdb::CompactionJobInfo& info) const;
-
- protected:
-  metrics::Counter& _write_stalls;
-  metrics::Counter& _write_stops;
 };
 
 }  // namespace sdb

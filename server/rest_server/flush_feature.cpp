@@ -23,8 +23,6 @@
 
 #include "app/app_server.h"
 #include "basics/log.h"
-#include "metrics/gauge_builder.h"
-#include "metrics/metrics_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
 
@@ -32,16 +30,9 @@ using namespace sdb::app;
 using namespace sdb::basics;
 using namespace sdb::options;
 
-DECLARE_GAUGE(serenedb_flush_subscriptions, uint64_t,
-              "Number of active flush subscriptions");
-
 namespace sdb {
 
-FlushFeature::FlushFeature()
-  : _metrics_flush_subscriptions(
-      metrics::GetMetrics().add(serenedb_flush_subscriptions{})) {
-  gInstance = this;
-}
+FlushFeature::FlushFeature() { gInstance = this; }
 
 FlushFeature::~FlushFeature() { gInstance = nullptr; }
 
@@ -90,8 +81,6 @@ std::tuple<size_t, size_t, Tick> FlushFeature::releaseUnusedTicks() {
             ", stale flush subscription(s) released: ", stale,
             ", active flush subscription(s): ", active,
             ", initial engine tick: ", initial_tick);
-
-  _metrics_flush_subscriptions.store(active, std::memory_order_relaxed);
 
   return std::tuple{active, stale, min_tick};
 }

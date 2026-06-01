@@ -30,10 +30,6 @@
 #include "general_server/async_job_manager.h"
 #include "general_server/general_server.h"
 #include "general_server/rest_handler_factory.h"
-#include "metrics/counter.h"
-#include "metrics/gauge.h"
-#include "metrics/histogram.h"
-#include "metrics/log_scale.h"
 
 namespace sdb {
 
@@ -58,20 +54,6 @@ class GeneralServerFeature final {
   std::shared_ptr<rest::RestHandlerFactory> handlerFactory() const;
   rest::AsyncJobManager& jobManager();
 
-  void countHttp1Request(uint64_t body_size) noexcept {
-    _request_body_size_http1.count(body_size);
-  }
-
-  void countHttp2Request(uint64_t body_size) noexcept {
-    _request_body_size_http2.count(body_size);
-  }
-
-  void countHttp1Connection() { _http1_connections.count(); }
-
-  void countHttp2Connection() { _http2_connections.count(); }
-
-  metrics::Gauge<uint64_t>& current_requests_size;
-
  private:
   // open REST interface for listening
   void startListening();
@@ -85,12 +67,6 @@ class GeneralServerFeature final {
   std::unique_ptr<rest::AsyncJobManager> _job_manager;
   std::unique_ptr<rest::GeneralServer> _server;
   uint64_t _num_io_threads;
-
-  // Some metrics about requests and connections
-  metrics::Histogram<metrics::LogScale<uint64_t>>& _request_body_size_http1;
-  metrics::Histogram<metrics::LogScale<uint64_t>>& _request_body_size_http2;
-  metrics::Counter& _http1_connections;
-  metrics::Counter& _http2_connections;
 };
 
 }  // namespace sdb

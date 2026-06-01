@@ -54,12 +54,9 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 #include "catalog/index.h"
 #include "catalog/search_common.h"
 #include "catalog/view.h"
-#include "metrics/gauge_builder.h"
-#include "metrics/metrics_feature.h"
 #include "rest_server/database_path_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
-#include "search/resource_manager.h"
 #include "search/wal_recovery.h"
 #include "storage_engine/search_engine.h"
 
@@ -72,11 +69,6 @@ REGISTER_ANALYZER_VPACK(IdentityAnalyzer, IdentityAnalyzer::make,
                         IdentityAnalyzer::normalize);
 REGISTER_ANALYZER_JSON(IdentityAnalyzer, IdentityAnalyzer::make_json,
                        IdentityAnalyzer::normalize_json);
-
-DECLARE_GAUGE(serenedb_search_num_out_of_sync_links, uint64_t,
-              "Number of inverted indexes currently out of sync");
-DECLARE_GAUGE(serenedb_search_columns_cache_size, LimitedResourceManager,
-              "Search columns cache usage in bytes");
 
 uint32_t ComputeThreadsCount(uint32_t threads, uint32_t threads_limit,
                              uint32_t div) noexcept {
@@ -116,11 +108,7 @@ class SearchThreadPools {
 
 SearchEngine::SearchEngine()
   : _dir_feature{DatabasePathFeature::instance()},
-    _thread_pools(std::make_shared<SearchThreadPools>()),
-    _out_of_sync_links(
-      metrics::GetMetrics().add(serenedb_search_num_out_of_sync_links{})),
-    _columns_cache_memory_used(
-      metrics::GetMetrics().add(serenedb_search_columns_cache_size{})) {
+    _thread_pools(std::make_shared<SearchThreadPools>()) {
   const uint32_t threads_limit =
     static_cast<uint32_t>(4 * number_of_cores::GetValue());
   _commit_threads = ComputeThreadsCount(

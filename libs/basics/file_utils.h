@@ -70,9 +70,6 @@ inline void Spit(const std::string& filename, std::string_view content,
   return Spit(filename.c_str(), content, sync);
 }
 
-// appends to an existing file
-void AppendToFile(const char* filename, std::string_view s, bool sync = false);
-
 // if a file could be removed returns ERROR_OK.
 // otherwise, returns ERROR_SYS_ERROR and sets LastError.
 [[nodiscard]] ErrorCode Remove(const char* file_name);
@@ -84,35 +81,6 @@ void AppendToFile(const char* filename, std::string_view s, bool sync = false);
 bool CreateDirectory(const char* name, ErrorCode* error_number = nullptr);
 bool CreateDirectory(const char* name, int mask,
                      ErrorCode* error_number = nullptr);
-
-/// copies directories / files recursive
-/// will not copy files/directories for which the filter function
-/// returns true (now wrapper for version below with CopyRecursiveState
-/// filter)
-bool CopyRecursive(const char* source, const char* target,
-                   const std::function<bool(std::string_view)>& filter,
-                   std::string& error);
-
-enum class CopyRecursiveState {
-  Ignore,
-  Copy,
-  Link,
-};
-
-/// copies directories / files recursive
-/// will not copy files/directories for which the filter function
-/// returns true
-bool CopyRecursive(
-  const char* source, const char* target,
-  const std::function<CopyRecursiveState(std::string_view)>& filter,
-  std::string& error);
-
-/// will not copy files/directories for which the filter function
-/// returns true
-bool CopyDirectoryRecursive(
-  const char* source, const char* target,
-  const std::function<CopyRecursiveState(std::string_view)>& filter,
-  std::string& error);
 
 // returns list of files / subdirectories / links in a directory.
 // does not recurse into subdirectories. will throw an exception in
@@ -133,29 +101,13 @@ inline bool IsDirectory(const std::string& path) {
   return IsDirectory(path.c_str());
 }
 
-// checks if path is a symbolic link
-bool IsSymbolicLink(const char* path);
-
-// checks if path is a regular file
-bool IsRegularFile(const char* path);
-inline bool IsRegularFile(const std::string& path) {
-  return IsRegularFile(path.c_str());
-}
-
 // checks if path exists
 bool Exists(const char* path);
 inline bool Exists(const std::string& path) { return Exists(path.c_str()); }
 
-// returns the size of a file. will return 0 for non-existing files
-/// the caller should check first if the file exists via the exists() method
-off_t Size(const char* path);
-
 // strip extension
 std::string_view StripExtension(std::string_view path,
                                 std::string_view extension);
-
-// changes into directory
-FileResult ChangeDirectory(const char* path);
 
 // returns the current directory
 FileResultString CurrentDirectory();

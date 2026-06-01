@@ -30,8 +30,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <functional>
 #include <memory>
+#include <system_error>
 #include <utility>
 
 #ifdef SERENEDB_HAVE_DIRENT_H
@@ -48,7 +50,6 @@
 #include "basics/error.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/files.h"
 #include "basics/logger/logger.h"
 #include "basics/string_utils.h"
 
@@ -260,13 +261,13 @@ static void FillString(int fd, std::string_view filename, size_t filesize,
 }
 
 void Slurp(const char* filename, std::string& result) {
-  int64_t filesize = SdbSizeFile(filename);
-  if (filesize < 0) {
+  std::error_code ec;
+  uintmax_t filesize = std::filesystem::file_size(filename, ec);
+  if (ec) {
     ThrowFileReadError(filename);
   }
 
   int fd = SERENEDB_OPEN(filename, O_RDONLY | SERENEDB_O_CLOEXEC);
-
   if (fd == -1) {
     ThrowFileReadError(filename);
   }
@@ -308,36 +309,8 @@ void Spit(const char* filename, std::string_view s, bool sync) {
   }
 
   if (sync) {
-    // intentionally ignore this error as there is nothing we can do about it
-    Sdbfsync(fd);
-  }
-}
-
-void AppendToFile(const char* filename, std::string_view s, bool sync) {
-  auto* ptr = s.data();
-  auto len = s.size();
-  int fd = SERENEDB_OPEN(filename, O_WRONLY | O_APPEND | SERENEDB_O_CLOEXEC);
-
-  if (fd == -1) {
-    ThrowFileWriteError(filename);
-  }
-
-  absl::Cleanup sg = [&]() noexcept { SERENEDB_CLOSE(fd); };
-
-  while (0 < len) {
-    auto n = SERENEDB_WRITE(fd, ptr, static_cast<size_t>(len));
-
-    if (n < 0) {
-      ThrowFileWriteError(filename);
-    }
-
-    ptr += n;
-    len -= n;
-  }
-
-  if (sync) {
-    // intentionally ignore this error as there is nothing we can do about it
-    Sdbfsync(fd);
+    // intentionally ignore this error -- nothing we can do about it.
+    std::ignore = fsync(fd);
   }
 }
 
@@ -383,153 +356,6 @@ bool CreateDirectory(const char* name, int mask, ErrorCode* error_number) {
   return result == 0;
 }
 
-/// will not copy files/directories for which the filter function
-/// returns true (now wrapper for version below with Sdbcopy_recursive_e
-/// filter)
-bool CopyRecursive(const char* source, const char* target,
-                   const std::function<bool(std::string_view)>& filter,
-                   std::string& error) {
-  // "auto lambda" will not work here
-  std::function<CopyRecursiveState(std::string_view)> lambda =
-    [&filter](std::string_view pathname) -> CopyRecursiveState {
-    return filter(pathname) ? CopyRecursiveState::Ignore
-                            : CopyRecursiveState::Copy;
-  };
-
-  return CopyRecursive(source, target, lambda, error);
-
-}  // copyRecursive (bool filter())
-
-/// will not copy files/directories for which the filter function
-/// returns true
-bool CopyRecursive(
-  const char* source, const char* target,
-  const std::function<CopyRecursiveState(std::string_view)>& filter,
-  std::string& error) {
-  if (IsDirectory(source)) {
-    return CopyDirectoryRecursive(source, target, filter, error);
-  }
-
-  switch (filter(source)) {
-    case CopyRecursiveState::Ignore:
-      return true;  // original ERROR_OK implies "false", seems wrong
-
-    case CopyRecursiveState::Copy:
-      return SdbCopyFile(source, target, error);
-
-    case CopyRecursiveState::Link:
-      return SdbCreateHardlink(source, target, error);
-
-    default:
-      return false;  // ERROR_BAD_PARAMETER seems wrong since returns "true"
-  }
-}
-
-/// will not copy files/directories for which the filter function
-/// returns true
-bool CopyDirectoryRecursive(
-  const char* source, const char* target,
-  const std::function<CopyRecursiveState(std::string_view)>& filter,
-  std::string& error) {
-  bool rc_bool = true;
-
-  // these strings will be recycled over and over
-  std::string dst = absl::StrCat(target, SERENEDB_DIR_SEPARATOR_STR);
-  const size_t dst_prefix_length = dst.size();
-  std::string src = absl::StrCat(source, SERENEDB_DIR_SEPARATOR_STR);
-  const size_t src_prefix_length = src.size();
-
-  DIR* filedir = opendir(source);
-
-  if (filedir == nullptr) {
-    error = absl::StrCat("directory ", source, " not found");
-    return false;
-  }
-
-  struct dirent* one_item = nullptr;
-
-  // do not use readdir_r() here anymore as it is not safe and deprecated
-  // in newer versions of libc:
-  // http://man7.org/linux/man-pages/man3/readdir_r.3.html
-  // the man page recommends to use plain readdir() because it can be expected
-  // to be thread-safe in reality, and newer versions of POSIX may require its
-  // thread-safety formally, and in addition obsolete readdir_r() altogether
-  while ((one_item = (readdir(filedir))) != nullptr && rc_bool) {
-    const char* fn = one_item->d_name;
-
-    // Now iterate over the items.
-    // check its not the pointer to the upper directory:
-    if (!strcmp(fn, ".") || !strcmp(fn, "..")) {
-      continue;
-    }
-
-    // add current filename to prefix
-    src.resize(src_prefix_length);
-    SDB_ASSERT(src.back() == SERENEDB_DIR_SEPARATOR_CHR);
-    src.append(fn);
-
-    auto filter_result = filter(src);
-
-    if (filter_result != CopyRecursiveState::Ignore) {
-      // prepare dst filename
-      dst.resize(dst_prefix_length);
-      SDB_ASSERT(dst.back() == SERENEDB_DIR_SEPARATOR_CHR);
-      dst.append(fn);
-
-      // figure out the type of the directory entry.
-      StatResultType type = StatResultType::Error;
-      struct stat stbuf;
-      int res = SERENEDB_STAT(src.c_str(), &stbuf);
-      if (res == 0) {
-        type = DoStatResultType(stbuf);
-      }
-
-      switch (filter_result) {
-        case CopyRecursiveState::Ignore:
-          SDB_ASSERT(false);
-          break;
-
-        case CopyRecursiveState::Copy:
-          // Handle subdirectories:
-          if (type == StatResultType::Directory) {
-            long system_error;
-            auto rc = SdbCreateDirectory(dst.c_str(), system_error, error);
-            if (rc != ERROR_OK && rc != ERROR_FILE_EXISTS) {
-              rc_bool = false;
-              break;
-            }
-            if (!CopyDirectoryRecursive(src.c_str(), dst.c_str(), filter,
-                                        error)) {
-              rc_bool = false;
-              break;
-            }
-            if (!SdbCopyAttributes(src.c_str(), dst.c_str(), error)) {
-              rc_bool = false;
-              break;
-            }
-          } else if (type == StatResultType::SymLink) {
-            if (!SdbCopySymlink(src.c_str(), dst.c_str(), error)) {
-              rc_bool = false;
-            }
-          } else {
-            // optimized version that reuses the already retrieved stat data
-            rc_bool = SdbCopyFile(src.c_str(), dst.c_str(), error, &stbuf);
-          }
-          break;
-
-        case CopyRecursiveState::Link:
-          if (!SdbCreateHardlink(src.c_str(), dst.c_str(), error)) {
-            rc_bool = false;
-          }
-          break;
-      }
-    }
-  }
-  closedir(filedir);
-
-  return rc_bool;
-}
-
 std::vector<std::string> ListFiles(const char* directory) {
   std::vector<std::string> result;
 
@@ -552,26 +378,8 @@ bool IsDirectory(const char* path) {
   return DoStatResultType(path) == ::StatResultType::Directory;
 }
 
-bool IsSymbolicLink(const char* path) {
-  return DoStatResultType(path) == ::StatResultType::SymLink;
-}
-
-bool IsRegularFile(const char* path) {
-  return DoStatResultType(path) == ::StatResultType::File;
-}
-
 bool Exists(const char* path) {
   return DoStatResultType(path) != ::StatResultType::Error;
-}
-
-off_t Size(const char* path) {
-  int64_t result = SdbSizeFile(path);
-
-  if (result < 0) {
-    return (off_t)0;
-  }
-
-  return (off_t)result;
 }
 
 std::string_view StripExtension(std::string_view path,
@@ -587,16 +395,6 @@ std::string_view StripExtension(std::string_view path,
   }
 
   return path;
-}
-
-FileResult ChangeDirectory(const char* path) {
-  int res = SERENEDB_CHDIR(path);
-
-  if (res == 0) {
-    return FileResult();
-  } else {
-    return FileResult(errno);
-  }
 }
 
 FileResultString CurrentDirectory() {
@@ -617,30 +415,73 @@ FileResultString CurrentDirectory() {
   return FileResultString(result);
 }
 
-std::string HomeDirectory() { return std::string{SdbHomeDirectory()}; }
-
-std::string ConfigDirectory(const char* binary_path) {
-  std::string dir = SdbLocateConfigDirectory(binary_path);
-
-  if (dir.empty()) {
-    return CurrentDirectory().result();
-  }
-
-  return dir;
+std::string HomeDirectory() {
+  const char* home = std::getenv("HOME");
+  return home == nullptr ? std::string{"."} : std::string{home};
 }
 
-std::string_view Dirname(std::string_view name) { return SdbDirname(name); }
+std::string ConfigDirectory(const char* /*binary_path*/) {
+  // SERENEDB_CONFIG_PATH overrides everything; otherwise fall back to the
+  // compile-time _SYSCONFDIR_ (if set non-empty), else CWD.
+  if (const char* env = std::getenv("SERENEDB_CONFIG_PATH");
+      env != nullptr && *env != '\0') {
+    std::string r{env};
+    while (!r.empty() && r.back() == SERENEDB_DIR_SEPARATOR_CHR) {
+      r.pop_back();
+    }
+    r.push_back(SERENEDB_DIR_SEPARATOR_CHR);
+    return r;
+  }
+#if defined(_SYSCONFDIR_)
+  if (const char* dir = _SYSCONFDIR_; *dir != '\0') {
+    std::string r{dir};
+    if (r.back() != SERENEDB_DIR_SEPARATOR_CHR) {
+      r.push_back(SERENEDB_DIR_SEPARATOR_CHR);
+    }
+    return r;
+  }
+#endif
+  return CurrentDirectory().result();
+}
+
+std::string_view Dirname(std::string_view path) {
+  size_t n = path.size();
+  if (n == 0) {
+    return ".";
+  }
+  if (n > 1 && path[n - 1] == SERENEDB_DIR_SEPARATOR_CHR) {
+    return path.substr(0, n - 1);
+  }
+  if (n == 1 && path[0] == SERENEDB_DIR_SEPARATOR_CHR) {
+    return SERENEDB_DIR_SEPARATOR_STR;
+  }
+  if (n == 1 && path[0] == '.') {
+    return ".";
+  }
+  if (n == 2 && path[0] == '.' && path[1] == '.') {
+    return "..";
+  }
+  const char* p;
+  for (p = path.data() + (n - 1); path.data() < p; --p) {
+    if (*p == SERENEDB_DIR_SEPARATOR_CHR) {
+      break;
+    }
+  }
+  if (path.data() == p) {
+    return *p == SERENEDB_DIR_SEPARATOR_CHR ? SERENEDB_DIR_SEPARATOR_STR : ".";
+  }
+  return path.substr(0, p - path.data());
+}
 
 void MakePathAbsolute(std::string& path) {
-  std::string cwd = file_utils::CurrentDirectory().result();
-
   if (path.empty()) {
-    path = cwd;
-  } else {
-    std::string p = SdbGetAbsolutePath(path, cwd);
-    if (!p.empty()) {
-      path = p;
-    }
+    path = file_utils::CurrentDirectory().result();
+    return;
+  }
+  std::error_code ec;
+  auto abs = std::filesystem::absolute(path, ec);
+  if (!ec) {
+    path = abs.string();
   }
 }
 

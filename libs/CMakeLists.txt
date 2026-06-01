@@ -32,6 +32,7 @@ add_library(
     basics/error.cpp
     basics/files.cpp
     basics/levenshtein.cpp
+    basics/lockfile.cpp
     basics/signals.cpp
     basics/system-functions.cpp
     basics/strings.cpp

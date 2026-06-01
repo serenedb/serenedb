@@ -270,13 +270,6 @@ class VPackHelper {
     return stringUInt64(slice.get(name));
   }
 
-  /// parses a json file to VPack
-  static vpack::Builder vpackFromFile(const char* filename);
-
-  /// writes a VPack to a file
-  static bool vpackToFile(const std::string& filename, vpack::Slice slice,
-                          bool sync_file);
-
   template<typename T>
   static constexpr int compareSame(T l, T r) {
     if (l < r) {

@@ -23,7 +23,6 @@
 
 #include "basics/common.h"
 #include "basics/directories.h"
-#include "basics/files.h"
 #include "basics/hashes.h"
 #include "basics/utf8_helper.h"
 #include "gtest/gtest.h"

@@ -27,7 +27,6 @@
 #include <string>
 #include <thread>
 
-#include "basics/files.h"
 #include "basics/operating-system.h"
 #include "basics/string_utils.h"
 
@@ -53,14 +52,13 @@ size_t NumberOfCoresImpl() {
 
 struct NumberOfCoresCache {
   NumberOfCoresCache() : cached_value(NumberOfCoresImpl()), overridden(false) {
-    std::string value;
-    if (SdbGETENV("SERENEDB_OVERRIDE_DETECTED_NUMBER_OF_CORES", value)) {
-      if (!value.empty()) {
-        uint64_t v = sdb::basics::string_utils::Uint64(value);
-        if (v != 0) {
-          cached_value = static_cast<size_t>(v);
-          overridden = true;
-        }
+    if (const char* env =
+          std::getenv("SERENEDB_OVERRIDE_DETECTED_NUMBER_OF_CORES");
+        env != nullptr && *env != '\0') {
+      uint64_t v = sdb::basics::string_utils::Uint64(env);
+      if (v != 0) {
+        cached_value = static_cast<size_t>(v);
+        overridden = true;
       }
     }
   }

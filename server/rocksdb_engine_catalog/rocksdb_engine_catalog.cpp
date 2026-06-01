@@ -45,11 +45,15 @@
 #include <vpack/slice.h>
 #include <vpack/vpack_helper.h>
 
+#include <sys/statvfs.h>
+#include <unistd.h>
+
 #include <atomic>
 #include <filesystem>
 #include <iomanip>
 #include <limits>
 #include <memory>
+#include <system_error>
 #include <utility>
 
 #include "app/app_server.h"
@@ -62,7 +66,6 @@
 #include "basics/exceptions.h"
 #include "basics/exitcodes.h"
 #include "basics/file_utils.h"
-#include "basics/files.h"
 #include "basics/logger/logger.h"
 #include "basics/result.h"
 #include "basics/static_strings.h"
@@ -168,6 +171,28 @@ void StartupVersionCheck(app::AppServer& server, rocksdb::TransactionDB* db,
                 rocksutils::ConvertStatus(s).errorMessage());
     }
   }
+}
+
+bool QueryDiskSpace(const char* path, uint64_t& total, uint64_t& free) {
+  std::error_code ec;
+  auto s = std::filesystem::space(path, ec);
+  if (ec) {
+    return false;
+  }
+  total = s.capacity;
+  // Match historical semantics: root sees `free`; everyone else `available`.
+  free = (geteuid() == 0) ? s.free : s.available;
+  return true;
+}
+
+bool QueryINodes(const char* path, uint64_t& total, uint64_t& free) {
+  struct statvfs st;
+  if (statvfs(path, &st) != 0) {
+    return false;
+  }
+  total = static_cast<uint64_t>(st.f_files);
+  free = static_cast<uint64_t>(st.f_ffree);
+  return true;
 }
 
 }  // namespace
@@ -468,11 +493,14 @@ void RocksDBEngineCatalog::verifySstFiles() const {
 
   rocksdb::Options options;
   rocksdb::SstFileReader sst_reader(options);
-  for (const auto& file_name : SdbFullTreeDirectory(_path.c_str())) {
-    if (!file_name.ends_with(".sst")) {
+  std::error_code ec;
+  for (auto it = std::filesystem::recursive_directory_iterator{_path, ec};
+       !ec && it != std::filesystem::recursive_directory_iterator{};
+       it.increment(ec)) {
+    if (it->path().extension() != ".sst") {
       continue;
     }
-    std::string filename = basics::file_utils::BuildFilename(_path, file_name);
+    const std::string filename = it->path().string();
     rocksdb::Status res = sst_reader.Open(filename);
     if (res.ok()) {
       res = sst_reader.VerifyChecksum();
@@ -511,17 +539,14 @@ void RocksDBEngineCatalog::start() {
 
   [[maybe_unused]] bool created_engine_dir = false;
   if (!basics::file_utils::IsDirectory(_path)) {
-    std::string system_error_str;
-    long error_no;
-
-    auto res = SdbCreateRecursiveDirectory(_path, error_no, system_error_str);
-
-    if (res == ERROR_OK) {
+    std::error_code ec;
+    std::filesystem::create_directories(_path, ec);
+    if (!ec) {
       SDB_TRACE(STORAGE, "created RocksDB data directory '", _path, "'");
       created_engine_dir = true;
     } else {
       SDB_FATAL(STORAGE, "unable to create RocksDB data directory '", _path,
-                "': ", system_error_str);
+                "': ", ec.message());
     }
   }
 
@@ -536,7 +561,7 @@ void RocksDBEngineCatalog::start() {
 
   uint64_t total_space;
   uint64_t free_space;
-  if (SdbGetDiskSpaceInfo(_path.c_str(), total_space, free_space).ok() &&
+  if (QueryDiskSpace(_path.c_str(), total_space, free_space) &&
       total_space != 0) {
     SDB_DEBUG(STORAGE, "total disk space for database directory mount: ",
               basics::string_utils::FormatSize(total_space),
@@ -1653,9 +1678,7 @@ void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {
     uint64_t total_space = 0;
     // free disk space in database directory
     uint64_t free_space = 0;
-    Result res =
-      SdbGetDiskSpaceInfo(_base_path.c_str(), total_space, free_space);
-    if (res.ok()) {
+    if (QueryDiskSpace(_base_path.c_str(), total_space, free_space)) {
       builder.add("rocksdb.free-disk-space", free_space);
       builder.add("rocksdb.total-disk-space", total_space);
     } else {
@@ -1671,9 +1694,7 @@ void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {
     uint64_t total_i_nodes = 0;
     // free inodes for database directory
     uint64_t free_i_nodes = 0;
-    Result res =
-      SdbGetINodesInfo(_base_path.c_str(), total_i_nodes, free_i_nodes);
-    if (res.ok()) {
+    if (QueryINodes(_base_path.c_str(), total_i_nodes, free_i_nodes)) {
       builder.add("rocksdb.free-inodes", free_i_nodes);
       builder.add("rocksdb.total-inodes", total_i_nodes);
     } else {
@@ -1784,7 +1805,7 @@ HealthData RocksDBEngineCatalog::healthCheck() {
     // free disk space in database directory
     uint64_t free_space = 0;
 
-    if (SdbGetDiskSpaceInfo(_base_path.c_str(), total_space, free_space).ok() &&
+    if (QueryDiskSpace(_base_path.c_str(), total_space, free_space) &&
         total_space >= 1024 * 1024) {
       // only carry out the following if we get a disk size of at least 1MB
       // back. everything else seems to be very unreasonable and not

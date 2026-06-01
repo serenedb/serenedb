@@ -15,40 +15,28 @@
 /// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
-///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
-//
-// Residual helpers pinned alive by tests/libs/iresearch/search/search_bench_-
-// test.cpp. New code should NOT add callers here -- use std::filesystem /
-// std::getenv / openssl direct instead. Once that search-bench is cleaned
-// up this header / .cpp pair goes away entirely.
 
 #pragma once
 
-#include <cstddef>
-#include <string>
+#include "basics/error.h"
+#include "basics/errors.h"
 
 namespace sdb {
 
-inline constexpr size_t kReadBufferSize = 8192;
-
-bool SdbSlurpFile(const char* filename, std::string& result);
-
-bool SdbSlurpGzipFile(const char* filename, std::string& result);
-
-bool SdbGETENV(const char* which, std::string& value);
-
-struct Sha256Functor {
-  Sha256Functor();
-  ~Sha256Functor();
-
-  bool operator()(const char* data, size_t size) noexcept;
-
-  std::string finalize();
-
- private:
-  void* _context;
-};
+// Pid-locking primitives backed by fcntl(2) F_WRLCK / F_UNLCK on a small file
+// whose body is the holder's pid. Used by DatabasePathFeature to gate "one
+// serened per datadir". No std::filesystem equivalent -- file locks are
+// kernel-level.
+//
+// CreateLockFile: O_EXCL-create the file, write the pid, take an exclusive
+// fcntl lock. ERROR_OK on success.
+// VerifyLockFile: existing file? read the pid, check if that process is alive
+// (kill(pid, 0)), then try to acquire the lock. Returns
+// ERROR_SERVER_DATADIR_LOCKED if held; ERROR_OK if it's a stale leftover.
+// DestroyLockFile: release the lock + unlink + close.
+ErrorCode CreateLockFile(const char* filename);
+ErrorCode VerifyLockFile(const char* filename);
+ErrorCode DestroyLockFile(const char* filename);
 
 }  // namespace sdb

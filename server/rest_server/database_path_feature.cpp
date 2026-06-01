@@ -23,12 +23,15 @@
 
 #include <absl/flags/flag.h>
 
+#include <filesystem>
+#include <system_error>
+
 #include "basics/application-exit.h"
 #include "basics/cleanup_functions.h"
 #include "basics/exitcodes.h"
 #include "basics/file_utils.h"
-#include "basics/files.h"
 #include "basics/lifecycle.h"
+#include "basics/lockfile.h"
 #include "basics/logger/logger.h"
 #include "basics/operating-system.h"
 #include "basics/string_utils.h"
@@ -66,19 +69,15 @@ DatabasePathFeature::DatabasePathFeature()
 DatabasePathFeature::~DatabasePathFeature() { gInstance = nullptr; }
 
 void DatabasePathFeature::start() {
-  // create base directory if it does not exist
+  // Create base directory if it does not exist.
   if (!basics::file_utils::IsDirectory(_directory)) {
-    std::string system_error_str;
-    long error_no;
-
-    const auto res =
-      SdbCreateRecursiveDirectory(_directory, error_no, system_error_str);
-
-    if (res == ERROR_OK) {
+    std::error_code ec;
+    std::filesystem::create_directories(_directory, ec);
+    if (!ec) {
       SDB_INFO(GENERAL, "Created database directory: ", _directory);
     } else {
       SDB_FATAL(GENERAL, "Unable to create database directory '", _directory,
-                "': ", system_error_str);
+                "': ", ec.message());
     }
   }
 
@@ -86,7 +85,7 @@ void DatabasePathFeature::start() {
   // a second serened starting on the same data dir.
   std::string lock_filename =
     basics::file_utils::BuildFilename(_directory, "LOCK");
-  auto res = SdbVerifyLockFile(lock_filename.c_str());
+  auto res = VerifyLockFile(lock_filename.c_str());
   if (res != ERROR_OK) {
     std::string other_pid;
     try {
@@ -106,15 +105,18 @@ void DatabasePathFeature::start() {
         lock_filename, "' goes away.");
     }
   }
-  if (SdbExistsFile(lock_filename.c_str())) {
-    res = SdbUnlinkFile(lock_filename.c_str());
-    if (res != ERROR_OK) {
-      SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
-                          "failed to remove an abandoned lockfile '",
-                          lock_filename, "': ", GetErrorStr(res));
+  {
+    std::error_code ec;
+    if (std::filesystem::exists(lock_filename, ec) && !ec) {
+      std::filesystem::remove(lock_filename, ec);
+      if (ec) {
+        SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
+                            "failed to remove an abandoned lockfile '",
+                            lock_filename, "': ", ec.message());
+      }
     }
   }
-  res = SdbCreateLockFile(lock_filename.c_str());
+  res = CreateLockFile(lock_filename.c_str());
   if (res != ERROR_OK) {
     SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
                         "failed to lock the database directory using '",
@@ -123,7 +125,7 @@ void DatabasePathFeature::start() {
   basics::CleanupFunctions::registerFunction(
     std::make_unique<basics::CleanupFunctions::CleanupFunction>(
       [lock_filename](int, void*) {
-        std::ignore = SdbDestroyLockFile(lock_filename.c_str());
+        std::ignore = DestroyLockFile(lock_filename.c_str());
       }));
 }
 

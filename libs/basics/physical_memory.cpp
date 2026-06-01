@@ -23,7 +23,6 @@
 
 #include <unistd.h>
 
-#include "basics/files.h"
 #include "basics/operating-system.h"
 #include "basics/string_utils.h"
 #include "basics/units_helper.h"
@@ -79,9 +78,10 @@ uint64_t PhysicalMemoryImpl() {
 struct PhysicalMemoryCache {
   PhysicalMemoryCache()
     : cached_value(PhysicalMemoryImpl()), overridden(false) {
-    std::string value;
-    if (SdbGETENV("SERENEDB_OVERRIDE_DETECTED_TOTAL_MEMORY", value)) {
-      value = basics::string_utils::RemoveWhitespaceAndComments(value);
+    const char* env = std::getenv("SERENEDB_OVERRIDE_DETECTED_TOTAL_MEMORY");
+    if (env != nullptr) {
+      std::string value =
+        basics::string_utils::RemoveWhitespaceAndComments(env);
 
       if (!value.empty()) {
         uint64_t v = sdb::options::units_helper::FromString<uint64_t>(value);

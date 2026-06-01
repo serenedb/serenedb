@@ -2,9 +2,7 @@ add_library(
     serene_geo
     STATIC
     geo_json.cpp
-    geo_params.cpp
     shape_container.cpp
-    utils.cpp
     coding.cpp
     wkb.cpp
 )

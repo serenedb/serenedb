@@ -35,21 +35,12 @@
 #include "basics/down_cast.h"
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
-#include "geo/ellipsoid.h"
 #include "geo/geo_params.h"
 #include "geo/s2/multi_point_region.h"
 #include "geo/s2/multi_polyline_region.h"
-#include "geo/utils.h"
 
 namespace sdb::geo {
 namespace {
-
-bool IsExcessiveLngLat(S1Angle lngsmall, S1Angle lngbig, S1Angle latsmall,
-                       S1Angle latbig) {
-  return std::fabs(lngbig.radians() - lngsmall.radians()) +
-           std::fabs(latbig.radians() - latsmall.radians()) >=
-         M_PI;
-}
 
 constexpr uint8_t BinOpCase(ShapeContainer::Type lhs,
                             ShapeContainer::Type rhs) noexcept {
@@ -125,67 +116,6 @@ bool IntersectsHelper(const S2Region& r1, const S2Region& r2) {
 }
 
 }  // namespace
-
-void ShapeContainer::updateBounds(QueryParams& qp) const noexcept {
-  SDB_ASSERT(!empty());
-
-  S2LatLng ll{centroid()};
-  qp.origin = ll;
-
-  auto rect = _data->GetRectBound();
-  if (rect.is_empty() || rect.is_point()) {
-    qp.max_distance = 0.0;
-    return;
-  }
-  double rad_max = 0.0;
-  // The following computation deserves an explanation:
-  // We want to derive from the bounding LatLng box an upper bound for
-  // the maximal distance. The centroid of the shape is contained in the
-  // bounding box and the main idea is to take the maximum distance to
-  // any of the corners and take this as upper bound for the distance.
-  // The hope is then that the complete bounding box is contained in the
-  // circle with radius this maximal distance.
-  // However, this is not correct in all cases. A prominent counterexample
-  // is the bounding box {lat:[-90, 90], lng:[-180, 180]} which is used
-  // for very large polygons. Its "four" corners are twice the north pole
-  // and twice the south pole. Most points on earth have a maximal distance
-  // to north and south pole of less than half the diameter of the earth,
-  // and yet, the smallest circle to contain the whole bounding box has
-  // radius half of the diameter of the earth.
-  // So we need to adjust our bound here. What we do is the following:
-  // If the sum of the added difference in latitude and longitude
-  // is less than 180 degrees, then the actual shortest geodesic to a
-  // corner runs as expected (for example, with increasing lat and lng
-  // towards the upper right corner of the bounding box). In this case
-  // the estimate of the maximal distance is correct, otherwise we simply
-  // take M_PI or 180 degrees or half the diameter of the earth as estimate.
-  if (IsExcessiveLngLat(rect.lng_lo(), ll.lng(), rect.lat_lo(), ll.lat())) {
-    rad_max = M_PI;
-  } else {
-    S1Angle a1{ll, rect.lo()};
-    rad_max = a1.radians();
-  }
-  if (IsExcessiveLngLat(ll.lng(), rect.lng_hi(), rect.lat_lo(), ll.lat())) {
-    rad_max = M_PI;
-  } else {
-    S1Angle a2{ll, S2LatLng{rect.lat_lo(), rect.lng_hi()}};
-    rad_max = std::max(rad_max, a2.radians());
-  }
-  if (IsExcessiveLngLat(rect.lng_lo(), ll.lng(), ll.lat(), rect.lat_hi())) {
-    rad_max = M_PI;
-  } else {
-    S1Angle a3{ll, S2LatLng{rect.lat_hi(), rect.lng_lo()}};
-    rad_max = std::max(rad_max, a3.radians());
-  }
-  if (IsExcessiveLngLat(ll.lng(), rect.lng_hi(), ll.lat(), rect.lat_hi())) {
-    rad_max = M_PI;
-  } else {
-    S1Angle a4{ll, rect.hi()};
-    rad_max = std::max(rad_max, a4.radians());
-  }
-  const auto rad = kRadEps + rad_max;
-  qp.max_distance = rad * kEarthRadiusInMeters;
-}
 
 S2Point ShapeContainer::centroid() const noexcept {
   switch (_type) {
@@ -418,64 +348,9 @@ bool ShapeContainer::equals(const ShapeContainer& other) const {
   return false;
 }
 
-double ShapeContainer::distanceFromCentroid(const S2Point& other,
-                                            const Ellipsoid& e) const noexcept {
-  return utils::GeodesicDistance(S2LatLng{centroid()}, S2LatLng{other}, e);
-}
-
 double ShapeContainer::distanceFromCentroid(
   const S2Point& other) const noexcept {
   return centroid().Angle(other) * geo::kEarthRadiusInMeters;
-}
-
-double ShapeContainer::area(const Ellipsoid& e) const {
-  if (!isAreaType()) {
-    return 0.0;
-  }
-
-  // TODO: perhaps remove in favor of one code-path below ?
-  if (e.flattening() == 0.0) {
-    switch (_type) {
-      case Type::S2Polygon: {
-        auto& data = basics::downCast<S2Polygon>(*_data);
-        return data.GetArea() * kEarthRadiusInMeters * kEarthRadiusInMeters;
-      }
-      default:
-        SDB_ASSERT(false);
-        return 0.0;
-    }
-  }
-
-  double area = 0.0;
-  geod_geodesic g{};
-  geod_init(&g, e.equator_radius(), e.flattening());
-  double a = 0.0;
-  double p = 0.0;
-
-  switch (_type) {
-    case Type::S2Polygon: {
-      geod_polygon polygon{};
-      auto& data = basics::downCast<S2Polygon>(*_data);
-      for (int k = 0; k < data.num_loops(); ++k) {
-        geod_polygon_init(&polygon, 0);
-
-        const auto* loop = data.loop(k);
-        for (const auto& vertex : loop->vertices_span()) {
-          S2LatLng lat_lng{vertex};
-          geod_polygon_addpoint(&g, &polygon, lat_lng.lat().degrees(),
-                                lat_lng.lng().degrees());
-        }
-
-        geod_polygon_compute(&g, &polygon, /*reverse=*/false, /*sign=*/true, &a,
-                             &p);
-        area += a;
-      }
-    } break;
-    default:
-      SDB_ASSERT(false);
-      return 0.0;
-  }
-  return area;
 }
 
 void ShapeContainer::Encode(Encoder& encoder, coding::Options options) const {

@@ -6,7 +6,7 @@ Runs ~126 `.test` files via DuckDB's `unittest` binary against the same
 serenedb build that ships the statically-linked extension.
 
 This is the DuckDB-level layer of the postgres_scanner test story. The
-serened-level layer (pg-wire end-to-end coverage) is the `*_pgscan.test`
+serened-level layer (pg-wire end-to-end coverage) is the `*_pgscan.test_slow`
 files under [tests/sqllogic/sdb/pg/duckdb_postgres/](../sqllogic/sdb/pg/duckdb_postgres/),
 driven by the regular sqllogic runner.
 

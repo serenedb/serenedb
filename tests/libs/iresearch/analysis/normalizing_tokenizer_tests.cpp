@@ -263,7 +263,7 @@ TEST_F(NormalizingTokenizerTests, test_load) {
     ASSERT_FALSE(stream->next());
   }
 
-  // invalid options — bogus locale (ported from "load jSON invalid"
+  // invalid options -- bogus locale (ported from "load jSON invalid"
   // cases that exercised empty/missing-locale JSON). The legacy JSON
   // parse-time rejections (non-string locale, non-string case, non-bool
   // accent) have no direct-API analogue, so they collapse to this

@@ -37,7 +37,6 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -51,22 +50,6 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 
 constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
   return nullptr;
-}
-
-bool ParseMeasure(std::string_view s, DFIMeasure& out) {
-  if (s == "standardized") {
-    out = DFIMeasure::Standardized;
-    return true;
-  }
-  if (s == "saturated") {
-    out = DFIMeasure::Saturated;
-    return true;
-  }
-  if (s == "chi_squared" || s == "chisquared") {
-    out = DFIMeasure::ChiSquared;
-    return true;
-  }
-  return false;
 }
 
 // Independence measure kernels; inlined by the templated scorer.

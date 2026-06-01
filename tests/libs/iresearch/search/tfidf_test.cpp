@@ -312,7 +312,6 @@ TEST_P(TfidfTestCase, test_normalize_features) {
     ASSERT_NE(nullptr, scorer);
     ASSERT_EQ(irs::IndexFeatures::Freq, scorer->GetIndexFeatures());
   }
-
 }
 
 TEST_P(TfidfTestCase, test_phrase) {

@@ -37,10 +37,11 @@
 #include "storage_engine/index_shard.h"
 
 namespace duckdb {
+
 class Serializer;
 class Deserializer;
-}  // namespace duckdb
 
+}  // namespace duckdb
 namespace sdb::catalog {
 
 // Numeric/temporal DuckDB types the inverted-index sink indexes via a

@@ -136,7 +136,7 @@ class AnalyzerImpl final {
   CacheType::ptr Get() const noexcept;
 
   std::string_view GetType() const noexcept { return _type; }
-  // duckdb-binary serialized `TokenizerConfig` blob — opaque to callers.
+  // duckdb-binary serialized `TokenizerConfig` blob -- opaque to callers.
   std::string_view GetProperties() const noexcept { return _properties; }
   Features GetFeatures() const noexcept { return _features; }
   char GetFieldMarker() const noexcept { return _field_marker; }

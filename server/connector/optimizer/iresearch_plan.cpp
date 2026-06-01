@@ -1388,10 +1388,14 @@ catalog::Column::Id ResolveColumnId(
 bool IsScorerFunctionName(std::string_view name) {
   using S = catalog::ScorerOptions;
   // TODO(mbkkt) make TrivialBiSet?
-  return name == S::Bm25::Owner::type_name() || name == S::Tfidf::Owner::type_name() ||
-         name == S::LmJm::Owner::type_name() || name == S::LmDirichlet::Owner::type_name() ||
-         name == S::IndriDirichlet::Owner::type_name() || name == S::Dfi::Owner::type_name() ||
-         name == S::RawBoost::Owner::type_name() || name == S::RawTf::Owner::type_name() ||
+  return name == S::Bm25::Owner::type_name() ||
+         name == S::Tfidf::Owner::type_name() ||
+         name == S::LmJm::Owner::type_name() ||
+         name == S::LmDirichlet::Owner::type_name() ||
+         name == S::IndriDirichlet::Owner::type_name() ||
+         name == S::Dfi::Owner::type_name() ||
+         name == S::RawBoost::Owner::type_name() ||
+         name == S::RawTf::Owner::type_name() ||
          name == S::RawDL::Owner::type_name();
 }
 

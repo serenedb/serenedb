@@ -38,7 +38,6 @@ class RawDL final : public irs::ScorerBase<RawDL, void> {
     return std::make_unique<RawDL>();
   }
 
-
   RawDL() noexcept = default;
 
   IndexFeatures GetIndexFeatures() const noexcept final {

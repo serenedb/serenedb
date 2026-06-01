@@ -55,33 +55,33 @@ TEST(lm_test, jm_load_default) {
 }
 
 TEST(lm_test, jm_load_object) {
-  auto scorer = irs::LMJelinekMercer::Make(
-    irs::LMJelinekMercer::Options{.lambda = 0.7f});
+  auto scorer =
+    irs::LMJelinekMercer::Make(irs::LMJelinekMercer::Options{.lambda = 0.7f});
   ASSERT_NE(nullptr, scorer);
   auto& lm = dynamic_cast<irs::LMJelinekMercer&>(*scorer);
   ASSERT_FLOAT_EQ(0.7f, lm.lambda());
 }
 
 TEST(lm_test, jm_load_array) {
-  auto scorer = irs::LMJelinekMercer::Make(
-    irs::LMJelinekMercer::Options{.lambda = 0.3f});
+  auto scorer =
+    irs::LMJelinekMercer::Make(irs::LMJelinekMercer::Options{.lambda = 0.3f});
   ASSERT_NE(nullptr, scorer);
   auto& lm = dynamic_cast<irs::LMJelinekMercer&>(*scorer);
   ASSERT_FLOAT_EQ(0.3f, lm.lambda());
 }
 
 TEST(lm_test, jm_load_invalid) {
-  // λ must lie in the open interval (0, 1] — both `1-lambda` and `lambda`
+  // λ must lie in the open interval (0, 1] -- both `1-lambda` and `lambda`
   // must be positive for the smoothing formula to be defined.
-  EXPECT_EQ(nullptr,
-            irs::LMJelinekMercer::Make(irs::LMJelinekMercer::Options{.lambda = 0.f}));
-  EXPECT_EQ(nullptr,
-            irs::LMJelinekMercer::Make(irs::LMJelinekMercer::Options{.lambda = -0.1f}));
-  EXPECT_EQ(nullptr,
-            irs::LMJelinekMercer::Make(irs::LMJelinekMercer::Options{.lambda = 1.5f}));
+  EXPECT_EQ(nullptr, irs::LMJelinekMercer::Make(
+                       irs::LMJelinekMercer::Options{.lambda = 0.f}));
+  EXPECT_EQ(nullptr, irs::LMJelinekMercer::Make(
+                       irs::LMJelinekMercer::Options{.lambda = -0.1f}));
+  EXPECT_EQ(nullptr, irs::LMJelinekMercer::Make(
+                       irs::LMJelinekMercer::Options{.lambda = 1.5f}));
   // Boundary: λ = 1 is allowed (degenerate but mathematically defined).
-  EXPECT_NE(nullptr,
-            irs::LMJelinekMercer::Make(irs::LMJelinekMercer::Options{.lambda = 1.f}));
+  EXPECT_NE(nullptr, irs::LMJelinekMercer::Make(
+                       irs::LMJelinekMercer::Options{.lambda = 1.f}));
 }
 
 TEST(lm_test, jm_equals) {
@@ -111,21 +111,20 @@ TEST(lm_test, dirichlet_load_default) {
 }
 
 TEST(lm_test, dirichlet_load_object) {
-  auto scorer =
-    irs::LMDirichlet::Make(irs::LMDirichlet::Options{.mu = 500.f});
+  auto scorer = irs::LMDirichlet::Make(irs::LMDirichlet::Options{.mu = 500.f});
   ASSERT_NE(nullptr, scorer);
   auto& lm = dynamic_cast<irs::LMDirichlet&>(*scorer);
   ASSERT_FLOAT_EQ(500.f, lm.mu());
 }
 
 TEST(lm_test, dirichlet_load_invalid) {
-  // μ must be non-negative — it scales the collection prior and divides by
+  // μ must be non-negative -- it scales the collection prior and divides by
   // (dl + μ); a negative μ makes the score uninterpretable.
   EXPECT_EQ(nullptr,
             irs::LMDirichlet::Make(irs::LMDirichlet::Options{.mu = -1.f}));
   EXPECT_EQ(nullptr,
             irs::LMDirichlet::Make(irs::LMDirichlet::Options{.mu = -0.001f}));
-  // Boundary: μ = 0 is allowed (degenerate — falls back to MLE).
+  // Boundary: μ = 0 is allowed (degenerate -- falls back to MLE).
   EXPECT_NE(nullptr,
             irs::LMDirichlet::Make(irs::LMDirichlet::Options{.mu = 0.f}));
 }

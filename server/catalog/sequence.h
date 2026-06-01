@@ -31,10 +31,11 @@
 #include "catalog/object.h"
 
 namespace duckdb {
+
 class Serializer;
 class Deserializer;
-}  // namespace duckdb
 
+}  // namespace duckdb
 namespace rocksdb {
 
 class ColumnFamilyHandle;
@@ -97,7 +98,7 @@ class Sequence final : public Object {
  private:
   std::atomic_uint64_t _cnt{0};
   mutable absl::Mutex _cnt_mtx;
-  // Owns the wire-format state (name, options, owner_table_id) — see
+  // Owns the wire-format state (name, options, owner_table_id) -- see
   // SequenceOptions comment for the reflection-based persistence contract.
   SequenceOptions _options;
 

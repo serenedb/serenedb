@@ -58,8 +58,8 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
     static catalog::Tokenizer gStringTokenizer(
       ObjectId{0}, ObjectId{12345}, "test_string_verbartim", {},
       DEFAULT_ROW_GROUP_SIZE,
-      irs::analysis::TokenizerConfig{
-        .config = irs::StringTokenizer::Options{}});
+      irs::analysis::TokenizerConfig{.config =
+                                       irs::StringTokenizer::Options{}});
     auto tokenizer = gStringTokenizer.GetTokenizer();
     EXPECT_TRUE(tokenizer);
     return {.analyzer = *std::move(tokenizer),

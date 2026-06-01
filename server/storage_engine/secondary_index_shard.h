@@ -23,9 +23,10 @@
 #include "storage_engine/index_shard.h"
 
 namespace duckdb {
-class Serializer;
-}  // namespace duckdb
 
+class Serializer;
+
+}  // namespace duckdb
 namespace sdb {
 
 class SecondaryIndexShard : public IndexShard {

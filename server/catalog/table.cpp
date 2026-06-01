@@ -68,9 +68,7 @@ Table::Table(ObjectId schema_id, ObjectId id, std::string_view name,
 std::shared_ptr<Table> Table::Deserialize(duckdb::Deserializer& src,
                                           ReadContext ctx) {
   TableData data;
-  // Pass ctx.id as the per-element arg so Column's SerdeRead can stamp the
-  // owner table id when reconstructing each column.
-  basics::ReadTuple(src, data, ctx.id);
+  basics::ReadTuple(src, data);
   return std::make_shared<Table>(
     ctx.schema_id, ctx.id, data.name, std::move(data.columns),
     std::move(data.pk_columns), std::move(data.check_constraints),

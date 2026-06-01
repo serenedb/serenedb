@@ -22,6 +22,7 @@
 
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
+
 #include "basics/serializer.h"
 
 namespace sdb::catalog {

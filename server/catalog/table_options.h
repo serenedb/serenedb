@@ -100,10 +100,11 @@ class Column final : public Object {
     return generated_type != GeneratedType::kNone;
   }
 
-  // Column is never persisted as a standalone Object — it rides inside
-  // TableData (see table.cpp). The Serialize override is a required no-op
-  // to satisfy the Object base.
-  void Serialize(duckdb::Serializer&) const final {}
+  // Column is never persisted as a standalone Object -- it rides inside
+  // TableData (see table.cpp). The owner table id is not written; Table's ctor
+  // re-stamps it on every column after deserialization.
+  void Serialize(duckdb::Serializer& sink) const final;
+  static Column Deserialize(duckdb::Deserializer& src);
   std::shared_ptr<Object> Clone() const final;
 
   void SetId(Id id) noexcept { _id = id; }
@@ -118,34 +119,29 @@ inline std::shared_ptr<Object> Column::Clone() const {
   return std::make_shared<Column>(*this);
 }
 
-inline void SerdeWrite(auto ctx, const Column& col) {
-  basics::WriteTuple(
-    ctx.io(),
-    std::forward_as_tuple(col.GetId(), col.type, std::string{col.GetName()},
-                          col.expr, col.generated_type));
-}
-
-inline void SerdeRead(auto ctx, Column& col) {
-  ObjectId id;
-  duckdb::LogicalType type;
-  std::string name;
-  std::shared_ptr<ColumnExpr> expr;
-  Column::GeneratedType gt = Column::kNone;
-  auto tup = std::tie(id, type, name, expr, gt);
-  basics::ReadTuple(ctx.io(), tup);
-  col = Column{ctx.arg(), id, name, std::move(type), std::move(expr), gt};
-}
-
 // Persistent on-disk catalog format.
-struct CheckConstraint {
-  ObjectId id;
-  std::string name;
-  std::shared_ptr<ColumnExpr> expr;
+class CheckConstraint final : public Object {
+ public:
+  CheckConstraint() : Object{{}, {}, {}, ObjectType::CheckConstraint} {}
+
+  CheckConstraint(ObjectId owner_table_id, ObjectId id, std::string_view name,
+                  std::shared_ptr<ColumnExpr> e)
+    : Object{owner_table_id, id, std::string{name},
+             ObjectType::CheckConstraint},
+      expr{std::move(e)} {}
+
+  void Serialize(duckdb::Serializer& sink) const final;
+  static CheckConstraint Deserialize(duckdb::Deserializer& src);
+  std::shared_ptr<Object> Clone() const final {
+    return std::make_shared<CheckConstraint>(*this);
+  }
 
   // If this constraint is just `NOT NULL` on a single column of `columns`,
   // returns that column's index. Otherwise returns std::nullopt.
   std::optional<size_t> IsNotNull(
     std::span<const Column> columns) const noexcept;
+
+  std::shared_ptr<ColumnExpr> expr;
 };
 
 // Persistent on-disk catalog format.

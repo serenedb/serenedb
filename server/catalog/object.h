@@ -163,7 +163,7 @@ class Object {
   }
 
   // Persist this Object via duckdb's binary serializer. The wire bytes are
-  // what RocksDB stores under the object's DefinitionKey — see
+  // what RocksDB stores under the object's DefinitionKey -- see
   // catalog::SerializeObject below. This is the canonical persistence path.
   virtual void Serialize(duckdb::Serializer&) const = 0;
 

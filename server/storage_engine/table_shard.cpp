@@ -22,13 +22,13 @@
 #include "table_shard.h"
 
 #include <absl/strings/str_cat.h>
-#include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <duckdb/common/serializer/memory_stream.hpp>
-#include "basics/serializer.h"
 
 #include <atomic>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <yaclib/async/make.hpp>
 
+#include "basics/serializer.h"
 #include "catalog/object.h"
 #include "catalog/table.h"
 

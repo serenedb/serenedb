@@ -25,6 +25,7 @@
 // is missing - silent fallback would produce misleading numbers.
 
 #include <benchmark/benchmark.h>
+#include <unicode/locid.h>
 #include <utf8.h>
 
 #include <algorithm>
@@ -32,8 +33,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <unicode/locid.h>
-
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/formats/formats.hpp>

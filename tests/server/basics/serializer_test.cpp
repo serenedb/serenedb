@@ -21,14 +21,13 @@
 // Round-trips structs through the duckdb-binary serializer/deserializer.
 
 #include <absl/algorithm/container.h>
-#include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <duckdb/common/serializer/binary_serializer.hpp>
-#include <duckdb/common/serializer/memory_stream.hpp>
 #include <gtest/gtest.h>
-#include "basics/serializer.h"
 
 #include <array>
 #include <cstdint>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <list>
 #include <map>
 #include <memory>
@@ -40,6 +39,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#include "basics/serializer.h"
 
 namespace {
 
@@ -77,7 +78,7 @@ void ExpectReadFails(const Input& in) {
 }
 
 // ------------------------------------------------------------------
-// Shared types — mirror the original serializer_test.cpp type matrix.
+// Shared types -- mirror the original serializer_test.cpp type matrix.
 // All carry operator== so RoundTrip's value comparison works.
 // ------------------------------------------------------------------
 
@@ -231,8 +232,7 @@ class MyCustomIntWithArg {
 
   template<typename Context>
   friend void SerdeWrite(Context ctx, MyCustomIntWithArg v) {
-    ctx.io().WriteValue(
-      static_cast<int64_t>(v._value + ctx.arg().value));
+    ctx.io().WriteValue(static_cast<int64_t>(v._value + ctx.arg().value));
   }
 
  private:
@@ -285,7 +285,7 @@ TEST(SerializerTest, testCustomWithArg) {
   struct Arg {
     int64_t value{};
   };
-  // Wire emits (_value + arg.value), read subtracts arg.value back ⇒
+  // Wire emits (_value + arg.value), read subtracts arg.value back =>
   // user-observed value round-trips for any arg.
   RoundTrip(Test{.id = MyCustomIntWithArg{2}}, Arg{.value = 2});
   RoundTrip(Test{.id = MyCustomIntWithArg{42}}, Arg{.value = -10});
@@ -304,7 +304,7 @@ TEST(SerializerTest, testMandatory) {
   RoundTrip(Test{42, 43});
 
   // Stream underflow: a struct with a single field written, then read
-  // into the wide two-field shape ⇒ ReadTuple throws on field `b`.
+  // into the wide two-field shape => ReadTuple throws on field `b`.
   struct Narrow {
     int a{};
     bool operator==(const Narrow&) const = default;
@@ -319,8 +319,8 @@ TEST(SerializerTest, testEnum) {
     bool operator==(const Holder&) const = default;
   };
 
-  RoundTrip(Holder{.values = {{"first", SomeEnum::Value1},
-                              {"second", SomeEnum::Value2}}});
+  RoundTrip(Holder{
+    .values = {{"first", SomeEnum::Value1}, {"second", SomeEnum::Value2}}});
 
   // Wire shape: same as Holder but with raw int (so writing skips the
   // enum_cast check); the int 0 isn't a SomeEnum member, so the read
@@ -329,11 +329,10 @@ TEST(SerializerTest, testEnum) {
     std::map<std::string, int> values;
     bool operator==(const WireShape&) const = default;
   };
-  ExpectReadFails<Holder>(
-    WireShape{.values = {{"first", 0}, {"second", 5}}});
+  ExpectReadFails<Holder>(WireShape{.values = {{"first", 0}, {"second", 5}}});
 }
 
-// testVariable — original used `vpack::Builder` to wrap a map inside an
+// testVariable -- original used `vpack::Builder` to wrap a map inside an
 // outer object. There's no duckdb-binary equivalent for a "bare map at
 // the top level inside an object"; wrap the map in a struct and
 // round-trip it directly.

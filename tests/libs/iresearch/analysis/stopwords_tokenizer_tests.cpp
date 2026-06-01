@@ -160,4 +160,3 @@ TEST(token_stopwords_stream_tests, test_load) {
     ASSERT_FALSE(stream->next());
   }
 }
-

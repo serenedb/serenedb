@@ -23,13 +23,13 @@
 
 #pragma once
 
+#include <unicode/locid.h>
+
 #include <atomic>
 #include <boost/iterator/iterator_facade.hpp>
 #include <filesystem>
 #include <fstream>
 #include <functional>
-
-#include <unicode/locid.h>
 
 #include "basics/down_cast.h"
 #include "iresearch/analysis/text_tokenizer.hpp"
@@ -613,7 +613,8 @@ class TokenizerPayload final : public irs::Tokenizer {
 };
 
 // Construct the "text" analyzer with locale=C and an empty (explicit) stopword
-// list. Mirrors the legacy registry call `tests::LegacyGetAnalyzer("text", Json,
+// list. Mirrors the legacy registry call `tests::LegacyGetAnalyzer("text",
+// Json,
 // "{\"locale\":\"C\", \"stopwords\":[]}")`.
 inline irs::analysis::Analyzer::ptr MakeDocGenTextTokenizer() {
   irs::analysis::TextTokenizer::Options opts;

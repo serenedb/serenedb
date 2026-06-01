@@ -26,10 +26,11 @@
 #include "catalog/object.h"
 
 namespace duckdb {
+
 class Serializer;
 class Deserializer;
-}  // namespace duckdb
 
+}  // namespace duckdb
 namespace sdb::catalog {
 
 inline constexpr std::string kPgSqlTypeOidProp = "sdb_oid";

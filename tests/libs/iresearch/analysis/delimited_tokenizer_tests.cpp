@@ -21,7 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-
 #include "gtest/gtest.h"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "tests_config.hpp"
@@ -359,7 +358,7 @@ TEST_F(DelimitedTokenizerTests, test_quote) {
 }
 
 TEST_F(DelimitedTokenizerTests, test_load) {
-  // happy path — explicit delimiter.
+  // happy path -- explicit delimiter.
   {
     std::string_view data("abc,def,ghi");  // quoted terms should be honoured
     auto stream = irs::analysis::DelimitedTokenizer::Make(
@@ -404,4 +403,3 @@ TEST_F(DelimitedTokenizerTests, test_load) {
     ASSERT_NE(nullptr, stream);
   }
 }
-

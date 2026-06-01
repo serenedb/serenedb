@@ -538,7 +538,7 @@ TEST(pipeline_token_stream_test, empty_pipeline_construct) {
 TEST(pipeline_token_stream_test, test_construct_invalid_child) {
   // Ported from the legacy `test_construct_invalid_analyzer` test, which
   // fed an UNKNOWN type into the JSON parser. With the typed Options
-  // API the equivalent is a child whose `Make` returns nullptr — e.g.
+  // API the equivalent is a child whose `Make` returns nullptr -- e.g.
   // a `PatternTokenizer` with an empty pattern.
   irs::analysis::PipelineTokenizer::Options opts;
   opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(

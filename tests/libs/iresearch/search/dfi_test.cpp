@@ -55,15 +55,15 @@ TEST(dfi_test, load_measures) {
               dynamic_cast<irs::DFI&>(*s).measure());
   }
   {
-    auto s = irs::DFI::Make(
-      irs::DFI::Options{.measure = irs::DFIMeasure::Saturated});
+    auto s =
+      irs::DFI::Make(irs::DFI::Options{.measure = irs::DFIMeasure::Saturated});
     ASSERT_NE(nullptr, s);
     ASSERT_EQ(irs::DFIMeasure::Saturated,
               dynamic_cast<irs::DFI&>(*s).measure());
   }
   {
-    auto s = irs::DFI::Make(
-      irs::DFI::Options{.measure = irs::DFIMeasure::ChiSquared});
+    auto s =
+      irs::DFI::Make(irs::DFI::Options{.measure = irs::DFIMeasure::ChiSquared});
     ASSERT_NE(nullptr, s);
     ASSERT_EQ(irs::DFIMeasure::ChiSquared,
               dynamic_cast<irs::DFI&>(*s).measure());
@@ -71,19 +71,19 @@ TEST(dfi_test, load_measures) {
 }
 
 TEST(dfi_test, load_invalid) {
-  EXPECT_EQ(
-    nullptr,
-    irs::DFI::Make(irs::DFI::Options{.measure = static_cast<irs::DFIMeasure>(99)}));
-  EXPECT_EQ(
-    nullptr,
-    irs::DFI::Make(irs::DFI::Options{.measure = static_cast<irs::DFIMeasure>(3)}));
+  EXPECT_EQ(nullptr, irs::DFI::Make(irs::DFI::Options{
+                       .measure = static_cast<irs::DFIMeasure>(99)}));
+  EXPECT_EQ(nullptr, irs::DFI::Make(irs::DFI::Options{
+                       .measure = static_cast<irs::DFIMeasure>(3)}));
   // Each named value is accepted.
-  EXPECT_NE(nullptr,
-            irs::DFI::Make(irs::DFI::Options{.measure = irs::DFIMeasure::Standardized}));
-  EXPECT_NE(nullptr,
-            irs::DFI::Make(irs::DFI::Options{.measure = irs::DFIMeasure::Saturated}));
-  EXPECT_NE(nullptr,
-            irs::DFI::Make(irs::DFI::Options{.measure = irs::DFIMeasure::ChiSquared}));
+  EXPECT_NE(nullptr, irs::DFI::Make(irs::DFI::Options{
+                       .measure = irs::DFIMeasure::Standardized}));
+  EXPECT_NE(
+    nullptr,
+    irs::DFI::Make(irs::DFI::Options{.measure = irs::DFIMeasure::Saturated}));
+  EXPECT_NE(
+    nullptr,
+    irs::DFI::Make(irs::DFI::Options{.measure = irs::DFIMeasure::ChiSquared}));
 }
 
 TEST(dfi_test, equals) {

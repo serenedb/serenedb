@@ -27,7 +27,7 @@ namespace irs::analysis {
 
 class PathHierarchyTokenizerTests : public ::testing::Test {
  public:
-  static void SetUpTestCase() {  }
+  static void SetUpTestCase() {}
 };
 
 void AssertTokenStreamContents(
@@ -923,7 +923,7 @@ TEST_F(PathHierarchyTokenizerTests, test_load_options) {
   // Ported from the original `test_load_vpack` test, which round-tripped
   // a VPack-encoded `{"delimiter":"/"}` blob through the analyzer
   // registry. With the JSON/VPack parse paths removed, the equivalent
-  // is direct construction with the same delimiter value — the
+  // is direct construction with the same delimiter value -- the
   // round-trip itself is covered by VPack serializer tests elsewhere.
   std::string_view data = "/a/b";
   auto stream = PathHierarchyTokenizer::Make(Options{.delimiter = "/"});

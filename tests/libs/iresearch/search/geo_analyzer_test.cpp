@@ -36,12 +36,13 @@ using namespace analysis;
 using namespace sdb::geo;
 
 namespace tests {
+
 template<typename Owner>
 inline irs::analysis::Analyzer::ptr MakeAnalyzer(typename Owner::Options opts) {
   return Owner::Make(std::move(opts));
 }
-}  // namespace tests
 
+}  // namespace tests
 namespace {
 
 // Little-endian WKB builder for the resetWKB analyzer tests. Mirrors the
@@ -96,12 +97,10 @@ TEST(GeoOptionsTest, default_options) {
 TEST(GeoBench, sizes) {
   GTEST_SKIP() << "It's just for check sizes, not comment out to allow compile";
 
-  auto vpack_analyzer =
-    tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>({});
+  auto vpack_analyzer = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>({});
   GeoJsonAnalyzer::Options opts;
   opts.coding = GeoJsonAnalyzer::Coding::S2LatLngU32;
-  auto s2_analyzer =
-    tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
+  auto s2_analyzer = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
 
   auto store_size = [](irs::analysis::Analyzer& a, vpack::Slice slice) {
     a.reset(irs::slice_to_view<char>(slice));

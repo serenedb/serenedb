@@ -32,7 +32,7 @@ irs::bstring operator""_b(const char* ptr, size_t size) {
 
 class MultiDelimitedTokenizerTests : public ::testing::Test {
  public:
-  static void SetUpTestCase() {  }
+  static void SetUpTestCase() {}
 
   void SetUp() final {
     // Code here will be called immediately after the constructor (right before

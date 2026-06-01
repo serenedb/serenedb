@@ -350,7 +350,7 @@ TEST_F(PatternTokenizerTests, test_make_options) {
                               {1, 3, 5}, {1, 1, 1});
   }
 
-  // Invalid: empty pattern — ported from the legacy "empty pattern
+  // Invalid: empty pattern -- ported from the legacy "empty pattern
   // string" / "missing pattern key" / "empty object" JSON-parse
   // rejections. With the direct-Options API, the absence of a pattern
   // collapses to a default-initialized empty `pattern` field.

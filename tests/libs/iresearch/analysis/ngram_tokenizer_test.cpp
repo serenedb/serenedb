@@ -30,9 +30,11 @@
 #include "tests_shared.hpp"
 
 namespace {
+
 irs::bstring operator""_b(const char* ptr, size_t size) {
   return irs::bstring{reinterpret_cast<const irs::byte_type*>(ptr), size};
 }
+
 }  // namespace
 
 TEST(ngram_token_stream_test, consts) {
@@ -280,8 +282,7 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         1, 1, false, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::bstring{},
-        irs::bstring{}));
+        irs::bstring{}, irs::bstring{}));
 
     std::u8string utf8data = u8"a\u00A2b\u00A3c\u00A4d\u00A5";
 
@@ -306,8 +307,7 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         2, 2, false, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::bstring{},
-        irs::bstring{}));
+        irs::bstring{}, irs::bstring{}));
 
     constexpr std::u8string_view kUtf8data = u8"a\u00A2b\u00A3c\u00A4d\u00A5";
     const auto data = irs::ViewCast<char>(kUtf8data);
@@ -340,8 +340,7 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         1, 2, false, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::bstring{},
-        irs::bstring{}));
+        irs::bstring{}, irs::bstring{}));
 
     constexpr std::u8string_view kUtf8data = u8"a\u00A2b\u00A3c\u00A4d\u00A5";
     const auto data = irs::ViewCast<char>(kUtf8data);
@@ -399,8 +398,7 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         5, 5, false, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::bstring{},
-        irs::bstring{}));
+        irs::bstring{}, irs::bstring{}));
 
     constexpr std::u8string_view kUtf8data = u8"\u00C0\u00C1\u00C2\u00C3\u00C4";
     const auto data = irs::ViewCast<char>(kUtf8data);
@@ -436,8 +434,7 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         5, 5, true, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::bstring{},
-        irs::bstring{}));
+        irs::bstring{}, irs::bstring{}));
     const std::u8string_view utf8data = u8"\u00C0\u00C1\u00C2\u00C3\u00C4";
     const auto data = irs::ViewCast<char>(utf8data);
 
@@ -452,8 +449,7 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         6, 6, true, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::bstring{},
-        irs::bstring{}));
+        irs::bstring{}, irs::bstring{}));
     constexpr std::u8string_view kUtf8data = u8"\u00C0\u00C1\u00C2\u00C3\u00C4";
     const auto data = irs::ViewCast<char>(kUtf8data);
 
@@ -468,8 +464,7 @@ TEST(ngram_token_stream_test, next_utf8) {
       irs::analysis::NGramTokenizerBase::InputType::UTF8>
       stream(irs::analysis::NGramTokenizerBase::Options(
         6, 6, false, irs::analysis::NGramTokenizerBase::InputType::UTF8,
-        irs::bstring{},
-        irs::bstring{}));
+        irs::bstring{}, irs::bstring{}));
     const std::u8string_view utf8data = u8"\u00C0\u00C1\u00C2\u00C3\u00C4";
     const auto data = irs::ViewCast<char>(utf8data);
 
@@ -1017,8 +1012,7 @@ TEST(ngram_token_stream_test, next) {
       irs::analysis::NGramTokenizerBase::InputType::Binary>
       stream(irs::analysis::NGramTokenizerBase::Options(
         1, 1, false, irs::analysis::NGramTokenizerBase::InputType::Binary,
-        "$"_b,
-        "^"_b));
+        "$"_b, "^"_b));
 
     const std::vector<Token> expected{{"$q", 0, 1, "$", ""},
                                       {"u", 1, 2},
@@ -1048,8 +1042,7 @@ TEST(ngram_token_stream_test, next) {
     irs::analysis::NGramTokenizer<
       irs::analysis::NGramTokenizerBase::InputType::Binary>
       stream(irs::analysis::NGramTokenizerBase::Options(
-        1, 1, true, irs::analysis::NGramTokenizerBase::InputType::Binary,
-        "$"_b,
+        1, 1, true, irs::analysis::NGramTokenizerBase::InputType::Binary, "$"_b,
         "^"_b));
 
     const std::vector<Token> expected{{"$q", 0, 1, "$", ""},
@@ -1136,8 +1129,7 @@ TEST(ngram_token_stream_test, next) {
       irs::analysis::NGramTokenizerBase::InputType::Binary>
       stream(irs::analysis::NGramTokenizerBase::Options(
         1, 3, false, irs::analysis::NGramTokenizerBase::InputType::Binary,
-        "$"_b,
-        "^"_b));
+        "$"_b, "^"_b));
 
     const std::vector<Token> expected{
       {"$q", 0, 1, "$", ""}, {"$qu", 0, 2, "$", ""}, {"$qui", 0, 3, "$", ""},
@@ -1180,8 +1172,7 @@ TEST(ngram_token_stream_test, next) {
     irs::analysis::NGramTokenizer<
       irs::analysis::NGramTokenizerBase::InputType::Binary>
       stream(irs::analysis::NGramTokenizerBase::Options(
-        2, 3, true, irs::analysis::NGramTokenizerBase::InputType::Binary,
-        "$"_b,
+        2, 3, true, irs::analysis::NGramTokenizerBase::InputType::Binary, "$"_b,
         irs::bstring{}));
 
     const std::vector<Token> expected{{"$qu", 0, 2, "$", ""},
@@ -1202,8 +1193,7 @@ TEST(ngram_token_stream_test, next) {
       irs::analysis::NGramTokenizerBase::InputType::Binary>
       stream(irs::analysis::NGramTokenizerBase::Options(
         2, 3, true, irs::analysis::NGramTokenizerBase::InputType::Binary,
-        irs::bstring{},
-        "^"_b));
+        irs::bstring{}, "^"_b));
 
     const std::vector<Token> expected{{"qu", 0, 2},
                                       {"qui", 0, 3},
@@ -1222,8 +1212,7 @@ TEST(ngram_token_stream_test, next) {
     irs::analysis::NGramTokenizer<
       irs::analysis::NGramTokenizerBase::InputType::Binary>
       stream(irs::analysis::NGramTokenizerBase::Options(
-        2, 3, true, irs::analysis::NGramTokenizerBase::InputType::Binary,
-        "$"_b,
+        2, 3, true, irs::analysis::NGramTokenizerBase::InputType::Binary, "$"_b,
         "^"_b));
 
     const std::vector<Token> expected{{"$qu", 0, 2, "$", ""},

@@ -31,10 +31,11 @@
 #include "catalog/table_options.h"
 
 namespace duckdb {
+
 class Serializer;
 class Deserializer;
-}  // namespace duckdb
 
+}  // namespace duckdb
 namespace sdb {
 namespace transaction {
 
@@ -78,9 +79,6 @@ class TableShard : public catalog::Object {
                       const catalog::TableStats& stats);
 
  protected:
-  /// Inject figures that are specific to StorageEngine
-  virtual void figuresSpecific(bool details, vpack::Builder&) {}
-
   ObjectId _table_id;
   // TODO(codeworse): this probably won't work in case of distributed setup
   std::atomic_uint64_t _num_rows{0};

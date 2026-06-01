@@ -111,15 +111,15 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   ObjectId shard_id;
   uint64_t table_size = std::numeric_limits<uint64_t>::max();
 
-  auto r = engine.VisitDefinitions(
-    table_id, ObjectType::TableShard,
-    [&](DefinitionKey key, std::string_view bytes) {
-      SDB_ASSERT(!shard_id.isSet());
-      shard_id = key.GetObjectId();
-      auto stats = TableShard::DeserializeStats(bytes);
-      table_size = stats.num_rows * cols;
-      return Result{};
-    });
+  auto r =
+    engine.VisitDefinitions(table_id, ObjectType::TableShard,
+                            [&](DefinitionKey key, std::string_view bytes) {
+                              SDB_ASSERT(!shard_id.isSet());
+                              shard_id = key.GetObjectId();
+                              auto stats = TableShard::DeserializeStats(bytes);
+                              table_size = stats.num_rows * cols;
+                              return Result{};
+                            });
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
@@ -148,10 +148,10 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   r = engine.VisitDefinitions(
     schema_id, ObjectType::Sequence,
     [&](DefinitionKey key, std::string_view bytes) -> Result {
-      auto seq = catalog::DeserializeObject<Sequence>(
-        bytes, {.id = key.GetObjectId(),
-                .database_id = db_id,
-                .schema_id = schema_id});
+      auto seq =
+        catalog::DeserializeObject<Sequence>(bytes, {.id = key.GetObjectId(),
+                                                     .database_id = db_id,
+                                                     .schema_id = schema_id});
       if (seq && seq->GetOwnerTableId() == table_id) {
         owned_sequences.push_back(key.GetObjectId());
       }
@@ -172,10 +172,9 @@ ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
   auto r = engine.VisitDefinitions(
     schema_id, ObjectType::Table,
     [&](DefinitionKey key, std::string_view bytes) -> Result {
-      auto options = GetTableOptionsForDrop(
-        bytes, {.id = key.GetObjectId(),
-                .database_id = db_id,
-                .schema_id = schema_id});
+      auto options = GetTableOptionsForDrop(bytes, {.id = key.GetObjectId(),
+                                                    .database_id = db_id,
+                                                    .schema_id = schema_id});
       if (!options) {
         return std::move(options.error());
       }
@@ -289,10 +288,9 @@ class OpenDatabase {
     _deleted;
 };
 
-Result OpenDatabase::AddDatabase(ObjectId database_id,
-                                 std::string_view bytes) {
-  auto db = catalog::DeserializeObject<catalog::Database>(
-    bytes, {.id = database_id});
+Result OpenDatabase::AddDatabase(ObjectId database_id, std::string_view bytes) {
+  auto db =
+    catalog::DeserializeObject<catalog::Database>(bytes, {.id = database_id});
   if (!db) {
     return Result{ERROR_INTERNAL, "Failed to read database definition"};
   }
@@ -361,12 +359,12 @@ Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::Tokenizer,
     [&](DefinitionKey key, std::string_view bytes) -> Result {
-      auto tokenizer = catalog::DeserializeObject<Tokenizer>(
-        bytes, {
-                 .id = key.GetObjectId(),
-                 .database_id = db_id,
-                 .schema_id = schema_id,
-               });
+      auto tokenizer =
+        catalog::DeserializeObject<Tokenizer>(bytes, {
+                                                       .id = key.GetObjectId(),
+                                                       .database_id = db_id,
+                                                       .schema_id = schema_id,
+                                                     });
       if (!tokenizer) {
         return Result{ERROR_INTERNAL, "Failed to read tokenizer definition"};
       }
@@ -400,12 +398,12 @@ Result OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id,
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::Sequence,
     [&](DefinitionKey key, std::string_view bytes) -> Result {
-      auto seq = catalog::DeserializeObject<Sequence>(
-        bytes, {
-                 .id = key.GetObjectId(),
-                 .database_id = db_id,
-                 .schema_id = schema_id,
-               });
+      auto seq =
+        catalog::DeserializeObject<Sequence>(bytes, {
+                                                      .id = key.GetObjectId(),
+                                                      .database_id = db_id,
+                                                      .schema_id = schema_id,
+                                                    });
       if (!seq) {
         return Result{ERROR_INTERNAL, "Failed to read sequence definition"};
       }
@@ -425,12 +423,12 @@ Result OpenDatabase::RegisterTypes(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::PgSqlType,
     [&](DefinitionKey key, std::string_view bytes) -> Result {
-      auto type = catalog::DeserializeObject<PgSqlType>(
-        bytes, {
-                 .id = key.GetObjectId(),
-                 .database_id = db_id,
-                 .schema_id = schema_id,
-               });
+      auto type =
+        catalog::DeserializeObject<PgSqlType>(bytes, {
+                                                       .id = key.GetObjectId(),
+                                                       .database_id = db_id,
+                                                       .schema_id = schema_id,
+                                                     });
       if (!type) {
         return Result{ERROR_INTERNAL, "Failed to read type definition"};
       }
@@ -442,8 +440,7 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
                                      ObjectId table_id) {
   auto visit = [&](ObjectType type) {
     return GetServerEngine().VisitDefinitions(
-      table_id, type,
-      [&](DefinitionKey key, std::string_view bytes) -> Result {
+      table_id, type, [&](DefinitionKey key, std::string_view bytes) -> Result {
         auto index_id = key.GetObjectId();
         if (!IsDeleted(index_id, DeletedScope::Relation)) {
           return AddIndex(db_id, schema_id, table_id, index_id, type, bytes);
@@ -507,8 +504,7 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
         return AddTable(db_id, schema_id, table_id, std::move(table));
       }
       auto options = GetTableOptionsForDrop(
-        bytes,
-        {.id = table_id, .database_id = db_id, .schema_id = schema_id});
+        bytes, {.id = table_id, .database_id = db_id, .schema_id = schema_id});
       if (!options) {
         return std::move(options.error());
       }
@@ -600,8 +596,8 @@ Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
 
 Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
                                std::string_view bytes) {
-  auto schema = catalog::DeserializeObject<catalog::Schema>(
-    bytes, {.database_id = db_id});
+  auto schema =
+    catalog::DeserializeObject<catalog::Schema>(bytes, {.database_id = db_id});
   if (!schema) {
     return Result{ERROR_INTERNAL, "Failed to read schema definition"};
   }

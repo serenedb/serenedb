@@ -21,19 +21,19 @@
 #include "catalog/sequence.h"
 
 #include <absl/base/internal/endian.h>
-#include <duckdb/common/serializer/deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
 #include <rocksdb/slice.h>
 #include <rocksdb/status.h>
-#include "basics/serializer.h"
 
 #include <cstring>
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
 #include <string>
 
 #include "basics/assert.h"
 #include "basics/exceptions.h"
+#include "basics/serializer.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"

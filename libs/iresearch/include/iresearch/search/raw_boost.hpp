@@ -39,7 +39,6 @@ struct RawBoost final : ScorerBase<RawBoost, void> {
     return std::make_unique<RawBoost>();
   }
 
-
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {

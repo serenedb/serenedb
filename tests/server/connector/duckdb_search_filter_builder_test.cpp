@@ -137,8 +137,7 @@ catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
   static catalog::Tokenizer gStringTokenizer(
     ObjectId{0}, ObjectId{12345}, "test_string_verbartim", {},
     DEFAULT_ROW_GROUP_SIZE,
-    irs::analysis::TokenizerConfig{
-      .config = irs::StringTokenizer::Options{}});
+    irs::analysis::TokenizerConfig{.config = irs::StringTokenizer::Options{}});
   auto tokenizer = gStringTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer),
@@ -182,8 +181,8 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
 [[maybe_unused]] catalog::ColumnTokenizer WildcardAnalyzerProvider(uint64_t) {
   irs::analysis::WildcardAnalyzer::Options wildcard_opts{
     .base_analyzer = std::make_unique<irs::analysis::TokenizerConfig>(
-      irs::analysis::TokenizerConfig{
-        .config = irs::StringTokenizer::Options{}}),
+      irs::analysis::TokenizerConfig{.config =
+                                       irs::StringTokenizer::Options{}}),
     .ngram_size = 3,
   };
   static catalog::Tokenizer gWildcardTokenizer(

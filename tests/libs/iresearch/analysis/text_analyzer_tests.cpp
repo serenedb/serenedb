@@ -92,7 +92,6 @@ irs::analysis::Analyzer::ptr MakeText(TextOpts opts = {}) {
 }
 
 }  // namespace
-
 namespace tests {
 
 class TextAnalyzerParserTestSuite : public ::testing::Test {

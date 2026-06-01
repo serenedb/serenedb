@@ -412,10 +412,9 @@ TEST(solr_synonyms_tests, factory_make_default_options) {
   // Ported from the legacy `factory_make_json_missing_field` test, which
   // fed `{}` to the JSON parser and asserted nullptr. The direct-Options
   // API treats a missing `synonyms_text` as an empty string, which is a
-  // valid (but empty) synonyms map — the analyzer is non-null and emits
+  // valid (but empty) synonyms map -- the analyzer is non-null and emits
   // the input verbatim (no synonym substitution).
-  auto analyzer =
-    SolrSynonymsTokenizer::Make(SolrSynonymsTokenizer::Options{});
+  auto analyzer = SolrSynonymsTokenizer::Make(SolrSynonymsTokenizer::Options{});
   ASSERT_NE(nullptr, analyzer);
 
   auto* term = irs::get<irs::TermAttr>(*analyzer);
@@ -424,4 +423,3 @@ TEST(solr_synonyms_tests, factory_make_default_options) {
   ASSERT_EQ("anything", irs::ViewCast<char>(term->value));
   ASSERT_FALSE(analyzer->next());
 }
-

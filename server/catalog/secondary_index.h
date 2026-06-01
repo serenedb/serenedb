@@ -25,10 +25,11 @@
 #include "storage_engine/secondary_index_shard.h"
 
 namespace duckdb {
+
 class Serializer;
 class Deserializer;
-}  // namespace duckdb
 
+}  // namespace duckdb
 namespace sdb::catalog {
 
 class SecondaryIndex : public Index {

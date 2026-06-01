@@ -29,7 +29,7 @@ namespace sdb::catalog {
 
 // A SQL function stored in the catalog. CreateMacroInfo is carried inside
 // the reflection-serialized PgSqlFunctionData wrapper as a duckdb-binary
-// blob — same shape as PgSqlView.
+// blob -- same shape as PgSqlView.
 class PgSqlFunction final : public Object {
  public:
   PgSqlFunction(ObjectId schema_id, ObjectId id, std::string_view name,

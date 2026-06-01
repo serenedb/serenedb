@@ -36,10 +36,11 @@
 #include "catalog/search_analyzer_impl.h"
 
 namespace duckdb {
+
 class Serializer;
 class Deserializer;
-}  // namespace duckdb
 
+}  // namespace duckdb
 namespace sdb::catalog {
 
 class Tokenizer : public Object {

@@ -383,8 +383,8 @@ TEST(wordnet_synonyms_tests, make_state_invalid_input) {
 }
 
 TEST(wordnet_synonyms_tests, factory_make_json) {
-  auto analyzer = WordnetSynonymsTokenizer::Make(
-    WordnetSynonymsTokenizer::Options{
+  auto analyzer =
+    WordnetSynonymsTokenizer::Make(WordnetSynonymsTokenizer::Options{
       .synonyms_text = "s(100000002,1,'come',v,1,0).",
     });
   ASSERT_NE(nullptr, analyzer);
@@ -412,4 +412,3 @@ TEST(wordnet_synonyms_tests, factory_make_missing_field) {
   ASSERT_TRUE(analyzer->reset("anything"));
   ASSERT_FALSE(analyzer->next());
 }
-

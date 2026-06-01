@@ -503,8 +503,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     add_segment(gen, irs::kOmCreate, opts);
   }
 
-  std::array<irs::Scorer::ptr, 1> order{
-    irs::BM25::Make(irs::BM25::Options{})};
+  std::array<irs::Scorer::ptr, 1> order{irs::BM25::Make(irs::BM25::Options{})};
   ASSERT_NE(nullptr, order.front());
 
   auto index = open_reader(irs::tests::DefaultReaderOptions());

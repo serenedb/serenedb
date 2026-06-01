@@ -420,7 +420,7 @@ class SnapshotImpl : public Snapshot {
       }
       auto refs = c.expr->GetRefs(RefKinds::Sequences | RefKinds::Functions |
                                   RefKinds::Types);
-      auto edge = c.GetId();
+      auto edge = std::pair{table.GetId(), c.GetId()};
       for (const auto& ref : refs.functions) {
         ModifyDependency(
           Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
@@ -615,11 +615,6 @@ class SnapshotImpl : public Snapshot {
         for (const auto& col : table.Columns()) {
           if (_objects.find(col.GetId()) == _objects.end()) {
             _objects.insert(std::make_shared<Column>(col));
-          }
-        }
-        for (const auto& c : table.CheckConstraints()) {
-          if (_objects.find(c.GetId()) == _objects.end()) {
-            _objects.insert(std::make_shared<CheckConstraint>(c));
           }
         }
         ModifyTableDependencies(parent_id, table, EdgeAction::Add);
@@ -1327,9 +1322,6 @@ class SnapshotImpl : public Snapshot {
           ModifyTableDependencies(parent_id, t, EdgeAction::Delete);
           for (const auto& col : t.Columns()) {
             _objects.erase(col.GetId());
-          }
-          for (const auto& c : t.CheckConstraints()) {
-            _objects.erase(c.GetId());
           }
         } break;
         case ObjectType::PgSqlView: {

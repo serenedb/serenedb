@@ -25,10 +25,11 @@
 #include "catalog/table_options.h"
 
 namespace duckdb {
+
 class Serializer;
 class Deserializer;
-}  // namespace duckdb
 
+}  // namespace duckdb
 namespace sdb::catalog {
 
 class Table final : public Object {

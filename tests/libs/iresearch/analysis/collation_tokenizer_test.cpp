@@ -105,7 +105,7 @@ TEST(collation_token_stream_test, construct_from_str) {
   }
 
   // .........................................................................
-  // invalid — JSON-parser cases ("{}", "[]", "1", `{"locale":1}`) collapse to
+  // invalid -- JSON-parser cases ("{}", "[]", "1", `{"locale":1}`) collapse to
   // a single direct-API case: missing locale yields a default Options whose
   // `locale` is bogus, which `Make` must reject.
   // .........................................................................

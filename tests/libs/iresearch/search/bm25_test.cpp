@@ -267,8 +267,7 @@ TEST_P(Bm25TestCase, make_from_array) {
 
   // custom `k` and `b`
   {
-    auto scorer =
-      irs::BM25::Make(irs::BM25::Options{.k1 = 1.5f, .b = 1.7f});
+    auto scorer = irs::BM25::Make(irs::BM25::Options{.k1 = 1.5f, .b = 1.7f});
     ASSERT_NE(nullptr, scorer);
     ASSERT_EQ(irs::Type<irs::BM25>::id(), scorer->type());
     auto& bm25 = dynamic_cast<irs::BM25&>(*scorer);
@@ -287,7 +286,7 @@ TEST_P(Bm25TestCase, test_normalize_features) {
               scorer->GetIndexFeatures());
   }
 
-  // without norms (bm15) — b = 0 selects the BM15 codepath.
+  // without norms (bm15) -- b = 0 selects the BM15 codepath.
   {
     auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
     ASSERT_NE(nullptr, scorer);
@@ -1359,10 +1358,9 @@ TEST_P(Bm25TestCase, test_make) {
     ASSERT_FALSE(scr.IsBM15());
   }
 
-  // bm11 — b = 1 selects the BM11 codepath.
+  // bm11 -- b = 1 selects the BM11 codepath.
   {
-    auto scorer =
-      irs::BM25::Make(irs::BM25::Options{.k1 = 78.9f, .b = 1.0f});
+    auto scorer = irs::BM25::Make(irs::BM25::Options{.k1 = 78.9f, .b = 1.0f});
     ASSERT_NE(nullptr, scorer);
     auto& scr = dynamic_cast<irs::BM25&>(*scorer);
     ASSERT_EQ(1.f, scr.b());
@@ -1371,10 +1369,9 @@ TEST_P(Bm25TestCase, test_make) {
     ASSERT_FALSE(scr.IsBM15());
   }
 
-  // bm15 — b = 0 selects the BM15 codepath.
+  // bm15 -- b = 0 selects the BM15 codepath.
   {
-    auto scorer =
-      irs::BM25::Make(irs::BM25::Options{.k1 = 78.9f, .b = 0.0f});
+    auto scorer = irs::BM25::Make(irs::BM25::Options{.k1 = 78.9f, .b = 0.0f});
     ASSERT_NE(nullptr, scorer);
     auto& scr = dynamic_cast<irs::BM25&>(*scorer);
     ASSERT_EQ(0.f, scr.b());

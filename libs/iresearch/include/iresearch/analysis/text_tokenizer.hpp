@@ -49,7 +49,7 @@ class TextTokenizer final : public TypedAnalyzer<TextTokenizer>,
     // lowercase tokens, match original implementation
     Case case_convert{Case::Lower};
     stopwords_t explicit_stopwords;
-    // single zero char indicates 'no value set' — empty string means a custom
+    // single zero char indicates 'no value set' -- empty string means a custom
     // (empty) path was explicitly requested.
     std::string stopwords_path = std::string(1, '\0');
     size_t min_gram{};

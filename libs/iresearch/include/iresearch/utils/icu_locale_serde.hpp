@@ -20,12 +20,13 @@
 
 #pragma once
 
-#include "basics/serializer.h"
+#include <unicode/locid.h>
+#include <unicode/uversion.h>
 
 #include <string>
 #include <string_view>
-#include <unicode/locid.h>
-#include <unicode/uversion.h>
+
+#include "basics/serializer.h"
 
 namespace irs {
 
@@ -44,7 +45,8 @@ void SerdeWrite(Context ctx, const icu::Locale& locale) {
   if (locale.isBogus()) {
     sdb::basics::detail::WriteString(ctx.io(), std::string_view{});
   } else {
-    sdb::basics::detail::WriteString(ctx.io(), std::string_view{locale.getName()});
+    sdb::basics::detail::WriteString(ctx.io(),
+                                     std::string_view{locale.getName()});
   }
 }
 

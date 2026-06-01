@@ -152,7 +152,7 @@ std::shared_ptr<Role> Role::FromData(RoleData data) {
       SDB_DEBUG(GENERAL, e.message());
     }
   }
-  // The default user always retains RW on the default database — enforced
+  // The default user always retains RW on the default database -- enforced
   // at load time so a tampered or downgraded grant can't lock it out.
   if (data.name == StaticStrings::kDefaultUser) {
     role->grantDatabase(StaticStrings::kDefaultDatabase, auth::Level::RW);

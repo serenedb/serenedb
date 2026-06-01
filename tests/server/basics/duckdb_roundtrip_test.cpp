@@ -359,7 +359,7 @@ TEST(DuckRoundTrip, write_invalid_enum_throws) {
 // Context-driven read. The Arg-flavoured overload of WriteTuple/ReadTuple
 // threads a Context through every nested SerdeRead. Here the context
 // supplies the default values the reader installs irrespective of what
-// the wire bytes say — matches the legacy `WithContext` test from
+// the wire bytes say -- matches the legacy `WithContext` test from
 // vpack_load_test.cpp.
 // ------------------------------------------------------------------
 
@@ -421,7 +421,7 @@ TEST(DuckRoundTrip, error_t_test) {
 }
 
 TEST(DuckRoundTrip, truncated_payload_throws) {
-  // Write a narrow shape, attempt to read into a wider one ⇒ ReadTuple
+  // Write a narrow shape, attempt to read into a wider one => ReadTuple
   // raises when the stream runs out before all fields are populated.
   struct Narrow {
     int i{};

@@ -20,14 +20,13 @@
 
 #pragma once
 
-#include "basics/serializer.h"
-
 #include <memory>
 #include <type_traits>
 #include <utility>
 #include <variant>
 
 #include "analyzer.hpp"
+#include "basics/serializer.h"
 #include "classification_tokenizer.hpp"
 #include "collation_tokenizer.hpp"
 #include "delimited_tokenizer.hpp"
@@ -53,29 +52,18 @@
 namespace irs::analysis {
 
 struct TokenizerConfig {
-  std::variant<
-    StringTokenizer::Options,
-    TextTokenizer::Options,
-    StemmingTokenizer::Options,
-    DelimitedTokenizer::Options,
-    MultiDelimitedTokenizer::Options,
-    PatternTokenizer::Options,
-    PathHierarchyTokenizer::Options,
-    NGramTokenizerBase::Options,
-    NormalizingTokenizer::Options,
-    SegmentationTokenizer::Options,
-    StopwordsTokenizer::Options,
-    ClassificationTokenizer::Options,
-    CollationTokenizer::Options,
-    SolrSynonymsTokenizer::Options,
-    WordnetSynonymsTokenizer::Options,
-    NearestNeighborsTokenizer::Options,
-    GeoPointAnalyzer::Options,
-    GeoJsonAnalyzer::Options,
-    WildcardAnalyzer::Options,
-    MinHashTokenizer::Options,
-    PipelineTokenizer::Options,
-    UnionTokenizer::Options>
+  std::variant<StringTokenizer::Options, TextTokenizer::Options,
+               StemmingTokenizer::Options, DelimitedTokenizer::Options,
+               MultiDelimitedTokenizer::Options, PatternTokenizer::Options,
+               PathHierarchyTokenizer::Options, NGramTokenizerBase::Options,
+               NormalizingTokenizer::Options, SegmentationTokenizer::Options,
+               StopwordsTokenizer::Options, ClassificationTokenizer::Options,
+               CollationTokenizer::Options, SolrSynonymsTokenizer::Options,
+               WordnetSynonymsTokenizer::Options,
+               NearestNeighborsTokenizer::Options, GeoPointAnalyzer::Options,
+               GeoJsonAnalyzer::Options, WildcardAnalyzer::Options,
+               MinHashTokenizer::Options, PipelineTokenizer::Options,
+               UnionTokenizer::Options>
     config;
 };
 
@@ -115,14 +103,12 @@ inline TokenizerConfig Clone(const TokenizerConfig& cfg) {
           copy.children.push_back(detail::CloneChild(child));
         }
         out.config = std::move(copy);
-      } else if constexpr (std::is_same_v<Options,
-                                          WildcardAnalyzer::Options>) {
+      } else if constexpr (std::is_same_v<Options, WildcardAnalyzer::Options>) {
         Options copy;
         copy.ngram_size = opts.ngram_size;
         copy.base_analyzer = detail::CloneChild(opts.base_analyzer);
         out.config = std::move(copy);
-      } else if constexpr (std::is_same_v<Options,
-                                          MinHashTokenizer::Options>) {
+      } else if constexpr (std::is_same_v<Options, MinHashTokenizer::Options>) {
         Options copy;
         copy.num_hashes = opts.num_hashes;
         copy.analyzer = detail::CloneChild(opts.analyzer);

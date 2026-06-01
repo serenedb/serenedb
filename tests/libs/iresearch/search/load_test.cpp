@@ -22,8 +22,6 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <simdjson.h>
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
 #include <zlib.h>
 
 #include <bit>
@@ -36,6 +34,8 @@
 #include "basics/bit_utils.hpp"
 #include "basics/files.h"
 #include "basics/math_utils.hpp"
+#include "basics/serializer.h"
+#include "basics/simdjson_sink.h"
 #include "executor.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_builder.h"

@@ -21,7 +21,6 @@
 #include "catalog/index.h"
 
 #include <absl/strings/ascii.h>
-#include "basics/serializer.h"
 
 #include <array>
 #include <duckdb/common/enum_util.hpp>
@@ -39,6 +38,7 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "basics/errors.h"
+#include "basics/serializer.h"
 #include "catalog/catalog.h"
 #include "catalog/geo_validate.h"
 #include "catalog/inverted_index.h"

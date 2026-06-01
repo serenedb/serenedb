@@ -22,6 +22,7 @@
 
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
+
 #include "basics/serializer.h"
 
 namespace sdb::catalog {
@@ -42,8 +43,8 @@ void Schema::Serialize(duckdb::Serializer& sink) const {
 }
 
 std::shared_ptr<Object> Schema::Clone() const {
-  return std::make_shared<Schema>(
-    GetParentId(), SchemaOptions{.id = GetId(), .name = _name});
+  return std::make_shared<Schema>(GetParentId(),
+                                  SchemaOptions{.id = GetId(), .name = _name});
 }
 
 }  // namespace sdb::catalog

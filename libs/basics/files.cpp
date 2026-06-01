@@ -54,12 +54,9 @@
 #include <sys/time.h>
 #endif
 
-#ifdef SERENEDB_HAVE_UNISTD_H
-#include <unistd.h>
-#endif
-
 #include <absl/crc/crc32c.h>
 #include <openssl/evp.h>
+#include <unistd.h>
 #include <zlib.h>
 
 #include "basics/application-exit.h"
@@ -227,8 +224,7 @@ bool CopyFileContents(int src_fd, int dst_fd, size_t file_size,
   if (gCanUseSplice) {
     // Linux-specific file-copying code based on splice()
     // The splice() system call first appeared in Linux 2.6.17; library support
-    // was added to glibc in version 2.5. libmusl also has bindings for it. so
-    // we simply assume it is there on Linux.
+    // was added to glibc in version 2.5.
     int splice_pipe[2];
     ssize_t pipe_size = 0;
     long chunk_send_remain = file_size;

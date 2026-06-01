@@ -45,10 +45,8 @@
 #ifdef SERENEDB_HAVE_DIRECT_H
 #include <direct.h>
 #endif
-#ifdef SERENEDB_HAVE_UNISTD_H
-#include <unistd.h>
-#endif
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "basics/debugging.h"
 #include "basics/error.h"

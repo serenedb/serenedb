@@ -69,10 +69,7 @@
 
 #include <fcntl.h>
 #include <sys/resource.h>
-
-#ifdef SERENEDB_HAVE_UNISTD_H
 #include <unistd.h>
-#endif
 
 #include <algorithm>
 #include <string_view>

@@ -21,17 +21,15 @@
 
 #include "basics/number_of_cores.h"
 
-#include "basics/files.h"
-#include "basics/operating-system.h"
-#include "basics/string_utils.h"
-
-#ifdef SERENEDB_HAVE_UNISTD_H
 #include <unistd.h>
-#endif
 
 #include <cstdint>
 #include <string>
 #include <thread>
+
+#include "basics/files.h"
+#include "basics/operating-system.h"
+#include "basics/string_utils.h"
 
 using namespace sdb;
 

@@ -21,13 +21,12 @@
 
 #include "system-functions.h"
 
+#include <unistd.h>
+
 #include <chrono>
 #include <string>
 
 #include "basics/operating-system.h"
-#ifdef SERENEDB_HAVE_UNISTD_H
-#include <unistd.h>
-#endif
 
 namespace sdb::utilities {
 

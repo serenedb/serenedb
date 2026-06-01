@@ -62,7 +62,6 @@
 #define SERENEDB_HAVE_SYS_TYPES_H 1
 #define SERENEDB_HAVE_SYS_WAIT_H 1
 #define SERENEDB_HAVE_TERMIOS_H 1
-#define SERENEDB_HAVE_UNISTD_H 1
 
 // available functions
 

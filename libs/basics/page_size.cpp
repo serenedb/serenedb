@@ -21,11 +21,9 @@
 
 #include "basics/page_size.h"
 
-#include "basics/operating-system.h"
-
-#ifdef SERENEDB_HAVE_UNISTD_H
 #include <unistd.h>
-#endif
+
+#include "basics/operating-system.h"
 
 using namespace sdb;
 

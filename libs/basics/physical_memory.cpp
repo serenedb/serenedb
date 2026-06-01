@@ -21,14 +21,12 @@
 
 #include "basics/physical_memory.h"
 
+#include <unistd.h>
+
 #include "basics/files.h"
 #include "basics/operating-system.h"
 #include "basics/string_utils.h"
 #include "basics/units_helper.h"
-
-#ifdef SERENEDB_HAVE_UNISTD_H
-#include <unistd.h>
-#endif
 
 #ifdef SERENEDB_HAVE_MACH
 #include <mach/mach_host.h>

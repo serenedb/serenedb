@@ -21,24 +21,10 @@
 
 #include "vpack/vpack_helper.h"
 
-#include "basics/error.h"
-#include "basics/exceptions.h"
-#include "basics/files.h"
-#include "basics/logger/logger.h"
-#include "basics/number_utils.h"
-#include "basics/operating-system.h"
-#include "basics/static_strings.h"
-#include "basics/string_utils.h"
-#include "basics/system-compiler.h"
-#include "basics/utf8_helper.h"
-
-#ifdef SERENEDB_HAVE_UNISTD_H
-#include <unistd.h>
-#endif
-
 #include <fcntl.h>
 #include <string.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -46,7 +32,17 @@
 #include <set>
 #include <string_view>
 
+#include "basics/error.h"
+#include "basics/exceptions.h"
+#include "basics/files.h"
+#include "basics/logger/logger.h"
+#include "basics/number_utils.h"
+#include "basics/operating-system.h"
 #include "basics/sink.h"
+#include "basics/static_strings.h"
+#include "basics/string_utils.h"
+#include "basics/system-compiler.h"
+#include "basics/utf8_helper.h"
 #include "vpack/collection.h"
 #include "vpack/common.h"
 #include "vpack/dumper.h"

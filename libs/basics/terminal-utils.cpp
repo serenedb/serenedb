@@ -21,12 +21,11 @@
 
 #include "terminal-utils.h"
 
+#include <unistd.h>
+
 #include <cstring>
 
 #include "basics/number_utils.h"
-#ifdef SERENEDB_HAVE_UNISTD_H
-#include <unistd.h>
-#endif
 
 using namespace sdb;
 

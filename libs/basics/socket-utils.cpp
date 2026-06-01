@@ -28,9 +28,7 @@
 #ifdef SERENEDB_HAVE_NETDB_H
 #include <netdb.h>
 #endif
-#ifdef SERENEDB_HAVE_UNISTD_H
 #include <unistd.h>
-#endif
 
 #include "basics/errors.h"
 #include "basics/logger/logger.h"

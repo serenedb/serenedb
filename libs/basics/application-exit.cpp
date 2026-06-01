@@ -21,12 +21,10 @@
 
 #include "basics/application-exit.h"
 
+#include <unistd.h>
+
 #include "basics/cleanup_functions.h"
 #include "basics/common.h"
-
-#ifdef SERENEDB_HAVE_UNISTD_H
-#include <unistd.h>
-#endif
 
 namespace sdb {
 

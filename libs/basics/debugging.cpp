@@ -21,6 +21,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include <csignal>
 #include <stdexcept>
@@ -30,10 +31,6 @@
 
 #include "basics/assert.h"
 #include "basics/logger/logger.h"
-
-#ifdef SERENEDB_HAVE_UNISTD_H
-#include <unistd.h>
-#endif
 
 #ifdef SDB_FAULT_INJECTION
 namespace sdb {

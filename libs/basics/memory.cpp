@@ -26,11 +26,7 @@
 #include <execinfo.h>  // for backtrace(...)
 #endif
 
-#include <cstddef>  // needed for __GLIBC__
-
-#if !defined(__APPLE__) && defined(__GLIBC__)
 #include <malloc.h>
-#endif
 #endif
 
 #include "basics/error.h"
@@ -41,10 +37,6 @@ namespace irs::memory {
 void DumpMemStatsTrace() noexcept {
 #ifndef _MSC_VER
 
-// MacOS does not have malloc.h and hence no mallinfo() or malloc_stats()
-// libmusl does no define mallinfo() or malloc_stats() in malloc.h
-// enable mallinfo() and malloc_stats() for GLIBC only
-#if !defined(__APPLE__) && defined(__GLIBC__)
   // output mallinfo()
   constexpr const char* kFormat =
     "\
@@ -70,7 +62,7 @@ Topmost releasable block (keepcost):   %u\n\
           static_cast<unsigned>(mi.keepcost));
 
   malloc_stats();  // output malloc_stats to stderr
-#endif
+
 #ifndef DISABLE_EXECINFO
   // output stacktrace
   void* frames_buf[128];  // arbitrary size

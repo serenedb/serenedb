@@ -32,9 +32,12 @@ namespace sdb {
 //
 // Lifecycle is bracketed by Initialize() / Shutdown() at the very edges of
 // the process:
-//   * serened main()           : Initialize before GlobalContext, Shutdown after RunServer
-//   * gtest test_main          : Initialize before RUN_ALL_TESTS, Shutdown after
-//   * search-benchmark-game    : Initialize at top of main(), Shutdown before return
+//   * serened main()           : Initialize before process-wide init, Shutdown
+//   after RunServer
+//   * gtest test_main          : Initialize before RUN_ALL_TESTS, Shutdown
+//   after
+//   * search-benchmark-game    : Initialize at top of main(), Shutdown before
+//   return
 // Within that window gLogger (libs/basics/logger) is non-null and the
 // SDB_* hot path skips its null-check.
 //

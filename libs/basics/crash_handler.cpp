@@ -138,8 +138,8 @@ void CrashHandler::SetState(std::string_view state) {
 }
 
 void CrashHandler::installCrashHandler() {
-  // absl::InitializeSymbolizer(argv[0]) is invoked from GlobalContext ctor;
-  // by the time RunServer reaches us the symbolizer is already up.
+  // absl::InitializeSymbolizer(argv[0]) is invoked from main() before we get
+  // here, so the symbolizer is already up.
   absl::FailureSignalHandlerOptions options;
   options.symbolize_stacktrace = true;
   options.use_alternate_stack = true;

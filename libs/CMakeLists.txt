@@ -172,7 +172,7 @@ add_library(
     ${LIB_SERVER_POSIX}
     ${LIB_SERVER_DATE}
     app/app_server.cpp
-    app/global_context.cpp
+    app/init.cpp
     app/name_validator.cpp
     endpoint/endpoint.cpp
     endpoint/endpoint_ip.cpp

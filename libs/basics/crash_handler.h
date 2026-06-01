@@ -57,7 +57,8 @@ class CrashHandler {
   }
 
   // Wire absl::InstallFailureSignalHandler. Must be called after
-  // absl::InitializeSymbolizer (GlobalContext ctor handles that).
+  // absl::InitializeSymbolizer; the binary entry point is responsible
+  // for ordering that call before invoking this.
   static void installCrashHandler();
 };
 

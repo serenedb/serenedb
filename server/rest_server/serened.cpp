@@ -27,9 +27,9 @@
 #include <vector>
 
 #include "app/app_server.h"
-#include "app/global_context.h"
+#include "app/init.h"
 #include "basics/crash_handler.h"
-#include "basics/directories.h"
+#include "basics/duckdb_engine.h"
 #include "basics/files.h"
 #include "basics/logger/logger.h"
 #include "catalog/catalog.h"
@@ -39,7 +39,6 @@
 #include "general_server/ssl_server_feature.h"
 #include "general_server/state.h"
 #include "pg/pg_feature.h"
-#include "basics/duckdb_engine.h"
 #include "query/server_engine.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/endpoint_feature.h"
@@ -56,11 +55,10 @@ using namespace sdb::app;
 
 const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
 
-int RunServer(int argc, char** argv, GlobalContext& context) {
+int RunServer(int argc, char** argv) {
   try {
     CrashHandler::installCrashHandler();
-    std::string name = context.binaryName();
-    SdbSetApplicationName(name);
+    SdbSetApplicationName(SdbBinaryName(argv[0]));
 
     int ret{EXIT_FAILURE};
     AppServer server;
@@ -168,7 +166,7 @@ int RunServer(int argc, char** argv, GlobalContext& context) {
     // DuckDBEngine Initialize() / Shutdown() bracket this whole function
     // from main(), so we don't need a Shutdown() on the unwind path here.
 
-    return context.exit(ret);
+    return ret;
   } catch (const std::exception& ex) {
     // gLogger is still up (Shutdown runs in main() after RunServer
     // returns), but go through SDB_ERROR so the line lands in the same
@@ -202,11 +200,10 @@ int main(int argc, char* argv[]) {
     return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::PSQL);
   }
 
-  // DuckDBEngine must be up BEFORE the first SDB_* fires. GlobalContext's
-  // ctor calls VPackHelper::initialize() which does SDB_TRACE; the absl
-  // failure-signal handler installed inside GlobalContext also relies on
-  // LogCrash, which is safe but the SDB_TRACE is not. Bracket the whole
-  // GlobalContext + RunServer lifetime so the contract holds.
+  // DuckDBEngine must be up BEFORE the first SDB_* fires. VPackHelper::
+  // initialize() below does SDB_TRACE, so it has to run after the engine
+  // is initialized. Bracket the whole RunServer lifetime so the contract
+  // holds.
   //
   // Two-step boot: the lite Initialize (serene_base) installs the storage
   // extension via the ConfigureServerDBConfig mutator BEFORE the duckdb
@@ -216,11 +213,11 @@ int main(int argc, char* argv[]) {
   auto& engine = sdb::DuckDBEngine::Instance();
   engine.Initialize(&server::query::ConfigureServerDBConfig);
   server::query::RegisterServerExtensions(engine.instance());
-  int rc;
-  {
-    GlobalContext context(argc, argv, BIN_DIRECTORY);
-    rc = RunServer(argc, argv, context);
-  }
+
+  sdb::app::InitProcess(argv[0]);
+  int rc = RunServer(argc, argv);
+  sdb::app::ShutdownGlobals();
+
   engine.Shutdown();
   return rc;
 }

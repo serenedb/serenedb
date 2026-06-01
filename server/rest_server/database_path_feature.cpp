@@ -23,7 +23,6 @@
 
 #include <absl/flags/flag.h>
 
-#include "app/global_context.h"
 #include "basics/application-exit.h"
 #include "basics/cleanup_functions.h"
 #include "basics/exitcodes.h"
@@ -55,17 +54,11 @@ DatabasePathFeature::DatabasePathFeature()
              _directory, "'");
   }
 
-  // strip trailing separators
+  // strip trailing separators and make the path absolute so log lines and
+  // error messages aren't ambiguous about which directory we're touching.
   _directory =
     basics::string_utils::RTrim(_directory, SERENEDB_DIR_SEPARATOR_STR);
-
-  auto ctx = GlobalContext::gContext;
-
-  if (ctx == nullptr) {
-    SDB_FATAL(GENERAL, "failed to get global context.");
-  }
-
-  ctx->normalizePath(_directory, "database.directory", false);
+  basics::file_utils::MakePathAbsolute(_directory);
 
   gInstance = this;
 }

@@ -30,7 +30,6 @@
 #include "app/init.h"
 #include "basics/crash_handler.h"
 #include "basics/duckdb_engine.h"
-#include "basics/files.h"
 #include "basics/logger/logger.h"
 #include "catalog/catalog.h"
 #include "duckdb_shell.hpp"
@@ -57,7 +56,6 @@ const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
 int RunServer(int argc, char** argv) {
   try {
     CrashHandler::installCrashHandler();
-    SdbSetApplicationName(SdbBinaryName(argv[0]));
 
     int ret{EXIT_FAILURE};
     AppServer server;

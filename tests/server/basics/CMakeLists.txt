@@ -13,7 +13,6 @@ add_executable(
     http_request_test.cpp
     error_test.cpp
     build_id_test.cpp
-    files_test.cpp
     fp_conv_test.cpp
     hashes_test.cpp
     hybrid_logical_clock_test.cpp

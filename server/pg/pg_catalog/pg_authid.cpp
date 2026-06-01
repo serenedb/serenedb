@@ -50,7 +50,7 @@ catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
       .rolcreaterole = true,
       .rolcreatedb = true,
       .rolcanlogin = role->isActive(),
-      .rolreplication = false,
+      .rolreplication = true,
       .rolbypassrls = true,
       .rolconnlimit = -1,
     };

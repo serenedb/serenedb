@@ -3,16 +3,21 @@ add_subdirectory(commands)
 target_sources(
     sereneserver
     PRIVATE
+        pg_catalog/pg_am.cpp
         pg_catalog/pg_attribute.cpp
         pg_catalog/pg_authid.cpp
         pg_catalog/pg_class.cpp
         pg_catalog/pg_constraint.cpp
         pg_catalog/pg_database.cpp
+        pg_catalog/pg_description.cpp
         pg_catalog/pg_enum.cpp
+        pg_catalog/pg_extension.cpp
         pg_catalog/pg_index.cpp
         pg_catalog/pg_language.cpp
         pg_catalog/pg_namespace.cpp
+        pg_catalog/pg_opclass.cpp
         pg_catalog/pg_proc.cpp
+        pg_catalog/pg_tablespace.cpp
         pg_catalog/pg_ts_dict.cpp
         pg_catalog/pg_stat_progress.cpp
         pg_catalog/pg_type.cpp

@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -18,27 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
-
-#include "pg/system_table.h"
+#include "pg/pg_catalog/pg_description.h"
 
 namespace sdb::pg {
 
-// https://www.postgresql.org/docs/18/catalog-pg-tablespace.html
-// NOLINTBEGIN
-struct PgTablespace {
-  static constexpr uint64_t kId = 155;
-  static constexpr std::string_view kName = "pg_tablespace";
-
-  Oid oid;
-  Name spcname;
-  Oid spcowner;
-  Array<Aclitem> spcacl;
-  Array<Text> spcoptions;
-};
-// NOLINTEND
-
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgTablespace>::GetTableData();
+catalog::MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
+  return {CreateColumns<PgDescription>(0), 0};
+}
 
 }  // namespace sdb::pg

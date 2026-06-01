@@ -31,7 +31,8 @@ services:
       - "${WORKSPACE}/out/drivers-tests:/out"
       - "${WORKSPACE}/out/logs:/logs"
     depends_on:
-      - serenedb-single
+      serenedb-single:
+        condition: service_started
     env_file:
       - "${WORKSPACE}/docker.env"
     environment:

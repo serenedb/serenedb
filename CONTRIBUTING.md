@@ -90,6 +90,25 @@ C++ unit tests:
 ./build/bin/serenedb-tests_connector "--gtest_filter=*DataSourceWithSearchTest*"
 ```
 
+### Testing CI workflows locally
+
+Run or dry-run the GitHub Actions workflows locally with
+[`act`](https://github.com/nektos/act), via `scripts/ci/act-local.sh`
+(self-bootstrapping -- installs `act` on first use, shares the host Docker
+socket so the in-container build steps work):
+
+```bash
+./scripts/ci/act-local.sh list                       # list workflows + jobs
+./scripts/ci/act-local.sh validate build-manual.yml  # dry-run: parse + plan, no exec
+./scripts/ci/act-local.sh run build-manual.yml -j perf   # actually run a job
+./scripts/ci/act-local.sh classify                   # run the PR change-classifier alone
+```
+
+`validate` always works and catches YAML / job-graph errors before you push --
+run it whenever you touch `.github/workflows/`. Full `run` needs the build image
+and `/mnt/data` caches for heavy jobs; put fake secrets in `.secrets`
+(gitignored) for workflows that reference them.
+
 ### Running vendored DuckDB extension tests
 
 The `postgres_scanner`, `avro`, `httpfs` extensions ship with their own

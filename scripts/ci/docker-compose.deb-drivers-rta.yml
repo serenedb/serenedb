@@ -24,7 +24,7 @@ services:
       - serenedb
     volumes:
       - "${WORKSPACE}:/serenedb"
-      - "${WORKSPACE}/logs:/logs"
+      - "${WORKSPACE}/out/logs:/logs"
       - "${WORKSPACE}/out/drivers-tests:/out"
     environment:
       - HOME=/tmp/home

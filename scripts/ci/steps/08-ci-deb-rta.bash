@@ -15,7 +15,7 @@ if [[ -z "$DEB_PACKAGE" ]]; then
 fi
 
 echo "=== Deb RTA: $(basename "$DEB_PACKAGE") ==="
-mkdir -p "${WORKSPACE}/logs"
+mkdir -p "${WORKSPACE}/out/logs"
 
 # Export all env vars ONCE so compose sees consistent config across all calls
 export DEB_PACKAGE="$(basename "$DEB_PACKAGE")"
@@ -28,7 +28,7 @@ COMPOSE_FILE="${CI_DIR}/docker-compose.deb-rta.yml"
 EXEC="docker compose -p ${PREFIX} -f ${COMPOSE_FILE} exec -T serenedb"
 
 cleanup() {
-	$EXEC journalctl -u serenedb --no-pager 2>/dev/null >"${WORKSPACE}/logs/deb-rta-journal.log" || true
+	$EXEC journalctl -u serenedb --no-pager 2>/dev/null >"${WORKSPACE}/out/logs/deb-rta-journal.log" || true
 	docker compose -p "$PREFIX" -f "$COMPOSE_FILE" down --volumes --remove-orphans 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
@@ -60,7 +60,7 @@ if [[ "${RTA_DRIVERS:-false}" == "true" ]]; then
 	drivers_rc=0
 	docker compose -p "${PREFIX}-drv" -f "$DRIVERS_COMPOSE" \
 		up --attach tests --exit-code-from tests --remove-orphans \
-		2>&1 | tee "${WORKSPACE}/logs/deb-rta-drivers.log" || drivers_rc=$?
+		2>&1 | tee "${WORKSPACE}/out/logs/deb-rta-drivers.log" || drivers_rc=$?
 	docker compose -p "${PREFIX}-drv" -f "$DRIVERS_COMPOSE" \
 		down --volumes --remove-orphans >/dev/null 2>&1 || true
 	if [[ $drivers_rc -ne 0 ]]; then

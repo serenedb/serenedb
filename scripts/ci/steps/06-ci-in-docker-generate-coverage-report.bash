@@ -33,8 +33,8 @@ fi
 echo ":: Found ${#ALL_BINARIES[@]} binaries:"
 printf "   %s\n" "${ALL_BINARIES[@]}"
 
-PROFILE_COUNT=$(find ./coverage/profiles -name "*.profraw" 2>/dev/null | wc -l)
-echo ":: Found ${PROFILE_COUNT} profile files in ./coverage/profiles"
+PROFILE_COUNT=$(find ./out/coverage/profiles -name "*.profraw" 2>/dev/null | wc -l)
+echo ":: Found ${PROFILE_COUNT} profile files in ./out/coverage/profiles"
 
 if [ "${PROFILE_COUNT}" -eq 0 ]; then
     echo "ERROR: No profile data found!"
@@ -48,12 +48,12 @@ echo ":: Generating HTML coverage report..."
     --compilation-dir . \
     llvm-profdata-21 \
     llvm-cov-21 \
-    ./coverage/profiles \
-    ./coverage/llvm_html \
+    ./out/coverage/profiles \
+    ./out/coverage/llvm_html \
     "${ALL_BINARIES[@]}"
 
 echo ":: Coverage reports generated successfully!"
-echo "   HTML: ./coverage/llvm_html"
+echo "   HTML: ./out/coverage/llvm_html"
 '
 
 echo "=========================================="

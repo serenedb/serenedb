@@ -7,7 +7,7 @@ services:
       - /var/log/serenedb
     volumes:
       - "${WORKSPACE}:/workspace:ro"
-      - "${WORKSPACE}/logs:/logs"
+      - "${WORKSPACE}/out/logs:/logs"
     environment:
       - HOME=/tmp
       - TARBALL_NAME
@@ -30,7 +30,7 @@ services:
       - serenedb
     volumes:
       - "${WORKSPACE}:/serenedb"
-      - "${WORKSPACE}/logs:/logs"
+      - "${WORKSPACE}/out/logs:/logs"
       - "${WORKSPACE}/out/drivers-tests:/out"
     environment:
       - HOME=/tmp/home

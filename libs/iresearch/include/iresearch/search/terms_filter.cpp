@@ -82,13 +82,13 @@ class TermsVisitor {
 };
 
 template<typename Collector>
-void CollectTerms(const IndexReader& index, std::string_view field,
+void CollectTerms(const IndexReader& index, irs::field_id id,
                   const ByTermsOptions::search_terms& terms,
                   Collector& collector) {
   TermsVisitor<Collector> visitor(collector);
 
   for (auto& segment : index) {
-    auto* reader = segment.field(field);
+    auto* reader = segment.field(id);
 
     if (!reader) {
       continue;
@@ -106,8 +106,7 @@ void ByTerms::visit(const SubReader& segment, const TermReader& field,
   VisitImpl(segment, field, terms, visitor);
 }
 
-Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
-                                    std::string_view field,
+Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx, irs::field_id id,
                                     const ByTermsOptions& options) {
   const auto& [terms, min_match, merge_type] = options;
   const size_t size = terms.size();
@@ -122,14 +121,14 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
     const auto term = std::begin(terms);
     auto sub_ctx = ctx;
     sub_ctx.boost = ctx.boost * term->boost;
-    return ByTerm::prepare(sub_ctx, field, term->term);
+    return ByTerm::prepare(sub_ctx, id, term->term);
   }
 
   FieldCollector field_stats;
   TermCollectorsFlat term_stats{ctx.scorer, size};
   MultiTermQuery::States states{ctx.memory, ctx.index.size()};
   AllTermsCollector collector{states, field_stats, term_stats};
-  CollectTerms(ctx.index, field, terms, collector);
+  CollectTerms(ctx.index, id, terms, collector);
 
   // FIXME(gnusi): Filter out unmatched states during collection
   if (min_match > 1) {
@@ -157,7 +156,7 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
 
 Filter::Query::ptr ByTerms::prepare(const PrepareContext& ctx) const {
   if (options().terms.empty() || options().min_match != 0) {
-    return Prepare(ctx.Boost(Boost()), field(), options());
+    return Prepare(ctx.Boost(Boost()), field_id(), options());
   }
   if (!ctx.scorer) {
     return MakeAllDocsFilter(kNoBoost)->prepare({
@@ -171,7 +170,7 @@ Filter::Query::ptr ByTerms::prepare(const PrepareContext& ctx) const {
   // Reset min_match to 1
   auto& terms = disj.add<ByTerms>();
   terms.boost(Boost());
-  *terms.mutable_field() = field();
+  *terms.mutable_field_id() = field_id();
   *terms.mutable_options() = options();
   terms.mutable_options()->min_match = 1;
   return disj.prepare({

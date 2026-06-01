@@ -84,7 +84,9 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
       CsvDocTemplateT() {
         fields.emplace_back(std::make_shared<tests::StringField>("id"));
+        fields.back()->id = tests::FieldIdForRuntime("id");
         fields.emplace_back(std::make_shared<tests::StringField>("label"));
+        fields.back()->id = tests::FieldIdForRuntime("label");
         reserve(fields.size());
       }
 
@@ -321,26 +323,30 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
             {
               irs::Filter::ptr filter = std::make_unique<irs::ByTerm>();
-              auto key_field = csv_doc_template.indexed.begin()->Name();
+              auto key_name = csv_doc_template.indexed.begin()->Name();
+              auto key_id = csv_doc_template.indexed.begin()->Id();
               auto key_term =
-                csv_doc_template.indexed.get<tests::StringField>(key_field)
+                csv_doc_template.indexed.get<tests::StringField>(key_name)
                   ->value();
-              auto value_field = (++(csv_doc_template.indexed.begin()))->Name();
+              auto value_name = (++(csv_doc_template.indexed.begin()))->Name();
               auto value_term =
-                csv_doc_template.indexed.get<tests::StringField>(value_field)
+                csv_doc_template.indexed.get<tests::StringField>(value_name)
                   ->value();
               std::string updated_term(value_term.data(), value_term.size());
 
               auto& filter_impl = static_cast<irs::ByTerm&>(*filter);
-              *filter_impl.mutable_field() = key_field;
+              *filter_impl.mutable_field_id() = key_id;
               filter_impl.mutable_options()->term =
                 irs::ViewCast<irs::byte_type>(key_term);
               // double up term
               updated_term.append(value_term.data(), value_term.size());
-              csv_doc_template.indexed.get<tests::StringField>(value_field)
+              csv_doc_template.indexed.get<tests::StringField>(value_name)
                 ->value(updated_term);
-              csv_doc_template.insert(
-                std::make_shared<tests::StringField>("updated"));
+              {
+                auto f = std::make_shared<tests::StringField>("updated");
+                f->id = tests::FieldIdForRuntime("updated");
+                csv_doc_template.insert(std::move(f));
+              }
 
               REGISTER_TIMER_NAMED_DETAILED("update");
               {
@@ -571,7 +577,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       ++docs_count;
     }
 
-    auto reader = irs::DirectoryReader(dir(), codec());
+    auto reader =
+      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(docs_count, reader[0].docs_count());
   }

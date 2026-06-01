@@ -111,13 +111,13 @@ class SubReaderMock final : public irs::SubReader {
 
   // Inverted index
 
-  irs::FieldIterator::ptr fields() const final {
+  std::span<const irs::field_id> field_ids() const final {
     EXPECT_FALSE(true);
-    return nullptr;
+    return {};
   }
 
-  // Returns corresponding term_reader by the specified field name.
-  const irs::TermReader* field(std::string_view) const final {
+  // Returns corresponding term_reader by the specified field id.
+  const irs::TermReader* field(irs::field_id) const final {
     EXPECT_FALSE(true);
     return nullptr;
   }

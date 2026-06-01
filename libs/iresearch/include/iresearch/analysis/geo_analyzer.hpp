@@ -50,9 +50,6 @@ class GeoAnalyzer : public analysis::Analyzer, private util::Noncopyable {
 
   virtual bool reset(simdjson::ondemand::value json) = 0;
 
-  // Resets the analyzer state from raw WKB bytes (GEOMETRY columns). The
-  // analyzer parses internally so future LatLng-coding work can fuse the WKB
-  // read with the encoder write without touching call sites.
   virtual bool resetWKB(bytes_view wkb) = 0;
 
   virtual void prepare(GeoFilterOptionsBase& options) const = 0;

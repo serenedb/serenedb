@@ -26,7 +26,7 @@
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
-#include <iresearch/columnstore/format.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/index_reader.hpp>

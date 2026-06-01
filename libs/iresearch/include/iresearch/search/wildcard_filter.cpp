@@ -122,19 +122,19 @@ field_visitor ByWildcard::visitor(bytes_view term) {
 }
 
 Filter::Query::ptr ByWildcard::prepare(const PrepareContext& ctx,
-                                       std::string_view field, bytes_view term,
+                                       irs::field_id id, bytes_view term,
                                        size_t scored_terms_limit) {
   bstring buf;
   return ExecuteWildcard(
     buf, term,
     [&](bytes_view term) -> Query::ptr {
-      return ByTerm::prepare(ctx, field, term);
+      return ByTerm::prepare(ctx, id, term);
     },
     [&, scored_terms_limit](bytes_view term) -> Query::ptr {
-      return ByPrefix::prepare(ctx, field, term, scored_terms_limit);
+      return ByPrefix::prepare(ctx, id, term, scored_terms_limit);
     },
     [&, scored_terms_limit](bytes_view term) -> Query::ptr {
-      return PrepareAutomatonFilter(ctx, field, FromWildcard(term),
+      return PrepareAutomatonFilter(ctx, id, FromWildcard(term),
                                     scored_terms_limit);
     });
 }

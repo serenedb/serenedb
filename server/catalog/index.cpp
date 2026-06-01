@@ -203,19 +203,16 @@ duckdb::PhysicalType LeafDataPhysicalType(const duckdb::LogicalType& type) {
 // the column's leaf physical type. Without this check, the failure
 // surfaces only during the asynchronous segment commit (logged, not
 // returned), so CREATE INDEX would falsely report success.
-Result ValidateColumnCompression(std::string_view column_name,
+Result ValidateColumnCompression(duckdb::ClientContext& context,
+                                 std::string_view column_name,
                                  duckdb::CompressionType compression,
                                  const duckdb::LogicalType& column_type) {
   if (compression == duckdb::CompressionType::COMPRESSION_AUTO) {
     return {};
   }
-  // Static DBConfig: its compression registry is identical across all
-  // duckdb instances (built-in codecs, no extension registration). Built
-  // once on first use; thread-safe via the C++ static-initialization
-  // guarantee.
-  static const duckdb::DBConfig kProbeConfig;
+  const auto& db_config = duckdb::DBConfig::GetConfig(context);
   const auto leaf = LeafDataPhysicalType(column_type);
-  auto fn = kProbeConfig.TryGetCompressionFunction(compression, leaf);
+  auto fn = db_config.TryGetCompressionFunction(compression, leaf);
   if (fn && fn->init_analyze) {
     return {};
   }
@@ -359,47 +356,36 @@ Result ApplyHNSWOptions(
   return {};
 }
 
-Result ValidateInvertedIndexColumns(
-  std::span<CreateIndexColumn> indexed_columns) {
-  for (const auto& c : indexed_columns) {
-    const auto& value_type = c.IsIndexedExpression()
-                               ? c.GetIndexedExpression().return_type
-                               : c.catalog_column->type;
-    const auto label = c.name;
-    const auto kind = value_type.id();
+bool IsTokenizerOpclass(const CreateIndexColumn& c) {
+  if (c.IsBuiltin(kHNSWKind) || c.IsBuiltin(kIncludedKind)) {
+    return false;
+  }
+  return true;
+}
 
-    if (c.IsBuiltin(kIncludedKind)) {
-      // TODO(mbkkt) List of supported instead of list of unsupported
-      const bool unsupported =
-        kind == duckdb::LogicalTypeId::UNION ||
-        kind == duckdb::LogicalTypeId::GEOMETRY ||
-        kind == duckdb::LogicalTypeId::TABLE ||
-        kind == duckdb::LogicalTypeId::AGGREGATE_STATE ||
-        kind == duckdb::LogicalTypeId::LEGACY_AGGREGATE_STATE ||
-        kind == duckdb::LogicalTypeId::LAMBDA ||
-        kind == duckdb::LogicalTypeId::TYPE ||
-        kind == duckdb::LogicalTypeId::TEMPLATE ||
-        kind == duckdb::LogicalTypeId::INVALID ||
-        kind == duckdb::LogicalTypeId::UNKNOWN ||
-        kind == duckdb::LogicalTypeId::ANY ||
-        kind == duckdb::LogicalTypeId::UNBOUND ||
-        kind == duckdb::LogicalTypeId::STRING_LITERAL ||
-        kind == duckdb::LogicalTypeId::INTEGER_LITERAL ||
-        kind == duckdb::LogicalTypeId::VALIDITY ||
-        kind == duckdb::LogicalTypeId::POINTER;
-      if (unsupported) {
-        return {ERROR_BAD_PARAMETER,
-                "Column '",
-                label,
-                "' has type ",
-                value_type.ToString(),
-                " which is not supported in INCLUDE"};
+Result ValidateInvertedIndexColumns(
+  std::span<const CreateIndexColumn> indexed_columns) {
+  for (const auto& c : indexed_columns) {
+    const auto& type = c.IsIndexedExpression()
+                         ? c.GetIndexedExpression().return_type
+                         : c.catalog_column->type;
+    const auto label = c.name;
+
+    if (c.IsBuiltin(kHNSWKind)) {
+      if (auto r = hnsw::Validate(label, type); !r.ok()) {
+        return r;
       }
       continue;
     }
 
-    if (c.HasParentheses() && c.opclass != kHNSWKind &&
-        c.opclass != kIncludedKind) {
+    if (c.IsBuiltin(kIncludedKind)) {
+      if (auto r = included::Validate(label, type); !r.ok()) {
+        return r;
+      }
+      continue;
+    }
+
+    if (c.HasParentheses()) {
       return {ERROR_BAD_PARAMETER,
               "Unknown built-in opclass '",
               c.opclass,
@@ -410,115 +396,77 @@ Result ValidateInvertedIndexColumns(
               ")"};
     }
 
-    if (c.IsBuiltin(kHNSWKind)) {
-      const bool is_float_array =
-        kind == duckdb::LogicalTypeId::ARRAY &&
-        duckdb::ArrayType::GetChildType(value_type).id() ==
-          duckdb::LogicalTypeId::FLOAT;
-      if (!is_float_array) {
-        return {ERROR_BAD_PARAMETER, "Column '", label,
-                "' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not ",
-                value_type.ToString()};
-      }
-      continue;
-    }
-
-    // LIST<T>/ARRAY<T> indexed expressions: each element is tokenised
-    // separately by the search sink (SetupListExpressionWriter). Only on the
-    // expression path -- direct LIST/ARRAY columns aren't walked. T must be a
-    // scalar the sink can project.
-    if ((kind == duckdb::LogicalTypeId::LIST ||
-         kind == duckdb::LogicalTypeId::ARRAY) &&
-        c.IsIndexedExpression()) {
-      const auto child = (kind == duckdb::LogicalTypeId::LIST
-                            ? duckdb::ListType::GetChildType(value_type)
-                            : duckdb::ArrayType::GetChildType(value_type))
-                           .id();
-      const bool child_supported = child == duckdb::LogicalTypeId::VARCHAR ||
-                                   child == duckdb::LogicalTypeId::BOOLEAN ||
-                                   IsNumericSliceKind(child);
-      if (child_supported) {
-        continue;
-      }
-    }
-
-    if (kind == duckdb::LogicalTypeId::ARRAY) {
-      return {ERROR_BAD_PARAMETER, "Column '", label, "' has unsupported type ",
-              value_type.ToString()};
-    }
-
-    const bool supported = kind == duckdb::LogicalTypeId::SQLNULL ||
-                           kind == duckdb::LogicalTypeId::VARCHAR ||
-                           kind == duckdb::LogicalTypeId::BLOB ||
-                           kind == duckdb::LogicalTypeId::BOOLEAN ||
-                           kind == duckdb::LogicalTypeId::TINYINT ||
-                           kind == duckdb::LogicalTypeId::SMALLINT ||
-                           kind == duckdb::LogicalTypeId::INTEGER ||
-                           kind == duckdb::LogicalTypeId::BIGINT ||
-                           kind == duckdb::LogicalTypeId::FLOAT ||
-                           kind == duckdb::LogicalTypeId::DOUBLE ||
-                           kind == duckdb::LogicalTypeId::DATE ||
-                           kind == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
-                           kind == duckdb::LogicalTypeId::GEOMETRY;
-    if (!supported) {
-      return {ERROR_BAD_PARAMETER,
-              "Column '",
-              label,
-              "' has unsupported type ",
-              value_type.ToString(),
-              " and can not be indexed"};
+    if (auto r = term_dict::Validate(label, type, c.opclass); !r.ok()) {
+      return r;
     }
   }
   return {};
 }
 
-Result ValidateGeoTokenizerColumn(std::string_view column_name,
-                                  const duckdb::LogicalType& col_type,
-                                  const irs::analysis::Analyzer& analyzer) {
+Result ValidateTokenizerVsColumn(std::string_view column_name,
+                                 const duckdb::LogicalType& col_type,
+                                 const irs::analysis::Analyzer& analyzer) {
   const auto type_id = analyzer.type();
   const bool is_geojson =
     type_id == irs::Type<irs::analysis::GeoJsonAnalyzer>::id();
   const bool is_geopoint =
     type_id == irs::Type<irs::analysis::GeoPointAnalyzer>::id();
-  if (!is_geojson && !is_geopoint) {
+  const auto col_id = col_type.id();
+
+  if (is_geojson || is_geopoint) {
+    if (col_id == duckdb::LogicalTypeId::GEOMETRY) {
+      if (auto r = ValidateGeometryCRS84(col_type); r.fail()) {
+        return {ERROR_BAD_PARAMETER, "Column '", column_name,
+                "': ", r.errorMessage()};
+      }
+      if (is_geopoint) {
+        return {ERROR_BAD_PARAMETER, "Column '", column_name,
+                "' is GEOMETRY but the analyzer is geopoint; geopoint's "
+                "latitude/longitude paths are JSON-only -- use a geojson "
+                "analyzer for GEOMETRY columns"};
+      }
+      if (is_geojson) {
+        const auto& geojson =
+          sdb::basics::downCast<irs::analysis::GeoJsonAnalyzer>(analyzer);
+        using Coding = irs::analysis::GeoJsonAnalyzer::Coding;
+        const auto coding = geojson.coding();
+        if (coding != Coding::Source && coding != Coding::S2Point) {
+          return {ERROR_BAD_PARAMETER, "Column '", column_name,
+                  "' is GEOMETRY but the geo analyzer uses a LatLng coding; ",
+                  "not yet supported for GEOMETRY columns -- use S2Point or "
+                  "source coding"};
+        }
+      }
+    } else if (!col_type.IsJSONType()) {
+      return {ERROR_BAD_PARAMETER, "Column '", column_name,
+              "' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY"};
+    }
     return {};
   }
 
-  const auto col_id = col_type.id();
-  const bool is_json = col_type.IsJSONType();
-  if (!is_json && col_id != duckdb::LogicalTypeId::GEOMETRY) {
-    return {ERROR_BAD_PARAMETER, "Column '", column_name,
-            "' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY"};
+  const auto is_string_leaf = [](duckdb::LogicalTypeId id) {
+    return id == duckdb::LogicalTypeId::VARCHAR ||
+           id == duckdb::LogicalTypeId::BLOB;
+  };
+  if (is_string_leaf(col_id)) {
+    return {};
   }
-
-  if (col_id == duckdb::LogicalTypeId::GEOMETRY) {
-    if (auto r = ValidateGeometryCRS84(col_type); r.fail()) {
-      return {ERROR_BAD_PARAMETER, "Column '", column_name,
-              "': ", r.errorMessage()};
-    }
-    if (is_geopoint) {
-      return {ERROR_BAD_PARAMETER, "Column '", column_name,
-              "' is GEOMETRY but the analyzer is geopoint; geopoint's "
-              "latitude/longitude paths are JSON-only -- use a geojson "
-              "analyzer for GEOMETRY columns"};
-    }
-    if (is_geojson) {
-      const auto& geojson =
-        sdb::basics::downCast<irs::analysis::GeoJsonAnalyzer>(analyzer);
-      using Coding = irs::analysis::GeoJsonAnalyzer::Coding;
-      const auto coding = geojson.coding();
-      // Source coding re-parses the force-included WKB source column; S2Point
-      // is supported by resetWKB. The remaining LatLng codings need a shape ->
-      // LatLng-bytes encoder that ShapeContainer doesn't implement yet.
-      if (coding != Coding::Source && coding != Coding::S2Point) {
-        return {ERROR_BAD_PARAMETER, "Column '", column_name,
-                "' is GEOMETRY but the geo analyzer uses a LatLng coding; ",
-                "not yet supported for GEOMETRY columns -- use S2Point or "
-                "source coding"};
-      }
+  if (col_id == duckdb::LogicalTypeId::LIST ||
+      col_id == duckdb::LogicalTypeId::ARRAY) {
+    const auto& child_type = col_id == duckdb::LogicalTypeId::LIST
+                               ? duckdb::ListType::GetChildType(col_type)
+                               : duckdb::ArrayType::GetChildType(col_type);
+    if (is_string_leaf(child_type.id()) && !child_type.IsJSONType()) {
+      return {};
     }
   }
-  return {};
+  return {ERROR_BAD_PARAMETER,
+          "Column '",
+          column_name,
+          "' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of "
+          "VARCHAR/BLOB (got ",
+          col_type.ToString(),
+          ")"};
 }
 
 std::vector<Column::Id> ExtractColumnIds(
@@ -541,7 +489,8 @@ std::vector<Column::Id> ExtractColumnIds(
 }
 
 Result ApplyIncludedOpclass(
-  std::string_view owner_label, const duckdb::LogicalType& value_type,
+  duckdb::ClientContext& context, std::string_view owner_label,
+  const duckdb::LogicalType& value_type,
   const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
   InvertedIndexEntryInfo& entry) {
   if (!opts) {
@@ -557,7 +506,8 @@ Result ApplyIncludedOpclass(
       if (!parsed) {
         return std::move(parsed).error();
       }
-      if (auto r = ValidateColumnCompression(owner_label, *parsed, value_type);
+      if (auto r = ValidateColumnCompression(context, owner_label, *parsed,
+                                             value_type);
           r.fail()) {
         return r;
       }
@@ -582,7 +532,8 @@ Result ApplyIncludedOpclass(
 }
 
 Result ApplyHNSWOpclass(
-  std::string_view owner_label, const duckdb::LogicalType& value_type,
+  duckdb::ClientContext& context, std::string_view owner_label,
+  const duckdb::LogicalType& value_type,
   const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
   InvertedIndexEntryInfo& entry) {
   SDB_ASSERT(opts);
@@ -599,7 +550,8 @@ Result ApplyHNSWOpclass(
       r.fail()) {
     return r;
   }
-  if (auto r = ValidateColumnCompression(owner_label, compression, value_type);
+  if (auto r = ValidateColumnCompression(context, owner_label, compression,
+                                         value_type);
       r.fail()) {
     return r;
   }
@@ -668,9 +620,6 @@ ResultOr<Tokenizer::TokenizerWrapper> InstantiateAnalyzer(
   return std::move(*tokenizer);
 }
 
-// A geo analyzer that re-parses the force-included source column instead of
-// writing a derived StoreAttr blob: GeoPoint (always) and GeoJson with the
-// default Source coding. S2/LatLng codings keep the StoreAttr-blob behavior.
 bool IsGeoSourceAnalyzer(const irs::analysis::Analyzer& analyzer) {
   const auto type_id = analyzer.type();
   if (type_id == irs::Type<irs::analysis::GeoPointAnalyzer>::id()) {
@@ -683,8 +632,15 @@ bool IsGeoSourceAnalyzer(const irs::analysis::Analyzer& analyzer) {
   return false;
 }
 
+bool IsGeoAnalyzer(const irs::analysis::Analyzer& analyzer) {
+  const auto type_id = analyzer.type();
+  return type_id == irs::Type<irs::analysis::GeoPointAnalyzer>::id() ||
+         type_id == irs::Type<irs::analysis::GeoJsonAnalyzer>::id();
+}
+
 void FillEntryFromTokenizer(const Tokenizer& dict,
                             const irs::analysis::Analyzer& analyzer,
+                            const duckdb::LogicalType& value_type,
                             InvertedIndexEntryInfo& entry) {
   entry.text_dictionary = dict.GetId();
   entry.features = dict.GetFeatures();
@@ -699,9 +655,18 @@ void FillEntryFromTokenizer(const Tokenizer& dict,
   if (wants_norm) {
     entry.norm_row_group_size = dict.GetNormRowGroupSize();
   }
+  if (value_type.IsJSONType() && !IsGeoAnalyzer(analyzer)) {
+    if (!irs::field_limits::valid(entry.bool_field_id)) {
+      entry.bool_field_id = static_cast<irs::field_id>(NextId());
+    }
+    if (!irs::field_limits::valid(entry.numeric_field_id)) {
+      entry.numeric_field_id = static_cast<irs::field_id>(NextId());
+    }
+  }
 }
 
-Result ApplyOpclassToEntry(const CreateIndexColumn& c,
+Result ApplyOpclassToEntry(duckdb::ClientContext& context,
+                           const CreateIndexColumn& c,
                            std::string_view owner_label,
                            const duckdb::LogicalType& value_type,
                            const Snapshot& snapshot, ObjectId database_id,
@@ -711,10 +676,11 @@ Result ApplyOpclassToEntry(const CreateIndexColumn& c,
     return {};
   }
   if (c.IsBuiltin(kHNSWKind)) {
-    return ApplyHNSWOpclass(owner_label, value_type, c.opclass_options, entry);
+    return ApplyHNSWOpclass(context, owner_label, value_type, c.opclass_options,
+                            entry);
   }
   if (c.IsBuiltin(kIncludedKind)) {
-    if (auto r = ApplyIncludedOpclass(owner_label, value_type,
+    if (auto r = ApplyIncludedOpclass(context, owner_label, value_type,
                                       c.opclass_options, entry);
         r.fail()) {
       return r;
@@ -735,17 +701,13 @@ Result ApplyOpclassToEntry(const CreateIndexColumn& c,
   if (!analyzer) {
     return std::move(analyzer).error();
   }
-  if (auto r = ValidateGeoTokenizerColumn(owner_label, value_type, **analyzer);
+  if (auto r = ValidateTokenizerVsColumn(owner_label, value_type, **analyzer);
       r.fail()) {
     return r;
   }
-  FillEntryFromTokenizer(*dict, **analyzer, entry);
-  // Source-coding geo analyzers force-include the indexed source column (its
-  // own field id) into the columnstore so the filter can re-parse it at query
-  // time, mirroring the HNSW/included force-include. Accept the same
-  // compression / row_group_size knobs.
+  FillEntryFromTokenizer(*dict, **analyzer, value_type, entry);
   if (IsGeoSourceAnalyzer(**analyzer)) {
-    if (auto r = ApplyIncludedOpclass(owner_label, value_type,
+    if (auto r = ApplyIncludedOpclass(context, owner_label, value_type,
                                       c.opclass_options, entry);
         r.fail()) {
       return r;
@@ -761,27 +723,15 @@ ResultOr<std::shared_ptr<SecondaryIndex>> CreateSecondaryIndex(
   ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
   std::string name, std::vector<catalog::CreateIndexColumn> columns,
   bool unique) {
-  for (const auto& c : columns) {
-    SDB_ASSERT(c.catalog_column);
-    // if (c.catalog_column->type->providesCustomComparison()) {
-    //   return std::unexpected<Result>{
-    //     std::in_place, ERROR_BAD_PARAMETER, "Column ", c.name,
-    //     " has type with custom comparison and can not be indexed"};
-    // }
-    // if (!c.catalog_column->type->isPrimitiveType()) {
-    //   return std::unexpected<Result>{
-    //     std::in_place, ERROR_BAD_PARAMETER, "Column ", c.name,
-    //     " has non primitive type and can not be indexed"};
-    // }
-  }
   return std::make_shared<SecondaryIndex>(database_id, schema_id, id,
                                           relation_id, std::move(name),
                                           ExtractColumnIds(columns), unique);
 }
 
 ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
-  ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
-  ObjectId id, ObjectId relation_id, std::string name,
+  duckdb::ClientContext& context, ObjectId database_id,
+  std::string_view schema_name, ObjectId schema_id, ObjectId id,
+  ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns,
   const std::shared_ptr<const Snapshot>& snapshot,
   InvertedIndexOptions options) {
@@ -795,15 +745,31 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   InvertedIndex::Entries entries;
   const uint64_t expressions_cnt = std::ranges::count_if(
     columns, [](const auto& c) { return c.IsIndexedExpression(); });
-  irs::field_id next_expr_field_id =
-    expressions_cnt > 0 ? NextNIds(expressions_cnt).id() : 0;
+  irs::field_id next_expr_field_id = expressions_cnt > 0
+                                       ? NextNIds(expressions_cnt).id()
+                                       : irs::field_limits::invalid();
+  containers::FlatHashSet<std::string_view> tokenized_exprs;
+  if (expressions_cnt > 1) {
+    tokenized_exprs.reserve(expressions_cnt);
+  }
+  containers::FlatHashSet<Column::Id> tokenized_cols;
   for (const auto& c : columns) {
     if (c.IsIndexedExpression()) {
       const auto& expr_data = c.GetIndexedExpression();
+      if (IsTokenizerOpclass(c) &&
+          !tokenized_exprs.insert(expr_data.serialized_expr).second) {
+        return std::unexpected<Result>{
+          std::in_place, ERROR_BAD_PARAMETER, "Expression '",
+          expr_data.pretty_printed,
+          "' is listed more than once with a tokenizer opclass; the catalog "
+          "stores a single tokenizer per indexed expression. Stack "
+          "`included(...)` on the same expression instead, or remove the "
+          "duplicate."};
+      }
       const auto field_id = next_expr_field_id++;
       InvertedIndexEntryInfo expr_info;
       expr_info.expression = expr_data;
-      if (auto r = ApplyOpclassToEntry(c, expr_data.pretty_printed,
+      if (auto r = ApplyOpclassToEntry(context, c, expr_data.pretty_printed,
                                        expr_data.return_type, *snapshot,
                                        database_id, schema_name, expr_info);
           r.fail()) {
@@ -816,9 +782,20 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       static_cast<irs::field_id>(c.catalog_column->GetId());
     auto& index_col =
       entries.try_emplace(col_field_id, InvertedIndexEntryInfo{}).first->second;
+    if (!c.IsBuiltin(kIncludedKind) && !c.IsBuiltin(kHNSWKind)) {
+      index_col.indexed_term_dict = true;
+    }
+    if (IsTokenizerOpclass(c) &&
+        !tokenized_cols.insert(c.catalog_column->GetId()).second) {
+      return std::unexpected<Result>{
+        std::in_place, ERROR_BAD_PARAMETER, "Column '", c.name,
+        "' is listed more than once with a tokenizer opclass; the catalog "
+        "stores a single tokenizer per indexed column. Stack `included(...)` "
+        "on the same column instead, or remove the duplicate."};
+    }
     if (auto r =
-          ApplyOpclassToEntry(c, c.name, c.catalog_column->type, *snapshot,
-                              database_id, schema_name, index_col);
+          ApplyOpclassToEntry(context, c, c.name, c.catalog_column->type,
+                              *snapshot, database_id, schema_name, index_col);
         r.fail()) {
       return std::unexpected<Result>(std::move(r));
     }
@@ -829,6 +806,9 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     }
     if (entry.norm_row_group_size == 0) {
       entry.norm_row_group_size = options.norm_row_group_size;
+    }
+    if (!irs::field_limits::valid(entry.null_field_id)) {
+      entry.null_field_id = static_cast<irs::field_id>(NextId());
     }
   }
   return std::make_shared<InvertedIndex>(

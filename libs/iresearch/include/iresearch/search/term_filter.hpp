@@ -42,7 +42,7 @@ struct ByTermOptions {
 // User-side term filter
 class ByTerm : public FilterWithField<ByTermOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
+  static Query::ptr prepare(const PrepareContext& ctx, irs::field_id id,
                             bytes_view term);
 
   static void visit(const SubReader& segment, const TermReader& field,
@@ -51,7 +51,7 @@ class ByTerm : public FilterWithField<ByTermOptions> {
   Query::ptr prepare(const PrepareContext& ctx) const final {
     auto sub_ctx = ctx;
     sub_ctx.boost *= Boost();
-    return prepare(sub_ctx, field(), options().term);
+    return prepare(sub_ctx, field_id(), options().term);
   }
 };
 

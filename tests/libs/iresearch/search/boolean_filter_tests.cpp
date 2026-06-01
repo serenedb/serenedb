@@ -44,19 +44,43 @@
 
 namespace {
 
+// Field-id constants used across this file. The on-disk index is now keyed
+// by field_id (not by name); these IDs are arbitrary stable values used by
+// both the writer-side fixture (to assign per-field IDs) and the filter
+// builders (to address those fields).
+inline constexpr irs::field_id kFieldName = tests::FieldIdFor("name");
+inline constexpr irs::field_id kFieldSame = tests::FieldIdFor("same");
+inline constexpr irs::field_id kFieldDuplicated =
+  tests::FieldIdFor("duplicated");
+inline constexpr irs::field_id kFieldPrefix = tests::FieldIdFor("prefix");
+inline constexpr irs::field_id kFieldTestField =
+  tests::FieldIdFor("test-field");
+inline constexpr irs::field_id kFieldField = tests::FieldIdFor("field");
+inline constexpr irs::field_id kFieldField1 = tests::FieldIdFor("field1");
+inline constexpr irs::field_id kFieldField123 = tests::FieldIdFor("field123");
+inline constexpr irs::field_id kFieldFieasfdld1 =
+  tests::FieldIdFor("fieasfdld1");
+inline constexpr irs::field_id kFieldSource = tests::FieldIdFor("source");
+inline constexpr irs::field_id kFieldNameUpper =
+  tests::FieldIdFor("name_upper");
+inline constexpr irs::field_id kFieldAbc = tests::FieldIdFor("abc");
+inline constexpr irs::field_id kFieldAbcd = tests::FieldIdFor("abcd");
+// Deliberately-bad ids used by tests that expect a no-match.
+inline constexpr irs::field_id kFieldInvalid = irs::field_limits::invalid();
+
 template<typename Filter>
-Filter MakeFilter(const std::string_view& field, const std::string_view term) {
+Filter MakeFilter(irs::field_id field, const std::string_view term) {
   Filter q;
-  *q.mutable_field() = field;
+  *q.mutable_field_id() = field;
   q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   return q;
 }
 
 template<typename Filter>
-Filter& Append(irs::BooleanFilter& root, const std::string_view& name,
+Filter& Append(irs::BooleanFilter& root, irs::field_id field,
                const std::string_view& term) {
   auto& sub = root.add<Filter>();
-  *sub.mutable_field() = name;
+  *sub.mutable_field_id() = field;
   sub.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   return sub;
 }
@@ -1097,10 +1121,8 @@ struct SegmentReaderMock final : irs::SubReader {
   irs::DocIterator::ptr docs_iterator() const final {
     return irs::DocIterator::empty();
   }
-  const irs::TermReader* field(std::string_view) const final { return nullptr; }
-  irs::FieldIterator::ptr fields() const final {
-    return irs::FieldIterator::empty();
-  }
+  const irs::TermReader* field(irs::field_id) const final { return nullptr; }
+  std::span<const irs::field_id> field_ids() const final { return {}; }
   irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
   irs::SegmentInfo _meta;
 };
@@ -15103,9 +15125,9 @@ TEST_P(BooleanFilterTestCase, or_sequential_multiple_segments) {
   auto rdr = open_reader();
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "B");
-    Append<irs::ByTerm>(root, "name", "F");
-    Append<irs::ByTerm>(root, "name", "I");
+    Append<irs::ByTerm>(root, kFieldName, "B");
+    Append<irs::ByTerm>(root, kFieldName, "F");
+    Append<irs::ByTerm>(root, kFieldName, "I");
 
     auto prep = root.prepare({.index = rdr});
     auto segment = rdr.begin();
@@ -15151,7 +15173,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
 
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "V");  // 22
+    Append<irs::ByTerm>(root, kFieldName, "V");  // 22
 
     CheckQuery(root, Docs{22}, rdr);
   }
@@ -15159,8 +15181,8 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // name=W OR name=Z
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "W");  // 23
-    Append<irs::ByTerm>(root, "name", "C");  // 3
+    Append<irs::ByTerm>(root, kFieldName, "W");  // 23
+    Append<irs::ByTerm>(root, kFieldName, "C");  // 3
 
     CheckQuery(root, Docs{3, 23}, rdr);
   }
@@ -15168,9 +15190,9 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // name=A OR name=Q OR name=Z
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");  // 1
-    Append<irs::ByTerm>(root, "name", "Q");  // 17
-    Append<irs::ByTerm>(root, "name", "Z");  // 26
+    Append<irs::ByTerm>(root, kFieldName, "A");  // 1
+    Append<irs::ByTerm>(root, kFieldName, "Q");  // 17
+    Append<irs::ByTerm>(root, kFieldName, "Z");  // 26
 
     CheckQuery(root, Docs{1, 17, 26}, rdr);
   }
@@ -15178,10 +15200,10 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // name=A OR name=Q OR same!=xyz
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");  // 1
-    Append<irs::ByTerm>(root, "name", "Q");  // 17
+    Append<irs::ByTerm>(root, kFieldName, "A");  // 1
+    Append<irs::ByTerm>(root, kFieldName, "Q");  // 17
     root.add<irs::Or>().add<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("same",
+      MakeFilter<irs::ByTerm>(kFieldSame,
                               "xyz");  // none (not within an OR must be
                                        // wrapped inside a single-branch OR)
 
@@ -15191,10 +15213,10 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // (name=A OR name=Q) OR same!=xyz
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");  // 1
-    Append<irs::ByTerm>(root, "name", "Q");  // 17
+    Append<irs::ByTerm>(root, kFieldName, "A");  // 1
+    Append<irs::ByTerm>(root, kFieldName, "Q");  // 17
     root.add<irs::Or>().add<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("same",
+      MakeFilter<irs::ByTerm>(kFieldSame,
                               "xyz");  // none (not within an OR must be
                                        // wrapped inside a single-branch OR)
 
@@ -15204,11 +15226,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // name=A OR name=Q OR name=Z OR same=invalid_term OR invalid_field=V
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");  // 1
-    Append<irs::ByTerm>(root, "name", "Q");  // 17
-    Append<irs::ByTerm>(root, "name", "Z");  // 26
-    Append<irs::ByTerm>(root, "same", "invalid_term");
-    Append<irs::ByTerm>(root, "invalid_field", "V");
+    Append<irs::ByTerm>(root, kFieldName, "A");  // 1
+    Append<irs::ByTerm>(root, kFieldName, "Q");  // 17
+    Append<irs::ByTerm>(root, kFieldName, "Z");  // 26
+    Append<irs::ByTerm>(root, kFieldSame, "invalid_term");
+    Append<irs::ByTerm>(root, kFieldInvalid, "V");
 
     CheckQuery(root, Docs{1, 17, 26}, rdr);
   }
@@ -15216,11 +15238,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // search : all terms
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");    // 1
-    Append<irs::ByTerm>(root, "name", "Q");    // 17
-    Append<irs::ByTerm>(root, "name", "Z");    // 26
-    Append<irs::ByTerm>(root, "same", "xyz");  // 1..32
-    Append<irs::ByTerm>(root, "same", "invalid_term");
+    Append<irs::ByTerm>(root, kFieldName, "A");    // 1
+    Append<irs::ByTerm>(root, kFieldName, "Q");    // 17
+    Append<irs::ByTerm>(root, kFieldName, "Z");    // 26
+    Append<irs::ByTerm>(root, kFieldSame, "xyz");  // 1..32
+    Append<irs::ByTerm>(root, kFieldSame, "invalid_term");
 
     CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
                           12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
@@ -15232,7 +15254,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   {
     irs::Or root;
     root.min_match_count(0);
-    Append<irs::ByTerm>(root, "name", "V");  // 22
+    Append<irs::ByTerm>(root, kFieldName, "V");  // 22
 
     CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
                           12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
@@ -15254,11 +15276,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // min match count is geater than a number of conditions
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");    // 1
-    Append<irs::ByTerm>(root, "name", "Q");    // 17
-    Append<irs::ByTerm>(root, "name", "Z");    // 26
-    Append<irs::ByTerm>(root, "same", "xyz");  // 1..32
-    Append<irs::ByTerm>(root, "same", "invalid_term");
+    Append<irs::ByTerm>(root, kFieldName, "A");    // 1
+    Append<irs::ByTerm>(root, kFieldName, "Q");    // 17
+    Append<irs::ByTerm>(root, kFieldName, "Z");    // 26
+    Append<irs::ByTerm>(root, kFieldSame, "xyz");  // 1..32
+    Append<irs::ByTerm>(root, kFieldSame, "invalid_term");
     root.min_match_count(root.size() + 1);
 
     CheckQuery(root, Docs{}, rdr);
@@ -15267,7 +15289,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // name=A OR false
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");  // 1
+    Append<irs::ByTerm>(root, kFieldName, "A");  // 1
     root.add<irs::Empty>();
 
     CheckQuery(root, Docs{1}, rdr);
@@ -15277,7 +15299,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   {
     irs::Or root;
     root.add<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("name", "A");  // 1
+      MakeFilter<irs::ByTerm>(kFieldName, "A");  // 1
     root.add<irs::Empty>();
 
     CheckQuery(
@@ -15290,8 +15312,8 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   {
     irs::Or root;
     root.add<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("name", "A");  // 1
-    Append<irs::ByTerm>(root, "same", "NOT POSSIBLE");
+      MakeFilter<irs::ByTerm>(kFieldName, "A");  // 1
+    Append<irs::ByTerm>(root, kFieldSame, "NOT POSSIBLE");
     CheckQuery(
       root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17,
                  18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
@@ -15301,11 +15323,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // optimization should adjust min_match
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");
+    Append<irs::ByTerm>(root, kFieldName, "A");
     root.add<irs::All>();
     root.add<irs::All>();
     root.add<irs::All>();
-    Append<irs::ByTerm>(root, "duplicated", "abcd");
+    Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");
     root.min_match_count(5);
     CheckQuery(root, Docs{1}, rdr);
   }
@@ -15314,11 +15336,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // optimization
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");
+    Append<irs::ByTerm>(root, kFieldName, "A");
     root.add<irs::All>();
     root.add<irs::All>();
     root.add<irs::All>();
-    Append<irs::ByTerm>(root, "duplicated", "abcd");
+    Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");
     root.min_match_count(5);
     irs::Scorer::ptr sort{std::make_unique<sort::CustomSort>()};
     CheckQuery(root, std::span{&sort, 1}, Docs{1}, rdr);
@@ -15330,7 +15352,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // unscored
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");
+    Append<irs::ByTerm>(root, kFieldName, "A");
     root.add<irs::All>();
     root.add<irs::All>();
     root.add<irs::All>();
@@ -15339,7 +15361,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     root.add<irs::All>();
     root.add<irs::All>();
     root.add<irs::All>();
-    Append<irs::ByTerm>(root, "duplicated", "abcd");
+    Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");
     root.min_match_count(3);
     CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
                           12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
@@ -15351,7 +15373,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   {
     irs::Or root;
     root.merge_type(irs::ScoreMergeType::Max);
-    Append<irs::ByTerm>(root, "name", "A");
+    Append<irs::ByTerm>(root, kFieldName, "A");
     root.add<irs::All>();
     root.add<irs::All>();
     root.add<irs::All>();
@@ -15360,7 +15382,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     root.add<irs::All>();
     root.add<irs::All>();
     root.add<irs::All>();
-    Append<irs::ByTerm>(root, "duplicated", "abcd");
+    Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");
     root.min_match_count(3);
     irs::Scorer::ptr sort{std::make_unique<sort::CustomSort>()};
 
@@ -15397,8 +15419,8 @@ TEST_P(BooleanFilterTestCase, and_schemas) {
   // Name = Product AND source=AdventureWor3ks2014
   {
     irs::And root;
-    Append<irs::ByTerm>(root, "Name", "Product");
-    Append<irs::ByTerm>(root, "source", "AdventureWor3ks2014");
+    Append<irs::ByTerm>(root, kFieldNameUpper, "Product");
+    Append<irs::ByTerm>(root, kFieldSource, "AdventureWor3ks2014");
     CheckQuery(root, Docs{}, rdr);
   }
 }
@@ -15421,7 +15443,7 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
   // name=V
   {
     irs::And root;
-    Append<irs::ByTerm>(root, "name", "V");  // 22
+    Append<irs::ByTerm>(root, kFieldName, "V");  // 22
 
     CheckQuery(root, Docs{22}, rdr);
   }
@@ -15429,26 +15451,26 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
   // duplicated=abcd AND same=xyz
   {
     irs::And root;
-    Append<irs::ByTerm>(root, "duplicated", "abcd");  // 1,5,11,21,27,31
-    Append<irs::ByTerm>(root, "same", "xyz");         // 1..32
+    Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");  // 1,5,11,21,27,31
+    Append<irs::ByTerm>(root, kFieldSame, "xyz");         // 1..32
     CheckQuery(root, Docs{1, 5, 11, 21, 27, 31}, rdr);
   }
 
   // duplicated=abcd AND same=xyz AND name=A
   {
     irs::And root;
-    Append<irs::ByTerm>(root, "duplicated", "abcd");  // 1,5,11,21,27,31
-    Append<irs::ByTerm>(root, "same", "xyz");         // 1..32
-    Append<irs::ByTerm>(root, "name", "A");           // 1
+    Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");  // 1,5,11,21,27,31
+    Append<irs::ByTerm>(root, kFieldSame, "xyz");         // 1..32
+    Append<irs::ByTerm>(root, kFieldName, "A");           // 1
     CheckQuery(root, Docs{1}, rdr);
   }
 
   // duplicated=abcd AND same=xyz AND name=B
   {
     irs::And root;
-    Append<irs::ByTerm>(root, "duplicated", "abcd");  // 1,5,11,21,27,31
-    Append<irs::ByTerm>(root, "same", "xyz");         // 1..32
-    Append<irs::ByTerm>(root, "name", "B");           // 2
+    Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");  // 1,5,11,21,27,31
+    Append<irs::ByTerm>(root, kFieldSame, "xyz");         // 1..32
+    Append<irs::ByTerm>(root, kFieldName, "B");           // 2
     CheckQuery(root, Docs{}, rdr);
   }
 }
@@ -15465,7 +15487,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
 
   // reverse order
   {
-    const std::string column_name = "duplicated";
+    const auto column_name = kFieldDuplicated;
 
     std::vector<irs::doc_id_t> expected = {32, 30, 29, 28, 26, 25, 24, 23, 22,
                                            20, 19, 18, 17, 16, 15, 14, 13, 12,
@@ -15550,7 +15572,7 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
 
   // reverse order
   {
-    const std::string column_name = "duplicated";
+    const auto column_name = kFieldDuplicated;
 
     std::vector<irs::doc_id_t> expected = {32, 30, 29, 28, 26, 25, 24, 23, 22,
                                            20, 19, 18, 17, 16, 15, 14, 13, 12,
@@ -15641,7 +15663,7 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
   // single not statement - empty result
   {
     irs::Not root;
-    root.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("same", "xyz");
+    root.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldSame, "xyz");
 
     CheckQuery(root, Docs{}, rdr);
   }
@@ -15649,22 +15671,22 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
   // duplicated=abcd AND (NOT ( NOT name=A ))
   {
     irs::And root;
-    root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+    root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
     root.add<irs::Not>().filter<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("name", "A");
+      MakeFilter<irs::ByTerm>(kFieldName, "A");
     CheckQuery(root, Docs{1}, rdr);
   }
 
   // duplicated=abcd AND (NOT ( NOT (NOT (NOT ( NOT name=A )))))
   {
     irs::And root;
-    root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+    root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
     root.add<irs::Not>()
       .filter<irs::Not>()
       .filter<irs::Not>()
       .filter<irs::Not>()
       .filter<irs::Not>()
-      .filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("name", "A");
+      .filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
     CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
   }
 
@@ -15690,17 +15712,19 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
   {
     {
       irs::And root;
-      root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+      root.add<irs::ByTerm>() =
+        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
     }
 
     {
       irs::Or root;
-      root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+      root.add<irs::ByTerm>() =
+        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       CheckQuery(root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
                             13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
                             24, 25, 26, 27, 28, 29, 30, 31, 32},
@@ -15711,20 +15735,20 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       irs::Or root;
       auto& left_branch = root.add<irs::And>();
       // this three filters fire at same doc so it will get score = 3
-      Append<irs::ByTerm>(left_branch, "name", "A");
-      Append<irs::ByTerm>(left_branch, "duplicated", "abcd");
-      Append<irs::ByTerm>(left_branch, "same", "xyz");
+      Append<irs::ByTerm>(left_branch, kFieldName, "A");
+      Append<irs::ByTerm>(left_branch, kFieldDuplicated, "abcd");
+      Append<irs::ByTerm>(left_branch, kFieldSame, "xyz");
 
       auto& right_branch = root.add<irs::And>();
-      Append<irs::ByTerm>(right_branch, "name", "B");  // +1 score
-      auto& sub = right_branch.add<irs::Or>();  // this OR we actually test
-      Append<irs::ByTerm>(sub, "name", "B");    // +1 score
+      Append<irs::ByTerm>(right_branch, kFieldName, "B");  // +1 score
+      auto& sub = right_branch.add<irs::Or>();    // this OR we actually test
+      Append<irs::ByTerm>(sub, kFieldName, "B");  // +1 score
       // will exclude some docs (but A will stay) and produce 'all'
       sub.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("prefix", "abcde");
+        MakeFilter<irs::ByTerm>(kFieldPrefix, "abcde");
       // will exclude some docs (but A will stay) and produce another 'all'
       sub.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("duplicated", "abcd");
+        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       // if 'all' will add at least 1 to score totals score will be 3 and
       // expected order will break
       irs::Scorer::ptr sort{std::make_unique<tests::sort::Boost>()};
@@ -15736,21 +15760,23 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
   {
     {
       irs::And root;
-      root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+      root.add<irs::ByTerm>() =
+        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
     }
 
     {
       irs::Or root;
-      root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+      root.add<irs::ByTerm>() =
+        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       CheckQuery(root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
                             13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
                             24, 25, 26, 27, 28, 29, 30, 31, 32},
@@ -15762,21 +15788,23 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
   {
     {
       irs::And root;
-      root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+      root.add<irs::ByTerm>() =
+        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "E");
+        MakeFilter<irs::ByTerm>(kFieldName, "E");
       CheckQuery(root, Docs{11, 21, 27, 31}, rdr);
     }
 
     {
       irs::Or root;
-      root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+      root.add<irs::ByTerm>() =
+        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("prefix", "abcd");
+        MakeFilter<irs::ByTerm>(kFieldPrefix, "abcd");
       CheckQuery(root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
                             13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
                             24, 25, 26, 27, 28, 29, 30, 31, 32},
@@ -15805,8 +15833,8 @@ TEST_P(BooleanFilterTestCase, not_and_conjunction_regression) {
 
   irs::Not root;
   auto& conj = root.filter<irs::And>();
-  conj.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("same", "xyz");
-  conj.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+  conj.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldSame, "xyz");
+  conj.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
 
   // duplicated=abcd matches {1, 5, 11, 21, 27, 31}; same=xyz matches
   // all 32 docs; the And matches the abcd set; Not is the complement.
@@ -15848,7 +15876,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential) {
   // single not statement - empty result
   {
     irs::Not not_node;
-    not_node.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("same", "xyz"),
+    not_node.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldSame, "xyz"),
 
     CheckQuery(not_node, Docs{}, rdr);
   }
@@ -15857,7 +15885,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential) {
   {
     irs::Not not_node;
     not_node.filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("same", "invalid_term"),
+      MakeFilter<irs::ByTerm>(kFieldSame, "invalid_term"),
 
     CheckQuery(not_node, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
                               12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
@@ -15869,7 +15897,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential) {
   {
     irs::Not not_node;
     not_node.filter<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("name", "A");
+      MakeFilter<irs::ByTerm>(kFieldName, "A");
     CheckQuery(not_node, Docs{1}, rdr);
   }
 
@@ -15880,7 +15908,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential) {
       .filter<irs::Not>()
       .filter<irs::Not>()
       .filter<irs::Not>()
-      .filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("name", "A");
+      .filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
 
     CheckQuery(not_node, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
                               13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
@@ -15907,15 +15935,15 @@ TEST_P(BooleanFilterTestCase, mixed) {
       // same=xyz AND duplicated=abcd
       {
         irs::And& child = root.add<irs::And>();
-        Append<irs::ByTerm>(child, "same", "xyz");
-        Append<irs::ByTerm>(child, "duplicated", "abcd");
+        Append<irs::ByTerm>(child, kFieldSame, "xyz");
+        Append<irs::ByTerm>(child, kFieldDuplicated, "abcd");
       }
 
       // same=xyz AND duplicated=vczc
       {
         irs::And& child = root.add<irs::And>();
-        Append<irs::ByTerm>(child, "same", "xyz");
-        Append<irs::ByTerm>(child, "duplicated", "vczc");
+        Append<irs::ByTerm>(child, kFieldSame, "xyz");
+        Append<irs::ByTerm>(child, kFieldDuplicated, "vczc");
       }
 
       CheckQuery(root, Docs{1, 2, 3, 5, 8, 11, 14, 17, 19, 21, 24, 27, 31},
@@ -15926,7 +15954,7 @@ TEST_P(BooleanFilterTestCase, mixed) {
     // name=X
     {
       irs::And root;
-      Append<irs::ByTerm>(root, "name", "X");
+      Append<irs::ByTerm>(root, kFieldName, "X");
 
       // ( same = xyz AND duplicated = abcd ) OR( same = xyz AND duplicated =
       // vczc )
@@ -15936,15 +15964,15 @@ TEST_P(BooleanFilterTestCase, mixed) {
         // same=xyz AND duplicated=abcd
         {
           irs::And& subchild = child.add<irs::And>();
-          Append<irs::ByTerm>(subchild, "same", "xyz");
-          Append<irs::ByTerm>(subchild, "duplicated", "abcd");
+          Append<irs::ByTerm>(subchild, kFieldSame, "xyz");
+          Append<irs::ByTerm>(subchild, kFieldDuplicated, "abcd");
         }
 
         // same=xyz AND duplicated=vczc
         {
           irs::And& subchild = child.add<irs::And>();
-          Append<irs::ByTerm>(subchild, "same", "xyz");
-          Append<irs::ByTerm>(subchild, "duplicated", "vczc");
+          Append<irs::ByTerm>(subchild, kFieldSame, "xyz");
+          Append<irs::ByTerm>(subchild, kFieldDuplicated, "vczc");
         }
       }
 
@@ -15966,35 +15994,35 @@ TEST_P(BooleanFilterTestCase, mixed) {
         // ( same = xyz AND duplicated = abcd )
         {
           irs::And& subchild = root.add<irs::And>();
-          Append<irs::ByTerm>(subchild, "same", "xyz");
-          Append<irs::ByTerm>(subchild, "duplicated", "abcd");
+          Append<irs::ByTerm>(subchild, kFieldSame, "xyz");
+          Append<irs::ByTerm>(subchild, kFieldDuplicated, "abcd");
         }
 
-        Append<irs::ByTerm>(child, "name", "A");
-        Append<irs::ByTerm>(child, "name", "C");
-        Append<irs::ByTerm>(child, "name", "P");
-        Append<irs::ByTerm>(child, "name", "X");
+        Append<irs::ByTerm>(child, kFieldName, "A");
+        Append<irs::ByTerm>(child, kFieldName, "C");
+        Append<irs::ByTerm>(child, kFieldName, "P");
+        Append<irs::ByTerm>(child, kFieldName, "X");
       }
 
       // (same=xyz AND (duplicated=vczc OR (name=A OR name=C OR NAME=P OR
       // name=U OR name=X)) 1, 2, 3, 8, 14, 16, 17, 19, 21, 24
       {
         irs::And& child = root.add<irs::And>();
-        Append<irs::ByTerm>(child, "same", "xyz");
+        Append<irs::ByTerm>(child, kFieldSame, "xyz");
 
         // (duplicated=vczc OR (name=A OR name=C OR NAME=P OR name=U OR
         // name=X)
         {
           irs::Or& subchild = child.add<irs::Or>();
-          Append<irs::ByTerm>(subchild, "duplicated", "vczc");
+          Append<irs::ByTerm>(subchild, kFieldDuplicated, "vczc");
 
           // name=A OR name=C OR NAME=P OR name=U OR name=X
           {
             irs::Or& subsubchild = subchild.add<irs::Or>();
-            Append<irs::ByTerm>(subsubchild, "name", "A");
-            Append<irs::ByTerm>(subsubchild, "name", "C");
-            Append<irs::ByTerm>(subsubchild, "name", "P");
-            Append<irs::ByTerm>(subsubchild, "name", "X");
+            Append<irs::ByTerm>(subsubchild, kFieldName, "A");
+            Append<irs::ByTerm>(subsubchild, kFieldName, "C");
+            Append<irs::ByTerm>(subsubchild, kFieldName, "P");
+            Append<irs::ByTerm>(subsubchild, kFieldName, "X");
           }
         }
       }
@@ -16013,15 +16041,15 @@ TEST_P(BooleanFilterTestCase, mixed) {
       // same=xyz AND duplicated=abcd
       {
         irs::And& child = root.add<irs::And>();
-        Append<irs::ByTerm>(child, "same", "xyz");
-        Append<irs::ByTerm>(child, "duplicated", "abcd");
+        Append<irs::ByTerm>(child, kFieldSame, "xyz");
+        Append<irs::ByTerm>(child, kFieldDuplicated, "abcd");
       }
 
       // same=xyz AND duplicated=vczc
       {
         irs::And& child = root.add<irs::And>();
-        Append<irs::ByTerm>(child, "same", "xyz");
-        Append<irs::ByTerm>(child, "duplicated", "vczc");
+        Append<irs::ByTerm>(child, kFieldSame, "xyz");
+        Append<irs::ByTerm>(child, kFieldDuplicated, "vczc");
       }
 
       CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
@@ -16041,15 +16069,15 @@ TEST_P(BooleanFilterTestCase, mixed) {
       // same=xyz AND duplicated=abcd
       {
         irs::And& child = root.add<irs::And>();
-        Append<irs::ByTerm>(child, "same", "xyz");
-        Append<irs::ByTerm>(child, "duplicated", "abcd");
+        Append<irs::ByTerm>(child, kFieldSame, "xyz");
+        Append<irs::ByTerm>(child, kFieldDuplicated, "abcd");
       }
 
       // same=xyz AND duplicated=vczc
       {
         irs::And& child = root.add<irs::And>();
-        Append<irs::ByTerm>(child, "same", "xyz");
-        Append<irs::ByTerm>(child, "duplicated", "vczc");
+        Append<irs::ByTerm>(child, kFieldSame, "xyz");
+        Append<irs::ByTerm>(child, kFieldDuplicated, "vczc");
       }
 
       CheckQuery(root, Docs{}, rdr);
@@ -16073,14 +16101,14 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
     auto& sub = root.add<irs::And>();
     {
       auto& filter = sub.add<irs::ByRange>();
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kFieldName;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("!"));
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
     }
     {
       auto& filter = sub.add<irs::ByRange>();
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kFieldName;
       filter.mutable_options()->range.max =
         irs::ViewCast<irs::byte_type>(std::string_view("~"));
       filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
@@ -16135,19 +16163,19 @@ TEST(Not_test, equal) {
 
   {
     irs::Not lhs;
-    lhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("abc", "def");
+    lhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
 
     irs::Not rhs;
-    rhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("abc", "def");
+    rhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
     ASSERT_EQ(lhs, rhs);
   }
 
   {
     irs::Not lhs;
-    lhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("abc", "def");
+    lhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
 
     irs::Not rhs;
-    rhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("abcd", "def");
+    rhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbcd, "def");
     ASSERT_NE(lhs, rhs);
   }
 }
@@ -16173,22 +16201,22 @@ TEST(And_test, add_clear) {
 
 TEST(And_test, equal) {
   irs::And lhs;
-  Append<irs::ByTerm>(lhs, "field", "term");
-  Append<irs::ByTerm>(lhs, "field1", "term1");
+  Append<irs::ByTerm>(lhs, kFieldField, "term");
+  Append<irs::ByTerm>(lhs, kFieldField1, "term1");
   {
     irs::And& subq = lhs.add<irs::And>();
-    Append<irs::ByTerm>(subq, "field123", "dfterm");
-    Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
+    Append<irs::ByTerm>(subq, kFieldField123, "dfterm");
+    Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
   }
 
   {
     irs::And rhs;
-    Append<irs::ByTerm>(rhs, "field", "term");
-    Append<irs::ByTerm>(rhs, "field1", "term1");
+    Append<irs::ByTerm>(rhs, kFieldField, "term");
+    Append<irs::ByTerm>(rhs, kFieldField1, "term1");
     {
       irs::And& subq = rhs.add<irs::And>();
-      Append<irs::ByTerm>(subq, "field123", "dfterm");
-      Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
+      Append<irs::ByTerm>(subq, kFieldField123, "dfterm");
+      Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
     }
 
     ASSERT_EQ(lhs, rhs);
@@ -16196,13 +16224,13 @@ TEST(And_test, equal) {
 
   {
     irs::And rhs;
-    Append<irs::ByTerm>(rhs, "field", "term");
-    Append<irs::ByTerm>(rhs, "field1", "term1");
+    Append<irs::ByTerm>(rhs, kFieldField, "term");
+    Append<irs::ByTerm>(rhs, kFieldField1, "term1");
     {
       irs::And& subq = rhs.add<irs::And>();
-      Append<irs::ByTerm>(subq, "field123", "dfterm");
-      Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
-      Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
+      Append<irs::ByTerm>(subq, kFieldField123, "dfterm");
+      Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
+      Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
     }
 
     ASSERT_NE(lhs, rhs);
@@ -16212,7 +16240,7 @@ TEST(And_test, equal) {
 TEST(And_test, optimize_double_negation) {
   irs::And root;
   root.add<irs::Not>().filter<irs::Not>().filter<irs::ByTerm>() =
-    MakeFilter<irs::ByTerm>("test_field", "test_term");
+    MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
   auto prepared = root.prepare({.index = irs::SubReader::empty()});
   ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
@@ -16229,7 +16257,7 @@ TEST(And_test, optimize_single_node) {
   // simple hierarchy
   {
     irs::And root;
-    Append<irs::ByTerm>(root, "test_field", "test_term");
+    Append<irs::ByTerm>(root, kFieldTestField, "test_term");
 
     auto prepared = root.prepare({.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
@@ -16239,7 +16267,7 @@ TEST(And_test, optimize_single_node) {
   {
     irs::And root;
     root.add<irs::And>().add<irs::And>().add<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("test_field", "test_term");
+      MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
     auto prepared = root.prepare({.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
@@ -16278,7 +16306,7 @@ TEST(And_test, optimize_all_filters) {
     irs::And root;
     root.add<irs::All>().boost(5.f);
     root.add<irs::All>().boost(2.f);
-    Append<irs::ByTerm>(root, "test_field", "test_term");
+    Append<irs::ByTerm>(root, kFieldTestField, "test_term");
 
     tests::sort::Boost sort{};
     auto prepared =
@@ -16291,7 +16319,7 @@ TEST(And_test, optimize_all_filters) {
   {
     tests::sort::Boost sort{};
     irs::And root;
-    Append<irs::ByTerm>(root, "test_field", "test_term");
+    Append<irs::ByTerm>(root, kFieldTestField, "test_term");
     root.add<irs::All>().boost(5.f);
     auto prepared =
       root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
@@ -16354,22 +16382,22 @@ TEST(Or_test, add_clear) {
 
 TEST(Or_test, equal) {
   irs::Or lhs;
-  Append<irs::ByTerm>(lhs, "field", "term");
-  Append<irs::ByTerm>(lhs, "field1", "term1");
+  Append<irs::ByTerm>(lhs, kFieldField, "term");
+  Append<irs::ByTerm>(lhs, kFieldField1, "term1");
   {
     irs::And& subq = lhs.add<irs::And>();
-    Append<irs::ByTerm>(subq, "field123", "dfterm");
-    Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
+    Append<irs::ByTerm>(subq, kFieldField123, "dfterm");
+    Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
   }
 
   {
     irs::Or rhs;
-    Append<irs::ByTerm>(rhs, "field", "term");
-    Append<irs::ByTerm>(rhs, "field1", "term1");
+    Append<irs::ByTerm>(rhs, kFieldField, "term");
+    Append<irs::ByTerm>(rhs, kFieldField1, "term1");
     {
       irs::And& subq = rhs.add<irs::And>();
-      Append<irs::ByTerm>(subq, "field123", "dfterm");
-      Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
+      Append<irs::ByTerm>(subq, kFieldField123, "dfterm");
+      Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
     }
 
     ASSERT_EQ(lhs, rhs);
@@ -16377,13 +16405,13 @@ TEST(Or_test, equal) {
 
   {
     irs::Or rhs;
-    Append<irs::ByTerm>(rhs, "field", "term");
-    Append<irs::ByTerm>(rhs, "field1", "term1");
+    Append<irs::ByTerm>(rhs, kFieldField, "term");
+    Append<irs::ByTerm>(rhs, kFieldField1, "term1");
     {
       irs::And& subq = rhs.add<irs::And>();
-      Append<irs::ByTerm>(subq, "field123", "dfterm");
-      Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
-      Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
+      Append<irs::ByTerm>(subq, kFieldField123, "dfterm");
+      Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
+      Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
     }
 
     ASSERT_NE(lhs, rhs);
@@ -16393,7 +16421,7 @@ TEST(Or_test, equal) {
 TEST(Or_test, optimize_double_negation) {
   irs::Or root;
   root.add<irs::Not>().filter<irs::Not>().filter<irs::ByTerm>() =
-    MakeFilter<irs::ByTerm>("test_field", "test_term");
+    MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
   auto prepared = root.prepare({.index = irs::SubReader::empty()});
   ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
@@ -16403,7 +16431,7 @@ TEST(Or_test, optimize_single_node) {
   // simple hierarchy
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "test_field", "test_term");
+    Append<irs::ByTerm>(root, kFieldTestField, "test_term");
 
     auto prepared = root.prepare({.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
@@ -16413,7 +16441,7 @@ TEST(Or_test, optimize_single_node) {
   {
     irs::Or root;
     root.add<irs::Or>().add<irs::Or>().add<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("test_field", "test_term");
+      MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
     auto prepared = root.prepare({.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));

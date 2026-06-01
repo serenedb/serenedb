@@ -43,16 +43,17 @@ enum class Conjunction { Or, And };
 enum class Modifier { None, Required, Not };
 
 struct ParserContext {
-  std::string_view default_field;
+  irs::field_id default_field_id{irs::field_limits::invalid()};
+  std::string_view default_field_name;
   irs::MixedBooleanFilter* current_root;
   irs::analysis::Analyzer* tokenizer;
   std::string error_message;
   Modifier last_mod{Modifier::None};
   bool strict_field = false;
 
-  ParserContext(irs::MixedBooleanFilter& root, std::string_view field,
+  ParserContext(irs::MixedBooleanFilter& root, irs::field_id field_id,
                 irs::analysis::Analyzer& tokenizer)
-    : default_field(field), current_root{&root}, tokenizer{&tokenizer} {}
+    : default_field_id(field_id), current_root{&root}, tokenizer{&tokenizer} {}
 
   void AddClause(Conjunction conj) {
     if (conj != Conjunction::And && last_mod == Modifier::None) {
@@ -85,14 +86,14 @@ struct ParserContext {
 
   irs::ByTerm& AddTerm(std::string_view value) {
     auto& f = current_root->GetOptional().add<irs::ByTerm>();
-    *f.mutable_field() = default_field;
+    *f.mutable_field_id() = default_field_id;
     f.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
     return f;
   }
 
   irs::ByPhrase& AddPhrase(std::string_view value, int slop = 0) {
     auto& f = current_root->GetOptional().add<irs::ByPhrase>();
-    *f.mutable_field() = default_field;
+    *f.mutable_field_id() = default_field_id;
     tokenizer->reset(value);
     auto token = irs::get<irs::TermAttr>(*tokenizer);
     for (; tokenizer->next();) {
@@ -103,7 +104,7 @@ struct ParserContext {
 
   irs::ByPrefix& AddPrefix(std::string_view value) {
     auto& f = current_root->GetOptional().add<irs::ByPrefix>();
-    *f.mutable_field() = default_field;
+    *f.mutable_field_id() = default_field_id;
     if (!value.empty() && value.back() == '*') {
       value.remove_suffix(1);
     }
@@ -113,7 +114,7 @@ struct ParserContext {
 
   irs::ByWildcard& AddWildcard(std::string_view value) {
     auto& f = current_root->GetOptional().add<irs::ByWildcard>();
-    *f.mutable_field() = default_field;
+    *f.mutable_field_id() = default_field_id;
     f.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
     return f;
   }
@@ -121,7 +122,7 @@ struct ParserContext {
   irs::ByRange& AddRange(std::string_view min_val, std::string_view max_val,
                          bool inc_min, bool inc_max) {
     auto& f = current_root->GetOptional().add<irs::ByRange>();
-    *f.mutable_field() = default_field;
+    *f.mutable_field_id() = default_field_id;
     auto& range = f.mutable_options()->range;
     if (min_val == "*") {
       range.min_type = irs::BoundType::Unbounded;
@@ -142,7 +143,7 @@ struct ParserContext {
 
   irs::ByEditDistance& AddFuzzy(std::string_view value, int distance) {
     auto& f = current_root->GetOptional().add<irs::ByEditDistance>();
-    *f.mutable_field() = default_field;
+    *f.mutable_field_id() = default_field_id;
     f.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
     f.mutable_options()->max_distance = static_cast<uint8_t>(distance);
     return f;

@@ -139,9 +139,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
                              "BOOLEAN and numeric columns."));
   }
 
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  if (auto r = MangleForType(col_type, field_name); !r.ok()) {
+  if (auto r = ValidateFilterType(col_type); !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()));
   }
@@ -171,7 +169,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
     }
     auto& range = ctx.negated ? Negate<irs::ByRange>(parent)
                               : AddFilter<irs::ByRange>(parent);
-    *range.mutable_field() = std::move(field_name);
+    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.boost(ctx.boost);
     auto* options = range.mutable_options();
     options->scored_terms_limit = ctx.scored_terms_limit;
@@ -197,7 +195,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
     auto& range = ctx.negated ? Negate<irs::ByRange>(parent)
                               : AddFilter<irs::ByRange>(parent);
-    *range.mutable_field() = std::move(field_name);
+    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.boost(ctx.boost);
     auto* options = range.mutable_options();
     options->scored_terms_limit = ctx.scored_terms_limit;
@@ -216,7 +214,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
 
   auto& range = ctx.negated ? Negate<irs::ByGranularRange>(parent)
                             : AddFilter<irs::ByGranularRange>(parent);
-  *range.mutable_field() = std::move(field_name);
+  *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
   range.boost(ctx.boost);
   auto* options = range.mutable_options();
   options->scored_terms_limit = ctx.scored_terms_limit;
@@ -292,9 +290,7 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
                              "analyzer), BOOLEAN and numeric columns."));
   }
 
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  if (auto r = MangleForType(col_type, field_name); !r.ok()) {
+  if (auto r = ValidateFilterType(col_type); !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()));
   }
@@ -303,7 +299,7 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
       col_type == duckdb::LogicalTypeId::BLOB) {
     auto& range = ctx.negated ? Negate<irs::ByRange>(parent)
                               : AddFilter<irs::ByRange>(parent);
-    *range.mutable_field() = std::move(field_name);
+    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.boost(ctx.boost);
     auto* options = range.mutable_options();
     options->scored_terms_limit = ctx.scored_terms_limit;
@@ -311,7 +307,7 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
     auto& range = ctx.negated ? Negate<irs::ByRange>(parent)
                               : AddFilter<irs::ByRange>(parent);
-    *range.mutable_field() = std::move(field_name);
+    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.boost(ctx.boost);
     auto* options = range.mutable_options();
     options->scored_terms_limit = ctx.scored_terms_limit;
@@ -333,7 +329,7 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
     // tokenising so the indexed and queried representations match.
     auto& range = ctx.negated ? Negate<irs::ByGranularRange>(parent)
                               : AddFilter<irs::ByGranularRange>(parent);
-    *range.mutable_field() = std::move(field_name);
+    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.boost(ctx.boost);
     auto* range_opts = range.mutable_options();
     range_opts->scored_terms_limit = ctx.scored_terms_limit;

@@ -943,8 +943,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
             action->expressions = std::move(new_exprs);
           }
           result->expressions = std::move(action->expressions);
-          break;
-        }
+        } break;
         case duckdb::MergeActionType::MERGE_DO_NOTHING:
           break;
         default:

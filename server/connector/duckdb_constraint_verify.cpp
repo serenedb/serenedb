@@ -197,8 +197,7 @@ void VerifyAppendConstraints(
         VerifyNotNullConstraint(table, chunk.data[phys_idx], chunk.size(),
                                 col_name, chunk, detail);
         catalog_check_idx++;
-        break;
-      }
+      } break;
       case duckdb::ConstraintType::CHECK: {
         auto& bound_check = constraint->Cast<duckdb::BoundCheckConstraint>();
         std::string_view constraint_name;
@@ -277,8 +276,7 @@ void VerifyUpdateConstraints(
           }
         }
         catalog_check_idx++;
-        break;
-      }
+      } break;
       case duckdb::ConstraintType::CHECK: {
         auto& bound_check = constraint->Cast<duckdb::BoundCheckConstraint>();
         std::string constraint_name;

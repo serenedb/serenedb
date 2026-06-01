@@ -98,22 +98,16 @@ mod_clause:
 term_expr:
     boosted_expr
     | TERM COLON                    {
-                                      // strict_field allows the prefix only
-                                      // when it names the default field --
-                                      // any other field would silently miss
-                                      // because indexed fields are mangled
-                                      // by column id, not user-facing name.
                                       if (ctx.strict_field &&
-                                          std::string_view{$1} != ctx.default_field) {
+                                          std::string_view{$1} !=
+                                              ctx.default_field_name) {
                                         ctx.error_message =
                                           "field-prefix in strict-field mode "
                                           "must match the default field";
                                         YYABORT;
                                       }
-                                      $<sv>$ = {ctx.default_field.data(), ctx.default_field.size()};
-                                      ctx.default_field = $1;
                                     }
-      term_expr                     { ctx.default_field = $<sv>3; }
+      term_expr
     ;
 
 boosted_expr:

@@ -21,6 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "basics/duckdb_engine.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
@@ -56,13 +57,15 @@ TEST_F(SegmentWriterTests, memory_index_field) {
     }
     irs::Tokenizer& GetTokens() { return token_stream; }
     std::string_view Name() const { return "test_field"; }
+    irs::field_id Id() const noexcept { return 1; }
   };
 
   irs::BooleanTokenizer stream;
   stream.reset(true);
   FieldT field(stream);
 
-  const irs::SegmentWriterOptions options{.scorers_features = {}};
+  const irs::SegmentWriterOptions options{
+    .scorers_features = {}, .db = &::sdb::DuckDBEngine::Instance().instance()};
 
   {
     irs::SegmentMeta segment;
@@ -130,6 +133,7 @@ TEST_F(SegmentWriterTests, index_field) {
     }
     irs::Tokenizer& GetTokens() { return token_stream; }
     std::string_view Name() const { return "test_field"; }
+    irs::field_id Id() const noexcept { return 1; }
   };
 
   // test missing token_stream attributes (increment)
@@ -139,7 +143,9 @@ TEST_F(SegmentWriterTests, index_field) {
     segment.codec = irs::formats::Get("1_5simd");
     ASSERT_NE(nullptr, segment.codec);
 
-    const irs::SegmentWriterOptions options{.scorers_features = {}};
+    const irs::SegmentWriterOptions options{
+      .scorers_features = {},
+      .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, options);
     writer->reset(segment);
@@ -166,7 +172,9 @@ TEST_F(SegmentWriterTests, index_field) {
     segment.codec = irs::formats::Get("1_5simd");
     ASSERT_NE(nullptr, segment.codec);
 
-    const irs::SegmentWriterOptions options{.scorers_features = {}};
+    const irs::SegmentWriterOptions options{
+      .scorers_features = {},
+      .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, options);
     writer->reset(segment);
@@ -187,8 +195,6 @@ TEST_F(SegmentWriterTests, index_field) {
   }
 }
 
-// --- Re-ported from the legacy suite ------------------------------------
-//
 // The sorted variants (six tests below) require the segment-writer's
 // comparator path through the new cs, which isn't implemented yet
 // (sorted-index support is a Phase-2+ item). They're kept as named test
@@ -300,6 +306,7 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
     }
     irs::Tokenizer& GetTokens() { return token_stream; }
     std::string_view Name() const { return "indexed_field"; }
+    irs::field_id Id() const noexcept { return 1; }
     bool Write(irs::DataOutput& out) const {
       irs::WriteStr(out, std::string_view{"hello"});
       return true;

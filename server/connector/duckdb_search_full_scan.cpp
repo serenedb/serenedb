@@ -50,7 +50,6 @@
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
-#include "catalog/mangling.h"
 #include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
 #include "connector/columnstore_materializer.h"
@@ -75,10 +74,6 @@
 
 namespace sdb::connector {
 
-// Rebuild per-field sub-filter state for a new segment. The OffsetsCollector
-// walks the prepared query tree and matches each sub-filter's field name
-// (8-byte BE column id + string mangle byte -- OFFSETS is VARCHAR-only)
-// against the requested columns.
 static void ResetOffsets(SearchFullScanGlobalState& gstate,
                          const irs::SubReader& segment) {
   for (auto& entry : gstate.offsets_entries) {
@@ -235,8 +230,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   if (!ss.offsets.empty()) {
     state->offsets_entries.resize(ss.offsets.size());
     for (size_t i = 0; i < ss.offsets.size(); ++i) {
-      MakeFieldName(ss.offsets[i].column_id, state->offsets_entries[i].name);
-      search::mangling::MangleString(state->offsets_entries[i].name);
+      state->offsets_entries[i].id =
+        static_cast<irs::field_id>(ss.offsets[i].column_id);
     }
     size_t j = 0;
     duckdb::idx_t out_slot = 0;

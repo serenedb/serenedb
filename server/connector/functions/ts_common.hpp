@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/planner/column_binding_map.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
@@ -53,8 +54,8 @@ struct FilterContext {
   irs::score_t boost = irs::kNoBoost;
   const ColumnGetter& column_getter;
   const ExpressionGetter* expr_getter = nullptr;
-  containers::NodeHashMap<std::string, SearchColumnInfo>& column_cache;
-  std::string& cache_key;
+  duckdb::column_binding_map_t<SearchColumnInfo>& column_cache;
+  containers::NodeHashMap<irs::field_id, SearchColumnInfo>& expr_cache;
   irs::analysis::Analyzer& identity;
   irs::analysis::Analyzer& tokenizer;
   duckdb::ClientContext& client_context;
@@ -67,7 +68,7 @@ struct FilterContext {
       .column_getter = column_getter,
       .expr_getter = expr_getter,
       .column_cache = column_cache,
-      .cache_key = cache_key,
+      .expr_cache = expr_cache,
       .identity = identity,
       .tokenizer = tokenizer,
       .client_context = client_context,
@@ -82,7 +83,7 @@ struct FilterContext {
       .column_getter = column_getter,
       .expr_getter = expr_getter,
       .column_cache = column_cache,
-      .cache_key = cache_key,
+      .expr_cache = expr_cache,
       .identity = identity,
       .tokenizer = tokenizer,
       .client_context = client_context,
@@ -116,12 +117,7 @@ const duckdb::Value* TryGetConstant(const duckdb::Expression& expr);
 
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr);
 
-void MakeFieldName(catalog::Column::Id column_id, std::string& field_name);
-// JSON-path-aware overload: emits `[BE col_id]/path/...` so per-path
-// inverted-index fields are reachable from queries that pass through a
-// SearchColumnInfo (e.g. `content->>'host' @@ ts_like(...)`).
-void MakeFieldName(const SearchColumnInfo& column, std::string& field_name);
-Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name);
+Result ValidateFilterType(duckdb::LogicalTypeId type_id);
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id);
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id);

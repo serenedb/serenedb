@@ -80,6 +80,8 @@ TEST(indri_dirichlet_test, equals) {
   ASSERT_FALSE(a->equals(*c));
 }
 
+constexpr irs::field_id kBodyFieldId = 1;
+
 class IndriDirichletIndexTest : public IndexTestBase {
  protected:
   void BuildFixture();
@@ -89,18 +91,19 @@ void IndriDirichletIndexTest::BuildFixture() {
   using TextField = tests::TextField<std::string>;
   const auto extra = irs::IndexFeatures::Norm;
 
+  auto make_body = [&](std::string value) {
+    auto f =
+      std::make_shared<TextField>("body", std::move(value), false, extra);
+    f->id = kBodyFieldId;
+    return f;
+  };
+
   tests::Document doc1;
-  doc1.insert(std::make_shared<TextField>("body", std::string{"fox fox dog"},
-                                          false, extra),
-              true, false);
+  doc1.insert(make_body(std::string{"fox fox dog"}), true, false);
   tests::Document doc2;
-  doc2.insert(
-    std::make_shared<TextField>("body", std::string{"fox cat"}, false, extra),
-    true, false);
+  doc2.insert(make_body(std::string{"fox cat"}), true, false);
   tests::Document doc3;
-  doc3.insert(std::make_shared<TextField>("body", std::string{"dog rabbit fox"},
-                                          false, extra),
-              true, false);
+  doc3.insert(make_body(std::string{"dog rabbit fox"}), true, false);
 
   irs::IndexWriterOptions opts;
 
@@ -124,7 +127,7 @@ TEST_P(IndriDirichletIndexTest, scores_are_finite) {
   auto& segment = *(index.begin());
 
   irs::ByTerm filter;
-  *filter.mutable_field() = "body";
+  *filter.mutable_field_id() = kBodyFieldId;
   filter.mutable_options()->term =
     irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 

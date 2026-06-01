@@ -48,13 +48,17 @@ struct HNSWColumnConfig {
 struct ColumnSerialized {
   ObjectId text_dictionary = ObjectId::none();
   bool store_values = false;
+  bool indexed_term_dict = false;
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
   search::Features features;
   std::optional<HNSWColumnConfig> hnsw_config;
-  std::optional<irs::field_id> synthetic_column;
+  irs::field_id synthetic_column = irs::field_limits::invalid();
   uint32_t row_group_size = 0;
   uint32_t norm_row_group_size = 0;
+  irs::field_id null_field_id = irs::field_limits::invalid();
+  irs::field_id bool_field_id = irs::field_limits::invalid();
+  irs::field_id numeric_field_id = irs::field_limits::invalid();
 };
 
 struct ExpressionSerialized {
@@ -62,28 +66,14 @@ struct ExpressionSerialized {
   std::string pretty_printed;
   std::vector<Column::Id> dependent_columns;
   duckdb::LogicalType return_type;
-  std::optional<irs::field_id> synthetic_column;
+  irs::field_id synthetic_column = irs::field_limits::invalid();
   ObjectId text_dictionary = ObjectId::none();
-  irs::field_id field_id = 0;
+  irs::field_id field_id = irs::field_limits::invalid();
   uint32_t norm_row_group_size = 0;
   search::Features features;
-
-  struct HasherBySerialized {
-    using is_transparent = void;
-
-    size_t operator()(std::string_view sv) const { return absl::HashOf(sv); }
-    size_t operator()(const ExpressionSerialized& info) const {
-      return (*this)(info.serialized_expr);
-    }
-
-    bool operator()(const ExpressionSerialized& a, std::string_view b) const {
-      return a.serialized_expr == b;
-    }
-    bool operator()(const ExpressionSerialized& a,
-                    const ExpressionSerialized& b) const {
-      return a.serialized_expr == b.serialized_expr;
-    }
-  };
+  irs::field_id null_field_id = irs::field_limits::invalid();
+  irs::field_id bool_field_id = irs::field_limits::invalid();
+  irs::field_id numeric_field_id = irs::field_limits::invalid();
 };
 
 using ColumnSerializedMap =

@@ -25,7 +25,6 @@
 #include "basics/misc.hpp"
 #include "basics/singleton.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/empty_term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/cost.hpp"
@@ -92,20 +91,6 @@ struct EmptySeekTermIterator : SeekTermIterator {
 
 EmptySeekTermIterator gEmptySeekIterator;
 
-// Represents a reader with no terms
-const EmptyTermReader kEmptyTermReader{0};
-
-// Represents a reader with no fields
-struct EmptyFieldIterator : FieldIterator {
-  const TermReader& value() const noexcept final { return kEmptyTermReader; }
-
-  bool seek(std::string_view /*target*/) noexcept final { return false; }
-
-  bool next() noexcept final { return false; }
-};
-
-EmptyFieldIterator gEmptyFieldIterator;
-
 }  // namespace
 
 TermIterator::ptr TermIterator::empty() noexcept {
@@ -122,10 +107,6 @@ DocIterator::ptr DocIterator::empty() noexcept {
 
 ResettableDocIterator::ptr ResettableDocIterator::empty() noexcept {
   return memory::to_managed<ResettableDocIterator>(gEmptyDocIterator);
-}
-
-FieldIterator::ptr FieldIterator::empty() noexcept {
-  return memory::to_managed<FieldIterator>(gEmptyFieldIterator);
 }
 
 }  // namespace irs

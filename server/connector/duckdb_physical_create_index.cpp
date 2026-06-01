@@ -56,7 +56,6 @@
 #include "connector/json_extract_names.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
-#include "connector/search_field_name.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
@@ -348,8 +347,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
 
     create_result = catalog_impl.CreateInvertedIndex(
-      _database_id, _schema_entry.name, _relation->GetName(), _info->index_name,
-      std::move(idx_columns), std::move(options),
+      context, _database_id, _schema_entry.name, _relation->GetName(),
+      _info->index_name, std::move(idx_columns), std::move(options),
       {.create_with_tombstone = true});
   } else {
     bool unique =
@@ -554,17 +553,11 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
 
   auto tokenizer_provider =
     MakeTokenizerProvider(gstate.snapshot_for_providers, inverted_index);
-  auto store_values_provider = MakeStoreValuesProvider(inverted_index);
-  auto is_text_indexed_provider = MakeIsTextIndexedProvider(inverted_index);
-  auto hnsw_info_provider = MakeHNSWInfoProvider(inverted_index);
-  auto expr_tokenizer_provider = MakeExpressionTokenizerProvider(
-    gstate.snapshot_for_providers, inverted_index);
+  auto entry_info_provider = MakeEntryInfoProvider(inverted_index);
   auto indexed_exprs = MakeIndexedExpressions(inverted_index, context.client);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx, std::move(tokenizer_provider),
-    gstate.index_for_providers->GetColumnIds(),
-    std::move(store_values_provider), std::move(is_text_indexed_provider),
-    std::move(hnsw_info_provider), std::move(expr_tokenizer_provider),
+    gstate.index_for_providers->GetColumnIds(), std::move(entry_info_provider),
     std::move(indexed_exprs));
 
   return lstate;
@@ -674,15 +667,16 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
 
   writer->Init(num_rows, chunk);
 
+  std::vector<std::string_view> view_row_keys{row_keys.begin(), row_keys.end()};
   DuckDBColumnSerializer::SstWriter noop{nullptr};
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {
       continue;
     }
 
-    const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
-                                /*have_nulls=*/true};
-    if (!writer->SwitchColumn(desc, chunk.data[col.input_col_idx], num_rows)) {
+    const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type};
+    if (!writer->SwitchColumn(desc, chunk.data[col.input_col_idx],
+                              view_row_keys, num_rows)) {
       continue;
     }
 
@@ -690,7 +684,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       key_utils::SetupColumnForKey(row_keys[row], col.id);
     }
 
-    DuckDBSinkIndexWriter* writer_ptr = writer;
+    auto* writer_ptr = basics::downCast<DuckDBSinkColumnWriter>(writer);
     serializer->WriteColumn(noop, chunk.data[col.input_col_idx], num_rows,
                             row_keys, {&writer_ptr, 1}, desc);
   }
@@ -700,9 +694,9 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     auto slot_to_col_ids = gstate.columns |
                            std::views::transform(&InsertColumnMeta::id) |
                            std::ranges::to<std::vector<catalog::Column::Id>>();
-    EvaluateAndWriteIndexedExpressions(
-      *writer, indexed_exprs, chunk, gstate.table_id, slot_to_col_ids,
-      context.client, num_rows, row_keys, *serializer);
+    EvaluateAndWriteIndexedExpressions(*writer, indexed_exprs, chunk,
+                                       gstate.table_id, slot_to_col_ids,
+                                       context.client, num_rows, row_keys);
   }
 
   writer->Finish();

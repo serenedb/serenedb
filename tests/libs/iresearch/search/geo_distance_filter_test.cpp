@@ -46,6 +46,10 @@ using namespace irs::tests;
 
 inline constexpr irs::field_id kName = 1;
 inline constexpr irs::field_id kGeo = 2;
+// Stand-ins used by filter-only ctor/equal/boost cases that previously
+// passed bare strings ("field", "field1") rather than indexing data.
+inline constexpr irs::field_id kFieldFieldId = 3;
+inline constexpr irs::field_id kField1FieldId = 4;
 
 struct CustomSort final : public irs::ScorerBase<void> {
   static constexpr std::string_view type_name() noexcept {
@@ -139,7 +143,7 @@ TEST(GeoDistanceFilterTest, options) {
 TEST(GeoDistanceFilterTest, ctor) {
   GeoDistanceFilter q;
   ASSERT_EQ(irs::Type<GeoDistanceFilter>::id(), q.type());
-  ASSERT_EQ("", q.field());
+  ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
   ASSERT_EQ(irs::kNoBoost, q.Boost());
 #ifndef SDB_DEV
   ASSERT_EQ(GeoDistanceFilterOptions{}, q.options());
@@ -153,7 +157,7 @@ TEST(GeoDistanceFilterTest, equal) {
   q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
   q.mutable_options()->range.max = 7000.;
   q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-  *q.mutable_field() = "field";
+  *q.mutable_field_id() = kFieldFieldId;
 
   {
     GeoDistanceFilter q1;
@@ -162,7 +166,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q1.mutable_options()->range.max = 7000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = kFieldFieldId;
 
     ASSERT_EQ(q, q1);
   }
@@ -175,7 +179,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q1.mutable_options()->range.max = 7000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = kFieldFieldId;
 
     ASSERT_EQ(q, q1);
   }
@@ -188,7 +192,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q1.mutable_options()->range.max = 7000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q1.mutable_field() = "field1";
+    *q1.mutable_field_id() = kField1FieldId;
 
     ASSERT_NE(q, q1);
   }
@@ -200,7 +204,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Exclusive;
     q1.mutable_options()->range.max = 7000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = kFieldFieldId;
 
     ASSERT_NE(q, q1);
   }
@@ -212,7 +216,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q1.mutable_options()->range.max = 7000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = kFieldFieldId;
 
     ASSERT_NE(q, q1);
   }
@@ -224,7 +228,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q1.mutable_options()->range.max = 7000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Exclusive;
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = kFieldFieldId;
 
     ASSERT_NE(q, q1);
   }
@@ -236,7 +240,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q1.mutable_options()->range.max = 6000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = kFieldFieldId;
 
     ASSERT_NE(q, q1);
   }
@@ -248,7 +252,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Exclusive;
     q1.mutable_options()->range.max = 7000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = kFieldFieldId;
 
     ASSERT_NE(q, q1);
   }
@@ -262,7 +266,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->range.min = 5000.;
     q.mutable_options()->options.set_max_cells(50);
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = kFieldFieldId;
     q.mutable_options()->store_field_id = kGeo;
 
     auto prepared = q.prepare({.index = irs::SubReader::empty()});
@@ -279,7 +283,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q.mutable_options()->range.max = 5500.;
     q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = kFieldFieldId;
     q.mutable_options()->store_field_id = kGeo;
 
     auto prepared = q.prepare({.index = irs::SubReader::empty()});
@@ -294,7 +298,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->range.min = 5000.;
     q.mutable_options()->options.set_max_cells(50);
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = kFieldFieldId;
     q.mutable_options()->store_field_id = kGeo;
     q.boost(boost);
 
@@ -313,7 +317,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q.mutable_options()->range.max = 6000.;
     q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = kFieldFieldId;
     q.mutable_options()->store_field_id = kGeo;
     q.boost(boost);
 
@@ -367,8 +371,10 @@ TEST(GeoDistanceFilterTest, query) {
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
+    geo_field.id = kGeo;
     StringField name_field;
     name_field.field_name = "name";
+    name_field.id = kName;
     {
       auto segment0 = writer->GetBatch();
       auto segment1 = writer->GetBatch();
@@ -494,7 +500,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70892, 37.607768).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -509,7 +515,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -526,7 +532,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -543,7 +549,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -560,7 +566,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -580,7 +586,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -604,7 +610,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -636,7 +642,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -669,7 +675,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -686,7 +692,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -703,7 +709,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -722,7 +728,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
 
@@ -738,7 +744,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -755,7 +761,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -788,7 +794,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -804,7 +810,7 @@ TEST(GeoDistanceFilterTest, query) {
     std::set<std::string> expected;
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -820,7 +826,7 @@ TEST(GeoDistanceFilterTest, query) {
     std::set<std::string> expected;
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -878,8 +884,10 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
+    geo_field.id = kGeo;
     StringField name_field;
     name_field.field_name = "name";
+    name_field.id = kName;
     {
       auto segment0 = writer->GetBatch();
       auto segment1 = writer->GetBatch();
@@ -992,7 +1000,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
   {
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70892, 37.607768).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -1040,7 +1048,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     GeoDistanceFilter q;
     q.boost(1.5f);
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70892, 37.607768).ToPoint();
     auto& range = q.mutable_options()->range;

@@ -23,7 +23,6 @@
 #include <iresearch/search/regexp_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
@@ -88,13 +87,11 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     throw duckdb::InvalidInputException("ts_regexp field is not VARCHAR");
   }
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  search::mangling::MangleString(field_name);
   auto& filter = ctx.negated ? Negate<irs::ByRegexp>(parent)
                              : AddFilter<irs::ByRegexp>(parent);
   filter.boost(ctx.boost);
-  *filter.mutable_field() = std::move(field_name);
+  *filter.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto* opts = filter.mutable_options();
   opts->scored_terms_limit = ctx.scored_terms_limit;
   opts->pattern.assign(

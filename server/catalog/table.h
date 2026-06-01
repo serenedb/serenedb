@@ -33,7 +33,7 @@ class Table final : public Object {
   Table(ObjectId schema_id, ObjectId id, std::string_view name,
         std::vector<Column> columns, std::vector<Column::Id> pk_columns,
         std::vector<CheckConstraint> check_constraints,
-        ObjectId generated_pk_seq_id);
+        ObjectId generated_pk_seq_id, ObjectId cache_table_id = {});
 
   static std::shared_ptr<Table> ReadInternal(vpack::Slice slice,
                                              ReadContext ctx);
@@ -48,6 +48,13 @@ class Table final : public Object {
   // explicit PK). Unset for tables with an explicit PK. Look it up via
   // `Snapshot::GetObject<Sequence>(GetGeneratedPkSeqId())`.
   ObjectId GetGeneratedPkSeqId() const noexcept { return _generated_pk_seq_id; }
+
+  // For search-backed tables (`StorageKind::kSearch`): id of the per-shard
+  // DuckDB-native cache table that buffers foreground writes before they
+  // sync into iresearch. Unset for non-search storage kinds. See
+  // search_table_shard_native.md §1.4 for the lifecycle. The cache table
+  // itself lives in the internal `sdb_cache$` attached database.
+  ObjectId GetCacheTableId() const noexcept { return _cache_table_id; }
 
   Result RenameColumn(std::shared_ptr<Table>& result, std::string_view old_name,
                       std::string_view new_name) const;
@@ -65,6 +72,7 @@ class Table final : public Object {
   std::vector<Column::Id> _pk_columns;
   std::vector<CheckConstraint> _check_constraints;
   ObjectId _generated_pk_seq_id;
+  ObjectId _cache_table_id;
 };
 
 }  // namespace sdb::catalog

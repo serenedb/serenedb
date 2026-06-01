@@ -38,12 +38,13 @@ namespace sdb::catalog {
 Table::Table(ObjectId schema_id, ObjectId id, std::string_view name,
              std::vector<Column> columns, std::vector<Column::Id> pk_columns,
              std::vector<CheckConstraint> check_constraints,
-             ObjectId generated_pk_seq_id)
+             ObjectId generated_pk_seq_id, ObjectId cache_table_id)
   : Object{schema_id, id, std::string{name}, ObjectType::Table},
     _columns{std::move(columns)},
     _pk_columns{std::move(pk_columns)},
     _check_constraints{std::move(check_constraints)},
-    _generated_pk_seq_id{generated_pk_seq_id} {
+    _generated_pk_seq_id{generated_pk_seq_id},
+    _cache_table_id{cache_table_id} {
   for (auto& col : _columns) {
     col.SetParentId(_id);
   }
@@ -75,10 +76,13 @@ std::shared_ptr<Table> Table::ReadInternal(vpack::Slice slice,
 
   ObjectId generated_pk_seq_id{
     basics::VPackHelper::getNumber<uint64_t>(slice, "generated_pk_seq_id", 0)};
+  ObjectId cache_table_id{
+    basics::VPackHelper::getNumber<uint64_t>(slice, "cache_table_id", 0)};
 
-  return std::make_shared<Table>(
-    ctx.schema_id, ctx.id, name_slice.stringView(), std::move(columns),
-    std::move(pk_columns), std::move(check_constraints), generated_pk_seq_id);
+  return std::make_shared<Table>(ctx.schema_id, ctx.id, name_slice.stringView(),
+                                 std::move(columns), std::move(pk_columns),
+                                 std::move(check_constraints),
+                                 generated_pk_seq_id, cache_table_id);
 }
 
 void Table::WriteInternal(vpack::Builder& b) const {
@@ -92,6 +96,9 @@ void Table::WriteInternal(vpack::Builder& b) const {
     vpack::WriteTuple(b, _check_constraints);
     if (_generated_pk_seq_id.isSet()) {
       b.add("generated_pk_seq_id", _generated_pk_seq_id.id());
+    }
+    if (_cache_table_id.isSet()) {
+      b.add("cache_table_id", _cache_table_id.id());
     }
   });
   b.close();
@@ -166,7 +173,7 @@ Result Table::DropCheckConstraint(std::shared_ptr<Table>& result,
 std::shared_ptr<Object> Table::Clone() const {
   auto cloned = std::make_shared<Table>(
     GetParentId(), GetId(), GetName(), _columns, _pk_columns,
-    _check_constraints, _generated_pk_seq_id);
+    _check_constraints, _generated_pk_seq_id, _cache_table_id);
   cloned->SetTombstoned(Tombstoned());
   return cloned;
 }

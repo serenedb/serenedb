@@ -223,13 +223,17 @@ struct TableDrop final : public DropTask,
   // Recovery / catalog-cleanup path: caller passes the persisted
   // StorageKind read from the shard's vpack. Forwarded to TableShardDrop
   // so on-disk artifact cleanup can dispatch on backend.
+  // `cache_table_id` is the per-shard cache table in `sdb_cache$` for
+  // kSearch tables; unset (zero) otherwise. Drop is best-effort and
+  // idempotent so recovery retry is safe.
   TableDrop(ObjectId id, ObjectId shard_id, ObjectId db_id, uint64_t table_size,
             std::vector<std::shared_ptr<IndexDrop>> indexes,
             std::vector<ObjectId> owned_sequences, ObjectId schema_id,
-            StorageKind storage, bool is_root = false)
+            StorageKind storage, ObjectId cache_table_id, bool is_root = false)
     : DropTask{id, schema_id, is_root},
       _indexes{std::move(indexes)},
       _owned_sequences{std::move(owned_sequences)},
+      _cache_table_id{cache_table_id},
       _shard_drop{std::make_shared<TableShardDrop>(
         shard_id, id, db_id, schema_id, table_size, storage)} {}
 
@@ -241,6 +245,7 @@ struct TableDrop final : public DropTask,
     : DropTask{table, schema_id, is_root},
       _indexes{std::move(indexes)},
       _owned_sequences{std::move(owned_sequences)},
+      _cache_table_id{table->GetCacheTableId()},
       _shard_drop{std::make_shared<TableShardDrop>(
         shard, table->GetId(), db_id, schema_id,
         table->Columns().size() * shard->GetTableStats().num_rows)} {}
@@ -267,6 +272,7 @@ struct TableDrop final : public DropTask,
  private:
   std::vector<std::shared_ptr<IndexDrop>> _indexes;
   std::vector<ObjectId> _owned_sequences;
+  ObjectId _cache_table_id;
   std::shared_ptr<TableShardDrop> _shard_drop;
 };
 

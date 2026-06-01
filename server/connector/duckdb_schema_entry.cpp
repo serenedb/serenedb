@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_schema_entry.h"
 
+#include <absl/cleanup/cleanup.h>
+
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/constraints/check_constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
@@ -40,9 +42,11 @@
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
+#include <duckdb/transaction/meta_transaction.hpp>
 #include <iostream>
 
 #include "app/app_server.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/function.h"
@@ -63,6 +67,7 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
+#include "query/duckdb_engine.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/secondary_index_shard.h"
 
@@ -406,6 +411,21 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
 
+  // For search-backed tables (kSearch): allocate cache_table_id now so the
+  // catalog `Table` entry carries it from creation. The catalog entry is
+  // written with-tombstone so a crash between the catalog write and the
+  // cache table CREATE leaves a tombstoned entry the drop-task can clean
+  // up. See search_table_shard_native.md §1.4.
+  const bool is_search = (options.storage == catalog::StorageKind::kSearch);
+  if (is_search) {
+    options.cache_table_id = catalog::NextId();
+    op_options.create_with_tombstone = true;
+  }
+  // Snapshot for kSearch cache-create / rollback below (options is moved
+  // into catalog_impl.CreateTable).
+  const std::string table_name_owned = options.name;
+  const ObjectId cache_table_id = options.cache_table_id;
+
   auto r =
     catalog_impl.CreateTable(database_id, name, std::move(options), op_options);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
@@ -417,6 +437,31 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
+  }
+
+  if (is_search) {
+    // On any failure of the cache create or tombstone removal: drop the
+    // tombstoned catalog entry synchronously so the catalog stays tidy.
+    // Recovery would do the same via the drop-task, but only on restart.
+    absl::Cleanup catalog_rollback = [&] {
+      std::ignore =
+        catalog_impl.DropTable(catalog.GetName(), name, table_name_owned, true);
+    };
+    // Cache create runs in a separate DuckDB connection: the user's
+    // current transaction is already modifying their serened database, and
+    // MetaTransaction forbids a single transaction from writing to two
+    // attached DBs (meta_transaction.cpp:256-260).
+    auto snapshot = catalog_impl.GetCatalogSnapshot();
+    auto created = snapshot->GetTable(database_id, name, table_name_owned);
+    SDB_ASSERT(created);
+    query::CreateSearchCacheTable(cache_table_id, *created);
+
+    auto rm_r =
+      catalog_impl.RemoveTombstone(database_id, name, table_name_owned);
+    if (!rm_r.ok()) {
+      SDB_THROW(std::move(rm_r));
+    }
+    std::move(catalog_rollback).Cancel();
   }
 
   return nullptr;

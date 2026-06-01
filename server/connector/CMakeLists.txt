@@ -43,6 +43,8 @@ add_library(
     index_source_view_rocksdb.cpp
     view_fast_path.cpp
     duckdb_copy_filesystem.cpp
+    duckdb_physical_cached_ctas.cpp
+    duckdb_physical_cached_insert.cpp
     duckdb_physical_insert.cpp
     duckdb_physical_search_insert.cpp
     duckdb_physical_sst_insert.cpp

@@ -35,6 +35,7 @@
 #include "catalog/types.h"
 #include "connector/key_utils.hpp"
 #include "general_server/scheduler.h"
+#include "query/duckdb_engine.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -180,7 +181,19 @@ AsyncResult TableDrop::Execute() {
     co_await yaclib::Await(async_results.begin(), async_results.end());
   }
   auto r = co_await Schedule(_shard_drop);
-  if (!r.ok() || !Finalize().ok()) {
+  if (!r.ok()) {
+    co_return Result{ERROR_LOCKED};
+  }
+  // kSearch cache table cleanup: must happen before Finalize wipes the
+  // catalog row so a crash mid-drop leaves a tombstoned table whose
+  // cache_table_id is still readable on retry. The helper is idempotent
+  // (DropEntry with RETURN_NULL).
+  if (_cache_table_id.isSet()) {
+    if (auto cr = query::DropSearchCacheTable(_cache_table_id); !cr.ok()) {
+      co_return Result{ERROR_LOCKED};
+    }
+  }
+  if (!Finalize().ok()) {
     co_return Result{ERROR_LOCKED};
   }
   co_return {};

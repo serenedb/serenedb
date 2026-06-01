@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_physical_search_insert.h"
 
+#include <absl/cleanup/cleanup.h>
+
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
@@ -48,6 +50,7 @@
 #include "connector/search_table_marker.h"
 #include "connector/search_table_sink_writer.h"
 #include "pg/connection_context.h"
+#include "query/duckdb_engine.h"
 #include "query/local_table_changes.h"
 #include "query/transaction.h"
 #include "search/search_table_shard.h"
@@ -159,6 +162,12 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
   catalog::CreateTableOperationOptions op_options;
   op_options.create_with_tombstone = true;
 
+  // kSearch: allocate the cache table id before the catalog write so the
+  // Table entry carries it. See search_table_shard_native.md §1.4.
+  options.cache_table_id = catalog::NextId();
+  const ObjectId cache_table_id = options.cache_table_id;
+  const std::string table_name_owned = options.name;
+
   auto r = catalog_impl.CreateTable(database_id, schema.name,
                                     std::move(options), op_options);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
@@ -180,6 +189,18 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
   SDB_ASSERT(catalog_table);
   auto database = snapshot->GetDatabase(database_id);
   SDB_ASSERT(database);
+
+  // Create the per-shard cache table. On failure, drop the tombstoned
+  // catalog entry synchronously so we don't leave it for recovery. The
+  // CTAS tombstone is removed later in RemoveCtasTombstoneIfNeeded after
+  // the operator finishes loading data; if that path fails the table
+  // remains tombstoned and the drop-task (Step 4) cleans up cache too.
+  absl::Cleanup catalog_rollback = [&] {
+    std::ignore = catalog_impl.DropTable(database->GetName(), schema.name,
+                                         table_name_owned, true);
+  };
+  query::CreateSearchCacheTable(cache_table_id, *catalog_table);
+  std::move(catalog_rollback).Cancel();
 
   state.ctas_mode = true;
   state.ctas_database_id = database_id;

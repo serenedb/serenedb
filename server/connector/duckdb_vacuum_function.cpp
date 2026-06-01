@@ -20,6 +20,9 @@
 
 #include "connector/duckdb_vacuum_function.h"
 
+#include <absl/strings/str_cat.h>
+
+#include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/database.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -27,9 +30,14 @@
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/duckdb_primary_key.h"
+#include "connector/key_utils.hpp"
+#include "connector/search_table_sink_writer.h"
 #include "pg/connection_context.h"
+#include "query/duckdb_engine.h"
 #include "search/inverted_index_shard.h"
 #include "search/search_table_shard.h"
 #include "storage_engine/engine_feature.h"
@@ -234,6 +242,136 @@ void ForEachInvertedShard(
   }
 }
 
+// Drains the per-shard cache table (`sdb_cache$.cache_<id>`) into
+// iresearch for a kSearch table. This is the M4 PR 4.x sync flow
+// (see search_table_shard_native.md §5), called from
+// VACUUM (REFRESH_TABLE) on a kSearch table.
+//
+// Step A scope: INSERT-only drain on generated-PK tables. Skips
+// `sdb_op$=1` DELETE rows and explicit-PK encoding (added in Step B).
+// Skips the gen-bracketed seqlock window / `sync_mu` / explicit tick
+// reservation -- there's no concurrent sync or reader in the
+// perf-test scope, and iresearch::Transaction::Commit() auto-allocates
+// a tick.
+//
+// Flow:
+//   1. Open a fresh DuckDB Connection on `sdb_cache$` (separate
+//      MetaTransaction from the user statement -- cache writes don't
+//      need to live in the user's txn).
+//   2. SELECT rowid, sdb_op$, sdb_pk$, <user cols> FROM cache_<id>
+//      ORDER BY rowid.
+//   3. For each chunk, write user columns + per-row PK into the
+//      iresearch transaction via SearchTableSinkWriter (lifted from
+//      SereneDBSearchInsert::Finalize).
+//   4. Commit the iresearch transaction; the caller follows up with
+//      SearchTableShard::Commit() (RefreshCommit) to flush the segment.
+//   5. DELETE FROM cache_<id> (everything visible to the cache_conn's
+//      snapshot from step 1).
+void DrainSearchCacheToIresearch(const catalog::Table& table,
+                                 search::SearchTableShard& search_shard) {
+  const auto cache_table_id = table.GetCacheTableId();
+  if (!cache_table_id.isSet()) {
+    return;  // Pre-cache kSearch table -- nothing to drain.
+  }
+  // STEP A: explicit-PK case is deferred to Step B (PK encoding needs
+  // per-column UnifiedVectorFormat preparation from the cache chunk).
+  SDB_ASSERT(table.PKColumns().empty(),
+             "Cache sync Step A: explicit-PK kSearch not supported yet");
+
+  // Build chunk-side column metadata in cache-row order. Cache schema
+  // is [sdb_op$, sdb_pk$, <user_cols...>] for generated-PK tables, so
+  // user_cols start at index 2 in each chunk we read. We also skip
+  // kGeneratedPKId in the catalog Table (virtual column not stored).
+  std::vector<catalog::Column::Id> column_ids;
+  std::vector<duckdb::LogicalType> chunk_types;
+  column_ids.reserve(table.Columns().size());
+  chunk_types.reserve(table.Columns().size());
+  for (const auto& col : table.Columns()) {
+    if (col.GetId() == catalog::Column::kGeneratedPKId) {
+      continue;
+    }
+    column_ids.push_back(col.GetId());
+    chunk_types.push_back(col.type);
+  }
+
+  // Phase 1 + 2: open cache connection, SELECT rows.
+  auto cache_conn = query::DuckDBEngine::Instance().CreateConnection();
+  const auto cache_table_name = query::SearchCacheTableName(cache_table_id);
+  const auto qualified = absl::StrCat("\"", query::kSearchCacheDatabase,
+                                      "\".main.\"", cache_table_name, "\"");
+  const auto select_sql =
+    absl::StrCat("SELECT * FROM ", qualified, " ORDER BY rowid");
+  auto result = cache_conn->Query(select_sql);
+  if (result->HasError()) {
+    SDB_THROW(ERROR_INTERNAL, "Cache sync SELECT failed: ", result->GetError());
+  }
+
+  // Phase 3: encode rows into the iresearch transaction.
+  auto search_trx = search_shard.GetTransaction();
+  auto table_key = key_utils::PrepareTableKey(table.GetId());
+  SearchTableSinkWriter sink{search_trx};
+  std::string pk_buffer;
+  uint64_t drained_rows = 0;
+
+  // Iterate result chunks. result->Fetch() returns one chunk at a time
+  // until null.
+  while (auto chunk = result->Fetch()) {
+    const auto num_rows = chunk->size();
+    if (num_rows == 0) {
+      break;
+    }
+    sink.Init(num_rows);
+
+    // Synthetic columns first: sdb_op$ at col 0, sdb_pk$ at col 1.
+    // User columns from col 2 onwards.
+    constexpr duckdb::idx_t kSyntheticCols = 2;
+    SDB_ASSERT(chunk->ColumnCount() == kSyntheticCols + column_ids.size());
+
+    // SwitchColumn per user column.
+    for (duckdb::idx_t i = 0; i < column_ids.size(); ++i) {
+      sink.SwitchColumn(column_ids[i], chunk_types[i],
+                        chunk->data[kSyntheticCols + i], num_rows);
+    }
+
+    // Per-row PK. For STEP A we assume all rows are INSERTs (sdb_op$=0)
+    // and skip the per-row op check; Step B will branch on sdb_op$.
+    auto* pk_data = duckdb::FlatVector::GetData<int64_t>(chunk->data[1]);
+    std::span<const duckdb_primary_key::PKColumn> empty_pk_columns;
+    std::vector<duckdb::UnifiedVectorFormat> empty_pk_formats;
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      pk_buffer.clear();
+      duckdb_primary_key::MakeColumnKey(
+        empty_pk_formats, empty_pk_columns, row,
+        static_cast<uint64_t>(pk_data[row]), table_key, [](std::string_view) {},
+        pk_buffer);
+      sink.Write(key_utils::ExtractRowKey(pk_buffer));
+    }
+    sink.Finish();
+    drained_rows += num_rows;
+  }
+
+  if (drained_rows == 0) {
+    return;  // Cache is empty -- nothing to commit.
+  }
+
+  // Phase 4a: commit iresearch transaction (auto-allocated tick).
+  if (!search_trx.Commit()) {
+    SDB_THROW(ERROR_INTERNAL,
+              "iresearch transaction commit failed during cache sync");
+  }
+
+  // Phase 4c: drop drained rows from the cache. Connection::Query
+  // auto-manages its own DuckDB transaction; sdb_cache$ is the only DB
+  // this Connection touches so MetaTransaction's single-DB rule is
+  // satisfied.
+  const auto delete_sql = absl::StrCat("DELETE FROM ", qualified);
+  auto del_result = cache_conn->Query(delete_sql);
+  if (del_result->HasError()) {
+    SDB_THROW(ERROR_INTERNAL,
+              "Cache sync DELETE failed: ", del_result->GetError());
+  }
+}
+
 void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
                       Scope scope, const ResolvedName& target) {
   auto apply = [action](search::InvertedIndexShard& s) {
@@ -250,6 +388,7 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
         table_shard->GetStorage() == catalog::StorageKind::kSearch) {
       auto& search_shard =
         basics::downCast<search::SearchTableShard>(*table_shard);
+      DrainSearchCacheToIresearch(*table, search_shard);
       search_shard.Commit();
     }
   };

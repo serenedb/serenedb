@@ -169,6 +169,13 @@ struct CreateTableOptions {
   std::vector<CheckConstraint> check_constraints;
   std::vector<SerialSequenceOption> sequences;
   StorageKind storage = StorageKind::kRocksDB;
+  // For search-backed tables (`StorageKind::kSearch`): id of the per-shard
+  // cache table in the internal `sdb_cache$` attached database. Allocated
+  // by the caller before invoking CreateTable; populated into the catalog
+  // `Table` entry so the cache table's lifecycle is durably linked to the
+  // search table's. Unset for all other storage kinds.
+  // See search_table_shard_native.md §1.4.
+  ObjectId cache_table_id;
 };
 // NOLINTEND
 

@@ -28,9 +28,11 @@
 #include <vpack/slice.h>
 
 #include <expected>
+#include <filesystem>
 #include <iostream>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
+#include <system_error>
 
 #include "app/app_server.h"
 #include "app/options/parameters.h"
@@ -65,6 +67,7 @@
 #include "general_server/scheduler.h"
 #include "general_server/state.h"
 #include "query/duckdb_engine.h"
+#include "rest_server/database_path_feature.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
@@ -75,6 +78,7 @@
 #include "storage_engine/secondary_index_shard.h"
 #include "vpack/value.h"
 #include "vpack/value_type.h"
+#include "vpack/vpack_helper.h"
 
 namespace sdb::catalog {
 namespace {
@@ -88,6 +92,10 @@ Result ErrorMeta(ErrorCode code, std::string_view object_type,
 // In case of recovery the ColumnExpr shouldn't be parsed
 struct DropTableOptions {
   uint64_t columns;
+  // cache_table_id is populated only for kSearch tables and is zero
+  // (unset) otherwise. The drop task uses it to clean up the per-shard
+  // cache table in the internal `sdb_cache$` database.
+  ObjectId cache_table_id;
 };
 
 ResultOr<DropTableOptions> GetTableOptionsForDrop(vpack::Slice slice) {
@@ -103,7 +111,10 @@ ResultOr<DropTableOptions> GetTableOptionsForDrop(vpack::Slice slice) {
       std::in_place, ERROR_SERVER_ILLEGAL_STATE,
       "\"columns\" variable should be an array in the table definition vpack"};
   }
-  return DropTableOptions{.columns = opts.columns.length()};
+  return DropTableOptions{
+    .columns = opts.columns.length(),
+    .cache_table_id = ObjectId{
+      basics::VPackHelper::getNumber<uint64_t>(slice, "cache_table_id", 0)}};
 }
 
 ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
@@ -127,7 +138,8 @@ ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
 
 ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   RocksDBEngineCatalog& engine, ObjectId db_id, ObjectId schema_id,
-  ObjectId table_id, uint64_t cols, bool is_root = false) {
+  ObjectId table_id, uint64_t cols, ObjectId cache_table_id,
+  bool is_root = false) {
   ObjectId shard_id;
   uint64_t table_size = std::numeric_limits<uint64_t>::max();
   StorageKind shard_storage = StorageKind::kRocksDB;
@@ -184,9 +196,10 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
-  return std::make_shared<TableDrop>(
-    table_id, shard_id, db_id, table_size, std::move(indexes),
-    std::move(owned_sequences), schema_id, shard_storage, is_root);
+  return std::make_shared<TableDrop>(table_id, shard_id, db_id, table_size,
+                                     std::move(indexes),
+                                     std::move(owned_sequences), schema_id,
+                                     shard_storage, cache_table_id, is_root);
 }
 
 ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
@@ -200,8 +213,9 @@ ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
       if (!options) {
         return std::move(options.error());
       }
-      auto table_drop = CreateTableDrop(engine, db_id, schema_id,
-                                        key.GetObjectId(), options->columns);
+      auto table_drop =
+        CreateTableDrop(engine, db_id, schema_id, key.GetObjectId(),
+                        options->columns, options->cache_table_id);
       if (!table_drop) {
         return std::move(table_drop.error());
       }
@@ -554,7 +568,8 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
         return std::move(options.error());
       }
       auto drop = CreateTableDrop(GetServerEngine(), db_id, schema_id, table_id,
-                                  options->columns, true);
+                                  options->columns, options->cache_table_id,
+                                  /*is_root=*/true);
       if (!drop) {
         return std::move(drop.error());
       }
@@ -767,6 +782,44 @@ Result CatalogFeature::Open() {
         SDB_FATAL("xxxxx", Logger::FIXME, "Failed to attach database ",
                   db->GetName(), ": ", result->GetError());
       }
+    }
+  }
+
+  // Attach the internal cache db (`sdb_cache$`) used by search-backed tables.
+  // One per serenedb instance, on-disk + WAL-backed; holds the per-shard
+  // `cache_<table_id>` tables that buffer foreground writes before they sync
+  // into iresearch. See search_table_shard_native.md §1.2. The `$` suffix on
+  // the database name follows serened's reserved-symbol convention
+  // ([query/utils.h:30](server/query/utils.h#L30)) so the name cannot
+  // collide with a user-attached database.
+  {
+    auto& dbpath = SerenedServer::Instance().getFeature<DatabasePathFeature>();
+    std::filesystem::path cache_dir = dbpath.directory();
+    cache_dir /= "engine_cache";
+    std::error_code ec;
+    std::filesystem::create_directories(cache_dir, ec);
+    if (ec) {
+      SDB_FATAL("xxxxx", Logger::FIXME, "Failed to create cache directory ",
+                cache_dir.string(), ": ", ec.message());
+    }
+    auto cache_file = cache_dir / "sdb_cache.duckdb";
+
+    auto conn = query::DuckDBEngine::Instance().CreateConnection();
+    // The cache file path is constructed from `dbpath.directory()` which is
+    // a serened-owned data dir; we don't expect single quotes in it. If they
+    // ever appear, the ATTACH below would mis-parse -- fail loudly here.
+    if (cache_file.string().find('\'') != std::string::npos) {
+      SDB_FATAL("xxxxx", Logger::FIXME,
+                "Cache db path contains a single quote, which is not "
+                "supported in ATTACH: ",
+                cache_file.string());
+    }
+    auto query = absl::StrCat("ATTACH '", cache_file.string(),
+                              "' AS \"sdb_cache$\" (TYPE duckdb)");
+    auto result = conn->Query(query);
+    if (result->HasError()) {
+      SDB_FATAL("xxxxx", Logger::FIXME,
+                "Failed to attach internal cache db: ", result->GetError());
     }
   }
 

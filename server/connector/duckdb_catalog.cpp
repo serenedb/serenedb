@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_catalog.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/match.h>
 
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
@@ -61,6 +62,8 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_entry_cache.h"
 #include "connector/duckdb_index_utils.h"
+#include "connector/duckdb_physical_cached_ctas.h"
+#include "connector/duckdb_physical_cached_insert.h"
 #include "connector/duckdb_physical_ctas.h"
 #include "connector/duckdb_physical_delete.h"
 #include "connector/duckdb_physical_insert.h"
@@ -76,6 +79,7 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
+#include "query/duckdb_engine.h"
 namespace sdb::connector {
 namespace {
 
@@ -472,18 +476,70 @@ void SereneDBCatalog::DropSchema(duckdb::ClientContext& context,
 duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) {
-  // Search-backed CTAS routes through the single search-insert operator
-  // (CTAS mode) -- search has no separate bulk/SST path. Peek the storage
-  // kind from the WITH options; rocksdb keeps the SST-based CTAS operator.
+  // Search-backed CTAS routes through SereneDBCachedCtas, which inherits
+  // PhysicalBatchInsert's parallel bulk-row-group write path against the
+  // per-shard cache table in `sdb_cache$`. We do the serened catalog +
+  // cache table creation at plan time (tombstoned), then construct the
+  // operator with the cache DuckTableEntry so PhysicalBatchInsert's
+  // INSERT-mode ctor runs normally. Failures past this point keep the
+  // tombstone live -- the drop-task cleans up both sides on snapshot.
   {
-    auto& table_info = op.info->Base().Cast<duckdb::CreateTableInfo>();
+    auto& base_info = op.info->Base();
+    auto& table_info = base_info.Cast<duckdb::CreateTableInfo>();
     catalog::CreateTableOptions probe;
     ApplyStorageKind(probe, table_info.options);
     if (probe.storage == catalog::StorageKind::kSearch) {
-      auto& search_ctas = planner.Make<SereneDBSearchInsert>(
-        std::move(op.info), op.schema, op.estimated_cardinality);
-      search_ctas.children.push_back(plan);
-      return search_ctas;
+      auto& schema_entry = op.schema.Cast<SereneDBSchemaEntry>();
+      auto database_id = schema_entry.GetDatabaseId();
+
+      // Plan-time work: allocate the cache table id and create the
+      // cache-side DuckDB table in `sdb_cache$` via a separate connection.
+      // Critically, we do NOT touch the user catalog here -- that's
+      // deferred to GetGlobalSinkState, mirroring the rocksdb CTAS path
+      // (duckdb_physical_ctas.cpp). Writing to the user catalog at plan
+      // time would bump its catalog version and trip
+      // PreparedStatementData::RequireRebind (which checks
+      // properties.modified_databases identities), causing DuckDB to
+      // re-bind + re-plan and our hook to fire twice.
+      //
+      // Construct an in-memory catalog Table just to drive
+      // BuildSearchCacheCreateInfo. The cache schema depends only on the
+      // user columns and PK-ness (always empty for CTAS), not on
+      // anything that goes through the catalog WAL, so a transient
+      // Table is sufficient.
+      std::vector<catalog::Column> cache_view_columns;
+      cache_view_columns.reserve(table_info.columns.LogicalColumnCount());
+      for (auto& col : table_info.columns.Logical()) {
+        catalog::Column sdb_col{{}, catalog::NextId(), col.Name(), col.Type()};
+        cache_view_columns.push_back(std::move(sdb_col));
+      }
+      const auto cache_table_id = catalog::NextId();
+      catalog::Table cache_view{database_id,
+                                catalog::NextId(),
+                                table_info.table,
+                                std::move(cache_view_columns),
+                                /*pk_columns=*/{},
+                                /*check_constraints=*/{},
+                                /*generated_pk_seq_id=*/{},
+                                cache_table_id};
+      query::CreateSearchCacheTable(cache_table_id, cache_view);
+
+      // Resolve the freshly-created cache DuckTableEntry. Sink consumes
+      // chunks shaped to this entry; the entry itself drives the insert
+      // column types inside PhysicalBatchInsert.
+      auto& cache_catalog = duckdb::Catalog::GetCatalog(
+        context, std::string{query::kSearchCacheDatabase});
+      auto& cache_entry = cache_catalog.GetEntry<duckdb::DuckTableEntry>(
+        context, "main", query::SearchCacheTableName(cache_table_id));
+      const auto user_col_count = cache_view.Columns().size();
+
+      auto& ctas = planner.Make<SereneDBCachedCtas>(
+        cache_entry,
+        duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>{},
+        std::move(op.info), op.schema, database_id, cache_table_id,
+        user_col_count, op.estimated_cardinality);
+      ctas.children.push_back(plan);
+      return ctas;
     }
   }
 
@@ -629,19 +685,42 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
     plan = &ResolveDefaultsWithGenerated(planner, op, *plan);
   }
 
-  // Search-table dispatch: bypass the SST / regular RocksDB paths entirely.
-  // No SST fast path -- per design D18, bulk inserts route through the
-  // regular search-insert operator until a dedicated bulk path is needed.
-  // No on-conflict handling -- M3 minimal scope rejects ON CONFLICT
-  // implicitly by ignoring the action; M6 wires it in.
+  // Search-table dispatch. Foreground writes route through DuckDB's
+  // PhysicalBatchInsert against the per-shard cache table in `sdb_cache$`
+  // (search_table_shard_native.md §1). SereneDBCachedInsert wraps
+  // BatchInsert and prepends the cache's synthetic columns
+  // (`sdb_op$`, optional `sdb_pk$`) in its Sink projection. SELECT still
+  // reads from iresearch until sync drains the cache (follow-up step).
+  // CTAS still routes through SereneDBSearchInsert until its own
+  // BatchInsert-based operator lands.
   {
     auto& conn_ctx = GetSereneDBContext(context);
-    auto shard =
-      conn_ctx.EnsureCatalogSnapshot()->GetTableShard(sdb_table->GetId());
+    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+    auto shard = snapshot->GetTableShard(sdb_table->GetId());
     SDB_ASSERT(shard);
     if (shard->GetStorage() == catalog::StorageKind::kSearch) {
-      auto& insert = planner.Make<SereneDBSearchInsert>(
-        std::move(sdb_table), std::move(op.types), op.estimated_cardinality);
+      const auto cache_table_id = sdb_table->GetCacheTableId();
+      SDB_ASSERT(cache_table_id.isSet(),
+                 "kSearch table is missing its cache_table_id");
+      // Resolve the cache DuckTableEntry in `sdb_cache$`.
+      auto& cache_catalog = duckdb::Catalog::GetCatalog(
+        context, std::string{query::kSearchCacheDatabase});
+      auto& cache_entry = cache_catalog.GetEntry<duckdb::DuckTableEntry>(
+        context, "main", query::SearchCacheTableName(cache_table_id));
+      // Generated-PK tables: bulk-reserve `sdb_pk$` values from the
+      // catalog Sequence in Sink. Explicit-PK tables leave the sequence
+      // null (no synthetic `sdb_pk$` column in the cache schema).
+      std::shared_ptr<catalog::Sequence> gen_pk_seq;
+      if (sdb_table->PKColumns().empty()) {
+        gen_pk_seq = snapshot->GetObject<catalog::Sequence>(
+          sdb_table->GetGeneratedPkSeqId());
+        SDB_ASSERT(gen_pk_seq);
+      }
+      const auto user_col_count = op.table.GetColumns().PhysicalColumnCount();
+      auto& insert = planner.Make<SereneDBCachedInsert>(
+        cache_entry,
+        duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>{},
+        user_col_count, std::move(gen_pk_seq), op.estimated_cardinality);
       if (plan) {
         insert.children.push_back(*plan);
       }

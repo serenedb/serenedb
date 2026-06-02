@@ -209,12 +209,9 @@ std::vector<T> Samples() {
 template<typename T>
 class BinPrim : public ::testing::Test {};
 
-// `char` is intentionally absent: WriteTuple serializes it (its arithmetic
-// branch lists `char`), but ReadTuple has no `char` case and misreads the
-// byte as a list header. See BinCharGap below.
 using PrimTypes =
-  ::testing::Types<bool, int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t,
-                   int64_t, uint64_t, float, double>;
+  ::testing::Types<bool, char, int8_t, uint8_t, int16_t, uint16_t, int32_t,
+                   uint32_t, int64_t, uint64_t, float, double>;
 TYPED_TEST_SUITE(BinPrim, PrimTypes);
 
 TYPED_TEST(BinPrim, BareRoundTrip) {
@@ -243,30 +240,6 @@ TYPED_TEST(BinPrim, VectorRoundTrip) {
   if constexpr (!std::is_same_v<TypeParam, bool>) {
     RoundTrip(Box<std::vector<TypeParam>>{Samples<TypeParam>()});
   }
-}
-
-// Documented asymmetry: WriteTuple accepts `char` (it is listed in the
-// arithmetic static_assert and written via WriteValue(char)), but ReadTuple
-// has no `char` branch, so it falls through to the list-reading path and
-// misreads the single byte. `char` is therefore not round-trippable through
-// the tuple/binary format. If ReadTuple gains a `char` case, drop this test
-// and add `char` back to BinPrim's PrimTypes.
-TEST(BinCharGap, char_tuple_read_is_unsupported) {
-  duckdb::MemoryStream stream;
-  {
-    duckdb::BinarySerializer sink{stream};
-    WriteTuple(sink, char{'A'});
-  }
-  stream.Rewind();
-  duckdb::BinaryDeserializer source{stream};
-  char out = 0;
-  bool threw = false;
-  try {
-    ReadTuple(source, out);
-  } catch (...) {
-    threw = true;
-  }
-  EXPECT_TRUE(threw || out != char{'A'});
 }
 
 // ===========================================================================

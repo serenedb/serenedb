@@ -233,7 +233,6 @@ void ReadString(Source& src, String& out) {
   }
 }
 
-// Arithmetic types both sinks serialize directly.
 template<typename T>
 inline constexpr bool kIsSerializableArithmetic =
   std::is_same_v<T, char> || std::is_same_v<T, int8_t> ||
@@ -345,6 +344,8 @@ void ReadTuple(Source& src, U& out, const A& arg = {}) {
         detail::ThrowInvalidEnum<T>(static_cast<int64_t>(raw));
       }
       value = *v;
+    } else if constexpr (std::is_same_v<T, char>) {
+      value = static_cast<char>(src.ReadUnsignedInt8());
     } else if constexpr (std::is_same_v<T, int8_t>) {
       value = src.ReadSignedInt8();
     } else if constexpr (std::is_same_v<T, uint8_t>) {
@@ -543,8 +544,7 @@ void WriteTuple(Sink& b, const U& in, const A& arg = {}) {
       b.OnListEnd();
     } else if constexpr (std::is_same_v<T, bool>) {
       b.WriteValue(value);
-    } else if constexpr (std::is_arithmetic_v<T>) {
-      static_assert(detail::kIsSerializableArithmetic<T>);
+    } else if constexpr (detail::kIsSerializableArithmetic<T>) {
       b.WriteValue(value);
     } else if constexpr (kIsString<T>) {
       detail::WriteString(
@@ -578,9 +578,7 @@ void ReadObject(Source& src, U& out, const A& arg = {}) {
                   magic_enum::enum_type_name<T>());
       }
       value = *cast;
-    } else if constexpr (std::is_arithmetic_v<T>) {
-      // Mirror WriteObject: the value was widened on write, so read the wide
-      // type back and narrow to T.
+    } else if constexpr (detail::kIsSerializableArithmetic<T>) {
       if constexpr (std::is_floating_point_v<T>) {
         value = static_cast<T>(src.ReadDouble());
       } else if constexpr (std::is_signed_v<T>) {

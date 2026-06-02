@@ -166,6 +166,10 @@ DocIterator::ptr BooleanQuery::Execute(const ExecutionContext& old) const {
   bool excl_has_abstract = false;
 
   for (auto it = excl_begin; it != end; ++it) {
+    if (!*it) {
+      // excludes nothing in this segment
+      continue;
+    }
     const auto sub = child_ctx(it);
     auto docs = (*it)->Execute(sub);
     if (doc_limits::eof(docs->value())) {

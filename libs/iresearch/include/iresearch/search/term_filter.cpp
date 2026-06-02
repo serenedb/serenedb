@@ -61,7 +61,10 @@ QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
                                          const bytes_view term) {
   const auto* reader = segment.field(field);
   if (!reader) {
-    return nullptr;
+    // field absent in this segment: a boost-carrying empty query so the boost
+    // is still observable and consistent with the multi-term path
+    return memory::make_tracked<TermQuery>(
+      ctx.memory, segment, TermState{nullptr, nullptr}, ctx.boost);
   }
   auto& collector = sdb::basics::downCast<TermsCollector>(*ctx.collector);
   collector.Field().Collect(*reader);

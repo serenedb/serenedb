@@ -26,9 +26,9 @@
 #include "basics/shared.hpp"
 #include "basics/std.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/all_terms_collector.hpp"
+#include "iresearch/search/all_terms_visitor.hpp"
 #include "iresearch/search/filter_visitor.hpp"
-#include "iresearch/search/limited_sample_collector.hpp"
+#include "iresearch/search/limited_sample_selector.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
@@ -144,8 +144,8 @@ QueryBuilder::ptr PrepareLevenshteinSegment(const SubReader& segment,
 
   if (!terms_limit) {
     auto& collector = sdb::basics::downCast<TermsCollector>(*ctx.collector);
-    AllTermsCollector term_collector{query->State(), collector.Field(),
-                                     collector.Terms()};
+    AllTermsVisitor term_collector{query->State(), collector.Field(),
+                                   collector.Terms()};
     VisitImpl(segment, *reader, max_distance, utf8_term_size, matcher,
               term_collector);
   } else {

@@ -31,10 +31,10 @@
 namespace irs {
 
 template<typename State>
-class AllTermsCollector : util::Noncopyable {
+class AllTermsVisitor : util::Noncopyable {
  public:
-  AllTermsCollector(State& state, FieldCollector& field_stats,
-                    TermCollectorsFlat& term_stats) noexcept
+  AllTermsVisitor(State& state, FieldCollector& field_stats,
+                  TermCollectorsFlat& term_stats) noexcept
     : _state{state}, _field_stats{field_stats}, _term_stats{term_stats} {}
 
   void Prepare(const SubReader& /*segment*/, const TermReader& field,
@@ -56,7 +56,7 @@ class AllTermsCollector : util::Noncopyable {
       .cookie = _terms->cookie(),
       .docs_count = *_docs_count,
       .boost = boost,
-      .stat_offset = _term_stats.GetScorer() ? _stat_index : State::kUnscored,
+      .stat_offset = _stat_index,
     });
   }
 

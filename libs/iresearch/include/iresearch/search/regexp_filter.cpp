@@ -22,7 +22,7 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/filter_visitor.hpp"
-#include "iresearch/search/limited_sample_collector.hpp"
+#include "iresearch/search/limited_sample_selector.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"

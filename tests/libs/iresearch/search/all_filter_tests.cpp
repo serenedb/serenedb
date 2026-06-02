@@ -52,13 +52,14 @@ TEST_P(AllFilterTestCase, all_sequential) {
 
   // check iterator attributes, no order
   MaxMemoryCounter counter;
-  const irs::All all_filter;
-  tests::PreparedFilter prepared{all_filter, *rdr, nullptr, counter};
-  auto it = prepared.Execute(0);
-  auto* it_cost = irs::get<irs::CostAttr>(*it);
-  ASSERT_TRUE(it_cost);
-  ASSERT_EQ(docs.size(), it_cost->estimate());
-  it.reset();
+  {
+    const irs::All all_filter;
+    tests::PreparedFilter prepared{all_filter, *rdr, nullptr, counter};
+    auto it = prepared.Execute(0);
+    auto* it_cost = irs::get<irs::CostAttr>(*it);
+    ASSERT_TRUE(it_cost);
+    ASSERT_EQ(docs.size(), it_cost->estimate());
+  }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
 }

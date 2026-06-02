@@ -117,12 +117,17 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx) const {
   const std::span stats{ctx.Stats().GetAllStats()};
   const auto* scorer = ctx.Stats().GetScorer();
 
+  const auto& terms = _state.Terms();
+  if (terms.size() < _min_match) {
+    // fewer matched terms than required to satisfy min_match
+    return DocIterator::empty();
+  }
+
   // partition the collected terms into scored / unscored
   std::vector<const SeekCookie*> unscored;
   CostAttr::Type unscored_estimation = 0;
   CostAttr::Type total_estimation = 0;
   size_t scored_count = 0;
-  const auto& terms = _state.Terms();
   for (const auto& entry : terms) {
     total_estimation += entry.docs_count;
     if (entry.stat_offset != MultiTermState::kUnscored) {
@@ -141,7 +146,8 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx) const {
     cookies.reserve(scored_count);
     for (const auto& entry : terms) {
       SDB_ASSERT(entry.cookie);
-      cookies.emplace_back(entry.cookie.get(), stats[entry.stat_offset].c_str(),
+      cookies.emplace_back(entry.cookie.get(),
+                           scorer ? stats[entry.stat_offset].c_str() : nullptr,
                            entry.boost, reader->meta());
     }
 
@@ -158,14 +164,15 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx) const {
       continue;
     }
     SDB_ASSERT(entry.cookie);
-    auto docs = reader->Iterator(features,
-                                 {
-                                   .cookie = entry.cookie.get(),
-                                   .stats = stats[entry.stat_offset].c_str(),
-                                   .boost = entry.boost,
-                                   .field = reader->meta(),
-                                 },
-                                 ctx.wand);
+    auto docs = reader->Iterator(
+      features,
+      {
+        .cookie = entry.cookie.get(),
+        .stats = scorer ? stats[entry.stat_offset].c_str() : nullptr,
+        .boost = entry.boost,
+        .field = reader->meta(),
+      },
+      ctx.wand);
     if (!docs) [[unlikely]] {
       continue;
     }

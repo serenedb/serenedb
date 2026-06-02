@@ -104,8 +104,7 @@ TEST_P(TermsFilterTestCase, boost) {
 
     tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
                                    counter};
-    ASSERT_EQ(irs::kNoBoost,
-              prepared.Query(0)->Boost());  // no boost because index is empty
+    ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);

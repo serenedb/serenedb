@@ -36,7 +36,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/collectors.hpp"
-#include "iresearch/search/limited_sample_collector.hpp"
+#include "iresearch/search/limited_sample_selector.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"

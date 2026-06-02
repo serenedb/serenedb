@@ -3637,7 +3637,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     // no order passed - no frequency
     {
-      auto docs = prepared.Execute(0);
+      tests::PreparedFilter unscored{q, rdr};
+      auto docs = unscored.Execute(0);
       ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
       ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     }
@@ -3940,7 +3941,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     // no order passed - no frequency
     {
-      auto docs = prepared.Execute(0);
+      tests::PreparedFilter unscored{q, rdr};
+      auto docs = unscored.Execute(0);
       ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
       ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     }

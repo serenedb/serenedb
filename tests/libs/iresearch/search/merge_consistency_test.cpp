@@ -99,7 +99,8 @@ irs::ByRange MakeRange(std::string_view field, std::string_view min,
   return q;
 }
 
-void AssertStatsEqual(const irs::StatsBuffer& lhs, const irs::StatsBuffer& rhs) {
+void AssertStatsEqual(const irs::StatsBuffer& lhs,
+                      const irs::StatsBuffer& rhs) {
   ASSERT_EQ(lhs.HasScorer(), rhs.HasScorer());
 
   const auto& l = lhs.GetAllStats();
@@ -146,10 +147,10 @@ void CollectSegment(const tests::PreparedFilter& prepared, size_t i,
 void AssertMergeConsistent(const irs::Filter& filter,
                            const irs::IndexReader& index,
                            const irs::Scorer* scorer) {
-  tests::PreparedFilter single{filter,  index,   scorer,
-                               irs::IResourceManager::gNoop, nullptr, Mode::Single};
-  tests::PreparedFilter merged{filter,  index,   scorer,
-                               irs::IResourceManager::gNoop, nullptr, Mode::Merge};
+  tests::PreparedFilter single{
+    filter, index, scorer, irs::IResourceManager::gNoop, nullptr, Mode::Single};
+  tests::PreparedFilter merged{
+    filter, index, scorer, irs::IResourceManager::gNoop, nullptr, Mode::Merge};
 
   ASSERT_EQ(single.size(), merged.size());
   ASSERT_EQ(index.size(), single.size());
@@ -366,10 +367,10 @@ TEST_P(MergeConsistencyTestCase, edit_distance) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-INSTANTIATE_TEST_SUITE_P(
-  merge_consistency_test, MergeConsistencyTestCase,
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5simd"})),
-  MergeConsistencyTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(merge_consistency_test, MergeConsistencyTestCase,
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         MergeConsistencyTestCase::to_string);
 
 }  // namespace

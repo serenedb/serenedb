@@ -369,7 +369,7 @@ class CompoundCollector final : public PrepareCollector {
   }
 
   StatsBuffer Finish(IResourceManager& memory) final {
-    StatsBuffer stats{StatsBuffer::Storage{{memory}}, nullptr};
+    StatsBuffer stats{StatsBuffer::Storage{{memory}}, _scorer};
     for (auto& child : _children) {
       stats.AddChild(child->Finish(memory));
     }

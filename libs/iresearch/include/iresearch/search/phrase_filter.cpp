@@ -26,22 +26,64 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter_visitor.hpp"
+#include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/phrase_iterator.hpp"
 #include "iresearch/search/phrase_query.hpp"
+#include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
+#include "iresearch/search/range_filter.hpp"
+#include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/states/phrase_state.hpp"
-#include "iresearch/search/states_cache.hpp"
-#include "iresearch/search/top_terms_collector.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/terms_filter.hpp"
+#include "iresearch/search/top_terms_selector.hpp"
+#include "iresearch/search/wildcard_filter.hpp"
 
 namespace irs {
 namespace {
 
-enum class PhraseQueryKind { kEmpty, kSingleTerm, kFixed, kVariadic };
+enum class PhraseQueryKind {
+  kEmpty,
+  kSingleTerm,
+  kSingleWord,
+  kFixed,
+  kVariadic
+};
 
-struct TopTermsCollectorImpl final : FilterVisitor {
-  explicit TopTermsCollectorImpl(size_t size) : _impl{size} {
-    SDB_ASSERT(size);
-  }
+// A phrase with a single non-term part (prefix/wildcard/range/...) reduces to
+// that part's own filter: position matching is a no-op for one word.
+std::unique_ptr<FilterWithBoost> MakeSinglePartFilter(
+  std::string_view field, const ByPhraseOptions& options) {
+  const auto make = [&]<typename F, typename T>(const T& opts) {
+    auto filter = std::make_unique<F>();
+    *filter->mutable_field() = field;
+    *filter->mutable_options() = opts;
+    return filter;
+  };
+  return std::visit(
+    [&]<typename T>(const T& opts) -> std::unique_ptr<FilterWithBoost> {
+      if constexpr (std::is_same_v<T, ByTermOptions>) {
+        return make.template operator()<ByTerm>(opts);
+      } else if constexpr (std::is_same_v<T, ByPrefixOptions>) {
+        return make.template operator()<ByPrefix>(opts);
+      } else if constexpr (std::is_same_v<T, ByWildcardOptions>) {
+        return make.template operator()<ByWildcard>(opts);
+      } else if constexpr (std::is_same_v<T, ByEditDistanceOptions>) {
+        return make.template operator()<ByEditDistance>(opts);
+      } else if constexpr (std::is_same_v<T, ByTermsOptions>) {
+        return make.template operator()<ByTerms>(opts);
+      } else if constexpr (std::is_same_v<T, ByRangeOptions>) {
+        return make.template operator()<ByRange>(opts);
+      } else {
+        static_assert(std::is_same_v<T, ByRegexpOptions>);
+        return make.template operator()<ByRegexp>(opts);
+      }
+    },
+    options.begin()->part);
+}
+
+struct TopTermsVisitor final : FilterVisitor {
+  explicit TopTermsVisitor(size_t size) : _impl{size} { SDB_ASSERT(size); }
 
   void Prepare(const SubReader& segment, const TermReader& field,
                const SeekTermIterator& terms) final {
@@ -52,7 +94,7 @@ struct TopTermsCollectorImpl final : FilterVisitor {
 
   field_visitor ToVisitor() {
     // TODO(mbkkt) we can avoid by_terms, but needs to change
-    // TopTermsCollector, to make it able keep equal elements
+    // TopTermsSelector, to make it able keep equal elements
     ByTermsOptions::search_terms terms;
     _impl.Visit([&](TopTerm<score_t>& term) {
       terms.emplace(std::move(term.term), term.key);
@@ -65,7 +107,7 @@ struct TopTermsCollectorImpl final : FilterVisitor {
   }
 
  private:
-  TopTermsCollector<TopTerm<score_t>> _impl;
+  TopTermsSelector<TopTerm<score_t>> _impl;
 };
 
 struct GetVisitor {
@@ -196,9 +238,16 @@ PhraseQueryKind GetKind(std::string_view field,
   if (field.empty() || options.empty()) {
     return PhraseQueryKind::kEmpty;
   }
-  if (1 == options.size() &&
-      std::get_if<ByTermOptions>(&options.begin()->part)) {
-    return PhraseQueryKind::kSingleTerm;
+  if (1 == options.size()) {
+    const auto& part = options.begin()->part;
+    if (std::get_if<ByTermOptions>(&part)) {
+      return PhraseQueryKind::kSingleTerm;
+    }
+    // a single multi-term part reduces to that part's own filter; a terms-set
+    // part keeps the phrase machinery (its frequency exposure differs)
+    if (!std::get_if<ByTermsOptions>(&part)) {
+      return PhraseQueryKind::kSingleWord;
+    }
   }
   if (options.simple()) {
     return PhraseQueryKind::kFixed;
@@ -290,7 +339,7 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
     std::vector<field_visitor> phrase_part_visitors;
     phrase_part_visitors.reserve(phrase_size);
     std::vector<field_visitor*> all_terms_visitors;
-    std::vector<TopTermsCollectorImpl> top_terms_collectors;
+    std::vector<TopTermsVisitor> top_terms_visitors;
 
     for (const auto& word : options) {
       auto& visitor =
@@ -299,16 +348,16 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
         auto& opts = std::get<ByEditDistanceOptions>(word.part);
         visitor = ByEditDistance::visitor(opts);
         all_terms_visitors.push_back(&visitor);
-        top_terms_collectors.emplace_back(opts.max_terms);
+        top_terms_visitors.emplace_back(opts.max_terms);
       }
     }
 
     if (!all_terms_visitors.empty()) {
-      auto it = top_terms_collectors.begin();
+      auto it = top_terms_visitors.begin();
       for (auto* visitor : all_terms_visitors) {
         (*visitor)(segment, *reader, *it++);
       }
-      it = top_terms_collectors.begin();
+      it = top_terms_visitors.begin();
       for (auto* visitor : all_terms_visitors) {
         *visitor = it++->ToVisitor();
       }
@@ -371,6 +420,9 @@ QueryBuilder::ptr ByPhrase::PrepareSegment(const SubReader& segment,
       return ByTerm::PrepareSegment(
         segment, sub_ctx, field(),
         std::get<ByTermOptions>(options().begin()->part).term);
+    case PhraseQueryKind::kSingleWord:
+      return MakeSinglePartFilter(field(), options())
+        ->PrepareSegment(segment, sub_ctx);
     case PhraseQueryKind::kFixed:
       return FixedPrepareSegment(segment, sub_ctx, field(), options());
     case PhraseQueryKind::kVariadic:
@@ -385,6 +437,8 @@ PrepareCollector::ptr ByPhrase::MakeCollector(const Scorer* scorer) const {
       return std::make_unique<NoopCollector>();
     case PhraseQueryKind::kSingleTerm:
       return std::make_unique<TermsCollector>(scorer, 1);
+    case PhraseQueryKind::kSingleWord:
+      return MakeSinglePartFilter(field(), options())->MakeCollector(scorer);
     case PhraseQueryKind::kFixed:
       return std::make_unique<TermsCollector>(scorer, options().size());
     case PhraseQueryKind::kVariadic:

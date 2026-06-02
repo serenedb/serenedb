@@ -24,7 +24,6 @@
 
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/states/term_state.hpp"
-#include "iresearch/search/states_cache.hpp"
 
 namespace irs {
 

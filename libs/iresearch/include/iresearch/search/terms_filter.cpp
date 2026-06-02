@@ -23,7 +23,8 @@
 #include "terms_filter.hpp"
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/all_terms_collector.hpp"
+#include "iresearch/search/all_terms_visitor.hpp"
+#include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/multiterm_query.hpp"
@@ -96,24 +97,40 @@ QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
   }
 
   auto& collector = sdb::basics::downCast<TermsCollector>(*ctx.collector);
-  AllTermsCollector mtv{query->State(), collector.Field(), collector.Terms()};
+  AllTermsVisitor mtv{query->State(), collector.Field(), collector.Terms()};
   VisitImpl(segment, *reader, terms, mtv);
   return query;
 }
 
+namespace {
+
+// min_match == 0 means "match all documents". When scored, each matched term
+// contributes to the score, so we model it as `All OR ByTerms(min_match=1)`.
+// When unscored, the boolean optimizer collapses this back to a plain All.
+std::unique_ptr<Or> MakeMatchAllDisjunction(const ByTerms& self) {
+  auto disjunction = std::make_unique<Or>();
+  disjunction->add(self.MakeAllDocsFilter(0.F));
+  auto& terms = disjunction->add<ByTerms>();
+  terms.boost(self.Boost());
+  *terms.mutable_field() = self.field();
+  *terms.mutable_options() = self.options();
+  terms.mutable_options()->min_match = 1;
+  return disjunction;
+}
+
+}  // namespace
+
 QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx) const {
   if (!options().terms.empty() && options().min_match == 0) {
-    // "match all documents"; the scored variant (All OR terms) needs the
-    // boolean Or filter, which is not yet migrated to PrepareSegment.
-    return MakeAllDocsFilter(kNoBoost)->PrepareSegment(segment, ctx);
+    return MakeMatchAllDisjunction(*this)->PrepareSegment(segment, ctx);
   }
   return PrepareSegment(segment, ctx.Boost(Boost()), field(), options());
 }
 
 PrepareCollector::ptr ByTerms::MakeCollector(const Scorer* scorer) const {
   if (!options().terms.empty() && options().min_match == 0) {
-    return MakeAllDocsFilter(kNoBoost)->MakeCollector(scorer);
+    return MakeMatchAllDisjunction(*this)->MakeCollector(scorer);
   }
   return std::make_unique<TermsCollector>(scorer, options().terms.size());
 }

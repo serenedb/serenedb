@@ -30,6 +30,7 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/states/multiterm_state.hpp"
+#include "iresearch/search/top_k_heap.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -43,7 +44,7 @@ struct IndexReader;
 // Each candidate references an entry in a per-segment MultiTermState by offset;
 // the cookie itself lives in that state, not here.
 template<typename Key, typename Comparer = std::less<Key>>
-class LimitedSampleCollector : private util::Noncopyable {
+class LimitedSampleSelector : private util::Noncopyable {
  public:
   using key_type = Key;
   using comparer_type = Comparer;
@@ -56,37 +57,27 @@ class LimitedSampleCollector : private util::Noncopyable {
     Key key;                // sampling key
   };
 
-  explicit LimitedSampleCollector(size_t scored_terms_limit,
-                                  const comparer_type& comparer = {})
-    : _comparer{comparer}, _scored_terms_limit{scored_terms_limit} {
-    _scored.reserve(scored_terms_limit);
-    _heap.reserve(scored_terms_limit);
-  }
+  explicit LimitedSampleSelector(size_t scored_terms_limit,
+                                 const comparer_type& comparer = {})
+    : _comparer{comparer}, _heap{scored_terms_limit, CandidateLess{comparer}} {}
 
   // Collect the term just appended to state->terms at the given offset.
   // terms - segment term-iterator positioned at that term.
   void collect(MultiTermState& state, uint32_t offset,
                const SeekTermIterator& terms, const Key& key) {
-    if (!_scored_terms_limit) {
+    if (!_heap.Capacity()) {
       return;  // nothing scored; the entry stays unscored (optimization)
     }
-    if (_scored.size() >= _scored_terms_limit) {
-      const size_t min_idx = _heap.front();
-      if (!_comparer(_scored[min_idx].key, key)) {
-        return;  // can't beat the current minimum; skip building the term
-      }
+    if (_heap.Full() && !_comparer(_heap.Min().key, key)) {
+      return;  // can't beat the current minimum; skip building the term
     }
-    Push(Candidate{&state, offset, bstring{terms.value()}, key});
+    _heap.Push(Candidate{&state, offset, bstring{terms.value()}, key});
   }
 
   // Fold another collector's candidates into this one.
-  void Merge(LimitedSampleCollector&& other) {
-    SDB_ASSERT(_scored_terms_limit == other._scored_terms_limit);
-    for (auto& candidate : other._scored) {
-      Push(std::move(candidate));
-    }
-    other._scored.clear();
-    other._heap.clear();
+  void Merge(LimitedSampleSelector&& other) {
+    SDB_ASSERT(_heap.Capacity() == other._heap.Capacity());
+    _heap.Merge(std::move(other._heap));
   }
 
   // Finish collecting: assign stat offsets to the surviving (scored) terms and
@@ -94,14 +85,14 @@ class LimitedSampleCollector : private util::Noncopyable {
   // caller-owned collectors.
   void score(const Scorer* scorer, const FieldCollector& field,
              TermCollectorsFlat& terms, ManagedVector<bstring>& stats) {
-    if (!_scored_terms_limit || _scored.empty()) {
+    if (!_heap.Capacity() || _heap.Empty()) {
       return;
     }
     SDB_ASSERT(scorer);
     // distinct term value -> stat offset shared across segments
     absl::flat_hash_map<hashed_bytes_view, uint32_t, HashedStrHash> offsets;
 
-    for (auto& candidate : _scored) {
+    for (auto& candidate : _heap.Finalize()) {
       auto& terms_states = candidate.state->Terms();
       auto& entry = terms_states[candidate.offset];
       auto [it, inserted] =
@@ -121,46 +112,15 @@ class LimitedSampleCollector : private util::Noncopyable {
   }
 
  private:
-  void Push(Candidate&& candidate) {
-    if (_scored.size() < _scored_terms_limit) {
-      _heap.emplace_back(_scored.size());
-      _scored.emplace_back(std::move(candidate));
-
-      if (_scored.size() == _scored_terms_limit) [[unlikely]] {
-        absl::c_make_heap(
-          _heap, [&](const size_t lhs, const size_t rhs) noexcept {
-            return _comparer(_scored[rhs].key, _scored[lhs].key);
-          });
-      }
-      return;
+  struct CandidateLess {
+    [[no_unique_address]] comparer_type comparer;
+    bool operator()(const Candidate& lhs, const Candidate& rhs) const {
+      return comparer(lhs.key, rhs.key);
     }
-
-    const size_t min_idx = _heap.front();
-    if (_comparer(_scored[min_idx].key, candidate.key)) {
-      PopHeap();
-      _scored[min_idx] = std::move(candidate);
-      PushHeap();
-    }
-    // else: drop the candidate; its entry stays unscored
-  }
-
-  void PushHeap() noexcept {
-    absl::c_push_heap(_heap, [&](const size_t lhs, const size_t rhs) noexcept {
-      return _comparer(_scored[rhs].key, _scored[lhs].key);
-    });
-  }
-
-  void PopHeap() noexcept {
-    absl::c_pop_heap(_heap, [&](const size_t lhs, const size_t rhs) noexcept {
-      return _comparer(_scored[rhs].key, _scored[lhs].key);
-    });
-  }
+  };
 
   [[no_unique_address]] comparer_type _comparer;
-  std::vector<Candidate> _scored;
-  // use external heap as candidates are big
-  std::vector<size_t> _heap;
-  size_t _scored_terms_limit;
+  TopKHeap<Candidate, CandidateLess> _heap;
 };
 
 struct TermFrequency {
@@ -197,12 +157,12 @@ struct TermScore {
   }
 };
 
-// Filter visitor for multiterm queries sampled into a LimitedSampleCollector.
+// Filter visitor for multiterm queries sampled into a LimitedSampleSelector.
 // The Key type (TermFrequency, TermScore, ...) selects the sampling order.
 template<typename Key>
 class SampledMultiTermVisitor {
  public:
-  SampledMultiTermVisitor(LimitedSampleCollector<Key>& collector,
+  SampledMultiTermVisitor(LimitedSampleSelector<Key>& collector,
                           MultiTermState& state)
     : _collector{collector}, _state{state} {}
 
@@ -240,7 +200,7 @@ class SampledMultiTermVisitor {
 
  private:
   const decltype(TermMeta::docs_count) _no_docs = 0;
-  LimitedSampleCollector<Key>& _collector;
+  LimitedSampleSelector<Key>& _collector;
   MultiTermState& _state;
   const SeekTermIterator* _terms = nullptr;
   const decltype(TermMeta::docs_count)* _docs_count = nullptr;
@@ -257,7 +217,7 @@ class LimitedTermsCollector final : public PrepareCollector {
     : _scorer{scorer}, _limited{scorer ? scored_terms_limit : 0} {}
 
   FieldCollector& Field() noexcept { return _field; }
-  LimitedSampleCollector<TermFrequency>& Limited() noexcept { return _limited; }
+  LimitedSampleSelector<TermFrequency>& Limited() noexcept { return _limited; }
 
   void Merge(PrepareCollector&& other) final {
     auto& rhs = sdb::basics::downCast<LimitedTermsCollector>(other);
@@ -276,7 +236,7 @@ class LimitedTermsCollector final : public PrepareCollector {
  private:
   const Scorer* _scorer;
   FieldCollector _field;
-  LimitedSampleCollector<TermFrequency> _limited;
+  LimitedSampleSelector<TermFrequency> _limited;
 };
 
 class ScoredTermsCollector final : public PrepareCollector {
@@ -285,7 +245,7 @@ class ScoredTermsCollector final : public PrepareCollector {
     : _scorer{scorer}, _limited{scorer ? scored_terms_limit : 0} {}
 
   FieldCollector& Field() noexcept { return _field; }
-  LimitedSampleCollector<TermScore>& Limited() noexcept { return _limited; }
+  LimitedSampleSelector<TermScore>& Limited() noexcept { return _limited; }
 
   void Merge(PrepareCollector&& other) final {
     auto& rhs = sdb::basics::downCast<ScoredTermsCollector>(other);
@@ -304,7 +264,7 @@ class ScoredTermsCollector final : public PrepareCollector {
  private:
   const Scorer* _scorer;
   FieldCollector _field;
-  LimitedSampleCollector<TermScore> _limited;
+  LimitedSampleSelector<TermScore> _limited;
 };
 
 }  // namespace irs

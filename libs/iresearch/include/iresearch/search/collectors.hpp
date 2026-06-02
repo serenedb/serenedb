@@ -212,6 +212,8 @@ class PrepareCollector {
   virtual void Merge(PrepareCollector&& other) = 0;
 
   virtual StatsBuffer Finish(IResourceManager& memory) = 0;
+
+  virtual const Scorer* GetScorer() const noexcept { return nullptr; }
 };
 
 class TermsCollector final : public PrepareCollector {
@@ -220,6 +222,8 @@ class TermsCollector final : public PrepareCollector {
 
   FieldCollector& Field() noexcept { return _field; }
   TermCollectorsFlat& Terms() noexcept { return _terms; }
+
+  const Scorer* GetScorer() const noexcept final { return _terms.GetScorer(); }
 
   void Merge(PrepareCollector&& other) final {
     auto& rhs = sdb::basics::downCast<TermsCollector>(other);
@@ -251,6 +255,8 @@ class NGramCollector final : public PrepareCollector {
 
   FieldCollector& Field() noexcept { return _field; }
   TermCollectorsFlat& Terms() noexcept { return _terms; }
+
+  const Scorer* GetScorer() const noexcept final { return _terms.GetScorer(); }
 
   void Merge(PrepareCollector&& other) final {
     auto& rhs = sdb::basics::downCast<NGramCollector>(other);
@@ -284,6 +290,8 @@ class VariadicTermsCollector final : public PrepareCollector {
 
   FieldCollector& Field() noexcept { return _field; }
   TermCollectorsVariadic& Terms() noexcept { return _terms; }
+
+  const Scorer* GetScorer() const noexcept final { return _scorer; }
 
   void Merge(PrepareCollector&& other) final {
     auto& rhs = sdb::basics::downCast<VariadicTermsCollector>(other);
@@ -321,6 +329,8 @@ class AllCollector final : public PrepareCollector {
  public:
   explicit AllCollector(const Scorer* scorer) noexcept : _scorer{scorer} {}
 
+  const Scorer* GetScorer() const noexcept final { return _scorer; }
+
   void Merge(PrepareCollector&& /*other*/) final {}
 
   StatsBuffer Finish(IResourceManager& memory) final {
@@ -344,6 +354,36 @@ class NoopCollector final : public PrepareCollector {
   StatsBuffer Finish(IResourceManager& memory) final {
     return StatsBuffer{StatsBuffer::Storage{{memory}}, nullptr};
   }
+};
+
+class FieldOnlyCollector final : public PrepareCollector {
+ public:
+  explicit FieldOnlyCollector(const Scorer* scorer) noexcept
+    : _scorer{scorer} {}
+
+  FieldCollector& Field() noexcept { return _field; }
+
+  const Scorer* GetScorer() const noexcept final { return _scorer; }
+
+  void Merge(PrepareCollector&& other) final {
+    auto& rhs = sdb::basics::downCast<FieldOnlyCollector>(other);
+    const FieldCollector fields[]{_field, rhs._field};
+    _field = MergeFieldCollectors(fields);
+  }
+
+  StatsBuffer Finish(IResourceManager& memory) final {
+    StatsBuffer::Storage stats{{memory}};
+    if (_scorer) {
+      bstring stat(GetStatsSize(_scorer), 0);
+      _scorer->collect(stat.data(), &_field, nullptr);
+      stats.emplace_back(std::move(stat));
+    }
+    return StatsBuffer{std::move(stats), _scorer};
+  }
+
+ private:
+  const Scorer* _scorer;
+  FieldCollector _field;
 };
 
 class CompoundCollector final : public PrepareCollector {

@@ -34,7 +34,8 @@ PreparedFilter::PreparedFilter(const irs::Filter& filter,
                                const irs::Scorer* scorer,
                                irs::IResourceManager& memory,
                                const irs::AttributeProvider* ctx,
-                               CollectMode mode)
+                               CollectMode mode,
+                               irs::IResourceManager* exec_memory)
   : _scorer{scorer} {
   _queries.reserve(index.size());
 
@@ -71,7 +72,7 @@ PreparedFilter::PreparedFilter(const irs::Filter& filter,
   }
 
   _exec.emplace(irs::ExecutionContext{
-    .memory = memory,
+    .memory = exec_memory ? *exec_memory : memory,
     .stats = &*_stats,
     .ctx = ctx,
   });

@@ -203,6 +203,8 @@ class LimitedTermsCollector final : public PrepareCollector {
   FieldCollector& Field() noexcept { return _field; }
   LimitedSampleSelector<TermFrequency>& Limited() noexcept { return _limited; }
 
+  const Scorer* GetScorer() const noexcept final { return _scorer; }
+
   void Merge(PrepareCollector&& other) final {
     auto& rhs = sdb::basics::downCast<LimitedTermsCollector>(other);
     const FieldCollector fields[]{_field, rhs._field};

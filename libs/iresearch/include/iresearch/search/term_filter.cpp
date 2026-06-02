@@ -70,7 +70,8 @@ QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
   collector.Field().Collect(*reader);
   auto terms = GetTermsIterator(*reader, term);
   if (!terms) {
-    return nullptr;
+    return memory::make_tracked<TermQuery>(
+      ctx.memory, segment, TermState{nullptr, nullptr}, ctx.boost);
   }
   collector.Terms().Collect(0, *terms);
   TermState state{reader, terms->cookie()};

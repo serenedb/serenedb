@@ -48,7 +48,7 @@ class MultiTermState {
 
   void Prepare(const TermReader* reader) {
     SDB_ASSERT(reader);
-    SDB_ASSERT(!_reader);
+    SDB_ASSERT(!_reader || _reader == reader);
     _reader = reader;
   }
 

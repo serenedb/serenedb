@@ -338,7 +338,8 @@ class PreparedFilter {
                  const irs::Scorer* scorer = nullptr,
                  irs::IResourceManager& memory = irs::IResourceManager::gNoop,
                  const irs::AttributeProvider* ctx = nullptr,
-                 CollectMode mode = CollectMode::Single);
+                 CollectMode mode = CollectMode::Single,
+                 irs::IResourceManager* exec_memory = nullptr);
 
   size_t size() const noexcept { return _queries.size(); }
 

@@ -6639,7 +6639,7 @@ TEST(by_phrase_test, boost) {
       q.boost(boost);
 
       tests::PreparedFilter prepared{q, irs::SubReader::empty()};
-      ASSERT_EQ(boost, prepared.Query(0)->Boost());
+      ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
 
     // prefix, wildcard, levenshtein, set, range
@@ -6664,7 +6664,7 @@ TEST(by_phrase_test, boost) {
       rt.range.max_type = irs::BoundType::Inclusive;
 
       tests::PreparedFilter prepared{q, irs::SubReader::empty()};
-      ASSERT_EQ(boost, prepared.Query(0)->Boost());
+      ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
   }
 }

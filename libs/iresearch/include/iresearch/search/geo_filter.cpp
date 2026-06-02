@@ -71,7 +71,7 @@ PrepareCollector::ptr MatchAllCollector(const Scorer* scorer) {
 }
 
 PrepareCollector::ptr GeoCollector(const Scorer* scorer) {
-  return std::make_unique<TermsCollector>(scorer, 1);
+  return std::make_unique<FieldOnlyCollector>(scorer);
 }
 
 // Returns singleton S2Cap that tolerates precision errors
@@ -417,7 +417,7 @@ GeoState PrepareState(const SubReader& segment, const PrepareContext& ctx,
     return state;
   }
 
-  auto& collector = sdb::basics::downCast<TermsCollector>(*ctx.collector);
+  auto& collector = sdb::basics::downCast<FieldOnlyCollector>(*ctx.collector);
   collector.Field().Collect(*reader);
 
   ManagedVector<SeekCookie::ptr> term_states{{ctx.memory}};

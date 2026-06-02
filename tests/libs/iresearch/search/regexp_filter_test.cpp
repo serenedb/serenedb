@@ -1585,11 +1585,14 @@ TEST_P(RegexpFilterTestCase, by_regexp_prepare_with_syntax) {
   }
   auto rdr = open_reader();
   auto pattern = irs::ViewCast<irs::byte_type>(std::string_view("(?:foo)bar"));
+  auto filter = MakeFilter("term", "(?:foo)bar");
   // Perl: non-capturing group parses, prepared query is non-null.
   {
+    auto collector = filter.MakeCollector(nullptr);
     auto prepared = irs::ByRegexp::PrepareSegment(
-      rdr[0], {.memory = irs::IResourceManager::gNoop}, "term", pattern,
-      /*scored_terms_limit=*/1024, irs::RegexpSyntax::Perl);
+      rdr[0],
+      {.collector = collector.get(), .memory = irs::IResourceManager::gNoop},
+      "term", pattern, /*scored_terms_limit=*/1024, irs::RegexpSyntax::Perl);
     ASSERT_NE(nullptr, prepared);
   }
   // POSIX: (?:...) is a Perl extension - prepare still returns a valid
@@ -1597,9 +1600,12 @@ TEST_P(RegexpFilterTestCase, by_regexp_prepare_with_syntax) {
   // match case is anchored end-to-end by
   // by_regexp_syntax_posix_rejects_perl_class above.
   {
+    auto collector = filter.MakeCollector(nullptr);
     auto prepared = irs::ByRegexp::PrepareSegment(
-      rdr[0], {.memory = irs::IResourceManager::gNoop}, "term", pattern,
-      /*scored_terms_limit=*/1024, irs::RegexpSyntax::PosixEre);
+      rdr[0],
+      {.collector = collector.get(), .memory = irs::IResourceManager::gNoop},
+      "term", pattern, /*scored_terms_limit=*/1024,
+      irs::RegexpSyntax::PosixEre);
     ASSERT_NE(nullptr, prepared);
   }
 }

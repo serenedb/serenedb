@@ -1743,7 +1743,7 @@ TEST(by_granular_range_test, boost) {
     q.boost(boost);
 
     tests::PreparedFilter prepared{q, irs::SubReader::empty()};
-    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
+    ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
 }
 

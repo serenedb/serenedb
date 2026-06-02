@@ -238,7 +238,6 @@ void And::ResolveBoolean(ResolvedBoolean& resolved, const Scorer* scorer,
       resolved.all_docs_keepalive2 = std::move(cumulative_all);
     }
   }
-  boost *= this->Boost();
   if (1 == incl.size() && excl.empty()) {
     // single node case
     resolved.kind = ResolvedBoolean::Delegate;
@@ -400,12 +399,8 @@ PrepareCollector::ptr BooleanFilter::MakeCollectorImpl(
 QueryBuilder::ptr BooleanFilter::PrepareSegmentImpl(const SubReader& segment,
                                                     const PrepareContext& ctx,
                                                     uint32_t min_match) const {
-  const Scorer* scorer = nullptr;
-  if (ctx.collector != nullptr) {
-    if (auto* compound = dynamic_cast<CompoundCollector*>(ctx.collector)) {
-      scorer = compound->GetScorer();
-    }
-  }
+  const Scorer* scorer =
+    ctx.collector != nullptr ? ctx.collector->GetScorer() : nullptr;
 
   auto resolved = Resolve(scorer, min_match);
 

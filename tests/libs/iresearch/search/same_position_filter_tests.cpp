@@ -512,7 +512,7 @@ TEST(by_same_position_test, boost) {
       q.boost(boost);
 
       tests::PreparedFilter prepared{q, irs::SubReader::empty()};
-      ASSERT_EQ(boost, prepared.Query(0)->Boost());
+      ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
 
     // single multiple terms
@@ -525,7 +525,7 @@ TEST(by_same_position_test, boost) {
       q.boost(boost);
 
       tests::PreparedFilter prepared{q, irs::SubReader::empty()};
-      ASSERT_EQ(boost, prepared.Query(0)->Boost());
+      ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
   }
 }

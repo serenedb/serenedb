@@ -28,8 +28,6 @@
 #include <string_view>
 
 #include "basics/exceptions.h"
-#include "basics/logger/log_level.h"
-#include "basics/logger/logger.h"
 #include "collation_tokenizer_encoder.hpp"
 
 namespace irs::analysis {

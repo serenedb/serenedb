@@ -26,7 +26,6 @@
 #include <vpack/common.h>
 
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 

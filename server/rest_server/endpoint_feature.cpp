@@ -27,17 +27,17 @@
 #include "basics/application-exit.h"
 #include "basics/log.h"
 
-ABSL_FLAG(std::vector<std::string>, server_endpoint, {},
-          "Endpoint for client requests (e.g. `pgsql+tcp://127.0.0.1:7890`). "
-          "Repeat for multiple. Supported schemes: pgsql+tcp, tcp, ssl, "
-          "unix.");
+ABSL_FLAG(std::vector<std::string>, server_endpoints, {},
+          "Endpoint(s) for client requests (e.g. "
+          "`pgsql+tcp://127.0.0.1:7890`). Comma-separated for multiple. "
+          "Supported schemes: pgsql+tcp, tcp, ssl, unix.");
 
 namespace sdb {
 
 EndpointList& Endpoints() {
   static EndpointList list = [] {
     EndpointList l;
-    auto endpoints = absl::GetFlag(FLAGS_server_endpoint);
+    auto endpoints = absl::GetFlag(FLAGS_server_endpoints);
     constexpr uint64_t kDefaultBacklog = 64;
     const uint64_t backlog_size =
       kDefaultBacklog <= SOMAXCONN ? kDefaultBacklog : SOMAXCONN / 2;

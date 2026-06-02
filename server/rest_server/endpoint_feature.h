@@ -25,7 +25,7 @@
 
 namespace sdb {
 
-// Process-wide endpoint list parsed from --server_endpoint. Lazily
+// Process-wide endpoint list parsed from --server_endpoints. Lazily
 // initialized on first call (must be invoked after absl::ParseCommandLine).
 // No start/stop ceremony -- there is no IO or thread setup to do here, just
 // CLI parsing. Replaced the old EndpointFeature class.

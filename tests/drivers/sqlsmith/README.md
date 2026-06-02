@@ -34,7 +34,7 @@ In one terminal, start serened with auth off and PG wire on `localhost:5432`:
 ```
 ninja serened
 ./build/bin/serened /tmp/datadir \
-    --server_endpoint pgsql+tcp://0.0.0.0:5432 \
+    --server_endpoints pgsql+tcp://0.0.0.0:5432 \
     2>/tmp/serened.log
 ```
 

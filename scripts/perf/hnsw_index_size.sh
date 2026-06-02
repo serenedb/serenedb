@@ -54,7 +54,7 @@ trap cleanup EXIT
 
 # Start serened on a private port + data dir.
 "$SERENED" "$DATA_DIR" \
-	--server_endpoint "pgsql+tcp://127.0.0.1:${PORT}" \
+	--server_endpoints "pgsql+tcp://127.0.0.1:${PORT}" \
 	SERENED_PID=$!
 
 PG_ADMIN=(psql -v ON_ERROR_STOP=1 -X -q

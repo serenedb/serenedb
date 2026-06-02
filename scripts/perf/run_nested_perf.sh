@@ -40,7 +40,7 @@ rm -f "${NATIVE_DB}" "${NATIVE_DB}.wal"
 
 echo "starting ${SERENED_BIN} on port ${PORT} with data dir ${SERENED_DATA_DIR}"
 "${SERENED_BIN}" "${SERENED_DATA_DIR}" \
-	--server_endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
+	--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
 	>"${LOG}" 2>&1 &
 SERENED_PID=$!
 trap "kill -9 ${SERENED_PID} >/dev/null 2>&1 || true" EXIT

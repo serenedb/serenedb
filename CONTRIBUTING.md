@@ -47,7 +47,7 @@ Additional build presets are defined in `CMakePresets.json`:
 ### Launch
 
 ```bash
-./build/bin/serened ./build_data --server_endpoint='pgsql+tcp://0.0.0.0:7890'
+./build/bin/serened ./build_data --server_endpoints='pgsql+tcp://0.0.0.0:7890'
 ```
 
 Connect via psql: `psql -h localhost -p 7890 -U postgres`

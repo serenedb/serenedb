@@ -39,7 +39,7 @@ PostgresFeature::PostgresFeature() {
     });
   if (!has_pgsql) {
     SDB_FATAL(GENERAL,
-              "no pgsql endpoint configured; --server_endpoint "
+              "no pgsql endpoint configured; --server_endpoints "
               "must include a pgsql+tcp:// entry");
   }
 

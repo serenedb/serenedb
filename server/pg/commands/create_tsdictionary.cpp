@@ -505,22 +505,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
       opts.accept = Opts::Accept::AlphaNumeric;
     }
 
-    if (OptionsParser::HasOption(tokenizer_options::kCase, prefix)) {
-      auto raw =
-        OptionsParser::EraseOptionOrDefault<tokenizer_options::kCase>(prefix);
-      const auto parsed =
-        magic_enum::enum_cast<Opts::Convert>(raw, magic_enum::case_insensitive);
-      if (!parsed) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("invalid value in \"case\" parameter"),
-                        ERR_HINT(tokenizer_options::kCase.description));
-      }
-      opts.convert = *parsed;
-    } else if (parent) {
-      opts.convert = parent->convert;
-    } else {
-      opts.convert = Opts::Convert::None;  // kCase default is "none"
-    }
+    opts.convert = ResolveEnum<tokenizer_options::kCase, Opts::Convert>(
+      prefix, parent ? &parent->convert : nullptr);
     return opts;
   }
 

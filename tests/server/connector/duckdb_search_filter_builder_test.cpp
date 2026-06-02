@@ -531,10 +531,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
  public:
   SearchFilterBuilderTest() : _db(nullptr), _conn(_db) {}
 
-  static void SetUpTestCase() {
-    irs::formats::Init();
-    irs::compression::Init();
-  }
+  static void SetUpTestCase() { irs::formats::Init(); }
 
   void SetUp() final {
     sdb::connector::RegisterSearchFunctions(*_db.instance);

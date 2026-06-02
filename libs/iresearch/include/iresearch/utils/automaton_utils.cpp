@@ -235,7 +235,7 @@ QueryBuilder::ptr PrepareAutomatonSegment(const SubReader& segment,
   auto& collector =
     sdb::basics::downCast<LimitedTermsCollector>(*ctx.collector);
   collector.Field().Collect(*reader);
-  MultiTermVisitor mtv{collector.Limited(), query->State()};
+  SampledMultiTermVisitor mtv{collector.Limited(), query->State()};
   Visit(segment, *reader, matcher, mtv);
   return query;
 }

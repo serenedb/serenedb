@@ -23,6 +23,7 @@
 #include "terms_filter.hpp"
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/all_terms_collector.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/multiterm_query.hpp"
@@ -58,41 +59,6 @@ void VisitImpl(const SubReader& segment, const TermReader& field,
     visitor.Visit(term.boost);
   }
 }
-
-// Per-segment additive visitor: every matched term gets its own stat slot.
-class MultiTermsVisitor {
- public:
-  MultiTermsVisitor(TermsCollector& collector, MultiTermState& state) noexcept
-    : _collector(collector), _state(state) {}
-
-  void SetIndex(uint32_t term_idx) noexcept { _stat_index = term_idx; }
-
-  void Prepare(const SubReader& /*segment*/, const TermReader& field,
-               const SeekTermIterator& terms) {
-    _collector.Field().Collect(field);
-    _state.Prepare(&field);
-    _terms = &terms;
-  }
-
-  void Visit(score_t boost) {
-    SDB_ASSERT(_terms);
-    _collector.Terms().Collect(_stat_index, *_terms);
-
-    auto* meta = irs::get<TermMeta>(*_terms);
-    _state.Push(MultiTermState::Entry{
-      .cookie = _terms->cookie(),
-      .docs_count = meta ? meta->docs_count : 0,
-      .boost = boost,
-      .stat_offset = _stat_index,
-    });
-  }
-
- private:
-  TermsCollector& _collector;
-  MultiTermState& _state;
-  const SeekTermIterator* _terms = nullptr;
-  uint32_t _stat_index = 0;
-};
 
 }  // namespace
 
@@ -130,7 +96,7 @@ QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
   }
 
   auto& collector = sdb::basics::downCast<TermsCollector>(*ctx.collector);
-  MultiTermsVisitor mtv{collector, query->State()};
+  AllTermsCollector mtv{query->State(), collector.Field(), collector.Terms()};
   VisitImpl(segment, *reader, terms, mtv);
   return query;
 }

@@ -152,7 +152,7 @@ QueryBuilder::ptr PrepareLevenshteinSegment(const SubReader& segment,
     auto& collector =
       sdb::basics::downCast<ScoredTermsCollector>(*ctx.collector);
     collector.Field().Collect(*reader);
-    ScoredMultiTermVisitor mtv{collector.Limited(), query->State()};
+    SampledMultiTermVisitor mtv{collector.Limited(), query->State()};
     VisitImpl(segment, *reader, max_distance, utf8_term_size, matcher, mtv);
   }
 

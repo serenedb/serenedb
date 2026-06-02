@@ -35,7 +35,7 @@ class AllTermsCollector : util::Noncopyable {
  public:
   AllTermsCollector(State& state, FieldCollector& field_stats,
                     TermCollectorsFlat& term_stats) noexcept
-    : _state(state), _field_stats(field_stats), _term_stats(term_stats) {}
+    : _state{state}, _field_stats{field_stats}, _term_stats{term_stats} {}
 
   void Prepare(const SubReader& /*segment*/, const TermReader& field,
                const SeekTermIterator& terms) noexcept {
@@ -56,12 +56,11 @@ class AllTermsCollector : util::Noncopyable {
       .cookie = _terms->cookie(),
       .docs_count = *_docs_count,
       .boost = boost,
-      .stat_offset = _stat_index,
+      .stat_offset = _term_stats.GetScorer() ? _stat_index : State::kUnscored,
     });
   }
 
-  uint32_t stat_index() const noexcept { return _stat_index; }
-  void stat_index(uint32_t stat_index) noexcept { _stat_index = stat_index; }
+  void SetIndex(uint32_t term_idx) noexcept { _stat_index = term_idx; }
 
  private:
   State& _state;

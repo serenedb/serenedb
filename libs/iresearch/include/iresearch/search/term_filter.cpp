@@ -51,6 +51,7 @@ void ByTerm::Visit(const SubReader& segment, const TermReader& field,
   if (!terms) {
     return;
   }
+  visitor.Prepare(segment, field, *terms);
   visitor.Visit(kNoBoost);
 }
 

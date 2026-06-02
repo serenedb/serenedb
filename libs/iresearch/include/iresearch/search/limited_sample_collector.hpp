@@ -168,6 +168,11 @@ struct TermFrequency {
   uint32_t frequency;
   score_t boost;
 
+  static TermFrequency Make(uint32_t offset, uint32_t docs_count,
+                            score_t boost) noexcept {
+    return {.offset = offset, .frequency = docs_count, .boost = boost};
+  }
+
   explicit operator score_t() const noexcept { return boost; }
 
   bool operator<(const TermFrequency& rhs) const noexcept {
@@ -176,11 +181,29 @@ struct TermFrequency {
   }
 };
 
-// Filter visitor for multiterm queries
-class MultiTermVisitor {
+struct TermScore {
+  uint32_t offset;
+  score_t boost;
+
+  static TermScore Make(uint32_t offset, uint32_t /*docs_count*/,
+                        score_t boost) noexcept {
+    return {.offset = offset, .boost = boost};
+  }
+
+  explicit operator score_t() const noexcept { return boost; }
+
+  bool operator<(const TermScore& rhs) const noexcept {
+    return boost < rhs.boost || (boost == rhs.boost && offset > rhs.offset);
+  }
+};
+
+// Filter visitor for multiterm queries sampled into a LimitedSampleCollector.
+// The Key type (TermFrequency, TermScore, ...) selects the sampling order.
+template<typename Key>
+class SampledMultiTermVisitor {
  public:
-  MultiTermVisitor(LimitedSampleCollector<TermFrequency>& collector,
-                   MultiTermState& state)
+  SampledMultiTermVisitor(LimitedSampleCollector<Key>& collector,
+                          MultiTermState& state)
     : _collector{collector}, _state{state} {}
 
   void Prepare(const SubReader& /*segment*/, const TermReader& reader,
@@ -210,73 +233,14 @@ class MultiTermVisitor {
       .boost = boost,
     });
 
-    const TermFrequency key{
-      .offset = _offset,
-      .frequency = docs_count,
-      .boost = boost,
-    };
-    _collector.collect(_state, _state.TermsSize() - 1, *_terms, key);
+    _collector.collect(_state, _state.TermsSize() - 1, *_terms,
+                       Key::Make(_offset, docs_count, boost));
     ++_offset;
   }
 
  private:
   const decltype(TermMeta::docs_count) _no_docs = 0;
-  LimitedSampleCollector<TermFrequency>& _collector;
-  MultiTermState& _state;
-  const SeekTermIterator* _terms = nullptr;
-  const decltype(TermMeta::docs_count)* _docs_count = nullptr;
-  uint32_t _offset = 0;
-};
-
-struct TermScore {
-  uint32_t offset;
-  score_t boost;
-
-  explicit operator score_t() const noexcept { return boost; }
-
-  bool operator<(const TermScore& rhs) const noexcept {
-    return boost < rhs.boost || (boost == rhs.boost && offset > rhs.offset);
-  }
-};
-
-// Filter visitor for multiterm queries sampled by score
-class ScoredMultiTermVisitor {
- public:
-  ScoredMultiTermVisitor(LimitedSampleCollector<TermScore>& collector,
-                         MultiTermState& state)
-    : _collector{collector}, _state{state} {}
-
-  void Prepare(const SubReader& /*segment*/, const TermReader& reader,
-               const SeekTermIterator& terms) {
-    auto* meta = irs::get<TermMeta>(terms);
-    _docs_count = meta ? &meta->docs_count : &_no_docs;
-
-    _state.Prepare(&reader);
-
-    _terms = &terms;
-    _offset = 0;
-  }
-
-  void Visit(score_t boost) {
-    SDB_ASSERT(_docs_count && _terms);
-    const uint32_t docs_count = *_docs_count;
-    _state.Push(MultiTermState::Entry{
-      .cookie = _terms->cookie(),
-      .docs_count = docs_count,
-      .boost = boost,
-    });
-
-    const TermScore key{
-      .offset = _offset,
-      .boost = boost,
-    };
-    _collector.collect(_state, _state.TermsSize() - 1, *_terms, key);
-    ++_offset;
-  }
-
- private:
-  const decltype(TermMeta::docs_count) _no_docs = 0;
-  LimitedSampleCollector<TermScore>& _collector;
+  LimitedSampleCollector<Key>& _collector;
   MultiTermState& _state;
   const SeekTermIterator* _terms = nullptr;
   const decltype(TermMeta::docs_count)* _docs_count = nullptr;

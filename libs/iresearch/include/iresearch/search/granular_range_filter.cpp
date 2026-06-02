@@ -592,7 +592,7 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
   auto& collector =
     sdb::basics::downCast<LimitedTermsCollector>(*ctx.collector);
   collector.Field().Collect(*reader);
-  MultiTermVisitor mtv{collector.Limited(), query->State()};
+  SampledMultiTermVisitor mtv{collector.Limited(), query->State()};
   VisitImpl(segment, *reader, options, mtv);
   return query;
 }

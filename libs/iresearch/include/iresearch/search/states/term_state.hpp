@@ -31,7 +31,7 @@ struct TermReader;
 // Cached per reader term state
 struct TermState {
   TermState(const TermReader* reader, SeekCookie::ptr cookie) noexcept
-    : reader(reader), cookie(std::move(cookie)) {}
+    : reader{reader}, cookie{std::move(cookie)} {}
 
   const TermReader* reader = nullptr;
   SeekCookie::ptr cookie;

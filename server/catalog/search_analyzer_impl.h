@@ -29,6 +29,7 @@
 #include <utility>
 
 #include "basics/object_pool.hpp"
+#include "basics/result.h"
 
 namespace sdb::search {
 

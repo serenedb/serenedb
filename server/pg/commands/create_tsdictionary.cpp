@@ -68,6 +68,28 @@
 #include "pg/sql_utils.h"
 #include "pg/tokenizer_options.h"
 
+namespace magic_enum {
+
+template<>
+constexpr customize::customize_t
+customize::enum_name<irs::analysis::SegmentationTokenizer::Options::Accept>(
+  irs::analysis::SegmentationTokenizer::Options::Accept value) noexcept {
+  using Accept = irs::analysis::SegmentationTokenizer::Options::Accept;
+  switch (value) {
+    case Accept::Any:
+      return "all";
+    case Accept::Graphic:
+      return "graphic";
+    case Accept::AlphaNumeric:
+      return "alpha";
+    case Accept::Alpha:
+      return invalid_tag;
+  }
+  return invalid_tag;
+}
+
+}  // namespace magic_enum
+
 namespace sdb::pg {
 namespace {
 
@@ -469,17 +491,14 @@ class CreateTSDictionaryOptions : public OptionsParser {
     if (OptionsParser::HasOption(tokenizer_options::kBreak, prefix)) {
       auto raw =
         OptionsParser::EraseOptionOrDefault<tokenizer_options::kBreak>(prefix);
-      if (raw == "all") {
-        opts.accept = Opts::Accept::Any;
-      } else if (raw == "graphic") {
-        opts.accept = Opts::Accept::Graphic;
-      } else if (raw == "alpha") {
-        opts.accept = Opts::Accept::AlphaNumeric;
-      } else {
+      const auto parsed =
+        magic_enum::enum_cast<Opts::Accept>(raw, magic_enum::case_insensitive);
+      if (!parsed) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("invalid value in \"break\" parameter"),
                         ERR_HINT(tokenizer_options::kBreak.description));
       }
+      opts.accept = *parsed;
     } else if (parent) {
       opts.accept = parent->accept;
     } else {

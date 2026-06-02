@@ -31,6 +31,7 @@
 
 #include "basics/containers/trivial_map.h"
 #include "basics/serializer.h"
+#include "catalog/object.h"
 
 namespace sdb::search {
 

@@ -222,14 +222,13 @@ void WriteString(Sink& sink, std::string_view v) {
   }
 }
 
-template<typename Source, typename String>
-void ReadString(Source& src, String& out) {
-  if constexpr (std::is_same_v<typename String::value_type, char>) {
+template<typename Source, typename Char, typename Traits, typename Alloc>
+void ReadString(Source& src, std::basic_string<Char, Traits, Alloc>& out) {
+  if constexpr (std::is_same_v<Char, char>) {
     out = src.ReadString();
   } else {
     const auto s = src.ReadString();
-    out.assign(reinterpret_cast<const typename String::value_type*>(s.data()),
-               s.size());
+    out.assign(reinterpret_cast<const Char*>(s.data()), s.size());
   }
 }
 
@@ -514,7 +513,6 @@ void WriteTuple(Sink& b, const U& in, const A& arg = {}) {
       }
       b.OnNullableEnd();
     } else if constexpr (kIsVariant<T>) {
-      // Index discriminator: reordering persisted alternatives breaks old data.
       self(value.index());
       std::visit([&](const auto& v) { self(v); }, value);
     } else if constexpr (detail::IsRange<T>) {
@@ -535,8 +533,6 @@ void WriteTuple(Sink& b, const U& in, const A& arg = {}) {
       }
       self(raw);
     } else if constexpr (std::is_aggregate_v<T>) {
-      // Positional, count-checked only: reordering same-typed fields is silent.
-      // Append new fields at the end.
       constexpr size_t kCount = boost::pfr::tuple_size_v<T>;
       b.OnListBegin(kCount);
       boost::pfr::for_each_field(value,
@@ -544,6 +540,8 @@ void WriteTuple(Sink& b, const U& in, const A& arg = {}) {
       b.OnListEnd();
     } else if constexpr (std::is_same_v<T, bool>) {
       b.WriteValue(value);
+    } else if constexpr (std::is_same_v<T, char>) {
+      b.WriteValue(static_cast<uint8_t>(value));
     } else if constexpr (detail::kIsSerializableArithmetic<T>) {
       b.WriteValue(value);
     } else if constexpr (kIsString<T>) {
@@ -689,8 +687,6 @@ void ReadObject(Source& src, U& out, const A& arg = {}) {
         self(*it++);
       });
     } else if constexpr (std::is_aggregate_v<T>) {
-      // Single pass: match each field to a member by name (constexpr compare,
-      // not a per-member JSON lookup). Missing default, unknown skipped.
       src.ForEachObjectField([&](std::string_view name) {
         bool matched = false;
         boost::pfr::for_each_field_with_name(
@@ -723,8 +719,6 @@ void ReadObject(Source& src, U& out, const A& arg = {}) {
 
 template<typename Sink, typename U, typename A = detail::Empty>
 void WriteObject(Sink& b, const U& in, const A& arg = {}) {
-  // An object member is omitted when it has nothing to emit: an empty struct
-  // or a null optional/pointer chain.
   auto is_empty = [](this auto&& is_empty, const auto& v) -> bool {
     using V = std::remove_cvref_t<decltype(v)>;
     if constexpr (std::is_empty_v<V>) {
@@ -751,7 +745,6 @@ void WriteObject(Sink& b, const U& in, const A& arg = {}) {
       }
       b.WriteNull();
     } else if constexpr (kIsVariant<T>) {
-      // [index, value]; see WriteTuple re: index-based discriminator fragility.
       b.OnListBegin();
       self(value.index());
       b.OnSeparator();

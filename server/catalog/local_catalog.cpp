@@ -420,7 +420,7 @@ class SnapshotImpl : public Snapshot {
       }
       auto refs = c.expr->GetRefs(RefKinds::Sequences | RefKinds::Functions |
                                   RefKinds::Types);
-      auto edge = std::pair{table.GetId(), c.GetId()};
+      auto edge = c.GetId();
       for (const auto& ref : refs.functions) {
         ModifyDependency(
           Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
@@ -615,6 +615,11 @@ class SnapshotImpl : public Snapshot {
         for (const auto& col : table.Columns()) {
           if (_objects.find(col.GetId()) == _objects.end()) {
             _objects.insert(std::make_shared<Column>(col));
+          }
+        }
+        for (const auto& c : table.CheckConstraints()) {
+          if (_objects.find(c.GetId()) == _objects.end()) {
+            _objects.insert(std::make_shared<CheckConstraint>(c));
           }
         }
         ModifyTableDependencies(parent_id, table, EdgeAction::Add);
@@ -1323,6 +1328,9 @@ class SnapshotImpl : public Snapshot {
           for (const auto& col : t.Columns()) {
             _objects.erase(col.GetId());
           }
+          for (const auto& c : t.CheckConstraints()) {
+            _objects.erase(c.GetId());
+          }
         } break;
         case ObjectType::PgSqlView: {
           GetDependencyForWrite<SchemaDependency>(parent_id)->views.erase(id);
@@ -1609,12 +1617,12 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
         return r;
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+      duckdb::MemoryStream stream;
       {
-        duckdb::MemoryStream stream;
         auto bytes = catalog::SerializeObject(*database, stream);
-        auto r = _engine->CreateDefinition(
-          id::kInstance, ObjectType::Database, database_id,
-          [&](bool) { return std::string_view{bytes}; });
+        auto r =
+          _engine->CreateDefinition(id::kInstance, ObjectType::Database,
+                                    database_id, [&](bool) { return bytes; });
 
         if (!r.ok()) {
           return r;
@@ -1627,7 +1635,6 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
                      });
       r = clone->RegisterObject(schema, database_id, false);
       SDB_ASSERT(r.ok());
-      duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*schema, stream);
       return _engine->CreateDefinition(
         database_id, ObjectType::Schema, schema->GetId(),
@@ -1731,23 +1738,22 @@ Result LocalCatalog::CreateIndexImpl(
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       auto shard_type = IndexShardType(index->GetType());
+      duckdb::MemoryStream stream;
       {  // Write index definition
-        duckdb::MemoryStream stream;
         auto bytes = catalog::SerializeObject(*index, stream);
-        r = _engine->CreateDefinition(
-          index->GetRelationId(), index->GetType(), index->GetId(),
-          [&](bool) { return std::string_view{bytes}; });
+        r = _engine->CreateDefinition(index->GetRelationId(), index->GetType(),
+                                      index->GetId(),
+                                      [&](bool) { return bytes; });
         if (!r.ok()) {
           return r;
         }
       }
       {  // Write index shard definition
-        duckdb::MemoryStream stream;
         auto bytes = catalog::SerializeObject(**shard, stream);
 
-        r = _engine->CreateDefinition(
-          index->GetId(), shard_type, (*shard)->GetId(),
-          [&](bool) { return std::string_view{bytes}; });
+        r = _engine->CreateDefinition(index->GetId(), shard_type,
+                                      (*shard)->GetId(),
+                                      [&](bool) { return bytes; });
         if (!r.ok()) {
           return r;
         }

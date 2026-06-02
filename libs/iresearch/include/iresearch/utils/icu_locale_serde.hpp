@@ -54,8 +54,7 @@ template<typename Context>
 void SerdeRead(Context ctx, icu::Locale& locale) {
   const std::string name = ctx.io().ReadString();
   if (name.empty()) {
-    locale = icu::Locale{"C"};
-    locale.setToBogus();
+    locale = irs::MakeBogusLocale();
     return;
   }
   locale = icu::Locale::createFromName(name.c_str());

@@ -560,7 +560,7 @@ std::vector<IteratorFactory> MakeFactories(bench::Executor& executor) {
 
 }  // namespace
 
-class SearchBenchTest : public TestBase {
+class LoadTest : public TestBase {
  protected:
   enum class Mode {
     Validate,
@@ -589,7 +589,7 @@ class SearchBenchTest : public TestBase {
       index_dir = gCorpusPath;
       gDropIndex = false;
     } else {
-      gIndexDir = test_results_dir() / "SearchBenchTest_index";
+      gIndexDir = test_results_dir() / "LoadTest_index";
       std::filesystem::create_directories(gIndexDir);
       BuildIndex(gCorpusPath, gIndexDir, gConfig);
       index_dir = gIndexDir.string();
@@ -615,7 +615,7 @@ class SearchBenchTest : public TestBase {
   }
 
   void RunAndValidate(std::string_view name) {
-    const auto res_dir = resource("searchbench") / name;
+    const auto res_dir = resource("iresearch-load") / name;
     const auto queries_path = res_dir / "queries.json";
     ASSERT_TRUE(std::filesystem::exists(queries_path))
       << "Queries file not found: " << queries_path;
@@ -742,9 +742,9 @@ class SearchBenchTest : public TestBase {
   static inline bool gDropIndex = true;
 };
 
-TEST_F(SearchBenchTest, WikiSmall) { RunAndValidate("wiki_small"); }
+TEST_F(LoadTest, WikiSmall) { RunAndValidate("wiki_small"); }
 
-TEST_F(SearchBenchTest, DisjunctionScoreAccuracy) {
+TEST_F(LoadTest, DisjunctionScoreAccuracy) {
   const auto& reader = gExecutor->GetReader();
   auto scorer_ptr =
     irs::scorers::Get(gConfig.scorer, irs::Type<irs::text_format::Json>::get(),
@@ -900,28 +900,28 @@ TEST_F(SearchBenchTest, DisjunctionScoreAccuracy) {
   }
 }
 
-TEST_F(SearchBenchTest, AdvanceVsFillBlock) {
+TEST_F(LoadTest, AdvanceVsFillBlock) {
   auto factories = MakeFactories(*gExecutor);
   TestAdvanceVsFillBlock(gExecutor->GetReader(), factories, kWindowSizes);
 }
 
-TEST_F(SearchBenchTest, SeekVsFillBlock) {
+TEST_F(LoadTest, SeekVsFillBlock) {
   auto factories = MakeFactories(*gExecutor);
   TestSeekVsFillBlock(gExecutor->GetReader(), factories, kWindowSizes);
 }
 
-TEST_F(SearchBenchTest, InterleavedSeekFillBlock) {
+TEST_F(LoadTest, InterleavedSeekFillBlock) {
   auto factories = MakeFactories(*gExecutor);
   TestInterleavedSeekFillBlock(gExecutor->GetReader(), factories, kWindowSizes);
 }
 
-TEST_F(SearchBenchTest, AdvanceSkipFillBlock) {
+TEST_F(LoadTest, AdvanceSkipFillBlock) {
   auto factories = MakeFactories(*gExecutor);
   TestAdvanceSkipFillBlock(gExecutor->GetReader(), factories, kWindowSizes,
                            kAdvanceSkips);
 }
 
-TEST_F(SearchBenchTest, SeekSkipFillBlock) {
+TEST_F(LoadTest, SeekSkipFillBlock) {
   auto factories = MakeFactories(*gExecutor);
   TestSeekSkipFillBlock(gExecutor->GetReader(), factories, kWindowSizes,
                         kSeekSkips);

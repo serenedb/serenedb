@@ -6,7 +6,7 @@ services:
       - seccomp:unconfined
     volumes:
       - "${WORKSPACE}:/serenedb"
-      - "${WORKSPACE}/logs:/var/log/serenedb"
+      - "${WORKSPACE}/out/logs:/var/log/serenedb"
     env_file:
       - "${WORKSPACE}/docker.env"
     environment:
@@ -29,15 +29,18 @@ services:
     volumes:
       - "${WORKSPACE}:/serenedb"
       - "${WORKSPACE}/out/drivers-tests:/out"
-      - "${WORKSPACE}/logs:/logs"
+      - "${WORKSPACE}/out/logs:/logs"
     depends_on:
-      - serenedb-single
+      serenedb-single:
+        condition: service_started
     env_file:
       - "${WORKSPACE}/docker.env"
     environment:
       - HOME=/tmp/home
       - LOG_DIR=/logs
       - SDB_DRV_LANG
+      - SDB_FUZZ_QUERIES
+      - SDB_FUZZ_PARALLEL
     networks:
       - test-network
     command: >

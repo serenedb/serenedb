@@ -42,4 +42,7 @@ struct PgAm {
 };
 // NOLINTEND
 
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgAm>::GetTableData();
+
 }  // namespace sdb::pg

@@ -38,18 +38,32 @@ static_assert(sizeof(ObjectId) == sizeof(ObjectId::BaseType));
 namespace id {  // system IDs
 
 inline constexpr ObjectId kInvalid{};
-inline constexpr ObjectId kRootUser{1000000};
+inline constexpr ObjectId kMinSystem{1'000'000};
+inline constexpr ObjectId kMaxSystem{2'000'000};
+inline constexpr ObjectId kRootUser{kMinSystem};
 
 // Database IDs
-inline constexpr ObjectId kInstance{1000004};
-inline constexpr ObjectId kTombstoneDatabase{1000001};
-inline constexpr ObjectId kSystemDB{1000002};
-inline constexpr ObjectId kMaxSystem{2000000};
-inline constexpr ObjectId kCalculationDB{std::numeric_limits<uint64_t>::max()};
+inline constexpr ObjectId kInstance{kMinSystem.id() + 4};
+inline constexpr ObjectId kSystemDB{kMinSystem.id() + 2};
+inline constexpr ObjectId kTombstoneDatabase{kMinSystem.id() + 1};
 
 // Schema IDs
 inline constexpr ObjectId kPgCatalogSchema{11};
-inline constexpr ObjectId kPgInformationSchema{1000003};
+inline constexpr ObjectId kPgInformationSchema{kMinSystem.id() + 3};
+
+// Type IDs
+inline constexpr ObjectId kVariant{kMinSystem.id() + 100};
+inline constexpr ObjectId kVariantArray{kMinSystem.id() + 101};
+
+// OpClasses
+inline constexpr ObjectId kPgOpclassHnsw{kMinSystem.id() + 200};
+inline constexpr ObjectId kPgOpclassIncluded{kMinSystem.id() + 201};
+
+// Access methods
+inline constexpr ObjectId kPgAmInverted{kMinSystem.id() + 300};
+inline constexpr ObjectId kPgAmIresearch{kMinSystem.id() + 301};
+inline constexpr ObjectId kPgAmRocksdb{kMinSystem.id() + 302};
+inline constexpr ObjectId kPgAmSecondary{kMinSystem.id() + 303};
 
 }  // namespace id
 }  // namespace sdb

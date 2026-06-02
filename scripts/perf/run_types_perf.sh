@@ -241,7 +241,9 @@ COPY (
          ROW('name-' || (i % 100)::VARCHAR,
              [ROW('k1', i)::STRUCT(k VARCHAR, v INTEGER),
               ROW('k2', i * 2)::STRUCT(k VARCHAR, v INTEGER)])
-           ::STRUCT(name VARCHAR, vals STRUCT(k VARCHAR, v INTEGER)[]) AS deep
+           ::STRUCT(name VARCHAR, vals STRUCT(k VARCHAR, v INTEGER)[]) AS deep,
+         {'a': (i * 0.5)::DOUBLE, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
+           AS variant_obj
   FROM range(${N}) t(i)
 ) TO '${PQ_SQL_PATH}' (FORMAT parquet);
 "
@@ -311,7 +313,7 @@ CREATE INDEX bench_idx ON bench_view USING inverted(bool_col)
 INCLUDE (
   i8, i16, i32, i64, f32, f64, s, bool_col,
   arr_i32, arr_f64, lst_i32, struct_basic, struct_f64,
-  map_i32, lst_struct, deep
+  map_i32, lst_struct, deep, variant_obj
 );
 "
 fi
@@ -352,6 +354,7 @@ QUERIES=(
 	"map|SUM(list_sum(map_values(map_i32)))"
 	"lstStr|SUM(list_sum(list_transform(lst_struct, p -> p.v)))"
 	"deep|SUM(length(deep.name)) + SUM(list_sum(list_transform(deep.vals, p -> p.v)))"
+	"variant|SUM(variant_obj.a::DOUBLE) + SUM(1.0 / length(variant_obj.b::VARCHAR))"
 )
 
 # Three timing modes, picked by env:

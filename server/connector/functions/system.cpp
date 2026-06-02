@@ -69,9 +69,8 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
       result_validity.SetInvalid(row);
       continue;
     }
-    const auto& name = name_ptr[n_idx];
     bool missing_ok = ok_ptr[o_idx];
-    std::string key{name.GetData(), name.GetSize()};
+    auto key = name_ptr[n_idx].GetString();
     duckdb::Value value;
     if (context.TryGetCurrentSetting(key, value)) {
       result_ptr[row] =
@@ -203,11 +202,23 @@ duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
 
 // format_type(oid, typmod) -> text
 // TODO(Pasha) Account typmod?
-void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+// Keyed on the oid only (UnaryExecutor): psql calls format_type(oid, NULL),
+// and a BinaryExecutor would NULL-propagate the NULL typmod and drop the name.
+void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                         duckdb::Vector& result) {
-  duckdb::BinaryExecutor::Execute<int64_t, int32_t, duckdb::string_t>(
-    args.data[0], args.data[1], result, args.size(),
-    [&](int64_t type_oid, int32_t) -> duckdb::string_t {
+  auto snapshot =
+    GetSereneDBContext(state.GetContext()).EnsureCatalogSnapshot();
+  duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
+    args.data[0], result, args.size(),
+    [&](int64_t type_oid) -> duckdb::string_t {
+      // User-defined types (enum, composite, ...) are catalog objects; resolve
+      // their real name there. Built-ins aren't catalog objects, so fall back
+      // to the static oid->name map (RegtypeOut, which otherwise renders an
+      // unknown oid as its bare number).
+      if (auto object =
+            snapshot->GetObject(ObjectId{static_cast<uint64_t>(type_oid)})) {
+        return duckdb::StringVector::AddString(result, object->GetName());
+      }
       return duckdb::StringVector::AddString(
         result, pg::RegtypeOut(static_cast<uint64_t>(type_oid)));
     });
@@ -543,12 +554,17 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                                  not_supported});
 
   {
-    duckdb::CreateScalarFunctionInfo info{{
+    duckdb::ScalarFunction format_type_fn{
       "format_type",
       {pg::OID(), duckdb::LogicalType::INTEGER},
       duckdb::LogicalType::VARCHAR,
       FormatTypeFunction,
-    }};
+    };
+    // psql calls format_type(oid, NULL); with default null handling the NULL
+    // typmod nulls the whole result before the function runs.
+    format_type_fn.SetNullHandling(
+      duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    duckdb::CreateScalarFunctionInfo info{std::move(format_type_fn)};
     info.schema = "pg_catalog";
     info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
     loader.RegisterFunction(std::move(info));

@@ -21,7 +21,7 @@ services:
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     volumes:
       - "${WORKSPACE}:/serenedb"
-      - "${WORKSPACE}/logs:/logs"
+      - "${WORKSPACE}/out/logs:/logs"
     env_file:
       - "${WORKSPACE}/docker.env"
     environment:

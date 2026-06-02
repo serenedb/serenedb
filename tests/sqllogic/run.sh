@@ -610,6 +610,15 @@ run_tests() {
 	# TODO(Misha) move this to sqllogictest-rs
 	mkdir -p "$(dirname -- "$junit-$engine")"
 
+	# Slowest-first off the persisted per-engine timing cache (opt-in): the runner
+	# reads SDB_TIMING_CACHE to order discovered files and SDB_TIMING_OUT to record.
+	local cache="" timing_out=""
+	if [[ -n "${SDB_TIMING_CACHE_DIR:-}" ]]; then
+		cache="$SDB_TIMING_CACHE_DIR/${engine}${SDB_TIMING_KEY:+.$SDB_TIMING_KEY}.tsv"
+		timing_out=$(mktemp)
+		export SDB_TIMING_CACHE="$cache" SDB_TIMING_OUT="$timing_out"
+	fi
+
 	sqllogictest "${tests[@]}" \
 		--host "$host" --port "$port" --engine "$engine" \
 		--jobs "$jobs" \
@@ -619,7 +628,14 @@ run_tests() {
 		$skip_failed_opt ${skip_failed:+"$skip_failed"} \
 		$skip_opt \
 		$ssl_port_opt
-	return $?
+	local rc=$?
+
+	if [[ -n "$timing_out" ]]; then
+		unset SDB_TIMING_CACHE SDB_TIMING_OUT
+		python3 "$SCRIPT_DIR/timing_cache.py" merge "$cache" "$timing_out" 2>/dev/null || true
+		rm -f "$timing_out"
+	fi
+	return $rc
 }
 
 # Default port when none specified

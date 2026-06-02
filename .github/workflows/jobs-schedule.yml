@@ -2,15 +2,10 @@ name: auto | nightly
 
 on:
   schedule:
-    # Daily at 05:00 UTC - coverage + release check
     - cron: '0 5 * * *'
-    # Monday 01:00 UTC - Memory sanitizer
     - cron: '0 1 * * 1'
-    # Tuesday 01:00 UTC - Address sanitizer
     - cron: '0 1 * * 2'
-    # Wednesday 01:00 UTC - Undefined behavior sanitizer
     - cron: '0 1 * * 3'
-    # Thursday 01:00 UTC - Thread sanitizer
     - cron: '0 1 * * 4'
 
 jobs:
@@ -19,12 +14,26 @@ jobs:
     uses: ./.github/workflows/build-reusable.yml
     with:
       LOCATION: linux-amd64
-      KIND: both
-      DEV: true
-      INSTRUMENTATION: coverage
+      CONFIG: coverage
+      IRESEARCH: true
+      EXTENSION: true
+      SQLITE: true
+      SQLSMITH: true
       FUZZ_QUERIES: "10000"
       FUZZ_PARALLEL: "4"
+    secrets: inherit
 
+  everything:
+    if: github.event.schedule == '0 5 * * *'
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      LOCATION: linux-amd64
+      CONFIG: dev
+      IRESEARCH: true
+      EXTENSION: true
+      SQLITE: true
+      SQLSMITH: true
+    secrets: inherit
 
   release-check:
     if: github.event.schedule == '0 5 * * *'
@@ -34,121 +43,37 @@ jobs:
       RTA: required
       UPLOAD_ARTIFACTS: false
 
-
-  msan-unit:
-    if: github.event.schedule == '0 1 * * 1'
+  sanitizer:
+    if: github.event.schedule != '0 5 * * *'
     uses: ./.github/workflows/build-reusable.yml
     with:
       LOCATION: linux-amd64
-      KIND: unit
-      DEV: true
-      INSTRUMENTATION: msan
-
-
-  msan-functional:
-    if: github.event.schedule == '0 1 * * 1'
-    uses: ./.github/workflows/build-reusable.yml
-    with:
-      LOCATION: linux-amd64
-      KIND: functional
-      DEV: true
-      INSTRUMENTATION: msan
+      CONFIG: >-
+        ${{ github.event.schedule == '0 1 * * 1' && 'msan'
+         || github.event.schedule == '0 1 * * 2' && 'asan'
+         || github.event.schedule == '0 1 * * 3' && 'ubsan'
+         || 'tsan' }}
+      # RUN_EXTRA: nightly sanitizers run the full in-scope set, not just ours + drivers.
+      RUN_EXTRA: true
+      IRESEARCH: true
+      EXTENSION: true
+      SQLITE: true
+      SQLSMITH: true
       FUZZ_QUERIES: "10000"
       FUZZ_PARALLEL: "4"
-
-
-  asan-unit:
-    if: github.event.schedule == '0 1 * * 2'
-    uses: ./.github/workflows/build-reusable.yml
-    with:
-      LOCATION: linux-amd64
-      KIND: unit
-      DEV: true
-      INSTRUMENTATION: asan
-
-
-  asan-functional:
-    if: github.event.schedule == '0 1 * * 2'
-    uses: ./.github/workflows/build-reusable.yml
-    with:
-      LOCATION: linux-amd64
-      KIND: functional
-      DEV: true
-      INSTRUMENTATION: asan
-      FUZZ_QUERIES: "10000"
-      FUZZ_PARALLEL: "4"
-
-
-  ubsan-unit:
-    if: github.event.schedule == '0 1 * * 3'
-    uses: ./.github/workflows/build-reusable.yml
-    with:
-      LOCATION: linux-amd64
-      KIND: unit
-      DEV: true
-      INSTRUMENTATION: ubsan
-
-
-  ubsan-functional:
-    if: github.event.schedule == '0 1 * * 3'
-    uses: ./.github/workflows/build-reusable.yml
-    with:
-      LOCATION: linux-amd64
-      KIND: functional
-      DEV: true
-      INSTRUMENTATION: ubsan
-      FUZZ_QUERIES: "10000"
-      FUZZ_PARALLEL: "4"
-
-
-  tsan-unit:
-    if: github.event.schedule == '0 1 * * 4'
-    uses: ./.github/workflows/build-reusable.yml
-    with:
-      LOCATION: linux-amd64
-      KIND: unit
-      DEV: true
-      INSTRUMENTATION: tsan
-
-
-  tsan-functional:
-    if: github.event.schedule == '0 1 * * 4'
-    uses: ./.github/workflows/build-reusable.yml
-    with:
-      LOCATION: linux-amd64
-      KIND: functional
-      DEV: true
-      INSTRUMENTATION: tsan
-      FUZZ_QUERIES: "10000"
-      FUZZ_PARALLEL: "4"
-
-
-  searchbench:
-    if: github.event.schedule == '0 5 * * *'
-    uses: ./.github/workflows/searchbench-reusable.yml
-    with:
-      LOCATION: linux-amd64
-      DATASET: wiki_small
-      GTEST_FILTER: SearchBenchTest*
-      DEV: true
-      INSTRUMENTATION: none
     secrets: inherit
 
-
   notify:
-    needs: [coverage, release-check, msan-unit, msan-functional, asan-unit, asan-functional, ubsan-unit, ubsan-functional, tsan-unit, tsan-functional, searchbench]
+    needs: [coverage, everything, release-check, sanitizer]
     if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 1
           submodules: false
-          clean: false
           sparse-checkout: scripts
           sparse-checkout-cone-mode: true
-
       - name: Send notification
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
@@ -157,7 +82,7 @@ jobs:
           TG_THREAD_ID_BUILD: "53"
           TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
           BRANCH: main
-          JOB_STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
+          JOB_STATUS: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
           ACTOR: scheduled
           RUN_NAME: "auto | nightly"
           RUN_NUMBER: ${{ github.run_number }}

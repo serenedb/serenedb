@@ -492,20 +492,21 @@ SELECT makeaclitem(0, 0, 'SELECT', false);
 db error: ERROR: Function is not supported in SereneDB
 
 
-onlyif serenedb
+# PG returns NULL for an OID that doesn't exist in the relevant catalog
+# (pg_proc / pg_type / pg_class). The pg_*_is_visible predicates look the
+# object up first and propagate NULL when nothing matches.
 query
 SELECT pg_function_is_visible(0);
 ----
 pg_function_is_visible
-t
+NULL
 
 
-onlyif serenedb
 query
 SELECT pg_type_is_visible(0);
 ----
 pg_type_is_visible
-t
+NULL
 
 
 onlyif serenedb

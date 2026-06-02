@@ -1,0 +1,1364 @@
+# psql backslash-command parity matrix.
+#
+# Each block: optional `skipif <engine>` directives, the command, `----`, and
+# a golden block (each line prefixed `> `) captured once from real Postgres
+# and committed. The harness diffs the configured engine's output against the
+# golden; no live Postgres is needed at test time.
+#   {schema}/{schema2} -> the per-run seeded schema names.
+#   <NL>               -> a newline (for multi-step commands fed via stdin).
+# Every command listed by psql's `\?` MUST appear here (active or skipif'd);
+# the harness enforces that. See README.md for block syntax and how to
+# refresh goldens via `run.py --update`.
+#
+# ---- client-side (server-independent; parity is trivially true) ----
+\echo parity-marker
+----
+> parity-marker
+
+\qecho parity-marker
+----
+> parity-marker
+
+\warn parity-marker
+----
+> parity-marker
+
+\copyright
+----
+> PostgreSQL Database Management System
+> (also known as Postgres, formerly known as Postgres95)
+>
+> Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+>
+> Portions Copyright (c) 1994, The Regents of the University of California
+>
+> Permission to use, copy, modify, and distribute this software and its
+> documentation for any purpose, without fee, and without a written agreement
+> is hereby granted, provided that the above copyright notice and this
+> paragraph and the following two paragraphs appear in all copies.
+>
+> IN NO EVENT SHALL THE UNIVERSITY OF CALIFORNIA BE LIABLE TO ANY PARTY FOR
+> DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, INCLUDING
+> LOST PROFITS, ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS
+> DOCUMENTATION, EVEN IF THE UNIVERSITY OF CALIFORNIA HAS BEEN ADVISED OF THE
+> POSSIBILITY OF SUCH DAMAGE.
+>
+> THE UNIVERSITY OF CALIFORNIA SPECIFICALLY DISCLAIMS ANY WARRANTIES,
+> INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
+> AND FITNESS FOR A PARTICULAR PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS
+> ON AN "AS IS" BASIS, AND THE UNIVERSITY OF CALIFORNIA HAS NO OBLIGATIONS TO
+> PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
+
+\?
+----
+> General
+>   \copyright             show PostgreSQL usage and distribution terms
+>   \crosstabview [COLUMNS] execute query and display result in crosstab
+>   \errverbose            show most recent error message at maximum verbosity
+>   \g [(OPTIONS)] [FILE]  execute query (and send result to file or |pipe);
+>                          \g with no arguments is equivalent to a semicolon
+>   \gdesc                 describe result of query, without executing it
+>   \gexec                 execute query, then execute each value in its result
+>   \gset [PREFIX]         execute query and store result in psql variables
+>   \gx [(OPTIONS)] [FILE] as \g, but forces expanded output mode
+>   \q                     quit psql
+>   \restrict RESTRICT_KEY
+>                          enter restricted mode with provided key
+>   \unrestrict RESTRICT_KEY
+>                          exit restricted mode if key matches
+>   \watch [[i=]SEC] [c=N] [m=MIN]
+>                          execute query every SEC seconds, up to N times,
+>                          stop if less than MIN rows are returned
+>
+> Help
+>   \? [commands]          show help on backslash commands
+>   \? options             show help on psql command-line options
+>   \? variables           show help on special variables
+>   \h [NAME]              help on syntax of SQL commands, * for all commands
+>
+> Query Buffer
+>   \e [FILE] [LINE]       edit the query buffer (or file) with external editor
+>   \ef [FUNCNAME [LINE]]  edit function definition with external editor
+>   \ev [VIEWNAME [LINE]]  edit view definition with external editor
+>   \p                     show the contents of the query buffer
+>   \r                     reset (clear) the query buffer
+>   \s [FILE]              display history or save it to file
+>   \w FILE                write query buffer to file
+>
+> Input/Output
+>   \copy ...              perform SQL COPY with data stream to the client host
+>   \echo [-n] [STRING]    write string to standard output (-n for no newline)
+>   \i FILE                execute commands from file
+>   \ir FILE               as \i, but relative to location of current script
+>   \o [FILE]              send all query results to file or |pipe
+>   \qecho [-n] [STRING]   write string to \o output stream (-n for no newline)
+>   \warn [-n] [STRING]    write string to standard error (-n for no newline)
+>
+> Conditional
+>   \if EXPR               begin conditional block
+>   \elif EXPR             alternative within current conditional block
+>   \else                  final alternative within current conditional block
+>   \endif                 end conditional block
+>
+> Informational
+>   (options: S = show system objects, x = expanded mode, + = additional detail)
+>   \d[Sx+]                list tables, views, and sequences
+>   \d[S+]   NAME          describe table, view, sequence, or index
+>   \da[Sx]  [PATTERN]     list aggregates
+>   \dA[x+]  [PATTERN]     list access methods
+>   \dAc[x+] [AMPTRN [TYPEPTRN]]  list operator classes
+>   \dAf[x+] [AMPTRN [TYPEPTRN]]  list operator families
+>   \dAo[x+] [AMPTRN [OPFPTRN]]   list operators of operator families
+>   \dAp[x+] [AMPTRN [OPFPTRN]]   list support functions of operator families
+>   \db[x+]  [PATTERN]     list tablespaces
+>   \dc[Sx+] [PATTERN]     list conversions
+>   \dconfig[x+] [PATTERN] list configuration parameters
+>   \dC[x+]  [PATTERN]     list casts
+>   \dd[Sx]  [PATTERN]     show object descriptions not displayed elsewhere
+>   \dD[Sx+] [PATTERN]     list domains
+>   \ddp[x]  [PATTERN]     list default privileges
+>   \dE[Sx+] [PATTERN]     list foreign tables
+>   \des[x+] [PATTERN]     list foreign servers
+>   \det[x+] [PATTERN]     list foreign tables
+>   \deu[x+] [PATTERN]     list user mappings
+>   \dew[x+] [PATTERN]     list foreign-data wrappers
+>   \df[anptw][Sx+] [FUNCPTRN [TYPEPTRN ...]]
+>                          list [only agg/normal/procedure/trigger/window] functions
+>   \dF[x+]  [PATTERN]     list text search configurations
+>   \dFd[x+] [PATTERN]     list text search dictionaries
+>   \dFp[x+] [PATTERN]     list text search parsers
+>   \dFt[x+] [PATTERN]     list text search templates
+>   \dg[Sx+] [PATTERN]     list roles
+>   \di[Sx+] [PATTERN]     list indexes
+>   \dl[x+]                list large objects, same as \lo_list
+>   \dL[Sx+] [PATTERN]     list procedural languages
+>   \dm[Sx+] [PATTERN]     list materialized views
+>   \dn[Sx+] [PATTERN]     list schemas
+>   \do[Sx+] [OPPTRN [TYPEPTRN [TYPEPTRN]]]
+>                          list operators
+>   \dO[Sx+] [PATTERN]     list collations
+>   \dp[Sx]  [PATTERN]     list table, view, and sequence access privileges
+>   \dP[itnx+] [PATTERN]   list [only index/table] partitioned relations [n=nested]
+>   \drds[x] [ROLEPTRN [DBPTRN]]
+>                          list per-database role settings
+>   \drg[Sx] [PATTERN]     list role grants
+>   \dRp[x+] [PATTERN]     list replication publications
+>   \dRs[x+] [PATTERN]     list replication subscriptions
+>   \ds[Sx+] [PATTERN]     list sequences
+>   \dt[Sx+] [PATTERN]     list tables
+>   \dT[Sx+] [PATTERN]     list data types
+>   \du[Sx+] [PATTERN]     list roles
+>   \dv[Sx+] [PATTERN]     list views
+>   \dx[x+]  [PATTERN]     list extensions
+>   \dX[x]   [PATTERN]     list extended statistics
+>   \dy[x+]  [PATTERN]     list event triggers
+>   \l[x+]   [PATTERN]     list databases
+>   \sf[+]   FUNCNAME      show a function's definition
+>   \sv[+]   VIEWNAME      show a view's definition
+>   \z[Sx]   [PATTERN]     same as \dp
+>
+> Large Objects
+>   \lo_export LOBOID FILE write large object to file
+>   \lo_import FILE [COMMENT]
+>                          read large object from file
+>   \lo_list[x+]           list large objects
+>   \lo_unlink LOBOID      delete a large object
+>
+> Formatting
+>   \a                     toggle between unaligned and aligned output mode
+>   \C [STRING]            set table title, or unset if none
+>   \f [STRING]            show or set field separator for unaligned query output
+>   \H                     toggle HTML output mode (currently off)
+>   \pset [NAME [VALUE]]   set table output option
+>                          (border|columns|csv_fieldsep|expanded|fieldsep|
+>                          fieldsep_zero|footer|format|linestyle|null|
+>                          numericlocale|pager|pager_min_lines|recordsep|
+>                          recordsep_zero|tableattr|title|tuples_only|
+>                          unicode_border_linestyle|unicode_column_linestyle|
+>                          unicode_header_linestyle|xheader_width)
+>   \t [on|off]            show only rows (currently off)
+>   \T [STRING]            set HTML <table> tag attributes, or unset if none
+>   \x [on|off|auto]       toggle expanded output (currently off)
+>
+> Connection
+>   \c[onnect] {[DBNAME|- USER|- HOST|- PORT|-] | conninfo}
+>                          connect to new database (currently "postgres")
+>   \conninfo              display information about current connection
+>   \encoding [ENCODING]   show or set client encoding
+>   \password [USERNAME]   securely change the password for a user
+>
+> Operating System
+>   \cd [DIR]              change the current working directory
+>   \getenv PSQLVAR ENVVAR fetch environment variable
+>   \setenv NAME [VALUE]   set or unset environment variable
+>   \timing [on|off]       toggle timing of commands (currently off)
+>   \! [COMMAND]           execute command in shell or start interactive shell
+>
+> Variables
+>   \prompt [TEXT] NAME    prompt user to set internal variable
+>   \set [NAME [VALUE]]    set internal variable, or list all if no parameters
+>   \unset NAME            unset (delete) internal variable
+>
+> Extended Query Protocol
+>   \bind [PARAM]...       set query parameters
+>   \bind_named STMT_NAME [PARAM]...
+>                          set query parameters for an existing prepared statement
+>   \close_prepared STMT_NAME
+>                          close an existing prepared statement
+>   \endpipeline           exit pipeline mode
+>   \flush                 flush output data to the server
+>   \flushrequest          send request to the server to flush its output buffer
+>   \getresults [NUM_RES]  read NUM_RES pending results, or all if no argument
+>   \parse STMT_NAME       create a prepared statement
+>   \sendpipeline          send an extended query to an ongoing pipeline
+>   \startpipeline         enter pipeline mode
+>   \syncpipeline          add a synchronisation point to an ongoing pipeline
+
+\h SELECT
+----
+> Command:     SELECT
+> Description: retrieve rows from a table or view
+> Syntax:
+> [ WITH [ RECURSIVE ] with_query [, ...] ]
+> SELECT [ ALL | DISTINCT [ ON ( expression [, ...] ) ] ]
+>     [ { * | expression [ [ AS ] output_name ] } [, ...] ]
+>     [ FROM from_item [, ...] ]
+>     [ WHERE condition ]
+>     [ GROUP BY [ ALL | DISTINCT ] grouping_element [, ...] ]
+>     [ HAVING condition ]
+>     [ WINDOW window_name AS ( window_definition ) [, ...] ]
+>     [ { UNION | INTERSECT | EXCEPT } [ ALL | DISTINCT ] select ]
+>     [ ORDER BY expression [ ASC | DESC | USING operator ] [ NULLS { FIRST | LAST } ] [, ...] ]
+>     [ LIMIT { count | ALL } ]
+>     [ OFFSET start [ ROW | ROWS ] ]
+>     [ FETCH { FIRST | NEXT } [ count ] { ROW | ROWS } { ONLY | WITH TIES } ]
+>     [ FOR { UPDATE | NO KEY UPDATE | SHARE | KEY SHARE } [ OF from_reference [, ...] ] [ NOWAIT | SKIP LOCKED ] [...] ]
+>
+> where from_item can be one of:
+>
+>     [ ONLY ] table_name [ * ] [ [ AS ] alias [ ( column_alias [, ...] ) ] ]
+>                 [ TABLESAMPLE sampling_method ( argument [, ...] ) [ REPEATABLE ( seed ) ] ]
+>     [ LATERAL ] ( select ) [ [ AS ] alias [ ( column_alias [, ...] ) ] ]
+>     with_query_name [ [ AS ] alias [ ( column_alias [, ...] ) ] ]
+>     [ LATERAL ] function_name ( [ argument [, ...] ] )
+>                 [ WITH ORDINALITY ] [ [ AS ] alias [ ( column_alias [, ...] ) ] ]
+>     [ LATERAL ] function_name ( [ argument [, ...] ] ) [ AS ] alias ( column_definition [, ...] )
+>     [ LATERAL ] function_name ( [ argument [, ...] ] ) AS ( column_definition [, ...] )
+>     [ LATERAL ] ROWS FROM( function_name ( [ argument [, ...] ] ) [ AS ( column_definition [, ...] ) ] [, ...] )
+>                 [ WITH ORDINALITY ] [ [ AS ] alias [ ( column_alias [, ...] ) ] ]
+>     from_item join_type from_item { ON join_condition | USING ( join_column [, ...] ) [ AS join_using_alias ] }
+>     from_item NATURAL join_type from_item
+>     from_item CROSS JOIN from_item
+>
+> and grouping_element can be one of:
+>
+>     ( )
+>     expression
+>     ( expression [, ...] )
+>     ROLLUP ( { expression | ( expression [, ...] ) } [, ...] )
+>     CUBE ( { expression | ( expression [, ...] ) } [, ...] )
+>     GROUPING SETS ( grouping_element [, ...] )
+>
+> and with_query is:
+>
+>     with_query_name [ ( column_name [, ...] ) ] AS [ [ NOT ] MATERIALIZED ] ( select | values | insert | update | delete | merge )
+>         [ SEARCH { BREADTH | DEPTH } FIRST BY column_name [, ...] SET search_seq_col_name ]
+>         [ CYCLE column_name [, ...] SET cycle_mark_col_name [ TO cycle_mark_value DEFAULT cycle_mark_default ] USING cycle_path_col_name ]
+>
+> TABLE [ ONLY ] table_name [ * ]
+>
+> URL: https://www.postgresql.org/docs/18/sql-select.html
+
+\a
+----
+
+\t
+----
+
+\x
+----
+
+\C report-title
+----
+
+\T width=5
+----
+
+\f |
+----
+
+\H
+----
+
+\pset border 1
+----
+
+\encoding
+----
+> UTF8
+
+\timing
+----
+
+\set demo 42<NL>\echo :demo<NL>\unset demo
+----
+> 42
+
+\setenv PSQLH hello<NL>\getenv gv PSQLH<NL>\echo :gv
+----
+> hello
+
+\if false<NL>\echo a<NL>\elif true<NL>\echo b<NL>\else<NL>\echo c<NL>\endif
+----
+> b
+
+# ---- query-buffer / execution over a fixed query ----
+SELECT 1 AS n<NL>\p
+----
+> SELECT 1 AS n
+> +---+
+> | n |
+> +---+
+> | 1 |
+> +---+
+> (1 row)
+
+SELECT 1 AS n<NL>\g
+----
+> +---+
+> | n |
+> +---+
+> | 1 |
+> +---+
+> (1 row)
+
+SELECT 1 AS n<NL>\gx
+----
+> +-[ RECORD 1 ]-+
+> | n | 1 |
+> +---+---+
+
+SELECT 1 AS n<NL>\gdesc
+----
+> +--------+---------+
+> | Column |  Type   |
+> +--------+---------+
+> | n      | integer |
+> +--------+---------+
+> (1 row)
+
+SELECT 42 AS gv<NL>\gset<NL>\echo :gv
+----
+> 42
+
+SELECT 'SELECT 7 AS seven'<NL>\gexec
+----
+> +-------+
+> | seven |
+> +-------+
+> |     7 |
+> +-------+
+> (1 row)
+
+SELECT $1::int AS v<NL>\bind 7<NL>\g
+----
+> +---+
+> | v |
+> +---+
+> | 7 |
+> +---+
+> (1 row)
+
+SELECT 'r' AS rowcat, 'c' AS colcat, 1 AS val<NL>\crosstabview
+----
+> +--------+---+
+> | rowcat | c |
+> +--------+---+
+> | r      | 1 |
+> +--------+---+
+> (1 row)
+
+SELECT 1 AS n<NL>\r
+----
+
+# ---- informational ----
+# Scoped via `SET search_path` + the BARE \d* form (no pattern). psql emits
+# `OPERATOR(pg_catalog.~)` whenever a pattern is supplied, which serened's
+# parser rejects -- so pattern/describe-specific forms are #skip'd below.
+SET search_path TO {schema};<NL>\d
+----
+>                       List of relations
+> +--------------+-----------------------+----------+----------+
+> |    Schema    |         Name          |   Type   |  Owner   |
+> +--------------+-----------------------+----------+----------+
+> | SCHEMA | account               | table    | postgres |
+> | SCHEMA | acct_seq              | sequence | postgres |
+> | SCHEMA | active_accounts       | view     | postgres |
+> | SCHEMA | transactions          | table    | postgres |
+> | SCHEMA | transactions_by_owner | view     | postgres |
+> | SCHEMA | txn_seq               | sequence | postgres |
+> +--------------+-----------------------+----------+----------+
+> (6 rows)
+
+SET search_path TO {schema};<NL>\dt
+----
+>                   List of tables
+> +--------------+--------------+-------+----------+
+> |    Schema    |     Name     | Type  |  Owner   |
+> +--------------+--------------+-------+----------+
+> | SCHEMA | account      | table | postgres |
+> | SCHEMA | transactions | table | postgres |
+> +--------------+--------------+-------+----------+
+> (2 rows)
+
+SET search_path TO {schema};<NL>\ds
+----
+>                 List of sequences
+> +--------------+----------+----------+----------+
+> |    Schema    |   Name   |   Type   |  Owner   |
+> +--------------+----------+----------+----------+
+> | SCHEMA | acct_seq | sequence | postgres |
+> | SCHEMA | txn_seq  | sequence | postgres |
+> +--------------+----------+----------+----------+
+> (2 rows)
+
+SET search_path TO {schema};<NL>\di
+----
+>                                List of indexes
+> +--------------+--------------------------+-------+----------+--------------+
+> |    Schema    |           Name           | Type  |  Owner   |    Table     |
+> +--------------+--------------------------+-------+----------+--------------+
+> | SCHEMA | account_owner_idx        | index | postgres | account      |
+> | SCHEMA | account_pkey             | index | postgres | account      |
+> | SCHEMA | transactions_account_idx | index | postgres | transactions |
+> | SCHEMA | transactions_pkey        | index | postgres | transactions |
+> +--------------+--------------------------+-------+----------+--------------+
+> (4 rows)
+
+SET search_path TO {schema};<NL>\dv
+----
+>                       List of views
+> +--------------+-----------------------+------+----------+
+> |    Schema    |         Name          | Type |  Owner   |
+> +--------------+-----------------------+------+----------+
+> | SCHEMA | active_accounts       | view | postgres |
+> | SCHEMA | transactions_by_owner | view | postgres |
+> +--------------+-----------------------+------+----------+
+> (2 rows)
+
+SET search_path TO {schema};<NL>\dT
+----
+>              List of data types
+> +--------------+-------------+-------------+
+> |    Schema    |    Name     | Description |
+> +--------------+-------------+-------------+
+> | SCHEMA | acct_status | [NULL]      |
+> | SCHEMA | currency    | [NULL]      |
+> | SCHEMA | point2d     | [NULL]      |
+> +--------------+-------------+-------------+
+> (3 rows)
+
+SET search_path TO {schema};<NL>\dm
+----
+>    List of materialized views
+> +--------+------+------+-------+
+> | Schema | Name | Type | Owner |
+> +--------+------+------+-------+
+> +--------+------+------+-------+
+> (0 rows)
+
+SET search_path TO {schema};<NL>\dE
+----
+>      List of foreign tables
+> +--------+------+------+-------+
+> | Schema | Name | Type | Owner |
+> +--------+------+------+-------+
+> +--------+------+------+-------+
+> (0 rows)
+
+SET search_path TO {schema};<NL>\dX
+----
+>                   List of extended statistics
+> +--------+------+------------+-----------+--------------+-----+
+> | Schema | Name | Definition | Ndistinct | Dependencies | MCV |
+> +--------+------+------------+-----------+--------------+-----+
+> +--------+------+------------+-----------+--------------+-----+
+> (0 rows)
+
+SET search_path TO {schema};<NL>\da
+----
+>                       List of aggregate functions
+> +--------+------+------------------+---------------------+-------------+
+> | Schema | Name | Result data type | Argument data types | Description |
+> +--------+------+------------------+---------------------+-------------+
+> +--------+------+------------------+---------------------+-------------+
+> (0 rows)
+
+SET search_path TO {schema};<NL>\dd
+----
+>           Object descriptions
+> +--------+------+--------+-------------+
+> | Schema | Name | Object | Description |
+> +--------+------+--------+-------------+
+> +--------+------+--------+-------------+
+> (0 rows)
+
+SET search_path TO {schema};<NL>\ddp
+----
+>           Default access privileges
+> +-------+--------+------+-------------------+
+> | Owner | Schema | Type | Access privileges |
+> +-------+--------+------+-------------------+
+> +-------+--------+------+-------------------+
+> (0 rows)
+
+SET search_path TO {schema};<NL>\dD
+----
+>                          List of domains
+> +--------+------+------+-----------+----------+---------+-------+
+> | Schema | Name | Type | Collation | Nullable | Default | Check |
+> +--------+------+------+-----------+----------+---------+-------+
+> +--------+------+------+-----------+----------+---------+-------+
+> (0 rows)
+
+SET search_path TO {schema};<NL>\dp
+----
+>                                           Access privileges
+> +--------------+-----------------------+----------+-------------------+-------------------+----------+
+> |    Schema    |         Name          |   Type   | Access privileges | Column privileges | Policies |
+> +--------------+-----------------------+----------+-------------------+-------------------+----------+
+> | SCHEMA | account               | table    | [NULL]            |                   |          |
+> | SCHEMA | acct_seq              | sequence | [NULL]            |                   |          |
+> | SCHEMA | active_accounts       | view     | [NULL]            |                   |          |
+> | SCHEMA | transactions          | table    | [NULL]            |                   |          |
+> | SCHEMA | transactions_by_owner | view     | [NULL]            |                   |          |
+> | SCHEMA | txn_seq               | sequence | [NULL]            |                   |          |
+> +--------------+-----------------------+----------+-------------------+-------------------+----------+
+> (6 rows)
+
+SET search_path TO {schema};<NL>\z
+----
+>                                           Access privileges
+> +--------------+-----------------------+----------+-------------------+-------------------+----------+
+> |    Schema    |         Name          |   Type   | Access privileges | Column privileges | Policies |
+> +--------------+-----------------------+----------+-------------------+-------------------+----------+
+> | SCHEMA | account               | table    | [NULL]            |                   |          |
+> | SCHEMA | acct_seq              | sequence | [NULL]            |                   |          |
+> | SCHEMA | active_accounts       | view     | [NULL]            |                   |          |
+> | SCHEMA | transactions          | table    | [NULL]            |                   |          |
+> | SCHEMA | transactions_by_owner | view     | [NULL]            |                   |          |
+> | SCHEMA | txn_seq               | sequence | [NULL]            |                   |          |
+> +--------------+-----------------------+----------+-------------------+-------------------+----------+
+> (6 rows)
+
+SET search_path TO {schema};<NL>\dP
+----
+>      List of partitioned relations
+> +--------+------+-------+------+-------+
+> | Schema | Name | Owner | Type | Table |
+> +--------+------+-------+------+-------+
+> +--------+------+-------+------+-------+
+> (0 rows)
+
+SET search_path TO {schema};<NL>\df
+----
+>                              List of functions
+> +--------------+-----------+------------------+---------------------+------+
+> |    Schema    |   Name    | Result data type | Argument data types | Type |
+> +--------------+-----------+------------------+---------------------+------+
+> | SCHEMA | double_it | integer          | integer             | func |
+> +--------------+-----------+------------------+---------------------+------+
+> (1 row)
+
+# ---- informational (pattern form) ----
+# Exercise the `\d* schema.*` form so the LIKE-pattern path through
+# pg_catalog (OPERATOR(pg_catalog.~) ... COLLATE pg_catalog.default) gets
+# its own coverage independent of the search_path-scoped form above.
+\dt {schema}.*
+----
+>                   List of tables
+> +--------------+--------------+-------+----------+
+> |    Schema    |     Name     | Type  |  Owner   |
+> +--------------+--------------+-------+----------+
+> | SCHEMA | account      | table | postgres |
+> | SCHEMA | transactions | table | postgres |
+> +--------------+--------------+-------+----------+
+> (2 rows)
+
+\ds {schema}.*
+----
+>                 List of sequences
+> +--------------+----------+----------+----------+
+> |    Schema    |   Name   |   Type   |  Owner   |
+> +--------------+----------+----------+----------+
+> | SCHEMA | acct_seq | sequence | postgres |
+> | SCHEMA | txn_seq  | sequence | postgres |
+> +--------------+----------+----------+----------+
+> (2 rows)
+
+\di {schema}.*
+----
+>                                List of indexes
+> +--------------+--------------------------+-------+----------+--------------+
+> |    Schema    |           Name           | Type  |  Owner   |    Table     |
+> +--------------+--------------------------+-------+----------+--------------+
+> | SCHEMA | account_owner_idx        | index | postgres | account      |
+> | SCHEMA | account_pkey             | index | postgres | account      |
+> | SCHEMA | transactions_account_idx | index | postgres | transactions |
+> | SCHEMA | transactions_pkey        | index | postgres | transactions |
+> +--------------+--------------------------+-------+----------+--------------+
+> (4 rows)
+
+\dv {schema}.*
+----
+>                       List of views
+> +--------------+-----------------------+------+----------+
+> |    Schema    |         Name          | Type |  Owner   |
+> +--------------+-----------------------+------+----------+
+> | SCHEMA | active_accounts       | view | postgres |
+> | SCHEMA | transactions_by_owner | view | postgres |
+> +--------------+-----------------------+------+----------+
+> (2 rows)
+
+\dT {schema}.*
+----
+>              List of data types
+> +--------------+-------------+-------------+
+> |    Schema    |    Name     | Description |
+> +--------------+-------------+-------------+
+> | SCHEMA | acct_status | [NULL]      |
+> | SCHEMA | currency    | [NULL]      |
+> | SCHEMA | point2d     | [NULL]      |
+> +--------------+-------------+-------------+
+> (3 rows)
+
+\df {schema}.*
+----
+>                              List of functions
+> +--------------+-----------+------------------+---------------------+------+
+> |    Schema    |   Name    | Result data type | Argument data types | Type |
+> +--------------+-----------+------------------+---------------------+------+
+> | SCHEMA | double_it | integer          | integer             | func |
+> +--------------+-----------+------------------+---------------------+------+
+> (1 row)
+
+\dp {schema}.*
+----
+>                                           Access privileges
+> +--------------+-----------------------+----------+-------------------+-------------------+----------+
+> |    Schema    |         Name          |   Type   | Access privileges | Column privileges | Policies |
+> +--------------+-----------------------+----------+-------------------+-------------------+----------+
+> | SCHEMA | account               | table    | [NULL]            |                   |          |
+> | SCHEMA | acct_seq              | sequence | [NULL]            |                   |          |
+> | SCHEMA | active_accounts       | view     | [NULL]            |                   |          |
+> | SCHEMA | transactions          | table    | [NULL]            |                   |          |
+> | SCHEMA | transactions_by_owner | view     | [NULL]            |                   |          |
+> | SCHEMA | txn_seq               | sequence | [NULL]            |                   |          |
+> +--------------+-----------------------+----------+-------------------+-------------------+----------+
+> (6 rows)
+
+\z {schema}.*
+----
+>                                           Access privileges
+> +--------------+-----------------------+----------+-------------------+-------------------+----------+
+> |    Schema    |         Name          |   Type   | Access privileges | Column privileges | Policies |
+> +--------------+-----------------------+----------+-------------------+-------------------+----------+
+> | SCHEMA | account               | table    | [NULL]            |                   |          |
+> | SCHEMA | acct_seq              | sequence | [NULL]            |                   |          |
+> | SCHEMA | active_accounts       | view     | [NULL]            |                   |          |
+> | SCHEMA | transactions          | table    | [NULL]            |                   |          |
+> | SCHEMA | transactions_by_owner | view     | [NULL]            |                   |          |
+> | SCHEMA | txn_seq               | sequence | [NULL]            |                   |          |
+> +--------------+-----------------------+----------+-------------------+-------------------+----------+
+> (6 rows)
+
+# Empty-output pattern forms (the seed has no aggregates, domains, mat views,
+# foreign tables, partitioned relations, or large objects in our schemas).
+\da {schema}.*
+----
+>                       List of aggregate functions
+> +--------+------+------------------+---------------------+-------------+
+> | Schema | Name | Result data type | Argument data types | Description |
+> +--------+------+------------------+---------------------+-------------+
+> +--------+------+------------------+---------------------+-------------+
+> (0 rows)
+
+\dD {schema}.*
+----
+>                          List of domains
+> +--------+------+------+-----------+----------+---------+-------+
+> | Schema | Name | Type | Collation | Nullable | Default | Check |
+> +--------+------+------+-----------+----------+---------+-------+
+> +--------+------+------+-----------+----------+---------+-------+
+> (0 rows)
+
+\dm {schema}.*
+----
+>    List of materialized views
+> +--------+------+------+-------+
+> | Schema | Name | Type | Owner |
+> +--------+------+------+-------+
+> +--------+------+------+-------+
+> (0 rows)
+
+\dE {schema}.*
+----
+>      List of foreign tables
+> +--------+------+------+-------+
+> | Schema | Name | Type | Owner |
+> +--------+------+------+-------+
+> +--------+------+------+-------+
+> (0 rows)
+
+# Empty by default on a fresh DB; pattern just exercises the LIKE path.
+\dx no_such_*
+----
+>                List of installed extensions
+> +------+---------+-----------------+--------+-------------+
+> | Name | Version | Default version | Schema | Description |
+> +------+---------+-----------------+--------+-------------+
+> +------+---------+-----------------+--------+-------------+
+> (0 rows)
+
+# Roles: filter to a known role name.
+\du post*
+----
+>                               List of roles
+> +-----------+------------------------------------------------------------+
+> | Role name |                         Attributes                         |
+> +-----------+------------------------------------------------------------+
+> | postgres  | Superuser, Create role, Create DB, Replication, Bypass RLS |
+> +-----------+------------------------------------------------------------+
+
+\dg post*
+----
+>                               List of roles
+> +-----------+------------------------------------------------------------+
+> | Role name |                         Attributes                         |
+> +-----------+------------------------------------------------------------+
+> | postgres  | Superuser, Create role, Create DB, Replication, Bypass RLS |
+> +-----------+------------------------------------------------------------+
+
+# serened-specific text search objects (text dictionary; templates/parsers/configs
+# follow upstream PG behavior and are unseeded so the pattern matches nothing).
+skipif postgres
+\dFd {schema}.*
+----
+>       List of text search dictionaries
+> +--------------+-------------+-------------+
+> |    Schema    |    Name     | Description |
+> +--------------+-------------+-------------+
+> | SCHEMA | simple_dict | [NULL]      |
+> +--------------+-------------+-------------+
+> (1 row)
+
+\dF {schema}.*
+----
+> List of text search configurations
+> +--------+------+-------------+
+> | Schema | Name | Description |
+> +--------+------+-------------+
+> +--------+------+-------------+
+> (0 rows)
+
+\dFp {schema}.*
+----
+>   List of text search parsers
+> +--------+------+-------------+
+> | Schema | Name | Description |
+> +--------+------+-------------+
+> +--------+------+-------------+
+> (0 rows)
+
+\dFt {schema}.*
+----
+>  List of text search templates
+> +--------+------+-------------+
+> | Schema | Name | Description |
+> +--------+------+-------------+
+> +--------+------+-------------+
+> (0 rows)
+
+# ---- categories that are empty on a fresh server (match as empty) ----
+\des
+----
+>         List of foreign servers
+> +------+-------+----------------------+
+> | Name | Owner | Foreign-data wrapper |
+> +------+-------+----------------------+
+> +------+-------+----------------------+
+> (0 rows)
+
+\det
+----
+>   List of foreign tables
+> +--------+-------+--------+
+> | Schema | Table | Server |
+> +--------+-------+--------+
+> +--------+-------+--------+
+> (0 rows)
+
+\deu
+----
+> List of user mappings
+> +--------+-----------+
+> | Server | User name |
+> +--------+-----------+
+> +--------+-----------+
+> (0 rows)
+
+\dew
+----
+>     List of foreign-data wrappers
+> +------+-------+---------+-----------+
+> | Name | Owner | Handler | Validator |
+> +------+-------+---------+-----------+
+> +------+-------+---------+-----------+
+> (0 rows)
+
+\dy
+----
+>                List of event triggers
+> +------+-------+-------+---------+----------+------+
+> | Name | Event | Owner | Enabled | Function | Tags |
+> +------+-------+-------+---------+----------+------+
+> +------+-------+-------+---------+----------+------+
+> (0 rows)
+
+\dRp
+----
+>                                          List of publications
+> +------+-------+------------+---------+---------+---------+-----------+-------------------+----------+
+> | Name | Owner | All tables | Inserts | Updates | Deletes | Truncates | Generated columns | Via root |
+> +------+-------+------------+---------+---------+---------+-----------+-------------------+----------+
+> +------+-------+------------+---------+---------+---------+-----------+-------------------+----------+
+> (0 rows)
+
+\dRs
+----
+>          List of subscriptions
+> +------+-------+---------+-------------+
+> | Name | Owner | Enabled | Publication |
+> +------+-------+---------+-------------+
+> +------+-------+---------+-------------+
+> (0 rows)
+
+\drg
+----
+>              List of role grants
+> +-----------+-----------+---------+---------+
+> | Role name | Member of | Options | Grantor |
+> +-----------+-----------+---------+---------+
+> +-----------+-----------+---------+---------+
+> (0 rows)
+
+\drds
+----
+>        List of settings
+> +------+----------+----------+
+> | Role | Database | Settings |
+> +------+----------+----------+
+> +------+----------+----------+
+> (0 rows)
+
+\dc
+----
+>                 List of conversions
+> +--------+------+--------+-------------+----------+
+> | Schema | Name | Source | Destination | Default? |
+> +--------+------+--------+-------------+----------+
+> +--------+------+--------+-------------+----------+
+> (0 rows)
+
+\do
+----
+>                               List of operators
+> +--------+------+---------------+----------------+-------------+-------------+
+> | Schema | Name | Left arg type | Right arg type | Result type | Description |
+> +--------+------+---------------+----------------+-------------+-------------+
+> +--------+------+---------------+----------------+-------------+-------------+
+> (0 rows)
+
+\du
+----
+>                               List of roles
+> +-----------+------------------------------------------------------------+
+> | Role name |                         Attributes                         |
+> +-----------+------------------------------------------------------------+
+> | postgres  | Superuser, Create role, Create DB, Replication, Bypass RLS |
+> +-----------+------------------------------------------------------------+
+
+\dg
+----
+>                               List of roles
+> +-----------+------------------------------------------------------------+
+> | Role name |                         Attributes                         |
+> +-----------+------------------------------------------------------------+
+> | postgres  | Superuser, Create role, Create DB, Replication, Bypass RLS |
+> +-----------+------------------------------------------------------------+
+
+# ---- connection (same db/user on both -> identical banner) ----
+\c
+----
+
+# \e/\ef/\ev open $EDITOR. The harness pins EDITOR=/bin/true via \setenv so
+# the editor exits clean without modifying the buffer -- otherwise output
+# depends on what editors happen to be installed in the image.
+\e
+----
+
+\ef
+----
+> No changes
+
+\ev
+----
+> No changes
+
+\watch
+----
+> \watch cannot be used with an empty query
+
+\q
+----
+
+\prompt
+----
+> \prompt: missing required argument
+
+# psql's \password queries `password_encryption` to pick a hash algo;
+# serened doesn't expose that GUC. PG accepts an empty password with a
+# NOTICE; serened errors. Test asserts serened's own output.
+skipif postgres
+\password
+----
+> Enter new password for user "postgres":
+> Enter it again:
+> ERROR:  unrecognized configuration parameter "password_encryption"
+>
+> Did you mean: "password"
+
+\cd
+----
+
+\!
+----
+
+\o
+----
+
+\w
+----
+> \w: missing required argument
+
+\s
+----
+
+\i
+----
+> \i: missing required argument
+
+\ir
+----
+> \ir: missing required argument
+
+\copy
+----
+> \copy: arguments required
+
+\lo
+----
+> invalid command \lo
+
+\dl
+----
+>        Large objects
+> +----+-------+-------------+
+> | ID | Owner | Description |
+> +----+-------+-------------+
+> +----+-------+-------------+
+> (0 rows)
+
+\restrict
+----
+> \restrict: missing required argument
+
+\unrestrict
+----
+> \unrestrict: missing required argument
+
+# skip-line 1 (centered title -- leading spaces depend on total table
+# width). skip-row drops rows whose value or presence is environment-
+# dependent:
+#   Host          -- 127.0.0.1 (dev) vs container hostname (CI)
+#   Server Port   -- 5433 (dev) vs 5432/7777 (CI)
+#   Backend PID   -- random per connection
+#   GSSAPI / SSL  -- present only when libpq was built with krb5 / openssl
+#   (N rows)      -- the count drifts when GSSAPI/SSL rows come and go
+# Block-local cell-pad + border-dash collapse is applied automatically.
+skipif postgres
+skip-line: 1
+skip-row: ^\| (Host|Server Port|Backend PID|GSSAPI Authenticated|SSL Connection)
+skip-row: ^\(\d+ rows?\)$
+\conninfo
+----
+>        Connection Information
+> +----------------------+------------+
+> |      Parameter       |   Value    |
+> +----------------------+------------+
+> | Database             | postgres   |
+> | Client User          | postgres   |
+> | Host                 | 127.0.0.1  |
+> | Server Port          | 5433       |
+> | Options              |            |
+> | Protocol Version     | 3.0        |
+> | Password Used        | false      |
+> | GSSAPI Authenticated | false      |
+> | Backend PID          | OID |
+> | SSL Connection       | false      |
+> | Superuser            | on         |
+> | Hot Standby          | off        |
+> +----------------------+------------+
+> (12 rows)
+
+\errverbose
+----
+> There is no previous error.
+
+# Scoped to schemas with our run-id suffix (psqlh_<suffix>, psqlh2_<suffix>)
+# so prior drivers' residual schemas in shared CI state don't pollute the
+# diff. `public` (owner divergence vs PG18) and other test schemas are
+# excluded by the pattern.
+\dn psqlh*_{suffix}
+----
+>       List of schemas
+> +---------------+----------+
+> |     Name      |  Owner   |
+> +---------------+----------+
+> | SCHEMA2 | postgres |
+> | SCHEMA  | postgres |
+> +---------------+----------+
+> (2 rows)
+
+# ---- skips: body/definition text requires PG ruleutils-style pretty-printer ----
+# PG reformats view/function bodies (multi-line indent, '::text' literal casts,
+# LANGUAGE clauses); serened returns the raw stored CREATE statement / DuckDB
+# CREATE FUNCTION form, so the bodies legitimately differ.
+# view body: PG ruleutils-rendered vs serened's raw CREATE statement
+\sv
+----
+> view name is required
+
+# function body: DuckDB CREATE FUNCTION form vs PG ruleutils rendering
+\sf
+----
+> function name is required
+
+# serened has 1 database (postgres); PG ships postgres + template0 + template1
+# as bootstrap artifacts. Test asserts serened's own \l output.
+skipif postgres
+\l
+----
+>                                                 List of databases
+> +----------+----------+----------+-----------------+---------+---------+--------+-----------+-------------------+
+> |   Name   |  Owner   | Encoding | Locale Provider | Collate |  Ctype  | Locale | ICU Rules | Access privileges |
+> +----------+----------+----------+-----------------+---------+---------+--------+-----------+-------------------+
+> | postgres | postgres | UTF8     | libc            | C.UTF-8 | C.UTF-8 | [NULL] | [NULL]    | [NULL]            |
+> +----------+----------+----------+-----------------+---------+---------+--------+-----------+-------------------+
+> (1 row)
+
+# serened has no tablespace concept; pg_tablespace is empty. PG ships
+# pg_default/pg_global; we only assert serened's own empty \db output.
+skipif postgres
+\db
+----
+>     List of tablespaces
+> +------+-------+----------+
+> | Name | Owner | Location |
+> +------+-------+----------+
+> +------+-------+----------+
+> (0 rows)
+
+# Non-default config knobs differ per server; serened additionally has no
+# pg_settings.source/boot_val so \dconfig is unconditionally empty here.
+# Tracked: https://github.com/serenedb/serenedb/issues/739
+skipif postgres
+\dconfig
+----
+> List of non-default configuration parameters
+> +-----------+-------+
+> | Parameter | Value |
+> +-----------+-------+
+> +-----------+-------+
+> (0 rows)
+
+# pg_cast is empty on serened; DuckDB doesn't expose its cast graph via
+# any duckdb_* table function and CastFunctionSet has no public iterator.
+# Tracked: https://github.com/serenedb/serenedb/issues/740
+skipif postgres
+\dC
+----
+>                    List of casts
+> +-------------+-------------+----------+-----------+
+> | Source type | Target type | Function | Implicit? |
+> +-------------+-------------+----------+-----------+
+> +-------------+-------------+----------+-----------+
+> (0 rows)
+
+# collations are locale/server dependent
+\dO
+----
+>                                  List of collations
+> +--------+------+----------+---------+-------+--------+-----------+----------------+
+> | Schema | Name | Provider | Collate | Ctype | Locale | ICU Rules | Deterministic? |
+> +--------+------+----------+---------+-------+--------+-----------+----------------+
+> +--------+------+----------+---------+-------+--------+-----------+----------------+
+> (0 rows)
+
+# serened has no extension mechanism; pg_extension is empty. PG ships
+# plpgsql; we assert serened's own empty \dx output.
+skipif postgres
+\dx
+----
+>                List of installed extensions
+> +------+---------+-----------------+--------+-------------+
+> | Name | Version | Default version | Schema | Description |
+> +------+---------+-----------------+--------+-------------+
+> +------+---------+-----------------+--------+-------------+
+> (0 rows)
+
+# serened doesn't implement procedural languages; pg_language has only
+# `internal` and `sql`, both filtered by psql's `WHERE lanplcallfoid != 0`.
+# PG ships plpgsql. Assert serened's own empty \dL output.
+skipif postgres
+\dL
+----
+>            List of languages
+> +------+-------+---------+-------------+
+> | Name | Owner | Trusted | Description |
+> +------+-------+---------+-------------+
+> +------+-------+---------+-------------+
+> (0 rows)
+
+# serened access methods: rocksdb/iresearch back tables;
+# secondary/inverted back indexes (server/catalog/object.h). PG ships
+# heap/btree/gin/... -- entirely different storage layer.
+skipif postgres
+\dA
+----
+> List of access methods
+> +-----------+-------+
+> |   Name    | Type  |
+> +-----------+-------+
+> | inverted  | Index |
+> | iresearch | Table |
+> | rocksdb   | Table |
+> | secondary | Index |
+> +-----------+-------+
+> (4 rows)
+
+# serened's pg_opclass surfaces the `hnsw` builtin (inverted AM, FLOAT[])
+# plus every CREATE TEXT SEARCH DICTIONARY as an inverted-AM opclass.
+skipif postgres
+\dAc
+----
+>                       List of operator classes
+> +----------+------------+--------------+----------------+----------+
+> |    AM    | Input type | Storage type | Operator class | Default? |
+> +----------+------------+--------------+----------------+----------+
+> | inverted | any        | [NULL]       | included       | no       |
+> | inverted | real[]     | [NULL]       | hnsw           | no       |
+> | inverted | text       | [NULL]       | simple_dict    | no       |
+> +----------+------------+--------------+----------------+----------+
+> (3 rows)
+
+# AM-pattern form: scopes by access-method name.
+skipif postgres
+\dAc inverted
+----
+>                       List of operator classes
+> +----------+------------+--------------+----------------+----------+
+> |    AM    | Input type | Storage type | Operator class | Default? |
+> +----------+------------+--------------+----------------+----------+
+> | inverted | any        | [NULL]       | included       | no       |
+> | inverted | real[]     | [NULL]       | hnsw           | no       |
+> | inverted | text       | [NULL]       | simple_dict    | no       |
+> +----------+------------+--------------+----------------+----------+
+> (3 rows)
+
+# AM + type-pattern form: scopes to a single input type within the AM.
+skipif postgres
+\dAc inverted text
+----
+>                       List of operator classes
+> +----------+------------+--------------+----------------+----------+
+> |    AM    | Input type | Storage type | Operator class | Default? |
+> +----------+------------+--------------+----------------+----------+
+> | inverted | text       | [NULL]       | simple_dict    | no       |
+> +----------+------------+--------------+----------------+----------+
+> (1 row)
+
+# serened doesn't model operator classes/families/operators/support;
+# its `secondary` and `inverted` AMs dispatch implicitly.
+# Tracked: https://github.com/serenedb/serenedb/issues/741
+skipif postgres
+\dAf
+----
+>          List of operator families
+> +----+-----------------+------------------+
+> | AM | Operator family | Applicable types |
+> +----+-----------------+------------------+
+> +----+-----------------+------------------+
+> (0 rows)
+
+# serened doesn't model operator classes/families/operators/support;
+# its `secondary` and `inverted` AMs dispatch implicitly.
+# Tracked: https://github.com/serenedb/serenedb/issues/741
+skipif postgres
+\dAo
+----
+>          List of operators of operator families
+> +----+-----------------+----------+----------+---------+
+> | AM | Operator family | Operator | Strategy | Purpose |
+> +----+-----------------+----------+----------+---------+
+> +----+-----------------+----------+----------+---------+
+> (0 rows)
+
+# serened doesn't model operator classes/families/operators/support;
+# its `secondary` and `inverted` AMs dispatch implicitly.
+# Tracked: https://github.com/serenedb/serenedb/issues/741
+skipif postgres
+\dAp
+----
+>                       List of support functions of operator families
+> +----+-----------------+----------------------+-----------------------+--------+----------+
+> | AM | Operator family | Registered left type | Registered right type | Number | Function |
+> +----+-----------------+----------------------+-----------------------+--------+----------+
+> +----+-----------------+----------------------+-----------------------+--------+----------+
+> (0 rows)
+
+# serened's text-search model is just dictionaries (CREATE TEXT SEARCH
+# DICTIONARY -> pg_ts_dict). PG ships configurations/parsers/templates
+# as separate layered abstractions; serened has none. Tracked:
+# https://github.com/serenedb/serenedb/issues/742
+skipif postgres
+\dF
+----
+> List of text search configurations
+> +--------+------+-------------+
+> | Schema | Name | Description |
+> +--------+------+-------------+
+> +--------+------+-------------+
+> (0 rows)
+
+# serened's tokenizers surface via pg_ts_dict. Seed creates one in
+# {schema} so \dFd has a row to display. PG ships snowball dictionaries
+# (a different concept); we assert serened's own \dFd output.
+skipif postgres
+\dFd
+----
+>       List of text search dictionaries
+> +--------------+-------------+-------------+
+> |    Schema    |    Name     | Description |
+> +--------------+-------------+-------------+
+> | SCHEMA | simple_dict | [NULL]      |
+> +--------------+-------------+-------------+
+> (1 row)
+
+# serened's text-search model is just dictionaries (CREATE TEXT SEARCH
+# DICTIONARY -> pg_ts_dict). PG ships configurations/parsers/templates
+# as separate layered abstractions; serened has none. Tracked:
+# https://github.com/serenedb/serenedb/issues/742
+skipif postgres
+\dFp
+----
+>   List of text search parsers
+> +--------+------+-------------+
+> | Schema | Name | Description |
+> +--------+------+-------------+
+> +--------+------+-------------+
+> (0 rows)
+
+# serened's text-search model is just dictionaries (CREATE TEXT SEARCH
+# DICTIONARY -> pg_ts_dict). PG ships configurations/parsers/templates
+# as separate layered abstractions; serened has none. Tracked:
+# https://github.com/serenedb/serenedb/issues/742
+skipif postgres
+\dFt
+----
+>  List of text search templates
+> +--------+------+-------------+
+> | Schema | Name | Description |
+> +--------+------+-------------+
+> +--------+------+-------------+
+> (0 rows)
+
+# serened rejects empty Parse with 'No statement to prepare!' whereas
+# PG accepts an empty Parse silently. Test asserts serened's own output.
+skipif postgres
+\parse stmt1
+----
+> ERROR:  No statement to prepare!
+
+\close_prepared stmt1
+----
+
+\startpipeline
+----
+
+\flush
+----
+
+\flushrequest
+----
+
+\syncpipeline
+----
+> cannot send pipeline when not in pipeline mode
+
+\sendpipeline
+----
+> \sendpipeline not allowed outside of pipeline mode
+
+\getresults
+----
+> No pending results to get
+
+\endpipeline
+----
+> cannot send pipeline when not in pipeline mode
+
+SELECT $1::int AS v<NL>\bind_named s1 7<NL>\g
+----
+> ERROR:  prepared statement "s1" does not exist
+
+\lo_import
+----
+> \lo_import: missing required argument
+
+\lo_export
+----
+> \lo_export: missing required argument
+
+\lo_list
+----
+>        Large objects
+> +----+-------+-------------+
+> | ID | Owner | Description |
+> +----+-------+-------------+
+> +----+-------+-------------+
+> (0 rows)
+
+\lo_unlink
+----
+> \lo_unlink: missing required argument
+
+# feed stdin -> \prompt sets v; echo it back
+\prompt msg v<NL>hello<NL>\echo :v
+----
+> hello
+> msg
+
+# restricted-mode key round-trip (no output on either side)
+\restrict abc<NL>\unrestrict abc
+----

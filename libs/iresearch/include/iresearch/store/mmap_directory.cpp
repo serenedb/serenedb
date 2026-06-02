@@ -50,7 +50,7 @@ inline int GetPosixMadvice(IOAdvice advice) {
   }
 
   SDB_ERROR(
-    "xxxxx", sdb::Logger::IRESEARCH,
+    IRESEARCH,
     absl::StrCat("madvice '", static_cast<uint32_t>(advice),
                  "' is not valid (RANDOM|SEQUENTIAL), fallback to NORMAL"));
 
@@ -70,7 +70,7 @@ std::shared_ptr<MMapHandle> OpenHandle(const path_char_t* file, IOAdvice advice,
   }
 
   if (!handle->open(file)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("Failed to open mmapped input file, path: ",
                            file_utils::ToStr(file)));
     return nullptr;
@@ -83,7 +83,7 @@ std::shared_ptr<MMapHandle> OpenHandle(const path_char_t* file, IOAdvice advice,
   const int padvice = GetPosixMadvice(advice);
 
   if (IR_MADVICE_NORMAL != padvice && !handle->advise(padvice)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("Failed to madvise input file, path: ",
                            file_utils::ToStr(file), ", error ", errno));
   }

@@ -24,7 +24,6 @@
 #include "app/name_validator.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
-#include "rest_server/serened.h"
 
 namespace sdb::catalog {
 
@@ -36,10 +35,8 @@ Result CreateDatabase(const ExecContext& exec, std::string_view name) {
 
   auto database = std::make_shared<catalog::Database>(ObjectId{}, name);
 
-  return SerenedServer::Instance()
-    .getFeature<catalog::CatalogFeature>()
-    .Global()
-    .CreateDatabase(std::move(database));
+  return catalog::CatalogFeature::instance().Global().CreateDatabase(
+    std::move(database));
 }
 
 Result DropDatabase(const ExecContext& exec, std::string_view db_name,
@@ -48,10 +45,8 @@ Result DropDatabase(const ExecContext& exec, std::string_view db_name,
     return {ERROR_FORBIDDEN};
   }
 
-  return SerenedServer::Instance()
-    .getFeature<catalog::CatalogFeature>()
-    .Global()
-    .DropDatabase(db_name, std::move(keep_alive));
+  return catalog::CatalogFeature::instance().Global().DropDatabase(
+    db_name, std::move(keep_alive));
 }
 
 }  // namespace sdb::catalog

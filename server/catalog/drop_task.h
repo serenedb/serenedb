@@ -40,7 +40,6 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "general_server/scheduler.h"
-#include "rest_server/serened_single.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/table_shard.h"
@@ -69,8 +68,7 @@ class DropTask {
   static AsyncResult ExecuteTask(std::shared_ptr<DropTask> task) {
     SDB_ASSERT(task);
     if (!task->AllowToDrop()) {
-      SDB_TRACE("xxxxx", Logger::ROCKSDB,
-                "Waiting till the snapshots will free the object ",
+      SDB_TRACE(STORAGE, "Waiting till the snapshots will free the object ",
                 task->GetContext());
       return yaclib::MakeFuture<Result>(ERROR_LOCKED);
     }

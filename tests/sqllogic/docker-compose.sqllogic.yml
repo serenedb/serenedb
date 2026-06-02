@@ -17,10 +17,8 @@ services:
     command: >
       sh -c '
         exec /serenedb/${BUILD_DIR}/bin/serened /tmp/serenedb_datadir \
-          --server.endpoint pgsql+tcp://0.0.0.0:7777 \
-          --server.endpoint pgsql+ssl://0.0.0.0:7778 \
-          --ssl.keyfile /serenedb/resources/ca.pem \
-          --server.authentication 0
+          --server_endpoints pgsql+tcp://0.0.0.0:7777,pgsql+ssl://0.0.0.0:7778 \
+          --ssl_keyfile /serenedb/resources/ca.pem
       '
 
   tests:

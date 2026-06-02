@@ -54,8 +54,7 @@ constexpr sdb::containers::TrivialBiMap kStreamTypeConvertMap =
 bool ParseVPackOptions(const vpack::Slice slice,
                        NGramTokenizerBase::Options& options) {
   if (!slice.isObject()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Slice for ngram_token_stream is not an object");
+    SDB_ERROR(IRESEARCH, "Slice for ngram_token_stream is not an object");
     return false;
   }
 
@@ -67,7 +66,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
   // min
   auto min_type_slice = slice.get(kMinParamName);
   if (min_type_slice.isNone()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("Failed to read '", kMinParamName,
                            "' attribute as number while constructing "
                            "ngram_token_stream from VPack arguments"));
@@ -76,7 +75,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
 
   if (!min_type_slice.isNumber()) {
     SDB_WARN(
-      "xxxxx", sdb::Logger::IRESEARCH, "Invalid type '", kMinParamName,
+      IRESEARCH, "Invalid type '", kMinParamName,
       "' (unsigned int expected) for ngram_token_stream from VPack arguments");
     return false;
   }
@@ -85,7 +84,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
   // max
   auto max_type_slice = slice.get(kMaxParamName);
   if (max_type_slice.isNone()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("Failed to read '", kMaxParamName,
                            "' attribute as number while constructing "
                            "ngram_token_stream from VPack arguments"));
@@ -93,7 +92,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
   }
   if (!max_type_slice.isNumber()) {
     SDB_WARN(
-      "xxxxx", sdb::Logger::IRESEARCH, "Invalid type '", kMaxParamName,
+      IRESEARCH, "Invalid type '", kMaxParamName,
       "' (unsigned int expected) for ngram_token_stream from VPack arguments");
     return false;
   }
@@ -108,15 +107,14 @@ bool ParseVPackOptions(const vpack::Slice slice,
   // preserve original
   auto preserve_type_slice = slice.get(kPreserveOriginalParamName);
   if (preserve_type_slice.isNone()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("Failed to read '", kPreserveOriginalParamName,
                            "' attribute as boolean while constructing "
                            "ngram_token_stream from VPack arguments"));
     return false;
   }
   if (!preserve_type_slice.isBool()) {
-    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid type '",
-             kPreserveOriginalParamName,
+    SDB_WARN(IRESEARCH, "Invalid type '", kPreserveOriginalParamName,
              "' (bool expected) for ngram_token_stream from VPack arguments");
     return false;
   }
@@ -128,8 +126,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
       !start_marker_type_slice.isNone()) {
     if (!start_marker_type_slice.isString()) {
       SDB_WARN(
-        "xxxxx", sdb::Logger::IRESEARCH, "Invalid type '",
-        kStartMarkerParamName,
+        IRESEARCH, "Invalid type '", kStartMarkerParamName,
         "' (string expected) for ngram_token_stream from VPack arguments");
       return false;
     }
@@ -142,7 +139,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
       !end_marker_type_slice.isNone()) {
     if (!end_marker_type_slice.isString()) {
       SDB_WARN(
-        "xxxxx", sdb::Logger::IRESEARCH, "Invalid type '", kEndMarkerParamName,
+        IRESEARCH, "Invalid type '", kEndMarkerParamName,
         "' (string expected) for ngram_token_stream from VPack arguments");
       return false;
     }
@@ -154,16 +151,14 @@ bool ParseVPackOptions(const vpack::Slice slice,
   if (auto stream_type_slice = slice.get(kStreamTypeParamName);
       !stream_type_slice.isNone()) {
     if (!stream_type_slice.isString()) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Non-string value in '",
-               kStreamTypeParamName,
+      SDB_WARN(IRESEARCH, "Non-string value in '", kStreamTypeParamName,
                "' while constructing ngram_token_stream from VPack arguments");
       return false;
     }
     auto stream_type = stream_type_slice.stringView();
     auto itr = kStreamTypeConvertMap.TryFindByFirst(stream_type);
     if (!itr) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
-               kStreamTypeParamName,
+      SDB_WARN(IRESEARCH, "Invalid value in '", kStreamTypeParamName,
                "' while constructing ngram_token_stream from VPack arguments");
       return false;
     }
@@ -199,7 +194,7 @@ bool MakeVPackConfig(const NGramTokenizerBase::Options& options,
     if (stream_type_value) {
       builder->add(kStreamTypeParamName, *stream_type_value);
     } else {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 absl::StrCat("Invalid ", kStreamTypeParamName,
                              " value in ngram analyzer options: ",
                              static_cast<int>(options.stream_bytes_type)));
@@ -268,7 +263,7 @@ bool NormalizeVPackConfig(std::string_view args, std::string& config) {
 Analyzer::ptr MakeJson(std::string_view args) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Null arguments while constructing ngram_token_stream");
       return nullptr;
     }
@@ -276,11 +271,11 @@ Analyzer::ptr MakeJson(std::string_view args) {
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing ngram_token_stream from JSON"));
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught error while constructing ngram_token_stream from JSON");
   }
   return nullptr;
@@ -289,7 +284,7 @@ Analyzer::ptr MakeJson(std::string_view args) {
 bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Null arguments while normalizing ngram_token_stream");
       return false;
     }
@@ -300,11 +295,11 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
       return !definition.empty();
     }
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("Caught error '", ex.what(),
                            "' while normalizing ngram_token_stream from JSON"));
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught error while normalizing ngram_token_stream from JSON");
   }
   return false;

@@ -414,14 +414,13 @@ bool ParseVPackOptions(vpack::Slice slice,
                        MultiDelimitedTokenizer::Options& options) {
   if (!slice.isObject()) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       "Slice for multi_delimited_token_stream is not an object or string");
     return false;
   }
   auto delim_array_slice = slice.get(kDelimiterParamName);
   if (!delim_array_slice.isArray()) {
-    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid type or missing '",
-             kDelimiterParamName,
+    SDB_WARN(IRESEARCH, "Invalid type or missing '", kDelimiterParamName,
              "' (array expected) for multi_delimited_token_stream from "
              "VPack arguments");
     return false;
@@ -429,8 +428,7 @@ bool ParseVPackOptions(vpack::Slice slice,
 
   for (auto delim : vpack::ArrayIterator(delim_array_slice)) {
     if (!delim.isString()) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid type in '",
-               kDelimiterParamName,
+      SDB_WARN(IRESEARCH, "Invalid type in '", kDelimiterParamName,
                "' (string expected) for multi_delimited_token_stream from "
                "VPack arguments");
       return false;
@@ -438,14 +436,13 @@ bool ParseVPackOptions(vpack::Slice slice,
     auto view = ViewCast<byte_type>(delim.stringView());
 
     if (view.empty()) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Delimiter list contains an empty string.");
+      SDB_ERROR(IRESEARCH, "Delimiter list contains an empty string.");
       return false;
     }
 
     for (const auto& known : options.delimiters) {
       if (view.starts_with(known) || known.starts_with(view)) {
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+        SDB_ERROR(IRESEARCH,
                   absl::StrCat("Some delimiters are a prefix of others. See `",
                                ViewCast<char>(bytes_view{known}), "` and `",
                                delim.stringView(), "`"));

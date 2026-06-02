@@ -26,7 +26,7 @@
 #include <absl/strings/str_cat.h>
 
 #include "basics/assert.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 
 using namespace std::chrono_literals;
 

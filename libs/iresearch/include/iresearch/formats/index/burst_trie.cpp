@@ -32,7 +32,7 @@
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
 #include "basics/containers/monotonic_buffer.hpp"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/memory.hpp"
 #include "basics/noncopyable.hpp"
 #include "basics/string_utils.h"
@@ -1840,8 +1840,7 @@ class TermIteratorImpl : public TermIteratorBase {
 
       if (!_terms_in) {
         // implementation returned wrong pointer
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                  "Failed to reopen terms input");
+        SDB_ERROR(IRESEARCH, "Failed to reopen terms input");
 
         throw IoError("failed to reopen terms input");
       }
@@ -2685,8 +2684,7 @@ class FieldReaderImpl final : public FieldReader {
 
         if (!terms_in) {
           // implementation returned wrong pointer
-          SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                    "Failed to reopen terms input");
+          SDB_ERROR(IRESEARCH, "Failed to reopen terms input");
 
           throw IoError("failed to reopen terms input");
         }
@@ -2783,8 +2781,7 @@ class FieldReaderImpl final : public FieldReader {
 
       if (!terms_in) {
         // implementation returned wrong pointer
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                  "Failed to reopen terms input");
+        SDB_ERROR(IRESEARCH, "Failed to reopen terms input");
 
         throw IoError{"Failed to reopen terms input"};  // FIXME
       }

@@ -34,7 +34,7 @@
 
 #include "basics/error_code.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_comparator.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -99,8 +99,7 @@ Result RemoveLargeRange(rocksdb::DB* db, rocksdb::Slice lower,
         // if file deletion failed, we will still iterate over the remaining
         // keys, so we don't need to abort and raise an error here
         sdb::Result r = rocksutils::ConvertStatus(s);
-        SDB_WARN("xxxxx", sdb::Logger::ENGINES,
-                 "RocksDB file deletion failed: ", r.errorMessage());
+        SDB_WARN(STORAGE, "RocksDB file deletion failed: ", r.errorMessage());
       }
 
       // go on and delete the remaining keys (delete files in range does not
@@ -109,8 +108,7 @@ Result RemoveLargeRange(rocksdb::DB* db, rocksdb::Slice lower,
         rocksdb::WriteOptions wo;
         rocksdb::Status s = db->DeleteRange(wo, cf, lower, upper);
         if (!s.ok()) {
-          SDB_WARN("xxxxx", sdb::Logger::ENGINES,
-                   "RocksDB key deletion failed: ", s.ToString());
+          SDB_WARN(STORAGE, "RocksDB key deletion failed: ", s.ToString());
           return rocksutils::ConvertStatus(s);
         }
         return {};
@@ -142,11 +140,11 @@ Result RemoveLargeRange(rocksdb::DB* db, rocksdb::Slice lower,
         ++counter;
         batch.Delete(cf, it->key());
         if (counter >= 1000) {
-          SDB_DEBUG("xxxxx", Logger::ENGINES, "intermediate delete write");
+          SDB_DEBUG(STORAGE, "intermediate delete write");
           // Persist deletes all 1000 documents
           rocksdb::Status status = db->Write(wo, &batch);
           if (!status.ok()) {
-            SDB_WARN("xxxxx", sdb::Logger::ENGINES,
+            SDB_WARN(STORAGE,
                      "RocksDB key deletion failed: ", status.ToString());
             return rocksutils::ConvertStatus(status);
           }
@@ -157,18 +155,16 @@ Result RemoveLargeRange(rocksdb::DB* db, rocksdb::Slice lower,
 
       CheckIteratorStatus(*it);
 
-      SDB_DEBUG("xxxxx", Logger::ENGINES,
-                "removing large range, deleted in total: ", total);
+      SDB_DEBUG(STORAGE, "removing large range, deleted in total: ", total);
 
       if (counter > 0) {
-        SDB_DEBUG("xxxxx", Logger::ENGINES, "intermediate delete write");
+        SDB_DEBUG(STORAGE, "intermediate delete write");
         // We still have sth to write
         // now apply deletion batch
         rocksdb::Status status = db->Write(rocksdb::WriteOptions(), &batch);
 
         if (!status.ok()) {
-          SDB_WARN("xxxxx", sdb::Logger::ENGINES,
-                   "RocksDB key deletion failed: ", status.ToString());
+          SDB_WARN(STORAGE, "RocksDB key deletion failed: ", status.ToString());
           return rocksutils::ConvertStatus(status);
         }
       }
@@ -191,8 +187,7 @@ Result CompactAll(rocksdb::DB* db, bool change_level,
       ? rocksdb::BottommostLevelCompaction::kForceOptimized
       : rocksdb::BottommostLevelCompaction::kIfHaveCompactionFilter;
 
-  SDB_INFO("xxxxx", sdb::Logger::ENGINES,
-           "starting compaction of entire RocksDB database key range");
+  SDB_INFO(STORAGE, "starting compaction of entire RocksDB database key range");
 
   for (auto family : {
          RocksDBColumnFamilyManager::Family::Default,
@@ -203,14 +198,13 @@ Result CompactAll(rocksdb::DB* db, bool change_level,
     rocksdb::Status s = db->CompactRange(options, cf, nullptr, nullptr);
     if (!s.ok()) {
       Result res = rocksutils::ConvertStatus(s);
-      SDB_WARN("xxxxx", sdb::Logger::ENGINES,
+      SDB_WARN(STORAGE,
                "compaction of entire RocksDB database key range failed: ",
                res.errorMessage());
       return res;
     }
   }
-  SDB_INFO("xxxxx", sdb::Logger::ENGINES,
-           "compaction of entire RocksDB database key range finished");
+  SDB_INFO(STORAGE, "compaction of entire RocksDB database key range finished");
 
   return {};
 }

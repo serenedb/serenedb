@@ -21,27 +21,12 @@
 
 #pragma once
 
-#include "basics/cleanup_functions.h"
-
 namespace sdb {
 
-/// exit function type
-using ExitFunction = void (*)(int, void*);
-
-/// exit function
-extern ExitFunction gExitFunction;
-
-/// defines a exit function
-void ApplicationExitSetExit(ExitFunction);
-
-/// aborts program execution, returning an error code
 [[noreturn]] void FatalErrorExitCode(int code) noexcept;
 
-/// aborts program execution, returning an error code
-/// if backtraces are enabled, a backtrace will be printed before
 [[noreturn]] void FatalErrorExit() noexcept;
 
-/// aborts program execution, calling std::abort
 [[noreturn]] void FatalErrorAbort() noexcept;
 
 }  // namespace sdb

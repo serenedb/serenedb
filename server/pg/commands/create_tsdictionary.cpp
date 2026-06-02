@@ -757,8 +757,7 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
     std::string{reinterpret_cast<const char*>(b.slice().getDataPtr()),
                 b.slice().byteSize()});
 
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto& catalog = catalog::CatalogFeature::instance().Global();
   auto r = catalog.CreateTokenizer(db_id, schema, std::move(tokenizer));
 
   if (!r.ok() && !if_not_exists) {

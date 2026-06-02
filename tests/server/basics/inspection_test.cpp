@@ -37,7 +37,7 @@
 #include <variant>
 #include <vector>
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "inspection_test_helper.h"
 
 namespace {

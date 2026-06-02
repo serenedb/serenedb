@@ -21,32 +21,25 @@
 
 #include "vpack/vpack_helper.h"
 
-#include "basics/error.h"
-#include "basics/exceptions.h"
-#include "basics/files.h"
-#include "basics/logger/logger.h"
-#include "basics/number_utils.h"
-#include "basics/operating-system.h"
-#include "basics/static_strings.h"
-#include "basics/string_utils.h"
-#include "basics/system-compiler.h"
-#include "basics/utf8_helper.h"
-
-#ifdef SERENEDB_HAVE_UNISTD_H
-#include <unistd.h>
-#endif
-
-#include <fcntl.h>
 #include <string.h>
-#include <sys/types.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cstdint>
 #include <memory>
 #include <set>
 #include <string_view>
 
+#include "basics/error.h"
+#include "basics/exceptions.h"
+#include "basics/log.h"
+#include "basics/number_utils.h"
+#include "basics/operating-system.h"
 #include "basics/sink.h"
+#include "basics/static_strings.h"
+#include "basics/string_utils.h"
+#include "basics/system-compiler.h"
+#include "basics/utf8_helper.h"
 #include "vpack/collection.h"
 #include "vpack/common.h"
 #include "vpack/dumper.h"
@@ -203,7 +196,7 @@ int VPackHelper::compareUIntDouble(uint64_t l, double r) noexcept {
 
 /// static initializer for all VPack values
 void VPackHelper::initialize() {
-  SDB_TRACE("xxxxx", sdb::Logger::FIXME, "initializing vpack");
+  SDB_TRACE(GENERAL, "initializing vpack");
 
   // set the attribute translator in the global options
   vpack::Options::gDefaults.unsupported_type_behavior =
@@ -332,157 +325,13 @@ std::string_view VPackHelper::checkAndGetString(vpack::Slice slice,
 uint64_t VPackHelper::stringUInt64(vpack::Slice slice) {
   if (slice.isString()) {
     auto str = slice.stringViewUnchecked();
-    return number_utils::AtoiZero<uint64_t>(str.data(),
-                                            str.data() + str.size());
+    uint64_t v = 0;
+    std::from_chars(str.data(), str.data() + str.size(), v);
+    return v;
   } else if (slice.isNumber<uint64_t>()) {
     return slice.getNumber<uint64_t>();
   }
   return 0;
-}
-
-vpack::Builder VPackHelper::vpackFromFile(const char* path) {
-  std::string content;
-  if (!SdbSlurpFile(path, content)) {
-    SDB_THROW(GetError());
-  }
-  vpack::Builder builder;
-  vpack::Parser parser{builder};
-  parser.parse(reinterpret_cast<const uint8_t*>(content.data()),
-               content.size());
-  return builder;
-}
-
-static bool PrintVPack(int fd, vpack::Slice slice, bool append_newline) {
-  if (slice.isNone()) {
-    return false;
-  }
-
-  StrSink sink;
-  auto& buffer = sink.Impl();
-  try {
-    vpack::Dumper dumper(&sink);
-    dumper.Dump(slice);
-  } catch (...) {
-    // Writing failed
-    return false;
-  }
-
-  if (buffer.empty()) {
-    // should not happen
-    return false;
-  }
-
-  if (append_newline) {
-    // add the newline here so we only need one write operation in the ideal
-    // case
-    buffer.push_back('\n');
-  }
-
-  const char* p = buffer.data();
-  size_t n = buffer.size();
-
-  while (0 < n) {
-    auto m = SERENEDB_WRITE(fd, p, static_cast<size_t>(n));
-
-    if (m <= 0) {
-      return false;
-    }
-
-    n -= m;
-    p += m;
-  }
-
-  return true;
-}
-
-bool VPackHelper::vpackToFile(const std::string& filename, vpack::Slice slice,
-                              bool sync_file) {
-  const std::string tmp = filename + ".tmp";
-
-  // remove a potentially existing temporary file
-  if (SdbExistsFile(tmp.c_str())) {
-    // TODO(mbkkt) why ignore?
-    std::ignore = SdbUnlinkFile(tmp.c_str());
-  }
-
-  int fd = SERENEDB_CREATE(
-    tmp.c_str(), O_CREAT | O_TRUNC | O_EXCL | O_RDWR | SERENEDB_O_CLOEXEC,
-    S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-
-  if (fd < 0) {
-    SetError(ERROR_SYS_ERROR);
-    SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot create json file '", tmp,
-             "': ", SERENEDB_ERRORNO_STR);
-    return false;
-  }
-
-  if (!PrintVPack(fd, slice, true)) {
-    SERENEDB_CLOSE(fd);
-    SetError(ERROR_SYS_ERROR);
-    SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot write to json file '", tmp,
-             "': ", SERENEDB_ERRORNO_STR);
-    // TODO(mbkkt) why ignore?
-    std::ignore = SdbUnlinkFile(tmp.c_str());
-    return false;
-  }
-
-  if (sync_file) {
-    SDB_TRACE("xxxxx", sdb::Logger::FIXME, "syncing tmp file '", tmp, "'");
-
-    if (!Sdbfsync(fd)) {
-      SERENEDB_CLOSE(fd);
-      SetError(ERROR_SYS_ERROR);
-      SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot sync saved json '", tmp,
-               "': ", SERENEDB_ERRORNO_STR);
-      // TODO(mbkkt) why ignore?
-      std::ignore = SdbUnlinkFile(tmp.c_str());
-      return false;
-    }
-  }
-
-  if (int res = SERENEDB_CLOSE(fd); res < 0) {
-    SetError(ERROR_SYS_ERROR);
-    SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot close saved file '", tmp,
-             "': ", SERENEDB_ERRORNO_STR);
-    // TODO(mbkkt) why ignore?
-    std::ignore = SdbUnlinkFile(tmp.c_str());
-    return false;
-  }
-
-  if (auto res = SdbRenameFile(tmp.c_str(), filename.c_str());
-      res != ERROR_OK) {
-    SetError(res);
-    SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot rename saved file '", tmp,
-             "' to '", filename, "': ", SERENEDB_ERRORNO_STR);
-    // TODO(mbkkt) why ignore?
-    std::ignore = SdbUnlinkFile(tmp.c_str());
-    return false;
-  }
-
-  if (sync_file) {
-    // also sync target directory
-    const std::string dir{SdbDirname(filename)};
-    fd = SERENEDB_OPEN(dir.c_str(), O_RDONLY | SERENEDB_O_CLOEXEC);
-    if (fd < 0) {
-      SetError(ERROR_SYS_ERROR);
-      SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot sync directory '", filename,
-               "': ", SERENEDB_ERRORNO_STR);
-    } else {
-      if (fsync(fd) < 0) {
-        SetError(ERROR_SYS_ERROR);
-        SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot sync directory '",
-                 filename, "': ", SERENEDB_ERRORNO_STR);
-      }
-      int res = SERENEDB_CLOSE(fd);
-      if (res < 0) {
-        SetError(ERROR_SYS_ERROR);
-        SDB_WARN("xxxxx", sdb::Logger::FIXME, "cannot close directory '",
-                 filename, "': ", SERENEDB_ERRORNO_STR);
-      }
-    }
-  }
-
-  return true;
 }
 
 int VPackHelper::compare(vpack::Slice lhs, vpack::Slice rhs) {
@@ -675,8 +524,9 @@ uint64_t VPackHelper::extractIdValue(vpack::Slice slice) {
   // TODO(mbkkt) invalid string or invalid number is not really checked
   if (id.isString()) {
     auto str = id.stringViewUnchecked();  // string "id", e.g. "9988488"
-    return number_utils::AtoiZero<uint64_t>(str.data(),
-                                            str.data() + str.size());
+    uint64_t v = 0;
+    std::from_chars(str.data(), str.data() + str.size(), v);
+    return v;
   } else if (id.isNumber()) {
     return id.getNumber<uint64_t>();  // numeric "id", e.g. 9988488
   } else if (id.isNone()) {

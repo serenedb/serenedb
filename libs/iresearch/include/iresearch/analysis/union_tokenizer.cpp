@@ -45,7 +45,7 @@ bool ParseVPackOptions(const vpack::Slice slice, T& options) {
     SDB_ASSERT(options.empty());
   }
   if (!slice.isObject()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Not a VPack object passed while constructing union_tokenizer");
     return false;
   }
@@ -60,15 +60,15 @@ bool ParseVPackOptions(const vpack::Slice slice, T& options) {
             if (type_attr_slice.isString()) {
               type = type_attr_slice.stringView();
             } else {
-              SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Failed to read '",
-                        kTypeParamName, "' attribute of '", kUnionParamName,
+              SDB_ERROR(IRESEARCH, "Failed to read '", kTypeParamName,
+                        "' attribute of '", kUnionParamName,
                         "' member as string while constructing "
                         "union_tokenizer from VPack arguments");
               return false;
             }
           } else {
-            SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Failed to get '",
-                      kTypeParamName, "' attribute of '", kUnionParamName,
+            SDB_ERROR(IRESEARCH, "Failed to get '", kTypeParamName,
+                      "' attribute of '", kUnionParamName,
                       "' member while constructing union_tokenizer "
                       "from VPack arguments");
             return false;
@@ -91,9 +91,8 @@ bool ParseVPackOptions(const vpack::Slice slice, T& options) {
               if (analyzer) {
                 options.push_back(std::move(analyzer));
               } else {
-                SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                          "Failed to create union member of type '", type,
-                          "' with properties '",
+                SDB_ERROR(IRESEARCH, "Failed to create union member of type '",
+                          type, "' with properties '",
                           slice_to_string(properties_attr_slice),
                           "' while constructing union_tokenizer "
                           "from VPack arguments");
@@ -122,44 +121,41 @@ bool ParseVPackOptions(const vpack::Slice slice, T& options) {
                   std::forward_as_tuple(vpack->slice().startAs<char>(),
                                         vpack->slice().byteSize()));
               } else {
-                SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                          "Failed to normalize union member of type '", type,
-                          "' with properties '",
-                          slice_to_string(properties_attr_slice),
-                          "' while constructing union_tokenizer "
-                          "from VPack arguments");
+                SDB_ERROR(
+                  IRESEARCH, "Failed to normalize union member of type '", type,
+                  "' with properties '", slice_to_string(properties_attr_slice),
+                  "' while constructing union_tokenizer "
+                  "from VPack arguments");
                 return false;
               }
             }
           } else {
-            SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Failed to get '",
-                      kPropertiesParamName, "' attribute of '", kUnionParamName,
+            SDB_ERROR(IRESEARCH, "Failed to get '", kPropertiesParamName,
+                      "' attribute of '", kUnionParamName,
                       "' member while constructing union_tokenizer "
                       "from VPack arguments");
             return false;
           }
         } else {
-          SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Failed to read '",
-                    kUnionParamName,
+          SDB_ERROR(IRESEARCH, "Failed to read '", kUnionParamName,
                     "' member as object while constructing "
                     "union_tokenizer from VPack arguments");
           return false;
         }
       }
     } else {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Failed to read '",
-                kUnionParamName,
+      SDB_ERROR(IRESEARCH, "Failed to read '", kUnionParamName,
                 "' attribute as array while constructing "
                 "union_tokenizer from VPack arguments");
       return false;
     }
   } else {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Not found parameter '",
-              kUnionParamName, "' while constructing union_tokenizer");
+    SDB_ERROR(IRESEARCH, "Not found parameter '", kUnionParamName,
+              "' while constructing union_tokenizer");
     return false;
   }
   if (options.empty()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Empty union found while constructing union_tokenizer");
     return false;
   }
@@ -215,17 +211,16 @@ Analyzer::ptr MakeVPack(std::string_view args) {
 Analyzer::ptr MakeJson(std::string_view args) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while constructing union_tokenizer");
+      SDB_ERROR(IRESEARCH, "Null arguments while constructing union_tokenizer");
       return nullptr;
     }
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Caught error '", ex.what(),
+    SDB_ERROR(IRESEARCH, "Caught error '", ex.what(),
               "' while constructing union_tokenizer from JSON");
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught error while constructing union_tokenizer from JSON");
   }
   return nullptr;
@@ -234,8 +229,7 @@ Analyzer::ptr MakeJson(std::string_view args) {
 bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while normalizing union_tokenizer");
+      SDB_ERROR(IRESEARCH, "Null arguments while normalizing union_tokenizer");
       return false;
     }
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
@@ -245,10 +239,10 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
       return !definition.empty();
     }
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Caught error '", ex.what(),
+    SDB_ERROR(IRESEARCH, "Caught error '", ex.what(),
               "' while normalizing union_tokenizer from JSON");
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught error while normalizing union_tokenizer from JSON");
   }
   return false;

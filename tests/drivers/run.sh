@@ -6,7 +6,7 @@
 #
 #   * Local debug: developer starts serened by hand
 #       ninja serened
-#       ./build/bin/serened /tmp/datadir --server.endpoint pgsql+tcp://0.0.0.0:5432 --server.authentication 0
+#       ./build/bin/serened /tmp/datadir --server_endpoints pgsql+tcp://0.0.0.0:5432
 #       tests/drivers/run.sh --lang python
 #
 #   * Docker (CI):

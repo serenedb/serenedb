@@ -24,7 +24,7 @@
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 
 namespace sdb {
 
@@ -98,8 +98,8 @@ bool EndpointList::hasSsl() const {
 void EndpointList::dump() const {
   for (const auto& it : _endpoints) {
     SDB_ASSERT(it.second != nullptr);
-    SDB_INFO("xxxxx", sdb::Logger::FIXME, "using endpoint '", it.first,
-             "' for ", encryptionName(it.second->encryption()), " requests");
+    SDB_INFO(GENERAL, "using endpoint '", it.first, "' for ",
+             encryptionName(it.second->encryption()), " requests");
   }
 }
 

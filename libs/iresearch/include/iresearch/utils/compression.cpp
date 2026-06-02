@@ -50,8 +50,6 @@ struct Value {
   const decompressor_factory_f decompressor_factory;
 };
 
-constexpr std::string_view kFileNamePrefix = "libcompression-";
-
 class CompressionRegister
   : public TaggedGenericRegister<std::string_view, Value, std::string_view,
                                  CompressionRegister> {};
@@ -84,23 +82,23 @@ CompressionRegistrar::CompressionRegistrar(
       CompressionRegister::instance().tag(type.name());
 
     if (source != nullptr && registered_source != nullptr) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering "
                "compression, ignoring: type '",
                type.name(), "' from ", source_ref, ", previously from ",
                *registered_source);
     } else if (source != nullptr) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering "
                "compression, ignoring: type '",
                type.name(), "' from ", source_ref);
     } else if (registered_source != nullptr) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering "
                "compression, ignoring: type '",
                type.name(), "' previously from ", *registered_source);
     } else {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering "
                "compression, ignoring: type '",
                type.name(), "'");
@@ -121,8 +119,7 @@ Compressor::ptr GetCompressor(std::string_view name, const Options& opts,
 
     return factory != nullptr ? factory(opts) : nullptr;
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught exception while getting an analyzer instance");
+    SDB_ERROR(IRESEARCH, "Caught exception while getting an analyzer instance");
   }
 
   return nullptr;
@@ -137,8 +134,7 @@ Decompressor::ptr GetDecompressor(std::string_view name,
 
     return factory != nullptr ? factory() : nullptr;
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught exception while getting an analyzer instance");
+    SDB_ERROR(IRESEARCH, "Caught exception while getting an analyzer instance");
   }
 
   return nullptr;
@@ -151,7 +147,8 @@ void Init() {
 }
 
 void LoadAll(std::string_view path) {
-  LoadLibraries(path, kFileNamePrefix, "");
+  (void)path;  // plugin loading via .so removed; SereneDB ships no out-of-tree
+               // iresearch plugins
 }
 
 bool Visit(const std::function<bool(std::string_view)>& visitor) {

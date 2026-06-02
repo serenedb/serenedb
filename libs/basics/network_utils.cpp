@@ -24,7 +24,7 @@
 
 #include <absl/strings/str_cat.h>
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/shared.hpp"
 
 #ifdef _WIN32
@@ -44,8 +44,7 @@ int GetHostName(char* name, size_t size) {
   int err;
 
   if (err = WSAStartup(MAKEWORD(2, 2), &wsaData)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("WSAStartup failed with error: ", err));
+    SDB_ERROR(IRESEARCH, absl::StrCat("WSAStartup failed with error: ", err));
     return -1;
   }
 
@@ -63,8 +62,7 @@ int GetHostName(char* name, size_t size) {
 bool IsSameHostname(const char* rhs, size_t size) {
   char name[256] = {};
   if (const int err = GetHostName(name, sizeof name); err) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("Unable to get hostname, error: ", err));
+    SDB_ERROR(IRESEARCH, absl::StrCat("Unable to get hostname, error: ", err));
     return false;
   }
 

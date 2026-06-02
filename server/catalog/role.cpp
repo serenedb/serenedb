@@ -28,13 +28,11 @@
 #include <string_view>
 
 #include "app/app_server.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/random/uniform_character.h"
 #include "basics/ssl/ssl_interface.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
-#include "basics/system-functions.h"
-#include "basics/write_locker.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
 #include "general_server/general_server_feature.h"
@@ -76,8 +74,7 @@ ErrorCode HexHashFromData(std::string_view hash_method, std::string_view str,
     crypted_length = 16;
   } else {
     // invalid algorithm...
-    SDB_DEBUG("xxxxx", Logger::AUTHENTICATION,
-              "invalid algorithm for hexHashFromData: ", hash_method);
+    SDB_DEBUG(GENERAL, "invalid algorithm for hexHashFromData: ", hash_method);
     return ERROR_BAD_PARAMETER;
   }
 
@@ -198,7 +195,7 @@ void catalog::Role::fromDocumentDatabases(catalog::Role& role,
       try {
         role.grantDatabase(db_name, database_auth);
       } catch (const basics::Exception& e) {
-        SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, e.message());
+        SDB_DEBUG(GENERAL, e.message());
       }
     } else {
       auto value = obj_value.stringView();
@@ -297,8 +294,8 @@ void catalog::Role::grantDatabase(std::string_view database,
               StaticStrings::kDefaultUser, "' to ",
               StaticStrings::kDefaultDatabase);
   }
-  SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, _name, ": Granting ",
-            ConvertFromAuthLevel(level), " on ", database);
+  SDB_DEBUG(GENERAL, _name, ": Granting ", ConvertFromAuthLevel(level), " on ",
+            database);
 
   auto it = _db_access.find(database);
   if (it != _db_access.end()) {
@@ -322,8 +319,7 @@ bool catalog::Role::removeDatabase(std::string_view database) {
               StaticStrings::kDefaultUser, "' to ",
               StaticStrings::kDefaultDatabase);
   }
-  SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, _name, ": Removing grant on ",
-            database);
+  SDB_DEBUG(GENERAL, _name, ": Removing grant on ", database);
   return _db_access.erase(database) > 0;
 }
 

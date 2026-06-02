@@ -605,8 +605,7 @@ automaton FromRegexp(bytes_view pattern, int64_t max_dfa_states,
   re2::RegexpStatus status;
   RegexpPtr re{re2::Regexp::Parse(sv, flags, &status)};
   if (!re) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "RE2 regexp parse error: ", status.Text());
+    SDB_ERROR(IRESEARCH, "RE2 regexp parse error: ", status.Text());
     return {};
   }
 
@@ -635,16 +634,14 @@ automaton FromRegexp(bytes_view pattern, int64_t max_dfa_states,
 
   automaton dfa;
   if (fst::DeterminizeStar(nfa, &dfa)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "RE2 regexp determinization failed");
+    SDB_ERROR(IRESEARCH, "RE2 regexp determinization failed");
     return {};
   }
 
   // Guard against exponential state blowup from pathological
   // patterns (e.g. [ab]{20} can produce 2^20 DFA states).
   if (max_dfa_states > 0 && dfa.NumStates() > max_dfa_states) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "RE2 regexp DFA too large: ", dfa.NumStates(),
+    SDB_ERROR(IRESEARCH, "RE2 regexp DFA too large: ", dfa.NumStates(),
               " states (limit: ", max_dfa_states, ")");
     return {};
   }

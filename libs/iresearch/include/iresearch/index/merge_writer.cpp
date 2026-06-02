@@ -29,7 +29,7 @@
 #include <vector>
 
 #include "basics/assert.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/memory.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/columnstore/format.hpp"
@@ -508,7 +508,7 @@ doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
                       doc_limits::eof());
   } catch (...) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       "Failed to resize merge_writer::doc_id_map to accommodate element: ",
       reader.docs_count() + doc_limits::min());
     return doc_limits::invalid();

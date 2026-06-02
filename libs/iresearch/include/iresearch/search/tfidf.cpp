@@ -79,7 +79,7 @@ Scorer::ptr MakeFromObject(const vpack::Slice slice) {
                                     });
   if (!r.ok()) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       absl::StrCat("Error '", r.errorMessage(),
                    "' while constructing tfidf scorer from VPack arguments"));
     return {};
@@ -93,7 +93,7 @@ Scorer::ptr MakeFromArray(const vpack::Slice slice) {
   auto r = vpack::ReadTupleNothrow(slice, params);
   if (!r.ok()) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       absl::StrCat("Error '", r.errorMessage(),
                    "' while constructing bm25 scorer from VPack arguments"));
     return {};
@@ -112,7 +112,7 @@ Scorer::ptr MakeVPack(const vpack::Slice slice) {
       return MakeFromArray(slice);
     default:  // wrong type
       SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
+        IRESEARCH,
         "Invalid VPack arguments passed while constructing tfidf scorer, "
         "arguments");
       return nullptr;
@@ -139,12 +139,12 @@ Scorer::ptr MakeJson(std::string_view args) {
       return MakeVPack(vpack->slice());
     } catch (const vpack::Exception& ex) {
       SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
+        IRESEARCH,
         absl::StrCat("Caught error '", ex.what(),
                      "' while constructing VPack from JSON for tfidf scorer"));
     } catch (...) {
       SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
+        IRESEARCH,
         "Caught error while constructing VPack from JSON for tfidf scorer");
     }
     return nullptr;

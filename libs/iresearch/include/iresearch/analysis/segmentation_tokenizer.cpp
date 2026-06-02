@@ -61,13 +61,12 @@ constexpr sdb::containers::TrivialBiMap kAcceptMap = [](auto selector) {
 
 bool ParseVPackOptions(const vpack::Slice slice, Options& options) {
   if (!slice.isObject()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Slice for segmentation analyzer is not an object");
+    SDB_ERROR(IRESEARCH, "Slice for segmentation analyzer is not an object");
     return false;
   }
   if (auto convert_slice = slice.get(kConvertName); !convert_slice.isNone()) {
     if (!convert_slice.isString()) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid type '", kConvertName,
+      SDB_WARN(IRESEARCH, "Invalid type '", kConvertName,
                "' (string expected) for segmentation analyzer from "
                "VPack arguments");
       return false;
@@ -75,8 +74,7 @@ bool ParseVPackOptions(const vpack::Slice slice, Options& options) {
     auto convert = convert_slice.stringView();
     auto it = kConvertMap.TryFindByFirst(convert);
     if (!it) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
-               kConvertName,
+      SDB_WARN(IRESEARCH, "Invalid value in '", kConvertName,
                "' for segmentation analyzer from VPack arguments");
       return false;
     }
@@ -84,7 +82,7 @@ bool ParseVPackOptions(const vpack::Slice slice, Options& options) {
   }
   if (auto accept_slice = slice.get(kAcceptName); !accept_slice.isNone()) {
     if (!accept_slice.isString()) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid type '", kAcceptName,
+      SDB_WARN(IRESEARCH, "Invalid type '", kAcceptName,
                "' (string expected) for segmentation analyzer from "
                "VPack arguments");
       return false;
@@ -92,8 +90,8 @@ bool ParseVPackOptions(const vpack::Slice slice, Options& options) {
     auto accept = accept_slice.stringView();
     auto it = kAcceptMap.TryFindByFirst(accept);
     if (!it) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
-               kAcceptName, "' for segmentation analyzer from VPack arguments");
+      SDB_WARN(IRESEARCH, "Invalid value in '", kAcceptName,
+               "' for segmentation analyzer from VPack arguments");
       return false;
     }
     options.accept = *it;
@@ -108,8 +106,7 @@ bool MakeVPackConfig(const Options& options, vpack::Builder* builder) {
     if (it) {
       builder->add(kConvertName, *it);
     } else {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
-               kConvertName,
+      SDB_WARN(IRESEARCH, "Invalid value in '", kConvertName,
                "' for normalizing segmentation analyzer from Value is: ",
                options.convert);
       return false;
@@ -120,8 +117,7 @@ bool MakeVPackConfig(const Options& options, vpack::Builder* builder) {
     if (it) {
       builder->add(kAcceptName, *it);
     } else {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
-               kAcceptName,
+      SDB_WARN(IRESEARCH, "Invalid value in '", kAcceptName,
                "' for normalizing segmentation analyzer from Value is: ",
                options.accept);
       return false;
@@ -144,13 +140,13 @@ Analyzer::ptr MakeVPack(const vpack::Slice slice) {
     return SegmentationTokenizer::make(std::move(options));
   } catch (const vpack::Exception& ex) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       absl::StrCat(
         "Caught error '", ex.what(),
         "' while constructing segmentation analyzer from VPack arguments"));
   } catch (...) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       "Caught error while constructing segmentation analyzer from VPack "
       "arguments");
   }
@@ -173,12 +169,12 @@ bool NormalizeVPackConfig(const vpack::Slice slice,
 
   } catch (const vpack::Exception& ex) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       absl::StrCat(
         "Caught error '", ex.what(),
         "' while normalizing segmentation analyzer from VPack arguments"));
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught error while normalizing segmentation analyzer from VPack "
               "arguments");
   }
@@ -198,7 +194,7 @@ bool NormalizeVPackConfig(std::string_view args, std::string& config) {
 Analyzer::ptr MakeJson(std::string_view args) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Null arguments while constructing segmentation analyzer");
       return nullptr;
     }
@@ -206,12 +202,12 @@ Analyzer::ptr MakeJson(std::string_view args) {
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing segmentation analyzer from JSON"));
   } catch (...) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       "Caught error while constructing segmentation analyzer from JSON");
   }
   return nullptr;
@@ -220,7 +216,7 @@ Analyzer::ptr MakeJson(std::string_view args) {
 bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Null arguments while normalizing segmentation analyzer");
       return false;
     }
@@ -232,11 +228,11 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
     }
   } catch (const vpack::Exception& ex) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while normalizing segmentation analyzer from JSON"));
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught error while normalizing segmentation analyzer from JSON");
   }
   return false;

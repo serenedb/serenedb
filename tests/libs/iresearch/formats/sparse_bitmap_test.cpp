@@ -64,7 +64,9 @@ namespace {
 // directory is always MemoryDirectory for these tests).
 class SparseBitmapTestCase : public ::testing::TestWithParam<bool> {
  protected:
-  duckdb::DatabaseInstance& Db() { return irs::tests::CsDb(); }
+  duckdb::DatabaseInstance& Db() {
+    return ::sdb::DuckDBEngine::Instance().instance();
+  }
 };
 
 // min, max -- half-open range of valid (non-null) doc ids.

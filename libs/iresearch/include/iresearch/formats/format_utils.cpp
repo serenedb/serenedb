@@ -127,7 +127,7 @@ int64_t Checksum(const IndexInput& in) {
     dup = in.Dup();
 
     if (!dup) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "failed to duplicate input");
+      SDB_ERROR(IRESEARCH, "failed to duplicate input");
 
       throw IoError{"failed to duplicate input"};
     }

@@ -214,7 +214,7 @@ Filter::Query::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
 
   if (fst::kError == matcher.Properties(0)) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       absl::StrCat("Expected deterministic, epsilon-free acceptor, got the "
                    "following properties ",
                    matcher.GetFst().Properties(

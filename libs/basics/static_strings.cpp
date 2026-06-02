@@ -23,22 +23,10 @@
 
 using namespace sdb;
 
-// constants
-const std::string StaticStrings::kEmpty;
-const std::string StaticStrings::kN1800("1800");
-
-// SereneDB connector name
-const std::string StaticStrings::kSereneDBConnector("serenedb");
-
-// URL parameter names
-const std::string StaticStrings::kWaitForSyncString("waitForSync");
 const std::string StaticStrings::kUserString("user");
 
 const std::string StaticStrings::kDataSourceId("id");
 const std::string StaticStrings::kDataSourceName("name");
-
-// query options
-const std::string StaticStrings::kFilter("filter");
 
 // HTTP headers
 const std::string StaticStrings::kAccept("accept");
@@ -63,7 +51,6 @@ const std::string StaticStrings::kAsyncId("x-serene-async-id");
 const std::string StaticStrings::kAuthorization("authorization");
 const std::string StaticStrings::kCacheControl("cache-control");
 const std::string StaticStrings::kChunked("chunked");
-const std::string StaticStrings::kClusterCommSource("x-serene-source");
 const std::string StaticStrings::kCode("code");
 const std::string StaticStrings::kConnection("connection");
 const std::string StaticStrings::kContentEncoding("content-encoding");
@@ -82,15 +69,11 @@ const std::string StaticStrings::kExpect("expect");
 const std::string StaticStrings::kExposedCorsHeaders(
   "etag, content-encoding, content-length, location, server, "
   "x-serene-errors, x-serene-async-id");
-const std::string StaticStrings::kHlcHeader("x-serene-hlc");
 const std::string StaticStrings::kLocation("location");
 const std::string StaticStrings::kNoSniff("nosniff");
 const std::string StaticStrings::kOrigin("origin");
-const std::string StaticStrings::kRequestForwardedTo(
-  "x-serene-request-forwarded-to");
 const std::string StaticStrings::kServer("server");
 const std::string StaticStrings::kTransferEncoding("transfer-encoding");
-const std::string StaticStrings::kTransactionId("x-serene-trx-id");
 
 const std::string StaticStrings::kWwwAuthenticate("www-authenticate");
 const std::string StaticStrings::kXContentTypeOptions("x-content-type-options");
@@ -129,8 +112,6 @@ const std::string StaticStrings::kObjectId("objectId");
 
 // misc strings
 const std::string StaticStrings::kLastValue("lastValue");
-const std::string StaticStrings::kUpgradeEnvName(
-  "SERENEDB_UPGRADE_DURING_RESTORE");
 
 // Replication
 const std::string StaticStrings::kRevisionTreeCount("count");

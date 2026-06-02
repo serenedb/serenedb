@@ -30,6 +30,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <memory>
+#include <shared_mutex>
 
 #include "catalog/inverted_index.h"
 #include "rest_server/flush_feature.h"
@@ -209,16 +210,20 @@ class InvertedIndexShard final
   auto& GetMutex() { return _mutex; }
 
   InvertedIndexSnapshotPtr GetInvertedIndexSnapshot() const {
-    return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire);
+    std::shared_lock guard{_snapshot_mutex};
+    return _snapshot;
   }
 
   void StoreInvertedIndexSnapshot(
     InvertedIndexSnapshotPtr inverted_index_snapshot) {
-    std::atomic_store_explicit(&_snapshot, std::move(inverted_index_snapshot),
-                               std::memory_order_release);
+    std::unique_lock guard{_snapshot_mutex};
+    _snapshot = std::move(inverted_index_snapshot);
   }
 
-  void ResetInvertedIndexSnapshot() { _snapshot.reset(); }
+  void ResetInvertedIndexSnapshot() {
+    std::unique_lock guard{_snapshot_mutex};
+    _snapshot.reset();
+  }
 
   auto& GetTasksSettings() { return _tasks_settings; }
 
@@ -262,6 +267,7 @@ class InvertedIndexShard final
   RocksDBEngineCatalog& _engine;
   SearchEngine& _search;
   std::shared_ptr<ThreadPoolState> _state;
+  mutable std::shared_mutex _snapshot_mutex;
   InvertedIndexSnapshotPtr _snapshot;
   std::unique_ptr<irs::Directory> _dir;
   std::unique_ptr<irs::Scorer> _topk_scorer;
@@ -281,22 +287,6 @@ class InvertedIndexShard final
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _compactions_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _file_descriptors_count{&irs::IResourceManager::gNoop};
-
-  // Stats
-  metrics::Gauge<uint64_t>* _mapped_memory{nullptr};
-  metrics::Gauge<uint64_t>* _num_failed_commits{nullptr};
-  metrics::Gauge<uint64_t>* _num_failed_cleanups{nullptr};
-  metrics::Gauge<uint64_t>* _num_failed_compactions{nullptr};
-
-  std::atomic_uint64_t _commit_time_num{0};
-  metrics::Gauge<uint64_t>* _avg_commit_time_ms{nullptr};
-
-  std::atomic_uint64_t _cleanup_time_num{0};
-  metrics::Gauge<uint64_t>* _avg_cleanup_time_ms{nullptr};
-
-  std::atomic_uint64_t _compaction_time_num{0};
-  metrics::Gauge<uint64_t>* _avg_compaction_time_ms{nullptr};
-  metrics::Guard<Stats>* _metric_stats{nullptr};
 
   enum class Error : uint8_t {
     // inverted index shard has no issues

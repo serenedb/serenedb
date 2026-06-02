@@ -39,7 +39,6 @@
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
-#include "rest_server/serened.h"
 
 namespace sdb::connector {
 namespace {
@@ -49,8 +48,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
   const duckdb::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
-  auto& catalog_feature =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+  auto& catalog_feature = catalog::CatalogFeature::instance();
 
   if (info.path.empty()) {
     // CREATE DATABASE: create new database in SereneDB catalog

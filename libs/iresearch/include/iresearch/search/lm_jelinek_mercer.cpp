@@ -66,14 +66,13 @@ Scorer::ptr MakeFromObject(const vpack::Slice slice) {
                                       .strict = false,
                                     });
   if (!r.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
+    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
               "' while constructing lm_jm scorer from VPack");
     return {};
   }
   if (params.lambda <= 0.f || params.lambda > 1.f ||
       !std::isfinite(params.lambda)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "lm_jm lambda must be in (0, 1]");
+    SDB_ERROR(IRESEARCH, "lm_jm lambda must be in (0, 1]");
     return {};
   }
   return std::make_unique<LMJelinekMercer>(params.lambda);
@@ -83,14 +82,13 @@ Scorer::ptr MakeFromArray(const vpack::Slice slice) {
   ObjectParams params;
   auto r = vpack::ReadTupleNothrow(slice, params);
   if (!r.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
+    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
               "' while constructing lm_jm scorer from VPack array");
     return {};
   }
   if (params.lambda <= 0.f || params.lambda > 1.f ||
       !std::isfinite(params.lambda)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "lm_jm lambda must be in (0, 1]");
+    SDB_ERROR(IRESEARCH, "lm_jm lambda must be in (0, 1]");
     return {};
   }
   return std::make_unique<LMJelinekMercer>(params.lambda);
@@ -103,8 +101,7 @@ Scorer::ptr MakeVPack(const vpack::Slice slice) {
     case vpack::ValueType::Array:
       return MakeFromArray(slice);
     default:
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Invalid VPack arguments for lm_jm scorer");
+      SDB_ERROR(IRESEARCH, "Invalid VPack arguments for lm_jm scorer");
       return nullptr;
   }
 }
@@ -125,10 +122,10 @@ Scorer::ptr MakeJson(std::string_view args) {
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Caught error '", ex.what(),
+    SDB_ERROR(IRESEARCH, "Caught error '", ex.what(),
               "' while constructing VPack from JSON for lm_jm");
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught error while constructing VPack from JSON for lm_jm");
   }
   return nullptr;

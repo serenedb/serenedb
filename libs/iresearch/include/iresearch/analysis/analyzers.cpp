@@ -79,8 +79,6 @@ struct Value {
   const normalizer_f normalizer;
 };
 
-constexpr std::string_view kFileNamePrefix = "libanalyzer-";
-
 class AnalyzerRegister final
   : public TaggedGenericRegister<Key, Value, std::string_view,
                                  AnalyzerRegister> {};
@@ -126,23 +124,23 @@ AnalyzerRegistrar::AnalyzerRegistrar(
       AnalyzerRegister::instance().tag(Key{type.name(), args_format});
 
     if (source && registered_source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering analyzer, "
                "ignoring: type '",
                type.name(), "' from ", source, ", previously from ",
                *registered_source);
     } else if (source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering analyzer, "
                "ignoring: type '",
                type.name(), "' from ", source);
     } else if (registered_source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering analyzer, "
                "ignoring: type '",
                type.name(), "', previously from ", *registered_source);
     } else {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering analyzer, "
                "ignoring: type '",
                type.name(), "'");
@@ -169,8 +167,7 @@ bool Normalize(std::string& out, std::string_view name,
 
     return normalizer ? normalizer(args, out) : false;
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught exception while normalizing analyzer '", name,
+    SDB_ERROR(IRESEARCH, "Caught exception while normalizing analyzer '", name,
               "' arguments");
   }
 
@@ -187,15 +184,15 @@ Analyzer::ptr Get(std::string_view name, const TypeInfo& args_format,
 
     return factory ? factory(args) : nullptr;
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught exception while getting an analyzer instance");
+    SDB_ERROR(IRESEARCH, "Caught exception while getting an analyzer instance");
   }
 
   return nullptr;
 }
 
 void LoadAll(std::string_view path) {
-  LoadLibraries(path, kFileNamePrefix, "");
+  (void)path;  // plugin loading via .so removed; SereneDB ships no out-of-tree
+               // iresearch plugins
 }
 
 bool Visit(

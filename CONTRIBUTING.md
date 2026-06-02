@@ -47,7 +47,7 @@ Additional build presets are defined in `CMakePresets.json`:
 ### Launch
 
 ```bash
-./build/bin/serened ./build_data --server.endpoint='pgsql+tcp://0.0.0.0:7890'
+./build/bin/serened ./build_data --server_endpoints='pgsql+tcp://0.0.0.0:7890'
 ```
 
 Connect via psql: `psql -h localhost -p 7890 -U postgres`
@@ -323,9 +323,8 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 ### Logging
 
-- Use `SDB_LOG(id, level, topic, ...)` macros from `logger/logger.h`
-- Shortcuts: `SDB_ERROR(id, topic, ...)`, `SDB_INFO(id, topic, ...)`
-- Log topics: `Logger::AUTHENTICATION`, `Logger::ENGINES`, `Logger::REQUESTS`, `Logger::STARTUP`, etc.
+- Use `SDB_LOG(level, topic, ...)` macros from `basics/log.h`
+- Shortcuts: `SDB_ERROR(topic, ...)`, `SDB_INFO(topic, ...)`
 
 ### Integer Types
 

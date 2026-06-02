@@ -21,9 +21,20 @@
 
 #include "search_engine.h"
 
+#include <absl/flags/flag.h>
 #include <absl/functional/any_invocable.h>
 #include <absl/strings/escaping.h>
 #include <absl/time/time.h>
+
+ABSL_FLAG(bool, server_skip_search_recovery, false,
+          "Skip the entire WAL replay phase for inverted indexes on startup. "
+          "Diagnostic only -- data loss is permanent for the skipped delta.");
+ABSL_FLAG(uint32_t, server_refresh_threads, 0,
+          "Threads in the iresearch refresh pool (0 = auto-derive from cores, "
+          "clamped to [1, 4 * cores]).");
+ABSL_FLAG(uint32_t, server_compaction_threads, 0,
+          "Threads in the iresearch compaction pool (0 = auto-derive from "
+          "cores, clamped to [1, 4 * cores]).");
 
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/fast_text_model.hpp>
@@ -33,23 +44,19 @@
 #include <iresearch/search/scorers.hpp>
 
 #include "app/app_server.h"
-#include "app/options/parameters.h"
 #include "basics/down_cast.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/lifecycle.h"
+#include "basics/log.h"
 #include "basics/number_of_cores.h"
 #include "catalog/catalog.h"
 #include "catalog/identity_analyzer.h"
 #include "catalog/index.h"
 #include "catalog/search_common.h"
 #include "catalog/view.h"
-#include "general_server/state.h"
-#include "metrics/gauge_builder.h"
-#include "metrics/metrics_feature.h"
 #include "rest_server/database_path_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
-#include "search/resource_manager.h"
 #include "search/wal_recovery.h"
 #include "storage_engine/search_engine.h"
 
@@ -62,21 +69,6 @@ REGISTER_ANALYZER_VPACK(IdentityAnalyzer, IdentityAnalyzer::make,
                         IdentityAnalyzer::normalize);
 REGISTER_ANALYZER_JSON(IdentityAnalyzer, IdentityAnalyzer::make_json,
                        IdentityAnalyzer::normalize_json);
-
-DECLARE_GAUGE(serenedb_search_num_out_of_sync_links, uint64_t,
-              "Number of inverted indexes currently out of sync");
-DECLARE_GAUGE(serenedb_search_columns_cache_size, LimitedResourceManager,
-              "Search columns cache usage in bytes");
-
-const std::string kCommitThreadsParam("--search.commit-threads");
-const std::string kCompactionThreadsParam("--search.compaction-threads");
-const std::string kFailOnOutOfSync("--search.fail-queries-on-out-of-sync");
-const std::string kSkipRecovery("--search.skip-recovery");
-const std::string kSkipWalRecovery("--search.skip-wal-recovery");
-const std::string kCacheLimit("--search.columns-cache-limit");
-const std::string kCacheOnlyLeader("--search.columns-cache-only-leader");
-const std::string kSearchThreadsLimit("--search.execution-threads-limit");
-const std::string kSearchDefaultParallelism("--search.default-parallelism");
 
 uint32_t ComputeThreadsCount(uint32_t threads, uint32_t threads_limit,
                              uint32_t div) noexcept {
@@ -114,142 +106,15 @@ class SearchThreadPools {
   ThreadPool _compaction_threads_pool;
 };
 
-SearchEngine::SearchEngine(Server& server)
-  : SerenedFeature{server, name()},
-    _dir_feature{server.getFeature<DatabasePathFeature>()},
-    _thread_pools(std::make_shared<SearchThreadPools>()),
-    _out_of_sync_links(server.getFeature<metrics::MetricsFeature>().add(
-      serenedb_search_num_out_of_sync_links{})),
-    _columns_cache_memory_used(server.getFeature<metrics::MetricsFeature>().add(
-      serenedb_search_columns_cache_size{})) {
-  setOptional(true);
-  static_assert(Server::isCreatedAfter<SearchEngine, DatabasePathFeature>());
-  static_assert(
-    Server::isCreatedAfter<SearchEngine, metrics::MetricsFeature>());
-}
-
-void SearchEngine::collectOptions(
-  std::shared_ptr<options::ProgramOptions> options) {
-  options->addSection("search", absl::StrCat(name(), " feature"));
-
-  options
-    ->addOption(kCompactionThreadsParam,
-                "The upper limit to the allowed number of compaction threads "
-                "(0 = auto-detect).",
-                new options::UInt32Parameter(&_compaction_threads))
-    .setLongDescription(R"(The option value must fall in the range
-`[ 1..search.compaction-threads ]`. Set it to `0` to automatically
-choose a sensible number based on the number of cores in the system.)");
-
-  options
-    ->addOption(kCommitThreadsParam,
-                "The upper limit to the allowed number of commit threads "
-                "(0 = auto-detect).",
-                new options::UInt32Parameter(&_commit_threads))
-    .setLongDescription(R"(The option value must fall in the range
-`[ 1..4 * NumberOfCores ]`. Set it to `0` to automatically choose a sensible
-number based on the number of cores in the system.)");
-
-  options->addOption(
-    kSkipRecovery,
-    "Skip the data recovery for the specified View link or inverted "
-    "index on startup. The value for this option needs to have the "
-    "format '<collection-name>/<index-id>' or "
-    "'<collection-name>/<index-name>'. You can use the option multiple "
-    "times, for each View link and inverted index to skip the recovery "
-    "for. The pseudo-value 'all' disables the recovery for all View "
-    "links and inverted indexes. The links/indexes skipped during the "
-    "recovery are marked as out-of-sync when the recovery completes. You "
-    "need to recreate them manually afterwards.\n"
-    "WARNING: Using this option causes data of affected links/indexes to "
-    "become incomplete or more incomplete until they have been manually "
-    "recreated.",
-    new options::VectorParameter<options::StringParameter>(
-      &_skip_recovery_items));
-
-  options->addOption(
-    kSkipWalRecovery,
-    "Skip the entire WAL replay phase for inverted indexes on startup. "
-    "Lagging shards will start serving queries with stale content; the "
-    "missing WAL delta will not be applied. Intended for diagnostics -- "
-    "data loss is permanent for the skipped delta unless you crash again "
-    "with a longer recovery window.",
-    new options::BooleanParameter(&_skip_wal_recovery));
-
-  options
-    ->addOption(kFailOnOutOfSync,
-                "Whether retrieval queries on out-of-sync "
-                "View links and inverted indexes should fail.",
-                new options::BooleanParameter(&_fail_queries_on_out_of_sync))
-
-    .setLongDescription(R"(If set to `true`, any data retrieval queries on
-out-of-sync links/indexes fail with the error 'collection/view is out of sync'
-(error code 1481).
-
-If set to `false`, queries on out-of-sync links/indexes are answered normally,
-but the returned data may be incomplete.)");
-
-  options->addOption(
-    kSearchThreadsLimit,
-    "The maximum number of threads that can be used to process "
-    "Search indexes during a SEARCH operation of a query.",
-    new options::UInt32Parameter(&_search_execution_threads_limit),
-    options::MakeDefaultFlags(options::Flags::DefaultNoComponents,
-                              options::Flags::OnDBServer,
-                              options::Flags::OnSingle));
-
-  options->addOption(
-    kSearchDefaultParallelism, "Default parallelism for Search queries",
-    new options::UInt32Parameter(&_default_parallelism),
-    options::MakeDefaultFlags(options::Flags::DefaultNoComponents,
-                              options::Flags::OnDBServer,
-                              options::Flags::OnSingle));
-}
-
-void SearchEngine::validateOptions(
-  std::shared_ptr<options::ProgramOptions> options) {
-  auto check_format = [](const auto& item) {
-    auto r = item.find('/');
-    if (r == std::string_view::npos) {
-      return false;
-    }
-    r = item.find('/', r);
-    if (r == std::string_view::npos) {
-      return true;
-    }
-    return false;
-  };
-  for (const auto& item : _skip_recovery_items) {
-    if (item != "all" && check_format(item)) {
-      SDB_FATAL("xxxxx", Logger::SEARCH, "invalid format for '", kSkipRecovery,
-                "' parameter. expecting '",
-                "<collection-name>/<index-id>' or "
-                "'<collection-name>/<index-name>' or ",
-                "'all', got: '", item, "'");
-    }
-  }
-
-  const auto& args = options->processingResult();
-
-  uint32_t threads_limit =
+SearchEngine::SearchEngine()
+  : _dir_feature{DatabasePathFeature::instance()},
+    _thread_pools(std::make_shared<SearchThreadPools>()) {
+  const uint32_t threads_limit =
     static_cast<uint32_t>(4 * number_of_cores::GetValue());
-
-  _commit_threads = ComputeThreadsCount(_commit_threads, threads_limit, 6);
-  _compaction_threads =
-    ComputeThreadsCount(_compaction_threads, threads_limit, 6);
-
-  if (!args.touched(kSearchThreadsLimit)) {
-    _search_execution_threads_limit =
-      static_cast<uint32_t>(number_of_cores::GetValue());
-  }
-}
-
-SearchEngine& GetSearchEngine() {
-  return SerenedServer::Instance().getFeature<SearchEngine>();
-}
-
-void SearchEngine::prepare() {
-  SDB_ASSERT(isEnabled());
+  _refresh_threads = ComputeThreadsCount(
+    absl::GetFlag(FLAGS_server_refresh_threads), threads_limit, 6);
+  _compaction_threads = ComputeThreadsCount(
+    absl::GetFlag(FLAGS_server_compaction_threads), threads_limit, 6);
 
   ::irs::analysis::ClassificationTokenizer::set_model_provider(
     &fast_text::CreateModel<fasttext::FastText>);
@@ -261,42 +126,42 @@ void SearchEngine::prepare() {
   irs::scorers::Init();
   irs::compression::Init();
 
+  gInstance = this;
+}
+
+SearchEngine::~SearchEngine() { gInstance = nullptr; }
+
+SearchEngine& GetSearchEngine() { return SearchEngine::instance(); }
+
+void SearchEngine::start() {
   SDB_ASSERT(std::make_tuple(size_t(0), size_t(0), size_t(0)) ==
              stats(ThreadGroup::Refresh));
   SDB_ASSERT(std::make_tuple(size_t(0), size_t(0), size_t(0)) ==
              stats(ThreadGroup::Compaction));
-}
 
-void SearchEngine::start() {
-  SDB_ASSERT(isEnabled());
+  SDB_ASSERT(_refresh_threads);
+  SDB_ASSERT(_compaction_threads);
 
-  if (ServerState::instance()->IsDBServer() ||
-      ServerState::instance()->IsSingle()) {
-    SDB_ASSERT(_commit_threads);
-    SDB_ASSERT(_compaction_threads);
+  _thread_pools->Get(ThreadGroup::Refresh)
+    .start(_refresh_threads, IR_NATIVE_STRING("search:refresh"));
+  _thread_pools->Get(ThreadGroup::Compaction)
+    .start(_compaction_threads, IR_NATIVE_STRING("search:compaction"));
 
-    _thread_pools->Get(ThreadGroup::Refresh)
-      .start(_commit_threads, IR_NATIVE_STRING("search:commit"));
-    _thread_pools->Get(ThreadGroup::Compaction)
-      .start(_compaction_threads, IR_NATIVE_STRING("search:compact"));
+  const bool skip_wal_recovery =
+    absl::GetFlag(FLAGS_server_skip_search_recovery);
+  InitInvertedIndexes(skip_wal_recovery);
 
-    InitInvertedIndexes(_skip_wal_recovery);
-
-    SDB_INFO("xxxxx", Logger::SEARCH, "Search maintenance: [", _commit_threads,
-             "..", _commit_threads, "] commit thread(s), [",
-             _compaction_threads, "..", _compaction_threads,
-             "] compaction thread(s). Search execution parallel threads "
-             "limit: ",
-             _search_execution_threads_limit);
-  }
+  SDB_INFO(SEARCH, "Search maintenance: ", _refresh_threads,
+           " refresh thread(s), ", _compaction_threads,
+           " compaction thread(s)");
 }
 
 void SearchEngine::stop() {
-  SDB_ASSERT(isEnabled());
+  // Nudge both pools to drain before we block on Stop().
+  _thread_pools->Get(ThreadGroup::Refresh).stop(false);
+  _thread_pools->Get(ThreadGroup::Compaction).stop(false);
   _thread_pools->Stop();
 }
-
-void SearchEngine::unprepare() { SDB_ASSERT(isEnabled()); }
 
 bool SearchEngine::Queue(ThreadGroup id, absl::Duration delay,
                          absl::AnyInvocable<void()>&& fn) {
@@ -310,11 +175,10 @@ bool SearchEngine::Queue(ThreadGroup id, absl::Duration delay,
     return true;
   }
 
-  if (!server().isStopping()) {
-    SDB_WARN("xxxxx", Logger::SEARCH,
-             "Caught exception while sumbitting a task to thread group '",
-             std::underlying_type_t<ThreadGroup>(id),
-             "', error: ", r.errorMessage());
+  if (!lifecycle::IsStopping()) {
+    SDB_WARN(
+      SEARCH, "Caught exception while sumbitting a task to thread group '",
+      std::underlying_type_t<ThreadGroup>(id), "', error: ", r.errorMessage());
   }
 
   return false;
@@ -329,29 +193,12 @@ std::pair<size_t, size_t> SearchEngine::limits(ThreadGroup id) const {
   return {threads, threads};
 }
 
-void SearchEngine::trackOutOfSyncLink() noexcept { ++_out_of_sync_links; }
-
-void SearchEngine::untrackOutOfSyncLink() noexcept {
-  uint64_t previous = _out_of_sync_links.fetch_sub(1);
-  SDB_ASSERT(previous > 0);
-}
-
-bool SearchEngine::failQueriesOnOutOfSync() const noexcept {
-  SDB_IF_FAILURE("Search::FailQueriesOnOutOfSync") { return true; }
-  return _fail_queries_on_out_of_sync;
-}
-
 std::filesystem::path SearchEngine::GetPersistedPath(
   ObjectId database_id) const {
   std::filesystem::path path = _dir_feature.directory();
   path /= StaticStrings::kEngineDirRoot;
   path /= absl::StrCat(database_id);
   return path;
-}
-
-void SearchEngine::beginShutdown() {
-  _thread_pools->Get(ThreadGroup::Refresh).stop(false);
-  _thread_pools->Get(ThreadGroup::Compaction).stop(false);
 }
 
 }  // namespace sdb::search

@@ -27,14 +27,7 @@
 
 #include "executor.h"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace bench {
-
-duckdb::DatabaseInstance& CsDb();
 
 struct IBatchHandler {
   virtual ~IBatchHandler() = default;

@@ -23,7 +23,7 @@
 
 #include <string_view>
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 
 namespace sdb {
 
@@ -70,8 +70,7 @@ void RocksDBBackgroundErrorListener::OnBackgroundError(
     }
 
     SDB_ERROR(
-      "xxxxx", Logger::ROCKSDB,
-      "RocksDB encountered a background error during a ", operation,
+      STORAGE, "RocksDB encountered a background error during a ", operation,
       " operation: ",
       (status != nullptr ? status->ToString() : "unknown error"),
       "; The database will be put in read-only mode, and subsequent write "
@@ -84,8 +83,7 @@ void RocksDBBackgroundErrorListener::OnErrorRecoveryCompleted(
   rocksdb::Status /* old_bg_error */) {
   _called.store(false, std::memory_order_relaxed);
 
-  SDB_INFO("xxxxx", Logger::ROCKSDB,
-           "RocksDB resuming operations after background error");
+  SDB_INFO(STORAGE, "RocksDB resuming operations after background error");
 }
 
 }  // namespace sdb

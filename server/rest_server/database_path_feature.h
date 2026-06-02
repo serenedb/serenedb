@@ -21,34 +21,24 @@
 
 #pragma once
 
-#include "app/app_feature.h"
-#include "rest_server/serened.h"
+#include <string>
+#include <string_view>
 
 namespace sdb {
 
-class DatabasePathFeature final : public SerenedFeature {
+class DatabasePathFeature final {
  public:
-  static constexpr std::string_view name() { return "DatabasePath"; }
+  inline static DatabasePathFeature* gInstance = nullptr;
+  static DatabasePathFeature& instance() noexcept { return *gInstance; }
 
-  explicit DatabasePathFeature(Server& server);
-
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
-  void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
-  void prepare() final;
-  void start() final;
+  DatabasePathFeature();
+  ~DatabasePathFeature();
 
   const std::string& directory() const { return _directory; }
   std::string subdirectoryName(std::string_view sub_directory) const;
-  void setDirectory(const std::string& path) {
-    // This is only needed in the catch tests, where we initialize the
-    // feature but do not have options or run `validateOptions`. Please
-    // do not use it from other code.
-    _directory = path;
-  }
 
  private:
   std::string _directory;
-  std::string _required_directory_state;
 };
 
 }  // namespace sdb

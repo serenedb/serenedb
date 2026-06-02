@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,31 +15,22 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
-#include <string_view>
-
 namespace sdb::signals {
 
-enum class SignalType { Term, Core, Cont, Ign, Logrotate, Stop, User };
-
-/// find out what impact a signal will have to the process we send it.
-SignalType MakeSignalType(int signal) noexcept;
-
-/// whether or not the signal is deadly
-bool IsDeadly(int signal) noexcept;
-
-/// return the name for a signal
-std::string_view Name(int signal) noexcept;
-
-std::string_view SubtypeName(int signal, int sub_code) noexcept;
-
-void MaskAllSignals();
+// Block every signal except the failure-class set (SEGV/BUS/ILL/FPE/ABRT)
+// on the calling thread. Called by InitThread() so worker threads never
+// receive SIGTERM/SIGINT/SIGQUIT/SIGHUP/SIGPIPE -- they always reach the
+// main thread, where signal_handling::Install() converts them into a clean
+// shutdown via the eventfd.
 void MaskAllSignalsServer();
-void MaskAllSignalsClient();
+
+// Reverse of MaskAllSignalsServer for the thread that wants to receive
+// signals (the main thread, just before installing the shutdown handlers).
 void UnmaskAllSignals();
 
 }  // namespace sdb::signals

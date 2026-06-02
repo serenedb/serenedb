@@ -22,7 +22,6 @@
 #include "rest_handler.h"
 
 #include <absl/strings/str_cat.h>
-#include <fuerte/jwt.h>
 #include <vpack/exception.h>
 
 #include <source_location>
@@ -30,44 +29,29 @@
 #include "app/app_server.h"
 #include "auth/token_cache.h"
 #include "basics/debugging.h"
-#include "basics/logger/logger.h"
-#include "basics/recursive_locker.h"
-#include "catalog/identifiers/transaction_id.h"
+#include "basics/log.h"
 #include "database/ticks.h"
-#include "general_server/authentication_feature.h"
 #include "general_server/general_server_feature.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
-#include "network/methods.h"
-#include "network/network_feature.h"
-#include "network/utils.h"
 #include "rest/general_request.h"
 #include "rest/http_response.h"
-#include "statistics/request_statistics.h"
 #include "utils/exec_context.h"
 
 using namespace sdb;
 using namespace sdb::basics;
 using namespace sdb::rest;
 
-RestHandler::RestHandler(SerenedServer& server, GeneralRequest* request,
+RestHandler::RestHandler(app::AppServer& server, GeneralRequest* request,
                          GeneralResponse* response)
   : _request(request),
     _response(response),
     _server(server),
-    _statistics(),
     _handler_id(0),
     _state(HandlerState::Prepare),
     _tracked_as_ongoing_low_prio(false),
     _lane(RequestLane::Undefined),
-    _canceled(false) {
-  if (server.hasFeature<GeneralServerFeature>() &&
-      server.isEnabled<GeneralServerFeature>()) {
-    _current_requests_size_tracker = metrics::GaugeCounterGuard<uint64_t>{
-      server.getFeature<GeneralServerFeature>().current_requests_size,
-      _request->memoryUsage()};
-  }
-}
+    _canceled(false) {}
 
 RestHandler::~RestHandler() {
   if (_tracked_as_ongoing_low_prio) {
@@ -79,7 +63,7 @@ RestHandler::~RestHandler() {
   }
 }
 
-void RestHandler::assignHandlerId() { _handler_id = NewServerSpecificTick(); }
+void RestHandler::assignHandlerId() { _handler_id = NewTickServer(); }
 
 uint64_t RestHandler::messageId() const {
   uint64_t message_id = 0UL;
@@ -90,8 +74,7 @@ uint64_t RestHandler::messageId() const {
   } else if (res) {
     message_id = res->messageId();
   } else {
-    SDB_WARN("xxxxx", Logger::COMMUNICATION,
-             "could not find corresponding request/response");
+    SDB_WARN(HTTP, "could not find corresponding request/response");
   }
 
   return message_id;
@@ -110,38 +93,19 @@ RequestLane RestHandler::determineRequestLane() {
 
   _lane = lane();
   SDB_ASSERT(_lane != RequestLane::Undefined);
-  if (PriorityRequestLane(_lane) != RequestPriority::Low) {
-    return _lane;
-  }
-
-  // If this is a low-priority request, check if it contains a transaction id,
-  // but is not the start of an AQL query or streaming transaction.
-  // If we find out that the request is part of an already ongoing transaction,
-  // we can now increase its priority, so that ongoing transactions can proceed.
-  // However, we don't want to prioritize the start of new transactions here.
-  found = false;
-  const auto& value = _request->header(StaticStrings::kTransactionId, found);
-  if (found) {
-    auto tid = TransactionId::none();
-    size_t pos = 0;
-    try {
-      tid = TransactionId{std::stoull(value, &pos, 10)};
-    } catch (...) {
-    }
-    if (tid.isSet() && !value.ends_with(" begin") && !value.ends_with(" aql")) {
-      // increase request priority from previously LOW to now MED.
-      _lane = RequestLane::Continuation;
-    }
-  }
+  // ArangoDB-era cluster-coord behaviour upgraded Low->Continuation priority
+  // for requests carrying an ongoing transaction id in the
+  // x-serene-trx-id header. Pg-wire transactions in SereneDB stick to a
+  // single connection (no header-based correlation), so the promotion is
+  // unreachable and gone.
   return _lane;
 }
 
 void RestHandler::trackQueueStart() noexcept {
   SDB_ASSERT(SchedulerFeature::gScheduler != nullptr);
-  _statistics.SET_QUEUE_START();
 }
 
-void RestHandler::trackQueueEnd() noexcept { _statistics.SET_QUEUE_END(); }
+void RestHandler::trackQueueEnd() noexcept {}
 
 void RestHandler::trackTaskStart() noexcept {
   SDB_ASSERT(!_tracked_as_ongoing_low_prio);
@@ -160,153 +124,22 @@ void RestHandler::trackTaskEnd() noexcept {
     SDB_ASSERT(SchedulerFeature::gScheduler != nullptr);
     SchedulerFeature::gScheduler->trackEndOngoingLowPriorityTask();
     _tracked_as_ongoing_low_prio = false;
-
-    // update the time the last low priority item spent waiting in the queue.
-
-    // the queueing time is in ms
-    uint64_t queue_time_ms =
-      static_cast<uint64_t>(_statistics.ELAPSED_WHILE_QUEUED() * 1000.0);
-    SchedulerFeature::gScheduler->setLastLowPriorityDequeueTime(queue_time_ms);
   }
-}
-
-RequestStatistics::Item&& RestHandler::StealRequestStatistics() {
-  return std::move(_statistics);
-}
-
-void RestHandler::SetRequestStatistics(RequestStatistics::Item&& stat) {
-  _statistics = std::move(stat);
 }
 
 yaclib::Future<Result> RestHandler::forwardRequest(bool& forwarded) {
+  // The full forwarding path was an ArangoDB Coordinator -> DBServer hop
+  // through the cluster-internal fuerte RPC pool. SereneDB has no
+  // Coordinator role, so the function short-circuits.
   forwarded = false;
-  if (!ServerState::instance()->IsCoordinator()) {
-    return yaclib::MakeFuture<Result>();
-  }
-
-  ResultOr forward_result = forwardingTarget();
-  if (!forward_result) {
-    return yaclib::MakeFuture(std::move(forward_result).error());
-  }
-
-  auto& forward_content = *forward_result;
-  std::string server_id = std::get<0>(forward_content);
-  bool remove_header = std::get<1>(forward_content);
-
-  if (remove_header) {
-    _request->removeHeader(StaticStrings::kAuthorization);
-    _request->setUser("");
-  }
-
-  if (server_id.empty()) {
-    // no need to actually forward
-    return yaclib::MakeFuture<Result>();
-  }
-
-  NetworkFeature& nf = server().getFeature<NetworkFeature>();
-  network::ConnectionPool* pool = nf.pool();
-  if (pool == nullptr) {
-    // nullptr happens only during controlled shutdown
-    generateError(rest::ResponseCode::ServiceUnavailable, ERROR_SHUTTING_DOWN,
-                  "shutting down server");
-    return yaclib::MakeFuture<Result>(ERROR_SHUTTING_DOWN);
-  }
-  SDB_DEBUG("xxxxx", Logger::REQUESTS, "forwarding request ",
-            _request->messageId(), " to ", server_id);
-
-  forwarded = true;
-
-  const std::string& dbname = _request->databaseName();
-
-  std::map<std::string, std::string> headers{_request->headers().begin(),
-                                             _request->headers().end()};
-
-  // always remove HTTP "Connection" header, so that we don't relay
-  // "Connection: Close" or "Connection: Keep-Alive" or such
-  headers.erase(StaticStrings::kConnection);
-
-  if (headers.find(StaticStrings::kAuthorization) == headers.end()) {
-    // No authorization header is set.
-    // In this case, we have to produce a proper JWT token as authorization:
-    auto auth = AuthenticationFeature::instance();
-    if (auth != nullptr && auth->isActive()) {
-      // when in superuser mode, username is empty
-      // in this case ClusterComm will add the default superuser token
-      const std::string& username = _request->user();
-      if (!username.empty()) {
-        headers.emplace(
-          StaticStrings::kAuthorization,
-          "bearer " + fuerte::jwt::GenerateUserToken(
-                        auth->tokenCache().jwtSecret(), username));
-      }
-    }
-  }
-
-  network::RequestOptions options;
-  options.database = dbname;
-  options.timeout = network::Timeout(900);
-
-  // if the type is unset JSON is used
-  options.content_type = rest::ContentTypeToString(_request->contentType());
-
-  options.accept_type =
-    rest::ContentTypeToString(_request->contentTypeResponse());
-
-  for (const auto& i : _request->values()) {
-    options.param(i.first, i.second);
-  }
-
-  auto request_type = fuerte::FromString(
-    GeneralRequest::translateMethod(_request->requestType()));
-
-  std::string_view res_payload = _request->rawPayload();
-  vpack::BufferUInt8 payload(res_payload.size());
-  payload.append(res_payload.data(), res_payload.size());
-
-  nf.trackForwardedRequest();
-
-  auto future = network::SendRequestRetry(
-    pool, "server:" + server_id, request_type, _request->requestPath(),
-    std::move(payload), options, std::move(headers));
-  auto cb = [this, server_id, self = shared_from_this()](
-              network::Response&& response) -> Result {
-    auto res = network::FuerteToSereneErrorCode(response);
-    if (res != ERROR_OK) {
-      generateError(res);
-      return res;
-    }
-
-    resetResponse(static_cast<rest::ResponseCode>(response.statusCode()));
-    _response->setContentType(
-      fuerte::ToString(response.response().contentType()));
-
-    HttpResponse* http_response = dynamic_cast<HttpResponse*>(_response.get());
-    if (_response == nullptr) {
-      SDB_THROW(ERROR_INTERNAL, "invalid response type");
-    }
-    http_response->body().Impl() = response.response().payloadAsString();
-
-    const auto& result_headers = response.response().messageHeader().meta();
-    for (const auto& it : result_headers) {
-      if (it.first == "http/1.1") {
-        // never forward this header, as the HTTP response code was already set
-        // via "resetResponse" above
-        continue;
-      }
-      _response->setHeader(it.first, it.second);
-    }
-    _response->setHeaderNC(StaticStrings::kRequestForwardedTo, server_id);
-
-    return {};
-  };
-  return std::move(future).ThenInline(cb);
+  return yaclib::MakeFuture<Result>();
 }
 
 void RestHandler::handleExceptionPtr(std::exception_ptr eptr) noexcept try {
   auto build_exception = [this](ErrorCode code, std::string message,
                                 std::source_location location) {
 #ifdef SDB_DEV
-    SDB_WARN("xxxxx", sdb::Logger::FIXME, "maintainer mode: ", message);
+    SDB_WARN(GENERAL, "maintainer mode: ", message);
 #endif
     Exception err(code, std::move(message), location);
     handleError(err);
@@ -363,8 +196,7 @@ void RestHandler::runHandlerStateMachine() {
         executeEngine(/*isContinue*/ false);
         if (_state == HandlerState::Paused) {
           shutdownExecute(false);
-          SDB_DEBUG("xxxxx", Logger::COMMUNICATION,
-                    "Pausing rest handler execution ",
+          SDB_DEBUG(HTTP, "Pausing rest handler execution ",
                     std::bit_cast<size_t>(this));
           return;  // stop state machine
         }
@@ -375,8 +207,7 @@ void RestHandler::runHandlerStateMachine() {
         executeEngine(/*isContinue*/ true);
         if (_state == HandlerState::Paused) {
           shutdownExecute(/*isFinalized*/ false);
-          SDB_DEBUG("xxxxx", Logger::COMMUNICATION,
-                    "Pausing rest handler execution ",
+          SDB_DEBUG(HTTP, "Pausing rest handler execution ",
                     std::bit_cast<size_t>(this));
           return;  // stop state machine
         }
@@ -384,15 +215,12 @@ void RestHandler::runHandlerStateMachine() {
       }
 
       case HandlerState::Paused:
-        SDB_DEBUG("xxxxx", Logger::COMMUNICATION,
-                  "Resuming rest handler execution ",
+        SDB_DEBUG(HTTP, "Resuming rest handler execution ",
                   std::bit_cast<size_t>(this));
         _state = HandlerState::Continued;
         break;
 
       case HandlerState::Finalize:
-        _statistics.SET_REQUEST_END();
-
         // shutdownExecute is noexcept
         shutdownExecute(true);  // may not be moved down
 
@@ -400,13 +228,10 @@ void RestHandler::runHandlerStateMachine() {
 
         // compress response if required
         compressResponse();
-        // Callback may stealStatistics!
         _send_response_callback(this);
         break;
 
       case HandlerState::Failed:
-        _statistics.SET_REQUEST_END();
-        // Callback may stealStatistics!
         _send_response_callback(this);
 
         shutdownExecute(false);
@@ -419,9 +244,6 @@ void RestHandler::runHandlerStateMachine() {
 }
 
 void RestHandler::prepareEngine() {
-  // set end immediately so we do not get negative statistics
-  _statistics.SET_REQUEST_START_END();
-
   if (_canceled) {
     _state = HandlerState::Failed;
 
@@ -489,15 +311,14 @@ void RestHandler::executeEngine(bool is_continue) {
     return;
   } catch (const Exception& ex) {
 #ifdef SDB_DEV
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
-             "maintainer mode: caught exception in ", name(), ": ", ex.what());
+    SDB_WARN(GENERAL, "maintainer mode: caught exception in ", name(), ": ",
+             ex.what());
 #endif
     handleError(ex);
   } catch (const vpack::Exception& ex) {
 #ifdef SDB_DEV
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
-             "maintainer mode: caught vpack exception in ", name(), ": ",
-             ex.what());
+    SDB_WARN(GENERAL, "maintainer mode: caught vpack exception in ", name(),
+             ": ", ex.what());
 #endif
     const bool is_parse_error =
       (ex.errorCode() == vpack::Exception::kParseError ||
@@ -508,24 +329,22 @@ void RestHandler::executeEngine(bool is_continue) {
     handleError(err);
   } catch (const std::bad_alloc& ex) {
 #ifdef SDB_DEV
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
-             "maintainer mode: caught memory exception in ", name(), ": ",
-             ex.what());
+    SDB_WARN(GENERAL, "maintainer mode: caught memory exception in ", name(),
+             ": ", ex.what());
 #endif
     Exception err(ERROR_OUT_OF_MEMORY, ex.what(),
                   std::source_location::current());
     handleError(err);
   } catch (const std::exception& ex) {
 #ifdef SDB_DEV
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
-             "maintainer mode: caught exception in ", name(), ": ", ex.what());
+    SDB_WARN(GENERAL, "maintainer mode: caught exception in ", name(), ": ",
+             ex.what());
 #endif
     Exception err(ERROR_INTERNAL, ex.what(), std::source_location::current());
     handleError(err);
   } catch (...) {
 #ifdef SDB_DEV
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
-             "maintainer mode: caught unknown exception in ", name());
+    SDB_WARN(GENERAL, "maintainer mode: caught unknown exception in ", name());
 #endif
     Exception err(ERROR_INTERNAL, std::source_location::current());
     handleError(err);
@@ -583,7 +402,7 @@ void RestHandler::compressResponse() {
   }
 
   uint64_t threshold =
-    server().getFeature<GeneralServerFeature>().compressResponseThreshold();
+    GeneralServerFeature::instance().compressResponseThreshold();
 
   if (threshold == 0) {
     // opted out of compression by configuration

@@ -47,8 +47,7 @@ trap cleanup EXIT
 
 echo "starting ${SERENED_BIN} on port ${PORT} (tmp data dir ${TMP_DATA_DIR})"
 "${SERENED_BIN}" "${TMP_DATA_DIR}" \
-	--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
-	--log.foreground-tty true \
+	--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
 	>"${LOG}" 2>&1 &
 SERENED_PID=$!
 

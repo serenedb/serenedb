@@ -33,16 +33,11 @@
 #include "basics/result.h"
 #include "endpoint/connection_info.h"
 #include "general_server/state.h"
-#include "statistics/connection_statistics.h"
-#include "statistics/request_statistics.h"
 
 namespace sdb {
 
-class AuthenticationFeature;
-class ConnectionStatistics;
 class GeneralRequest;
 class GeneralResponse;
-class RequestStatistics;
 
 namespace rest {
 
@@ -78,13 +73,10 @@ class CommTask : public std::enable_shared_from_this<CommTask> {
   ConnectionInfo _connection_info;
   std::chrono::milliseconds _keep_alive_timeout;
 
-  // contains value of "x-serene-source"
-  std::string _request_source;
-  // whether or not the request was originated by a user (true)
-  // or if it is a cluster-internal request (false).
-  // we use this flag to save some reduce verbosity of responses
-  // (verbose user-facing HTTP response headers) in
-  // cluster-internal-only traffic.
+  // True for the single-node user-facing case; legacy cluster-internal
+  // requests (coordinator <-> DB-server) would have set this to false to
+  // skip verbose headers. Kept until the last reader (verbose-header
+  // suppression) gets pruned out.
   bool _is_user_request{true};
 };
 

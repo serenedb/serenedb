@@ -28,7 +28,7 @@
 
 #include "basics/assert.h"
 #include "basics/crc.hpp"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "iresearch/utils/bytes_utils.hpp"
 
 namespace irs {
@@ -340,13 +340,12 @@ IndexInput::ptr MemoryDirectory::open(std::string_view name,
     return std::make_unique<MemoryIndexInput>(*it->second);
   }
   SDB_ERROR(
-    "xxxxx", sdb::Logger::IRESEARCH,
+    IRESEARCH,
     absl::StrCat("Failed to open input file, error: File not found, path: ",
                  name));
   return nullptr;
 } catch (...) {
-  SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-            absl::StrCat("Failed to open input file, path: ", name));
+  SDB_ERROR(IRESEARCH, absl::StrCat("Failed to open input file, path: ", name));
   return nullptr;
 }
 

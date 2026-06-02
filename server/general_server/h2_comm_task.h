@@ -59,8 +59,7 @@ class H2CommTask final : public GeneralCommTask<T> {
   bool ReadCallback(asio_ns::error_code ec) final;
   void SetIOTimeout() final;
 
-  void SendResponse(std::unique_ptr<GeneralResponse> response,
-                    RequestStatistics::Item stat) final;
+  void SendResponse(std::unique_ptr<GeneralResponse> response) final;
 
   std::unique_ptr<GeneralResponse> CreateResponse(rest::ResponseCode,
                                                   uint64_t message_id) final;

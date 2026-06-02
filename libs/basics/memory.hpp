@@ -26,7 +26,7 @@
 #include <memory>
 
 #include "basics/assert.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/math_utils.hpp"
 #include "basics/noncopyable.hpp"
 #include "basics/resource_manager.hpp"
@@ -39,9 +39,6 @@ constexpr size_t AlignUp(size_t size, size_t alignment) noexcept {
   SDB_ASSERT(math::IsPower2(alignment));
   return (size + alignment - 1) & (0 - alignment);
 }
-
-// Dump memory statistics and stack trace to stderr
-void DumpMemStatsTrace() noexcept;
 
 template<typename Alloc>
 class AllocatorDeallocator {

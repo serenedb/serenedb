@@ -100,8 +100,7 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
   const auto missing_ok = args[1].GetValue<bool>();
 
   auto& conn_ctx = GetSereneDBContext(context);
-  auto& catalog_feature =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+  auto& catalog_feature = catalog::CatalogFeature::instance();
   auto& catalog = catalog_feature.Global();
 
   auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);

@@ -23,6 +23,7 @@
 
 #include "general_server/comm_task.h"
 #include "general_server/generic_comm_task.h"
+#include "rest/common_defines.h"
 
 namespace sdb::rest {
 
@@ -72,17 +73,9 @@ class GeneralCommTask : public GenericCommTask<T, CommTask> {
   ~GeneralCommTask() override = default;
 
   /// send the response to the client.
-  virtual void SendResponse(std::unique_ptr<GeneralResponse>,
-                            RequestStatistics::Item) = 0;
-  void SetRequestStatistics(uint64_t id, RequestStatistics::Item&& stat);
+  virtual void SendResponse(std::unique_ptr<GeneralResponse>) = 0;
 
  protected:
-  [[nodiscard]] ConnectionStatistics::Item AcquireConnectionStatistics();
-  [[nodiscard]] RequestStatistics::ItemView AcquireRequestStatistics(
-    uint64_t id);
-  [[nodiscard]] RequestStatistics::ItemView GetRequestStatistics(uint64_t id);
-  [[nodiscard]] RequestStatistics::Item StealRequestStatistics(uint64_t id);
-
   virtual std::unique_ptr<GeneralResponse> CreateResponse(
     rest::ResponseCode, uint64_t message_id) = 0;
 
@@ -136,9 +129,7 @@ class GeneralCommTask : public GenericCommTask<T, CommTask> {
     std::string_view protocol,
     const containers::FlatHashMap<std::string, std::string>& headers) const;
 
-  AuthenticationFeature* _auth;
   bool _writing;
-  ConnectionStatistics::Item _connection_statistics;
 
  private:
   ////////////////////////////////////////////////////////////////////////////////
@@ -146,9 +137,6 @@ class GeneralCommTask : public GenericCommTask<T, CommTask> {
   ///        exceptions for /_api/users to allow logins without authorization
   ////////////////////////////////////////////////////////////////////////////////
   Flow CanAccessPath(const auth::TokenCache::Entry&, GeneralRequest&) const;
-
-  mutable absl::Mutex _statistics_mutex;
-  containers::FlatHashMap<uint64_t, RequestStatistics::Item> _statistics_map;
 };
 
 }  // namespace sdb::rest

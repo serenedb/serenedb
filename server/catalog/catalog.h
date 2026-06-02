@@ -350,21 +350,16 @@ struct LogicalCatalog {
   virtual std::shared_ptr<const Snapshot> GetCatalogSnapshot() const = 0;
 };
 
-class CatalogFeature final : public SerenedFeature {
+class CatalogFeature final {
  public:
-  static constexpr std::string_view name() noexcept { return "Catalog"; }
+  inline static CatalogFeature* gInstance = nullptr;
+  static CatalogFeature& instance() noexcept { return *gInstance; }
 
-  explicit CatalogFeature(Server& server);
+  CatalogFeature();
+  ~CatalogFeature();
 
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
-  void start() final;
-  void unprepare() final;
-  void prepare() final;
-
-  void Cleanup() {
-    _local.reset();
-    _global.reset();
-  }
+  void start();
+  void stop() {}
 
   Result Open();
 
@@ -386,7 +381,6 @@ class CatalogFeature final : public SerenedFeature {
  private:
   std::shared_ptr<LogicalCatalog> _global;
   std::shared_ptr<LogicalCatalog> _local;
-  bool _skip_background_errors = false;
 };
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id);

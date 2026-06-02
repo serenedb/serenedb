@@ -23,6 +23,8 @@
 
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 #include <rocksdb/advanced_cache.h>
 #include <rocksdb/convenience.h>
 #include <rocksdb/db.h>
@@ -38,6 +40,8 @@
 #include <rocksdb/transaction_log.h>
 #include <rocksdb/utilities/transaction_db.h>
 #include <rocksdb/write_batch.h>
+#include <sys/statvfs.h>
+#include <unistd.h>
 #include <vpack/builder.h>
 #include <vpack/collection.h>
 #include <vpack/iterator.h>
@@ -50,13 +54,10 @@
 #include <iomanip>
 #include <limits>
 #include <memory>
+#include <system_error>
 #include <utility>
 
 #include "app/app_server.h"
-#include "app/language.h"
-#include "app/options/parameters.h"
-#include "app/options/program_options.h"
-#include "app/options/section.h"
 #include "basics/application-exit.h"
 #include "basics/assert.h"
 #include "basics/build.h"
@@ -66,13 +67,11 @@
 #include "basics/exceptions.h"
 #include "basics/exitcodes.h"
 #include "basics/file_utils.h"
-#include "basics/files.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/result.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "basics/system-compiler.h"
-#include "basics/system-functions.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "catalog/function.h"
@@ -88,18 +87,9 @@
 #include "database/ticks.h"
 #include "general_server/rest_handler_factory.h"
 #include "general_server/scheduler_feature.h"
-#include "general_server/server_options_feature.h"
-#include "general_server/state.h"
-#include "metrics/counter_builder.h"
-#include "metrics/gauge_builder.h"
-#include "metrics/histogram_builder.h"
-#include "metrics/metric.h"
-#include "metrics/metrics_feature.h"
 #include "rest/version.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/flush_feature.h"
-#include "rest_server/serened_single.h"
-#include "rest_server/server_id_feature.h"
 #include "rocksdb_engine_catalog/listeners/rocksdb_background_error_listener.h"
 #include "rocksdb_engine_catalog/listeners/rocksdb_metrics_listener.h"
 #include "rocksdb_engine_catalog/options.h"
@@ -129,7 +119,7 @@
 namespace sdb {
 namespace {
 
-void StartupVersionCheck(SerenedServer& server, rocksdb::TransactionDB* db,
+void StartupVersionCheck(app::AppServer& server, rocksdb::TransactionDB* db,
                          bool db_existed) {
   // try to find version, using the version key
   RocksDBKeyWithBuffer<SettingsKey> version_key{RocksDBSettingsType::Version};
@@ -143,19 +133,18 @@ void StartupVersionCheck(SerenedServer& server, rocksdb::TransactionDB* db,
               version_key.GetBuffer(), &old_version);
 
     if (s.IsNotFound() || old_version.size() != 1) {
-      SDB_FATAL("xxxxx", Logger::ENGINES,
-                "Error reading stored version from database: ",
+      SDB_FATAL(STORAGE, "Error reading stored version from database: ",
                 rocksutils::ConvertStatus(s).errorMessage());
     } else if (old_version.data()[0] < kRocksDBFormatVersion) {
       // Performing 'upgrade' routine
       if (old_version.data()[0] != '0' || kRocksDBFormatVersion != '1') {
-        SDB_FATAL("xxxxx", Logger::ENGINES, "Your database is in an old ",
+        SDB_FATAL(STORAGE, "Your database is in an old ",
                   "format. Please downgrade the server, ",
                   "dump & restore the data");
       }
 
     } else if (old_version.data()[0] > kRocksDBFormatVersion) {
-      SDB_FATAL("xxxxx", Logger::ENGINES,
+      SDB_FATAL(STORAGE,
                 "You are using an old version of SereneDB, please update ",
                 "before opening this database");
     } else {
@@ -173,63 +162,35 @@ void StartupVersionCheck(SerenedServer& server, rocksdb::TransactionDB* db,
       rocksdb::Slice{&kRocksDBFormatVersion, sizeof(kRocksDBFormatVersion)});
 
     if (!s.ok()) {
-      SDB_FATAL("xxxxx", Logger::ENGINES, "Error storing endianess/version: ",
+      SDB_FATAL(STORAGE, "Error storing endianess/version: ",
                 rocksutils::ConvertStatus(s).errorMessage());
     }
   }
 }
 
-}  // namespace
+bool QueryDiskSpace(const char* path, uint64_t& total, uint64_t& free) {
+  std::error_code ec;
+  auto s = std::filesystem::space(path, ec);
+  if (ec) {
+    return false;
+  }
+  total = s.capacity;
+  // Match historical semantics: root sees `free`; everyone else `available`.
+  free = (geteuid() == 0) ? s.free : s.available;
+  return true;
+}
 
-DECLARE_GAUGE(rocksdb_wal_released_tick_flush, uint64_t,
-              "Released tick for RocksDB WAL deletion (flush-induced)");
-DECLARE_GAUGE(rocksdb_wal_sequence, uint64_t, "Current RocksDB WAL sequence");
-DECLARE_GAUGE(
-  rocksdb_wal_sequence_lower_bound, uint64_t,
-  "RocksDB WAL sequence number until which background thread has caught up");
-DECLARE_GAUGE(rocksdb_live_wal_files, uint64_t,
-              "Number of live RocksDB WAL files");
-DECLARE_GAUGE(rocksdb_live_wal_files_size, uint64_t,
-              "Cumulated size of live RocksDB WAL files");
-DECLARE_GAUGE(rocksdb_archived_wal_files, uint64_t,
-              "Number of archived RocksDB WAL files");
-DECLARE_GAUGE(rocksdb_archived_wal_files_size, uint64_t,
-              "Cumulated size of archived RocksDB WAL files");
-DECLARE_GAUGE(rocksdb_prunable_wal_files, uint64_t,
-              "Number of prunable RocksDB WAL files");
-DECLARE_GAUGE(rocksdb_wal_pruning_active, uint64_t,
-              "Whether or not RocksDB WAL file pruning is active");
-DECLARE_GAUGE(serenedb_revision_tree_memory_usage, uint64_t,
-              "Total memory consumed by all revision trees");
-DECLARE_GAUGE(
-  serenedb_revision_tree_buffered_memory_usage, uint64_t,
-  "Total memory consumed by buffered updates for all revision trees");
-DECLARE_GAUGE(serenedb_index_estimates_memory_usage, uint64_t,
-              "Total memory consumed by all index selectivity estimates");
-DECLARE_COUNTER(serenedb_revision_tree_rebuilds_success_total,
-                "Number of successful revision tree rebuilds");
-DECLARE_COUNTER(serenedb_revision_tree_rebuilds_failure_total,
-                "Number of failed revision tree rebuilds");
-DECLARE_COUNTER(serenedb_revision_tree_hibernations_total,
-                "Number of revision tree hibernations");
-DECLARE_COUNTER(serenedb_revision_tree_resurrections_total,
-                "Number of revision tree resurrections");
-DECLARE_COUNTER(rocksdb_cache_edge_inserts_uncompressed_entries_size_total,
-                "Total gross memory size of all edge cache entries ever stored "
-                "in memory");
-DECLARE_COUNTER(rocksdb_cache_edge_inserts_effective_entries_size_total,
-                "Total effective memory size of all edge cache entries ever "
-                "stored in memory (after compression)");
-DECLARE_GAUGE(rocksdb_cache_edge_compression_ratio, double,
-              "Overall compression ratio for all edge cache entries ever "
-              "stored in memory");
-DECLARE_COUNTER(rocksdb_cache_edge_inserts_total,
-                "Number of inserts into the edge cache");
-DECLARE_COUNTER(rocksdb_cache_edge_compressed_inserts_total,
-                "Number of compressed inserts into the edge cache");
-DECLARE_COUNTER(
-  rocksdb_cache_edge_empty_inserts_total,
-  "Number of inserts into the edge cache that were an empty array");
+bool QueryINodes(const char* path, uint64_t& total, uint64_t& free) {
+  struct statvfs st;
+  if (statvfs(path, &st) != 0) {
+    return false;
+  }
+  total = static_cast<uint64_t>(st.f_files);
+  free = static_cast<uint64_t>(st.f_ffree);
+  return true;
+}
+
+}  // namespace
 
 // global flag to cancel all compactions. will be flipped to true on shutdown
 static std::atomic_bool gCancelCompactions = false;
@@ -238,12 +199,12 @@ RocksDBFilePurgePreventer::RocksDBFilePurgePreventer(
   RocksDBEngineCatalog* engine)
   : _engine(engine) {
   SDB_ASSERT(_engine != nullptr);
-  _engine->_purge_lock.lockRead();
+  _engine->_purge_lock.ReaderLock();
 }
 
 RocksDBFilePurgePreventer::~RocksDBFilePurgePreventer() {
   if (_engine != nullptr) {
-    _engine->_purge_lock.unlockRead();
+    _engine->_purge_lock.ReaderUnlock();
   }
 }
 
@@ -258,7 +219,7 @@ RocksDBFilePurgeEnabler::RocksDBFilePurgeEnabler(RocksDBEngineCatalog* engine)
   : _engine(nullptr) {
   SDB_ASSERT(engine != nullptr);
 
-  if (engine->_purge_lock.tryLockWrite()) {
+  if (engine->_purge_lock.WriterTryLock()) {
     // we got the lock
     _engine = engine;
   }
@@ -266,7 +227,7 @@ RocksDBFilePurgeEnabler::RocksDBFilePurgeEnabler(RocksDBEngineCatalog* engine)
 
 RocksDBFilePurgeEnabler::~RocksDBFilePurgeEnabler() {
   if (_engine != nullptr) {
-    _engine->_purge_lock.unlockWrite();
+    _engine->_purge_lock.WriterUnlock();
   }
 }
 
@@ -280,14 +241,10 @@ RocksDBFilePurgeEnabler::RocksDBFilePurgeEnabler(
 Result DeleteDefinition(rocksdb::DB* db, auto&& make_key,
                         auto&& make_log_value) {
   rocksdb::WriteBatch batch;
-  if (ServerState::instance()->IsSingle()) {
-    // No need to write DDL events in cluster mode,
-    // as they are not replicated.
-    auto log_value = make_log_value();
+  auto log_value = make_log_value();
 
-    if (!log_value.empty()) [[likely]] {
-      batch.PutLogData({log_value.data(), log_value.size()});
-    }
+  if (!log_value.empty()) [[likely]] {
+    batch.PutLogData({log_value.data(), log_value.size()});
   }
 
   auto key = make_key();
@@ -303,14 +260,10 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_key, auto&& make_value,
                        auto&& make_log_value) {
   rocksdb::WriteBatch batch;
 
-  if (ServerState::instance()->IsSingle()) {
-    // No need to write DDL events in cluster mode,
-    // as they are not replicated.
-    auto log_value = make_log_value();
+  auto log_value = make_log_value();
 
-    if (!log_value.empty()) [[likely]] {
-      batch.PutLogData({log_value.data(), log_value.size()});
-    }
+  if (!log_value.empty()) [[likely]] {
+    batch.PutLogData({log_value.data(), log_value.size()});
   }
 
   auto key = make_key();
@@ -330,14 +283,10 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_old_key,
                        auto&& make_log_value) {
   rocksdb::WriteBatch batch;
 
-  if (ServerState::instance()->IsSingle()) {
-    // No need to write DDL events in cluster mode,
-    // as they are not replicated.
-    auto log_value = make_log_value();
+  auto log_value = make_log_value();
 
-    if (!log_value.empty()) [[likely]] {
-      batch.PutLogData({log_value.data(), log_value.size()});
-    }
+  if (!log_value.empty()) [[likely]] {
+    batch.PutLogData({log_value.data(), log_value.size()});
   }
 
   auto* column = RocksDBColumnFamilyManager::get(
@@ -354,53 +303,12 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_old_key,
   return rocksutils::ConvertStatus(db->Write(wo, &batch));
 }
 
-RocksDBEngineCatalog::RocksDBEngineCatalog(SerenedServer& server)
-  : RocksDBEngineCatalog(server.getFeature<RocksDBOptionFeature>(),
-                         server.getFeature<metrics::MetricsFeature>()) {}
+RocksDBEngineCatalog::RocksDBEngineCatalog()
+  : RocksDBEngineCatalog(RocksDBOptionFeature::instance()) {}
 
 RocksDBEngineCatalog::RocksDBEngineCatalog(
-  const RocksDBOptionFeature& options_provider,
-  metrics::MetricsFeature& metrics)
-  : _options_provider(options_provider),
-    _metrics(metrics),
-    _metrics_index_estimator_memory_usage(
-      metrics.add(serenedb_index_estimates_memory_usage{})),
-    _metrics_wal_released_tick_flush(
-      metrics.add(rocksdb_wal_released_tick_flush{})),
-    _metrics_wal_sequence_lower_bound(
-      metrics.add(rocksdb_wal_sequence_lower_bound{})),
-    _metrics_live_wal_files(metrics.add(rocksdb_live_wal_files{})),
-    _metrics_archived_wal_files(metrics.add(rocksdb_archived_wal_files{})),
-    _metrics_live_wal_files_size(metrics.add(rocksdb_live_wal_files_size{})),
-    _metrics_archived_wal_files_size(
-      metrics.add(rocksdb_archived_wal_files_size{})),
-    _metrics_prunable_wal_files(metrics.add(rocksdb_prunable_wal_files{})),
-    _metrics_wal_pruning_active(metrics.add(rocksdb_wal_pruning_active{})),
-    _metrics_tree_memory_usage(
-      metrics.add(serenedb_revision_tree_memory_usage{})),
-    _metrics_tree_buffered_memory_usage(
-      metrics.add(serenedb_revision_tree_buffered_memory_usage{})),
-    _metrics_tree_rebuilds_success(
-      metrics.add(serenedb_revision_tree_rebuilds_success_total{})),
-    _metrics_tree_rebuilds_failure(
-      metrics.add(serenedb_revision_tree_rebuilds_failure_total{})),
-    _metrics_tree_hibernations(
-      metrics.add(serenedb_revision_tree_hibernations_total{})),
-    _metrics_tree_resurrections(
-      metrics.add(serenedb_revision_tree_resurrections_total{})),
-    _metrics_edge_cache_entries_size_initial(metrics.add(
-      rocksdb_cache_edge_inserts_uncompressed_entries_size_total{})),
-    _metrics_edge_cache_entries_size_effective(
-      metrics.add(rocksdb_cache_edge_inserts_effective_entries_size_total{})),
-    _metrics_edge_cache_inserts(
-      metrics.add(rocksdb_cache_edge_inserts_total{})),
-    _metrics_edge_cache_compressed_inserts(
-      metrics.add(rocksdb_cache_edge_compressed_inserts_total{})),
-    _metrics_edge_cache_empty_inserts(
-      metrics.add(rocksdb_cache_edge_empty_inserts_total{})) {
-  // inherits order from StorageEngine but requires "RocksDBOption" that is
-  // used to configure this engine
-}
+  const RocksDBOptionFeature& options_provider)
+  : _options_provider(options_provider) {}
 
 RocksDBEngineCatalog::~RocksDBEngineCatalog() {
   gRecoveryHelpers.clear();
@@ -432,16 +340,14 @@ void RocksDBEngineCatalog::shutdownRocksDBInstance() noexcept {
     // do a final WAL sync here before shutting down
     Result res = RocksDBSyncThread::sync(_db->GetBaseDB());
     if (res.fail()) {
-      SDB_WARN("xxxxx", Logger::ENGINES,
-               "could not sync RocksDB WAL: ", res.errorMessage());
+      SDB_WARN(STORAGE, "could not sync RocksDB WAL: ", res.errorMessage());
     }
 
     rocksdb::Status status = _db->Close();
 
     if (!status.ok()) {
       Result res = rocksutils::ConvertStatus(status);
-      SDB_ERROR("xxxxx", Logger::ENGINES,
-                "could not shutdown RocksDB: ", res.errorMessage());
+      SDB_ERROR(STORAGE, "could not shutdown RocksDB: ", res.errorMessage());
     }
   } catch (...) {
     // this is allowed to go wrong on shutdown
@@ -453,7 +359,7 @@ void RocksDBEngineCatalog::shutdownRocksDBInstance() noexcept {
 }
 
 void RocksDBEngineCatalog::flushOpenFilesIfRequired() {
-  if (_metrics_live_wal_files.load() <
+  if (_live_wal_files_count.load(std::memory_order_relaxed) <
       _options_provider._auto_flush_min_wal_files) {
     return;
   }
@@ -463,14 +369,13 @@ void RocksDBEngineCatalog::flushOpenFilesIfRequired() {
       (now - _auto_flush_last_executed) >=
         std::chrono::duration<double>(
           _options_provider._auto_flush_check_interval)) {
-    SDB_INFO("xxxxx", Logger::ENGINES,
+    SDB_INFO(STORAGE,
              "auto flushing RocksDB wal and column families because number of "
              "live WAL files is ",
-             _metrics_live_wal_files.load());
+             _live_wal_files_count.load(std::memory_order_relaxed));
     Result res = flushWal(/*waitForSync*/ true, /*flushColumnFamilies*/ true);
     if (res.fail()) {
-      SDB_WARN("xxxxx", Logger::ENGINES,
-               "unable to flush RocksDB wal: ", res.errorMessage());
+      SDB_WARN(STORAGE, "unable to flush RocksDB wal: ", res.errorMessage());
     }
     // set _auto_flush_last_executed regardless of whether flushing has worked
     // or not. we don't want to put too much stress onto the db
@@ -481,44 +386,40 @@ void RocksDBEngineCatalog::flushOpenFilesIfRequired() {
 // preparation phase for storage engine. can be used for internal setup.
 // the storage engine must not start any threads here or write any files
 void RocksDBEngineCatalog::prepare() {
-  _base_path =
-    SerenedServer::Instance().getFeature<DatabasePathFeature>().directory();
+  _base_path = DatabasePathFeature::instance().directory();
   SDB_ASSERT(!_base_path.empty());
 }
 
 void RocksDBEngineCatalog::verifySstFiles() const {
   SDB_ASSERT(!_path.empty());
 
-  SDB_INFO("xxxxx", Logger::STARTUP, "verifying RocksDB .sst files in path '",
-           _path, "'");
+  SDB_INFO(STARTUP, "verifying RocksDB .sst files in path '", _path, "'");
 
   rocksdb::Options options;
   rocksdb::SstFileReader sst_reader(options);
-  for (const auto& file_name : SdbFullTreeDirectory(_path.c_str())) {
-    if (!file_name.ends_with(".sst")) {
+  std::error_code ec;
+  for (auto it = std::filesystem::recursive_directory_iterator{_path, ec};
+       !ec && it != std::filesystem::recursive_directory_iterator{};
+       it.increment(ec)) {
+    if (it->path().extension() != ".sst") {
       continue;
     }
-    std::string filename = basics::file_utils::BuildFilename(_path, file_name);
+    const std::string filename = it->path().string();
     rocksdb::Status res = sst_reader.Open(filename);
     if (res.ok()) {
       res = sst_reader.VerifyChecksum();
     }
     if (!res.ok()) {
       auto result = rocksutils::ConvertStatus(res);
-      SDB_FATAL_EXIT_CODE("xxxxx", Logger::STARTUP, EXIT_SST_FILE_CHECK,
+      SDB_FATAL_EXIT_CODE(STARTUP, EXIT_SST_FILE_CHECK,
                           "error when verifying .sst file '", filename,
                           "': ", result.errorMessage());
     }
   }
 
-  SDB_INFO("xxxxx", Logger::STARTUP,
-           "verification of RocksDB .sst files in path '", _path,
+  SDB_INFO(STARTUP, "verification of RocksDB .sst files in path '", _path,
            "' completed successfully");
-  log::Flush();
-  // exit with status code = 0, without leaking
-  int exit_code = static_cast<int>(ERROR_OK);
-  gExitFunction(exit_code, nullptr);
-  exit(exit_code);
+  FatalErrorExitCode(0);
 }
 
 rocksdb::Options RocksDBEngineCatalog::makeOptions(bool is_new_dir) {
@@ -531,29 +432,22 @@ rocksdb::Options RocksDBEngineCatalog::makeOptions(bool is_new_dir) {
 }
 
 void RocksDBEngineCatalog::start() {
-  SDB_TRACE("xxxxx", Logger::ENGINES, "rocksdb version ",
-            rest::Version::getRocksDBVersion(),
+  SDB_TRACE(STORAGE, "rocksdb version ", rest::Version::getRocksDBVersion(),
             ", supported compression types: ", getCompressionSupport());
 
-  _path = SerenedServer::Instance()
-            .getFeature<DatabasePathFeature>()
-            .subdirectoryName(StaticStrings::kRocksDbEngineRoot);
+  _path = DatabasePathFeature::instance().subdirectoryName(
+    StaticStrings::kRocksDbEngineRoot);
 
   [[maybe_unused]] bool created_engine_dir = false;
   if (!basics::file_utils::IsDirectory(_path)) {
-    std::string system_error_str;
-    long error_no;
-
-    auto res = SdbCreateRecursiveDirectory(_path, error_no, system_error_str);
-
-    if (res == ERROR_OK) {
-      SDB_TRACE("xxxxx", Logger::ENGINES, "created RocksDB data directory '",
-                _path, "'");
+    std::error_code ec;
+    std::filesystem::create_directories(_path, ec);
+    if (!ec) {
+      SDB_TRACE(STORAGE, "created RocksDB data directory '", _path, "'");
       created_engine_dir = true;
     } else {
-      SDB_FATAL("xxxxx", Logger::ENGINES,
-                "unable to create RocksDB data directory '", _path,
-                "': ", system_error_str);
+      SDB_FATAL(STORAGE, "unable to create RocksDB data directory '", _path,
+                "': ", ec.message());
     }
   }
 
@@ -562,17 +456,15 @@ void RocksDBEngineCatalog::start() {
     auto bulk_insert_dir =
       std::filesystem::path(_path) / connector::kBulkInsertDir;
     auto removed = std::filesystem::remove_all(bulk_insert_dir, ec);
-    SDB_INFO_IF("xxxxx", Logger::ENGINES, removed != 0 && !ec,
-                "removed bulk insert directory '", bulk_insert_dir.c_str(),
-                "'");
+    SDB_INFO_IF(STORAGE, removed != 0 && !ec, "removed bulk insert directory '",
+                bulk_insert_dir.c_str(), "'");
   }
 
   uint64_t total_space;
   uint64_t free_space;
-  if (SdbGetDiskSpaceInfo(_path.c_str(), total_space, free_space).ok() &&
+  if (QueryDiskSpace(_path.c_str(), total_space, free_space) &&
       total_space != 0) {
-    SDB_DEBUG("xxxxx", Logger::ENGINES,
-              "total disk space for database directory mount: ",
+    SDB_DEBUG(STORAGE, "total disk space for database directory mount: ",
               basics::string_utils::FormatSize(total_space),
               ", free disk space for database directory mount: ",
               basics::string_utils::FormatSize(free_space), " (",
@@ -583,7 +475,7 @@ void RocksDBEngineCatalog::start() {
 
   _db_options = makeOptions(created_engine_dir);
 
-  SDB_TRACE("xxxxx", Logger::ENGINES, "initializing RocksDB, path: '", _path,
+  SDB_TRACE(STORAGE, "initializing RocksDB, path: '", _path,
             "', WAL directory '", _db_options.wal_dir, "'");
 
   if (_options_provider._verify_sst) {
@@ -605,7 +497,7 @@ void RocksDBEngineCatalog::start() {
   _error_listener = std::make_shared<RocksDBBackgroundErrorListener>();
   _db_options.listeners.push_back(_error_listener);
   _db_options.listeners.push_back(
-    std::make_shared<RocksDBMetricsListener>(SerenedServer::Instance()));
+    std::make_shared<RocksDBMetricsListener>(app::AppServer::Instance()));
 
   // create column families
   std::vector<rocksdb::ColumnFamilyDescriptor> cf_families;
@@ -622,8 +514,7 @@ void RocksDBEngineCatalog::start() {
 
   bool db_existed = checkExistingDB(cf_families);
 
-  SDB_DEBUG("xxxxx", Logger::STARTUP, "opening RocksDB instance in '", _path,
-            "'");
+  SDB_DEBUG(STARTUP, "opening RocksDB instance in '", _path, "'");
 
   std::vector<rocksdb::ColumnFamilyHandle*> cf_handles;
 
@@ -638,17 +529,16 @@ void RocksDBEngineCatalog::start() {
         "NFS?)";
     }
 
-    SDB_FATAL("xxxxx", Logger::STARTUP,
+    SDB_FATAL(STARTUP,
               "unable to initialize RocksDB engine: ", status.ToString(),
               error);
   }
   if (cf_families.size() != cf_handles.size()) {
-    SDB_FATAL("xxxxx", Logger::STARTUP,
-              "unable to initialize RocksDB column families");
+    SDB_FATAL(STARTUP, "unable to initialize RocksDB column families");
   }
   if (cf_handles.size() <
       RocksDBColumnFamilyManager::kMinNumberOfColumnFamilies) {
-    SDB_FATAL("xxxxx", Logger::STARTUP,
+    SDB_FATAL(STARTUP,
               "unexpected number of column families found in database. got ",
               cf_handles.size(), ", expecting at least ",
               RocksDBColumnFamilyManager::kMinNumberOfColumnFamilies);
@@ -673,7 +563,7 @@ void RocksDBEngineCatalog::start() {
       RocksDBColumnFamilyManager::Family::Sequences)]);
 
   // will crash the process if version does not match
-  StartupVersionCheck(SerenedServer::Instance(), _db, db_existed);
+  StartupVersionCheck(app::AppServer::Instance(), _db, db_existed);
 
   _db_existed = db_existed;
 
@@ -687,24 +577,13 @@ void RocksDBEngineCatalog::start() {
   _db->SetDBOptions({{"max_total_wal_size",
                       std::to_string(_options_provider.maxTotalWalSize())}});
 
-  {
-    auto& feature = SerenedServer::Instance().getFeature<FlushFeature>();
-    _use_released_tick = feature.isEnabled();
-  }
-
-  // useReleasedTick should be true on DB servers and single servers
-  SDB_ASSERT((ServerState::instance()->IsCoordinator() ||
-              ServerState::instance()->IsAgent()) ||
-             _use_released_tick);
+  _use_released_tick = true;  // FlushFeature is always present + enabled
 
   if (_options_provider._sync_interval > 0) {
     _sync_thread = std::make_unique<RocksDBSyncThread>(
       *this, std::chrono::milliseconds(_options_provider._sync_interval),
       std::chrono::milliseconds(_options_provider._sync_delay_threshold));
-    if (!_sync_thread->start()) {
-      SDB_FATAL("xxxxx", Logger::ENGINES,
-                "could not start rocksdb sync thread");
-    }
+    _sync_thread->start();
   }
 
   SDB_ASSERT(_db != nullptr);
@@ -714,16 +593,13 @@ void RocksDBEngineCatalog::start() {
   const double counter_sync_seconds = 2.5;
   _background_thread =
     std::make_unique<RocksDBBackgroundThread>(*this, counter_sync_seconds);
-  if (!_background_thread->start()) {
-    SDB_FATAL("xxxxx", Logger::ENGINES,
-              "could not start rocksdb counter manager thread");
-  }
+  _background_thread->start();
 
   EnsureSystemDatabase();
 
   // to populate initial health check data
   if (auto hd = healthCheck(); hd.res.fail()) {
-    SDB_ERROR("xxxxx", Logger::ENGINES, hd.res.errorMessage());
+    SDB_ERROR(STORAGE, hd.res.errorMessage());
   }
 
   // make an initial inventory of WAL files, so that all WAL files
@@ -747,63 +623,25 @@ void RocksDBEngineCatalog::stop() {
     if (_settings_manager) {
       auto sync_res = _settings_manager->sync(/*force*/ true);
       if (!sync_res) {
-        SDB_WARN("xxxxx", Logger::ENGINES,
+        SDB_WARN(STORAGE,
                  "caught exception while shutting down RocksDB engine: ",
                  sync_res.error().errorMessage());
       }
     }
 
-    // wait until background thread stops
-    while (_background_thread->isRunning()) {
-      std::this_thread::yield();
-    }
+    // jthread joins on reset() via ~RocksDBBackgroundThread()
     _background_thread.reset();
   }
 
   if (_sync_thread) {
     // _sync_thread may be a nullptr, in case automatic syncing is turned off
     _sync_thread->beginShutdown();
-
-    // wait until sync thread stops
-    while (_sync_thread->isRunning()) {
-      std::this_thread::yield();
-    }
+    // jthread joins on reset() via ~RocksDBSyncThread()
     _sync_thread.reset();
   }
 }
 
 void RocksDBEngineCatalog::unprepare() { shutdownRocksDBInstance(); }
-
-void RocksDBEngineCatalog::trackRevisionTreeHibernation() noexcept {
-  ++_metrics_tree_hibernations;
-}
-
-void RocksDBEngineCatalog::trackRevisionTreeResurrection() noexcept {
-  ++_metrics_tree_resurrections;
-}
-
-void RocksDBEngineCatalog::trackRevisionTreeMemoryIncrease(
-  uint64_t value) noexcept {
-  _metrics_tree_memory_usage.fetch_add(value);
-}
-
-void RocksDBEngineCatalog::trackRevisionTreeMemoryDecrease(
-  uint64_t value) noexcept {
-  [[maybe_unused]] auto old = _metrics_tree_memory_usage.fetch_sub(value);
-  SDB_ASSERT(old >= value);
-}
-
-void RocksDBEngineCatalog::trackRevisionTreeBufferedMemoryIncrease(
-  uint64_t value) noexcept {
-  _metrics_tree_buffered_memory_usage.fetch_add(value);
-}
-
-void RocksDBEngineCatalog::trackRevisionTreeBufferedMemoryDecrease(
-  uint64_t value) noexcept {
-  [[maybe_unused]] auto old =
-    _metrics_tree_buffered_memory_usage.fetch_sub(value);
-  SDB_ASSERT(old >= value);
-}
 
 bool RocksDBEngineCatalog::hasBackgroundError() const {
   return _error_listener != nullptr && _error_listener->Called();
@@ -847,15 +685,11 @@ std::string RocksDBEngineCatalog::versionFilename(ObjectId id) const {
 void RocksDBEngineCatalog::cleanupReplicationContexts() {}
 
 RecoveryState RocksDBEngineCatalog::recoveryState() noexcept {
-  return SerenedServer::Instance()
-    .getFeature<RocksDBRecoveryManager>()
-    .recoveryState();
+  return RocksDBRecoveryManager::instance().recoveryState();
 }
 
 Tick RocksDBEngineCatalog::recoveryTick() noexcept {
-  return SerenedServer::Instance()
-    .getFeature<RocksDBRecoveryManager>()
-    .recoverySequenceNumber();
+  return RocksDBRecoveryManager::instance().recoverySequenceNumber();
 }
 
 Result RocksDBEngineCatalog::SyncTableShard(const TableShard& shard) {
@@ -922,7 +756,7 @@ Result RocksDBEngineCatalog::flushWal(bool wait_for_sync,
 
 void RocksDBEngineCatalog::waitForEstimatorSync() {
   // release all unused ticks from flush feature
-  SerenedServer::Instance().getFeature<FlushFeature>().releaseUnusedTicks();
+  FlushFeature::instance().releaseUnusedTicks();
 
   // force-flush
   std::ignore = _settings_manager->sync(/*force*/ true);
@@ -950,34 +784,18 @@ void RocksDBEngineCatalog::determineWalFilesInitial() {
   rocksdb::VectorLogPtr files;
   auto status = _db->GetSortedWalFiles(files);
   if (!status.ok()) {
-    SDB_WARN("xxxxx", Logger::ENGINES,
-             "could not get WAL files: ", status.ToString());
+    SDB_WARN(STORAGE, "could not get WAL files: ", status.ToString());
     return;
   }
 
   size_t live_files = 0;
-  size_t archived_files = 0;
-  uint64_t live_files_size = 0;
-  uint64_t archived_files_size = 0;
   for (size_t current = 0; current < files.size(); current++) {
     const auto& f = files[current].get();
-
-    if (f->Type() == rocksdb::WalFileType::kArchivedLogFile) {
-      ++archived_files;
-      archived_files_size += f->SizeFileBytes();
-    } else if (f->Type() == rocksdb::WalFileType::kAliveLogFile) {
+    if (f->Type() == rocksdb::WalFileType::kAliveLogFile) {
       ++live_files;
-      live_files_size += f->SizeFileBytes();
     }
   }
-  _metrics_wal_sequence_lower_bound.store(
-    _settings_manager->earliestSeqNeeded(), std::memory_order_relaxed);
-  _metrics_live_wal_files.store(live_files, std::memory_order_relaxed);
-  _metrics_archived_wal_files.store(archived_files, std::memory_order_relaxed);
-  _metrics_live_wal_files_size.store(live_files_size,
-                                     std::memory_order_relaxed);
-  _metrics_archived_wal_files_size.store(archived_files_size,
-                                         std::memory_order_relaxed);
+  _live_wal_files_count.store(live_files, std::memory_order_relaxed);
 }
 
 void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
@@ -993,7 +811,7 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
       static_cast<uint64_t>(basics::string_utils::Int64(v));
   }
 
-  SDB_DEBUG("xxxxx", Logger::ENGINES,
+  SDB_DEBUG(STORAGE,
             "determining prunable WAL files, minTickToKeep: ", min_tick_to_keep,
             ", minTickExternal: ", min_tick_external,
             ", releasedTick: ", _released_tick,
@@ -1003,8 +821,7 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
   rocksdb::VectorLogPtr files;
   auto status = _db->GetSortedWalFiles(files);
   if (!status.ok()) {
-    SDB_WARN("xxxxx", Logger::ENGINES,
-             "could not get WAL files: ", status.ToString());
+    SDB_WARN(STORAGE, "could not get WAL files: ", status.ToString());
     return;
   }
 
@@ -1023,8 +840,8 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
     if (f->Type() == rocksdb::WalFileType::kAliveLogFile) {
       ++live_files;
       live_files_size += f->SizeFileBytes();
-      SDB_TRACE("xxxxx", Logger::ENGINES, "live WAL file #", current, "/",
-                files.size(), ", filename: '", f->PathName(),
+      SDB_TRACE(STORAGE, "live WAL file #", current, "/", files.size(),
+                ", filename: '", f->PathName(),
                 "', start sequence: ", f->StartSequence());
       continue;
     }
@@ -1053,20 +870,20 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
         // still need
         eligible_step2 = true;
 
-        double stamp =
-          utilities::GetMicrotime() + _options_provider._prune_wait_time;
+        double stamp = absl::ToDoubleSeconds(absl::Now() - absl::UnixEpoch()) +
+                       _options_provider._prune_wait_time;
         const auto [it, emplaced] =
           _prunable_wal_files.try_emplace(f->PathName(), stamp);
 
         if (emplaced) {
-          SDB_DEBUG("xxxxx", Logger::ENGINES, "RocksDB WAL file '",
-                    f->PathName(), "' with start sequence ", f->StartSequence(),
+          SDB_DEBUG(STORAGE, "RocksDB WAL file '", f->PathName(),
+                    "' with start sequence ", f->StartSequence(),
                     ", expire stamp ", stamp,
                     " added to prunable list because it is not needed anymore");
           SDB_ASSERT(it != _prunable_wal_files.end());
         } else {
-          SDB_TRACE("xxxxx", Logger::ENGINES, "unable to add WAL file #",
-                    current, "/", files.size(), ", filename: '", f->PathName(),
+          SDB_TRACE(STORAGE, "unable to add WAL file #", current, "/",
+                    files.size(), ", filename: '", f->PathName(),
                     "', start sequence: ", f->StartSequence(),
                     " to list of prunable WAL files. file already present in "
                     "list "
@@ -1076,16 +893,14 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
       }
     }
 
-    SDB_TRACE("xxxxx", Logger::ENGINES, "inspected WAL file #", current, "/",
-              files.size(), ", filename: '", f->PathName(),
-              "', start sequence: ", f->StartSequence(),
-              ", eligible step1: ", eligible_step1,
-              ", step2: ", eligible_step2);
+    SDB_TRACE(
+      STORAGE, "inspected WAL file #", current, "/", files.size(),
+      ", filename: '", f->PathName(), "', start sequence: ", f->StartSequence(),
+      ", eligible step1: ", eligible_step1, ", step2: ", eligible_step2);
   }
 
-  SDB_DEBUG("xxxxx", Logger::ENGINES, "found ", files.size(),
-            " WAL file(s), with ", live_files, " live file(s) and ",
-            archived_files, " file(s) in the archive, ",
+  SDB_DEBUG(STORAGE, "found ", files.size(), " WAL file(s), with ", live_files,
+            " live file(s) and ", archived_files, " file(s) in the archive, ",
             "number of prunable files: ", _prunable_wal_files.size(),
             ", live file size: ", live_files_size,
             ", archived file size: ", archived_files_size);
@@ -1095,10 +910,9 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
     // size of the archive is restricted, and we overflowed the limit.
 
     // print current archive size
-    SDB_TRACE(
-      "xxxxx", Logger::ENGINES,
-      "total size of the RocksDB WAL file archive: ", archived_files_size,
-      ", limit: ", _options_provider._max_wal_archive_size_limit);
+    SDB_TRACE(STORAGE, "total size of the RocksDB WAL file archive: ",
+              archived_files_size,
+              ", limit: ", _options_provider._max_wal_archive_size_limit);
 
     // we got more archived files than configured. time for purging some
     // files!
@@ -1133,9 +947,8 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
 
         // never change this id without adjusting wal-archive-size-limit tests
         // in tests/js/client/server-parameters
-        SDB_WARN("xxxxx", Logger::ENGINES,
-                 "forcing removal of RocksDB WAL file '", f->PathName(),
-                 "' with start sequence ", f->StartSequence(),
+        SDB_WARN(STORAGE, "forcing removal of RocksDB WAL file '",
+                 f->PathName(), "' with start sequence ", f->StartSequence(),
                  " because of overflowing archive. configured maximum archive "
                  "size is ",
                  _options_provider._max_wal_archive_size_limit,
@@ -1155,17 +968,7 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
     }
   }
 
-  _metrics_wal_sequence_lower_bound.store(
-    _settings_manager->earliestSeqNeeded(), std::memory_order_relaxed);
-  _metrics_live_wal_files.store(live_files, std::memory_order_relaxed);
-  _metrics_archived_wal_files.store(archived_files, std::memory_order_relaxed);
-  _metrics_live_wal_files_size.store(live_files_size,
-                                     std::memory_order_relaxed);
-  _metrics_archived_wal_files_size.store(archived_files_size,
-                                         std::memory_order_relaxed);
-  _metrics_prunable_wal_files.store(_prunable_wal_files.size(),
-                                    std::memory_order_relaxed);
-  _metrics_wal_pruning_active.store(1, std::memory_order_relaxed);
+  _live_wal_files_count.store(live_files, std::memory_order_relaxed);
 }
 
 RocksDBFilePurgePreventer RocksDBEngineCatalog::disallowPurging() noexcept {
@@ -1194,12 +997,11 @@ void RocksDBEngineCatalog::pruneWalFiles() {
        /* no hoisting */) {
     // check if WAL file is expired
     auto delete_file = purge_enabler.canPurge();
-    SDB_TRACE("xxxxx", Logger::ENGINES, "pruneWalFiles checking file '",
-              (*it).first, "', canPurge: ", delete_file);
+    SDB_TRACE(STORAGE, "pruneWalFiles checking file '", (*it).first,
+              "', canPurge: ", delete_file);
 
     if (delete_file) {
-      SDB_DEBUG("xxxxx", Logger::ENGINES, "deleting RocksDB WAL file '",
-                (*it).first, "'");
+      SDB_DEBUG(STORAGE, "deleting RocksDB WAL file '", (*it).first, "'");
       rocksdb::Status s;
       if (basics::file_utils::Exists(basics::file_utils::BuildFilename(
             _db_options.wal_dir, (*it).first))) {
@@ -1207,12 +1009,12 @@ void RocksDBEngineCatalog::pruneWalFiles() {
         // otherwise RocksDB may complain about non-existing files and log a
         // big error message
         s = _db->DeleteFile((*it).first);
-        SDB_DEBUG("xxxxx", Logger::ENGINES,
-                  "calling RocksDB DeleteFile for WAL file '", (*it).first,
+        SDB_DEBUG(STORAGE, "calling RocksDB DeleteFile for WAL file '",
+                  (*it).first,
                   "'. status: ", rocksutils::ConvertStatus(s).errorMessage());
       } else {
-        SDB_DEBUG("xxxxx", Logger::ENGINES, "to-be-deleted RocksDB WAL file '",
-                  (*it).first, "' does not exist. skipping deletion");
+        SDB_DEBUG(STORAGE, "to-be-deleted RocksDB WAL file '", (*it).first,
+                  "' does not exist. skipping deletion");
       }
       // apparently there is a case where a file was already deleted
       // but is still in _prunable_wal_files. In this case we get an invalid
@@ -1222,8 +1024,7 @@ void RocksDBEngineCatalog::pruneWalFiles() {
         continue;
       } else {
         SDB_WARN(
-          "xxxxx", Logger::ENGINES, "attempt to prune RocksDB WAL file '",
-          (*it).first,
+          STORAGE, "attempt to prune RocksDB WAL file '", (*it).first,
           "' failed with error: ", rocksutils::ConvertStatus(s).errorMessage());
       }
     }
@@ -1233,13 +1034,9 @@ void RocksDBEngineCatalog::pruneWalFiles() {
     ++it;
   }
 
-  _metrics_prunable_wal_files.store(_prunable_wal_files.size(),
-                                    std::memory_order_relaxed);
-
-  SDB_TRACE(
-    "xxxxx", Logger::ENGINES, "prune WAL files started with ", initial_size,
-    " prunable WAL files, ",
-    "current number of prunable WAL files: ", _prunable_wal_files.size());
+  SDB_TRACE(STORAGE, "prune WAL files started with ", initial_size,
+            " prunable WAL files, ", "current number of prunable WAL files: ",
+            _prunable_wal_files.size());
 }
 
 void RocksDBEngineCatalog::EnsureSystemDatabase() {
@@ -1252,7 +1049,7 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
                      });
 
   if (has_system) {
-    SDB_TRACE("xxxxx", Logger::STARTUP, "Found system database");
+    SDB_TRACE(STARTUP, "Found system database");
     return;
   }
 
@@ -1263,8 +1060,7 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
     CreateDefinition(id::kInstance, catalog::ObjectType::Database,
                      id::kSystemDB, [&](bool) { return builder.slice(); });
   if (!r.ok()) {
-    SDB_FATAL("xxxxx", Logger::STARTUP,
-              "unable to write database marker: ", r.errorMessage());
+    SDB_FATAL(STARTUP, "unable to write database marker: ", r.errorMessage());
   }
 
   catalog::SchemaOptions schema_options{
@@ -1277,8 +1073,7 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
     CreateDefinition(id::kSystemDB, catalog::ObjectType::Schema,
                      schema_options.id, [&](bool) { return builder.slice(); });
   if (!r.ok()) {
-    SDB_FATAL("xxxxx", Logger::STARTUP,
-              "unable to write schema marker: ", r.errorMessage());
+    SDB_FATAL(STARTUP, "unable to write schema marker: ", r.errorMessage());
   }
 }
 
@@ -1435,157 +1230,6 @@ Result RocksDBEngineCatalog::WriteTombstone(ObjectId parent_id, ObjectId id) {
     },
     [] { return vpack::Slice::emptyStringSlice(); },
     [] { return std::string_view{}; });
-}
-
-DECLARE_GAUGE(rocksdb_cache_active_tables, uint64_t,
-              "rocksdb_cache_active_tables");
-DECLARE_GAUGE(rocksdb_cache_allocated, uint64_t, "rocksdb_cache_allocated");
-DECLARE_GAUGE(rocksdb_cache_peak_allocated, uint64_t,
-              "rocksdb_cache_peak_allocated");
-DECLARE_GAUGE(rocksdb_cache_hit_rate_lifetime, uint64_t,
-              "rocksdb_cache_hit_rate_lifetime");
-DECLARE_GAUGE(rocksdb_cache_hit_rate_recent, uint64_t,
-              "rocksdb_cache_hit_rate_recent");
-DECLARE_GAUGE(rocksdb_cache_limit, uint64_t, "rocksdb_cache_limit");
-DECLARE_GAUGE(rocksdb_cache_unused_memory, uint64_t,
-              "rocksdb_cache_unused_memory");
-DECLARE_GAUGE(rocksdb_cache_unused_tables, uint64_t,
-              "rocksdb_cache_unused_tables");
-DECLARE_COUNTER(rocksdb_cache_migrate_tasks_total,
-                "rocksdb_cache_migrate_tasks_total");
-DECLARE_COUNTER(rocksdb_cache_free_memory_tasks_total,
-                "rocksdb_cache_free_memory_tasks_total");
-DECLARE_COUNTER(rocksdb_cache_migrate_tasks_duration_total,
-                "rocksdb_cache_migrate_tasks_duration_total");
-DECLARE_COUNTER(rocksdb_cache_free_memory_tasks_duration_total,
-                "rocksdb_cache_free_memory_tasks_duration_total");
-DECLARE_GAUGE(rocksdb_actual_delayed_write_rate, uint64_t,
-              "rocksdb_actual_delayed_write_rate");
-DECLARE_GAUGE(rocksdb_background_errors, uint64_t, "rocksdb_background_errors");
-DECLARE_GAUGE(rocksdb_base_level, uint64_t, "rocksdb_base_level");
-DECLARE_GAUGE(rocksdb_block_cache_capacity, uint64_t,
-              "rocksdb_block_cache_capacity");
-DECLARE_GAUGE(rocksdb_block_cache_pinned_usage, uint64_t,
-              "rocksdb_block_cache_pinned_usage");
-DECLARE_GAUGE(rocksdb_block_cache_usage, uint64_t, "rocksdb_block_cache_usage");
-DECLARE_GAUGE(rocksdb_block_cache_entries, uint64_t,
-              "rocksdb_block_cache_entries");
-DECLARE_GAUGE(rocksdb_block_cache_charge_per_entry, uint64_t,
-              "rocksdb_block_cache_charge_per_entry");
-DECLARE_GAUGE(rocksdb_compaction_pending, uint64_t,
-              "rocksdb_compaction_pending");
-DECLARE_GAUGE(rocksdb_compression_ratio_at_level0, uint64_t,
-              "rocksdb_compression_ratio_at_level0");
-DECLARE_GAUGE(rocksdb_compression_ratio_at_level1, uint64_t,
-              "rocksdb_compression_ratio_at_level1");
-DECLARE_GAUGE(rocksdb_compression_ratio_at_level2, uint64_t,
-              "rocksdb_compression_ratio_at_level2");
-DECLARE_GAUGE(rocksdb_compression_ratio_at_level3, uint64_t,
-              "rocksdb_compression_ratio_at_level3");
-DECLARE_GAUGE(rocksdb_compression_ratio_at_level4, uint64_t,
-              "rocksdb_compression_ratio_at_level4");
-DECLARE_GAUGE(rocksdb_compression_ratio_at_level5, uint64_t,
-              "rocksdb_compression_ratio_at_level5");
-DECLARE_GAUGE(rocksdb_compression_ratio_at_level6, uint64_t,
-              "rocksdb_compression_ratio_at_level6");
-DECLARE_GAUGE(rocksdb_cur_size_active_mem_table, uint64_t,
-              "rocksdb_cur_size_active_mem_table");
-DECLARE_GAUGE(rocksdb_cur_size_all_mem_tables, uint64_t,
-              "rocksdb_cur_size_all_mem_tables");
-DECLARE_GAUGE(rocksdb_estimate_live_data_size, uint64_t,
-              "rocksdb_estimate_live_data_size");
-DECLARE_GAUGE(rocksdb_estimate_num_keys, uint64_t, "rocksdb_estimate_num_keys");
-DECLARE_GAUGE(rocksdb_estimate_pending_compaction_bytes, uint64_t,
-              "rocksdb_estimate_pending_compaction_bytes");
-DECLARE_GAUGE(rocksdb_estimate_table_readers_mem, uint64_t,
-              "rocksdb_estimate_table_readers_mem");
-DECLARE_GAUGE(rocksdb_free_disk_space, uint64_t, "rocksdb_free_disk_space");
-DECLARE_GAUGE(rocksdb_free_inodes, uint64_t, "rocksdb_free_inodes");
-DECLARE_GAUGE(rocksdb_is_file_deletions_enabled, uint64_t,
-              "rocksdb_is_file_deletions_enabled");
-DECLARE_GAUGE(rocksdb_is_write_stopped, uint64_t, "rocksdb_is_write_stopped");
-DECLARE_GAUGE(rocksdb_live_sst_files_size, uint64_t,
-              "rocksdb_live_sst_files_size");
-DECLARE_GAUGE(rocksdb_mem_table_flush_pending, uint64_t,
-              "rocksdb_mem_table_flush_pending");
-DECLARE_GAUGE(rocksdb_min_log_number_to_keep, uint64_t,
-              "rocksdb_min_log_number_to_keep");
-DECLARE_GAUGE(rocksdb_num_deletes_active_mem_table, uint64_t,
-              "rocksdb_num_deletes_active_mem_table");
-DECLARE_GAUGE(rocksdb_num_deletes_imm_mem_tables, uint64_t,
-              "rocksdb_num_deletes_imm_mem_tables");
-DECLARE_GAUGE(rocksdb_num_entries_active_mem_table, uint64_t,
-              "rocksdb_num_entries_active_mem_table");
-DECLARE_GAUGE(rocksdb_num_entries_imm_mem_tables, uint64_t,
-              "rocksdb_num_entries_imm_mem_tables");
-DECLARE_GAUGE(rocksdb_num_files_at_level0, uint64_t,
-              "rocksdb_num_files_at_level0");
-DECLARE_GAUGE(rocksdb_num_files_at_level1, uint64_t,
-              "rocksdb_num_files_at_level1");
-DECLARE_GAUGE(rocksdb_num_files_at_level2, uint64_t,
-              "rocksdb_num_files_at_level2");
-DECLARE_GAUGE(rocksdb_num_files_at_level3, uint64_t,
-              "rocksdb_num_files_at_level3");
-DECLARE_GAUGE(rocksdb_num_files_at_level4, uint64_t,
-              "rocksdb_num_files_at_level4");
-DECLARE_GAUGE(rocksdb_num_files_at_level5, uint64_t,
-              "rocksdb_num_files_at_level5");
-DECLARE_GAUGE(rocksdb_num_files_at_level6, uint64_t,
-              "rocksdb_num_files_at_level6");
-DECLARE_GAUGE(rocksdb_num_immutable_mem_table, uint64_t,
-              "rocksdb_num_immutable_mem_table");
-DECLARE_GAUGE(rocksdb_num_immutable_mem_table_flushed, uint64_t,
-              "rocksdb_num_immutable_mem_table_flushed");
-DECLARE_GAUGE(rocksdb_num_live_versions, uint64_t, "rocksdb_num_live_versions");
-DECLARE_GAUGE(rocksdb_num_running_compactions, uint64_t,
-              "rocksdb_num_running_compactions");
-DECLARE_GAUGE(rocksdb_num_running_flushes, uint64_t,
-              "rocksdb_num_running_flushes");
-DECLARE_GAUGE(rocksdb_num_snapshots, uint64_t, "rocksdb_num_snapshots");
-DECLARE_GAUGE(rocksdb_oldest_snapshot_time, uint64_t,
-              "rocksdb_oldest_snapshot_time");
-DECLARE_GAUGE(rocksdb_size_all_mem_tables, uint64_t,
-              "rocksdb_size_all_mem_tables");
-DECLARE_GAUGE(rocksdb_total_disk_space, uint64_t, "rocksdb_total_disk_space");
-DECLARE_GAUGE(rocksdb_total_inodes, uint64_t, "rocksdb_total_inodes");
-DECLARE_GAUGE(rocksdb_total_sst_files_size, uint64_t,
-              "rocksdb_total_sst_files_size");
-DECLARE_GAUGE(rocksdb_engine_throttle_bps, uint64_t,
-              "rocksdb_engine_throttle_bps");
-DECLARE_GAUGE(rocksdb_read_only, uint64_t, "rocksdb_read_only");
-DECLARE_GAUGE(rocksdb_total_sst_files, uint64_t, "rocksdb_total_sst_files");
-DECLARE_GAUGE(rocksdb_live_blob_file_size, uint64_t,
-              "rocksdb_live_blob_file_size");
-DECLARE_GAUGE(rocksdb_live_blob_file_garbage_size, uint64_t,
-              "rocksdb_live_blob_file_garbage_size");
-DECLARE_GAUGE(rocksdb_num_blob_files, uint64_t, "rocksdb_num_blob_files");
-
-void RocksDBEngineCatalog::toPrometheus(std::string& result,
-                                        std::string_view globals,
-                                        bool ensure_whitespace) const {
-  vpack::BufferUInt8 buffer;
-  vpack::Builder stats(buffer);
-  getStatistics(stats);
-  vpack::Slice sslice = stats.slice();
-
-  SDB_ASSERT(sslice.isObject());
-  for (auto [a_key, a_value] : vpack::ObjectIterator(sslice)) {
-    if (a_value.isNumber()) {
-      std::string name = a_key.copyString();
-      std::replace(name.begin(), name.end(), '.', '_');
-      std::replace(name.begin(), name.end(), '-', '_');
-      if (!name.empty() && name.front() != 'r') {
-        // prepend name with "rocksdb_"
-        name = absl::StrCat(kEngineName, "_", name);
-      }
-
-      metrics::Metric::addInfo(result, name, /*help*/ name,
-                               name.ends_with("_total") ? "counter" : "gauge");
-      metrics::Metric::addMark(result, name, globals, "");
-      absl::StrAppend(&result, ensure_whitespace ? " " : "",
-                      a_value.getNumber<uint64_t>(), "\n");
-    }
-  }
 }
 
 void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {
@@ -1753,9 +1397,7 @@ void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {
     uint64_t total_space = 0;
     // free disk space in database directory
     uint64_t free_space = 0;
-    Result res =
-      SdbGetDiskSpaceInfo(_base_path.c_str(), total_space, free_space);
-    if (res.ok()) {
+    if (QueryDiskSpace(_base_path.c_str(), total_space, free_space)) {
       builder.add("rocksdb.free-disk-space", free_space);
       builder.add("rocksdb.total-disk-space", total_space);
     } else {
@@ -1771,9 +1413,7 @@ void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {
     uint64_t total_i_nodes = 0;
     // free inodes for database directory
     uint64_t free_i_nodes = 0;
-    Result res =
-      SdbGetINodesInfo(_base_path.c_str(), total_i_nodes, free_i_nodes);
-    if (res.ok()) {
+    if (QueryINodes(_base_path.c_str(), total_i_nodes, free_i_nodes)) {
       builder.add("rocksdb.free-inodes", free_i_nodes);
       builder.add("rocksdb.total-inodes", total_i_nodes);
     } else {
@@ -1827,9 +1467,6 @@ void RocksDBEngineCatalog::releaseTick(Tick tick) {
   if (tick > _released_tick) {
     _released_tick = tick;
     lock.unlock();
-
-    // update metric for released tick
-    _metrics_wal_released_tick_flush.store(tick, std::memory_order_relaxed);
   }
 }
 
@@ -1884,7 +1521,7 @@ HealthData RocksDBEngineCatalog::healthCheck() {
     // free disk space in database directory
     uint64_t free_space = 0;
 
-    if (SdbGetDiskSpaceInfo(_base_path.c_str(), total_space, free_space).ok() &&
+    if (QueryDiskSpace(_base_path.c_str(), total_space, free_space) &&
         total_space >= 1024 * 1024) {
       // only carry out the following if we get a disk size of at least 1MB
       // back. everything else seems to be very unreasonable and not
@@ -1914,8 +1551,7 @@ HealthData RocksDBEngineCatalog::healthCheck() {
           (now - _last_health_log_warning_timestamp >=
            std::chrono::minutes(15));
         if (last_log_warning_long_ago) {
-          SDB_WARN("xxxxx", Logger::ENGINES,
-                   "free disk space capacity is low, ",
+          SDB_WARN(STORAGE, "free disk space capacity is low, ",
                    "bytes free: ", free_space, ", % free: ",
                    absl::StrFormat("%.1f", disk_free_percentage * 100.0));
           _last_health_log_warning_timestamp = now;
@@ -1928,7 +1564,7 @@ HealthData RocksDBEngineCatalog::healthCheck() {
   _last_health_check_successful = _health_data.res.ok();
 
   if (_health_data.res.fail() && last_log_message_long_ago) {
-    SDB_ERROR("xxxxx", Logger::ENGINES, _health_data.res.errorMessage());
+    SDB_ERROR(STORAGE, _health_data.res.errorMessage());
 
     // update timestamp of last log message
     _last_health_log_message_timestamp = now;
@@ -1957,7 +1593,7 @@ bool RocksDBEngineCatalog::checkExistingDB(
     Result res = rocksutils::ConvertStatus(status);
     if (res.isNot(ERROR_SERVER_IO_ERROR)) {
       // not an I/O error. so we better report the error and abort here
-      SDB_FATAL("xxxxx", Logger::STARTUP,
+      SDB_FATAL(STARTUP,
                 "unable to initialize RocksDB engine: ", res.errorMessage());
     }
   }
@@ -1974,14 +1610,12 @@ bool RocksDBEngineCatalog::checkExistingDB(
       names.append(it);
     }
 
-    SDB_DEBUG("xxxxx", Logger::STARTUP,
-              "found existing column families: ", names);
+    SDB_DEBUG(STARTUP, "found existing column families: ", names);
 
     for (const auto& it : cf_families) {
       if (!absl::c_contains(existing_column_families, it.name)) {
         SDB_FATAL(
-          "xxxxx", Logger::STARTUP, "column family '", it.name,
-          "' is missing in database",
+          STARTUP, "column family '", it.name, "' is missing in database",
           ". if you are upgrading from an earlier alpha or beta version "
           "of SereneDB, it is required to restart with a new database "
           "directory and "
@@ -1991,7 +1625,7 @@ bool RocksDBEngineCatalog::checkExistingDB(
 
     if (existing_column_families.size() <
         RocksDBColumnFamilyManager::kMinNumberOfColumnFamilies) {
-      SDB_FATAL("xxxxx", Logger::STARTUP,
+      SDB_FATAL(STARTUP,
                 "unexpected number of column families found in database (",
                 existing_column_families.size(), "). expecting at least ",
                 RocksDBColumnFamilyManager::kMinNumberOfColumnFamilies,
@@ -2010,27 +1644,6 @@ std::shared_ptr<StorageSnapshot> RocksDBEngineCatalog::currentSnapshot() {
     return std::make_shared<StorageSnapshot>(*_db);
   } else {
     return nullptr;
-  }
-}
-
-std::tuple<uint64_t, uint64_t, uint64_t, uint64_t, uint64_t>
-RocksDBEngineCatalog::getCacheMetrics() {
-  return {_metrics_edge_cache_entries_size_initial.load(),
-          _metrics_edge_cache_entries_size_effective.load(),
-          _metrics_edge_cache_inserts.load(),
-          _metrics_edge_cache_compressed_inserts.load(),
-          _metrics_edge_cache_empty_inserts.load()};
-}
-
-void RocksDBEngineCatalog::addCacheMetrics(
-  uint64_t initial, uint64_t effective, uint64_t total_inserts,
-  uint64_t total_compressed_inserts, uint64_t total_empty_inserts) noexcept {
-  if (total_inserts > 0) {
-    _metrics_edge_cache_entries_size_initial.count(initial);
-    _metrics_edge_cache_entries_size_effective.count(effective);
-    _metrics_edge_cache_inserts.count(total_inserts);
-    _metrics_edge_cache_compressed_inserts.count(total_compressed_inserts);
-    _metrics_edge_cache_empty_inserts.count(total_empty_inserts);
   }
 }
 

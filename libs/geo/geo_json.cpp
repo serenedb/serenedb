@@ -37,7 +37,7 @@
 #include <vector>
 
 #include "basics/debugging.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/string_utils.h"
 #include "geo/geo_params.h"
 #include "geo/s2/multi_point_region.h"

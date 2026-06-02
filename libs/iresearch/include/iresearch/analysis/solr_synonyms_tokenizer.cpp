@@ -31,7 +31,7 @@
 #include <utility>
 
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/result.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/string.hpp"
@@ -159,14 +159,13 @@ constexpr std::string_view kSynonymsField = "synonyms";
 
 bool ParseVPackOptions(const vpack::Slice slice, std::string& synonyms_text) {
   if (!slice.isObject()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Slice for solr_synonyms is not an object");
+    SDB_ERROR(IRESEARCH, "Slice for solr_synonyms is not an object");
     return false;
   }
 
   const auto field = slice.get(kSynonymsField);
   if (field.isNone() || !field.isString()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Missing or non-string 'synonyms' while constructing "
               "solr_synonyms from VPack arguments");
     return false;
@@ -183,7 +182,7 @@ Analyzer::ptr MakeVPack(vpack::Slice slice) {
   }
   auto state = SolrSynonymsTokenizer::MakeState(std::move(synonyms_text));
   if (!state) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Failed to parse synonyms while constructing solr_synonyms: ",
               state.error().errorMessage());
     return nullptr;
@@ -199,17 +198,16 @@ Analyzer::ptr MakeVPack(std::string_view args) {
 Analyzer::ptr MakeJson(std::string_view args) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while constructing solr_synonyms");
+      SDB_ERROR(IRESEARCH, "Null arguments while constructing solr_synonyms");
       return nullptr;
     }
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Caught error '", ex.what(),
+    SDB_ERROR(IRESEARCH, "Caught error '", ex.what(),
               "' while constructing solr_synonyms from JSON");
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught error while constructing solr_synonyms from JSON");
   }
   return nullptr;
@@ -224,7 +222,7 @@ bool NormalizeVPackConfig(vpack::Slice slice, vpack::Builder* builder) {
   // dictionary be created and surfacing the error later at use time.
   auto state = SolrSynonymsTokenizer::MakeState(synonyms_text);
   if (!state) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Failed to parse synonyms while normalizing solr_synonyms: ",
               state.error().errorMessage());
     return false;
@@ -247,8 +245,7 @@ bool NormalizeVPackConfig(std::string_view args, std::string& config) {
 bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
   try {
     if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while normalizing solr_synonyms");
+      SDB_ERROR(IRESEARCH, "Null arguments while normalizing solr_synonyms");
       return false;
     }
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
@@ -258,10 +255,10 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
       return !definition.empty();
     }
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Caught error '", ex.what(),
+    SDB_ERROR(IRESEARCH, "Caught error '", ex.what(),
               "' while normalizing solr_synonyms from JSON");
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught error while normalizing solr_synonyms from JSON");
   }
   return false;

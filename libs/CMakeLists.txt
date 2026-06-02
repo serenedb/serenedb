@@ -13,66 +13,40 @@ add_library(
     serene_base
     STATIC
     basics/encoding_utils.cpp
-    basics/number_utils.cpp
-    basics/cleanup_functions.cpp
     basics/exceptions.cpp
-    basics/file_result.cpp
     basics/file_utils.cpp
     basics/number_of_cores.cpp
-    basics/page_size.cpp
     basics/physical_memory.cpp
-    basics/read_write_lock.cpp
     basics/result.cpp
     basics/result_error.cpp
     basics/string_utils.cpp
-    basics/thread.cpp
+    basics/thread_id.cpp
     basics/static_strings.cpp
+    basics/lifecycle.cpp
     basics/application-exit.cpp
     basics/debugging.cpp
     basics/error.cpp
     basics/files.cpp
-    basics/levenshtein.cpp
-    basics/memory.cpp
-    basics/process-utils.cpp
+    basics/lockfile.cpp
     basics/signals.cpp
-    basics/system-functions.cpp
-    basics/terminal-utils-posix.cpp
-    basics/threads-posix.cpp
-    basics/strings.cpp
-    basics/zip.cpp
-    basics/datetime.cpp
-    basics/hashes.cpp
     basics/utf8_helper.cpp
-    basics/cpu_usage_snapshot.cpp
-    basics/file_descriptors.cpp
-    basics/hybrid_logical_clock.cpp
-    basics/socket-utils.cpp
-    basics/terminal-utils.cpp
     basics/thread_utils.cpp
     basics/async_utils.cpp
     basics/dtoa.cpp
     basics/bit_packing.cpp
-    basics/so_utils.cpp
     basics/file_utils_ext.cpp
-    basics/process_utils.cpp
     basics/network_utils.cpp
-    basics/memory.cpp
     basics/crash_handler.cpp
-    basics/units_helper.cpp
     basics/random/random_generator.cpp
     basics/random/uniform_character.cpp
-    basics/logger/escaper.cpp
-    basics/logger/appender.cpp
-    basics/logger/appender_file.cpp
-    basics/logger/appender_syslog.cpp
-    basics/logger/log_thread.cpp
-    basics/logger/logger.cpp
-    basics/logger/log_time_format.cpp
     basics/ssl/ssl_interface.cpp
     basics/ssl/ssl_helper.cpp
     basics/message_buffer.cpp
     basics/message_chunk.cpp
     basics/message_sequence_view.cpp
+    basics/duckdb_engine.cpp
+    basics/log.cpp
+    basics/log_flags.cpp
 )
 
 set(FUNCTION2_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/function2")
@@ -94,6 +68,8 @@ add_dependencies(serene_base errorfiles exitcodefiles)
 target_link_libraries(
     serene_base
     PUBLIC
+        absl::flags
+        absl::flags_parse
         absl::flat_hash_set
         absl::random_random
         absl::synchronization
@@ -109,10 +85,19 @@ target_link_libraries(
         zlib
         icu
         lz4_static
-        minizip
         serene_build_id
+        # The SDB_* logger hot path forwards directly to duckdb::Logger
+        # virtuals; we need duckdb's headers (and the Logger vtable) at
+        # link time. Pulled in PUBLICly so any target that uses
+        # SDB_INFO / SDB_TRACE inline gets the duckdb headers it needs.
+        duckdb_static
         ${SYSTEM_LIBRARIES}
-    PRIVATE date_interface boost_boost absl::stacktrace absl::symbolize
+    PRIVATE
+        date_interface
+        boost_boost
+        absl::stacktrace
+        absl::symbolize
+        absl::failure_signal_handler
 )
 
 ################################################################################
@@ -122,12 +107,6 @@ target_link_libraries(
 add_subdirectory(vpack EXCLUDE_FROM_ALL)
 
 target_link_libraries(vpack PUBLIC serene_base)
-
-################################################################################
-## fuerte
-################################################################################
-
-add_subdirectory(fuerte)
 
 ################################################################################
 ## iresearch
@@ -160,10 +139,7 @@ target_compile_definitions(iresearch-static PRIVATE -DDISABLE_EXECINFO)
 ## serene
 ################################################################################
 
-set(LIB_SERVER_POSIX
-    endpoint/endpoint_unix_domain.cpp
-    endpoint/endpoint_srv.cpp
-)
+set(LIB_SERVER_POSIX endpoint/endpoint_unix_domain.cpp)
 
 set(LIB_SERVER_DATE ${CMAKE_SOURCE_DIR}/third_party/date/src/tz.cpp)
 
@@ -172,20 +148,9 @@ add_library(
     STATIC
     ${LIB_SERVER_POSIX}
     ${LIB_SERVER_DATE}
-    app/app_feature.cpp
     app/app_server.cpp
-    app/global_context.cpp
-    app/config.cpp
-    app/language.cpp
-    app/shutdown.cpp
-    app/temp_path.cpp
-    app/logger_feature.cpp
+    app/init.cpp
     app/name_validator.cpp
-    app/options/ini_file_parser.cpp
-    app/options/option.cpp
-    app/options/program_options.cpp
-    app/options/section.cpp
-    app/options/translator.cpp
     endpoint/endpoint.cpp
     endpoint/endpoint_ip.cpp
     endpoint/endpoint_ip_v4.cpp
@@ -199,10 +164,7 @@ add_library(
     rest/version.cpp
 )
 
-target_link_libraries(
-    serene
-    PUBLIC s2 boost_boost vpack fuerte date_interface
-)
+target_link_libraries(serene PUBLIC s2 boost_boost vpack date_interface)
 
 # this is "."
 target_include_directories(serene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

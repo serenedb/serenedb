@@ -24,6 +24,7 @@
 
 #include <absl/container/node_hash_map.h>
 #include <absl/strings/str_cat.h>
+#include <dlfcn.h>
 
 #include <memory>
 #include <mutex>
@@ -31,9 +32,8 @@
 #include <vector>
 
 #include "basics/containers/node_hash_map.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/singleton.hpp"
-#include "basics/so_utils.hpp"
 
 namespace irs {
 
@@ -70,7 +70,7 @@ class GenericRegister : public Singleton<RegisterType> {
       return load_entry_from_so(key);
     }
 
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "key not found");
+    SDB_ERROR(IRESEARCH, "key not found");
 
     return entry_type{};
   }
@@ -98,10 +98,10 @@ class GenericRegister : public Singleton<RegisterType> {
   virtual entry_type load_entry_from_so(const key_type& key) const {
     const auto file = key_to_filename(key);
 
-    void* handle = LoadLibrary(file.c_str(), 1);
+    void* handle = ::dlopen(file.c_str(), RTLD_LAZY | RTLD_LOCAL);
 
     if (nullptr == handle) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "load failed");
+      SDB_ERROR(IRESEARCH, "load failed");
       return entry_type();
     }
 
@@ -111,12 +111,12 @@ class GenericRegister : public Singleton<RegisterType> {
     {
       std::lock_guard lock(_mutex);
 
-      this_ptr->_so_handles.emplace_back(
-        handle, [](void* h) -> void { irs::FreeLibrary(h); });
+      this_ptr->_so_handles.emplace_back(handle,
+                                         [](void* h) -> void { ::dlclose(h); });
     }
 
     if (!this_ptr->add_so_handle(handle)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 absl::StrCat("init failed in shared object : ", file));
       return entry_type();
     }
@@ -125,7 +125,7 @@ class GenericRegister : public Singleton<RegisterType> {
     // that performs registration
     const entry_type* entry = lookup(key);
     if (nullptr == entry) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 absl::StrCat("lookup failed in shared object : ", file));
       return entry_type{};
     }

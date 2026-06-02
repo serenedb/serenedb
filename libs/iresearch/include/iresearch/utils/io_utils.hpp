@@ -24,7 +24,7 @@
 
 #include <absl/strings/str_cat.h>
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/memory.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -37,11 +37,11 @@
         p->method();                                                           \
         std::default_delete<T>::operator()(p);                                 \
       } catch (const std::exception& e) {                                      \
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,                             \
+        SDB_ERROR(IRESEARCH,                                                   \
                   absl::StrCat("caught exception while closing i/o stream: '", \
                                e.what(), "'"));                                \
       } catch (...) {                                                          \
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,                             \
+        SDB_ERROR(IRESEARCH,                                                   \
                   "caught an unspecified exception while closing i/o stream"); \
       }                                                                        \
     }                                                                          \

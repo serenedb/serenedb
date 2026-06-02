@@ -25,7 +25,7 @@
 #include <chrono>
 #include <thread>
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/shared.hpp"
 #include "basics/thread_utils.hpp"
 #include "data_input.hpp"

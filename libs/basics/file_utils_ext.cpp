@@ -53,10 +53,60 @@
 
 #endif  // _WIN32
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/network_utils.hpp"
-#include "basics/process_utils.hpp"
 
+#ifdef _WIN32
+#include <Windows.h>
+#include <process.h>  // _getpid
+#include <tlhelp32.h>
+#else
+#include <unistd.h>  // getpid
+
+#include <csignal>
+#endif
+
+#include <cstdlib>
+#include <limits>
+
+namespace irs {
+
+bool IsRunning(pid_t pid) {
+#ifdef _WIN32
+  HANDLE ps = CreateToolhelp32Snapshot(TH32CS_SNAPALL, 0);
+  PROCESSENTRY32 pe = {0};
+  pe.dwSize = sizeof(pe);
+  if (Process32First(ps, &pe)) {
+    do {
+      if (pe.th32ProcessID == DWORD(pid)) {
+        CloseHandle(ps);
+        return true;
+      }
+    } while (Process32Next(ps, &pe));
+  }
+  CloseHandle(ps);
+  return false;
+#else
+  return 0 == kill(pid, 0);
+#endif
+}
+
+pid_t GetPid() {
+#ifdef _WIN32
+  return _getpid();
+#else
+  return getpid();
+#endif
+}
+
+bool IsValidPid(const char* buf) {
+  const auto pid = strtol(buf, nullptr, 10);
+  return 0 != pid && pid <= std::numeric_limits<pid_t>::max() &&
+         pid >= std::numeric_limits<pid_t>::min() &&
+         IsRunning(static_cast<pid_t>(pid));
+}
+
+}  // namespace irs
 namespace {
 
 #ifdef _WIN32
@@ -303,8 +353,7 @@ bool verify_lock_file(const path_char_t* file) {
   // check hostname
   const size_t len = strlen(buf);
   if (!is_same_hostname(buf, len)) {
-    SDB_INFO("xxxxx", sdb::Logger::IRESEARCH,
-             "Index locked by another host, hostname: '",
+    SDB_INFO(IRESEARCH, "Index locked by another host, hostname: '",
              std::string_view{buf, len}, "', file: '", ToStr(file), "'");
     return true;  // locked
   }
@@ -312,9 +361,8 @@ bool verify_lock_file(const path_char_t* file) {
   // check pid
   const char* pid = buf + len + 1;
   if (is_valid_pid(pid)) {
-    SDB_INFO("xxxxx", sdb::Logger::IRESEARCH,
-             "Index locked by another process, PID: '", pid, "', file: '",
-             ToStr(file), "'");
+    SDB_INFO(IRESEARCH, "Index locked by another process, PID: '", pid,
+             "', file: '", ToStr(file), "'");
     return true;  // locked
   }
 
@@ -345,8 +393,8 @@ lock_handle_t create_lock_file(const path_char_t* file) {
   } while ((--try_count) > 0);
 
   if (INVALID_HANDLE_VALUE == fd) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Unable to create lock file: '",
-              ToStr(file), "', error: ", GET_ERROR());
+    SDB_ERROR(IRESEARCH, "Unable to create lock file: '", ToStr(file),
+              "', error: ", GET_ERROR());
     return nullptr;
   }
 
@@ -355,29 +403,28 @@ lock_handle_t create_lock_file(const path_char_t* file) {
 
   // write hostname to lock file
   if (const int err = get_host_name(buf, sizeof buf - 1)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Unable to get hostname, error: ", err);
+    SDB_ERROR(IRESEARCH, "Unable to get hostname, error: ", err);
     return nullptr;
   }
 
   if (!file_utils::write(fd, buf, strlen(buf) + 1)) {  // include terminate 0
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Unable to write lock file: '",
-              ToStr(file), "', error: ", GET_ERROR());
+    SDB_ERROR(IRESEARCH, "Unable to write lock file: '", ToStr(file),
+              "', error: ", GET_ERROR());
     return nullptr;
   }
 
   // write PID to lock file
   const size_t size = sprintf(buf, "%d", get_pid());
   if (!file_utils::write(fd, buf, size)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Unable to write lock file: '",
-              ToStr(file), "', error: ", GET_ERROR());
+    SDB_ERROR(IRESEARCH, "Unable to write lock file: '", ToStr(file),
+              "', error: ", GET_ERROR());
     return nullptr;
   }
 
   // flush buffers
   if (::FlushFileBuffers(fd) <= 0) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Unable to flush lock file: '",
-              ToStr(file), "', error: ", GET_ERROR());
+    SDB_ERROR(IRESEARCH, "Unable to flush lock file: '", ToStr(file),
+              "', error: ", GET_ERROR());
     return nullptr;
   }
 
@@ -418,8 +465,8 @@ bool VerifyLockFile(const path_char_t* file) {
   const int fd = ::open(file, O_RDONLY);
 
   if (fd < 0) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Unable to open lock file '",
-              file, "' for verification, error: ", GET_ERROR());
+    SDB_ERROR(IRESEARCH, "Unable to open lock file '", file,
+              "' for verification, error: ", GET_ERROR());
     return false;  // not locked
   }
 
@@ -432,12 +479,10 @@ bool VerifyLockFile(const path_char_t* file) {
     // try to apply advisory lock on lock file
     if (flock(fd, LOCK_EX | LOCK_NB)) {
       if (EWOULDBLOCK == GET_ERROR()) {
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Lock file '", file,
-                  "' is already locked");
+        SDB_ERROR(IRESEARCH, "Lock file '", file, "' is already locked");
         return true;  // locked
       } else {
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                  "Unable to apply lock on lock file: '", file,
+        SDB_ERROR(IRESEARCH, "Unable to apply lock on lock file: '", file,
                   "', error: ", GET_ERROR());
         return false;  // not locked
       }
@@ -455,8 +500,7 @@ bool VerifyLockFile(const path_char_t* file) {
   // check hostname
   const size_t len = strlen(buf);  // hostname length
   if (!IsSameHostname(buf, len)) {
-    SDB_INFO("xxxxx", sdb::Logger::IRESEARCH,
-             "Index locked by another host, hostname: '",
+    SDB_INFO(IRESEARCH, "Index locked by another host, hostname: '",
              std::string_view{buf, len}, "', file: '", file, "'");
     return true;  // locked
   }
@@ -469,9 +513,8 @@ bool VerifyLockFile(const path_char_t* file) {
   // check pid
   const char* pid = buf + len + 1;
   if (IsValidPid(pid)) {
-    SDB_INFO("xxxxx", sdb::Logger::IRESEARCH,
-             "Index locked by another process, PID: '", pid, "', file: '", file,
-             "'");
+    SDB_INFO(IRESEARCH, "Index locked by another process, PID: '", pid,
+             "', file: '", file, "'");
     return true;  // locked
   }
 
@@ -482,8 +525,8 @@ lock_handle_t CreateLockFile(const path_char_t* file) {
   const int fd = ::open(file, O_CREAT | O_EXCL | O_RDWR, S_IRUSR | S_IWUSR);
 
   if (fd < 0) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Unable to create lock file: '",
-              file, "', error: ", GET_ERROR());
+    SDB_ERROR(IRESEARCH, "Unable to create lock file: '", file,
+              "', error: ", GET_ERROR());
     return nullptr;
   }
 
@@ -492,37 +535,36 @@ lock_handle_t CreateLockFile(const path_char_t* file) {
 
   // write hostname to lock file
   if (const int err = GetHostName(buf, sizeof buf - 1)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Unable to get hostname, error: ", err);
+    SDB_ERROR(IRESEARCH, "Unable to get hostname, error: ", err);
     return nullptr;
   }
 
   if (!file_utils::Write(reinterpret_cast<void*>(fd), buf,
                          strlen(buf) + 1)) {  // include terminated 0
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Unable to write lock file: '",
-              file, "', error: ", GET_ERROR());
+    SDB_ERROR(IRESEARCH, "Unable to write lock file: '", file,
+              "', error: ", GET_ERROR());
     return nullptr;
   }
 
   // write PID to lock file
   size_t size = sprintf(buf, "%d", GetPid());
   if (!file_utils::Write(reinterpret_cast<void*>(fd), buf, size)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Unable to write lock file: '",
-              file, "', error: ", GET_ERROR());
+    SDB_ERROR(IRESEARCH, "Unable to write lock file: '", file,
+              "', error: ", GET_ERROR());
     return nullptr;
   }
 
   // flush buffers
   if (fsync(fd)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Unable to write lock file: '",
-              file, "', error: ", GET_ERROR());
+    SDB_ERROR(IRESEARCH, "Unable to write lock file: '", file,
+              "', error: ", GET_ERROR());
     return nullptr;
   }
 
   // try to apply advisory lock on lock file
   if (flock(fd, LOCK_EX)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Unable to write lock file: '",
-              file, "', error: ", GET_ERROR());
+    SDB_ERROR(IRESEARCH, "Unable to write lock file: '", file,
+              "', error: ", GET_ERROR());
     return nullptr;
   }
 
@@ -532,18 +574,18 @@ lock_handle_t CreateLockFile(const path_char_t* file) {
 bool FileSync(const path_char_t* file) noexcept {
   const int handle = ::open(file, O_WRONLY);
   if (handle < 0) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Unable to open file: '", file,
+    SDB_ERROR(IRESEARCH, "Unable to open file: '", file,
               "', error: ", GET_ERROR());
     return false;
   }
   const int fsync_r = ::fsync(handle);
   if (fsync_r != 0) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Unable to fsync file: '", file,
+    SDB_ERROR(IRESEARCH, "Unable to fsync file: '", file,
               "', error: ", GET_ERROR());
   }
   const int close_r = ::close(handle);
   if (close_r != 0) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Unable to close file: '", file,
+    SDB_ERROR(IRESEARCH, "Unable to close file: '", file,
               "', error: ", GET_ERROR());
   }
   return fsync_r == 0;
@@ -640,8 +682,8 @@ bool Exists(bool& result, const path_char_t* file) noexcept {
   result = 0 == PathStats(info, file);
 
   if (!result && ENOENT != GET_ERROR()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Failed to get stat, error ",
-              GET_ERROR(), " path: ", ToStr(file));
+    SDB_ERROR(IRESEARCH, "Failed to get stat, error ", GET_ERROR(),
+              " path: ", ToStr(file));
   }
 
   return true;
@@ -660,8 +702,8 @@ bool ExistsDirectory(bool& result, const path_char_t* name) noexcept {
     result = (info.st_mode & S_IFDIR) > 0;
 #endif
   } else if (ENOENT != GET_ERROR()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Failed to get stat, error ",
-              GET_ERROR(), " path: ", ToStr(name));
+    SDB_ERROR(IRESEARCH, "Failed to get stat, error ", GET_ERROR(),
+              " path: ", ToStr(name));
   }
 
   return true;
@@ -680,8 +722,8 @@ bool ExistsFile(bool& result, const path_char_t* name) noexcept {
     result = (info.st_mode & S_IFREG) > 0;
 #endif
   } else if (ENOENT != GET_ERROR()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Failed to get stat, error ",
-              GET_ERROR(), " path: ", ToStr(name));
+    SDB_ERROR(IRESEARCH, "Failed to get stat, error ", GET_ERROR(),
+              " path: ", ToStr(name));
   }
 
   return true;
@@ -727,8 +769,8 @@ handle_t Open(const path_char_t* path, OpenMode mode, int advice) noexcept {
         CREATE_ALWAYS;  // while opening for write we infer creation
       break;
     default:
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Invalid OpenMode ",
-                static_cast<int>(mode), " specified for file ", ToStr(path));
+      SDB_ERROR(IRESEARCH, "Invalid OpenMode ", static_cast<int>(mode),
+                " specified for file ", ToStr(path));
       SDB_ASSERT(false);
       return handle_t(nullptr);
   }
@@ -766,8 +808,8 @@ handle_t Open(const path_char_t* path, OpenMode mode, int advice) noexcept {
 #endif
   auto fd = ::open(path ? path : "/dev/null", posix_mode, S_IRUSR | S_IWUSR);
   if (fd < 0) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Failed to open file, error: ", GET_ERROR(), ", path: ", path);
+    SDB_ERROR(IRESEARCH, "Failed to open file, error: ", GET_ERROR(),
+              ", path: ", path);
     return handle_t(nullptr);
   }
 #ifdef __APPLE__
@@ -797,8 +839,8 @@ handle_t Open(void* file, OpenMode mode, int advice) noexcept {
                                          VOLUME_NAME_DOS);  // -1 for \0
 
   if (!length) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Failed to get filename from file handle, error ", GET_ERROR());
+    SDB_ERROR(IRESEARCH, "Failed to get filename from file handle, error ",
+              GET_ERROR());
 
     return nullptr;
   }
@@ -808,8 +850,7 @@ handle_t Open(void* file, OpenMode mode, int advice) noexcept {
     return open(path, mode, advice);
   }
 
-  SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-           "Required file path buffer size of ", length + 1,
+  SDB_WARN(IRESEARCH, "Required file path buffer size of ", length + 1,
            " is greater than the expected size of ", size,
            ", malloc necessary");  // +1 for \0
 
@@ -824,8 +865,7 @@ handle_t Open(void* file, OpenMode mode, int advice) noexcept {
     return open(buf.get(), mode, advice);
   }
 
-  SDB_ERROR(
-    "xxxxx", sdb::Logger::IRESEARCH,
+  SDB_ERROR(IRESEARCH,
    "Failed to get filename from file handle, inconsistent length "
                  "detected, first ",
                  buf_size, " then ", length + 1));  // +1 for \0
@@ -843,8 +883,8 @@ handle_t Open(void* file, OpenMode mode, int advice) noexcept {
                               // MAXPATHLEN, +1 for \0
 
   if (0 > fd || 0 > fcntl(fd, F_GETPATH, path)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Failed to get file path from file handle, error ", GET_ERROR());
+    SDB_ERROR(IRESEARCH, "Failed to get file path from file handle, error ",
+              GET_ERROR());
     return nullptr;
   }
 
@@ -858,7 +898,7 @@ handle_t Open(void* file, OpenMode mode, int advice) noexcept {
   char path[14 + sizeof(fd) * 3 + 1];
 
   if (0 > fd || 0 > sprintf(path, "/proc/self/fd/%d", fd)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
 
               "Failed to get system handle from file handle, error ",
               GET_ERROR());
@@ -910,9 +950,8 @@ bool Mkdir(const path_char_t* path, bool create_new) noexcept {
         // failed to create directory  or directory exist, but we are asked to
         // perform creation
 
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                  "Failed to create relative path: '", ToStr(path), "', error ",
-                  GET_ERROR());
+        SDB_ERROR(IRESEARCH, "Failed to create relative path: '", ToStr(path),
+                  "', error ", GET_ERROR());
         return false;
       }
     }
@@ -934,9 +973,8 @@ bool Mkdir(const path_char_t* path, bool create_new) noexcept {
       // failed to create directory  or directory exist, but we are asked to
       // perform creation
 
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Failed to create absolute path: '", ToStr(path), "', error ",
-                GET_ERROR());
+      SDB_ERROR(IRESEARCH, "Failed to create absolute path: '", ToStr(path),
+                "', error ", GET_ERROR());
 
       return false;
     }
@@ -946,8 +984,8 @@ bool Mkdir(const path_char_t* path, bool create_new) noexcept {
     if (GET_ERROR() != EEXIST || create_new) {
       // failed to create directory  or directory exist, but we are asked to
       // perform creation
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Failed to create path: '",
-                path, "', error ", GET_ERROR());
+      SDB_ERROR(IRESEARCH, "Failed to create path: '", path, "', error ",
+                GET_ERROR());
       return false;
     }
   }
@@ -1036,7 +1074,7 @@ bool ReadCwd(
     auto size = GetCurrentDirectory(0, nullptr);
 
     if (!size) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
 
                 "Failed to get length of the current working directory, error ",
                 GET_ERROR());
@@ -1052,7 +1090,7 @@ bool ReadCwd(
 
     // if error or more space required than available
     if (!size || size >= result.size()) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Failed to get the current working directory, error ",
                 GET_ERROR());
 
@@ -1086,7 +1124,7 @@ bool ReadCwd(
     }
 
     if (ERANGE != GET_ERROR()) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Failed to get the current working directory, error ",
                 GET_ERROR());
 
@@ -1099,7 +1137,7 @@ bool ReadCwd(
     std::unique_ptr<char, DeleterT> pcwd(getcwd(nullptr, 0));
 
     if (!pcwd) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                 "Failed to allocate the current working directory, error ",
                 GET_ERROR());
 
@@ -1111,12 +1149,12 @@ bool ReadCwd(
 
     return true;
   } catch (const std::bad_alloc& e) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Memory allocation failure while getting the "
               "current working directory: ",
               e.what());
   } catch (const std::exception& e) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
 
               "Caught exception while getting the current working directory: ",
               e.what());
@@ -1177,7 +1215,7 @@ bool Remove(const path_char_t* path) noexcept {
         SDB_DEBUG(absl::StrCat("Failed to remove path: '", ToStr(path),
                                "', error ", system_error));
       } else {
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+        SDB_ERROR(IRESEARCH,
                  "Failed to remove path: '", ToStr(path),
                                "', error ", system_error));
       }
@@ -1209,7 +1247,7 @@ bool Remove(const path_char_t* path) noexcept {
       SDB_DEBUG(absl::StrCat("Failed to remove path: '", ToStr(path),
                              "', error ", system_error));
     } else {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_ERROR(IRESEARCH,
                "Failed to remove path: '", ToStr(path),
                              "', error ", system_error));
     }
@@ -1222,11 +1260,11 @@ bool Remove(const path_char_t* path) noexcept {
   if (res) {  // non-0 == error
     if (ENOENT == GET_ERROR()) {
       // file is just not here, so we are done actually
-      SDB_DEBUG("xxxxx", sdb::Logger::IRESEARCH, "Failed to remove path: '",
-                path, "', error ", GET_ERROR());
+      SDB_DEBUG(IRESEARCH, "Failed to remove path: '", path, "', error ",
+                GET_ERROR());
     } else {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Failed to remove path: '",
-                path, "', error ", GET_ERROR());
+      SDB_ERROR(IRESEARCH, "Failed to remove path: '", path, "', error ",
+                GET_ERROR());
     }
     return false;
   }

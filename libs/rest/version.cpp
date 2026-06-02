@@ -27,6 +27,7 @@
 #include <rocksdb/version.h>
 #include <vpack/builder.h>
 
+#include <charconv>
 #include <cstdint>
 #include <sstream>
 #include <string_view>
@@ -302,7 +303,8 @@ int32_t Version::getNumericServerVersion() {
   }
 
   SDB_ASSERT(*p == '.');
-  int32_t major = number_utils::AtoiPositiveUnchecked<int32_t>(api_version, p);
+  int32_t major = 0;
+  std::from_chars(api_version, p, major);
 
   api_version = ++p;
 
@@ -312,7 +314,8 @@ int32_t Version::getNumericServerVersion() {
   }
 
   SDB_ASSERT((*p == '.' || *p == '-' || *p == '\0') && p != api_version);
-  int32_t minor = number_utils::AtoiPositiveUnchecked<int32_t>(api_version, p);
+  int32_t minor = 0;
+  std::from_chars(api_version, p, minor);
 
   int32_t patch = 0;
   if (*p == '.') {
@@ -324,7 +327,7 @@ int32_t Version::getNumericServerVersion() {
     }
 
     if (p != api_version) {
-      patch = number_utils::AtoiPositiveUnchecked<int32_t>(api_version, p);
+      std::from_chars(api_version, p, patch);
     }
   }
 

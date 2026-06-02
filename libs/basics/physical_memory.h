@@ -28,7 +28,6 @@ namespace physical_memory {
 
 /// return system's physical memory
 uint64_t GetValue();
-bool Overridden();
 
 }  // namespace physical_memory
 }  // namespace sdb

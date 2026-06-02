@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
 #include "catalog/index.h"
 #include "catalog/scorer_options.h"

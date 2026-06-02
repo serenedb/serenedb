@@ -28,7 +28,8 @@
 #include "app/app_server.h"
 #include "basics/application-exit.h"
 #include "basics/exitcodes.h"
-#include "basics/logger/logger.h"
+#include "basics/lifecycle.h"
+#include "basics/log.h"
 #include "endpoint/endpoint.h"
 #include "endpoint/endpoint_list.h"
 #include "general_server/acceptor.h"
@@ -48,25 +49,16 @@ int ClientHelloCallback(SSL* ssl, int* al, void* arg) { return 1; }
 }  // namespace
 
 GeneralServer::GeneralServer(GeneralServerFeature& feature,
-                             uint64_t num_io_threads,
-                             bool allow_early_connections)
-  : _feature(feature), _allow_early_connections(allow_early_connections) {
-  auto& server = feature.server();
-
-  _contexts.reserve(num_io_threads);
+                             uint64_t num_io_threads) {
   for (size_t i = 0; i < num_io_threads; ++i) {
-    _contexts.emplace_back(server);
+    _contexts.emplace_back();
   }
 }
 
 GeneralServer::~GeneralServer() = default;
 
-bool GeneralServer::allowEarlyConnections() const noexcept {
-  return _allow_early_connections;
-}
-
 void GeneralServer::registerTask(std::shared_ptr<CommTask> task) {
-  if (_feature.server().isStopping()) {
+  if (lifecycle::IsStopping()) {
     SDB_THROW(ERROR_SHUTTING_DOWN);
   }
   auto* t = task.get();
@@ -99,12 +91,11 @@ void GeneralServer::startListening(EndpointList& list) {
     bool ok = openEndpoint(io_context, &ep);
 
     if (ok) {
-      SDB_DEBUG("xxxxx", sdb::Logger::FIXME, "bound to endpoint '",
-                specification, "'");
+      SDB_DEBUG(GENERAL, "bound to endpoint '", specification, "'");
     } else {
       SDB_FATAL_EXIT_CODE(
-        "xxxxx", sdb::Logger::FIXME, EXIT_COULD_NOT_BIND_PORT,
-        "failed to bind to endpoint '", specification,
+        GENERAL, EXIT_COULD_NOT_BIND_PORT, "failed to bind to endpoint '",
+        specification,
         "'. Please check whether another instance is already "
         "running using this endpoint and review your endpoints "
         "configuration.");
@@ -178,7 +169,7 @@ IoContext& GeneralServer::selectIoContext() {
 SslServerFeature::SslContextList GeneralServer::sslContexts() {
   std::lock_guard guard(_ssl_context_mutex);
   if (!_ssl_contexts) {
-    _ssl_contexts = server().getFeature<SslServerFeature>().createSslContexts();
+    _ssl_contexts = SslServerFeature::instance().createSslContexts();
     if (_ssl_contexts->size() > 0) {
       // Set a client hello callback such that we have a chance to change the
       // SSL context:
@@ -194,35 +185,6 @@ SSL_CTX* GeneralServer::getSSL_CTX(size_t index) {
   return (*_ssl_contexts)[index].native_handle();
 }
 
-Result GeneralServer::reloadTLS() {
-  try {
-    {
-      std::lock_guard guard(_ssl_context_mutex);
-      _ssl_contexts =
-        server().getFeature<SslServerFeature>().createSslContexts();
-      if (_ssl_contexts->size() > 0) {
-        // Set a client hello callback such that we have a chance to change the
-        // SSL context:
-        SSL_CTX_set_client_hello_cb((*_ssl_contexts)[0].native_handle(),
-                                    &ClientHelloCallback, (void*)this);
-      }
-    }
-    // Now cancel every acceptor once, such that a new AsioSocket is generated
-    // which will use the new context. Otherwise, the first connection will
-    // still use the old certs:
-    for (auto& a : _acceptors) {
-      a->cancel();
-    }
-    return {};
-  } catch (std::exception& e) {
-    SDB_ERROR(
-      "xxxxx", Logger::SSL,
-      "Could not reload TLS context from files, got exception with this "
-      "error: ",
-      e.what());
-    return Result(ERROR_CANNOT_READ_FILE,
-                  "Could not reload TLS context from files.");
-  }
+app::AppServer& GeneralServer::server() const {
+  return app::AppServer::Instance();
 }
-
-SerenedServer& GeneralServer::server() const { return _feature.server(); }

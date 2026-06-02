@@ -348,7 +348,7 @@ std::string HashIds(const std::vector<std::string>& ids) {
     sha(id.data(), id.size());
     sha("\n", 1);
   }
-  return sha.finalize();
+  return sha.Finalize();
 }
 
 void HashResults(std::vector<QueryResult>& results) {
@@ -561,16 +561,17 @@ class LoadTest : public TestBase {
   };
 
   static void SetUpTestSuite() {
-    if (!sdb::SdbGETENV("CORPUS_PATH", gCorpusPath)) {
+    if (const char* v = std::getenv("CORPUS_PATH"); v != nullptr) {
+      gCorpusPath = v;
+    } else {
       GTEST_SKIP() << "CORPUS_PATH not set";
     }
-    std::string gen;
-    if (sdb::SdbGETENV("GENERATE_REFERENCE", gen)) {
-      gMode = gen == "json" ? Mode::GenerateJson : Mode::GenerateHash;
+    if (const char* gen = std::getenv("GENERATE_REFERENCE"); gen != nullptr) {
+      gMode = std::string_view{gen} == "json" ? Mode::GenerateJson
+                                              : Mode::GenerateHash;
     }
-    std::string gzip;
-    if (sdb::SdbGETENV("GENERATE_GZIP", gzip)) {
-      gGzip = gzip != "0";
+    if (const char* gzip = std::getenv("GENERATE_GZIP"); gzip != nullptr) {
+      gGzip = std::string_view{gzip} != "0";
     }
     if (!std::filesystem::exists(gCorpusPath)) {
       GTEST_SKIP() << "Path does not exist: " << gCorpusPath;
@@ -588,9 +589,9 @@ class LoadTest : public TestBase {
       std::cout << absl::StrCat("Index directory: ", index_dir, "\n");
     }
 
-    std::string drop_index;
-    if (sdb::SdbGETENV("DROP_INDEX", drop_index)) {
-      gDropIndex = drop_index != "0";
+    if (const char* drop_index = std::getenv("DROP_INDEX");
+        drop_index != nullptr) {
+      gDropIndex = std::string_view{drop_index} != "0";
     }
 
     gExecutor = std::make_unique<bench::Executor>(index_dir, gConfig);
@@ -649,11 +650,11 @@ class LoadTest : public TestBase {
     std::string ref_str;
     auto gz_path = res_dir / "reference.json.gz";
     if (std::filesystem::exists(gz_path)) {
-      ASSERT_TRUE(sdb::SdbSlurpGzipFile(gz_path.c_str(), ref_str))
+      ASSERT_TRUE(sdb::SlurpGzipFile(gz_path.c_str(), ref_str))
         << "Cannot read: " << gz_path;
     } else {
       auto raw_path = res_dir / "reference.json";
-      ASSERT_TRUE(sdb::SdbSlurpFile(raw_path.c_str(), ref_str))
+      ASSERT_TRUE(sdb::SlurpFile(raw_path.c_str(), ref_str))
         << "Reference file not found: " << raw_path;
     }
     auto expected = DeserializeResults(ref_str);

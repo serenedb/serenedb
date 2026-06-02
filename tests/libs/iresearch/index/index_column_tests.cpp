@@ -59,7 +59,9 @@ namespace {
 
 class IndexColumnTestCase : public ::testing::TestWithParam<bool> {
  protected:
-  duckdb::DatabaseInstance& Db() { return irs::tests::CsDb(); }
+  duckdb::DatabaseInstance& Db() {
+    return ::sdb::DuckDBEngine::Instance().instance();
+  }
 };
 
 // Encode a `std::string` with the legacy `irs::WriteStr` shape (length-

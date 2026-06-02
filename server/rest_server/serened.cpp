@@ -19,132 +19,140 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "rest_server/serened.h"
-
-#include <absl/functional/overload.h>
+#include <absl/cleanup/cleanup.h>
 
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <exception>
+#include <functional>
+#include <utility>
 
+#include "app/app_server.h"
+#include "app/init.h"
+#include "basics/crash_handler.h"
+#include "basics/duckdb_engine.h"
+#include "basics/log.h"
+#include "catalog/catalog.h"
 #include "duckdb_shell.hpp"
-#include "general_server/server_options_feature.h"
-#include "rest_server/serened_includes.h"
+#include "general_server/general_server_feature.h"
+#include "general_server/scheduler_feature.h"
+#include "general_server/ssl_server_feature.h"
+#include "pg/pg_feature.h"
+#include "query/server_engine.h"
+#include "rest_server/database_path_feature.h"
+#include "rest_server/flush_feature.h"
+#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
+#include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
+#include "storage_engine/engine_feature.h"
+#include "storage_engine/search_engine.h"
 
 namespace {
 
 using namespace sdb;
 using namespace sdb::app;
 
-static_assert(SerenedServer::id<LoggerFeature>() == 0);
-
-constexpr auto kNonServerFeatures = std::array{
-#ifdef SERENEDB_HAVE_FORK
-  SerenedServer::id<SupervisorFeature>(),
-  SerenedServer::id<DaemonFeature>(),
-#endif
-  SerenedServer::id<GeneralServerFeature>(),
-  SerenedServer::id<HttpEndpointProvider>(),
-  SerenedServer::id<LogBufferFeature>(),
-  SerenedServer::id<ServerFeature>(),
-  SerenedServer::id<SslServerFeature>(),
-  SerenedServer::id<StatisticsFeature>(),
-};
-
 const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
 
-int RunServer(int argc, char** argv, GlobalContext& context) {
+int RunServer(int argc, char** argv) {
   try {
     CrashHandler::installCrashHandler();
-    std::string name = context.binaryName();
 
-    auto options = std::make_shared<sdb::options::ProgramOptions>(
-      argv[0], "Usage: " + name + " [<options>]",
-      "For more information use:", BIN_DIRECTORY);
+    AppServer server;
 
-    int ret{EXIT_FAILURE};
-    SerenedServer server{options, BIN_DIRECTORY};
-    ServerState state;
+    // 1. Parse CLI before constructing any feature (ctors read flags).
+    //    parseOptions can SDB_FATAL on bad CLI -- DuckDB is already up
+    //    by the time we get here (Initialize ran in main(), see below).
+    server.parseOptions(argc, argv);
 
-    server.addReporter(
-      {[&](SerenedServer::State state) {
-         CrashHandler::SetState(magic_enum::enum_name(state));
+    // 2. Construct features in dependency order. Each ctor reads its
+    //    own flags, runs validation, and sets its static gInstance
+    //    pointer; Feature::instance() works from here on.
+    SslServerFeature ssl;
+    DatabasePathFeature db_path;
+    SchedulerFeature scheduler;
+    RocksDBOptionFeature rocksdb_opt;
+    EngineFeature engine;
+    FlushFeature flush;
+    RocksDBRecoveryManager recovery;
+    catalog::CatalogFeature catalog;
+    search::SearchEngine search;
+    GeneralServerFeature general;
+    pg::PostgresFeature pg;
 
-         if (state == SerenedServer::State::InStart) {
-           // drop priveleges before starting features
-           server.getFeature<PrivilegeFeature>().dropPrivilegesPermanently();
-         }
-       },
-       {}});
-
-    server.addFeatures(absl::Overload{
-      []<typename T>(auto& server, type::Tag<T>) {
-        return std::make_unique<T>(server);
-      },
-      [&ret](auto& server, type::Tag<CheckVersionFeature>) {
-        return std::make_unique<CheckVersionFeature>(server, &ret,
-                                                     kNonServerFeatures);
-      },
-      [&name](auto& server, type::Tag<ConfigFeature>) {
-        return std::make_unique<ConfigFeature>(
-          server, name, [] { return GetServerOptions().app_print_version; });
-      },
-      [](auto& server, type::Tag<InitDatabaseFeature>) {
-        return std::make_unique<InitDatabaseFeature>(server,
-                                                     kNonServerFeatures);
-      },
-      [](auto& server, type::Tag<LoggerFeature>) {
-        return std::make_unique<LoggerFeature>(server, true);
-      },
-      [](auto& server, type::Tag<NetworkFeature>) {
-        auto& metrics = server.template getFeature<metrics::MetricsFeature>();
-        return std::make_unique<NetworkFeature>(
-          server, metrics, network::ConnectionPool::Config{metrics});
-      },
-      [&ret](auto& server, type::Tag<ServerFeature>) {
-        return std::make_unique<ServerFeature>(server, &ret);
-      },
-      [&name](auto& server, type::Tag<TempPath>) {
-        return std::make_unique<TempPath>(server, name);
-      },
-      [](auto& server, type::Tag<SslServerFeature>) {
-        return std::make_unique<SslServerFeature>(server);
-      },
-      [&ret](auto& server, type::Tag<UpgradeFeature>) {
-        return std::make_unique<UpgradeFeature>(server, &ret,
-                                                kNonServerFeatures);
-      },
-      [](auto& server, type::Tag<HttpEndpointProvider>) {
-        return std::make_unique<EndpointFeature>(server);
-      },
-    });
-
-    try {
-      server.run(argc, argv);
-      if (server.helpShown()) {
-        // --help was displayed
-        ret = EXIT_SUCCESS;
+    // --------------------------------------------------------------
+    // Two-method lifecycle: start() does non-IO setup + spin-up of
+    // threads / sockets; stop() drains long-running threads then
+    // tears down. Construction order doubles as boot order; shutdown
+    // is strict LIFO. `stoppers` holds the stop closures of every
+    // feature that successfully started; the absl::Cleanup below
+    // drains them on scope exit -- whether that's a normal return
+    // after wait() OR an exception thrown mid-start. Either path
+    // unwinds exactly the already-started subset in reverse order.
+    // --------------------------------------------------------------
+    std::deque<std::function<void()>> stoppers;
+    absl::Cleanup drain = [&]() noexcept {
+      while (!stoppers.empty()) {
+        try {
+          stoppers.back()();
+        } catch (const std::exception& ex) {
+          SDB_ERROR(GENERAL, "exception during stop: ", ex.what());
+        } catch (...) {
+          SDB_ERROR(GENERAL, "exception of unknown type during stop");
+        }
+        stoppers.pop_back();
       }
-    } catch (const std::exception& ex) {
-      SDB_ERROR("xxxxx", Logger::FIXME,
-                "serened terminated because of an exception: ", ex.what());
-      ret = EXIT_FAILURE;
-    } catch (...) {
-      SDB_ERROR("xxxxx", Logger::FIXME,
-                "serened terminated because of an exception of "
-                "unknown type");
-      ret = EXIT_FAILURE;
-    }
-    log::Flush();
-    return context.exit(ret);
+    };
+    auto start_one = [&](auto& feature, std::function<void()> stop_fn) {
+      feature.start();
+      stoppers.push_back(std::move(stop_fn));
+    };
+
+    // 3. start -- after a successful pass the server is fully
+    //    accepting clients. The CrashHandler state strings get
+    //    stamped into /tmp/crash bundles so a fatal signal during
+    //    boot lands with a phase tag.
+    CrashHandler::SetState("starting");
+    start_one(ssl, [&] { ssl.stop(); });
+    start_one(scheduler, [&] { scheduler.stop(); });
+    start_one(engine, [&] { engine.stop(); });
+    // flush has no start() work; ctor already registered metrics + gInstance,
+    // but stop() clears subscriptions so it needs a LIFO slot here.
+    stoppers.push_back([&] { flush.stop(); });
+    // recovery + pg only have start() work (no stop counterpart): WAL replay
+    // and engine-ready assertion respectively. No teardown needed.
+    recovery.start();
+    start_one(catalog, [&] { catalog.stop(); });
+    start_one(search, [&] { search.stop(); });
+    start_one(general, [&] { general.stop(); });
+    pg.start();
+
+    // Boot completed; emit a recognisable banner so operators tailing
+    // logs (and the sdb_log smoke test) can confirm the server is up.
+    SDB_INFO(GENERAL, "SereneDB is ready for business. Have fun!");
+
+    // 4. wait for SIGTERM/SIGINT.
+    CrashHandler::SetState("running");
+    server.wait();
+
+    // 5. stop -- the absl::Cleanup runs stoppers in strict LIFO on
+    //    scope exit; the SetState below paints the bucket so a fatal
+    //    signal during shutdown tags the right phase. DuckDBEngine
+    //    Initialize/Shutdown brackets this whole function from main().
+    CrashHandler::SetState("stopping");
+    return EXIT_SUCCESS;
   } catch (const std::exception& ex) {
-    SDB_ERROR("xxxxx", Logger::FIXME,
+    // gLogger is still up (Shutdown runs in main() after RunServer
+    // returns), but go through SDB_ERROR so the line lands in the same
+    // duckdb_logs() store as everything else.
+    SDB_ERROR(GENERAL,
               "serened terminated because of an exception: ", ex.what());
   } catch (...) {
-    SDB_ERROR("xxxxx", Logger::FIXME,
-              "serened terminated because of an exception of "
-              "unknown type");
+    SDB_ERROR(GENERAL,
+              "serened terminated because of an exception of unknown type");
   }
-  exit(EXIT_FAILURE);
+  // Return non-zero -- main() will run DuckDBEngine::Shutdown() before exit.
+  return EXIT_FAILURE;
 }
 
 // Trim argv in place: overwrite argv[1] with argv[0] and hand the shell
@@ -159,50 +167,31 @@ int RunSubcommand(int argc, char* argv[],
 
 int main(int argc, char* argv[]) {
   if (argc >= 2 && std::strcmp(argv[1], "shell") == 0) {
+    // Pure duckdb shell -- manages its own DuckDB instance, no SDB_*.
     return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::SHELL);
   }
   if (argc >= 2 && std::strcmp(argv[1], "psql") == 0) {
     return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::PSQL);
   }
 
-  std::string workdir(basics::file_utils::CurrentDirectory().result());
+  // DuckDBEngine must be up BEFORE the first SDB_* fires. VPackHelper::
+  // initialize() below does SDB_TRACE, so it has to run after the engine
+  // is initialized. Bracket the whole RunServer lifetime so the contract
+  // holds.
+  //
+  // Two-step boot: the lite Initialize (serene_base) installs the storage
+  // extension via the ConfigureServerDBConfig mutator BEFORE the duckdb
+  // ctor runs (storage extensions must be registered pre-construct), then
+  // RegisterServerExtensions fills connector/pg/index types on the live
+  // DatabaseInstance.
+  auto& engine = sdb::DuckDBEngine::Instance();
+  engine.Initialize(&server::query::ConfigureServerDBConfig);
+  server::query::RegisterServerExtensions(engine.instance());
 
-  GlobalContext context(argc, argv, BIN_DIRECTORY);
+  sdb::app::InitProcess(argv[0]);
+  int rc = RunServer(argc, argv);
+  sdb::app::ShutdownGlobals();
 
-  gRestartAction = nullptr;
-
-  int res = RunServer(argc, argv, context);
-  if (res != 0) {
-    return res;
-  }
-  if (gRestartAction == nullptr) {
-    return 0;
-  }
-  try {
-    res = (*gRestartAction)();
-  } catch (...) {
-    res = -1;
-  }
-  delete gRestartAction;
-  if (res != 0) {
-    std::cerr << "FATAL: RestartAction returned non-zero exit status: " << res
-              << ", giving up." << std::endl;
-    return res;
-  }
-  // It is not clear if we want to do the following under Linux and OSX,
-  // it is a clean way to restart from scratch with the same process ID,
-  // so the process does not have to be terminated. On Windows, we have
-  // to do this because the solution below is not possible. In these
-  // cases, we need outside help to get the process restarted.
-#if defined(__linux__)
-  res = chdir(workdir.c_str());
-  if (res != 0) {
-    std::cerr << "WARNING: could not change into directory '" << workdir << "'"
-              << std::endl;
-  }
-  if (execvp(argv[0], argv) == -1) {
-    std::cerr << "WARNING: could not execvp ourselves, restore will not work!"
-              << std::endl;
-  }
-#endif
+  engine.Shutdown();
+  return rc;
 }

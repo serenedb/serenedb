@@ -27,100 +27,29 @@
 
 #include "app/app_server.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/lifecycle.h"
+#include "basics/log.h"
 #include "basics/random/random_generator.h"
 #include "basics/string_utils.h"
-#include "basics/thread.h"
+#include "basics/thread_id.h"
 #include "general_server/acceptor.h"
 #include "general_server/rest_handler.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
-#include "metrics/counter_builder.h"
-#include "metrics/gauge_builder.h"
-#include "metrics/metrics_feature.h"
-#include "network/network_feature.h"
 #include "rest/general_response.h"
-#include "statistics/request_statistics.h"
 
 namespace sdb {
-namespace {
 
-class SchedulerThread : public ServerThread<SerenedServer> {
- public:
-  explicit SchedulerThread(Server& server, Scheduler& scheduler,
-                           const std::string& name = "Scheduler")
-    : ServerThread<SerenedServer>(server, name), _scheduler(scheduler) {}
-
-  // shutdown is called by derived implementation!
-  ~SchedulerThread() override = default;
-
- protected:
-  Scheduler& _scheduler;
-};
-
-}  // namespace
-
-class SchedulerCronThread final : public SchedulerThread {
- public:
-  explicit SchedulerCronThread(SerenedServer& server, Scheduler& scheduler)
-    : SchedulerThread(server, scheduler, "SchedCron") {}
-
-  ~SchedulerCronThread() final { shutdown(); }
-
-  void run() final { _scheduler.runCronThread(); }
-};
-
-DECLARE_COUNTER(serenedb_scheduler_handler_tasks_created_total,
-                "Number of scheduler tasks created");
-DECLARE_COUNTER(serenedb_scheduler_queue_time_violations_total,
-                "Tasks dropped because the client-requested queue time "
-                "restriction would be violated");
-
-DECLARE_GAUGE(
-  serenedb_scheduler_ongoing_low_prio, uint64_t,
-  "Total number of ongoing RestHandlers coming from the low prio queue");
-DECLARE_GAUGE(serenedb_scheduler_low_prio_queue_last_dequeue_time, uint64_t,
-              "Last recorded dequeue time for a low priority queue item [ms]");
-
-DECLARE_GAUGE(
-  serenedb_scheduler_low_prio_queue_length, uint64_t,
-  "Current queue length of the low priority queue in the scheduler");
-DECLARE_GAUGE(
-  serenedb_scheduler_medium_prio_queue_length, uint64_t,
-  "Current queue length of the medium priority queue in the scheduler");
-DECLARE_GAUGE(
-  serenedb_scheduler_high_prio_queue_length, uint64_t,
-  "Current queue length of the high priority queue in the scheduler");
-DECLARE_GAUGE(
-  serenedb_scheduler_maintenance_prio_queue_length, uint64_t,
-  "Current queue length of the maintenance priority queue in the scheduler");
-
-Scheduler::Scheduler(SerenedServer& server, uint64_t min_threads,
+Scheduler::Scheduler(app::AppServer& server, uint64_t min_threads,
                      uint64_t max_threads, uint64_t max_queue_size,
                      uint64_t fifo1_size, uint64_t fifo2_size,
-                     uint64_t fifo3_size, uint64_t ongoing_low_priority_limit,
-                     double unavailability_queue_fill_grade,
-                     metrics::MetricsFeature& metrics)
+                     uint64_t fifo3_size,
+                     double unavailability_queue_fill_grade)
   : _server{server},
-    _nf{server.getFeature<NetworkFeature>()},
     _min_threads{min_threads},
     _max_threads{max_threads},
     _max_fifo_sizes{max_queue_size, fifo1_size, fifo2_size, fifo3_size},
-    _ongoing_low_priority_limit{ongoing_low_priority_limit},
-    _unavailability_queue_fill_grade{unavailability_queue_fill_grade},
-    _metrics_handler_tasks_created(
-      metrics.add(serenedb_scheduler_handler_tasks_created_total{})),
-    _metrics_queue_time_violations(
-      metrics.add(serenedb_scheduler_queue_time_violations_total{})),
-    _ongoing_low_priority_gauge(
-      metrics.add(serenedb_scheduler_ongoing_low_prio{})),
-    _metrics_last_low_priority_dequeue_time(
-      metrics.add(serenedb_scheduler_low_prio_queue_last_dequeue_time{})),
-    _metrics_queue_lengths{
-      metrics.add(serenedb_scheduler_maintenance_prio_queue_length{}),
-      metrics.add(serenedb_scheduler_high_prio_queue_length{}),
-      metrics.add(serenedb_scheduler_medium_prio_queue_length{}),
-      metrics.add(serenedb_scheduler_low_prio_queue_length{})} {
+    _unavailability_queue_fill_grade{unavailability_queue_fill_grade} {
   SDB_ASSERT(ToQueueNo(std::to_underlying(RequestPriority::Maintenance)) == 0);
   SDB_ASSERT(ToQueueNo(std::to_underlying(RequestPriority::High)) == 1);
   SDB_ASSERT(ToQueueNo(std::to_underlying(RequestPriority::Med)) == 2);
@@ -132,7 +61,7 @@ Scheduler::~Scheduler() = default;
 void Scheduler::JobObserver::taskEnqueued(
   const folly::ThreadPoolExecutor::TaskInfo& info) noexcept {
   const auto queue_no = ToQueueNo(info.priority);
-  _scheduler._metrics_queue_lengths[queue_no].get() += 1;
+  _scheduler._queue_lengths[queue_no].fetch_add(1, std::memory_order_relaxed);
 }
 
 void Scheduler::JobObserver::taskDequeued(
@@ -143,45 +72,40 @@ void Scheduler::JobObserver::taskDequeued(
         .count());
   }
   const auto queue_no = ToQueueNo(info.priority);
-  _scheduler._metrics_queue_lengths[queue_no].get() -= 1;
+  _scheduler._queue_lengths[queue_no].fetch_sub(1, std::memory_order_relaxed);
 }
 
 void Scheduler::JobObserver::taskProcessed(
   const folly::ThreadPoolExecutor::ProcessedTaskInfo& info) noexcept {}
 
-bool Scheduler::start() {
+void Scheduler::start() {
   _executor_handle = std::make_unique<folly::CPUThreadPoolExecutor>(
     std::pair{_max_threads, _min_threads},
     folly::CPUThreadPoolExecutor::makeLifoSemPriorityQueue(4));
   _executor_handle->addTaskObserver(std::make_unique<JobObserver>(*this));
-  _cron_thread = std::make_unique<SchedulerCronThread>(_server, *this);
-  return _cron_thread->start();
+  _cron_thread = std::jthread{[this] {
+    InitThread("SchedCron");
+    runCronThread();
+  }};
 }
 
 void Scheduler::shutdown() {
-  _executor_handle->join();
-
-  _cron_queue_mutex.Lock();
-  _cron_stopping = true;
-  _croncv.notify_one();
-  _cron_queue_mutex.Unlock();
-
-  _cron_thread.reset();
-
-#ifdef SDB_DEV
-  // At this point the cron thread has been stopped
-  // And there will be no other people posting on the queue
-  // Lets make sure that all items on the queue are disabled
-  while (!_cron_queue.empty()) {
-    const auto& top = _cron_queue.top();
-    auto item = top.second.lock();
-    if (item) {
-      SDB_ASSERT(item->isDisabled(), item->name());
-    }
-    _cron_queue.pop();
+  {
+    absl::MutexLock guard{&_cron_queue_mutex};
+    _cron_stopping = true;
+    _croncv.notify_one();
   }
-#endif
+  _cron_thread.join();
 
+  while (!_cron_queue.empty()) {
+    auto top = _cron_queue.top();
+    _cron_queue.pop();
+    if (auto item = top.second.lock()) {
+      item->cancel();
+    }
+  }
+
+  _executor_handle->join();
   _executor_handle = {};
 }
 
@@ -209,8 +133,7 @@ void Scheduler::runCronThread() {
             item->run();
           }
         } catch (const std::exception& ex) {
-          SDB_WARN("xxxxx", Logger::THREADS,
-                   "caught exception in runCronThread: ", ex.what());
+          SDB_WARN(GENERAL, "caught exception in runCronThread: ", ex.what());
         }
 
         // always lock again, as we are going into the wait_for below
@@ -229,27 +152,7 @@ void Scheduler::runCronThread() {
 }
 
 void Scheduler::queue(RequestPriority prio, folly::Func func) noexcept {
-  if (prio == RequestPriority::Low) {
-    func = [this, func = std::move(func)] mutable {
-      const bool needs_reschedule = [&] {
-        if (_ongoing_low_priority_limit == 0) {
-          return false;
-        }
-        const auto ongoing = _ongoing_low_priority_gauge.load();
-        if (ongoing < _ongoing_low_priority_limit) {
-          return false;
-        }
-        // Because jobs may fan out to multiple servers and shards, we also
-        // limit dequeuing based on the number of internal requests in flight
-        return _nf.isSaturated();
-      }();
-      if (needs_reschedule) {
-        queue(RequestPriority::Low, std::move(func));
-      } else {
-        func();
-      }
-    };
-  } else if (prio == RequestPriority::Med) {
+  if (prio == RequestPriority::Med) {
     SDB_IF_FAILURE("BlockSchedulerMediumQueue") {
       func = [this, func = std::move(func)] mutable {
         queue(RequestPriority::Med, std::move(func));
@@ -338,38 +241,32 @@ yaclib::Future<> Scheduler::delay(std::string_view name, clock::duration d) {
   });
 }
 
-void Scheduler::trackCreateHandlerTask() noexcept {
-  ++_metrics_handler_tasks_created;
-}
-
 void Scheduler::trackBeginOngoingLowPriorityTask() noexcept {
-  ++_ongoing_low_priority_gauge;
+  _ongoing_low_priority.fetch_add(1, std::memory_order_relaxed);
 }
 
 void Scheduler::trackEndOngoingLowPriorityTask() noexcept {
-  --_ongoing_low_priority_gauge;
+  _ongoing_low_priority.fetch_sub(1, std::memory_order_relaxed);
 }
 
-void Scheduler::trackQueueTimeViolation() { ++_metrics_queue_time_violations; }
-
 uint64_t Scheduler::getLastLowPriorityDequeueTime() const noexcept {
-  return _metrics_last_low_priority_dequeue_time.load();
+  return _last_low_priority_dequeue_time_ms.load(std::memory_order_relaxed);
 }
 
 void Scheduler::setLastLowPriorityDequeueTime(uint64_t time) noexcept {
-  _metrics_last_low_priority_dequeue_time = time;
+  _last_low_priority_dequeue_time_ms.store(time, std::memory_order_relaxed);
 }
 
 std::pair<uint64_t, uint64_t> Scheduler::getNumberLowPrioOngoingAndQueued()
   const {
-  return {_ongoing_low_priority_gauge.load(std::memory_order_relaxed),
-          _metrics_queue_lengths.back().get().load(std::memory_order_relaxed)};
+  return {_ongoing_low_priority.load(std::memory_order_relaxed),
+          _queue_lengths.back().load(std::memory_order_relaxed)};
 }
 
 double Scheduler::approximateQueueFillGrade() const {
   const auto max_length = _max_fifo_sizes[kNumberOfQueues - 1];
   const auto q_length =
-    _metrics_queue_lengths[kNumberOfQueues - 1].get().load();
+    _queue_lengths[kNumberOfQueues - 1].load(std::memory_order_relaxed);
   return static_cast<double>(q_length) / static_cast<double>(max_length);
 }
 
@@ -378,8 +275,7 @@ double Scheduler::unavailabilityQueueFillGrade() const {
 }
 
 Scheduler* GetScheduler() noexcept {
-  return SerenedServer::Instance().isStopping() ? nullptr
-                                                : SchedulerFeature::gScheduler;
+  return lifecycle::IsStopping() ? nullptr : SchedulerFeature::gScheduler;
 }
 
 }  // namespace sdb

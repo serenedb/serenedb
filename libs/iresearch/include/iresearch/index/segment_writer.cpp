@@ -23,7 +23,7 @@
 
 #include "iresearch/index/segment_writer.hpp"
 
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/shared.hpp"
 #include "index_meta.hpp"
 #include "iresearch/analysis/token_attributes.hpp"

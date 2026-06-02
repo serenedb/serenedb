@@ -28,7 +28,7 @@
 #include "basics/common.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/errors.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "endpoint/endpoint.h"

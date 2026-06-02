@@ -90,34 +90,22 @@ void Scheduler::start() {
 }
 
 void Scheduler::shutdown() {
-  _executor_handle->join();
-
   {
     absl::MutexLock guard{&_cron_queue_mutex};
     _cron_stopping = true;
     _croncv.notify_one();
   }
-
-  // Joins the cron thread. start() unconditionally creates _cron_thread,
-  // so it is always joinable here.
   _cron_thread.join();
 
-#ifdef SDB_DEV
-  // Drain the queue while we are still alive. A surviving queued item's
-  // destructor would call cancel() and (if not yet disabled) reach back
-  // into the Scheduler -- which would have already been torn down,
-  // producing a UAF. Asserting isDisabled() makes the violation loud
-  // instead of corrupting memory.
   while (!_cron_queue.empty()) {
-    const auto& top = _cron_queue.top();
-    auto item = top.second.lock();
-    if (item) {
-      SDB_ASSERT(item->isDisabled(), item->name());
-    }
+    auto top = _cron_queue.top();
     _cron_queue.pop();
+    if (auto item = top.second.lock()) {
+      item->cancel();
+    }
   }
-#endif
 
+  _executor_handle->join();
   _executor_handle = {};
 }
 

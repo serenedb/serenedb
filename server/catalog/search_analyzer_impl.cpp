@@ -23,7 +23,6 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
-#include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
@@ -31,49 +30,9 @@
 #include <iresearch/index/norm.hpp>
 
 #include "basics/containers/trivial_map.h"
-#include "basics/down_cast.h"
-#include "basics/log.h"
 #include "basics/serializer.h"
-#include "catalog/mangling.h"
 
 namespace sdb::search {
-
-[[maybe_unused]] std::tuple<FunctionValueType, FunctionValueType, char>
-GetAnalyzerMeta(const irs::analysis::Analyzer* analyzer) noexcept {
-  SDB_ASSERT(analyzer);
-  const auto type = analyzer->type();
-
-  if (type == irs::Type<irs::analysis::GeoJsonAnalyzer>::id()) {
-    return {FunctionValueType::JsonCompound, FunctionValueType::String,
-            mangling::kAnalyzer};
-  }
-
-  if (type == irs::Type<irs::analysis::GeoPointAnalyzer>::id()) {
-    return {FunctionValueType::JsonCompound, FunctionValueType::String,
-            mangling::kAnalyzer};
-  }
-
-  if (type == irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
-    return {FunctionValueType::String, FunctionValueType::String,
-            mangling::kString};
-  }
-
-#ifdef SDB_GTEST
-  if ("iresearch-vpack-analyzer" == type().name()) {
-    return {FunctionValueType::JsonCompound, FunctionValueType::String,
-            mangling::kString};
-  }
-#endif
-
-  const auto* value_type = irs::get<AnalyzerReturnTypeAttr>(*analyzer);
-  if (value_type) {
-    // TODO(gnusi): returning mangling::kString is not always correct
-    return {FunctionValueType::String, value_type->value, mangling::kString};
-  }
-
-  return {FunctionValueType::String, FunctionValueType::String,
-          mangling::kString};
-}
 
 namespace {
 
@@ -196,111 +155,6 @@ AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(std::string_view bytes) {
   } catch (...) {
     return {};
   }
-}
-
-Result AnalyzerImpl::init(std::string_view type,
-                          std::string_view properties_bytes, Features features,
-                          FunctionValueType input_type,
-                          FunctionValueType return_type) {
-  return basics::SafeCall([&] -> Result {
-    if (type.empty()) {
-      return {ERROR_BAD_PARAMETER, "analyzer type is empty"};
-    }
-    if (auto r = features.Validate(type); !r.ok()) {
-      return r;
-    }
-
-    _config.assign(properties_bytes.data(), properties_bytes.size());
-    const auto properties_size = _config.size();
-    // ensure no reallocations will happen when appending the type tail below
-    _config.reserve(_config.size() + type.size());
-
-    _cache.clear();  // reset for new type/properties
-    auto instance =
-      _cache.emplace(std::string_view{_config.data(), properties_size});
-    if (!instance) {
-      return {ERROR_BAD_PARAMETER,
-              "failed to create analyzer instance, type: ",
-              type,
-              ", properties: ",
-              properties_size,
-              " bytes"};
-    }
-
-    _properties = std::string_view{_config.data(), properties_size};
-    _type = {_config.data() + _config.size(), type.size()};
-    _config.append(type);
-    SDB_ASSERT(_type == type);
-
-    _features = features;  // store only requested features
-
-    bool input_invalid = (input_type == FunctionValueType::Invalid);
-    bool return_invalid = (return_type == FunctionValueType::Invalid);
-    SDB_ASSERT(input_invalid == return_invalid);
-    if (input_invalid || return_invalid) {
-      std::tie(std::ignore, std::ignore, _field_marker) =
-        GetAnalyzerMeta(instance.get());
-      return {};
-    }
-
-    std::tie(_input_type, _return_type, _field_marker) =
-      GetAnalyzerMeta(instance.get());
-    if (instance->type() != irs::Type<irs::analysis::PipelineTokenizer>::id()) {
-      return {};
-    }
-
-    // pipeline needs to validate members compatibility
-    const irs::analysis::Analyzer* prev = nullptr;
-    const irs::analysis::Analyzer* next = nullptr;
-    auto prev_output = FunctionValueType::Invalid;
-    auto& pipeline =
-      basics::downCast<irs::analysis::PipelineTokenizer>(*instance);
-    if (!pipeline.visit_members([&](const irs::analysis::Analyzer& curr) {
-          FunctionValueType curr_input;
-          FunctionValueType curr_output;
-          std::tie(curr_input, curr_output, std::ignore) =
-            GetAnalyzerMeta(&curr);
-          if (prev &&
-              (curr_input & prev_output) == FunctionValueType::Invalid) {
-            next = &curr;
-            return false;
-          }
-          prev = &curr;
-          prev_output = curr_output;
-          return true;
-        })) {
-      return {ERROR_BAD_PARAMETER,
-              "Failed to validate pipeline analyzer, because incompatible "
-              "part found. Analyzer type: ",
-              prev->type()().name(),
-              ", emits output not acceptable by analyzer type: ",
-              next->type()().name()};
-    }
-    // for pipeline we take last pipe member output type as whole pipe output
-    // type
-    _return_type = prev_output;
-    return {};
-  });
-}
-
-AnalyzerImpl::CacheType::ptr AnalyzerImpl::Get() const noexcept try {
-  return _cache.emplace(_properties);
-} catch (const basics::Exception& e) {
-  SDB_WARN(SEARCH,
-           "caught exception while instantiating an search analyzer type '",
-           _type, "' (", _properties.size(),
-           " bytes of properties): ", e.code(), " ", e.what());
-  return {};
-} catch (const std::exception& e) {
-  SDB_WARN(
-    SEARCH, "caught exception while instantiating an search analyzer type '",
-    _type, "' (", _properties.size(), " bytes of properties): ", e.what());
-  return {};
-} catch (...) {
-  SDB_WARN(SEARCH,
-           "caught exception while instantiating an search analyzer type '",
-           _type, "' (", _properties.size(), " bytes of properties)");
-  return {};
 }
 
 }  // namespace sdb::search

@@ -26,36 +26,31 @@
 
 namespace irs {
 
-class AllQuery : public Filter::Query {
+class AllQuery : public QueryBuilder {
  public:
-  explicit AllQuery(bstring&& stats, score_t boost)
-    : _stats{std::move(stats)}, _boost{boost} {}
+  explicit AllQuery(const SubReader& segment, score_t boost)
+    : QueryBuilder{segment}, _boost{boost} {}
 
-  DocIterator::ptr execute(const ExecutionContext& ctx) const final {
-    return memory::make_managed<AllIterator>(ctx.segment.docs_count(),
-                                             _stats.c_str(), _boost);
+  DocIterator::ptr Execute(const ExecutionContext& ctx) const final {
+    return memory::make_managed<AllIterator>(
+      _segment.docs_count(), ctx.Stats().GetStats().data(), _boost);
   }
 
-  void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {
-    // No terms to visit
-  }
+  void Visit(PreparedStateVisitor&, score_t) const final {}
 
   score_t Boost() const noexcept final { return _boost; }
 
  private:
-  bstring _stats;
   score_t _boost;
 };
 
-Filter::Query::ptr All::prepare(const PrepareContext& ctx) const {
-  bstring stats(GetStatsSize(ctx.scorer), 0);
+QueryBuilder::ptr All::PrepareSegment(const SubReader& segment,
+                                      const PrepareContext& ctx) const {
+  return memory::make_tracked<AllQuery>(ctx.memory, segment, ctx.boost);
+}
 
-  if (ctx.scorer) {
-    ctx.scorer->collect(stats.data(), nullptr, nullptr);
-  }
-
-  return memory::make_tracked<AllQuery>(ctx.memory, std::move(stats),
-                                        ctx.boost * Boost());
+PrepareCollector::ptr All::MakeCollector(const Scorer* scorer) const {
+  return std::make_unique<AllCollector>(scorer);
 }
 
 }  // namespace irs

@@ -29,8 +29,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/collectors.hpp"
-#include "iresearch/search/filter_visitor.hpp"
-#include "iresearch/search/multiterm_query.hpp"
+#include "iresearch/search/states/multiterm_state.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -40,194 +39,127 @@ struct SubReader;
 struct IndexReader;
 
 // Object to collect and track a limited number of scorers,
-// terms with longer postings are treated as more important
+// terms with longer postings are treated as more important.
+// Each candidate references an entry in a per-segment MultiTermState by offset;
+// the cookie itself lives in that state, not here.
 template<typename Key, typename Comparer = std::less<Key>>
 class LimitedSampleCollector : private util::Noncopyable {
  public:
   using key_type = Key;
   using comparer_type = Comparer;
 
+  // A candidate term still in the running for the global top-K.
+  struct Candidate {
+    MultiTermState* state;  // state owning the referenced term
+    uint32_t offset;        // index into state->terms
+    bstring term;           // term value, kept for dedup at score()
+    Key key;                // sampling key
+  };
+
   explicit LimitedSampleCollector(size_t scored_terms_limit,
                                   const comparer_type& comparer = {})
     : _comparer{comparer}, _scored_terms_limit{scored_terms_limit} {
-    _scored_states.reserve(scored_terms_limit);
-    _scored_states_heap.reserve(scored_terms_limit);
+    _scored.reserve(scored_terms_limit);
+    _heap.reserve(scored_terms_limit);
   }
 
-  // Prepare scorer for terms collecting
-  // segment - segment reader for the current term
-  // state - state containing this scored term
-  // terms - segment term-iterator positioned at the current term
-  void Prepare(const SubReader& segment, const SeekTermIterator& terms,
-               MultiTermState& scored_state) noexcept {
-    _state.state = &scored_state;
-    _state.segment = &segment;
-    _state.terms = &terms;
-
-    SDB_ASSERT(scored_state.reader);
-    _field_stats.Collect(*scored_state.reader);
-    // get term metadata
-    auto* meta = irs::get<TermMeta>(terms);
-    _state.docs_count = meta ? &meta->docs_count : &_no_docs;
-  }
-
-  // Collect current term
-  void collect(const Key& key) {
-    SDB_ASSERT(_state.segment && _state.terms && _state.state);
-
+  // Collect the term just appended to state->terms at the given offset.
+  // terms - segment term-iterator positioned at that term.
+  void collect(MultiTermState& state, uint32_t offset,
+               const SeekTermIterator& terms, const Key& key) {
     if (!_scored_terms_limit) {
-      // state will not be scored
-
-      _state.state->unscored_states.emplace_back(_state.terms->cookie());
-      _state.state->unscored_states_estimation += *_state.docs_count;
-      return;  // nothing to collect (optimization)
+      return;  // nothing scored; the entry stays unscored (optimization)
     }
-
-    if (_scored_states.size() < _scored_terms_limit) {
-      // have not reached the scored state limit yet
-      _scored_states_heap.emplace_back(_scored_states.size());
-      _scored_states.emplace_back(key, _state);
-
-      if (_scored_states.size() == _scored_terms_limit) [[unlikely]] {
-        absl::c_make_heap(_scored_states_heap, [&](const size_t lhs,
-                                                   const size_t rhs) noexcept {
-          return _comparer(_scored_states[rhs].key, _scored_states[lhs].key);
-        });
+    if (_scored.size() >= _scored_terms_limit) {
+      const size_t min_idx = _heap.front();
+      if (!_comparer(_scored[min_idx].key, key)) {
+        return;  // can't beat the current minimum; skip building the term
       }
-
-      return;
     }
-
-    const size_t min_state_idx = _scored_states_heap.front();
-
-    if (_scored_states[min_state_idx].key < key) {
-      pop();
-
-      auto& min_state = _scored_states[min_state_idx];
-
-      SDB_ASSERT(min_state.cookie);
-      // state will not be scored
-      min_state.state->unscored_states.emplace_back(
-        std::move(min_state.cookie));
-      min_state.state->unscored_states_estimation += min_state.docs_count;
-
-      // update min state
-      min_state.docs_count = *_state.docs_count;
-      min_state.state = _state.state;
-      min_state.cookie = _state.terms->cookie();
-      min_state.term = _state.terms->value();
-      min_state.key = key;
-
-      push();
-    } else {
-      // state will not be scored
-      _state.state->unscored_states.emplace_back(_state.terms->cookie());
-      _state.state->unscored_states_estimation += *_state.docs_count;
-    }
+    Push(Candidate{&state, offset, bstring{terms.value()}, key});
   }
 
-  // Finish collecting and evaluate stats
-  void score(const IndexReader& index, const Scorer* scorer,
-             MultiTermQuery::Stats& stats) {
-    if (!_scored_terms_limit) {
-      return;  // nothing to score (optimization)
+  // Fold another collector's candidates into this one.
+  void Merge(LimitedSampleCollector&& other) {
+    SDB_ASSERT(_scored_terms_limit == other._scored_terms_limit);
+    for (auto& candidate : other._scored) {
+      Push(std::move(candidate));
     }
-    if (_scored_states.empty()) {
+    other._scored.clear();
+    other._heap.clear();
+  }
+
+  // Finish collecting: assign stat offsets to the surviving (scored) terms and
+  // evaluate their shared stats. Term/field statistics are accumulated into the
+  // caller-owned collectors.
+  void score(const Scorer* scorer, const FieldCollector& field,
+             TermCollectorsFlat& terms, ManagedVector<bstring>& stats) {
+    if (!_scored_terms_limit || _scored.empty()) {
       return;
     }
-    // stats for a specific term
-    absl::flat_hash_map<hashed_bytes_view, StatsState, HashedStrHash>
-      term_stats;
+    SDB_ASSERT(scorer);
+    // distinct term value -> stat offset shared across segments
+    absl::flat_hash_map<hashed_bytes_view, uint32_t, HashedStrHash> offsets;
 
-    // iterate over all the states from which statistcis should be collected
-    uint32_t stats_offset = 0;
-    for (auto& scored_state : _scored_states) {
-      // find the stats for the current term
-      const auto res = term_stats.try_emplace(
-        hashed_bytes_view{scored_state.term}, scorer, stats_offset);
-
-      auto& stats_entry = res.first->second;
-
-      stats_entry.term_stats.Collect(0, *scored_state.cookie);
-
-      scored_state.state->scored_states.emplace_back(
-        std::move(scored_state.cookie), stats_entry.stats_offset,
-        static_cast<score_t>(scored_state.key));
-
-      // update estimation for scored state
-      scored_state.state->scored_states_estimation += scored_state.docs_count;
+    for (auto& candidate : _scored) {
+      auto& terms_states = candidate.state->Terms();
+      auto& entry = terms_states[candidate.offset];
+      auto [it, inserted] =
+        offsets.try_emplace(hashed_bytes_view{candidate.term}, uint32_t{0});
+      if (inserted) {
+        it->second = static_cast<uint32_t>(terms.PushBack());
+      }
+      const uint32_t idx = it->second;
+      terms.Collect(idx, *entry.cookie);
+      entry.stat_offset = idx;
     }
 
-    // iterate over all stats and apply/store order stats
-    stats.resize(stats_offset);
-    for (auto& entry : term_stats) {
-      auto& stats_entry = stats[entry.second.stats_offset];
-      stats_entry.resize(scorer ? scorer->stats_size() : 0);
-      auto* stats_buf = const_cast<byte_type*>(stats_entry.data());
-
-      entry.second.term_stats.Finish(stats_buf, 0, &_field_stats);
+    stats.resize(terms.Size());
+    for (const auto& [term, idx] : offsets) {
+      terms.Finish(stats[idx], idx, &field);
     }
   }
 
  private:
-  struct StatsState {
-    explicit StatsState(const Scorer* scorer, uint32_t& state_offset)
-      : term_stats{scorer, 1}, stats_offset{state_offset++} {}
+  void Push(Candidate&& candidate) {
+    if (_scored.size() < _scored_terms_limit) {
+      _heap.emplace_back(_scored.size());
+      _scored.emplace_back(std::move(candidate));
 
-    TermCollectorsFlat term_stats;
-    uint32_t stats_offset;
-  };
-
-  // A representation of state of the collector
-  struct CollectorState {
-    const SubReader* segment{};
-    const SeekTermIterator* terms{};
-    MultiTermState* state{};
-    const uint32_t* docs_count{};
-  };
-
-  // A representation of a term cookie with its associated range_state
-  struct ScoredTermState {
-    ScoredTermState(const Key& key, const CollectorState& state)
-      : key(key),
-        cookie(state.terms->cookie()),
-        state(state.state),
-        term(state.terms->value()),
-        docs_count(*state.docs_count) {
-      SDB_ASSERT(this->cookie);
+      if (_scored.size() == _scored_terms_limit) [[unlikely]] {
+        absl::c_make_heap(
+          _heap, [&](const size_t lhs, const size_t rhs) noexcept {
+            return _comparer(_scored[rhs].key, _scored[lhs].key);
+          });
+      }
+      return;
     }
 
-    ScoredTermState(ScoredTermState&&) = default;
-    ScoredTermState& operator=(ScoredTermState&&) = default;
-
-    Key key;
-    SeekCookie::ptr cookie;  // term offset cache
-    MultiTermState* state;   // state containing this scored term
-    bstring term;            // actual term value this state is for
-    uint32_t docs_count;
-  };
-
-  void push() noexcept {
-    absl::c_push_heap(
-      _scored_states_heap, [&](const size_t lhs, const size_t rhs) noexcept {
-        return _comparer(_scored_states[rhs].key, _scored_states[lhs].key);
-      });
+    const size_t min_idx = _heap.front();
+    if (_comparer(_scored[min_idx].key, candidate.key)) {
+      PopHeap();
+      _scored[min_idx] = std::move(candidate);
+      PushHeap();
+    }
+    // else: drop the candidate; its entry stays unscored
   }
 
-  void pop() noexcept {
-    absl::c_pop_heap(
-      _scored_states_heap, [&](const size_t lhs, const size_t rhs) noexcept {
-        return _comparer(_scored_states[rhs].key, _scored_states[lhs].key);
-      });
+  void PushHeap() noexcept {
+    absl::c_push_heap(_heap, [&](const size_t lhs, const size_t rhs) noexcept {
+      return _comparer(_scored[rhs].key, _scored[lhs].key);
+    });
+  }
+
+  void PopHeap() noexcept {
+    absl::c_pop_heap(_heap, [&](const size_t lhs, const size_t rhs) noexcept {
+      return _comparer(_scored[rhs].key, _scored[lhs].key);
+    });
   }
 
   [[no_unique_address]] comparer_type _comparer;
-  const decltype(TermMeta::docs_count) _no_docs = 0;
-  CollectorState _state;
-  FieldCollector _field_stats;
-  std::vector<ScoredTermState> _scored_states;
-  // use external heap as states are big
-  std::vector<size_t> _scored_states_heap;
+  std::vector<Candidate> _scored;
+  // use external heap as candidates are big
+  std::vector<size_t> _heap;
   size_t _scored_terms_limit;
 };
 
@@ -245,14 +177,13 @@ struct TermFrequency {
 };
 
 // Filter visitor for multiterm queries
-template<typename States>
 class MultiTermVisitor {
  public:
   MultiTermVisitor(LimitedSampleCollector<TermFrequency>& collector,
-                   States& states)
-    : _collector(collector), _states(states) {}
+                   MultiTermState& state)
+    : _collector{collector}, _state{state} {}
 
-  void Prepare(const SubReader& segment, const TermReader& reader,
+  void Prepare(const SubReader& /*segment*/, const TermReader& reader,
                const SeekTermIterator& terms) {
     // get term metadata
     auto* meta = irs::get<TermMeta>(terms);
@@ -263,30 +194,153 @@ class MultiTermVisitor {
     // probably due to broken optimization
     _docs_count = meta ? &meta->docs_count : &_no_docs;
 
-    // get state for current segment
-    auto& state = _states.insert(segment);
-    state.reader = &reader;
+    _state.Prepare(&reader);
 
-    _collector.Prepare(segment, terms, state);
-    _key.offset = 0;
+    _terms = &terms;
+    _offset = 0;
   }
 
   // FIXME can incorporate boost into collecting logic
   void Visit(score_t boost) {
-    // fill scoring candidates
-    SDB_ASSERT(_docs_count);
-    _key.frequency = *_docs_count;
-    _key.boost = boost;
-    _collector.collect(_key);
-    ++_key.offset;
+    SDB_ASSERT(_docs_count && _terms);
+    const uint32_t docs_count = *_docs_count;
+    _state.Push(MultiTermState::Entry{
+      .cookie = _terms->cookie(),
+      .docs_count = docs_count,
+      .boost = boost,
+    });
+
+    const TermFrequency key{
+      .offset = _offset,
+      .frequency = docs_count,
+      .boost = boost,
+    };
+    _collector.collect(_state, _state.TermsSize() - 1, *_terms, key);
+    ++_offset;
   }
 
  private:
   const decltype(TermMeta::docs_count) _no_docs = 0;
   LimitedSampleCollector<TermFrequency>& _collector;
-  States& _states;
-  TermFrequency _key;
+  MultiTermState& _state;
+  const SeekTermIterator* _terms = nullptr;
   const decltype(TermMeta::docs_count)* _docs_count = nullptr;
+  uint32_t _offset = 0;
+};
+
+struct TermScore {
+  uint32_t offset;
+  score_t boost;
+
+  explicit operator score_t() const noexcept { return boost; }
+
+  bool operator<(const TermScore& rhs) const noexcept {
+    return boost < rhs.boost || (boost == rhs.boost && offset > rhs.offset);
+  }
+};
+
+// Filter visitor for multiterm queries sampled by score
+class ScoredMultiTermVisitor {
+ public:
+  ScoredMultiTermVisitor(LimitedSampleCollector<TermScore>& collector,
+                         MultiTermState& state)
+    : _collector{collector}, _state{state} {}
+
+  void Prepare(const SubReader& /*segment*/, const TermReader& reader,
+               const SeekTermIterator& terms) {
+    auto* meta = irs::get<TermMeta>(terms);
+    _docs_count = meta ? &meta->docs_count : &_no_docs;
+
+    _state.Prepare(&reader);
+
+    _terms = &terms;
+    _offset = 0;
+  }
+
+  void Visit(score_t boost) {
+    SDB_ASSERT(_docs_count && _terms);
+    const uint32_t docs_count = *_docs_count;
+    _state.Push(MultiTermState::Entry{
+      .cookie = _terms->cookie(),
+      .docs_count = docs_count,
+      .boost = boost,
+    });
+
+    const TermScore key{
+      .offset = _offset,
+      .boost = boost,
+    };
+    _collector.collect(_state, _state.TermsSize() - 1, *_terms, key);
+    ++_offset;
+  }
+
+ private:
+  const decltype(TermMeta::docs_count) _no_docs = 0;
+  LimitedSampleCollector<TermScore>& _collector;
+  MultiTermState& _state;
+  const SeekTermIterator* _terms = nullptr;
+  const decltype(TermMeta::docs_count)* _docs_count = nullptr;
+  uint32_t _offset = 0;
+};
+
+// Per-segment collector for limited-sample (top-K) filters. Owns the field
+// collector and the limited sample collector; the per-term collector is built
+// in place at Finish, since the number of distinct winners is only known after
+// all segments are merged.
+class LimitedTermsCollector final : public PrepareCollector {
+ public:
+  LimitedTermsCollector(const Scorer* scorer, size_t scored_terms_limit)
+    : _scorer{scorer}, _limited{scorer ? scored_terms_limit : 0} {}
+
+  FieldCollector& Field() noexcept { return _field; }
+  LimitedSampleCollector<TermFrequency>& Limited() noexcept { return _limited; }
+
+  void Merge(PrepareCollector&& other) final {
+    auto& rhs = sdb::basics::downCast<LimitedTermsCollector>(other);
+    const FieldCollector fields[]{_field, rhs._field};
+    _field = MergeFieldCollectors(fields);
+    _limited.Merge(std::move(rhs._limited));
+  }
+
+  StatsBuffer Finish(IResourceManager& memory) final {
+    StatsBuffer::Storage stats{{memory}};
+    TermCollectorsFlat terms{_scorer, 0};
+    _limited.score(_scorer, _field, terms, stats);
+    return StatsBuffer{std::move(stats), _scorer};
+  }
+
+ private:
+  const Scorer* _scorer;
+  FieldCollector _field;
+  LimitedSampleCollector<TermFrequency> _limited;
+};
+
+class ScoredTermsCollector final : public PrepareCollector {
+ public:
+  ScoredTermsCollector(const Scorer* scorer, size_t scored_terms_limit)
+    : _scorer{scorer}, _limited{scorer ? scored_terms_limit : 0} {}
+
+  FieldCollector& Field() noexcept { return _field; }
+  LimitedSampleCollector<TermScore>& Limited() noexcept { return _limited; }
+
+  void Merge(PrepareCollector&& other) final {
+    auto& rhs = sdb::basics::downCast<ScoredTermsCollector>(other);
+    const FieldCollector fields[]{_field, rhs._field};
+    _field = MergeFieldCollectors(fields);
+    _limited.Merge(std::move(rhs._limited));
+  }
+
+  StatsBuffer Finish(IResourceManager& memory) final {
+    StatsBuffer::Storage stats{{memory}};
+    TermCollectorsFlat terms{_scorer, 0};
+    _limited.score(_scorer, _field, terms, stats);
+    return StatsBuffer{std::move(stats), _scorer};
+  }
+
+ private:
+  const Scorer* _scorer;
+  FieldCollector _field;
+  LimitedSampleCollector<TermScore> _limited;
 };
 
 }  // namespace irs

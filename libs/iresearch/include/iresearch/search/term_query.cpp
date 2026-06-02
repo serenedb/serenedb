@@ -31,34 +31,33 @@
 
 namespace irs {
 
-TermQuery::TermQuery(States&& states, bstring&& stats, score_t boost)
-  : _states{std::move(states)}, _stats{std::move(stats)}, _boost{boost} {}
+TermQuery::TermQuery(const SubReader& segment, TermState&& state, score_t boost)
+  : QueryBuilder{segment}, _state{std::move(state)}, _boost{boost} {}
 
-DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
-  const auto& segment = ctx.segment;
-  const auto* state = _states.find(segment);
+DocIterator::ptr TermQuery::Execute(const ExecutionContext& ctx) const {
+  const auto& segment = _segment;
 
-  if (!state) [[unlikely]] {  // Invalid state
+  if (!_state.cookie) [[unlikely]] {  // Invalid state
     return DocIterator::empty();
   }
 
-  if (!ctx.scorer &&
+  if (!ctx.Stats().HasScorer() &&
       segment.docs_count() ==
-        sdb::basics::downCast<CookieImpl>(*state->cookie).meta.docs_count)
+        sdb::basics::downCast<CookieImpl>(*_state.cookie).meta.docs_count)
     [[unlikely]] {
     return memory::make_managed<AllIterator>(segment.docs_count(), nullptr,
                                              kNoBoost);
   }
 
-  const auto* reader = state->reader;
+  const auto* reader = _state.reader;
   SDB_ASSERT(reader);
   DocIterator::ptr docs;
 
-  const auto features = GetFeatures(ctx.scorer);
+  const auto features = GetFeatures(ctx.Stats().GetScorer());
   auto it = reader->Iterator(features,
                              {
-                               .cookie = state->cookie.get(),
-                               .stats = _stats.c_str(),
+                               .cookie = _state.cookie.get(),
+                               .stats = ctx.Stats().GetStats().data(),
                                .boost = _boost,
                                .field = reader->meta(),
                              },
@@ -70,11 +69,8 @@ DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
   return it;
 }
 
-void TermQuery::visit(const SubReader& segment, PreparedStateVisitor& visitor,
-                      score_t boost) const {
-  if (const auto* state = _states.find(segment); state) {
-    visitor.Visit(*this, *state, boost * _boost);
-  }
+void TermQuery::Visit(PreparedStateVisitor& visitor, score_t boost) const {
+  visitor.Visit(*this, _state, boost * _boost);
 }
 
 }  // namespace irs

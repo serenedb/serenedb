@@ -36,7 +36,10 @@ class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
 
   bool empty() const noexcept { return _and->empty() && _or->empty(); }
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 
  private:
   bool equals(const Filter& rhs) const noexcept final;

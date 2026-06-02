@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <limits>
+
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/scorer.hpp"
@@ -30,48 +32,45 @@ namespace irs {
 
 struct TermReader;
 
-struct MultiTermState {
-  struct ScoredTermState {
-    ScoredTermState(SeekCookie::ptr&& cookie, uint32_t stat_offset,
-                    score_t boost = kNoBoost) noexcept
-      : cookie{std::move(cookie)}, stat_offset{stat_offset}, boost{boost} {}
+class MultiTermState {
+ public:
+  static constexpr uint32_t kUnscored = std::numeric_limits<uint32_t>::max();
 
+  struct Entry {
     SeekCookie::ptr cookie;
-    uint32_t stat_offset{};
-    float_t boost{kNoBoost};
+    uint32_t docs_count = 0;
+    score_t boost = kNoBoost;
+    uint32_t stat_offset = kUnscored;
   };
 
   explicit MultiTermState(IResourceManager& memory) noexcept
-    : scored_states{{memory}}, unscored_states{{memory}} {}
+    : _terms{{memory}} {}
 
-  using UnscoredTermState = SeekCookie::ptr;
+  void Prepare(const TermReader* reader) {
+    SDB_ASSERT(reader);
+    SDB_ASSERT(!_reader);
+    _reader = reader;
+  }
 
   // Return true if state is empty
-  bool empty() const noexcept {
-    return scored_states.empty() && unscored_states.empty();
+  bool Empty() const noexcept { return _terms.empty(); }
+  const auto* Reader() const noexcept { return _reader; }
+
+  void Push(Entry&& entry) {
+    _terms.emplace_back(std::move(entry));
+    _estimation += _terms.back().docs_count;
   }
 
-  // Return total cost of execution
-  CostAttr::Type estimation() const noexcept {
-    return scored_states_estimation + unscored_states_estimation;
-  }
+  auto& Terms() noexcept { return _terms; }
+  const auto& Terms() const noexcept { return _terms; }
+  auto TermsSize() const { return _terms.size(); }
 
+ private:
   // Reader using for iterate over the terms
-  const TermReader* reader{};
+  const TermReader* _reader = nullptr;
 
-  // Scored term states
-  ManagedVector<ScoredTermState> scored_states;
-
-  // Matching terms that may have been skipped
-  // while collecting statistics and should not be
-  // scored by the disjunction.
-  ManagedVector<UnscoredTermState> unscored_states;
-
-  // Estimated cost of scored states
-  CostAttr::Type scored_states_estimation{};
-
-  // Estimated cost of unscored states
-  CostAttr::Type unscored_states_estimation{};
+  ManagedVector<Entry> _terms;
+  CostAttr::Type _estimation = 0;
 };
 
 }  // namespace irs

@@ -49,7 +49,10 @@ class BySamePosition : public FilterWithOptions<BySamePositionOptions> {
   static constexpr IndexFeatures kRequiredFeatures =
     IndexFeatures::Freq | IndexFeatures::Pos;
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

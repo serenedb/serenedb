@@ -38,6 +38,7 @@
 #include "iresearch/utils/vpack_utils.hpp"
 #include "s2/s2point_region.h"
 #include "s2/s2polygon.h"
+#include "search/filter_test_case_base.hpp"
 #include "search_fields.hpp"
 #include "tests_shared.hpp"
 
@@ -268,8 +269,8 @@ TEST(GeoDistanceFilterTest, boost) {
     *q.mutable_field() = "field";
     q.mutable_options()->store_field_id = kGeo;
 
-    auto prepared = q.prepare({.index = irs::SubReader::empty()});
-    ASSERT_EQ(irs::kNoBoost, prepared->Boost());
+    ::tests::PreparedFilter prepared{q, irs::SubReader::empty()};
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
 
   {
@@ -285,8 +286,8 @@ TEST(GeoDistanceFilterTest, boost) {
     *q.mutable_field() = "field";
     q.mutable_options()->store_field_id = kGeo;
 
-    auto prepared = q.prepare({.index = irs::SubReader::empty()});
-    ASSERT_EQ(irs::kNoBoost, prepared->Boost());
+    ::tests::PreparedFilter prepared{q, irs::SubReader::empty()};
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
 
   {
@@ -301,8 +302,8 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->store_field_id = kGeo;
     q.boost(boost);
 
-    auto prepared = q.prepare({.index = irs::SubReader::empty()});
-    ASSERT_EQ(boost, prepared->Boost());
+    ::tests::PreparedFilter prepared{q, irs::SubReader::empty()};
+    ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
 
   {
@@ -320,8 +321,8 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->store_field_id = kGeo;
     q.boost(boost);
 
-    auto prepared = q.prepare({.index = irs::SubReader::empty()});
-    ASSERT_EQ(boost, prepared->Boost());
+    ::tests::PreparedFilter prepared{q, irs::SubReader::empty()};
+    ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
 }
 
@@ -423,19 +424,16 @@ TEST(GeoDistanceFilterTest, query) {
     };
 
     MaxMemoryCounter counter;
-    auto prepared = q.prepare({
-      .index = *reader,
-      .memory = counter,
-    });
-    EXPECT_NE(nullptr, prepared);
+    std::optional<::tests::PreparedFilter> prepared{std::in_place, q, *reader,
+                                                    nullptr, counter};
     auto expected_cost = costs.begin();
-    for (auto& segment : *reader) {
+    for (size_t i = 0; auto& segment : *reader) {
       const auto* column = segment.Column(kName);
       EXPECT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto it = prepared->execute({.segment = segment});
+      auto it = prepared->Execute(i);
       EXPECT_NE(nullptr, it);
-      auto seek_it = prepared->execute({.segment = segment});
+      auto seek_it = prepared->Execute(i);
       EXPECT_NE(nullptr, seek_it);
       auto* cost = irs::get<irs::CostAttr>(*it);
       EXPECT_NE(nullptr, cost);
@@ -445,6 +443,7 @@ TEST(GeoDistanceFilterTest, query) {
       ++expected_cost;
 
       if (irs::doc_limits::eof(it->value())) {
+        ++i;
         continue;
       }
 
@@ -462,12 +461,12 @@ TEST(GeoDistanceFilterTest, query) {
       EXPECT_TRUE(irs::doc_limits::eof(seek_it->seek(it->value())));
 
       {
-        auto it = prepared->execute({.segment = segment});
+        auto it = prepared->Execute(i);
         EXPECT_NE(nullptr, it);
 
         while (it->next()) {
           const auto doc_id = it->value();
-          auto seek_it = prepared->execute({.segment = segment});
+          auto seek_it = prepared->Execute(i);
           EXPECT_NE(nullptr, seek_it);
           EXPECT_EQ(doc_id, seek_it->seek(doc_id));
           do {
@@ -482,6 +481,7 @@ TEST(GeoDistanceFilterTest, query) {
         }
         EXPECT_TRUE(irs::doc_limits::eof(it->value()));
       }
+      ++i;
     }
     EXPECT_EQ(expected_cost, costs.end());
 
@@ -942,20 +942,20 @@ TEST(GeoDistanceFilterTest, checkScorer) {
   auto execute_query = [&](const irs::Filter& q, const irs::Scorer& ord) {
     std::map<std::string, irs::score_t> actual_results;
 
-    auto prepared = q.prepare({.index = *reader, .scorer = &ord});
-    EXPECT_NE(nullptr, prepared);
-    for (auto& segment : *reader) {
+    ::tests::PreparedFilter prepared{q, *reader, &ord};
+    for (size_t i = 0; auto& segment : *reader) {
       const auto* column = segment.Column(kName);
       EXPECT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto it = prepared->execute({.segment = segment, .scorer = &ord});
+      auto it = prepared.Execute(i);
       EXPECT_NE(nullptr, it);
-      auto seek_it = prepared->execute({.segment = segment, .scorer = &ord});
+      auto seek_it = prepared.Execute(i);
       EXPECT_NE(nullptr, seek_it);
       auto* cost = irs::get<irs::CostAttr>(*it);
       EXPECT_NE(nullptr, cost);
 
       if (irs::doc_limits::eof(it->value())) {
+        ++i;
         continue;
       }
 
@@ -993,13 +993,12 @@ TEST(GeoDistanceFilterTest, checkScorer) {
       EXPECT_TRUE(irs::doc_limits::eof(seek_it->seek(it->value())));
 
       {
-        auto it = prepared->execute({.segment = segment, .scorer = &ord});
+        auto it = prepared.Execute(i);
         EXPECT_NE(nullptr, it);
 
         while (it->next()) {
           const auto doc_id = it->value();
-          auto seek_it =
-            prepared->execute({.segment = segment, .scorer = &ord});
+          auto seek_it = prepared.Execute(i);
           EXPECT_NE(nullptr, seek_it);
           EXPECT_EQ(doc_id, seek_it->seek(doc_id));
           do {
@@ -1014,6 +1013,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
         }
         EXPECT_TRUE(irs::doc_limits::eof(it->value()));
       }
+      ++i;
     }
 
     return actual_results;

@@ -27,114 +27,97 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/ngram_similarity_query.hpp"
-#include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/terms_filter.hpp"
 
 namespace irs {
+namespace {
 
-Filter::Query::ptr ByNGramSimilarity::Prepare(
-  const PrepareContext& ctx, std::string_view field_name,
-  const std::vector<irs::bstring>& ngrams, float_t threshold,
-  bool allow_phrase) {
+size_t MinMatchCount(size_t terms_count, float_t threshold) noexcept {
+  threshold = std::clamp(threshold, 0.f, 1.f);
+  return std::clamp(static_cast<size_t>(
+                      std::ceil(static_cast<float_t>(terms_count) * threshold)),
+                    size_t{1}, terms_count);
+}
+
+}  // namespace
+
+QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
+  const SubReader& segment, const PrepareContext& ctx,
+  std::string_view field_name, const std::vector<irs::bstring>& ngrams,
+  float_t threshold) {
   if (ngrams.empty() || field_name.empty()) {
-    // empty field or terms or invalid threshold
-    return Query::empty();
+    return QueryBuilder::Empty();
   }
   const auto terms_count = ngrams.size();
+  const auto min_match_count = MinMatchCount(terms_count, threshold);
 
-  threshold = std::clamp(threshold, 0.f, 1.f);
-  const auto min_match_count =
-    std::clamp(static_cast<size_t>(
-                 std::ceil(static_cast<float_t>(terms_count) * threshold)),
-               size_t{1}, terms_count);
-  if (!ctx.scorer && 1 == min_match_count) {
+  auto* ngram_collector = dynamic_cast<NGramCollector*>(ctx.collector);
+  if (ngram_collector == nullptr) {
     irs::ByTermsOptions options;
     for (const auto& term : ngrams) {
       options.terms.emplace(term, irs::kNoBoost);
     }
-    return ByTerms::Prepare(ctx, field_name, options);
+    return ByTerms::PrepareSegment(segment, ctx, field_name, options);
   }
 
-  if (allow_phrase && min_match_count == terms_count) {
-    irs::ByPhraseOptions options;
-    for (const auto& ngram : ngrams) {
-      options.push_back(ByTermOptions{ngram});
-    }
-    return ByPhrase::Prepare(ctx, field_name, options);
+  const TermReader* field = segment.field(field_name);
+
+  if (!field) {
+    return nullptr;
   }
 
-  NGramStates query_states{ctx.memory, ctx.index.size()};
-
-  // per segment terms states
-  ManagedVector<SeekCookie::ptr> term_states{{ctx.memory}};
-  term_states.reserve(terms_count);
-
-  // prepare ngrams stats
-  FieldCollector field_stats;
-  TermCollectorsFlat term_stats{ctx.scorer, terms_count};
-
-  for (const auto& segment : ctx.index) {
-    // get term dictionary for field
-    const TermReader* field = segment.field(field_name);
-
-    if (!field) {
-      continue;
-    }
-
-    // check required features
-    if (NGramSimilarityQuery::kRequiredFeatures !=
-        (field->meta().index_features &
-         NGramSimilarityQuery::kRequiredFeatures)) {
-      continue;
-    }
-
-    // collect field statistics once per segment
-    field_stats.Collect(*field);
-    size_t term_idx = 0;
-    size_t count_terms = 0;
-    auto term = field->iterator(SeekMode::NORMAL);
-    for (const auto& ngram : ngrams) {
-      auto& state = term_states.emplace_back();
-      if (term->seek(ngram)) {
-        // read term attributes
-        term->read();
-        // collect statistics
-        term_stats.Collect(term_idx, *term);
-        state = term->cookie();
-        ++count_terms;
-      }
-
-      ++term_idx;
-    }
-
-    if (count_terms < min_match_count) {
-      // we have not found enough terms
-      term_states.clear();
-      continue;
-    }
-
-    auto& state = query_states.insert(segment);
-    state.terms = std::move(term_states);
-    state.reader = field;
-
-    term_states.clear();
-    term_states.reserve(terms_count);
+  if (NGramSimilarityQuery::kRequiredFeatures !=
+      (field->meta().index_features &
+       NGramSimilarityQuery::kRequiredFeatures)) {
+    return nullptr;
   }
 
-  if (query_states.empty()) {
-    return Query::empty();
+  ngram_collector->Field().Collect(*field);
+
+  NGramState state{ctx.memory};
+  state.terms.reserve(terms_count);
+
+  size_t term_idx = 0;
+  size_t count_terms = 0;
+  auto term = field->iterator(SeekMode::NORMAL);
+  for (const auto& ngram : ngrams) {
+    auto& term_state = state.terms.emplace_back();
+    if (term->seek(ngram)) {
+      term->read();
+      ngram_collector->Terms().Collect(term_idx, *term);
+      term_state = term->cookie();
+      ++count_terms;
+    }
+
+    ++term_idx;
   }
 
-  bstring stats(GetStatsSize(ctx.scorer), 0);
-  auto* stats_buf = stats.data();
-
-  for (size_t term_idx = 0; term_idx < terms_count; ++term_idx) {
-    term_stats.Finish(stats_buf, term_idx, &field_stats);
+  if (count_terms < min_match_count) {
+    return nullptr;
   }
+
+  state.reader = field;
 
   return memory::make_tracked<NGramSimilarityQuery>(
-    ctx.memory, min_match_count, std::move(query_states), std::move(stats),
-    ctx.boost);
+    ctx.memory, segment, min_match_count, std::move(state), ctx.boost);
+}
+
+PrepareCollector::ptr ByNGramSimilarity::MakeCollector(
+  const Scorer* scorer) const {
+  const auto& ngrams = options().ngrams;
+  const auto terms_count = ngrams.size();
+  if (ngrams.empty() || field().empty()) {
+    return std::make_unique<NoopCollector>();
+  }
+  const auto min_match_count = MinMatchCount(terms_count, options().threshold);
+  if (!scorer && 1 == min_match_count) {
+    irs::ByTermsOptions opts;
+    for (const auto& term : ngrams) {
+      opts.terms.emplace(term, irs::kNoBoost);
+    }
+    return std::make_unique<TermsCollector>(scorer, opts.terms.size());
+  }
+  return std::make_unique<NGramCollector>(scorer, terms_count);
 }
 
 }  // namespace irs

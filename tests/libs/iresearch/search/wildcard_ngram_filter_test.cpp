@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/analysis/wildcard_analyzer.hpp"
 #include "iresearch/index/directory_reader.hpp"
@@ -232,13 +233,12 @@ TEST(WildcardNgramFilterTest, query) {
 
   // Execute a filter and return matched doc_ids across all segments.
   auto execute = [&](const irs::ByWildcardNgram& q) {
-    auto prepared = q.prepare({.index = *reader, .memory = counter});
-    EXPECT_NE(nullptr, prepared);
+    tests::PreparedFilter prepared{q, *reader, nullptr, counter};
     counter.Reset();
 
     std::vector<irs::doc_id_t> result;
-    for (const auto& segment : *reader) {
-      auto docs = prepared->execute({.segment = segment});
+    for (size_t i = 0, n = prepared.size(); i < n; ++i) {
+      auto docs = prepared.Execute(i);
       while (docs->next()) {
         result.push_back(docs->value());
       }

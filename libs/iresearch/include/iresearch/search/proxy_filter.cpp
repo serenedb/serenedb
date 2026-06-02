@@ -39,9 +39,10 @@ class LazyFilterBitset : private util::Noncopyable {
  public:
   using WordT = size_t;
 
-  LazyFilterBitset(const ExecutionContext& ctx, const Filter::Query& filter)
+  LazyFilterBitset(const SubReader& segment, const ExecutionContext& ctx,
+                   const QueryBuilder& inner_query)
     : _manager{ctx.memory} {
-    const size_t bits = ctx.segment.docs_count() + doc_limits::min();
+    const size_t bits = segment.docs_count() + doc_limits::min();
     _words = bitset::bits_to_words(bits);
 
     auto bytes = sizeof(*this) + sizeof(WordT) * _words;
@@ -49,7 +50,7 @@ class LazyFilterBitset : private util::Noncopyable {
     Finally decrease = [&]() noexcept { ctx.memory.DecreaseChecked(bytes); };
 
     // TODO(mbkkt) use mask from segment manually to avoid virtual call
-    _real_doc_itr = ctx.segment.mask(filter.execute(ctx));
+    _real_doc_itr = segment.mask(inner_query.Execute(ctx));
 
     _cost = CostAttr::extract(*_real_doc_itr);
 
@@ -200,7 +201,6 @@ struct ProxyQueryCache {
     std::pair<const SubReader* const, std::unique_ptr<LazyFilterBitset>>>;
 
   Filter::ptr real_filter;
-  Filter::Query::ptr real_filter_prepared;
   absl::Mutex readers_lock;
   absl::flat_hash_map<
     const SubReader*, std::unique_ptr<LazyFilterBitset>,
@@ -209,17 +209,22 @@ struct ProxyQueryCache {
     readers;
 };
 
-class ProxyQuery : public Filter::Query {
+class ProxyQuery : public QueryBuilder {
  public:
-  explicit ProxyQuery(ProxyFilter::cache_ptr cache) : _cache{cache} {
+  ProxyQuery(const SubReader& segment, ProxyFilter::cache_ptr cache,
+             QueryBuilder::ptr inner_query)
+    : QueryBuilder{segment},
+      _cache{std::move(cache)},
+      _inner_query{std::move(inner_query)} {
     SDB_ASSERT(_cache);
-    SDB_ASSERT(_cache->real_filter_prepared);
+    SDB_ASSERT(_inner_query);
   }
 
-  DocIterator::ptr execute(const ExecutionContext& ctx) const final {
+  DocIterator::ptr Execute(const ExecutionContext& ctx) const final {
+    const auto& segment = _segment;
     auto* cache_bitset = [&] -> LazyFilterBitset* {
       absl::ReaderMutexLock lock{&_cache->readers_lock};
-      auto it = _cache->readers.find(&ctx.segment);
+      auto it = _cache->readers.find(&segment);
       if (it != _cache->readers.end()) {
         return it->second.get();
       }
@@ -227,17 +232,17 @@ class ProxyQuery : public Filter::Query {
     }();
     if (!cache_bitset) {
       auto bitset =
-        std::make_unique<LazyFilterBitset>(ctx, *_cache->real_filter_prepared);
+        std::make_unique<LazyFilterBitset>(segment, ctx, *_inner_query);
       cache_bitset = bitset.get();
       absl::WriterMutexLock lock{&_cache->readers_lock};
-      SDB_ASSERT(!_cache->readers.contains(&ctx.segment));
-      _cache->readers.emplace(&ctx.segment, std::move(bitset));
+      SDB_ASSERT(!_cache->readers.contains(&segment));
+      _cache->readers.emplace(&segment, std::move(bitset));
     }
     return memory::make_tracked<LazyFilterBitsetIterator>(ctx.memory,
                                                           *cache_bitset);
   }
 
-  void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {
+  void Visit(PreparedStateVisitor&, score_t) const final {
     // No terms to visit
   }
 
@@ -245,20 +250,30 @@ class ProxyQuery : public Filter::Query {
 
  private:
   ProxyFilter::cache_ptr _cache;
+  QueryBuilder::ptr _inner_query;
 };
 
-Filter::Query::ptr ProxyFilter::prepare(const PrepareContext& ctx) const {
+QueryBuilder::ptr ProxyFilter::PrepareSegment(const SubReader& segment,
+                                              const PrepareContext& ctx) const {
   // Currently we do not support caching scores.
   // Proxy filter should not be used with scorers!
-  SDB_ASSERT(!ctx.scorer);
-  if (!_cache || ctx.scorer) {
-    return Filter::Query::empty();
+  if (!_cache) {
+    return QueryBuilder::Empty();
   }
-  if (!_cache->real_filter_prepared) {
-    _cache->real_filter_prepared = _cache->real_filter->prepare(ctx);
-    _cache->real_filter.reset();
+  auto collector = _cache->real_filter->MakeCollector(nullptr);
+  auto inner_ctx = ctx;
+  inner_ctx.collector = collector.get();
+  auto inner_query = _cache->real_filter->PrepareSegment(segment, inner_ctx);
+  if (!inner_query) {
+    return QueryBuilder::Empty();
   }
-  return memory::make_tracked<ProxyQuery>(ctx.memory, _cache);
+  return memory::make_tracked<ProxyQuery>(ctx.memory, segment, _cache,
+                                          std::move(inner_query));
+}
+
+PrepareCollector::ptr ProxyFilter::MakeCollector(
+  const Scorer* /*scorer*/) const {
+  return std::make_unique<NoopCollector>();
 }
 
 Filter& ProxyFilter::cache_filter(IResourceManager& memory,

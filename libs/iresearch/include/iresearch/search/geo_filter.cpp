@@ -61,12 +61,17 @@ constexpr auto kSingletonCapEps = 2 * std::numeric_limits<double>::epsilon();
 
 using Disjunction = DisjunctionIterator<ScoreAdapter, ScoreMergeType::Noop>;
 
-// Bound covers the entire sphere. Used to be
-// `ByColumnExistence(store_field_id)` so rows that never wrote a geo value were
-// excluded; that gate is gone -- a full-cap match means every doc in the
-// segment matches.
-Filter::Query::ptr MatchAll(const PrepareContext& ctx) {
-  return irs::All{}.prepare(ctx);
+QueryBuilder::ptr MatchAll(const SubReader& segment,
+                           const PrepareContext& ctx) {
+  return irs::All{}.PrepareSegment(segment, ctx);
+}
+
+PrepareCollector::ptr MatchAllCollector(const Scorer* scorer) {
+  return irs::All{}.MakeCollector(scorer);
+}
+
+PrepareCollector::ptr GeoCollector(const Scorer* scorer) {
+  return std::make_unique<TermsCollector>(scorer, 1);
 }
 
 // Returns singleton S2Cap that tolerates precision errors
@@ -225,12 +230,12 @@ DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
     boost);
 }
 
-// Cached per reader query state
+// Per-segment geo query state
 struct GeoState {
   explicit GeoState(IResourceManager& memory) noexcept : states{{memory}} {}
 
   // Columnstore reader for the BLOB column carrying the analyzer's per-doc
-  // StoreAttr bytes. Resolved per-segment in PrepareStates via
+  // StoreAttr bytes. Resolved per-segment in PrepareState via
   // SubReader::Column.
   const columnstore::ColumnReader* stored_field{};
 
@@ -241,30 +246,26 @@ struct GeoState {
   ManagedVector<SeekCookie::ptr> states;
 };
 
-using GeoStates = StatesCache<GeoState>;
-
 // Compiled GeoFilter
 template<typename Parser, typename Acceptor>
-class GeoQuery : public Filter::Query {
+class GeoQuery : public QueryBuilder {
  public:
-  GeoQuery(GeoStates&& states, bstring&& stats, Parser&& parser,
+  GeoQuery(const SubReader& segment, GeoState&& state, Parser&& parser,
            Acceptor&& acceptor, score_t boost) noexcept
-    : _states{std::move(states)},
-      _stats{std::move(stats)},
+    : QueryBuilder{segment},
+      _state{std::move(state)},
       _parser{std::move(parser)},
       _acceptor{std::move(acceptor)},
       _boost{boost} {}
 
-  DocIterator::ptr execute(const ExecutionContext& ctx) const final {
-    auto& segment = ctx.segment;
-    const auto* state = _states.find(segment);
+  DocIterator::ptr Execute(const ExecutionContext& ctx) const final {
+    const auto& segment = _segment;
 
-    if (!state) {
+    if (!_state.reader) {
       return DocIterator::empty();
     }
 
-    auto* field = state->reader;
-    SDB_ASSERT(field);
+    auto* field = _state.reader;
 
     const auto* cs_reader = segment.CsReader();
     if (!cs_reader) {
@@ -272,9 +273,9 @@ class GeoQuery : public Filter::Query {
     }
 
     typename Disjunction::Adapters itrs;
-    itrs.reserve(state->states.size());
+    itrs.reserve(_state.states.size());
 
-    for (auto& entry : state->states) {
+    for (auto& entry : _state.states) {
       SDB_ASSERT(entry);
       auto it = field->Iterator(IndexFeatures::None, {.cookie = entry.get()});
       if (!it || doc_limits::eof(it->value())) [[unlikely]] {
@@ -283,18 +284,17 @@ class GeoQuery : public Filter::Query {
       itrs.emplace_back(std::move(it));
     }
 
-    return MakeIterator(std::move(itrs), *state->stored_field, *cs_reader,
-                        segment, *state->reader, _stats.c_str(), Boost(),
-                        _parser, _acceptor);
+    return MakeIterator(std::move(itrs), *_state.stored_field, *cs_reader,
+                        segment, *_state.reader, ctx.Stats().GetStats().data(),
+                        Boost(), _parser, _acceptor);
   }
 
-  void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {}
+  void Visit(PreparedStateVisitor&, score_t) const final {}
 
   score_t Boost() const noexcept final { return _boost; }
 
  private:
-  GeoStates _states;
-  bstring _stats;
+  GeoState _state;
   [[no_unique_address]] Parser _parser;
   [[no_unique_address]] Acceptor _acceptor;
   score_t _boost;
@@ -368,31 +368,31 @@ struct GeoDistanceAcceptor {
 };
 
 template<typename Options, typename Acceptor>
-Filter::Query::ptr MakeQuery(IResourceManager& manager, GeoStates&& states,
-                             bstring&& stats, score_t boost,
-                             const Options& options, Acceptor&& acceptor) {
+QueryBuilder::ptr MakeQuery(const SubReader& segment, IResourceManager& manager,
+                            GeoState&& state, score_t boost,
+                            const Options& options, Acceptor&& acceptor) {
   switch (options.stored) {
     case StoredType::VPack:
       return memory::make_tracked<GeoQuery<VPackParser, Acceptor>>(
-        manager, std::move(states), std::move(stats), VPackParser{},
+        manager, segment, std::move(state), VPackParser{},
         std::forward<Acceptor>(acceptor), boost);
     case StoredType::S2Region:
       return memory::make_tracked<GeoQuery<S2ShapeParser, Acceptor>>(
-        manager, std::move(states), std::move(stats), S2ShapeParser{},
+        manager, segment, std::move(state), S2ShapeParser{},
         std::forward<Acceptor>(acceptor), boost);
     case StoredType::S2Point:
     case StoredType::S2Centroid:
       return memory::make_tracked<GeoQuery<S2PointParser, Acceptor>>(
-        manager, std::move(states), std::move(stats), S2PointParser{},
+        manager, segment, std::move(state), S2PointParser{},
         std::forward<Acceptor>(acceptor), boost);
   }
   SDB_ASSERT(false);
-  return Filter::Query::empty();
+  return QueryBuilder::Empty();
 }
 
-std::pair<GeoStates, bstring> PrepareStates(
-  const PrepareContext& ctx, std::span<const std::string> geo_terms,
-  std::string_view field, field_id store_field_id) {
+GeoState PrepareState(const SubReader& segment, const PrepareContext& ctx,
+                      std::span<const std::string> geo_terms,
+                      std::string_view field, field_id store_field_id) {
   SDB_ASSERT(!geo_terms.empty());
 
   std::vector<std::string_view> sorted_terms(geo_terms.begin(),
@@ -401,58 +401,45 @@ std::pair<GeoStates, bstring> PrepareStates(
   SDB_ASSERT(std::unique(sorted_terms.begin(), sorted_terms.end()) ==
              sorted_terms.end());
 
-  std::pair<GeoStates, bstring> res{
-    std::piecewise_construct,
-    std::forward_as_tuple(ctx.memory, ctx.index.size()),
-    std::forward_as_tuple(GetStatsSize(ctx.scorer), 0)};
-
-  const auto size = sorted_terms.size();
-  FieldCollector field_stats;
-  ManagedVector<SeekCookie::ptr> term_states{{ctx.memory}};
+  GeoState state{ctx.memory};
 
   SDB_ASSERT(store_field_id != 0);
-  for (const auto& segment : ctx.index) {
-    const auto* reader = segment.field(field);
-    if (!reader) {
-      continue;
-    }
-    const auto* stored_field = segment.Column(store_field_id);
-    if (!stored_field) {
-      continue;
-    }
-    auto terms = reader->iterator(SeekMode::NORMAL);
-    if (!terms) [[unlikely]] {
-      continue;
-    }
-
-    field_stats.Collect(*reader);
-    term_states.reserve(size);
-
-    for (const auto term : sorted_terms) {
-      if (!terms->seek(ViewCast<byte_type>(term))) {
-        continue;
-      }
-      terms->read();
-      term_states.emplace_back(terms->cookie());
-    }
-
-    if (term_states.empty()) {
-      continue;
-    }
-
-    auto& state = res.first.insert(segment);
-    state.reader = reader;
-    state.states = std::move(term_states);
-    state.stored_field = stored_field;
-    term_states.clear();
+  const auto* reader = segment.field(field);
+  if (!reader) {
+    return state;
+  }
+  const auto* stored_field = segment.Column(store_field_id);
+  if (!stored_field) {
+    return state;
+  }
+  auto terms = reader->iterator(SeekMode::NORMAL);
+  if (!terms) [[unlikely]] {
+    return state;
   }
 
-  if (ctx.scorer) {
-    const auto* fs = &field_stats;
-    ctx.scorer->collect(const_cast<byte_type*>(res.second.data()), fs, nullptr);
+  auto& collector = sdb::basics::downCast<TermsCollector>(*ctx.collector);
+  collector.Field().Collect(*reader);
+
+  ManagedVector<SeekCookie::ptr> term_states{{ctx.memory}};
+  term_states.reserve(sorted_terms.size());
+
+  for (const auto term : sorted_terms) {
+    if (!terms->seek(ViewCast<byte_type>(term))) {
+      continue;
+    }
+    terms->read();
+    term_states.emplace_back(terms->cookie());
   }
 
-  return res;
+  if (term_states.empty()) {
+    return state;
+  }
+
+  state.reader = reader;
+  state.states = std::move(term_states);
+  state.stored_field = stored_field;
+
+  return state;
 }
 
 std::pair<S2Cap, bool> GetBound(BoundType type, S2Point origin,
@@ -465,10 +452,11 @@ std::pair<S2Cap, bool> GetBound(BoundType type, S2Point origin,
           BoundType::Inclusive == type};
 }
 
-Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
-                                       std::string_view field,
-                                       const GeoDistanceFilterOptions& options,
-                                       bool greater) {
+QueryBuilder::ptr PrepareOpenInterval(const SubReader& segment,
+                                      const PrepareContext& ctx,
+                                      std::string_view field,
+                                      const GeoDistanceFilterOptions& options,
+                                      bool greater) {
   const auto& range = options.range;
   const auto& origin = options.origin;
 
@@ -492,7 +480,7 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
         bound = greater ? S2Cap::Full() : FromPoint(origin);
 
         if (!bound.is_valid()) {
-          return Filter::Query::empty();
+          return QueryBuilder::Empty();
         }
 
         incl = true;
@@ -512,7 +500,7 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
           opts.range.max = 0;
           opts.range.max_type = BoundType::Inclusive;
 
-          return root.prepare(ctx);
+          return root.PrepareSegment(segment, ctx);
         } else {
           bound = S2Cap::Empty();
         }
@@ -524,7 +512,7 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
     std::tie(bound, incl) = GetBound(type, origin, dist);
 
     if (!bound.is_valid()) {
-      return Filter::Query::empty();
+      return QueryBuilder::Empty();
     }
 
     if (greater) {
@@ -535,11 +523,11 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
   SDB_ASSERT(bound.is_valid());
 
   if (bound.is_full()) {
-    return MatchAll(ctx);
+    return MatchAll(segment, ctx);
   }
 
   if (bound.is_empty()) {
-    return Filter::Query::empty();
+    return QueryBuilder::Empty();
   }
 
   S2RegionTermIndexer indexer(options.options);
@@ -547,32 +535,88 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
   const auto geo_terms = indexer.GetQueryTerms(bound, options.prefix);
 
   if (geo_terms.empty()) {
-    return Filter::Query::empty();
+    return QueryBuilder::Empty();
   }
 
-  auto [states, stats] =
-    PrepareStates(ctx, geo_terms, field, options.store_field_id);
+  auto state =
+    PrepareState(segment, ctx, geo_terms, field, options.store_field_id);
 
   if (incl) {
-    return MakeQuery(ctx.memory, std::move(states), std::move(stats), ctx.boost,
-                     options, GeoDistanceAcceptor<true>{bound});
+    return MakeQuery(segment, ctx.memory, std::move(state), ctx.boost, options,
+                     GeoDistanceAcceptor<true>{bound});
   } else {
-    return MakeQuery(ctx.memory, std::move(states), std::move(stats), ctx.boost,
-                     options, GeoDistanceAcceptor<false>{bound});
+    return MakeQuery(segment, ctx.memory, std::move(state), ctx.boost, options,
+                     GeoDistanceAcceptor<false>{bound});
   }
 }
 
-Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
-                                   std::string_view field,
-                                   const GeoDistanceFilterOptions& options) {
+PrepareCollector::ptr PrepareOpenIntervalCollector(
+  const Scorer* scorer, std::string_view field,
+  const GeoDistanceFilterOptions& options, bool greater) {
+  const auto& range = options.range;
+  const auto& origin = options.origin;
+
+  const auto [dist, type] =
+    greater ? std::forward_as_tuple(range.min, range.min_type)
+            : std::forward_as_tuple(range.max, range.max_type);
+
+  S2Cap bound;
+
+  if (dist < 0.) {
+    bound = greater ? S2Cap::Full() : S2Cap::Empty();
+  } else if (0. == dist) {
+    switch (type) {
+      case BoundType::Unbounded:
+        SDB_ASSERT(false);
+        bound = S2Cap::Empty();
+        break;
+      case BoundType::Inclusive:
+        bound = greater ? S2Cap::Full() : FromPoint(origin);
+        break;
+      case BoundType::Exclusive:
+        if (greater) {
+          And root;
+          auto& excl = root.add<Not>().filter<GeoDistanceFilter>();
+          *excl.mutable_field() = std::string{field};
+          auto& opts = *excl.mutable_options();
+          opts = options;
+          opts.range.min = 0;
+          opts.range.min_type = BoundType::Inclusive;
+          opts.range.max = 0;
+          opts.range.max_type = BoundType::Inclusive;
+
+          return root.MakeCollector(scorer);
+        } else {
+          bound = S2Cap::Empty();
+        }
+        break;
+    }
+  } else {
+    std::tie(bound, std::ignore) = GetBound(type, origin, dist);
+    if (greater && bound.is_valid()) {
+      bound = bound.Complement();
+    }
+  }
+
+  if (bound.is_valid() && bound.is_full()) {
+    return MatchAllCollector(scorer);
+  }
+
+  return GeoCollector(scorer);
+}
+
+QueryBuilder::ptr PrepareInterval(const SubReader& segment,
+                                  const PrepareContext& ctx,
+                                  std::string_view field,
+                                  const GeoDistanceFilterOptions& options) {
   const auto& range = options.range;
   SDB_ASSERT(BoundType::Unbounded != range.min_type);
   SDB_ASSERT(BoundType::Unbounded != range.max_type);
 
   if (range.max < 0.) {
-    return Filter::Query::empty();
+    return QueryBuilder::Empty();
   } else if (range.min < 0.) {
-    return PrepareOpenInterval(ctx, field, options, false);
+    return PrepareOpenInterval(segment, ctx, field, options, false);
   }
 
   const bool min_incl = range.min_type == BoundType::Inclusive;
@@ -580,10 +624,10 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
 
   if (math::ApproxEquals(range.min, range.max)) {
     if (!min_incl || !max_incl) {
-      return Filter::Query::empty();
+      return QueryBuilder::Empty();
     }
   } else if (range.min > range.max) {
-    return Filter::Query::empty();
+    return QueryBuilder::Empty();
   }
 
   const auto& origin = options.origin;
@@ -596,14 +640,13 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
     const auto geo_terms = indexer.GetQueryTerms(origin, options.prefix);
 
     if (geo_terms.empty()) {
-      return Filter::Query::empty();
+      return QueryBuilder::Empty();
     }
 
-    auto [states, stats] =
-      PrepareStates(ctx, geo_terms, field, options.store_field_id);
+    auto state =
+      PrepareState(segment, ctx, geo_terms, field, options.store_field_id);
 
-    return MakeQuery(ctx.memory, std::move(states), std::move(stats), ctx.boost,
-                     options,
+    return MakeQuery(segment, ctx.memory, std::move(state), ctx.boost, options,
                      [bound = FromPoint(origin)](const ShapeContainer& shape) {
                        return bound.InteriorContains(shape.centroid());
                      });
@@ -613,7 +656,7 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
   auto max_bound = FromPoint(origin, range.max);
 
   if (!min_bound.is_valid() || !max_bound.is_valid()) {
-    return Filter::Query::empty();
+    return QueryBuilder::Empty();
   }
 
   S2RegionTermIndexer indexer(options.options);
@@ -631,49 +674,56 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
   const auto geo_terms = indexer.GetQueryTerms(ring, options.prefix);
 
   if (geo_terms.empty()) {
-    return Filter::Query::empty();
+    return QueryBuilder::Empty();
   }
 
-  auto [states, stats] =
-    PrepareStates(ctx, geo_terms, field, options.store_field_id);
+  auto state =
+    PrepareState(segment, ctx, geo_terms, field, options.store_field_id);
 
   switch (size_t(min_incl) + 2 * size_t(max_incl)) {
     case 0:
       return MakeQuery(
-        ctx.memory, std::move(states), std::move(stats), ctx.boost, options,
+        segment, ctx.memory, std::move(state), ctx.boost, options,
         GeoDistanceRangeAcceptor<false, false>{min_bound, max_bound});
     case 1:
       return MakeQuery(
-        ctx.memory, std::move(states), std::move(stats), ctx.boost, options,
+        segment, ctx.memory, std::move(state), ctx.boost, options,
         GeoDistanceRangeAcceptor<true, false>{min_bound, max_bound});
     case 2:
       return MakeQuery(
-        ctx.memory, std::move(states), std::move(stats), ctx.boost, options,
+        segment, ctx.memory, std::move(state), ctx.boost, options,
         GeoDistanceRangeAcceptor<false, true>{min_bound, max_bound});
     case 3:
       return MakeQuery(
-        ctx.memory, std::move(states), std::move(stats), ctx.boost, options,
+        segment, ctx.memory, std::move(state), ctx.boost, options,
         GeoDistanceRangeAcceptor<true, true>{min_bound, max_bound});
     default:
       SDB_ASSERT(false);
-      return Filter::Query::empty();
+      return QueryBuilder::Empty();
   }
+}
+
+PrepareCollector::ptr PrepareIntervalCollector(
+  const Scorer* scorer, std::string_view field,
+  const GeoDistanceFilterOptions& options) {
+  const auto& range = options.range;
+
+  if (range.max < 0.) {
+    return GeoCollector(scorer);
+  } else if (range.min < 0.) {
+    return PrepareOpenIntervalCollector(scorer, field, options, false);
+  }
+
+  return GeoCollector(scorer);
 }
 
 }  // namespace
 
-Filter::Query::ptr GeoFilter::prepare(const PrepareContext& ctx) const {
-#ifdef SDB_DEV
-  // Single-prepare guard. GeoFilter::prepare moves shape state into the
-  // returned Query, so a second prepare on the same filter would silently
-  // produce Query::empty() and the surrounding bool-filter would collapse
-  // to no rows. Surface that misuse loudly here.
-  SDB_ASSERT(!_prepared.exchange(true, std::memory_order_relaxed) &&
-             "GeoFilter::prepare() called more than once on the same instance");
-#endif
-  auto& shape = const_cast<ShapeContainer&>(options().shape);
+QueryBuilder::ptr GeoFilter::PrepareSegment(const SubReader& segment,
+                                            const PrepareContext& ctx) const {
+  const auto& shape = options().shape;
   if (shape.empty()) {
-    return Filter::Query::empty();
+    return QueryBuilder::Empty();
   }
 
   const auto& options = this->options();
@@ -689,39 +739,44 @@ Filter::Query::ptr GeoFilter::prepare(const PrepareContext& ctx) const {
   }
 
   if (geo_terms.empty()) {
-    return Filter::Query::empty();
+    return QueryBuilder::Empty();
   }
 
-  auto [states, stats] =
-    PrepareStates(ctx, geo_terms, field(), options.store_field_id);
+  auto state =
+    PrepareState(segment, ctx, geo_terms, field(), options.store_field_id);
 
   const auto boost = ctx.boost * this->Boost();
 
   switch (options.type) {
     case GeoFilterType::Intersects:
       return MakeQuery(
-        ctx.memory, std::move(states), std::move(stats), boost, options,
-        [filter_shape = std::move(shape)](const ShapeContainer& indexed_shape) {
-          return filter_shape.intersects(indexed_shape);
+        segment, ctx.memory, std::move(state), boost, options,
+        [filter_shape = &shape](const ShapeContainer& indexed_shape) {
+          return filter_shape->intersects(indexed_shape);
         });
     case GeoFilterType::Contains:
       return MakeQuery(
-        ctx.memory, std::move(states), std::move(stats), boost, options,
-        [filter_shape = std::move(shape)](const ShapeContainer& indexed_shape) {
-          return filter_shape.contains(indexed_shape);
+        segment, ctx.memory, std::move(state), boost, options,
+        [filter_shape = &shape](const ShapeContainer& indexed_shape) {
+          return filter_shape->contains(indexed_shape);
         });
     case GeoFilterType::IsContained:
       return MakeQuery(
-        ctx.memory, std::move(states), std::move(stats), boost, options,
-        [filter_shape = std::move(shape)](const ShapeContainer& indexed_shape) {
-          return indexed_shape.contains(filter_shape);
+        segment, ctx.memory, std::move(state), boost, options,
+        [filter_shape = &shape](const ShapeContainer& indexed_shape) {
+          return indexed_shape.contains(*filter_shape);
         });
   }
   SDB_ASSERT(false);
-  return Filter::Query::empty();
+  return QueryBuilder::Empty();
 }
 
-Filter::Query::ptr GeoDistanceFilter::prepare(const PrepareContext& ctx) const {
+PrepareCollector::ptr GeoFilter::MakeCollector(const Scorer* scorer) const {
+  return GeoCollector(scorer);
+}
+
+QueryBuilder::ptr GeoDistanceFilter::PrepareSegment(
+  const SubReader& segment, const PrepareContext& ctx) const {
   const auto& options = this->options();
   const auto& range = options.range;
   const auto lower_bound = BoundType::Unbounded != range.min_type;
@@ -730,12 +785,29 @@ Filter::Query::ptr GeoDistanceFilter::prepare(const PrepareContext& ctx) const {
   auto sub_ctx = ctx.Boost(Boost());
 
   if (!lower_bound && !upper_bound) {
-    return MatchAll(sub_ctx);
+    return MatchAll(segment, sub_ctx);
   }
   if (lower_bound && upper_bound) {
-    return PrepareInterval(sub_ctx, field(), options);
+    return PrepareInterval(segment, sub_ctx, field(), options);
   } else {
-    return PrepareOpenInterval(sub_ctx, field(), options, lower_bound);
+    return PrepareOpenInterval(segment, sub_ctx, field(), options, lower_bound);
+  }
+}
+
+PrepareCollector::ptr GeoDistanceFilter::MakeCollector(
+  const Scorer* scorer) const {
+  const auto& options = this->options();
+  const auto& range = options.range;
+  const auto lower_bound = BoundType::Unbounded != range.min_type;
+  const auto upper_bound = BoundType::Unbounded != range.max_type;
+
+  if (!lower_bound && !upper_bound) {
+    return MatchAllCollector(scorer);
+  }
+  if (lower_bound && upper_bound) {
+    return PrepareIntervalCollector(scorer, field(), options);
+  } else {
+    return PrepareOpenIntervalCollector(scorer, field(), options, lower_bound);
   }
 }
 

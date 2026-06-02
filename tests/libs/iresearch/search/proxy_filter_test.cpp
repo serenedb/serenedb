@@ -84,17 +84,18 @@ class DoclistTestIterator : public DocIterator, private util::Noncopyable {
   bool _resetted;
 };
 
-class DoclistTestQuery : public Filter::Query {
+class DoclistTestQuery : public QueryBuilder {
  public:
-  DoclistTestQuery(const std::vector<doc_id_t>& documents, score_t)
-    : _documents(documents) {}
+  DoclistTestQuery(const SubReader& segment,
+                   const std::vector<doc_id_t>& documents, score_t)
+    : QueryBuilder{segment}, _documents(documents) {}
 
-  DocIterator::ptr execute(const ExecutionContext&) const final {
+  DocIterator::ptr Execute(const ExecutionContext&) const final {
     ++gExecutes;
     return memory::make_managed<DoclistTestIterator>(_documents);
   }
 
-  void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {
+  void Visit(PreparedStateVisitor&, score_t) const final {
     // No terms to visit
   }
 
@@ -117,10 +118,11 @@ class DoclistTestFilter : public Filter {
 
   static void ResetPrepares() noexcept { gPrepares = 0; }
 
-  Filter::Query::ptr prepare(const PrepareContext& ctx) const final {
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final {
     ++gPrepares;
-    return memory::make_tracked<DoclistTestQuery>(ctx.memory, *_documents,
-                                                  ctx.boost);
+    return memory::make_tracked<DoclistTestQuery>(ctx.memory, segment,
+                                                  *_documents, ctx.boost);
   }
 
   void SetExpected(const std::vector<doc_id_t>& documents) {
@@ -176,14 +178,9 @@ class ProxyFilterTestCase : public ::testing::TestWithParam<size_t> {
       } else {
         proxy.set_cache(cache);
       }
-      auto prepared_proxy = proxy.prepare({
-        .index = _index,
-        .memory = prepare_counter,
-      });
-      auto docs = prepared_proxy->execute({
-        .segment = _index[0],
-        .memory = execute_counter,
-      });
+      tests::PreparedFilter prepared_proxy{proxy, _index, nullptr,
+                                           prepare_counter};
+      auto docs = prepared_proxy.Execute(0);
       auto costs = irs::get<irs::CostAttr>(*docs);
       EXPECT_TRUE(costs);
       EXPECT_EQ(costs->estimate(), expected.size());

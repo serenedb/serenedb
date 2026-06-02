@@ -30,9 +30,10 @@ struct TermReader;
 
 // Cached per reader term state
 struct TermState {
-  explicit TermState(IResourceManager& /*memory*/) noexcept {}
+  TermState(const TermReader* reader, SeekCookie::ptr cookie) noexcept
+    : reader(reader), cookie(std::move(cookie)) {}
 
-  const TermReader* reader{};
+  const TermReader* reader = nullptr;
   SeekCookie::ptr cookie;
 };
 

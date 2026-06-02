@@ -77,9 +77,9 @@ TEST(by_regexp_test, boost) {
   MaxMemoryCounter counter;
   {
     irs::ByRegexp q = MakeFilter("field", "bar.*");
-    auto prepared =
-      q.prepare({.index = irs::SubReader::empty(), .memory = counter});
-    ASSERT_EQ(irs::kNoBoost, prepared->Boost());
+    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
+                                   counter};
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -88,9 +88,9 @@ TEST(by_regexp_test, boost) {
     irs::score_t boost = 1.5f;
     irs::ByRegexp q = MakeFilter("field", "bar.*");
     q.boost(boost);
-    auto prepared =
-      q.prepare({.index = irs::SubReader::empty(), .memory = counter});
-    ASSERT_EQ(boost, prepared->Boost());
+    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
+                                   counter};
+    ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -100,36 +100,32 @@ TEST(by_regexp_test, boost) {
 TEST(by_regexp_test, type_of_prepared_query) {
   MaxMemoryCounter counter;
   {
-    auto lhs =
-      MakeFilter<irs::ByTerm>("foo", "bar")
-        .prepare({.index = irs::SubReader::empty(), .memory = counter});
-    auto rhs =
-      MakeFilter("foo", "bar")
-        .prepare({.index = irs::SubReader::empty(), .memory = counter});
-    auto& lhs_ref = *lhs;
-    auto& rhs_ref = *rhs;
+    tests::PreparedFilter lhs{MakeFilter<irs::ByTerm>("foo", "bar"),
+                              irs::SubReader::empty(), nullptr, counter};
+    tests::PreparedFilter rhs{MakeFilter("foo", "bar"), irs::SubReader::empty(),
+                              nullptr, counter};
+    auto& lhs_ref = *lhs.Query(0);
+    auto& rhs_ref = *rhs.Query(0);
     ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
   }
   counter.Reset();
   {
-    auto lhs =
-      MakeFilter<irs::ByPrefix>("foo", "bar")
-        .prepare({.index = irs::SubReader::empty(), .memory = counter});
-    auto rhs =
-      MakeFilter("foo", "bar.*")
-        .prepare({.index = irs::SubReader::empty(), .memory = counter});
-    auto& lhs_ref = *lhs;
-    auto& rhs_ref = *rhs;
+    tests::PreparedFilter lhs{MakeFilter<irs::ByPrefix>("foo", "bar"),
+                              irs::SubReader::empty(), nullptr, counter};
+    tests::PreparedFilter rhs{MakeFilter("foo", "bar.*"),
+                              irs::SubReader::empty(), nullptr, counter};
+    auto& lhs_ref = *lhs.Query(0);
+    auto& rhs_ref = *rhs.Query(0);
     ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
   }
   counter.Reset();
   {
-    auto lhs = MakeFilter<irs::ByTerm>("foo", "").prepare(
-      {.index = irs::SubReader::empty(), .memory = counter});
-    auto rhs = MakeFilter("foo", "").prepare(
-      {.index = irs::SubReader::empty(), .memory = counter});
-    auto& lhs_ref = *lhs;
-    auto& rhs_ref = *rhs;
+    tests::PreparedFilter lhs{MakeFilter<irs::ByTerm>("foo", ""),
+                              irs::SubReader::empty(), nullptr, counter};
+    tests::PreparedFilter rhs{MakeFilter("foo", ""), irs::SubReader::empty(),
+                              nullptr, counter};
+    auto& lhs_ref = *lhs.Query(0);
+    auto& rhs_ref = *rhs.Query(0);
     ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
   }
   counter.Reset();
@@ -515,9 +511,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_with_boost) {
     irs::score_t boost = 2.5f;
     auto q = MakeFilter("prefix", ".*c.*");
     q.boost(boost);
-    auto prepared = q.prepare({.index = rdr, .memory = counter});
-    ASSERT_NE(nullptr, prepared);
-    ASSERT_EQ(boost, prepared->Boost());
+    tests::PreparedFilter prepared{q, rdr, nullptr, counter};
+    ASSERT_NE(nullptr, prepared.Query(0));
+    ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
   counter.Reset();
 }
@@ -536,9 +532,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
     q.mutable_options()->pattern =
       irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"));
     q.mutable_options()->scored_terms_limit = 1;
-    auto prepared =
-      q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
-    ASSERT_NE(nullptr, prepared);
+    tests::PreparedFilter prepared{q, rdr, nullptr,
+                                   irs::IResourceManager::gNoop};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   // scored_terms_limit = 0
   {
@@ -547,9 +543,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
     q.mutable_options()->pattern =
       irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"));
     q.mutable_options()->scored_terms_limit = 0;
-    auto prepared =
-      q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
-    ASSERT_NE(nullptr, prepared);
+    tests::PreparedFilter prepared{q, rdr, nullptr,
+                                   irs::IResourceManager::gNoop};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   // scored_terms_limit very large
   {
@@ -558,9 +554,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
     q.mutable_options()->pattern =
       irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"));
     q.mutable_options()->scored_terms_limit = 1000000;
-    auto prepared =
-      q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
-    ASSERT_NE(nullptr, prepared);
+    tests::PreparedFilter prepared{q, rdr, nullptr,
+                                   irs::IResourceManager::gNoop};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
 }
 
@@ -689,10 +685,10 @@ TEST_P(RegexpFilterTestCase, by_regexp_filter_reuse) {
   MaxMemoryCounter counter;
   auto q = MakeFilter("same", ".*");
   {
-    auto prepared =
-      q.prepare({.index = irs::SubReader::empty(), .memory = counter});
-    ASSERT_NE(nullptr, prepared);
-    ASSERT_EQ(irs::kNoBoost, prepared->Boost());
+    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
+                                   counter};
+    ASSERT_NE(nullptr, prepared.Query(0));
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
   counter.Reset();
   {
@@ -722,18 +718,18 @@ TEST_P(RegexpFilterTestCase, by_regexp_anchoring) {
   CheckQuery(MakeFilter("term", "^foobar$"), Docs{1}, Costs{1}, rdr);
   {
     auto q = MakeFilter("term", "^foo");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     auto q = MakeFilter("term", "foo$");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     auto q = MakeFilter("term", "^$");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
 }
 
@@ -779,25 +775,22 @@ TEST_P(RegexpFilterTestCase, by_regexp_redos_resistance) {
   auto rdr = open_reader();
   {
     auto start = std::chrono::steady_clock::now();
-    ASSERT_NE(nullptr, MakeFilter("redos", "(a+)+b")
-                         .prepare({.index = rdr,
-                                   .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{MakeFilter("redos", "(a+)+b"), rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
     ASSERT_LT(std::chrono::steady_clock::now() - start,
               std::chrono::seconds(5));
   }
   {
     auto start = std::chrono::steady_clock::now();
-    ASSERT_NE(nullptr, MakeFilter("redos", "(a|a)*b")
-                         .prepare({.index = rdr,
-                                   .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{MakeFilter("redos", "(a|a)*b"), rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
     ASSERT_LT(std::chrono::steady_clock::now() - start,
               std::chrono::seconds(5));
   }
   {
     auto start = std::chrono::steady_clock::now();
-    ASSERT_NE(nullptr, MakeFilter("redos", "(.*){10}")
-                         .prepare({.index = rdr,
-                                   .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{MakeFilter("redos", "(.*){10}"), rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
     ASSERT_LT(std::chrono::steady_clock::now() - start,
               std::chrono::seconds(5));
   }
@@ -836,8 +829,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_whitespace_in_terms) {
   auto rdr = open_reader();
   {
     auto q = MakeFilter("ws", "a.b");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   CheckQuery(MakeFilter("ws", "a b"), Docs{3}, Costs{1}, rdr);
 }
@@ -931,21 +924,23 @@ TEST_P(RegexpFilterTestCase, by_regexp_determinism) {
   auto q = MakeFilter("term", "foo.*bar");
   Docs run1, run2;
   {
-    auto p = q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
-    for (auto& s : rdr) {
-      auto d = p->execute({.segment = s});
+    tests::PreparedFilter p{q, rdr, nullptr, irs::IResourceManager::gNoop};
+    for (size_t i = 0; [[maybe_unused]] auto& s : rdr) {
+      auto d = p.Execute(i);
       while (d->advance() != irs::doc_limits::eof()) {
         run1.push_back(d->value());
       }
+      ++i;
     }
   }
   {
-    auto p = q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
-    for (auto& s : rdr) {
-      auto d = p->execute({.segment = s});
+    tests::PreparedFilter p{q, rdr, nullptr, irs::IResourceManager::gNoop};
+    for (size_t i = 0; [[maybe_unused]] auto& s : rdr) {
+      auto d = p.Execute(i);
       while (d->advance() != irs::doc_limits::eof()) {
         run2.push_back(d->value());
       }
+      ++i;
     }
   }
   ASSERT_EQ(run1, run2);
@@ -1009,12 +1004,13 @@ TEST_P(RegexpFilterTestCase, by_regexp_compaction) {
     ASSERT_EQ(1, rdr.size());
     Docs result;
     auto q = MakeFilter("same", ".*");
-    auto p = q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
-    for (auto& s : rdr) {
-      auto d = p->execute({.segment = s});
+    tests::PreparedFilter p{q, rdr, nullptr, irs::IResourceManager::gNoop};
+    for (size_t i = 0; [[maybe_unused]] auto& s : rdr) {
+      auto d = p.Execute(i);
       while (d->advance() != irs::doc_limits::eof()) {
         result.push_back(d->value());
       }
+      ++i;
     }
     ASSERT_EQ(32, result.size());
   }
@@ -1137,8 +1133,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_counted_quantifiers) {
   CheckQuery(MakeFilter("term", "fo{2,}bar"), Docs{1, 16}, Costs{2}, rdr);
   {
     auto q = MakeFilter("term", ".{6}");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
 }
 
@@ -1153,13 +1149,13 @@ TEST_P(RegexpFilterTestCase, by_regexp_non_capturing_group) {
   auto rdr = open_reader();
   {
     auto q = MakeFilter("term", "(?:foo)+bar");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     auto q = MakeFilter("term", "(?:fo|ba)+r");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
 }
 
@@ -1174,8 +1170,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_perl_classes) {
   auto rdr = open_reader();
   {
     auto q = MakeFilter("class", "\\d+");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     Docs docs;
@@ -1186,18 +1182,18 @@ TEST_P(RegexpFilterTestCase, by_regexp_perl_classes) {
   }
   {
     auto q = MakeFilter("class", "\\D+");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     auto q = MakeFilter("class", "\\W+");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     auto q = MakeFilter("class", "\\s");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     Docs docs;
@@ -1220,8 +1216,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_word_boundary) {
   CheckQuery(MakeFilter("term", "\\bfoo\\b"), Docs{9}, Costs{1}, rdr);
   {
     auto q = MakeFilter("term", "\\Bfoo");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
 }
 
@@ -1236,13 +1232,13 @@ TEST_P(RegexpFilterTestCase, by_regexp_case_insensitive_flag) {
   auto rdr = open_reader();
   {
     auto q = MakeFilter("class", "(?i:abc)123");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     auto q = MakeFilter("class", "(?i:abc).*");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
 }
 
@@ -1257,13 +1253,13 @@ TEST_P(RegexpFilterTestCase, by_regexp_unicode_property_classes) {
   auto rdr = open_reader();
   {
     auto q = MakeFilter("utf8", "\\p{Cyrillic}+");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     auto q = MakeFilter("utf8", "\\P{Cyrillic}+");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
 }
 
@@ -1307,8 +1303,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_empty_alternation_branch) {
   CheckQuery(MakeFilter("term", "(|foo)bar"), Docs{1, 10}, Costs{2}, rdr);
   {
     auto q = MakeFilter("term", "a|");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
 }
 
@@ -1323,13 +1319,13 @@ TEST_P(RegexpFilterTestCase, by_regexp_shared_subtrees) {
   auto rdr = open_reader();
   {
     auto q = MakeFilter("term", "(o{2,5}){1,2}");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     auto q = MakeFilter("term", "(.{1,3}){1,3}");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
 }
 
@@ -1344,18 +1340,18 @@ TEST_P(RegexpFilterTestCase, by_regexp_large_nfa) {
   auto rdr = open_reader();
   {
     auto q = MakeFilter("term", ".{20}");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     auto q = MakeFilter("term", "[a-z]{5,10}");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     auto q = MakeFilter("term", "foo|bar|baz|qux|quux|corge|grault|garply");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
 }
 
@@ -1370,20 +1366,20 @@ TEST_P(RegexpFilterTestCase, by_regexp_utf8_char_class) {
   auto rdr = open_reader();
   {
     auto q = MakeFilter("utf8", "[\xD0\xB0-\xD1\x8F]+");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     auto q = MakeFilter("utf8",
                         "[\xD0\xB0-\xD1\x8F"
                         "a-z]+");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     auto q = MakeFilter("utf8", "[^\xD0\xB0-\xD1\x8F]+");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
 }
 
@@ -1398,13 +1394,13 @@ TEST_P(RegexpFilterTestCase, by_regexp_any_byte) {
   auto rdr = open_reader();
   {
     auto q = MakeFilter("term", "\\C{6}");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     auto q = MakeFilter("term", "foo\\Cbar");
-    ASSERT_NE(nullptr, q.prepare({.index = rdr,
-                                  .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{q, rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
 }
 
@@ -1419,9 +1415,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_very_long_pattern) {
   auto rdr = open_reader();
   {
     std::string p(2000, 'x');
-    ASSERT_NE(nullptr,
-              MakeFilter("term", p).prepare(
-                {.index = rdr, .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{MakeFilter("term", p), rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
   {
     std::string p;
@@ -1431,9 +1426,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_very_long_pattern) {
       }
       p += std::string(i, 'x');
     }
-    ASSERT_NE(nullptr,
-              MakeFilter("term", p).prepare(
-                {.index = rdr, .memory = irs::IResourceManager::gNoop}));
+    tests::PreparedFilter prepared{MakeFilter("term", p), rdr};
+    ASSERT_NE(nullptr, prepared.Query(0));
   }
 }
 
@@ -1508,13 +1502,14 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_posix_accepts_posix_class) {
 
   auto collect = [&](const irs::ByRegexp& q) {
     Docs out;
-    auto prepared =
-      q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
-    for (auto& s : rdr) {
-      auto d = prepared->execute({.segment = s});
+    tests::PreparedFilter prepared{q, rdr, nullptr,
+                                   irs::IResourceManager::gNoop};
+    for (size_t i = 0; [[maybe_unused]] auto& s : rdr) {
+      auto d = prepared.Execute(i);
       while (d->advance() != irs::doc_limits::eof()) {
         out.push_back(d->value());
       }
+      ++i;
     }
     return out;
   };
@@ -1551,13 +1546,14 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_fast_paths_are_agnostic) {
     auto q = MakeFilter(field, pattern);
     q.mutable_options()->syntax = syntax;
     Docs out;
-    auto prepared =
-      q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
-    for (auto& s : rdr) {
-      auto d = prepared->execute({.segment = s});
+    tests::PreparedFilter prepared{q, rdr, nullptr,
+                                   irs::IResourceManager::gNoop};
+    for (size_t i = 0; [[maybe_unused]] auto& s : rdr) {
+      auto d = prepared.Execute(i);
       while (d->advance() != irs::doc_limits::eof()) {
         out.push_back(d->value());
       }
+      ++i;
     }
     return out;
   };
@@ -1591,8 +1587,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_prepare_with_syntax) {
   auto pattern = irs::ViewCast<irs::byte_type>(std::string_view("(?:foo)bar"));
   // Perl: non-capturing group parses, prepared query is non-null.
   {
-    auto prepared = irs::ByRegexp::prepare(
-      {.index = rdr, .memory = irs::IResourceManager::gNoop}, "term", pattern,
+    auto prepared = irs::ByRegexp::PrepareSegment(
+      rdr[0], {.memory = irs::IResourceManager::gNoop}, "term", pattern,
       /*scored_terms_limit=*/1024, irs::RegexpSyntax::Perl);
     ASSERT_NE(nullptr, prepared);
   }
@@ -1601,8 +1597,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_prepare_with_syntax) {
   // match case is anchored end-to-end by
   // by_regexp_syntax_posix_rejects_perl_class above.
   {
-    auto prepared = irs::ByRegexp::prepare(
-      {.index = rdr, .memory = irs::IResourceManager::gNoop}, "term", pattern,
+    auto prepared = irs::ByRegexp::PrepareSegment(
+      rdr[0], {.memory = irs::IResourceManager::gNoop}, "term", pattern,
       /*scored_terms_limit=*/1024, irs::RegexpSyntax::PosixEre);
     ASSERT_NE(nullptr, prepared);
   }

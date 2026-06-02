@@ -30,104 +30,52 @@
 namespace irs {
 namespace {
 
-// Filter visitor for term queries
-class TermVisitor : private util::Noncopyable {
- public:
-  TermVisitor(TermCollectorsFlat& term_stats, TermQuery::States& states)
-    : _term_stats(term_stats), _states(states) {}
-
-  void Prepare(const SubReader& segment, const TermReader& field,
-               const SeekTermIterator& terms) noexcept {
-    _segment = &segment;
-    _reader = &field;
-    _terms = &terms;
-  }
-
-  void Visit(score_t /*boost*/) {
-    // collect statistics
-    SDB_ASSERT(_segment && _reader && _terms);
-    _term_stats.Collect(0, *_terms);
-
-    // Cache term state in prepared query attributes.
-    // Later, using cached state we could easily "jump" to
-    // postings without relatively expensive FST traversal
-    auto& state = _states.insert(*_segment);
-    state.reader = _reader;
-    state.cookie = _terms->cookie();
-  }
-
- private:
-  TermCollectorsFlat& _term_stats;
-  TermQuery::States& _states;
-  const SubReader* _segment{};
-  const TermReader* _reader{};
-  const SeekTermIterator* _terms{};
-};
-
-template<typename Visitor>
-void VisitImpl(const SubReader& segment, const TermReader& field,
-               bytes_view term, Visitor& visitor) {
-  // find term
+SeekTermIterator::ptr GetTermsIterator(const TermReader& field,
+                                       const bytes_view term) {
   auto terms = field.iterator(SeekMode::RandomOnly);
-
   if (!terms) [[unlikely]] {
-    return;
+    return nullptr;
   }
   if (!terms->seek(term)) {
-    return;
+    return nullptr;
   }
-
-  visitor.Prepare(segment, field, *terms);
-
-  // read term attributes
   terms->read();
-
-  visitor.Visit(kNoBoost);
+  return terms;
 }
 
 }  // namespace
 
-void ByTerm::visit(const SubReader& segment, const TermReader& field,
-                   bytes_view term, FilterVisitor& visitor) {
-  VisitImpl(segment, field, term, visitor);
+void ByTerm::Visit(const SubReader& segment, const TermReader& field,
+                   const bytes_view term, FilterVisitor& visitor) {
+  auto terms = GetTermsIterator(field, term);
+  if (!terms) {
+    return;
+  }
+  visitor.Visit(kNoBoost);
 }
 
-Filter::Query::ptr ByTerm::prepare(const PrepareContext& ctx,
-                                   std::string_view field, bytes_view term) {
-  TermQuery::States states{ctx.memory, ctx.index.size()};
-  FieldCollector field_stats;
-  TermCollectorsFlat term_stats{ctx.scorer, 1};
-
-  TermVisitor visitor(term_stats, states);
-
-  // iterate over the segments
-  for (const auto& segment : ctx.index) {
-    // get field
-    const auto* reader = segment.field(field);
-
-    if (!reader) {
-      continue;
-    }
-
-    // collect field statistics once per segment
-    field_stats.Collect(*reader);
-
-    VisitImpl(segment, *reader, term, visitor);
+QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
+                                         const PrepareContext& ctx,
+                                         const std::string_view field,
+                                         const bytes_view term) {
+  const auto* reader = segment.field(field);
+  if (!reader) {
+    return nullptr;
   }
-
-#ifndef SDB_GTEST  // TODO(mbkkt) adjust tests
-  if (states.empty()) {
-    return Query::empty();
+  auto& collector = sdb::basics::downCast<TermsCollector>(*ctx.collector);
+  collector.Field().Collect(*reader);
+  auto terms = GetTermsIterator(*reader, term);
+  if (!terms) {
+    return nullptr;
   }
-#endif
+  collector.Terms().Collect(0, *terms);
+  TermState state{reader, terms->cookie()};
+  return memory::make_tracked<TermQuery>(ctx.memory, segment, std::move(state),
+                                         ctx.boost);
+}
 
-  bstring stats(GetStatsSize(ctx.scorer), 0);
-  auto* stats_buf = stats.data();
-
-  term_stats.Finish(stats_buf, 0, &field_stats);
-
-  return memory::make_tracked<TermQuery>(ctx.memory, std::move(states),
-                                         std::move(stats), ctx.boost);
+PrepareCollector::ptr ByTerm::MakeCollector(const Scorer* scorer) const {
+  return std::make_unique<TermsCollector>(scorer, 1);
 }
 
 }  // namespace irs

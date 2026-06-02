@@ -277,11 +277,9 @@ TEST(by_prefix_test, boost) {
   {
     irs::ByPrefix q = MakeFilter("field", "term");
 
-    auto prepared = q.prepare({
-      .index = irs::SubReader::empty(),
-      .memory = counter,
-    });
-    ASSERT_EQ(irs::kNoBoost, prepared->Boost());
+    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
+                                   counter};
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -293,11 +291,9 @@ TEST(by_prefix_test, boost) {
     irs::ByPrefix q = MakeFilter("field", "term");
     q.boost(boost);
 
-    auto prepared = q.prepare({
-      .index = irs::SubReader::empty(),
-      .memory = counter,
-    });
-    ASSERT_EQ(boost, prepared->Boost());
+    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
+                                   counter};
+    ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -401,8 +397,9 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_partial_field_stats) {
     ASSERT_EQ(expected_docs_with_field, field->docs_with_field);
   };
 
-  auto q = MakeFilter("prefix", "").prepare({.index = rdr, .scorer = &scorer});
-  ASSERT_NE(nullptr, q);
+  const auto filter = MakeFilter("prefix", "");
+  tests::PreparedFilter prepared{filter, rdr, &scorer};
+  ASSERT_NE(nullptr, prepared.Query(0));
 
   ASSERT_GT(finish_count, 1u);       // multiple scored terms
   ASSERT_NE(nullptr, shared_field);  // field stats were collected

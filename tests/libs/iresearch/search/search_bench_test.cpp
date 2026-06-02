@@ -40,6 +40,7 @@
 #include "index_builder.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/term_filter.hpp"
+#include "search/filter_test_case_base.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -192,8 +193,15 @@ IteratorFactory QueryIterator(bench::Executor& executor,
         const irs::DirectoryReader& reader, const irs::SubReader& segment) {
         auto filter = executor.ParseFilter(query);
         SDB_ASSERT(filter);
-        auto prepared = filter->prepare({.index = reader});
-        return prepared->execute({.segment = segment});
+        tests::PreparedFilter prepared{*filter, reader};
+        size_t i = 0;
+        for (const auto& sub : reader) {
+          if (&sub == &segment) {
+            break;
+          }
+          ++i;
+        }
+        return prepared.Execute(i);
       },
   };
 }
@@ -760,16 +768,17 @@ TEST_F(SearchBenchTest, DisjunctionScoreAccuracy) {
 
     std::map<irs::doc_id_t, irs::score_t> reference_scores;
 
-    for (auto& segment : reader) {
+    for (size_t segment_idx = 0; auto& segment : reader) {
       for (auto term_str : terms) {
-        auto filter = irs::ByTerm::prepare(
-          {.index = reader, .scorer = &scorer}, "text",
+        irs::ByTerm filter;
+        *filter.mutable_field() = "text";
+        filter.mutable_options()->term =
           irs::ViewCast<irs::byte_type>(irs::bytes_view{
             reinterpret_cast<const irs::byte_type*>(term_str.data()),
-            term_str.size()}));
-        ASSERT_TRUE(filter);
+            term_str.size()});
+        tests::PreparedFilter prepared{filter, reader, &scorer};
 
-        auto it = filter->execute({.segment = segment, .scorer = &scorer});
+        auto it = prepared.Execute(segment_idx);
         ASSERT_TRUE(it);
 
         irs::ColumnArgsFetcher fetcher;
@@ -789,21 +798,21 @@ TEST_F(SearchBenchTest, DisjunctionScoreAccuracy) {
           reference_scores[doc] += s;
         }
       }
+      ++segment_idx;
     }
     ASSERT_GT(reference_scores.size(), 0u) << "No reference docs found";
 
     auto filter = gExecutor->ParseFilter(std::string{query});
     ASSERT_TRUE(filter);
 
-    auto prepared = filter->prepare({.index = reader, .scorer = &scorer});
-    ASSERT_TRUE(prepared);
+    tests::PreparedFilter prepared{*filter, reader, &scorer};
 
     // 1) Compare via advance + Score
     {
       std::map<irs::doc_id_t, irs::score_t> bd_scores;
-      for (auto& segment : reader) {
+      for (size_t i = 0; auto& segment : reader) {
         irs::ColumnArgsFetcher fetcher;
-        auto it = prepared->execute({.segment = segment, .scorer = &scorer});
+        auto it = prepared.Execute(i);
         auto score_func = it->PrepareScore({
           .scorer = &scorer,
           .segment = &segment,
@@ -817,6 +826,7 @@ TEST_F(SearchBenchTest, DisjunctionScoreAccuracy) {
           irs::score_t s = score_func.Score();
           bd_scores[doc] = s;
         }
+        ++i;
       }
 
       EXPECT_EQ(bd_scores.size(), reference_scores.size())

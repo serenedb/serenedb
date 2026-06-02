@@ -28,7 +28,6 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/limited_sample_collector.hpp"
 #include "iresearch/search/multiterm_query.hpp"
@@ -37,6 +36,20 @@
 
 namespace irs {
 namespace {
+
+enum class RangeKind { Term, Empty, Range };
+
+RangeKind Classify(const ByGranularRangeOptions& options) noexcept {
+  const auto& rng = options.range;
+  if (!rng.min.empty() && !rng.max.empty() &&
+      rng.min.front() == rng.max.front()) {
+    if (rng.min_type == rng.max_type && rng.min_type == BoundType::Inclusive) {
+      return RangeKind::Term;
+    }
+    return RangeKind::Empty;
+  }
+  return RangeKind::Range;
+}
 
 // Example term structure, in order of term iteration/comparison, N = 4:
 // all/each token _must_ produce N terms
@@ -547,55 +560,50 @@ void SetGranularTerm(ByGranularRangeOptions::terms& boundary,
   }
 }
 
-Filter::Query::ptr ByGranularRange::prepare(const PrepareContext& ctx,
-                                            std::string_view field,
-                                            const options_type& options) {
-  const auto& rng = options.range;
+QueryBuilder::ptr ByGranularRange::PrepareSegment(
+  const SubReader& segment, const PrepareContext& ctx) const {
+  auto sub_ctx = ctx;
+  sub_ctx.boost *= Boost();
+  return PrepareSegment(segment, sub_ctx, field(), options());
+}
 
-  if (!rng.min.empty() && !rng.max.empty()) {
-    const auto& min = rng.min.front();
-    const auto& max = rng.max.front();
-
-    if (min == max) {  // compare the most precise terms
-      if (rng.min_type == rng.max_type &&
-          rng.min_type == BoundType::Inclusive) {
-        // degenerated case
-        return ByTerm::prepare(ctx, field, min);
-      }
-
-      // can't satisfy condition
-      return Query::empty();
-    }
+QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
+                                                  const PrepareContext& ctx,
+                                                  const std::string_view field,
+                                                  const options_type& options) {
+  switch (Classify(options)) {
+    case RangeKind::Term:
+      return ByTerm::PrepareSegment(segment, ctx, field,
+                                    options.range.min.front());
+    case RangeKind::Empty:
+      return QueryBuilder::Empty();
+    case RangeKind::Range:
+      break;
   }
 
-  // object for collecting order stats
-  LimitedSampleCollector<TermFrequency> collector{
-    ctx.scorer ? options.scored_terms_limit : 0};
-  MultiTermQuery::States states{ctx.memory, ctx.index.size()};
-  MultiTermVisitor mtv{collector, states};
+  auto query = memory::make_tracked<MultiTermQuery>(
+    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum, size_t{1});
 
-  // iterate over the segments
-  for (const auto& segment : ctx.index) {
-    // get term dictionary for field
-    const TermReader* reader = segment.field(field);
-
-    if (!reader) {
-      continue;  // no such field in this reader
-    }
-
-    VisitImpl(segment, *reader, options, mtv);
+  const auto* reader = segment.field(field);
+  if (!reader) {
+    return query;
   }
 
-  if (states.empty()) {
-    return Query::empty();
+  auto& collector =
+    sdb::basics::downCast<LimitedTermsCollector>(*ctx.collector);
+  collector.Field().Collect(*reader);
+  MultiTermVisitor mtv{collector.Limited(), query->State()};
+  VisitImpl(segment, *reader, options, mtv);
+  return query;
+}
+
+PrepareCollector::ptr ByGranularRange::MakeCollector(
+  const Scorer* scorer) const {
+  if (Classify(options()) == RangeKind::Term) {
+    return std::make_unique<TermsCollector>(scorer, 1);
   }
-
-  MultiTermQuery::Stats stats{{ctx.memory}};
-  collector.score(ctx.index, ctx.scorer, stats);
-
-  return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),
-                                              std::move(stats), ctx.boost,
-                                              ScoreMergeType::Sum, size_t{1});
+  return std::make_unique<LimitedTermsCollector>(scorer,
+                                                 options().scored_terms_limit);
 }
 
 void ByGranularRange::visit(const SubReader& segment, const TermReader& reader,

@@ -25,6 +25,7 @@
 #include "basics/shared.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/filter_visitor.hpp"
+#include "iresearch/search/limited_sample_collector.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -86,7 +87,7 @@ field_visitor ByWildcard::visitor(bytes_view term) {
       return [term = bstring(term)](const SubReader& segment,
                                     const TermReader& field,
                                     FilterVisitor& visitor) {
-        ByTerm::visit(segment, field, term, visitor);
+        ByTerm::Visit(segment, field, term, visitor);
       };
     },
     [](bytes_view term) -> field_visitor {
@@ -121,21 +122,47 @@ field_visitor ByWildcard::visitor(bytes_view term) {
     });
 }
 
-Filter::Query::ptr ByWildcard::prepare(const PrepareContext& ctx,
-                                       std::string_view field, bytes_view term,
-                                       size_t scored_terms_limit) {
+QueryBuilder::ptr ByWildcard::PrepareSegment(const SubReader& segment,
+                                             const PrepareContext& ctx,
+                                             std::string_view field,
+                                             bytes_view term,
+                                             size_t scored_terms_limit) {
   bstring buf;
   return ExecuteWildcard(
     buf, term,
-    [&](bytes_view term) -> Query::ptr {
-      return ByTerm::prepare(ctx, field, term);
+    [&](bytes_view term) -> QueryBuilder::ptr {
+      return ByTerm::PrepareSegment(segment, ctx, field, term);
     },
-    [&, scored_terms_limit](bytes_view term) -> Query::ptr {
-      return ByPrefix::prepare(ctx, field, term, scored_terms_limit);
+    [&, scored_terms_limit](bytes_view term) -> QueryBuilder::ptr {
+      return ByPrefix::PrepareSegment(segment, ctx, field, term,
+                                      scored_terms_limit);
     },
-    [&, scored_terms_limit](bytes_view term) -> Query::ptr {
-      return PrepareAutomatonFilter(ctx, field, FromWildcard(term),
-                                    scored_terms_limit);
+    [&](bytes_view term) -> QueryBuilder::ptr {
+      return PrepareAutomatonSegment(segment, ctx, field, FromWildcard(term));
+    });
+}
+
+QueryBuilder::ptr ByWildcard::PrepareSegment(const SubReader& segment,
+                                             const PrepareContext& ctx) const {
+  auto sub_ctx = ctx;
+  sub_ctx.boost *= Boost();
+  return PrepareSegment(segment, sub_ctx, field(), options().term,
+                        options().scored_terms_limit);
+}
+
+PrepareCollector::ptr ByWildcard::MakeCollector(const Scorer* scorer) const {
+  bstring buf;
+  const auto limit = options().scored_terms_limit;
+  return ExecuteWildcard(
+    buf, options().term,
+    [&](bytes_view) -> PrepareCollector::ptr {
+      return std::make_unique<TermsCollector>(scorer, 1);
+    },
+    [&](bytes_view) -> PrepareCollector::ptr {
+      return std::make_unique<LimitedTermsCollector>(scorer, limit);
+    },
+    [&](bytes_view) -> PrepareCollector::ptr {
+      return std::make_unique<LimitedTermsCollector>(scorer, limit);
     });
 }
 

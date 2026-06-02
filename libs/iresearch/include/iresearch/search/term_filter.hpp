@@ -42,17 +42,21 @@ struct ByTermOptions {
 // User-side term filter
 class ByTerm : public FilterWithField<ByTermOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
-                            bytes_view term);
+  static void Visit(const SubReader& segment, const TermReader& field,
+                    const bytes_view term, FilterVisitor& visitor);
 
-  static void visit(const SubReader& segment, const TermReader& field,
-                    bytes_view term, FilterVisitor& visitor);
-
-  Query::ptr prepare(const PrepareContext& ctx) const final {
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final {
     auto sub_ctx = ctx;
     sub_ctx.boost *= Boost();
-    return prepare(sub_ctx, field(), options().term);
+    return PrepareSegment(segment, sub_ctx, field(), options().term);
   }
+  static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                          const PrepareContext& ctx,
+                                          const std::string_view field,
+                                          const bytes_view term);
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

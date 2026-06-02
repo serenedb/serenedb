@@ -35,6 +35,7 @@ enum class Level : uint8_t {
   RW = 3,
 };
 
+auth::Level ConvertToAuthLevel(std::string_view grant);
 std::string_view ConvertFromAuthLevel(auth::Level lvl);
 
 }  // namespace sdb::auth

@@ -28,9 +28,10 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/all_terms_visitor.hpp"
 #include "iresearch/search/filter_visitor.hpp"
-#include "iresearch/search/limited_sample_selector.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/terms_filter.hpp"
+#include "iresearch/search/top_terms_selector.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
@@ -142,18 +143,23 @@ QueryBuilder::ptr PrepareLevenshteinSegment(const SubReader& segment,
     return query;
   }
 
+  auto& collector = sdb::basics::downCast<TermsCollector>(*ctx.collector);
+  AllTermsVisitor term_collector{query->State(), collector.Field(),
+                                 collector.Terms()};
+
   if (!terms_limit) {
-    auto& collector = sdb::basics::downCast<TermsCollector>(*ctx.collector);
-    AllTermsVisitor term_collector{query->State(), collector.Field(),
-                                   collector.Terms()};
     VisitImpl(segment, *reader, max_distance, utf8_term_size, matcher,
               term_collector);
   } else {
-    auto& collector =
-      sdb::basics::downCast<ScoredTermsCollector>(*ctx.collector);
-    collector.Field().Collect(*reader);
-    SampledMultiTermVisitor mtv{collector.Limited(), query->State()};
-    VisitImpl(segment, *reader, max_distance, utf8_term_size, matcher, mtv);
+    TopTermsSelector<TopTerm<score_t>> selector{terms_limit};
+    VisitImpl(segment, *reader, max_distance, utf8_term_size, matcher,
+              selector);
+
+    ByTermsOptions::search_terms terms;
+    selector.Visit([&](TopTerm<score_t>& candidate) {
+      terms.emplace(std::move(candidate.term), candidate.key);
+    });
+    ByTerms::visit(segment, *reader, terms, term_collector);
   }
 
   return query;
@@ -242,7 +248,6 @@ PrepareCollector::ptr ByEditDistance::MakeCollector(
   const Scorer* scorer) const {
   const auto term = bytes_view{options().term};
   const auto prefix = bytes_view{options().prefix};
-  const auto scored_terms_limit = options().max_terms;
 
   return ExecuteLevenshtein(
     options().max_distance, options().provider, options().with_transpositions,
@@ -255,10 +260,7 @@ PrepareCollector::ptr ByEditDistance::MakeCollector(
     },
     [&](const ParametricDescription&, const bytes_view,
         const bytes_view) -> PrepareCollector::ptr {
-      if (!scored_terms_limit) {
-        return std::make_unique<TermsCollector>(scorer, 1);
-      }
-      return std::make_unique<ScoredTermsCollector>(scorer, scored_terms_limit);
+      return std::make_unique<TermsCollector>(scorer, 1);
     });
 }
 

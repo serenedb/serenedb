@@ -355,14 +355,15 @@ TEST_P(MergeConsistencyTestCase, edit_distance) {
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(2, rdr.size());
 
-  // scored, limited terms -> ScoredTermsCollector
-  irs::ByEditDistance filter;
-  *filter.mutable_field() = "title";
-  filter.mutable_options()->term = Bytes("aa");
-  filter.mutable_options()->max_distance = 2;
-  filter.mutable_options()->max_terms = 1024;
+  for (const size_t max_terms : {size_t{1024}, size_t{2}}) {
+    irs::ByEditDistance filter;
+    *filter.mutable_field() = "title";
+    filter.mutable_options()->term = Bytes("aa");
+    filter.mutable_options()->max_distance = 2;
+    filter.mutable_options()->max_terms = max_terms;
 
-  CheckAllScorers(filter, rdr);
+    CheckAllScorers(filter, rdr);
+  }
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

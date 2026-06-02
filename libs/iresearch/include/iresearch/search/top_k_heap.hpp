@@ -32,9 +32,9 @@
 namespace irs {
 
 // Retains the top-K elements of a stream ordered by `Less`; the K greatest
-// survive. Elements accumulate in a buffer reserved for 2*K and are trimmed back
-// to K with std::nth_element whenever the buffer fills, giving amortized O(1)
-// insertion and O(K) memory without a maintained heap. The buffer is also
+// survive. Elements accumulate in a buffer reserved for 2*K and are trimmed
+// back to K with std::nth_element whenever the buffer fills, giving amortized
+// O(1) insertion and O(K) memory without a maintained heap. The buffer is also
 // partitioned the first time it reaches K, so once Full() reports true Min()
 // (the smallest retained element, at index K-1) is a valid rejection threshold:
 // callers peek it to skip materializing an element that cannot make the cut.

@@ -141,24 +141,8 @@ struct TermFrequency {
   }
 };
 
-struct TermScore {
-  uint32_t offset;
-  score_t boost;
-
-  static TermScore Make(uint32_t offset, uint32_t /*docs_count*/,
-                        score_t boost) noexcept {
-    return {.offset = offset, .boost = boost};
-  }
-
-  explicit operator score_t() const noexcept { return boost; }
-
-  bool operator<(const TermScore& rhs) const noexcept {
-    return boost < rhs.boost || (boost == rhs.boost && offset > rhs.offset);
-  }
-};
-
 // Filter visitor for multiterm queries sampled into a LimitedSampleSelector.
-// The Key type (TermFrequency, TermScore, ...) selects the sampling order.
+// The Key type (TermFrequency, ...) selects the sampling order.
 template<typename Key>
 class SampledMultiTermVisitor {
  public:
@@ -237,34 +221,6 @@ class LimitedTermsCollector final : public PrepareCollector {
   const Scorer* _scorer;
   FieldCollector _field;
   LimitedSampleSelector<TermFrequency> _limited;
-};
-
-class ScoredTermsCollector final : public PrepareCollector {
- public:
-  ScoredTermsCollector(const Scorer* scorer, size_t scored_terms_limit)
-    : _scorer{scorer}, _limited{scorer ? scored_terms_limit : 0} {}
-
-  FieldCollector& Field() noexcept { return _field; }
-  LimitedSampleSelector<TermScore>& Limited() noexcept { return _limited; }
-
-  void Merge(PrepareCollector&& other) final {
-    auto& rhs = sdb::basics::downCast<ScoredTermsCollector>(other);
-    const FieldCollector fields[]{_field, rhs._field};
-    _field = MergeFieldCollectors(fields);
-    _limited.Merge(std::move(rhs._limited));
-  }
-
-  StatsBuffer Finish(IResourceManager& memory) final {
-    StatsBuffer::Storage stats{{memory}};
-    TermCollectorsFlat terms{_scorer, 0};
-    _limited.score(_scorer, _field, terms, stats);
-    return StatsBuffer{std::move(stats), _scorer};
-  }
-
- private:
-  const Scorer* _scorer;
-  FieldCollector _field;
-  LimitedSampleSelector<TermScore> _limited;
 };
 
 }  // namespace irs

@@ -25,20 +25,21 @@
 #include "basics/noncopyable.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/search/collectors.hpp"
+#include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/states/multiterm_state.hpp"
 
 namespace irs {
 
 template<typename State>
-class AllTermsVisitor : util::Noncopyable {
+class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
  public:
   AllTermsVisitor(State& state, FieldCollector& field_stats,
                   TermCollectorsFlat& term_stats) noexcept
     : _state{state}, _field_stats{field_stats}, _term_stats{term_stats} {}
 
   void Prepare(const SubReader& /*segment*/, const TermReader& field,
-               const SeekTermIterator& terms) noexcept {
+               const SeekTermIterator& terms) noexcept final {
     _field_stats.Collect(field);
     _state.Prepare(&field);
 
@@ -48,7 +49,7 @@ class AllTermsVisitor : util::Noncopyable {
     _docs_count = meta ? &meta->docs_count : &_no_docs;
   }
 
-  void Visit(score_t boost) {
+  void Visit(score_t boost) final {
     SDB_ASSERT(_terms);
     _term_stats.Collect(_stat_index, *_terms);
 

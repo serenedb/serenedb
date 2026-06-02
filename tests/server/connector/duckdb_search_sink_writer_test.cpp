@@ -69,7 +69,6 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
   static void SetUpTestCase() {
     // Running these multiple times does no harm but is redundant.
     irs::formats::Init();
-    irs::compression::Init();
   }
 
   void SetUp() final {

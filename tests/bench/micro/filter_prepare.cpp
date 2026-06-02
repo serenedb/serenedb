@@ -317,6 +317,18 @@ void SetUpNot(irs::Not& n) {
   inner.mutable_options()->term = AsBytes("term_0042");
 }
 
+template<typename Filter>
+void RunPrepare(const Filter& filter, const irs::DirectoryReader& reader,
+                const irs::Scorer* scorer) {
+  auto collector = filter.MakeCollector(scorer);
+  for (const auto& sub : reader) {
+    auto q = filter.PrepareSegment(sub, {.collector = collector.get()});
+    benchmark::DoNotOptimize(q);
+  }
+  auto stats = collector->Finish(irs::IResourceManager::gNoop);
+  benchmark::DoNotOptimize(stats);
+}
+
 }  // namespace
 
 #define DEFINE_FILTER_VARIANTS(Tag, Filter, Setup)                             \
@@ -324,8 +336,7 @@ void SetUpNot(irs::Not& n) {
                               Setup)                                           \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      auto q = _filter.prepare({.index = _reader});                            \
-      benchmark::DoNotOptimize(q);                                             \
+      RunPrepare(_filter, _reader, nullptr);                                   \
     }                                                                          \
   }                                                                            \
   BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_NoScorer)                  \
@@ -335,8 +346,7 @@ void SetUpNot(irs::Not& n) {
                               Setup)                                           \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      auto q = _filter.prepare({.index = _reader, .scorer = &_bm25});          \
-      benchmark::DoNotOptimize(q);                                             \
+      RunPrepare(_filter, _reader, &_bm25);                                    \
     }                                                                          \
   }                                                                            \
   BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_Bm25)                      \
@@ -346,8 +356,7 @@ void SetUpNot(irs::Not& n) {
                               Setup)                                           \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      auto q = _filter.prepare({.index = _reader, .scorer = &_tfidf});         \
-      benchmark::DoNotOptimize(q);                                             \
+      RunPrepare(_filter, _reader, &_tfidf);                                   \
     }                                                                          \
   }                                                                            \
   BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_Tfidf)                     \
@@ -357,8 +366,7 @@ void SetUpNot(irs::Not& n) {
                               Setup, true)                                     \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      auto q = _filter.prepare({.index = _reader, .scorer = &_bm25});          \
-      benchmark::DoNotOptimize(q);                                             \
+      RunPrepare(_filter, _reader, &_bm25);                                    \
     }                                                                          \
   }                                                                            \
   BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_Bm25_Boost)                \

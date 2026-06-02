@@ -87,13 +87,15 @@ void InitAnnFilterContext(
 
 class TextScanFilter {
  public:
-  TextScanFilter(const irs::Filter::Query& query);
+  TextScanFilter(const irs::Filter& filter, irs::PrepareCollector& collector);
 
   bool Accept(faiss::idx_t id) const;
   void Reset(const irs::SubReader& segment);
 
  private:
-  const irs::Filter::Query& _query;
+  const irs::Filter& _filter;
+  irs::PrepareCollector& _collector;
+  mutable irs::QueryBuilder::ptr _query;
   mutable irs::DocIterator::ptr _it;
 };
 
@@ -101,7 +103,9 @@ class CompositeScanFilter final : public faiss::IDSelector {
  public:
   CompositeScanFilter() = default;
 
-  void EnableText(const irs::Filter::Query& query) { _text.emplace(query); }
+  void EnableText(const irs::Filter& filter, irs::PrepareCollector& collector) {
+    _text.emplace(filter, collector);
+  }
   void EnableAnn(const ANNFilterContext& ctx) { _ann.emplace(ctx); }
 
   bool Empty() const { return !_text && !_ann; }

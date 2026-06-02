@@ -653,14 +653,10 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
   opts.child = MakeByNumericTerm("count", 2);
   opts.parent = MakeParentProvider(kParent);
   opts.match = [&](const irs::SubReader& segment) -> irs::DocIterator::ptr {
+    const irs::All all;
+    tests::PreparedFilter prepared{all, segment, nullptr, counter};
     return irs::memory::make_managed<ChildIterator>(
-      irs::All()
-        .prepare({
-          .index = segment,
-          .memory = counter,
-        })
-        ->execute({.segment = segment}),
-      std::set{6U, 13U, 15U, 20U});
+      prepared.Execute(0), std::set{6U, 13U, 15U, 20U});
   };
 
   {
@@ -672,14 +668,10 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
 
   auto make_match = [&]() -> irs::ByNestedOptions::MatchType {
     return [&](const irs::SubReader& segment) -> irs::DocIterator::ptr {
+      const irs::All all;
+      tests::PreparedFilter prepared{all, segment, nullptr, counter};
       return irs::memory::make_managed<ChildIterator>(
-        irs::All()
-          .prepare({
-            .index = segment,
-            .memory = counter,
-          })
-          ->execute({.segment = segment}),
-        std::set{6U, 13U, 15U, 20U});
+        prepared.Execute(0), std::set{6U, 13U, 15U, 20U});
     };
   };
 

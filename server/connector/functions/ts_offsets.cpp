@@ -173,14 +173,16 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     }
   });
 
-  auto query = bind.stored_filter->prepare({.index = *segment});
+  auto collector = bind.stored_filter->MakeCollector(nullptr);
+  auto query = bind.stored_filter->PrepareSegment(
+    *segment, {.collector = collector.get()});
   if (!query) {
     return;
   }
 
   FieldEntry entry{.name = field.name};
   OffsetsCollector visitor{std::span{&entry, 1}};
-  query->visit(*segment, visitor, irs::kNoBoost);
+  query->Visit(visitor, irs::kNoBoost);
 
   std::vector<highlight::HitRange> offsets;
   for (duckdb::idx_t r = 0; r < count; ++r) {

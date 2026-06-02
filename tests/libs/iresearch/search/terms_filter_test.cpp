@@ -87,11 +87,9 @@ TEST_P(TermsFilterTestCase, boost) {
   {
     irs::ByTerms q = MakeFilter("field", {{"bar", 0.5f}, {"baz", 0.25f}});
 
-    auto prepared = q.prepare({
-      .index = irs::SubReader::empty(),
-      .memory = counter,
-    });
-    ASSERT_EQ(irs::kNoBoost, prepared->Boost());
+    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
+                                   counter};
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -104,12 +102,9 @@ TEST_P(TermsFilterTestCase, boost) {
     irs::ByTerms q = MakeFilter("field", {{"bar", 0.5f}, {"baz", 0.25f}});
     q.boost(boost);
 
-    auto prepared = q.prepare({
-      .index = irs::SubReader::empty(),
-      .memory = counter,
-    });
-    ASSERT_EQ(irs::kNoBoost,
-              prepared->Boost());  // no boost because index is empty
+    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
+                                   counter};
+    ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -130,11 +125,8 @@ TEST_P(TermsFilterTestCase, boost) {
       MakeFilter("duplicated", {{"abcd", 0.5f}, {"vczc", 0.25f}});
     q.boost(boost);
 
-    auto prepared = q.prepare({
-      .index = *rdr,
-      .memory = counter,
-    });
-    ASSERT_EQ(boost, prepared->Boost());
+    tests::PreparedFilter prepared{q, *rdr, nullptr, counter};
+    ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);

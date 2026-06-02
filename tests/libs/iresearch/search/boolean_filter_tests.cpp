@@ -200,19 +200,19 @@ struct SeekDoc {
 };
 
 struct Boosted : public irs::FilterWithBoost {
-  struct Prepared : irs::Filter::Query {
-    explicit Prepared(const BasicDocIterator::DocidsT& docs, irs::score_t boost)
-      : docs{docs}, _boost{boost} {}
+  struct Prepared : irs::QueryBuilder {
+    explicit Prepared(const irs::SubReader& segment,
+                      const BasicDocIterator::DocidsT& docs, irs::score_t boost)
+      : QueryBuilder{segment}, docs{docs}, _boost{boost} {}
 
-    irs::DocIterator::ptr execute(
+    irs::DocIterator::ptr Execute(
       const irs::ExecutionContext& ctx) const final {
       Boosted::gExecuteCount++;
       return irs::memory::make_managed<BasicDocIterator>(
         docs.begin(), docs.end(), stats.c_str(), Boost());
     }
 
-    void visit(const irs::SubReader&, irs::PreparedStateVisitor&,
-               irs::score_t) const final {
+    void Visit(irs::PreparedStateVisitor&, irs::score_t) const final {
       // No terms to visit
     }
 
@@ -225,8 +225,9 @@ struct Boosted : public irs::FilterWithBoost {
     irs::score_t _boost;
   };
 
-  irs::Filter::Query::ptr prepare(const irs::PrepareContext& ctx) const final {
-    return irs::memory::make_managed<Boosted::Prepared>(docs,
+  irs::QueryBuilder::ptr PrepareSegment(
+    const irs::SubReader& segment, const irs::PrepareContext& ctx) const final {
+    return irs::memory::make_managed<Boosted::Prepared>(segment, docs,
                                                         ctx.boost * Boost());
   }
 
@@ -295,11 +296,9 @@ TEST(boolean_query_boost, hierarchy) {
       sub.boost(value);
     }
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
 
-    auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+    auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
@@ -379,11 +378,9 @@ TEST(boolean_query_boost, hierarchy) {
       node.docs = {1, 2, 3};
     }
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
 
-    auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+    auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
@@ -472,11 +469,9 @@ TEST(boolean_query_boost, hierarchy) {
       node.docs = {1, 2, 3};
     }
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
 
-    auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+    auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
@@ -517,9 +512,9 @@ TEST(boolean_query_boost, and_filter) {
   {
     irs::And root;
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    tests::PreparedFilter prep{root, irs::SubReader::empty()};
 
-    ASSERT_EQ(irs::kNoBoost, prep->Boost());
+    ASSERT_EQ(irs::kNoBoost, prep.Query(0)->Boost());
   }
 
   // boosted empty boolean query
@@ -529,9 +524,9 @@ TEST(boolean_query_boost, and_filter) {
     irs::And root;
     root.boost(value);
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    tests::PreparedFilter prep{root, irs::SubReader::empty()};
 
-    ASSERT_EQ(irs::kNoBoost, prep->Boost());
+    ASSERT_EQ(irs::kNoBoost, prep.Query(0)->Boost());
   }
 
   // single boosted subquery
@@ -547,11 +542,9 @@ TEST(boolean_query_boost, and_filter) {
       node.boost(value);
     }
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
 
-    auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+    auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
@@ -579,11 +572,9 @@ TEST(boolean_query_boost, and_filter) {
     }
     root.boost(value);
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
 
-    auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+    auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
@@ -616,11 +607,9 @@ TEST(boolean_query_boost, and_filter) {
     }
     root.boost(value);
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
 
-    auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+    auto docs = prep.Execute(0);
 
     /* the first hit should be scored as value*value + value*value since it
      * exists in both results */
@@ -665,10 +654,8 @@ TEST(boolean_query_boost, and_filter) {
       node.boost(value);
     }
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-    auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
+    auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
@@ -711,10 +698,8 @@ TEST(boolean_query_boost, and_filter) {
       node.boost(value);
     }
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-    auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
+    auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
@@ -755,10 +740,8 @@ TEST(boolean_query_boost, and_filter) {
       node.boost(0.f);
     }
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-    auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
+    auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
@@ -779,9 +762,9 @@ TEST(boolean_query_boost, or_filter) {
   {
     irs::Or root;
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    tests::PreparedFilter prep{root, irs::SubReader::empty()};
 
-    ASSERT_EQ(irs::kNoBoost, prep->Boost());
+    ASSERT_EQ(irs::kNoBoost, prep.Query(0)->Boost());
   }
 
   // empty single boosted query
@@ -791,9 +774,9 @@ TEST(boolean_query_boost, or_filter) {
     irs::Or root;
     root.boost(value);
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    tests::PreparedFilter prep{root, irs::SubReader::empty()};
 
-    ASSERT_EQ(irs::kNoBoost, prep->Boost());
+    ASSERT_EQ(irs::kNoBoost, prep.Query(0)->Boost());
   }
 
   // boosted empty single query
@@ -809,10 +792,8 @@ TEST(boolean_query_boost, or_filter) {
     }
     root.boost(value);
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-    auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
+    auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
@@ -840,11 +821,9 @@ TEST(boolean_query_boost, or_filter) {
     }
     root.boost(value);
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
 
-    auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+    auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
@@ -877,10 +856,8 @@ TEST(boolean_query_boost, or_filter) {
     }
     root.boost(value);
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-    auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
+    auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
@@ -938,10 +915,8 @@ TEST(boolean_query_boost, or_filter) {
       node.boost(value);
     }
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-    auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
+    auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
@@ -997,10 +972,8 @@ TEST(boolean_query_boost, or_filter) {
       node.boost(value);
     }
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-    auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
+    auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
@@ -1053,10 +1026,8 @@ TEST(boolean_query_boost, or_filter) {
       node.boost(0.f);
     }
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-    auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
+    auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
@@ -1117,20 +1088,23 @@ struct Unestimated : public irs::FilterWithBoost {
     }
   };
 
-  struct Prepared : public irs::Filter::Query {
-    irs::DocIterator::ptr execute(const irs::ExecutionContext&) const final {
+  struct Prepared : public irs::QueryBuilder {
+    explicit Prepared(const irs::SubReader& segment) : QueryBuilder{segment} {}
+
+    irs::DocIterator::ptr Execute(const irs::ExecutionContext&) const final {
       return irs::memory::make_managed<Unestimated::DocIteratorImpl>();
     }
-    void visit(const irs::SubReader&, irs::PreparedStateVisitor&,
-               irs::score_t) const final {
+    void Visit(irs::PreparedStateVisitor&, irs::score_t) const final {
       // No terms to visit
     }
 
     irs::score_t Boost() const noexcept final { return irs::kNoBoost; }
   };
 
-  Filter::Query::ptr prepare(const irs::PrepareContext& /*ctx*/) const final {
-    return irs::memory::make_managed<Unestimated::Prepared>();
+  irs::QueryBuilder::ptr PrepareSegment(
+    const irs::SubReader& segment,
+    const irs::PrepareContext& /*ctx*/) const final {
+    return irs::memory::make_managed<Unestimated::Prepared>(segment);
   }
 
   irs::TypeInfo::type_id type() const noexcept final {
@@ -1161,17 +1135,17 @@ struct Estimated : public irs::FilterWithBoost {
     irs::CostAttr cost;
   };
 
-  struct Prepared : public irs::Filter::Query {
-    explicit Prepared(irs::CostAttr::Type est, bool* evaluated)
-      : evaluated(evaluated), est(est) {}
+  struct Prepared : public irs::QueryBuilder {
+    explicit Prepared(const irs::SubReader& segment, irs::CostAttr::Type est,
+                      bool* evaluated)
+      : QueryBuilder{segment}, evaluated(evaluated), est(est) {}
 
-    irs::DocIterator::ptr execute(const irs::ExecutionContext&) const final {
+    irs::DocIterator::ptr Execute(const irs::ExecutionContext&) const final {
       return irs::memory::make_managed<Estimated::DocIteratorImpl>(est,
                                                                    evaluated);
     }
 
-    void visit(const irs::SubReader&, irs::PreparedStateVisitor&,
-               irs::score_t) const final {
+    void Visit(irs::PreparedStateVisitor&, irs::score_t) const final {
       // No terms to visit
     }
 
@@ -1181,8 +1155,11 @@ struct Estimated : public irs::FilterWithBoost {
     irs::CostAttr::Type est;
   };
 
-  Filter::Query::ptr prepare(const irs::PrepareContext& /*ctx*/) const final {
-    return irs::memory::make_managed<Estimated::Prepared>(est, &evaluated);
+  irs::QueryBuilder::ptr PrepareSegment(
+    const irs::SubReader& segment,
+    const irs::PrepareContext& /*ctx*/) const final {
+    return irs::memory::make_managed<Estimated::Prepared>(segment, est,
+                                                          &evaluated);
   }
 
   irs::TypeInfo::type_id type() const noexcept final {
@@ -1207,13 +1184,10 @@ TEST(boolean_query_estimation, or_filter) {
     root.add<detail::Estimated>().est = 1;
     root.add<detail::Estimated>().est = 100;
 
-    auto prep = root.prepare({
-      .index = irs::SubReader::empty(),
-      .memory = counter,
-    });
-
     detail::SegmentReaderMock segment_reader{1000};
-    auto docs = prep->execute({.segment = segment_reader});
+    tests::PreparedFilter prep{root, segment_reader, nullptr, counter};
+
+    auto docs = prep.Execute(0);
 
     // check that subqueries were not estimated
     for (auto it = root.begin(), end = root.end(); it != end; ++it) {
@@ -1243,9 +1217,9 @@ TEST(boolean_query_estimation, or_filter) {
     root.add<detail::Unestimated>();
     root.add<detail::Unestimated>();
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    tests::PreparedFilter prep{root, irs::SubReader::empty()};
 
-    auto docs = prep->execute({.segment = irs::SubReader::empty()});
+    auto docs = prep.Execute(0);
     ASSERT_EQ(0, irs::CostAttr::extract(*docs));
   }
 
@@ -1261,10 +1235,10 @@ TEST(boolean_query_estimation, or_filter) {
     root.add<detail::Estimated>().est = 100;
     root.add<detail::Unestimated>();
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
-
     detail::SegmentReaderMock segment_reader{1000};
-    auto docs = prep->execute({.segment = segment_reader});
+    tests::PreparedFilter prep{root, segment_reader};
+
+    auto docs = prep.Execute(0);
 
     /* check that subqueries were not estimated */
     for (auto it = root.begin(), end = root.end(); it != end; ++it) {
@@ -1305,11 +1279,10 @@ TEST(boolean_query_estimation, or_filter) {
     tests::sort::Boost impl;
     const irs::Scorer* sort{&impl};
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = sort});
-
     detail::SegmentReaderMock segment_reader{1000};
-    auto docs = prep->execute({.segment = segment_reader});
+    tests::PreparedFilter prep{root, segment_reader, sort};
+
+    auto docs = prep.Execute(0);
 
     // check that subqueries were not estimated
     for (auto it = root.begin(), end = root.end(); it != end; ++it) {
@@ -1336,9 +1309,9 @@ TEST(boolean_query_estimation, or_filter) {
   {
     irs::Or root;
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    tests::PreparedFilter prep{root, irs::SubReader::empty()};
 
-    auto docs = prep->execute({.segment = irs::SubReader::empty()});
+    auto docs = prep.Execute(0);
     ASSERT_EQ(0, irs::CostAttr::extract(*docs));
   }
 }
@@ -1353,9 +1326,9 @@ TEST(boolean_query_estimation, and_filter) {
     root.add<detail::Estimated>().est = 1;
     root.add<detail::Estimated>().est = 100;
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    tests::PreparedFilter prep{root, irs::SubReader::empty()};
 
-    auto docs = prep->execute({.segment = irs::SubReader::empty()});
+    auto docs = prep.Execute(0);
 
     // check that subqueries were estimated
     for (auto it = root.begin(), end = root.end(); it != end; ++it) {
@@ -1376,9 +1349,9 @@ TEST(boolean_query_estimation, and_filter) {
     root.add<detail::Unestimated>();
     root.add<detail::Unestimated>();
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    tests::PreparedFilter prep{root, irs::SubReader::empty()};
 
-    auto docs = prep->execute({.segment = irs::SubReader::empty()});
+    auto docs = prep.Execute(0);
 
     // check that subqueries were estimated
     for (auto it = root.begin(), end = root.end(); it != end; ++it) {
@@ -1404,9 +1377,9 @@ TEST(boolean_query_estimation, and_filter) {
     root.add<detail::Estimated>().est = 100;
     root.add<detail::Unestimated>();
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    tests::PreparedFilter prep{root, irs::SubReader::empty()};
 
-    auto docs = prep->execute({.segment = irs::SubReader::empty()});
+    auto docs = prep.Execute(0);
 
     // check that subqueries were estimated
     for (auto it = root.begin(), end = root.end(); it != end; ++it) {
@@ -1434,9 +1407,9 @@ TEST(boolean_query_estimation, and_filter) {
     root.add<irs::Not>().filter<detail::Estimated>().est = 0;
     root.add<detail::Unestimated>();
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    tests::PreparedFilter prep{root, irs::SubReader::empty()};
 
-    auto docs = prep->execute({.segment = irs::SubReader::empty()});
+    auto docs = prep.Execute(0);
 
     // check that subqueries were estimated
     for (auto it = root.begin(), end = root.end(); it != end; ++it) {
@@ -1452,9 +1425,9 @@ TEST(boolean_query_estimation, and_filter) {
   // empty case
   {
     irs::And root;
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    tests::PreparedFilter prep{root, irs::SubReader::empty()};
 
-    auto docs = prep->execute({.segment = irs::SubReader::empty()});
+    auto docs = prep.Execute(0);
     ASSERT_EQ(0, irs::CostAttr::extract(*docs));
   }
 }
@@ -15107,26 +15080,23 @@ TEST_P(BooleanFilterTestCase, or_sequential_multiple_segments) {
     Append<irs::ByTerm>(root, "name", "F");
     Append<irs::ByTerm>(root, "name", "I");
 
-    auto prep = root.prepare({.index = rdr});
-    auto segment = rdr.begin();
+    tests::PreparedFilter prep{root, rdr};
     {
-      auto docs = prep->execute({.segment = *segment});
+      auto docs = prep.Execute(0);
       ASSERT_TRUE(docs->next());
       ASSERT_EQ(2, docs->value());
       ASSERT_FALSE(docs->next());
     }
 
-    ++segment;
     {
-      auto docs = prep->execute({.segment = *segment});
+      auto docs = prep.Execute(1);
       ASSERT_TRUE(docs->next());
       ASSERT_EQ(2, docs->value());
       ASSERT_FALSE(docs->next());
     }
 
-    ++segment;
     {
-      auto docs = prep->execute({.segment = *segment});
+      auto docs = prep.Execute(2);
       ASSERT_TRUE(docs->next());
       ASSERT_EQ(2, docs->value());
       ASSERT_FALSE(docs->next());
@@ -15497,14 +15467,13 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
       *score = cur_doc;
     };
 
-    auto prepared_filter = not_node.prepare({.index = *rdr, .scorer = &sort});
+    tests::PreparedFilter prepared_filter{not_node, *rdr, &sort};
     std::multimap<irs::score_t, irs::doc_id_t, std::greater<>> scored_result;
 
     ASSERT_EQ(1, rdr->size());
     auto& segment = (*rdr)[0];
 
-    auto filter_itr =
-      prepared_filter->execute({.segment = segment, .scorer = &sort});
+    auto filter_itr = prepared_filter.Execute(0);
     ASSERT_EQ(32, irs::CostAttr::extract(*filter_itr));
 
     auto score = filter_itr->PrepareScore({
@@ -15582,14 +15551,13 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
       *score = cur_doc;
     };
 
-    auto prepared_filter = root.prepare({.index = *rdr, .scorer = &sort});
+    tests::PreparedFilter prepared_filter{root, *rdr, &sort};
     std::multimap<irs::score_t, irs::doc_id_t, std::greater<>> scored_result;
 
     ASSERT_EQ(1, rdr->size());
     auto& segment = (*rdr)[0];
 
-    auto filter_itr =
-      prepared_filter->execute({.segment = segment, .scorer = &sort});
+    auto filter_itr = prepared_filter.Execute(0);
     ASSERT_EQ(32, irs::CostAttr::extract(*filter_itr));
 
     auto score = filter_itr->PrepareScore({
@@ -15817,9 +15785,9 @@ TEST_P(BooleanFilterTestCase, not_and_conjunction_regression) {
   // Also exercise seek() across the result set -- this is the path
   // that drove the SQL-side crash, since the table scan repeatedly
   // re-enters Exclusion::converge with the next incl doc.
-  auto prepared = root.prepare({.index = rdr});
-  for (const auto& sub : rdr) {
-    auto docs = prepared->execute({.segment = sub});
+  tests::PreparedFilter prepared{root, rdr};
+  for (size_t i = 0, n = prepared.size(); i < n; ++i) {
+    auto docs = prepared.Execute(i);
     for (irs::doc_id_t target : {2, 5, 6, 11, 12, 21, 22, 27, 28, 31, 32}) {
       const auto landed = docs->seek(target);
       EXPECT_GE(landed, target);
@@ -16088,16 +16056,16 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
 
     irs::TFIDF tfidf_scorer;
 
-    auto prepared = root.prepare({.index = *rdr, .scorer = &tfidf_scorer});
-    ASSERT_NE(nullptr, prepared);
+    tests::PreparedFilter prepared{root, *rdr, &tfidf_scorer};
+    ASSERT_NE(nullptr, prepared.Query(0));
 
     std::vector<irs::doc_id_t> expected_docs{
       1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15,
       16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 29, 30, 31, 32};
 
     auto expected_doc = expected_docs.begin();
-    for (const auto& sub : rdr) {
-      auto docs = prepared->execute({.segment = sub, .scorer = &tfidf_scorer});
+    for (size_t i = 0, n = prepared.size(); i < n; ++i) {
+      auto docs = prepared.Execute(i);
 
       const auto& scr = docs->PrepareScore({
         .scorer = &tfidf_scorer,
@@ -16214,15 +16182,16 @@ TEST(And_test, optimize_double_negation) {
   root.add<irs::Not>().filter<irs::Not>().filter<irs::ByTerm>() =
     MakeFilter<irs::ByTerm>("test_field", "test_term");
 
-  auto prepared = root.prepare({.index = irs::SubReader::empty()});
-  ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
+  tests::PreparedFilter prepared{root, irs::SubReader::empty()};
+  ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.Query(0)));
 }
 
 TEST(And_test, prepare_empty_filter) {
   irs::And root;
-  auto prepared = root.prepare({.index = irs::SubReader::empty()});
-  ASSERT_NE(nullptr, prepared);
-  ASSERT_EQ(typeid(irs::Filter::Query::empty().get()), typeid(prepared.get()));
+  tests::PreparedFilter prepared{root, irs::SubReader::empty()};
+  ASSERT_NE(nullptr, prepared.Query(0));
+  ASSERT_EQ(typeid(irs::QueryBuilder::Empty().get()),
+            typeid(prepared.Query(0)));
 }
 
 TEST(And_test, optimize_single_node) {
@@ -16231,8 +16200,8 @@ TEST(And_test, optimize_single_node) {
     irs::And root;
     Append<irs::ByTerm>(root, "test_field", "test_term");
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
-    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
+    tests::PreparedFilter prepared{root, irs::SubReader::empty()};
+    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.Query(0)));
   }
 
   // complex hierarchy
@@ -16241,8 +16210,8 @@ TEST(And_test, optimize_single_node) {
     root.add<irs::And>().add<irs::And>().add<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>("test_field", "test_term");
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
-    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
+    tests::PreparedFilter prepared{root, irs::SubReader::empty()};
+    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.Query(0)));
   }
 }
 
@@ -16252,11 +16221,11 @@ TEST(And_test, optimize_all_filters) {
     irs::And root;
     root.add<irs::All>().boost(5.f);
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
-    ASSERT_EQ(
-      typeid(irs::All().prepare({.index = irs::SubReader::empty()}).get()),
-      typeid(prepared.get()));
-    ASSERT_EQ(5.f, prepared->Boost());
+    tests::PreparedFilter prepared{root, irs::SubReader::empty()};
+    const irs::All all;
+    tests::PreparedFilter all_prepared{all, irs::SubReader::empty()};
+    ASSERT_EQ(typeid(all_prepared.Query(0)), typeid(prepared.Query(0)));
+    ASSERT_EQ(5.f, prepared.Query(0)->Boost());
   }
 
   // multiple `all` filters
@@ -16266,11 +16235,11 @@ TEST(And_test, optimize_all_filters) {
     root.add<irs::All>().boost(2.f);
     root.add<irs::All>().boost(3.f);
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
-    ASSERT_EQ(
-      typeid(irs::All().prepare({.index = irs::SubReader::empty()}).get()),
-      typeid(prepared.get()));
-    ASSERT_EQ(10.f, prepared->Boost());
+    tests::PreparedFilter prepared{root, irs::SubReader::empty()};
+    const irs::All all;
+    tests::PreparedFilter all_prepared{all, irs::SubReader::empty()};
+    ASSERT_EQ(typeid(all_prepared.Query(0)), typeid(prepared.Query(0)));
+    ASSERT_EQ(10.f, prepared.Query(0)->Boost());
   }
 
   // multiple `all` filters + term filter
@@ -16281,10 +16250,9 @@ TEST(And_test, optimize_all_filters) {
     Append<irs::ByTerm>(root, "test_field", "test_term");
 
     tests::sort::Boost sort{};
-    auto prepared =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
-    ASSERT_EQ(8.f, prepared->Boost());
+    tests::PreparedFilter prepared{root, irs::SubReader::empty(), &sort};
+    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.Query(0)));
+    ASSERT_EQ(8.f, prepared.Query(0)->Boost());
   }
 
   // `all` filter + term filter
@@ -16293,10 +16261,9 @@ TEST(And_test, optimize_all_filters) {
     irs::And root;
     Append<irs::ByTerm>(root, "test_field", "test_term");
     root.add<irs::All>().boost(5.f);
-    auto prepared =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
-    ASSERT_EQ(6.f, prepared->Boost());
+    tests::PreparedFilter prepared{root, irs::SubReader::empty(), &sort};
+    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.Query(0)));
+    ASSERT_EQ(6.f, prepared.Query(0)->Boost());
   }
 }
 
@@ -16314,9 +16281,8 @@ TEST(And_test, not_boosted) {
     node.docs = {1};
     node.boost(5);
   }
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-  auto docs =
-    prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+  tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
+  auto docs = prep.Execute(0);
   const auto& scr = docs->PrepareScore({
     .scorer = &sort,
     .segment = &irs::SubReader::empty(),
@@ -16395,8 +16361,8 @@ TEST(Or_test, optimize_double_negation) {
   root.add<irs::Not>().filter<irs::Not>().filter<irs::ByTerm>() =
     MakeFilter<irs::ByTerm>("test_field", "test_term");
 
-  auto prepared = root.prepare({.index = irs::SubReader::empty()});
-  ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
+  tests::PreparedFilter prepared{root, irs::SubReader::empty()};
+  ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.Query(0)));
 }
 
 TEST(Or_test, optimize_single_node) {
@@ -16405,8 +16371,8 @@ TEST(Or_test, optimize_single_node) {
     irs::Or root;
     Append<irs::ByTerm>(root, "test_field", "test_term");
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
-    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
+    tests::PreparedFilter prepared{root, irs::SubReader::empty()};
+    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.Query(0)));
   }
 
   // complex hierarchy
@@ -16415,8 +16381,8 @@ TEST(Or_test, optimize_single_node) {
     root.add<irs::Or>().add<irs::Or>().add<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>("test_field", "test_term");
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
-    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
+    tests::PreparedFilter prepared{root, irs::SubReader::empty()};
+    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.Query(0)));
   }
 }
 
@@ -16440,9 +16406,9 @@ TEST(Or_test, optimize_all_unscored) {
   root.add<irs::All>();
   root.add<irs::Empty>();
 
-  auto prep = root.prepare({.index = irs::SubReader::empty()});
+  tests::PreparedFilter prep{root, irs::SubReader::empty()};
 
-  prep->execute({.segment = irs::SubReader::empty()});
+  prep.Execute(0);
   ASSERT_EQ(
     0, detail::Boosted::gExecuteCount);  // specific filters should be opt out
 }
@@ -16467,9 +16433,9 @@ TEST(Or_test, optimize_all_scored) {
   root.add<irs::All>();
   root.add<irs::Empty>();
   tests::sort::Boost sort{};
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+  tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
 
-  prep->execute({.segment = irs::SubReader::empty()});
+  prep.Execute(0);
   ASSERT_EQ(3,
             detail::Boosted::gExecuteCount);  // specific filters should
                                               // executed as score needs them
@@ -16482,10 +16448,10 @@ TEST(Or_test, optimize_only_all_boosted) {
   root.add<irs::All>().boost(3);
   root.add<irs::All>().boost(5);
 
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+  tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
 
-  prep->execute({.segment = irs::SubReader::empty()});
-  ASSERT_EQ(16, prep->Boost());
+  prep.Execute(0);
+  ASSERT_EQ(16, prep.Query(0)->Boost());
 }
 
 TEST(Or_test, boosted_not) {
@@ -16502,9 +16468,8 @@ TEST(Or_test, boosted_not) {
     node.docs = {1};
     node.boost(5);
   }
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-  auto docs =
-    prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
+  tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
+  auto docs = prep.Execute(0);
   const auto& scr = docs->PrepareScore({
     .scorer = &sort,
     .segment = &irs::SubReader::empty(),

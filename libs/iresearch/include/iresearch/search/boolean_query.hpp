@@ -33,24 +33,24 @@ class BooleanFilter;
 class Or;
 
 // Base class for boolean queries
-class BooleanQuery : public Filter::Query {
+class BooleanQuery : public QueryBuilder {
  public:
-  using queries_t = ManagedVector<Filter::Query::ptr>;
+  using queries_t = ManagedVector<QueryBuilder::ptr>;
   using iterator = queries_t::const_iterator;
 
-  DocIterator::ptr execute(const ExecutionContext& ctx) const final;
+  BooleanQuery(const SubReader& segment, queries_t&& queries, size_t excl,
+               ScoreMergeType merge_type, score_t boost)
+    : QueryBuilder{segment},
+      _queries{std::move(queries)},
+      _excl{excl},
+      _merge_type{merge_type},
+      _boost{boost} {}
 
-  void visit(const SubReader& segment, PreparedStateVisitor& visitor,
-             score_t boost) const final;
+  DocIterator::ptr Execute(const ExecutionContext& ctx) const final;
+
+  void Visit(PreparedStateVisitor& visitor, score_t boost) const final;
 
   score_t Boost() const noexcept final { return _boost; }
-
-  void prepare(const PrepareContext& ctx, ScoreMergeType merge_type,
-               queries_t queries, size_t exclude_start);
-
-  void prepare(const PrepareContext& ctx, ScoreMergeType merge_type,
-               std::span<const Filter* const> incl,
-               std::span<const Filter* const> excl);
 
   iterator begin() const { return _queries.begin(); }
   iterator excl_begin() const { return begin() + _excl; }
@@ -60,7 +60,7 @@ class BooleanQuery : public Filter::Query {
   size_t size() const { return _queries.size(); }
 
  protected:
-  virtual DocIterator::ptr execute(const ExecutionContext& ctx, iterator begin,
+  virtual DocIterator::ptr Execute(const ExecutionContext& ctx, iterator begin,
                                    iterator end) const = 0;
 
   ScoreMergeType merge_type() const noexcept { return _merge_type; }
@@ -78,14 +78,18 @@ class BooleanQuery : public Filter::Query {
 // Represent a set of queries joint by "And"
 class AndQuery : public BooleanQuery {
  public:
-  DocIterator::ptr execute(const ExecutionContext& ctx, iterator begin,
+  using BooleanQuery::BooleanQuery;
+
+  DocIterator::ptr Execute(const ExecutionContext& ctx, iterator begin,
                            iterator end) const final;
 };
 
 // Represent a set of queries joint by "Or"
 class OrQuery : public BooleanQuery {
  public:
-  DocIterator::ptr execute(const ExecutionContext& ctx, iterator begin,
+  using BooleanQuery::BooleanQuery;
+
+  DocIterator::ptr Execute(const ExecutionContext& ctx, iterator begin,
                            iterator end) const final;
 };
 
@@ -93,36 +97,39 @@ class OrQuery : public BooleanQuery {
 // minimum number of clauses that should satisfy criteria
 class MinMatchQuery : public BooleanQuery {
  public:
-  explicit MinMatchQuery(size_t min_match_count) noexcept
-    : _min_match_count{min_match_count} {
+  MinMatchQuery(const SubReader& segment, queries_t&& queries, size_t excl,
+                ScoreMergeType merge_type, score_t boost,
+                size_t min_match_count)
+    : BooleanQuery{segment, std::move(queries), excl, merge_type, boost},
+      _min_match_count{min_match_count} {
     SDB_ASSERT(_min_match_count > 1);
   }
 
-  DocIterator::ptr execute(const ExecutionContext& ctx, iterator begin,
+  DocIterator::ptr Execute(const ExecutionContext& ctx, iterator begin,
                            iterator end) const final;
 
  private:
   size_t _min_match_count;
 };
 
-class BoostQuery : public Filter::Query {
+class BoostQuery : public QueryBuilder {
  public:
-  DocIterator::ptr execute(const ExecutionContext& ctx) const final;
+  BoostQuery(const SubReader& segment, QueryBuilder::ptr&& req,
+             std::vector<QueryBuilder::ptr>&& opt)
+    : QueryBuilder{segment}, _req{std::move(req)}, _opt{std::move(opt)} {}
 
-  void visit(const SubReader& segment, PreparedStateVisitor& visitor,
-             score_t boost) const final;
+  DocIterator::ptr Execute(const ExecutionContext& ctx) const final;
+
+  void Visit(PreparedStateVisitor& visitor, score_t boost) const final;
 
   score_t Boost() const noexcept final {
     SDB_ASSERT(false);
     return {};
   }
 
-  void Prepare(const PrepareContext& ctx, const BooleanFilter& req,
-               const Or& opt);
-
  private:
-  Query::ptr _req;
-  std::vector<Query::ptr> _opt;
+  QueryBuilder::ptr _req;
+  std::vector<QueryBuilder::ptr> _opt;
 };
 
 }  // namespace irs

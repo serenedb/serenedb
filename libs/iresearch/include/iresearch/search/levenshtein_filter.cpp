@@ -26,12 +26,12 @@
 #include "basics/shared.hpp"
 #include "basics/std.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/all_terms_collector.hpp"
+#include "iresearch/search/all_terms_visitor.hpp"
 #include "iresearch/search/filter_visitor.hpp"
-#include "iresearch/search/limited_sample_collector.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/search/top_terms_collector.hpp"
+#include "iresearch/search/terms_filter.hpp"
+#include "iresearch/search/top_terms_selector.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
@@ -76,53 +76,6 @@ inline auto ExecuteLevenshtein(uint8_t max_distance,
   return lev(d, prefix, target);
 }
 
-template<typename StatesType>
-struct AggregatedStatsVisitor : util::Noncopyable {
-  AggregatedStatsVisitor(StatesType& states, TermCollectorsFlat& stats) noexcept
-    : stats(stats), states(states) {}
-
-  void operator()(const irs::SubReader& segment, const irs::TermReader& field,
-                  uint32_t docs_count) const {
-    this->segment = &segment;
-    this->field = &field;
-    state = &states.insert(segment);
-    state->reader = &field;
-    state->scored_states_estimation += docs_count;
-  }
-
-  void operator()(SeekCookie::ptr& cookie) const {
-    SDB_ASSERT(segment);
-    SDB_ASSERT(field);
-    stats.Collect(0, *cookie);
-    state->scored_states.emplace_back(std::move(cookie), 0, boost);
-  }
-
-  TermCollectorsFlat& stats;
-  StatesType& states;
-  mutable typename StatesType::state_type* state{};
-  mutable const SubReader* segment{};
-  mutable const TermReader* field{};
-  score_t boost{irs::kNoBoost};
-};
-
-class TopTermsCollectorImpl
-  : public irs::TopTermsCollector<TopTermState<score_t>> {
- public:
-  using BaseType = irs::TopTermsCollector<TopTermState<score_t>>;
-
-  TopTermsCollectorImpl(size_t size, FieldCollector& stats)
-    : BaseType(size), _stats(stats) {}
-
-  void Prepare(const SubReader& segment, const TermReader& field,
-               const SeekTermIterator& terms) {
-    _stats.Collect(field);
-    BaseType::Prepare(segment, field, terms);
-  }
-
- private:
-  FieldCollector& _stats;
-};
-
 //////////////////////////////////////////////////////////////////////////////
 /// @brief visitation logic for levenshtein filter
 /// @param segment segment reader
@@ -164,14 +117,16 @@ void VisitImpl(const SubReader& segment, const TermReader& reader,
   }
 }
 
-template<typename Collector>
-bool CollectTerms(const IndexReader& index, std::string_view field,
-                  bytes_view prefix, bytes_view term,
-                  const ParametricDescription& d, Collector& collector) {
+QueryBuilder::ptr PrepareLevenshteinSegment(const SubReader& segment,
+                                            const PrepareContext& ctx,
+                                            std::string_view field,
+                                            bytes_view prefix, bytes_view term,
+                                            size_t terms_limit,
+                                            const ParametricDescription& d) {
   const auto acceptor = MakeLevenshteinAutomaton(d, prefix, term);
 
   if (!Validate(acceptor)) {
-    return false;
+    return QueryBuilder::Empty();
   }
 
   auto matcher = MakeAutomatonMatcher(acceptor);
@@ -180,55 +135,34 @@ bool CollectTerms(const IndexReader& index, std::string_view field,
                                        utf8_utils::Length(term)));
   const uint8_t max_distance = d.max_distance() + 1;
 
-  for (auto& segment : index) {
-    if (auto* reader = segment.field(field); reader) {
-      VisitImpl(segment, *reader, max_distance, utf8_term_size, matcher,
-                collector);
-    }
+  auto query = memory::make_tracked<MultiTermQuery>(
+    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Max, size_t{1});
+
+  const auto* reader = segment.field(field);
+  if (!reader) {
+    return query;
   }
 
-  return true;
-}
-
-Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
-                                            std::string_view field,
-                                            bytes_view prefix, bytes_view term,
-                                            size_t terms_limit,
-                                            const ParametricDescription& d) {
-  FieldCollector field_stats;
-  TermCollectorsFlat term_stats{ctx.scorer, 1};
-  MultiTermQuery::States states{ctx.memory, ctx.index.size()};
+  auto& collector = sdb::basics::downCast<TermsCollector>(*ctx.collector);
+  AllTermsVisitor term_collector{query->State(), collector.Field(),
+                                 collector.Terms()};
 
   if (!terms_limit) {
-    AllTermsCollector term_collector{states, field_stats, term_stats};
-    term_collector.stat_index(0);  // aggregate stats from different terms
-
-    if (!CollectTerms(ctx.index, field, prefix, term, d, term_collector)) {
-      return Filter::Query::empty();
-    }
+    VisitImpl(segment, *reader, max_distance, utf8_term_size, matcher,
+              term_collector);
   } else {
-    TopTermsCollectorImpl term_collector(terms_limit, field_stats);
+    TopTermsSelector<TopTerm<score_t>> selector{terms_limit};
+    VisitImpl(segment, *reader, max_distance, utf8_term_size, matcher,
+              selector);
 
-    if (!CollectTerms(ctx.index, field, prefix, term, d, term_collector)) {
-      return Filter::Query::empty();
-    }
-
-    AggregatedStatsVisitor aggregate_stats{states, term_stats};
-    term_collector.Visit([&aggregate_stats](TopTermState<score_t>& state) {
-      aggregate_stats.boost = std::max(0.f, state.key);
-      state.Visit(aggregate_stats);
+    ByTermsOptions::search_terms terms;
+    selector.Visit([&](TopTerm<score_t>& candidate) {
+      terms.emplace(std::move(candidate.term), candidate.key);
     });
+    ByTerms::visit(segment, *reader, terms, term_collector);
   }
 
-  MultiTermQuery::Stats stats(
-    1, MultiTermQuery::Stats::allocator_type{ctx.memory});
-  stats.back().resize(GetStatsSize(ctx.scorer), 0);
-  auto* stats_buf = stats[0].data();
-  term_stats.Finish(stats_buf, 0, &field_stats);
-
-  return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),
-                                              std::move(stats), ctx.boost,
-                                              ScoreMergeType::Max, size_t{1});
+  return query;
 }
 
 }  // namespace
@@ -245,7 +179,7 @@ field_visitor ByEditDistance::visitor(const ByEditDistanceAllOptions& opts) {
       return [target = opts.prefix + opts.term](const SubReader& segment,
                                                 const TermReader& field,
                                                 FilterVisitor& visitor) {
-        return ByTerm::visit(segment, field, target, visitor);
+        return ByTerm::Visit(segment, field, target, visitor);
       };
     },
     [](const ParametricDescription& d, const bytes_view prefix,
@@ -280,29 +214,53 @@ field_visitor ByEditDistance::visitor(const ByEditDistanceAllOptions& opts) {
     });
 }
 
-Filter::Query::ptr ByEditDistance::prepare(
-  const PrepareContext& ctx, std::string_view field, bytes_view term,
-  size_t scored_terms_limit, uint8_t max_distance, options_type::pdp_f provider,
-  bool with_transpositions, bytes_view prefix) {
+QueryBuilder::ptr ByEditDistance::PrepareSegment(
+  const SubReader& segment, const PrepareContext& ctx) const {
+  auto sub_ctx = ctx.Boost(Boost());
+  const auto field = this->field();
+  const auto term = bytes_view{options().term};
+  const auto prefix = bytes_view{options().prefix};
+  const auto scored_terms_limit = options().max_terms;
+
   return ExecuteLevenshtein(
-    max_distance, provider, with_transpositions, prefix, term,
-    [] -> Query::ptr { return Query::empty(); },
-    [&] -> Query::ptr {
+    options().max_distance, options().provider, options().with_transpositions,
+    prefix, term, [&] -> QueryBuilder::ptr { return QueryBuilder::Empty(); },
+    [&] -> QueryBuilder::ptr {
       if (!prefix.empty() && !term.empty()) {
         bstring target;
         target.reserve(prefix.size() + term.size());
         target += prefix;
         target += term;
-        return ByTerm::prepare(ctx, field, target);
+        return ByTerm::PrepareSegment(segment, sub_ctx, field, target);
       }
 
-      return ByTerm::prepare(ctx, field, prefix.empty() ? term : prefix);
+      return ByTerm::PrepareSegment(segment, sub_ctx, field,
+                                    prefix.empty() ? term : prefix);
     },
-    [&, scored_terms_limit](const ParametricDescription& d,
-                            const bytes_view prefix,
-                            const bytes_view term) -> Query::ptr {
-      return PrepareLevenshteinFilter(ctx, field, prefix, term,
-                                      scored_terms_limit, d);
+    [&](const ParametricDescription& d, const bytes_view prefix,
+        const bytes_view term) -> QueryBuilder::ptr {
+      return PrepareLevenshteinSegment(segment, sub_ctx, field, prefix, term,
+                                       scored_terms_limit, d);
+    });
+}
+
+PrepareCollector::ptr ByEditDistance::MakeCollector(
+  const Scorer* scorer) const {
+  const auto term = bytes_view{options().term};
+  const auto prefix = bytes_view{options().prefix};
+
+  return ExecuteLevenshtein(
+    options().max_distance, options().provider, options().with_transpositions,
+    prefix, term,
+    [&] -> PrepareCollector::ptr {
+      return std::make_unique<TermsCollector>(scorer, 1);
+    },
+    [&] -> PrepareCollector::ptr {
+      return std::make_unique<TermsCollector>(scorer, 1);
+    },
+    [&](const ParametricDescription&, const bytes_view,
+        const bytes_view) -> PrepareCollector::ptr {
+      return std::make_unique<TermsCollector>(scorer, 1);
     });
 }
 

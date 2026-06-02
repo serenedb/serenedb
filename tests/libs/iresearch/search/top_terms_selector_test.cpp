@@ -30,7 +30,7 @@
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/scorers.hpp"
-#include "iresearch/search/top_terms_collector.hpp"
+#include "iresearch/search/top_terms_selector.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -177,18 +177,16 @@ struct StateVisitor {
 
 }  // namespace
 
-TEST(TopTermsCollector_test, test_top_k) {
+TEST(TopTermsSelector_test, test_top_k) {
   using CollectorType =
-    irs::TopTermsCollector<irs::TopTermState<irs::byte_type>>;
+    irs::TopTermsSelector<irs::TopTermState<irs::byte_type>>;
   CollectorType collector(5);
 
   // segment 0
   irs::EmptyTermReader term_reader0(42);
   SubReader segment0(100);
   const std::pair<std::string_view, TestTermMeta> term_s0[]{
-    {"F", {1, 1}}, {"G", {2, 2}},   {"H", {3, 3}},  {"B", {3, 3}},
-    {"C", {3, 3}}, {"A", {3, 3}},   {"H", {2, 2}},  {"D", {5, 5}},
-    {"E", {5, 5}}, {"I", {15, 15}}, {"J", {5, 25}}, {"K", {15, 35}},
+    {"A", {3, 3}}, {"C", {15, 15}}, {"E", {2, 2}}, {"G", {5, 5}}, {"I", {1, 1}},
   };
 
   {
@@ -204,8 +202,7 @@ TEST(TopTermsCollector_test, test_top_k) {
   irs::EmptyTermReader term_reader1(42);
   SubReader segment1(100);
   const std::pair<std::string_view, TestTermMeta> term_s1[]{
-    {"F", {1, 1}}, {"G", {2, 2}}, {"H", {3, 3}},   {"B", {3, 3}},
-    {"C", {3, 3}}, {"A", {3, 3}}, {"K", {15, 35}},
+    {"B", {3, 3}}, {"D", {5, 5}}, {"F", {2, 2}}, {"H", {15, 15}}, {"J", {5, 5}},
   };
 
   {
@@ -217,16 +214,13 @@ TEST(TopTermsCollector_test, test_top_k) {
     }
   }
 
+  // top-5 distinct terms by key (byte value): J, I, H, G, F
   std::map<char, State> expected_states{
-    {'J', {{{&segment0, {&term_reader0, 5, {term_s0 + 10}}}}}},
-    {'K',
-     {{{&segment0, {&term_reader0, 15, {term_s0 + 11}}},
-       {&segment1, {&term_reader1, 15, {term_s1 + 6}}}}}},
-    {'I', {{{&segment0, {&term_reader0, 15, {term_s0 + 9}}}}}},
-    {'H',
-     {{{&segment0, {&term_reader0, 5, {term_s0 + 2, term_s0 + 6}}},
-       {&segment1, {&term_reader1, 3, {term_s1 + 2}}}}}},
-    {'G', {{{&segment0, {&term_reader0, 2, {term_s0 + 1}}}}}},
+    {'J', {{{&segment1, {&term_reader1, 5, {term_s1 + 4}}}}}},
+    {'I', {{{&segment0, {&term_reader0, 1, {term_s0 + 4}}}}}},
+    {'H', {{{&segment1, {&term_reader1, 15, {term_s1 + 3}}}}}},
+    {'G', {{{&segment0, {&term_reader0, 5, {term_s0 + 3}}}}}},
+    {'F', {{{&segment1, {&term_reader1, 2, {term_s1 + 2}}}}}},
   };
 
   auto visitor = [&expected_states](CollectorType::state_type& state) {
@@ -243,18 +237,16 @@ TEST(TopTermsCollector_test, test_top_k) {
   collector.Visit(visitor);
 }
 
-TEST(TopTermsCollector_test, test_top_0) {
+TEST(TopTermsSelector_test, test_top_0) {
   using CollectorType =
-    irs::TopTermsCollector<irs::TopTermState<irs::byte_type>>;
+    irs::TopTermsSelector<irs::TopTermState<irs::byte_type>>;
   CollectorType collector(0);  // same as collector(1)
 
   // segment 0
   irs::EmptyTermReader term_reader0(42);
   SubReader segment0(100);
   const std::pair<std::string_view, TestTermMeta> term_s0[]{
-    {"F", {1, 1}}, {"G", {2, 2}},   {"H", {3, 3}},  {"B", {3, 3}},
-    {"C", {3, 3}}, {"A", {3, 3}},   {"H", {2, 2}},  {"D", {5, 5}},
-    {"E", {5, 5}}, {"I", {15, 15}}, {"J", {5, 25}}, {"K", {15, 35}},
+    {"A", {3, 3}}, {"C", {15, 15}}, {"E", {2, 2}}, {"G", {5, 5}}, {"I", {1, 1}},
   };
 
   {
@@ -270,8 +262,7 @@ TEST(TopTermsCollector_test, test_top_0) {
   irs::EmptyTermReader term_reader1(42);
   SubReader segment1(100);
   const std::pair<std::string_view, TestTermMeta> term_s1[]{
-    {"F", {1, 1}}, {"G", {2, 2}}, {"H", {3, 3}},   {"B", {3, 3}},
-    {"C", {3, 3}}, {"A", {3, 3}}, {"K", {15, 35}},
+    {"B", {3, 3}}, {"D", {5, 5}}, {"F", {2, 2}}, {"H", {15, 15}}, {"J", {5, 5}},
   };
 
   {
@@ -283,10 +274,9 @@ TEST(TopTermsCollector_test, test_top_0) {
     }
   }
 
+  // limit 0 behaves as limit 1: only the single highest-key term survives
   std::map<char, State> expected_states{
-    {'K',
-     {{{&segment0, {&term_reader0, 15, {term_s0 + 11}}},
-       {&segment1, {&term_reader1, 15, {term_s1 + 6}}}}}},
+    {'J', {{{&segment1, {&term_reader1, 5, {term_s1 + 4}}}}}},
   };
 
   auto visitor = [&expected_states](CollectorType::state_type& state) {

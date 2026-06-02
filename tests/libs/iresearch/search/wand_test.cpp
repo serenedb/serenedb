@@ -36,6 +36,7 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
+#include "search/filter_test_case_base.hpp"
 
 namespace {
 
@@ -135,8 +136,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
                                        const irs::Filter& filter,
                                        irs::ScorerPtr scorer, bool wand_enabled,
                                        bool can_use_wand, size_t limit) {
-  auto query = filter.prepare({.index = index, .scorer = scorer});
-  EXPECT_NE(nullptr, query);
+  tests::PreparedFilter query{filter, index, scorer};
 
   const irs::WandContext mode{.wand_enabled = wand_enabled};
 
@@ -145,11 +145,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
 
   for (size_t left = limit, segment_id = 0; const auto& segment : index) {
     irs::ColumnArgsFetcher fetcher;
-    auto docs = query->execute(irs::ExecutionContext{
-      .segment = segment,
-      .scorer = scorer,
-      .wand = mode,
-    });
+    auto docs = query.Execute(segment_id, mode);
     EXPECT_NE(nullptr, docs);
 
     irs::ScoreFunction score;

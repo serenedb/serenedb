@@ -41,4 +41,36 @@ void TermCollector::Collect(const AttributeProvider& term_attrs) noexcept {
   }
 }
 
+FieldCollector MergeFieldCollectors(
+  std::span<const FieldCollector> collectors) noexcept {
+  FieldCollector merged;
+  for (const auto& collector : collectors) {
+    merged.docs_with_field += collector.docs_with_field;
+    merged.total_term_freq += collector.total_term_freq;
+  }
+  return merged;
+}
+
+TermCollector MergeTermCollectors(
+  std::span<const TermCollector> collectors) noexcept {
+  TermCollector merged;
+  for (const auto& collector : collectors) {
+    merged.docs_with_term += collector.docs_with_term;
+    merged.total_term_freq += collector.total_term_freq;
+  }
+  return merged;
+}
+
+void MergeFlatTermBuffers(std::span<const FlatTermBuffer> buffers,
+                          FlatTermBuffer& out) {
+  for (const auto& buffer : buffers) {
+    for (size_t i = 0, size = buffer.Size(); i < size; ++i) {
+      const auto& src = buffer.Get(i);
+      auto& dst = out.Get(i);
+      dst.docs_with_term += src.docs_with_term;
+      dst.total_term_freq += src.total_term_freq;
+    }
+  }
+}
+
 }  // namespace irs

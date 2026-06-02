@@ -24,7 +24,7 @@
 
 #include <iresearch/formats/empty_term_reader.hpp>
 #include <iresearch/index/index_reader.hpp>
-#include <iresearch/search/top_terms_collector.hpp>
+#include <iresearch/search/top_terms_selector.hpp>
 #include <iresearch/utils/string.hpp>
 
 namespace {
@@ -142,7 +142,7 @@ struct State {
 };
 
 void BmTopTermCollector(benchmark::State& state) {
-  using collector_type = irs::TopTermsCollector<irs::TopTermState<int>>;
+  using collector_type = irs::TopTermsSelector<irs::TopTermState<int>>;
   collector_type collector(64);  // same as collector(1)
   irs::EmptyTermReader term_reader(42);
   SubReader segment(100);

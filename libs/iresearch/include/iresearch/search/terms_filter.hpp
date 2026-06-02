@@ -77,10 +77,14 @@ class ByTerms final : public FilterWithField<ByTermsOptions>,
                     const ByTermsOptions::search_terms& terms,
                     FilterVisitor& visitor);
 
-  static Query::ptr Prepare(const PrepareContext& ctx, std::string_view field,
-                            const ByTermsOptions& options);
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+  static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                          const PrepareContext& ctx,
+                                          std::string_view field,
+                                          const ByTermsOptions& options);
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

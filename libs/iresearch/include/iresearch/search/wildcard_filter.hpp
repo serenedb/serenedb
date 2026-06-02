@@ -55,15 +55,17 @@ struct ByWildcardOptions : ByWildcardFilterOptions {
 // User-side wildcard filter
 class ByWildcard final : public FilterWithField<ByWildcardOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
-                            bytes_view term, size_t scored_terms_limit);
-
   static field_visitor visitor(bytes_view term);
 
-  Query::ptr prepare(const PrepareContext& ctx) const final {
-    return prepare(ctx.Boost(Boost()), field(), options().term,
-                   options().scored_terms_limit);
-  }
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+  static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                          const PrepareContext& ctx,
+                                          std::string_view field,
+                                          bytes_view term,
+                                          size_t scored_terms_limit);
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

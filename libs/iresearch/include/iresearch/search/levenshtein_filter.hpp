@@ -92,20 +92,12 @@ struct ByEditDistanceOptions : ByEditDistanceAllOptions {
 ////////////////////////////////////////////////////////////////////////////////
 class ByEditDistance final : public FilterWithField<ByEditDistanceOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
-                            bytes_view term, size_t terms_limit,
-                            uint8_t max_distance, options_type::pdp_f provider,
-                            bool with_transpositions, bytes_view prefix);
-
   static field_visitor visitor(const ByEditDistanceAllOptions& options);
 
-  Query::ptr prepare(const PrepareContext& ctx) const final {
-    auto sub_ctx = ctx;
-    sub_ctx.boost *= Boost();
-    return prepare(sub_ctx, field(), options().term, options().max_terms,
-                   options().max_distance, options().provider,
-                   options().with_transpositions, options().prefix);
-  }
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

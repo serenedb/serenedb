@@ -250,13 +250,14 @@ class AllDocsExistenceIterator : public DocIterator {
   Attributes _attrs;
 };
 
-class ColumnExistenceQuery : public Filter::Query {
+class ColumnExistenceQuery : public QueryBuilder {
  public:
-  ColumnExistenceQuery(field_id id, score_t boost) noexcept
-    : _id{id}, _boost{boost} {}
+  ColumnExistenceQuery(const SubReader& segment, field_id id,
+                       score_t boost) noexcept
+    : QueryBuilder{segment}, _id{id}, _boost{boost} {}
 
-  DocIterator::ptr execute(const ExecutionContext& ctx) const final {
-    const auto* column = ctx.segment.Column(_id);
+  DocIterator::ptr Execute(const ExecutionContext& ctx) const final {
+    const auto* column = _segment.Column(_id);
     if (column == nullptr) {
       return DocIterator::empty();
     }
@@ -268,14 +269,14 @@ class ColumnExistenceQuery : public Filter::Query {
       return memory::make_managed<AllDocsExistenceIterator>(
         static_cast<uint32_t>(row_count), _boost);
     }
-    const auto* cs_reader = ctx.segment.CsReader();
+    const auto* cs_reader = _segment.CsReader();
     SDB_ENSURE(cs_reader, sdb::ERROR_INTERNAL,
                "column_existence_filter: segment has no columnstore reader");
     return memory::make_managed<ColumnExistenceIterator>(
       *column, *cs_reader, static_cast<CostAttr::Type>(row_count));
   }
 
-  void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {}
+  void Visit(PreparedStateVisitor&, score_t) const final {}
 
   score_t Boost() const noexcept final { return _boost; }
 
@@ -286,8 +287,9 @@ class ColumnExistenceQuery : public Filter::Query {
 
 }  // namespace
 
-Filter::Query::ptr ByColumnExistence::prepare(const PrepareContext& ctx) const {
-  return memory::make_tracked<ColumnExistenceQuery>(ctx.memory, _id,
+QueryBuilder::ptr ByColumnExistence::PrepareSegment(
+  const SubReader& segment, const PrepareContext& ctx) const {
+  return memory::make_tracked<ColumnExistenceQuery>(ctx.memory, segment, _id,
                                                     ctx.boost * Boost());
 }
 

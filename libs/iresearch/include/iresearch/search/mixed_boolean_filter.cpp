@@ -24,17 +24,51 @@
 
 namespace irs {
 
-Filter::Query::ptr MixedBooleanFilter::prepare(
-  const PrepareContext& ctx) const {
+PrepareCollector::ptr MixedBooleanFilter::MakeCollector(
+  const Scorer* scorer) const {
   if (_and->empty()) {
-    return _or->prepare(ctx);
+    return _or->MakeCollector(scorer);
   }
   if (_or->empty()) {
-    return _and->prepare(ctx);
+    return _and->MakeCollector(scorer);
   }
-  auto q = memory::make_tracked<BoostQuery>(ctx.memory);
-  q->Prepare(ctx, *_and, *_or);
-  return q;
+  auto compound = std::make_unique<CompoundCollector>(scorer);
+  compound->Add(_and->MakeCollector(scorer));
+  for (const auto& opt_filter : *_or) {
+    compound->Add(opt_filter->MakeCollector(scorer));
+  }
+  return compound;
+}
+
+QueryBuilder::ptr MixedBooleanFilter::PrepareSegment(
+  const SubReader& segment, const PrepareContext& ctx) const {
+  if (_and->empty()) {
+    return _or->PrepareSegment(segment, ctx);
+  }
+  if (_or->empty()) {
+    return _and->PrepareSegment(segment, ctx);
+  }
+
+  auto* compound = dynamic_cast<CompoundCollector*>(ctx.collector);
+  SDB_ASSERT(compound != nullptr);
+
+  PrepareContext req_ctx = ctx;
+  req_ctx.collector = &compound->Child(0);
+  auto req = _and->PrepareSegment(segment, req_ctx);
+
+  std::vector<QueryBuilder::ptr> opt;
+  opt.reserve(_or->size());
+  const auto opt_ctx = ctx.Boost(_or->Boost());
+  size_t idx = 1;
+  for (const auto& opt_filter : *_or) {
+    PrepareContext child = opt_ctx;
+    child.collector = &compound->Child(idx);
+    opt.emplace_back(opt_filter->PrepareSegment(segment, child));
+    ++idx;
+  }
+
+  return memory::make_tracked<BoostQuery>(ctx.memory, segment, std::move(req),
+                                          std::move(opt));
 }
 
 bool MixedBooleanFilter::equals(const Filter& rhs) const noexcept {

@@ -28,6 +28,7 @@
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "connector/duckdb_scan_base.hpp"
@@ -52,11 +53,15 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   std::vector<std::vector<irs::doc_id_t>> cs_segment_doc_ids;
   std::vector<std::vector<duckdb::idx_t>> cs_segment_out_positions;
 
-  // Prepared query for this scan: `stored_filter->prepare(...)` re-runs
-  // here at scan-init time so any scorer-attached IDF/norm stats are
-  // collected once (an earlier optimizer-time prepare with a null scorer
-  // could break filters that mutate options(), e.g. GeoFilter).
-  irs::Filter::Query::ptr query;
+  // Per-segment prepared queries for this scan. PrepareSegment runs here at
+  // scan-init time for every segment so any scorer-attached IDF/norm stats
+  // are collected once into `stats` via the shared `collector` (an earlier
+  // optimizer-time prepare with a null scorer could break filters that mutate
+  // options(), e.g. GeoFilter). Indexed by segment ordinal; entries may be
+  // null. `stats` must outlive the iterators produced by Execute.
+  irs::PrepareCollector::ptr collector;
+  std::vector<irs::QueryBuilder::ptr> queries;
+  std::optional<irs::StatsBuffer> stats;
 
   // Scorer state. `scorer_obj` is non-null iff the plan attached BM25 /
   // TFIDF / DFI / LM-* via the projection or ORDER BY rewrite.

@@ -24,27 +24,23 @@
 
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/states/term_state.hpp"
-#include "iresearch/search/states_cache.hpp"
 
 namespace irs {
 
 // Compiled query suitable for filters with a single term like "by_term"
-class TermQuery : public Filter::Query {
+class TermQuery : public QueryBuilder {
  public:
-  using States = StatesCache<TermState>;
+  explicit TermQuery(const SubReader& segment, TermState&& state,
+                     score_t boost);
 
-  explicit TermQuery(States&& states, bstring&& stats, score_t boost);
+  DocIterator::ptr Execute(const ExecutionContext& ctx) const final;
 
-  DocIterator::ptr execute(const ExecutionContext& ctx) const final;
-
-  void visit(const SubReader& segment, PreparedStateVisitor& visitor,
-             score_t boost) const final;
+  void Visit(PreparedStateVisitor&, score_t boost) const final;
 
   score_t Boost() const noexcept final { return _boost; }
 
  private:
-  States _states;
-  bstring _stats;
+  TermState _state;
   score_t _boost;
 };
 

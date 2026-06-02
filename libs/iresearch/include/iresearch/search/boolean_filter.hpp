@@ -26,6 +26,7 @@
 
 #include "iresearch/search/all_docs_provider.hpp"
 #include "iresearch/search/filter.hpp"
+#include "iresearch/search/terms_filter.hpp"
 #include "iresearch/utils/iterator.hpp"
 
 namespace irs {
@@ -75,14 +76,48 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
     _filters.erase(_filters.begin() + to, _filters.end());
   }
 
-  Query::ptr PrepareImpl(const PrepareContext& ctx, uint32_t min_match) const;
+  struct ResolvedBoolean {
+    enum Kind { Empty, Delegate, Composite };
+
+    Kind kind = Empty;
+
+    // Delegate
+    const Filter* delegate = nullptr;
+    score_t delegate_boost = kNoBoost;
+    // ByTerms-fold delegate is built on demand; signalled by these fields
+    bool fold_terms = false;
+    std::string_view fold_field;
+    ByTermsOptions fold_options;
+
+    // Composite
+    std::vector<const Filter*> incl;
+    std::vector<const Filter*> excl;
+    size_t min_match = 1;
+    ScoreMergeType merge = ScoreMergeType::Sum;
+    score_t boost = kNoBoost;
+    // 0 - AndQuery, 1 - OrQuery, >1 - MinMatchQuery with this min_match
+    enum Composite { kAnd, kOr, kMinMatch } composite = kAnd;
+
+    // keep-alive for filters synthesized during resolution
+    AllDocsProvider::Ptr all_docs_keepalive;
+    AllDocsProvider::Ptr all_docs_keepalive2;
+  };
+
+  ResolvedBoolean Resolve(const Scorer* scorer, uint32_t min_match) const;
+
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          uint32_t min_match) const;
+
+  QueryBuilder::ptr PrepareSegmentImpl(const SubReader& segment,
+                                       const PrepareContext& ctx,
+                                       uint32_t min_match) const;
 
  protected:
   bool equals(const Filter& rhs) const noexcept final;
 
-  virtual Query::ptr PrepareBoolean(std::vector<const Filter*>& incl,
-                                    std::vector<const Filter*>& excl,
-                                    const PrepareContext& ctx) const = 0;
+  virtual void ResolveBoolean(ResolvedBoolean& resolved, const Scorer* scorer,
+                              std::vector<const Filter*>& incl,
+                              std::vector<const Filter*>& excl) const = 0;
 
   void GroupFilters(AllDocsProvider::Ptr& all_docs_zero_boost,
                     std::vector<const Filter*>& incl,
@@ -95,14 +130,17 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
 // Represents conjunction
 class And final : public BooleanFilter {
  public:
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<And>::id(); }
 
  protected:
-  Query::ptr PrepareBoolean(std::vector<const Filter*>& incl,
-                            std::vector<const Filter*>& excl,
-                            const PrepareContext& ctx) const final;
+  void ResolveBoolean(ResolvedBoolean& resolved, const Scorer* scorer,
+                      std::vector<const Filter*>& incl,
+                      std::vector<const Filter*>& excl) const final;
 };
 
 // Represents disjunction
@@ -117,14 +155,17 @@ class Or final : public BooleanFilter {
     return *this;
   }
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<Or>::id(); }
 
  protected:
-  Query::ptr PrepareBoolean(std::vector<const Filter*>& incl,
-                            std::vector<const Filter*>& excl,
-                            const PrepareContext& ctx) const final;
+  void ResolveBoolean(ResolvedBoolean& resolved, const Scorer* scorer,
+                      std::vector<const Filter*>& incl,
+                      std::vector<const Filter*>& excl) const final;
 
  private:
   uint32_t _min_match_count{1};
@@ -150,7 +191,10 @@ class Not : public FilterWithType<Not>, public AllDocsProvider {
   void clear() { _filter.reset(); }
   bool empty() const { return nullptr == _filter; }
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 
  protected:
   bool equals(const irs::Filter& rhs) const noexcept final;

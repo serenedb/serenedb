@@ -31,9 +31,7 @@ namespace sdb::connector {
 // something that never match user created fields id.
 constexpr inline std::string_view kPkFieldName{"\x00", 1};
 
-class SearchRemoveFilterBase : public irs::Filter,
-                               public irs::Filter::Query,
-                               public irs::DocIterator {
+class SearchRemoveFilterBase : public irs::Filter, public irs::DocIterator {
  public:
   bool Empty() const noexcept { return _pks.empty(); }
 
@@ -42,24 +40,16 @@ class SearchRemoveFilterBase : public irs::Filter,
                       pk.size());
   }
 
+  irs::DocIterator::ptr MakeIterator(const irs::SubReader& segment,
+                                     const irs::ExecutionContext& ctx) const;
+
  protected:
   irs::TypeInfo::type_id type() const noexcept final {
     return irs::Type<SearchRemoveFilterBase>::id();
   }
 
-  Filter::Query::ptr prepare(const irs::PrepareContext& ctx) const final {
-    if (_pks.empty()) {
-      return irs::Filter::Query::empty();
-    }
-    return irs::memory::to_managed<const irs::Filter::Query>(*this);
-  }
-
-  irs::DocIterator::ptr execute(const irs::ExecutionContext& ctx) const final;
-
-  void visit(const irs::SubReader&, irs::PreparedStateVisitor&,
-             irs::score_t) const final {}
-
-  irs::score_t Boost() const noexcept final { return irs::kNoBoost; }
+  irs::QueryBuilder::ptr PrepareSegment(
+    const irs::SubReader& segment, const irs::PrepareContext& ctx) const final;
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
     return nullptr;

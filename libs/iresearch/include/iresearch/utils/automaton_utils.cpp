@@ -23,7 +23,8 @@
 #include "iresearch/utils/automaton_utils.hpp"
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/limited_sample_collector.hpp"
+#include "iresearch/search/limited_sample_selector.hpp"
+#include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -206,10 +207,10 @@ void Utf8TransitionsBuilder::Finish(automaton& a, automaton::StateId from) {
   a.EmplaceArc(_rho_states[3], kRhoLabel, _rho_states[2]);
 }
 
-Filter::Query::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
+QueryBuilder::ptr PrepareAutomatonSegment(const SubReader& segment,
+                                          const PrepareContext& ctx,
                                           std::string_view field,
-                                          const automaton& acceptor,
-                                          size_t scored_terms_limit) {
+                                          const automaton& acceptor) {
   auto matcher = MakeAutomatonMatcher(acceptor);
 
   if (fst::kError == matcher.Properties(0)) {
@@ -220,27 +221,23 @@ Filter::Query::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
                    matcher.GetFst().Properties(
                      automaton_table_matcher::kFstProperties, false)));
 
-    return Filter::Query::empty();
+    return QueryBuilder::Empty();
   }
 
-  // object for collecting order stats
-  LimitedSampleCollector<TermFrequency> collector(
-    ctx.scorer ? scored_terms_limit : 0);
-  MultiTermQuery::States states{ctx.memory, ctx.index.size()};
-  MultiTermVisitor mtv{collector, states};
+  auto query = memory::make_tracked<MultiTermQuery>(
+    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum, size_t{1});
 
-  for (const auto& segment : ctx.index) {
-    if (const auto* reader = segment.field(field); reader) {
-      Visit(segment, *reader, matcher, mtv);
-    }
+  const auto* reader = segment.field(field);
+  if (!reader) {
+    return query;
   }
 
-  MultiTermQuery::Stats stats{{ctx.memory}};
-  collector.score(ctx.index, ctx.scorer, stats);
-
-  return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),
-                                              std::move(stats), ctx.boost,
-                                              ScoreMergeType::Sum, size_t{1});
+  auto& collector =
+    sdb::basics::downCast<LimitedTermsCollector>(*ctx.collector);
+  collector.Field().Collect(*reader);
+  SampledMultiTermVisitor mtv{collector.Limited(), query->State()};
+  Visit(segment, *reader, matcher, mtv);
+  return query;
 }
 
 }  // namespace irs

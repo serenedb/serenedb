@@ -37,7 +37,6 @@
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/bytes_output.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {

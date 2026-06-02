@@ -94,7 +94,6 @@ set(iresearch-tests_sources
     ./utils/bitvector_tests.cpp
     ./utils/encryption_test.cpp
     ./utils/container_utils_tests.cpp
-    ./utils/compression_test.cpp
     ./utils/crc_test.cpp
     ./utils/file_utils_tests.cpp
     ./utils/object_pool_tests.cpp

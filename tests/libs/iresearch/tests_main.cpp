@@ -217,7 +217,6 @@ int TestEnv::initialize(int argc, char* argv[]) {
   ::testing::InitGoogleTest(&gArgc, gArgv);
 
   irs::formats::Init();
-  irs::compression::Init();
 
   return RUN_ALL_TESTS();
 }

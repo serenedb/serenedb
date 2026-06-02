@@ -36,7 +36,6 @@
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/bytes_output.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 

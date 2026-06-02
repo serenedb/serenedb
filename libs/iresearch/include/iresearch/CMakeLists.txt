@@ -157,9 +157,6 @@ set(IResearch_core_sources
     ./utils/automaton_utils.cpp
     ./utils/encryption.cpp
     ./utils/ctr_encryption.cpp
-    ./utils/compression.cpp
-    ./utils/delta_compression.cpp
-    ./utils/lz4compression.cpp
     ./utils/directory_utils.cpp
     ./utils/mmap_utils.cpp
     ./utils/index_utils.cpp

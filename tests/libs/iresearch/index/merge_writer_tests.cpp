@@ -36,7 +36,6 @@
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/index_utils.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "utils/write_helpers.hpp"
 

@@ -49,18 +49,16 @@
 #include <vector>
 
 #include "iresearch/analysis/analyzer.hpp"
-#include "iresearch/analysis/analyzers.hpp"
 #include "iresearch/analysis/shingle_analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/columnstore/column_writer.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/phrase_ngram_filter.hpp"
-#include "iresearch/search/scorers.hpp"
 #include "iresearch/store/mmap_directory.hpp"
-#include "iresearch/utils/compression.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -154,11 +152,18 @@ class WhitespaceTokenizer final
 
 analysis::ShingleAnalyzer::Options ShingleOpts() {
   return {
-    .base_analyzer = std::make_unique<WhitespaceTokenizer>(),
     .min_shingle_size = 2,
     .max_shingle_size = 2,
     .output_unigrams = true,
   };
+}
+
+// The shingle analyzer's ctor takes the (built) base analyzer separately from
+// the rest of its options; the bench always wraps a whitespace tokenizer.
+std::unique_ptr<analysis::ShingleAnalyzer> MakeShingle(
+  analysis::ShingleAnalyzer::Options opts) {
+  return std::make_unique<analysis::ShingleAnalyzer>(
+    std::make_unique<WhitespaceTokenizer>(), std::move(opts));
 }
 
 // A frequent-words-bounded variant: only bigrams involving a stopword are
@@ -301,21 +306,21 @@ const Corpus& GetCorpus() {
     c.classic_reader = BuildIndex(c.classic_dir, tmp / "sdb-bench-phrase-classic",
                                   PlainField{}, docs, false, "classic (Freq+Pos)");
 
-    auto idx_a = std::make_unique<analysis::ShingleAnalyzer>(ShingleOpts());
+    auto idx_a = MakeShingle(ShingleOpts());
     ShingleField fa;
     fa.analyzer = idx_a.get();
     fa.features = IndexFeatures::Freq;
     c.a_reader = BuildIndex(c.a_dir, tmp / "sdb-bench-phrase-shingleA", fa, docs,
                             true, "shingleA (Freq + store)");
 
-    auto idx_b = std::make_unique<analysis::ShingleAnalyzer>(ShingleOpts());
+    auto idx_b = MakeShingle(ShingleOpts());
     ShingleField fb;
     fb.analyzer = idx_b.get();
     fb.features = IndexFeatures::Freq | IndexFeatures::Pos;
     c.b_reader = BuildIndex(c.b_dir, tmp / "sdb-bench-phrase-shingleB", fb, docs,
                             false, "shingleB (Freq+Pos)");
 
-    auto idx_bf = std::make_unique<analysis::ShingleAnalyzer>(ShingleOptsBounded());
+    auto idx_bf = MakeShingle(ShingleOptsBounded());
     ShingleField fbf;
     fbf.analyzer = idx_bf.get();
     fbf.features = IndexFeatures::Freq | IndexFeatures::Pos;
@@ -323,9 +328,9 @@ const Corpus& GetCorpus() {
       BuildIndex(c.bf_dir, tmp / "sdb-bench-phrase-shingleBF", fbf, docs, false,
                  "shingleB+freqwords (Freq+Pos, bounded vocab)");
 
-    c.query_a = std::make_unique<analysis::ShingleAnalyzer>(ShingleOpts());
-    c.query_b = std::make_unique<analysis::ShingleAnalyzer>(ShingleOpts());
-    c.query_bf = std::make_unique<analysis::ShingleAnalyzer>(ShingleOptsBounded());
+    c.query_a = MakeShingle(ShingleOpts());
+    c.query_b = MakeShingle(ShingleOpts());
+    c.query_bf = MakeShingle(ShingleOptsBounded());
     return c;
   }();
   return corpus;
@@ -419,10 +424,7 @@ BENCHMARK_CAPTURE(BM_shingleBF, content3, "quick brown fox");
 BENCHMARK_CAPTURE(BM_shingleBF, stop3, "the of the");
 
 int main(int argc, char** argv) {
-  irs::analysis::analyzers::Init();
   irs::formats::Init();
-  irs::scorers::Init();
-  irs::compression::Init();
 
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {

@@ -42,8 +42,8 @@
 #include <vector>
 
 #include "iresearch/analysis/analyzer.hpp"
-#include "iresearch/analysis/analyzers.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/analysis/wildcard_analyzer.hpp"
 #include "iresearch/columnstore/column_writer.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -51,11 +51,9 @@
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/regexp_ngram_filter.hpp"
-#include "iresearch/search/scorers.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
 #include "iresearch/search/wildcard_ngram_filter.hpp"
 #include "iresearch/store/mmap_directory.hpp"
-#include "iresearch/utils/compression.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -278,20 +276,14 @@ const Corpus& GetCorpus() {
                              KeywordField{}, docs, false, "automaton (term dict)");
 
     auto idx = std::make_unique<analysis::WildcardAnalyzer>(
-      analysis::WildcardAnalyzer::Options{
-        .base_analyzer = std::make_unique<WhitespaceTokenizer>(),
-        .ngram_size = 3,
-      });
+      std::make_unique<WhitespaceTokenizer>(), /*ngram_size=*/3);
     WildcardField wf;
     wf.analyzer = idx.get();
     c.wc_reader = BuildIndex(c.wc_dir, tmp / "sdb-bench-regex-ngram", wf, docs,
                              true, "ngram (+ store)");
 
     c.query_analyzer = std::make_unique<analysis::WildcardAnalyzer>(
-      analysis::WildcardAnalyzer::Options{
-        .base_analyzer = std::make_unique<WhitespaceTokenizer>(),
-        .ngram_size = 3,
-      });
+      std::make_unique<WhitespaceTokenizer>(), /*ngram_size=*/3);
     return c;
   }();
   return corpus;
@@ -421,19 +413,13 @@ const LargeCorpus& GetLargeCorpus() {
                              KeywordField{}, docs, false,
                              "LARGE automaton (term dict)");
     auto idx = std::make_unique<analysis::WildcardAnalyzer>(
-      analysis::WildcardAnalyzer::Options{
-        .base_analyzer = std::make_unique<WhitespaceTokenizer>(),
-        .ngram_size = 3,
-      });
+      std::make_unique<WhitespaceTokenizer>(), /*ngram_size=*/3);
     WildcardField wf;
     wf.analyzer = idx.get();
     c.wc_reader = BuildIndex(c.wc_dir, tmp / "sdb-bench-regexL-ngram", wf, docs,
                              true, "LARGE ngram (+ store)");
     c.query_analyzer = std::make_unique<analysis::WildcardAnalyzer>(
-      analysis::WildcardAnalyzer::Options{
-        .base_analyzer = std::make_unique<WhitespaceTokenizer>(),
-        .ngram_size = 3,
-      });
+      std::make_unique<WhitespaceTokenizer>(), /*ngram_size=*/3);
     // Parity sanity (hit counts must match between the two paths).
     std::cerr << "[parity] .*quick.* auto=" << RunFilter(c.kw_reader, MakeAutomaton(".*quick.*"))
               << " ngram=" << RunFilter(c.wc_reader, MakeNgram(".*quick.*", *c.query_analyzer))
@@ -501,10 +487,7 @@ BENCHMARK_CAPTURE(BM_wildcard_auto_infix, large, "%quick%");
 BENCHMARK_CAPTURE(BM_wildcard_ngram_infix, large, "%quick%");
 
 int main(int argc, char** argv) {
-  irs::analysis::analyzers::Init();
   irs::formats::Init();
-  irs::scorers::Init();
-  irs::compression::Init();
 
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {

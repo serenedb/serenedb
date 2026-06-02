@@ -111,18 +111,11 @@ SearchEngine::SearchEngine()
     _thread_pools(std::make_shared<SearchThreadPools>()) {
   const uint32_t threads_limit =
     static_cast<uint32_t>(4 * number_of_cores::GetValue());
-  _commit_threads = ComputeThreadsCount(
+  _refresh_threads = ComputeThreadsCount(
     absl::GetFlag(FLAGS_server_refresh_threads), threads_limit, 6);
   _compaction_threads = ComputeThreadsCount(
     absl::GetFlag(FLAGS_server_compaction_threads), threads_limit, 6);
-  gInstance = this;
-}
 
-SearchEngine::~SearchEngine() { gInstance = nullptr; }
-
-SearchEngine& GetSearchEngine() { return SearchEngine::instance(); }
-
-void SearchEngine::start() {
   ::irs::analysis::ClassificationTokenizer::set_model_provider(
     &fast_text::CreateModel<fasttext::FastText>);
   ::irs::analysis::NearestNeighborsTokenizer::set_model_provider(
@@ -133,24 +126,32 @@ void SearchEngine::start() {
   irs::scorers::Init();
   irs::compression::Init();
 
+  gInstance = this;
+}
+
+SearchEngine::~SearchEngine() { gInstance = nullptr; }
+
+SearchEngine& GetSearchEngine() { return SearchEngine::instance(); }
+
+void SearchEngine::start() {
   SDB_ASSERT(std::make_tuple(size_t(0), size_t(0), size_t(0)) ==
              stats(ThreadGroup::Refresh));
   SDB_ASSERT(std::make_tuple(size_t(0), size_t(0), size_t(0)) ==
              stats(ThreadGroup::Compaction));
 
-  SDB_ASSERT(_commit_threads);
+  SDB_ASSERT(_refresh_threads);
   SDB_ASSERT(_compaction_threads);
 
   _thread_pools->Get(ThreadGroup::Refresh)
-    .start(_commit_threads, IR_NATIVE_STRING("search:commit"));
+    .start(_refresh_threads, IR_NATIVE_STRING("search:refresh"));
   _thread_pools->Get(ThreadGroup::Compaction)
-    .start(_compaction_threads, IR_NATIVE_STRING("search:compact"));
+    .start(_compaction_threads, IR_NATIVE_STRING("search:compaction"));
 
   const bool skip_wal_recovery =
     absl::GetFlag(FLAGS_server_skip_search_recovery);
   InitInvertedIndexes(skip_wal_recovery);
 
-  SDB_INFO(SEARCH, "Search maintenance: ", _commit_threads,
+  SDB_INFO(SEARCH, "Search maintenance: ", _refresh_threads,
            " refresh thread(s), ", _compaction_threads,
            " compaction thread(s)");
 }
@@ -190,13 +191,6 @@ std::tuple<size_t, size_t, size_t> SearchEngine::stats(ThreadGroup id) const {
 std::pair<size_t, size_t> SearchEngine::limits(ThreadGroup id) const {
   auto threads = _thread_pools->Get(id).threads();
   return {threads, threads};
-}
-
-void SearchEngine::trackOutOfSyncLink() noexcept { ++_out_of_sync_links; }
-
-void SearchEngine::untrackOutOfSyncLink() noexcept {
-  uint64_t previous = _out_of_sync_links.fetch_sub(1);
-  SDB_ASSERT(previous > 0);
 }
 
 std::filesystem::path SearchEngine::GetPersistedPath(

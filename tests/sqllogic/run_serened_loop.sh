@@ -34,6 +34,6 @@ fi
 
 while true; do
 	"$SERENED" "$DATADIR" \
-		--server_endpoint "pgsql+tcp://0.0.0.0:$PORT" \
-		echo "serened exited with code $?, restarting..."
+		--server_endpoint "pgsql+tcp://0.0.0.0:$PORT"
+	echo "serened exited with code $?, restarting..."
 done

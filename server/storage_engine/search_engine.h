@@ -71,20 +71,14 @@ class SearchEngine final {
   std::pair<size_t, size_t> limits(ThreadGroup id) const;
   bool Queue(ThreadGroup id, absl::Duration delay,
              absl::AnyInvocable<void()>&& fn);
-  void trackOutOfSyncLink() noexcept;
-  void untrackOutOfSyncLink() noexcept;
 
   std::filesystem::path GetPersistedPath(ObjectId database_id) const;
 
  private:
   DatabasePathFeature& _dir_feature;
-
   std::shared_ptr<SearchThreadPools> _thread_pools;
-
-  std::atomic<uint64_t> _out_of_sync_links{0};
-
   uint32_t _compaction_threads{0};
-  uint32_t _commit_threads{0};
+  uint32_t _refresh_threads{0};
 };
 
 }  // namespace search

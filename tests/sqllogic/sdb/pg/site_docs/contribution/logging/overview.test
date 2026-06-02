@@ -1,0 +1,136 @@
+# DOCS_TEST: example_001
+
+query
+CALL enable_logging();
+----
+success
+
+statement ok
+-- Run some queries...
+SELECT * FROM duckdb_logs;
+
+# DOCS_TEST: example_002
+
+query
+CALL disable_logging();
+----
+success
+
+# DOCS_TEST: example_003
+
+query
+CALL truncate_duckdb_logs();
+----
+success
+
+# DOCS_TEST: example_004
+
+query
+CALL enable_logging(level = 'debug');
+----
+success
+
+# DOCS_TEST: example_005
+
+query
+CALL enable_logging('HTTP');
+----
+success
+
+# DOCS_TEST: example_006
+
+query
+CALL enable_logging(['HTTP', 'QueryLog']);
+----
+success
+
+# DOCS_TEST: example_007
+
+statement ok
+SELECT request.headers FROM duckdb_logs_parsed('HTTP');
+
+# DOCS_TEST: example_008
+
+statement ok
+DESCRIBE FROM duckdb_logs_parsed('HTTP');
+
+# DOCS_TEST: example_009
+
+query
+CALL enable_logging(storage = 'stdout');
+----
+success
+
+# DOCS_TEST: example_010
+
+skipif serenedb
+query
+CALL enable_logging(storage = 'file', storage_config = {'path': 'path/to/store/logs'});
+----
+
+# DOCS_TEST: example_011
+
+skipif serenedb
+query
+CALL enable_logging(storage_path = 'path/to/store/logs');
+----
+
+# DOCS_TEST: example_012
+
+statement ok
+-- normalized: creates `/tmp/duckdb_log_contexts.csv` and `/tmp/duckdb_log_entries.csv`
+CALL enable_logging(storage_path = '/tmp');
+
+query
+-- denormalized: creates `/tmp/logs.csv`
+CALL enable_logging(storage_path = '/tmp/logs.csv');
+----
+success
+
+# DOCS_TEST: example_013
+
+query
+CALL enable_logging(storage_config = {'buffer_size': 0});
+----
+success
+
+# DOCS_TEST: example_014
+
+query
+CALL enable_logging(storage_buffer_size = 0);
+----
+success
+
+# DOCS_TEST: example_015
+
+query
+CALL enable_logging(storage = 'stdout', storage_buffer_size = 2048);
+----
+success
+
+# DOCS_TEST: example_016
+
+query
+CALL enable_logging(storage_path = '/tmp/mylogs', storage_buffer_size = 0);
+----
+success
+
+# DOCS_TEST: example_017
+
+skipif serenedb
+query
+-- regular invocation
+CALL enable_logging(storage = 'file', storage_config = {'path': 'path/to/store/logs'});
+----
+
+skipif serenedb
+query
+-- using shorthand for common path storage config param
+CALL enable_logging(storage = 'file', storage_path = 'path/to/store/logs');
+----
+
+skipif serenedb
+query
+-- omitting `storage = 'file'` -> is implied from presence of `storage_config`
+CALL enable_logging(storage_config = {'path': 'path/to/store/logs'});
+----

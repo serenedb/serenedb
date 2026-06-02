@@ -1,0 +1,24 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: syntax error at or near "s3express"
+s3express-⟨availability_zone⟩.⟨region⟩.amazonaws.com
+
+# DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| CREATE SECRET (
+#|     TYPE s3,
+#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
+#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩',
+#|     REGION '⟨us-east-1⟩',
+#|     ENDPOINT 's3express-⟨use1-az5⟩.⟨us-east-1⟩.amazonaws.com'
+#| );
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_01d3a915_001 (i INTEGER);
+
+# DOCS_TEST: example_003
+
+query error (?i).*(Could not resolve hostname|Problem with the SSL CA cert).*
+SELECT *
+FROM 's3://express-bucket-name--use1-az5--x-s3/my-file.parquet';

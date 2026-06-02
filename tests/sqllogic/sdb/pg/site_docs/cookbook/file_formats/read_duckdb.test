@@ -1,0 +1,25 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: syntax error at or near "read_duckdb"
+read_duckdb(⟨'path_to_database'⟩, table_name = ⟨'table_to_read'⟩);
+
+# DOCS_TEST: example_002
+
+query error (?i)Cannot open database .*
+SELECT r_regionkey, r_name
+FROM read_duckdb('https://blobs.duckdb.org/data/tpch-sf10.db', table_name = 'region');
+
+# DOCS_TEST: example_003
+
+query error (?i)No files found that match the pattern .*
+SELECT x FROM read_duckdb('my-*.duckdb', table_name = 'numbers');
+
+# DOCS_TEST: example_004
+
+query error (?i)No files found that match the pattern .*
+FROM read_duckdb('my-2.duckdb');
+
+# DOCS_TEST: example_005
+
+query error (?i)No files found that match the pattern .*
+FROM 'my-2.duckdb';

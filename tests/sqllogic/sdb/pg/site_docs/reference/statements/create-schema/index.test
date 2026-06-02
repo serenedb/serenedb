@@ -1,0 +1,18 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS analytics;
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE TABLE analytics.page_views (
+    id INTEGER PRIMARY KEY,
+    url TEXT NOT NULL,
+    viewed_at TIMESTAMP DEFAULT NOW()
+);
+
+query
+SELECT * FROM analytics.page_views;
+----
+id	url	viewed_at

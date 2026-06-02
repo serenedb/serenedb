@@ -1,0 +1,255 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE MACRO add(a, b) AS a + b;
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE OR REPLACE MACRO add(a, b) AS a + b;
+
+# DOCS_TEST: example_003
+
+statement error db error: ERROR: function "add" already exists with same argument types
+CREATE MACRO IF NOT EXISTS add(a, b) AS a + b;
+
+# DOCS_TEST: example_004
+
+statement ok
+CREATE MACRO ifelse(a, b, c) AS CASE WHEN a THEN b ELSE c END;
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE MACRO one() AS (SELECT 1);
+
+# DOCS_TEST: example_006
+
+statement ok
+CREATE FUNCTION main.my_avg(x) AS sum(x) / count(x);
+
+# DOCS_TEST: example_007
+
+statement ok
+CREATE MACRO add_default(a, b := 5) AS a + b;
+
+# DOCS_TEST: example_008
+
+statement ok
+CREATE MACRO arr_append(l, e) AS list_concat(l, list_value(e));
+
+# DOCS_TEST: example_009
+
+statement ok
+CREATE MACRO is_maximal(a INTEGER) AS a = 2^31 - 1;
+
+# DOCS_TEST: example_010
+
+statement ok
+CREATE MACRO static_table() AS TABLE
+    SELECT 'Hello' AS column1, 'World' AS column2;
+
+# DOCS_TEST: example_011
+
+statement ok
+CREATE MACRO dynamic_table(col1_value, col2_value) AS TABLE
+    SELECT col1_value AS column1, col2_value AS column2;
+
+# DOCS_TEST: example_012
+
+statement ok
+CREATE OR REPLACE TEMP MACRO dynamic_table(col1_value, col2_value) AS TABLE
+    SELECT col1_value AS column1, col2_value AS column2
+    UNION ALL
+    SELECT 'Hello' AS col1_value, 456 AS col2_value;
+
+# DOCS_TEST: example_013
+
+statement error
+CREATE MACRO get_users(i) AS TABLE
+    SELECT * FROM users WHERE uid IN (SELECT unnest(i));
+----
+db error: ERROR: Table with name users does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_014
+
+statement ok
+CREATE TABLE users AS
+    SELECT *
+    FROM (VALUES (1, 'Ada'), (2, 'Bob'), (3, 'Carl'), (4, 'Dan'), (5, 'Eve')) t(uid, name);
+
+query error
+SELECT * FROM get_users([1, 5]);
+----
+db error: ERROR: Table Function with name get_users does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_015
+
+statement ok
+CREATE MACRO checksum(tbl) AS TABLE
+    SELECT bit_xor(md5_number(COLUMNS(*)::VARCHAR))
+    FROM query_table(tbl);
+
+statement ok
+CREATE TABLE tbl AS SELECT unnest([42, 43]) AS x, 100 AS y;
+
+query
+SELECT * FROM checksum('tbl');
+----
+checksum	checksum
+60609334165039584609948387465088153270	0
+
+# DOCS_TEST: example_016
+
+statement ok
+CREATE MACRO add_x
+    (a, b) AS a + b,
+    (a, b, c) AS a + b + c;
+
+# DOCS_TEST: example_017
+
+query
+SELECT
+    add_x(21, 42) AS two_args,
+    add_x(21, 42, 21) AS three_args;
+----
+two_args	three_args
+63	84
+
+# DOCS_TEST: example_018
+
+statement ok
+CREATE OR REPLACE MACRO is_maximal
+    (a TINYINT) AS a = 2^7 - 1,
+    (a INT) AS a = 2^31 - 1;
+
+# DOCS_TEST: example_019
+
+query
+SELECT
+    is_maximal(127::TINYINT) AS tiny,
+    is_maximal(127) AS regular;
+----
+tiny	regular
+t	f
+
+# DOCS_TEST: example_020
+
+statement error db error: ERROR: Referenced column "b" was not found because the FROM clause is missing
+CREATE MACRO add(a) AS a + b;
+
+# DOCS_TEST: example_021
+
+statement error db error: ERROR: function "add" already exists with same argument types
+CREATE MACRO add(a, b) AS a + b;
+
+# DOCS_TEST: example_022
+
+query
+SELECT add(1, 2) AS x;
+----
+x
+3
+
+# DOCS_TEST: example_023
+
+query error db error: ERROR: Could not convert string 'hello' to INT32
+SELECT add('hello', 3);
+
+# DOCS_TEST: example_024
+
+statement error db error: ERROR: function "add_default" already exists with same argument types
+CREATE MACRO add_default(a, b := 5) AS a + b;
+
+# DOCS_TEST: example_025
+
+query
+SELECT add_default(37);
+----
+add_default
+42
+
+# DOCS_TEST: example_026
+
+statement ok
+CREATE MACRO triple_add(a, b := 5, c := 10) AS a + b + c;
+
+# DOCS_TEST: example_027
+
+query
+SELECT triple_add(40, c := 1, b := 1) AS x;
+----
+x
+42
+
+# DOCS_TEST: example_028
+
+query
+SELECT add(40, 2) AS x;
+----
+x
+42
+
+# DOCS_TEST: example_029
+
+query error db error: ERROR: Referenced column "a" was not found because the FROM clause is missing
+SELECT a + b AS x;
+
+# DOCS_TEST: example_030
+
+query
+SELECT 40 + 2 AS x;
+----
+x
+42
+
+# DOCS_TEST: example_031
+
+statement ok
+CREATE OR REPLACE FUNCTION fibo(n) AS (SELECT 1);
+
+statement ok
+CREATE OR REPLACE FUNCTION fibo(n) AS (
+    CASE
+        WHEN n <= 1 THEN 1
+        ELSE fibo(n - 1)
+    END
+);
+
+query error db error: ERROR: Max expression depth limit of 1000 exceeded\. Use "SET max_expression_depth TO x" to increase the maximum expression depth\.
+SELECT fibo(3);
+
+# DOCS_TEST: example_032
+
+statement ok
+CREATE OR REPLACE MACRO low(s) AS lower(s);
+
+query
+SELECT low('AA');
+----
+low
+aa
+
+# DOCS_TEST: example_033
+
+statement ok
+CREATE OR REPLACE MACRO low(s) AS s.lower();
+
+query
+SELECT low('AA');
+----
+low
+aa
+
+# DOCS_TEST: example_034
+
+query error
+SELECT schema_name, function_name, function_type, parameters
+FROM duckdb_function();
+----
+db error: ERROR: Table Function with name duckdb_function does not exist!
+Did you mean "<slt:ignore>"?

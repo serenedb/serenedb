@@ -1,0 +1,19 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE strings (
+    val VARCHAR CHECK (length(val) <= 10) -- val has a maximum length of 10
+);
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE TABLE tbl (s VARCHAR USING COMPRESSION zstd);
+
+# DOCS_TEST: example_003
+
+query
+SELECT 'Hello' || chr(10) || 'world' AS msg;
+----
+msg
+Hello\nworld

@@ -1,0 +1,213 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE SCHEMA my_schema;
+
+statement ok
+CREATE TYPE my_schema.mood AS ENUM ('sad', 'ok', 'happy');
+
+# DOCS_TEST: example_003
+
+skipif serenedb
+query
+SELECT 'clubs'::ENUM ('spades', 'hearts', 'diamonds', 'clubs');
+----
+
+# DOCS_TEST: example_004
+
+statement error
+CREATE TYPE region AS ENUM (SELECT region FROM sales_data);
+----
+db error: ERROR: Table with name sales_data does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TYPE IF EXISTS region CASCADE;
+
+# DOCS_TEST: example_005
+
+statement error (?i)No files found that match the pattern .*
+CREATE TYPE region AS ENUM (SELECT region FROM 'sales_data.csv');
+
+statement error
+CREATE TABLE sales_data (amount INTEGER, region region);
+----
+db error: ERROR: Type with name region does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error
+COPY sales_data FROM 'sales_data.csv';
+----
+db error: ERROR: Table with name sales_data does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+statement ok
+CREATE TYPE breed AS ENUM ('maltese', 'Maltese');
+
+query
+-- Will return false
+SELECT 'maltese'::breed = 'Maltese'::breed;
+----
+?column?
+f
+
+query error db error: ERROR: Could not convert string 'MALTESE' to UINT8
+-- Will error
+SELECT 'MALTESE'::breed;
+
+# DOCS_TEST: example_007
+
+statement ok
+CREATE TABLE person (
+    name TEXT,
+    current_mood mood
+);
+
+statement ok
+INSERT INTO person VALUES
+    ('Pedro', 'happy'),
+    ('Mark', NULL),
+    ('Pagliacci', 'sad'),
+    ('Mr. Mackey', 'ok');
+
+# DOCS_TEST: example_008
+
+statement error db error: ERROR: Could not convert string 'quackity\-quack' to UINT8
+INSERT INTO person VALUES ('Hannes', 'quackity-quack');
+
+# DOCS_TEST: example_009
+
+query
+SELECT current_mood, regexp_matches(current_mood, '.*a.*') AS contains_a FROM person;
+----
+current_mood	contains_a
+happy	t
+NULL	NULL
+sad	t
+ok	f
+
+# DOCS_TEST: example_010
+
+statement ok
+CREATE TYPE new_mood AS ENUM ('happy', 'anxious');
+
+query
+SELECT * FROM person
+WHERE current_mood = 'happy'::new_mood;
+----
+name	current_mood
+Pedro	happy
+
+# DOCS_TEST: example_011
+
+query
+SELECT * FROM person
+WHERE current_mood = name;
+----
+name	current_mood
+
+# DOCS_TEST: example_012
+
+query
+SELECT * FROM person
+WHERE current_mood = 'sad';
+----
+name	current_mood
+Pagliacci	sad
+
+# DOCS_TEST: example_013
+
+query
+SELECT * FROM person
+WHERE current_mood = 'bogus';
+----
+name	current_mood
+
+# DOCS_TEST: example_014
+
+query error db error: ERROR: Could not convert string 'bogus' to UINT8
+SELECT * FROM person
+WHERE current_mood = 'bogus'::mood;
+
+# DOCS_TEST: example_015
+
+statement ok
+CREATE TYPE priority AS ENUM ('low', 'medium', 'high');
+
+query
+SELECT 'low'::priority < 'high'::priority AS comp;
+----
+comp
+t
+
+# DOCS_TEST: example_016
+
+query
+SELECT unnest(['medium'::priority, 'high'::priority, 'low'::priority]) AS m
+ORDER BY m;
+----
+m
+low
+medium
+high
+
+# DOCS_TEST: example_017
+
+statement ok
+CREATE TABLE tasks (name TEXT, priority_level priority);
+
+statement ok
+INSERT INTO tasks VALUES ('a', 'low'), ('b', 'medium'), ('c', 'high');
+
+query
+-- WARNING!
+-- Equivalent to `WHERE priority_level::VARCHAR >= 'medium'`
+SELECT * FROM tasks
+WHERE priority_level >= 'medium';
+----
+name	priority_level
+b	medium
+c	high
+
+# DOCS_TEST: example_018
+
+query
+SELECT * FROM tasks
+WHERE priority_level >= 'medium'::priority;
+----
+name	priority_level
+b	medium
+c	high
+
+# DOCS_TEST: example_019
+
+query
+SELECT enum_range(NULL::mood) AS my_enum_range;
+----
+my_enum_range
+{sad,ok,happy}
+
+# DOCS_TEST: example_020
+
+statement error
+DROP TYPE ⟨enum_name⟩;
+----
+db error: ERROR: Type with name ⟨enum_name⟩ does not exist!
+Did you mean "<slt:ignore>"?

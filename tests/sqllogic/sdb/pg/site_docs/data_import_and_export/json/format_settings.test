@@ -1,0 +1,41 @@
+# DOCS_TEST: example_001
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM filename.json;
+
+# DOCS_TEST: example_002
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_json('records.json', format = 'newline_delimited');
+
+# DOCS_TEST: example_003
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_json('records-in-array.json', format = 'array');
+
+# DOCS_TEST: example_004
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_json('unstructured.json', format = 'unstructured');
+
+# DOCS_TEST: example_005
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_json('records.json', records = true);
+
+# DOCS_TEST: example_006
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_json('records.json', records = false);
+
+# DOCS_TEST: example_007
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_json('arrays.json', records = false);

@@ -1,0 +1,7 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE people (id INTEGER, name VARCHAR);
+
+statement ok
+INSERT INTO people VALUES (1, 'Mark'), (2, 'Hannes');

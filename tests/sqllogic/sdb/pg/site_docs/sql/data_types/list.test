@@ -1,0 +1,84 @@
+# DOCS_TEST: example_001
+
+query
+SELECT [1, 2, 3];
+----
+list_value
+{1,2,3}
+
+# DOCS_TEST: example_002
+
+query
+SELECT ['duck', 'goose', NULL, 'heron'];
+----
+list_value
+{duck,goose,NULL,heron}
+
+# DOCS_TEST: example_003
+
+query
+SELECT [['duck', 'goose', 'heron'], NULL, ['frog', 'toad'], []];
+----
+list_value
+{{duck,goose,heron},{frog},{frog,toad},{}}
+
+# DOCS_TEST: example_004
+
+query
+SELECT list_value(1, 2, 3);
+----
+list_value
+{1,2,3}
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE TABLE list_table (int_list INTEGER[], varchar_list VARCHAR[]);
+
+# DOCS_TEST: example_006
+
+query
+SELECT [1, 2] < [1, 3] AS result;
+----
+result
+t
+
+# DOCS_TEST: example_007
+
+query
+SELECT [[1], [2, 4, 5]] < [[2]] AS result;
+----
+result
+t
+
+# DOCS_TEST: example_008
+
+query
+SELECT [ ] < [1] AS result;
+----
+result
+t
+
+# DOCS_TEST: example_009
+
+query
+SELECT [ ] < [ ] AS result;
+----
+result
+f
+
+# DOCS_TEST: example_010
+
+query
+SELECT [1, 2] < [1] AS result;
+----
+result
+f
+
+# DOCS_TEST: example_011
+
+query
+SELECT [1, 2] < [1, NULL, 4] AS result;
+----
+result
+t

@@ -1,0 +1,133 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE grades (grade INTEGER, course VARCHAR);
+
+statement ok
+INSERT INTO grades VALUES (7, 'Math'), (9, 'Math'), (8, 'CS');
+
+# DOCS_TEST: example_002
+
+query
+SELECT min(grade) FROM grades;
+----
+min
+7
+
+# DOCS_TEST: example_003
+
+query
+SELECT course FROM grades WHERE grade = (SELECT min(grade) FROM grades);
+----
+course
+Math
+
+# DOCS_TEST: example_004
+
+query
+SELECT ARRAY(SELECT grade FROM grades) AS all_grades;
+----
+all_grades
+{7,9,8}
+
+# DOCS_TEST: example_005
+
+query
+SELECT 6 <= ALL (SELECT grade FROM grades) AS adequate;
+----
+adequate
+t
+
+# DOCS_TEST: example_006
+
+query
+SELECT 8 >= ALL (SELECT grade FROM grades) AS excellent;
+----
+excellent
+f
+
+# DOCS_TEST: example_007
+
+query
+SELECT 5 >= ANY (SELECT grade FROM grades) AS fail;
+----
+fail
+f
+
+# DOCS_TEST: example_008
+
+query
+SELECT EXISTS (FROM grades WHERE course = 'Math') AS math_grades_present;
+----
+math_grades_present
+t
+
+# DOCS_TEST: example_009
+
+query
+SELECT EXISTS (FROM grades WHERE course = 'History') AS history_grades_present;
+----
+history_grades_present
+f
+
+# DOCS_TEST: example_010
+
+statement ok
+CREATE TABLE Person (id BIGINT, name VARCHAR);
+
+statement ok
+CREATE TABLE interest (PersonId BIGINT, topic VARCHAR);
+
+statement ok
+INSERT INTO Person VALUES (1, 'Jane'), (2, 'Joe');
+
+statement ok
+INSERT INTO interest VALUES (2, 'Music');
+
+query
+SELECT *
+FROM Person
+WHERE NOT EXISTS (FROM interest WHERE interest.PersonId = Person.id);
+----
+id	name
+1	Jane
+
+# DOCS_TEST: example_011
+
+query
+SELECT 'Math' IN (SELECT course FROM grades) AS math_grades_present;
+----
+math_grades_present
+t
+
+# DOCS_TEST: example_012
+
+query
+SELECT *
+FROM grades grades_parent
+WHERE grade =
+    (SELECT min(grade)
+     FROM grades
+     WHERE grades.course = grades_parent.course);
+----
+grade	course
+7	Math
+8	CS
+
+# DOCS_TEST: example_013
+
+query error (?i)(Values were not provided .*prepared statement parameters: 1|expected 1 parameters but got 0)
+SELECT min(grade)
+FROM grades
+WHERE course = ?;
+
+# DOCS_TEST: example_014
+
+query
+SELECT t
+FROM (SELECT unnest(generate_series(41, 43)) AS x, 'hello' AS y) t;
+----
+t
+(41,hello)
+(42,hello)
+(43,hello)

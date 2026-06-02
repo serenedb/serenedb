@@ -1,0 +1,286 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM 'test.parquet';
+
+# DOCS_TEST: example_002
+
+query error (?i)No files found that match the pattern .*
+DESCRIBE SELECT * FROM 'test.parquet';
+
+# DOCS_TEST: example_003
+
+statement error (?i)No files found that match the pattern .*
+CREATE TABLE test AS
+    SELECT * FROM 'test.parquet';
+
+# DOCS_TEST: example_004
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet('test.parq');
+
+# DOCS_TEST: example_005
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet(['file1.parquet', 'file2.parquet', 'file3.parquet']);
+
+# DOCS_TEST: example_006
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM 'test/*.parquet';
+
+# DOCS_TEST: example_007
+
+query error (?i)No files found that match the pattern .*
+SELECT *, filename
+FROM read_parquet('test/*.parquet');
+
+# DOCS_TEST: example_008
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet(['folder1/*.parquet', 'folder2/*.parquet']);
+
+# DOCS_TEST: example_009
+
+query error (?i)Could not resolve hostname error .*
+SELECT *
+FROM read_parquet('https://some.url/some_file.parquet');
+
+# DOCS_TEST: example_010
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM parquet_metadata('test.parquet');
+
+# DOCS_TEST: example_011
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM parquet_file_metadata('test.parquet');
+
+# DOCS_TEST: example_012
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM parquet_kv_metadata('test.parquet');
+
+# DOCS_TEST: example_013
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM parquet_schema('test.parquet');
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_014
+
+statement error (?i)Cannot open file .*
+COPY
+    (SELECT * FROM tbl)
+    TO 'result-snappy.parquet'
+    (FORMAT parquet);
+
+# DOCS_TEST: example_015
+
+statement error (?i)Cannot open file .*
+COPY
+    (FROM generate_series(100_000))
+    TO 'test.parquet'
+    (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);
+
+# DOCS_TEST: example_016
+
+statement error (?i)Failed to create directory .*
+EXPORT DATABASE 'target_directory' (FORMAT parquet);
+
+# DOCS_TEST: example_017
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM 'test.parquet';
+
+# DOCS_TEST: example_018
+
+statement error (?i)Cannot open file .*
+COPY (SELECT 42::INTEGER AS i) TO 'integers.parquet' (FIELD_IDS {i: 0});
+
+# DOCS_TEST: example_019
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet('integers.parquet', schema = MAP {
+                    0: {name: 'renamed_i', type: 'BIGINT', default_value: NULL},
+                    1: {name: 'new_column', type: 'UTINYINT', default_value: 43}
+                  });
+
+# DOCS_TEST: example_020
+
+statement error
+INSERT INTO people
+    SELECT * FROM read_parquet('test.parquet');
+----
+db error: ERROR: Table with name people does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_021
+
+statement error (?i)No files found that match the pattern .*
+CREATE TABLE people AS
+    SELECT * FROM read_parquet('test.parquet');
+
+# DOCS_TEST: example_022
+
+statement error (?i)No files found that match the pattern .*
+CREATE VIEW people AS
+    SELECT * FROM read_parquet('test.parquet');
+
+# DOCS_TEST: example_023
+
+query error
+SELECT * FROM people;
+----
+db error: ERROR: Table with name people does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_024
+
+statement error (?i)Cannot open file .*
+COPY
+    (SELECT * FROM tbl)
+    TO 'result-snappy.parquet'
+    (FORMAT parquet);
+
+# DOCS_TEST: example_025
+
+statement error (?i)Cannot open file .*
+COPY tbl
+    TO 'result-zstd.parquet'
+    (FORMAT parquet, COMPRESSION zstd);
+
+# DOCS_TEST: example_026
+
+statement error (?i)Cannot open file .*
+COPY tbl
+    TO 'result-zstd.parquet'
+    (FORMAT parquet, COMPRESSION zstd, COMPRESSION_LEVEL 1);
+
+# DOCS_TEST: example_027
+
+statement error (?i)Cannot open file .*
+COPY (
+    SELECT
+        42 AS number,
+        true AS is_even
+) TO 'kv_metadata.parquet' (
+    FORMAT parquet,
+    KV_METADATA {
+        number: 'Answer to life, universe, and everything',
+        is_even: 'not ''odd''' -- single quotes in values must be escaped
+    }
+);
+
+# DOCS_TEST: example_028
+
+statement error (?i)Cannot open file .*
+COPY tbl
+    TO 'result-v2.parquet'
+    (FORMAT parquet, PARQUET_VERSION 'V2');
+
+# DOCS_TEST: example_029
+
+statement error (?i)No files found that match the pattern .*
+COPY
+    'test.csv'
+    TO 'result-uncompressed.parquet'
+    (FORMAT parquet, COMPRESSION uncompressed);
+
+# DOCS_TEST: example_030
+
+statement error (?i)Cannot open file .*
+COPY
+    (FROM generate_series(100_000))
+    TO 'row-groups-zstd.parquet'
+    (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);
+
+# DOCS_TEST: example_031
+
+statement error (?i)Cannot open file .*
+COPY
+    (FROM generate_series(100_000))
+    TO 'result-lz4.parquet'
+    (FORMAT parquet, COMPRESSION lz4);
+
+# DOCS_TEST: example_032
+
+statement error (?i)Cannot open file .*
+COPY
+    (FROM generate_series(100_000))
+    TO 'result-lz4.parquet'
+    (FORMAT parquet, COMPRESSION lz4_raw);
+
+# DOCS_TEST: example_033
+
+statement error (?i)Cannot open file .*
+COPY
+    (FROM generate_series(100_000))
+    TO 'result-brotli.parquet'
+    (FORMAT parquet, COMPRESSION brotli);
+
+# DOCS_TEST: example_034
+
+statement error
+COPY
+    lineitem
+    TO 'lineitem-with-custom-dictionary-size.parquet'
+    (FORMAT parquet, STRING_DICTIONARY_PAGE_SIZE_LIMIT 100_000);
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_035
+
+statement error (?i)Failed to create directory .*
+EXPORT DATABASE 'target_directory' (FORMAT parquet);
+
+# DOCS_TEST: example_036
+
+statement error
+INSTALL parquet;
+----
+db error: ERROR: Failed to download extension "parquet" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/parquet.duckdb_extension.gz"
+Extension "parquet" is an existing extension.
+
+For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=parquet (ERROR Problem with the SSL CA cert (path? access rights?))

@@ -1,0 +1,19 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY norm_dict (
+    TEMPLATE = 'norm',
+    LOCALE = 'en_US.UTF-8',
+    CASE = 'lower',
+    ACCENT = false
+);
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY norm_upper (
+    TEMPLATE = 'norm',
+    LOCALE = 'en_US.UTF-8',
+    CASE = 'upper',
+    ACCENT = false
+);

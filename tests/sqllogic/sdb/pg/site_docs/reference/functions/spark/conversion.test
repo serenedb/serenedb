@@ -1,0 +1,515 @@
+# DOCS_TEST: example_001
+
+query error db error: ERROR: Type INT32 with value 128 can't be cast because the value is out of range for the destination type INT8
+SELECT cast(128 as tinyint);
+
+query error db error: ERROR: invalid date field format: "2012\-Oct\-23", expected format is \(YYYY\-MM\-DD\)
+SELECT cast('2012-Oct-23' as date);
+
+# DOCS_TEST: example_002
+
+query
+SELECT try_cast(128 as tinyint);
+----
+tinyint
+NULL
+
+query
+SELECT try_cast(cast(550000.0 as DECIMAL(8, 1)) as smallint);
+----
+smallint
+NULL
+
+query
+SELECT try_cast(1e12 as int);
+----
+int4
+NULL
+
+# DOCS_TEST: example_003
+
+query
+SELECT cast(1234567 as bigint);
+----
+int8
+1234567
+
+query
+SELECT cast(12 as tinyint);
+----
+tinyint
+12
+
+query error db error: ERROR: Type INT32 with value 1234 can't be cast because the value is out of range for the destination type INT8
+SELECT cast(1234 as tinyint);
+
+query error db error: ERROR: Type INT32 with value 1234567 can't be cast because the value is out of range for the destination type INT16
+SELECT cast(1234567 as smallint);
+
+# DOCS_TEST: example_004
+
+query
+SELECT cast(12345.12 as bigint);
+----
+int8
+12345
+
+query
+SELECT cast(12345.67 as bigint);
+----
+int8
+12346
+
+query
+SELECT cast(127.1 as tinyint);
+----
+tinyint
+127
+
+query error db error: ERROR: Failed to cast decimal value 128 to type INT8
+SELECT cast(127.8 as tinyint);
+
+query error db error: ERROR: Failed to cast decimal value 1234568 to type INT16
+SELECT cast(1234567.89 as smallint);
+
+query error db error: ERROR: Type DOUBLE with value inf can't be cast because the value is out of range for the destination type INT64
+SELECT cast(cast('inf' as double) as bigint);
+
+query error db error: ERROR: Type DOUBLE with value nan can't be cast because the value is out of range for the destination type INT32
+SELECT cast(cast('nan' as double) as integer);
+
+query error db error: ERROR: Type DOUBLE with value nan can't be cast because the value is out of range for the destination type INT16
+SELECT cast(cast('nan' as double) as smallint);
+
+query error db error: ERROR: Type DOUBLE with value nan can't be cast because the value is out of range for the destination type INT8
+SELECT cast(cast('nan' as double) as tinyint);
+
+query error db error: ERROR: Type DOUBLE with value nan can't be cast because the value is out of range for the destination type INT64
+SELECT cast(cast('nan' as double) as bigint);
+
+# DOCS_TEST: example_005
+
+query
+SELECT cast('12345' as bigint);
+----
+int8
+12345
+
+query
+SELECT cast('+1' as tinyint);
+----
+tinyint
+1
+
+query
+SELECT cast('-1' as tinyint);
+----
+tinyint
+-1
+
+query
+SELECT cast('12345.67' as bigint);
+----
+int8
+12346
+
+query
+SELECT cast('1.2' as tinyint);
+----
+tinyint
+1
+
+query
+SELECT cast('-1.8' as tinyint);
+----
+tinyint
+-2
+
+query
+SELECT cast('+1' as tinyint);
+----
+tinyint
+1
+
+query
+SELECT cast('1.' as tinyint);
+----
+tinyint
+1
+
+query
+SELECT cast('-1' as tinyint);
+----
+tinyint
+-1
+
+query
+SELECT cast('-1.' as tinyint);
+----
+tinyint
+-1
+
+query
+SELECT cast('0.' as tinyint);
+----
+tinyint
+0
+
+query error db error: ERROR: Could not convert string '\.' to INT8
+SELECT cast('.' as tinyint);
+
+query error db error: ERROR: Could not convert string '\-\.' to INT8
+SELECT cast('-.' as tinyint);
+
+# DOCS_TEST: example_006
+
+query error db error: ERROR: Could not convert string '1234567' to INT8
+SELECT cast('1234567' as tinyint);
+
+query error db error: ERROR: Could not convert string '1a' to INT8
+SELECT cast('1a' as tinyint);
+
+query error db error: ERROR: Could not convert string '' to INT8
+SELECT cast('' as tinyint);
+
+query error db error: ERROR: Could not convert string '1,234,567' to INT64
+SELECT cast('1,234,567' as bigint);
+
+query error db error: ERROR: syntax error at or near "234"
+SELECT cast('1'234'567' as bigint);
+
+query error db error: ERROR: Could not convert string 'nan' to INT64
+SELECT cast('nan' as bigint);
+
+query error db error: ERROR: Could not convert string 'infinity' to INT64
+SELECT cast('infinity' as bigint);
+
+# DOCS_TEST: example_007
+
+query
+SELECT cast(cast(2.56 as DECIMAL(6, 2)) as bigint);
+----
+int8
+3
+
+query
+SELECT cast(cast(3.46 as DECIMAL(6, 2)) as bigint);
+----
+int8
+3
+
+query error db error: ERROR: Failed to cast decimal value 5500 to type INT8
+SELECT cast(cast(5500.0 as DECIMAL(5, 1)) as tinyint);
+
+query error db error: ERROR: Failed to cast decimal value 2147483649 to type INT8
+SELECT cast(cast(2147483648.90 as DECIMAL(12, 2)) as tinyint);
+
+query error db error: ERROR: Failed to cast decimal value 2147483649 to type INT32
+SELECT cast(cast(2147483648.90 as DECIMAL(12, 2)) as integer);
+
+query
+SELECT cast(cast(2147483648.90 as DECIMAL(12, 2)) as bigint);
+----
+int8
+2147483649
+
+# DOCS_TEST: example_008
+
+query error db error: ERROR: Unimplemented type for cast \(TIMESTAMP \-> BIGINT\)
+SELECT cast(cast('1970-01-01 00:00:00' as timestamp) as bigint);
+
+query error db error: ERROR: Unimplemented type for cast \(TIMESTAMP \-> SMALLINT\)
+SELECT cast(cast('1970-01-01 00:00:00' as timestamp) as smallint);
+
+query error db error: ERROR: Unimplemented type for cast \(TIMESTAMP \-> TINYINT\)
+SELECT cast(cast('1970-01-01 00:00:00' as timestamp) as tinyint);
+
+query error db error: ERROR: Unimplemented type for cast \(TIMESTAMP \-> BIGINT\)
+SELECT cast(cast('2000-01-01 12:21:56' as timestamp) as bigint);
+
+query error db error: ERROR: Unimplemented type for cast \(TIMESTAMP \-> BIGINT\)
+SELECT cast(cast('2025-02-25 08:00:26.88' as timestamp) as bigint);
+
+query error db error: ERROR: Unimplemented type for cast \(TIMESTAMP \-> INTEGER\)
+SELECT cast(cast('2025-02-25 08:00:26.88' as timestamp) as integer);
+
+query error db error: ERROR: Unimplemented type for cast \(TIMESTAMP \-> SMALLINT\)
+SELECT cast(cast('2025-02-25 08:00:26.88' as timestamp) as smallint);
+
+query error db error: ERROR: Unimplemented type for cast \(TIMESTAMP \-> TINYINT\)
+SELECT cast(cast('2025-02-25 08:00:26.88' as timestamp) as tinyint);
+
+# DOCS_TEST: example_009
+
+query
+SELECT cast('1' as boolean);
+----
+bool
+t
+
+query
+SELECT cast('0' as boolean);
+----
+bool
+f
+
+query
+SELECT cast('t' as boolean);
+----
+bool
+t
+
+query
+SELECT cast('true' as boolean);
+----
+bool
+t
+
+query
+SELECT cast('f' as boolean);
+----
+bool
+f
+
+query
+SELECT cast('false' as boolean);
+----
+bool
+f
+
+query
+SELECT cast('y' as boolean);
+----
+bool
+t
+
+query
+SELECT cast('yes' as boolean);
+----
+bool
+t
+
+query
+SELECT cast('n' as boolean);
+----
+bool
+f
+
+query
+SELECT cast('no' as boolean);
+----
+bool
+f
+
+# DOCS_TEST: example_010
+
+query error db error: ERROR: Could not convert string '1\.7E308' to BOOL
+SELECT cast('1.7E308' as boolean);
+
+query error db error: ERROR: Could not convert string 'nan' to BOOL
+SELECT cast('nan' as boolean);
+
+query error db error: ERROR: Could not convert string 'infinity' to BOOL
+SELECT cast('infinity' as boolean);
+
+query error db error: ERROR: Could not convert string '12' to BOOL
+SELECT cast('12' as boolean);
+
+query error db error: ERROR: Could not convert string '\-1' to BOOL
+SELECT cast('-1' as boolean);
+
+query error db error: ERROR: Could not convert string 'tr' to BOOL
+SELECT cast('tr' as boolean);
+
+query error db error: ERROR: Could not convert string 'tru' to BOOL
+SELECT cast('tru' as boolean);
+
+# DOCS_TEST: example_011
+
+query
+SELECT cast(cast('1970-01-01 00:00:00' as timestamp) as string);
+----
+text
+1970-01-01 00:00:00
+
+query
+SELECT cast(cast('2000-01-01 12:21:56.129' as timestamp) as string);
+----
+text
+2000-01-01 12:21:56.129
+
+query
+SELECT cast(cast('2000-01-01 12:21:56.100000' as timestamp) as string);
+----
+text
+2000-01-01 12:21:56.1
+
+query
+SELECT cast(cast('2000-01-01 12:21:56.129900' as timestamp) as string);
+----
+text
+2000-01-01 12:21:56.1299
+
+query
+SELECT cast(cast('10000-02-01 16:00:00.000' as timestamp) as string);
+----
+text
+10000-02-01 16:00:00
+
+query
+SELECT cast(cast('0384-01-01 08:00:00.000' as timestamp) as string);
+----
+text
+0384-01-01 08:00:00
+
+query
+SELECT cast(cast('-0010-02-01 10:00:00.000' as timestamp) as string);
+----
+text
+0011-02-01 (BC) 10:00:00
+
+# DOCS_TEST: example_012
+
+query error db error: ERROR: invalid date field format: "1970", expected format is \(YYYY\-MM\-DD\)
+SELECT cast('1970' as date);
+
+query error db error: ERROR: invalid date field format: "1970\-01", expected format is \(YYYY\-MM\-DD\)
+SELECT cast('1970-01' as date);
+
+query
+SELECT cast('1970-01-01' as date);
+----
+date
+1970-01-01
+
+query
+SELECT cast('1970-01-01T123' as date);
+----
+date
+1970-01-01
+
+query
+SELECT cast('1970-01-01 ' as date);
+----
+date
+1970-01-01
+
+query
+SELECT cast('1970-01-01 (BC)' as date);
+----
+date
+-1969-01-01
+
+# DOCS_TEST: example_013
+
+query error db error: ERROR: invalid date field format: "2012\-Oct\-23", expected format is \(YYYY\-MM\-DD\)
+SELECT cast('2012-Oct-23' as date);
+
+query
+SELECT cast('2012/10/23' as date);
+----
+date
+2012-10-23
+
+query error db error: ERROR: invalid date field format: "2012\.10\.23", expected format is \(YYYY\-MM\-DD\)
+SELECT cast('2012.10.23' as date);
+
+# DOCS_TEST: example_014
+
+query
+SELECT cast(' 1.23' as decimal(38, 0));
+----
+numeric
+1
+
+query
+SELECT cast('1.23 ' as decimal(38, 0));
+----
+numeric
+1
+
+query
+SELECT cast('  1.23  ' as decimal(38, 0));
+----
+numeric
+1
+
+query
+SELECT cast(' -3E+2' as decimal(12, 2));
+----
+numeric
+-300.00
+
+query
+SELECT cast('-3E+2 ' as decimal(12, 2));
+----
+numeric
+-300.00
+
+query
+SELECT cast('  -3E+2  ' as decimal(12, 2));
+----
+numeric
+-300.00
+
+# DOCS_TEST: example_015
+
+query error db error: ERROR: Unimplemented type for cast \(TINYINT \-> BLOB\)
+SELECT cast(cast(18 as tinyint) as binary);
+
+query error db error: ERROR: Unimplemented type for cast \(SMALLINT \-> BLOB\)
+SELECT cast(cast(180 as smallint) as binary);
+
+query error db error: ERROR: Unimplemented type for cast \(INTEGER \-> BLOB\)
+SELECT cast(cast(180000 as integer) as binary);
+
+query error db error: ERROR: Unimplemented type for cast \(BIGINT \-> BLOB\)
+SELECT cast(cast(180000 as bigint) as binary);
+
+# DOCS_TEST: example_016
+
+query error db error: ERROR: Unimplemented type for cast \(INTEGER \-> TIMESTAMP\)
+SELECT cast(0 as timestamp);
+
+query error db error: ERROR: Unimplemented type for cast \(INTEGER \-> TIMESTAMP\)
+SELECT cast(1727181032 as timestamp);
+
+query error db error: ERROR: Unimplemented type for cast \(BIGINT \-> TIMESTAMP\)
+SELECT cast(9223372036855 as timestamp);
+
+query error db error: ERROR: Unimplemented type for cast \(BIGINT \-> TIMESTAMP\)
+SELECT cast(-9223372036855 as timestamp);
+
+# DOCS_TEST: example_017
+
+query error db error: ERROR: Unimplemented type for cast \(DECIMAL\(2,1\) \-> TIMESTAMP\)
+SELECT cast(0.0 as timestamp);
+
+query error db error: ERROR: Unimplemented type for cast \(DECIMAL\(11,1\) \-> TIMESTAMP\)
+SELECT cast(1727181032.0 as timestamp);
+
+query error db error: ERROR: Unimplemented type for cast \(DECIMAL\(11,1\) \-> TIMESTAMP\)
+SELECT cast(-1727181032.0 as timestamp);
+
+query error db error: ERROR: Unimplemented type for cast \(DOUBLE \-> TIMESTAMP\)
+SELECT cast(cast(9223372036855.999 as double) as timestamp);
+
+query error db error: ERROR: Unimplemented type for cast \(DOUBLE \-> TIMESTAMP\)
+SELECT cast(cast(-9223372036856.999 as double) as timestamp);
+
+query error db error: ERROR: Unimplemented type for cast \(DOUBLE \-> TIMESTAMP\)
+SELECT cast(cast(1.79769e+308 as double) as timestamp);
+
+query error db error: ERROR: Unimplemented type for cast \(DOUBLE \-> TIMESTAMP\)
+SELECT cast(cast('inf' as double) as timestamp);
+
+query error db error: ERROR: Unimplemented type for cast \(DOUBLE \-> TIMESTAMP\)
+SELECT cast(cast('nan' as double) as timestamp);
+
+# DOCS_TEST: example_018
+
+query error db error: ERROR: Unimplemented type for cast \(BOOLEAN \-> TIMESTAMP\)
+SELECT cast(true as timestamp);
+
+query error db error: ERROR: Unimplemented type for cast \(BOOLEAN \-> TIMESTAMP\)
+SELECT cast(false as timestamp);

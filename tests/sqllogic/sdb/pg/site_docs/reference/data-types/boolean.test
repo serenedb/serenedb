@@ -1,0 +1,50 @@
+# DOCS_TEST: example_001
+
+statement ok
+-- Create a table with a boolean column
+CREATE TABLE settings (
+    id SERIAL PRIMARY KEY,
+    is_active BOOLEAN
+);
+
+statement error db error: ERROR: Could not convert string 'on' to BOOL
+-- Insert boolean values using different literal forms
+INSERT INTO settings VALUES
+    (1, TRUE),
+    (2, 't'),
+    (3, 'yes'),
+    (4, 'on'),
+    (5, '1'),
+    (6, FALSE),
+    (7, 'f'),
+    (8, 'no'),
+    (9, 'off'),
+    (10, '0');
+
+query
+-- Retrieve all rows
+SELECT * FROM settings;
+----
+id	is_active
+
+# DOCS_TEST: example_002
+
+query
+WITH bools(v) AS (VALUES (TRUE), (NULL), (FALSE))
+SELECT
+    a.v AS a,
+    b.v AS b,
+    a.v AND b.v AS and_result,
+    a.v OR b.v AS or_result
+FROM bools a, bools b;
+----
+a	b	and_result	or_result
+t	t	t	t
+NULL	t	NULL	t
+f	t	f	t
+t	NULL	NULL	t
+NULL	NULL	NULL	NULL
+f	NULL	f	NULL
+t	f	f	t
+NULL	f	f	NULL
+f	f	f	f

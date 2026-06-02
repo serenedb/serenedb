@@ -1,0 +1,94 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+query
+SELECT CAST(i AS VARCHAR) AS i
+FROM generate_series(1, 3) tbl(i);
+----
+i
+1
+2
+3
+
+# DOCS_TEST: example_002
+
+query
+SELECT i::DOUBLE AS i
+FROM generate_series(1, 3) tbl(i);
+----
+i
+1
+2
+3
+
+# DOCS_TEST: example_003
+
+query error db error: ERROR: Could not convert string 'hello' to INT32
+SELECT CAST('hello' AS INTEGER);
+
+# DOCS_TEST: example_004
+
+query
+SELECT TRY_CAST('hello' AS INTEGER) AS i;
+----
+i
+NULL
+
+# DOCS_TEST: example_005
+
+query
+SELECT cast_to_type('42', NULL::INTEGER) AS result;
+----
+result
+42
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_006
+
+statement error db error: ERROR: relation "tbl" already exists
+CREATE TABLE tbl (i INT, s VARCHAR);
+
+statement error db error: ERROR: table tbl has 12 columns but 2 values were supplied
+INSERT INTO tbl VALUES (42, 'hello world');
+
+statement ok
+CREATE MACRO conditional_add(col, nr) AS
+    CASE
+        WHEN typeof(col) == 'INTEGER' THEN cast_to_type(col::INTEGER + nr, col)
+        ELSE col
+    END;
+
+query
+SELECT conditional_add(COLUMNS(*), 100) FROM tbl;
+----
+id	name	col1	col2	Some Column Name	i	a	b	c	number	number1	number2
+101	mark	1	2	alpha	101	110	120	130	110	200	1100
+103	bookmark	4	5	beta	102	111	121	131	120	300	2100
+107	other	9	16	gamma	103	112	122	132	NULL	400	3100

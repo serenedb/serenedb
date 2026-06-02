@@ -1,0 +1,129 @@
+# DOCS_TEST: example_001
+
+query error db error: ERROR: text search dictionary "basic_dict" does not exist
+SELECT ts_lexize('basic_dict', 'Café Résumé');
+
+query error db error: ERROR: text search dictionary "exact_dict" does not exist
+-- {cafe,resume}
+SELECT ts_lexize('exact_dict', 'Café Résumé');
+
+# DOCS_TEST: example_002
+
+query error
+-- All of these match "The Matrix"
+SELECT id, title FROM movies_idx WHERE PHRASE(title, 'the matrix');
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT id, title FROM movies_idx WHERE PHRASE(title, 'THE MATRIX');
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT id, title FROM movies_idx WHERE PHRASE(title, 'The Matrix');
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+query error
+-- Only matches the exact capitalization
+SELECT id, title FROM movies_exact_idx WHERE PHRASE(title, 'The Matrix');
+----
+db error: ERROR: Table with name movies_exact_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+query error
+-- No results — wrong case
+SELECT id, title FROM movies_exact_idx WHERE PHRASE(title, 'the matrix');
+----
+db error: ERROR: Table with name movies_exact_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_005
+
+query error
+SELECT id, title FROM movies_idx WHERE PHRASE(title, 'cafe society');
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+query error
+-- Also works with the accented form
+SELECT id, title FROM movies_idx WHERE PHRASE(title, 'café society');
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_007
+
+query error
+-- Must use the exact accent to match
+SELECT id, title FROM movies_exact_idx WHERE PHRASE(title, 'Café');
+----
+db error: ERROR: Table with name movies_exact_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_008
+
+query error
+-- No match — accent is missing
+SELECT id, title FROM movies_exact_idx WHERE PHRASE(title, 'Cafe');
+----
+db error: ERROR: Table with name movies_exact_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_009
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY search_friendly (
+    TEMPLATE = 'text',
+    LOCALE = 'en_US.UTF-8',
+    CASE = 'lower',
+    STEMMING = true,
+    ACCENT = false,
+    FREQUENCY = true,
+    POSITION = true
+);
+
+# DOCS_TEST: example_010
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY identifier_dict (
+    TEMPLATE = 'text',
+    LOCALE = 'en_US.UTF-8',
+    CASE = 'none',
+    STEMMING = false,
+    ACCENT = true
+);
+
+# DOCS_TEST: example_011
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY upper_dict (
+    TEMPLATE = 'text',
+    LOCALE = 'en_US.UTF-8',
+    CASE = 'upper',
+    STEMMING = false,
+    ACCENT = false
+);
+
+query error db error: ERROR: text search dictionary "upper_dict" does not exist
+SELECT ts_lexize('upper_dict', 'Café Résumé');

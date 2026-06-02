@@ -1,0 +1,367 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE integers (i INTEGER, j INTEGER);
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE integers
+ADD COLUMN k INTEGER;
+
+# DOCS_TEST: example_003
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE integers
+ADD COLUMN l INTEGER DEFAULT 10;
+
+# DOCS_TEST: example_004
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE integers
+DROP k;
+
+# DOCS_TEST: example_005
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE integers
+ALTER i TYPE VARCHAR;
+
+# DOCS_TEST: example_006
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE integers
+ALTER i SET DATA TYPE VARCHAR USING concat(i, '_', j);
+
+# DOCS_TEST: example_007
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE integers
+ALTER COLUMN i SET DEFAULT 10;
+
+# DOCS_TEST: example_008
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE integers
+ALTER COLUMN i DROP DEFAULT;
+
+# DOCS_TEST: example_009
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE integers
+ALTER COLUMN i SET NOT NULL;
+
+# DOCS_TEST: example_010
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE integers
+ALTER COLUMN i DROP NOT NULL;
+
+# DOCS_TEST: example_011
+
+statement ok
+ALTER TABLE integers
+RENAME TO integers_old;
+
+# DOCS_TEST: example_012
+
+statement error
+ALTER TABLE integers
+RENAME i TO ii;
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_013
+
+statement error
+ALTER TABLE integers
+ADD PRIMARY KEY (i);
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_014
+
+statement error
+ALTER TABLE integers
+RENAME TO integers_old;
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_015
+
+statement error
+ALTER TABLE integers
+RENAME COLUMN i TO j;
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_016
+
+statement error
+ALTER TABLE integers
+RENAME i TO j;
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_017
+
+statement error
+ALTER TABLE integers
+ADD COLUMN k INTEGER;
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_018
+
+statement error
+ALTER TABLE integers
+ADD k INTEGER;
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_019
+
+statement error
+ALTER TABLE integers
+ADD COLUMN l INTEGER DEFAULT 10;
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_020
+
+statement error
+ALTER TABLE integers
+DROP COLUMN k;
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_021
+
+statement error
+ALTER TABLE integers
+DROP k;
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_022
+
+statement error
+ALTER TABLE integers
+ALTER i TYPE VARCHAR;
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_023
+
+statement error
+ALTER TABLE integers
+ALTER i SET DATA TYPE VARCHAR USING concat(i, '_', j);
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_024
+
+statement error db error: ERROR: relation "tbl" already exists
+CREATE TABLE tbl (col STRUCT(i INTEGER));
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE tbl
+ALTER col TYPE USING struct_insert(col, a := 42, b := NULL::VARCHAR);
+
+# DOCS_TEST: example_025
+
+statement error
+ALTER TABLE integers
+ALTER COLUMN i SET DEFAULT 10;
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_026
+
+statement error
+ALTER TABLE integers
+ALTER COLUMN i DROP DEFAULT;
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_027
+
+statement error
+ALTER TABLE integers
+ADD PRIMARY KEY (i);
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_028
+
+statement error
+ALTER TABLE integers
+ADD PRIMARY KEY (i, j);
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_029
+
+statement error
+ALTER TABLE my_table
+SET ('option_name' = 'value');
+----
+db error: ERROR: Table with name my_table does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_030
+
+statement error
+ALTER TABLE my_table
+RESET ('option_name');
+----
+db error: ERROR: Table with name my_table does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_031
+
+statement error
+ALTER TABLE my_table
+SET ('option1' = 'value1', 'option2' = 'value2');
+----
+db error: ERROR: Table with name my_table does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error
+ALTER TABLE my_table
+RESET ('option1', 'option2');
+----
+db error: ERROR: Table with name my_table does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_032
+
+statement error db error: ERROR: relation "tbl" already exists
+CREATE TABLE tbl (col VARCHAR);
+
+statement error db error: ERROR: table tbl has 12 columns but 1 values were supplied
+INSERT INTO tbl
+VALUES ('asdf'), ('42');
+
+statement error
+DELETE FROM tbl
+WHERE col = 'asdf';
+----
+db error: ERROR: Referenced column "col" not found in FROM clause!
+Candidate bindings: "col1", "col2", "c", "Some Column Name"
+
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE tbl
+ALTER COLUMN col TYPE INTEGER;
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+# DOCS_TEST: example_033
+
+statement error
+CREATE OR REPLACE TABLE tbl AS FROM tbl;
+----
+db error: ERROR: Table with name tbl does not exist!
+Did you mean "<slt:ignore>"?

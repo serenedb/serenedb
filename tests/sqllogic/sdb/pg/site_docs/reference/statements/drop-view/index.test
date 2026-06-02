@@ -1,0 +1,4 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP VIEW IF EXISTS recent_articles;

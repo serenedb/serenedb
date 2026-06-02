@@ -1,0 +1,38 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE events (id INTEGER, data VARIANT);
+
+statement error db error: ERROR: Unsupported column type for RocksDB serialization: VARIANT
+INSERT INTO events VALUES
+    (1, 42::VARIANT),
+    (2, 'hello world'::VARIANT),
+    (3, [1, 2, 3]::VARIANT),
+    (4, {'name': 'Alice', 'age': 30}::VARIANT);
+
+query error db error: ERROR: Such type is not supported
+SELECT * FROM events;
+
+# DOCS_TEST: example_002
+
+query error db error: ERROR: Such type is not supported
+SELECT id, data, variant_typeof(data) AS vtype
+FROM events;
+
+# DOCS_TEST: example_003
+
+query error db error: ERROR: Such type is not supported
+SELECT data.name FROM events WHERE id = 4;
+
+# DOCS_TEST: example_004
+
+query error db error: ERROR: Such type is not supported
+SELECT variant_extract(data, 'name') AS name FROM events WHERE id = 4;
+
+# DOCS_TEST: example_005
+
+statement error (?i)Cannot open file .*
+COPY events TO 'events.parquet' (
+    FORMAT parquet,
+    SHREDDING {'data': 'STRUCT(name VARCHAR, age INTEGER)'}
+);

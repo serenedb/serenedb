@@ -1,0 +1,88 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE person (name VARCHAR, age BIGINT);
+
+statement ok
+INSERT INTO person VALUES ('Alice', 37), ('Ana', 35), ('Bob', 41), ('Bea', 25);
+
+# DOCS_TEST: example_002
+
+statement ok
+PREPARE query_person AS
+    SELECT *
+    FROM person
+    WHERE starts_with(name, ?)
+      AND age >= ?;
+
+# DOCS_TEST: example_003
+
+query
+EXECUTE query_person('B', 40);
+----
+name	age
+Bob	41
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DEALLOCATE query_person;
+
+# DOCS_TEST: example_004
+
+statement error substitution failed: No such variable: \$2
+PREPARE query_person AS
+    SELECT *
+    FROM person
+    WHERE starts_with(name, $2)
+      AND age >= $1;
+
+# DOCS_TEST: example_005
+
+query error db error: ERROR: Prepared statement "query_person" does not exist
+EXECUTE query_person(40, 'B');
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DEALLOCATE query_person;
+
+# DOCS_TEST: example_006
+
+statement error substitution failed: No such variable: \$name_start_letter
+PREPARE query_person AS
+    SELECT *
+    FROM person
+    WHERE starts_with(name, $name_start_letter)
+      AND age >= $minimum_age;
+
+# DOCS_TEST: example_007
+
+query error db error: ERROR: Prepared statement "query_person" does not exist
+EXECUTE query_person(name_start_letter := 'B', minimum_age := 40);
+
+# DOCS_TEST: example_008
+
+statement ok
+DEALLOCATE query_person;
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+PREPARE query_person AS SELECT 1;
+
+# DOCS_TEST: example_009
+
+statement ok
+DEALLOCATE PREPARE query_person;

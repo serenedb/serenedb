@@ -1,0 +1,196 @@
+# DOCS_TEST: example_001
+
+query
+SELECT 'abc' LIKE 'abc';
+----
+?column?
+t
+
+query
+SELECT 'abc' LIKE 'a%' ;
+----
+?column?
+t
+
+query
+SELECT 'abc' LIKE '_b_';
+----
+?column?
+t
+
+query
+SELECT 'abc' LIKE 'c';
+----
+?column?
+f
+
+query
+SELECT 'abc' LIKE 'c%' ;
+----
+?column?
+f
+
+query
+SELECT 'abc' LIKE '%c';
+----
+?column?
+t
+
+query
+SELECT 'abc' NOT LIKE '%c';
+----
+?column?
+f
+
+# DOCS_TEST: example_002
+
+query
+SELECT 'abc' ILIKE '%C';
+----
+?column?
+t
+
+# DOCS_TEST: example_003
+
+query
+SELECT 'abc' NOT ILIKE '%C';
+----
+?column?
+f
+
+# DOCS_TEST: example_004
+
+query
+SELECT 'a%c' LIKE 'a$%c' ESCAPE '$';
+----
+like_escape
+t
+
+query
+SELECT 'azc' LIKE 'a$%c' ESCAPE '$';
+----
+like_escape
+f
+
+# DOCS_TEST: example_005
+
+query
+SELECT 'A%c' ILIKE 'a$%c' ESCAPE '$';
+----
+ilike_escape
+t
+
+# DOCS_TEST: example_006
+
+query
+SELECT 'abc' SIMILAR TO 'abc';
+----
+?column?
+t
+
+query
+SELECT 'abc' SIMILAR TO 'a';
+----
+?column?
+f
+
+query
+SELECT 'abc' SIMILAR TO '.*(b|d).*';
+----
+?column?
+f
+
+query
+SELECT 'abc' SIMILAR TO '(b|c).*';
+----
+?column?
+f
+
+query
+SELECT 'abc' NOT SIMILAR TO 'abc';
+----
+?column?
+f
+
+# DOCS_TEST: example_007
+
+query
+SELECT 'best.txt' GLOB '*.txt';
+----
+?column?
+t
+
+query
+SELECT 'best.txt' GLOB '????.txt';
+----
+?column?
+t
+
+query
+SELECT 'best.txt' GLOB '?.txt';
+----
+?column?
+f
+
+query
+SELECT 'best.txt' GLOB '[abc]est.txt';
+----
+?column?
+t
+
+query
+SELECT 'best.txt' GLOB '[a-z]est.txt';
+----
+?column?
+t
+
+# DOCS_TEST: example_008
+
+query
+SELECT 'Best.txt' GLOB '[a-z]est.txt';
+----
+?column?
+f
+
+query
+SELECT 'Best.txt' GLOB '[a-zA-Z]est.txt';
+----
+?column?
+t
+
+# DOCS_TEST: example_009
+
+query
+SELECT 'Best.txt' GLOB '[!a-zA-Z]est.txt';
+----
+?column?
+f
+
+# DOCS_TEST: example_010
+
+query
+SELECT NOT 'best.txt' GLOB '*.txt';
+----
+?column?
+f
+
+# DOCS_TEST: example_011
+
+query
+SELECT * FROM glob('*');
+----
+file
+
+# DOCS_TEST: example_012
+
+query
+SELECT * FROM glob('README.md');
+----
+file
+
+# DOCS_TEST: example_013
+
+query
+SELECT * FROM glob('**/README.md');
+----
+file

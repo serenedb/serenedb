@@ -1,0 +1,17 @@
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| CREATE SECRET (
+#|     TYPE r2,
+#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
+#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩',
+#|     ACCOUNT_ID '⟨your-33-character-hexadecimal-account-ID⟩'
+#| );
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_4f5b5b46_001 (i INTEGER);
+
+# DOCS_TEST: example_002
+
+query error (?i)Could not resolve hostname error .*
+SELECT * FROM read_parquet('r2://⟨r2-bucket-name⟩/⟨file⟩');

@@ -1,0 +1,96 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement error (?i)No files found that match the pattern .*
+CREATE TABLE commits AS
+    FROM read_csv(
+            'git-log.csv',
+            delim = '🍥',
+            header = false,
+            column_names = ['timestamp', 'hash', 'author', 'message']
+        );
+
+# DOCS_TEST: example_002
+
+query error
+FROM commits
+LIMIT 5;
+----
+db error: ERROR: Table with name commits does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+query error substitution failed: Invalid escape sequence: \\b
+SELECT
+    message.lower().regexp_extract('\b(ci|cli|python)\b') AS topic,
+    count(*) AS num_commits
+FROM commits
+WHERE topic <> ''
+GROUP BY ALL
+ORDER BY num_commits DESC;
+
+# DOCS_TEST: example_004
+
+statement error substitution failed: Invalid escape sequence: \\W
+CREATE TABLE words AS
+    SELECT unnest(
+        message
+            .lower()
+            .regexp_replace('\W', ' ')
+            .trim(' ')
+            .string_split_regex('\W')
+        ) AS word
+FROM commits;
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS words;
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE TABLE stopwords AS
+    SELECT unnest(['a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and', 'any', 'are', 'as', 'at', 'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both', 'but', 'by', 'can', 'did', 'do', 'does', 'doing', 'don', 'down', 'during', 'each', 'few', 'for', 'from', 'further', 'had', 'has', 'have', 'having', 'he', 'her', 'here', 'hers', 'herself', 'him', 'himself', 'his', 'how', 'i', 'if', 'in', 'into', 'is', 'it', 'its', 'itself', 'just', 'me', 'more', 'most', 'my', 'myself', 'no', 'nor', 'not', 'now', 'of', 'off', 'on', 'once', 'only', 'or', 'other', 'our', 'ours', 'ourselves', 'out', 'over', 'own', 's', 'same', 'she', 'should', 'so', 'some', 'such', 't', 'than', 'that', 'the', 'their', 'theirs', 'them', 'themselves', 'then', 'there', 'these', 'they', 'this', 'those', 'through', 'to', 'too', 'under', 'until', 'up', 'very', 'was', 'we', 'were', 'what', 'when', 'where', 'which', 'while', 'who', 'whom', 'why', 'will', 'with', 'you', 'your', 'yours', 'yourself', 'yourselves']) AS word;
+
+statement error
+CREATE OR REPLACE TABLE words AS
+    FROM words
+    NATURAL ANTI JOIN stopwords
+    WHERE word != '';
+----
+db error: ERROR: Table with name words does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+query error
+SELECT word, count(*) AS count FROM words
+GROUP BY ALL
+ORDER BY count DESC
+LIMIT 20;
+----
+db error: ERROR: Table with name words does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_007
+
+query error
+SELECT
+    year(timestamp) AS year,
+    count(*) AS num_commits,
+    num_commits.bar(0, 20_000) AS num_commits_viz
+FROM commits
+GROUP BY ALL
+ORDER BY ALL;
+----
+db error: ERROR: Table with name commits does not exist!
+Did you mean "<slt:ignore>"?

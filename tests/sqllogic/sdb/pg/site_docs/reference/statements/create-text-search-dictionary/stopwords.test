@@ -1,0 +1,16 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY stop_filter (
+    TEMPLATE = 'stopwords',
+    STOPWORDS = '"the","a","an","is"'
+);
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY hex_stop (
+    TEMPLATE = 'stopwords',
+    STOPWORDS = '"616263","6D6E6F"',
+    HEX = true
+);

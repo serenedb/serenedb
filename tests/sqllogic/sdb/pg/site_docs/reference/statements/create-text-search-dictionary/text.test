@@ -1,0 +1,48 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY english_dict (
+    TEMPLATE = 'text',
+    LOCALE = 'en_US.UTF-8',
+    CASE = 'lower',
+    STEMMING = true,
+    ACCENT = true,
+    FREQUENCY = true,
+    POSITION = true
+);
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY exact_dict (
+    TEMPLATE = 'text',
+    LOCALE = 'en_US.UTF-8',
+    CASE = 'none',
+    STEMMING = false,
+    ACCENT = false,
+    FREQUENCY = true,
+    POSITION = true
+);
+
+# DOCS_TEST: example_003
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY autocomplete_dict (
+    TEMPLATE = 'text',
+    LOCALE = 'en_US.UTF-8',
+    CASE = 'lower',
+    MINGRAM = 2,
+    MAXGRAM = 5,
+    PRESERVEORIGINAL = true
+);
+
+# DOCS_TEST: example_004
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY filtered_dict (
+    TEMPLATE = 'text',
+    LOCALE = 'en_US.UTF-8',
+    CASE = 'lower',
+    STEMMING = true,
+    STOPWORDS = '"the","a","an","is","at"'
+);

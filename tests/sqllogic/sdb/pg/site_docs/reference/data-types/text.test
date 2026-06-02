@@ -1,0 +1,60 @@
+# DOCS_TEST: example_001
+
+statement ok
+-- Create a table with different string types
+CREATE TABLE users (
+    username VARCHAR(20),
+    code CHAR(5),
+    description TEXT
+);
+
+statement ok
+-- Insert sample data
+INSERT INTO users VALUES
+    ('alice', 'A123 ', 'Alice is a developer'),
+    ('bob', 'B456 ', 'Bob works in marketing');
+
+query
+-- Query all rows
+SELECT * FROM users;
+----
+username	code	description
+alice	A123 	Alice is a developer
+bob	B456 	Bob works in marketing
+
+# DOCS_TEST: example_002
+
+query
+SELECT
+    LENGTH('🪐') AS length,
+    CHAR_LENGTH('🪐') AS char_length,
+    OCTET_LENGTH('🪐') AS octet_length;
+----
+length	char_length	octet_length
+1	1	4
+
+# DOCS_TEST: example_003
+
+query error
+WITH strings(a, b) AS (
+    VALUES ('foo', 'FOO')
+)
+SELECT a, b, a = b, a COLLATE "en_US_ci" = b
+FROM strings;
+----
+db error: ERROR: Collation with name en_us_ci does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+query error
+WITH strings(s) AS (
+    VALUES ('foo'), ('FOO')
+)
+SELECT MIN(s COLLATE "binary")
+FROM strings
+GROUP BY s COLLATE "en_US_ci";
+----
+db error: ERROR: Collation with name en_us_ci does not exist!
+Did you mean "<slt:ignore>"?

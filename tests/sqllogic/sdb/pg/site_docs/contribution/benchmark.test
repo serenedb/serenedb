@@ -1,0 +1,36 @@
+# DOCS_TEST: example_001
+
+query error
+SELECT min(i + 1) FROM integers;
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: syntax error at or near "select"
+load
+select setseed(0.8675309);
+
+statement error db error: ERROR: syntax error at or near "\{"
+create or replace table data as (
+	select
+		k::TINYINT as k,
+		(case when random() > ${errors} then m - 1704067200000 else null end) as v,
+		m,
+	from range(1704067200000, 1704067200000 + ${sf} * 1_000_000 * 10, 10) times(m)
+	cross join range(${keys}) keys(k)
+);
+
+# DOCS_TEST: example_003
+
+statement error db error: ERROR: syntax error at or near "run"
+run
+SELECT
+	m,
+	k,
+	fill(v) OVER (PARTITION BY k ORDER BY m) as v
+FROM
+	data
+qualify v <> m - 1704067200000;

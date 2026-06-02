@@ -1,0 +1,69 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM read_csv('input.csv');
+
+# DOCS_TEST: example_002
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM 'input.csv';
+
+# DOCS_TEST: example_003
+
+statement error (?i)No files found that match the pattern .*
+CREATE TABLE new_tbl AS
+    SELECT * FROM read_csv('input.csv');
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS new_tbl;
+
+# DOCS_TEST: example_004
+
+statement error (?i)No files found that match the pattern .*
+CREATE TABLE new_tbl AS
+    FROM read_csv('input.csv');
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_005
+
+statement error (?i)No files found that match the pattern .*
+INSERT INTO tbl
+    SELECT * FROM read_csv('input.csv');
+
+# DOCS_TEST: example_006
+
+statement error (?i)No files found that match the pattern .*
+COPY tbl FROM 'input.csv';

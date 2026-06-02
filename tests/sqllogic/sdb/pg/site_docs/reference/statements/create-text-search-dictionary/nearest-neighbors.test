@@ -1,0 +1,8 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY nn_dict (
+    TEMPLATE = 'nearest_neighbors',
+    MODELLOCATION = '/models/cooking.bin',
+    TOPK = 2
+);

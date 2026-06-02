@@ -1,0 +1,57 @@
+# DOCS_TEST: example_001
+
+statement error
+INSTALL httpfs;
+----
+db error: ERROR: Failed to download extension "httpfs" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/httpfs.duckdb_extension.gz"
+Extension "httpfs" is an existing extension.
+
+For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=httpfs (ERROR Problem with the SSL CA cert (path? access rights?))
+
+
+statement error
+INSTALL iceberg;
+----
+db error: ERROR: Failed to download extension "iceberg" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/iceberg.duckdb_extension.gz"
+Extension "iceberg" is an existing extension.
+
+For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=iceberg (ERROR Problem with the SSL CA cert (path? access rights?))
+
+
+# DOCS_TEST: example_002
+
+statement ok
+LOAD httpfs;
+
+statement ok
+LOAD iceberg;
+
+# DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| CREATE SECRET (
+#|     TYPE s3,
+#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
+#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩',
+#|     REGION '⟨us-east-1⟩'
+#| );
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_f6ee28f4_001 (i INTEGER);
+
+# DOCS_TEST: example_004
+# DOCS_RAW_BEGIN
+#| CREATE SECRET (
+#|     TYPE s3,
+#|     PROVIDER credential_chain
+#| );
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_f6ee28f4_002 (i INTEGER);
+
+# DOCS_TEST: example_005
+
+query error (?i)Could not resolve hostname error .*
+SELECT *
+FROM iceberg_scan('s3://⟨bucket⟩/⟨iceberg_table_folder⟩/metadata/⟨id⟩.metadata.json');

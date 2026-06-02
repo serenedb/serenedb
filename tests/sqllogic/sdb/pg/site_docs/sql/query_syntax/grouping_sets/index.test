@@ -1,0 +1,242 @@
+control substitution on
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE addresses (
+    address VARCHAR,
+    city VARCHAR,
+    street_name VARCHAR,
+    income DOUBLE,
+    zip VARCHAR,
+    country VARCHAR,
+    population INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO addresses VALUES
+    ('123 Quack Blvd', 'DuckTown', 'Quack Blvd', 50000, '11111', 'NL', 100, 1, 10),
+    ('111 Duck Duck Goose Ln', 'DuckTown', 'Duck Duck Goose Ln', 60000, '11111', 'NL', 100, 2, 20),
+    ('111 Duck Duck Goose Ln', 'Duck Town', 'Duck Duck Goose Ln', 70000, '11111', 'US', 50, 3, 30),
+    ('111 Duck Duck Goose Ln', 'Duck Town', 'Duck Duck Goose Ln', 80000, '11111-0001', 'US', 50, 4, 40),
+    ('5 Pond Road', 'Mallard', 'Pond Road', 90000, '22222', 'UK', 25, 5, 50),
+    ('9 Lake View', 'Mallard', 'Lake View', 40000, '33333', 'UK', 25, 6, 60);
+
+# DOCS_TEST: example_001
+
+query ??? rowsort
+-- the syntax () denotes the empty set (i.e., computing an ungrouped aggregate)
+SELECT city, street_name, avg(income)
+FROM addresses
+GROUP BY GROUPING SETS ((city, street_name), (city), (street_name), ());
+----
+city	street_name	avg
+Duck Town	Duck Duck Goose Ln	75000
+Duck Town	NULL	75000
+DuckTown	Duck Duck Goose Ln	60000
+DuckTown	NULL	55000
+DuckTown	Quack Blvd	50000
+Mallard	Lake View	40000
+Mallard	NULL	65000
+Mallard	Pond Road	90000
+NULL	Duck Duck Goose Ln	70000
+NULL	Lake View	40000
+NULL	NULL	65000
+NULL	Pond Road	90000
+NULL	Quack Blvd	50000
+
+# DOCS_TEST: example_002
+
+query ??? rowsort
+SELECT city, street_name, avg(income)
+FROM addresses
+GROUP BY CUBE (city, street_name);
+----
+city	street_name	avg
+Duck Town	Duck Duck Goose Ln	75000
+Duck Town	NULL	75000
+DuckTown	Duck Duck Goose Ln	60000
+DuckTown	NULL	55000
+DuckTown	Quack Blvd	50000
+Mallard	Lake View	40000
+Mallard	NULL	65000
+Mallard	Pond Road	90000
+NULL	Duck Duck Goose Ln	70000
+NULL	Lake View	40000
+NULL	NULL	65000
+NULL	Pond Road	90000
+NULL	Quack Blvd	50000
+
+# DOCS_TEST: example_003
+
+query ??? rowsort
+SELECT city, street_name, avg(income)
+FROM addresses
+GROUP BY ROLLUP (city, street_name);
+----
+city	street_name	avg
+Duck Town	Duck Duck Goose Ln	75000
+Duck Town	NULL	75000
+DuckTown	Duck Duck Goose Ln	60000
+DuckTown	NULL	55000
+DuckTown	Quack Blvd	50000
+Mallard	Lake View	40000
+Mallard	NULL	65000
+Mallard	Pond Road	90000
+NULL	NULL	65000
+
+# DOCS_TEST: example_004
+
+statement ok
+CREATE TABLE students (course VARCHAR, type VARCHAR);
+
+statement ok
+INSERT INTO students (course, type)
+VALUES
+    ('CS', 'Bachelor'), ('CS', 'Bachelor'), ('CS', 'PhD'), ('Math', 'Masters'),
+    ('CS', NULL), ('CS', NULL), ('Math', NULL);
+
+# DOCS_TEST: example_005
+
+query ??? rowsort
+SELECT course, type, count(*)
+FROM students
+GROUP BY GROUPING SETS ((course, type), course, type, ());
+----
+course	type	count
+CS	Bachelor	2
+CS	NULL	2
+CS	NULL	5
+CS	PhD	1
+Math	Masters	1
+Math	NULL	1
+Math	NULL	2
+NULL	Bachelor	2
+NULL	Masters	1
+NULL	NULL	3
+NULL	NULL	7
+NULL	PhD	1
+
+# DOCS_TEST: example_006
+
+query ??? rowsort
+-- Group by course, type:
+SELECT course, type, count(*)
+FROM students
+GROUP BY course, type
+UNION ALL
+-- Group by type:
+SELECT NULL AS course, type, count(*)
+FROM students
+GROUP BY type
+UNION ALL
+-- Group by course:
+SELECT course, NULL AS type, count(*)
+FROM students
+GROUP BY course
+UNION ALL
+-- Group by nothing:
+SELECT NULL AS course, NULL AS type, count(*)
+FROM students;
+----
+course	type	count
+CS	Bachelor	2
+CS	NULL	2
+CS	NULL	5
+CS	PhD	1
+Math	Masters	1
+Math	NULL	1
+Math	NULL	2
+NULL	Bachelor	2
+NULL	Masters	1
+NULL	NULL	3
+NULL	NULL	7
+NULL	PhD	1
+
+# DOCS_TEST: example_007
+
+query ???? rowsort
+WITH days AS (
+    SELECT
+        year("generate_series")    AS y,
+        quarter("generate_series") AS q,
+        month("generate_series")   AS m
+    FROM generate_series(DATE '2023-01-01', DATE '2023-12-31', INTERVAL 1 DAY)
+)
+SELECT y, q, m, GROUPING_ID(y, q, m) AS "grouping_id()"
+FROM days
+GROUP BY GROUPING SETS (
+    (y, q, m),
+    (y, q),
+    (y),
+    ()
+)
+ORDER BY y, q, m;
+----
+y	q	m	grouping_id()
+2023	1	1	0
+2023	1	2	0
+2023	1	3	0
+2023	1	NULL	1
+2023	2	4	0
+2023	2	5	0
+2023	2	6	0
+2023	2	NULL	1
+2023	3	7	0
+2023	3	8	0
+2023	3	9	0
+2023	3	NULL	1
+2023	4	10	0
+2023	4	11	0
+2023	4	12	0
+2023	4	NULL	1
+2023	NULL	NULL	3
+NULL	NULL	NULL	7
+
+# DOCS_TEST: example_008
+
+query ????? rowsort
+WITH days AS (
+    SELECT
+        year("generate_series")    AS y,
+        quarter("generate_series") AS q,
+        month("generate_series")   AS m
+    FROM generate_series(DATE '2023-01-01', DATE '2023-12-31', INTERVAL 1 DAY)
+)
+SELECT
+    y, q, m,
+    GROUPING_ID(y, q, m) AS "grouping_id(y, q, m)",
+    right(GROUPING_ID(y, q, m)::BIT::VARCHAR, 3) AS "y_q_m_bits"
+FROM days
+GROUP BY GROUPING SETS (
+    (y, q, m),
+    (y, q),
+    (y),
+    ()
+)
+ORDER BY y, q, m;
+----
+y	q	m	grouping_id(y, q, m)	y_q_m_bits
+2023	1	1	0	000
+2023	1	2	0	000
+2023	1	3	0	000
+2023	1	NULL	1	001
+2023	2	4	0	000
+2023	2	5	0	000
+2023	2	6	0	000
+2023	2	NULL	1	001
+2023	3	7	0	000
+2023	3	8	0	000
+2023	3	9	0	000
+2023	3	NULL	1	001
+2023	4	10	0	000
+2023	4	11	0	000
+2023	4	12	0	000
+2023	4	NULL	1	001
+2023	NULL	NULL	3	011
+NULL	NULL	NULL	7	111

@@ -1,0 +1,103 @@
+# DOCS_TEST: example_001
+
+query
+SELECT
+    count() AS total_rows,
+    count() FILTER (i <= 5) AS lte_five,
+    count() FILTER (i % 2 = 1) AS odds
+FROM generate_series(1, 10) tbl(i);
+----
+total_rows	lte_five	odds
+10	5	5
+
+# DOCS_TEST: example_002
+
+query
+SELECT
+    sum(i) FILTER (i <= 5) AS lte_five_sum,
+    median(i) FILTER (i % 2 = 1) AS odds_median,
+    median(i) FILTER (i % 2 = 1 AND i <= 5) AS odds_lte_five_median
+FROM generate_series(1, 10) tbl(i);
+----
+lte_five_sum	odds_median	odds_lte_five_median
+15	5	3
+
+# DOCS_SETUP
+
+statement ok
+SET memory_limit = '10GB';
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TEMP TABLE stacked_data AS
+    SELECT
+        i,
+        CASE WHEN i <= rows * 0.25  THEN 2022
+             WHEN i <= rows * 0.5   THEN 2023
+             WHEN i <= rows * 0.75  THEN 2024
+             WHEN i <= rows * 0.875 THEN 2025
+             ELSE NULL
+             END AS year
+    FROM (
+        SELECT
+            i,
+            count(*) OVER () AS rows
+        FROM generate_series(1, 100_000_000) tbl(i)
+    ) tbl;
+
+# DOCS_TEST: example_004
+
+query ?????
+SELECT
+    count(i) FILTER (year = 2022) AS "2022",
+    count(i) FILTER (year = 2023) AS "2023",
+    count(i) FILTER (year = 2024) AS "2024",
+    count(i) FILTER (year = 2025) AS "2025",
+    count(i) FILTER (year IS NULL) AS "NULLs"
+FROM stacked_data;
+----
+2022	2023	2024	2025	NULLs
+25000000	25000000	25000000	12500000	12500000
+
+# DOCS_TEST: example_005
+
+query ?????
+SELECT
+    count(CASE WHEN year = 2022 THEN i END) AS "2022",
+    count(CASE WHEN year = 2023 THEN i END) AS "2023",
+    count(CASE WHEN year = 2024 THEN i END) AS "2024",
+    count(CASE WHEN year = 2025 THEN i END) AS "2025",
+    count(CASE WHEN year IS NULL THEN i END) AS "NULLs"
+FROM stacked_data;
+----
+2022	2023	2024	2025	NULLs
+25000000	25000000	25000000	12500000	12500000
+
+# DOCS_TEST: example_006
+
+query ?????
+SELECT
+    first(i) FILTER (year = 2022) AS "2022",
+    first(i) FILTER (year = 2023) AS "2023",
+    first(i) FILTER (year = 2024) AS "2024",
+    first(i) FILTER (year = 2025) AS "2025",
+    first(i) FILTER (year IS NULL) AS "NULLs"
+FROM stacked_data;
+----
+2022	2023	2024	2025	NULLs
+<slt:ignore>	<slt:ignore>	<slt:ignore>	<slt:ignore>	<slt:ignore>
+
+# DOCS_TEST: example_007
+
+query ?????
+SELECT
+    first(CASE WHEN year = 2022 THEN i END) AS "2022",
+    first(CASE WHEN year = 2023 THEN i END) AS "2023",
+    first(CASE WHEN year = 2024 THEN i END) AS "2024",
+    first(CASE WHEN year = 2025 THEN i END) AS "2025",
+    first(CASE WHEN year IS NULL THEN i END) AS "NULLs"
+FROM stacked_data;
+----
+2022	2023	2024	2025	NULLs
+<slt:ignore>	<slt:ignore>	<slt:ignore>	<slt:ignore>	<slt:ignore>

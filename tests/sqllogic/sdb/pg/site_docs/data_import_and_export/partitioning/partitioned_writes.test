@@ -1,0 +1,58 @@
+# DOCS_TEST: example_001
+
+statement error
+COPY orders TO 'orders'
+(FORMAT parquet, PARTITION_BY (year, month));
+----
+db error: ERROR: Table with name orders does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+statement error
+COPY orders TO 'orders'
+(FORMAT csv, PARTITION_BY (year, month), OVERWRITE_OR_IGNORE);
+----
+db error: ERROR: Table with name orders does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+statement error
+COPY orders TO 'orders'
+(FORMAT csv, PARTITION_BY (year, month), COMPRESSION gzip, FILE_EXTENSION 'csv.gz');
+----
+db error: ERROR: Table with name orders does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+statement error
+COPY orders TO 'orders'
+(FORMAT parquet, PARTITION_BY (year, month), OVERWRITE_OR_IGNORE, FILENAME_PATTERN 'orders_{i}');
+----
+db error: ERROR: Table with name orders does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_005
+
+statement error
+COPY orders TO 'orders'
+(FORMAT parquet, PARTITION_BY (year, month), OVERWRITE_OR_IGNORE, FILENAME_PATTERN 'file_{uuid}');
+----
+db error: ERROR: Table with name orders does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+statement error
+COPY orders TO 'orders'
+(FORMAT parquet, PARTITION_BY (year, month), APPEND);
+----
+db error: ERROR: Table with name orders does not exist!
+Did you mean "<slt:ignore>"?

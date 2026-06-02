@@ -1,0 +1,57 @@
+# DOCS_TEST: example_001
+
+query
+SELECT strftime(DATE '1992-03-02', '%d/%m/%Y');
+----
+strftime
+02/03/1992
+
+# DOCS_TEST: example_002
+
+query
+SELECT strftime(TIMESTAMP '1992-03-02 20:32:45', '%A, %-d %B %Y - %I:%M:%S %p');
+----
+strftime
+Monday, 2 March 1992 - 08:32:45 PM
+
+# DOCS_TEST: example_003
+
+query
+SELECT strptime('02/03/1992', '%d/%m/%Y');
+----
+strptime
+1992-03-02 00:00:00
+
+# DOCS_TEST: example_004
+
+query
+SELECT strptime('Monday, 2 March 1992 - 08:32:45 PM', '%A, %-d %B %Y - %I:%M:%S %p');
+----
+strptime
+1992-03-02 20:32:45
+
+# DOCS_TEST: example_005
+
+query error
+SELECT strptime('02/50/1992', '%d/%m/%Y') AS x;
+----
+db error: ERROR: Could not parse string "02/50/1992" according to format specifier "%d/%m/%Y"
+02/50/1992
+   ^
+Error: Month out of range, expected a value between 1 and 12
+
+
+# DOCS_TEST: example_006
+
+statement error
+COPY dates FROM 'test.csv' (DATEFORMAT '%d/%m/%Y', TIMESTAMPFORMAT '%A, %-d %B %Y - %I:%M:%S %p');
+----
+db error: ERROR: Table with name dates does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_007
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_csv('test.csv', dateformat = '%m/%d/%Y', timestampformat = '%A, %-d %B %Y - %I:%M:%S %p');

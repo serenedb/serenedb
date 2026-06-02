@@ -1,0 +1,34 @@
+# DOCS_TEST: example_001
+
+statement ok
+-- Create a table with array columns
+CREATE TABLE sample_arrays (
+    nums INT[],
+    texts TEXT[]
+);
+
+statement error db error: ERROR: Unimplemented type for cast \(INTEGER\[\] \-> INTEGER\)
+-- Insert single- and multi-dimensional arrays
+INSERT INTO sample_arrays VALUES
+    (ARRAY[1, 2, 3], ARRAY['a', 'b', 'c']),
+    (ARRAY[[1, 3], [3, 4]], ARRAY[['a', 'b'], ['c', 'd']]);
+
+query
+-- Retrieve all rows
+SELECT * FROM sample_arrays;
+----
+nums	texts
+
+# DOCS_TEST: example_002
+
+query
+-- Define a CTE with an array column
+WITH sample_data(a) AS (
+    VALUES (ARRAY[1, 2, 3])
+)
+-- Select the first element of the array
+SELECT a[1] AS first_element
+FROM sample_data;
+----
+first_element
+1

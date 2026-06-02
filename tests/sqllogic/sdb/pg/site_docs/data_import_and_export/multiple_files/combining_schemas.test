@@ -1,0 +1,14 @@
+# DOCS_TEST: example_001
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM read_csv('flights*.csv');
+
+# DOCS_TEST: example_002
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM read_csv('flights*.csv', union_by_name = true);
+
+# DOCS_TEST: example_003
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM read_csv(['flights3.csv', 'flights4.csv'], union_by_name = true);

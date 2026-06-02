@@ -1,0 +1,395 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE t1 (i INTEGER, j INTEGER);
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE TABLE t1 (id INTEGER PRIMARY KEY, j VARCHAR);
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TABLE t1 (id INTEGER, j VARCHAR, PRIMARY KEY (id, j));
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_004
+
+statement ok
+CREATE TABLE t1 (
+    i INTEGER NOT NULL DEFAULT 0,
+    decimalnr DOUBLE CHECK (decimalnr < 10),
+    date DATE UNIQUE,
+    time TIMESTAMP
+);
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE TABLE t1 AS
+    SELECT 42 AS i, 84 AS j;
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_006
+
+statement error (?i)No files found that match the pattern .*
+CREATE TABLE t1 AS
+    SELECT *
+    FROM read_csv('path/file.csv');
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_007
+
+statement error (?i)No files found that match the pattern .*
+CREATE TABLE t1 AS
+    FROM read_csv('path/file.csv');
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_008
+
+statement error
+CREATE TABLE t1 AS
+    FROM t2
+    LIMIT 0;
+----
+db error: ERROR: Table with name t2 does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_009
+
+statement error (?i)No files found that match the pattern .*
+CREATE TEMP TABLE t1 AS
+    SELECT *
+    FROM read_csv('path/file.csv');
+
+# DOCS_TEST: example_010
+
+statement ok
+SET temp_directory = '/path/to/directory/';
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_011
+
+statement ok
+CREATE OR REPLACE TABLE t1 (i INTEGER, j INTEGER);
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_012
+
+statement ok
+CREATE TABLE IF NOT EXISTS t1 (i INTEGER, j INTEGER);
+
+# DOCS_TEST: example_013
+
+statement ok
+CREATE TABLE nums AS
+    SELECT i
+    FROM range(0, 3) t(i);
+
+# DOCS_TEST: example_014
+
+statement error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://duckdb\.org/data/flights\.csv'
+CREATE TABLE flights AS
+    FROM 'https://duckdb.org/data/flights.csv';
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS flights;
+
+# DOCS_TEST: example_015
+
+statement error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://duckdb\.org/data/flights\.csv'
+CREATE OR REPLACE TABLE flights AS
+    FROM 'https://duckdb.org/data/flights.csv';
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_016
+
+statement error
+CREATE TABLE t1 AS
+    FROM t2
+    WITH NO DATA;
+----
+db error: ERROR: Table with name t2 does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_017
+
+statement error
+CREATE TABLE t1 AS
+    FROM t2
+    LIMIT 0;
+----
+db error: ERROR: Table with name t2 does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_018
+
+statement ok
+CREATE TABLE t1 (
+    id INTEGER PRIMARY KEY,
+    percentage INTEGER CHECK (0 <= percentage AND percentage <= 100)
+);
+
+statement ok
+INSERT INTO t1 VALUES (1, 5);
+
+statement error
+INSERT INTO t1 VALUES (2, -1);
+----
+db error: ERROR: new row for relation "t1" violates check constraint "t1_percentage_check"
+DETAIL: Failing row contains (2, -1).
+
+
+# DOCS_TEST: example_019
+
+statement error
+INSERT INTO t1 VALUES (3, 101);
+----
+db error: ERROR: new row for relation "t1" violates check constraint "t1_percentage_check"
+DETAIL: Failing row contains (3, 101).
+
+
+# DOCS_TEST: example_020
+
+statement ok
+CREATE TABLE t2 (id INTEGER PRIMARY KEY, x INTEGER, y INTEGER CHECK (x < y));
+
+statement ok
+INSERT INTO t2 VALUES (1, 5, 10);
+
+statement error
+INSERT INTO t2 VALUES (2, 5, 3);
+----
+db error: ERROR: new row for relation "t2" violates check constraint "t2_check"
+DETAIL: Failing row contains (2, 5, 3).
+
+
+# DOCS_TEST: example_021
+
+statement ok
+CREATE TABLE t3 (
+    id INTEGER PRIMARY KEY,
+    x INTEGER,
+    y INTEGER,
+    CONSTRAINT x_smaller_than_y CHECK (x < y)
+);
+
+statement ok
+INSERT INTO t3 VALUES (1, 5, 10);
+
+statement error
+INSERT INTO t3 VALUES (2, 5, 3);
+----
+db error: ERROR: new row for relation "t3" violates check constraint "x_smaller_than_y"
+DETAIL: Failing row contains (2, 5, 3).
+
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+statement ok
+DROP TABLE IF EXISTS t2;
+
+# DOCS_TEST: example_022
+
+statement ok
+CREATE TABLE t1 (id INTEGER PRIMARY KEY, j VARCHAR);
+
+statement ok
+CREATE TABLE t2 (
+    id INTEGER PRIMARY KEY,
+    t1_id INTEGER,
+    FOREIGN KEY (t1_id) REFERENCES t1 (id)
+);
+
+# DOCS_TEST: example_023
+
+statement ok
+INSERT INTO t1 VALUES (1, 'a');
+
+statement ok
+INSERT INTO t2 VALUES (1, 1);
+
+statement ok
+INSERT INTO t2 VALUES (2, 2);
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t3;
+
+# DOCS_TEST: example_024
+
+statement ok
+CREATE TABLE t3 (id INTEGER, j VARCHAR, PRIMARY KEY (id, j));
+
+statement ok
+CREATE TABLE t4 (
+    id INTEGER PRIMARY KEY, t3_id INTEGER, t3_j VARCHAR,
+    FOREIGN KEY (t3_id, t3_j) REFERENCES t3(id, j)
+);
+
+# DOCS_TEST: example_025
+
+statement ok
+INSERT INTO t3 VALUES (1, 'a');
+
+statement ok
+INSERT INTO t4 VALUES (1, 1, 'a');
+
+statement ok
+INSERT INTO t4 VALUES (2, 1, 'b');
+
+# DOCS_TEST: example_026
+
+statement ok
+CREATE TABLE t5 (id INTEGER UNIQUE, j VARCHAR);
+
+statement error db error: ERROR: Failed to create foreign key: there is no primary key or unique constraint for referenced table "t5"
+CREATE TABLE t6 (
+    id INTEGER PRIMARY KEY,
+    t5_id INTEGER,
+    FOREIGN KEY (t5_id) REFERENCES t5(id)
+);
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_027
+
+statement ok
+CREATE TABLE t1 (x FLOAT, two_x AS (2 * x));
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_028
+
+statement ok
+CREATE TABLE t1 (x FLOAT, two_x FLOAT GENERATED ALWAYS AS (2 * x) VIRTUAL);

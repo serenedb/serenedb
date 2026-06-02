@@ -1,0 +1,9 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY classifier (
+    TEMPLATE = 'classification',
+    MODELLOCATION = '/models/cooking.bin',
+    TOPK = 3,
+    THRESHOLD = 0.5
+);

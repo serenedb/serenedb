@@ -1,0 +1,58 @@
+# DOCS_TEST: example_001
+
+query error
+SELECT id, title, genre
+FROM movies_idx
+WHERE TERM_EQ(genre, 'sci-fi')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+query error
+SELECT id, title, genre
+FROM movies_idx
+WHERE TERM_IN(genre, 'comedy', 'drama')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+query error
+SELECT id, title, genre
+FROM movies_idx
+WHERE NOT TERM_EQ(genre, 'sci-fi')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+query error
+SELECT id, title
+FROM movies_idx
+WHERE TERM_EQ(genre, 'sci-fi') AND PHRASE(description, 'alien spacecraft')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_005
+
+query error
+SELECT genre, COUNT(*) AS count, AVG(runtime) AS avg_runtime
+FROM movies_idx
+WHERE PHRASE(description, 'biggest blockbuster')
+GROUP BY genre;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?

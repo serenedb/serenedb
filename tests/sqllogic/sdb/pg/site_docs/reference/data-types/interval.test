@@ -1,0 +1,17 @@
+# DOCS_TEST: example_001
+
+query
+-- Adding an interval to a timestamp
+SELECT
+    date '2025-12-10 12:00:00' + INTERVAL '1' day AS new_time;
+----
+new_time
+2025-12-11 00:00:00
+
+query
+-- Subtracting an interval from a date
+SELECT
+    DATE '2025-12-10' - INTERVAL '1' month AS earlier_date;
+----
+earlier_date
+2025-11-10 00:00:00

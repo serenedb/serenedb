@@ -1,0 +1,41 @@
+# DOCS_TEST: example_001
+
+statement ok
+-- Create a table with numeric columns
+CREATE TABLE accounts (
+    account_id SERIAL PRIMARY KEY,
+);
+
+statement error db error: ERROR: table accounts has 1 columns but 3 values were supplied
+-- Insert values
+INSERT INTO accounts VALUES
+    (1, 12345.67, 1234567890.12345678),
+    (2, 98765.43, 9876543210.87654321);
+
+query
+-- Query the data
+SELECT * FROM accounts;
+----
+account_id
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: Unsupported column type for RocksDB serialization: DECIMAL
+-- Create a table with a large numeric
+CREATE TABLE numerics(i) AS
+VALUES (POWER(2, 126)::NUMERIC(38,0));
+
+query error
+-- This produces an overflow
+SELECT i + i FROM numerics;
+----
+db error: ERROR: Table with name numerics does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+-- Using try() returns NULL instead of an error
+SELECT TRY(i + i) FROM numerics;
+----
+db error: ERROR: Table with name numerics does not exist!
+Did you mean "<slt:ignore>"?

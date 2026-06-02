@@ -1,0 +1,35 @@
+# DOCS_TEST: example_001
+
+statement error
+UPDATE employees
+SET salary = 135000
+WHERE id = 3;
+----
+db error: ERROR: Table with name employees does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+statement error
+UPDATE orders
+SET status = 'shipped', shipped_at = NOW()
+WHERE status = 'processing' AND created_at < '2025-03-01';
+----
+db error: ERROR: Table with name orders does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+statement error
+UPDATE employees
+SET salary = salary * 1.10
+WHERE department IN (
+    SELECT department
+    FROM performance_reviews
+    WHERE avg_score > 4.5
+);
+----
+db error: ERROR: Table with name employees does not exist!
+Did you mean "<slt:ignore>"?

@@ -1,0 +1,73 @@
+# DOCS_TEST: example_001
+
+query error
+SELECT collect_set(i)
+FROM (
+    VALUES
+        (1),
+        (null)
+) AS t(i);
+----
+db error: ERROR: Scalar Function with name collect_set does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error db error: ERROR: syntax error at or near ">"
+-- ARRAY[1]
+>
+SELECT collect_set(elements)
+FROM (
+    VALUES
+        ARRAY[1, 2],
+        ARRAY[1, null]
+) AS t(elements);
+
+# DOCS_TEST: example_002
+
+query
+SELECT max_by(x, y)
+FROM (
+    VALUES
+        ('a', 10),
+        ('b', 50),
+        ('c', 50)
+) AS t(x, y);
+----
+max_by
+b
+
+# DOCS_TEST: example_003
+
+query
+SELECT min_by(x, y)
+FROM (
+    VALUES
+        ('a', 10),
+        ('b', 10),
+        ('c', 50)
+) AS t(x, y);
+----
+min_by
+a
+
+# DOCS_TEST: example_004
+
+query
+SELECT mode(x)
+FROM (
+    VALUES
+        (0), (10), (10), (null), (null), (null)
+) AS t(x);
+----
+mode
+10
+
+# DOCS_TEST: example_005
+
+query error db error: ERROR: syntax error at or near "L"
+SELECT SUM(x)
+FROM (
+    VALUES
+        (9223372036854775807L),
+        (1L)
+) AS t(x);

@@ -1,0 +1,68 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE MACRO pretty_print_integer(n) AS
+    CASE
+        WHEN n >= 1_000_000_000 THEN printf('%dB', n // 1_000_000_000)
+        WHEN n >= 1_000_000     THEN printf('%dM', n // 1_000_000)
+        WHEN n >= 1_000         THEN printf('%dk', n // 1_000)
+        ELSE printf('%d', n)
+    END;
+
+query
+SELECT pretty_print_integer(25_500_000) AS x;
+----
+x
+25M
+
+# DOCS_TEST: example_002
+
+statement error
+INSTALL httpfs;
+----
+db error: ERROR: Failed to download extension "httpfs" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/httpfs.duckdb_extension.gz"
+Extension "httpfs" is an existing extension.
+
+For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=httpfs (ERROR Problem with the SSL CA cert (path? access rights?))
+
+
+# DOCS_TEST: example_003
+
+statement error (?i)Cannot open database .*
+ATTACH 'https://blobs.duckdb.org/data/pretty_print_integer_macro.duckdb'
+    AS pretty_print_macro_db;
+
+query error db error: ERROR: Referenced column "pretty_print_macro_db" was not found because the FROM clause is missing
+SELECT pretty_print_macro_db.pretty_print_integer(42_123) AS x;
+
+# DOCS_TEST: example_004
+
+statement ok
+CREATE MACRO checksum(table_name) AS TABLE
+    SELECT bit_xor(md5_number(COLUMNS(*)::VARCHAR))
+    FROM query_table(table_name);
+
+# DOCS_TEST: example_005
+
+statement error
+INSTALL httpfs;
+----
+db error: ERROR: Failed to download extension "httpfs" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/httpfs.duckdb_extension.gz"
+Extension "httpfs" is an existing extension.
+
+For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=httpfs (ERROR Problem with the SSL CA cert (path? access rights?))
+
+
+# DOCS_TEST: example_006
+
+statement error (?i)Cannot open database .*
+ATTACH 'https://blobs.duckdb.org/data/compute_table_checksum.duckdb'
+    AS compute_table_checksum_db;
+
+statement error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://blobs\.duckdb\.org/stations\.parquet'
+CREATE TABLE stations AS
+    FROM 'https://blobs.duckdb.org/stations.parquet';
+
+statement error db error: ERROR: syntax error at or near "\."
+.mode line
+FROM compute_table_checksum_db.checksum('stations');

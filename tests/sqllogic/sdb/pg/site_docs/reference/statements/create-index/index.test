@@ -1,0 +1,41 @@
+# DOCS_TEST: example_001
+
+statement error
+CREATE INDEX idx_articles_search ON articles
+    USING inverted (id, title english_dict, body english_dict);
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+query error
+SELECT id, title
+FROM idx_articles_search
+WHERE PHRASE(body, 'vector search')
+ORDER BY id;
+----
+db error: ERROR: Table with name idx_articles_search does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY french_dict (
+    template = 'text',
+    locale = 'fr',
+    case = 'lower',
+    stemming = true,
+    accent = true,
+    frequency = true,
+    position = true
+);
+
+statement error
+CREATE INDEX idx_articles_fr ON articles
+    USING inverted (id, body french_dict);
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?

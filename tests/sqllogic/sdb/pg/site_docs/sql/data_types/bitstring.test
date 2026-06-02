@@ -1,0 +1,23 @@
+# DOCS_TEST: example_001
+
+query
+SELECT '101010'::BITSTRING AS b;
+----
+b
+101010
+
+# DOCS_TEST: example_002
+
+query
+SELECT bitstring('0101011', 12) AS b;
+----
+b
+000000101011
+
+# DOCS_TEST: example_003
+
+query
+SELECT 123::BITSTRING AS b;
+----
+b
+00000000000000000000000001111011

@@ -1,0 +1,73 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE articles (
+    id INTEGER PRIMARY KEY,
+    title VARCHAR,
+    body VARCHAR,
+    category VARCHAR,
+    published_at DATE,
+    views INTEGER
+);
+
+# DOCS_TEST: example_002
+
+statement ok
+INSERT INTO articles VALUES
+(1, 'Introduction to Vector Search', 'Vector search enables finding similar items by comparing embeddings in high-dimensional space. It powers recommendation systems and semantic search.', 'engineering', '2025-01-15', 4200),
+(2, 'Scaling Analytics Pipelines', 'Modern analytics pipelines must handle billions of rows with sub-second latency. Columnar storage and vectorized execution are key techniques.', 'engineering', '2025-02-20', 3800),
+(3, 'Why Unified Search and Analytics Matter', 'Running search and analytics in separate systems creates data silos and synchronization lag. A unified engine eliminates these problems entirely.', 'product', '2025-03-01', 5100),
+(4, 'Full-Text Search Best Practices', 'Effective full-text search requires proper analyzers, stemming, and relevance scoring. Position-aware indexing improves phrase matching accuracy.', 'engineering', '2025-03-10', 2900),
+(5, 'Real-Time Data Processing at Scale', 'Real-time ingestion combined with instant query availability means dashboards and search results always reflect the latest data without refresh delays.', 'product', '2025-03-15', 6200);
+
+# DOCS_TEST: example_003
+
+query
+SELECT category, COUNT(*) AS articles, AVG(views) AS avg_views
+FROM articles
+GROUP BY category
+ORDER BY avg_views DESC;
+----
+category	articles	avg_views
+product	2	5650
+engineering	3	3633.3333333333335
+
+# DOCS_TEST: example_004
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX articles_search_idx ON articles
+    USING inverted(id, title english_dict, body english_dict);
+
+# DOCS_TEST: example_005
+
+query error
+SELECT id, title, views
+FROM articles_search_idx
+WHERE PHRASE(body, 'search and analytics')
+ORDER BY views DESC;
+----
+db error: ERROR: Scalar Function with name phrase does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+query error
+SELECT category, COUNT(*) AS matches
+FROM articles_search_idx
+WHERE PHRASE(body, 'search')
+GROUP BY category;
+----
+db error: ERROR: Scalar Function with name phrase does not exist!
+Did you mean "<slt:ignore>"?

@@ -1,0 +1,19 @@
+# DOCS_TEST: example_001
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM read_csv('my_csv_file.csv', sample_size = -1);
+
+# DOCS_TEST: example_002
+
+query error (?i)No files found that match the pattern .*
+FROM sniff_csv('my_file.csv');
+
+query error (?i)No files found that match the pattern .*
+FROM sniff_csv('my_file.csv', sample_size = 1000);
+
+# DOCS_TEST: example_003
+
+statement error db error: ERROR: syntax error at or near "\."
+-- use line mode in CLI to get the full command
+.mode line
+SELECT Prompt FROM sniff_csv('my_file.csv');

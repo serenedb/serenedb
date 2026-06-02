@@ -1,0 +1,8 @@
+# DOCS_TEST: example_001
+
+query
+SELECT name, abbrev
+FROM pg_timezone_names()
+ORDER BY name;
+----
+name	abbrev

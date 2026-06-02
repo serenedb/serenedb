@@ -1,0 +1,142 @@
+control substitution on
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_001
+
+statement ok
+UPDATE tbl
+SET i = 0
+WHERE i IS NULL;
+
+# DOCS_TEST: example_002
+
+statement error
+UPDATE tbl
+SET i = 1, j = 2;
+----
+db error: ERROR: Referenced update column j not found in table!
+
+Did you mean: "a", "b", "c", "col1", "col2"
+
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE OR REPLACE TABLE original AS
+    SELECT 1 AS key, 'original value' AS value
+    UNION ALL
+    SELECT 2 AS key, 'original value 2' AS value;
+
+statement ok
+CREATE OR REPLACE TABLE new AS
+    SELECT 1 AS key, 'new value' AS value
+    UNION ALL
+    SELECT 2 AS key, 'new value 2' AS value;
+
+query
+SELECT *
+FROM original;
+----
+key	value
+1	original value
+2	original value 2
+
+# DOCS_TEST: example_004
+
+statement ok
+UPDATE original
+    SET value = new.value
+    FROM new
+    WHERE original.key = new.key;
+
+# DOCS_TEST: example_005
+
+statement ok
+UPDATE original
+    SET value = (
+        SELECT
+            new.value
+        FROM new
+        WHERE original.key = new.key
+    );
+
+# DOCS_TEST: example_006
+
+query
+SELECT *
+FROM original;
+----
+key	value
+1	new value
+2	new value 2
+
+# DOCS_TEST: example_007
+
+statement ok
+UPDATE original AS true_original
+    SET value = (
+        SELECT
+            new.value || ' a change!' AS value
+        FROM original AS new
+        WHERE true_original.key = new.key
+    );
+
+# DOCS_TEST: example_008
+
+statement ok
+CREATE TABLE city (name VARCHAR, revenue BIGINT, country_code VARCHAR);
+
+statement ok
+CREATE TABLE country (code VARCHAR, name VARCHAR);
+
+statement ok
+INSERT INTO city VALUES ('Paris', 700, 'FR'), ('Lyon', 200, 'FR'), ('Brussels', 400, 'BE');
+
+statement ok
+INSERT INTO country VALUES ('FR', 'France'), ('BE', 'Belgium');
+
+# DOCS_TEST: example_009
+
+statement ok
+UPDATE city
+SET revenue = revenue + 100
+FROM country
+WHERE city.country_code = country.code
+  AND country.name = 'France';
+
+# DOCS_TEST: example_010
+
+query
+SELECT *
+FROM city;
+----
+name	revenue	country_code
+Paris	800	FR
+Lyon	300	FR
+Brussels	400	BE

@@ -1,0 +1,18 @@
+# DOCS_TEST: example_001
+
+statement ok
+SELECT id, topic, level, message FROM sdb_log ORDER BY id DESC LIMIT 5;
+
+# DOCS_TEST: example_002
+
+query error
+SELECT * FROM sdb_show_all_settings WHERE name LIKE 'sdb_%';
+----
+db error: ERROR: Table with name sdb_show_all_settings does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+statement ok
+SELECT * FROM information_schema.tables;

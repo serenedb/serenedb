@@ -1,0 +1,253 @@
+control substitution on
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_001
+
+query
+SELECT * FROM tbl;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_002
+
+query
+SELECT col1 + col2 AS res, sqrt(col1) AS root FROM tbl;
+----
+res	root
+3	1
+9	2
+25	3
+
+# DOCS_TEST: example_003
+
+query
+SELECT
+    res: col1 + col2,
+    root: sqrt(col1)
+FROM tbl;
+----
+res	root
+3	1
+9	2
+25	3
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE addresses (
+    address VARCHAR,
+    city VARCHAR,
+    street_name VARCHAR,
+    income DOUBLE,
+    zip VARCHAR,
+    country VARCHAR,
+    population INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO addresses VALUES
+    ('123 Quack Blvd', 'DuckTown', 'Quack Blvd', 50000, '11111', 'NL', 100, 1, 10),
+    ('111 Duck Duck Goose Ln', 'DuckTown', 'Duck Duck Goose Ln', 60000, '11111', 'NL', 100, 2, 20),
+    ('111 Duck Duck Goose Ln', 'Duck Town', 'Duck Duck Goose Ln', 70000, '11111', 'US', 50, 3, 30),
+    ('111 Duck Duck Goose Ln', 'Duck Town', 'Duck Duck Goose Ln', 80000, '11111-0001', 'US', 50, 4, 40),
+    ('5 Pond Road', 'Mallard', 'Pond Road', 90000, '22222', 'UK', 25, 5, 50),
+    ('9 Lake View', 'Mallard', 'Lake View', 40000, '33333', 'UK', 25, 6, 60);
+
+# DOCS_TEST: example_004
+
+query ? rowsort
+SELECT DISTINCT city FROM addresses;
+----
+city
+Duck Town
+DuckTown
+Mallard
+
+# DOCS_TEST: example_005
+
+query
+SELECT count(*) FROM addresses;
+----
+count
+6
+
+# DOCS_TEST: example_006
+
+query
+SELECT * EXCLUDE (city) FROM addresses;
+----
+address	street_name	income	zip	country	population	number1	number2
+123 Quack Blvd	Quack Blvd	50000	11111	NL	100	1	10
+111 Duck Duck Goose Ln	Duck Duck Goose Ln	60000	11111	NL	100	2	20
+111 Duck Duck Goose Ln	Duck Duck Goose Ln	70000	11111	US	50	3	30
+111 Duck Duck Goose Ln	Duck Duck Goose Ln	80000	11111-0001	US	50	4	40
+5 Pond Road	Pond Road	90000	22222	UK	25	5	50
+9 Lake View	Lake View	40000	33333	UK	25	6	60
+
+# DOCS_TEST: example_007
+
+query
+SELECT * REPLACE (lower(city) AS city) FROM addresses;
+----
+address	city	street_name	income	zip	country	population	number1	number2
+123 Quack Blvd	ducktown	Quack Blvd	50000	11111	NL	100	1	10
+111 Duck Duck Goose Ln	ducktown	Duck Duck Goose Ln	60000	11111	NL	100	2	20
+111 Duck Duck Goose Ln	duck town	Duck Duck Goose Ln	70000	11111	US	50	3	30
+111 Duck Duck Goose Ln	duck town	Duck Duck Goose Ln	80000	11111-0001	US	50	4	40
+5 Pond Road	mallard	Pond Road	90000	22222	UK	25	5	50
+9 Lake View	mallard	Lake View	40000	33333	UK	25	6	60
+
+# DOCS_TEST: example_008
+
+query error substitution failed: Invalid escape sequence: \\d
+SELECT COLUMNS('number\d+') FROM addresses;
+
+# DOCS_TEST: example_009
+
+query
+SELECT min(COLUMNS(*)) FROM addresses;
+----
+address	city	street_name	income	zip	country	population	number1	number2
+111 Duck Duck Goose Ln	Duck Town	Duck Duck Goose Ln	40000	11111	NL	25	1	10
+
+# DOCS_TEST: example_010
+
+query
+SELECT "Some Column Name" FROM tbl;
+----
+some column name
+alpha
+beta
+gamma
+
+# DOCS_TEST: example_011
+
+query
+SELECT *
+FROM tbl;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_012
+
+query error substitution failed: Invalid escape sequence: \\d
+SELECT COLUMNS('number\d+')
+FROM addresses;
+
+# DOCS_TEST: example_013
+
+query ? rowsort
+SELECT DISTINCT city
+FROM addresses;
+----
+city
+Duck Town
+DuckTown
+Mallard
+
+# DOCS_TEST: example_014
+
+query error
+SELECT DISTINCT ON(country) city, population
+FROM cities
+ORDER BY population DESC;
+----
+db error: ERROR: Table with name cities does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_015
+
+query
+SELECT count(*)
+FROM addresses;
+----
+count
+6
+
+# DOCS_TEST: example_016
+
+query ?? rowsort
+SELECT city, count(*)
+FROM addresses
+GROUP BY city;
+----
+city	count
+Duck Town	2
+DuckTown	2
+Mallard	2
+
+# DOCS_TEST: example_017
+
+query error
+SELECT row_number() OVER ()
+FROM sales;
+----
+db error: ERROR: Table with name sales does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_018
+
+query error
+SELECT amount - lag(amount) OVER (ORDER BY time)
+FROM sales;
+----
+db error: ERROR: Table with name sales does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_019
+
+query
+SELECT unnest([1, 2, 3]);
+----
+unnest
+1
+2
+3
+
+# DOCS_TEST: example_020
+
+query
+SELECT unnest({'a': 42, 'b': 84});
+----
+a	b
+42	84

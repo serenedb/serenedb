@@ -4,3 +4,4 @@ query
 select '5'::json;
 ----
 json
+5

@@ -1,0 +1,101 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement error
+INSERT INTO people VALUES (1, 'Mark');
+----
+db error: ERROR: Table with name people does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM 'test.csv';
+
+# DOCS_TEST: example_003
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM read_csv('test.csv', header = false);
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_004
+
+statement error (?i)No files found that match the pattern .*
+COPY tbl FROM 'test.csv' (HEADER false);
+
+# DOCS_TEST: example_005
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM 'test.csv.gz';
+
+# DOCS_TEST: example_006
+
+statement error (?i)No files found that match the pattern .*
+CREATE TABLE test AS
+    SELECT * FROM 'test.csv';
+
+# DOCS_TEST: example_007
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM 'test.parquet';
+
+# DOCS_TEST: example_008
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM read_parquet('test.parquet');
+
+# DOCS_TEST: example_009
+
+statement error (?i)No files found that match the pattern .*
+COPY tbl FROM 'test.parquet';
+
+# DOCS_TEST: example_010
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM 'test.json';
+
+# DOCS_TEST: example_011
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM read_json_auto('test.json');
+
+# DOCS_TEST: example_012
+
+statement error (?i)No files found that match the pattern .*
+COPY tbl FROM 'test.json';
+
+# DOCS_TEST: example_013
+
+statement error (?i)Cannot open file .*
+COPY (FROM (VALUES (42), (43)) t(x)) TO 'test.parquet';
+
+query error (?i)No files found that match the pattern .*
+SELECT *, filename FROM 'test.parquet';

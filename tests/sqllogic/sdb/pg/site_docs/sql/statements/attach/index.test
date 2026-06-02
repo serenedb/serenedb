@@ -1,0 +1,267 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement error (?i)Cannot open file .*
+ATTACH 'file.db';
+
+# DOCS_TEST: example_002
+
+statement error (?i)Cannot open file .*
+ATTACH 'file.db' AS file_db;
+
+# DOCS_TEST: example_003
+
+statement error (?i)Cannot open database .*
+ATTACH 'file.db' (READ_ONLY);
+
+# DOCS_TEST: example_004
+
+statement error (?i)Cannot open file .*
+ATTACH 'file.db' (BLOCK_SIZE 16_384);
+
+# DOCS_TEST: example_005
+
+statement error (?i)Cannot open file .*
+ATTACH 'file.db' (ROW_GROUP_SIZE 2048);
+
+# DOCS_TEST: example_006
+
+statement error (?i)Cannot open file .*
+ATTACH 'file.db' (RECOVERY_MODE no_wal_writes);
+
+# DOCS_TEST: example_007
+
+statement error
+ATTACH 'sqlite_file.db' AS sqlite_db (TYPE sqlite);
+----
+db error: ERROR: Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/sqlite_scanner.duckdb_extension" not found.
+Extension "sqlite" is an existing extension.
+
+Install it first using "INSTALL sqlite".
+
+
+# DOCS_TEST: example_008
+
+statement error (?i)Cannot open file .*
+ATTACH IF NOT EXISTS 'file.db';
+
+# DOCS_TEST: example_009
+
+statement error (?i)Cannot open file .*
+ATTACH IF NOT EXISTS 'file.db' AS file_db;
+
+# DOCS_TEST: example_010
+
+statement error (?i)Cannot open file .*
+ATTACH OR REPLACE 'file2.db' AS file_db;
+
+# DOCS_TEST: example_011
+
+statement error (?i)Catalog with name .* does not exist!
+CREATE TABLE file.new_table (i INTEGER);
+
+# DOCS_TEST: example_012
+
+statement error db error: ERROR: Failed to detach database with name "file": database not found
+DETACH file;
+
+# DOCS_TEST: example_013
+
+statement ok
+SHOW DATABASES;
+
+# DOCS_TEST: example_014
+
+statement ok
+USE file;
+
+# DOCS_TEST: example_015
+
+statement error (?i)Cannot open database .*
+ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
+
+statement error (?i)Cannot open database .*
+ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db (READ_ONLY);
+
+# DOCS_TEST: example_016
+
+statement error (?i)Cannot open database .*
+ATTACH 's3://⟨blobs-duckdb⟩/databases/stations.duckdb' AS stations_db;
+
+statement error (?i)Cannot open database .*
+ATTACH 's3://⟨blobs-duckdb⟩/databases/stations.duckdb' AS stations_db (READ_ONLY);
+
+# DOCS_TEST: example_017
+
+statement error (?i)Cannot open file .*
+ATTACH 'file.db' (STORAGE_VERSION 'v1.2.0');
+
+# DOCS_TEST: example_018
+
+statement error (?i)Cannot open file .*
+ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack');
+
+# DOCS_TEST: example_019
+
+statement ok
+LOAD httpfs;
+
+statement error (?i)Cannot open file .*
+ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack');
+
+# DOCS_TEST: example_020
+
+statement error db error: ERROR: CBC encryption is disabled
+ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack', ENCRYPTION_CIPHER 'CBC');
+
+statement error (?i)Cannot open file .*
+ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack', ENCRYPTION_CIPHER 'CTR');
+
+# DOCS_SETUP
+
+statement ok
+DETACH IF EXISTS memory_db;
+
+# DOCS_TEST: example_021
+
+statement ok
+ATTACH ':memory:' AS memory_db;
+
+statement ok
+USE memory_db;
+
+# DOCS_TEST: example_022
+
+statement error (?i)Cannot open file .*
+ATTACH 'new_db.db';
+
+# DOCS_TEST: example_023
+
+statement error (?i)Catalog .* does not exist!
+CREATE SCHEMA new_db.my_schema;
+
+# DOCS_TEST: example_024
+
+statement error (?i)Catalog with name .* does not exist!
+CREATE TABLE new_db.my_schema.my_table (col INTEGER);
+
+# DOCS_TEST: example_025
+
+query error (?i)Catalog .* does not exist!
+SELECT new_db.my_schema.my_table.col FROM new_db.my_schema.my_table;
+
+# DOCS_TEST: example_026
+
+statement ok
+CREATE TABLE my_table (col INTEGER);
+
+# DOCS_TEST: example_027
+
+statement ok
+USE new_db;
+
+# DOCS_TEST: example_028
+
+statement error db error: ERROR: SET schema: No catalog \+ schema named "new_db\.my_schema" found\.
+USE new_db.my_schema;
+
+# DOCS_TEST: example_029
+
+statement error (?i)Cannot open file .*
+ATTACH 'new_db.db';
+
+statement ok
+CREATE SCHEMA my_schema;
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS new_db;
+
+# DOCS_TEST: example_030
+
+statement error (?i)Catalog with name .* does not exist!
+CREATE TABLE new_db.tbl (i INTEGER);
+
+# DOCS_TEST: example_031
+
+statement error (?i)Catalog with name .* does not exist!
+CREATE TABLE my_schema.tbl (i INTEGER);
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP SCHEMA IF EXISTS new_db CASCADE;
+
+statement ok
+DROP TABLE IF EXISTS new_db;
+
+# DOCS_TEST: example_032
+
+statement ok
+CREATE SCHEMA new_db;
+
+statement ok
+CREATE TABLE new_db.tbl (i INTEGER);
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DETACH IF EXISTS db1;
+
+statement ok
+DETACH IF EXISTS db2;
+
+# DOCS_TEST: example_033
+
+statement ok
+ATTACH ':memory:' AS db1;
+
+statement ok
+ATTACH ':memory:' AS db2;
+
+statement ok
+CREATE table db1.tbl1 (i INTEGER);
+
+statement ok
+CREATE table db2.tbl2 (j INTEGER);
+
+# DOCS_TEST: example_034
+
+query
+SELECT * FROM db1.tbl1;
+----
+i
+
+query
+SELECT * FROM db2.tbl2;
+----
+j
+
+# DOCS_TEST: example_035
+
+statement ok
+SET search_path = 'db1,db2';
+
+query error
+SELECT * FROM tbl1;
+----
+db error: ERROR: Table with name tbl1 does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT * FROM tbl2;
+----
+db error: ERROR: Table with name tbl2 does not exist!
+Did you mean "<slt:ignore>"?

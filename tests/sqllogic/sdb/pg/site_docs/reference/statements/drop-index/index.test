@@ -1,0 +1,4 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP INDEX IF EXISTS idx_articles_category;

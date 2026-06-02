@@ -1,0 +1,123 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+query error
+SELECT sum(amount)
+FROM sales;
+----
+db error: ERROR: Table with name sales does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+query error
+SELECT region, sum(amount)
+FROM sales
+GROUP BY region;
+----
+db error: ERROR: Table with name sales does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+query error
+SELECT region
+FROM sales
+GROUP BY region
+HAVING sum(amount) > 100;
+----
+db error: ERROR: Table with name sales does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+query error
+SELECT count(DISTINCT region)
+FROM sales;
+----
+db error: ERROR: Table with name sales does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_005
+
+query error
+SELECT sum(amount), sum(amount) FILTER (region != 'north')
+FROM sales;
+----
+db error: ERROR: Table with name sales does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+query error
+SELECT list(region ORDER BY amount DESC)
+FROM sales;
+----
+db error: ERROR: Table with name sales does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_007
+
+query error
+SELECT first(amount ORDER BY date ASC)
+FROM sales;
+----
+db error: ERROR: Table with name sales does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_008
+
+query error
+SELECT ⟨aggregate_function⟩(⟨arg⟩, ⟨sep⟩ ORDER BY ⟨ordering_criteria⟩);
+----
+db error: ERROR: Scalar Function with name ⟨aggregate_function⟩ does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_009
+
+statement error db error: ERROR: relation "tbl" already exists
+CREATE TABLE tbl AS
+    SELECT s FROM range(1, 4) r(s);
+
+query error
+SELECT string_agg(s, ', ' ORDER BY s DESC) AS countdown
+FROM tbl;
+----
+db error: ERROR: Referenced column "s" not found in FROM clause!
+Candidate bindings: "a"

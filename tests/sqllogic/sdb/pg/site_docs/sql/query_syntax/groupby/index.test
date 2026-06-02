@@ -1,0 +1,82 @@
+control substitution on
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE addresses (
+    address VARCHAR,
+    city VARCHAR,
+    street_name VARCHAR,
+    income DOUBLE,
+    zip VARCHAR,
+    country VARCHAR,
+    population INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO addresses VALUES
+    ('123 Quack Blvd', 'DuckTown', 'Quack Blvd', 50000, '11111', 'NL', 100, 1, 10),
+    ('111 Duck Duck Goose Ln', 'DuckTown', 'Duck Duck Goose Ln', 60000, '11111', 'NL', 100, 2, 20),
+    ('111 Duck Duck Goose Ln', 'Duck Town', 'Duck Duck Goose Ln', 70000, '11111', 'US', 50, 3, 30),
+    ('111 Duck Duck Goose Ln', 'Duck Town', 'Duck Duck Goose Ln', 80000, '11111-0001', 'US', 50, 4, 40),
+    ('5 Pond Road', 'Mallard', 'Pond Road', 90000, '22222', 'UK', 25, 5, 50),
+    ('9 Lake View', 'Mallard', 'Lake View', 40000, '33333', 'UK', 25, 6, 60);
+
+# DOCS_TEST: example_001
+
+query ?? rowsort
+SELECT city, count(*)
+FROM addresses
+GROUP BY city;
+----
+city	count
+Duck Town	2
+DuckTown	2
+Mallard	2
+
+# DOCS_TEST: example_002
+
+query ??? rowsort
+SELECT city, street_name, avg(income)
+FROM addresses
+GROUP BY city, street_name;
+----
+city	street_name	avg
+Duck Town	Duck Duck Goose Ln	75000
+DuckTown	Duck Duck Goose Ln	60000
+DuckTown	Quack Blvd	50000
+Mallard	Lake View	40000
+Mallard	Pond Road	90000
+
+# DOCS_TEST: example_003
+
+query ?? rowsort
+SELECT city, street_name
+FROM addresses
+GROUP BY ALL;
+----
+city	street_name
+Duck Town	Duck Duck Goose Ln
+DuckTown	Duck Duck Goose Ln
+DuckTown	Quack Blvd
+Mallard	Lake View
+Mallard	Pond Road
+
+# DOCS_TEST: example_004
+
+query ??? rowsort
+SELECT city, street_name, avg(income)
+FROM addresses
+GROUP BY ALL;
+----
+city	street_name	avg
+Duck Town	Duck Duck Goose Ln	75000
+DuckTown	Duck Duck Goose Ln	60000
+DuckTown	Quack Blvd	50000
+Mallard	Lake View	40000
+Mallard	Pond Road	90000

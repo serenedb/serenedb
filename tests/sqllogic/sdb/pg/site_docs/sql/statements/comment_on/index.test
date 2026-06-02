@@ -1,0 +1,112 @@
+# DOCS_TEST: example_001
+
+statement error
+COMMENT ON TABLE test_table IS 'very nice table';
+----
+db error: ERROR: Table with name test_table does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+statement error
+COMMENT ON COLUMN test_table.test_table_column IS 'very nice column';
+----
+db error: ERROR: Table with name test_table does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+statement error
+COMMENT ON VIEW test_view IS 'very nice view';
+----
+db error: ERROR: View with name test_view does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+statement error db error: ERROR: Index with name test_index does not exist!
+COMMENT ON INDEX test_index IS 'very nice index';
+
+# DOCS_TEST: example_005
+
+statement error db error: ERROR: Sequence with name test_sequence does not exist!
+COMMENT ON SEQUENCE test_sequence IS 'very nice sequence';
+
+# DOCS_TEST: example_006
+
+statement error
+COMMENT ON TYPE test_type IS 'very nice type';
+----
+db error: ERROR: Type with name test_type does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_007
+
+statement error
+COMMENT ON MACRO test_macro IS 'very nice macro';
+----
+db error: ERROR: Macro Function with name test_macro does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_008
+
+statement error
+COMMENT ON MACRO TABLE test_table_macro IS 'very nice table macro';
+----
+db error: ERROR: Table Macro Function with name test_table_macro does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_009
+
+statement error
+COMMENT ON TABLE test_table IS NULL;
+----
+db error: ERROR: Table with name test_table does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_010
+
+statement ok
+SELECT comment FROM duckdb_tables();
+
+# DOCS_TEST: example_011
+
+statement ok
+SELECT comment FROM duckdb_columns();
+
+# DOCS_TEST: example_012
+
+statement ok
+SELECT comment FROM duckdb_views();
+
+# DOCS_TEST: example_013
+
+statement ok
+SELECT comment FROM duckdb_indexes();
+
+# DOCS_TEST: example_014
+
+statement ok
+SELECT comment FROM duckdb_sequences();
+
+# DOCS_TEST: example_015
+
+statement ok
+SELECT comment FROM duckdb_types();
+
+# DOCS_TEST: example_016
+
+statement ok
+SELECT comment FROM duckdb_functions();
+
+# DOCS_TEST: example_017
+
+statement ok
+SELECT comment FROM duckdb_functions();

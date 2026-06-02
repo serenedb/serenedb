@@ -1,0 +1,172 @@
+# DOCS_TEST: example_001
+
+query
+SELECT regexp_matches('abc', 'abc');
+----
+regexp_matches
+t
+
+query
+SELECT regexp_matches('abc', '^abc$');
+----
+regexp_matches
+t
+
+query
+SELECT regexp_matches('abc', 'a');
+----
+regexp_matches
+t
+
+query
+SELECT regexp_matches('abc', '^a$');
+----
+regexp_matches
+f
+
+query
+SELECT regexp_matches('abc', '.*(b|d).*');
+----
+regexp_matches
+t
+
+query
+SELECT regexp_matches('abc', '(b|c).*');
+----
+regexp_matches
+t
+
+query
+SELECT regexp_matches('abc', '^(b|c).*');
+----
+regexp_matches
+f
+
+query
+SELECT regexp_matches('abc', '(?i)A');
+----
+regexp_matches
+t
+
+query
+SELECT regexp_matches('abc', 'A', 'i');
+----
+regexp_matches
+t
+
+# DOCS_TEST: example_002
+
+query
+SELECT regexp_matches('abcd', 'ABC', 'c');
+----
+regexp_matches
+f
+
+query
+SELECT regexp_matches('abcd', 'ABC', 'i');
+----
+regexp_matches
+t
+
+query
+SELECT regexp_matches('ab^/$cd', '^/$', 'l');
+----
+regexp_matches
+t
+
+query
+SELECT regexp_matches(E'hello\nworld', 'hello.world', 'p');
+----
+regexp_matches
+f
+
+query
+SELECT regexp_matches(E'hello\nworld', 'hello.world', 's');
+----
+regexp_matches
+t
+
+# DOCS_TEST: example_003
+
+query
+SELECT regexp_replace('abc', '(b|c)', 'X');
+----
+regexp_replace
+aXc
+
+query
+SELECT regexp_replace('abc', '(b|c)', 'X', 'g');
+----
+regexp_replace
+aXX
+
+query
+SELECT regexp_replace('abc', '(b|c)', '\1\1\1\1');
+----
+regexp_replace
+abbbbc
+
+query
+SELECT regexp_replace('abc', '(.*)c', '\1e');
+----
+regexp_replace
+abe
+
+query
+SELECT regexp_replace('abc', '(a)(b)', '\2\1');
+----
+regexp_replace
+bac
+
+# DOCS_TEST: example_004
+
+query
+SELECT regexp_extract('abc', '.b.');
+----
+regexp_extract
+abc
+
+query
+SELECT regexp_extract('abc', '.b.', 0);
+----
+regexp_extract
+abc
+
+query
+SELECT regexp_extract('abc', '.b.', 1);
+----
+regexp_extract
+(empty)
+
+query
+SELECT regexp_extract('abc', '([a-z])(b)', 1);
+----
+regexp_extract
+a
+
+query
+SELECT regexp_extract('abc', '([a-z])(b)', 2);
+----
+regexp_extract
+b
+
+# DOCS_TEST: example_005
+
+query
+SELECT regexp_extract('2023-04-15', '(\d+)-(\d+)-(\d+)', ['y', 'm', 'd']);
+----
+regexp_extract
+(2023,04,15)
+
+# DOCS_TEST: example_006
+
+query
+SELECT regexp_extract('2023-04-15 07:59:56', '^(\d+)-(\d+)-(\d+) (\d+):(\d+):(\d+)', ['y', 'm', 'd']);
+----
+regexp_extract
+(2023,04,15)
+
+# DOCS_TEST: example_007
+
+query error db error: ERROR: Not enough capturing groups \(3\) for provided names \(4\)
+SELECT regexp_extract('duckdb_0_7_1', '^(\w+)_(\d+)_(\d+)', ['tool', 'major', 'minor', 'fix']);

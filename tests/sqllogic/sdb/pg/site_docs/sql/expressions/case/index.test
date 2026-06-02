@@ -1,0 +1,136 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+CREATE OR REPLACE TABLE integers AS SELECT unnest([1, 2, 3]) AS i;
+
+query
+SELECT i, CASE WHEN i > 2 THEN 1 ELSE 0 END AS test
+FROM integers;
+----
+i	test
+1	0
+2	0
+3	1
+
+# DOCS_TEST: example_002
+
+query
+SELECT i, IF(i > 2, 1, 0) AS test
+FROM integers;
+----
+i	test
+1	0
+2	0
+3	1
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS integers;
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE OR REPLACE TABLE integers AS SELECT unnest([1, 2, 3]) AS i;
+
+query
+SELECT i, CASE WHEN i = 1 THEN 10 WHEN i = 2 THEN 20 ELSE 0 END AS test
+FROM integers;
+----
+i	test
+1	10
+2	20
+3	0
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS integers;
+
+# DOCS_TEST: example_004
+
+statement ok
+CREATE OR REPLACE TABLE integers AS SELECT unnest([1, 2, 3]) AS i;
+
+query
+SELECT i, CASE WHEN i = 1 THEN 10 END AS test
+FROM integers;
+----
+i	test
+1	10
+2	NULL
+3	NULL
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS integers;
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE OR REPLACE TABLE integers AS SELECT unnest([1, 2, 3]) AS i;
+
+query
+SELECT i, CASE i WHEN 1 THEN 10 WHEN 2 THEN 20 WHEN 3 THEN 30 END AS test
+FROM integers;
+----
+i	test
+1	10
+2	20
+3	30
+
+# DOCS_TEST: example_006
+
+query
+SELECT i, CASE WHEN i = 1 THEN 10 WHEN i = 2 THEN 20 WHEN i = 3 THEN 30 END AS test
+FROM integers;
+----
+i	test
+1	10
+2	20
+3	30
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS integers;
+
+# DOCS_TEST: example_007
+
+statement ok
+CREATE OR REPLACE TABLE integers AS SELECT unnest([1, 2, 3]) AS i;
+
+query
+SELECT i, SWITCH(i, MAP {1: 'one', 2: 'two', 3: 'three'}) AS test
+FROM integers;
+----
+i	test
+1	one
+2	two
+3	three
+
+# DOCS_TEST: example_008
+
+query
+SELECT i, SWITCH(i, MAP {1: 'one', 2: 'two'}, 'other') AS test
+FROM integers;
+----
+i	test
+1	one
+2	two
+3	other

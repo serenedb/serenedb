@@ -1,0 +1,70 @@
+# DOCS_TEST: example_001
+
+statement ok
+BEGIN;
+
+# DOCS_TEST: example_002
+
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+
+# DOCS_TEST: example_003
+
+statement ok
+BEGIN;
+
+statement error
+INSERT INTO articles VALUES (10, 'New Article', 'content', 'engineering', '2025-03-01', 0);
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error
+UPDATE articles SET views = views + 1 WHERE id = 1;
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement ok
+COMMIT;
+
+# DOCS_TEST: example_004
+
+statement ok
+BEGIN;
+
+statement error
+DELETE FROM articles WHERE views < 100;
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement ok
+-- Oops, let's undo that
+ROLLBACK;
+
+# DOCS_TEST: example_005
+
+statement ok
+BEGIN;
+
+statement error
+-- Both operations succeed or both fail
+INSERT INTO accounts (id, balance) VALUES (1, 1000);
+----
+db error: ERROR: Table with name accounts does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error
+INSERT INTO accounts (id, balance) VALUES (2, 500);
+----
+db error: ERROR: Table with name accounts does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement ok
+COMMIT;

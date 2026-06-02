@@ -1,0 +1,104 @@
+# DOCS_TEST: example_001
+
+query
+SELECT current_setting('memory_limit') AS memlimit;
+----
+memlimit
+<slt:ignore>
+
+# DOCS_TEST: example_002
+
+statement ok
+SELECT value AS memlimit
+FROM duckdb_settings()
+WHERE name = 'memory_limit';
+
+# DOCS_TEST: example_003
+
+statement ok
+SET memory_limit = '10GB';
+
+# DOCS_TEST: example_004
+
+statement ok
+SET threads TO 1;
+
+# DOCS_TEST: example_005
+
+statement ok
+SET enable_logging = true;
+
+statement ok
+SET logging_level = 'debug';
+
+# DOCS_TEST: example_006
+
+query
+SELECT write_log('A new client has connected.', level := 'debug', scope := 'connection');
+----
+write_log
+NULL
+
+# DOCS_TEST: example_007
+
+query
+SELECT write_log(
+        'A new duck has connected to the lake.',
+        level := 'debug',
+        scope := 'connection',
+        log_type := 'duckdb.docs.example.quack'
+    );
+----
+write_log
+NULL
+
+# DOCS_TEST: example_008
+
+statement ok
+SELECT * FROM duckdb_logs WHERE log_level = 'DEBUG';
+
+# DOCS_TEST: example_009
+
+statement ok
+SELECT * FROM duckdb_logs WHERE type = 'QueryLog';
+
+# DOCS_TEST: example_010
+
+statement ok
+SELECT * FROM duckdb_settings() WHERE name LIKE '%logging%';
+
+# DOCS_TEST: example_011
+
+statement ok
+SET enable_progress_bar = true;
+
+# DOCS_TEST: example_012
+
+statement ok
+SET default_null_order = 'nulls_last';
+
+# DOCS_TEST: example_013
+
+query
+SELECT current_setting('threads') AS threads;
+----
+threads
+<slt:ignore>
+
+# DOCS_TEST: example_014
+
+statement ok
+SELECT *
+FROM duckdb_settings()
+WHERE name = 'threads';
+
+# DOCS_TEST: example_015
+
+statement ok
+SELECT *
+FROM duckdb_settings();
+
+# DOCS_TEST: example_016
+
+statement ok
+RESET memory_limit;

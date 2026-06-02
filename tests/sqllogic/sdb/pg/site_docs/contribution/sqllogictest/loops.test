@@ -1,0 +1,57 @@
+# These examples document sqllogictest syntax. They are rendered in docs
+# through SqlLogicTest; the executable record below each raw block is a no-op
+# that keeps this file valid for the sqllogictest runner.
+
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| # create the table 'integers' with values 0...100
+#| statement ok
+#| CREATE TABLE integers AS SELECT * FROM range(0, 100, 1) t1(i);
+#|
+#| # verify individually that all 100 values are there
+#| loop i 0 100
+#|
+#| # execute the query, replacing the value
+#| query I
+#| SELECT count(*) FROM integers WHERE i = ${i};
+#| ----
+#| 1
+#|
+#| # end the loop (note that multiple statements can be part of a loop)
+#| endloop
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_c3caa70f_001 (i INTEGER);
+
+# DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| foreach partcode millennium century decade year quarter month day hour minute second millisecond microsecond epoch
+#|
+#| query III
+#| SELECT i, date_part('${partcode}', i) AS p, date_part(['${partcode}'], i) AS st
+#| FROM intervals
+#| WHERE p <> st['${partcode}'];
+#| ----
+#|
+#| endloop
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_c3caa70f_002 (i INTEGER);
+
+# DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| CREATE TABLE integers AS SELECT * FROM range(0, 100, 1) t1(i);
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_c3caa70f_003 (i INTEGER);
+
+# DOCS_TEST: example_004
+# DOCS_RAW_BEGIN
+#| CREATE TABLE strings AS SELECT * FROM repeat('hello', 100) t1(s);
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_c3caa70f_004 (i INTEGER);

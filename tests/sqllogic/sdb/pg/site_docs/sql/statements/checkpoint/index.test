@@ -1,0 +1,27 @@
+# DOCS_TEST: example_001
+
+statement ok
+CHECKPOINT;
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: Database "file_db" not found
+CHECKPOINT file_db;
+
+# DOCS_TEST: example_003
+
+statement ok
+FORCE CHECKPOINT;
+
+# DOCS_SETUP
+
+statement ok
+DETACH IF EXISTS memory_compressed;
+
+# DOCS_TEST: example_004
+
+statement ok
+ATTACH ':memory:' AS memory_compressed (COMPRESS);
+
+statement ok
+USE memory_compressed;

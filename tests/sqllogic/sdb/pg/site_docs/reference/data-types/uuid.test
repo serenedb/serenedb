@@ -1,0 +1,19 @@
+# DOCS_TEST: example_001
+
+statement ok
+-- Create a table with a UUID primary key
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username TEXT
+);
+
+statement error db error: ERROR: Unsupported column type for RocksDB serialization: UUID
+-- Insert a record with automatic UUID generation
+INSERT INTO users (username) VALUES ('alice');
+
+query
+-- Generate a UUID with timestamp
+SELECT uuidv7() AS timestamped_uuid;
+----
+timestamped_uuid
+<slt:ignore>

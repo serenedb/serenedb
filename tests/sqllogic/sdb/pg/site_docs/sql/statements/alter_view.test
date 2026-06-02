@@ -1,0 +1,7 @@
+# DOCS_TEST: example_001
+
+statement error
+ALTER VIEW view1 RENAME TO view2;
+----
+db error: ERROR: View with name view1 does not exist!
+Did you mean "<slt:ignore>"?

@@ -1,0 +1,10 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: syntax error at or near "\."
+.mode line
+SELECT Prompt FROM sniff_csv('part-0001.csv');
+
+# DOCS_TEST: example_002
+
+query error (?i)No files found that match the pattern .*
+FROM read_csv('part-*.csv', auto_detect=false, delim=',', quote='"', escape='"', new_line='\n', skip=0, header=true, columns={'hello': 'BIGINT', 'world': 'VARCHAR'});

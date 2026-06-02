@@ -1,0 +1,42 @@
+# DOCS_TEST: example_001
+
+query
+SELECT
+    42 AS x,
+    ['a', 'b', 'c',] AS y,
+    'hello world' AS z,
+;
+----
+x	y	z
+42	{a,b,c}	hello world
+
+# DOCS_TEST: example_002
+
+query error
+SELECT * FROM t1;
+----
+db error: ERROR: Table with name t1 does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+query error
+SELECT array_agg(rs.val), rs.grp
+FROM
+    (SELECT val, grp, row_number() OVER (PARTITION BY grp ORDER BY val DESC) AS rid
+    FROM t1 ORDER BY val DESC) AS rs
+WHERE rid < 4
+GROUP BY rs.grp;
+----
+db error: ERROR: Table with name t1 does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+query error
+SELECT max(val, 3) FROM t1 GROUP BY grp;
+----
+db error: ERROR: Table with name t1 does not exist!
+Did you mean "<slt:ignore>"?

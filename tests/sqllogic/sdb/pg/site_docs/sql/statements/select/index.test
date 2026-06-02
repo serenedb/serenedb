@@ -1,0 +1,185 @@
+control substitution on
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_001
+
+query
+SELECT * FROM tbl;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_002
+
+query error
+SELECT j FROM tbl WHERE i = 3;
+----
+db error: ERROR: Referenced column "j" not found in FROM clause!
+Candidate bindings: "a"
+
+
+# DOCS_TEST: example_003
+
+query error
+SELECT i, sum(j) FROM tbl GROUP BY i;
+----
+db error: ERROR: Referenced column "j" not found in FROM clause!
+Candidate bindings: "a"
+
+
+# DOCS_TEST: example_004
+
+query
+SELECT * FROM tbl ORDER BY i DESC LIMIT 3;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+
+# DOCS_TEST: example_005
+
+query error
+SELECT * FROM t1 JOIN t2 USING (a, b);
+----
+db error: ERROR: Table with name t1 does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+query error
+SELECT #1, #3 FROM tbl;
+----
+db error: ERROR: Scalar Function with name # does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE addresses (
+    address VARCHAR,
+    city VARCHAR,
+    street_name VARCHAR,
+    income DOUBLE,
+    zip VARCHAR,
+    country VARCHAR,
+    population INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO addresses VALUES
+    ('123 Quack Blvd', 'DuckTown', 'Quack Blvd', 50000, '11111', 'NL', 100, 1, 10),
+    ('111 Duck Duck Goose Ln', 'DuckTown', 'Duck Duck Goose Ln', 60000, '11111', 'NL', 100, 2, 20),
+    ('111 Duck Duck Goose Ln', 'Duck Town', 'Duck Duck Goose Ln', 70000, '11111', 'US', 50, 3, 30),
+    ('111 Duck Duck Goose Ln', 'Duck Town', 'Duck Duck Goose Ln', 80000, '11111-0001', 'US', 50, 4, 40),
+    ('5 Pond Road', 'Mallard', 'Pond Road', 90000, '22222', 'UK', 25, 5, 50),
+    ('9 Lake View', 'Mallard', 'Lake View', 40000, '33333', 'UK', 25, 6, 60);
+
+# DOCS_TEST: example_007
+
+query ? rowsort
+SELECT DISTINCT city FROM addresses;
+----
+city
+Duck Town
+DuckTown
+Mallard
+
+# DOCS_TEST: example_008
+
+query
+SELECT d
+FROM (SELECT 1 AS a, 2 AS b) d;
+----
+d
+(1,2)
+
+# DOCS_TEST: example_009
+
+query error db error: ERROR: syntax error at or near "WHERE"
+SELECT ⟨select_list⟩
+FROM ⟨tables⟩
+    USING SAMPLE ⟨sample_expression⟩
+WHERE ⟨condition⟩
+GROUP BY ⟨groups⟩
+HAVING ⟨group_filter⟩
+    WINDOW ⟨window_expression⟩
+    QUALIFY ⟨qualify_filter⟩
+ORDER BY ⟨order_expression⟩
+LIMIT ⟨n⟩;
+
+# DOCS_TEST: example_010
+
+statement ok
+CREATE TABLE t (id INTEGER, content VARCHAR);
+
+statement ok
+INSERT INTO t VALUES (42, 'hello'), (43, 'world');
+
+query
+SELECT rowid, id, content FROM t;
+----
+rowid	id	content
+1	42	hello
+2	43	world
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+# DOCS_TEST: example_011
+
+statement ok
+CREATE OR REPLACE TABLE t AS (FROM range(10) r(i));
+
+statement ok
+DELETE FROM t WHERE i % 2 = 0;
+
+query
+SELECT rowid FROM t;
+----
+rowid
+2
+4
+6
+8
+10

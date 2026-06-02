@@ -1,0 +1,14 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://blobs\.duckdb\.org/nl\-railway/services\-2025\-03\.csv\.gz'
+CREATE TABLE services AS
+    FROM 'https://blobs.duckdb.org/nl-railway/services-2025-03.csv.gz';
+
+# DOCS_TEST: example_002
+
+query error
+DESCRIBE services;
+----
+db error: ERROR: unrecognized configuration parameter "services"
+
+Did you mean: "preserve_identifier_case"

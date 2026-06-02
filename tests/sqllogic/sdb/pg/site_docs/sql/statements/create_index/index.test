@@ -1,0 +1,49 @@
+# DOCS_TEST: example_001
+
+statement error
+CREATE UNIQUE INDEX films_id_idx ON films (id);
+----
+db error: ERROR: Table with name films does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+statement error
+CREATE INDEX s_idx ON films (revenue);
+----
+db error: ERROR: Table with name films does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+statement error
+CREATE INDEX IF NOT EXISTS s_idx ON films (revenue);
+----
+db error: ERROR: Table with name films does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+statement error
+CREATE INDEX gy_idx ON films (genre, year);
+----
+db error: ERROR: Table with name films does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_005
+
+statement error
+CREATE INDEX i_index ON integers ((j + k));
+----
+db error: ERROR: Table with name integers does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+statement error db error: ERROR: Index with name title_idx does not exist!
+DROP INDEX title_idx;

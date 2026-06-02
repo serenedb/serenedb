@@ -1,0 +1,300 @@
+# DOCS_TEST: example_001
+
+query
+SELECT CAST(NULL AS JSON);
+----
+json
+NULL
+
+query
+SELECT CAST(1 AS JSON);
+----
+json
+1
+
+query
+SELECT CAST(9223372036854775807 AS JSON);
+----
+json
+9223372036854775807
+
+query error (?i)Malformed JSON.*
+SELECT CAST('abc' AS JSON);
+
+query
+SELECT CAST(true AS JSON);
+----
+json
+true
+
+query
+SELECT CAST(1.234 AS JSON);
+----
+json
+1.234
+
+query
+SELECT CAST(-0.00012 AS JSON);
+----
+json
+-0.00012
+
+query
+SELECT CAST(10000000.0 AS JSON);
+----
+json
+10000000.0
+
+query
+SELECT CAST(ARRAY[1, 23, 456] AS JSON);
+----
+array
+[1,23,456]
+
+query
+SELECT CAST(ARRAY[1, NULL, 456] AS JSON);
+----
+array
+[1,null,456]
+
+query
+SELECT CAST(ARRAY[ARRAY[1, 23], ARRAY[456]] AS JSON);
+----
+array
+[[1,23],[456]]
+
+query
+SELECT CAST(MAP_FROM_ENTRIES(ARRAY[('k1', 1), ('k2', 23), ('k3', 456)]) AS JSON);
+----
+map_from_entries
+{"k1":1,"k2":23,"k3":456}
+
+query
+SELECT CAST(CAST(ROW(123, 'abc', true, JSON '["a"]') AS ROW(v1 BIGINT, v2 VARCHAR, v3 BOOLEAN, v4 JSON)) AS JSON);
+----
+row
+{"v1":123,"v2":"abc","v3":true,"v4":["a"]}
+
+# DOCS_TEST: example_002
+
+query
+SELECT CAST(JSON 'null' AS VARCHAR);
+----
+text
+null
+
+query
+SELECT CAST(JSON '1' AS INTEGER);
+----
+int4
+1
+
+query
+SELECT CAST(JSON '9223372036854775807' AS BIGINT);
+----
+int8
+9223372036854775807
+
+query
+SELECT CAST(JSON '"abc"' AS VARCHAR);
+----
+text
+"abc"
+
+query
+SELECT CAST(JSON 'true' AS BOOLEAN);
+----
+bool
+t
+
+query
+SELECT CAST(JSON '1.234' AS DOUBLE);
+----
+float8
+1.234
+
+query error db error: ERROR: syntax error at or near "ARRAY"
+SELECT CAST(JSON '[1,23,456]' AS ARRAY(INTEGER));
+
+query error db error: ERROR: syntax error at or near "ARRAY"
+SELECT CAST(JSON '[1,null,456]' AS ARRAY(INTEGER));
+
+query error db error: ERROR: syntax error at or near "ARRAY"
+SELECT CAST(JSON '[[1,23],[456]]' AS ARRAY(ARRAY(INTEGER)));
+
+query error (?i)Malformed JSON.*
+SELECT CAST(JSON '\{"k1":1,"k2":23,"k3":456\}' AS MAP(VARCHAR, INTEGER));
+
+query error (?i)Malformed JSON.*
+SELECT CAST(JSON '\{"v1":123,"v2":"abc","v3":true\}' AS ROW(v1 BIGINT, v2 VARCHAR, v3 BOOLEAN));
+
+query error (?i)Malformed JSON.*
+SELECT CAST(JSON '\{"V1":123,"V2":"abc","V3":true\}' AS ROW(v1 BIGINT, v2 VARCHAR, v3 BOOLEAN));
+
+query error db error: ERROR: Expected OBJECT, but got ARRAY: \[123,"abc",true\]
+SELECT CAST(JSON '[123,"abc",true]' AS ROW(v1 BIGINT, v2 VARCHAR, v3 BOOLEAN));
+
+# DOCS_TEST: example_003
+
+query error
+SELECT is_json_scalar('1');
+----
+db error: ERROR: Scalar Function with name is_json_scalar does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error db error: ERROR: syntax error at or near "\*"
+*-- true*
+SELECT is_json_scalar('[1, 2, 3]');
+
+statement error db error: ERROR: syntax error at or near "\*"
+*-- false*
+
+# DOCS_TEST: example_004
+
+query error
+SELECT json_array_contains('[1, 2, 3]', 2);
+----
+db error: ERROR: Scalar Function with name json_array_contains does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_005
+
+query error
+SELECT json_array_get('[1, 2, 3]', 0);
+----
+db error: ERROR: Scalar Function with name json_array_get does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT json_array_get('[1, 2, 3]', 1);
+----
+db error: ERROR: Scalar Function with name json_array_get does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+query error
+SELECT json_array_get('[1, 2, 3]', -1);
+----
+db error: ERROR: Scalar Function with name json_array_get does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT json_array_get('[1, 2, 3]', -2);
+----
+db error: ERROR: Scalar Function with name json_array_get does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_007
+
+query error
+SELECT json_array_get('[1, 2, 3]', 10);
+----
+db error: ERROR: Scalar Function with name json_array_get does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT json_array_get('[1, 2, 3]', -10);
+----
+db error: ERROR: Scalar Function with name json_array_get does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_008
+
+query error
+SELECT json_array_get('\{"a": 10, "b": 11\}', 1);
+----
+db error: ERROR: Scalar Function with name json_array_get does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_009
+
+query
+SELECT json_array_length('[1, 2, 3]');
+----
+json_array_length
+3
+
+# DOCS_TEST: example_010
+
+query error db error: ERROR: Referenced column "json" was not found because the FROM clause is missing
+SELECT json_extract(json, '$.store.book');
+
+# DOCS_TEST: example_011
+
+query error
+SELECT json_extract_scalar('[1, 2, 3]', '$[2]');
+----
+db error: ERROR: Scalar Function with name json_extract_scalar does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT json_extract_scalar(json, '$.store.book[0].author');
+----
+db error: ERROR: Scalar Function with name json_extract_scalar does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_012
+
+query error
+SELECT json_format(JSON '[1, 2, 3]');
+----
+db error: ERROR: Scalar Function with name json_format does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT json_format(JSON '"a"');
+----
+db error: ERROR: Scalar Function with name json_format does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_013
+
+query error
+SELECT json_parse('[1, 2, 3]');
+----
+db error: ERROR: Scalar Function with name json_parse does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT json_parse('"abc"');
+----
+db error: ERROR: Scalar Function with name json_parse does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_014
+
+query error
+SELECT json_size('\{"x": \{"a": 1, "b": 2\}\}', '$.x');
+----
+db error: ERROR: Scalar Function with name json_size does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT json_size('\{"x": [1, 2, 3]\}', '$.x');
+----
+db error: ERROR: Scalar Function with name json_size does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT json_size('\{"x": \{"a": 1, "b": 2\}\}', '$.x.a');
+----
+db error: ERROR: Scalar Function with name json_size does not exist!
+Did you mean "<slt:ignore>"?

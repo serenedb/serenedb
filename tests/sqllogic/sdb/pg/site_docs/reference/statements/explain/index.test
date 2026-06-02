@@ -1,0 +1,16 @@
+# DOCS_TEST: example_001
+
+query error
+EXPLAIN SELECT * FROM articles WHERE category = 'engineering';
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+query error
+EXPLAIN ANALYZE SELECT category, COUNT(*) FROM articles GROUP BY category;
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?

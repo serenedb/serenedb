@@ -1,0 +1,31 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE SCHEMA s1;
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS s2;
+
+# DOCS_TEST: example_003
+
+statement error db error: ERROR: schema "s2" already exists
+CREATE OR REPLACE SCHEMA s2;
+
+# DOCS_TEST: example_004
+
+statement ok
+CREATE TABLE s1.t (id INTEGER PRIMARY KEY, other_id INTEGER);
+
+statement ok
+CREATE TABLE s2.t (id INTEGER PRIMARY KEY, j VARCHAR);
+
+# DOCS_TEST: example_005
+
+query
+SELECT *
+FROM s1.t s1t, s2.t s2t
+WHERE s1t.other_id = s2t.id;
+----
+id	other_id	id	j

@@ -1,0 +1,85 @@
+# DOCS_TEST: example_001
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM 'dir/*.csv';
+
+# DOCS_TEST: example_002
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM '*/*/*.csv';
+
+# DOCS_TEST: example_003
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM 'dir/**/*.csv';
+
+# DOCS_TEST: example_004
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_csv(['flights1.csv', 'flights2.csv']);
+
+# DOCS_TEST: example_005
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_csv(['flights1.csv', 'flights2.csv'], union_by_name = true, filename = true);
+
+# DOCS_TEST: example_006
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM 'test/*.parquet';
+
+# DOCS_TEST: example_007
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet(['file1.parquet', 'file2.parquet', 'file3.parquet']);
+
+# DOCS_TEST: example_008
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet(['folder1/*.parquet', 'folder2/*.parquet']);
+
+# DOCS_TEST: example_009
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet('dir/**/*.parquet');
+
+# DOCS_TEST: example_010
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet(['file1.parquet', 'file2.parquet', 'file3.parquet']);
+
+# DOCS_TEST: example_011
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet('test/*.parquet');
+
+# DOCS_TEST: example_012
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet(['folder1/*.parquet', 'folder2/*.parquet']);
+
+# DOCS_TEST: example_013
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_csv(['flights1.csv', 'flights2.csv'], union_by_name = true, filename = true);
+
+# DOCS_TEST: example_014
+
+query
+SELECT *
+FROM glob('*');
+----
+file

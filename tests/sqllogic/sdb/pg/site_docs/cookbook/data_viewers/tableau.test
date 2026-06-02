@@ -1,0 +1,6 @@
+# DOCS_TEST: example_001
+
+statement error (?i)No files found that match the pattern .*
+CREATE VIEW h2oai AS (
+    FROM read_parquet('/Users/username/duckdb/data/parquet-testing/h2oai/h2oai_group_small.parquet')
+);

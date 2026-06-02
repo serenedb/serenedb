@@ -1,0 +1,23 @@
+# DOCS_TEST: example_001
+
+query
+SELECT true, false, NULL::BOOLEAN;
+----
+bool	bool	bool
+t	f	NULL
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE TABLE integers (i INTEGER);
+
+statement ok
+INSERT INTO integers VALUES (5), (15), (NULL);
+
+# DOCS_TEST: example_003
+
+query
+SELECT * FROM integers WHERE i > 10;
+----
+i
+15

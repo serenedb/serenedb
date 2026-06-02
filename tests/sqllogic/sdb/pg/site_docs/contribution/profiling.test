@@ -1,0 +1,29 @@
+# DOCS_TEST: example_001
+
+statement ok
+EXPLAIN (FORMAT html) SELECT 42 AS x;
+
+# DOCS_TEST: example_002
+
+query
+CALL enable_profiling(
+    format := 'json',
+    save_location := '/path/to/output.json',
+    coverage := 'select',
+    mode := 'standard',
+    metrics := ['QUERY_NAME', 'LATENCY', 'OPERATOR_TIMING']
+);
+----
+success
+
+# DOCS_TEST: example_003
+
+query error (?i)Cannot open file .*
+CALL enable_profiling(['LATENCY', 'RESULT_SET_SIZE']);
+
+# DOCS_TEST: example_004
+
+query
+CALL disable_profiling();
+----
+success

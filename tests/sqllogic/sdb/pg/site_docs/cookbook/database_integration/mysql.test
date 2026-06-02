@@ -1,0 +1,72 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement error
+INSTALL mysql;
+----
+db error: ERROR: Failed to download extension "mysql_scanner" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/mysql_scanner.duckdb_extension.gz"
+Extension "mysql_scanner" is an existing extension.
+
+For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=mysql_scanner (ERROR Problem with the SSL CA cert (path? access rights?))
+
+
+# DOCS_TEST: example_002
+
+statement error
+LOAD mysql;
+----
+db error: ERROR: Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/mysql_scanner.duckdb_extension" not found.
+Extension "mysql" is an existing extension.
+
+Install it first using "INSTALL mysql".
+
+
+# DOCS_TEST: example_003
+
+statement error
+ATTACH 'host=localhost user=root port=0 database=mysqlscanner' AS mysql_db (TYPE mysql, READ_ONLY);
+----
+db error: ERROR: Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/mysql_scanner.duckdb_extension" not found.
+Extension "mysql" is an existing extension.
+
+Install it first using "INSTALL mysql".
+
+
+statement ok
+USE mysql_db;
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_004
+
+statement error db error: ERROR: relation "tbl" already exists
+CREATE TABLE tbl (id INTEGER, name VARCHAR);
+
+statement error db error: ERROR: table tbl has 12 columns but 2 values were supplied
+INSERT INTO tbl VALUES (42, 'DuckDB');

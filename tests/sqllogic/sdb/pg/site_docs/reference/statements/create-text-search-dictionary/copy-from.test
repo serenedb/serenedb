@@ -1,0 +1,37 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY english_upper (
+    TEMPLATE = 'copy_from',
+    FROM = 'english_dict',
+    CASE = 'upper'
+);
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY pipe_variant (
+    TEMPLATE = 'copy_from',
+    FROM = 'pipe_dict',
+    STEP1_DELIMITER = '|',
+    STEP2_CASE = 'upper'
+);
+
+# DOCS_TEST: example_003
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY pipe_extended (
+    TEMPLATE = 'copy_from',
+    FROM = 'pipe_dict',
+    STEP3_TEMPLATE = 'stopwords',
+    STEP3_STOPWORDS = '"bar","foo"'
+);
+
+# DOCS_TEST: example_004
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY minhash_variant (
+    TEMPLATE = 'copy_from',
+    FROM = 'minhash_text',
+    ANALYZER_STOPWORDS = '"fox"'
+);

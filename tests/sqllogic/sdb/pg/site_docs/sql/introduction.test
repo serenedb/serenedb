@@ -1,0 +1,297 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE weather (
+    city    VARCHAR,
+    temp_lo INTEGER, -- minimum temperature on a day
+    temp_hi INTEGER, -- maximum temperature on a day
+    prcp    FLOAT,
+    date    DATE
+);
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE TABLE cities (
+    name VARCHAR,
+    lat  DECIMAL,
+    lon  DECIMAL
+);
+
+# DOCS_TEST: example_003
+
+statement error
+DROP TABLE ⟨tablename⟩;
+----
+db error: ERROR: Table with name ⟨tablename⟩ does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+statement ok
+INSERT INTO weather
+VALUES ('San Francisco', 46, 50, 0.25, '1994-11-27');
+
+# DOCS_TEST: example_005
+
+statement error db error: ERROR: Unsupported column type for RocksDB serialization: DECIMAL
+INSERT INTO cities
+VALUES ('San Francisco', -194.0, 53.0);
+
+# DOCS_TEST: example_006
+
+statement ok
+INSERT INTO weather (city, temp_lo, temp_hi, prcp, date)
+VALUES ('San Francisco', 43, 57, 0.0, '1994-11-29');
+
+# DOCS_TEST: example_007
+
+statement ok
+INSERT INTO weather (date, city, temp_hi, temp_lo)
+VALUES ('1994-11-29', 'Hayward', 54, 37);
+
+# DOCS_TEST: example_008
+
+statement error (?i)No files found that match the pattern .*
+COPY weather
+FROM 'weather.csv';
+
+# DOCS_TEST: example_009
+
+query
+SELECT *
+FROM weather;
+----
+city	temp_lo	temp_hi	prcp	date
+San Francisco	46	50	0.25	1994-11-27
+San Francisco	43	57	0	1994-11-29
+Hayward	37	54	NULL	1994-11-29
+
+# DOCS_TEST: example_010
+
+query
+SELECT city, temp_lo, temp_hi, prcp, date
+FROM weather;
+----
+city	temp_lo	temp_hi	prcp	date
+San Francisco	46	50	0.25	1994-11-27
+San Francisco	43	57	0	1994-11-29
+Hayward	37	54	NULL	1994-11-29
+
+# DOCS_TEST: example_011
+
+query
+SELECT city, (temp_hi + temp_lo) / 2 AS temp_avg, date
+FROM weather;
+----
+city	temp_avg	date
+San Francisco	48	1994-11-27
+San Francisco	50	1994-11-29
+Hayward	45	1994-11-29
+
+# DOCS_TEST: example_012
+
+query
+SELECT *
+FROM weather
+WHERE city = 'San Francisco'
+  AND prcp > 0.0;
+----
+city	temp_lo	temp_hi	prcp	date
+San Francisco	46	50	0.25	1994-11-27
+
+# DOCS_TEST: example_013
+
+query
+SELECT *
+FROM weather
+ORDER BY city;
+----
+city	temp_lo	temp_hi	prcp	date
+Hayward	37	54	NULL	1994-11-29
+San Francisco	46	50	0.25	1994-11-27
+San Francisco	43	57	0	1994-11-29
+
+# DOCS_TEST: example_014
+
+query
+SELECT *
+FROM weather
+ORDER BY city, temp_lo;
+----
+city	temp_lo	temp_hi	prcp	date
+Hayward	37	54	NULL	1994-11-29
+San Francisco	43	57	0	1994-11-29
+San Francisco	46	50	0.25	1994-11-27
+
+# DOCS_TEST: example_015
+
+query ? rowsort
+SELECT DISTINCT city
+FROM weather;
+----
+city
+Hayward
+San Francisco
+
+# DOCS_TEST: example_016
+
+query
+SELECT DISTINCT city
+FROM weather
+ORDER BY city;
+----
+city
+Hayward
+San Francisco
+
+# DOCS_TEST: example_017
+
+query
+SELECT *
+FROM weather, cities
+WHERE city = name;
+----
+city	temp_lo	temp_hi	prcp	date	name	lat	lon
+
+# DOCS_TEST: example_018
+
+query
+SELECT city, temp_lo, temp_hi, prcp, date, lon, lat
+FROM weather, cities
+WHERE city = name;
+----
+city	temp_lo	temp_hi	prcp	date	lon	lat
+
+# DOCS_TEST: example_019
+
+query
+SELECT weather.city, weather.temp_lo, weather.temp_hi,
+       weather.prcp, weather.date, cities.lon, cities.lat
+FROM weather, cities
+WHERE cities.name = weather.city;
+----
+city	temp_lo	temp_hi	prcp	date	lon	lat
+
+# DOCS_TEST: example_020
+
+query
+SELECT *
+FROM weather
+INNER JOIN cities ON weather.city = cities.name;
+----
+city	temp_lo	temp_hi	prcp	date	name	lat	lon
+
+# DOCS_TEST: example_021
+
+query
+SELECT *
+FROM weather
+LEFT OUTER JOIN cities ON weather.city = cities.name;
+----
+city	temp_lo	temp_hi	prcp	date	name	lat	lon
+San Francisco	46	50	0.25	1994-11-27	NULL	NULL	NULL
+San Francisco	43	57	0	1994-11-29	NULL	NULL	NULL
+Hayward	37	54	NULL	1994-11-29	NULL	NULL	NULL
+
+# DOCS_TEST: example_022
+
+query
+SELECT max(temp_lo)
+FROM weather;
+----
+max
+46
+
+# DOCS_TEST: example_023
+
+query error db error: ERROR: WHERE clause cannot contain aggregates!
+SELECT city
+FROM weather
+WHERE temp_lo = max(temp_lo);
+
+# DOCS_TEST: example_024
+
+query
+SELECT city
+FROM weather
+WHERE temp_lo = (SELECT max(temp_lo) FROM weather);
+----
+city
+San Francisco
+
+# DOCS_TEST: example_025
+
+query ?? rowsort
+SELECT city, max(temp_lo)
+FROM weather
+GROUP BY city;
+----
+city	max
+Hayward	37
+San Francisco	46
+
+# DOCS_TEST: example_026
+
+query ?? rowsort
+SELECT city, max(temp_lo)
+FROM weather
+GROUP BY city
+HAVING max(temp_lo) < 40;
+----
+city	max
+Hayward	37
+
+# DOCS_TEST: example_027
+
+query ?? rowsort
+SELECT city, max(temp_lo)
+FROM weather
+WHERE city LIKE 'S%'            -- (1)
+GROUP BY city
+HAVING max(temp_lo) < 40;
+----
+city	max
+
+# DOCS_TEST: example_028
+
+statement ok
+UPDATE weather
+SET temp_hi = temp_hi - 2,  temp_lo = temp_lo - 2
+WHERE date > '1994-11-28';
+
+# DOCS_TEST: example_029
+
+query
+SELECT *
+FROM weather;
+----
+city	temp_lo	temp_hi	prcp	date
+San Francisco	46	50	0.25	1994-11-27
+San Francisco	41	55	0	1994-11-29
+Hayward	35	52	NULL	1994-11-29
+
+# DOCS_TEST: example_030
+
+statement ok
+DELETE FROM weather
+WHERE city = 'Hayward';
+
+# DOCS_TEST: example_031
+
+query
+SELECT *
+FROM weather;
+----
+city	temp_lo	temp_hi	prcp	date
+San Francisco	46	50	0.25	1994-11-27
+San Francisco	41	55	0	1994-11-29
+
+# DOCS_TEST: example_032
+
+statement error
+DELETE FROM ⟨table_name⟩;
+----
+db error: ERROR: Table with name ⟨table_name⟩ does not exist!
+Did you mean "<slt:ignore>"?

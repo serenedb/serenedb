@@ -1,0 +1,22 @@
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| CREATE SECRET my_secret (
+#|     TYPE s3,
+#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
+#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩',
+#|     URL_STYLE 'path',
+#|     REGION '⟨us-east⟩',
+#|     ENDPOINT '⟨us-east⟩.object.fastlystorage.app' -- see note below
+#| );
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_a8cfe5a9_001 (i INTEGER);
+
+# DOCS_TEST: example_002
+
+query error (?i)Could not resolve hostname error .*
+SELECT * FROM 's3://⟨fastly-bucket-name⟩/(file).csv';
+
+query error (?i)Could not resolve hostname error .*
+SELECT * FROM read_parquet('s3://⟨fastly-bucket-name⟩/⟨file⟩.parquet');

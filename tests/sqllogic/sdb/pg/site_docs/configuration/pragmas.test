@@ -1,0 +1,489 @@
+# DOCS_TEST: example_001
+
+statement ok
+PRAGMA database_list;
+
+# DOCS_TEST: example_002
+
+statement ok
+PRAGMA show_tables;
+
+# DOCS_TEST: example_003
+
+statement ok
+PRAGMA show_tables_expanded;
+
+# DOCS_TEST: example_004
+
+statement ok
+PRAGMA functions;
+
+# DOCS_TEST: example_005
+
+statement ok
+SET catalog_error_max_schemas = 10;
+
+# DOCS_TEST: example_006
+
+query error
+PRAGMA table_info('table_name');
+----
+db error: ERROR: Table with name table_name does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+CALL pragma_table_info('table_name');
+----
+db error: ERROR: Table with name table_name does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_007
+
+statement error db error: ERROR: syntax error at or near "cid"
+cid INTEGER,        -- cid of the column
+name VARCHAR,       -- name of the column
+type VARCHAR,       -- type of the column
+notnull BOOLEAN,    -- if the column is marked as NOT NULL
+dflt_value VARCHAR, -- default value of the column, or NULL if not specified
+pk BOOLEAN          -- part of the primary key or not
+
+# DOCS_TEST: example_008
+
+statement ok
+PRAGMA database_size;
+
+statement ok
+CALL pragma_database_size();
+
+# DOCS_TEST: example_009
+
+statement error db error: ERROR: syntax error at or near "database_name"
+database_name VARCHAR, -- database name
+database_size VARCHAR, -- total block count times the block size
+block_size BIGINT,     -- database block size
+total_blocks BIGINT,   -- total blocks in the database
+used_blocks BIGINT,    -- used blocks in the database
+free_blocks BIGINT,    -- free blocks in the database
+wal_size VARCHAR,      -- write ahead log size
+memory_usage VARCHAR,  -- memory used by the database buffer manager
+memory_limit VARCHAR   -- maximum memory allowed for the database
+
+# DOCS_TEST: example_010
+
+query error
+PRAGMA storage_info('table_name');
+----
+db error: ERROR: Table with name table_name does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+CALL pragma_storage_info('table_name');
+----
+db error: ERROR: Table with name table_name does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_011
+
+statement ok
+PRAGMA show_databases;
+
+# DOCS_TEST: example_012
+
+statement ok
+SET memory_limit = '1GB';
+
+# DOCS_TEST: example_013
+
+statement ok
+SET threads = 4;
+
+# DOCS_TEST: example_014
+# DOCS_RAW_BEGIN
+#| PRAGMA collations;
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_51513bdc_001 (i INTEGER);
+
+# DOCS_TEST: example_015
+# DOCS_RAW_BEGIN
+#| SET default_collation = 'nocase';
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_51513bdc_002 (i INTEGER);
+
+# DOCS_TEST: example_016
+# DOCS_RAW_BEGIN
+#| SET default_null_order = 'NULLS_FIRST';
+#|
+#| SET default_null_order = 'NULLS_LAST_ON_ASC_FIRST_ON_DESC';
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_51513bdc_003 (i INTEGER);
+
+# DOCS_TEST: example_017
+# DOCS_RAW_BEGIN
+#| SET default_order = 'ASCENDING';
+#|
+#| SET default_order = 'DESCENDING';
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_51513bdc_004 (i INTEGER);
+
+# DOCS_TEST: example_018
+
+query error
+SELECT 42 ORDER BY 'hello world';
+----
+db error: ERROR: ORDER BY non-integer literal has no effect.
+* SET order_by_non_integer_literal=true to allow this behavior.
+
+
+# DOCS_TEST: example_019
+# DOCS_RAW_BEGIN
+#| SET order_by_non_integer_literal = true;
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_51513bdc_005 (i INTEGER);
+
+# DOCS_TEST: example_020
+
+query
+PRAGMA version;
+----
+library_version	source_id	codename
+v0.0.1	8c42e3b1	Unknown Version
+
+query
+CALL pragma_version();
+----
+library_version	source_id	codename
+v0.0.1	8c42e3b1	Unknown Version
+
+# DOCS_TEST: example_021
+
+query
+PRAGMA platform;
+----
+platform
+linux_arm64
+
+query
+CALL pragma_platform();
+----
+platform
+linux_arm64
+
+# DOCS_TEST: example_022
+
+query
+PRAGMA user_agent;
+----
+user_agent
+duckdb/v0.0.1(linux_arm64) cpp
+
+# DOCS_TEST: example_023
+
+query
+PRAGMA metadata_info;
+----
+block_id	total_blocks	free_blocks	free_list
+
+# DOCS_TEST: example_024
+
+query
+PRAGMA enable_progress_bar;
+----
+Success
+
+# DOCS_TEST: example_025
+
+query
+PRAGMA enable_print_progress_bar;
+----
+Success
+
+# DOCS_TEST: example_026
+
+query
+PRAGMA disable_progress_bar;
+----
+Success
+
+# DOCS_TEST: example_027
+
+query
+PRAGMA disable_print_progress_bar;
+----
+Success
+
+# DOCS_TEST: example_028
+
+statement ok
+SET explain_output = 'physical_only';
+
+# DOCS_TEST: example_029
+
+statement ok
+SET explain_output = 'optimized_only';
+
+# DOCS_TEST: example_030
+
+statement ok
+SET explain_output = 'all';
+
+# DOCS_TEST: example_031
+
+query
+PRAGMA enable_profiling;
+----
+Success
+
+query
+PRAGMA enable_profile;
+----
+Success
+
+# DOCS_TEST: example_032
+
+statement ok
+SET profiling_coverage = 'SELECT';
+
+# DOCS_TEST: example_033
+
+statement ok
+SET profiling_coverage = 'ALL';
+
+# DOCS_TEST: example_034
+
+statement ok
+SET enable_profiling = 'query_tree';
+
+# DOCS_TEST: example_035
+
+statement ok
+SET enable_profiling = 'json';
+
+# DOCS_TEST: example_036
+
+statement ok
+SET enable_profiling = 'query_tree_optimizer';
+
+# DOCS_TEST: example_037
+
+statement ok
+SET enable_profiling = 'no_output';
+
+# DOCS_TEST: example_038
+
+statement ok
+SET profiling_output = '/path/to/file.json';
+
+statement ok
+SET profile_output = '/path/to/file.json';
+
+# DOCS_TEST: example_039
+
+statement ok
+SET profiling_mode = 'standard';
+
+# DOCS_TEST: example_040
+
+statement ok
+SET profiling_mode = 'detailed';
+
+# DOCS_TEST: example_041
+
+statement ok
+SET profiling_mode = 'all';
+
+# DOCS_TEST: example_042
+
+statement ok
+SET custom_profiling_settings = '{"CPU_TIME": "false", "EXTRA_INFO": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_TIMING": "true"}';
+
+# DOCS_TEST: example_043
+
+query
+PRAGMA disable_profiling;
+----
+Success
+
+query
+PRAGMA disable_profile;
+----
+Success
+
+# DOCS_TEST: example_044
+
+query
+PRAGMA disable_optimizer;
+----
+Success
+
+# DOCS_TEST: example_045
+
+query
+PRAGMA enable_optimizer;
+----
+Success
+
+# DOCS_TEST: example_046
+
+statement ok
+SET disabled_optimizers = 'filter_pushdown,statistics_propagation';
+
+# DOCS_TEST: example_047
+
+statement ok
+SET disabled_optimizers = '';
+
+# DOCS_TEST: example_048
+
+statement error (?i)Cannot open file .*
+SET log_query_path = '/tmp/duckdb_log/';
+
+# DOCS_TEST: example_049
+
+statement ok
+SET log_query_path = '';
+
+# DOCS_TEST: example_050
+
+query
+PRAGMA verify_external;
+----
+Success
+
+# DOCS_TEST: example_051
+
+query
+PRAGMA disable_verify_external;
+----
+Success
+
+# DOCS_TEST: example_052
+
+query
+PRAGMA verify_serializer;
+----
+Success
+
+# DOCS_TEST: example_053
+
+query
+PRAGMA disable_verify_serializer;
+----
+Success
+
+# DOCS_TEST: example_054
+
+query
+PRAGMA enable_object_cache;
+----
+Success
+
+# DOCS_TEST: example_055
+
+query
+PRAGMA disable_object_cache;
+----
+Success
+
+# DOCS_TEST: example_056
+
+query
+PRAGMA force_compression = 'bitpacking';
+----
+
+# DOCS_TEST: example_057
+
+query
+PRAGMA disabled_compression_methods = 'fsst,rle';
+----
+
+# DOCS_TEST: example_058
+
+query
+PRAGMA force_checkpoint;
+----
+Success
+
+# DOCS_TEST: example_059
+
+query
+PRAGMA enable_checkpoint_on_shutdown;
+----
+Success
+
+# DOCS_TEST: example_060
+
+query
+PRAGMA disable_checkpoint_on_shutdown;
+----
+Success
+
+# DOCS_TEST: example_061
+
+statement ok
+SET temp_directory = '/path/to/temp_dir.tmp/';
+
+# DOCS_TEST: example_062
+
+statement ok
+SET errors_as_json = true;
+
+# DOCS_TEST: example_063
+
+query error
+SELECT * FROM nonexistent_tbl;
+----
+db error: ERROR: Table with name nonexistent_tbl does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_064
+
+statement ok
+SET ieee_floating_point_ops = false;
+
+# DOCS_TEST: example_065
+
+query
+PRAGMA enable_verification;
+----
+Success
+
+# DOCS_TEST: example_066
+
+query
+PRAGMA disable_verification;
+----
+Success
+
+# DOCS_TEST: example_067
+
+query
+PRAGMA verify_parallelism;
+----
+Success
+
+# DOCS_TEST: example_068
+
+query
+PRAGMA disable_verify_parallelism;
+----
+Success
+
+# DOCS_TEST: example_069
+
+statement ok
+SET default_block_size = '16384';

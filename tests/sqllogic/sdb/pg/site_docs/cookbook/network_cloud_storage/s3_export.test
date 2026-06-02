@@ -1,0 +1,68 @@
+# DOCS_TEST: example_001
+
+statement error
+INSTALL httpfs;
+----
+db error: ERROR: Failed to download extension "httpfs" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/httpfs.duckdb_extension.gz"
+Extension "httpfs" is an existing extension.
+
+For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=httpfs (ERROR Problem with the SSL CA cert (path? access rights?))
+
+
+# DOCS_TEST: example_002
+
+statement ok
+LOAD httpfs;
+
+# DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| CREATE SECRET (
+#|     TYPE s3,
+#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
+#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩',
+#|     REGION '⟨us-east-1⟩'
+#| );
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_5893ec35_001 (i INTEGER);
+
+# DOCS_TEST: example_004
+# DOCS_RAW_BEGIN
+#| CREATE SECRET (
+#|     TYPE s3,
+#|     PROVIDER credential_chain
+#| );
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_5893ec35_002 (i INTEGER);
+
+# DOCS_TEST: example_005
+
+statement error
+COPY ⟨table_name⟩ TO 's3://⟨s3-bucket⟩/⟨filename⟩.parquet';
+----
+db error: ERROR: Table with name ⟨table_name⟩ does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+# DOCS_RAW_BEGIN
+#| CREATE SECRET (
+#|     TYPE gcs,
+#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
+#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩'
+#| );
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_5893ec35_003 (i INTEGER);
+
+# DOCS_TEST: example_007
+
+statement error
+COPY ⟨table_name⟩ TO 'gs://⟨gcs_bucket⟩/⟨filename⟩.parquet';
+----
+db error: ERROR: Table with name ⟨table_name⟩ does not exist!
+Did you mean "<slt:ignore>"?

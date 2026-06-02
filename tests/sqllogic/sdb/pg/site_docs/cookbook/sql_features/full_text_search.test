@@ -1,0 +1,38 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://blobs\.duckdb\.org/data/shakespeare\.parquet'
+CREATE TABLE corpus AS
+    SELECT * FROM 'https://blobs.duckdb.org/data/shakespeare.parquet';
+
+# DOCS_TEST: example_002
+
+query error
+DESCRIBE corpus;
+----
+db error: ERROR: unrecognized configuration parameter "corpus"
+
+Did you mean: "consolidation_interval"
+
+
+# DOCS_TEST: example_003
+
+query error
+PRAGMA create_fts_index('corpus', 'line_id', 'text_entry');
+----
+db error: ERROR: Pragma Function with name "create_fts_index" is not in the catalog, but it exists in the fts extension.
+
+This feature relies on the "fts" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+
+# DOCS_TEST: example_004
+
+query error
+SELECT
+    fts_main_corpus.match_bm25(line_id, 'butter') AS score,
+    line_id, play_name, speaker, text_entry
+FROM corpus
+WHERE score IS NOT NULL
+ORDER BY score DESC;
+----
+db error: ERROR: Table with name corpus does not exist!
+Did you mean "<slt:ignore>"?

@@ -1,0 +1,55 @@
+# DOCS_TEST: example_001
+
+query error
+SELECT title, BM25() AS score
+FROM articles_idx
+WHERE PHRASE(body, 'distributed database')
+ORDER BY BM25() DESC
+LIMIT 10;
+----
+db error: ERROR: Table with name articles_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+query error
+SELECT category, COUNT(*) AS articles, AVG(BM25()) AS avg_relevance
+FROM articles_idx
+WHERE PHRASE(body, 'machine learning')
+GROUP BY category
+ORDER BY avg_relevance DESC;
+----
+db error: ERROR: Table with name articles_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+statement error db error: ERROR: syntax error at or near "USING"
+CREATE TABLE logs (
+    timestamp TIMESTAMP,
+    level TEXT,
+    message TEXT
+) USING EXTERNAL WITH (
+    PATH = 's3://my-bucket/logs/*.parquet',
+    FORMAT = 'parquet',
+    S3_REGION = 'us-east-1'
+);
+
+statement error
+CREATE INDEX logs_idx ON logs
+    USING inverted (timestamp, level, message log_dict);
+----
+db error: ERROR: Table with name logs does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT timestamp, message, BM25() AS score
+FROM logs_idx
+WHERE PHRASE(message, 'connection timeout')
+ORDER BY BM25() DESC;
+----
+db error: ERROR: Table with name logs_idx does not exist!
+Did you mean "<slt:ignore>"?

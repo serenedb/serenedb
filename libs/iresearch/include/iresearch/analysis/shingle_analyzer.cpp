@@ -20,207 +20,26 @@
 
 #include "iresearch/analysis/shingle_analyzer.hpp"
 
-#include <vpack/builder.h>
-#include <vpack/iterator.h>
-
-#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/utils/string.hpp"
-#include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
 namespace {
-
-constexpr std::string_view kMinSize = "minShingleSize";
-constexpr std::string_view kMaxSize = "maxShingleSize";
-constexpr std::string_view kOutputUnigrams = "outputUnigrams";
-constexpr std::string_view kOutputUnigramsIfNoShingles =
-  "outputUnigramsIfNoShingles";
-constexpr std::string_view kFrequentWords = "frequentWords";
-constexpr std::string_view kParseError =
-  ", failed to parse options for shingle analyzer";
-
-constexpr uint32_t kMinShingle = 2;
-constexpr uint32_t kMaxShingle = 16;  // bounds the sliding window
 
 // Default token separator: a single 0xFF byte cannot appear inside a UTF-8
 // token, so shingle terms are unambiguous for text columns.
 constexpr byte_type kDefaultSeparator{0xFF};
 
-bool ParseUInt(vpack::Slice obj, std::string_view key, uint32_t def,
-               uint32_t& out) {
-  auto slice = obj.get(key);
-  if (slice.isNone()) {
-    out = def;
-    return true;
-  }
-  if (!slice.isNumber<uint32_t>()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, key, " attribute must be uint32",
-              kParseError);
-    return false;
-  }
-  out = slice.getNumber<uint32_t>();
-  return true;
-}
-
-bool ParseBool(vpack::Slice obj, std::string_view key, bool def, bool& out) {
-  auto slice = obj.get(key);
-  if (slice.isNone()) {
-    out = def;
-    return true;
-  }
-  if (!slice.isBool()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, key, " attribute must be bool",
-              kParseError);
-    return false;
-  }
-  out = slice.getBool();
-  return true;
-}
-
-bool ParseSizes(vpack::Slice slice, uint32_t& min, uint32_t& max) {
-  SDB_ASSERT(slice.isObject());
-  if (!ParseUInt(slice, kMinSize, kMinShingle, min) ||
-      !ParseUInt(slice, kMaxSize, kMinShingle, max)) {
-    return false;
-  }
-  if (min < kMinShingle) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, kMinSize, " must be at least ",
-              kMinShingle, kParseError);
-    return false;
-  }
-  if (max < min) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, kMaxSize, " must be >= ", kMinSize,
-              kParseError);
-    return false;
-  }
-  if (max > kMaxShingle) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, kMaxSize, " must be at most ",
-              kMaxShingle, kParseError);
-    return false;
-  }
-  return true;
-}
-
-bool ParseOptions(vpack::Slice slice, ShingleAnalyzer::Options& options) {
-  if (!slice.isObject()) {
-    return false;
-  }
-  if (!ParseSizes(slice, options.min_shingle_size, options.max_shingle_size)) {
-    return false;
-  }
-  if (!ParseBool(slice, kOutputUnigrams, true, options.output_unigrams)) {
-    return false;
-  }
-  if (!ParseBool(slice, kOutputUnigramsIfNoShingles, false,
-                 options.output_unigrams_if_no_shingles)) {
-    return false;
-  }
-  if (auto fw = slice.get(kFrequentWords); !fw.isNone()) {
-    if (!fw.isArray()) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, kFrequentWords,
-                " must be an array of strings", kParseError);
-      return false;
-    }
-    for (auto word : vpack::ArrayIterator{fw}) {
-      if (!word.isString()) {
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, kFrequentWords,
-                  " entries must be strings", kParseError);
-        return false;
-      }
-      options.frequent_words.emplace_back(ViewCast<byte_type>(word.stringView()));
-    }
-  }
-  if (!analyzers::MakeAnalyzer(slice, options.base_analyzer)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Invalid analyzer definition in ",
-              slice_to_string(slice), kParseError);
-    return false;
-  }
-  return true;
-}
-
-Analyzer::ptr MakeImpl(vpack::Slice slice) {
-  ShingleAnalyzer::Options opts;
-  if (ParseOptions(slice, opts)) {
-    return std::make_unique<ShingleAnalyzer>(std::move(opts));
-  }
-  return {};
-}
-
-bool NormalizeImpl(vpack::Slice input, vpack::Builder& output) {
-  if (!input.isObject()) {
-    return false;
-  }
-  uint32_t min = 0;
-  uint32_t max = 0;
-  if (!ParseSizes(input, min, max)) {
-    return false;
-  }
-  bool output_unigrams = true;
-  bool output_unigrams_if_no_shingles = false;
-  if (!ParseBool(input, kOutputUnigrams, true, output_unigrams) ||
-      !ParseBool(input, kOutputUnigramsIfNoShingles, false,
-                 output_unigrams_if_no_shingles)) {
-    return false;
-  }
-  vpack::ObjectBuilder scope{&output};
-  output.add(kMinSize, min);
-  output.add(kMaxSize, max);
-  output.add(kOutputUnigrams, output_unigrams);
-  output.add(kOutputUnigramsIfNoShingles, output_unigrams_if_no_shingles);
-  if (auto fw = input.get(kFrequentWords); !fw.isNone()) {
-    if (!fw.isArray()) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, kFrequentWords,
-                " must be an array of strings", kParseError);
-      return false;
-    }
-    output.add(kFrequentWords, vpack::Value{vpack::ValueType::Array});
-    for (auto word : vpack::ArrayIterator{fw}) {
-      if (!word.isString()) {
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, kFrequentWords,
-                  " entries must be strings", kParseError);
-        return false;
-      }
-      output.add(word.stringView());
-    }
-    output.close();
-  }
-  if (!analyzers::NormalizeAnalyzer(input, output)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Invalid analyzer definition in ",
-              slice_to_string(input), kParseError);
-    return false;
-  }
-  return true;
-}
-
 }  // namespace
 
-bool ShingleAnalyzer::normalize(std::string_view args, std::string& definition) {
-  if (args.empty()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Empty arguments", kParseError);
-    return false;
+Analyzer::ptr ShingleAnalyzer::Make(Options opts) {
+  Analyzer::ptr base;
+  if (opts.base_analyzer) {
+    base = CreateAnalyzer(std::move(*opts.base_analyzer));
   }
-  vpack::Slice input{reinterpret_cast<const uint8_t*>(args.data())};
-  vpack::Builder output;
-  if (!NormalizeImpl(input, output)) {
-    return false;
-  }
-  definition.assign(output.slice().startAs<char>(), output.slice().byteSize());
-  return true;
-}
-
-Analyzer::ptr ShingleAnalyzer::make(std::string_view args) {
-  if (args.empty()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Empty arguments", kParseError);
-    return {};
-  }
-  vpack::Slice slice{reinterpret_cast<const uint8_t*>(args.data())};
-  return MakeImpl(slice);
-}
-
-void ShingleAnalyzer::init() {
-  REGISTER_ANALYZER_VPACK(ShingleAnalyzer, ShingleAnalyzer::make,
-                          ShingleAnalyzer::normalize);
+  // If `base_analyzer` is absent the ctor falls back to StringTokenizer.
+  return std::make_unique<ShingleAnalyzer>(std::move(base), std::move(opts));
 }
 
 void ShingleAnalyzer::AppendShingle(std::span<const bytes_view> tokens,
@@ -273,8 +92,8 @@ const byte_type* ShingleAnalyzer::ReadToken(const byte_type* p,
   return p + n;
 }
 
-ShingleAnalyzer::ShingleAnalyzer(Options&& options) noexcept
-  : _analyzer{std::move(options.base_analyzer)},
+ShingleAnalyzer::ShingleAnalyzer(Analyzer::ptr base, Options&& options) noexcept
+  : _analyzer{std::move(base)},
     _min{options.min_shingle_size},
     _max{options.max_shingle_size},
     _output_unigrams{options.output_unigrams},
@@ -326,8 +145,7 @@ bytes_view ShingleAnalyzer::TokenAt(uint32_t offset) const noexcept {
 
 void ShingleAnalyzer::AppendToken(bytes_view token) {
   if (token.size() > kMaxTokenSize) {
-    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-             "too long input for shingle analyzer: ", token.size());
+    SDB_WARN(IRESEARCH, "too long input for shingle analyzer: ", token.size());
     return;
   }
   const auto offset = static_cast<uint32_t>(_terms.size());

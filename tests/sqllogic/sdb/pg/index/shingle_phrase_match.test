@@ -237,4 +237,4 @@ CREATE TEXT SEARCH DICTIONARY shingle_min1(
     tokenizer_delimiter = ' '
 );
 ----
-db error: ERROR: Failed to create text search dictionary "shingle_min1"
+db error: ERROR: "minshinglesize" must be between 2 and 16

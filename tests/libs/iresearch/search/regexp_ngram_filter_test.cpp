@@ -114,10 +114,8 @@ struct WildcardField {
 inline constexpr irs::field_id kStoreId = 1;
 
 irs::analysis::WildcardAnalyzer MakeAnalyzer() {
-  return irs::analysis::WildcardAnalyzer{{
-    .base_analyzer = std::make_unique<WhitespaceTokenizer>(),
-    .ngram_size = 3,
-  }};
+  return irs::analysis::WildcardAnalyzer{
+    std::make_unique<WhitespaceTokenizer>(), /*ngram_size=*/3};
 }
 
 irs::ByRegexpNgram MakeFilter(std::string_view regex,

@@ -23,15 +23,20 @@
 #include <absl/container/flat_hash_set.h>
 
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
+#include <tuple>
 #include <vector>
 
+#include "basics/serializer.h"
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::analysis {
+
+struct TokenizerConfig;
 
 // Word-level shingle analyzer, modelled on the Lucene/Elasticsearch shingle
 // token filter. Wraps a base analyzer and, from its token stream, emits as
@@ -66,7 +71,8 @@ namespace irs::analysis {
 class ShingleAnalyzer final : public TypedAnalyzer<ShingleAnalyzer> {
  public:
   struct Options {
-    Analyzer::ptr base_analyzer;
+    using Owner = ShingleAnalyzer;
+    std::unique_ptr<TokenizerConfig> base_analyzer;
     uint32_t min_shingle_size = 2;
     uint32_t max_shingle_size = 2;
     bool output_unigrams = true;
@@ -86,9 +92,7 @@ class ShingleAnalyzer final : public TypedAnalyzer<ShingleAnalyzer> {
   };
 
   static constexpr std::string_view type_name() noexcept { return "shingle"; }
-  static bool normalize(std::string_view args, std::string& definition);
-  static Analyzer::ptr make(std::string_view args);
-  static void init();
+  static Analyzer::ptr Make(Options opts);
 
   // Join `tokens` into a single shingle term in `out` (cleared first) using
   // `separator` between adjacent tokens. Shared by the analyzer's term
@@ -110,7 +114,7 @@ class ShingleAnalyzer final : public TypedAnalyzer<ShingleAnalyzer> {
   static const byte_type* ReadToken(const byte_type* p,
                                      bytes_view& token) noexcept;
 
-  explicit ShingleAnalyzer(Options&& options) noexcept;
+  ShingleAnalyzer(Analyzer::ptr base, Options&& options) noexcept;
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
 
@@ -173,5 +177,24 @@ class ShingleAnalyzer final : public TypedAnalyzer<ShingleAnalyzer> {
   uint32_t _pending_fillers{0};   // fillers still to emit before _pending_token
   bool _has_pending{false};       // whether _pending_token holds a buffered token
 };
+
+template<typename Context>
+void SerdeWrite(Context ctx, const ShingleAnalyzer::Options& o) {
+  sdb::basics::WriteTuple(
+    ctx.io(),
+    std::tie(o.base_analyzer, o.min_shingle_size, o.max_shingle_size,
+             o.output_unigrams, o.output_unigrams_if_no_shingles,
+             o.token_separator, o.filler_token, o.frequent_words),
+    ctx.arg());
+}
+
+template<typename Context>
+void SerdeRead(Context ctx, ShingleAnalyzer::Options& o) {
+  auto refs =
+    std::tie(o.base_analyzer, o.min_shingle_size, o.max_shingle_size,
+             o.output_unigrams, o.output_unigrams_if_no_shingles,
+             o.token_separator, o.filler_token, o.frequent_words);
+  sdb::basics::ReadTuple(ctx.io(), refs, ctx.arg());
+}
 
 }  // namespace irs::analysis

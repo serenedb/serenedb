@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/analysis/shingle_analyzer.hpp"
+#include "iresearch/analysis/tokenizer_config.hpp"
 
 #include <string>
 #include <vector>
@@ -139,13 +140,14 @@ irs::analysis::ShingleAnalyzer MakeAnalyzer(uint32_t min, uint32_t max,
                                             bool output_unigrams,
                                             bool output_unigrams_if_no_shingles =
                                               false) {
-  return irs::analysis::ShingleAnalyzer{{
-    .base_analyzer = std::make_unique<WhitespaceTokenizer>(),
-    .min_shingle_size = min,
-    .max_shingle_size = max,
-    .output_unigrams = output_unigrams,
-    .output_unigrams_if_no_shingles = output_unigrams_if_no_shingles,
-  }};
+  return irs::analysis::ShingleAnalyzer{
+    std::make_unique<WhitespaceTokenizer>(),
+    {
+      .min_shingle_size = min,
+      .max_shingle_size = max,
+      .output_unigrams = output_unigrams,
+      .output_unigrams_if_no_shingles = output_unigrams_if_no_shingles,
+    }};
 }
 
 std::string ToString(irs::bytes_view v) {
@@ -302,13 +304,14 @@ irs::bstring Bytes(std::string_view s) {
 TEST(ShingleAnalyzerTest, frequent_words_bound) {
   // A frequent-words bound emits a shingle only if it contains a frequent word;
   // unigrams are always emitted (output_unigrams is forced on).
-  irs::analysis::ShingleAnalyzer analyzer{{
-    .base_analyzer = std::make_unique<WhitespaceTokenizer>(),
-    .min_shingle_size = 2,
-    .max_shingle_size = 2,
-    .output_unigrams = false,  // overridden because a bound is set
-    .frequent_words = {Bytes("the"), Bytes("of")},
-  }};
+  irs::analysis::ShingleAnalyzer analyzer{
+    std::make_unique<WhitespaceTokenizer>(),
+    {
+      .min_shingle_size = 2,
+      .max_shingle_size = 2,
+      .output_unigrams = false,  // overridden because a bound is set
+      .frequent_words = {Bytes("the"), Bytes("of")},
+    }};
   // "the quick brown": "the quick" kept (the is frequent); "quick brown" dropped
   // (neither frequent); every unigram still emitted.
   const std::vector<std::string> expected{
@@ -320,12 +323,13 @@ TEST(ShingleAnalyzerTest, frequent_words_bound) {
 TEST(ShingleAnalyzerTest, frequent_words_positions) {
   // The dropped shingle leaves the unigram alone at its position (inc=1), so a
   // positional phrase can still fall back to unigrams across the rare span.
-  irs::analysis::ShingleAnalyzer analyzer{{
-    .base_analyzer = std::make_unique<WhitespaceTokenizer>(),
-    .min_shingle_size = 2,
-    .max_shingle_size = 2,
-    .frequent_words = {Bytes("the")},
-  }};
+  irs::analysis::ShingleAnalyzer analyzer{
+    std::make_unique<WhitespaceTokenizer>(),
+    {
+      .min_shingle_size = 2,
+      .max_shingle_size = 2,
+      .frequent_words = {Bytes("the")},
+    }};
   const std::vector<TermInc> expected{
     {"the", 1}, {Shingle({"the", "quick"}), 0},
     {"quick", 1},  // "quick brown" dropped -> only the unigram here
@@ -337,12 +341,13 @@ TEST(ShingleAnalyzerTest, frequent_words_positions) {
 TEST(ShingleAnalyzerTest, lucene_filler_gap) {
   // The base drops "the"; the resulting gap becomes a filler token, so no
   // shingle bridges the removed stopword.
-  irs::analysis::ShingleAnalyzer analyzer{{
-    .base_analyzer = std::make_unique<StopwordTokenizer>(),
-    .min_shingle_size = 2,
-    .max_shingle_size = 2,
-    .output_unigrams = true,
-  }};
+  irs::analysis::ShingleAnalyzer analyzer{
+    std::make_unique<StopwordTokenizer>(),
+    {
+      .min_shingle_size = 2,
+      .max_shingle_size = 2,
+      .output_unigrams = true,
+    }};
   const std::vector<std::string> expected{
     "quick", Shingle({"quick", "_"}), "_", Shingle({"_", "brown"}), "brown",
   };
@@ -351,12 +356,13 @@ TEST(ShingleAnalyzerTest, lucene_filler_gap) {
 
 TEST(ShingleAnalyzerTest, lucene_filler_positions) {
   // The filler occupies its own position so a positional phrase is gap-aware.
-  irs::analysis::ShingleAnalyzer analyzer{{
-    .base_analyzer = std::make_unique<StopwordTokenizer>(),
-    .min_shingle_size = 2,
-    .max_shingle_size = 2,
-    .output_unigrams = true,
-  }};
+  irs::analysis::ShingleAnalyzer analyzer{
+    std::make_unique<StopwordTokenizer>(),
+    {
+      .min_shingle_size = 2,
+      .max_shingle_size = 2,
+      .output_unigrams = true,
+    }};
   const std::vector<TermInc> expected{
     {"quick", 1}, {Shingle({"quick", "_"}), 0},
     {"_", 1},     {Shingle({"_", "brown"}), 0},

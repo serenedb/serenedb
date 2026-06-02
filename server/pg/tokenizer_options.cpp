@@ -72,4 +72,11 @@ void CheckNgramSize(std::string_view option, int value) {
   }
 }
 
+void CheckShingleSize(std::string_view option, int value) {
+  if (value < 2 || value > 16) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("\"", option, "\" must be between 2 and 16"));
+  }
+}
+
 }  // namespace sdb::pg::tokenizer_options

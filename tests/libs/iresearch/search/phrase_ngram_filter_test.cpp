@@ -26,6 +26,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/analysis/shingle_analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/store/memory_directory.hpp"
@@ -124,12 +125,13 @@ irs::ByPhraseNgram MakeFilter(std::string_view field, std::string_view phrase,
 }
 
 irs::analysis::ShingleAnalyzer MakeAnalyzer(uint32_t min = 2, uint32_t max = 2) {
-  return irs::analysis::ShingleAnalyzer{{
-    .base_analyzer = std::make_unique<WhitespaceTokenizer>(),
-    .min_shingle_size = min,
-    .max_shingle_size = max,
-    .output_unigrams = true,
-  }};
+  return irs::analysis::ShingleAnalyzer{
+    std::make_unique<WhitespaceTokenizer>(),
+    {
+      .min_shingle_size = min,
+      .max_shingle_size = max,
+      .output_unigrams = true,
+    }};
 }
 
 irs::bstring Bytes(std::string_view s) {
@@ -138,13 +140,14 @@ irs::bstring Bytes(std::string_view s) {
 
 irs::analysis::ShingleAnalyzer MakeFreqAnalyzer(
   std::vector<irs::bstring> frequent) {
-  return irs::analysis::ShingleAnalyzer{{
-    .base_analyzer = std::make_unique<WhitespaceTokenizer>(),
-    .min_shingle_size = 2,
-    .max_shingle_size = 2,
-    .output_unigrams = true,
-    .frequent_words = std::move(frequent),
-  }};
+  return irs::analysis::ShingleAnalyzer{
+    std::make_unique<WhitespaceTokenizer>(),
+    {
+      .min_shingle_size = 2,
+      .max_shingle_size = 2,
+      .output_unigrams = true,
+      .frequent_words = std::move(frequent),
+    }};
 }
 
 // Frequent-words corpus: stopwords {the, of} bound the shingle vocabulary.

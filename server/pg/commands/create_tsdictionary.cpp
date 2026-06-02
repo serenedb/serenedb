@@ -37,6 +37,7 @@
 #include <iresearch/analysis/pattern_tokenizer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/shingle_analyzer.hpp>
 #include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
@@ -768,6 +769,44 @@ class CreateTSDictionaryOptions : public OptionsParser {
     return opts;
   }
 
+  irs::analysis::ShingleAnalyzer::Options BuildShingle(
+    std::string_view prefix,
+    const irs::analysis::ShingleAnalyzer::Options* parent) {
+    irs::analysis::ShingleAnalyzer::Options opts;
+    opts.base_analyzer =
+      BuildSingleChild(prefix, parent ? parent->base_analyzer.get() : nullptr);
+    int parent_min = parent ? static_cast<int>(parent->min_shingle_size) : 2;
+    opts.min_shingle_size =
+      static_cast<uint32_t>(Resolve<tokenizer_options::kMinShingleSize>(
+        prefix, parent ? &parent_min : nullptr));
+    int parent_max = parent ? static_cast<int>(parent->max_shingle_size) : 2;
+    opts.max_shingle_size =
+      static_cast<uint32_t>(Resolve<tokenizer_options::kMaxShingleSize>(
+        prefix, parent ? &parent_max : nullptr));
+    if (opts.max_shingle_size < opts.min_shingle_size) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("\"maxshinglesize\" must be >= \"minshinglesize\""));
+    }
+    opts.output_unigrams = Resolve<tokenizer_options::kOutputUnigrams>(
+      prefix, parent ? &parent->output_unigrams : nullptr);
+    opts.output_unigrams_if_no_shingles =
+      Resolve<tokenizer_options::kOutputUnigramsIfNoShingles>(
+        prefix, parent ? &parent->output_unigrams_if_no_shingles : nullptr);
+    if (OptionsParser::HasOption(tokenizer_options::kFrequentWords, prefix)) {
+      auto raw =
+        OptionsParser::EraseOptionOrDefault<tokenizer_options::kFrequentWords>(
+          prefix);
+      ParseCommaSeparated(raw, [&](std::string_view w) {
+        opts.frequent_words.emplace_back(
+          reinterpret_cast<const irs::byte_type*>(w.data()), w.size());
+      });
+    } else if (parent) {
+      opts.frequent_words = parent->frequent_words;
+    }
+    return opts;
+  }
+
   template<typename Opts>
   static const Opts* ParentOptions(const irs::analysis::TokenizerConfig* cfg) {
     if (!cfg) {
@@ -823,6 +862,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else if (type == WildcardAnalyzer::type_name()) {
       out.config = BuildWildcard(
         prefix, ParentOptions<WildcardAnalyzer::Options>(parent_cfg));
+    } else if (type == ShingleAnalyzer::type_name()) {
+      out.config = BuildShingle(
+        prefix, ParentOptions<ShingleAnalyzer::Options>(parent_cfg));
     } else if (type == NormalizingTokenizer::type_name()) {
       out.config = BuildNormalizing(
         prefix, ParentOptions<NormalizingTokenizer::Options>(parent_cfg));

@@ -155,12 +155,15 @@ inline constexpr OptionInfo kNgramSize{
 
 // Shingle (word n-gram) analyzer for position-free phrase search.
 
+void CheckShingleSize(std::string_view option, int value);
+
 inline constexpr OptionInfo kMinShingleSize{
-  "minshinglesize", 2, "Minimum shingle (word n-gram) size (minimum 2)"};
+  "minshinglesize", 2, "Minimum shingle (word n-gram) size (minimum 2)",
+  CheckShingleSize};
 
 inline constexpr OptionInfo kMaxShingleSize{
-  "maxshinglesize", 2,
-  "Maximum shingle (word n-gram) size (>= minshinglesize)"};
+  "maxshinglesize", 2, "Maximum shingle (word n-gram) size (>= minshinglesize)",
+  CheckShingleSize};
 
 inline constexpr OptionInfo kOutputUnigrams{
   "outputunigrams", true, "Index individual tokens alongside the shingles"};

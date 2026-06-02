@@ -443,8 +443,7 @@ int main() {
   ReadStoredFields(reader);
   RemoveDocuments(*writer, *tokenizer);
   CompactIndex(*writer, dir);
-}
 
-engine.Shutdown();
-return 0;
+  engine.Shutdown();
+  return 0;
 }

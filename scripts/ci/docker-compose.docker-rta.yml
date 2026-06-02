@@ -2,7 +2,7 @@ services:
   serenedb:
     image: ${DOCKER_TEST_IMAGE}
     # No volume mounts -- logs collected via 'docker compose logs' to avoid UID mismatch
-    command: serened --server.authentication 0
+    command: serened
     networks:
       - rta-network
 

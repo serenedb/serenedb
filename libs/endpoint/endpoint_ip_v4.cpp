@@ -21,16 +21,10 @@
 
 #include "endpoint_ip_v4.h"
 
-#include "basics/logger/logger.h"
-#include "endpoint/endpoint.h"
-
 using namespace sdb;
 
-EndpointIpV4::EndpointIpV4(EndpointType type, TransportType transport,
-                           EncryptionType encryption, int listen_backlog,
-                           bool reuse_address, const std::string& host,
-                           const uint16_t port)
-  : EndpointIp(DomainType::IPv4, type, transport, encryption, listen_backlog,
+EndpointIpV4::EndpointIpV4(TransportType transport, EncryptionType encryption,
+                           int listen_backlog, bool reuse_address,
+                           const std::string& host, const uint16_t port)
+  : EndpointIp(DomainType::IPv4, transport, encryption, listen_backlog,
                reuse_address, host, port) {}
-
-bool EndpointIpV4::isBroadcastBind() const { return host() == "0.0.0.0"; }

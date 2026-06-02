@@ -25,6 +25,7 @@
 #include <vpack/slice.h>
 
 #include <memory>
+#include <shared_mutex>
 #include <vector>
 
 #include "catalog/catalog.h"
@@ -165,6 +166,7 @@ class LocalCatalog final : public LogicalCatalog,
                           std::string_view new_name, std::shared_ptr<T> object);
 
   mutable absl::Mutex _mutex;
+  mutable std::shared_mutex _snapshot_mutex;
   std::shared_ptr<const SnapshotImpl> _snapshot;
   RocksDBEngineCatalog* _engine;
 };

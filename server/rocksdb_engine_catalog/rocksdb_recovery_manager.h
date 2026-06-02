@@ -27,7 +27,6 @@
 
 #include "basics/common.h"
 #include "basics/result.h"
-#include "rest_server/serened.h"
 
 namespace rocksdb {
 
@@ -47,30 +46,25 @@ enum class RecoveryState : uint32_t {
   Done,
 };
 
-class RocksDBRecoveryManager final : public SerenedFeature {
+class RocksDBRecoveryManager final {
  public:
-  static constexpr std::string_view name() { return "RocksDBRecoveryManager"; }
+  inline static RocksDBRecoveryManager* gInstance = nullptr;
+  static RocksDBRecoveryManager& instance() noexcept { return *gInstance; }
 
-  explicit RocksDBRecoveryManager(Server& server);
+  RocksDBRecoveryManager();
+  ~RocksDBRecoveryManager();
 
-  void prepare() final;
-  void unprepare() final;
-
-  void start() final;
+  void start();
 
   RecoveryState recoveryState() const noexcept;
 
   // current recovery sequence number
   rocksdb::SequenceNumber recoverySequenceNumber() const noexcept;
 
-  Result registerPostRecoveryCallback(std::function<Result()>&& callback);
-
  private:
   Result parseRocksWAL();
   void runRecovery();
-  void recoveryDone();
 
-  std::vector<std::function<Result()>> _pending_recovery_callbacks;
   std::atomic<rocksdb::SequenceNumber> _current_sequence_number;
   std::atomic<RecoveryState> _recovery_state;
 };

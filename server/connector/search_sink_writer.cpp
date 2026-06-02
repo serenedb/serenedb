@@ -26,7 +26,6 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
-#include "basics/endian.h"
 #include "catalog/mangling.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
@@ -1018,7 +1017,7 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteNumericValue(
   SDB_ASSERT(cell_slices.size() == 1);
   SDB_ASSERT(sizeof(T) == cell_slices[0].size());
   // this is true as long as we match machine ending with storage ending
-  static_assert(basics::IsLittleEndian());
+  static_assert(std::endian::native == std::endian::little);
   if constexpr (sizeof(T) == 1) {
     static_assert(std::is_integral_v<T>);
     // absl::little_endian has no Load<int8_t>; a single byte has no endianness.

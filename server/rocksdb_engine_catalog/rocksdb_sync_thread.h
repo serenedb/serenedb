@@ -25,11 +25,10 @@
 #include <rocksdb/types.h>
 
 #include <chrono>
+#include <thread>
 
 #include "basics/common.h"
-#include "basics/condition_variable.h"
 #include "basics/result.h"
-#include "basics/thread.h"
 
 namespace rocksdb {
 
@@ -40,15 +39,19 @@ namespace sdb {
 
 class RocksDBEngineCatalog;
 
-class RocksDBSyncThread final : public Thread {
+class RocksDBSyncThread {
  public:
   RocksDBSyncThread(RocksDBEngineCatalog& engine,
                     std::chrono::milliseconds interval,
                     std::chrono::milliseconds delay_threshold);
 
-  ~RocksDBSyncThread() final;
+  ~RocksDBSyncThread();
 
-  void beginShutdown() final;
+  // start the background thread.
+  void start();
+
+  // request the thread to stop and notify it; idempotent.
+  void beginShutdown();
 
   /// updates last sync time and calls the synchronization
   /// this is the preferred method to call when trying to avoid redundant
@@ -59,7 +62,7 @@ class RocksDBSyncThread final : public Thread {
   static Result sync(rocksdb::DB* db);
 
  private:
-  void run() final;
+  void run();
 
   RocksDBEngineCatalog& _engine;
 
@@ -78,11 +81,16 @@ class RocksDBSyncThread final : public Thread {
   /// sync thread
   const std::chrono::milliseconds _delay_threshold;
 
-  /// protects _last_sync_time and _last_sequence_number
+  /// protects _last_sync_time and _last_sequence_number; also guards _stopping
+  /// and is the wait predicate for the run loop.
   struct {
     absl::CondVar cv;
     absl::Mutex mutex;
   } _condition;
+
+  bool _stopping{false};
+  // Declared last so it joins first on destruction.
+  std::jthread _thread;
 };
 
 }  // namespace sdb

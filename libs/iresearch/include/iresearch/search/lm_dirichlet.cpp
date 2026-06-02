@@ -66,13 +66,12 @@ Scorer::ptr MakeFromObject(const vpack::Slice slice) {
                                       .strict = false,
                                     });
   if (!r.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
+    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
               "' while constructing lm_dirichlet scorer from VPack");
     return {};
   }
   if (!std::isfinite(params.mu) || params.mu < 0.f) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "lm_dirichlet mu must be a non-negative finite value");
+    SDB_ERROR(IRESEARCH, "lm_dirichlet mu must be a non-negative finite value");
     return {};
   }
   return std::make_unique<LMDirichlet>(params.mu);
@@ -82,13 +81,12 @@ Scorer::ptr MakeFromArray(const vpack::Slice slice) {
   ObjectParams params;
   auto r = vpack::ReadTupleNothrow(slice, params);
   if (!r.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
+    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
               "' while constructing lm_dirichlet scorer from VPack array");
     return {};
   }
   if (!std::isfinite(params.mu) || params.mu < 0.f) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "lm_dirichlet mu must be a non-negative finite value");
+    SDB_ERROR(IRESEARCH, "lm_dirichlet mu must be a non-negative finite value");
     return {};
   }
   return std::make_unique<LMDirichlet>(params.mu);
@@ -101,8 +99,7 @@ Scorer::ptr MakeVPack(const vpack::Slice slice) {
     case vpack::ValueType::Array:
       return MakeFromArray(slice);
     default:
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Invalid VPack arguments for lm_dirichlet scorer");
+      SDB_ERROR(IRESEARCH, "Invalid VPack arguments for lm_dirichlet scorer");
       return nullptr;
   }
 }
@@ -123,11 +120,11 @@ Scorer::ptr MakeJson(std::string_view args) {
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Caught error '", ex.what(),
+    SDB_ERROR(IRESEARCH, "Caught error '", ex.what(),
               "' while constructing VPack from JSON for lm_dirichlet");
   } catch (...) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       "Caught error while constructing VPack from JSON for lm_dirichlet");
   }
   return nullptr;

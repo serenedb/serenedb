@@ -226,8 +226,7 @@ Result DropFunctionByKind(catalog::LogicalCatalog& catalog,
 }  // namespace
 
 void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto& catalog = catalog::CatalogFeature::instance().Global();
 
   Result r;
   switch (info.type) {

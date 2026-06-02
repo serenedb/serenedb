@@ -21,19 +21,11 @@
 
 #include "basics/number_of_cores.h"
 
-#include "basics/files.h"
-#include "basics/operating-system.h"
-#include "basics/string_utils.h"
-
-#ifdef SERENEDB_HAVE_UNISTD_H
 #include <unistd.h>
-#endif
 
-#include <cstdint>
-#include <string>
 #include <thread>
 
-using namespace sdb;
+#include "basics/operating-system.h"
 
 namespace {
 
@@ -53,30 +45,9 @@ size_t NumberOfCoresImpl() {
   return static_cast<size_t>(std::thread::hardware_concurrency());
 }
 
-struct NumberOfCoresCache {
-  NumberOfCoresCache() : cached_value(NumberOfCoresImpl()), overridden(false) {
-    std::string value;
-    if (SdbGETENV("SERENEDB_OVERRIDE_DETECTED_NUMBER_OF_CORES", value)) {
-      if (!value.empty()) {
-        uint64_t v = sdb::basics::string_utils::Uint64(value);
-        if (v != 0) {
-          cached_value = static_cast<size_t>(v);
-          overridden = true;
-        }
-      }
-    }
-  }
-
-  size_t cached_value;
-  bool overridden;
-};
-
-const NumberOfCoresCache kCache;
-
 }  // namespace
 
-/// return number of cores from cache
-size_t sdb::number_of_cores::GetValue() { return ::kCache.cached_value; }
-
-/// return if number of cores was overridden
-bool sdb::number_of_cores::Overridden() { return ::kCache.overridden; }
+size_t sdb::number_of_cores::GetValue() {
+  static const size_t kCached = NumberOfCoresImpl();
+  return kCached;
+}

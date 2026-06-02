@@ -22,36 +22,32 @@
 
 #include <memory>
 
-#include "app/app_server.h"
 #include "catalog/catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 
 namespace sdb {
 
-EngineFeature::EngineFeature(Server& server)
-  : SerenedFeature{server, name()},
-    _engine{std::make_shared<RocksDBEngineCatalog>(server)} {
-  setOptional(false);
+EngineFeature::EngineFeature()
+  : _engine{std::make_shared<RocksDBEngineCatalog>()} {
+  gInstance = this;
 }
 
+EngineFeature::~EngineFeature() { gInstance = nullptr; }
+
 RocksDBEngineCatalog& GetServerEngine() {
-  return SerenedServer::Instance().getFeature<EngineFeature>().engine();
+  return EngineFeature::instance().engine();
 }
 
 void EngineFeature::start() {
+  _engine->prepare();
   _engine->start();
-  _started.store(true);
 }
 
 void EngineFeature::stop() {
+  _engine->beginShutdown();
   _engine->cleanupReplicationContexts();
   _engine->stop();
+  _engine->unprepare();
 }
-
-void EngineFeature::prepare() { _engine->prepare(); }
-
-void EngineFeature::unprepare() { _engine->unprepare(); }
-
-void EngineFeature::beginShutdown() { _engine->beginShutdown(); }
 
 }  // namespace sdb

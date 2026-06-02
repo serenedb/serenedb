@@ -21,12 +21,12 @@
 
 #include "encoding_utils.h"
 
+#include <absl/base/internal/endian.h>
 #include <zconf.h>
 #include <zlib.h>
 
 #include "basics/buffer.h"
 #include "basics/debugging.h"
-#include "basics/endian.h"
 #include "basics/errors.h"
 #include "basics/string_buffer.h"
 #include "basics/string_utils.h"
@@ -214,7 +214,7 @@ ErrorCode Lz4Uncompress(const uint8_t* compressed, size_t compressed_len,
   // uncompressed size is encoded in bytes 1-4, starting from offset 0,
   // encoded as a uint32_t in big endian format
   memcpy(&uncompressed_len, compressed + 1, sizeof(uncompressed_len));
-  uncompressed_len = basics::BigToHost<uint32_t>(uncompressed_len);
+  uncompressed_len = absl::big_endian::ToHost32(uncompressed_len);
 
   if (uncompressed_len == 0 ||
       uncompressed_len >= static_cast<size_t>(LZ4_MAX_INPUT_SIZE)) {
@@ -352,7 +352,7 @@ ErrorCode Lz4Compress(const uint8_t* uncompressed, size_t uncompressed_len,
   data[0] = 0x01U;  // version
 
   auto original_len = static_cast<uint32_t>(uncompressed_len);
-  original_len = basics::HostToBig(original_len);
+  original_len = absl::big_endian::FromHost32(original_len);
   memcpy(data + 1, &original_len, sizeof(original_len));
 
   // compress data into output buffer. writes start at byte 5.

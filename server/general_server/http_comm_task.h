@@ -51,8 +51,7 @@ class HttpCommTask final : public GeneralCommTask<T> {
   bool ReadCallback(asio_ns::error_code ec) final;
   void SetIOTimeout() final;
 
-  void SendResponse(std::unique_ptr<GeneralResponse> response,
-                    RequestStatistics::Item stat) final;
+  void SendResponse(std::unique_ptr<GeneralResponse> response) final;
 
   std::unique_ptr<GeneralResponse> CreateResponse(rest::ResponseCode,
                                                   uint64_t message_id) final;
@@ -78,7 +77,7 @@ class HttpCommTask final : public GeneralCommTask<T> {
   void DoProcessRequest();
 
   // called on IO context thread
-  void WriteResponse(RequestStatistics::Item stat);
+  void WriteResponse();
 
   std::string url() const;
 

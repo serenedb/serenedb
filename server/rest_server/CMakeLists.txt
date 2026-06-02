@@ -1,25 +1,8 @@
 target_sources(
     sereneserver
     PRIVATE
-        restart_action.cpp
-        bootstrap_feature.cpp
-        check_version_feature.cpp
-        daemon_feature.cpp
         database_path_feature.cpp
         endpoint_feature.cpp
-        environment_feature.cpp
-        file_descriptors_feature.cpp
         flush_feature.cpp
-        init_database_feature.cpp
-        language_check_feature.cpp
-        lockfile_feature.cpp
-        log_buffer_feature.cpp
-        privilege_feature.cpp
-        server_feature.cpp
-        server_id_feature.cpp
-        soft_shutdown_feature.cpp
-        supervisor_feature.cpp
-        time_zone_feature.cpp
-        upgrade_feature.cpp
         database_context.cpp
 )

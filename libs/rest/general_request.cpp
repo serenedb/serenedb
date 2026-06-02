@@ -24,7 +24,7 @@
 #include <vpack/vpack_helper.h>
 
 #include "basics/debugging.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "rest/request_context.h"
@@ -86,8 +86,7 @@ std::string_view GeneralRequest::translateMethod(RequestType method) {
     case RequestType::Put:
       return "PUT";
     default:
-      SDB_WARN("xxxxx", Logger::FIXME,
-               "illegal http request method encountered in switch");
+      SDB_WARN(GENERAL, "illegal http request method encountered in switch");
       return "UNKNOWN";
   }
 }

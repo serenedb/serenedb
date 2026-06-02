@@ -21,8 +21,6 @@
 
 #pragma once
 
-#include <vpack/slice.h>
-
 #include <string_view>
 
 #include "basics/common.h"
@@ -37,8 +35,6 @@ enum class Level : char {
   RW = 3,
 };
 
-auth::Level ConvertToAuthLevel(vpack::Slice grants);
-auth::Level ConvertToAuthLevel(std::string_view grant);
 std::string_view ConvertFromAuthLevel(auth::Level lvl);
 
 }  // namespace sdb::auth

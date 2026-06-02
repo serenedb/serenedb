@@ -1,7 +1,7 @@
 services:
   serenedb:
     image: ${DOCKER_TEST_IMAGE}
-    command: serened --server.authentication 0
+    command: serened
     networks:
       - rta-network
 

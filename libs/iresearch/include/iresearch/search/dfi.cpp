@@ -87,13 +87,13 @@ Scorer::ptr MakeFromObject(const vpack::Slice slice) {
                                       .strict = false,
                                     });
   if (!r.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
+    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
               "' while constructing dfi scorer from VPack");
     return {};
   }
   DFIMeasure m;
   if (!ParseMeasure(params.measure, m)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "dfi measure must be one of: standardized, saturated, "
               "chi_squared; got '",
               params.measure, "'");
@@ -106,13 +106,13 @@ Scorer::ptr MakeFromArray(const vpack::Slice slice) {
   ObjectParams params;
   auto r = vpack::ReadTupleNothrow(slice, params);
   if (!r.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
+    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
               "' while constructing dfi scorer from VPack array");
     return {};
   }
   DFIMeasure m;
   if (!ParseMeasure(params.measure, m)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "dfi measure must be one of: standardized, saturated, "
               "chi_squared; got '",
               params.measure, "'");
@@ -128,8 +128,7 @@ Scorer::ptr MakeVPack(const vpack::Slice slice) {
     case vpack::ValueType::Array:
       return MakeFromArray(slice);
     default:
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Invalid VPack arguments for dfi scorer");
+      SDB_ERROR(IRESEARCH, "Invalid VPack arguments for dfi scorer");
       return nullptr;
   }
 }
@@ -150,10 +149,10 @@ Scorer::ptr MakeJson(std::string_view args) {
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Caught error '", ex.what(),
+    SDB_ERROR(IRESEARCH, "Caught error '", ex.what(),
               "' while constructing VPack from JSON for dfi");
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught error while constructing VPack from JSON for dfi");
   }
   return nullptr;

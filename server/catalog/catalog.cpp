@@ -33,15 +33,14 @@
 #include <memory>
 
 #include "app/app_server.h"
-#include "app/options/parameters.h"
-#include "app/options/program_options.h"
 #include "basics/application-exit.h"
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
+#include "basics/duckdb_engine.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/misc.hpp"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
@@ -52,6 +51,7 @@
 #include "catalog/inverted_index.h"
 #include "catalog/local_catalog.h"
 #include "catalog/object.h"
+#include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/secondary_index.h"
 #include "catalog/sequence.h"
@@ -63,9 +63,6 @@
 #include "catalog/view.h"
 #include "folly/Function.h"
 #include "general_server/scheduler.h"
-#include "general_server/state.h"
-#include "query/duckdb_engine.h"
-#include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -671,8 +668,7 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
 
 template<typename T>
 ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto& catalog = catalog::CatalogFeature::instance().Global();
   auto database = catalog.GetCatalogSnapshot()->GetDatabase(key);
   if (!database) [[unlikely]] {
     return std::unexpected<Result>(std::in_place,
@@ -682,78 +678,70 @@ ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
   return database;
 }
 
-CatalogFeature::CatalogFeature(Server& server)
-  : SerenedFeature{server, name()} {}
+CatalogFeature::CatalogFeature() { gInstance = this; }
 
-void CatalogFeature::collectOptions(
-  std::shared_ptr<options::ProgramOptions> options) {
-  options->addOption(
-    "--skip-background-errors",
-    "Whether to attempt to continue in face of errors caused by background "
-    "tasks; may result in inconsistent database state.",
-    std::make_unique<options::BooleanParameter>(&_skip_background_errors));
-}
+CatalogFeature::~CatalogFeature() { gInstance = nullptr; }
 
-void CatalogFeature::prepare() {
+void CatalogFeature::start() {
+  // NOTE: stop() is intentionally empty in the header. _local / _global
+  // must remain valid past every feature's stop() because
+  // EngineFeature::stop() drains the rocksdb background thread, which
+  // calls SyncStats -> GetCatalog(). The CatalogFeature dtor releases
+  // the shared_ptrs once all features are torn down.
   auto catalog = std::make_shared<LocalCatalog>();
   _global = catalog;
   _local = std::move(catalog);
-}
 
-void CatalogFeature::start() {
   auto r = Open();
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }
 }
 
-void CatalogFeature::unprepare() {
-  SDB_ASSERT(_local);
-  SDB_ASSERT(_global);
-  _local.reset();
-  _global.reset();
-}
-
 Result CatalogFeature::Open() {
-  if (ServerState::instance()->IsCoordinator()) {
-    return {};
+  OpenDatabase open_db{Local()};
+  if (auto r = open_db.AddRoles(); !r.ok()) {
+    return r;
   }
 
-  OpenDatabase open_db{Local()};
-  if (ServerState::instance()->IsSingle()) {
-    if (auto r = open_db.AddRoles(); !r.ok()) {
-      return r;
+  // Bootstrap the default `postgres` role on first start. AddRoles() has
+  // already loaded any persisted roles; if none exist we mint the root user
+  // and persist it via Local().CreateRole(), which writes it to RocksDB so it
+  // survives across restarts. RBAC isn't implemented yet, so the password is
+  // empty and auth checks are skipped.
+  if (Local().GetCatalogSnapshot()->GetRoles().empty()) {
+    auto root = Role::NewUser(StaticStrings::kDefaultUser, "", id::kRootUser);
+    if (auto br = Local().CreateRole(std::move(root)); !br.ok()) {
+      return br;
     }
   }
 
   auto r = open_db();
 
   if (!r.ok()) {
-    SDB_FATAL("xxxxx", Logger::FIXME, "Failed to open database, ",
-              r.errorMessage());
+    SDB_FATAL(GENERAL, "Failed to open database, ", r.errorMessage());
   }
 
   if (auto fr = Local().FinalizeLoad(); !fr.ok()) {
-    SDB_FATAL("xxxxx", Logger::FIXME,
-              "FinalizeLoad failed: ", fr.errorMessage());
+    SDB_FATAL(GENERAL, "FinalizeLoad failed: ", fr.errorMessage());
   }
 
   if (!catalog::GetDatabase(StaticStrings::kDefaultDatabase)) {
-    SDB_FATAL("xxxxx", Logger::FIXME, "No ", StaticStrings::kDefaultDatabase,
+    SDB_FATAL(GENERAL, "No ", StaticStrings::kDefaultDatabase,
               " database found in database directory");
   }
 
   // Attach all existing databases into DuckDB
   {
     auto snapshot = GetCatalog().GetCatalogSnapshot();
-    auto conn = query::DuckDBEngine::Instance().CreateConnection();
+    auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
     for (auto& db : snapshot->GetDatabases()) {
       auto query = absl::StrCat("ATTACH '", db->GetId().id(), "' AS \"",
                                 db->GetName(), "\" (TYPE serenedb)");
       auto result = conn->Query(query);
       if (result->HasError()) {
-        SDB_FATAL("xxxxx", Logger::FIXME, "Failed to attach database ",
-                  db->GetName(), ": ", result->GetError());
+        SDB_FATAL(GENERAL, "Failed to attach database ", db->GetName(), ": ",
+                  result->GetError());
       }
     }
   }
@@ -770,10 +758,7 @@ ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name) {
 }
 
 LogicalCatalog& GetCatalog() {
-  auto& catalogs =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-  return ServerState::instance()->IsCoordinator() ? catalogs.Global()
-                                                  : catalogs.Local();
+  return catalog::CatalogFeature::instance().Local();
 }
 
 }  // namespace sdb::catalog

@@ -21,7 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "basics/runtime_utils.hpp"
 #include "iresearch/analysis/analyzers.hpp"
 #include "tests_config.hpp"
 #include "tests_shared.hpp"
@@ -39,17 +38,18 @@ class AnalyzerTest : public ::testing::Test {
       // same env variable name as
       // irs::analysis::text_token_stream::STOPWORD_PATH_ENV_VARIABLE
       const auto text_stopword_path_var = "IRESEARCH_TEXT_STOPWORD_PATH";
-      const char* cz_old_stopword_path = irs::Getenv(text_stopword_path_var);
+      const char* cz_old_stopword_path = std::getenv(text_stopword_path_var);
       std::string s_old_stopword_path =
         cz_old_stopword_path == nullptr ? "" : cz_old_stopword_path;
 
-      irs::Setenv(text_stopword_path_var, IRS_TEST_RESOURCE_DIR, true);
+      ::setenv(text_stopword_path_var, IRS_TEST_RESOURCE_DIR, /*overwrite=*/1);
       irs::analysis::analyzers::Get(
         "text", irs::Type<irs::text_format::Text>::get(),
         "en");  // stream needed only to load stopwords
 
       if (cz_old_stopword_path) {
-        irs::Setenv(text_stopword_path_var, s_old_stopword_path.c_str(), true);
+        ::setenv(text_stopword_path_var, s_old_stopword_path.c_str(),
+                 /*overwrite=*/1);
       }
     }
   }

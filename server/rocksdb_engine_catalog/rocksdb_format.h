@@ -21,8 +21,9 @@
 
 #pragma once
 
+#include <absl/base/internal/endian.h>
+
 #include "basics/common.h"
-#include "basics/endian.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 
 namespace sdb::rocksutils {
@@ -32,7 +33,7 @@ inline T UintFromPersistentLittleEndian(const char* p) {
   static_assert(std::is_unsigned_v<T>);
   T value;
   memcpy(&value, p, sizeof(T));
-  return basics::LittleToHost<T>(value);
+  return absl::little_endian::ToHost<T>(value);
 }
 
 template<typename T>
@@ -40,34 +41,34 @@ inline T UintFromPersistentBigEndian(const char* p) {
   static_assert(std::is_unsigned_v<T>);
   T value;
   memcpy(&value, p, sizeof(T));
-  return basics::BigToHost<T>(value);
+  return absl::big_endian::ToHost<T>(value);
 }
 
 template<typename T>
 inline void UintToPersistentLittleEndian(std::string& p, T value) {
   static_assert(std::is_unsigned_v<T>);
-  value = basics::HostToLittle(value);
+  value = absl::little_endian::FromHost<T>(value);
   p.append(reinterpret_cast<const char*>(&value), sizeof(T));
 }
 
 template<typename T>
 inline void UintToPersistentBigEndian(std::string& p, T value) {
   static_assert(std::is_unsigned_v<T>);
-  value = basics::HostToBig(value);
+  value = absl::big_endian::FromHost<T>(value);
   p.append(reinterpret_cast<const char*>(&value), sizeof(T));
 }
 
 template<typename T>
 inline void UintToPersistentRawLe(char* p, T value) {
   static_assert(std::is_unsigned_v<T>);
-  value = basics::HostToLittle(value);
+  value = absl::little_endian::FromHost<T>(value);
   memcpy(p, &value, sizeof(T));
 }
 
 template<typename T>
 inline void UintToPersistentRawBe(char* p, T value) {
   static_assert(std::is_unsigned_v<T>);
-  value = basics::HostToBig(value);
+  value = absl::big_endian::FromHost<T>(value);
   memcpy(p, &value, sizeof(T));
 }
 

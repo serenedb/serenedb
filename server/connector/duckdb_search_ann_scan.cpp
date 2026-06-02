@@ -35,7 +35,7 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/string_utils.h"
 #include "connector/duckdb_ann_filter.h"
 #include "connector/duckdb_client_state.h"

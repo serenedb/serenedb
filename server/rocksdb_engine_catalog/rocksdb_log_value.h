@@ -26,7 +26,6 @@
 
 #include "catalog/identifiers/index_id.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/identifiers/transaction_id.h"
 #include "catalog/types.h"
 #include "rocksdb_engine_catalog/concat.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -82,11 +81,6 @@ struct IndexDrop {
   ObjectId database_id;
   ObjectId object_id;
   IndexId index_id;
-};
-
-struct Transaction {
-  ObjectId database_id;
-  TransactionId transaction_id;
 };
 
 struct SingleOp {

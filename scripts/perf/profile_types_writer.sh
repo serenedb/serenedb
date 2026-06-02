@@ -55,8 +55,7 @@ start_serened_under_perf() {
 	perf record -F "${FREQ}" -g --call-graph "${PERF_CALL_GRAPH:-fp}" \
 		--output "${perf_data}" -- \
 		"${SERENED_BIN}" "${DATA_DIR}" \
-		--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
-		--log.foreground-tty true \
+		--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
 		>"${serened_log}" 2>&1 &
 	PERF_PID=$!
 	for _ in $(seq 1 60); do

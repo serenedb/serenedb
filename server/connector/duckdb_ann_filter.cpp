@@ -21,12 +21,12 @@
 #include "connector/duckdb_ann_filter.h"
 
 #include "basics/assert.h"
+#include "basics/duckdb_engine.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/index_source.h"
 #include "connector/index_source_factory.h"
 #include "connector/pk_batch_helpers.h"
 #include "connector/search_pk_lookup.h"
-#include "query/duckdb_engine.h"
 
 namespace sdb::connector {
 

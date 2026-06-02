@@ -6,7 +6,6 @@ target_sources(
         acceptor_tcp.cpp
         acceptor_unix_domain.cpp
         async_job_manager.cpp
-        authentication_feature.cpp
         comm_task.cpp
         general_comm_task.cpp
         general_server.cpp
@@ -15,11 +14,11 @@ target_sources(
         h2_comm_task.cpp
         scheduler.cpp
         scheduler_feature.cpp
+        signal_handling.cpp
         http_comm_task.cpp
         io_context.cpp
         request_lane.cpp
         rest_handler.cpp
         rest_handler_factory.cpp
         ssl_server_feature.cpp
-        server_options_feature.cpp
 )

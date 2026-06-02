@@ -30,10 +30,8 @@
 #include <tuple>
 #include <vector>
 
-#include "app/app_feature.h"
+#include "basics/assert.h"
 #include "catalog/types.h"
-#include "metrics/fwd.h"
-#include "rest_server/serened.h"
 
 namespace sdb {
 
@@ -80,13 +78,15 @@ class LowerBoundSubscription final : public FlushSubscription {
   std::string _name;
 };
 
-class FlushFeature final : public SerenedFeature {
+class FlushFeature final {
  public:
-  static constexpr std::string_view name() noexcept { return "Flush"; }
+  inline static FlushFeature* gInstance = nullptr;
+  static FlushFeature& instance() noexcept { return *gInstance; }
 
-  explicit FlushFeature(Server& server);
+  FlushFeature();
+  ~FlushFeature();
 
-  ~FlushFeature() final;
+  void stop();
 
   /// register a flush subscription that will ensure replay of all WAL
   ///        entries after the latter of registration or the last successful
@@ -102,14 +102,9 @@ class FlushFeature final : public SerenedFeature {
   /// found, the returned tick value is 0.
   std::tuple<size_t, size_t, Tick> releaseUnusedTicks();
 
-  void stop() final;
-
  private:
   absl::Mutex _flush_subscriptions_mutex;
   std::vector<std::weak_ptr<FlushSubscription>> _flush_subscriptions;
-  bool _stopped;
-
-  metrics::Gauge<uint64_t>& _metrics_flush_subscriptions;
 };
 
 }  // namespace sdb

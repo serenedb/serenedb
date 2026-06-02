@@ -21,30 +21,26 @@
 #pragma once
 
 #include "basics/down_cast.h"
-#include "rest_server/serened.h"
 
 namespace sdb {
 
 class RocksDBEngineCatalog;
 
-class EngineFeature final : public SerenedFeature {
+class EngineFeature final {
  public:
-  static constexpr std::string_view name() noexcept { return "Engine"; }
+  inline static EngineFeature* gInstance = nullptr;
+  static EngineFeature& instance() noexcept { return *gInstance; }
 
-  explicit EngineFeature(Server& server);
+  EngineFeature();
+  ~EngineFeature();
 
-  void start() final;
-  void stop() final;
-  void prepare() final;
-  void unprepare() final;
-  void beginShutdown() final;
+  void start();
+  void stop();
 
   RocksDBEngineCatalog& engine() { return *_engine; }
-  bool started() const { return _started.load(std::memory_order_relaxed); }
 
  protected:
   std::shared_ptr<RocksDBEngineCatalog> _engine;
-  std::atomic_bool _started = false;
 };
 
 RocksDBEngineCatalog& GetServerEngine();

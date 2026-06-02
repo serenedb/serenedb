@@ -21,7 +21,6 @@ EXCEPTIONS = {
     "libs/iresearch/include/iresearch/utils/fstext/fst_draw.hpp",
     "libs/vpack/include/vpack/wyhash.h",
     "libs/vpack/include/vpack/events_from_slice.h",
-    "libs/basics/logger/syslog_names.h",
     "server/pg/protocol.h",
     "server/pg/functions/interval.cpp",
     "tests/bench/micro/call_once.cpp",

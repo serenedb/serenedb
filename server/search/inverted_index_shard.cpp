@@ -41,18 +41,15 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
+#include "basics/duckdb_engine.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/scorer_options.h"
-#include "metrics/gauge.h"
-#include "metrics/guard.h"
-#include "query/duckdb_engine.h"
 #include "query/transaction.h"
 #include "rest_server/flush_feature.h"
-#include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "search/task.h"
@@ -62,19 +59,6 @@
 
 namespace sdb::search {
 namespace {
-
-uint64_t ComputeAvg(std::atomic<uint64_t>& time_num, uint64_t new_time) {
-  constexpr uint64_t kWindowSize{10};
-  const auto old_time_num =
-    time_num.fetch_add((new_time << 32U) + 1, std::memory_order_relaxed);
-  const auto old_time = old_time_num >> 32U;
-  const auto old_num = old_time_num & std::numeric_limits<uint32_t>::max();
-  if (old_num >= kWindowSize) {
-    time_num.fetch_sub(((old_time / old_num) << 32U) + 1,
-                       std::memory_order_relaxed);
-  }
-  return (old_time + new_time) / (old_num + 1);
-}
 
 bool ReadCommitMeta(irs::bytes_view payload, Tick& tick,
                     int64_t& iceberg_snapshot_id) noexcept {
@@ -132,10 +116,9 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
   _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
   _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
-  auto& server = SerenedServer::Instance();
 
   const auto schema_id = index.GetParentId();
-  const auto db_id = server.getFeature<catalog::CatalogFeature>()
+  const auto db_id = catalog::CatalogFeature::instance()
                        .Global()
                        .GetCatalogSnapshot()
                        ->GetDatabaseId(index);
@@ -181,15 +164,13 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   resource_manager.readers = _readers_memory;
   resource_manager.compactions = _compactions_memory;
   resource_manager.file_descriptors = _file_descriptors_count;
-  resource_manager.cached_columns =
-    &GetSearchEngine().getCachedColumnsManager();
   _dir = std::make_unique<irs::MMapDirectory>(path, irs::DirectoryAttributes{},
                                               resource_manager);
 
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = 256 * (size_t{1} << 20);  // 256MB
   writer_options.lock_repository = false;  // RocksDB has its own lock
-  writer_options.db = query::DuckDBEngine::Instance().GetDB().instance.get();
+  writer_options.db = &sdb::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
   writer_options.column_options = [&](irs::field_id id) -> irs::ColumnOptions {
     if (const auto* entry = index.FindEntry(id)) {
@@ -273,8 +254,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
     auto payload = irs::GetPayload(reader.Meta().index_meta);
     if (!payload.empty()) {
       if (!ReadCommitMeta(payload, _recovery_tick, _iceberg_snapshot_id)) {
-        SDB_WARN("xxxxx", Logger::SEARCH,
-                 "Failed to read commit meta from inverted index '",
+        SDB_WARN(SEARCH, "Failed to read commit meta from inverted index '",
                  GetId().id(), "'");
       }
       _last_committed_tick = _recovery_tick;
@@ -291,10 +271,6 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   _flush_subscription = std::make_shared<LowerBoundSubscription>(
     _recovery_tick,
     absl::StrCat("flush subscription for inverted index '", _id, "'"));
-
-  if (!server.hasFeature<RocksDBRecoveryManager>()) {
-    return;
-  }
 }
 
 void InvertedIndexShard::WriteInternal(vpack::Builder& /*b*/) const {}
@@ -302,20 +278,7 @@ void InvertedIndexShard::WriteInternal(vpack::Builder& /*b*/) const {}
 void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
                                         query::Transaction* user_txn)
   ABSL_NO_THREAD_SAFETY_ANALYSIS {
-  // Bump _num_failed_commits if anything below throws so the metric stays
-  // consistent with the legacy SearchDataStore::truncateCommit path.
-  bool ok = false;
-  irs::Finally compute_metrics = [&]() noexcept {
-    // We don't measure time because we believe that it should tend to zero
-    if (!ok && _num_failed_commits != nullptr) {
-      _num_failed_commits->fetch_add(1, std::memory_order_relaxed);
-    }
-  };
-
-  SDB_IF_FAILURE("SereneSearchTruncateFailure") {
-    CrashHandler::setHardKill();
-    SDB_THROW(ERROR_DEBUG);
-  }
+  SDB_IF_FAILURE("SereneSearchTruncateFailure") { SDB_THROW(ERROR_DEBUG); }
 
   SDB_ASSERT(_writer);
 
@@ -377,16 +340,13 @@ void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
     auto& subscription =
       basics::downCast<LowerBoundSubscription>(*_flush_subscription);
     subscription.tick(_last_committed_tick);
-    ok = true;
   } catch (const std::exception& e) {
-    SDB_ERROR("xxxxx", Logger::SEARCH,
-              "caught exception while truncating Search index '", GetId().id(),
-              "': ", e.what());
+    SDB_ERROR(SEARCH, "caught exception while truncating Search index '",
+              GetId().id(), "': ", e.what());
     throw;
   } catch (...) {
-    SDB_WARN("xxxxx", Logger::SEARCH,
-             "caught exception while truncating Search index '", GetId().id(),
-             "'");
+    SDB_WARN(SEARCH, "caught exception while truncating Search index '",
+             GetId().id(), "'");
     throw;
   }
 }
@@ -416,10 +376,6 @@ InvertedIndexShard::Stats InvertedIndexShard::UpdateStatsUnsafe(
   SDB_ASSERT(inverted_index_snapshot);
   auto& reader = inverted_index_snapshot->reader;
   SDB_ASSERT(reader);
-  if (_mapped_memory) {
-    _mapped_memory->store(reader.CountMappedMemory(),
-                          std::memory_order_relaxed);
-  }
   auto& segments = reader->Meta().index_meta.segments;
 
   Stats stats;
@@ -432,9 +388,6 @@ InvertedIndexShard::Stats InvertedIndexShard::UpdateStatsUnsafe(
     stats.indexSize += meta.byte_size;
     stats.numFiles += meta.files.size();
   }
-  if (_metric_stats) {
-    _metric_stats->store(stats);
-  }
   return stats;
 }
 
@@ -444,12 +397,6 @@ InvertedIndexShard::ResultWithTime InvertedIndexShard::CleanupUnsafe() {
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
-  if (bool ok = result.ok(); ok && _avg_cleanup_time_ms != nullptr) {
-    _avg_cleanup_time_ms->store(ComputeAvg(_cleanup_time_num, time_ms),
-                                std::memory_order_relaxed);
-  } else if (!ok && _num_failed_cleanups != nullptr) {
-    _num_failed_cleanups->fetch_add(1, std::memory_order_relaxed);
-  }
   return {std::move(result), time_ms};
 }
 
@@ -474,12 +421,6 @@ InvertedIndexShard::ResultWithTime InvertedIndexShard::CompactUnsafe(
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
-  if (bool ok = result.ok(); ok && _avg_compaction_time_ms != nullptr) {
-    _avg_compaction_time_ms->store(ComputeAvg(_compaction_time_num, time_ms),
-                                   std::memory_order_relaxed);
-  } else if (!ok && _num_failed_compactions != nullptr) {
-    _num_failed_compactions->fetch_add(1, std::memory_order_relaxed);
-  }
   return {std::move(result), time_ms};
 }
 
@@ -491,19 +432,9 @@ InvertedIndexShard::ResultWithTime InvertedIndexShard::CommitUnsafe(
                        std::chrono::steady_clock::now() - begin)
                        .count();
 
-  SDB_IF_FAILURE("Search::FailOnCommit") {
-    // intentionally mark the commit as failed
-    result.reset(ERROR_DEBUG);
-  }
+  SDB_IF_FAILURE("Search::FailOnCommit") { result.reset(ERROR_DEBUG); }
   SDB_IF_FAILURE("Search::CrashAfterCommit") { SDB_IMMEDIATE_ABORT(); }
 
-  if (bool ok = result.ok(); !ok && _num_failed_commits != nullptr) {
-    _num_failed_commits->fetch_add(1, std::memory_order_relaxed);
-  } else if (ok && code == CommitResult::Done &&
-             _avg_commit_time_ms != nullptr) {
-    _avg_commit_time_ms->store(ComputeAvg(_commit_time_num, time_ms),
-                               std::memory_order_relaxed);
-  }
   return {std::move(result), time_ms};
 }
 
@@ -551,15 +482,15 @@ Result InvertedIndexShard::CommitUnsafeImpl(
     std::unique_lock commit_lock{_commit_mutex, std::try_to_lock};
     if (!commit_lock.owns_lock()) {
       if (!wait) {
-        SDB_TRACE("xxxxx", Logger::SEARCH, "Commit for Search index '",
-                  GetId().id(), "' is already in progress, skipping");
+        SDB_TRACE(SEARCH, "Commit for Search index '", GetId().id(),
+                  "' is already in progress, skipping");
 
         code = CommitResult::InProgress;
         return {};
       }
 
-      SDB_TRACE("xxxxx", Logger::SEARCH, "Commit for Search index '",
-                GetId().id(), "' is already in progress, waiting");
+      SDB_TRACE(SEARCH, "Commit for Search index '", GetId().id(),
+                "' is already in progress, waiting");
 
       commit_lock.lock();
     }
@@ -597,8 +528,8 @@ Result InvertedIndexShard::CommitUnsafeImpl(
     SDB_ASSERT(reader != nullptr);
     std::move(commit_guard).Cancel();
     if (!were_changes) {
-      SDB_TRACE("xxxxx", Logger::SEARCH, "Commit for Search index '",
-                GetId().id(), "' is no changes, tick ", before_commit, "'");
+      SDB_TRACE(SEARCH, "Commit for Search index '", GetId().id(),
+                "' is no changes, tick ", before_commit, "'");
       // While Recovering, the flush subscription must not claim more than
       // what's actually flushed -- otherwise rocksdb could truncate WAL we
       // still need to replay on a later restart.
@@ -633,9 +564,9 @@ Result InvertedIndexShard::CommitUnsafeImpl(
 
     UpdateStatsUnsafe(std::move(data));
 
-    SDB_DEBUG("xxxxx", Logger::SEARCH, "successful sync of Search index '",
-              GetId().id(), "', segments '", reader_size, "', docs count '",
-              docs_count, "', live docs count '", live_docs_count,
+    SDB_DEBUG(SEARCH, "successful sync of Search index '", GetId().id(),
+              "', segments '", reader_size, "', docs count '", docs_count,
+              "', live docs count '", live_docs_count,
               "', last operation tick '", _last_committed_tick, "'");
   } catch (const basics::Exception& e) {
     return {e.code(), "caught exception while committing Search index '",
@@ -656,11 +587,7 @@ void InvertedIndexShard::FinishCreation() {
     return;
   }
   _phase = Phase::Active;
-  auto& server = SerenedServer::Instance();
-  if (server.hasFeature<FlushFeature>()) {
-    server.getFeature<FlushFeature>().registerFlushSubscription(
-      _flush_subscription);
-  }
+  FlushFeature::instance().registerFlushSubscription(_flush_subscription);
 }
 
 void InvertedIndexShard::RecoveryCommit(Tick tick) {
@@ -671,9 +598,6 @@ void InvertedIndexShard::RecoveryCommit(Tick tick) {
 }
 
 InvertedIndexShard::Stats InvertedIndexShard::GetStats() const {
-  if (_metric_stats) {
-    return _metric_stats->load();
-  }
   auto snapshot = GetInvertedIndexSnapshot();
   if (!snapshot) {
     return {};

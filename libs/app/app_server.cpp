@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,434 +15,90 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "app_server.h"
 
-#include <absl/cleanup/cleanup.h>
-#include <absl/strings/str_join.h>
-#include <vpack/options.h>
-#include <vpack/slice.h>
+#include <absl/flags/parse.h>
+#include <absl/flags/usage.h>
+#include <absl/flags/usage_config.h>
 
-#include <atomic>
-#include <chrono>
-#include <cstdlib>
-#include <iostream>
-#include <new>
-#include <ranges>
-#include <utility>
+#include <string>
 
-#include "app/app_feature.h"
-#include "app/options/argument_parser.h"
-#include "app/options/option.h"
-#include "app/options/parameters.h"
-#include "app/options/program_options.h"
-#include "app/options/section.h"
-#include "basics/application-exit.h"
-#include "basics/debugging.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
-#include "basics/logger/logger.h"
-#include "basics/result.h"
-#include "basics/string_utils.h"
+#include "basics/lifecycle.h"
+#include "basics/log.h"
 
 namespace sdb::app {
 
-AppServer::AppServer(std::shared_ptr<options::ProgramOptions> options,
-                     const char* binary_path,
-                     std::span<std::unique_ptr<AppFeature>> features)
-  : _options{options}, _all_features{features}, _binary_path{binary_path} {
-  addReporter(
-    ProgressHandler{[](AppServer::State state) {},
-                    [](AppServer::State state, std::string_view name) {}});
-}
-
-bool AppServer::isStopping() const {
-  auto tmp = state();
-  return isStoppingState(tmp);
-}
-
-bool AppServer::isStoppingState(State state) const {
-  return state == State::InShutdown || state == State::InStop ||
-         state == State::InUnprepare || state == State::Stopped ||
-         state == State::Aborted;
-}
-
-void AppServer::disableFeatures(std::span<const size_t> types, bool force) {
-  for (const size_t type : types) {
-    if (hasFeature(type)) {
-      auto& feature = *_all_features[type];
-      if (force) {
-        feature.forceDisable();
-      } else {
-        feature.disable();
-      }
-    }
-  }
-}
-
-// this method will initialize and validate options
-// of all feature, start them and wait for a shutdown
-// signal. after that, it will shutdown all features
-void AppServer::run(int argc, char* argv[]) {
-  // collect options from all features
-  // in this phase, all features are order-independent
-  _state.store(State::InCollectOptions, std::memory_order_release);
-  reportServerProgress(State::InCollectOptions);
-  collectOptions();
-
-  // setup dependency, but ignore any failure for now
-  SetupFeatures();
-
-  // parse the command line parameters and load any configuration
-  // file(s)
-  parseOptions(argc, argv);
-
-  if (!_help_section.empty()) {
-    // help shown. we can exit early
-    return;
-  }
-
-  // seal the options
-  _options->seal();
-
-  // validate options of all features
-  _state.store(State::InValidateOptions, std::memory_order_release);
-  reportServerProgress(State::InValidateOptions);
-  validateOptions();
-
-  // allows process control
-  daemonize();
-
-  // now the features will actually do some preparation work
-  // in the preparation phase, the features must not start any threads
-  // furthermore, they must not write any files under elevated privileges
-  // if they want other features to access them, or if they want to access
-  // these files with dropped privileges
-  _state.store(State::InPrepare, std::memory_order_release);
-  reportServerProgress(State::InPrepare);
-  prepare();
-
-  // start features. now features are allowed to start threads, write files
-  // etc.
-  _state.store(State::InStart, std::memory_order_release);
-  reportServerProgress(State::InStart);
-  start();
-
-  // wait until we get signaled the shutdown request
-  _state.store(State::InWait, std::memory_order_release);
-  reportServerProgress(State::InWait);
-  wait();
-
-  // beginShutdown is called asynchronously ----------
-
-  // stop all features
-  _state.store(State::InStop, std::memory_order_release);
-  reportServerProgress(State::InStop);
-  stop();
-
-  // unprepare all features
-  _state.store(State::InUnprepare, std::memory_order_release);
-  reportServerProgress(State::InUnprepare);
-  unprepare();
-
-  // stopped
-  _state.store(State::Stopped, std::memory_order_release);
-  reportServerProgress(State::Stopped);
-}
-
-// signal the server to initiate a soft shutdown
-void AppServer::initiateSoftShutdown() {
-  // fowards the begin shutdown signal to all features
-  for (auto& feature : EnabledFeaturesReverse()) {
-    auto r = basics::SafeCall([&] { feature.initiateSoftShutdown(); });
-
-    if (!r.ok()) {
-      SDB_ERROR("xxxxx", Logger::STARTUP,
-                "caught exception during initiateSoftShutdown of feature '",
-                feature.name(), "': ", r.errorMessage());
-    }
-  }
-}
-
-// signal the server to shut down
-void AppServer::beginShutdown() {
-  // fetch the old state, check if somebody already called shutdown, and only
-  // proceed if not.
-  State old = state();
-  do {
-    if (isStoppingState(old)) {
-      // beginShutdown already called, nothing to do now
-      return;
-    }
-    // try to enter the new state, but make sure nobody changed it in between
-  } while (!_state.compare_exchange_weak(old, State::InShutdown,
-                                         std::memory_order_release,
-                                         std::memory_order_acquire));
-
-  // make sure that we advance the state when we get out of here
-  absl::Cleanup wait_aborter = [this] noexcept {
-    absl::MutexLock guard{&_shutdown_condition.mutex};
-    _abort_waiting = true;
-    _shutdown_condition.cv.notify_one();
-  };
-
-  // now we can execute the actual shutdown sequence
-
-  // fowards the begin shutdown signal to all features
-  for (auto& feature : EnabledFeaturesReverse()) {
-    auto r = basics::SafeCall([&] { feature.beginShutdown(); });
-
-    if (!r.ok()) {
-      SDB_ERROR("xxxxx", Logger::STARTUP,
-                "caught exception during beginShutdown of feature '",
-                feature.name(), "': ", r.errorMessage());
-    }
-  }
-}
-
-void AppServer::shutdownFatalError() { reportServerProgress(State::Aborted); }
-
-void AppServer::collectOptions() {
-  _options->addSection(options::Section{"", "general settings", "",
-                                        "general options", false, false});
-
-  _options->addOption(
-    "--dump-options",
-    "Dump all available startup options in JSON format and exit.",
-    new options::BooleanParameter(&_dump_options),
-    options::MakeDefaultFlags(options::Flags::Uncommon,
-                              options::Flags::Command));
-
-  for (auto& feature : EnabledFeatures()) {
-    reportFeatureProgress(_state.load(std::memory_order_relaxed),
-                          feature.name());
-    feature.collectOptions(_options);
-  }
-}
-
 void AppServer::parseOptions(int argc, char* argv[]) {
-  options::ArgumentParser parser(_options.get());
-
-  _help_section = parser.helpSection(argc, argv);
-
-  if (!_help_section.empty()) {
-    // user asked for "--help"
-
-    // translate "all" to ".", because section "all" does not exist
-    if (_help_section == "all" || _help_section == "hidden") {
-      _help_section = ".";
-    }
-    _options->printHelp(_help_section);
-    return;
-  }
-
-  if (!parser.parse(argc, argv)) {
-    // command-line option parsing failed. an error was already printed
-    // by now, so we can exit
-    FatalErrorExitCode(_options->processingResult().exitCodeOrFailure());
-  }
-
-  for (auto& feature : EnabledFeatures()) {
-    feature.loadOptions(_options, _binary_path);
-  }
-
-  if (_dump_options) {
-    auto builder =
-      _options->toVPack(false, true, [](const std::string&) { return true; });
-    vpack::Options options;
-    options.pretty_print = true;
-    std::cout << builder.slice().toJson(&options) << std::endl;
-    exit(EXIT_SUCCESS);
-  }
-}
-
-void AppServer::validateOptions() {
-  for (auto& feature : EnabledFeatures()) {
-    reportFeatureProgress(_state.load(std::memory_order_relaxed),
-                          feature.name());
-    feature.validateOptions(_options);
-    feature.state(AppFeature::State::Validated);
-  }
-}
-
-void AppServer::SetupFeatures() {
-  for (auto& feature : EnabledFeatures()) {
-    feature.state(AppFeature::State::Initialized);
-  }
-}
-
-void AppServer::daemonize() {
-  for (auto& feature : EnabledFeatures()) {
-    feature.daemonize();
-  }
-}
-
-void AppServer::prepare() {
-  for (auto& feature : EnabledFeatures()) {
-    reportFeatureProgress(_state.load(std::memory_order_relaxed),
-                          feature.name());
-
-    auto r = basics::SafeCall([&] { feature.prepare(); });
-
-    if (!r.ok()) {
-      SDB_ERROR("xxxxx", Logger::STARTUP,
-                "caught exception during prepare of feature '", feature.name(),
-                "': ", r.errorMessage());
-    }
-
-    feature.state(AppFeature::State::Prepared);
-  }
-}
-
-void AppServer::start() {
-  for (auto& feature : EnabledFeatures()) {
-    auto r = basics::SafeCall(
-      [&] {
-        reportFeatureProgress(_state.load(std::memory_order_relaxed),
-                              feature.name());
-        feature.start();
-        feature.state(AppFeature::State::Started);
-      },
-      [&](ErrorCode code, std::string_view what) {
-        return Result{
-          code, "startup aborted: caught exception during start of feature '",
-          feature.name(), "': ", what.empty() ? "unspecified error" : what};
-      });
-
-    if (!r.ok()) {
-      SDB_ERROR("xxxxx", Logger::STARTUP, r.errorMessage(), ". shutting down");
-
-      auto started_features =
-        EnabledFeaturesReverse() | std::views::filter([](const auto& feature) {
-          return feature.state() == AppFeature::State::Started;
-        });
-
-      // try to stop all feature that we just started
-      for (auto& feature : started_features) {
-        auto r = basics::SafeCall([&] { feature.beginShutdown(); });
-
-        if (!r.ok()) {
-          // ignore errors on shutdown
-          SDB_ERROR("xxxxx", Logger::STARTUP,
-                    "caught exception while stopping feature '", feature.name(),
-                    "', error: ", r.errorMessage());
-        }
+  absl::FlagsUsageConfig usage_config;
+  usage_config.contains_help_flags = [](std::string_view file) {
+    return file.find("third_party/") == std::string_view::npos;
+  };
+  usage_config.contains_helpshort_flags = usage_config.contains_help_flags;
+  usage_config.contains_helppackage_flags = usage_config.contains_help_flags;
+  usage_config.normalize_filename = [](std::string_view file) -> std::string {
+    struct CategoryRule {
+      std::string_view file_suffix;
+      std::string_view category;
+    };
+    static constexpr CategoryRule kRules[] = {
+      {"server/rest_server/database_path_feature.cpp", "server"},
+      {"server/rest_server/endpoint_feature.cpp", "server"},
+      {"server/general_server/scheduler_feature.cpp", "server"},
+      {"server/storage_engine/search_engine.cpp", "server"},
+      {"server/general_server/general_server_feature.cpp", "http"},
+      {"server/general_server/ssl_server_feature.cpp", "ssl"},
+      {"libs/basics/log_flags.cpp", "log"},
+    };
+    for (const auto& [suffix, category] : kRules) {
+      if (file.ends_with(suffix)) {
+        return std::string{category};
       }
-
-      // try to stop all feature that we just started
-      for (auto& feature : started_features) {
-        auto r = basics::SafeCall([&] { feature.stop(); });
-
-        if (!r.ok()) {
-          // if something goes wrong, we simply rethrow to abort!
-          SDB_FATAL("xxxxx", Logger::STARTUP,
-                    "caught exception while stopping feature '", feature.name(),
-                    "', error: ", r.errorMessage());
-          SDB_THROW(std::move(r));
-        }
-
-        feature.state(AppFeature::State::Stopped);
-      }
-
-      auto stopped_features =
-        EnabledFeaturesReverse() | std::views::filter([](const auto& feature) {
-          const auto state = feature.state();
-          return state == AppFeature::State::Stopped ||
-                 state == AppFeature::State::Prepared;
-        });
-
-      // try to unprepare all feature that we just started
-      for (auto& feature : stopped_features) {
-        auto r = basics::SafeCall([&] { feature.unprepare(); });
-
-        if (!r.ok()) {
-          // if something goes wrong, we simply rethrow to abort!
-          SDB_FATAL("xxxxx", Logger::STARTUP,
-                    "caught exception while unpreparing feature '",
-                    feature.name(), "', error: ", r.errorMessage());
-          SDB_THROW(std::move(r));
-        }
-
-        feature.state(AppFeature::State::Unprepared);
-      }
-
-      shutdownFatalError();
-      SDB_THROW(std::move(r));  // throw exception so the startup aborts
     }
-  }
-
-  for (const auto& callback : _startup_callbacks) {
-    callback();
-  }
-}
-
-void AppServer::stop() {
-  for (auto& feature : EnabledFeaturesReverse()) {
-    reportFeatureProgress(_state.load(std::memory_order_relaxed),
-                          feature.name());
-
-    auto r = basics::SafeCall([&] { feature.stop(); });
-
-    if (!r.ok()) {
-      SDB_ERROR("xxxxx", Logger::STARTUP,
-                "caught exception during stop of feature '", feature.name(),
-                "': ", r.errorMessage());
+    constexpr std::string_view kMarker = "/serenedb/";
+    if (auto pos = file.rfind(kMarker); pos != std::string_view::npos) {
+      return std::string{file.substr(pos + kMarker.size())};
     }
+    return std::string{file};
+  };
+  absl::SetFlagsUsageConfig(usage_config);
+  absl::SetProgramUsageMessage(
+    "serened -- SereneDB pg-wire server\n\n"
+    "Usage:\n"
+    "  serened <data-dir> [--flag=value ...]\n"
+    "  serened shell [duckdb-shell args ...]\n"
+    "  serened psql  [psql args ...]\n\n"
+    "Flag sources (absl built-in, full definitions under --helpfull):\n"
+    "  --flagfile=path1,path2     Read flags from one or more files (one\n"
+    "                             '--flag=value' per line, '#' comments OK).\n"
+    "  --fromenv=name1,name2      Read each listed flag from FLAGS_<name>;\n"
+    "                             missing env vars are an error.\n"
+    "  --tryfromenv=name1,name2   Same as --fromenv but silently skip\n"
+    "                             flags whose env var is unset.\n"
+    "  --undefok=name1,name2      Tolerate '--name1=...' even when no flag\n"
+    "                             with that name exists (useful for shared\n"
+    "                             flagfiles across binaries).\n\n"
+    "Help variants:\n"
+    "  --help                     This filtered banner.\n"
+    "  --helpfull                 Every absl-managed flag.\n"
+    "  --help=<substring>         Flags whose name or description matches.\n"
+    "  --helpshort                Project-defined flags only (no absl/gtest).\n"
+    "  --helppackage              Flags grouped by source-tree location.\n"
+    "  --version                  Print the build banner and exit.");
 
-    feature.state(AppFeature::State::Stopped);
-  }
-}
-
-void AppServer::unprepare() {
-  for (auto& feature : EnabledFeaturesReverse()) {
-    reportFeatureProgress(_state.load(std::memory_order_relaxed),
-                          feature.name());
-
-    auto r = basics::SafeCall([&] { feature.unprepare(); });
-
-    if (!r.ok()) {
-      SDB_ERROR("xxxxx", Logger::STARTUP,
-                "caught exception during unprepare of feature '",
-                feature.name(), "': ", r.errorMessage());
-    }
-
-    feature.state(AppFeature::State::Unprepared);
+  auto positionals = absl::ParseCommandLine(argc, argv);
+  if (positionals.size() == 2) {
+    lifecycle::SetDataDirArg(positionals[1]);
+  } else if (positionals.size() > 2) {
+    SDB_FATAL(GENERAL, "expected at most one positional data-dir arg");
   }
 }
 
 void AppServer::wait() {
-  // wait here until beginShutdown has been called and finished
-  while (true) {
-    if (gCtrlC.load()) {
-      beginShutdown();
-    }
-
-    // wait until somebody calls beginShutdown and it finishes
-    absl::MutexLock guard{&_shutdown_condition.mutex};
-    if (_abort_waiting) {
-      break;
-    }
-    _shutdown_condition.cv.WaitWithTimeout(&_shutdown_condition.mutex,
-                                           absl::Milliseconds(100));
-  }
-}
-
-void AppServer::reportServerProgress(State state) {
-  for (auto& reporter : _progress_reports) {
-    if (reporter.state) {
-      reporter.state(state);
-    }
-  }
-}
-
-void AppServer::reportFeatureProgress(State state, std::string_view name) {
-  for (auto& reporter : _progress_reports) {
-    if (reporter.feature) {
-      reporter.feature(state, name);
-    }
-  }
+  lifecycle::WaitForShutdown();
+  SDB_INFO(GENERAL, "received shutdown signal, beginning shut down sequence");
 }
 
 }  // namespace sdb::app

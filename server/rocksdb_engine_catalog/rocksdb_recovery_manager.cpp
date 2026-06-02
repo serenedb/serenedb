@@ -31,6 +31,8 @@
 #include <vpack/vpack_helper.h>
 
 #include <atomic>
+#include <filesystem>
+#include <system_error>
 
 #include "app/app_server.h"
 #include "basics/application-exit.h"
@@ -38,16 +40,13 @@
 #include "basics/exceptions.h"
 #include "basics/exitcodes.h"
 #include "basics/file_utils.h"
-#include "basics/files.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/number_utils.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "database/ticks.h"
-#include "general_server/scheduler_feature.h"
-#include "general_server/state.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -55,26 +54,17 @@
 #include "rocksdb_engine_catalog/rocksdb_log_value.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_helper.h"
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb {
 
-RocksDBRecoveryManager::RocksDBRecoveryManager(Server& server)
-  : SerenedFeature{server, name()},
-    _current_sequence_number(0),
-    _recovery_state(RecoveryState::Before) {
-  setOptional(true);
+RocksDBRecoveryManager::RocksDBRecoveryManager()
+  : _current_sequence_number(0), _recovery_state(RecoveryState::Before) {
+  gInstance = this;
 }
 
-void RocksDBRecoveryManager::prepare() {
-  if (ServerState::instance()->IsCoordinator()) {
-    disable();
-  }
-}
+RocksDBRecoveryManager::~RocksDBRecoveryManager() { gInstance = nullptr; }
 
 void RocksDBRecoveryManager::start() {
-  SDB_ASSERT(isEnabled());
-
   // synchronizes with acquire inRecovery()
   _recovery_state.store(RecoveryState::InProgress, std::memory_order_release);
 
@@ -83,16 +73,13 @@ void RocksDBRecoveryManager::start() {
 
   // synchronizes with acquire inRecovery()
   _recovery_state.store(RecoveryState::Done, std::memory_order_release);
-
-  // notify everyone that recovery is now done
-  recoveryDone();
 }
 
 void RocksDBRecoveryManager::runRecovery() {
   auto res = parseRocksWAL();
   if (res.fail()) {
     SDB_FATAL_EXIT_CODE(
-      "xxxxx", Logger::ENGINES, EXIT_RECOVERY,
+      STORAGE, EXIT_RECOVERY,
       "failed during rocksdb WAL recovery: ", res.errorMessage());
   }
 
@@ -129,10 +116,6 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
   // minimum server tick we are going to accept (initialized to
   // NewTickServer())
   const uint64_t _minimum_server_tick;
-  // max tick value found in WAL
-  uint64_t _max_tick_found;
-  // max HLC value found in WAL
-  uint64_t _max_hlc_found;
   // number of WAL entries scanned
   uint64_t _entries_scanned;
   // start of batch sequence number (currently only set, but not read back -
@@ -152,8 +135,6 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
                     std::atomic<rocksdb::SequenceNumber>& current_sequence)
     : _progress_state{recovery_start_sequence, latest_sequence},
       _minimum_server_tick(NewTickServer()),
-      _max_tick_found(0),
-      _max_hlc_found(0),
       _entries_scanned(0),
       _batch_start_sequence(0),
       _current_sequence(current_sequence),
@@ -182,8 +163,8 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
       // report only every 5%, so that we don't flood the log with micro
       // progress
       if (progress >= 5 && progress >= _progress_state.progress_value + 5) {
-        SDB_INFO("xxxxx", Logger::ENGINES, "Recovering from sequence number ",
-                 start_sequence, " (", progress, "% of WAL)...");
+        SDB_INFO(STORAGE, "Recovering from sequence number ", start_sequence,
+                 " (", progress, "% of WAL)...");
 
         _progress_state.progress_value = progress;
       }
@@ -198,51 +179,22 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
   Result ShutdownWbReader() {
     Result rv = basics::SafeCall([&] {
       if (_engine.dbExisted()) {
-        SDB_INFO("xxxxx", Logger::ENGINES, "RocksDB recovery finished, ",
+        SDB_INFO(STORAGE, "RocksDB recovery finished, ",
                  "WAL entries scanned: ", _entries_scanned,
                  ", recovery start sequence number: ",
                  _progress_state.recovery_start_sequence,
                  ", latest WAL sequence number: ",
-                 _engine.db()->GetLatestSequenceNumber(),
-                 ", max tick value found in WAL: ", _max_tick_found,
-                 ", last HLC value found in WAL: ", _max_hlc_found);
+                 _engine.db()->GetLatestSequenceNumber());
       }
-
-      // update ticks after parsing wal
-      UpdateTickServer(_max_tick_found);
-
-      NewTickHybridLogicalClock(_max_hlc_found);
+      // Tick / HLC recovery is owned by RocksDBSettingsManager::loadSettings;
+      // the WAL-walk used to derive a max-tick / max-HLC here, but the
+      // extraction logic was never implemented and the values would always
+      // have been 0.
     });
     return rv;
   }
 
  private:
-  void StoreMaxHlc(uint64_t hlc) {
-    if (hlc > _max_hlc_found) {
-      _max_hlc_found = hlc;
-    }
-  }
-
-  void StoreMaxTick(uint64_t tick) {
-    if (tick > _max_tick_found) {
-      _max_tick_found = tick;
-    }
-  }
-
-  void UpdateMaxTick(uint32_t column_family_id, const rocksdb::Slice& key,
-                     const rocksdb::Slice& value) {
-    // RETURN (side-effect): update _max_tick_found
-    //
-    // extract max tick from Markers and store them as side-effect in
-    // _max_tick_found member variable that can be used later (dtor) to call
-    // SdbUpdateTickServer (ticks.h)
-    // Markers: - collections (id,objectid) as tick and max tick in indexes
-    // array
-    //          - documents - _rev (revision as maxtick)
-    //          - databases
-    // TODO(codeworse): implement recovery logic
-  }
-
   // tick function that is called before each new WAL entry
   void IncTick() {
     if (_start_of_batch) {
@@ -260,8 +212,6 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
     ++_entries_scanned;
 
     IncTick();
-
-    UpdateMaxTick(column_family_id, key, value);
 
     for (auto helper : _engine.recoveryHelpers()) {
       helper->PutCF(column_family_id, key, value, _current_sequence);
@@ -390,21 +340,25 @@ Result RocksDBRecoveryManager::parseRocksWAL() {
     if (engine.dbExisted()) {
       size_t files_active = 0;
       size_t files_in_archive = 0;
-      try {
-        // number of active log files
-        std::string active = db->GetOptions().wal_dir;
-        files_active = SdbFilesDirectory(active.c_str()).size();
-
-        // number of log files in the archive
-        std::string archive = basics::file_utils::BuildFilename(
-          db->GetOptions().wal_dir, "archive");
-        files_in_archive = SdbFilesDirectory(archive.c_str()).size();
-      } catch (...) {
-        // don't ever fail recovery because we can't get list of files in
-        // archive
+      std::error_code ec;
+      // number of active log files
+      for (auto it =
+             std::filesystem::directory_iterator{db->GetOptions().wal_dir, ec};
+           !ec && it != std::filesystem::directory_iterator{};
+           it.increment(ec)) {
+        ++files_active;
+      }
+      // number of log files in the archive
+      ec.clear();
+      const std::string archive =
+        basics::file_utils::BuildFilename(db->GetOptions().wal_dir, "archive");
+      for (auto it = std::filesystem::directory_iterator{archive, ec};
+           !ec && it != std::filesystem::directory_iterator{};
+           it.increment(ec)) {
+        ++files_in_archive;
       }
 
-      SDB_INFO("xxxxx", Logger::ENGINES,
+      SDB_INFO(STORAGE,
                "RocksDB recovery starting, scanning WAL starting from sequence "
                "number ",
                recovery_start_sequence,
@@ -440,7 +394,7 @@ Result RocksDBRecoveryManager::parseRocksWAL() {
         if (!s.ok()) {
           rv = rocksutils::ConvertStatus(s);
           auto msg = absl::StrCat("error during WAL scan: ", rv.errorMessage());
-          SDB_ERROR("xxxxx", Logger::ENGINES, msg);
+          SDB_ERROR(STORAGE, msg);
           rv.reset(rv.errorNumber(), std::move(msg));  // update message
           break;
         }
@@ -464,51 +418,6 @@ Result RocksDBRecoveryManager::parseRocksWAL() {
   }
 
   return res;
-}
-
-void RocksDBRecoveryManager::recoveryDone() {
-  SDB_ASSERT(!ServerState::instance()->IsCoordinator());
-  SDB_ASSERT(!server().getFeature<EngineFeature>().engine().inRecovery());
-
-  // '_pending_recovery_callbacks' will not change because
-  // !StorageEngine.inRecovery()
-  // It's single active thread before recovery done,
-  // so we could use general purpose thread pool for this
-  std::vector<yaclib::Future<Result>> futures;
-  futures.reserve(_pending_recovery_callbacks.size());
-  for (auto& entry : _pending_recovery_callbacks) {
-    futures.emplace_back(SchedulerFeature::gScheduler->queueWithFuture(
-      RequestLane::ClientSlow, std::move(entry)));
-  }
-  _pending_recovery_callbacks.clear();
-  // TODO(mbkkt) use single wait with early termination
-  // when it would be available
-  yaclib::Wait(futures.begin(), futures.end());
-  for (auto& future : futures) {
-    auto r = std::move(future).Touch().Ok();
-    if (!r.ok()) {
-      SDB_ERROR("xxxxx", Logger::FIXME,
-                "recovery failure due to error from callback, error '",
-                GetErrorStr(r.errorNumber()), "' message: ", r.errorMessage());
-
-      SDB_THROW(std::move(r));
-    }
-  }
-}
-
-Result RocksDBRecoveryManager::registerPostRecoveryCallback(
-  std::function<Result()>&& callback) {
-  if (!server().getFeature<EngineFeature>().engine().inRecovery()) {
-    return callback();  // if no engine then can't be in recovery
-  }
-
-  // do not need a lock since single-thread access during recovery
-  _pending_recovery_callbacks.emplace_back(std::move(callback));
-  return {};
-}
-
-void RocksDBRecoveryManager::unprepare() {
-  _pending_recovery_callbacks.clear();
 }
 
 }  // namespace sdb

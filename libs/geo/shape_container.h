@@ -39,9 +39,6 @@ class S2PointRegion;
 
 namespace sdb::geo {
 
-class Ellipsoid;
-struct QueryParams;
-
 /// Thin wrapper around S2Region objects combined with
 /// a type and helper methods to do intersect and contains
 /// checks between all supported region types
@@ -75,8 +72,6 @@ class ShapeContainer final {
 
   bool isAreaType() const noexcept { return _type == Type::S2Polygon; }
 
-  void updateBounds(QueryParams& qp) const noexcept;
-
   S2Point centroid() const noexcept;
 
   bool contains(const S2Point& other) const;
@@ -87,11 +82,6 @@ class ShapeContainer final {
   bool equals(const ShapeContainer& other) const;
 
   double distanceFromCentroid(const S2Point& other) const noexcept;
-
-  double distanceFromCentroid(const S2Point& other,
-                              const Ellipsoid& e) const noexcept;
-
-  double area(const Ellipsoid& e) const;
 
   S2Region* region() noexcept { return _data.get(); }
   const S2Region* region() const noexcept { return _data.get(); }

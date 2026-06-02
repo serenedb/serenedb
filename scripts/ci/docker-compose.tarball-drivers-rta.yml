@@ -19,8 +19,7 @@ services:
         tar -xzf /workspace/$TARBALL_NAME -C /tmp/serenedb --strip-components=1 &&
         exec /tmp/serenedb/usr/bin/serened \
           --config /tmp/serenedb/etc/serenedb/serened.conf \
-          --server.endpoint pgsql+tcp://0.0.0.0:7890 \
-          --server.authentication 0
+          --server_endpoints pgsql+tcp://0.0.0.0:7890 \
       '
 
   tests:

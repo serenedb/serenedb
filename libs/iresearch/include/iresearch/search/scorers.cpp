@@ -55,8 +55,6 @@ struct Key {
   TypeInfo args_format;
 };
 
-constexpr std::string_view kFileNamePrefix = "libscorer-";
-
 class ScorerRegister
   : public TaggedGenericRegister<Key, Scorer::ptr (*)(std::string_view args),
                                  std::string_view, ScorerRegister> {};
@@ -77,8 +75,7 @@ Scorer::ptr scorers::Get(std::string_view name, const TypeInfo& args_format,
 
     return factory ? factory(args) : nullptr;
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught exception while getting a scorer instance");
+    SDB_ERROR(IRESEARCH, "Caught exception while getting a scorer instance");
   }
 
   return nullptr;
@@ -97,7 +94,8 @@ void scorers::Init() {
 }
 
 void scorers::LoadAll(std::string_view path) {
-  LoadLibraries(path, kFileNamePrefix, "");
+  (void)path;  // plugin loading via .so removed; SereneDB ships no out-of-tree
+               // iresearch plugins
 }
 
 bool scorers::Visit(
@@ -123,23 +121,23 @@ ScorerRegistrar::ScorerRegistrar(const TypeInfo& type,
       ScorerRegister::instance().tag(Key{type.name(), args_format});
 
     if (source && registered_source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering scorer, "
                "ignoring: type '",
                type.name(), "' from ", source_ref, ", previously from ",
                *registered_source);
     } else if (source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering scorer, "
                "ignoring: type '",
                type.name(), "' from ", source_ref);
     } else if (registered_source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering scorer, "
                "ignoring: type '",
                type.name(), "', previously from ", *registered_source);
     } else {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering scorer, "
                "ignoring: type '",
                type.name(), "'");

@@ -21,168 +21,40 @@
 
 #include "endpoint_feature.h"
 
-#include "app/app_server.h"
-#include "app/options/parameters.h"
-#include "app/options/program_options.h"
-#include "app/options/section.h"
-#include "basics/application-exit.h"
-#include "basics/logger/logger.h"
-#include "endpoint/endpoint.h"
-#include "general_server/scheduler_feature.h"
+#include <absl/flags/flag.h>
+#include <sys/socket.h>
 
-using namespace sdb::basics;
-using namespace sdb::options;
+#include "basics/application-exit.h"
+#include "basics/log.h"
+
+ABSL_FLAG(std::vector<std::string>, server_endpoints, {},
+          "Endpoint(s) for client requests (e.g. "
+          "`pgsql+tcp://127.0.0.1:7890`). Comma-separated for multiple. "
+          "Supported schemes: pgsql+tcp, tcp, ssl, unix.");
 
 namespace sdb {
 
-EndpointFeature::EndpointFeature(SerenedServer& server)
-  : HttpEndpointProvider{server, name()} {
-  setOptional(true);
-
-  // if our default value is too high, we'll use half of the max value provided
-  // by the system
-  if (_backlog_size > SOMAXCONN) {
-    _backlog_size = SOMAXCONN / 2;
-  }
-}
-
-void EndpointFeature::collectOptions(std::shared_ptr<ProgramOptions> options) {
-  options
-    ->addOption("--server.endpoint",
-                "Endpoint for client requests (e.g. "
-                "`pgsql+tcp://127.0.0.1:7890`)",
-                new VectorParameter<StringParameter>(&_endpoints))
-    .setLongDescription(R"(You can specify this option multiple times to let
-the SereneDB server listen for incoming requests on multiple endpoints.
-
-The endpoints are normally specified either in SereneDB's configuration file or
-on the command-line with `--server.endpoint`. SereneDB supports different types
-of endpoints:
-
-- `pgsql+tcp://ipv4-address:port` - PostgreSQL wire protocol, using IPv4
-- `pgsql+tcp://[ipv6-address]:port` - PostgreSQL wire protocol, using IPv6
-- `tcp://ipv4-address:port` - TCP/IP endpoint, using IPv4
-- `tcp://[ipv6-address]:port` - TCP/IP endpoint, using IPv6
-- `ssl://ipv4-address:port` - TCP/IP endpoint, using IPv4, SSL encryption
-- `ssl://[ipv6-address]:port` - TCP/IP endpoint, using IPv6, SSL encryption
-- `unix:///path/to/socket` - Unix domain socket endpoint
-
-You can use `http://` as an alias for `tcp://`, and `https://` as an alias for
-`ssl://`.
-
-If a TCP/IP endpoint is specified without a port number, then the default port
-(7890) is used.
-
-If you use SSL-encrypted endpoints, you must also supply the path to a server
-certificate using the `--ssl.keyfile` option.
-
-```bash
-serened --server.endpoint pgsql+tcp://127.0.0.1:7890
-```
-
-On one specific ethernet interface, each port can only be bound
-**exactly once**. You can look up your available interfaces using the `ifconfig`
-command on Linux. The general names of the
-interfaces differ between operating systems and the hardware they run on.
-However, every host has typically a so called loopback interface, which is a
-virtual interface. By convention, it always has the address `127.0.0.1` (IPv4)
-or `::1` (IPv6), and can only be reached from the very same host. Ethernet
-interfaces usually have names like `eth0`, `wlan0`, `eth1:17`, `le0`.
-
-To find out which services already use ports (so SereneDB can't bind them
-anymore), you can use the `netstat` command. It behaves a little different on
-each platform; run it with `-lnpt` on Linux for valuable information.
-
-SereneDB can also do a so called *broadcast bind* using
-`pgsql+tcp://0.0.0.0:7890`. This way, it is reachable on all interfaces of
-the host. This may be useful on development systems that frequently change
-their network setup, like laptops.
-
-SereneDB can also listen to IPv6 link-local addresses via adding the zone ID
-to the IPv6 address in the form `[ipv6-link-local-address%zone-id]`. However,
-what you probably want instead is to bind to a local IPv6 address. Local IPv6
-addresses start with `fd`. If you only see a `fe80:` IPv6 address in your
-interface configuration but no IPv6 address starting with `fd`, your interface
-has no local IPv6 address assigned. You can read more about IPv6 link-local
-addresses here: https://en.wikipedia.org/wiki/Link-local_address#IPv6.
-
-To bind to a link-local and local IPv6 address, run `ifconfig` or equivalent
-command. The command lists all interfaces and assigned IP addresses. The
-link-local address may be `fe80::6257:18ff:fe82:3ec6%eth0` (IPv6 address plus
-interface name). A local IPv6 address may be `fd12:3456::789a`.
-To bind SereneDB to it, start `serened` with
-`--server.endpoint pgsql+tcp://[fe80::6257:18ff:fe82:3ec6%eth0]:7890`.
-You can use `telnet` to test the connection.)");
-
-  options->addSection("tcp", "TCP features");
-
-  options
-    ->addOption("--tcp.reuse-address", "Try to reuse TCP port(s).",
-                new BooleanParameter(&_reuse_address),
-                sdb::options::MakeDefaultFlags(sdb::options::Flags::Uncommon))
-    .setLongDescription(R"(If you set this option to `true`, the socket
-option `SO_REUSEADDR` is set on all server endpoints, which is the default.
-If you set this option to `false`, it is possible that it takes up to a minute
-after a server has terminated until it is possible for a new server to use the
-same endpoint again.
-
-**Note**: This can be a security risk because it might be possible for another
-process to bind to the same address and port, possibly hijacking network
-traffic.)");
-
-  options
-    ->addOption("--tcp.backlog-size",
-                "Specify the size of the backlog for the `listen` "
-                "system call.",
-                new UInt64Parameter(&_backlog_size),
-                sdb::options::MakeDefaultFlags(sdb::options::Flags::Uncommon))
-    .setLongDescription(R"(The maximum value is platform-dependent.
-If you specify a value higher than defined in the system header's `SOMAXCONN`
-may result in a warning on server start. The actual value used by `listen`
-may also be silently truncated on some platforms (this happens inside the
-`listen` system call).)");
-}
-
-void EndpointFeature::validateOptions(std::shared_ptr<ProgramOptions>) {
-  if (_backlog_size > SOMAXCONN) {
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
-             "value for --tcp.backlog-size exceeds default system "
-             "header SOMAXCONN value ",
-             SOMAXCONN, ". trying to use ", SOMAXCONN, " anyway");
-  }
-  if (_endpoints.empty()) {
-    _endpoints.emplace_back("pgsql+tcp://127.0.0.1:7890");
-    SDB_INFO(
-      "xxxxx", sdb::Logger::FIXME,
-      "no endpoints have been specified, using default: ", _endpoints.back());
-  }
-  buildEndpointLists();
-}
-
-std::vector<std::string> EndpointFeature::httpEndpoints() {
-  auto http_entries = _endpoint_list.all(Endpoint::TransportType::HTTP);
-  std::vector<std::string> result;
-
-  for (auto http : http_entries) {
-    auto uri = Endpoint::uriForm(http);
-
-    if (!uri.empty()) {
-      result.emplace_back(uri);
+EndpointList& Endpoints() {
+  static EndpointList list = [] {
+    EndpointList l;
+    auto endpoints = absl::GetFlag(FLAGS_server_endpoints);
+    constexpr uint64_t kDefaultBacklog = 64;
+    const uint64_t backlog_size =
+      kDefaultBacklog <= SOMAXCONN ? kDefaultBacklog : SOMAXCONN / 2;
+    constexpr bool kReuseAddress = true;
+    if (endpoints.empty()) {
+      endpoints.emplace_back("pgsql+tcp://127.0.0.1:7890");
+      SDB_INFO(GENERAL, "no endpoints have been specified, using default: ",
+               endpoints.back());
     }
-  }
-
-  return result;
-}
-
-void EndpointFeature::buildEndpointLists() {
-  for (const auto& it : _endpoints) {
-    bool ok =
-      _endpoint_list.add(it, static_cast<int>(_backlog_size), _reuse_address);
-
-    if (!ok) {
-      SDB_FATAL("xxxxx", sdb::Logger::FIXME, "invalid endpoint '", it, "'");
+    for (const auto& ep : endpoints) {
+      if (!l.add(ep, static_cast<int>(backlog_size), kReuseAddress)) {
+        SDB_FATAL(GENERAL, "invalid endpoint '", ep, "'");
+      }
     }
-  }
+    return l;
+  }();
+  return list;
 }
 
 }  // namespace sdb

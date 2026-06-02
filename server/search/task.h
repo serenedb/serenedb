@@ -58,7 +58,7 @@ class Task {
 
   template<IndexTaskType Self>
   yaclib::Future<> Schedule(this Self&& self, absl::Duration delay = {}) {
-    SDB_TRACE("xxxxx", Logger::SEARCH, "Scheduling task: ", Self::TaskName());
+    SDB_TRACE(SEARCH, "Scheduling task: ", Self::TaskName());
     auto [future, promise] = yaclib::MakeContract();
     self._promise = std::move(promise);
     self._engine->Queue(Self::ThreadGroup(), delay, std::move(self));
@@ -70,7 +70,7 @@ class Task {
     this const Self& self,
     std::shared_ptr<InvertedIndexShard>&& inverted_index_shard,
     absl::Duration delay = {}) {
-    SDB_TRACE("xxxxx", Logger::SEARCH, "Scheduling task: ", Self::TaskName());
+    SDB_TRACE(SEARCH, "Scheduling task: ", Self::TaskName());
     self.GetContinuos(std::move(inverted_index_shard)).Schedule(delay).Detach();
   }
 

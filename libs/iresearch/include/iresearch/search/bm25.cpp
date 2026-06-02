@@ -77,7 +77,7 @@ Scorer::ptr MakeFromObject(const vpack::Slice slice) {
                                       .strict = false,
                                     });
   if (!r.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
+    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
               "' while constructing bm25 scorer from VPack arguments");
     return {};
   }
@@ -95,7 +95,7 @@ Scorer::ptr MakeFromArray(const vpack::Slice slice) {
   ArrayParams params;
   auto r = vpack::ReadTupleNothrow(slice, params);
   if (!r.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
+    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
               "' while constructing bm25 scorer from VPack arguments");
     return {};
   }
@@ -111,7 +111,7 @@ Scorer::ptr MakeVPack(const vpack::Slice slice) {
       return MakeFromArray(slice);
     default:  // wrong type
       SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
+        IRESEARCH,
         "Invalid VPack arguments passed while constructing bm25 scorer");
       return nullptr;
   }
@@ -136,12 +136,12 @@ Scorer::ptr MakeJson(std::string_view args) {
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       absl::StrCat("Caught error '", ex.what(),
                    "' while constructing VPack from JSON for bm25 scorer"));
   } catch (...) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       "Caught error while constructing VPack from JSON for bm25 scorer");
   }
   return nullptr;

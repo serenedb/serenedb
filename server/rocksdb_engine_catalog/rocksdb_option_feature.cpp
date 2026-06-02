@@ -45,15 +45,10 @@
 #endif
 
 #include "app/app_server.h"
-#include "app/options/option.h"
-#include "app/options/parameters.h"
-#include "app/options/program_options.h"
 #include "basics/application-exit.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/number_of_cores.h"
 #include "basics/physical_memory.h"
-#include "basics/process-utils.h"
-#include "basics/system-functions.h"
 #include "catalog/table_options.h"
 #include "rocksdb_engine_catalog/options.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
@@ -85,9 +80,7 @@ bool IsIOUringEnabled() {
   static const bool kSupported = IsIoUringSupported();
   return kSupported;
 #else
-  return SerenedServer::Instance()
-    .getFeature<RocksDBOptionFeature>()
-    .ioUringEnabled();
+  return RocksDBOptionFeature::instance().ioUringEnabled();
 #endif
 }
 
@@ -125,8 +118,7 @@ rocksdb::CompressionType CompressionTypeFromString(std::string_view type) {
     return rocksdb::kLZ4HCCompression;
   }
   SDB_ASSERT(false);
-  SDB_FATAL("xxxxx", sdb::Logger::STARTUP, "unexpected compression type '",
-            type, "'");
+  SDB_FATAL(STARTUP, "unexpected compression type '", type, "'");
 }
 
 // types of block cache
@@ -179,8 +171,7 @@ rocksdb::CompactionStyle CompactionStyleFromString(std::string_view type) {
   }
 
   SDB_ASSERT(false);
-  SDB_FATAL("xxxxx", sdb::Logger::STARTUP, "unexpected compaction style '",
-            type, "'");
+  SDB_FATAL(STARTUP, "unexpected compaction style '", type, "'");
 }
 
 // defaults
@@ -260,10 +251,9 @@ static constexpr uint64_t kMinSyncInterval = 5;
 
 }  // namespace
 
-RocksDBOptionFeature::RocksDBOptionFeature(Server& server)
-  : SerenedFeature{server, name()},
-    // number of lock stripes for the transaction lock manager. we bump this
-    // to at least 16 to reduce contention for small scale systems.
+RocksDBOptionFeature::RocksDBOptionFeature()
+  :  // number of lock stripes for the transaction lock manager. we bump this
+     // to at least 16 to reduce contention for small scale systems.
     _transaction_lock_stripes(
       std::max(number_of_cores::GetValue(), size_t(16))),
     _transaction_lock_timeout(gRocksDbTrxDefaults.transaction_lock_timeout),
@@ -361,8 +351,12 @@ RocksDBOptionFeature::RocksDBOptionFeature(Server& server)
     _total_write_buffer_size = ::DefaultTotalWriteBufferSize();
   }
 
-  setOptional(true);
+  validateAndDeriveOptions();
+
+  gInstance = this;
 }
+
+RocksDBOptionFeature::~RocksDBOptionFeature() { gInstance = nullptr; }
 
 const rocksdb::Options& RocksDBOptionFeature::getOptions() const {
   if (!_options) {
@@ -383,1042 +377,13 @@ bool RocksDBOptionFeature::ioUringEnabled() const noexcept {
   return _io_uring == kIoUringEnabled;
 }
 
-void RocksDBOptionFeature::collectOptions(
-  std::shared_ptr<ProgramOptions> options) {
-  options->addSection("rocksdb", "RocksDB engine");
-
-  options->addOption(
-    "--rocksdb.wal-directory",
-    "Absolute path for RocksDB WAL files. If not set, a "
-    "subdirectory `journals` inside the database directory "
-    "is used.",
-    new StringParameter(&_wal_directory),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.target-file-size-base",
-    "Per-file target file size for compaction (in bytes). The "
-    "actual target file size for each level is "
-    "`--rocksdb.target-file-size-base` multiplied by "
-    "`--rocksdb.target-file-size-multiplier` ^ (level - 1)",
-    new UInt64Parameter(&_target_file_size_base),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.target-file-size-multiplier",
-    "The multiplier for `--rocksdb.target-file-size`. A value of 1 means "
-    "that files in different levels will have the same size.",
-    new UInt64Parameter(&_target_file_size_multiplier, /*base*/ 1,
-                        /*minValue*/ 1),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  SDB_ASSERT(::kCompressionTypes.contains(_compression_type));
-  options->addOption("--rocksdb.compression-type",
-                     "The compression algorithm to use within RocksDB.",
-                     new DiscreteValuesParameter<StringParameter>(
-                       &_compression_type, ::kCompressionTypes));
-
-  SDB_ASSERT(::kIoUringValues.contains(_io_uring));
-  options->addOption(
-    "--rocksdb.io-uring",
-    "Enable or disable io_uring for async I/O in RocksDB. "
-    "Possible values: 'enabled', 'disabled', 'not-supported'. "
-    "The value 'not-supported' is set automatically if io_uring is not "
-    "available on this system and cannot be changed to 'enabled'.",
-    new DiscreteValuesParameter<StringParameter>(&_io_uring, ::kIoUringValues),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options
-    ->addOption("--rocksdb.transaction-lock-stripes",
-                "The number of lock stripes to use for transaction locks.",
-                new UInt64Parameter(&_transaction_lock_stripes),
-                options::MakeFlags(
-                  options::Flags::Dynamic, options::Flags::DefaultNoComponents,
-                  options::Flags::OnAgent, options::Flags::OnDBServer,
-                  options::Flags::OnSingle))
-
-    .setLongDescription(R"(You can control the number of lock stripes to use
-for RocksDB's transaction lock manager with this option. You can use higher
-values to reduce a potential contention in the lock manager.
-
-The option defaults to the number of available cores, but is increased to a
-value of `16` if the number of cores is lower.)");
-
-  options->addOption(
-    "--rocksdb.transaction-lock-timeout",
-    "If positive, specifies the wait timeout in milliseconds when "
-    " a transaction attempts to lock a document. A negative value "
-    "is not recommended as it can lead to deadlocks (0 = no waiting, < 0 no "
-    "timeout)",
-    new Int64Parameter(&_transaction_lock_timeout),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options
-    ->addOption(
-      "--rocksdb.total-write-buffer-size",
-      "The maximum total size of in-memory write buffers (0 = unbounded).",
-      new UInt64Parameter(&_total_write_buffer_size),
-      options::MakeFlags(options::Flags::Dynamic,
-                         options::Flags::DefaultNoComponents,
-                         options::Flags::OnAgent, options::Flags::OnDBServer,
-                         options::Flags::OnSingle))
-    .setLongDescription(R"(The total amount of data to build up in all
-in-memory buffers (backed by log files). You can use this option together with
-the block cache size configuration option to limit memory usage.
-
-If set to `0`, the memory usage is not limited.
-
-If set to a value larger than `0`, this caps memory usage for write buffers but
-may have an effect on performance. If there is more than 4 GiB of RAM in the
-system, the default value is `(system RAM size - 2 GiB) * 0.5`.
-
-For systems with less RAM, the default values are:
-
-- 512 MiB for systems with between 1 and 4 GiB of RAM.
-- 256 MiB for systems with less than 1 GiB of RAM.)");
-
-  options
-    ->addOption("--rocksdb.write-buffer-size",
-                "The amount of data to build up in memory before "
-                "converting to a sorted on-disk file (0 = disabled).",
-                new UInt64Parameter(&_write_buffer_size),
-                options::MakeFlags(
-                  options::Flags::DefaultNoComponents, options::Flags::OnAgent,
-                  options::Flags::OnDBServer, options::Flags::OnSingle))
-    .setLongDescription(R"(The amount of data to build up in each in-memory
-buffer (backed by a log file) before closing the buffer and queuing it to be
-flushed to standard storage. Larger values than the default may improve
-performance, especially for bulk loads.)");
-
-  options
-    ->addOption("--rocksdb.max-write-buffer-number",
-                "The maximum number of write buffers that build up in memory "
-                "(default: number of column families + 2 = 12 write buffers). "
-                "You can only increase the number.",
-                new UInt64Parameter(&_max_write_buffer_number),
-                options::MakeFlags(
-                  options::Flags::DefaultNoComponents, options::Flags::OnAgent,
-                  options::Flags::OnDBServer, options::Flags::OnSingle))
-    .setLongDescription(R"(If this number is reached before the buffers can
-be flushed, writes are slowed or stalled.)");
-
-  options
-    ->addOption(
-      "--rocksdb.max-write-buffer-size-to-maintain",
-      "The maximum size of immutable write buffers that build up in memory "
-      "per column family. Larger values mean that more in-memory data "
-      "can be used for transaction conflict checking (-1 = use automatic "
-      "default value, 0 = do not keep immutable flushed write buffers, "
-      "which is the default and usually correct).",
-      new Int64Parameter(&_max_write_buffer_size_to_maintain),
-      options::MakeFlags(options::Flags::DefaultNoComponents,
-                         options::Flags::OnAgent, options::Flags::OnDBServer,
-                         options::Flags::OnSingle))
-    .setLongDescription(R"(The default value `0` restores the memory usage
-pattern of version 3.6. This makes RocksDB not keep any flushed immutable
-write-buffers in memory.)");
-
-  options
-    ->addOption("--rocksdb.max-total-wal-size",
-                "The maximum total size of WAL files that force a flush "
-                "of stale column families.",
-                new UInt64Parameter(&_max_total_wal_size),
-                options::MakeFlags(
-                  options::Flags::DefaultNoComponents, options::Flags::OnAgent,
-                  options::Flags::OnDBServer, options::Flags::OnSingle))
-    .setLongDescription(R"(When reached, force a flush of all column families
-whose data is backed by the oldest WAL files. If you set this option to a low
-value, regular flushing of column family data from memtables is triggered, so
-that WAL files can be moved to the archive.
-
-If you set this option to a high value, regular flushing is avoided but may
-prevent WAL files from being moved to the archive and being removed.)");
-
-  options->addOption(
-    "--rocksdb.delayed-write-rate",
-    "Limit the write rate to the database (in bytes per second) when writing "
-    "to the last mem-table allowed and if more than 3 mem-tables are "
-    "allowed, or if a certain number of level-0 files are surpassed and "
-    "writes need to be slowed down.",
-    new UInt64Parameter(&_delayed_write_rate),
-    options::MakeFlags(options::Flags::Uncommon,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.min-write-buffer-number-to-merge",
-    "The minimum number of write buffers that are merged "
-    "together before writing to storage.",
-    new UInt64Parameter(&_min_write_buffer_number_to_merge),
-    options::MakeFlags(options::Flags::Dynamic,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.num-levels",
-    "The number of levels for the database in the LSM tree.",
-    new UInt64Parameter(&_num_levels, /*base*/ 1,
-                        /*minValue*/ 1, /*maxValue*/ 20),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options
-    ->addOption("--rocksdb.num-uncompressed-levels",
-                "The number of levels that do not use compression in the "
-                "LSM tree.",
-                new UInt64Parameter(&_num_uncompressed_levels),
-                options::MakeFlags(
-                  options::Flags::DefaultNoComponents, options::Flags::OnAgent,
-                  options::Flags::OnDBServer, options::Flags::OnSingle))
-    .setLongDescription(R"(Levels above the default of `2` use
-compression to reduce the disk space requirements for storing data in these
-levels.)");
-
-  options
-    ->addOption("--rocksdb.dynamic-level-bytes",
-                "Whether to determine the number of bytes for each level "
-                "dynamically to minimize space amplification.",
-                new BooleanParameter(&_dynamic_level_bytes),
-                options::MakeFlags(
-                  options::Flags::DefaultNoComponents, options::Flags::OnAgent,
-                  options::Flags::OnDBServer, options::Flags::OnSingle))
-    .setLongDescription(R"(If set to `true`, the amount of data in each level
-of the LSM tree is determined dynamically to minimize the space amplification.
-Otherwise, the level sizes are fixed. The dynamic sizing allows RocksDB to
-maintain a well-structured LSM tree regardless of total data size.)");
-
-  options->addOption(
-    "--rocksdb.max-bytes-for-level-base",
-    "If not using dynamic level sizes, this controls the "
-    "maximum total data size for level-1 of the LSM tree.",
-    new UInt64Parameter(&_max_bytes_for_level_base),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.max-bytes-for-level-multiplier",
-    "If not using dynamic level sizes, the maximum number of "
-    "bytes for level L of the LSM tree can be calculated as "
-    " max-bytes-for-level-base * "
-    "(max-bytes-for-level-multiplier ^ (L-1))",
-    new DoubleParameter(&_max_bytes_for_level_multiplier, /*base*/ 1.0,
-                        /*minValue*/ 0.0,
-                        /*maxValue*/ std::numeric_limits<double>::max(),
-                        /*minInclusive*/ false),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options
-    ->addOption(
-      "--rocksdb.block-align-data-blocks",
-      "If enabled, data blocks are aligned on the lesser of page size and "
-      "block size.",
-      new BooleanParameter(&_block_align_data_blocks),
-      options::MakeFlags(options::Flags::DefaultNoComponents,
-                         options::Flags::OnAgent, options::Flags::OnDBServer,
-                         options::Flags::OnSingle))
-    .setLongDescription(R"(This may waste some memory but may reduce the
-number of cross-page I/O operations.)");
-
-  options->addOption(
-    "--rocksdb.enable-pipelined-write",
-    "If enabled, use a two stage write queue for WAL writes "
-    "and memtable writes.",
-    new BooleanParameter(&_enable_pipelined_write),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.enable-statistics",
-    "Whether RocksDB statistics should be enabled.",
-    new BooleanParameter(&_enable_statistics),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.optimize-filters-for-hits",
-    "Whether the implementation should optimize the filters mainly for cases "
-    "where keys are found rather than also optimize for keys missed. You can "
-    "enable the option if you know that there are very few misses or the "
-    "performance in the case of misses is not important for your "
-    "application.",
-    new BooleanParameter(&_optimize_filters_for_hits),
-    options::MakeFlags(options::Flags::Uncommon,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-#ifdef __linux__
-  options->addOption(
-    "--rocksdb.use-direct-reads", "Use O_DIRECT for reading files.",
-    new BooleanParameter(&_use_direct_reads),
-    options::MakeFlags(options::Flags::DefaultNoOs, options::Flags::OsLinux,
-                       options::Flags::Uncommon));
-
-  options->addOption(
-    "--rocksdb.use-direct-io-for-flush-and-compaction",
-    "Use O_DIRECT for writing files for flush and compaction.",
-    new BooleanParameter(&_use_direct_io_for_flush_and_compaction),
-    options::MakeFlags(options::Flags::DefaultNoOs, options::Flags::OsLinux,
-                       options::Flags::Uncommon));
-#endif
-
-  options->addOption(
-    "--rocksdb.use-fsync",
-    "Whether to use fsync calls when writing to disk (set to false "
-    "for issuing fdatasync calls only).",
-    new BooleanParameter(&_use_fsync),
-    options::MakeFlags(options::Flags::Uncommon,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options
-    ->addOption("--rocksdb.max-background-jobs",
-                "The maximum number of concurrent background jobs "
-                "(compactions and flushes).",
-                new Int32Parameter(&_max_background_jobs),
-                options::MakeFlags(
-                  options::Flags::Uncommon, options::Flags::Dynamic,
-                  options::Flags::DefaultNoComponents, options::Flags::OnAgent,
-                  options::Flags::OnDBServer, options::Flags::OnSingle))
-    .setLongDescription(R"(The jobs are submitted to the low priority thread
-pool. The default value is the number of processors in the system.)");
-
-  options->addOption(
-    "--rocksdb.max-subcompactions",
-    "The maximum number of concurrent sub-jobs for a "
-    "background compaction.",
-    new UInt32Parameter(&_max_subcompactions),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options
-    ->addOption("--rocksdb.level0-compaction-trigger",
-                "The number of level-0 files that triggers a compaction.",
-                new Int64Parameter(&_level0_compaction_trigger),
-                options::MakeFlags(
-                  options::Flags::DefaultNoComponents, options::Flags::OnAgent,
-                  options::Flags::OnDBServer, options::Flags::OnSingle))
-    .setLongDescription(R"(Compaction of level-0 to level-1 is triggered when
-this many files exist in level-0. If you set this option to a higher number, it
-may help bulk writes at the expense of slowing down reads.)");
-
-  options
-    ->addOption("--rocksdb.level0-slowdown-trigger",
-                "The number of level-0 files that triggers a write slowdown",
-                new Int64Parameter(&_level0_slowdown_trigger),
-                options::MakeFlags(
-                  options::Flags::DefaultNoComponents, options::Flags::OnAgent,
-                  options::Flags::OnDBServer, options::Flags::OnSingle))
-    .setLongDescription(R"(When this many files accumulate in level-0, writes
-are slowed down to `--rocksdb.delayed-write-rate` to allow compaction to
-catch up.)");
-
-  options
-    ->addOption("--rocksdb.level0-stop-trigger",
-                "The number of level-0 files that triggers a full write stop",
-                new Int64Parameter(&_level0_stop_trigger),
-                options::MakeFlags(
-                  options::Flags::DefaultNoComponents, options::Flags::OnAgent,
-                  options::Flags::OnDBServer, options::Flags::OnSingle))
-    .setLongDescription(R"(When this many files accumulate in level-0, writes
-are stopped to allow compaction to catch up.)");
-
-  options->addOption(
-    "--rocksdb.pending-compactions-slowdown-trigger",
-    "The number of pending compaction bytes that triggers a "
-    "write slowdown.",
-    new UInt64Parameter(&_pending_compaction_bytes_slowdown_trigger),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.pending-compactions-stop-trigger",
-    "The number of pending compaction bytes that triggers a full "
-    "write stop.",
-    new UInt64Parameter(&_pending_compaction_bytes_stop_trigger),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options
-    ->addOption(
-      "--rocksdb.num-threads-priority-high",
-      "The number of threads for high priority operations (e.g. flush).",
-      new UInt32Parameter(&_num_threads_high, /*base*/ 1, /*minValue*/ 0,
-                          /*maxValue*/ 64),
-      options::MakeFlags(options::Flags::DefaultNoComponents,
-                         options::Flags::OnAgent, options::Flags::OnDBServer,
-                         options::Flags::OnSingle))
-
-    .setLongDescription(R"(The recommended value is to set this equal to
-`max-background-flushes`. The default value is `number of processors / 2`.)");
-
-  options->addOption(
-    "--rocksdb.block-cache-estimated-entry-charge",
-    "The estimated charge of cache entries (in bytes) for the "
-    "hyper-clock cache.",
-    new UInt64Parameter(&_block_cache_estimated_entry_charge),
-    options::MakeFlags(options::Flags::Experimental,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  SDB_ASSERT(::kBlockCacheTypes.contains(_block_cache_type));
-  options->addOption("--rocksdb.block-cache-type",
-                     "The block cache type to use.",
-                     new DiscreteValuesParameter<StringParameter>(
-                       &_block_cache_type, ::kBlockCacheTypes));
-
-  options
-    ->addOption(
-      "--rocksdb.num-threads-priority-low",
-      "The number of threads for low priority operations (e.g. "
-      "compaction).",
-      new UInt32Parameter(&_num_threads_low, /*base*/ 1, /*minValue*/ 0,
-                          /*maxValue*/ 256),
-      options::MakeFlags(options::Flags::DefaultNoComponents,
-                         options::Flags::OnAgent, options::Flags::OnDBServer,
-                         options::Flags::OnSingle))
-    .setLongDescription(R"(The default value is
-`number of processors / 2`.)");
-
-  options
-    ->addOption("--rocksdb.block-cache-size",
-                "The size of block cache (in bytes).",
-                new UInt64Parameter(&_block_cache_size),
-                options::MakeFlags(
-                  options::Flags::Dynamic, options::Flags::DefaultNoComponents,
-                  options::Flags::OnAgent, options::Flags::OnDBServer,
-                  options::Flags::OnSingle))
-    .setLongDescription(R"(This is the maximum size of the block cache in
-bytes. Increasing this value may improve performance. If there is more than
-4 GiB of RAM in the system, the default value is
-`(system RAM size - 2GiB) * 0.3`.
-
-For systems with less RAM, the default values are:
-
-- 512 MiB for systems with between 2 and 4 GiB of RAM.
-- 256 MiB for systems with between 1 and 2 GiB of RAM.
-- 128 MiB for systems with less than 1 GiB of RAM.)");
-
-  options
-    ->addOption(
-      "--rocksdb.block-cache-shard-bits",
-      "The number of shard bits to use for the block cache "
-      "(-1 = default value).",
-      new Int32Parameter(&_block_cache_shard_bits, /*base*/ 1, /*minValue*/ -1,
-                         /*maxValue*/ 20, /*minInclusive*/ true,
-                         /*maxInclusive*/ false),
-      options::MakeFlags(options::Flags::DefaultNoComponents,
-                         options::Flags::OnAgent, options::Flags::OnDBServer,
-                         options::Flags::OnSingle))
-    .setLongDescription(R"(The number of bits used to shard the block cache
-to allow concurrent operations. To keep individual shards at a reasonable size
-(i.e. at least 512 KiB), keep this value to at most
-`block-cache-shard-bits / 512 KiB`. Default: `block-cache-size / 2^19`.)");
-
-  options
-    ->addOption("--rocksdb.enforce-block-cache-size-limit",
-                "If enabled, strictly enforces the block cache size limit.",
-                new BooleanParameter(&_enforce_block_cache_size_limit),
-                options::MakeFlags(
-                  options::Flags::DefaultNoComponents, options::Flags::OnAgent,
-                  options::Flags::OnDBServer, options::Flags::OnSingle))
-    .setLongDescription(R"(Whether the maximum size of the RocksDB block
-cache is strictly enforced. You can set this option to limit the memory usage of
-the block cache to at most the specified size. If inserting a data block into
-the cache would exceed the cache's capacity, the data block is not inserted.
-If disabled, a data block may still get inserted into the cache. It is evicted
-later, but the cache may temporarily grow beyond its capacity limit.
-
-To improve stability of memory usage and prevent exceeding the block cache
-capacity limit (as configurable via `--rocksdb.block-cache-size`), it is
-recommended to set this option to `true`.)");
-
-  options
-    ->addOption("--rocksdb.cache-index-and-filter-blocks",
-                "If enabled, the RocksDB block cache quota also includes "
-                "RocksDB memtable sizes.",
-                new BooleanParameter(&_cache_index_and_filter_blocks),
-                options::MakeFlags(
-                  options::Flags::Uncommon, options::Flags::DefaultNoComponents,
-                  options::Flags::OnAgent, options::Flags::OnDBServer,
-                  options::Flags::OnSingle))
-    .setLongDescription(R"(If you set this option to `true`, RocksDB tracks
-all loaded index and filter blocks in the block cache, so that they count
-towards RocksDB's block cache memory limit.
-
-If you set this option to `false`, the memory usage for index and filter blocks
-is not accounted for.
-
-To improve stability of memory usage and avoid untracked memory allocations by
-RocksDB, it is recommended to set this option to `true`. Note that tracking
-index and filter blocks leaves less room for other data in the block cache, so
-in case servers have unused RAM capacity available, it may be useful to increase
-the overall size of the block cache.)");
-
-  options->addOption(
-    "--rocksdb.cache-index-and-filter-blocks-with-high-priority",
-    "If enabled and `--rocksdb.cache-index-and-filter-blocks` is also "
-    "enabled, cache index and filter blocks with high priority, "
-    "making index and filter blocks be less likely to be evicted than "
-    "data blocks.",
-    new BooleanParameter(&_cache_index_and_filter_blocks_with_high_priority),
-    options::MakeFlags(options::Flags::Uncommon,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.table-block-size",
-    "The approximate size (in bytes) of the user data packed "
-    "per block for uncompressed data.",
-    new UInt64Parameter(&_table_block_size),
-    options::MakeFlags(options::Flags::Uncommon,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.recycle-log-file-num",
-    "If enabled, keep a pool of log files around for recycling.",
-    new SizeTParameter(&_recycle_log_file_num),
-    options::MakeFlags(options::Flags::Uncommon,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.bloom-filter-bits-per-key",
-    "The average number of bits to use per key in a Bloom filter.",
-    new DoubleParameter(&_bloom_bits_per_key),
-    options::MakeFlags(options::Flags::Uncommon,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.compaction-read-ahead-size",
-    "If non-zero, bigger reads are performed when doing compaction. If you "
-    "run RocksDB on spinning disks, you should set this to at least 2 MB. "
-    "That way, RocksDB's compaction does sequential instead of random reads.",
-    new UInt64Parameter(&_compaction_readahead_size),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.wal-recovery-skip-corrupted",
-    "Skip corrupted records in WAL recovery.",
-    new BooleanParameter(&_skip_corrupted),
-    options::MakeFlags(options::Flags::Uncommon,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.limit-open-files-at-startup",
-    "Limit the amount of .sst files RocksDB inspects at "
-    "startup, in order to reduce the startup I/O operations.",
-    new BooleanParameter(&_limit_open_files_at_startup),
-    options::MakeFlags(options::Flags::Uncommon,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options
-    ->addOption("--rocksdb.allow-fallocate",
-                "Whether to allow RocksDB to use fallocate calls. "
-                "If disabled, fallocate calls are bypassed and no "
-                "pre-allocation is done.",
-                new BooleanParameter(&_allow_fallocate),
-                options::MakeFlags(
-                  options::Flags::Uncommon, options::Flags::DefaultNoComponents,
-                  options::Flags::OnAgent, options::Flags::OnDBServer,
-                  options::Flags::OnSingle))
-    .setLongDescription(R"(Preallocation is turned on by default, but you can
-turn it off for operating system versions that are known to have issues with it.
-This option only has an effect on operating systems that support
-`fallocate`.)");
-
-  SDB_ASSERT(::kChecksumTypes.contains(_checksum_type));
-  options->addOption(
-    "--rocksdb.checksum-type", "The checksum type to use for table files.",
-    new DiscreteValuesParameter<StringParameter>(&_checksum_type,
-                                                 ::kChecksumTypes),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  SDB_ASSERT(::kCompactionStyles.contains(_compaction_style));
-  options->addOption(
-    "--rocksdb.compaction-style",
-    "The compaction style which is used to pick the next file(s) to "
-    "be compacted (note: all styles except 'level' are experimental).",
-    new DiscreteValuesParameter<StringParameter>(&_compaction_style,
-                                                 ::kCompactionStyles),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.format-version",
-    "The table format version to use inside RocksDB.",
-    new DiscreteValuesParameter<UInt32Parameter>(&_format_version,
-                                                 {
-                                                   6,
-                                                 }),
-    options::MakeFlags(options::Flags::Uncommon,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.optimize-filters-for-memory",
-    "Optimize RocksDB bloom filters to reduce internal memory "
-    "fragmentation.",
-    new BooleanParameter(&_optimize_filters_for_memory),
-    options::MakeFlags(options::Flags::Uncommon,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.enable-index-compression", "Enable index compression.",
-    new BooleanParameter(&_enable_index_compression),
-    options::MakeFlags(options::Flags::Uncommon,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.enable-blob-files",
-    "Enable blob files for the documents column family.",
-    new BooleanParameter(&_enable_blob_files),
-    options::MakeFlags(options::Flags::Experimental,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.enable-blob-cache",
-    "Enable caching of blobs in the block cache for the documents "
-    "column family.",
-    new BooleanParameter(&_enable_blob_cache),
-    options::MakeFlags(options::Flags::Experimental,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.min-blob-size",
-    "The size threshold for storing documents in blob files (in "
-    "bytes, 0 = store all documents in blob files). "
-    "Requires `--rocks.enable-blob-files`.",
-    new UInt64Parameter(&_min_blob_size),
-    options::MakeFlags(options::Flags::Experimental,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.blob-file-size",
-    "The size limit for blob files in the documents column "
-    "family (in bytes). Requires `--rocksdb.enable-blob-files`.",
-    new UInt64Parameter(&_blob_file_size),
-    options::MakeFlags(options::Flags::Experimental,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.blob-file-starting-level",
-    "The level from which on to use blob files in the documents "
-    "column family. Requires `--rocksdb.enable-blob-files`.",
-    new UInt32Parameter(&_blob_file_starting_level),
-    options::MakeFlags(options::Flags::Experimental,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.blob-garbage-collection-age-cutoff",
-    "The age cutoff for garbage collecting blob files in the documents "
-    "column family (percentage value from 0 to 1 determines how many "
-    "blob files are garbage collected during compaction). Requires "
-    "`--rocksdb.enable-blob-files` and "
-    "`--rocksdb.enable-blob-garbage-collection`.",
-    new DoubleParameter(&_blob_garbage_collection_age_cutoff, 1.0, 0.0, 1.0),
-    options::MakeFlags(options::Flags::Experimental,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.blob-garbage-collection-force-threshold",
-    "The garbage ratio threshold for scheduling targeted compactions "
-    "for the oldest blob files in the documents column family "
-    "(percentage value between 0 and 1). "
-    "Requires `--rocksdb.enable-blob-files` and "
-    "`--rocksdb.enable-blob-garbage-collection`.",
-    new DoubleParameter(&_blob_garbage_collection_force_threshold, 1.0, 0.0,
-                        1.0),
-    options::MakeFlags(options::Flags::Experimental,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  SDB_ASSERT(::kCompressionTypes.contains(_blob_compression_type));
-  options->addOption(
-    "--rocksdb.blob-compression-type",
-    "The compression algorithm to use for blob data in the "
-    "documents column family. "
-    "Requires `--rocksdb.enable-blob-files`.",
-    new DiscreteValuesParameter<StringParameter>(&_blob_compression_type,
-                                                 ::kCompressionTypes),
-    options::MakeFlags(options::Flags::Experimental,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.enable-blob-garbage-collection",
-    "Enable blob garbage collection during compaction in the "
-    "documents column family. Requires `--rocksdb.enable-blob-files`.",
-    new BooleanParameter(&_enable_blob_garbage_collection),
-    options::MakeFlags(options::Flags::Experimental,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.prepopulate-blob-cache",
-    "Pre-populate the blob cache on flushes.",
-    new BooleanParameter(&_prepopulate_blob_cache),
-    options::MakeFlags(options::Flags::Experimental, options::Flags::Uncommon,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options
-    ->addOption(
-      "--rocksdb.block-cache-jemalloc-allocator",
-      "Use jemalloc-based memory allocator for RocksDB block cache.",
-      new BooleanParameter(&_use_jemalloc_allocator),
-      options::MakeFlags(options::Flags::Experimental, options::Flags::Uncommon,
-                         options::Flags::OsLinux, options::Flags::OnAgent,
-                         options::Flags::OnDBServer, options::Flags::OnSingle))
-
-    .setLongDescription(
-      R"(The jemalloc-based memory allocator for the RocksDB block cache
-will also exclude the block cache contents from coredumps, potentially making generated
-coredumps a lot smaller.
-In order to use this option, the executable needs to be compiled with jemalloc
-support (which is the default on Linux).)");
-
-  options->addOption(
-    "--rocksdb.prepopulate-block-cache", "Pre-populate block cache on flushes.",
-    new BooleanParameter(&_prepopulate_block_cache),
-    options::MakeFlags(options::Flags::Uncommon,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.reserve-block-cache-memory",
-    "account for some rocksdb memory in block cache",
-    new BooleanParameter(&_reserve_block_cache_memory),
-    options::MakeFlags(options::Flags::Uncommon,
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
-  options
-    ->addOption("--rocksdb.periodic-compaction-ttl",
-                "Time-to-live (in seconds) for periodic compaction of .sst "
-                "files, based on the file age (0 = no periodic compaction).",
-                new UInt64Parameter(&_periodic_compaction_ttl),
-                options::MakeFlags(
-                  options::Flags::DefaultNoComponents, options::Flags::OnAgent,
-                  options::Flags::OnDBServer, options::Flags::OnSingle))
-
-    .setLongDescription(R"(The default value from RocksDB is ~30 days. To
-avoid periodic auto-compaction and the I/O caused by it, you can set this
-option to `0`.)");
-
-  options
-    ->addOption("--rocksdb.partition-files-for-default",
-                "If enabled, the document data for different "
-                "tables/shards will end up in "
-                "different .sst files.",
-                new BooleanParameter(&_partition_files_for_default_cf),
-                options::MakeFlags(
-                  options::Flags::Uncommon, options::Flags::Experimental,
-                  options::Flags::DefaultNoComponents, options::Flags::OnAgent,
-                  options::Flags::OnDBServer, options::Flags::OnSingle))
-
-    .setLongDescription(R"(Enabling this option will make RocksDB's
-compaction write the document data for different tables/shards
-into different .sst files. Otherwise the document data from different
-tables/shards can be mixed and written into the same .sst files.
-
-Enabling this option usually has the benefit of making the RocksDB
-compaction more efficient when a lot of different tables/shards
-are written to in parallel.
-The disavantage of enabling this option is that there can be more .sst
-files than when the option is turned off, and the disk space used by
-these .sst files can be higher than if there are fewer .sst files (this
-is because there is some per-.sst file overhead).
-In particular on deployments with many tables/shards
-this can lead to a very high number of .sst files, with the potential
-of outgrowing the maximum number of file descriptors the SereneDB process
-can open. Thus the option should only be enabled on deployments with a
-limited number of tables/shards.)");
-
-  /// minimum required percentage of free disk space for considering
-  /// the server "healthy". this is expressed as a floating point value
-  /// between 0 and 1! if set to 0.0, the % amount of free disk is ignored in
-  /// checks.
-  options->addOption(
-    "--rocksdb.minimum-disk-free-percent",
-    "The minimum percentage of free disk space for considering the "
-    "server healthy in health checks (0 = disable the check).",
-    new DoubleParameter(&_required_disk_free_percentage, /*base*/ 1.0,
-                        /*minValue*/ 0.0, /*maxValue*/ 1.0),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnDBServer, options::Flags::OnSingle));
-
-  /// minimum number of free bytes on disk for considering the server
-  /// healthy. if set to 0, the number of free bytes on disk is ignored in
-  /// checks.
-  options->addOption(
-    "--rocksdb.minimum-disk-free-bytes",
-    "The minimum number of free disk bytes for considering the "
-    "server healthy in health checks (0 = disable the check).",
-    new UInt64Parameter(&_required_disk_free_bytes),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnDBServer, options::Flags::OnSingle));
-
-  // control transaction size for RocksDB engine
-  options
-    ->addOption("--rocksdb.max-transaction-size",
-                "The transaction size limit (in bytes).",
-                new UInt64Parameter(&_max_transaction_size))
-    .setLongDescription(R"(Transactions store all keys and values in RAM, so
-large transactions run the risk of causing out-of-memory situations. This
-setting allows you to ensure that it does not happen by limiting the size of
-any individual transaction. Transactions whose operations would consume more
-RAM than this threshold value are aborted automatically with error 32
-("resource limit exceeded").)");
-
-  options->addOption("--rocksdb.intermediate-commit-size",
-                     "An intermediate commit is performed automatically "
-                     "when a transaction has accumulated operations of this "
-                     "size (in bytes), and a new transaction is started.",
-                     new UInt64Parameter(&_intermediate_commit_size));
-
-  options->addOption("--rocksdb.intermediate-commit-count",
-                     "An intermediate commit is performed automatically "
-                     "when this number of operations is reached in a "
-                     "transaction, and a new transaction is started.",
-                     new UInt64Parameter(&_intermediate_commit_count));
-
-  options->addOption("--rocksdb.max-parallel-compactions",
-                     "The maximum number of parallel compactions jobs.",
-                     new UInt64Parameter(&_max_parallel_compactions));
-
-  options
-    ->addOption(
-      "--rocksdb.sync-interval",
-      "The interval for automatic, non-requested disk syncs (in "
-      "milliseconds, 0 = turn automatic syncing off)",
-      new UInt64Parameter(&_sync_interval),
-      options::MakeFlags(options::Flags::OsLinux, options::Flags::OsMac,
-                         options::Flags::OnDBServer, options::Flags::OnSingle))
-    .setLongDescription(R"(Automatic synchronization of data from RocksDB's
-write-ahead logs to disk is only performed for not-yet synchronized data, and
-only for operations that have been executed without the `waitForSync`
-attribute.)");
-
-  options->addOption(
-    "--rocksdb.sync-delay-threshold",
-    "The threshold for self-observation of WAL disk syncs "
-    "(in milliseconds, 0 = no warnings). Any WAL disk sync longer ago "
-    "than this threshold triggers a warning ",
-    new UInt64Parameter(&_sync_delay_threshold),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnDBServer, options::Flags::OnSingle,
-                       options::Flags::Uncommon));
-
-  options
-    ->addOption(
-      "--rocksdb.wal-file-timeout",
-      "The timeout after which unused WAL files are deleted "
-      "(in seconds).",
-      new DoubleParameter(&_prune_wait_time),
-      options::MakeFlags(options::Flags::DefaultNoComponents,
-                         options::Flags::OnDBServer, options::Flags::OnSingle))
-    .setLongDescription(R"(Data of ongoing transactions is stored in RAM.
-Transactions that get too big (in terms of number of operations involved or the
-total size of data created or modified by the transaction) are committed
-automatically. Effectively, this means that big user transactions are split into
-multiple smaller RocksDB transactions that are committed individually.
-The entire user transaction does not necessarily have ACID properties in this
-case.)");
-
-  options
-    ->addOption(
-      "--rocksdb.wal-file-timeout-initial",
-      "The initial timeout (in seconds) after which unused WAL "
-      "files deletion kicks in after server start.",
-      new DoubleParameter(&_prune_wait_time_initial),
-      options::MakeFlags(options::Flags::DefaultNoComponents,
-                         options::Flags::OnDBServer, options::Flags::OnSingle,
-                         options::Flags::Uncommon))
-    .setLongDescription(R"(If you decrease the value, the server starts the
-removal of obsolete WAL files earlier after server start. This is useful in
-testing environments that are space-restricted and do not require keeping much
-WAL file data at all.)");
-
-  options
-    ->addOption(
-      "--rocksdb.debug-logging", "Whether to enable RocksDB debug logging.",
-      new BooleanParameter(&_debug_logging),
-      options::MakeFlags(options::Flags::DefaultNoComponents,
-                         options::Flags::OnDBServer, options::Flags::OnSingle,
-                         options::Flags::Uncommon))
-    .setLongDescription(R"(If set to `true`, enables verbose logging of
-RocksDB's actions into the logfile written by SereneDB (if the
-`--rocksdb.use-file-logging` option is off), or RocksDB's own log (if the
-`--rocksdb.use-file-logging` option is on).
-
-This option is turned off by default, but you can enable it for debugging
-RocksDB internals and performance.)");
-
-  options
-    ->addOption("--rocksdb.verify-sst",
-                "Verify the validity of .sst files present in the "
-                "`engine_rocksdb` directory on startup.",
-                new BooleanParameter(&_verify_sst),
-                options::MakeFlags(
-                  options::Flags::Command, options::Flags::DefaultNoComponents,
-                  options::Flags::OnAgent, options::Flags::OnDBServer,
-                  options::Flags::OnSingle, options::Flags::Uncommon))
-
-    .setLongDescription(R"(If set to `true`, during startup, all .sst files
-in the `engine_rocksdb` folder in the database directory are checked for
-potential corruption and errors. The server process stops after the check and
-returns an exit code of `0` if the validation was successful, or a non-zero
-exit code if there is an error in any of the .sst files.)");
-
-  options
-    ->addOption(
-      "--rocksdb.wal-archive-size-limit",
-      "The maximum total size (in bytes) of archived WAL files to "
-      "keep on the leader (0 = unlimited).",
-      new options::UInt64Parameter(&_max_wal_archive_size_limit),
-      options::MakeFlags(options::Flags::DefaultNoComponents,
-                         options::Flags::OnDBServer, options::Flags::OnSingle,
-                         options::Flags::Uncommon))
-    .setLongDescription(R"(A value of `0` does not restrict the size of the
-archive, so the leader removes archived WAL files when there are no replication
-clients needing them. Any non-zero value restricts the size of the WAL files
-archive to about the specified value and trigger WAL archive file deletion once
-the threshold is reached. You can use this to get rid of archived WAL files in
-a disk size-constrained environment.
-
-**Note**: The value is only a threshold, so the archive may get bigger than
-the configured value until the background thread actually deletes files from
-the archive. Also note that deletion from the archive only kicks in after
-`--rocksdb.wal-file-timeout-initial` seconds have elapsed after server start.
-
-Archived WAL files are normally deleted automatically after a short while when
-there is no follower attached that may read from the archive. However, in case
-when there are followers attached that may read from the archive, WAL files
-normally remain in the archive until their contents have been streamed to the
-followers. In case there are slow followers that cannot catch up, this causes a
-growth of the WAL files archive over time.
-
-You can use the option to force a deletion of WAL files from the archive even if
-there are followers attached that may want to read the archive. In case the
-option is set and a leader deletes files from the archive that followers want to
-read, this aborts the replication on the followers. Followers can restart the
-replication doing a resync, though, but they may not be able to catch up if WAL
-file deletion happens too early.
-
-Thus it is best to leave this option at its default value of `0` except in cases
-when disk size is very constrained and no replication is used.)");
-
-  options->addOption(
-    "--rocksdb.auto-flush-min-live-wal-files",
-    "The minimum number of live WAL files that triggers an "
-    "auto-flush of WAL "
-    "and column family data.",
-    new UInt64Parameter(&_auto_flush_min_wal_files),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnDBServer, options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.auto-flush-check-interval",
-    "The interval (in seconds) in which auto-flushes of WAL and column "
-    "family data is executed.",
-    new DoubleParameter(&_auto_flush_check_interval),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnDBServer, options::Flags::OnSingle));
-
-  //////////////////////////////////////////////////////////////////////////////
-  /// add column family-specific options now
-  //////////////////////////////////////////////////////////////////////////////
-  auto add_max_write_buffer_number_cf =
-    [this, &options](RocksDBColumnFamilyManager::Family family) {
-      std::string name = RocksDBColumnFamilyManager::name(family);
-      size_t index = std::to_underlying(family);
-      options->addOption(
-        "--rocksdb.max-write-buffer-number-" + name,
-        "If non-zero, overrides the value of "
-        "`--rocksdb.max-write-buffer-number` for the " +
-          name + " column family",
-        new UInt64Parameter(&_max_write_buffer_number_cf[index]),
-        options::MakeDefaultFlags(options::Flags::Uncommon));
-    };
-  for (auto family : {
-         RocksDBColumnFamilyManager::Family::Default,
-         RocksDBColumnFamilyManager::Family::Definitions,
-       }) {
-    add_max_write_buffer_number_cf(family);
-  }
-}
-
-void RocksDBOptionFeature::validateOptions(
-  std::shared_ptr<ProgramOptions> options) {
+void RocksDBOptionFeature::validateAndDeriveOptions() {
   transaction::Options::setLimits(_max_transaction_size,
                                   _intermediate_commit_size,
                                   _intermediate_commit_count);
 
-  if (_io_uring == kIoUringNotSupported &&
-      options->processingResult().touched("--rocksdb.io-uring")) {
-    SDB_WARN("xxxxx", sdb::Logger::STARTUP,
+  if (_io_uring == kIoUringNotSupported && false) {
+    SDB_WARN(STARTUP,
              "io_uring is not supported on this system, ignoring "
              "--rocksdb.io-uring configuration");
   }
@@ -1427,17 +392,16 @@ void RocksDBOptionFeature::validateOptions(
     if (_sync_interval < kMinSyncInterval) {
       // _sync_interval = 0 means turned off!
       SDB_FATAL(
-        "xxxxx", Logger::CONFIG,
+        STARTUP,
         "invalid value for --rocksdb.sync-interval. Please use a value ",
         "of at least ", kMinSyncInterval);
     }
 
     if (_sync_delay_threshold > 0 && _sync_delay_threshold <= _sync_interval) {
-      if (!options->processingResult().touched("rocksdb.sync-interval") &&
-          options->processingResult().touched("rocksdb.sync-delay-threshold")) {
+      if (!false && false) {
         // user has not set --rocksdb.sync-interval, but set
         // --rocksdb.sync-delay-threshold
-        SDB_WARN("xxxxx", Logger::CONFIG,
+        SDB_WARN(STARTUP,
                  "invalid value for --rocksdb.sync-delay-threshold. should be "
                  "higher ",
                  "than the value of --rocksdb.sync-interval (", _sync_interval,
@@ -1445,48 +409,39 @@ void RocksDBOptionFeature::validateOptions(
       }
 
       _sync_delay_threshold = 10 * _sync_interval;
-      SDB_WARN("xxxxx", Logger::CONFIG,
+      SDB_WARN(STARTUP,
                "auto-adjusting value of --rocksdb.sync-delay-threshold to ",
                _sync_delay_threshold, " ms");
     }
   }
 
   if (_prune_wait_time_initial < 10) {
-    SDB_WARN("xxxxx", Logger::ENGINES,
+    SDB_WARN(STORAGE,
              "consider increasing the value for "
              "--rocksdb.wal-file-timeout-initial. ",
              "Replication clients might have trouble to get in sync");
   }
 
   if (_write_buffer_size > 0 && _write_buffer_size < 1024 * 1024) {
-    SDB_FATAL("xxxxx", sdb::Logger::STARTUP,
-              "invalid value for '--rocksdb.write-buffer-size'");
+    SDB_FATAL(STARTUP, "invalid value for '--rocksdb.write-buffer-size'");
   }
   if (_total_write_buffer_size > 0 &&
       _total_write_buffer_size < 64 * 1024 * 1024) {
-    SDB_FATAL("xxxxx", sdb::Logger::STARTUP,
-              "invalid value for '--rocksdb.total-write-buffer-size'");
+    SDB_FATAL(STARTUP, "invalid value for '--rocksdb.total-write-buffer-size'");
   }
   if (_max_background_jobs != -1 && _max_background_jobs < 1) {
-    SDB_FATAL("xxxxx", sdb::Logger::STARTUP,
-              "invalid value for '--rocksdb.max-background-jobs'");
+    SDB_FATAL(STARTUP, "invalid value for '--rocksdb.max-background-jobs'");
   }
 
-  _min_write_buffer_number_to_merge_touched =
-    options->processingResult().touched(
-      "--rocksdb.min-write-buffer-number-to-merge");
+  _min_write_buffer_number_to_merge_touched = false;
 
-  if (_block_cache_type == ::kBlockCacheTypeLRU &&
-      options->processingResult().touched(
-        "--rocksdb.block-cache-estimated-entry-charge")) {
-    SDB_WARN("xxxxx", Logger::ENGINES,
+  if (_block_cache_type == ::kBlockCacheTypeLRU && false) {
+    SDB_WARN(STORAGE,
              "Setting value of '--rocksdb.block-cache-estimated-entry-charge' "
              "has no effect when using LRU block cache");
   }
 
-  if (_enforce_block_cache_size_limit &&
-      !options->processingResult().touched(
-        "--rocksdb.block-cache-shard-bits")) {
+  if (_enforce_block_cache_size_limit && !false) {
     // if block cache size limit is enforced, and the number of shard bits for
     // the block cache hasn't been set, we set it dynamically:
     // we would like that each block cache shard can hold data blocks of
@@ -1513,7 +468,7 @@ void RocksDBOptionFeature::validateOptions(
   if (_use_jemalloc_allocator) {
     _use_jemalloc_allocator = false;
     SDB_INFO(
-      "xxxxx", Logger::STARTUP,
+      STARTUP,
       "disabling jemalloc allocator for RocksDB - jemalloc not compiled");
   }
 #endif
@@ -1533,14 +488,13 @@ void RocksDBOptionFeature::validateOptions(
     // or Status::MemoryLimit() error and fail the entire read.
     // warn the user about it!
     if (shard_size < ::kMinShardSize) {
-      SDB_WARN("xxxxx", Logger::ENGINES,
-               "size of RocksDB block cache shards seems to be too low. ",
-               "block cache size: ", _block_cache_size,
-               ", shard bits: ", _block_cache_shard_bits,
-               ", shard size: ", shard_size,
-               ". it is probably useful to set "
-               "`--rocksdb.enforce-block-cache-size-limit` to false ",
-               "to avoid incomplete cache reads.");
+      SDB_WARN(
+        STORAGE, "size of RocksDB block cache shards seems to be too low. ",
+        "block cache size: ", _block_cache_size,
+        ", shard bits: ", _block_cache_shard_bits, ", shard size: ", shard_size,
+        ". it is probably useful to set "
+        "`--rocksdb.enforce-block-cache-size-limit` to false ",
+        "to avoid incomplete cache reads.");
     }
   }
 
@@ -1556,9 +510,8 @@ void RocksDBOptionFeature::validateOptions(
   }
 
   if (_max_subcompactions > _num_threads_low) {
-    if (server().options()->processingResult().touched(
-          "--rocksdb.max-subcompactions")) {
-      SDB_WARN("xxxxx", Logger::ENGINES,
+    if (false) {
+      SDB_WARN(STORAGE,
                "overriding value for option `--rocksdb.max-subcompactions` to ",
                _num_threads_low,
                " because the specified value is greater than the number of "
@@ -1568,8 +521,8 @@ void RocksDBOptionFeature::validateOptions(
   }
 
   SDB_TRACE(
-    "xxxxx", Logger::ENGINES, "using RocksDB options: wal_dir: '",
-    _wal_directory, "'", ", compression type: ", _compression_type,
+    STORAGE, "using RocksDB options: wal_dir: '", _wal_directory, "'",
+    ", compression type: ", _compression_type,
     ", write_buffer_size: ", _write_buffer_size,
     ", total_write_buffer_size: ", _total_write_buffer_size,
     ", max_write_buffer_number: ", _max_write_buffer_number,
@@ -1770,8 +723,7 @@ rocksdb::Options RocksDBOptionFeature::doGetOptions() const {
   // TODO: enable memtable_insert_with_hint_prefix_extractor?
   result.bloom_locality = 1;
 
-  if (!server().options()->processingResult().touched(
-        "rocksdb.max-write-buffer-number")) {
+  if (!false) {
     // TODO It is unclear if this value makes sense as a default, but we aren't
     // changing it yet, in order to maintain backwards compatibility.
 
@@ -1785,7 +737,7 @@ rocksdb::Options RocksDBOptionFeature::doGetOptions() const {
   } else if (result.max_write_buffer_number < 4) {
     // user set the value explicitly, and it is lower than recommended
     result.max_write_buffer_number = 4;
-    SDB_WARN("xxxxx", Logger::ENGINES,
+    SDB_WARN(STORAGE,
              "overriding value for option `--rocksdb.max-write-buffer-number` "
              "to 4 because it is lower than recommended");
   }
@@ -1818,9 +770,8 @@ rocksdb::BlockBasedTableOptions RocksDBOptionFeature::doGetTableOptions()
       rocksdb::Status s =
         rocksdb::NewJemallocNodumpAllocator(jopts, &allocator);
       if (!s.ok()) {
-        SDB_FATAL(
-          "xxxxx", Logger::STARTUP,
-          "unable to use jemalloc allocator for RocksDB: ", s.ToString());
+        SDB_FATAL(STARTUP, "unable to use jemalloc allocator for RocksDB: ",
+                  s.ToString());
       }
     }
 #endif
@@ -1885,8 +836,7 @@ rocksdb::BlockBasedTableOptions RocksDBOptionFeature::doGetTableOptions()
     result.checksum = rocksdb::ChecksumType::kXXH3;
   } else {
     SDB_ASSERT(false);
-    SDB_WARN("xxxxx", sdb::Logger::STARTUP,
-             "unexpected value for '--rocksdb.checksum-type'");
+    SDB_WARN(STARTUP, "unexpected value for '--rocksdb.checksum-type'");
   }
 
   // TODO

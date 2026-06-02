@@ -36,7 +36,7 @@
 #include "basics/debugging.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/system-compiler.h"
 #include "vpack/builder.h"
 #include "vpack/exception.h"
@@ -269,13 +269,6 @@ class VPackHelper {
   static uint64_t stringUInt64(vpack::Slice slice, std::string_view name) {
     return stringUInt64(slice.get(name));
   }
-
-  /// parses a json file to VPack
-  static vpack::Builder vpackFromFile(const char* filename);
-
-  /// writes a VPack to a file
-  static bool vpackToFile(const std::string& filename, vpack::Slice slice,
-                          bool sync_file);
 
   template<typename T>
   static constexpr int compareSame(T l, T r) {

@@ -24,7 +24,6 @@
 #include "catalog/catalog.h"
 #include "catalog/role.h"
 #include "pg/pg_catalog/fwd.h"
-#include "rest_server/serened.h"
 
 namespace sdb::pg {
 namespace {

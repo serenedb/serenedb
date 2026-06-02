@@ -368,7 +368,7 @@ std::string SerializeResults(const std::vector<QueryResult>& results) {
   // Drive the templated reflection-based writer through `sdb::basics::JsonSink`
   // (simdjson::builder), emitting JSON text directly without an intermediate
   // vpack::Builder + slice round-trip.
-  simdjson::SIMDJSON_BUILTIN_IMPLEMENTATION::builder::string_builder sb(1024);
+  simdjson::builder::string_builder sb(1024);
   {
     sdb::basics::JsonSink sink{sb};
     sdb::basics::WriteObject(sink, results);
@@ -385,8 +385,8 @@ std::vector<QueryResult> DeserializeResults(std::string_view json_str) {
   // simdjson::ondemand and feed it through `sdb::basics::JsonSource` + the
   // reflection reader.
   simdjson::padded_string padded{json_str};
-  simdjson::SIMDJSON_BUILTIN_IMPLEMENTATION::ondemand::parser parser;
-  simdjson::SIMDJSON_BUILTIN_IMPLEMENTATION::ondemand::document doc;
+  simdjson::ondemand::parser parser;
+  simdjson::ondemand::document doc;
   auto err = parser.iterate(padded).get(doc);
   if (err != simdjson::SUCCESS) {
     return {};

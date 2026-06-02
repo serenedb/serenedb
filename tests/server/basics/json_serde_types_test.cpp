@@ -64,7 +64,7 @@ using sdb::basics::WriteObject;
 
 template<typename T>
 std::string ToJson(const T& value) {
-  simdjson::SIMDJSON_BUILTIN_IMPLEMENTATION::builder::string_builder sb(256);
+  simdjson::builder::string_builder sb(256);
   {
     JsonSink sink{sb};
     WriteObject(sink, value);
@@ -77,8 +77,8 @@ std::string ToJson(const T& value) {
 template<typename T>
 T FromJson(std::string_view json) {
   simdjson::padded_string padded{json};
-  simdjson::SIMDJSON_BUILTIN_IMPLEMENTATION::ondemand::parser parser;
-  simdjson::SIMDJSON_BUILTIN_IMPLEMENTATION::ondemand::document doc;
+  simdjson::ondemand::parser parser;
+  simdjson::ondemand::document doc;
   EXPECT_EQ(parser.iterate(padded).get(doc), simdjson::SUCCESS);
   T out{};
   JsonSource source{doc};
@@ -109,8 +109,8 @@ std::string ReadError(std::string_view json) {
 template<typename T>
 bool ReadFails(std::string_view json) {
   simdjson::padded_string padded{json};
-  simdjson::SIMDJSON_BUILTIN_IMPLEMENTATION::ondemand::parser parser;
-  simdjson::SIMDJSON_BUILTIN_IMPLEMENTATION::ondemand::document doc;
+  simdjson::ondemand::parser parser;
+  simdjson::ondemand::document doc;
   if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
     return true;
   }

@@ -36,7 +36,7 @@ namespace {
 
 template<typename T>
 std::string ToJson(const T& value) {
-  simdjson::SIMDJSON_BUILTIN_IMPLEMENTATION::builder::string_builder sb(256);
+  simdjson::builder::string_builder sb(256);
   {
     sdb::basics::JsonSink sink{sb};
     sdb::basics::WriteObject(sink, value);
@@ -49,8 +49,8 @@ std::string ToJson(const T& value) {
 template<typename T>
 T FromJson(std::string_view json) {
   simdjson::padded_string padded{json};
-  simdjson::SIMDJSON_BUILTIN_IMPLEMENTATION::ondemand::parser parser;
-  simdjson::SIMDJSON_BUILTIN_IMPLEMENTATION::ondemand::document doc;
+  simdjson::ondemand::parser parser;
+  simdjson::ondemand::document doc;
   EXPECT_EQ(parser.iterate(padded).get(doc), simdjson::SUCCESS);
   T out{};
   sdb::basics::JsonSource source{doc};

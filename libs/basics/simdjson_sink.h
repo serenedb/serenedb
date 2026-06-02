@@ -37,10 +37,9 @@
 
 namespace sdb::basics {
 
-namespace sj = simdjson::SIMDJSON_BUILTIN_IMPLEMENTATION;
 
 class JsonSink {
-  using StringBuilder = sj::builder::string_builder;
+  using StringBuilder = simdjson::builder::string_builder;
 
  public:
   explicit JsonSink(StringBuilder& sb) : _sb{&sb} {}
@@ -70,11 +69,11 @@ class JsonSink {
 };
 
 class JsonSource {
-  using Document = sj::ondemand::document;
-  using Value = sj::ondemand::value;
-  using Object = sj::ondemand::object;
-  using JsonType = sj::ondemand::json_type;
-  using ArrayIterator = sj::ondemand::array_iterator;
+  using Document = simdjson::ondemand::document;
+  using Value = simdjson::ondemand::value;
+  using Object = simdjson::ondemand::object;
+  using JsonType = simdjson::ondemand::json_type;
+  using ArrayIterator = simdjson::ondemand::array_iterator;
   using ArrayRange = std::pair<ArrayIterator, ArrayIterator>;
 
  public:

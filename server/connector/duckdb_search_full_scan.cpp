@@ -79,14 +79,14 @@ namespace sdb::connector {
 // walks the prepared query tree and matches each sub-filter's field name
 // (8-byte BE column id + string mangle byte -- OFFSETS is VARCHAR-only)
 // against the requested columns.
-static void ResetOffsets(SearchFullScanGlobalState& gstate,
-                         const irs::SubReader& segment) {
+static void ResetOffsets(SearchFullScanGlobalState& gstate, size_t seg_idx) {
   for (auto& entry : gstate.offsets_entries) {
     entry.state.Clear();
   }
   OffsetsCollector visitor{gstate.offsets_entries};
-  SDB_ASSERT(gstate.query);
-  gstate.query->visit(segment, visitor, irs::kNoBoost);
+  auto& query = gstate.queries[seg_idx];
+  SDB_ASSERT(query);
+  query->Visit(visitor, irs::kNoBoost);
 }
 
 // Fill `gstate.offsets_doc_scratch` for `doc_id` per requested field, then
@@ -163,7 +163,7 @@ static void WriteTopkOffsets(SearchFullScanGlobalState& gstate,
     [](const irs::ScoreDoc& sd) { return std::pair{sd.segment_idx, sd.doc}; },
     gstate.lookup_scratch,
     [&](uint32_t seg) {
-      ResetOffsets(gstate, reader[seg]);
+      ResetOffsets(gstate, seg);
       return true;
     },
     [&](uint32_t orig, uint32_t seg, uint32_t doc) {
@@ -218,10 +218,14 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   // scorer-aware re-prepare ran afterwards.
   SDB_ASSERT(ss.stored_filter);
   SDB_ASSERT(ss.snapshot);
-  state->query = ss.stored_filter->prepare({
-    .index = ss.snapshot->reader,
-    .scorer = state->scorer_obj.get(),
-  });
+  auto& prepare_reader = ss.snapshot->reader;
+  state->collector = ss.stored_filter->MakeCollector(state->scorer_obj.get());
+  state->queries.reserve(prepare_reader.size());
+  for (size_t i = 0; i < prepare_reader.size(); ++i) {
+    state->queries.emplace_back(ss.stored_filter->PrepareSegment(
+      prepare_reader[i], {.collector = state->collector.get()}));
+  }
+  state->stats = state->collector->Finish(irs::IResourceManager::gNoop);
 
   // Split projections into inverted-cs vs relation-served subsets.
   ClassifyColumnstoreProjections(*state, bind_data);
@@ -289,8 +293,6 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
   const duckdb::idx_t batch_size = STANDARD_VECTOR_SIZE;
   auto& search = bind_data.scan_source->Cast<SearchScan>();
   auto& reader = search.snapshot->reader;
-  SDB_ASSERT(gstate.query);
-  auto& query = *gstate.query;
 
   const bool has_real = absl::c_any_of(gstate.projected_columns, [](auto p) {
     return p != duckdb::DConstants::INVALID_INDEX;
@@ -327,9 +329,12 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
         auto& segment = reader[si];
         fetcher.Clear();
         collector.SetSegment(seg_idx++);
-        auto it = segment.mask(query.execute({
-          .segment = segment,
-          .scorer = gstate.scorer_obj.get(),
+        auto& seg_query = gstate.queries[si];
+        if (!seg_query) {
+          continue;
+        }
+        auto it = segment.mask(seg_query->Execute({
+          .stats = &*gstate.stats,
           .wand = {.wand_enabled = wand_enabled},
         }));
         auto score_func = it->PrepareScore({
@@ -538,9 +543,12 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
         }
         const auto seg_idx_to_open = gstate.search_segment_idx;
         auto& segment = reader[gstate.search_segment_idx++];
-        gstate.search_doc = segment.mask(query.execute({
-          .segment = segment,
-          .scorer = gstate.scorer_obj.get(),
+        auto& seg_query = gstate.queries[seg_idx_to_open];
+        if (!seg_query) {
+          continue;
+        }
+        gstate.search_doc = segment.mask(seg_query->Execute({
+          .stats = &*gstate.stats,
         }));
         if (need_pk) {
           const auto [cs_reader, pk_col] =
@@ -560,7 +568,7 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
           });
         }
         if (search.EmitOffsets()) {
-          ResetOffsets(gstate, segment);
+          ResetOffsets(gstate, seg_idx_to_open);
         }
       }
 

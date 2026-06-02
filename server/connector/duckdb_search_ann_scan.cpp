@@ -391,10 +391,8 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchAnnScanInitLocal(
   auto lstate = duckdb::make_uniq<SearchAnnScanLocalState>(
     dis.data() + dis_begin, ids.data() + ids_begin, gstate.scan->top_k);
   if (gstate.scan->stored_text_filter) {
-    auto& pf =
-      basics::downCast<irs::ProxyFilter>(*gstate.scan->stored_text_filter);
-    lstate->text_filter_query =
-      pf.prepare({.index = *gstate.reader, .scorer = nullptr});
+    lstate->text_filter_collector =
+      gstate.scan->stored_text_filter->MakeCollector(nullptr);
   }
   return lstate;
 }
@@ -409,8 +407,8 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
   uint32_t segment;
   SDB_ASSERT(g.reader);
   CompositeScanFilter composite;
-  if (l.text_filter_query) {
-    composite.EnableText(*l.text_filter_query);
+  if (l.text_filter_collector) {
+    composite.EnableText(*g.scan->stored_text_filter, *l.text_filter_collector);
   }
   if (g.filter_ctx) {
     composite.EnableAnn(*g.filter_ctx);
@@ -464,10 +462,8 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchRangeScanInitLocal(
   auto& gstate = state->Cast<SearchRangeScanGlobalState>();
   auto lstate = duckdb::make_uniq<SearchRangeScanLocalState>();
   if (gstate.scan->stored_text_filter) {
-    auto& pf =
-      basics::downCast<irs::ProxyFilter>(*gstate.scan->stored_text_filter);
-    lstate->text_filter_query =
-      pf.prepare({.index = *gstate.reader, .scorer = nullptr});
+    lstate->text_filter_collector =
+      gstate.scan->stored_text_filter->MakeCollector(nullptr);
   }
   return lstate;
 }
@@ -481,8 +477,8 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
 
   uint32_t segment;
   CompositeScanFilter composite;
-  if (l.text_filter_query) {
-    composite.EnableText(*l.text_filter_query);
+  if (l.text_filter_collector) {
+    composite.EnableText(*g.scan->stored_text_filter, *l.text_filter_collector);
   }
   if (g.filter_ctx) {
     composite.EnableAnn(*g.filter_ctx);

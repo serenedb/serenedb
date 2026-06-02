@@ -41,9 +41,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchCountScanInitGlobal(
   const auto& count_scan = bind_data.scan_source->Cast<CountScan>();
   if (count_scan.stored_filter) {
     SDB_ASSERT(count_scan.snapshot);
-    state->query = count_scan.stored_filter->prepare({
-      .index = count_scan.snapshot->reader,
-    });
+    auto& reader = count_scan.snapshot->reader;
+    state->collector = count_scan.stored_filter->MakeCollector(nullptr);
+    state->queries.reserve(reader.size());
+    for (size_t i = 0; i < reader.size(); ++i) {
+      state->queries.emplace_back(count_scan.stored_filter->PrepareSegment(
+        reader[i], {.collector = state->collector.get()}));
+    }
   }
   return state;
 }
@@ -65,13 +69,17 @@ void SearchCountScanFunction(duckdb::ClientContext& /*context*/,
   if (!gstate.counted) {
     SDB_ASSERT(count_scan.snapshot);
     auto& reader = count_scan.snapshot->reader;
-    if (!gstate.query) {
+    if (!gstate.collector) {
       gstate.total = reader.live_docs_count();
     } else {
       uint64_t count = 0;
       for (size_t i = 0; i < reader.size(); ++i) {
         auto& segment = reader[i];
-        auto doc = segment.mask(gstate.query->execute({.segment = segment}));
+        auto& query = gstate.queries[i];
+        if (!query) {
+          continue;
+        }
+        auto doc = segment.mask(query->Execute({}));
         count += doc->count();
       }
       gstate.total = count;

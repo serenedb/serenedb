@@ -73,7 +73,7 @@ struct SearchAnnScanLocalState : public CommonScanLocalState {
   SearchAnnScanLocalState(float* dis_data, int64_t* ids_data, size_t size)
     : buffer{dis_data, ids_data, size} {}
   irs::HNSWAnnSearchBuffer buffer;
-  irs::Filter::Query::ptr text_filter_query;
+  irs::PrepareCollector::ptr text_filter_collector;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
@@ -110,7 +110,7 @@ struct SearchRangeScanLocalState : public CommonScanLocalState {
   size_t current_idx = 0;
   irs::HNSWRangeSearchBuffer range_buffer;
   std::vector<uint32_t> lookup_scratch;
-  irs::Filter::Query::ptr text_filter_query;
+  irs::PrepareCollector::ptr text_filter_collector;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(

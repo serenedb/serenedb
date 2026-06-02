@@ -203,6 +203,7 @@ target_include_directories(
 add_executable(
     iresearch-load-tests
     ./search/load_test.cpp
+    ./search/filter_test_case_base.cpp
     ./formats/column/test_cs_helpers.cpp
     ./tests_param.cpp
     ./tests_main.cpp

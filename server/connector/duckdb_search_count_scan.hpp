@@ -31,11 +31,12 @@ namespace sdb::connector {
 // zero-column DataChunks capped at STANDARD_VECTOR_SIZE until drained.
 // The aggregate above (count_star) sums chunk cardinalities.
 struct SearchCountScanGlobalState : public CommonScanGlobalState {
-  // Prepared filter query. Null when CountScan.stored_filter is null
-  // (match-all short-circuit via IndexReader::live_docs_count()).
-  // Otherwise built once in SearchCountScanInitGlobal -- the only
-  // prepare site for CountScan.
-  irs::Filter::Query::ptr query;
+  // Per-segment prepared filter queries. Empty when CountScan.stored_filter
+  // is null (match-all short-circuit via IndexReader::live_docs_count()).
+  // Otherwise built once in SearchCountScanInitGlobal -- the only prepare
+  // site for CountScan. Indexed by segment ordinal; entries may be null.
+  irs::PrepareCollector::ptr collector;
+  std::vector<irs::QueryBuilder::ptr> queries;
 
   uint64_t total = 0;
   uint64_t emitted = 0;

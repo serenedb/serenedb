@@ -35,7 +35,7 @@ void BmSegmentationAnalyzer(benchmark::State& state) {
   opts.accept = SegmentationTokenizer::Options::Accept::AlphaNumeric;
   opts.convert = SegmentationTokenizer::Options::Convert::Lower;
 
-  auto stream = SegmentationTokenizer::make(std::move(opts));
+  auto stream = SegmentationTokenizer::Make(std::move(opts));
 
   const std::string_view str = "QUICK BROWN FOX JUMPS OVER THE LAZY DOG";
   for (auto _ : state) {
@@ -72,8 +72,10 @@ class AsciiOptimizationFixture : public benchmark::Fixture {
 
 BENCHMARK_DEFINE_F(AsciiOptimizationFixture,
                    BM_ascii_optimization)(benchmark::State& state) {
+  // NOTE: use_ascii_optimization is no longer a persistable Options field
+  // (it's hardcoded to true inside SegmentationTokenizer::Make). The
+  // benchmark dimension is therefore unused; state.range(0) ignored.
   SegmentationTokenizer::Options opts;
-  opts.use_ascii_optimization = static_cast<bool>(state.range(0));
   opts.convert =
     static_cast<SegmentationTokenizer::Options::Convert>(state.range(1));
   opts.accept =
@@ -81,7 +83,7 @@ BENCHMARK_DEFINE_F(AsciiOptimizationFixture,
   opts.separate =
     static_cast<SegmentationTokenizer::Options::Separate>(state.range(3));
 
-  auto stream = SegmentationTokenizer::make(std::move(opts));
+  auto stream = SegmentationTokenizer::Make(std::move(opts));
 
   for (auto _ : state) {
     stream->reset(data);

@@ -27,7 +27,6 @@
 #include <utility>
 
 #include "basics/application-exit.h"
-#include "iresearch/search/scorers.hpp"
 
 #if !defined(_WIN32)
 #include <dlfcn.h>  // for RTLD_NEXT
@@ -48,7 +47,7 @@
 #include "basics/log.h"
 #include "basics/network_utils.hpp"
 #include "index/doc_generator.hpp"
-#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/utils/attributes.hpp"
 #include "iresearch/utils/mmap_utils.hpp"
@@ -217,10 +216,7 @@ int TestEnv::initialize(int argc, char* argv[]) {
   ::testing::AddGlobalTestEnvironment(new IterationTracker());
   ::testing::InitGoogleTest(&gArgc, gArgv);
 
-  irs::analysis::analyzers::Init();
   irs::formats::Init();
-  irs::scorers::Init();
-  irs::compression::Init();
 
   return RUN_ALL_TESTS();
 }

@@ -1388,11 +1388,15 @@ catalog::Column::Id ResolveColumnId(
 bool IsScorerFunctionName(std::string_view name) {
   using S = catalog::ScorerOptions;
   // TODO(mbkkt) make TrivialBiSet?
-  return name == S::Bm25::kName || name == S::Tfidf::kName ||
-         name == S::LmJm::kName || name == S::LmDirichlet::kName ||
-         name == S::IndriDirichlet::kName || name == S::Dfi::kName ||
-         name == S::RawBoost::kName || name == S::RawTf::kName ||
-         name == S::RawDL::kName;
+  return name == S::Bm25::Owner::type_name() ||
+         name == S::Tfidf::Owner::type_name() ||
+         name == S::LmJm::Owner::type_name() ||
+         name == S::LmDirichlet::Owner::type_name() ||
+         name == S::IndriDirichlet::Owner::type_name() ||
+         name == S::Dfi::Owner::type_name() ||
+         name == S::RawBoost::Owner::type_name() ||
+         name == S::RawTf::Owner::type_name() ||
+         name == S::RawDL::Owner::type_name();
 }
 
 // Returns false if args are non-constant (caller refuses to claim). Throws

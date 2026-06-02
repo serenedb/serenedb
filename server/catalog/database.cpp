@@ -20,28 +20,30 @@
 
 #include "catalog/database.h"
 
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
+
+#include "basics/serializer.h"
+
 namespace sdb::catalog {
 
-Database::Database(ObjectId id, std::string_view name)
-  : Object{{}, id, std::string{name}, ObjectType::Database} {}
+Database::Database(ObjectId id, DatabaseOptions opts)
+  : Object{{}, id, opts.name, ObjectType::Database} {}
 
-std::shared_ptr<Database> Database::ReadInternal(vpack::Slice slice,
-                                                 ReadContext ctx) {
-  auto name_slice = slice.get("name");
-  if (!name_slice.isString()) {
-    return nullptr;
-  }
-  return std::make_shared<Database>(ctx.id, name_slice.stringView());
+std::shared_ptr<Database> Database::Deserialize(duckdb::Deserializer& src,
+                                                ReadContext ctx) {
+  DatabaseOptions opts;
+  basics::ReadTuple(src, opts);
+  return std::make_shared<Database>(ctx.id, std::move(opts));
 }
 
-void Database::WriteInternal(vpack::Builder& b) const {
-  b.openObject();
-  WriteObject(b, [](vpack::Builder&) {});
-  b.close();
+void Database::Serialize(duckdb::Serializer& sink) const {
+  basics::WriteTuple(sink, DatabaseOptions{std::string{GetName()}});
 }
 
 std::shared_ptr<Object> Database::Clone() const {
-  return std::make_shared<Database>(GetId(), GetName());
+  return std::make_shared<Database>(GetId(),
+                                    DatabaseOptions{std::string{GetName()}});
 }
 
 }  // namespace sdb::catalog

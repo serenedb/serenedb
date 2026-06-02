@@ -26,8 +26,6 @@
 #include <s2/s2point_region.h>
 #include <vpack/builder.h>
 #include <vpack/iterator.h>
-#include <vpack/parser.h>
-#include <vpack/serializer.h>
 
 #include <magic_enum/magic_enum.hpp>
 #include <string>
@@ -36,10 +34,10 @@
 #include "basics/exceptions.h"
 #include "basics/log.h"
 #include "basics/result.h"
+#include "basics/serializer.h"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
 #include "geo/wkb.h"
-#include "iresearch/analysis/analyzers.hpp"
 #include "iresearch/search/geo_filter.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 
@@ -83,88 +81,6 @@ namespace {
 
 using namespace sdb;
 using namespace sdb::geo;
-
-constexpr std::string_view kLatitudeParam = "latitude";
-constexpr std::string_view kLongitudeParam = "longitude";
-
-Result FromVPack(vpack::Slice object, GeoPointAnalyzer::Options& options) {
-  SDB_ASSERT(object.isObject());
-  auto r = vpack::ReadObjectNothrow(object, options,
-                                    {
-                                      .skip_unknown = true,
-                                      .strict = false,
-                                    });
-  if (!r.ok()) {
-    return {ERROR_BAD_PARAMETER,
-            absl::StrCat("Failed to parse definition, ", r.errorMessage())};
-  }
-
-  r = options.options.Validate();
-  if (!r.ok()) {
-    return r;
-  }
-
-  if (options.latitude.empty() != options.longitude.empty()) {
-    options.latitude = {};
-    options.longitude = {};
-    return {ERROR_BAD_PARAMETER,
-            absl::StrCat("'", kLatitudeParam, "' and '", kLongitudeParam,
-                         "' should be both empty or non-empty.")};
-  }
-  return {};
-}
-
-Result FromVPack(vpack::Slice object, GeoJsonAnalyzer::Options& options) {
-  SDB_ASSERT(object.isObject());
-  auto r = vpack::ReadObjectNothrow(object, options,
-                                    {
-                                      .skip_unknown = true,
-                                      .strict = false,
-                                    });
-  if (!r.ok()) {
-    return {ERROR_BAD_PARAMETER,
-            absl::StrCat("Failed to parse definition, ", r.errorMessage())};
-  }
-
-  r = options.options.Validate();
-  if (!r.ok()) {
-    return r;
-  }
-
-  return {};
-}
-
-template<typename Analyzer>
-bool ParseOptionsVPack(std::string_view args,
-                       typename Analyzer::Options& options) {
-  const auto object = irs::view_to_slice(args);
-  Result r;
-  if (!object.isObject()) {
-    r = {ERROR_BAD_PARAMETER, "Analyzer definition is not an Object"};
-  } else {
-    r = FromVPack(object, options);
-  }
-  if (!r.ok()) {
-    SDB_WARN(SEARCH, "Failed to read options for '",
-             irs::Type<Analyzer>::name(), "' analyzer, error: '",
-             r.errorMessage(), "'");
-    return false;
-  }
-  return true;
-}
-
-template<typename Analyzer>
-bool NormalizeImpl(std::string_view args, std::string& out) {
-  typename Analyzer::Options options;
-  if (!ParseOptionsVPack<Analyzer>(args, options)) {
-    return false;
-  }
-  vpack::Builder root;
-  vpack::WriteObject(root, options);
-  out.resize(root.slice().byteSize());
-  std::memcpy(&out[0], root.slice().begin(), out.size());
-  return true;
-}
 
 struct S2AnalyzerData {
   sdb::geo::coding::Options coding;
@@ -307,16 +223,16 @@ bool GeoAnalyzer::reset(std::string_view value) {
   return reset(_json_parser.builder().slice());
 }
 
-bool GeoPointAnalyzer::normalize(std::string_view args, std::string& out) {
-  return NormalizeImpl<GeoPointAnalyzer>(args, out);
-}
-
-irs::analysis::Analyzer::ptr GeoPointAnalyzer::make(std::string_view args) {
-  Options options;
-  if (!ParseOptionsVPack<GeoPointAnalyzer>(args, options)) {
-    return {};
+irs::analysis::Analyzer::ptr GeoPointAnalyzer::Make(Options opts) {
+  if (!opts.options.Validate().ok()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "geo_point: invalid geo options");
   }
-  return std::make_unique<GeoPointAnalyzer>(options);
+  if (opts.latitude.empty() != opts.longitude.empty()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              "geo_point: latitude and longitude must both be set or both "
+              "empty");
+  }
+  return std::make_unique<GeoPointAnalyzer>(opts);
 }
 
 GeoPointAnalyzer::GeoPointAnalyzer(const Options& options)
@@ -396,19 +312,14 @@ bool GeoPointAnalyzer::ParsePoint(vpack::Slice json, S2LatLng& point) const {
   return true;
 }
 
-bool GeoJsonAnalyzer::normalize(std::string_view args, std::string& out) {
-  return NormalizeImpl<GeoJsonAnalyzer>(args, out);
-}
-
-irs::analysis::Analyzer::ptr GeoJsonAnalyzer::make(std::string_view args) {
-  Options options;
-  if (!ParseOptionsVPack<GeoJsonAnalyzer>(args, options)) {
-    return {};
+irs::analysis::Analyzer::ptr GeoJsonAnalyzer::Make(Options opts) {
+  if (!opts.options.Validate().ok()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "geo_json: invalid geo options");
   }
-  if (options.coding == Coding::VPack) {
-    return std::make_unique<GeoJsonAnalyzerImpl<vpack::Builder>>(options);
+  if (opts.coding == Coding::VPack) {
+    return std::make_unique<GeoJsonAnalyzerImpl<vpack::Builder>>(opts);
   }
-  return std::make_unique<GeoJsonAnalyzerImpl<S2AnalyzerData>>(options);
+  return std::make_unique<GeoJsonAnalyzerImpl<S2AnalyzerData>>(opts);
 }
 
 GeoJsonAnalyzer::GeoJsonAnalyzer(const Options& options)
@@ -494,13 +405,6 @@ void GeoJsonAnalyzerImpl<S2AnalyzerData>::StoreImpl(vpack::Slice) {
   auto* store = irs::GetMutable<StoreAttr>(this);
   SDB_ASSERT(store);
   store->value = data;
-}
-
-void GeoAnalyzer::init() {
-  REGISTER_ANALYZER_VPACK(GeoPointAnalyzer, GeoPointAnalyzer::make,
-                          GeoPointAnalyzer::normalize);
-  REGISTER_ANALYZER_VPACK(GeoJsonAnalyzer, GeoJsonAnalyzer::make,
-                          GeoJsonAnalyzer::normalize);
 }
 
 }  // namespace irs::analysis

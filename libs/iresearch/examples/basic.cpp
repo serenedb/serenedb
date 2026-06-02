@@ -25,7 +25,7 @@
 #include <duckdb/main/database.hpp>
 #include <iostream>
 #include <iresearch/analysis/analyzer.hpp>
-#include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/columnstore/column_reader.hpp>
 #include <iresearch/columnstore/column_writer.hpp>
 #include <iresearch/columnstore/format.hpp>
@@ -34,13 +34,12 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
+#include <iresearch/search/bm25.hpp>
 #include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/mixed_boolean_filter.hpp>
 #include <iresearch/search/scorer.hpp>
-#include <iresearch/search/scorers.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/compression.hpp>
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/text_format.hpp>
@@ -73,8 +72,9 @@ inline constexpr irs::field_id kBodyColumnId = 2;
 struct TextField {
   std::string_view name;
   std::string_view text;
-  irs::analysis::Analyzer::ptr tokenizer{irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(), R"({})")};
+  irs::analysis::Analyzer::ptr tokenizer{
+    irs::analysis::SegmentationTokenizer::Make(
+      irs::analysis::SegmentationTokenizer::Options{})};
 
   std::string_view Name() const noexcept { return name; }
 
@@ -400,57 +400,49 @@ int main() {
   engine.Initialize();
 
   // Initialize subsystems (required once per process).
-  irs::analysis::analyzers::Init();
   irs::formats::Init();
-  irs::scorers::Init();
-  irs::compression::Init();
 
-  // Nested scope so writer/reader/dir destruct before DuckDBEngine::Shutdown
-  // tears down the duckdb::DuckDB they were dispatching through.
-  {
-    auto format = irs::formats::Get("1_5simd");
-    auto scorer =
-      irs::scorers::Get("bm25", irs::Type<irs::text_format::Json>::get(), "{}");
-    auto tokenizer = irs::analysis::analyzers::Get(
-      "segmentation", irs::Type<irs::text_format::Json>::get(), "{}");
+  auto format = irs::formats::Get("1_5simd");
+  auto scorer = irs::BM25::Make(irs::BM25::Options{});
+  auto tokenizer = irs::analysis::SegmentationTokenizer::Make(
+    irs::analysis::SegmentationTokenizer::Options{});
 
-    irs::MemoryDirectory dir;
-    // cs needs a DatabaseInstance plumbed through both the writer (for
-    // OpenColumn) and the reader_options (for CsReader on the snapshot).
-    // Norm-featured fields additionally require a norm_column_options
-    // callback that allocates a (column id, row-group size) pair per field.
-    irs::IndexWriterOptions options;
-    options.db = &Db();
-    options.reader_options.db = &Db();
-    options.column_options = [](irs::field_id) -> irs::ColumnOptions {
-      return {.row_group_size = DEFAULT_ROW_GROUP_SIZE};
+  irs::MemoryDirectory dir;
+  // cs needs a DatabaseInstance plumbed through both the writer (for
+  // OpenColumn) and the reader_options (for CsReader on the snapshot).
+  // Norm-featured fields additionally require a norm_column_options
+  // callback that allocates a (column id, row-group size) pair per field.
+  irs::IndexWriterOptions options;
+  options.db = &Db();
+  options.reader_options.db = &Db();
+  options.column_options = [](irs::field_id) -> irs::ColumnOptions {
+    return {.row_group_size = DEFAULT_ROW_GROUP_SIZE};
+  };
+  options.norm_column_options =
+    [next = std::make_shared<std::atomic<irs::field_id>>(0)](
+      std::string_view) -> irs::NormColumnOptions {
+    return {
+      .id = next->fetch_add(1, std::memory_order_relaxed),
+      .row_group_size = DEFAULT_ROW_GROUP_SIZE,
     };
-    options.norm_column_options =
-      [next = std::make_shared<std::atomic<irs::field_id>>(0)](
-        std::string_view) -> irs::NormColumnOptions {
-      return {
-        .id = next->fetch_add(1, std::memory_order_relaxed),
-        .row_group_size = DEFAULT_ROW_GROUP_SIZE,
-      };
-    };
-    auto writer = irs::IndexWriter::Make(dir, format, irs::kOmCreate, options);
+  };
+  auto writer = irs::IndexWriter::Make(dir, format, irs::kOmCreate, options);
 
-    BuildIndex(*writer);
+  BuildIndex(*writer);
 
-    auto reader = writer->GetSnapshot();
+  auto reader = writer->GetSnapshot();
 
-    PrintIndexStats(reader);
-    QuerySingleTerm(reader, *tokenizer);
-    QueryTopK(reader, *scorer, *tokenizer);
-    QueryBooleanAnd(reader, *tokenizer);
-    QueryBooleanOr(reader, *tokenizer);
-    QueryPhrase(reader, *tokenizer);
-    QueryPrefix(reader, *tokenizer);
-    QueryExclusion(reader, *tokenizer);
-    ReadStoredFields(reader);
-    RemoveDocuments(*writer, *tokenizer);
-    CompactIndex(*writer, dir);
-  }
+  PrintIndexStats(reader);
+  QuerySingleTerm(reader, *tokenizer);
+  QueryTopK(reader, *scorer, *tokenizer);
+  QueryBooleanAnd(reader, *tokenizer);
+  QueryBooleanOr(reader, *tokenizer);
+  QueryPhrase(reader, *tokenizer);
+  QueryPrefix(reader, *tokenizer);
+  QueryExclusion(reader, *tokenizer);
+  ReadStoredFields(reader);
+  RemoveDocuments(*writer, *tokenizer);
+  CompactIndex(*writer, dir);
 
   engine.Shutdown();
   return 0;

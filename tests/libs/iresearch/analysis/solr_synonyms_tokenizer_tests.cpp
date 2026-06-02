@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/solr_synonyms_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 
@@ -393,10 +393,9 @@ TEST(solr_synonyms_tests, make_state_invalid_input) {
 }
 
 TEST(solr_synonyms_tests, factory_make_json) {
-  auto analyzer =
-    irs::analysis::analyzers::Get(SolrSynonymsTokenizer::type_name(),
-                                  irs::Type<irs::text_format::Json>::get(),
-                                  R"({"synonyms": "ipod, i-pod, i pod"})");
+  auto analyzer = SolrSynonymsTokenizer::Make(SolrSynonymsTokenizer::Options{
+    .synonyms_text = "ipod, i-pod, i pod",
+  });
   ASSERT_NE(nullptr, analyzer);
 
   auto* term = irs::get<irs::TermAttr>(*analyzer);
@@ -409,17 +408,18 @@ TEST(solr_synonyms_tests, factory_make_json) {
   ASSERT_EQ((std::vector<std::string>{"i pod", "i-pod", "ipod"}), emitted);
 }
 
-TEST(solr_synonyms_tests, factory_make_json_missing_field) {
-  auto analyzer = irs::analysis::analyzers::Get(
-    SolrSynonymsTokenizer::type_name(),
-    irs::Type<irs::text_format::Json>::get(), R"({})");
-  ASSERT_EQ(nullptr, analyzer);
-}
+TEST(solr_synonyms_tests, factory_make_default_options) {
+  // Ported from the legacy `factory_make_json_missing_field` test, which
+  // fed `{}` to the JSON parser and asserted nullptr. The direct-Options
+  // API treats a missing `synonyms_text` as an empty string, which is a
+  // valid (but empty) synonyms map -- the analyzer is non-null and emits
+  // the input verbatim (no synonym substitution).
+  auto analyzer = SolrSynonymsTokenizer::Make(SolrSynonymsTokenizer::Options{});
+  ASSERT_NE(nullptr, analyzer);
 
-TEST(solr_synonyms_tests, factory_normalize_json) {
-  std::string normalized;
-  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-    normalized, SolrSynonymsTokenizer::type_name(),
-    irs::Type<irs::text_format::Json>::get(), R"({"synonyms": "foo,bar"})"));
-  ASSERT_FALSE(normalized.empty());
+  auto* term = irs::get<irs::TermAttr>(*analyzer);
+  ASSERT_TRUE(analyzer->reset("anything"));
+  ASSERT_TRUE(analyzer->next());
+  ASSERT_EQ("anything", irs::ViewCast<char>(term->value));
+  ASSERT_FALSE(analyzer->next());
 }

@@ -23,11 +23,16 @@
 
 #pragma once
 
+#include <tuple>
+
+#include "basics/serializer.h"
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/ngram_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 
 namespace irs::analysis {
+
+struct TokenizerConfig;
 
 class WildcardAnalyzer final : public TypedAnalyzer<WildcardAnalyzer>,
                                private util::Noncopyable {
@@ -35,16 +40,16 @@ class WildcardAnalyzer final : public TypedAnalyzer<WildcardAnalyzer>,
 
  public:
   struct Options {
-    Analyzer::ptr base_analyzer;
+    using Owner = WildcardAnalyzer;
+    std::unique_ptr<TokenizerConfig> base_analyzer;
     size_t ngram_size = 3;
   };
+  static Analyzer::ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "wildcard"; }
-  static bool normalize(std::string_view args, std::string& definition);
-  static Analyzer::ptr make(std::string_view args);
-  static void init();
 
-  explicit WildcardAnalyzer(Options&& options) noexcept;
+  explicit WildcardAnalyzer(Analyzer::ptr base_analyzer,
+                            size_t ngram_size) noexcept;
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
 
@@ -71,5 +76,17 @@ class WildcardAnalyzer final : public TypedAnalyzer<WildcardAnalyzer>,
   const byte_type* _terms_begin{};
   const byte_type* _terms_end{};
 };
+
+template<typename Context>
+void SerdeWrite(Context ctx, const WildcardAnalyzer::Options& o) {
+  sdb::basics::WriteTuple(ctx.io(), std::tie(o.base_analyzer, o.ngram_size),
+                          ctx.arg());
+}
+
+template<typename Context>
+void SerdeRead(Context ctx, WildcardAnalyzer::Options& o) {
+  auto refs = std::tie(o.base_analyzer, o.ngram_size);
+  sdb::basics::ReadTuple(ctx.io(), refs, ctx.arg());
+}
 
 }  // namespace irs::analysis

@@ -34,7 +34,6 @@
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/tfidf.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "iresearch/utils/ngram_match_utils.hpp"
 #include "tests_shared.hpp"
 

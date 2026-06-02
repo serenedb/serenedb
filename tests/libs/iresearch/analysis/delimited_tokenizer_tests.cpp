@@ -21,9 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/common.h>
-#include <vpack/parser.h>
-
 #include "gtest/gtest.h"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "tests_config.hpp"
@@ -242,9 +239,8 @@ TEST_F(DelimitedTokenizerTests, test_quote) {
       test_func(data, &stream);
     }
     {
-      auto stream = irs::analysis::analyzers::Get(
-        "delimiter", irs::Type<irs::text_format::Json>::get(),
-        "{\"delimiter\":\",\"}");
+      auto stream = irs::analysis::DelimitedTokenizer::Make(
+        irs::analysis::DelimitedTokenizer::Options{.delimiter = ","});
       test_func(data, stream.get());
     }
   }
@@ -362,11 +358,11 @@ TEST_F(DelimitedTokenizerTests, test_quote) {
 }
 
 TEST_F(DelimitedTokenizerTests, test_load) {
-  // load jSON string
+  // happy path -- explicit delimiter.
   {
     std::string_view data("abc,def,ghi");  // quoted terms should be honoured
-    auto stream = irs::analysis::analyzers::Get(
-      "delimiter", irs::Type<irs::text_format::Json>::get(), "\",\"");
+    auto stream = irs::analysis::DelimitedTokenizer::Make(
+      irs::analysis::DelimitedTokenizer::Options{.delimiter = ","});
 
     ASSERT_NE(nullptr, stream);
     ASSERT_TRUE(stream->reset(data));
@@ -391,142 +387,19 @@ TEST_F(DelimitedTokenizerTests, test_load) {
     ASSERT_FALSE(stream->next());
   }
 
-  // load jSON object
+  // .........................................................................
+  // The old JSON-only invalid cases ("{}", "[]", "1", `{"delimiter":1}`,
+  // empty string) are all parser-level rejections with no direct-API
+  // analogue: with the Options API the delimiter is a `std::string` so the
+  // only way to construct it "invalid" is to leave it empty -- which the
+  // analyzer intentionally treats as the "no delimiter" sentinel (the whole
+  // input becomes a single token), not an error. Construction with default
+  // Options must therefore succeed, so we explicitly cover the default-
+  // constructed case here as a regression guard.
+  // .........................................................................
   {
-    std::string_view data("abc,def,ghi");  // quoted terms should be honoured
-    auto stream = irs::analysis::analyzers::Get(
-      "delimiter", irs::Type<irs::text_format::Json>::get(),
-      "{\"delimiter\":\",\"}");
-
+    auto stream = irs::analysis::DelimitedTokenizer::Make(
+      irs::analysis::DelimitedTokenizer::Options{});
     ASSERT_NE(nullptr, stream);
-    ASSERT_TRUE(stream->reset(data));
-
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    auto* payload = irs::get<irs::PayAttr>(*stream);
-    ASSERT_EQ(nullptr, payload);
-    auto* term = irs::get<irs::TermAttr>(*stream);
-
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(3, offset->end);
-    ASSERT_EQ("abc", irs::ViewCast<char>(term->value));
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(4, offset->start);
-    ASSERT_EQ(7, offset->end);
-    ASSERT_EQ("def", irs::ViewCast<char>(term->value));
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(8, offset->start);
-    ASSERT_EQ(11, offset->end);
-    ASSERT_EQ("ghi", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream->next());
   }
-
-  // load jSON invalid
-  {
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "delimiter", irs::Type<irs::text_format::Json>::get(),
-                         std::string_view{}));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "delimiter", irs::Type<irs::text_format::Json>::get(), "1"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "delimiter", irs::Type<irs::text_format::Json>::get(), "[]"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "delimiter", irs::Type<irs::text_format::Json>::get(), "{}"));
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "delimiter", irs::Type<irs::text_format::Json>::get(),
-                         "{\"delimiter\":1}"));
-  }
-
-  // load text
-  {
-    std::string_view data("abc,def,ghi");  // quoted terms should be honoured
-    auto stream = irs::analysis::analyzers::Get(
-      "delimiter", irs::Type<irs::text_format::Text>::get(), ",");
-
-    ASSERT_NE(nullptr, stream);
-    ASSERT_TRUE(stream->reset(data));
-
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    auto* payload = irs::get<irs::PayAttr>(*stream);
-    ASSERT_EQ(nullptr, payload);
-    auto* term = irs::get<irs::TermAttr>(*stream);
-
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(3, offset->end);
-    ASSERT_EQ("abc", irs::ViewCast<char>(term->value));
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(4, offset->start);
-    ASSERT_EQ(7, offset->end);
-    ASSERT_EQ("def", irs::ViewCast<char>(term->value));
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(8, offset->start);
-    ASSERT_EQ(11, offset->end);
-    ASSERT_EQ("ghi", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream->next());
-  }
-
-  // load text, wide symbols
-  {
-    std::string_view data(
-      "\x61\x62\x63\x2C\xD0\x9F");  // quoted terms should be honoured
-    auto stream = irs::analysis::analyzers::Get(
-      "delimiter", irs::Type<irs::text_format::Text>::get(), ",");
-
-    ASSERT_NE(nullptr, stream);
-    ASSERT_TRUE(stream->reset(data));
-
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    auto* payload = irs::get<irs::PayAttr>(*stream);
-    ASSERT_EQ(nullptr, payload);
-    auto* term = irs::get<irs::TermAttr>(*stream);
-
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(3, offset->end);
-    ASSERT_EQ("abc", irs::ViewCast<char>(term->value));
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(4, offset->start);
-    ASSERT_EQ(6, offset->end);
-    ASSERT_EQ("\xD0\x9F", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream->next());
-  }
-}
-
-TEST_F(DelimitedTokenizerTests, test_make_config_json) {
-  // with unknown parameter
-  {
-    std::string config = "{\"delimiter\":\",\",\"invalid_parameter\":true}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "delimiter", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(vpack::Parser::fromJson("{\"delimiter\":\",\"}")->toString(),
-              actual);
-  }
-
-  // test vpack
-  {
-    std::string config = "{\"delimiter\":\",\",\"invalid_parameter\":true}";
-    auto in_vpack = vpack::Parser::fromJson(config.c_str(), config.size());
-    std::string in_str;
-    in_str.assign(in_vpack->slice().startAs<char>(),
-                  in_vpack->slice().byteSize());
-    std::string out_str;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      out_str, "delimiter", irs::Type<irs::text_format::VPack>::get(), in_str));
-    vpack::Slice out_slice(reinterpret_cast<const uint8_t*>(out_str.c_str()));
-    ASSERT_EQ(vpack::Parser::fromJson("{\"delimiter\":\",\"}")->toString(),
-              out_slice.toString());
-  }
-}
-
-TEST_F(DelimitedTokenizerTests, test_make_config_text) {
-  std::string config = ",";
-  std::string actual;
-  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-    actual, "delimiter", irs::Type<irs::text_format::Text>::get(), config));
-  ASSERT_EQ(config, actual);
 }

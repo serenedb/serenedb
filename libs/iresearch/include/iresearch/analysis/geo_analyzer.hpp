@@ -68,7 +68,6 @@ class GeoAnalyzer : public analysis::Analyzer, private util::Noncopyable {
 #ifdef SDB_GTEST
   const auto& options() const noexcept { return _indexer.options(); }
 #endif
-  static void init();  // for registration in a static build
 
  protected:
   explicit GeoAnalyzer(const S2RegionTermIndexer::Options& options);
@@ -96,14 +95,14 @@ class GeoAnalyzer : public analysis::Analyzer, private util::Noncopyable {
 class GeoPointAnalyzer final : public GeoAnalyzer {
  public:
   struct Options {
+    using Owner = GeoPointAnalyzer;
     sdb::geo::GeoOptions options;
     std::vector<std::string> latitude;
     std::vector<std::string> longitude;
   };
+  static analysis::Analyzer::ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "geopoint"; }
-  static bool normalize(std::string_view args, std::string& out);
-  static analysis::Analyzer::ptr make(std::string_view args);
 
   explicit GeoPointAnalyzer(const Options& options);
 
@@ -155,15 +154,15 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
   };
 
   struct Options {
+    using Owner = GeoJsonAnalyzer;
     sdb::geo::GeoOptions options;
     Type type{Type::Shape};
     // TODO(mbkkt) adjust tests to change default to S2LatLngF64
     Coding coding{Coding::VPack};
   };
+  static analysis::Analyzer::ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "geojson"; }
-  static bool normalize(std::string_view args, std::string& out);
-  static analysis::Analyzer::ptr make(std::string_view args);
 
   TypeInfo::type_id type() const noexcept final {
     return irs::Type<GeoJsonAnalyzer>::id();

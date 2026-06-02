@@ -39,14 +39,6 @@ constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
   return nullptr;
 }
 
-Scorer::ptr MakeJson(std::string_view /*args*/) {
-  return std::make_unique<RawTF>();
-}
-
-Scorer::ptr MakeVPack(std::string_view /*args*/) {
-  return std::make_unique<RawTF>();
-}
-
 template<ScoreMergeType MergeType, bool HasBoost>
 IRS_FORCE_INLINE void RawTfImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
@@ -137,11 +129,6 @@ ScoreFunction RawTF::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Make<RawTfScore<HasBoost>>(ctx.boost, freq,
                                                      filter_boost);
   });
-}
-
-void RawTF::init() {
-  REGISTER_SCORER_JSON(RawTF, MakeJson);
-  REGISTER_SCORER_VPACK(RawTF, MakeVPack);
 }
 
 }  // namespace irs

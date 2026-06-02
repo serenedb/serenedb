@@ -24,200 +24,61 @@
 #include "nearest_neighbors_tokenizer.hpp"
 
 #include <fasttext.h>
-#include <vpack/parser.h>
-#include <vpack/slice.h>
 
 #include <string_view>
 
+#include "basics/exceptions.h"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/fasttext_utils.hpp"
-#include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
 namespace {
 
-constexpr std::string_view kModelLocationParamName = "model_location";
-constexpr std::string_view kTopKParamName = "top_k";
-
 std::atomic<NearestNeighborsTokenizer::model_provider_f> gModelProvider =
   nullptr;
 
-bool ParseVPackOptions(const vpack::Slice slice,
-                       NearestNeighborsTokenizer::Options& options,
-                       const char* action) {
-  if (vpack::ValueType::Object == slice.type()) {
-    auto model_location_slice = slice.get(kModelLocationParamName);
-    if (!model_location_slice.isString()) {
-      SDB_ERROR(
-        IRESEARCH,
-        absl::StrCat("Invalid vpack while ", action,
-                     " nearest_neighbors_tokenizer from VPack arguments. ",
-                     kModelLocationParamName, " value should be a string."));
-      return false;
-    }
-    options.model_location = model_location_slice.stringView();
-    auto top_k_slice = slice.get(kTopKParamName);
-    if (!top_k_slice.isNone()) {
-      if (!top_k_slice.isNumber()) {
-        SDB_ERROR(
-          IRESEARCH,
-          absl::StrCat("Invalid vpack while ", action,
-                       " nearest_neighbors_tokenizer from VPack arguments. ",
-                       kTopKParamName, " value should be an integer."));
-        return false;
-      }
-      const auto top_k = top_k_slice.getNumber<size_t>();
-      if (top_k > static_cast<uint32_t>(std::numeric_limits<int32_t>::max())) {
-        SDB_ERROR(
-          IRESEARCH,
-          absl::StrCat("Invalid value provided while ", action,
-                       " nearest_neighbors_tokenizer from VPack arguments. ",
-                       kTopKParamName, " value should be an int32_t."));
-        return false;
-      }
-      options.top_k = static_cast<uint32_t>(top_k);
-    }
+}  // namespace
 
-    return true;
+Analyzer::ptr NearestNeighborsTokenizer::Make(Options opts) {
+  if (opts.model_location.empty()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              "nearest_neighbors: empty model location");
   }
-
-  SDB_ERROR(IRESEARCH,
-            absl::StrCat("Invalid vpack while ", action,
-                         " nearest_neighbors_tokenizer from VPack arguments. "
-                         "Object was expected."));
-
-  return false;
-}
-
-Analyzer::ptr Construct(const NearestNeighborsTokenizer::Options& options) {
+  if (opts.top_k <= 0) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              "nearest_neighbors: top_k must be positive");
+  }
   auto provider = gModelProvider.load(std::memory_order_relaxed);
 
-  NearestNeighborsTokenizer::model_ptr model;
-
+  model_ptr model;
   try {
     if (provider) {
-      model = provider(options.model_location);
+      model = provider(opts.model_location);
     } else {
       auto new_model = std::make_shared<fasttext::ImmutableFastText>();
-      new_model->loadModel(options.model_location);
-
+      new_model->loadModel(opts.model_location);
       model = new_model;
     }
   } catch (const std::exception& e) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("Failed to load fasttext kNN model from: ",
-                           options.model_location, ", error: ", e.what()));
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              absl::StrCat("nearest_neighbors: failed to load fasttext kNN "
+                           "model from: ",
+                           opts.model_location, ", error: ", e.what()));
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("Failed to load fasttext kNN model from: ",
-                           options.model_location));
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              absl::StrCat("nearest_neighbors: failed to load fasttext kNN "
+                           "model from: ",
+                           opts.model_location));
   }
 
   if (!model) {
-    return nullptr;
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              absl::StrCat("nearest_neighbors: failed to load fasttext kNN "
+                           "model from: ",
+                           opts.model_location));
   }
 
-  return std::make_unique<NearestNeighborsTokenizer>(options, std::move(model));
-}
-
-Analyzer::ptr MakeVPack(const vpack::Slice slice) {
-  NearestNeighborsTokenizer::Options options{};
-  if (ParseVPackOptions(slice, options, "constructing")) {
-    return Construct(options);
-  }
-  return nullptr;
-}
-
-Analyzer::ptr MakeVPack(std::string_view args) {
-  vpack::Slice slice{reinterpret_cast<const uint8_t*>(args.data())};
-  return MakeVPack(slice);
-}
-
-Analyzer::ptr MakeJson(std::string_view args) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR(
-        IRESEARCH,
-        "Null arguments while constructing nearest_neighbors_tokenizer ");
-      return nullptr;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat(
-                "Caught error '", ex.what(),
-                "' while constructing nearest_neighbors_tokenizer from JSON"));
-  } catch (...) {
-    SDB_ERROR(
-      IRESEARCH,
-      "Caught error while constructing nearest_neighbors_tokenizer from JSON");
-  }
-  return nullptr;
-}
-
-bool MakeVPackConfig(const NearestNeighborsTokenizer::Options& options,
-                     vpack::Builder* builder) {
-  vpack::ObjectBuilder object{builder};
-  {
-    builder->add(kModelLocationParamName, options.model_location);
-    builder->add(kTopKParamName, options.top_k);
-  }
-  return true;
-}
-
-bool NormalizeVPackConfig(const vpack::Slice slice, vpack::Builder* builder) {
-  NearestNeighborsTokenizer::Options options{};
-  if (ParseVPackOptions(slice, options, "normalizing")) {
-    return MakeVPackConfig(options, builder);
-  }
-  return false;
-}
-
-bool NormalizeVPackConfig(std::string_view args, std::string& config) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  vpack::Builder builder;
-  if (NormalizeVPackConfig(slice, &builder)) {
-    config.assign(builder.slice().startAs<char>(), builder.slice().byteSize());
-    return true;
-  }
-  return false;
-}
-
-bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR(
-        IRESEARCH,
-        "Null arguments while normalizing nearest_neighbors_tokenizer ");
-      return false;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data());
-    vpack::Builder builder;
-    if (NormalizeVPackConfig(vpack->slice(), &builder)) {
-      definition = builder.toString();
-      return !definition.empty();
-    }
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat(
-                "Caught error '", ex.what(),
-                "' while normalizing nearest_neighbors_tokenizer from JSON"));
-  } catch (...) {
-    SDB_ERROR(
-      IRESEARCH,
-      "Caught error while normalizing nearest_neighbors_tokenizer from JSON");
-  }
-  return false;
-}
-
-}  // namespace
-
-void NearestNeighborsTokenizer::init() {
-  REGISTER_ANALYZER_JSON(NearestNeighborsTokenizer, MakeJson,
-                         NormalizeJsonConfig);
-  REGISTER_ANALYZER_VPACK(NearestNeighborsTokenizer, MakeVPack,
-                          NormalizeVPackConfig);
+  return std::make_unique<NearestNeighborsTokenizer>(opts, std::move(model));
 }
 
 NearestNeighborsTokenizer::model_provider_f

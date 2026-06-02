@@ -20,10 +20,12 @@
 
 #pragma once
 
+#include <cmath>
+
+#include "basics/exceptions.h"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/lm_similarity.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 
 namespace irs {
 
@@ -45,7 +47,19 @@ class LMDirichlet final : public irs::ScorerBase<LMDirichlet, LMStats> {
 
   static constexpr score_t MU() noexcept { return 2000.f; }
 
-  static void init();
+  struct Options {
+    using Owner = LMDirichlet;
+    float mu = MU();
+    bool operator==(const Options&) const = default;
+  };
+
+  static std::unique_ptr<LMDirichlet> Make(const Options& opts) {
+    if (opts.mu < 0.f || !std::isfinite(opts.mu)) {
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+                "lm_dirichlet: mu must be a non-negative finite value");
+    }
+    return std::make_unique<LMDirichlet>(opts.mu);
+  }
 
   explicit LMDirichlet(score_t mu = MU()) noexcept : _mu{mu} {}
 

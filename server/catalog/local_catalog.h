@@ -22,7 +22,6 @@
 
 #include <absl/base/thread_annotations.h>
 #include <absl/synchronization/mutex.h>
-#include <vpack/slice.h>
 
 #include <memory>
 #include <shared_mutex>

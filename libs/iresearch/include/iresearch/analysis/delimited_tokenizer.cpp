@@ -23,11 +23,6 @@
 
 #include "delimited_tokenizer.hpp"
 
-#include <vpack/builder.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/slice.h>
-
 #include <string_view>
 
 namespace irs::analysis {
@@ -99,152 +94,6 @@ size_t FindDelimiter(bytes_view data, bytes_view delim) {
   return data.size();
 }
 
-constexpr std::string_view kDelimiterParamName{"delimiter"};
-
-bool ParseVPackOptions(const vpack::Slice slice, std::string& delimiter) {
-  if (!slice.isObject() && !slice.isString()) {
-    SDB_ERROR(IRESEARCH,
-              "Slice for delimited_token_stream is not an object or string");
-    return false;
-  }
-
-  switch (slice.type()) {
-    case vpack::ValueType::String:
-      delimiter = slice.stringView();
-      return true;
-    case vpack::ValueType::Object:
-      if (auto delim_type_slice = slice.get(kDelimiterParamName);
-          !delim_type_slice.isNone()) {
-        if (!delim_type_slice.isString()) {
-          SDB_WARN(IRESEARCH, "Invalid type '", kDelimiterParamName,
-                   "' (string expected) for delimited_token_stream from "
-                   "VPack arguments");
-          return false;
-        }
-        delimiter = delim_type_slice.stringView();
-        return true;
-      }
-      break;
-    default:
-      break;
-  }
-
-  SDB_ERROR(
-    IRESEARCH,
-    absl::StrCat(
-      "Missing '", kDelimiterParamName,
-      "' while constructing delimited_token_stream from VPack arguments"));
-
-  return false;
-}
-
-// args is a jSON encoded object with the following attributes:
-// "delimiter"(string): the delimiter to use for tokenization <required>
-Analyzer::ptr MakeVPack(const vpack::Slice slice) {
-  std::string delimiter;
-  if (ParseVPackOptions(slice, delimiter)) {
-    return DelimitedTokenizer::make(delimiter);
-  }
-  return nullptr;
-}
-
-Analyzer::ptr MakeVPack(std::string_view args) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-// builds analyzer config from internal options in json format
-// delimiter reference to analyzer options storage
-// definition string for storing json document with config
-bool MakeVPackConfig(std::string_view delimiter,
-                     vpack::Builder* vpack_builder) {
-  vpack::ObjectBuilder object(vpack_builder);
-  {
-    // delimiter
-    vpack_builder->add(kDelimiterParamName, delimiter);
-  }
-
-  return true;
-}
-
-bool NormalizeVPackConfig(const vpack::Slice slice,
-                          vpack::Builder* vpack_builder) {
-  std::string delimiter;
-  if (ParseVPackOptions(slice, delimiter)) {
-    return MakeVPackConfig(delimiter, vpack_builder);
-  }
-  return false;
-}
-
-bool NormalizeVPackConfig(std::string_view args, std::string& definition) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  vpack::Builder builder;
-  bool res = NormalizeVPackConfig(slice, &builder);
-  if (res) {
-    definition.assign(builder.slice().startAs<char>(),
-                      builder.slice().byteSize());
-  }
-  return res;
-}
-
-Analyzer::ptr MakeJson(std::string_view args) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR(IRESEARCH,
-                "Null arguments while constructing delimited_token_stream");
-      return nullptr;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing delimited_token_stream from JSON"));
-  } catch (...) {
-    SDB_ERROR(
-      IRESEARCH,
-      "Caught error while constructing delimited_token_stream from JSON");
-  }
-  return nullptr;
-}
-
-bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR(IRESEARCH,
-                "Null arguments while normalizing delimited_token_stream");
-      return false;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    vpack::Builder vpack_builder;
-    if (NormalizeVPackConfig(vpack->slice(), &vpack_builder)) {
-      definition = vpack_builder.toString();
-      return !definition.empty();
-    }
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while normalizing delimited_token_stream from JSON"));
-  } catch (...) {
-    SDB_ERROR(
-      IRESEARCH,
-      "Caught error while normalizing delimited_token_stream from JSON");
-  }
-  return false;
-}
-
-// args is a delimiter to use for tokenization
-Analyzer::ptr MakeText(std::string_view args) {
-  return std::make_unique<DelimitedTokenizer>(args);
-}
-
-bool NormalizeTextConfig(std::string_view delimiter, std::string& definition) {
-  definition = delimiter;
-  return true;
-}
-
 }  // namespace
 
 DelimitedTokenizer::DelimitedTokenizer(std::string_view delimiter)
@@ -255,14 +104,8 @@ DelimitedTokenizer::DelimitedTokenizer(std::string_view delimiter)
   }
 }
 
-Analyzer::ptr DelimitedTokenizer::make(std::string_view delimiter) {
-  return MakeText(delimiter);
-}
-
-void DelimitedTokenizer::init() {
-  REGISTER_ANALYZER_VPACK(DelimitedTokenizer, MakeVPack, NormalizeVPackConfig);
-  REGISTER_ANALYZER_JSON(DelimitedTokenizer, MakeJson, NormalizeJsonConfig);
-  REGISTER_ANALYZER_TEXT(DelimitedTokenizer, MakeText, NormalizeTextConfig);
+Analyzer::ptr DelimitedTokenizer::Make(Options opts) {
+  return std::make_unique<DelimitedTokenizer>(opts.delimiter);
 }
 
 bool DelimitedTokenizer::next() {

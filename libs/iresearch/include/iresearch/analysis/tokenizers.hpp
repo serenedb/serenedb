@@ -89,6 +89,13 @@ class StringTokenizer : public analysis::TypedAnalyzer<StringTokenizer>,
  public:
   static constexpr std::string_view type_name() noexcept { return "keyword"; }
 
+  struct Options {
+    using Owner = StringTokenizer;
+  };
+  static ptr Make(Options /*opts*/) {
+    return std::make_unique<StringTokenizer>();
+  }
+
   bool next() noexcept final;
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {

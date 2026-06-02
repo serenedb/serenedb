@@ -20,10 +20,6 @@
 
 #pragma once
 
-#include <absl/strings/str_cat.h>
-
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "catalog/identifiers/object_id.h"
 
 namespace sdb {
@@ -31,19 +27,5 @@ namespace sdb {
 struct Identifier : ObjectId {
   using ObjectId::ObjectId;
 };
-
-void VPackWrite(auto ctx, Identifier value) {
-  ctx.vpack().add(absl::AlphaNum(value.id()).Piece());
-}
-
-void VPackRead(auto ctx, Identifier& value) {
-  uint64_t id;
-
-  if (!absl::SimpleAtoi(ctx.vpack().stringView(), &id)) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "Failed to parse identifier from string");
-  }
-
-  value = Identifier{id};
-}
 
 }  // namespace sdb

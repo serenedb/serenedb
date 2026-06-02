@@ -21,10 +21,10 @@
 
 #pragma once
 
-#include <sys/types.h>
-
+#include <compare>
 #include <cstdint>
-#include <string_view>
+#include <iosfwd>
+#include <limits>
 
 namespace sdb {
 

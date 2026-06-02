@@ -28,7 +28,6 @@
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/search/column_existence_filter.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {

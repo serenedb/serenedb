@@ -21,9 +21,11 @@
 #include "catalog/inverted_index.h"
 
 #include <faiss/MetricType.h>
-#include <vpack/serializer.h>
 
-#include <iresearch/analysis/analyzers.hpp>
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
+#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 
 #include "absl/algorithm/container.h"
@@ -31,11 +33,12 @@
 #include "basics/containers/node_hash_map.h"
 #include "basics/containers/node_hash_set.h"
 #include "basics/down_cast.h"
+#include "basics/serializer.h"
 #include "catalog/catalog.h"
+#include "catalog/persistence/inverted_index.h"
 #include "database/ticks.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
-#include "utils/velox_vpack.h"
 
 namespace sdb::catalog {
 namespace {
@@ -62,54 +65,93 @@ ResultOr<ColumnTokenizer> BuildColumnTokenizer(
                          .features = features.GetIndexFeatures()};
 }
 
-// Persisted shape kept stable across the unified Entries refactor.
-struct ColumnSerialized {
-  ObjectId text_dictionary = ObjectId::none();
-  bool store_values = false;
-  duckdb::CompressionType compression =
-    duckdb::CompressionType::COMPRESSION_AUTO;
-  search::Features features;
-  std::optional<HNSWColumnConfig> hnsw_config;
-  std::optional<irs::field_id> synthetic_column;
-  uint32_t row_group_size = 0;
-  uint32_t norm_row_group_size = 0;
-};
+using persistence::ColumnSerialized;
+using persistence::ColumnSerializedMap;
+using persistence::ExpressionSerialized;
+using persistence::InvertedIndexData;
 
-struct ExpressionSerialized {
-  std::string serialized_expr;
-  std::vector<Column::Id> dependent_columns;
-  duckdb::LogicalType return_type;
-  ObjectId text_dictionary = ObjectId::none();
-  search::Features features;
-  irs::field_id field_id = 0;
-  std::optional<irs::field_id> synthetic_column;
-  uint32_t norm_row_group_size = 0;
-  std::string pretty_printed;
-
-  struct HasherBySerialized {
-    using is_transparent = void;
-
-    size_t operator()(std::string_view sv) const { return absl::HashOf(sv); }
-    size_t operator()(const ExpressionSerialized& info) const {
-      return (*this)(info.serialized_expr);
-    }
-
-    bool operator()(const ExpressionSerialized& a, std::string_view b) const {
-      return a.serialized_expr == b;
-    }
-    bool operator()(const ExpressionSerialized& a,
-                    const ExpressionSerialized& b) const {
-      return a.serialized_expr == b.serialized_expr;
-    }
-  };
-};
-
-using ColumnSerializedMap =
-  containers::NodeHashMap<Column::Id, ColumnSerialized>;
 using ExpressionSerializedSet =
   containers::NodeHashSet<ExpressionSerialized,
                           ExpressionSerialized::HasherBySerialized,
                           ExpressionSerialized::HasherBySerialized>;
+
+InvertedIndexData PackEntries(std::string_view name,
+                              std::span<const Column::Id> column_ids,
+                              const InvertedIndex::Entries& entries,
+                              const InvertedIndexOptions& options) {
+  InvertedIndexData data;
+  data.name = std::string{name};
+  data.column_ids.assign(column_ids.begin(), column_ids.end());
+  data.options = options;
+  for (const auto& [field_id, entry] : entries) {
+    if (const auto* expr = entry.GetExpressionData()) {
+      data.expressions.push_back(ExpressionSerialized{
+        .serialized_expr = expr->serialized_expr,
+        .pretty_printed = expr->pretty_printed,
+        .dependent_columns = expr->dependent_columns,
+        .return_type = expr->return_type,
+        .synthetic_column = entry.synthetic_column,
+        .text_dictionary = entry.text_dictionary,
+        .field_id = field_id,
+        .norm_row_group_size = entry.norm_row_group_size,
+        .features = entry.features,
+      });
+    } else {
+      data.columns.emplace(static_cast<Column::Id>(field_id),
+                           ColumnSerialized{
+                             .text_dictionary = entry.text_dictionary,
+                             .store_values = entry.store_values,
+                             .compression = entry.compression,
+                             .features = entry.features,
+                             .hnsw_config = entry.hnsw_config,
+                             .synthetic_column = entry.synthetic_column,
+                             .row_group_size = entry.row_group_size,
+                             .norm_row_group_size = entry.norm_row_group_size,
+                           });
+    }
+  }
+  return data;
+}
+
+std::shared_ptr<InvertedIndex> UnpackEntries(InvertedIndexData data,
+                                             ReadContext ctx) {
+  InvertedIndex::Entries entries;
+  entries.reserve(data.columns.size() + data.expressions.size());
+  for (auto& [col_id, col] : data.columns) {
+    entries.emplace(static_cast<irs::field_id>(col_id),
+                    InvertedIndexEntryInfo{
+                      .text_dictionary = col.text_dictionary,
+                      .features = col.features,
+                      .synthetic_column = col.synthetic_column,
+                      .norm_row_group_size = col.norm_row_group_size,
+                      .store_values = col.store_values,
+                      .compression = col.compression,
+                      .hnsw_config = std::move(col.hnsw_config),
+                      .row_group_size = col.row_group_size,
+                    });
+  }
+  for (auto& expr : data.expressions) {
+    entries.emplace(
+      expr.field_id,
+      InvertedIndexEntryInfo{
+        .text_dictionary = expr.text_dictionary,
+        .features = expr.features,
+        .synthetic_column = expr.synthetic_column,
+        .norm_row_group_size = expr.norm_row_group_size,
+        .expression =
+          ExpressionData{
+            .serialized_expr = std::move(expr.serialized_expr),
+            .dependent_columns = std::move(expr.dependent_columns),
+            .return_type = std::move(expr.return_type),
+            .pretty_printed = std::move(expr.pretty_printed),
+          },
+      });
+  }
+  return std::make_shared<InvertedIndex>(
+    ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
+    std::move(data.name), std::move(data.column_ids), std::move(entries),
+    std::move(data.options));
+}
 
 }  // namespace
 
@@ -118,118 +160,16 @@ ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
   return search::InvertedIndexShard::Create(id, *this, is_new);
 }
 
-std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
-                                                           ReadContext ctx) {
-  auto name_slice = slice.get("name");
-  if (!name_slice.isString()) {
-    return nullptr;
-  }
-
-  std::vector<Column::Id> column_ids;
-  if (auto r = vpack::ReadTupleNothrow(slice.get("column_ids"), column_ids);
-      !r.ok()) {
-    return nullptr;
-  }
-
-  ColumnSerializedMap columns;
-  if (auto r = vpack::ReadTupleNothrow(slice.get("columns"), columns);
-      !r.ok()) {
-    return nullptr;
-  }
-
-  std::vector<ExpressionSerialized> expressions;
-  if (auto s = slice.get("expressions"); !s.isNone()) {
-    if (auto r = vpack::ReadTupleNothrow(s, expressions); !r.ok()) {
-      return nullptr;
-    }
-  }
-
-  InvertedIndexOptions options;
-  if (auto s = slice.get("options"); !s.isNone()) {
-    if (auto r = vpack::ReadTupleNothrow(s, options); !r.ok()) {
-      return nullptr;
-    }
-  }
-
-  Entries entries;
-  entries.reserve(columns.size() + expressions.size());
-  for (auto& [col_id, col] : columns) {
-    InvertedIndexEntryInfo entry;
-    entry.text_dictionary = col.text_dictionary;
-    entry.features = col.features;
-    entry.synthetic_column = col.synthetic_column;
-    entry.norm_row_group_size = col.norm_row_group_size;
-    entry.store_values = col.store_values;
-    entry.compression = col.compression;
-    entry.hnsw_config = std::move(col.hnsw_config);
-    entry.row_group_size = col.row_group_size;
-    entries.emplace(static_cast<irs::field_id>(col_id), std::move(entry));
-  }
-  for (auto& expr : expressions) {
-    InvertedIndexEntryInfo entry;
-    entry.text_dictionary = expr.text_dictionary;
-    entry.features = expr.features;
-    entry.synthetic_column = expr.synthetic_column;
-    entry.norm_row_group_size = expr.norm_row_group_size;
-    entry.expression = ExpressionData{
-      .serialized_expr = std::move(expr.serialized_expr),
-      .dependent_columns = std::move(expr.dependent_columns),
-      .return_type = std::move(expr.return_type),
-      .pretty_printed = std::move(expr.pretty_printed),
-    };
-    entries.emplace(expr.field_id, std::move(entry));
-  }
-
-  return std::make_shared<InvertedIndex>(
-    ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
-    std::string{name_slice.stringView()}, std::move(column_ids),
-    std::move(entries), std::move(options));
+std::shared_ptr<InvertedIndex> InvertedIndex::Deserialize(
+  duckdb::Deserializer& src, ReadContext ctx) {
+  InvertedIndexData data;
+  basics::ReadTuple(src, data);
+  return UnpackEntries(std::move(data), ctx);
 }
 
-void InvertedIndex::WriteInternal(vpack::Builder& b) const {
-  ColumnSerializedMap columns;
-  ExpressionSerializedSet expressions;
-  for (const auto& [field_id, entry] : _entries) {
-    if (const auto* expr = entry.GetExpressionData()) {
-      ExpressionSerialized out;
-      out.serialized_expr = expr->serialized_expr;
-      out.dependent_columns = expr->dependent_columns;
-      out.return_type = expr->return_type;
-      out.text_dictionary = entry.text_dictionary;
-      out.features = entry.features;
-      out.field_id = field_id;
-      out.synthetic_column = entry.synthetic_column;
-      out.norm_row_group_size = entry.norm_row_group_size;
-      out.pretty_printed = expr->pretty_printed;
-      expressions.insert(std::move(out));
-    } else {
-      ColumnSerialized out;
-      out.text_dictionary = entry.text_dictionary;
-      out.store_values = entry.store_values;
-      out.compression = entry.compression;
-      out.features = entry.features;
-      out.hnsw_config = entry.hnsw_config;
-      out.synthetic_column = entry.synthetic_column;
-      out.row_group_size = entry.row_group_size;
-      out.norm_row_group_size = entry.norm_row_group_size;
-      columns.emplace(static_cast<Column::Id>(field_id), std::move(out));
-    }
-  }
-
-  b.openObject();
-  WriteObject(b, [&](vpack::Builder& b) {
-    b.add("column_ids");
-    vpack::WriteTuple(b, _column_ids);
-    b.add("columns");
-    vpack::WriteTuple(b, columns);
-    if (!expressions.empty()) {
-      b.add("expressions");
-      vpack::WriteTuple(b, expressions);
-    }
-    b.add("options");
-    vpack::WriteTuple(b, _options);
-  });
-  b.close();
+void InvertedIndex::Serialize(duckdb::Serializer& sink) const {
+  auto data = PackEntries(GetName(), _column_ids, _entries, _options);
+  basics::WriteTuple(sink, data);
 }
 
 void InvertedIndex::BuildSerializedExprIndex() {
@@ -390,14 +330,14 @@ containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {
 }
 
 std::shared_ptr<Object> InvertedIndex::Clone() const {
-  vpack::Builder b;
-  WriteInternal(b);
-  return ReadInternal(b.slice(), {
-                                   .id = GetId(),
-                                   .database_id = GetDatabaseId(),
-                                   .schema_id = GetParentId(),
-                                   .relation_id = GetRelationId(),
-                                 });
+  duckdb::MemoryStream stream;
+  return DeserializeObject<InvertedIndex>(SerializeObject(*this, stream),
+                                          {
+                                            .id = GetId(),
+                                            .database_id = GetDatabaseId(),
+                                            .schema_id = GetParentId(),
+                                            .relation_id = GetRelationId(),
+                                          });
 }
 
 }  // namespace sdb::catalog

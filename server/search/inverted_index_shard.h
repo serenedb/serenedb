@@ -154,7 +154,7 @@ class InvertedIndexShard final
   static std::shared_ptr<InvertedIndexShard> Create(
     ObjectId id, const catalog::InvertedIndex& index, bool is_new);
 
-  void WriteInternal(vpack::Builder& builder) const final;
+  void Serialize(duckdb::Serializer& sink) const final;
 
   struct TruncateGuard {
     struct UnlockDeleter {

@@ -33,6 +33,7 @@
 
 #include "basics/containers/trivial_map.h"
 #include "basics/debugging.h"
+#include "basics/serializer.h"
 #include "basics/static_strings.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
@@ -40,7 +41,6 @@
 #include "pg/sql_exception_macro.h"
 #include "query/config.h"
 #include "rest/version.h"
-#include "vpack/serializer.h"
 
 namespace sdb {
 
@@ -48,7 +48,7 @@ using duckdb::LogicalTypeId;
 
 namespace {
 
-template<vpack::detail::FixedString Name>
+template<basics::detail::FixedString Name>
 void Readonly(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {
   throw duckdb::InvalidInputException{"parameter \"%s\" cannot be changed",
                                       std::string_view{Name}.data()};
@@ -58,7 +58,7 @@ void Readonly(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {
 // the change. Emit a NOTICE so clients that care can see the SET is a no-op
 // on the server side; the value still flows into DuckDB session state so
 // SHOW round-trips what the client set.
-template<vpack::detail::FixedString Name>
+template<basics::detail::FixedString Name>
 void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
                  duckdb::Value& value) {
   constexpr std::string_view kName{Name};

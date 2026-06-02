@@ -27,11 +27,6 @@
 #include <ostream>
 #include <string>
 
-namespace vpack {
-
-class Value;
-}
-
 // TODO We probably want to put this into a namespace, but this is easy to
 //      refactor automatically later.
 
@@ -65,9 +60,3 @@ class [[nodiscard]] ErrorCode {
  private:
   ValueType _value{};
 };
-
-void VPackRead(auto ctx, ErrorCode& code) {
-  code = ErrorCode{static_cast<int>(ctx.vpack().getInt())};
-}
-
-void VPackWrite(auto ctx, ErrorCode code) { ctx.vpack().add(code.value()); }

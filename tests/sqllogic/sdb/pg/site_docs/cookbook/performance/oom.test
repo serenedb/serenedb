@@ -1,0 +1,10 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: Failed to cast value: Could not convert string '⟨lower_than_the_number_of_available_threads⟩' to INT64
+SET threads = ⟨lower_than_the_number_of_available_threads⟩;
+
+statement error db error: ERROR: SET value cannot contain column names
+SET memory_limit = ⟨lower_than_80%_of_system_memory⟩;
+
+statement ok
+SET preserve_insertion_order = false;

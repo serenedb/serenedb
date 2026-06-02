@@ -1,0 +1,21 @@
+# DOCS_TEST: example_001
+
+statement error (?i)Cannot open database .*
+ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
+
+# DOCS_TEST: example_002
+
+query error db error: ERROR: Table with name "stations_db\.stations" does not exist because schema "stations_db" does not exist\.
+SELECT count(*) AS num_stations
+FROM stations_db.stations;
+
+# DOCS_TEST: example_003
+
+statement error (?i)Cannot open database .*
+ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
+
+# DOCS_TEST: example_004
+
+query error db error: ERROR: Table with name "stations_db\.stations" does not exist because schema "stations_db" does not exist\.
+SELECT count(*) AS num_stations
+FROM stations_db.stations;

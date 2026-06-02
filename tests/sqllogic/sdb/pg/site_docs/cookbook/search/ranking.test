@@ -1,0 +1,159 @@
+# DOCS_TEST: example_001
+
+query error
+SELECT id, title, BM25() AS relevance
+FROM movies_idx
+WHERE PHRASE(description, 'alien')
+ORDER BY BM25() DESC;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+query error
+SELECT id, title, BM25(1.2, 0.75) AS relevance
+FROM movies_idx
+WHERE PHRASE(description, 'galaxy')
+ORDER BY BM25(1.2, 0.75) DESC;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+query error
+SELECT id, title, BM25(0.5, 0) AS relevance
+FROM movies_idx
+WHERE PHRASE(description, 'alien')
+ORDER BY BM25(0.5, 0) DESC;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+query error
+SELECT id, title, BM25(2.0, 0.75) AS relevance
+FROM movies_idx
+WHERE PHRASE(description, 'film')
+ORDER BY BM25(2.0, 0.75) DESC;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_005
+
+query error
+-- BM15: ignore document length differences
+SELECT id, title, BM25(1.2, 0) AS relevance
+FROM movies_idx
+WHERE PHRASE(description, 'alien')
+ORDER BY BM25(1.2, 0) DESC;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+-- BM11: strongly favor shorter documents
+SELECT id, title, BM25(1.2, 1) AS relevance
+FROM movies_idx
+WHERE PHRASE(description, 'alien')
+ORDER BY BM25(1.2, 1) DESC;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+query error
+SELECT id, title, genre, BM25() AS relevance
+FROM movies_idx
+WHERE PHRASE(description, 'film') AND TERM_EQ(genre, 'drama')
+ORDER BY BM25() DESC;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_007
+
+query error
+SELECT genre, COUNT(*) AS matches, AVG(BM25()) AS avg_relevance
+FROM movies_idx
+WHERE PHRASE(description, 'biggest blockbuster')
+GROUP BY genre
+ORDER BY avg_relevance DESC;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_008
+
+query error
+SELECT id, title, BM25() AS relevance
+FROM movies_idx
+WHERE PHRASE(description, 'alien')
+ORDER BY BM25() DESC, id
+LIMIT 10 OFFSET 0;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_009
+
+query error
+SELECT id, title, TFIDF() AS relevance
+FROM movies_idx
+WHERE PHRASE(description, 'alien')
+ORDER BY TFIDF() DESC;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_010
+
+query error
+SELECT id, title, TFIDF(true) AS relevance
+FROM movies_idx
+WHERE PHRASE(description, 'alien')
+ORDER BY TFIDF(true) DESC;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_011
+
+query error
+SELECT id, title, BM25() AS relevance, runtime,
+       BM25() * LOG(runtime + 1) AS custom_score
+FROM movies_idx
+WHERE PHRASE(description, 'alien')
+ORDER BY custom_score DESC;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_012
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY ranking_dict (
+    TEMPLATE = 'text',
+    LOCALE = 'en_US.UTF-8',
+    CASE = 'lower',
+    STEMMING = true,
+    ACCENT = false,
+    FREQUENCY = true,
+    POSITION = true
+);

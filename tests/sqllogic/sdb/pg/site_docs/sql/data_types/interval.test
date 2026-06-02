@@ -1,0 +1,100 @@
+# DOCS_TEST: example_001
+
+query
+SELECT
+    INTERVAL 1 YEAR, -- single unit using YEAR keyword; stored as 12 months
+    INTERVAL (random() * 10) YEAR, -- parentheses necessary for variable amounts;
+                                   -- stored as integer number of months
+    INTERVAL '1 month 1 day', -- string type necessary for multiple units; stored as (1 month, 1 day)
+    '16 months'::INTERVAL, -- string cast supported; stored as 16 months
+    '48:00:00'::INTERVAL, -- HH::MM::SS string supported; stored as (48 * 60 * 60 * 1e6 microseconds)
+;
+----
+to_years	to_years	interval	interval	interval
+<slt:ignore>	<slt:ignore>	<slt:ignore>	<slt:ignore>	<slt:ignore>
+
+# DOCS_TEST: example_002
+
+query
+SELECT INTERVAL '1.5' YEARS;
+----
+to_years
+1 year
+
+# DOCS_TEST: example_003
+
+query
+SELECT DATE '2000-01-01' + INTERVAL (i) MONTH
+FROM range(12) t(i);
+----
+?column?
+2000-01-01 00:00:00
+2000-02-01 00:00:00
+2000-03-01 00:00:00
+2000-04-01 00:00:00
+2000-05-01 00:00:00
+2000-06-01 00:00:00
+2000-07-01 00:00:00
+2000-08-01 00:00:00
+2000-09-01 00:00:00
+2000-10-01 00:00:00
+2000-11-01 00:00:00
+2000-12-01 00:00:00
+
+# DOCS_TEST: example_004
+
+query
+SELECT
+    period = list_reduce(
+        [INTERVAL (datepart(part, period) || part) FOR part IN
+             ['year', 'month', 'day', 'hour', 'minute', 'microsecond']
+        ],
+        (i1, i2) -> i1 + i2
+    ) -- always true
+FROM (
+    VALUES (
+        INTERVAL (random() * 123_456_789_123) MICROSECONDS
+        + INTERVAL (random() * 12_345) DAYS
+        + INTERVAL (random() * 12_345) MONTHS
+    )
+) _(period);
+----
+?column?
+<slt:ignore>
+
+# DOCS_TEST: example_005
+
+query
+SELECT
+    datepart('decade', INTERVAL 12 YEARS), -- returns 1
+    datepart('year', INTERVAL 12 YEARS), -- returns 12
+    datepart('second', INTERVAL 1_234 MILLISECONDS), -- returns 1
+    datepart('microsecond', INTERVAL 1_234 MILLISECONDS), -- returns 1_234_000
+;
+----
+datepart	datepart	datepart	datepart
+1	12	1	1234000
+
+# DOCS_TEST: example_006
+
+query
+SELECT
+    DATE '2000-01-01' + INTERVAL 1 YEAR,
+    TIMESTAMP '2000-01-01 01:33:30' - INTERVAL '1 month 13 hours',
+    TIME '02:00:00' - INTERVAL '3 days 23 hours', -- wraps; equals TIME '03:00:00'
+;
+----
+?column?	?column?	?column?
+2001-01-01 00:00:00	1999-11-30 12:33:30	03:00:00
+
+# DOCS_TEST: example_007
+
+query error db error: ERROR: SELECT clause without selection list
+SELECT
+;
+
+# DOCS_TEST: example_008
+
+query error db error: ERROR: SELECT clause without selection list
+SELECT
+;

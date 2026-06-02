@@ -1,0 +1,17 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY seg_dict (
+    TEMPLATE = 'segmentation',
+    CASE = 'lower',
+    BREAK = 'alpha'
+);
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY seg_all (
+    TEMPLATE = 'segmentation',
+    CASE = 'upper',
+    BREAK = 'all'
+);

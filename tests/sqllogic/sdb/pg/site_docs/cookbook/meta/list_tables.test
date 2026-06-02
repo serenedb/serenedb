@@ -1,0 +1,57 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE tbl (i INTEGER);
+
+statement ok
+SHOW TABLES;
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE TABLE tbl (i INTEGER);
+
+statement ok
+CREATE SCHEMA s1;
+
+statement ok
+CREATE TABLE s1.tbl (v VARCHAR);
+
+statement ok
+SHOW ALL TABLES;
+
+# DOCS_TEST: example_003
+
+# DOCS_RAW_BEGIN
+#| ATTACH 'db.duckdb';
+#|
+#| CREATE TABLE db.main_tbl (u VARCHAR);
+#|
+#| CREATE SCHEMA db.s1;
+#|
+#| CREATE TABLE db.s1.schema_tbl (v VARCHAR);
+#|
+#| SHOW TABLES FROM db;
+# DOCS_RAW_END
+
+statement ok
+CREATE TEMP TABLE IF NOT EXISTS __docs_list_tables_noop (i INTEGER);
+
+# DOCS_TEST: example_004
+
+# DOCS_RAW_BEGIN
+#| SHOW TABLES FROM db.s1;
+# DOCS_RAW_END
+
+statement ok
+CREATE TEMP TABLE IF NOT EXISTS __docs_list_tables_noop (i INTEGER);

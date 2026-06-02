@@ -1,0 +1,66 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://duckdb\.org/data/prices\.csv'
+CREATE TABLE prices AS FROM 'https://duckdb.org/data/prices.csv';
+
+statement error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://duckdb\.org/data/holdings\.csv'
+CREATE TABLE holdings AS FROM 'https://duckdb.org/data/holdings.csv';
+
+# DOCS_TEST: example_002
+
+query error
+SELECT h.ticker, h.when, price * shares AS value
+FROM holdings h
+ASOF JOIN prices p
+       ON h.ticker = p.ticker
+      AND h.when >= p.when;
+----
+db error: ERROR: Table with name holdings does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+query error
+SELECT h.ticker, h.when, price * shares AS value
+FROM holdings h
+ASOF LEFT JOIN prices p
+            ON h.ticker = p.ticker
+           AND h.when >= p.when
+ORDER BY ALL;
+----
+db error: ERROR: Table with name holdings does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+query error
+SELECT ticker, h.when, price * shares AS value
+FROM holdings h
+ASOF JOIN prices p USING (ticker, "when");
+----
+db error: ERROR: Table with name holdings does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_005
+
+query error
+SELECT *
+FROM holdings h
+ASOF JOIN prices p USING (ticker, "when");
+----
+db error: ERROR: Table with name holdings does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+query error
+SELECT h.ticker, h.when AS holdings_when, p.when AS prices_when, h.shares, p.price
+FROM holdings h
+ASOF JOIN prices p USING (ticker, "when");
+----
+db error: ERROR: Table with name holdings does not exist!
+Did you mean "<slt:ignore>"?

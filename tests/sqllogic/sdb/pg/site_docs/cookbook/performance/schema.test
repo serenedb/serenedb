@@ -1,0 +1,27 @@
+# DOCS_TEST: example_001
+
+query error
+SELECT avg(extract('day' FROM creationDate)) FROM Comment;
+----
+db error: ERROR: Table with name Comment does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+query error
+SELECT avg(CAST(creationDate[9:10] AS INTEGER)) FROM Comment;
+----
+db error: ERROR: Table with name Comment does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+query error
+SELECT count(*) AS count
+FROM Comment c1
+JOIN Comment c2 ON c1.ParentCommentId = c2.id;
+----
+db error: ERROR: Table with name Comment does not exist!
+Did you mean "<slt:ignore>"?

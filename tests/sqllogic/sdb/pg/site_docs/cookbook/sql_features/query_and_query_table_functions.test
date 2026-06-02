@@ -1,0 +1,61 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE my_table (i INTEGER);
+
+statement ok
+INSERT INTO my_table VALUES (42);
+
+statement ok
+PREPARE select_from_table AS SELECT * FROM query_table($1);
+
+query
+EXECUTE select_from_table('my_table');
+----
+i
+42
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE OR REPLACE MACRO my_summarize(table_name) AS TABLE
+SELECT
+    unnest([*COLUMNS('alias_.*')]) AS column_name,
+    unnest([*COLUMNS('min_.*')]) AS min_value,
+    unnest([*COLUMNS('max_.*')]) AS max_value
+FROM (
+    SELECT
+        any_value(alias(COLUMNS(*))) AS "alias_\0",
+        min(COLUMNS(*))::VARCHAR AS "min_\0",
+        max(COLUMNS(*))::VARCHAR AS "max_\0"
+    FROM query_table(table_name::VARCHAR)
+);
+
+query error db error: ERROR: Expected catalog\.entry, schema\.entry or entry: too many entries found \(input: https://blobs\.duckdb\.org/data/ontime\.parquet\)
+SELECT *
+FROM my_summarize('https://blobs.duckdb.org/data/ontime.parquet')
+LIMIT 3;
+
+# DOCS_TEST: example_003
+
+statement error db error: ERROR: syntax error at or near "values"
+CREATE OR REPLACE MACRO stack(table_name, index, name, values) AS TABLE
+FROM query(
+    'UNPIVOT ' || table_name
+    || ' ON COLUMNS(* EXCLUDE (' || array_to_string(index, ', ')
+    || ')) INTO NAME ' || name || ' VALUES ' || values
+);
+
+query error
+WITH cities AS (
+    FROM (
+        VALUES
+            ('NL', 'Amsterdam', '10', '12', '15'),
+            ('US', 'New York', '100', '120', '150')
+    ) _(country, city, '2000', '2010', '2020')
+)
+SELECT *
+FROM stack('cities', ['country', 'city'], 'year', 'population');
+----
+db error: ERROR: Table Function with name stack does not exist!
+Did you mean "<slt:ignore>"?

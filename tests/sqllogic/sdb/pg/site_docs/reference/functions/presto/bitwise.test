@@ -1,0 +1,52 @@
+# DOCS_TEST: example_001
+
+query error
+SELECT bit_count(9, 64);
+----
+db error: ERROR: No function matches the given name and argument types 'bit_count(INTEGER_LITERAL, INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	bit_count(TINYINT) -> TINYINT
+	bit_count(SMALLINT) -> TINYINT
+	bit_count(INTEGER) -> TINYINT
+	bit_count(BIGINT) -> TINYINT
+	bit_count(HUGEINT) -> TINYINT
+	bit_count(BIT) -> BIGINT
+
+
+query error
+SELECT bit_count(9, 8);
+----
+db error: ERROR: No function matches the given name and argument types 'bit_count(INTEGER_LITERAL, INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	bit_count(TINYINT) -> TINYINT
+	bit_count(SMALLINT) -> TINYINT
+	bit_count(INTEGER) -> TINYINT
+	bit_count(BIGINT) -> TINYINT
+	bit_count(HUGEINT) -> TINYINT
+	bit_count(BIT) -> BIGINT
+
+
+query error
+SELECT bit_count(-7, 64);
+----
+db error: ERROR: No function matches the given name and argument types 'bit_count(INTEGER_LITERAL, INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	bit_count(TINYINT) -> TINYINT
+	bit_count(SMALLINT) -> TINYINT
+	bit_count(INTEGER) -> TINYINT
+	bit_count(BIGINT) -> TINYINT
+	bit_count(HUGEINT) -> TINYINT
+	bit_count(BIT) -> BIGINT
+
+
+query error
+SELECT bit_count(-7, 8);
+----
+db error: ERROR: No function matches the given name and argument types 'bit_count(INTEGER_LITERAL, INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	bit_count(TINYINT) -> TINYINT
+	bit_count(SMALLINT) -> TINYINT
+	bit_count(INTEGER) -> TINYINT
+	bit_count(BIGINT) -> TINYINT
+	bit_count(HUGEINT) -> TINYINT
+	bit_count(BIT) -> BIGINT

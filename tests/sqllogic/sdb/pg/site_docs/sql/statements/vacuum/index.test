@@ -1,0 +1,37 @@
+# DOCS_TEST: example_001
+
+statement ok
+VACUUM;
+
+# DOCS_TEST: example_002
+
+statement ok
+VACUUM ANALYZE;
+
+# DOCS_TEST: example_003
+
+statement error
+VACUUM my_table(my_column);
+----
+db error: ERROR: Table with name my_table does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+statement error
+VACUUM ANALYZE my_table(my_column);
+----
+db error: ERROR: Table with name my_table does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_005
+
+statement error db error: ERROR: Full vacuum option
+VACUUM FULL;
+
+# DOCS_TEST: example_006
+
+statement error db error: ERROR: Cannot change vacuum_rebuild_indexes setting while database is running
+SET vacuum_rebuild_indexes = 1000000;

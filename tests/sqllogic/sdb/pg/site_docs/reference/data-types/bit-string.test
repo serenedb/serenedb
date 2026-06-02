@@ -1,0 +1,32 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: syntax error at or near "b'1010'"
+b'1010'   -- binary notation
+x'a'      -- hexadecimal notation, equivalent to b'1010'
+
+# DOCS_TEST: example_002
+
+statement error
+CREATE TABLE flags (
+    status BIT(4),
+    options BIT VARYING(8)
+);
+----
+db error: ERROR: Type with name varbit does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error
+INSERT INTO flags VALUES
+    (b'1010', x'1F'),
+    (b'0101', b'11001100');
+----
+db error: ERROR: Table with name flags does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT status, options FROM flags;
+----
+db error: ERROR: Table with name flags does not exist!
+Did you mean "<slt:ignore>"?

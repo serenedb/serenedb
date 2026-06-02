@@ -1,0 +1,18 @@
+# DOCS_SETUP
+
+statement ok
+DETACH IF EXISTS db1;
+
+statement ok
+DETACH IF EXISTS db2;
+
+# DOCS_TEST: example_001
+
+statement error (?i)Cannot open file .*
+ATTACH 'db1.db' AS db1;
+
+statement error (?i)Cannot open file .*
+ATTACH 'db2.db' AS db2;
+
+statement error (?i)Catalog .* does not exist!
+COPY FROM DATABASE db1 TO db2;

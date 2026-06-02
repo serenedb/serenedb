@@ -1,0 +1,22 @@
+# DOCS_TEST: example_001
+
+statement error
+CREATE VIEW recent_articles AS
+SELECT id, title, views, published_at
+FROM articles
+WHERE published_at > NOW() - INTERVAL '30 days';
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+statement error
+CREATE VIEW article_authors AS
+SELECT a.id, a.title, au.name AS author_name
+FROM articles a
+JOIN authors au ON a.author_id = au.id;
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?

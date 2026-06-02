@@ -1,0 +1,30 @@
+# DOCS_TEST: example_001
+
+query
+SELECT size, parse_path(filename), content
+FROM read_text('test/sql/table_function/files/*.txt');
+----
+size	parse_path	content
+
+# DOCS_TEST: example_002
+
+query
+SELECT size, content, filename
+FROM read_blob('test/sql/table_function/files/*');
+----
+size	content	filename
+
+# DOCS_TEST: example_003
+
+statement ok
+DESCRIBE FROM read_text('README.md');
+
+# DOCS_TEST: example_004
+
+query error
+SELECT *
+FROM read_blob('data/parquet-testing/hive-partitioning/simple/**/*.parquet')
+WHERE part IN ('a', 'b') AND date >= '2012-01-01';
+----
+db error: ERROR: Referenced column "part" not found in FROM clause!
+Candidate bindings: "last_modified"

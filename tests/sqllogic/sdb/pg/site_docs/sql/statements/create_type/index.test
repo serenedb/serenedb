@@ -1,0 +1,19 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TYPE mood AS ENUM ('happy', 'sad', 'curious');
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE TYPE many_things AS STRUCT(k INTEGER, l VARCHAR);
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TYPE one_thing AS UNION(number INTEGER, string VARCHAR);
+
+# DOCS_TEST: example_004
+
+statement ok
+CREATE TYPE x_index AS INTEGER;

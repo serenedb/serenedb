@@ -1,0 +1,35 @@
+# DOCS_TEST: example_001
+
+query
+VALUES ('Amsterdam', 1), ('London', 2);
+----
+column1	column2
+Amsterdam	1
+London	2
+
+# DOCS_TEST: example_002
+
+query
+SELECT *
+FROM (VALUES ('Amsterdam', 1), ('London', 2)) cities(name, id);
+----
+name	id
+Amsterdam	1
+London	2
+
+# DOCS_TEST: example_003
+
+statement error
+INSERT INTO cities
+VALUES ('Amsterdam', 1), ('London', 2);
+----
+db error: ERROR: Table with name cities does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+statement ok
+CREATE TABLE cities AS
+    SELECT *
+    FROM (VALUES ('Amsterdam', 1), ('London', 2)) cities(name, id);

@@ -1,0 +1,294 @@
+# DOCS_TEST: example_001
+
+query
+SELECT abs(-42);
+----
+abs
+42
+
+query
+SELECT abs(3.14);
+----
+abs
+3.14
+
+query
+SELECT abs(-128);
+----
+abs
+128
+
+query
+SELECT abs(-128);
+----
+abs
+128
+
+# DOCS_TEST: example_002
+
+query
+SELECT CAST(1.1232100 as DECIMAL(38, 7)) + CAST(1 as DECIMAL(10, 0));
+----
+?column?
+2.1232100
+
+query
+SELECT CAST(-999999999999999999999999999.999 as DECIMAL(30, 3)) + CAST(-999999999999999999999999999.999 as DECIMAL(30, 3));
+----
+?column?
+-1999999999999999999999999999.998
+
+query
+SELECT CAST(99999999999999999999999999999999.99998 as DECIMAL(38, 6)) + CAST(-99999999999999999999999999999999.99999 as DECIMAL(38, 5));
+----
+?column?
+-0.000010
+
+query error db error: ERROR: Casting value "\-99999999999999999999999999999999990\.000" to type DECIMAL\(38,7\) failed: value is out of range!
+SELECT CAST(-99999999999999999999999999999999990.0 as DECIMAL(38, 3)) + CAST(-0.00001 as DECIMAL(38, 7));
+
+# DOCS_TEST: example_003
+
+query error db error: ERROR: syntax error at or near "2"
+SELECT 3 div 2;
+
+query error db error: ERROR: syntax error at or near "div"
+SELECT 1L div 2L;
+
+query error db error: ERROR: syntax error at or near "0"
+SELECT 3 div 0;
+
+# DOCS_TEST: example_004
+
+query
+SELECT 3 / 2;
+----
+?column?
+1
+
+query error db error: ERROR: syntax error at or near "/"
+SELECT 2L / 2L;
+
+query
+SELECT 3 / 0;
+----
+?column?
+NULL
+
+# DOCS_TEST: example_005
+
+query
+SELECT CAST(1 as DECIMAL(17, 3)) / CAST(2 as DECIMAL(17, 3));
+----
+?column?
+0.5
+
+query
+SELECT CAST(1 as DECIMAL(20, 3)) / CAST(20 as DECIMAL(20, 2));
+----
+?column?
+0.05
+
+query
+SELECT CAST(1 as DECIMAL(20, 3)) / CAST(0 as DECIMAL(20, 3));
+----
+?column?
+Infinity
+
+# DOCS_TEST: example_006
+
+query
+SELECT factorial(0);
+----
+factorial
+1
+
+query
+SELECT factorial(5);
+----
+factorial
+120
+
+query
+SELECT factorial(20);
+----
+factorial
+2432902008176640000
+
+query
+SELECT factorial(21);
+----
+factorial
+51090942171709440000
+
+query
+SELECT factorial(-1);
+----
+factorial
+1
+
+# DOCS_TEST: example_007
+
+query error db error: ERROR: Referenced column "Spark SQL" was not found because the FROM clause is missing
+SELECT hex("Spark SQL");
+
+query
+SELECT hex(17);
+----
+hex
+11
+
+query
+SELECT hex(-1);
+----
+hex
+FFFFFFFFFFFFFFFF
+
+# DOCS_TEST: example_008
+
+query
+SELECT CAST(1 as DECIMAL(17, 3)) * CAST(2 as DECIMAL(17, 3));
+----
+?column?
+2.000000
+
+query
+SELECT CAST(1 as DECIMAL(20, 3)) * CAST(20 as DECIMAL(20, 2));
+----
+?column?
+20.00000
+
+query
+SELECT CAST(1 as DECIMAL(20, 3)) * CAST(0 as DECIMAL(20, 3));
+----
+?column?
+0.000000
+
+query error db error: ERROR: Needed scale 76 to accurately represent the multiplication result, but this is out of range of the DECIMAL type\. Max scale is 38; could not perform an accurate multiplication\. Either add a cast to DOUBLE, or add an explicit cast to a decimal with a lower scale\.
+SELECT CAST(201e-38 as DECIMAL(38, 38)) * CAST(301e-38 as DECIMAL(38, 38));
+
+# DOCS_TEST: example_009
+
+query
+SELECT not true;
+----
+?column?
+f
+
+query
+SELECT not false;
+----
+?column?
+t
+
+query
+SELECT not NULL;
+----
+?column?
+NULL
+
+# DOCS_TEST: example_010
+
+query error
+SELECT rand();
+----
+db error: ERROR: Scalar Function with name rand does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_011
+
+query error
+SELECT rand(0);
+----
+db error: ERROR: Scalar Function with name rand does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT rand(NULL);
+----
+db error: ERROR: Scalar Function with name rand does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_012
+
+query error
+SELECT rint(12.3456);
+----
+db error: ERROR: Scalar Function with name rint does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_013
+
+query
+SELECT CAST(1.1232100 as DECIMAL(38, 7)) - CAST(1 as DECIMAL(10, 0));
+----
+?column?
+0.1232100
+
+query
+SELECT CAST(-999999999999999999999999999.999 as DECIMAL(30, 3)) - CAST(-999999999999999999999999999.999 as DECIMAL(30, 3));
+----
+?column?
+0.000
+
+query
+SELECT CAST(99999999999999999999999999999999.99998 as DECIMAL(38, 6)) - CAST(-0.00001 as DECIMAL(38, 5));
+----
+?column?
+99999999999999999999999999999999.999990
+
+query error db error: ERROR: Casting value "\-99999999999999999999999999999999990\.000" to type DECIMAL\(38,7\) failed: value is out of range!
+SELECT CAST(-99999999999999999999999999999999990.0 as DECIMAL(38, 3)) - CAST(0.00001 as DECIMAL(38, 7));
+
+# DOCS_TEST: example_014
+
+query error db error: ERROR: Referenced column "23" was not found because the FROM clause is missing
+SELECT unhex("23");
+
+query error db error: ERROR: Referenced column "f" was not found because the FROM clause is missing
+SELECT unhex("f");
+
+query error db error: ERROR: Referenced column "b2323" was not found because the FROM clause is missing
+SELECT unhex("b2323");
+
+query error db error: ERROR: Referenced column "G" was not found because the FROM clause is missing
+SELECT unhex("G");
+
+query error db error: ERROR: Referenced column "G23" was not found because the FROM clause is missing
+SELECT unhex("G23");
+
+# DOCS_TEST: example_015
+
+query
+SELECT width_bucket(-1.0, 0.0, 10.0, 5);
+----
+width_bucket
+0
+
+query
+SELECT width_bucket(0.1, 0.0, 10.0, 5);
+----
+width_bucket
+1
+
+query
+SELECT width_bucket(10.1, 0.0, 10.0, 5);
+----
+width_bucket
+6
+
+query error db error: ERROR: lower bound must be less than upper bound
+SELECT width_bucket(-1.0, 10.0, 0.0, 5);
+
+query error db error: ERROR: lower bound must be less than upper bound
+SELECT width_bucket(0.1, 10.0, 0.0, 5);
+
+query error db error: ERROR: lower bound must be less than upper bound
+SELECT width_bucket(10.1, 10.0, 0.0, 5);
+
+query error db error: ERROR: lower bound must be less than upper bound
+SELECT width_bucket(10.1, 10.0, 10.0, 5);

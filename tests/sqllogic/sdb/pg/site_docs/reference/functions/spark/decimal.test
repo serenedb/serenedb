@@ -1,0 +1,145 @@
+# DOCS_TEST: example_001
+
+query
+select cast('1.1232154' as decimal(38, 7)) + cast('1' as decimal(10, 0));
+----
+?column?
+2.1232154
+
+query error db error: ERROR: Overflow in addition of DECIMAL\(38\) \(99999999999999999999999999999992345678 \+ 10000000\);
+select cast('9999999999999999999999999999999.2345678' as decimal(38, 7)) + cast('1' as decimal(10, 0));
+
+# DOCS_TEST: example_002
+
+query
+select cast('1.1232154' as decimal(38, 7)) + cast('1' as decimal(10, 0));
+----
+?column?
+2.1232154
+
+query error db error: ERROR: Overflow in addition of DECIMAL\(38\) \(99999999999999999999999999999992345678 \+ 10000000\);
+select cast('9999999999999999999999999999999.2345678' as decimal(38, 7)) + cast('1' as decimal(10, 0));
+
+# DOCS_TEST: example_003
+
+query error db error: ERROR: Overflow in multiplication of DECIMAL\(38\) \(123456789101100000 \* 1234100000000000000000\)\. You might want to add an explicit cast to a decimal with a smaller scale\.
+select cast(0.1234567891011 as decimal(38, 18)) * cast(1234.1 as decimal(38, 18));
+
+# DOCS_TEST: example_004
+
+query error db error: ERROR: syntax error at or near "CAST"
+SELECT CAST(1 as DECIMAL(17, 3)) div CAST(2 as DECIMAL(17, 3));
+
+query error db error: ERROR: syntax error at or near "CAST"
+SELECT CAST(21 as DECIMAL(20, 3)) div CAST(20 as DECIMAL(20, 2));
+
+query error db error: ERROR: syntax error at or near "CAST"
+SELECT CAST(1 as DECIMAL(20, 3)) div CAST(0 as DECIMAL(20, 3));
+
+query error db error: ERROR: syntax error at or near "CAST"
+SELECT CAST(99999999999999999999999999999999999 as DECIMAL(38, 1)) div CAST(0.001 as DECIMAL(7, 4));
+
+# DOCS_TEST: example_005
+
+query
+SELECT ceil(cast(1.23 as DECIMAL(3, 2)));
+----
+ceil
+2
+
+# DOCS_TEST: example_006
+
+query
+SELECT floor(cast(1.23 as DECIMAL(3, 2)));
+----
+floor
+1
+
+# DOCS_TEST: example_007
+
+query error
+SELECT unaryminus(cast(-9999999999999999999.9999999999999999999 as DECIMAL(38, 19)));
+----
+db error: ERROR: Scalar Function with name unaryminus does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_008
+
+query
+SELECT (round(cast (9.9 as decimal(2, 1)), 0));
+----
+round
+10
+
+query
+SELECT (round(cast (99 as decimal(2, 0)), -1));
+----
+round
+100
+
+# DOCS_TEST: example_009
+
+query
+SELECT round(cast (0.856 as DECIMAL(3, 3)), -1);
+----
+round
+0
+
+query
+SELECT round(cast (85.6 as DECIMAL(3, 1)), -1);
+----
+round
+90
+
+query
+SELECT round(cast (85.6 as DECIMAL(3, 1)), -2);
+----
+round
+0
+
+query
+SELECT round(cast (85.6 as DECIMAL(3, 1)), -99);
+----
+round
+0
+
+query
+SELECT round(cast (12345678901234.56789 as DECIMAL(32, 5)), -9);
+----
+round
+12346000000000
+
+# DOCS_TEST: example_010
+
+query
+SELECT round(cast (85.6 as DECIMAL(3, 1)));
+----
+round
+86
+
+query
+SELECT round(cast (0.856 as DECIMAL(3, 3)), 0);
+----
+round
+1
+
+# DOCS_TEST: example_011
+
+query
+SELECT round(cast (85.681 as DECIMAL(5, 3)), 1);
+----
+round
+85.7
+
+query
+SELECT round(cast (85.681 as DECIMAL(5, 3)), 999);
+----
+round
+85.681
+
+query
+SELECT round(cast (0.1234567890123456789 as DECIMAL(19, 19)), 14);
+----
+round
+0.12345678901235

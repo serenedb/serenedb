@@ -1,0 +1,33 @@
+# DOCS_TEST: example_001
+
+statement ok
+SET preserve_insertion_order = false;
+
+# DOCS_SETUP
+
+statement ok
+DETACH IF EXISTS db;
+
+# DOCS_TEST: example_002
+
+statement ok
+ATTACH '/tmp/somefile.db' AS db (ROW_GROUP_SIZE 16384);
+
+# DOCS_TEST: example_003
+
+statement ok
+SET temp_directory = '/path/to/temp_dir.tmp/';
+
+# DOCS_TEST: example_004
+
+statement ok
+FROM duckdb_external_file_cache();
+
+# DOCS_TEST: example_005
+
+query error (?i)Catalog with name .* does not exist!
+CALL dbgen(sf = 30);
+
+statement error db error: ERROR: syntax error at or near "\."
+.timer on
+PRAGMA tpch(1);

@@ -1,0 +1,17 @@
+# DOCS_TEST: example_001
+
+query
+SELECT
+    sqrt(2) > '-inf',
+    'nan' > sqrt(2);
+----
+?column?	?column?
+t	t
+
+# DOCS_TEST: example_002
+
+query
+SELECT uuid_extract_timestamp(uuidv7()) AS ts;
+----
+ts
+<slt:ignore>

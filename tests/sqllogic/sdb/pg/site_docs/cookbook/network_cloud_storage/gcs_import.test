@@ -1,0 +1,25 @@
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| CREATE SECRET (
+#|     TYPE gcs,
+#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
+#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩'
+#| );
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_cded4207_001 (i INTEGER);
+
+# DOCS_TEST: example_002
+
+query error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://storage\.googleapis\.com/%E2%9F%A8gcs_bucket%E2%9F%A9/%E2%9F%A8file\.parquet%E2%9F%A9'
+SELECT *
+FROM read_parquet('gs://⟨gcs_bucket⟩/⟨file.parquet⟩');
+
+# DOCS_TEST: example_003
+
+statement ok
+LOAD httpfs;
+
+statement error (?i)Cannot open database .*
+ATTACH 'gs://⟨gcs_bucket⟩/⟨file.duckdb⟩' AS ⟨duckdb_database⟩ (READ_ONLY);

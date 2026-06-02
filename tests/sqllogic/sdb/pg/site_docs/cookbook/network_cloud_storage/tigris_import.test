@@ -1,0 +1,21 @@
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| CREATE SECRET my_secret (
+#|     TYPE s3,
+#|     KEY_ID '⟨tid_xxxxxxxxxxxx⟩',
+#|     SECRET '⟨tsec_xxxxxxxxxxxxxxxxxxxxxxxx⟩',
+#|     REGION 'auto',
+#|     ENDPOINT 'fly.storage.tigris.dev'
+#| );
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE __docs_noop_2a4fbb77_001 (i INTEGER);
+
+# DOCS_TEST: example_002
+
+query error (?i)Could not resolve hostname error .*
+SELECT * FROM 's3://⟨tigris-bucket-name⟩/⟨file⟩.csv';
+
+query error (?i)Could not resolve hostname error .*
+SELECT * FROM read_parquet('s3://⟨tigris-bucket-name⟩/⟨file⟩.parquet');

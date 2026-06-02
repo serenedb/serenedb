@@ -1,0 +1,150 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM 'flights.csv';
+
+# DOCS_TEST: example_002
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_csv('flights.csv',
+    delim = '|',
+    header = true,
+    columns = {
+        'FlightDate': 'DATE',
+        'UniqueCarrier': 'VARCHAR',
+        'OriginCityName': 'VARCHAR',
+        'DestCityName': 'VARCHAR'
+    });
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TABLE ontime (
+    FlightDate DATE,
+    UniqueCarrier VARCHAR,
+    OriginCityName VARCHAR,
+    DestCityName VARCHAR
+);
+
+statement error (?i)No files found that match the pattern .*
+COPY ontime FROM 'flights.csv';
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS ontime;
+
+# DOCS_TEST: example_004
+
+statement error (?i)No files found that match the pattern .*
+CREATE TABLE ontime AS
+    SELECT * FROM 'flights.csv';
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS ontime;
+
+# DOCS_TEST: example_005
+
+statement error (?i)No files found that match the pattern .*
+CREATE TABLE ontime AS
+    FROM 'flights.csv';
+
+# DOCS_TEST: example_006
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM read_csv('csv_file.csv', auto_type_candidates = ['BIGINT', 'DATE']);
+
+# DOCS_TEST: example_007
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM read_csv('flights.csv');
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS ontime;
+
+# DOCS_TEST: example_008
+
+statement error (?i)No files found that match the pattern .*
+CREATE TABLE ontime AS
+    SELECT * FROM read_csv('flights.csv');
+
+query error
+DESCRIBE ontime;
+----
+db error: ERROR: unrecognized configuration parameter "ontime"
+
+Did you mean: "TimeZone"
+
+
+# DOCS_TEST: example_009
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM read_csv('flights.csv', sample_size = 20_000);
+
+# DOCS_TEST: example_010
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM read_csv('flights.csv', header = true);
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS ontime;
+
+# DOCS_TEST: example_011
+
+statement ok
+CREATE TABLE ontime (
+    flightdate DATE,
+    uniquecarrier VARCHAR,
+    origincityname VARCHAR,
+    destcityname VARCHAR
+);
+
+statement error (?i)No files found that match the pattern .*
+COPY ontime FROM 'flights.csv';
+
+query
+SELECT * FROM ontime;
+----
+flightdate	uniquecarrier	origincityname	destcityname
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS ontime;
+
+# DOCS_TEST: example_012
+
+statement ok
+CREATE TABLE ontime (flightdate DATE, uniquecarrier VARCHAR, origincityname VARCHAR, destcityname VARCHAR);
+
+statement error (?i)No files found that match the pattern .*
+COPY ontime FROM 'flights.csv' (DELIMITER '|', HEADER);
+
+query
+SELECT * FROM ontime;
+----
+flightdate	uniquecarrier	origincityname	destcityname

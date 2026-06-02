@@ -1,0 +1,43 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+query error
+SUMMARIZE tbl;
+----
+db error: ERROR: unrecognized configuration parameter "tbl"
+
+Did you mean: "block_allocator_memory", "allocator_background_threads", "allocator_bulk_deallocation_flush_threshold", "allocator_flush_threshold", "allow_asterisks_in_http_paths"
+
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_002
+
+statement ok
+SUMMARIZE SELECT * FROM tbl;

@@ -1,0 +1,75 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+query
+PRAGMA add_parquet_key('key128', '0123456789112345');
+----
+Success
+
+query
+PRAGMA add_parquet_key('key192', '012345678911234501234567');
+----
+Success
+
+query
+PRAGMA add_parquet_key('key256', '01234567891123450123456789112345');
+----
+Success
+
+query
+PRAGMA add_parquet_key('key256base64', 'MDEyMzQ1Njc4OTExMjM0NTAxMjM0NTY3ODkxMTIzNDU=');
+----
+Success
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_002
+
+statement error (?i)Cannot open file .*
+COPY tbl TO 'tbl.parquet' (ENCRYPTION_CONFIG {footer_key: 'key256'});
+
+# DOCS_TEST: example_003
+
+statement error (?i)No files found that match the pattern .*
+COPY tbl FROM 'tbl.parquet' (ENCRYPTION_CONFIG {footer_key: 'key256'});
+
+# DOCS_TEST: example_004
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet('tbl.parquet', encryption_config = {footer_key: 'key256'});
+
+# DOCS_TEST: example_005
+
+statement error db error: ERROR: Parquet encryption_config column_keys not yet implemented
+COPY tbl TO 'tbl.parquet'
+    (ENCRYPTION_CONFIG {
+        footer_key: 'key256',
+        column_keys: {key256: ['col0', 'col1']}
+    });

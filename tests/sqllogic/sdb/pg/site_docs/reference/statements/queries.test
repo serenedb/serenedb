@@ -1,0 +1,137 @@
+# DOCS_TEST: example_001
+
+query error
+SELECT title, year, rating
+FROM movies
+WHERE rating > 8.0
+ORDER BY rating DESC
+LIMIT 10;
+----
+db error: ERROR: Table with name movies does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+query error
+SELECT title, views
+FROM articles
+WHERE category = 'engineering' AND views > 1000;
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+query error
+SELECT category, COUNT(*) AS count, AVG(views) AS avg_views
+FROM articles
+GROUP BY category
+HAVING COUNT(*) > 5;
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+query error
+-- Inner join
+SELECT a.title, s.name
+FROM articles a
+JOIN authors s ON a.author_id = s.id;
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+-- Left join
+SELECT a.title, s.name
+FROM articles a
+LEFT JOIN authors s ON a.author_id = s.id;
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_005
+
+query error
+WITH top_articles AS (
+    SELECT title, views, category
+    FROM articles
+    WHERE views > 5000
+)
+SELECT category, COUNT(*) AS count
+FROM top_articles
+GROUP BY category;
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+query error
+SELECT title, category, views,
+    RANK() OVER (PARTITION BY category ORDER BY views DESC) AS rank
+FROM articles;
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_007
+
+query error
+-- Union (removes duplicates)
+SELECT title FROM articles_2024
+UNION
+SELECT title FROM articles_2025;
+----
+db error: ERROR: Table with name articles_2024 does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+-- Union all (keeps duplicates)
+SELECT title FROM articles_2024
+UNION ALL
+SELECT title FROM articles_2025;
+----
+db error: ERROR: Table with name articles_2024 does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+-- Intersect
+SELECT title FROM articles_2024
+INTERSECT
+SELECT title FROM articles_2025;
+----
+db error: ERROR: Table with name articles_2024 does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_008
+
+query error
+SELECT title, views
+FROM articles
+WHERE views > (SELECT AVG(views) FROM articles);
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_009
+
+query error
+SELECT title, views
+FROM articles
+WHERE category IN (SELECT name FROM categories WHERE active = TRUE);
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?

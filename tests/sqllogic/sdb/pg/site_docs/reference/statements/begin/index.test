@@ -1,0 +1,80 @@
+# DOCS_TEST: example_001
+
+statement ok
+BEGIN;
+
+statement ok
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+# DOCS_TEST: example_002
+
+statement ok
+SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+# DOCS_TEST: example_003
+
+statement ok
+BEGIN;
+
+statement error
+INSERT INTO accounts (id, balance) VALUES (1, 1000);
+----
+db error: ERROR: Table with name accounts does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error
+INSERT INTO accounts (id, balance) VALUES (2, 500);
+----
+db error: ERROR: Table with name accounts does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement ok
+COMMIT;
+
+# DOCS_TEST: example_004
+
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+query error
+SELECT balance FROM accounts WHERE id = 1;
+----
+db error: ERROR: Table with name accounts does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+-- Concurrent updates to account 1 become visible on the next SELECT
+SELECT balance FROM accounts WHERE id = 1;
+----
+db error: ERROR: Table with name accounts does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement ok
+COMMIT;
+
+# DOCS_TEST: example_005
+
+statement ok
+BEGIN;
+
+statement error
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+----
+db error: ERROR: Table with name accounts does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error
+UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+----
+db error: ERROR: Table with name accounts does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement ok
+-- Something went wrong
+ROLLBACK;

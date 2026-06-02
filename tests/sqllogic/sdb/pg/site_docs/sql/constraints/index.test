@@ -1,0 +1,163 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE students (name VARCHAR CHECK (NOT contains(name, ' ')));
+
+statement error
+INSERT INTO students VALUES ('this name contains spaces');
+----
+db error: ERROR: new row for relation "students" violates check constraint "students_name_check"
+DETAIL: Failing row contains (this name contains spaces).
+
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS students;
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE TABLE students (name VARCHAR NOT NULL);
+
+statement error
+INSERT INTO students VALUES (NULL);
+----
+db error: ERROR: null value in column "name" of relation "students" violates not-null constraint
+DETAIL: Failing row contains (null).
+
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS students;
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TABLE students (id INTEGER PRIMARY KEY, name VARCHAR);
+
+statement ok
+INSERT INTO students VALUES (1, 'Student 1');
+
+statement error
+INSERT INTO students VALUES (1, 'Student 2');
+----
+db error: ERROR: duplicate key value violates unique constraint "students_pkey"
+DETAIL: Key (id)=(1) already exists.
+
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS students;
+
+# DOCS_TEST: example_004
+
+statement ok
+CREATE TABLE students (id INTEGER, name VARCHAR, PRIMARY KEY (id, name));
+
+statement ok
+INSERT INTO students VALUES (1, 'Student 1');
+
+statement ok
+INSERT INTO students VALUES (1, 'Student 2');
+
+statement error
+INSERT INTO students VALUES (1, 'Student 1');
+----
+db error: ERROR: duplicate key value violates unique constraint "students_pkey"
+DETAIL: Key (id, name)=(1, Student 1) already exists.
+
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS students;
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE TABLE students (id INTEGER PRIMARY KEY, name VARCHAR, email VARCHAR UNIQUE);
+
+statement ok
+INSERT INTO students VALUES (1, 'Student 1', 'student1@uni.com');
+
+statement ok
+INSERT INTO students VALUES (2, 'Student 2', 'student1@uni.com');
+
+# DOCS_TEST: example_006
+
+statement ok
+INSERT INTO students (id, name) VALUES (3, 'Student 3');
+
+statement error
+INSERT INTO students (name, email) VALUES ('Student 3', 'student3@uni.com');
+----
+db error: ERROR: null value in column "id" of relation "students" violates not-null constraint
+DETAIL: Failing row contains (null, Student 3, student3@uni.com).
+
+
+# DOCS_TEST: example_007
+
+statement ok
+CREATE TABLE integers (i INTEGER, j INTEGER, k INTEGER, UNIQUE (i, j));
+
+statement ok
+INSERT INTO integers VALUES (1, 2, 3);
+
+statement ok
+INSERT INTO integers VALUES (1, 4, 5);
+
+statement ok
+INSERT INTO integers VALUES (1, 2, 5);
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS students;
+
+# DOCS_TEST: example_008
+
+statement ok
+CREATE TABLE students (id INTEGER PRIMARY KEY, name VARCHAR);
+
+statement ok
+CREATE TABLE subjects (id INTEGER PRIMARY KEY, name VARCHAR);
+
+statement ok
+CREATE TABLE exams (
+    exam_id INTEGER PRIMARY KEY,
+    subject_id INTEGER REFERENCES subjects(id),
+    student_id INTEGER REFERENCES students(id),
+    grade INTEGER
+);
+
+statement ok
+INSERT INTO students VALUES (1, 'Student 1');
+
+statement ok
+INSERT INTO subjects VALUES (1, 'CS 101');
+
+statement ok
+INSERT INTO exams VALUES (1, 1, 1, 10);
+
+statement ok
+INSERT INTO exams VALUES (2, 1, 2, 10);

@@ -1,0 +1,20 @@
+# DOCS_TEST: example_001
+
+statement error (?i)Cannot open file .*
+ATTACH 'my.duckdb' AS my_database;
+
+statement ok
+SHOW DATABASES;
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: Failed to detach database with name "my_database": database not found
+DETACH my_database;
+
+statement ok
+SHOW DATABASES;
+
+# DOCS_TEST: example_003
+
+statement ok
+SHOW SCHEMAS;

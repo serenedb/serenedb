@@ -1,0 +1,43 @@
+# DOCS_TEST: example_001
+
+statement ok
+-- Create a table with a date column
+CREATE TABLE events (
+    id SERIAL PRIMARY KEY,
+    event_date DATE
+);
+
+statement error db error: ERROR: invalid date field format: "10\-Dec\-2025", expected format is \(YYYY\-MM\-DD\)
+-- Insert dates in different accepted formats
+INSERT INTO events VALUES
+    (1, '2025-12-10'),
+    (2, '2025/12/11'),
+    (3, '10-Dec-2025');
+
+query
+-- Retrieve all rows
+SELECT * FROM events;
+----
+id	event_date
+
+# DOCS_TEST: example_002
+
+statement ok
+SET DateStyle = 'DMY';
+
+query
+SELECT '01/02/03';
+----
+?column?
+01/02/03
+
+# DOCS_TEST: example_003
+
+statement ok
+SET DateStyle = 'MDY';
+
+query
+SELECT '01/02/03';
+----
+?column?
+01/02/03

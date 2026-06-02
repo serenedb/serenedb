@@ -1,0 +1,68 @@
+# DOCS_TEST: example_001
+
+query
+SELECT '[1, null, {"key": "value"}]'::JSON;
+----
+json
+[1, null, {"key": "value"}]
+
+# DOCS_TEST: example_002
+
+query error (?i)Malformed JSON.*
+SELECT 'unquoted'::JSON;
+
+# DOCS_TEST: example_003
+
+query
+SELECT '{ "a": 5 }'::JSON = '{"a":5}'::JSON;
+----
+?column?
+f
+
+# DOCS_TEST: example_004
+
+query
+SELECT '{  "a":5 }'::JSON::VARCHAR
+----
+text
+{  "a":5 }
+
+# DOCS_TEST: example_005
+
+query
+SELECT '{"a":1,"b":2}'::JSON = '{"b":2,"a":1}'::JSON;
+----
+?column?
+f
+
+# DOCS_TEST: example_006
+
+query
+SELECT '{"a":1,"a":2}'::JSON;
+----
+json
+{"a":1,"a":2}
+
+# DOCS_TEST: example_007
+
+query
+SELECT '{"duck": 42}'::JSON::STRUCT(duck INTEGER);
+----
+struct(duck integer)
+(42)
+
+# DOCS_TEST: example_008
+
+query
+SELECT {duck: 42}::JSON;
+----
+struct_pack
+{"duck":42}
+
+# DOCS_TEST: example_009
+
+query
+SELECT '2023-05-12'::DATE::JSON;
+----
+json
+"2023-05-12"

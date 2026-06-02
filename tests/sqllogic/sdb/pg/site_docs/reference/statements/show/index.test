@@ -1,0 +1,20 @@
+# DOCS_TEST: example_001
+
+query
+SHOW search_path;
+----
+search_path
+"$user", public
+
+# DOCS_TEST: example_002
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+# DOCS_TEST: example_003
+
+statement ok
+SHOW ALL;

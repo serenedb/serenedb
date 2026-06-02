@@ -1,0 +1,34 @@
+# DOCS_TEST: example_001
+
+statement ok
+-- Create a table with timestamp columns
+CREATE TABLE events (
+    event_name TEXT,
+    start_time TIMESTAMP,
+    start_time_tz TIMESTAMPTZ
+);
+
+statement error
+-- Insert timestamps
+INSERT INTO events VALUES
+    ('Time', TIMESTAMP '2025-12-10 09:30:00.360234', TIMESTAMPTZ '2025-12-10 09:30:00.360234 PST');
+----
+db error: ERROR: timestamp field value "2025-12-10 09:30:00.360234 PST" has a timestamp that is not UTC.
+Use the TIMESTAMPTZ type with the ICU extension loaded to handle non-UTC timestamps.
+
+
+query
+-- Query all events
+SELECT * FROM events;
+----
+event_name	start_time	start_time_tz
+
+# DOCS_TEST: example_002
+
+statement ok
+-- Set session time zone to US Pacific
+SET TIMEZONE TO 'US/Pacific';
+
+statement ok
+-- Or use UTC for consistent backend calculations
+SET TIMEZONE TO 'UTC';

@@ -1,0 +1,315 @@
+control substitution on
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_001
+
+query
+SELECT *
+FROM tbl;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_002
+
+query error
+SELECT tbl.*
+FROM tbl
+JOIN other_tbl USING (id);
+----
+db error: ERROR: Table with name other_tbl does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+query
+SELECT st.* FROM (SELECT {'x': 1, 'y': 2, 'z': 3} AS st);
+----
+x	y	z
+1	2	3
+
+# DOCS_TEST: example_004
+
+query error db error: ERROR: Column "col" in EXCLUDE list not found in FROM clause
+SELECT * EXCLUDE (col)
+FROM tbl;
+
+# DOCS_TEST: example_005
+
+query
+SELECT * REPLACE (col1 / 1_000 AS col1, col2 / 1_000 AS col2)
+FROM tbl;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	0.001	0.002	alpha	1	10	20	30	10	100	1000
+3	bookmark	0.004	0.005	beta	2	11	21	31	20	200	2000
+7	other	0.009	0.016	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_006
+
+query
+SELECT * RENAME (col1 AS height, col2 AS width)
+FROM tbl;
+----
+id	name	height	width	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_007
+
+query
+SELECT * LIKE 'col%'
+FROM tbl;
+----
+col1	col2
+1	2
+4	5
+9	16
+
+# DOCS_TEST: example_008
+
+query
+SELECT * GLOB 'col*'
+FROM tbl;
+----
+col1	col2
+1	2
+4	5
+9	16
+
+# DOCS_TEST: example_009
+
+query error db error: ERROR: Pattern applied to a star expression must be a constant
+SELECT * SIMILAR TO 'col.'
+FROM tbl;
+
+# DOCS_TEST: example_010
+
+query error db error: ERROR: Pattern applied to a star expression must be a constant
+SELECT * NOT SIMILAR TO 'col.'
+FROM tbl;
+
+# DOCS_TEST: example_011
+
+statement ok
+CREATE TABLE numbers (id INTEGER, number INTEGER);
+
+statement ok
+INSERT INTO numbers VALUES (1, 10), (2, 20), (3, NULL);
+
+query
+SELECT min(COLUMNS(*)), count(COLUMNS(*)) FROM numbers;
+----
+id	number	id	number
+1	10	3	2
+
+# DOCS_TEST: example_012
+
+query
+SELECT
+    min(COLUMNS(* REPLACE (number + id AS number))),
+    count(COLUMNS(* EXCLUDE (number)))
+FROM numbers;
+----
+id	min	id
+1	11	3
+
+# DOCS_TEST: example_013
+
+query
+SELECT COLUMNS(*) + COLUMNS(*) FROM numbers;
+----
+id	number
+2	20
+4	40
+6	NULL
+
+# DOCS_TEST: example_014
+
+query ?? rowsort
+SELECT *
+FROM (
+    SELECT 'a', 'a'
+    UNION ALL
+    SELECT 'a', 'b'
+    UNION ALL
+    SELECT 'b', 'b'
+) _(x, y)
+WHERE COLUMNS(*) = 'a';
+----
+x	y
+a	a
+
+# DOCS_TEST: example_015
+
+query ?? rowsort
+SELECT *
+FROM (
+    SELECT 'a', 'a'
+    UNION ALL
+    SELECT 'a', 'b'
+    UNION ALL
+    SELECT 'b', 'b'
+) _(x, y)
+WHERE greatest(UNPACK(COLUMNS(*) = 'a'));
+----
+x	y
+a	a
+a	b
+
+# DOCS_TEST: example_016
+
+query ??? rowsort
+SELECT DISTINCT ON (COLUMNS('x|y')) *
+FROM (VALUES (1, 2, 'a'), (1, 2, 'b'), (3, 4, 'c')) t(x, y, z);
+----
+x	y	z
+1	2	<slt:ignore>
+3	4	c
+
+# DOCS_TEST: example_017
+
+query
+SELECT COLUMNS('(id|numbers?)') FROM numbers;
+----
+id	number
+1	10
+2	20
+3	NULL
+
+# DOCS_TEST: example_018
+
+query error substitution failed: Invalid escape sequence: \\w
+SELECT COLUMNS('(\w{3}).*') AS '\1' FROM numbers;
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_019
+
+statement error db error: ERROR: relation "tbl" already exists
+CREATE TABLE tbl ("Foo:Bar" INTEGER, "Foo:Baz" INTEGER, "Foo:Qux" INTEGER);
+
+query error substitution failed: Invalid escape sequence: \\w
+SELECT COLUMNS('(\w*):(\w*)') AS '\1\2' FROM tbl;
+
+# DOCS_TEST: example_020
+
+query error substitution failed: Invalid escape sequence: \\0
+SELECT min(COLUMNS(*)) AS "min_\0" FROM numbers;
+
+# DOCS_TEST: example_021
+
+query
+SELECT COLUMNS(lambda c: c LIKE '%num%') FROM numbers;
+----
+number
+10
+20
+NULL
+
+# DOCS_TEST: example_022
+
+query error db error: ERROR: Column "num" was selected but was not found in the FROM clause
+SELECT COLUMNS(['id', 'num']) FROM numbers;
+
+# DOCS_TEST: example_023
+
+query
+SELECT coalesce(COLUMNS(['a', 'b', 'c'])) AS result
+FROM (SELECT NULL a, 42 b, true c);
+----
+result	result	result
+NULL	42	t
+
+# DOCS_TEST: example_024
+
+query
+SELECT coalesce(UNPACK(COLUMNS(['a', 'b', 'c']))) AS result
+FROM (SELECT NULL AS a, 42 AS b, true AS c);
+----
+result
+42
+
+# DOCS_TEST: example_025
+
+query
+SELECT coalesce(*COLUMNS(*)) AS result
+FROM (SELECT NULL a, 42 AS b, true AS c);
+----
+result
+42
+
+# DOCS_TEST: example_026
+
+query
+SELECT greatest(UNPACK(COLUMNS(*) + 1)) AS result
+FROM (SELECT 1 AS a, 2 AS b, 3 AS c);
+----
+result
+4
+
+# DOCS_TEST: example_027
+
+query
+SELECT st.* FROM (SELECT {'x': 1, 'y': 2, 'z': 3} AS st);
+----
+x	y	z
+1	2	3

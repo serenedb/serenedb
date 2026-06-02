@@ -1,0 +1,380 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+query
+SELECT struct_pack(key1 := 'value1', key2 := 42) AS s;
+----
+s
+(value1,42)
+
+# DOCS_TEST: example_002
+
+query
+SELECT {'key1': 'value1', 'key2': 42} AS s;
+----
+s
+(value1,42)
+
+# DOCS_TEST: example_003
+
+query
+SELECT d AS s FROM (SELECT 'value1' AS key1, 42 AS key2) d;
+----
+s
+(value1,42)
+
+# DOCS_TEST: example_004
+
+query
+SELECT {'x': 1, 'y': 2, 'z': 3} AS s;
+----
+s
+(1,2,3)
+
+# DOCS_TEST: example_005
+
+query
+SELECT {'yes': 'duck', 'maybe': 'goose', 'huh': NULL, 'no': 'heron'} AS s;
+----
+s
+(duck,goose,,heron)
+
+# DOCS_TEST: example_006
+
+query
+SELECT {'key1': 'string', 'key2': 1, 'key3': 12.345} AS s;
+----
+s
+(string,1,12.345)
+
+# DOCS_TEST: example_007
+
+query
+SELECT {
+        'birds': {'yes': 'duck', 'maybe': 'goose', 'huh': NULL, 'no': 'heron'},
+        'aliens': NULL,
+        'amphibians': {'yes': 'frog', 'maybe': 'salamander', 'huh': 'dragon', 'no': 'toad'}
+    } AS s;
+----
+s
+("(duck,goose,,heron)",,"(frog,salamander,dragon,toad)")
+
+# DOCS_TEST: example_008
+
+query
+SELECT struct_update({'a': 1, 'b': 2}, b := 3, c := 4) AS s;
+----
+s
+(1,3,4)
+
+# DOCS_TEST: example_009
+
+query
+SELECT a.x FROM (SELECT {'x': 1, 'y': 2, 'z': 3} AS a);
+----
+x
+1
+
+# DOCS_TEST: example_010
+
+query
+SELECT a."x space" FROM (SELECT {'x space': 1, 'y': 2, 'z': 3} AS a);
+----
+x space
+1
+
+# DOCS_TEST: example_011
+
+query
+SELECT a['x space'] FROM (SELECT {'x space': 1, 'y': 2, 'z': 3} AS a);
+----
+a
+1
+
+# DOCS_TEST: example_012
+
+query
+SELECT struct_extract({'x space': 1, 'y': 2, 'z': 3}, 'x space');
+----
+struct_extract
+1
+
+# DOCS_TEST: example_013
+
+query
+SELECT unnest(a)
+FROM (SELECT {'x': 1, 'y': 2, 'z': 3} AS a);
+----
+x	y	z
+1	2	3
+
+# DOCS_TEST: example_014
+
+query
+SELECT a.* EXCLUDE ('y')
+FROM (SELECT {'x': 1, 'y': 2, 'z': 3} AS a);
+----
+x	z
+1	3
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_015
+
+query error
+SELECT part1
+FROM tbl;
+----
+db error: ERROR: Referenced column "part1" not found in FROM clause!
+Candidate bindings: "a"
+
+
+# DOCS_TEST: example_016
+
+query error
+SELECT part1.part2
+FROM tbl;
+----
+db error: ERROR: Referenced table "part1" not found!
+Candidate tables: "tbl"
+
+
+# DOCS_TEST: example_017
+
+query error
+SELECT part1.part2.part3
+FROM tbl;
+----
+db error: ERROR: Referenced table "part1" not found!
+Candidate tables: "tbl"
+
+
+# DOCS_TEST: example_018
+
+statement ok
+CREATE TABLE t1 (s STRUCT(v VARCHAR, i INTEGER));
+
+statement ok
+INSERT INTO t1 VALUES (row('a', 42));
+
+query
+SELECT * FROM t1;
+----
+s
+(a,42)
+
+# DOCS_TEST: example_019
+
+statement error db error: ERROR: syntax error at or near "\{"
+{'v': a, 'i': 42}
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_020
+
+statement ok
+CREATE TABLE t1 AS (
+    SELECT row('a', 42)::STRUCT(v VARCHAR, i INTEGER)
+);
+
+# DOCS_TEST: example_021
+
+statement ok
+CREATE TABLE t2 AS SELECT row('a');
+
+# DOCS_TEST: example_022
+
+query error db error: ERROR: STRUCT to STRUCT cast must have at least one matching member
+SELECT a::STRUCT(y INTEGER) AS b
+FROM
+    (SELECT {'x': 42} AS a);
+
+# DOCS_TEST: example_023
+
+query
+SELECT struct_pack(y := a.x) AS b
+FROM
+    (SELECT {'x': 42} AS a);
+----
+b
+(42)
+
+# DOCS_TEST: example_024
+
+query
+SELECT row(x, x + 1, y) FROM (SELECT 1 AS x, 'a' AS y) AS s;
+----
+row
+(1,2,a)
+
+# DOCS_TEST: example_025
+
+query
+SELECT (x, x + 1, y) AS s FROM (SELECT 1 AS x, 'a' AS y);
+----
+s
+(1,2,a)
+
+# DOCS_TEST: example_026
+
+query
+SELECT {'k1': 0, 'k2': 0} < {'k1': 1, 'k2': 0};
+----
+?column?
+t
+
+# DOCS_TEST: example_027
+
+query
+SELECT {'k1': 'hello'} < {'k1': 'world'};
+----
+?column?
+t
+
+# DOCS_TEST: example_028
+
+query
+SELECT {'k1': 0, 'k2': 0} < {'k1': 0, 'k2': NULL};
+----
+?column?
+t
+
+# DOCS_TEST: example_029
+
+query
+SELECT {'k1': 0} < {'k2': 0};
+----
+?column?
+t
+
+# DOCS_TEST: example_030
+
+query
+SELECT  {'k1': 0, 'k2': 0} < {'k2': 0, 'k3': 0};
+----
+?column?
+t
+
+# DOCS_TEST: example_031
+
+query
+SELECT {'k1': 1, 'k2': 0} > {'k3': 0, 'k1': 0};
+----
+?column?
+t
+
+# DOCS_TEST: example_032
+
+query
+SELECT {'k1': 1, 'k2': 0} < {'k1': 0, 'k2': 1};
+----
+?column?
+f
+
+# DOCS_TEST: example_033
+
+query
+SELECT {'k1': [0]} < {'k1': [0, 0]};
+----
+?column?
+t
+
+# DOCS_TEST: example_034
+
+query
+SELECT {'k1': 1} > {'k2': 0};
+----
+?column?
+f
+
+# DOCS_TEST: example_035
+
+query
+SELECT {'k1': 0, 'k2': 0} < {'k3': 0, 'k1': 1};
+----
+?column?
+t
+
+# DOCS_TEST: example_036
+
+query
+SELECT  {'k1': 1, 'k2': 0} > {'k2': 0, 'k3': 0};
+----
+?column?
+f
+
+# DOCS_TEST: example_037
+
+statement ok
+CREATE TABLE test (s STRUCT(i INTEGER, j INTEGER));
+
+statement ok
+INSERT INTO test VALUES (ROW(1, 1)), (ROW(2, 2));
+
+# DOCS_TEST: example_038
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE test ADD COLUMN s.k INTEGER;
+
+query
+FROM test;
+----
+s
+(1,1)
+(2,2)
+
+# DOCS_TEST: example_039
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE test DROP COLUMN s.i;
+
+query
+FROM test;
+----
+s
+(1,1)
+(2,2)
+
+# DOCS_TEST: example_040
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE test RENAME s.j TO v1;
+
+query
+FROM test;
+----
+s
+(1,1)
+(2,2)

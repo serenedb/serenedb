@@ -1,0 +1,715 @@
+control substitution on
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_001
+
+query
+SELECT *
+FROM tbl;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_002
+
+query
+FROM tbl
+SELECT *;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_003
+
+query
+FROM tbl;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_004
+
+query
+SELECT tn.*
+FROM tbl tn;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_005
+
+query
+SELECT tn.*
+FROM tn: tbl;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_006
+
+query error db error: ERROR: Table with name "schema_name\.tbl" does not exist because schema "schema_name" does not exist\.
+SELECT *
+FROM schema_name.tbl;
+
+# DOCS_TEST: example_007
+
+query
+SELECT t.i
+FROM range(100) AS t(i);
+----
+i
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+66
+67
+68
+69
+70
+71
+72
+73
+74
+75
+76
+77
+78
+79
+80
+81
+82
+83
+84
+85
+86
+87
+88
+89
+90
+91
+92
+93
+94
+95
+96
+97
+98
+99
+
+# DOCS_TEST: example_008
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM 'test.csv';
+
+# DOCS_TEST: example_009
+
+query
+SELECT *
+FROM (SELECT * FROM tbl);
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_010
+
+query error
+SELECT t
+FROM t;
+----
+db error: ERROR: Table with name t does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_011
+
+query
+SELECT t
+FROM (SELECT unnest(generate_series(41, 43)) AS x, 'hello' AS y) t;
+----
+t
+(41,hello)
+(42,hello)
+(43,hello)
+
+# DOCS_TEST: example_012
+
+query error
+SELECT *
+FROM tbl
+JOIN other_table
+  ON tbl.key = other_table.key;
+----
+db error: ERROR: Table with name other_table does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_013
+
+statement ok
+SELECT *
+FROM tbl
+TABLESAMPLE 10%;
+
+# DOCS_TEST: example_014
+
+query ???????????? rowsort
+SELECT *
+FROM tbl
+TABLESAMPLE 10 ROWS;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_015
+
+query
+FROM range(100) AS t(i)
+SELECT sum(t.i)
+WHERE i % 2 = 0;
+----
+sum
+2450
+
+# DOCS_TEST: example_016
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM 'test.csv';
+
+# DOCS_TEST: example_017
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_csv('test.csv');
+
+# DOCS_TEST: example_018
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_csv('test.csv') WITH ORDINALITY;
+
+# DOCS_TEST: example_019
+
+query error
+SELECT a.*, b.*
+FROM a
+CROSS JOIN b;
+----
+db error: ERROR: Table with name a does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_020
+
+query error
+SELECT a.*, b.*
+FROM a, b;
+----
+db error: ERROR: Table with name a does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_021
+
+statement ok
+CREATE TABLE l_regions (
+    r_regionkey INTEGER NOT NULL PRIMARY KEY,
+    r_name      CHAR(25) NOT NULL,
+    r_comment   VARCHAR(152)
+);
+
+statement ok
+CREATE TABLE l_nations (
+    n_nationkey INTEGER NOT NULL PRIMARY KEY,
+    n_name      CHAR(25) NOT NULL,
+    n_regionkey INTEGER NOT NULL,
+    n_comment   VARCHAR(152),
+    FOREIGN KEY (n_regionkey) REFERENCES l_regions(r_regionkey)
+);
+
+# DOCS_TEST: example_022
+
+query
+SELECT n.*, r.*
+FROM l_nations n
+JOIN l_regions r ON (n_regionkey = r_regionkey);
+----
+n_nationkey	n_name	n_regionkey	n_comment	r_regionkey	r_name	r_comment
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS l_regions;
+
+statement ok
+DROP TABLE IF EXISTS l_nations;
+
+# DOCS_TEST: example_023
+
+statement ok
+CREATE TABLE l_regions (regionkey INTEGER NOT NULL PRIMARY KEY,
+                        name      CHAR(25) NOT NULL,
+                        comment   VARCHAR(152));
+
+statement ok
+CREATE TABLE l_nations (nationkey INTEGER NOT NULL PRIMARY KEY,
+                        name      CHAR(25) NOT NULL,
+                        regionkey INTEGER NOT NULL,
+                        comment   VARCHAR(152),
+                        FOREIGN KEY (regionkey) REFERENCES l_regions(regionkey));
+
+# DOCS_TEST: example_024
+
+query
+SELECT n.*, r.*
+FROM l_nations n
+JOIN l_regions r USING (regionkey);
+----
+nationkey	name	regionkey	comment	regionkey	name	comment
+
+# DOCS_TEST: example_025
+
+query error
+SELECT s1.t_id, s2.t_id
+FROM west s1, west s2
+WHERE s1.time > s2.time
+  AND s1.cost < s2.cost;
+----
+db error: ERROR: Table with name west does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_026
+
+statement ok
+CREATE TABLE city_airport (city_name VARCHAR, iata VARCHAR);
+
+statement ok
+CREATE TABLE airport_names (iata VARCHAR, airport_name VARCHAR);
+
+statement ok
+INSERT INTO city_airport VALUES
+    ('Amsterdam', 'AMS'),
+    ('Rotterdam', 'RTM'),
+    ('Eindhoven', 'EIN'),
+    ('Groningen', 'GRQ');
+
+statement ok
+INSERT INTO airport_names VALUES
+    ('AMS', 'Amsterdam Airport Schiphol'),
+    ('RTM', 'Rotterdam The Hague Airport'),
+    ('MST', 'Maastricht Aachen Airport');
+
+# DOCS_TEST: example_027
+
+query
+SELECT *
+FROM city_airport
+NATURAL JOIN airport_names;
+----
+iata	city_name	airport_name
+AMS	Amsterdam	Amsterdam Airport Schiphol
+RTM	Rotterdam	Rotterdam The Hague Airport
+
+# DOCS_TEST: example_028
+
+query
+SELECT *
+FROM city_airport
+JOIN airport_names
+USING (iata);
+----
+iata	city_name	airport_name
+AMS	Amsterdam	Amsterdam Airport Schiphol
+RTM	Rotterdam	Rotterdam The Hague Airport
+
+# DOCS_TEST: example_029
+
+query
+SELECT *
+FROM city_airport
+SEMI JOIN airport_names
+    USING (iata);
+----
+iata	city_name
+AMS	Amsterdam
+RTM	Rotterdam
+
+# DOCS_TEST: example_030
+
+query
+SELECT *
+FROM city_airport
+WHERE iata IN (SELECT iata FROM airport_names);
+----
+city_name	iata
+Amsterdam	AMS
+Rotterdam	RTM
+
+# DOCS_TEST: example_031
+
+query
+SELECT *
+FROM city_airport
+ANTI JOIN airport_names
+    USING (iata);
+----
+iata	city_name
+EIN	Eindhoven
+GRQ	Groningen
+
+# DOCS_TEST: example_032
+
+query
+SELECT *
+FROM city_airport
+WHERE iata NOT IN (SELECT iata FROM airport_names WHERE iata IS NOT NULL);
+----
+city_name	iata
+Eindhoven	EIN
+Groningen	GRQ
+
+# DOCS_TEST: example_033
+
+query
+SELECT *
+FROM range(3) t(i), LATERAL (SELECT i + 1) t2(j);
+----
+i	j
+0	1
+1	2
+2	3
+
+# DOCS_TEST: example_034
+
+query ?? rowsort
+SELECT *
+FROM
+    generate_series(0, 1) t(i),
+    LATERAL (SELECT i + 10 UNION ALL SELECT i + 100) t2(j);
+----
+i	j
+0	10
+0	100
+1	101
+1	11
+
+# DOCS_TEST: example_035
+
+statement ok
+CREATE TABLE t1 AS
+    SELECT *
+    FROM range(3) t(i), LATERAL (SELECT i + 1) t2(j);
+
+query
+SELECT *
+    FROM t1, LATERAL (SELECT i + j) t2(k)
+    ORDER BY ALL;
+----
+i	j	k
+0	1	1
+1	2	3
+2	3	5
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST: example_036
+
+statement ok
+CREATE TABLE t1 (x INTEGER);
+
+statement ok
+CREATE TABLE t2 (s VARCHAR);
+
+statement ok
+INSERT INTO t1 VALUES (1), (2), (3);
+
+statement ok
+INSERT INTO t2 VALUES ('a'), ('b');
+
+query
+SELECT *
+FROM t1
+POSITIONAL JOIN t2;
+----
+x	s
+1	a
+2	b
+3	NULL
+
+# DOCS_TEST: example_037
+
+query error
+SELECT t.*, p.price
+FROM trades t
+ASOF JOIN prices p
+       ON t.symbol = p.symbol AND t.when >= p.when;
+----
+db error: ERROR: Table with name trades does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_038
+
+query error
+SELECT *
+FROM trades t
+ASOF LEFT JOIN prices p
+            ON t.symbol = p.symbol
+           AND t.when >= p.when;
+----
+db error: ERROR: Table with name trades does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_039
+
+query error
+SELECT *
+FROM trades t
+ASOF JOIN prices p USING (symbol, "when");
+----
+db error: ERROR: Table with name trades does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_040
+
+query error
+SELECT t.symbol, t.when AS trade_when, p.when AS price_when, price
+FROM trades t
+ASOF LEFT JOIN prices p USING (symbol, "when");
+----
+db error: ERROR: Table with name trades does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_041
+
+statement ok
+CREATE TABLE t (x INTEGER);
+
+query error (?i)Ambiguous reference to table .*duplicate alias .*explicitly alias one of the tables using "AS my_alias"
+SELECT * FROM t JOIN t USING(x);
+
+# DOCS_TEST: example_042
+
+query
+SELECT * FROM t AS t1 JOIN t AS t2 USING(x);
+----
+x
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+statement ok
+DROP TABLE IF EXISTS t2;
+
+# DOCS_TEST: example_043
+
+statement ok
+CREATE TABLE t1 (x INTEGER);
+
+statement ok
+CREATE TABLE t2 (y INTEGER);
+
+statement ok
+INSERT INTO t1 VALUES (1), (2), (4);
+
+statement ok
+INSERT INTO t2 VALUES (2), (3);
+
+query
+SELECT * FROM t1 NATURAL JOIN t2 t2(x);
+----
+x
+2
+
+# DOCS_TEST: example_044
+
+query
+SELECT * FROM t1 NATURAL JOIN (VALUES (2), (4)) _(x);
+----
+x
+2
+4
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+# DOCS_TEST: example_045
+
+statement ok
+CREATE TABLE tbl AS
+    SELECT *
+    FROM (VALUES ('a'), ('b')) t1(s), range(1, 3) t2(i);
+
+# DOCS_TEST: example_046
+
+query
+FROM tbl
+SELECT i, s;
+----
+i	s
+1	a
+1	b
+2	a
+2	b
+
+# DOCS_TEST: example_047
+
+query
+SELECT i, s
+FROM tbl;
+----
+i	s
+1	a
+1	b
+2	a
+2	b
+
+# DOCS_TEST: example_048
+
+query
+FROM tbl;
+----
+s	i
+a	1
+b	1
+a	2
+b	2
+
+# DOCS_TEST: example_049
+
+query
+SELECT *
+FROM tbl;
+----
+s	i
+a	1
+b	1
+a	2
+b	2

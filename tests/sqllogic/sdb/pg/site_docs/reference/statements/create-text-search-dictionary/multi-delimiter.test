@@ -1,0 +1,15 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY multi_delim (
+    TEMPLATE = 'multi_delimiter',
+    DELIMITERS = '":", ";", " ", ".", "|"'
+);
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY csv_delim (
+    TEMPLATE = 'multi_delimiter',
+    DELIMITERS = '","'
+);

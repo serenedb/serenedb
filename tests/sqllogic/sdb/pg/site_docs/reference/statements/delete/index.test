@@ -1,0 +1,29 @@
+# DOCS_TEST: example_001
+
+statement error
+DELETE FROM sessions
+WHERE expires_at < NOW();
+----
+db error: ERROR: Table with name sessions does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+statement error
+DELETE FROM orders
+WHERE customer_id IN (
+    SELECT id FROM customers WHERE active = FALSE
+);
+----
+db error: ERROR: Table with name orders does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+statement error
+DELETE FROM temp_results;
+----
+db error: ERROR: Table with name temp_results does not exist!
+Did you mean "<slt:ignore>"?

@@ -1,0 +1,47 @@
+# DOCS_TEST: example_001
+
+statement ok
+SET memory_limit = '10GB';
+
+# DOCS_TEST: example_002
+
+statement ok
+SET threads = 1;
+
+# DOCS_TEST: example_003
+
+statement ok
+SET threads TO 1;
+
+# DOCS_TEST: example_004
+
+statement ok
+RESET threads;
+
+# DOCS_TEST: example_005
+
+query
+SELECT current_setting('threads');
+----
+current_setting
+<slt:ignore>
+
+# DOCS_TEST: example_006
+
+statement ok
+SET SESSION default_collation = 'nocase';
+
+# DOCS_TEST: example_007
+
+statement error
+SET GLOBAL sort_order = 'desc';
+----
+db error: ERROR: unrecognized configuration parameter "sort_order"
+
+Did you mean: "null_order"
+
+
+# DOCS_TEST: example_008
+
+statement ok
+SET GLOBAL threads = 4;

@@ -1,0 +1,104 @@
+# DOCS_TEST: example_001
+
+query error
+SELECT id, title
+FROM movies_idx
+WHERE PHRASE(description, 'biggest blockbuster')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+query error
+SELECT id, title
+FROM movies_idx
+WHERE PHRASE(description, 'the war against its controllers');
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+query error
+SELECT id, title
+FROM movies_idx
+WHERE PHRASE(description, 'alien') AND PHRASE(description, 'galaxy')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+query error
+SELECT id, title
+FROM movies_idx
+WHERE PHRASE(description, 'computer hacker') OR PHRASE(description, 'serial killer')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_005
+
+query error
+SELECT id, title
+FROM movies_idx
+WHERE PHRASE(title, 'the matrix') AND PHRASE(description, 'machine')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+query error
+SELECT id, title, genre
+FROM movies_idx
+WHERE TERM_EQ(genre, 'sci-fi') AND PHRASE(description, 'galaxy')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_007
+
+query error
+SELECT genre, COUNT(*) AS matches, AVG(runtime) AS avg_runtime
+FROM movies_idx
+WHERE PHRASE(description, 'film')
+GROUP BY genre
+ORDER BY matches DESC;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_008
+
+query error
+SELECT genre,
+       COUNT(*) AS count,
+       MIN(year) AS earliest,
+       MAX(year) AS latest
+FROM movies_idx
+WHERE PHRASE(description, 'biggest blockbuster')
+GROUP BY genre;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_009
+
+query error db error: ERROR: text search dictionary "basic_dict" does not exist
+-- The query "Biggest Blockbuster" becomes tokens: {biggest, blockbuster}
+SELECT ts_lexize('basic_dict', 'Biggest Blockbuster');

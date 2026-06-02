@@ -1,0 +1,45 @@
+# DOCS_TEST: example_001
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM parquet_metadata('test.parquet');
+
+# DOCS_TEST: example_002
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM parquet_metadata('data/*.parquet');
+
+# DOCS_TEST: example_003
+
+query error (?i)No files found that match the pattern .*
+DESCRIBE SELECT * FROM 'test.parquet';
+
+# DOCS_TEST: example_004
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM parquet_schema('test.parquet');
+
+# DOCS_TEST: example_005
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM parquet_file_metadata('test.parquet');
+
+# DOCS_TEST: example_006
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM parquet_kv_metadata('test.parquet');
+
+# DOCS_TEST: example_007
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM parquet_full_metadata('test.parquet');
+
+# DOCS_TEST: example_008
+
+query error (?i)No files found that match the pattern .*
+FROM parquet_bloom_probe('my_file.parquet', 'my_col', 500);

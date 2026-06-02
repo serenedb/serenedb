@@ -1,0 +1,19 @@
+# DOCS_TEST: example_001
+
+statement ok
+SET search_path TO myschema, public;
+
+statement ok
+SET timezone = 'America/New_York';
+
+statement ok
+SET sdb_write_conflict_policy = 'replace';
+
+statement ok
+SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+statement error db error: ERROR: SET LOCAL can only be used in transaction blocks
+SET LOCAL execution_threads = 4;
+
+statement ok
+RESET search_path;

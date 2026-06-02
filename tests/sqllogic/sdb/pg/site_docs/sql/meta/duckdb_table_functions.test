@@ -1,0 +1,19 @@
+# DOCS_TEST: example_001
+
+statement ok
+SELECT * FROM duckdb_settings();
+
+# DOCS_TEST: example_002
+
+statement ok
+CALL duckdb_settings();
+
+# DOCS_TEST: example_003
+
+statement ok
+SELECT * FROM duckdb_views();
+
+# DOCS_TEST: example_004
+
+statement ok
+SELECT * FROM duckdb_views;

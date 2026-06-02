@@ -1,0 +1,21 @@
+# DOCS_TEST: example_001
+
+statement ok
+BEGIN;
+
+statement error
+INSERT INTO articles VALUES (10, 'New Article', 'content', 'engineering', '2025-03-01', 0);
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error
+UPDATE articles SET views = views + 1 WHERE id = 1;
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement ok
+COMMIT;

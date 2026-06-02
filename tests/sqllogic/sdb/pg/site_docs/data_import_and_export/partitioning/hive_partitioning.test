@@ -1,0 +1,67 @@
+# DOCS_TEST: example_001
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet('orders/*/*/*.parquet', hive_partitioning = true);
+
+# DOCS_TEST: example_002
+
+statement error
+COPY orders
+TO 'orders' (FORMAT parquet, PARTITION_BY (year, month));
+----
+db error: ERROR: Table with name orders does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+statement error
+COPY (SELECT *, year(timestamp) AS year, month(timestamp) AS month FROM services)
+TO 'test' (PARTITION_BY (year, month));
+----
+db error: ERROR: Table with name services does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+query error (?i)No files found that match the pattern .*
+FROM read_parquet('test/*/*/*.parquet', hive_partitioning = false);
+
+query error (?i)No files found that match the pattern .*
+FROM read_parquet('test/*/*/*.parquet', hive_partitioning = true);
+
+# DOCS_TEST: example_005
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet('orders/*/*/*.parquet', hive_partitioning = true);
+
+# DOCS_TEST: example_006
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet('orders/*/*/*.parquet', hive_partitioning = true)
+WHERE year = 2022
+  AND month = 11;
+
+# DOCS_TEST: example_007
+
+statement error
+SET hive_partitioning = false;
+----
+db error: ERROR: unrecognized configuration parameter "hive_partitioning"
+
+Did you mean: "partitioned_write_flush_threshold"
+
+
+# DOCS_TEST: example_008
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet(
+    'dir/**/*.parquet',
+    hive_partitioning = true,
+    hive_types = {'release': DATE, 'orders': BIGINT}
+);

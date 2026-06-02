@@ -1,0 +1,192 @@
+# DOCS_TEST: example_001
+
+query
+SELECT unnest([1, 2, 3]);
+----
+unnest
+1
+2
+3
+
+# DOCS_TEST: example_002
+
+query
+SELECT unnest({'a': 42, 'b': 84});
+----
+a	b
+42	84
+
+# DOCS_TEST: example_003
+
+query
+SELECT unnest([{'a': 42, 'b': 84}, {'a': 100, 'b': NULL}], recursive := true);
+----
+a	b
+42	84
+100	NULL
+
+# DOCS_TEST: example_004
+
+query
+SELECT unnest([[[1, 2], [3, 4]], [[5, 6], [7, 8, 9], []], [[10, 11]]], max_depth := 2);
+----
+unnest
+{1,2}
+{3,4}
+{5,6}
+{7,8,9}
+{}
+{10,11}
+
+# DOCS_TEST: example_005
+
+query
+SELECT unnest([1, 2, 3]);
+----
+unnest
+1
+2
+3
+
+# DOCS_TEST: example_006
+
+query
+SELECT unnest([1, 2, 3]), 10;
+----
+unnest	?column?
+1	10
+2	10
+3	10
+
+# DOCS_TEST: example_007
+
+query
+SELECT unnest([1, 2, 3]), unnest([10, 11]);
+----
+unnest	unnest
+1	10
+2	11
+3	NULL
+
+# DOCS_TEST: example_008
+
+query
+SELECT unnest(l) + 10 FROM (VALUES ([1, 2, 3]), ([4, 5])) tbl(l);
+----
+?column?
+11
+12
+13
+14
+15
+
+# DOCS_TEST: example_009
+
+query
+SELECT unnest([]);
+----
+unnest
+
+# DOCS_TEST: example_010
+
+query
+SELECT unnest(NULL);
+----
+unnest
+
+# DOCS_TEST: example_011
+
+query
+SELECT unnest({'a': 42, 'b': 84});
+----
+a	b
+42	84
+
+# DOCS_TEST: example_012
+
+query
+SELECT unnest({'a': 42, 'b': {'x': 84}});
+----
+a	b
+42	(84)
+
+# DOCS_TEST: example_013
+
+query
+SELECT unnest([[1, 2, 3], [4, 5]], recursive := true);
+----
+unnest
+1
+2
+3
+4
+5
+
+# DOCS_TEST: example_014
+
+query
+SELECT unnest([{'a': 42, 'b': 84}, {'a': 100, 'b': NULL}], recursive := true);
+----
+a	b
+42	84
+100	NULL
+
+# DOCS_TEST: example_015
+
+query
+SELECT unnest({'a': [1, 2, 3], 'b': 88}, recursive := true);
+----
+a	b
+{1,2,3}	88
+
+# DOCS_TEST: example_016
+
+query
+SELECT unnest([[[1, 2], [3, 4]], [[5, 6], [7, 8, 9], []], [[10, 11]]], max_depth := 2) AS x;
+----
+x
+{1,2}
+{3,4}
+{5,6}
+{7,8,9}
+{}
+{10,11}
+
+# DOCS_TEST: example_017
+
+query
+SELECT unnest([[[1, 2], [3, 4]], [[5, 6], [7, 8, 9], []], [[10, 11]]], max_depth := 3) AS x;
+----
+x
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+
+# DOCS_TEST: example_018
+
+query
+SELECT unnest(l) AS x, generate_subscripts(l, 1) AS index
+FROM (VALUES ([1, 2, 3]), ([4, 5])) tbl(l);
+----
+x	index
+1	1
+2	2
+3	3
+4	1
+5	2
+
+# DOCS_TEST: example_019
+
+query
+SELECT unnest([{'a': 0, 'b': {'bb': {'bbb': 1}}}], recursive := true, keep_parent_names := true);
+----
+a	b.bb.bbb
+0	1

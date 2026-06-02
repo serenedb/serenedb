@@ -1,0 +1,253 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+CREATE SEQUENCE serial;
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: relation "serial" already exists
+CREATE SEQUENCE serial START 101;
+
+# DOCS_TEST: example_003
+
+statement error db error: ERROR: relation "serial" already exists
+CREATE SEQUENCE serial START WITH 1 INCREMENT BY 2;
+
+# DOCS_TEST: example_004
+
+statement error db error: ERROR: sequence INCREMENT must be positive \(negative increments not yet supported\)
+CREATE SEQUENCE serial START WITH 99 INCREMENT BY -1 MAXVALUE 99;
+
+# DOCS_TEST: example_005
+
+statement error db error: ERROR: relation "serial" already exists
+CREATE SEQUENCE serial START WITH 1 MAXVALUE 10;
+
+# DOCS_TEST: example_006
+
+statement error db error: ERROR: relation "serial" already exists
+CREATE SEQUENCE serial START WITH 1 MAXVALUE 10 CYCLE;
+
+# DOCS_TEST: example_007
+
+statement error db error: ERROR: relation "serial" already exists
+CREATE OR REPLACE SEQUENCE serial;
+
+# DOCS_TEST: example_008
+
+statement ok
+CREATE SEQUENCE IF NOT EXISTS serial;
+
+# DOCS_TEST: example_009
+
+statement ok
+DROP SEQUENCE serial;
+
+# DOCS_TEST: example_010
+
+statement ok
+DROP SEQUENCE IF EXISTS serial;
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_011
+
+statement ok
+CREATE SEQUENCE id_sequence START 1;
+
+statement error db error: ERROR: relation "tbl" already exists
+CREATE TABLE tbl (id INTEGER PRIMARY KEY DEFAULT nextval('id_sequence'), s VARCHAR);
+
+statement error
+INSERT INTO tbl (s) VALUES ('hello'), ('world');
+----
+db error: ERROR: Table "tbl" does not have a column with name "s"
+
+Did you mean: "Some Column Name", "a", "b", "c", "col1"
+
+
+query
+SELECT * FROM tbl;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_012
+
+statement error db error: ERROR: relation "tbl" already exists
+CREATE TABLE tbl (s VARCHAR);
+
+statement error db error: ERROR: table tbl has 12 columns but 1 values were supplied
+INSERT INTO tbl VALUES ('hello'), ('world');
+
+statement error db error: ERROR: relation "id_sequence" already exists
+CREATE SEQUENCE id_sequence START 1;
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE tbl ADD COLUMN id INTEGER DEFAULT nextval('id_sequence');
+
+query error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+SELECT * FROM tbl;
+
+# DOCS_TEST: example_013
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+CREATE SEQUENCE serial START 1;
+
+query error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+SELECT nextval('serial') AS nextval;
+
+# DOCS_TEST: example_014
+
+statement error
+INSERT INTO distributors VALUES (nextval('serial'), 'nothing');
+----
+db error: ERROR: Table with name distributors does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_015
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+CREATE SEQUENCE serial START 1;
+
+query error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+SELECT nextval('serial') AS nextval;
+
+query error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+SELECT currval('serial') AS currval;
+
+# DOCS_SETUP
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+USE $__DATABASE__;
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+DROP TABLE IF EXISTS tbl;
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_016
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+CREATE SEQUENCE id_sequence START 1;
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+CREATE TABLE tbl (
+    id INTEGER DEFAULT nextval('id_sequence'),
+    s VARCHAR
+);
+
+statement error
+INSERT INTO tbl(s) VALUES ('default is the next value from id_sequence');
+----
+db error: ERROR: Table "tbl" does not have a column with name "s"
+
+Did you mean: "Some Column Name", "a", "b", "c", "col1"
+
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+ALTER TABLE tbl ALTER COLUMN id SET DEFAULT NULL;
+
+statement error
+INSERT INTO tbl(s) VALUES ('default is NULL');
+----
+db error: ERROR: Table "tbl" does not have a column with name "s"
+
+Did you mean: "Some Column Name", "a", "b", "c", "col1"
+
+
+query error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+SELECT * FROM tbl;
+
+# DOCS_TEST: example_017
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+DROP SEQUENCE id_sequence;
+
+# DOCS_TEST: example_018
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+DROP SEQUENCE id_sequence CASCADE;
+
+query error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+SELECT * FROM tbl;

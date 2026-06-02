@@ -1,0 +1,99 @@
+# DOCS_TEST: example_001
+
+query error
+SELECT like('abc', '%b%');
+----
+db error: ERROR: Scalar Function with name like does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+query
+SELECT regexp_extract('1a 2b 14m', '\d+');
+----
+regexp_extract
+1
+
+# DOCS_TEST: example_003
+
+query
+SELECT regexp_extract('1a 2b 14m', '(\d+)([a-z]+)', 2);
+----
+regexp_extract
+a
+
+# DOCS_TEST: example_004
+
+query
+SELECT regexp_extract_all('1a 2b 14m', '\d+');
+----
+regexp_extract_all
+{1,2,14}
+
+# DOCS_TEST: example_005
+
+query
+SELECT regexp_extract_all('1a 2b 14m', '(\d+)([a-z]+)', 2);
+----
+regexp_extract_all
+{a,b,m}
+
+# DOCS_TEST: example_006
+
+query
+SELECT regexp_like('1a 2b 14m', '\d+b');
+----
+regexp_like
+t
+
+# DOCS_TEST: example_007
+
+query error
+SELECT regexp_replace('1a 2b 14m', '\d+[ab] ');
+----
+db error: ERROR: No function matches the given name and argument types 'regexp_replace(STRING_LITERAL, STRING_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	regexp_replace(VARCHAR, VARCHAR, VARCHAR) -> VARCHAR
+	regexp_replace(VARCHAR, VARCHAR, VARCHAR, VARCHAR) -> VARCHAR
+
+
+# DOCS_TEST: example_008
+
+query
+SELECT regexp_replace('1a 2b 14m', '(\d+)([ab]) ', '3c$2 ');
+----
+regexp_replace
+3c$2 2b 14m
+
+query
+SELECT regexp_replace('[\{\}]', '\\}]', '\\}');
+----
+regexp_replace
+[\\{\\}
+
+# DOCS_TEST: example_009
+
+query error
+SELECT regexp_replace('new york', '(\w)(\w*)', x -> upper(x[1]) || lower(x[2]));
+----
+db error: ERROR: failed to bind function, either: This scalar function does not support lambdas!
+ or: Referenced column "x" was not found because the FROM clause is missing
+
+
+# DOCS_TEST: example_010
+
+query error
+SELECT regexp_split('1a 2b 14m', '\s*[a-z]+\s*');
+----
+db error: ERROR: Scalar Function with name regexp_split does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_011
+
+query error
+SELECT regexp_split('1a 2b 14m', '');
+----
+db error: ERROR: Scalar Function with name regexp_split does not exist!
+Did you mean "<slt:ignore>"?

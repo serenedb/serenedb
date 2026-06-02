@@ -1,0 +1,9 @@
+# DOCS_TEST: example_001
+
+query error
+SELECT published_at AS time, views
+FROM articles
+ORDER BY published_at;
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?

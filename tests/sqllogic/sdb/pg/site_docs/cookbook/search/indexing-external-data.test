@@ -1,0 +1,96 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: syntax error at or near "USING"
+CREATE TABLE logs (
+    id INTEGER,
+    timestamp TIMESTAMP,
+    level TEXT,
+    service TEXT,
+    message TEXT
+) USING EXTERNAL WITH (
+    PATH = 's3://my-bucket/logs/2025/*.parquet',
+    FORMAT = 'Parquet',
+    S3_ACCESS_KEY = 'your-access-key',
+    S3_SECRET_KEY = 'your-secret-key',
+    S3_REGION = 'us-east-1'
+);
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: syntax error at or near "USING"
+CREATE TABLE articles (
+    id INTEGER,
+    title TEXT,
+    body TEXT,
+    category TEXT
+) USING EXTERNAL WITH (
+    PATH = '/data/articles.parquet',
+    FORMAT = 'Parquet'
+);
+
+# DOCS_TEST: example_003
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY english_dict (
+    TEMPLATE = 'text',
+    LOCALE = 'en_US.UTF-8',
+    CASE = 'lower',
+    STEMMING = true,
+    ACCENT = false,
+    FREQUENCY = true,
+    POSITION = true
+);
+
+# DOCS_TEST: example_004
+
+statement error
+CREATE INDEX logs_search ON logs
+    USING inverted (id, timestamp, level, service, message english_dict);
+----
+db error: ERROR: Table with name logs does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error db error: ERROR: relation 'logs' not found\.
+VACUUM (UPDATE_INDEXES) logs;
+
+# DOCS_TEST: example_005
+
+query error
+-- Full-text search
+SELECT id, timestamp, message
+FROM logs_search
+WHERE PHRASE(message, 'connection timeout')
+ORDER BY BM25() DESC
+LIMIT 20;
+----
+db error: ERROR: Table with name logs_search does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+-- Combine search with exact filters
+SELECT id, timestamp, level, message
+FROM logs_search
+WHERE PHRASE(message, 'out of memory') AND level = 'ERROR'
+ORDER BY timestamp DESC;
+----
+db error: ERROR: Table with name logs_search does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+-- Fuzzy matching for typo tolerance
+SELECT id, service, message
+FROM logs_search
+WHERE LEVENSHTEIN_MATCH(service, 'postgre', 1)
+ORDER BY id;
+----
+db error: ERROR: Table with name logs_search does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+statement error db error: ERROR: relation 'logs' not found\.
+VACUUM (UPDATE_INDEXES) logs;

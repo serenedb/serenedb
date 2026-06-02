@@ -1,0 +1,8 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE cities AS
+    FROM (VALUES ('Amsterdam', 1), ('London', 2)) cities(name, id);
+
+statement error (?i)Cannot open file .*
+COPY cities TO 'cities.json';

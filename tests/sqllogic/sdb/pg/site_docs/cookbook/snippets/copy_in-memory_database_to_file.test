@@ -1,0 +1,10 @@
+# DOCS_TEST: example_001
+
+statement error (?i)Cannot open file .*
+ATTACH 'my_database.db';
+
+statement error (?i)Catalog .* does not exist!
+COPY FROM DATABASE memory TO my_database;
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+DETACH my_database;

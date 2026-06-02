@@ -1,0 +1,52 @@
+# DOCS_TEST: example_001
+
+statement ok
+BEGIN TRANSACTION;
+
+# DOCS_TEST: example_002
+
+statement ok
+COMMIT;
+
+# DOCS_TEST: example_003
+
+statement ok
+ROLLBACK;
+
+# DOCS_TEST: example_004
+
+statement ok
+ABORT;
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE TABLE person (name VARCHAR, age BIGINT);
+
+statement ok
+BEGIN TRANSACTION;
+
+statement ok
+INSERT INTO person VALUES ('Ada', 52);
+
+statement ok
+COMMIT;
+
+statement ok
+BEGIN TRANSACTION;
+
+statement ok
+DELETE FROM person WHERE name = 'Ada';
+
+statement ok
+INSERT INTO person VALUES ('Bruce', 39);
+
+statement ok
+ROLLBACK;
+
+query
+SELECT * FROM person;
+----
+name	age
+Ada	52
+Bruce	39

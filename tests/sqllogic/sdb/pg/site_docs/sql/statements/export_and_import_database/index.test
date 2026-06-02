@@ -1,0 +1,33 @@
+# DOCS_TEST: example_001
+
+statement error (?i)Failed to create directory .*
+EXPORT DATABASE 'target_directory';
+
+# DOCS_TEST: example_002
+
+statement error (?i)Failed to create directory .*
+EXPORT DATABASE 'target_directory' (FORMAT csv, DELIMITER '|');
+
+# DOCS_TEST: example_003
+
+statement error (?i)Failed to create directory .*
+EXPORT DATABASE 'target_directory' (FORMAT parquet);
+
+# DOCS_TEST: example_004
+
+statement error (?i)Failed to create directory .*
+EXPORT DATABASE 'target_directory' (
+    FORMAT parquet,
+    COMPRESSION zstd,
+    ROW_GROUP_SIZE 100_000
+);
+
+# DOCS_TEST: example_005
+
+statement error (?i)Cannot open file .*
+IMPORT DATABASE 'source_directory';
+
+# DOCS_TEST: example_006
+
+query error (?i)Cannot open file .*
+PRAGMA import_database('source_directory');

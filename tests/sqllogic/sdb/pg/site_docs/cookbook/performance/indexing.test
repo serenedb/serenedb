@@ -1,0 +1,20 @@
+# DOCS_TEST: example_001
+
+statement error
+CREATE INDEX idx ON tbl (col1);
+----
+db error: ERROR: Table with name tbl does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+statement error
+CREATE INDEX idx_multi_column ON tbl (col1, col2);
+----
+db error: ERROR: Table with name tbl does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error db error: ERROR: syntax error at or near "\+"
+CREATE INDEX idx_expr ON tbl (col1 + 1);

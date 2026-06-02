@@ -1,0 +1,121 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_json('todos.json')
+LIMIT 5;
+
+# DOCS_TEST: example_002
+
+statement error (?i)No files found that match the pattern .*
+CREATE TABLE todos AS
+    SELECT *
+    FROM read_json('todos.json');
+
+query error
+DESCRIBE todos;
+----
+db error: ERROR: unrecognized configuration parameter "todos"
+
+Did you mean: "auto_checkpoint_skip_wal_threshold"
+
+
+# DOCS_TEST: example_003
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_json(
+        'todos.json',
+        columns = {userId: 'UBIGINT', completed: 'BOOLEAN'}
+    )
+LIMIT 5;
+
+# DOCS_TEST: example_004
+
+query error (?i)No files found that match the pattern .*
+FROM read_json_objects('birds.json', format = 'unstructured');
+
+# DOCS_TEST: example_005
+
+query error (?i)No files found that match the pattern .*
+FROM read_json_objects('birds-nd.json', format = 'newline_delimited');
+
+# DOCS_TEST: example_006
+
+query error (?i)No files found that match the pattern .*
+FROM read_json_objects('birds-array.json', format = 'array');
+
+# DOCS_TEST: example_007
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_json(
+    ['birds1.json', 'birds2.json'],
+    columns = {duck: 'INTEGER', goose: 'INTEGER[]', swan: 'DOUBLE'}
+);
+
+# DOCS_TEST: example_008
+
+query error (?i)No files found that match the pattern .*
+SELECT goose, duck FROM read_json('*.json.gz');
+
+query error (?i)No files found that match the pattern .*
+SELECT goose, duck FROM '*.json.gz';
+
+# DOCS_TEST: example_009
+
+query error db error: ERROR: SELECT clause without selection list
+SELECT
+FROM read_json('birds.json');
+
+# DOCS_TEST: example_010
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_json('birds-records.json');
+
+# DOCS_TEST: example_011
+
+statement error (?i)Cannot open file .*
+COPY (SELECT * FROM range(5) r(i))
+TO 'numbers.json' (ARRAY true);
+
+# DOCS_TEST: example_012
+
+statement ok
+CREATE TABLE numbers (i BIGINT);
+
+statement error (?i)No files found that match the pattern .*
+COPY numbers FROM 'numbers.json' (ARRAY true);
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS numbers;
+
+# DOCS_TEST: example_013
+
+statement ok
+CREATE TABLE numbers (i BIGINT);
+
+statement error (?i)No files found that match the pattern .*
+COPY numbers FROM 'numbers.json' (AUTO_DETECT true);
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS numbers;
+
+# DOCS_TEST: example_014
+
+statement error (?i)No files found that match the pattern .*
+CREATE TABLE numbers AS
+    FROM 'numbers.json';

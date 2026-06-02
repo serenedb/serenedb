@@ -1,0 +1,18 @@
+# DOCS_TEST: example_001
+
+statement error db error: ERROR: required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY english_dict (
+    TEMPLATE = 'text',
+    LOCALE = 'en_US.UTF-8',
+    CASE = 'lower',
+    STEMMING = true,
+    FREQUENCY = true,
+    POSITION = true
+);
+
+statement error
+CREATE INDEX idx_docs ON documents
+    USING inverted (id, title english_dict, body english_dict);
+----
+db error: ERROR: Table with name documents does not exist!
+Did you mean "<slt:ignore>"?

@@ -1,0 +1,78 @@
+# DOCS_TEST: example_001
+
+statement error
+COPY movies FROM '/data/movies.csv' WITH (FORMAT CSV, HEADER TRUE);
+----
+db error: ERROR: Table with name movies does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: syntax error at or near "\\"
+\copy movies FROM 'movies.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+# DOCS_TEST: example_003
+
+statement error
+COPY movies FROM '/data/movies.csv' WITH (FORMAT CSV, HEADER TRUE)
+WHERE year > 2010;
+----
+db error: ERROR: Table with name movies does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+statement error
+COPY movies FROM '/data/movies.parquet' WITH (FORMAT PARQUET);
+----
+db error: ERROR: Table with name movies does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_005
+
+statement error
+COPY (SELECT title, year, rating FROM movies WHERE rating > 8.0)
+    TO '/data/top_rated.csv' WITH (FORMAT CSV, HEADER TRUE);
+----
+db error: ERROR: Table with name movies does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+statement error (?i)Unrecognized option "s3_.*" for csv
+COPY movies FROM 's3://my-bucket/data/movies.csv' WITH (
+    FORMAT CSV,
+    HEADER TRUE,
+    S3_ACCESS_KEY 'your-access-key',
+    S3_SECRET_KEY 'your-secret-key',
+    S3_REGION 'us-east-1'
+);
+
+
+# DOCS_TEST: example_007
+
+statement error
+COPY movies TO 's3://my-bucket/data/movies.parquet' WITH (
+    FORMAT PARQUET,
+    S3_ACCESS_KEY 'your-access-key',
+    S3_SECRET_KEY 'your-secret-key',
+    S3_ENDPOINT 'https://s3.us-east-1.amazonaws.com'
+);
+----
+db error: ERROR: Unrecognized option "s3_endpoint" for parquet
+
+Candidate options: "encryption_config", "parquet_version", "shredding", "filename_pattern", "string_dictionary_page_size_limit"
+
+
+# DOCS_TEST: example_008
+
+statement error
+COPY movies FROM '/data/movies.csv' WITH (HELP);
+----
+db error: ERROR: Unrecognized option "help" for csv
+
+Candidate options: "hive_file_pattern", "sep", "decimal_separator", "delim", "escape"

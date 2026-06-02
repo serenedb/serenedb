@@ -1,0 +1,15 @@
+# DOCS_TEST: example_001
+
+statement ok
+BEGIN;
+
+statement error
+DELETE FROM articles WHERE views < 100;
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement ok
+-- Undo the delete
+ROLLBACK;

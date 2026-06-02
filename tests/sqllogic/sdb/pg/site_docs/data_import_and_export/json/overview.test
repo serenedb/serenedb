@@ -1,0 +1,86 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+query error (?i)No files found that match the pattern .*
+SELECT * FROM 'todos.json';
+
+# DOCS_TEST: example_002
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_json('todos.json',
+               format = 'array',
+               columns = {userId: 'UBIGINT',
+                          id: 'UBIGINT',
+                          title: 'VARCHAR',
+                          completed: 'BOOLEAN'});
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TABLE todos (userId UBIGINT, id UBIGINT, title VARCHAR, completed BOOLEAN);
+
+statement error (?i)No files found that match the pattern .*
+COPY todos FROM 'todos.json' (AUTO_DETECT true);
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS todos;
+
+# DOCS_TEST: example_004
+
+statement error (?i)No files found that match the pattern .*
+CREATE TABLE todos AS
+    SELECT * FROM 'todos.json';
+
+# DOCS_TEST: example_005
+
+query error (?i)No files found that match the pattern .*
+SELECT filename, *
+FROM 'todos-*.json';
+
+# DOCS_TEST: example_006
+
+statement error
+COPY (SELECT * FROM todos) TO 'todos.json';
+----
+db error: ERROR: Table with name todos does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_007
+
+statement ok
+CREATE TABLE example (j JSON);
+
+statement ok
+INSERT INTO example VALUES
+    ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
+
+# DOCS_TEST: example_008
+
+query
+SELECT j.family FROM example;
+----
+family
+"anatidae"
+
+# DOCS_TEST: example_009
+
+query error substitution failed: Missing variable name
+SELECT j->'$.family' FROM example;
+
+# DOCS_TEST: example_010
+
+query error substitution failed: Missing variable name
+SELECT j->>'$.family' FROM example;
+
+# DOCS_TEST: example_011
+
+query error substitution failed: Invalid escape sequence: \\"
+SELECT '{"d[u]._\"ck":42}'->'$."d[u]._\"ck"' AS v;

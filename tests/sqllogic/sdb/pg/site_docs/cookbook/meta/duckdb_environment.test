@@ -1,0 +1,29 @@
+# DOCS_TEST: example_001
+
+query
+SELECT version() AS version;
+----
+version
+PostgreSQL 18.3 (SereneDB 26.05.4)
+
+# DOCS_TEST: example_002
+
+query
+PRAGMA version;
+----
+library_version	source_id	codename
+v0.0.1	8c42e3b1	Unknown Version
+
+# DOCS_TEST: example_003
+
+query
+PRAGMA platform;
+----
+platform
+linux_arm64
+
+# DOCS_TEST: example_004
+
+statement ok
+SELECT *
+FROM duckdb_extensions();

@@ -1,0 +1,54 @@
+control substitution on
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_001
+
+statement ok
+DELETE FROM tbl WHERE i = 2;
+
+# DOCS_TEST: example_002
+
+statement ok
+DELETE FROM tbl;
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TABLE employees (name VARCHAR, age INTEGER);
+
+statement ok
+INSERT INTO employees VALUES ('Kat', 32);
+
+statement error db error: ERROR: Vector::Reference used on vector of different type \(source VARCHAR referenced BIGINT\)
+DELETE FROM employees RETURNING name, 2025 - age AS approx_birthyear;
+
+# DOCS_TEST: example_004
+
+statement ok
+TRUNCATE tbl;

@@ -1,0 +1,40 @@
+# DOCS_TEST: example_001
+
+statement ok
+SET disabled_optimizers = 'join_order,build_side_probe_side';
+
+# DOCS_TEST: example_002
+
+query error db error: ERROR: syntax error at or near "\.\."
+SELECT ...
+FROM ...
+JOIN ...  -- this join is performed first
+JOIN ...;
+
+# DOCS_TEST: example_003
+
+statement ok
+SET disabled_optimizers = '';
+
+# DOCS_TEST: example_004
+
+statement error db error: ERROR: syntax error at or near "\.\."
+CREATE OR REPLACE TEMPORARY TABLE t1 AS
+    ...;
+
+statement error db error: ERROR: syntax error at or near "\.\."
+-- join on the result of the first query, t1
+CREATE OR REPLACE TEMPORARY TABLE t2 AS
+    SELECT * FROM t1 ...;
+
+query error db error: ERROR: syntax error at or near "\.\."
+-- compute the final result using t2
+SELECT * FROM t1 ...
+
+# DOCS_TEST: example_005
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+statement ok
+DROP TABLE IF EXISTS t2;

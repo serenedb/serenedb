@@ -1,0 +1,13 @@
+# DOCS_TEST: example_001
+
+statement error
+VACUUM articles;
+----
+db error: ERROR: Table with name articles does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: relation 'articles' not found\.
+VACUUM (UPDATE_INDEXES) articles;

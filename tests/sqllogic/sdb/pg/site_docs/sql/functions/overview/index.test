@@ -1,0 +1,80 @@
+# DOCS_TEST: example_001
+
+query
+SELECT replace(goose_name, 'goose', 'duck') AS duck_name
+FROM unnest(['African goose', 'Faroese goose', 'Hungarian goose', 'Pomeranian goose']) breed(goose_name);
+----
+duck_name
+African duck
+Faroese duck
+Hungarian duck
+Pomeranian duck
+
+# DOCS_TEST: example_002
+
+query
+SELECT goose_name.replace('goose', 'duck') AS duck_name
+FROM unnest(['African goose', 'Faroese goose', 'Hungarian goose', 'Pomeranian goose']) breed(goose_name);
+----
+duck_name
+African duck
+Faroese duck
+Hungarian duck
+Pomeranian duck
+
+# DOCS_TEST: example_003
+
+query
+SELECT ('hello world').replace(' ', '_');
+----
+replace
+hello_world
+
+# DOCS_TEST: example_004
+
+query
+SELECT (2).sqrt();
+----
+sqrt
+1.4142135623730951
+
+# DOCS_TEST: example_005
+
+query
+SELECT (m[1]).map_entries()
+FROM (VALUES ([MAP {'hello': 42}, MAP {'world': 42}])) t(m);
+----
+map_entries
+<slt:ignore>
+
+# DOCS_TEST: example_006
+
+query error db error: ERROR: syntax error at or near "\)"
+SELECT * FROM ('my_file.parquet').read_parquet();
+
+# DOCS_TEST: example_007
+
+query error
+SELECT (2).coalesce(0);
+----
+db error: ERROR: Scalar Function with name coalesce does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error db error: ERROR: Wrong number of arguments to IFNULL\.
+SELECT (2).ifnull(0);
+
+# DOCS_TEST: example_008
+
+statement ok
+SELECT DISTINCT ON(function_name)
+    function_name,
+    function_type,
+    return_type,
+    parameters,
+    parameter_types,
+    description
+FROM duckdb_functions()
+WHERE function_type = 'scalar'
+  AND function_name LIKE 'b%'
+ORDER BY function_name;

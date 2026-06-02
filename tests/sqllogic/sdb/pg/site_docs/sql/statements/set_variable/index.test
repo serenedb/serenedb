@@ -1,0 +1,126 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+SET VARIABLE my_var = 30;
+
+query
+SELECT 20 + getvariable('my_var') AS total;
+----
+total
+50
+
+# DOCS_TEST: example_002
+
+statement ok
+SET VARIABLE my_var = 30;
+
+statement ok
+SET VARIABLE my_var = 100;
+
+query
+SELECT 20 + getvariable('my_var') AS total;
+----
+total
+120
+
+# DOCS_TEST: example_003
+
+statement ok
+SET VARIABLE my_date = DATE '2018-07-13';
+
+statement ok
+SET VARIABLE my_string = 'Hello world';
+
+statement ok
+SET VARIABLE my_map = MAP {'k1': 10, 'k2': 20};
+
+# DOCS_TEST: example_004
+
+statement error (?i)Cannot open file .*
+-- write some CSV files
+COPY (SELECT 42 AS a) TO 'test1.csv';
+
+statement error (?i)Cannot open file .*
+COPY (SELECT 84 AS a) TO 'test2.csv';
+
+statement ok
+-- add a list of CSV files to a table
+CREATE TABLE csv_files (file VARCHAR);
+
+statement ok
+INSERT INTO csv_files VALUES ('test1.csv'), ('test2.csv');
+
+statement ok
+-- initialize a variable with the list of csv files
+SET VARIABLE list_of_files = (SELECT list(file) FROM csv_files);
+
+query error (?i)No files found that match the pattern .*
+-- read the CSV files
+SELECT * FROM read_csv(getvariable('list_of_files'), filename := True);
+
+# DOCS_TEST: example_005
+
+query
+SELECT getvariable('undefined_var') AS result;
+----
+result
+NULL
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_006
+
+statement ok
+SET VARIABLE column_to_exclude = 'col1';
+
+statement error db error: ERROR: relation "tbl" already exists
+CREATE TABLE tbl AS SELECT 12 AS col0, 34 AS col1, 56 AS col2;
+
+query
+SELECT COLUMNS(c -> c != getvariable('column_to_exclude')) FROM tbl;
+----
+id	name	col2	Some Column Name	i	a	b	c	number	number1	number2
+1	mark	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	5	beta	2	11	21	31	20	200	2000
+7	other	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_007
+
+statement ok
+SET VARIABLE my_var = 30;
+
+statement ok
+RESET VARIABLE my_var;
+
+query
+SELECT getvariable('my_var') AS my_var;
+----
+my_var
+NULL

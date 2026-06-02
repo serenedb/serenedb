@@ -1,0 +1,50 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE people (name VARCHAR, birth_date DATE);
+
+# DOCS_TEST: example_002
+
+query error (?i)No files found that match the pattern .*
+FROM read_csv('faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
+
+# DOCS_TEST: example_003
+
+query error (?i)No files found that match the pattern .*
+FROM read_csv(
+    'faulty.csv',
+    columns = {'name': 'VARCHAR', 'age': 'INTEGER'},
+    ignore_errors = true
+);
+
+# DOCS_TEST: example_004
+
+query error (?i)No files found that match the pattern .*
+SELECT name
+FROM read_csv('faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
+
+# DOCS_TEST: example_005
+
+query error (?i)No files found that match the pattern .*
+FROM read_csv(
+    'faulty.csv',
+    columns = {'name': 'VARCHAR', 'age': 'INTEGER'},
+    store_rejects = true
+);
+
+# DOCS_TEST: example_006
+
+query error
+FROM reject_scans;
+----
+db error: ERROR: Table with name reject_scans does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_007
+
+query error
+FROM reject_errors;
+----
+db error: ERROR: Table with name reject_errors does not exist!
+Did you mean "<slt:ignore>"?

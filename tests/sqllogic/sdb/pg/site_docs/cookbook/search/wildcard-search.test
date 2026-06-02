@@ -1,0 +1,82 @@
+# DOCS_TEST: example_001
+
+query error
+SELECT id, title, genre
+FROM movies_idx
+WHERE TERM_LIKE(genre, 'sci%')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+query error
+SELECT id, title, genre
+FROM movies_idx
+WHERE TERM_LIKE(genre, '%dy')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+query error
+SELECT id, title, genre
+FROM movies_idx
+WHERE TERM_LIKE(genre, '%vent%')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+query error
+SELECT id, title, genre
+FROM movies_idx
+WHERE TERM_LIKE(genre, 'co_edy')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_005
+
+query error
+SELECT id, title
+FROM movies_idx
+WHERE TERM_LIKE(description, 'h_____')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+query error
+SELECT id, title
+FROM movies_idx
+WHERE TERM_LIKE(description, 'block%')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_007
+
+query error
+SELECT id, title, genre
+FROM movies_idx
+WHERE TERM_LIKE(genre, 'sci%') AND PHRASE(description, 'alien')
+ORDER BY id;
+----
+db error: ERROR: Table with name movies_idx does not exist!
+Did you mean "<slt:ignore>"?

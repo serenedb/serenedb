@@ -1,0 +1,30 @@
+# DOCS_TEST: example_001
+
+statement error
+INSTALL httpfs;
+----
+db error: ERROR: Failed to download extension "httpfs" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/httpfs.duckdb_extension.gz"
+Extension "httpfs" is an existing extension.
+
+For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=httpfs (ERROR Problem with the SSL CA cert (path? access rights?))
+
+
+# DOCS_TEST: example_002
+
+statement ok
+LOAD httpfs;
+
+# DOCS_TEST: example_003
+
+query error (?i)Could not resolve hostname error .*
+SELECT * FROM read_parquet('https://⟨domain⟩/path/to/file.parquet');
+
+# DOCS_TEST: example_004
+
+query error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://duckdb\.org/data/prices\.parquet'
+SELECT * FROM read_parquet('https://duckdb.org/data/prices.parquet');
+
+# DOCS_TEST: example_005
+
+query error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://duckdb\.org/data/holdings\.parquet'
+SELECT * FROM 'https://duckdb.org/data/holdings.parquet';

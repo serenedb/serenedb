@@ -1,0 +1,185 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+query
+SELECT list_transform(
+        list_filter([0, 1, 2, 3, 4, 5], lambda x: x % 2 = 0),
+        lambda y: y * y
+    );
+----
+list_transform
+{0,4,16}
+
+# DOCS_TEST: example_002
+
+query
+SELECT list_transform(
+        [1, 2, 3],
+        lambda x :
+            list_reduce([4, 5, 6], lambda a, b: a + b) + x
+    );
+----
+list_transform
+{16,17,18}
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_003
+
+statement error db error: ERROR: relation "tbl" already exists
+CREATE TABLE tbl (x INTEGER);
+
+statement error db error: ERROR: table tbl has 12 columns but 1 values were supplied
+INSERT INTO tbl VALUES (10);
+
+query error
+SELECT list_apply(
+            [1, 2],
+            lambda x: list_apply([4], lambda x: x + tbl.x)[1] + x
+    )
+FROM tbl;
+----
+db error: ERROR: Table "tbl" does not have a column named "x"
+
+Candidate bindings: : "a", "b", "c", "col1", "col2"
+
+
+# DOCS_TEST: example_004
+
+query
+SELECT list_filter([1, 3, 1, 5], lambda x, i: x > i);
+----
+list_filter
+{3,5}
+
+# DOCS_TEST: example_005
+
+query
+SELECT list_transform([1, 2, NULL, 3], lambda x: x + 1);
+----
+list_transform
+{2,3,NULL,4}
+
+# DOCS_TEST: example_006
+
+query
+SELECT list_transform(['Duck', 'Goose', 'Sparrow'], lambda s: concat(s, 'DB'));
+----
+list_transform
+{DuckDB,GooseDB,SparrowDB}
+
+# DOCS_TEST: example_007
+
+query
+SELECT list_transform([5, NULL, 6], lambda x: coalesce(x, 0) + 1);
+----
+list_transform
+{6,1,7}
+
+# DOCS_TEST: example_008
+
+query
+SELECT list_filter([5, -6, NULL, 7], lambda x: x > 0);
+----
+list_filter
+{5,7}
+
+# DOCS_TEST: example_009
+
+query
+SELECT list_filter(
+        list_filter([2, 4, 3, 1, 20, 10, 3, 30], lambda x: x % 2 = 0),
+        lambda y: y % 5 = 0
+    );
+----
+list_filter
+{20,10,30}
+
+# DOCS_TEST: example_010
+
+query error
+SELECT list_filter([1, 2, 3, 4], lambda x: x > #1) FROM range(4);
+----
+db error: ERROR: Scalar Function with name # does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_011
+
+query
+SELECT list_reduce([1, 2, 3, 4], lambda acc, x: acc + x);
+----
+list_reduce
+10
+
+# DOCS_TEST: example_012
+
+query
+SELECT list_reduce(
+        list_filter([1, 2, 3, 4], lambda x: x > 2),
+        lambda acc, x: acc + x
+    );
+----
+list_reduce
+7
+
+# DOCS_TEST: example_013
+
+query
+SELECT list_reduce(['DuckDB', 'is', 'awesome'], lambda acc, x: concat(acc, ' ', x));
+----
+list_reduce
+DuckDB is awesome
+
+# DOCS_TEST: example_014
+
+query
+SELECT list_reduce(
+        ['a', 'b', 'c', 'd'],
+        lambda x, y, i: x || ' - ' || CAST(i AS VARCHAR) || ' - ' || y
+    );
+----
+list_reduce
+a - 2 - b - 3 - c - 4 - d
+
+# DOCS_TEST: example_015
+
+query
+SELECT list_reduce(
+        ['a', 'b', 'c', 'd'],
+        lambda x, y, i: x || ' - ' || CAST(i AS VARCHAR) || ' - ' || y, 'INITIAL'
+    );
+----
+list_reduce
+INITIAL - 1 - a - 2 - b - 3 - c - 4 - d
+
+# DOCS_TEST: example_016
+
+query error db error: ERROR: subqueries in lambda expressions are not supported
+SELECT list_apply([1, 2, 3], lambda x: (SELECT 42) + x);

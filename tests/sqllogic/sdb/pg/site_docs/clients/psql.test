@@ -1,0 +1,13 @@
+# DOCS_TEST: example_001
+
+query error
+SELECT title, rating FROM movies WHERE year > 2015 ORDER BY rating DESC LIMIT 5;
+----
+db error: ERROR: Table with name movies does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+statement error db error: ERROR: syntax error at or near "\\"
+\copy movies FROM 'movies.csv' WITH (FORMAT CSV, HEADER TRUE);

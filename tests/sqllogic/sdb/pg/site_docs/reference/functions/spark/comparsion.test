@@ -1,0 +1,103 @@
+# DOCS_TEST: example_001
+
+query error
+SELECT equalnullsafe(null, null);
+----
+db error: ERROR: Scalar Function with name equalnullsafe does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT equalnullsafe(null, ARRAY[1]);
+----
+db error: ERROR: Scalar Function with name equalnullsafe does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT equalnullsafe(ARRAY[1, null], ARRAY[1, null]);
+----
+db error: ERROR: Scalar Function with name equalnullsafe does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+query error
+SELECT equalto(null, null);
+----
+db error: ERROR: Scalar Function with name equalto does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT equalto(null, ARRAY[1]);
+----
+db error: ERROR: Scalar Function with name equalto does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT equalto(ARRAY[1, null], ARRAY[1, null]);
+----
+db error: ERROR: Scalar Function with name equalto does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+query
+SELECT greatest(10, 9, 2, 4, 3);
+----
+greatest
+10
+
+query
+SELECT greatest(10, 9, 2, 4, 3, null);
+----
+greatest
+10
+
+query
+SELECT greatest(null, null) - null
+----
+?column?
+NULL
+
+# DOCS_TEST: example_004
+
+query error
+SELECT isnotnull(1);
+----
+db error: ERROR: Scalar Function with name isnotnull does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_005
+
+query error
+SELECT isnull(1);
+----
+db error: ERROR: Scalar Function with name isnull does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+query
+SELECT least(10, 9, 2, 4, 3);
+----
+least
+2
+
+query
+SELECT least(10, 9, 2, 4, 3, null);
+----
+least
+2
+
+query
+SELECT least(null, null) - null
+----
+?column?
+NULL

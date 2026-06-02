@@ -1,0 +1,29 @@
+# DOCS_TEST: example_001
+
+query error (?i)No files found that match the pattern .*
+SELECT *
+FROM read_parquet('flights*.parquet', union_by_name = true);
+
+# DOCS_TEST: example_002
+
+statement error (?i)Failed to create directory .*
+COPY
+    (FROM generate_series(10_000_000))
+    TO 'test.parquet'
+    (FORMAT parquet, PER_THREAD_OUTPUT);
+
+# DOCS_TEST: example_003
+
+statement error (?i)Cannot open file .*
+COPY
+    (FROM generate_series(100_000))
+    TO 'row-groups.parquet'
+    (FORMAT parquet, ROW_GROUP_SIZE 100_000);
+
+# DOCS_TEST: example_004
+
+statement error (?i)Failed to create directory .*
+COPY
+    (FROM generate_series(100_000))
+    TO 'output-directory'
+    (FORMAT parquet, ROW_GROUP_SIZE 20_000, ROW_GROUPS_PER_FILE 2);

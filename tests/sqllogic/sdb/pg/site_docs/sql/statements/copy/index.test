@@ -1,0 +1,466 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement error
+COPY lineitem FROM 'lineitem.csv';
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_002
+
+statement error
+COPY lineitem FROM 'lineitem.csv' (DELIMITER '|');
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_003
+
+statement error
+COPY lineitem FROM 'lineitem.pq' (FORMAT parquet);
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_004
+
+statement error
+COPY lineitem FROM 'lineitem.json' (FORMAT json, AUTO_DETECT true);
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_005
+
+statement error
+COPY lineitem FROM "lineitem.csv";
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_006
+
+statement error
+COPY lineitem FROM lineitem.csv;
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_007
+
+statement error
+COPY lineitem TO 'lineitem.csv' (FORMAT csv, DELIMITER '|', HEADER);
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_008
+
+statement error
+COPY lineitem TO "lineitem.csv";
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_009
+
+statement error
+COPY lineitem TO lineitem.csv;
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_010
+
+statement error
+COPY (SELECT l_orderkey, l_partkey FROM lineitem) TO 'lineitem.parquet' (COMPRESSION zstd);
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DETACH IF EXISTS db1;
+
+statement ok
+DETACH IF EXISTS db2;
+
+statement ok
+ATTACH ':memory:' AS db1;
+
+statement ok
+ATTACH ':memory:' AS db2;
+
+statement ok
+CREATE TABLE db1.tbl1 AS SELECT 42 AS x, 3 AS y;
+
+# DOCS_TEST: example_011
+
+statement ok
+COPY FROM DATABASE db1 TO db2;
+
+# DOCS_TEST: example_012
+
+statement error db error: ERROR: Table with name "tbl1" already exists!
+COPY FROM DATABASE db1 TO db2 (SCHEMA);
+
+# DOCS_TEST: example_013
+
+statement error
+COPY test FROM 'test.csv';
+----
+db error: ERROR: Table with name test does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_014
+
+statement error
+COPY category FROM 'categories.csv' (HEADER);
+----
+db error: ERROR: Table with name category does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_015
+
+statement error
+COPY lineitem FROM 'lineitem.tbl' (DELIMITER '|');
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_016
+
+statement error
+COPY lineitem FROM 'lineitem.tbl' (AUTO_DETECT true);
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_017
+
+statement error
+COPY category(name) FROM 'names.csv';
+----
+db error: ERROR: Table with name category does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_018
+
+statement error
+COPY lineitem FROM 'lineitem.parquet' (FORMAT parquet);
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_019
+
+statement error
+COPY lineitem FROM 'lineitem.ndjson' (FORMAT json);
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_020
+
+statement error
+COPY lineitem FROM 'lineitem.json' (FORMAT json, ARRAY true);
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_021
+
+statement ok
+SET VARIABLE source_file = 'lineitem.json';
+
+statement error
+COPY lineitem FROM (getvariable('source_file'));
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_022
+
+statement error substitution failed: No such variable: \$1
+PREPARE v1 AS COPY lineitem FROM ($1);
+
+query error db error: ERROR: Prepared statement "v1" does not exist
+EXECUTE v1('lineitem.json');
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST: example_023
+
+statement error (?i)No files found that match the pattern .*
+COPY tbl FROM 'tbl.csv' WITH DELIMITER '|' CSV HEADER;
+
+# DOCS_TEST: example_024
+
+statement error
+COPY lineitem TO 'lineitem.csv';
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_025
+
+statement error
+COPY lineitem TO 'lineitem.tbl' (DELIMITER '|');
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_026
+
+statement error substitution failed: Invalid escape sequence: \\t
+COPY lineitem TO 'lineitem.tsv' (DELIMITER '\t', HEADER false);
+
+# DOCS_TEST: example_027
+
+statement error
+COPY lineitem(l_orderkey) TO 'orderkey.tbl' (DELIMITER '|');
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_028
+
+statement error (?i)Cannot open file .*
+COPY (SELECT 42 AS a, 'hello' AS b) TO 'query.csv' (DELIMITER ',');
+
+# DOCS_TEST: example_029
+
+statement error (?i)Cannot open file .*
+COPY (SELECT 42 AS a, 'hello' AS b) TO 'query.parquet' (FORMAT parquet);
+
+# DOCS_TEST: example_030
+
+statement error (?i)Cannot open file .*
+COPY (SELECT 42 AS a, 'hello' AS b) TO 'query.ndjson' (FORMAT json);
+
+# DOCS_TEST: example_031
+
+statement error (?i)Cannot open file .*
+COPY (SELECT 42 AS a, 'hello' AS b) TO 'query.json' (FORMAT json, ARRAY true);
+
+# DOCS_TEST: example_032
+
+statement error
+COPY (SELECT l_orderkey, l_comment FROM lineitem) TO 'lineitem_part.parquet' (RETURN_STATS);
+----
+db error: ERROR: Table with name lineitem does not exist!
+Did you mean "<slt:ignore>"?
+
+
+# DOCS_TEST: example_033
+
+statement ok
+SET VARIABLE target_file = 'target_file.parquet';
+
+statement error (?i)Cannot open file .*
+COPY (SELECT 'hello world') TO (getvariable('target_file'));
+
+# DOCS_SETUP
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DEALLOCATE v1;
+
+# DOCS_TEST: example_034
+
+statement error substitution failed: No such variable: \$1
+PREPARE v1 AS COPY (SELECT 42 AS i) to $1;
+
+query error db error: ERROR: Prepared statement "v1" does not exist
+EXECUTE v1('file.csv');
+
+# DOCS_TEST: example_035
+
+statement ok
+SET VARIABLE my_format = 'parquet';
+
+statement error (?i)Cannot open file .*
+COPY (SELECT 42 AS i) TO 'file' (FORMAT getvariable('my_format'));
+
+# DOCS_TEST: example_036
+
+statement error (?i)Cannot open file .*
+COPY (SELECT 42 AS x, 84 AS y) TO 'out.csv' WITH DELIMITER '|' CSV HEADER;
+
+# DOCS_TEST: example_037
+
+statement error (?i)(Cannot open file .*|Failed to attach database: database with name .* already exists)
+ATTACH 'db1.db' AS db1;
+
+statement ok
+CREATE TABLE db1.tbl AS SELECT 42 AS x, 3 AS y;
+
+statement ok
+CREATE MACRO db1.two_x_plus_y(x, y) AS 2 * x + y;
+
+statement error (?i)(Cannot open file .*|Failed to attach database: database with name .* already exists)
+ATTACH 'db2.db' AS db2;
+
+statement error db error: ERROR: Table with name "tbl1" already exists!
+COPY FROM DATABASE db1 TO db2;
+
+query error db error: ERROR: Scalar Function with name two_x_plus_y does not exist!
+SELECT db2.two_x_plus_y(x, y) AS z FROM db2.tbl;
+
+# DOCS_TEST: example_038
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+COPY FROM DATABASE db1 TO db2 (SCHEMA);
+
+# DOCS_TEST: example_039
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+COPY
+    (SELECT 128 AS i)
+    TO 'my.parquet'
+    (FIELD_IDS 'auto');
+
+# DOCS_TEST: example_040
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+COPY
+    (SELECT 128 AS i)
+    TO 'my.parquet'
+    (FIELD_IDS {i: 42});
+
+# DOCS_TEST: example_041
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+COPY
+    (SELECT 128 AS i, 256 AS j)
+    TO 'my.parquet'
+    (FIELD_IDS {i: 42, j: 43});
+
+# DOCS_TEST: example_042
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+COPY
+    (SELECT {i: 128} AS my_struct)
+    TO 'my.parquet'
+    (FIELD_IDS {my_struct: {__duckdb_field_id: 42, i: 43}});
+
+# DOCS_TEST: example_043
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+COPY
+    (SELECT [128, 256] AS my_list)
+    TO 'my.parquet'
+    (FIELD_IDS {my_list: {__duckdb_field_id: 42, element: 43}});
+
+# DOCS_TEST: example_044
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+COPY
+    (SELECT MAP {'key1' : 128, 'key2': 256} my_map)
+    TO 'my.parquet'
+    (FIELD_IDS {my_map: {__duckdb_field_id: 42, key: 43, value: 44}});
+
+# DOCS_TEST: example_045
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+COPY (SELECT 'QUACK!' AS hello) TO 'quack.json';
+
+# DOCS_TEST: example_046
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+COPY (SELECT [1, 2, 3] AS num_list) TO 'numbers.json';
+
+# DOCS_TEST: example_047
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+COPY (SELECT 'gzip_explicit' AS compression_type) TO 'explicit_compression.json' (FORMAT json, COMPRESSION 'GZIP');
+
+# DOCS_TEST: example_048
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+COPY (SELECT 1 AS id, 'Alice' AS name, [1, 2, 3] AS numbers
+      UNION ALL
+      SELECT 2, 'Bob', [4, 5, 6] AS numbers)
+TO 'array_true.json' (FORMAT json, ARRAY true);
+
+# DOCS_TEST: example_049
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+COPY (SELECT 1 AS id, 'Alice' AS name, [1, 2, 3] AS numbers
+      UNION ALL
+      SELECT 2, 'Bob', [4, 5, 6] AS numbers)
+TO 'array_false.json' (FORMAT json, ARRAY false);
+
+# DOCS_TEST: example_050
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+COPY (select 'foo'::BLOB) TO 'blob_output.blob' (FORMAT BLOB);
+
+# DOCS_TEST: example_051
+
+statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+COPY (select 'foo'::BLOB) TO 'blob_output_gzip.blob' (FORMAT BLOB, COMPRESSION 'GZIP');
+
+# DOCS_TEST: example_052
+
+statement error
+INSERT INTO tbl2
+    FROM tbl1;
+----
+db error: ERROR: Table with name tbl2 does not exist!
+Did you mean "<slt:ignore>"?

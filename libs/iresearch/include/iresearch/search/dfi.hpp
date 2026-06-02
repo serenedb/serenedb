@@ -22,6 +22,7 @@
 
 #include <cstdint>
 
+#include "basics/exceptions.h"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/scorer.hpp"
 
@@ -68,6 +69,9 @@ class DFI final : public irs::ScorerBase<DFI, DFIStats> {
   };
 
   static std::unique_ptr<DFI> Make(const Options& opts) {
+    if (opts.measure > DFIMeasure::ChiSquared) {
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER, "dfi: invalid measure");
+    }
     return std::make_unique<DFI>(opts.measure);
   }
 

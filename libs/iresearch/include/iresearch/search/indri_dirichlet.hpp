@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <cmath>
+
+#include "basics/exceptions.h"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/lm_similarity.hpp"
 #include "iresearch/search/scorer.hpp"
@@ -51,8 +54,9 @@ class IndriDirichlet final : public irs::ScorerBase<IndriDirichlet, LMStats> {
   };
 
   static std::unique_ptr<IndriDirichlet> Make(const Options& opts) {
-    if (opts.mu < 0.f) {
-      return nullptr;
+    if (opts.mu < 0.f || !std::isfinite(opts.mu)) {
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+                "indri_dirichlet: mu must be a non-negative finite value");
     }
     return std::make_unique<IndriDirichlet>(opts.mu);
   }

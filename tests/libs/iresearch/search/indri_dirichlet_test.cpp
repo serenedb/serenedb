@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <limits>
 #include <map>
 
 #include "index/index_tests.hpp"
@@ -58,10 +59,14 @@ TEST(indri_dirichlet_test, load_object) {
 TEST(indri_dirichlet_test, load_invalid) {
   // μ must be non-negative -- it scales the collection prior; a negative μ
   // produces a meaningless ratio.
-  EXPECT_EQ(nullptr, irs::IndriDirichlet::Make(
-                       irs::IndriDirichlet::Options{.mu = -1.f}));
-  EXPECT_EQ(nullptr, irs::IndriDirichlet::Make(
-                       irs::IndriDirichlet::Options{.mu = -0.001f}));
+  EXPECT_ANY_THROW(
+    irs::IndriDirichlet::Make(irs::IndriDirichlet::Options{.mu = -1.f}));
+  EXPECT_ANY_THROW(
+    irs::IndriDirichlet::Make(irs::IndriDirichlet::Options{.mu = -0.001f}));
+  EXPECT_ANY_THROW(irs::IndriDirichlet::Make(irs::IndriDirichlet::Options{
+    .mu = std::numeric_limits<float>::quiet_NaN()}));
+  EXPECT_ANY_THROW(irs::IndriDirichlet::Make(irs::IndriDirichlet::Options{
+    .mu = std::numeric_limits<float>::infinity()}));
   // Boundary: μ = 0 is allowed (degenerate).
   EXPECT_NE(nullptr,
             irs::IndriDirichlet::Make(irs::IndriDirichlet::Options{.mu = 0.f}));

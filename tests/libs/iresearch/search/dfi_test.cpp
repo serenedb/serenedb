@@ -70,10 +70,10 @@ TEST(dfi_test, load_measures) {
 }
 
 TEST(dfi_test, load_invalid) {
-  EXPECT_EQ(nullptr, irs::DFI::Make(irs::DFI::Options{
-                       .measure = static_cast<irs::DFIMeasure>(99)}));
-  EXPECT_EQ(nullptr, irs::DFI::Make(irs::DFI::Options{
-                       .measure = static_cast<irs::DFIMeasure>(3)}));
+  EXPECT_ANY_THROW(irs::DFI::Make(
+    irs::DFI::Options{.measure = static_cast<irs::DFIMeasure>(99)}));
+  EXPECT_ANY_THROW(irs::DFI::Make(
+    irs::DFI::Options{.measure = static_cast<irs::DFIMeasure>(3)}));
   // Each named value is accepted.
   EXPECT_NE(nullptr, irs::DFI::Make(irs::DFI::Options{
                        .measure = irs::DFIMeasure::Standardized}));

@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <limits>
 #include <map>
 
 #include "formats/column/test_cs_helpers.hpp"
@@ -72,12 +73,12 @@ TEST(lm_test, jm_load_array) {
 TEST(lm_test, jm_load_invalid) {
   // λ must lie in the open interval (0, 1] -- both `1-lambda` and `lambda`
   // must be positive for the smoothing formula to be defined.
-  EXPECT_EQ(nullptr, irs::LMJelinekMercer::Make(
-                       irs::LMJelinekMercer::Options{.lambda = 0.f}));
-  EXPECT_EQ(nullptr, irs::LMJelinekMercer::Make(
-                       irs::LMJelinekMercer::Options{.lambda = -0.1f}));
-  EXPECT_EQ(nullptr, irs::LMJelinekMercer::Make(
-                       irs::LMJelinekMercer::Options{.lambda = 1.5f}));
+  EXPECT_ANY_THROW(
+    irs::LMJelinekMercer::Make(irs::LMJelinekMercer::Options{.lambda = 0.f}));
+  EXPECT_ANY_THROW(
+    irs::LMJelinekMercer::Make(irs::LMJelinekMercer::Options{.lambda = -0.1f}));
+  EXPECT_ANY_THROW(
+    irs::LMJelinekMercer::Make(irs::LMJelinekMercer::Options{.lambda = 1.5f}));
   // Boundary: λ = 1 is allowed (degenerate but mathematically defined).
   EXPECT_NE(nullptr, irs::LMJelinekMercer::Make(
                        irs::LMJelinekMercer::Options{.lambda = 1.f}));
@@ -119,10 +120,14 @@ TEST(lm_test, dirichlet_load_object) {
 TEST(lm_test, dirichlet_load_invalid) {
   // μ must be non-negative -- it scales the collection prior and divides by
   // (dl + μ); a negative μ makes the score uninterpretable.
-  EXPECT_EQ(nullptr,
-            irs::LMDirichlet::Make(irs::LMDirichlet::Options{.mu = -1.f}));
-  EXPECT_EQ(nullptr,
-            irs::LMDirichlet::Make(irs::LMDirichlet::Options{.mu = -0.001f}));
+  EXPECT_ANY_THROW(
+    irs::LMDirichlet::Make(irs::LMDirichlet::Options{.mu = -1.f}));
+  EXPECT_ANY_THROW(
+    irs::LMDirichlet::Make(irs::LMDirichlet::Options{.mu = -0.001f}));
+  EXPECT_ANY_THROW(irs::LMDirichlet::Make(
+    irs::LMDirichlet::Options{.mu = std::numeric_limits<float>::quiet_NaN()}));
+  EXPECT_ANY_THROW(irs::LMDirichlet::Make(
+    irs::LMDirichlet::Options{.mu = std::numeric_limits<float>::infinity()}));
   // Boundary: μ = 0 is allowed (degenerate -- falls back to MLE).
   EXPECT_NE(nullptr,
             irs::LMDirichlet::Make(irs::LMDirichlet::Options{.mu = 0.f}));

@@ -37,7 +37,6 @@
 
 namespace sdb::basics {
 
-
 class JsonSink {
   using StringBuilder = simdjson::builder::string_builder;
 

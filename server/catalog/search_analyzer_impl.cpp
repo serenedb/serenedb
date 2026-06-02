@@ -34,7 +34,6 @@
 #include "catalog/object.h"
 
 namespace sdb::search {
-
 namespace {
 
 constexpr containers::TrivialSet kGeoAnalyzers = [](auto selector) {

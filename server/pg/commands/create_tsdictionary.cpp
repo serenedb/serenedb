@@ -91,7 +91,6 @@ customize::enum_name<irs::analysis::SegmentationTokenizer::Options::Accept>(
 }
 
 }  // namespace magic_enum
-
 namespace sdb::pg {
 namespace {
 

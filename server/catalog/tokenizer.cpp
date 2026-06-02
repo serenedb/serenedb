@@ -36,18 +36,13 @@
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "basics/serializer.h"
+#include "catalog/persistence/tokenizer.h"
 #include "catalog/search_analyzer_impl.h"
 
 namespace sdb::catalog {
 namespace {
 
-// Persistent on-disk catalog format.
-struct TokenizerData {
-  std::string name;
-  irs::analysis::TokenizerConfig config;
-  search::Features features;
-  uint32_t norm_row_group_size = 0;
-};
+using persistence::TokenizerData;
 
 }  // namespace
 

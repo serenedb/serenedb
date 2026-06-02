@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,29 +20,31 @@
 
 #pragma once
 
-#include <memory>
+#include <cstdint>
+#include <duckdb/common/types.hpp>
 #include <optional>
 #include <string>
-#include <string_view>
+#include <vector>
 
 #include "catalog/persistence/scorer_options.h"
+#include "catalog/table_options.h"
 
-namespace duckdb {
+namespace sdb::catalog::persistence {
 
-class BoundFunctionExpression;
-class ClientContext;
+struct InvertedIndexOptions {
+  uint32_t row_group_size = 0;
+  uint32_t norm_row_group_size = 0;
+  uint32_t refresh_interval_ms = 0;
+  uint32_t compaction_interval_ms = 0;
+  uint32_t cleanup_interval_step = 0;
+  std::optional<ScorerOptions> topk_scorer;
+};
 
-}  // namespace duckdb
-namespace sdb::catalog {
+struct ExpressionData {
+  std::string serialized_expr;
+  std::vector<Column::Id> dependent_columns;
+  duckdb::LogicalType return_type;
+  std::string pretty_printed;
+};
 
-using persistence::ScorerOptions;
-
-std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec);
-
-std::optional<ScorerOptions> ExtractScorerFromBound(
-  const duckdb::BoundFunctionExpression& func, std::string_view name);
-
-ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
-                                    std::string input);
-
-}  // namespace sdb::catalog
+}  // namespace sdb::catalog::persistence

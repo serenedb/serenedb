@@ -21,14 +21,14 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string_view>
 
 #include "basics/common.h"
 
 namespace sdb::auth {
 
-/// Supported access levels for data
-enum class Level : char {
+enum class Level : uint8_t {
   Undefined = 0,
   None = 1,
   RO = 2,

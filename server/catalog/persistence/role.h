@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,29 +20,23 @@
 
 #pragma once
 
-#include <memory>
-#include <optional>
+#include <absl/container/node_hash_map.h>
+
 #include <string>
-#include <string_view>
 
-#include "catalog/persistence/scorer_options.h"
+#include "auth/common.h"
+#include "catalog/identifiers/object_id.h"
 
-namespace duckdb {
+namespace sdb::catalog::persistence {
 
-class BoundFunctionExpression;
-class ClientContext;
+struct RoleData {
+  ObjectId id;
+  std::string name;
+  bool active = true;
+  std::string password_method;
+  std::string password_salt;
+  std::string password_hash;
+  absl::node_hash_map<std::string, auth::Level> db_access;
+};
 
-}  // namespace duckdb
-namespace sdb::catalog {
-
-using persistence::ScorerOptions;
-
-std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec);
-
-std::optional<ScorerOptions> ExtractScorerFromBound(
-  const duckdb::BoundFunctionExpression& func, std::string_view name);
-
-ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
-                                    std::string input);
-
-}  // namespace sdb::catalog
+}  // namespace sdb::catalog::persistence

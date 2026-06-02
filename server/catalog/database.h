@@ -21,6 +21,7 @@
 #pragma once
 
 #include "catalog/object.h"
+#include "catalog/persistence/database.h"
 
 namespace duckdb {
 
@@ -30,10 +31,7 @@ class Deserializer;
 }  // namespace duckdb
 namespace sdb::catalog {
 
-// Persistent on-disk catalog format.
-struct DatabaseOptions {
-  std::string name;
-};
+using persistence::DatabaseOptions;
 
 class Database final : public Object {
  public:

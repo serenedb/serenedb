@@ -29,6 +29,7 @@
 #include <string>
 
 #include "catalog/object.h"
+#include "catalog/persistence/sequence.h"
 
 namespace duckdb {
 
@@ -44,19 +45,7 @@ class DB;
 }  // namespace rocksdb
 namespace sdb::catalog {
 
-// Persistent on-disk catalog format.
-struct SequenceOptions {
-  std::string name;
-  uint64_t start_value = 1;
-  uint64_t increment = 1;
-  uint64_t min_value = 1;
-  uint64_t max_value = std::numeric_limits<int64_t>::max();
-  uint64_t cache = 1;
-  uint64_t owner_table_id = 0;
-  bool cycle = false;
-
-  uint64_t Seed() const noexcept { return start_value - increment; }
-};
+using persistence::SequenceOptions;
 
 class Table;
 

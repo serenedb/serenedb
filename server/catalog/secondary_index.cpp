@@ -24,16 +24,12 @@
 #include <duckdb/common/serializer/serializer.hpp>
 
 #include "basics/serializer.h"
+#include "catalog/persistence/secondary_index.h"
 
 namespace sdb::catalog {
 namespace {
 
-// Persistent on-disk catalog format.
-struct SecondaryIndexData {
-  std::string name;
-  std::vector<Column::Id> column_ids;
-  bool unique = false;
-};
+using persistence::SecondaryIndexData;
 
 std::shared_ptr<SecondaryIndex> FromData(SecondaryIndexData data,
                                          ReadContext ctx) {

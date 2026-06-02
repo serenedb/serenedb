@@ -35,6 +35,7 @@
 #include "basics/down_cast.h"
 #include "basics/serializer.h"
 #include "catalog/catalog.h"
+#include "catalog/persistence/inverted_index.h"
 #include "database/ticks.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
@@ -64,73 +65,15 @@ ResultOr<ColumnTokenizer> BuildColumnTokenizer(
                          .features = features.GetIndexFeatures()};
 }
 
-// Persistent on-disk catalog format.
-struct ColumnSerialized {
-  ObjectId text_dictionary = ObjectId::none();
-  bool store_values = false;
-  duckdb::CompressionType compression =
-    duckdb::CompressionType::COMPRESSION_AUTO;
-  search::Features features;
-  std::optional<HNSWColumnConfig> hnsw_config;
-  std::optional<irs::field_id> synthetic_column;
-  uint32_t row_group_size = 0;
-  uint32_t norm_row_group_size = 0;
-};
+using persistence::ColumnSerialized;
+using persistence::ColumnSerializedMap;
+using persistence::ExpressionSerialized;
+using persistence::InvertedIndexData;
 
-// Persistent on-disk catalog format.
-struct ExpressionSerialized {
-  std::string serialized_expr;
-  std::vector<Column::Id> dependent_columns;
-  duckdb::LogicalType return_type;
-  ObjectId text_dictionary = ObjectId::none();
-  search::Features features;
-  irs::field_id field_id = 0;
-  std::optional<irs::field_id> synthetic_column;
-  uint32_t norm_row_group_size = 0;
-  std::string pretty_printed;
-
-  struct HasherBySerialized {
-    using is_transparent = void;
-
-    size_t operator()(std::string_view sv) const { return absl::HashOf(sv); }
-    size_t operator()(const ExpressionSerialized& info) const {
-      return (*this)(info.serialized_expr);
-    }
-
-    bool operator()(const ExpressionSerialized& a, std::string_view b) const {
-      return a.serialized_expr == b;
-    }
-    bool operator()(const ExpressionSerialized& a,
-                    const ExpressionSerialized& b) const {
-      return a.serialized_expr == b.serialized_expr;
-    }
-  };
-};
-
-using ColumnSerializedMap =
-  containers::NodeHashMap<Column::Id, ColumnSerialized>;
 using ExpressionSerializedSet =
   containers::NodeHashSet<ExpressionSerialized,
                           ExpressionSerialized::HasherBySerialized,
                           ExpressionSerialized::HasherBySerialized>;
-
-}  // namespace
-
-ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
-  bool is_new, ObjectId id) const {
-  return search::InvertedIndexShard::Create(id, *this, is_new);
-}
-
-namespace {
-
-// Persistent on-disk catalog format.
-struct InvertedIndexData {
-  std::string name;
-  std::vector<Column::Id> column_ids;
-  ColumnSerializedMap columns;
-  std::vector<ExpressionSerialized> expressions;
-  InvertedIndexOptions options;
-};
 
 InvertedIndexData PackEntries(std::string_view name,
                               std::span<const Column::Id> column_ids,
@@ -144,14 +87,14 @@ InvertedIndexData PackEntries(std::string_view name,
     if (const auto* expr = entry.GetExpressionData()) {
       data.expressions.push_back(ExpressionSerialized{
         .serialized_expr = expr->serialized_expr,
+        .pretty_printed = expr->pretty_printed,
         .dependent_columns = expr->dependent_columns,
         .return_type = expr->return_type,
-        .text_dictionary = entry.text_dictionary,
-        .features = entry.features,
-        .field_id = field_id,
         .synthetic_column = entry.synthetic_column,
+        .text_dictionary = entry.text_dictionary,
+        .field_id = field_id,
         .norm_row_group_size = entry.norm_row_group_size,
-        .pretty_printed = expr->pretty_printed,
+        .features = entry.features,
       });
     } else {
       data.columns.emplace(static_cast<Column::Id>(field_id),
@@ -211,6 +154,11 @@ std::shared_ptr<InvertedIndex> UnpackEntries(InvertedIndexData data,
 }
 
 }  // namespace
+
+ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
+  bool is_new, ObjectId id) const {
+  return search::InvertedIndexShard::Create(id, *this, is_new);
+}
 
 std::shared_ptr<InvertedIndex> InvertedIndex::Deserialize(
   duckdb::Deserializer& src, ReadContext ctx) {

@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,29 +20,19 @@
 
 #pragma once
 
-#include <memory>
-#include <optional>
+#include <cstdint>
+#include <iresearch/analysis/tokenizer_config.hpp>
 #include <string>
-#include <string_view>
 
-#include "catalog/persistence/scorer_options.h"
+#include "catalog/search_analyzer_impl.h"
 
-namespace duckdb {
+namespace sdb::catalog::persistence {
 
-class BoundFunctionExpression;
-class ClientContext;
+struct TokenizerData {
+  std::string name;
+  irs::analysis::TokenizerConfig config;
+  search::Features features;
+  uint32_t norm_row_group_size = 0;
+};
 
-}  // namespace duckdb
-namespace sdb::catalog {
-
-using persistence::ScorerOptions;
-
-std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec);
-
-std::optional<ScorerOptions> ExtractScorerFromBound(
-  const duckdb::BoundFunctionExpression& func, std::string_view name);
-
-ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
-                                    std::string input);
-
-}  // namespace sdb::catalog
+}  // namespace sdb::catalog::persistence

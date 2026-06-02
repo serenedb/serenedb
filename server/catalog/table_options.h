@@ -34,6 +34,7 @@
 #include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
+#include "catalog/persistence/table_stats.h"
 #include "catalog/sequence.h"
 #include "query/utils.h"
 
@@ -144,10 +145,7 @@ class CheckConstraint final : public Object {
   std::shared_ptr<ColumnExpr> expr;
 };
 
-// Persistent on-disk catalog format.
-struct TableStats {
-  uint64_t num_rows = 0;
-};
+using persistence::TableStats;
 
 struct CreateTableOptions {
   // LocalCatalog resolves the sequence name (mangling on collision), stamps

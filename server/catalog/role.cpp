@@ -104,9 +104,7 @@ RoleData Role::ToData() const {
     .password_hash = _password_hash,
   };
   for (const auto& [db_name, context] : _db_access) {
-    data.db_access.emplace(db_name,
-                           static_cast<std::underlying_type_t<auth::Level>>(
-                             context.database_auth_level));
+    data.db_access.emplace(db_name, context.database_auth_level);
   }
   return data;
 }
@@ -145,9 +143,9 @@ std::shared_ptr<Role> Role::FromData(RoleData data) {
   role->_password_method = std::move(data.password_method);
   role->_password_salt = std::move(data.password_salt);
   role->_password_hash = std::move(data.password_hash);
-  for (const auto& [db_name, raw_level] : data.db_access) {
+  for (const auto& [db_name, level] : data.db_access) {
     try {
-      role->grantDatabase(db_name, static_cast<auth::Level>(raw_level));
+      role->grantDatabase(db_name, level);
     } catch (const basics::Exception& e) {
       SDB_DEBUG(GENERAL, e.message());
     }

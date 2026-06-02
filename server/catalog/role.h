@@ -30,20 +30,11 @@
 #include "basics/containers/node_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
+#include "catalog/persistence/role.h"
 
 namespace sdb::catalog {
 
-// Persistent on-disk catalog format.
-struct RoleData {
-  ObjectId id;
-  std::string name;
-  bool active = true;
-  std::string password_method;
-  std::string password_salt;
-  std::string password_hash;
-  absl::node_hash_map<std::string, std::underlying_type_t<auth::Level>>
-    db_access;
-};
+using persistence::RoleData;
 
 class Role final : public catalog::Object {
  public:

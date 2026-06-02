@@ -31,20 +31,12 @@
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/serializer.h"
+#include "catalog/persistence/table.h"
 
 namespace sdb::catalog {
 namespace {
 
-// Persistent on-disk catalog format.
-struct TableData {
-  std::string name;
-  std::vector<Column> columns;
-  std::vector<Column::Id> pk_columns;
-  std::vector<CheckConstraint> check_constraints;
-  // Duckdb is positional, so we always write the slot; an unset ObjectId
-  // (default-constructed) is the "no generated PK sequence" sentinel.
-  ObjectId generated_pk_seq_id;
-};
+using persistence::TableData;
 
 }  // namespace
 

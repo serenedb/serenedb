@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,29 +20,23 @@
 
 #pragma once
 
-#include <memory>
-#include <optional>
+#include <cstdint>
+#include <limits>
 #include <string>
-#include <string_view>
 
-#include "catalog/persistence/scorer_options.h"
+namespace sdb::catalog::persistence {
 
-namespace duckdb {
+struct SequenceOptions {
+  std::string name;
+  uint64_t start_value = 1;
+  uint64_t increment = 1;
+  uint64_t min_value = 1;
+  uint64_t max_value = std::numeric_limits<int64_t>::max();
+  uint64_t cache = 1;
+  uint64_t owner_table_id = 0;
+  bool cycle = false;
 
-class BoundFunctionExpression;
-class ClientContext;
+  uint64_t Seed() const noexcept { return start_value - increment; }
+};
 
-}  // namespace duckdb
-namespace sdb::catalog {
-
-using persistence::ScorerOptions;
-
-std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec);
-
-std::optional<ScorerOptions> ExtractScorerFromBound(
-  const duckdb::BoundFunctionExpression& func, std::string_view name);
-
-ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
-                                    std::string input);
-
-}  // namespace sdb::catalog
+}  // namespace sdb::catalog::persistence

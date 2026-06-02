@@ -31,6 +31,7 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
 #include "catalog/index.h"
+#include "catalog/persistence/inverted_index.h"
 #include "catalog/scorer_options.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
@@ -63,13 +64,7 @@ constexpr bool IsNumericSliceKind(duckdb::LogicalTypeId kind) noexcept {
   }
 }
 
-// Persistent on-disk catalog format.
-struct HNSWColumnConfig {
-  int d = 0;
-  int m = 32;
-  int ef_construction = 40;
-  irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
-};
+using persistence::HNSWColumnConfig;
 
 struct InvertedIndexEntryInfo {
   ObjectId text_dictionary = ObjectId::none();

@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,29 +20,19 @@
 
 #pragma once
 
-#include <memory>
-#include <optional>
 #include <string>
-#include <string_view>
+#include <vector>
 
-#include "catalog/persistence/scorer_options.h"
+#include "catalog/table_options.h"
 
-namespace duckdb {
+namespace sdb::catalog::persistence {
 
-class BoundFunctionExpression;
-class ClientContext;
+struct TableData {
+  std::string name;
+  std::vector<Column> columns;
+  std::vector<Column::Id> pk_columns;
+  std::vector<CheckConstraint> check_constraints;
+  ObjectId generated_pk_seq_id;
+};
 
-}  // namespace duckdb
-namespace sdb::catalog {
-
-using persistence::ScorerOptions;
-
-std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec);
-
-std::optional<ScorerOptions> ExtractScorerFromBound(
-  const duckdb::BoundFunctionExpression& func, std::string_view name);
-
-ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
-                                    std::string input);
-
-}  // namespace sdb::catalog
+}  // namespace sdb::catalog::persistence

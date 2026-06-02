@@ -141,10 +141,6 @@ class AnalyzerImpl final {
   Features GetFeatures() const noexcept { return _features; }
   char GetFieldMarker() const noexcept { return _field_marker; }
 
-  // Native (no-vpack) entry point: `properties_bytes` is the duckdb-binary
-  // serialization of an `irs::analysis::TokenizerConfig` -- the same shape
-  // Builder::make consumes. Callers that already hold a serialized config
-  // feed it in directly.
   Result init(std::string_view type, std::string_view properties_bytes,
               Features features,
               FunctionValueType input_type = FunctionValueType::Invalid,

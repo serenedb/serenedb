@@ -162,9 +162,6 @@ class Object {
     _tombstoned.store(v, std::memory_order_release);
   }
 
-  // Persist this Object via duckdb's binary serializer. The wire bytes are
-  // what RocksDB stores under the object's DefinitionKey -- see
-  // catalog::SerializeObject below. This is the canonical persistence path.
   virtual void Serialize(duckdb::Serializer&) const = 0;
 
   virtual std::shared_ptr<Object> Clone() const = 0;

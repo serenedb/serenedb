@@ -72,9 +72,6 @@ void Tokenizer::PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept {
 }
 
 irs::analysis::Analyzer::ptr Tokenizer::CreateAnalyzer() const {
-  // `irs::analysis::CreateAnalyzer` consumes its argument (the per-template
-  // `Make(Options)` factory takes Options by value). Deep-clone so `_config`
-  // survives across repeated `GetTokenizer()` calls.
   return irs::analysis::CreateAnalyzer(irs::analysis::Clone(_config));
 }
 
@@ -99,9 +96,6 @@ std::shared_ptr<Tokenizer> Tokenizer::Deserialize(duckdb::Deserializer& src,
 void Tokenizer::Serialize(duckdb::Serializer& sink) const {
   TokenizerData data{
     .name = std::string{GetName()},
-    // Deep-clone -- TokenizerData carries TokenizerConfig by value, and the
-    // composite arms are move-only. basics::WriteTuple visits by const-ref so
-    // the clone is only consumed once (here) and `_config` is preserved.
     .config = irs::analysis::Clone(_config),
     .features = _features,
     .norm_row_group_size = _norm_row_group_size,

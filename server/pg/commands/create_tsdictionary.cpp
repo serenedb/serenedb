@@ -18,8 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_split.h>
 #include <unicode/locid.h>
 
 #include <iresearch/analysis/classification_tokenizer.hpp>
@@ -104,42 +106,19 @@ void VisitValues(auto&& callback) {
 
 void ParseCommaSeparated(std::string_view input,
                          std::invocable<std::string_view> auto&& callback) {
-  while (!input.empty()) {
-    auto pos = input.find(',');
-    auto token = input.substr(0, pos);
-    while (!token.empty() &&
-           std::isspace(static_cast<unsigned char>(token.front()))) {
-      token.remove_prefix(1);
-    }
-    while (!token.empty() &&
-           std::isspace(static_cast<unsigned char>(token.back()))) {
-      token.remove_suffix(1);
-    }
-    if (token.front() != '\"' || token.back() != '\"') {
+  for (std::string_view token :
+       absl::StrSplit(input, ',', absl::SkipWhitespace())) {
+    token = absl::StripAsciiWhitespace(token);
+    if (token.size() < 2 || token.front() != '\"' || token.back() != '\"') {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("Invalid format of list of words(should be "
                               "comma-separated and quoted)"));
     }
-    token.remove_suffix(1);
-    token.remove_prefix(1);
+    token = token.substr(1, token.size() - 2);
     if (!token.empty()) {
       callback(token);
     }
-    input = pos == std::string_view::npos ? "" : input.substr(pos + 1);
   }
-}
-
-std::vector<std::string> SplitPath(std::string_view path) {
-  std::vector<std::string> out;
-  while (!path.empty()) {
-    auto pos = path.find('/');
-    auto part = path.substr(0, pos);
-    if (!part.empty()) {
-      out.emplace_back(part);
-    }
-    path = pos == std::string_view::npos ? "" : path.substr(pos + 1);
-  }
-  return out;
 }
 
 constexpr OptionInfo kTSDictionaryRootOptions[] = {
@@ -623,13 +602,16 @@ class CreateTSDictionaryOptions : public OptionsParser {
     std::string_view prefix,
     const irs::analysis::GeoPointAnalyzer::Options* parent) {
     irs::analysis::GeoPointAnalyzer::Options opts;
+    auto split_path = [](std::string_view path) {
+      return absl::StrSplit(path, '/', absl::SkipEmpty());
+    };
     bool lat_set = false;
     bool lng_set = false;
     if (OptionsParser::HasOption(tokenizer_options::kGeoLatitude, prefix)) {
       auto raw =
         OptionsParser::EraseOptionOrDefault<tokenizer_options::kGeoLatitude>(
           prefix);
-      opts.latitude = SplitPath(raw);
+      opts.latitude = split_path(raw);
       lat_set = !opts.latitude.empty();
     } else if (parent) {
       opts.latitude = parent->latitude;
@@ -639,7 +621,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
       auto raw =
         OptionsParser::EraseOptionOrDefault<tokenizer_options::kGeoLongitude>(
           prefix);
-      opts.longitude = SplitPath(raw);
+      opts.longitude = split_path(raw);
       lng_set = !opts.longitude.empty();
     } else if (parent) {
       opts.longitude = parent->longitude;
@@ -743,13 +725,10 @@ class CreateTSDictionaryOptions : public OptionsParser {
     return opts;
   }
 
-  irs::analysis::MinHashTokenizer::Options BuildMinHash(
+  std::unique_ptr<irs::analysis::TokenizerConfig> BuildSingleChild(
     std::string_view prefix,
-    const irs::analysis::MinHashTokenizer::Options* parent) {
-    irs::analysis::MinHashTokenizer::Options opts;
+    const irs::analysis::TokenizerConfig* parent_child) {
     auto child_prefix = OptionInfo::AdjustPrefix(prefix, "tokenizer");
-    const irs::analysis::TokenizerConfig* parent_child =
-      parent ? parent->analyzer.get() : nullptr;
     std::string type;
     if (OptionsParser::HasOption(tokenizer_options::kTemplate, child_prefix) ||
         !parent_child) {
@@ -761,7 +740,15 @@ class CreateTSDictionaryOptions : public OptionsParser {
     SDB_ASSERT(!type.empty());
     auto child = std::make_unique<irs::analysis::TokenizerConfig>();
     BuildChild(type, child_prefix, parent_child, *child);
-    opts.analyzer = std::move(child);
+    return child;
+  }
+
+  irs::analysis::MinHashTokenizer::Options BuildMinHash(
+    std::string_view prefix,
+    const irs::analysis::MinHashTokenizer::Options* parent) {
+    irs::analysis::MinHashTokenizer::Options opts;
+    opts.analyzer =
+      BuildSingleChild(prefix, parent ? parent->analyzer.get() : nullptr);
     int parent_n = parent ? static_cast<int>(parent->num_hashes) : 1;
     opts.num_hashes =
       static_cast<uint32_t>(Resolve<tokenizer_options::kNumHashes>(
@@ -773,21 +760,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
     std::string_view prefix,
     const irs::analysis::WildcardAnalyzer::Options* parent) {
     irs::analysis::WildcardAnalyzer::Options opts;
-    auto child_prefix = OptionInfo::AdjustPrefix(prefix, "tokenizer");
-    const irs::analysis::TokenizerConfig* parent_child =
-      parent ? parent->base_analyzer.get() : nullptr;
-    std::string type;
-    if (OptionsParser::HasOption(tokenizer_options::kTemplate, child_prefix) ||
-        !parent_child) {
-      type = OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>(
-        child_prefix);
-    } else {
-      type = std::string{TypeNameOf(*parent_child)};
-    }
-    SDB_ASSERT(!type.empty());
-    auto child = std::make_unique<irs::analysis::TokenizerConfig>();
-    BuildChild(type, child_prefix, parent_child, *child);
-    opts.base_analyzer = std::move(child);
+    opts.base_analyzer =
+      BuildSingleChild(prefix, parent ? parent->base_analyzer.get() : nullptr);
     int parent_n = parent ? static_cast<int>(parent->ngram_size) : 3;
     opts.ngram_size =
       static_cast<size_t>(Resolve<tokenizer_options::kNgramSize>(

@@ -1004,7 +1004,11 @@ bool TryClaimSearchFilter(
     return false;
   }
 
-  irs::Optimize(root);
+  std::unique_ptr<irs::Scorer> scorer;
+  if (bind_data.entry_kind != connector::ScanEntryKind::BaseTable) {
+    scorer = catalog::MakeScorer({});
+  }
+  irs::Optimize(root, {.scorer = scorer.get()});
 
   // Capture summary BEFORE preparing -- prepare consumes the tree.
   std::string filter_summary = irs::ToStringDemangled(

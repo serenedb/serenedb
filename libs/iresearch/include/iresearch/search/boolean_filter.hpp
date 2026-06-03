@@ -80,14 +80,8 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
     _filters.erase(_filters.begin() + to, _filters.end());
   }
 
-  Query::ptr PrepareImpl(const PrepareContext& ctx, uint32_t min_match) const;
-
  protected:
   bool equals(const Filter& rhs) const noexcept final;
-
-  virtual Query::ptr PrepareBoolean(std::vector<const Filter*>& incl,
-                                    std::vector<const Filter*>& excl,
-                                    const PrepareContext& ctx) const = 0;
 
   void GroupFilters(std::vector<const Filter*>& incl,
                     std::vector<const Filter*>& excl) const;
@@ -102,11 +96,6 @@ class And final : public BooleanFilter {
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<And>::id(); }
-
- protected:
-  Query::ptr PrepareBoolean(std::vector<const Filter*>& incl,
-                            std::vector<const Filter*>& excl,
-                            const PrepareContext& ctx) const final;
 };
 
 // Represents disjunction
@@ -124,11 +113,6 @@ class Or final : public BooleanFilter {
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<Or>::id(); }
-
- protected:
-  Query::ptr PrepareBoolean(std::vector<const Filter*>& incl,
-                            std::vector<const Filter*>& excl,
-                            const PrepareContext& ctx) const final;
 
  private:
   uint32_t _min_match_count{1};

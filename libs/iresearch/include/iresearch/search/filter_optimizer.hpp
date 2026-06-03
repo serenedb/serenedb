@@ -27,7 +27,9 @@
 
 namespace irs {
 
-struct OptimizeContext {};
+struct OptimizeContext {
+  const Scorer* scorer = nullptr;
+};
 
 struct RuleDesc {
   std::string_view name;

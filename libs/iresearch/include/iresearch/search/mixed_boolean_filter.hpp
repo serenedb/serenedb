@@ -43,15 +43,22 @@ class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
   Filter::ptr& OptionalSlot() noexcept { return _or; }
 
   bool empty() const noexcept {
-    return GetRequired().empty() && GetOptional().empty();
+    return HasNoClauses(*_and) && HasNoClauses(*_or);
   }
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
  private:
+  static bool HasNoClauses(const Filter& filter) noexcept {
+    const auto tid = filter.type();
+    if (tid == irs::Type<And>::id() || tid == irs::Type<Or>::id()) {
+      return sdb::basics::downCast<BooleanFilter>(filter).empty();
+    }
+    return false;
+  }
+
   bool equals(const Filter& rhs) const noexcept final;
 
-  And _root;
   Filter::ptr _and;
   Filter::ptr _or;
 };

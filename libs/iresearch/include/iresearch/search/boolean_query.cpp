@@ -308,15 +308,20 @@ DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
     });
 }
 
-void BoostQuery::Prepare(const PrepareContext& ctx, const BooleanFilter& req,
-                         const Or& opt) {
-  SDB_ASSERT(!req.empty());
+void BoostQuery::Prepare(const PrepareContext& ctx, const Filter& req,
+                         const Filter& opt) {
   _req = req.prepare(ctx);
-  const auto opt_ctx = ctx.Boost(opt.Boost());
-  _opt.reserve(opt.size());
-  for (const auto& opt_filter : opt) {
-    _opt.emplace_back(opt_filter->prepare(opt_ctx));
+  const auto tid = opt.type();
+  if (tid == irs::Type<And>::id() || tid == irs::Type<Or>::id()) {
+    const auto& opt_bool = sdb::basics::downCast<BooleanFilter>(opt);
+    const auto opt_ctx = ctx.Boost(opt_bool.Boost());
+    _opt.reserve(opt_bool.size());
+    for (const auto& opt_filter : opt_bool) {
+      _opt.emplace_back(opt_filter->prepare(opt_ctx));
+    }
+    return;
   }
+  _opt.emplace_back(opt.prepare(ctx));
 }
 
 DocIterator::ptr BoostQuery::execute(const ExecutionContext& old) const {

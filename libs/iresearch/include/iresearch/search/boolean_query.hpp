@@ -29,9 +29,6 @@
 
 namespace irs {
 
-class BooleanFilter;
-class Or;
-
 // Base class for boolean queries
 class BooleanQuery : public Filter::Query {
  public:
@@ -117,8 +114,7 @@ class BoostQuery : public Filter::Query {
     return {};
   }
 
-  void Prepare(const PrepareContext& ctx, const BooleanFilter& req,
-               const Or& opt);
+  void Prepare(const PrepareContext& ctx, const Filter& req, const Filter& opt);
 
  private:
   Query::ptr _req;

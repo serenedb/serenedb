@@ -22,7 +22,6 @@
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
-#include "iresearch/search/exclude_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -51,7 +50,7 @@ Filter& Append(irs::BooleanFilter& root, std::string_view name,
 }  // namespace
 namespace tests {
 
-TEST(filter_optimizer_test, not_becomes_exclude) {
+TEST(filter_optimizer_test, not_is_preserved) {
   irs::Filter::ptr root = std::make_unique<irs::Not>();
   auto& node = sdb::basics::downCast<irs::Not>(*root);
   node.boost(2.5F);
@@ -59,11 +58,11 @@ TEST(filter_optimizer_test, not_becomes_exclude) {
 
   irs::Optimize(root);
 
-  ASSERT_EQ(irs::Type<irs::Exclude>::id(), root->type());
-  auto& exclude = sdb::basics::downCast<irs::Exclude>(*root);
-  ASSERT_EQ(2.5F, exclude.Boost());
-  ASSERT_NE(nullptr, exclude.Child());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), exclude.Child()->type());
+  ASSERT_EQ(irs::Type<irs::Not>::id(), root->type());
+  auto& not_node = sdb::basics::downCast<irs::Not>(*root);
+  ASSERT_EQ(2.5F, not_node.Boost());
+  ASSERT_NE(nullptr, not_node.filter());
+  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), not_node.filter()->type());
 }
 
 TEST(filter_optimizer_test, empty_not_becomes_empty) {
@@ -104,9 +103,9 @@ TEST(filter_optimizer_test, triple_negation_keeps_one) {
 
   irs::Optimize(root);
 
-  ASSERT_EQ(irs::Type<irs::Exclude>::id(), root->type());
-  auto& exclude = sdb::basics::downCast<irs::Exclude>(*root);
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), exclude.Child()->type());
+  ASSERT_EQ(irs::Type<irs::Not>::id(), root->type());
+  auto& not_node = sdb::basics::downCast<irs::Not>(*root);
+  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), not_node.filter()->type());
 }
 
 TEST(filter_optimizer_test, deep_negation_chain) {
@@ -134,7 +133,7 @@ TEST(filter_optimizer_test, not_inside_and) {
   ASSERT_EQ(irs::Type<irs::And>::id(), root->type());
   ASSERT_EQ(2, and_root.size());
   ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[0].type());
-  ASSERT_EQ(irs::Type<irs::Exclude>::id(), and_root[1].type());
+  ASSERT_EQ(irs::Type<irs::Not>::id(), and_root[1].type());
 }
 
 TEST(filter_optimizer_test, flatten_and) {
@@ -279,8 +278,8 @@ TEST(filter_optimizer_test, mixed_boolean_filter_subtrees) {
   irs::Optimize(root);
 
   ASSERT_EQ(irs::Type<irs::MixedBooleanFilter>::id(), root->type());
-  ASSERT_EQ(irs::Type<irs::Exclude>::id(), mixed.RequiredSlot()->type());
-  ASSERT_EQ(irs::Type<irs::Exclude>::id(), mixed.OptionalSlot()->type());
+  ASSERT_EQ(irs::Type<irs::Not>::id(), mixed.RequiredSlot()->type());
+  ASSERT_EQ(irs::Type<irs::Not>::id(), mixed.OptionalSlot()->type());
   ASSERT_FALSE(mixed.empty());
 }
 

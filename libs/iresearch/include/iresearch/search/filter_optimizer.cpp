@@ -24,7 +24,6 @@
 #include <absl/container/inlined_vector.h>
 
 #include "iresearch/search/boolean_filter.hpp"
-#include "iresearch/search/exclude_filter.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/terms_filter.hpp"
@@ -42,10 +41,6 @@ void EnumerateChildSlots(Filter& node, Visitor&& visit) {
     }
   } else if (tid == Type<Not>::id()) {
     if (auto& slot = sdb::basics::downCast<Not>(node).ChildSlot(); slot) {
-      visit(slot);
-    }
-  } else if (tid == Type<Exclude>::id()) {
-    if (auto& slot = sdb::basics::downCast<Exclude>(node).ChildSlot(); slot) {
       visit(slot);
     }
   } else if (tid == Type<MixedBooleanFilter>::id()) {
@@ -112,21 +107,16 @@ struct NotRule {
       slot = std::make_unique<Empty>();
       return true;
     }
-    if (child->type() == Type<Exclude>::id()) {
-      auto inner =
-        std::move(sdb::basics::downCast<Exclude>(*child).ChildSlot());
-      slot = std::move(inner);
+    if (child->type() == Type<Not>::id()) {
+      auto inner = std::move(sdb::basics::downCast<Not>(*child).ChildSlot());
+      slot = inner ? std::move(inner) : Filter::ptr{std::make_unique<Empty>()};
       return true;
     }
     if (const auto all = node.MakeAllDocsFilter(kNoBoost); *all == *child) {
       slot = std::make_unique<Empty>();
       return true;
     }
-    auto exclude = std::make_unique<Exclude>();
-    exclude->boost(node.Boost());
-    exclude->ChildSlot() = std::move(child);
-    slot = std::move(exclude);
-    return true;
+    return false;
   }
 };
 
@@ -360,26 +350,6 @@ void RunRules(Filter::ptr& slot, const OptimizeContext& ctx,
   }
 }
 
-[[maybe_unused]] bool HasNotTarget(std::span<const RuleDesc> rules) noexcept {
-  return absl::c_any_of(rules, [](const auto& rule) {
-    return absl::c_find(rule.targets, Type<Not>::id()) != rule.targets.end();
-  });
-}
-
-[[maybe_unused]] bool NoNotRemains(Filter& root) noexcept {
-  absl::InlinedVector<Filter*, 16> stack{&root};
-  while (!stack.empty()) {
-    auto* node = stack.back();
-    stack.pop_back();
-    if (node->type() == Type<Not>::id()) {
-      return false;
-    }
-    EnumerateChildSlots(
-      *node, [&](Filter::ptr& child) { stack.push_back(child.get()); });
-  }
-  return true;
-}
-
 }  // namespace
 
 constinit const std::span<const RuleDesc> kDefaultRules{kDefaultRulesStorage};
@@ -409,8 +379,6 @@ void Optimize(Filter::ptr& root, const OptimizeContext& ctx,
       stack.push_back({&child, false});
     });
   }
-
-  SDB_ASSERT(!HasNotTarget(rules) || NoNotRemains(*root));
 }
 
 }  // namespace irs

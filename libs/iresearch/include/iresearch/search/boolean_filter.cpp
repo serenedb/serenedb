@@ -26,7 +26,6 @@
 #include "disjunction.hpp"
 #include "exclusion.hpp"
 #include "iresearch/search/boolean_query.hpp"
-#include "iresearch/search/exclude_filter.hpp"
 #include "prepared_state_visitor.hpp"
 
 namespace irs {
@@ -47,10 +46,10 @@ void BooleanFilter::GroupFilters(std::vector<const Filter*>& incl,
 
   const auto is_and = type() == irs::Type<And>::id();
   for (const auto& filter : *this) {
-    if (is_and && irs::Type<Exclude>::id() == filter->type()) {
-      const auto& exclude = sdb::basics::downCast<Exclude>(*filter);
-      if (!exclude.empty()) {
-        excl.push_back(exclude.Child());
+    if (is_and && irs::Type<Not>::id() == filter->type()) {
+      const auto& not_node = sdb::basics::downCast<Not>(*filter);
+      if (!not_node.empty()) {
+        excl.push_back(not_node.filter());
       }
       continue;
     }

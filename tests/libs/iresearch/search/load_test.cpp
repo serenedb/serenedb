@@ -367,7 +367,7 @@ void HashResults(std::vector<QueryResult>& results) {
 std::string SerializeResults(const std::vector<QueryResult>& results) {
   // Drive the templated reflection-based writer through `sdb::basics::JsonSink`
   // (simdjson::builder), emitting JSON text directly without an intermediate
-  // vpack::Builder + slice round-trip.
+  // builder + slice round-trip.
   simdjson::builder::string_builder sb(1024);
   {
     sdb::basics::JsonSink sink{sb};

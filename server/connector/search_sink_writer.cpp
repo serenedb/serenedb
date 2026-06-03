@@ -253,13 +253,13 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
 
   if (expr_desc.type.IsJSONType()) {
     auto tokenizer = _subexpr_tokenizer_provider(field_id);
-    if (irs::get<irs::StoreAttr>(*tokenizer.analyzer) != nullptr) {
+    if (irs::get<irs::StoreAttr>(*tokenizer.analyzer) != nullptr &&
+        tokenizer.tokenizer_column.has_value()) {
       MakeFieldName(field_id, _name_buffer);
       search::mangling::MangleString(_name_buffer);
       const auto tokenizer_column = tokenizer.tokenizer_column;
       _field.PrepareForStringValue(std::move(tokenizer));
       SDB_ASSERT(_field.store_attr != nullptr);
-      SDB_ASSERT(tokenizer_column);
       _current_writer =
         MakeStoreAttrWriter(*tokenizer_column, have_nulls, &WriteStringValue);
       _field.name = _name_buffer;
@@ -311,12 +311,9 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
       auto tokenizer = _subexpr_tokenizer_provider(field_id);
       const auto tokenizer_column = tokenizer.tokenizer_column;
       _field.PrepareForStringValue(std::move(tokenizer));
-      const bool has_store = _field.store_attr != nullptr;
+      const bool has_store =
+        _field.store_attr != nullptr && tokenizer_column.has_value();
       if (has_store) {
-        SDB_ASSERT(tokenizer_column,
-                   "expression tokenizer registers StoreAttr but catalog has "
-                   "no synthetic column allocated for field_id ",
-                   field_id);
         _current_writer =
           MakeStoreAttrWriter(*tokenizer_column, have_nulls, &WriteStringValue);
       } else {
@@ -547,12 +544,13 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     auto column_tokenizer = _tokenizer_provider(column_id);
     const auto tokenizer_column = column_tokenizer.tokenizer_column;
     _field.PrepareForStringValue(std::move(column_tokenizer));
-    const bool has_store = _field.store_attr != nullptr;
+    // Source-coding geo analyzers (on JSON columns) register a StoreAttr
+    // attribute but never populate it; the catalog force-includes the source
+    // column and allocates no tokenizer_column. Write a derived blob only when
+    // both are present.
+    const bool has_store =
+      _field.store_attr != nullptr && tokenizer_column.has_value();
     if (has_store) {
-      SDB_ASSERT(tokenizer_column,
-                 "tokenizer registers StoreAttr but catalog has no tokenizer "
-                 "column allocated for column ",
-                 column_id);
       _current_writer =
         MakeStoreAttrWriter(*tokenizer_column, have_nulls, &WriteStringValue);
     } else {
@@ -602,7 +600,11 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       std::ignore = geo.resetWKB(wkb);
       return field;
     };
-    if (has_store) {
+    // Source-coding geo analyzers register a StoreAttr attribute but never
+    // populate it (no derived blob): the catalog force-includes the source
+    // column instead and allocates no tokenizer_column. Only write a blob
+    // when both the analyzer produced one and a column was allocated.
+    if (has_store && tokenizer_column) {
       SDB_ASSERT(tokenizer_column,
                  "geo tokenizer registers StoreAttr but catalog has no "
                  "tokenizer column allocated for column ",

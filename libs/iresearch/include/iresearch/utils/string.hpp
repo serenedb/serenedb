@@ -23,7 +23,6 @@
 #pragma once
 
 #include <absl/hash/hash.h>
-#include <vpack/char_traits.h>
 
 #include <cstring>
 #include <string>
@@ -33,16 +32,15 @@
 #include "basics/assert.h"
 #include "basics/shared.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/char_traits.hpp"
 
 namespace irs {
 
 // NOLINTBEGIN
 template<typename Char, typename Allocator = std::allocator<Char>>
-using basic_string =
-  std::basic_string<Char, vpack::char_traits<Char>, Allocator>;
+using basic_string = std::basic_string<Char, irs::char_traits<Char>, Allocator>;
 template<typename Char>
-using basic_string_view =
-  std::basic_string_view<Char, vpack::char_traits<Char>>;
+using basic_string_view = std::basic_string_view<Char, irs::char_traits<Char>>;
 
 using bstring = basic_string<byte_type>;
 using bytes_view = basic_string_view<byte_type>;

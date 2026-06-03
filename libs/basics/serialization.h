@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2020 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,36 +15,22 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
-#include <cstdint>
-#include <iosfwd>
-#include <string_view>
+#include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/common/storage_compatibility.hpp>
+#include <duckdb/storage/storage_info.hpp>
 
-#include "common.h"
+namespace duckdb {
 
-namespace vpack {
+inline SerializationOptions VersionStorageOptions() {
+  SerializationOptions opts;
+  opts.storage_compatibility =
+    StorageCompatibility::FromIndex(StorageVersion::V2_0_0);
+  return opts;
+}
 
-enum class ValueType : uint8_t {
-  None,  // not yet initialized
-  Null,  // JSON null
-  Bool,
-  Array,
-  Object,
-  Double,
-  Int,
-  UInt,
-  SmallInt,
-  String,
-};
-
-std::string_view ValueTypeName(ValueType type);
-
-ValueType ValueTypeGroup(ValueType type);
-
-}  // namespace vpack
-
-std::ostream& operator<<(std::ostream&, vpack::ValueType);
+}  // namespace duckdb

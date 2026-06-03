@@ -247,7 +247,8 @@ target_link_libraries(
     PUBLIC absl::flat_hash_map
     PUBLIC absl::flat_hash_set
     PUBLIC absl::crc32c
-    PUBLIC vpack
+    PUBLIC serene_base
+    PUBLIC simdjson
     PUBLIC iresearch-ofst
     PUBLIC ${FASTTEXT_LIBRARY_STATIC}
     PUBLIC ${SIMD_LIBRARY_STATIC}

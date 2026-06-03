@@ -28,8 +28,6 @@ LEGACY_EXCEPTIONS = {
     "system-functions.cpp",
     "system-functions.h",
     "tests-common.h",
-    "vpack-to-json.cpp",
-    "vpack-validate.cpp",
     "10000_writes_test.cpp",
 }
 

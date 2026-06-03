@@ -40,13 +40,7 @@
 #include <rocksdb/transaction_log.h>
 #include <rocksdb/utilities/transaction_db.h>
 #include <rocksdb/write_batch.h>
-#include <sys/statvfs.h>
 #include <unistd.h>
-#include <vpack/builder.h>
-#include <vpack/collection.h>
-#include <vpack/iterator.h>
-#include <vpack/slice.h>
-#include <vpack/vpack_helper.h>
 
 #include <atomic>
 #include <duckdb/common/serializer/memory_stream.hpp>
@@ -96,10 +90,8 @@
 #include "rocksdb_engine_catalog/rocksdb_background_thread.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
-#include "rocksdb_engine_catalog/rocksdb_comparator.h"
 #include "rocksdb_engine_catalog/rocksdb_format.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
-#include "rocksdb_engine_catalog/rocksdb_log_value.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
@@ -177,16 +169,6 @@ bool QueryDiskSpace(const char* path, uint64_t& total, uint64_t& free) {
   total = s.capacity;
   // Match historical semantics: root sees `free`; everyone else `available`.
   free = (geteuid() == 0) ? s.free : s.available;
-  return true;
-}
-
-bool QueryINodes(const char* path, uint64_t& total, uint64_t& free) {
-  struct statvfs st;
-  if (statvfs(path, &st) != 0) {
-    return false;
-  }
-  total = static_cast<uint64_t>(st.f_files);
-  free = static_cast<uint64_t>(st.f_ffree);
   return true;
 }
 
@@ -1223,206 +1205,6 @@ Result RocksDBEngineCatalog::WriteTombstone(ObjectId parent_id, ObjectId id) {
         parent_id, catalog::ObjectType::Tombstone, id};
     },
     [] { return std::string_view{}; }, [] { return std::string_view{}; });
-}
-
-void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {
-  // add int properties
-  auto add_int = [&](const std::string& s) {
-    std::string v;
-    if (_db->GetProperty(s, &v)) {
-      int64_t i = basics::string_utils::Int64(v);
-      builder.add(s, i);
-    }
-  };
-
-  // add string properties
-  auto add_str = [&](const std::string& s) {
-    std::string v;
-    if (_db->GetProperty(s, &v)) {
-      builder.add(s, v);
-    }
-  };
-
-  // get string property from each column family and return sum;
-  auto add_int_all_cf = [&](const std::string& s) {
-    int64_t sum = 0;
-    std::string v;
-    for (auto cfh : RocksDBColumnFamilyManager::allHandles()) {
-      v.clear();
-      if (_db->GetProperty(cfh, s, &v)) {
-        int64_t temp = basics::string_utils::Int64(v);
-
-        // -1 returned for some things that are valid property but no value
-        if (0 < temp) {
-          sum += temp;
-        }
-      }
-    }
-    builder.add(s, sum);
-    return sum;
-  };
-
-  // add column family properties
-  auto add_cf = [&](RocksDBColumnFamilyManager::Family family) {
-    std::string name = RocksDBColumnFamilyManager::name(family);
-    rocksdb::ColumnFamilyHandle* c = RocksDBColumnFamilyManager::get(family);
-    std::string v;
-    builder.add(name, vpack::Value(vpack::ValueType::Object));
-    if (_db->GetProperty(c, rocksdb::DB::Properties::kCFStats, &v)) {
-      builder.add("dbstats", v);
-    }
-
-    // re-add this line to count all keys in the column family (slow!!!)
-    // builder.add("keys", rocksutils::countKeys(_db, c));
-
-    // estimate size on disk and in memtables
-    uint64_t out = 0;
-    rocksdb::Range r(rocksdb::Slice("\x00\x00\x00\x00\x00\x00\x00\x00", 8),
-                     rocksdb::Slice("\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
-                                    "\xff\xff\xff\xff\xff\xff",
-                                    16));
-
-    rocksdb::SizeApproximationOptions options{.include_memtables = true,
-                                              .include_files = true};
-    _db->GetApproximateSizes(options, c, &r, 1, &out);
-
-    builder.add("memory", out);
-    builder.close();
-  };
-
-  builder.openObject(/*unindexed*/ true);
-  int64_t num_sst_files_on_all_levels = 0;
-  for (int i = 0; i < _options_provider.getOptions().num_levels; ++i) {
-    num_sst_files_on_all_levels += add_int_all_cf(
-      absl::StrCat(rocksdb::DB::Properties::kNumFilesAtLevelPrefix, i));
-    // ratio needs new calculation with all cf, not a simple add operation
-    add_int_all_cf(
-      absl::StrCat(rocksdb::DB::Properties::kCompressionRatioAtLevelPrefix, i));
-  }
-  builder.add("rocksdb.total-sst-files", num_sst_files_on_all_levels);
-  // caution:  you must read rocksdb/db/internal_stats.cc carefully to
-  //           determine if a property is for whole database or one column
-  //           family
-  add_int_all_cf(rocksdb::DB::Properties::kNumImmutableMemTable);
-  add_int_all_cf(rocksdb::DB::Properties::kNumImmutableMemTableFlushed);
-  add_int_all_cf(rocksdb::DB::Properties::kMemTableFlushPending);
-  add_int_all_cf(rocksdb::DB::Properties::kCompactionPending);
-  add_int(rocksdb::DB::Properties::kBackgroundErrors);
-  add_int_all_cf(rocksdb::DB::Properties::kCurSizeActiveMemTable);
-  add_int_all_cf(rocksdb::DB::Properties::kCurSizeAllMemTables);
-  add_int_all_cf(rocksdb::DB::Properties::kSizeAllMemTables);
-  add_int_all_cf(rocksdb::DB::Properties::kNumEntriesActiveMemTable);
-  add_int_all_cf(rocksdb::DB::Properties::kNumEntriesImmMemTables);
-  add_int_all_cf(rocksdb::DB::Properties::kNumDeletesActiveMemTable);
-  add_int_all_cf(rocksdb::DB::Properties::kNumDeletesImmMemTables);
-  add_int_all_cf(rocksdb::DB::Properties::kEstimateNumKeys);
-  add_int_all_cf(rocksdb::DB::Properties::kEstimateTableReadersMem);
-  add_int(rocksdb::DB::Properties::kNumSnapshots);
-  add_int(rocksdb::DB::Properties::kOldestSnapshotTime);
-  add_int_all_cf(rocksdb::DB::Properties::kNumLiveVersions);
-  add_int(rocksdb::DB::Properties::kMinLogNumberToKeep);
-  add_int_all_cf(rocksdb::DB::Properties::kEstimateLiveDataSize);
-  add_int_all_cf(rocksdb::DB::Properties::kLiveSstFilesSize);
-  add_int_all_cf(rocksdb::DB::Properties::kLiveBlobFileSize);
-  add_int_all_cf(rocksdb::DB::Properties::kLiveBlobFileGarbageSize);
-  add_int_all_cf(rocksdb::DB::Properties::kNumBlobFiles);
-  add_str(rocksdb::DB::Properties::kDBStats);
-  add_str(rocksdb::DB::Properties::kSSTables);
-  add_int(rocksdb::DB::Properties::kNumRunningCompactions);
-  add_int(rocksdb::DB::Properties::kNumRunningFlushes);
-  add_int(rocksdb::DB::Properties::kIsFileDeletionsEnabled);
-  add_int_all_cf(rocksdb::DB::Properties::kEstimatePendingCompactionBytes);
-  add_int(rocksdb::DB::Properties::kBaseLevel);
-  add_int(rocksdb::DB::Properties::kBlockCacheCapacity);
-  add_int(rocksdb::DB::Properties::kBlockCacheUsage);
-  add_int(rocksdb::DB::Properties::kBlockCachePinnedUsage);
-
-  const auto& table_options = _options_provider.getTableOptions();
-  if (table_options.block_cache != nullptr) {
-    const auto& cache = table_options.block_cache;
-    auto usage = cache->GetUsage();
-    auto entries = cache->GetOccupancyCount();
-    if (entries > 0) {
-      builder.add("rocksdb.block-cache-charge-per-entry",
-                  static_cast<uint64_t>(usage / entries));
-    } else {
-      builder.add("rocksdb.block-cache-charge-per-entry", 0);
-    }
-    builder.add("rocksdb.block-cache-entries", entries);
-  } else {
-    builder.add("rocksdb.block-cache-entries", 0);
-    builder.add("rocksdb.block-cache-charge-per-entry", 0);
-  }
-
-  add_int_all_cf(rocksdb::DB::Properties::kTotalSstFilesSize);
-  add_int(rocksdb::DB::Properties::kActualDelayedWriteRate);
-  add_int(rocksdb::DB::Properties::kIsWriteStopped);
-
-  if (_db_options.statistics) {
-    for (const auto& stat : rocksdb::TickersNameMap) {
-      builder.add(stat.second,
-                  _db_options.statistics->getTickerCount(stat.first));
-    }
-
-    uint64_t wal_write, flush_write, compaction_write, user_write;
-    wal_write = _db_options.statistics->getTickerCount(rocksdb::WAL_FILE_BYTES);
-    flush_write =
-      _db_options.statistics->getTickerCount(rocksdb::FLUSH_WRITE_BYTES);
-    compaction_write =
-      _db_options.statistics->getTickerCount(rocksdb::COMPACT_WRITE_BYTES);
-    user_write = _db_options.statistics->getTickerCount(rocksdb::BYTES_WRITTEN);
-    builder.add(
-      "rocksdbengine.write.amplification.x100",
-      (0 != user_write)
-        ? ((wal_write + flush_write + compaction_write) * 100) / user_write
-        : 100);
-  }
-
-  // print column family statistics
-  //  warning: output format limits numbers to 3 digits of precision or less.
-  builder.add("columnFamilies", vpack::Value(vpack::ValueType::Object));
-  add_cf(RocksDBColumnFamilyManager::Family::Default);
-  add_cf(RocksDBColumnFamilyManager::Family::Definitions);
-  builder.close();
-
-  {
-    // total disk space in database directory
-    uint64_t total_space = 0;
-    // free disk space in database directory
-    uint64_t free_space = 0;
-    if (QueryDiskSpace(_base_path.c_str(), total_space, free_space)) {
-      builder.add("rocksdb.free-disk-space", free_space);
-      builder.add("rocksdb.total-disk-space", total_space);
-    } else {
-      builder.add("rocksdb.free-disk-space",
-                  vpack::Value(vpack::ValueType::Null));
-      builder.add("rocksdb.total-disk-space",
-                  vpack::Value(vpack::ValueType::Null));
-    }
-  }
-
-  {
-    // total inodes for database directory
-    uint64_t total_i_nodes = 0;
-    // free inodes for database directory
-    uint64_t free_i_nodes = 0;
-    if (QueryINodes(_base_path.c_str(), total_i_nodes, free_i_nodes)) {
-      builder.add("rocksdb.free-inodes", free_i_nodes);
-      builder.add("rocksdb.total-inodes", total_i_nodes);
-    } else {
-      builder.add("rocksdb.free-inodes", vpack::Value(vpack::ValueType::Null));
-      builder.add("rocksdb.total-inodes", vpack::Value(vpack::ValueType::Null));
-    }
-  }
-
-  if (_error_listener) {
-    builder.add("rocksdb.read-only", _error_listener->Called() ? 1 : 0);
-  }
-
-  auto sequence_number = _db->GetLatestSequenceNumber();
-  builder.add("rocksdb.wal-sequence", sequence_number);
-
-  builder.close();
 }
 
 /// get compression supported by RocksDB

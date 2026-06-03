@@ -28,7 +28,6 @@
 #include <rocksdb/slice.h>
 #include <rocksdb/status.h>
 #include <rocksdb/utilities/transaction_db.h>
-#include <vpack/iterator.h>
 
 #include <initializer_list>
 
@@ -36,7 +35,6 @@
 #include "basics/exceptions.h"
 #include "basics/log.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
-#include "rocksdb_engine_catalog/rocksdb_comparator.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"

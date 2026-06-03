@@ -25,7 +25,7 @@
 #include <string>
 #include <type_traits>
 
-namespace vpack {
+namespace irs {
 
 struct CharTraitsU8 {
   using char_type = uint8_t;
@@ -112,4 +112,4 @@ template<typename Char>
 using char_traits = std::conditional_t<std::is_same_v<Char, uint8_t>,
                                        CharTraitsU8, std::char_traits<Char>>;
 
-}  // namespace vpack
+}  // namespace irs

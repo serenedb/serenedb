@@ -21,10 +21,6 @@
 
 #pragma once
 
-#include <vpack/builder.h>
-#include <vpack/options.h>
-#include <vpack/slice.h>
-
 #include <cstddef>
 #include <map>
 #include <memory>
@@ -34,6 +30,7 @@
 #include <utility>
 #include <vector>
 
+#include "basics/buffer.h"
 #include "basics/common.h"
 #include "basics/containers/flat_hash_map.h"
 #include "endpoint/connection_info.h"
@@ -170,10 +167,8 @@ class GeneralRequest {
   virtual size_t contentLength() const noexcept = 0;
   /// unprocessed request payload
   virtual std::string_view rawPayload() const = 0;
-  /// parsed request payload
-  virtual vpack::Slice payload(bool strict_validation = true) = 0;
   /// overwrite payload
-  virtual void setPayload(vpack::BufferUInt8 buffer);
+  virtual void setPayload(basics::BufferUInt8 buffer);
 
   virtual void setDefaultContentType() noexcept = 0;
   /// @brieg should reflect the Content-Type header
@@ -224,15 +219,10 @@ class GeneralRequest {
 
   void setStringValue(std::string& target, std::string_view value);
 
-  /// get VPack options for validation. effectively turns off
-  /// validation if strictValidation is false. This optimization can be used for
-  /// internal requests
-  const vpack::Options* validationOptions(bool strict_validation);
-
   ConnectionInfo _connection_info;  /// connection info
 
   /// request payload buffer, exact access semantics are defined in subclass
-  vpack::BufferUInt8 _payload;
+  basics::BufferUInt8 _payload;
 
   std::string _database_name;
   std::string _user;
@@ -246,9 +236,6 @@ class GeneralRequest {
   containers::FlatHashMap<std::string, std::string> _headers;
   containers::FlatHashMap<std::string, std::string> _values;
   containers::FlatHashMap<std::string, std::vector<std::string>> _array_values;
-
-  /// if payload was not VPack this will store parsed result
-  std::shared_ptr<vpack::Builder> _vpack_builder;
 
   const uint64_t _message_id;
 

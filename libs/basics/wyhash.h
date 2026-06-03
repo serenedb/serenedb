@@ -250,3 +250,23 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 For more information, please refer to <http://unlicense.org/>
 */
+
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+
+namespace sdb::basics {
+
+inline constexpr uint64_t kWyp[4] = {
+  0x2d358dccaa6c78a5ull,
+  0x8bb84b93962eacc9ull,
+  0x4b33a62ed433d4a3ull,
+  0x4d5a2da51de1aa47ull,
+};
+
+inline uint64_t WyHash(const void* data, size_t size, uint64_t seed) {
+  return wyhash(data, size, seed, kWyp);
+}
+
+}  // namespace sdb::basics

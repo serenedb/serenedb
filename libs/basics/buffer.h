@@ -29,7 +29,7 @@
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 
-namespace vpack {
+namespace sdb::basics {
 
 using index_t = uint64_t;
 
@@ -245,7 +245,7 @@ class Buffer {
     auto capacity = new_len;
 #endif
     if (capacity > std::numeric_limits<index_t>::max()) [[unlikely]] {
-      SDB_THROW(sdb::ERROR_INTERNAL, "vpack::Buffer is unable to allocate");
+      SDB_THROW(sdb::ERROR_INTERNAL, "Buffer is unable to allocate");
     }
     // copy existing data into buffer
     memcpy(buffer, _buffer, _size);
@@ -272,4 +272,4 @@ class Buffer {
 
 using BufferUInt8 = Buffer<uint8_t>;
 
-}  // namespace vpack
+}  // namespace sdb::basics

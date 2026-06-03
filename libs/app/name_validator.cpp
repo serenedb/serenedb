@@ -21,7 +21,7 @@
 
 #include "name_validator.h"
 
-#include <vpack/utf8_helper.h>
+#include <simdjson.h>
 
 #include <cstdint>
 #include <string>
@@ -79,8 +79,7 @@ bool DatabaseNameValidator::isAllowedName(bool allow_system,
 
     // new naming convention allows Unicode characters. we need to
     // make sure everything is valid UTF-8 now.
-    ok &= vpack::Utf8Helper::isValidUtf8(
-      reinterpret_cast<const uint8_t*>(name.data()), name.size());
+    ok &= simdjson::validate_utf8(name);
 
     if (!ok) {
       return false;
@@ -145,8 +144,7 @@ bool TableNameValidator::isAllowedName(std::string_view name) noexcept {
 
     // new naming convention allows Unicode characters. we need to
     // make sure everything is valid UTF-8 now.
-    ok &= vpack::Utf8Helper::isValidUtf8(
-      reinterpret_cast<const uint8_t*>(name.data()), name.size());
+    ok &= simdjson::validate_utf8(name);
 
     if (!ok) {
       return false;

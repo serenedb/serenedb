@@ -34,7 +34,6 @@
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/string.hpp>
-#include <iresearch/utils/text_format.hpp>
 #include <memory>
 
 #include "basics/duckdb_engine.h"

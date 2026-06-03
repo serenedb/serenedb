@@ -30,7 +30,6 @@
 
 #include "basics/common.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
-#include "rocksdb_engine_catalog/rocksdb_comparator.h"
 
 namespace sdb {
 namespace options {
@@ -189,7 +188,6 @@ class RocksDBOptionFeature final {
 
   void validateAndDeriveOptions();
 
-  std::unique_ptr<RocksDBVPackComparator> _vpack_cmp;
   mutable std::optional<rocksdb::Options> _options;
   mutable std::optional<rocksdb::BlockBasedTableOptions> _table_options;
 

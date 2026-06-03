@@ -115,7 +115,7 @@ int HttpCommTask<T>::on_url(llhttp_t* p, const char* at, size_t len) try {
   me->_request->setRequestType(LlhttpToRequestType(p));
   if (me->_request->requestType() == RequestType::Illegal) {
     me->SendSimpleResponse(rest::ResponseCode::MethodNotAllowed,
-                           rest::ContentType::Unset, 1, vpack::BufferUInt8());
+                           rest::ContentType::Unset, 1, {});
     return HPE_USER;
   }
 
@@ -189,12 +189,12 @@ int HttpCommTask<T>::on_header_complete(llhttp_t* p) try {
   if ((p->http_major != 1 || p->http_minor != 0) &&
       (p->http_major != 1 || p->http_minor != 1)) {
     me->SendSimpleResponse(rest::ResponseCode::HttpVersionNotSupported,
-                           rest::ContentType::Unset, 1, vpack::BufferUInt8());
+                           rest::ContentType::Unset, 1, {});
     return HPE_USER;
   }
   if (p->content_length > kMaximalBodySize) {
     me->SendSimpleResponse(rest::ResponseCode::RequestEntityTooLarge,
-                           rest::ContentType::Unset, 1, vpack::BufferUInt8());
+                           rest::ContentType::Unset, 1, {});
     return HPE_USER;
   }
   me->_should_keep_alive = llhttp_should_keep_alive(p);

@@ -1,0 +1,111 @@
+control substitution on
+hash-threshold 100
+
+# Stage a parquet with a TIMESTAMP_TZ_NS column. Cast through VARCHAR
+# because direct TIMESTAMP -> TIMESTAMPTZ_NS isn't a registered implicit
+# cast; the value must be UTC since no ICU extension is loaded.
+statement count 6
+COPY (
+  SELECT
+    ('2025-09-23 00:00:' || lpad((g * 5)::VARCHAR, 2, '0')
+       || '+00')::TIMESTAMPTZ_NS AS ts,
+    g AS id,
+    CASE WHEN g % 2 = 0 THEN 'payment captured ok'
+         ELSE 'connection reset by peer' END AS body
+  FROM range(0, 6) AS r(g)
+) TO '/tmp/${__DATABASE__}_tzns.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw (template='keyword', frequency=true, norm=true);
+
+
+statement ok
+CREATE VIEW logs AS SELECT ts AS Ts, id AS Id, body AS Body
+  FROM read_parquet('/tmp/${__DATABASE__}_tzns.parquet');
+
+
+# LIST<VARCHAR> indexed expression tokenises Body via the keyword dict.
+# Ts (TIMESTAMP_TZ_NS) is included so we exercise the protocol +
+# columnstore paths for the niche type.
+statement ok
+CREATE INDEX logs_idx ON logs USING inverted(
+    (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) kw
+) INCLUDE (Ts, Id, Body);
+
+
+# --------------------------------------------------------------------------
+# TIMESTAMP_TZ_NS: SELECT returns it on the wire.
+# --------------------------------------------------------------------------
+
+query
+SELECT Ts FROM logs_idx
+WHERE (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) @@ 'payment'
+ORDER BY Ts;
+----
+ts
+2025-09-23 00:00:00+00
+2025-09-23 00:00:10+00
+2025-09-23 00:00:20+00
+
+
+# --------------------------------------------------------------------------
+# TIMESTAMP_TZ_NS: range filter on the included column.
+# --------------------------------------------------------------------------
+
+query
+SELECT count(*) FROM logs_idx
+WHERE (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) @@ 'payment'
+  AND Ts >= TIMESTAMP '2025-09-23 00:00:05'
+  AND Ts <  TIMESTAMP '2025-09-23 00:00:25';
+----
+count
+2
+
+
+# --------------------------------------------------------------------------
+# date_trunc isn't wired for TIMESTAMP_TZ_NS directly; ::TIMESTAMP_NS lets
+# the existing TIMESTAMP overload pick up the value.
+# --------------------------------------------------------------------------
+
+query
+SELECT date_trunc('minute', Ts::TIMESTAMP_NS) AS m, count(*) FROM logs_idx
+WHERE (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) @@ 'payment'
+GROUP BY m ORDER BY m;
+----
+m	count
+2025-09-23 00:00:00	3
+
+
+# --------------------------------------------------------------------------
+# Single-term ts_phrase: keyword dict has no Positions+Frequency, but
+# ByPhrase short-circuits size==1 to ByTerm so this must succeed.
+# --------------------------------------------------------------------------
+
+query
+SELECT count(*) FROM logs_idx
+WHERE (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) @@ ts_phrase('payment');
+----
+count
+3
+
+
+query
+SELECT count(*) FROM logs_idx
+WHERE (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) @@ ts_phrase('reset');
+----
+count
+3
+
+
+# --------------------------------------------------------------------------
+# Multi-term ts_phrase: still requires Positions+Frequency. With the
+# keyword dict on the LIST child this should be rejected at planning.
+# --------------------------------------------------------------------------
+
+statement error
+SELECT count(*) FROM logs_idx
+WHERE (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) @@ ts_phrase('connection', 1, 'reset');
+----
+db error: ERROR: ts_phrase field should have Positions and Frequency features enabled for multi-term phrases
+HINT: Recreate the inverted index with both `Positions` and `Frequency` features attached to the column, or query with a single-term ts_phrase / ts_like.

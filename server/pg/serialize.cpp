@@ -760,6 +760,27 @@ void SerializeTimestampNs(SerializationContext& context,
 }
 
 template<VarFormat Format, WrapContext InContainer>
+void SerializeTimestampTzNs(SerializationContext& context,
+                            const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                            duckdb::idx_t row) {
+  const auto ts =
+    vdata.unified
+      .GetData<duckdb::timestamp_tz_ns_t>()[vdata.unified.sel->get_index(row)];
+  if constexpr (Format == VarFormat::Text) {
+    auto str = duckdb::Timestamp::ToString(
+      duckdb::Timestamp::FromEpochNanoSeconds(ts.value));
+    WithWrapIfNested<InContainer>(context, [&] {
+      context.buffer->WriteUncommitted(str);
+      context.buffer->WriteUncommitted("+00");
+    });
+  } else {
+    // PG wire timestamptz is µs since 2000-01-01. Drop sub-µs precision.
+    absl::big_endian::Store64(context.buffer->GetContiguousData(8),
+                              (ts.value - kGapNs) / 1000);
+  }
+}
+
+template<VarFormat Format, WrapContext InContainer>
 void SerializeTimestampTz(SerializationContext& context,
                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
@@ -1278,6 +1299,7 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
     case TIMESTAMP:
     case TIMESTAMP_NS:
     case TIMESTAMP_TZ:
+    case TIMESTAMP_TZ_NS:
     case BLOB:
     case STRUCT:
       return true;
@@ -1718,6 +1740,13 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
         SerializeTimestampTz<VarFormat::Binary, WrapContext::Array>;
       RETURN_ARRAY_SERIALIZATION(kText, kBinary, kTimestampTz);
     }
+    case TIMESTAMP_TZ_NS: {
+      static constexpr auto kText =
+        SerializeTimestampTzNs<VarFormat::Text, WrapContext::Array>;
+      static constexpr auto kBinary =
+        SerializeTimestampTzNs<VarFormat::Binary, WrapContext::Array>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kTimestampTz);
+    }
     case INTERVAL: {
       static constexpr auto kText =
         SerializeInterval<VarFormat::Text, WrapContext::Array>;
@@ -2041,6 +2070,15 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
         SerializeTimestampTz<VarFormat::Text, WrapContext::Record>;
       static constexpr auto kBinary =
         SerializeTimestampTz<VarFormat::Binary, WrapContext::None>;
+      RETURN_IN_RECORD_SERIALIZATION(kText, kTextInRecord, kBinary);
+    }
+    case TIMESTAMP_TZ_NS: {
+      static constexpr auto kText =
+        SerializeTimestampTzNs<VarFormat::Text, WrapContext::None>;
+      static constexpr auto kTextInRecord =
+        SerializeTimestampTzNs<VarFormat::Text, WrapContext::Record>;
+      static constexpr auto kBinary =
+        SerializeTimestampTzNs<VarFormat::Binary, WrapContext::None>;
       RETURN_IN_RECORD_SERIALIZATION(kText, kTextInRecord, kBinary);
     }
     case INTERVAL: {

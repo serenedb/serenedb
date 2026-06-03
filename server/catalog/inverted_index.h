@@ -58,6 +58,7 @@ constexpr bool IsNumericSliceKind(duckdb::LogicalTypeId kind) noexcept {
     case duckdb::LogicalTypeId::DATE:
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ_NS:
       return true;
     default:
       return false;

@@ -28,6 +28,7 @@
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/column_existence_filter.hpp>
+#include <iresearch/search/exclude_filter.hpp>
 #include <iresearch/search/geo_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
@@ -208,6 +209,11 @@ void StringifyNot(std::string* out, const Not& filter, FT&& ft) {
 }
 
 template<typename FT>
+void StringifyExclude(std::string* out, const Exclude& filter, FT&& ft) {
+  absl::StrAppend(out, "EXCLUDE[", StringifyFilter(*filter.Child(), ft), "]");
+}
+
+template<typename FT>
 void StringifyNGram(std::string* out, const ByNGramSimilarity& filter,
                     FT&& ft) {
   absl::StrAppend(out, "NGRAM_SIMILARITY[", ft(filter.field()), ", ",
@@ -367,6 +373,8 @@ std::string StringifyFilter(const Filter& filter, FT&& ft) {
     StringifyOr(&out, static_cast<const Or&>(filter), ft);
   } else if (type == Type<Not>::id()) {
     StringifyNot(&out, static_cast<const Not&>(filter), ft);
+  } else if (type == Type<Exclude>::id()) {
+    StringifyExclude(&out, static_cast<const Exclude&>(filter), ft);
   } else if (type == Type<ByTerm>::id()) {
     StringifyTerm(&out, static_cast<const ByTerm&>(filter), ft);
   } else if (type == Type<ByTerms>::id()) {

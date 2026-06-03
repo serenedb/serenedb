@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <span>
 #include <vector>
 
 #include "iresearch/search/all_docs_provider.hpp"
@@ -70,6 +71,10 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
     return result;
   }
 
+  std::span<Filter::ptr> ChildSlots() noexcept { return _filters; }
+
+  std::vector<Filter::ptr>& MutableChildren() noexcept { return _filters; }
+
   void Erase(size_t to) {
     SDB_ASSERT(to <= _filters.size());
     _filters.erase(_filters.begin() + to, _filters.end());
@@ -84,8 +89,7 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
                                     std::vector<const Filter*>& excl,
                                     const PrepareContext& ctx) const = 0;
 
-  void GroupFilters(AllDocsProvider::Ptr& all_docs_zero_boost,
-                    std::vector<const Filter*>& incl,
+  void GroupFilters(std::vector<const Filter*>& incl,
                     std::vector<const Filter*>& excl) const;
 
   std::vector<Filter::ptr> _filters;
@@ -146,6 +150,8 @@ class Not : public FilterWithType<Not>, public AllDocsProvider {
     _filter = std::make_unique<T>(std::forward<Args>(args)...);
     return sdb::basics::downCast<T>(*_filter);
   }
+
+  Filter::ptr& ChildSlot() noexcept { return _filter; }
 
   void clear() { _filter.reset(); }
   bool empty() const { return nullptr == _filter; }

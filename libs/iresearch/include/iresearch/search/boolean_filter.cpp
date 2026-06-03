@@ -26,25 +26,13 @@
 #include "disjunction.hpp"
 #include "exclusion.hpp"
 #include "iresearch/search/boolean_query.hpp"
+#include "iresearch/search/exclude_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/terms_filter.hpp"
 #include "prepared_state_visitor.hpp"
 
 namespace irs {
-namespace {
 
-std::pair<const Filter*, bool> OptimizeNot(const Not& node) {
-  bool neg = true;
-  const auto* inner = node.filter();
-  while (inner != nullptr && inner->type() == Type<Not>::id()) {
-    neg = !neg;
-    inner = sdb::basics::downCast<Not>(inner)->filter();
-  }
-
-  return std::pair{inner, neg};
-}
-
-}  // namespace
 bool BooleanFilter::equals(const Filter& rhs) const noexcept {
   if (!Filter::equals(rhs)) {
     return false;
@@ -66,11 +54,7 @@ Filter::Query::ptr BooleanFilter::PrepareImpl(const PrepareContext& ctx,
   if (size == 1) {
     auto* filter = _filters.front().get();
     SDB_ASSERT(filter);
-
-    // FIXME(gnusi): let Not handle everything?
-    if (filter->type() != irs::Type<irs::Not>::id()) {
-      return filter->prepare(ctx.Boost(Boost()));
-    }
+    return filter->prepare(ctx.Boost(Boost()));
   }
 
   if (min_match != 0 && absl::c_all_of(*this, [&](const auto& filter) {
@@ -109,10 +93,9 @@ Filter::Query::ptr BooleanFilter::PrepareImpl(const PrepareContext& ctx,
   std::vector<const Filter*> incl;
   std::vector<const Filter*> excl;
 
-  AllDocsProvider::Ptr all_docs_zero_boost;
   AllDocsProvider::Ptr all_docs_no_boost;
 
-  GroupFilters(all_docs_zero_boost, incl, excl);
+  GroupFilters(incl, excl);
 
   if (incl.empty() && !excl.empty()) {
     // single negative query case
@@ -123,48 +106,26 @@ Filter::Query::ptr BooleanFilter::PrepareImpl(const PrepareContext& ctx,
   return PrepareBoolean(incl, excl, ctx);
 }
 
-void BooleanFilter::GroupFilters(AllDocsProvider::Ptr& all_docs_zero_boost,
-                                 std::vector<const Filter*>& incl,
+void BooleanFilter::GroupFilters(std::vector<const Filter*>& incl,
                                  std::vector<const Filter*>& excl) const {
   incl.reserve(size() / 2);
   excl.reserve(incl.capacity());
 
   const Filter* empty_filter = nullptr;
-  const auto is_or = type() == irs::Type<Or>::id();
+  const auto is_and = type() == irs::Type<And>::id();
   for (const auto& filter : *this) {
     if (irs::Type<Empty>::id() == filter->type()) {
       empty_filter = filter.get();
       continue;
     }
-    if (irs::Type<Not>::id() == filter->type()) {
-      const auto res = OptimizeNot(sdb::basics::downCast<Not>(*filter));
-
-      if (!res.first) {
-        continue;
+    if (is_and && irs::Type<Exclude>::id() == filter->type()) {
+      const auto& exclude = sdb::basics::downCast<Exclude>(*filter);
+      if (!exclude.empty()) {
+        excl.push_back(exclude.Child());
       }
-
-      if (res.second) {
-        if (!all_docs_zero_boost) {
-          all_docs_zero_boost = MakeAllDocsFilter(0.F);
-        }
-
-        if (*all_docs_zero_boost == *res.first) {
-          // not all -> empty result
-          incl.clear();
-          return;
-        }
-        excl.push_back(res.first);
-        if (is_or) {
-          // FIXME: this should have same boost as Not filter.
-          // But for now we do not boost negation.
-          incl.push_back(all_docs_zero_boost.get());
-        }
-      } else {
-        incl.push_back(res.first);
-      }
-    } else {
-      incl.push_back(filter.get());
+      continue;
     }
+    incl.push_back(filter.get());
   }
   if (empty_filter != nullptr) {
     incl.push_back(empty_filter);
@@ -349,26 +310,19 @@ Filter::Query::ptr Or::PrepareBoolean(std::vector<const Filter*>& incl,
 }
 
 Filter::Query::ptr Not::prepare(const PrepareContext& ctx) const {
-  const auto res = OptimizeNot(*this);
-
-  if (!res.first) {
+  if (!_filter) {
     return Query::empty();
   }
 
   const PrepareContext sub_ctx = ctx.Boost(Boost());
 
-  if (res.second) {
-    auto all_docs = MakeAllDocsFilter(kNoBoost);
-    const std::array<const irs::Filter*, 1> incl{all_docs.get()};
-    const std::array<const irs::Filter*, 1> excl{res.first};
+  auto all_docs = MakeAllDocsFilter(kNoBoost);
+  const std::array<const irs::Filter*, 1> incl{all_docs.get()};
+  const std::array<const irs::Filter*, 1> excl{_filter.get()};
 
-    auto q = memory::make_tracked<AndQuery>(sub_ctx.memory);
-    q->prepare(sub_ctx, ScoreMergeType::Sum, incl, excl);
-    return q;
-  }
-
-  // negation has been optimized out
-  return res.first->prepare(sub_ctx);
+  auto q = memory::make_tracked<AndQuery>(sub_ctx.memory);
+  q->prepare(sub_ctx, ScoreMergeType::Sum, incl, excl);
+  return q;
 }
 
 bool Not::equals(const irs::Filter& rhs) const noexcept {

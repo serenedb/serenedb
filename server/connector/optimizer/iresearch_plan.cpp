@@ -46,6 +46,7 @@
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_top_n.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/filter_optimizer.hpp>
 #include <iresearch/search/proxy_filter.hpp>
 
 #include "basics/down_cast.h"
@@ -728,9 +729,8 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
 
   auto expr_getter = MakeExpressionGetter(sctx);
 
-  auto proxy = std::make_unique<irs::ProxyFilter>();
-  auto [and_root, cache] =
-    proxy->set_filter<irs::And>(irs::IResourceManager::gNoop);
+  irs::Filter::ptr text_root = std::make_unique<irs::And>();
+  auto& and_root = sdb::basics::downCast<irs::And>(*text_root);
 
   std::vector<std::vector<bool>> claimed_per_filter;
   bool any_claimed = false;
@@ -772,7 +772,11 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
       CombineFilterExpressions(std::move(rewritten_exprs));
     ann->filter_column_ids = std::move(filter_col_ids);
     if (any_claimed) {
-      ann->text_filter_root = &and_root;
+      irs::Optimize(text_root);
+      auto proxy = std::make_unique<irs::ProxyFilter>();
+      auto [real, cache] = proxy->set_filter(irs::IResourceManager::gNoop,
+                                             std::move(text_root));
+      ann->text_filter_root = &real;
       ann->stored_text_filter = std::move(proxy);
     }
   }
@@ -925,9 +929,8 @@ bool TryClaimAnnRange(
 
   auto expr_getter = MakeExpressionGetter(sctx);
 
-  auto proxy = std::make_unique<irs::ProxyFilter>();
-  auto [and_root, cache] =
-    proxy->set_filter<irs::And>(irs::IResourceManager::gNoop);
+  irs::Filter::ptr text_root = std::make_unique<irs::And>();
+  auto& and_root = sdb::basics::downCast<irs::And>(*text_root);
 
   std::vector<bool> claimed(filters.size(), false);
   bool any_claimed = false;
@@ -958,7 +961,11 @@ bool TryClaimAnnRange(
       CombineFilterExpressions(std::move(rewritten_exprs));
     rss->filter_column_ids = std::move(filter_col_ids);
     if (any_claimed) {
-      rss->text_filter_root = &and_root;
+      irs::Optimize(text_root);
+      auto proxy = std::make_unique<irs::ProxyFilter>();
+      auto [real, cache] = proxy->set_filter(irs::IResourceManager::gNoop,
+                                             std::move(text_root));
+      rss->text_filter_root = &real;
       rss->stored_text_filter = std::move(proxy);
     }
     filters.clear();
@@ -984,10 +991,11 @@ bool TryClaimSearchFilter(
 
   auto expr_getter = MakeExpressionGetter(ctx);
 
-  auto root = std::make_shared<irs::And>();
+  irs::Filter::ptr root = std::make_unique<irs::And>();
+  auto& and_root = sdb::basics::downCast<irs::And>(*root);
   std::vector<size_t> claimed_indices;
   for (size_t i = 0; i < filters.size(); ++i) {
-    if (TryClaimIresearchConjunct(*root, filters[i], getter, expr_getter,
+    if (TryClaimIresearchConjunct(and_root, filters[i], getter, expr_getter,
                                   options)) {
       claimed_indices.push_back(i);
     }
@@ -996,13 +1004,15 @@ bool TryClaimSearchFilter(
     return false;
   }
 
+  irs::Optimize(root);
+
   // Capture summary BEFORE preparing -- prepare consumes the tree.
   std::string filter_summary = irs::ToStringDemangled(
     *root, MakeColumnNameLookup(bind_data, *resolved.index));
 
   auto search = std::make_unique<connector::SearchScan>();
   search->snapshot = PinnedSearchSnapshot(options, resolved.index->GetId());
-  search->stored_filter = root;
+  search->stored_filter = std::move(root);
   search->filter_summary = std::move(filter_summary);
   if (resolved.index) {
     search->topk_scorer = resolved.index->GetTopKScorer();

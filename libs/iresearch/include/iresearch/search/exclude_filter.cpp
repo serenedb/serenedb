@@ -18,36 +18,35 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "exclude_filter.hpp"
 
-#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/boolean_query.hpp"
 
 namespace irs {
 
-class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
-                                 public AllDocsProvider {
- public:
-  MixedBooleanFilter()
-    : _and{std::make_unique<And>()}, _or{std::make_unique<Or>()} {}
+Filter::Query::ptr Exclude::prepare(const PrepareContext& ctx) const {
+  if (!_child) {
+    return Query::empty();
+  }
 
-  auto& GetRequired(this auto& self) noexcept { return *self._and; }
+  const PrepareContext sub_ctx = ctx.Boost(Boost());
 
-  auto& GetOptional(this auto& self) noexcept { return *self._or; }
+  auto all_docs = MakeAllDocsFilter(kNoBoost);
+  const std::array<const irs::Filter*, 1> incl{all_docs.get()};
+  const std::array<const irs::Filter*, 1> excl{_child.get()};
 
-  auto& RequiredSlot() noexcept { return _and; }
+  auto q = memory::make_tracked<AndQuery>(sub_ctx.memory);
+  q->prepare(sub_ctx, ScoreMergeType::Sum, incl, excl);
+  return q;
+}
 
-  auto& OptionalSlot() noexcept { return _or; }
-
-  bool empty() const noexcept { return _and->empty() && _or->empty(); }
-
-  Query::ptr prepare(const PrepareContext& ctx) const final;
-
- private:
-  bool equals(const Filter& rhs) const noexcept final;
-
-  And _root;
-  std::unique_ptr<And> _and;
-  std::unique_ptr<Or> _or;
-};
+bool Exclude::equals(const irs::Filter& rhs) const noexcept {
+  if (!Filter::equals(rhs)) {
+    return false;
+  }
+  const auto& typed_rhs = sdb::basics::downCast<Exclude>(rhs);
+  return (!empty() && !typed_rhs.empty() && *_child == *typed_rhs._child) ||
+         (empty() && typed_rhs.empty());
+}
 
 }  // namespace irs

@@ -32,6 +32,7 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/exclusion.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/range_filter.hpp"
 #include "iresearch/search/score_function.hpp"
@@ -1421,25 +1422,28 @@ TEST(boolean_query_estimation, and_filter) {
 
   // estimated/unestimated/negative subqueries
   {
-    irs::And root;
-    root.add<detail::Estimated>().est = 100;
-    root.add<detail::Estimated>().est = 320;
-    root.add<irs::Not>().filter<detail::Estimated>().est = 3;
-    root.add<detail::Unestimated>();
-    root.add<detail::Estimated>().est = 10;
-    root.add<detail::Unestimated>();
-    root.add<detail::Estimated>().est = 7;
-    root.add<detail::Estimated>().est = 100;
-    root.add<irs::Not>().filter<detail::Unestimated>();
-    root.add<irs::Not>().filter<detail::Estimated>().est = 0;
-    root.add<detail::Unestimated>();
+    irs::Filter::ptr root = std::make_unique<irs::And>();
+    auto& and_root = sdb::basics::downCast<irs::And>(*root);
+    and_root.add<detail::Estimated>().est = 100;
+    and_root.add<detail::Estimated>().est = 320;
+    and_root.add<irs::Not>().filter<detail::Estimated>().est = 3;
+    and_root.add<detail::Unestimated>();
+    and_root.add<detail::Estimated>().est = 10;
+    and_root.add<detail::Unestimated>();
+    and_root.add<detail::Estimated>().est = 7;
+    and_root.add<detail::Estimated>().est = 100;
+    and_root.add<irs::Not>().filter<detail::Unestimated>();
+    and_root.add<irs::Not>().filter<detail::Estimated>().est = 0;
+    and_root.add<detail::Unestimated>();
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    irs::Optimize(root);
+
+    auto prep = root->prepare({.index = irs::SubReader::empty()});
 
     auto docs = prep->execute({.segment = irs::SubReader::empty()});
 
     // check that subqueries were estimated
-    for (auto it = root.begin(), end = root.end(); it != end; ++it) {
+    for (auto it = and_root.begin(), end = and_root.end(); it != end; ++it) {
       auto* est_query = dynamic_cast<detail::Estimated*>(it->get());
       if (est_query) {
         ASSERT_TRUE(est_query->evaluated);
@@ -15681,7 +15685,10 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       irs::Or root;
       root.add<irs::All>();
       root.add<irs::Not>().filter<irs::All>();
-      CheckQuery(root, Docs{}, rdr);
+      CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                            23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+                 rdr);
     }
 
   }  // namespace tests
@@ -15701,9 +15708,9 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
       root.add<irs::Not>().filter<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>("name", "A");
-      CheckQuery(root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
-                            13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                            24, 25, 26, 27, 28, 29, 30, 31, 32},
+      CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                            23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
                  rdr);
     }
     // check 'all' filter added for Not nodes does not affects score
@@ -15728,7 +15735,7 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       // if 'all' will add at least 1 to score totals score will be 3 and
       // expected order will break
       irs::Scorer::ptr sort{std::make_unique<tests::sort::Boost>()};
-      CheckQuery(root, std::span{&sort, 1}, Docs{2, 1}, rdr);
+      CheckQuery(root, std::span{&sort, 1}, Docs{1, 2}, rdr);
     }
   }
 
@@ -15751,9 +15758,9 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
         MakeFilter<irs::ByTerm>("name", "A");
       root.add<irs::Not>().filter<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>("name", "A");
-      CheckQuery(root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
-                            13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                            24, 25, 26, 27, 28, 29, 30, 31, 32},
+      CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                            23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
                  rdr);
     }
   }
@@ -15777,9 +15784,9 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
         MakeFilter<irs::ByTerm>("name", "A");
       root.add<irs::Not>().filter<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>("prefix", "abcd");
-      CheckQuery(root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
-                            13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                            24, 25, 26, 27, 28, 29, 30, 31, 32},
+      CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                            23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
                  rdr);
     }
   }
@@ -16052,7 +16059,8 @@ TEST_P(BooleanFilterTestCase, mixed) {
         Append<irs::ByTerm>(child, "duplicated", "vczc");
       }
 
-      CheckQuery(root, Docs{}, rdr);
+      CheckQuery(root, Docs{1, 2, 3, 5, 8, 11, 14, 17, 19, 21, 24, 27, 31},
+                 rdr);
     }
   }
 }

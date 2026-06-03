@@ -27,8 +27,6 @@
 #include <s2/s2polygon.h>
 #include <s2/s2polyline.h>
 #include <s2/util/coding/coder.h>
-#include <vpack/iterator.h>
-#include <vpack/vpack_helper.h>
 
 #include <algorithm>
 #include <span>
@@ -39,6 +37,7 @@
 #include "basics/debugging.h"
 #include "basics/log.h"
 #include "basics/string_utils.h"
+#include "basics/system-compiler.h"
 #include "geo/geo_params.h"
 #include "geo/s2/multi_point_region.h"
 #include "geo/s2/multi_polyline_region.h"
@@ -46,6 +45,8 @@
 
 namespace sdb::geo::json {
 namespace {
+
+namespace ondemand = simdjson::ondemand;
 
 template<bool Validation>
 S2Point EncodePointImpl(S2LatLng lat_lng, coding::Options options,
@@ -182,35 +183,47 @@ void RemoveAdjacentDuplicates(Vertices& vertices) noexcept {
   vertices.erase(it, vertices.end());
 }
 
-bool GetCoordinates(vpack::Slice& vpack) {
-  SDB_ASSERT(vpack.isObject());
-  vpack = vpack.get(fields::kCoordinates);
-  return vpack.isArray();
+bool ReadDouble(ondemand::value value, double& out) noexcept {
+  return value.get_double().get(out) == simdjson::SUCCESS;
 }
 
 template<bool Validation, bool GeoJson>
-bool ParseImpl(vpack::Slice vpack, S2LatLng& vertex) {
-  SDB_ASSERT(vpack.isArray());
-  vpack::ArrayIterator jt{vpack};
-  if (Validation && SDB_UNLIKELY(jt.size() != 2)) {
-    return false;
+bool ParseImpl(ondemand::value vertex_value, S2LatLng& vertex) {
+  ondemand::array pair;
+  if (vertex_value.get_array().get(pair) != simdjson::SUCCESS) {
+    if constexpr (Validation) {
+      return false;
+    }
   }
-  const auto first = *jt;
-  if (Validation && SDB_UNLIKELY(!first.isNumber<double>())) {
-    return false;
+  double values[2];
+  size_t i = 0;
+  for (auto element : pair) {
+    if (Validation && SDB_UNLIKELY(i == 2)) {
+      return false;
+    }
+    ondemand::value element_value;
+    if (element.get(element_value) != simdjson::SUCCESS) {
+      if constexpr (Validation) {
+        return false;
+      }
+    }
+    if (Validation && SDB_UNLIKELY(!ReadDouble(element_value, values[i]))) {
+      return false;
+    } else if constexpr (!Validation) {
+      std::ignore = ReadDouble(element_value, values[i]);
+    }
+    ++i;
   }
-  jt.next();
-  const auto second = *jt;
-  if (Validation && SDB_UNLIKELY(!second.isNumber<double>())) {
+  if (Validation && SDB_UNLIKELY(i != 2)) {
     return false;
   }
   double lat, lon;
   if constexpr (GeoJson) {
-    lon = first.getNumber<double>();
-    lat = second.getNumber<double>();
+    lon = values[0];
+    lat = values[1];
   } else {
-    lat = first.getNumber<double>();
-    lon = second.getNumber<double>();
+    lat = values[0];
+    lon = values[1];
   }
   // We should Normalize all S2LatLng
   // because otherwise their converting to S2Point is invalid!
@@ -219,22 +232,20 @@ bool ParseImpl(vpack::Slice vpack, S2LatLng& vertex) {
 }
 
 template<bool Validation, bool GeoJson>
-Result ParseImpl(vpack::Slice vpack, std::vector<S2LatLng>& vertices) {
-  SDB_ASSERT(vpack.isArray());
-  vpack::ArrayIterator it{vpack};
+Result ParseImpl(ondemand::array array, std::vector<S2LatLng>& vertices) {
   vertices.clear();
-  vertices.reserve(it.size());
 
   S2LatLng vertex;
-  for (; it.valid(); it.next()) {
-    auto slice = *it;
-    if (Validation && SDB_UNLIKELY(!slice.isArray())) {
-      return {ERROR_BAD_PARAMETER,
-              "Bad coordinates, should be array " + slice.toJson()};
+  for (auto element : array) {
+    ondemand::value element_value;
+    if (element.get(element_value) != simdjson::SUCCESS) {
+      if constexpr (Validation) {
+        return {ERROR_BAD_PARAMETER, "Bad coordinates"};
+      }
     }
-    auto ok = ParseImpl<Validation, GeoJson>(slice, vertex);
+    auto ok = ParseImpl<Validation, GeoJson>(element_value, vertex);
     if (Validation && SDB_UNLIKELY(!ok)) {
-      return {ERROR_BAD_PARAMETER, "Bad coordinates values " + slice.toJson()};
+      return {ERROR_BAD_PARAMETER, "Bad coordinates values"};
     }
     vertices.emplace_back(vertex);
   }
@@ -242,31 +253,35 @@ Result ParseImpl(vpack::Slice vpack, std::vector<S2LatLng>& vertices) {
 }
 
 template<Type T>
-Result Validate(vpack::Slice& vpack) {
-  if (ParseType(vpack) != T) [[unlikely]] {
+Result Validate(ondemand::object& object, ondemand::value& coordinates) {
+  if (ParseType(object) != T) [[unlikely]] {
     // TODO(mbkkt) Unnecessary memcpy,
     //  this string can be constructed at compile time with compile time new
     return {ERROR_BAD_PARAMETER,
             absl::StrCat("Require type: '", toString<T>(), "'.")};
   }
-  if (!GetCoordinates(vpack)) [[unlikely]] {
+  if (object.find_field_unordered(fields::kCoordinates).get(coordinates) !=
+      simdjson::SUCCESS) [[unlikely]] {
+    return {ERROR_BAD_PARAMETER, "Coordinates missing."};
+  }
+  if (coordinates.type() != simdjson::ondemand::json_type::array) [[unlikely]] {
     return {ERROR_BAD_PARAMETER, "Coordinates missing."};
   }
   return {};
 }
 
 template<bool Validation, bool GeoJson>
-Result ParsePointImpl(vpack::Slice vpack, S2LatLng& region) {
-  auto ok = ParseImpl<Validation, GeoJson>(vpack, region);
+Result ParsePointImpl(ondemand::value json, S2LatLng& region) {
+  auto ok = ParseImpl<Validation, GeoJson>(json, region);
   if (Validation && SDB_UNLIKELY(!ok)) {
-    return {ERROR_BAD_PARAMETER, "Bad coordinates " + vpack.toJson()};
+    return {ERROR_BAD_PARAMETER, "Bad coordinates"};
   }
   return {};
 }
 
 template<bool Validation>
-Result ParsePointsImpl(vpack::Slice vpack, std::vector<S2LatLng>& vertices) {
-  auto r = ParseImpl<Validation, true>(vpack, vertices);
+Result ParsePointsImpl(ondemand::array array, std::vector<S2LatLng>& vertices) {
+  auto r = ParseImpl<Validation, true>(array, vertices);
   if (Validation && SDB_UNLIKELY(!r.ok())) {
     return r;
   }
@@ -278,8 +293,8 @@ Result ParsePointsImpl(vpack::Slice vpack, std::vector<S2LatLng>& vertices) {
 }
 
 template<bool Validation>
-Result ParseLineImpl(vpack::Slice vpack, std::vector<S2LatLng>& vertices) {
-  auto r = ParseImpl<Validation, true>(vpack, vertices);
+Result ParseLineImpl(ondemand::array array, std::vector<S2LatLng>& vertices) {
+  auto r = ParseImpl<Validation, true>(array, vertices);
   if (Validation && SDB_UNLIKELY(!r.ok())) {
     return r;
   }
@@ -293,12 +308,15 @@ Result ParseLineImpl(vpack::Slice vpack, std::vector<S2LatLng>& vertices) {
 }
 
 template<bool Validation>
-Result ParseLinesImpl(vpack::Slice vpack, std::vector<S2Polyline>& lines,
+Result ParseLinesImpl(ondemand::array array, std::vector<S2Polyline>& lines,
                       std::vector<S2LatLng>& vertices, coding::Options options,
                       Encoder* encoder) {
-  SDB_ASSERT(vpack.isArray());
-  vpack::ArrayIterator it{vpack};
-  const auto n = it.size();
+  size_t n = 0;
+  if (array.count_elements().get(n) != simdjson::SUCCESS) {
+    if constexpr (Validation) {
+      return {ERROR_BAD_PARAMETER, "Invalid MultiLinestring."};
+    }
+  }
   if (Validation && SDB_UNLIKELY(n == 0)) {
     return {
       ERROR_BAD_PARAMETER,
@@ -308,12 +326,14 @@ Result ParseLinesImpl(vpack::Slice vpack, std::vector<S2Polyline>& lines,
     EncodeCount<Validation>(n, coding::Type::MultiPolyline, options, encoder);
   lines.clear();
   lines.reserve(n);
-  for (; it.valid(); it.next()) {
-    auto slice = *it;
-    if (Validation && SDB_UNLIKELY(!slice.isArray())) {
-      return {ERROR_BAD_PARAMETER, "Missing coordinates."};
+  for (auto element : array) {
+    ondemand::array line;
+    if (element.get_array().get(line) != simdjson::SUCCESS) {
+      if constexpr (Validation) {
+        return {ERROR_BAD_PARAMETER, "Missing coordinates."};
+      }
     }
-    [[maybe_unused]] auto r = ParseLineImpl<Validation>(slice, vertices);
+    [[maybe_unused]] auto r = ParseLineImpl<Validation>(line, vertices);
     if constexpr (Validation) {
       if (!r.ok()) [[unlikely]] {
         return r;
@@ -358,14 +378,11 @@ Result MakeLoopValid(std::vector<S2LatLng>& vertices) noexcept(!Validation) {
 }
 
 template<bool Validation>
-Result ParseLoopImpl(vpack::Slice vpack,
+Result ParseLoopImpl(ondemand::array loop,
                      std::vector<std::unique_ptr<S2Loop>>& loops,
                      std::vector<S2LatLng>& vertices, S2Loop*& first,
                      coding::Options options, Encoder* encoder,
                      size_t multiplier) {
-  if (Validation && SDB_UNLIKELY(!vpack.isArray())) {
-    return {ERROR_BAD_PARAMETER, "Missing coordinates."};
-  }
   // Coordinates of a Polygon are an array of LinearRing coordinate arrays.
   // The first element in the array represents the exterior ring.
   // Any subsequent elements represent interior rings (or holes).
@@ -377,7 +394,7 @@ Result ParseLoopImpl(vpack::Slice vpack,
   // - A linear ring MUST follow the right-hand rule with respect to the
   //   area it bounds, i.e., exterior rings are counterclockwise (CCW), and
   //   holes are clockwise (CW).
-  auto r = ParsePointsImpl<Validation>(vpack, vertices);
+  auto r = ParsePointsImpl<Validation>(loop, vertices);
   if (Validation && SDB_UNLIKELY(!r.ok())) {
     return r;
   }
@@ -462,17 +479,29 @@ S2Polygon CreatePolygon(std::vector<std::unique_ptr<S2Loop>>&& loops,
 }
 
 template<bool Validation>
-Result ParsePolygonImpl(vpack::ArrayIterator it, S2Polygon& region,
+Result ParsePolygonImpl(ondemand::array array, S2Polygon& region,
                         std::vector<S2LatLng>& vertices,
                         coding::Options options, Encoder* encoder) {
-  const auto n = it.size();
+  size_t n = 0;
+  if (array.count_elements().get(n) != simdjson::SUCCESS) {
+    if constexpr (Validation) {
+      return {ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object."};
+    }
+  }
   SDB_ASSERT(n >= 1);
   std::vector<std::unique_ptr<S2Loop>> loops;
   loops.reserve(n);
   auto multiplier =
     EncodeCount<Validation>(n, coding::Type::Polygon, options, encoder);
-  for (S2Loop* first = nullptr; it.valid(); it.next()) {
-    auto r = ParseLoopImpl<Validation>(*it, loops, vertices, first, options,
+  S2Loop* first = nullptr;
+  for (auto element : array) {
+    ondemand::array loop;
+    if (element.get_array().get(loop) != simdjson::SUCCESS) {
+      if constexpr (Validation) {
+        return {ERROR_BAD_PARAMETER, "Missing coordinates."};
+      }
+    }
+    auto r = ParseLoopImpl<Validation>(loop, loops, vertices, first, options,
                                        encoder, multiplier);
     if (Validation && SDB_UNLIKELY(!r.ok())) {
       return r;
@@ -491,18 +520,27 @@ Result ParsePolygonImpl(vpack::ArrayIterator it, S2Polygon& region,
 }
 
 template<bool Validation>
-Result ParsePolygonImpl(vpack::Slice vpack, ShapeContainer& region,
+Result ParsePolygonImpl(ondemand::value json, ShapeContainer& region,
                         std::vector<S2LatLng>& vertices,
                         coding::Options options, Encoder* encoder) {
-  SDB_ASSERT(vpack.isArray());
-  vpack::ArrayIterator it{vpack};
-  const auto n = it.size();
+  ondemand::array array;
+  if (json.get_array().get(array) != simdjson::SUCCESS) {
+    if constexpr (Validation) {
+      return {ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object."};
+    }
+  }
+  size_t n = 0;
+  if (array.count_elements().get(n) != simdjson::SUCCESS) {
+    if constexpr (Validation) {
+      return {ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object."};
+    }
+  }
   if (Validation && SDB_UNLIKELY(n == 0)) {
     return {ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object."};
   }
   std::unique_ptr<S2Polygon> d;
   d = std::make_unique<S2Polygon>();
-  auto r = ParsePolygonImpl<Validation>(it, *d, vertices, options, encoder);
+  auto r = ParsePolygonImpl<Validation>(array, *d, vertices, options, encoder);
   if (Validation && SDB_UNLIKELY(!r.ok())) {
     return r;
   }
@@ -511,12 +549,23 @@ Result ParsePolygonImpl(vpack::Slice vpack, ShapeContainer& region,
 }
 
 template<bool Validation>
-Result ParseMultiPolygonImpl(vpack::Slice vpack, S2Polygon& region,
+Result ParseMultiPolygonImpl(ondemand::value json, S2Polygon& region,
                              std::vector<S2LatLng>& vertices,
                              coding::Options options, Encoder* encoder) {
-  SDB_ASSERT(vpack.isArray());
-  vpack::ArrayIterator it{vpack};
-  const auto n = it.size();
+  ondemand::array array;
+  if (json.get_array().get(array) != simdjson::SUCCESS) {
+    if constexpr (Validation) {
+      return {ERROR_BAD_PARAMETER,
+              "MultiPolygon should contains at least one Polygon."};
+    }
+  }
+  size_t n = 0;
+  if (array.count_elements().get(n) != simdjson::SUCCESS) {
+    if constexpr (Validation) {
+      return {ERROR_BAD_PARAMETER,
+              "MultiPolygon should contains at least one Polygon."};
+    }
+  }
   if (Validation && SDB_UNLIKELY(n == 0)) {
     return {ERROR_BAD_PARAMETER,
             "MultiPolygon should contains at least one Polygon."};
@@ -525,21 +574,37 @@ Result ParseMultiPolygonImpl(vpack::Slice vpack, S2Polygon& region,
   loops.reserve(n);
   auto multiplier =
     EncodeCount<Validation>(n, coding::Type::Polygon, options, encoder);
-  for (S2Loop* first = nullptr; it.valid(); it.next()) {
-    if (Validation && SDB_UNLIKELY(!(*it).isArray())) {
-      return {ERROR_BAD_PARAMETER,
-              "Polygon should contains at least one coordinates array."};
+  S2Loop* first = nullptr;
+  for (auto polygon_element : array) {
+    ondemand::array polygon;
+    if (polygon_element.get_array().get(polygon) != simdjson::SUCCESS) {
+      if constexpr (Validation) {
+        return {ERROR_BAD_PARAMETER,
+                "Polygon should contains at least one coordinates array."};
+      }
     }
-    vpack::ArrayIterator jt{*it};
-    if (Validation && SDB_UNLIKELY(jt.size() == 0)) {
+    size_t m = 0;
+    if (polygon.count_elements().get(m) != simdjson::SUCCESS) {
+      if constexpr (Validation) {
+        return {ERROR_BAD_PARAMETER,
+                "Polygon should contains at least one Loop."};
+      }
+    }
+    if (Validation && SDB_UNLIKELY(m == 0)) {
       return {ERROR_BAD_PARAMETER,
               "Polygon should contains at least one Loop."};
     }
     if (encoder != nullptr) {
-      encoder->Ensure(jt.size() * Varint::kMax64);
+      encoder->Ensure(m * Varint::kMax64);
     }
-    for (; jt.valid(); jt.next()) {
-      auto r = ParseLoopImpl<Validation>(*jt, loops, vertices, first, options,
+    for (auto loop_element : polygon) {
+      ondemand::array loop;
+      if (loop_element.get_array().get(loop) != simdjson::SUCCESS) {
+        if constexpr (Validation) {
+          return {ERROR_BAD_PARAMETER, "Missing coordinates."};
+        }
+      }
+      auto r = ParseLoopImpl<Validation>(loop, loops, vertices, first, options,
                                          encoder, multiplier);
       if (Validation && SDB_UNLIKELY(!r.ok())) {
         return r;
@@ -560,25 +625,33 @@ Result ParseMultiPolygonImpl(vpack::Slice vpack, S2Polygon& region,
 }
 
 template<bool Validation>
-Result ParseRegionImpl(vpack::Slice vpack, ShapeContainer& region,
+Result ParseRegionImpl(ondemand::value json, ShapeContainer& region,
                        std::vector<S2LatLng>& cache, coding::Options options,
                        Encoder* encoder) {
-  const auto t = ParseType(vpack);
+  ondemand::object object;
+  if (json.get_object().get(object) != simdjson::SUCCESS) {
+    if constexpr (Validation) {
+      return {ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object."};
+    }
+  }
+  const auto t = ParseType(object);
   if constexpr (Validation) {
     if (t == Type::Unknown) [[unlikely]] {
       return {ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object."};
     }
-    if (!GetCoordinates(vpack)) [[unlikely]] {
+  }
+  ondemand::value coordinates;
+  if (object.find_field_unordered(fields::kCoordinates).get(coordinates) !=
+      simdjson::SUCCESS) {
+    if constexpr (Validation) {
       return {ERROR_BAD_PARAMETER, "Coordinates missing."};
     }
-  } else {
-    vpack = vpack.get(fields::kCoordinates);
   }
   const bool is_s2 = coding::IsOptionsS2(options);
   switch (t) {
     case Type::Point: {
       S2LatLng lat_lng;
-      auto r = ParsePointImpl<Validation, true>(vpack, lat_lng);
+      auto r = ParsePointImpl<Validation, true>(coordinates, lat_lng);
       if (Validation && SDB_UNLIKELY(!r.ok())) {
         return r;
       }
@@ -587,7 +660,13 @@ Result ParseRegionImpl(vpack::Slice vpack, ShapeContainer& region,
       return {};
     }
     case Type::Linestring: {
-      auto r = ParseLineImpl<Validation>(vpack, cache);
+      ondemand::array array;
+      if (coordinates.get_array().get(array) != simdjson::SUCCESS) {
+        if constexpr (Validation) {
+          return {ERROR_BAD_PARAMETER, "Missing coordinates."};
+        }
+      }
+      auto r = ParseLineImpl<Validation>(array, cache);
       if (Validation && SDB_UNLIKELY(!r.ok())) {
         return r;
       }
@@ -602,14 +681,20 @@ Result ParseRegionImpl(vpack::Slice vpack, ShapeContainer& region,
       region.reset(std::move(d), ToShapeType(Type::Linestring), options);
     } break;
     case Type::Polygon: {
-      auto r = ParsePolygonImpl<Validation>(vpack, region, cache, options,
+      auto r = ParsePolygonImpl<Validation>(coordinates, region, cache, options,
                                             is_s2 ? nullptr : encoder);
       if (Validation && SDB_UNLIKELY(!r.ok())) {
         return r;
       }
     } break;
     case Type::MultiPoint: {
-      auto r = ParsePointsImpl<Validation>(vpack, cache);
+      ondemand::array array;
+      if (coordinates.get_array().get(array) != simdjson::SUCCESS) {
+        if constexpr (Validation) {
+          return {ERROR_BAD_PARAMETER, "Missing coordinates."};
+        }
+      }
+      auto r = ParsePointsImpl<Validation>(array, cache);
       if (Validation && SDB_UNLIKELY(!r.ok())) {
         return r;
       }
@@ -621,8 +706,14 @@ Result ParseRegionImpl(vpack::Slice vpack, ShapeContainer& region,
       region.reset(std::move(d), ToShapeType(Type::MultiPoint), options);
     } break;
     case Type::MultiLinestring: {
+      ondemand::array array;
+      if (coordinates.get_array().get(array) != simdjson::SUCCESS) {
+        if constexpr (Validation) {
+          return {ERROR_BAD_PARAMETER, "Missing coordinates."};
+        }
+      }
       std::vector<S2Polyline> lines;
-      auto r = ParseLinesImpl<Validation>(vpack, lines, cache, options,
+      auto r = ParseLinesImpl<Validation>(array, lines, cache, options,
                                           is_s2 ? nullptr : encoder);
       if (Validation && SDB_UNLIKELY(!r.ok())) {
         return r;
@@ -633,8 +724,8 @@ Result ParseRegionImpl(vpack::Slice vpack, ShapeContainer& region,
     } break;
     case Type::MultiPolygon: {
       auto d = std::make_unique<S2Polygon>();
-      auto r = ParseMultiPolygonImpl<Validation>(vpack, *d, cache, options,
-                                                 is_s2 ? nullptr : encoder);
+      auto r = ParseMultiPolygonImpl<Validation>(
+        coordinates, *d, cache, options, is_s2 ? nullptr : encoder);
       if (Validation && SDB_UNLIKELY(!r.ok())) {
         return r;
       }
@@ -662,15 +753,12 @@ Result ParseRegionImpl(vpack::Slice vpack, ShapeContainer& region,
     break
 
 /// parse GeoJSON Type
-Type ParseType(vpack::Slice vpack) noexcept {
-  if (!vpack.isObject()) [[unlikely]] {
+Type ParseType(ondemand::object& object) noexcept {
+  std::string_view type;
+  if (object.find_field_unordered(fields::kType).get_string().get(type) !=
+      simdjson::SUCCESS) [[unlikely]] {
     return Type::Unknown;
   }
-  const auto field = vpack.get(fields::kType);
-  if (!field.isString()) [[unlikely]] {
-    return Type::Unknown;
-  }
-  const auto type = field.stringView();
   switch (type.size()) {
     CASE(Type::Point);
     CASE(Type::Polygon);
@@ -695,21 +783,35 @@ Type ParseType(vpack::Slice vpack) noexcept {
 
 #undef CASE
 
-Result ParsePoint(vpack::Slice vpack, S2LatLng& region) {
-  auto r = Validate<Type::Point>(vpack);
+Result ParsePoint(ondemand::value json, S2LatLng& region) {
+  ondemand::object object;
+  if (json.get_object().get(object) != simdjson::SUCCESS) [[unlikely]] {
+    return {ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object."};
+  }
+  ondemand::value coordinates;
+  auto r = Validate<Type::Point>(object, coordinates);
   if (!r.ok()) {
     return r;
   }
-  return ParsePointImpl<true, true>(vpack, region);
+  return ParsePointImpl<true, true>(coordinates, region);
 }
 
-Result ParseMultiPoint(vpack::Slice vpack, S2MultiPointRegion& region) {
-  auto r = Validate<Type::MultiPoint>(vpack);
+Result ParseMultiPoint(ondemand::value json, S2MultiPointRegion& region) {
+  ondemand::object object;
+  if (json.get_object().get(object) != simdjson::SUCCESS) [[unlikely]] {
+    return {ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object."};
+  }
+  ondemand::value coordinates;
+  auto r = Validate<Type::MultiPoint>(object, coordinates);
   if (!r.ok()) [[unlikely]] {
     return r;
   }
+  ondemand::array array;
+  if (coordinates.get_array().get(array) != simdjson::SUCCESS) [[unlikely]] {
+    return {ERROR_BAD_PARAMETER, "Missing coordinates."};
+  }
   std::vector<S2LatLng> vertices;
-  r = ParsePointsImpl<true>(vpack, vertices);
+  r = ParsePointsImpl<true>(array, vertices);
   if (!r.ok()) [[unlikely]] {
     return r;
   }
@@ -717,13 +819,22 @@ Result ParseMultiPoint(vpack::Slice vpack, S2MultiPointRegion& region) {
   return {};
 }
 
-Result ParseLinestring(vpack::Slice vpack, S2Polyline& region) {
-  auto r = Validate<Type::Linestring>(vpack);
+Result ParseLinestring(ondemand::value json, S2Polyline& region) {
+  ondemand::object object;
+  if (json.get_object().get(object) != simdjson::SUCCESS) [[unlikely]] {
+    return {ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object."};
+  }
+  ondemand::value coordinates;
+  auto r = Validate<Type::Linestring>(object, coordinates);
   if (!r.ok()) [[unlikely]] {
     return r;
   }
+  ondemand::array array;
+  if (coordinates.get_array().get(array) != simdjson::SUCCESS) [[unlikely]] {
+    return {ERROR_BAD_PARAMETER, "Missing coordinates."};
+  }
   std::vector<S2LatLng> vertices;
-  r = ParseLineImpl<true>(vpack, vertices);
+  r = ParseLineImpl<true>(array, vertices);
   if (!r.ok()) [[unlikely]] {
     return r;
   }
@@ -735,76 +846,98 @@ Result ParseLinestring(vpack::Slice vpack, S2Polyline& region) {
   return {};
 }
 
-Result ParseMultiLinestring(vpack::Slice vpack, S2MultiPolylineRegion& region) {
-  auto r = Validate<Type::MultiLinestring>(vpack);
+Result ParseMultiLinestring(ondemand::value json,
+                            S2MultiPolylineRegion& region) {
+  ondemand::object object;
+  if (json.get_object().get(object) != simdjson::SUCCESS) [[unlikely]] {
+    return {ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object."};
+  }
+  ondemand::value coordinates;
+  auto r = Validate<Type::MultiLinestring>(object, coordinates);
   if (!r.ok()) [[unlikely]] {
     return r;
+  }
+  ondemand::array array;
+  if (coordinates.get_array().get(array) != simdjson::SUCCESS) [[unlikely]] {
+    return {ERROR_BAD_PARAMETER, "Missing coordinates."};
   }
   auto& lines = region.Impl();
   std::vector<S2LatLng> vertices;
-  return ParseLinesImpl<true>(vpack, lines, vertices, coding::Options::Invalid,
+  return ParseLinesImpl<true>(array, lines, vertices, coding::Options::Invalid,
                               nullptr);
 }
 
-Result ParsePolygon(vpack::Slice vpack, S2Polygon& region) {
-  auto r = Validate<Type::Polygon>(vpack);
+Result ParsePolygon(ondemand::value json, S2Polygon& region) {
+  ondemand::object object;
+  if (json.get_object().get(object) != simdjson::SUCCESS) [[unlikely]] {
+    return {ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object."};
+  }
+  ondemand::value coordinates;
+  auto r = Validate<Type::Polygon>(object, coordinates);
   if (!r.ok()) [[unlikely]] {
     return r;
   }
-  vpack::ArrayIterator it{vpack};
-  if (it.size() == 0) [[unlikely]] {
+  ondemand::array array;
+  if (coordinates.get_array().get(array) != simdjson::SUCCESS) [[unlikely]] {
+    return {ERROR_BAD_PARAMETER, "Missing coordinates."};
+  }
+  size_t n = 0;
+  if (array.count_elements().get(n) != simdjson::SUCCESS || n == 0)
+    [[unlikely]] {
     return {ERROR_BAD_PARAMETER, "Polygon should contains at least one loop."};
   }
   std::vector<S2LatLng> vertices;
-  return ParsePolygonImpl<true>(it, region, vertices, coding::Options::Invalid,
-                                nullptr);
+  return ParsePolygonImpl<true>(array, region, vertices,
+                                coding::Options::Invalid, nullptr);
 }
 
-Result ParseMultiPolygon(vpack::Slice vpack, S2Polygon& region) {
-  auto r = Validate<Type::MultiPolygon>(vpack);
+Result ParseMultiPolygon(ondemand::value json, S2Polygon& region) {
+  ondemand::object object;
+  if (json.get_object().get(object) != simdjson::SUCCESS) [[unlikely]] {
+    return {ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object."};
+  }
+  ondemand::value coordinates;
+  auto r = Validate<Type::MultiPolygon>(object, coordinates);
   if (!r.ok()) [[unlikely]] {
     return r;
   }
   std::vector<S2LatLng> vertices;
-  return ParseMultiPolygonImpl<true>(vpack, region, vertices,
+  return ParseMultiPolygonImpl<true>(coordinates, region, vertices,
                                      coding::Options::Invalid, nullptr);
 }
 
-Result ParseRegion(vpack::Slice vpack, ShapeContainer& region) {
+Result ParseRegion(ondemand::value json, ShapeContainer& region) {
   std::vector<S2LatLng> cache;
-  return ParseRegionImpl<true>(vpack, region, cache, coding::Options::Invalid,
+  return ParseRegionImpl<true>(json, region, cache, coding::Options::Invalid,
                                nullptr);
 }
 
 template<bool Valid>
-Result ParseRegion(vpack::Slice vpack, ShapeContainer& region,
+Result ParseRegion(ondemand::value json, ShapeContainer& region,
                    std::vector<S2LatLng>& cache, coding::Options options,
                    Encoder* encoder) {
-  auto r = ParseRegionImpl<(Valid || kIsMaintainer)>(vpack, region, cache,
+  auto r = ParseRegionImpl<(Valid || kIsMaintainer)>(json, region, cache,
                                                      options, encoder);
   SDB_ASSERT(Valid || r.ok(), r.errorMessage());
   return r;
 }
 
-template Result ParseRegion<true>(vpack::Slice vpack, ShapeContainer& region,
+template Result ParseRegion<true>(ondemand::value json, ShapeContainer& region,
                                   std::vector<S2LatLng>& cache,
                                   coding::Options options, Encoder* encoder);
-template Result ParseRegion<false>(vpack::Slice vpack, ShapeContainer& region,
+template Result ParseRegion<false>(ondemand::value json, ShapeContainer& region,
                                    std::vector<S2LatLng>& cache,
                                    coding::Options options, Encoder* encoder);
 
 template<bool Valid>
-Result ParseCoordinates(vpack::Slice vpack, ShapeContainer& region,
+Result ParseCoordinates(ondemand::value json, ShapeContainer& region,
                         bool geo_json, coding::Options options,
                         Encoder* encoder) {
   auto r = [&]() -> Result {
     static constexpr bool kValidation = Valid || kIsMaintainer;
-    if (kValidation && SDB_UNLIKELY(!vpack.isArray())) {
-      return {ERROR_BAD_PARAMETER, "Invalid coordinate pair."};
-    }
     S2LatLng lat_lng;
-    auto res = geo_json ? ParsePointImpl<kValidation, true>(vpack, lat_lng)
-                        : ParsePointImpl<kValidation, false>(vpack, lat_lng);
+    auto res = geo_json ? ParsePointImpl<kValidation, true>(json, lat_lng)
+                        : ParsePointImpl<kValidation, false>(json, lat_lng);
     if (kValidation && SDB_UNLIKELY(!res.ok())) {
       return res;
     }
@@ -816,11 +949,11 @@ Result ParseCoordinates(vpack::Slice vpack, ShapeContainer& region,
   return r;
 }
 
-template Result ParseCoordinates<true>(vpack::Slice vpack,
+template Result ParseCoordinates<true>(ondemand::value json,
                                        ShapeContainer& region, bool geoJson,
                                        coding::Options options,
                                        Encoder* encoder);
-template Result ParseCoordinates<false>(vpack::Slice vpack,
+template Result ParseCoordinates<false>(ondemand::value json,
                                         ShapeContainer& region, bool geoJson,
                                         coding::Options options,
                                         Encoder* encoder);

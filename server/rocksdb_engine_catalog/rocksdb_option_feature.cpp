@@ -344,7 +344,6 @@ RocksDBOptionFeature::RocksDBOptionFeature()
       transaction::Options::gDefaultIntermediateCommitSize),
     _intermediate_commit_count(
       transaction::Options::gDefaultIntermediateCommitCount),
-    _vpack_cmp(std::make_unique<RocksDBVPackComparator>()),
     _max_write_buffer_number_cf{0, 0} {
   if (_total_write_buffer_size == 0) {
     // unlimited write buffer size... now set to some fraction of physical RAM

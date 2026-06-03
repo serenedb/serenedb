@@ -38,7 +38,6 @@ target_link_libraries(
         rocksdb_interface
         llhttp
         nghttp2::nghttp2
-        vpack
         rocksdb
         duckdb_static
         Folly::folly

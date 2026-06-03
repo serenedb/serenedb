@@ -28,7 +28,6 @@
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/text_format.hpp>
 #include <span>
 #include <string>
 #include <vector>

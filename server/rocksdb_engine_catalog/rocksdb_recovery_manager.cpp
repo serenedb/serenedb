@@ -25,10 +25,6 @@
 #include <rocksdb/utilities/transaction_db.h>
 #include <rocksdb/utilities/write_batch_with_index.h>
 #include <rocksdb/write_batch.h>
-#include <vpack/iterator.h>
-#include <vpack/parser.h>
-#include <vpack/slice.h>
-#include <vpack/vpack_helper.h>
 
 #include <atomic>
 #include <filesystem>
@@ -51,7 +47,6 @@
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
-#include "rocksdb_engine_catalog/rocksdb_log_value.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_helper.h"
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
 

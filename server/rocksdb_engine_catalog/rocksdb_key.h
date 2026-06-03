@@ -22,7 +22,6 @@
 #pragma once
 
 #include <rocksdb/slice.h>
-#include <vpack/slice.h>
 
 #include <iosfwd>
 #include <string>

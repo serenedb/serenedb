@@ -85,7 +85,7 @@ class HttpCommTask final : public GeneralCommTask<T> {
   llhttp_t _parser;
   llhttp_settings_t _parser_settings;
 
-  vpack::BufferUInt8 _header;
+  basics::BufferUInt8 _header;
 
   // ==== parser state ====
   std::string _last_header_field;

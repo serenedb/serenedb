@@ -332,7 +332,7 @@ TEST(SerializerTest, testEnum) {
   ExpectReadFails<Holder>(WireShape{.values = {{"first", 0}, {"second", 5}}});
 }
 
-// testVariable -- original used `vpack::Builder` to wrap a map inside an
+// testVariable -- original wrapped a map inside an
 // outer object. There's no duckdb-binary equivalent for a "bare map at
 // the top level inside an object"; wrap the map in a struct and
 // round-trip it directly.

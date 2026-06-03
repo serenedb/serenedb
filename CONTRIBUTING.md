@@ -204,7 +204,7 @@ Click **Run and Debug** on the left sidebar (Shift+Ctrl+D / Shift+Cmd+D). This a
 
 ## C++ Code Style
 
-Based on common sense, Google C++ style guide, and Abseil best practices. These rules apply to serenedb, iresearch, and vpack code.
+Based on common sense, Google C++ style guide, and Abseil best practices. These rules apply to serenedb and iresearch code.
 
 Style issues shouldn't block PRs -- anything not caught automatically can be fixed later. This is a living document.
 

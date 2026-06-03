@@ -30,8 +30,6 @@ namespace sdb::rest {
 
 std::string ContentTypeToString(ContentType type) {
   switch (type) {
-    case ContentType::VPack:
-      return StaticStrings::kMimeTypeVPack;
     case ContentType::Text:
       return StaticStrings::kMimeTypeText;
     case ContentType::Html:
@@ -52,9 +50,6 @@ ContentType StringToContentType(const std::string& val, ContentType def) {
       val.compare(0, StaticStrings::kMimeTypeJsonNoEncoding.size(),
                   StaticStrings::kMimeTypeJsonNoEncoding) == 0) {
     return ContentType::Json;
-  }
-  if (val == StaticStrings::kMimeTypeVPack) {
-    return ContentType::VPack;
   }
   if (val.starts_with(StaticStrings::kMimeTypeDumpNoEncoding)) {
     return ContentType::Dump;

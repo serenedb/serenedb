@@ -33,11 +33,6 @@
 #define SERENEDB_VERSION_FULL SERENEDB_VERSION " [" SERENEDB_PLATFORM "]"
 #endif
 
-namespace vpack {
-
-class Builder;
-}
-
 namespace sdb {
 namespace rest {
 
@@ -113,9 +108,6 @@ class Version {
 
   // get detailed version information as a (multi-line) string
   static std::string getDetailed();
-
-  // VPack all data
-  static void getVPack(vpack::Builder&);
 
  public:
   static std::map<std::string, std::string> gValues;

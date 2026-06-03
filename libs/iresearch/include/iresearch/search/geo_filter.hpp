@@ -37,8 +37,9 @@
 namespace irs {
 
 enum class StoredType : uint8_t {
-  // Valid GeoJson as VPack or coordinates array of two S2LatLng
-  VPack = 0,
+  // The indexed source column is force-included and re-parsed at query time
+  // (JSON GeoJSON text or WKB bytes, selected by source_is_wkb).
+  Source = 0,
   // Valid ShapeContainer serialized as S2Region
   S2Region,
   // Same as S2Region, but contains only S2Point
@@ -50,9 +51,19 @@ enum class StoredType : uint8_t {
 struct GeoFilterOptionsBase {
   std::string prefix;
   S2RegionTermIndexer::Options options;
-  StoredType stored{StoredType::VPack};
+  StoredType stored{StoredType::Source};
   sdb::geo::coding::Options coding{sdb::geo::coding::Options::Invalid};
   field_id store_field_id{0};
+  // For StoredType::Source: whether the force-included source column carries
+  // WKB bytes (GEOMETRY column) rather than GeoJSON text (JSON/VARCHAR).
+  bool source_is_wkb{false};
+  // For StoredType::Source: the geopoint analyzer's source is not GeoJSON but
+  // a bare point -- a [lat, lng] array (both paths empty) or an object whose
+  // latitude/longitude live at these field paths. Re-parsed with the same
+  // semantics as GeoPointAnalyzer::ParsePoint.
+  bool source_is_point{false};
+  std::vector<std::string> point_latitude;
+  std::vector<std::string> point_longitude;
 };
 
 enum class GeoFilterType : uint8_t {

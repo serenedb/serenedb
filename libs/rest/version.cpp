@@ -25,7 +25,6 @@
 #include <openssl/ssl.h>
 #include <rocksdb/convenience.h>
 #include <rocksdb/version.h>
-#include <vpack/builder.h>
 
 #include <charconv>
 #include <cstdint>
@@ -507,17 +506,4 @@ std::string Version::getDetailed() {
   }
 
   return result;
-}
-
-// VPack all data
-void Version::getVPack(vpack::Builder& dst) {
-  SDB_ASSERT(!dst.isClosed());
-
-  for (const auto& it : gValues) {
-    const std::string& value = it.second;
-
-    if (!value.empty()) {
-      dst.add(it.first, value);
-    }
-  }
 }

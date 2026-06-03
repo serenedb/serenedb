@@ -114,7 +114,7 @@ class GeneralCommTask : public GenericCommTask<T, CommTask> {
 
   /// send simple response including response body
   void SendSimpleResponse(rest::ResponseCode, rest::ContentType,
-                          uint64_t message_id, vpack::BufferUInt8&&);
+                          uint64_t message_id, std::string buffer);
 
   /// decompress content
   Result HandleContentEncoding(GeneralRequest&);

@@ -226,7 +226,7 @@ ErrorCode Lz4Uncompress(const uint8_t* compressed, size_t compressed_len,
   if constexpr (std::is_same_v<T, std::string>) {
     // TODO(mbkkt) why amortized?
     basics::StrResizeAmortized(uncompressed, initial + uncompressed_len);
-  } else if constexpr (std::is_same_v<T, vpack::BufferUInt8>) {
+  } else if constexpr (std::is_same_v<T, basics::BufferUInt8>) {
     uncompressed.reserve(initial + uncompressed_len);
   } else {
     static_assert(std::is_same_v<T, basics::StringBuffer>);
@@ -247,7 +247,7 @@ ErrorCode Lz4Uncompress(const uint8_t* compressed, size_t compressed_len,
     return ERROR_BAD_PARAMETER;
   }
 
-  if constexpr (std::is_same_v<T, vpack::BufferUInt8>) {
+  if constexpr (std::is_same_v<T, basics::BufferUInt8>) {
     uncompressed.resetTo(initial + uncompressed_len);
   }
 
@@ -341,7 +341,7 @@ ErrorCode Lz4Compress(const uint8_t* uncompressed, size_t uncompressed_len,
   if constexpr (std::is_same_v<T, std::string>) {
     // TODO(mbkkt) maybe amortized?
     basics::StrResize(compressed, compressed_len);
-  } else if constexpr (std::is_same_v<T, vpack::BufferUInt8>) {
+  } else if constexpr (std::is_same_v<T, basics::BufferUInt8>) {
     compressed.reserve(compressed_len);
   } else {
     static_assert(std::is_same_v<T, basics::StringBuffer>);
@@ -367,7 +367,7 @@ ErrorCode Lz4Compress(const uint8_t* uncompressed, size_t uncompressed_len,
   }
 
   compressed_len += kLz4HeaderLen;
-  if constexpr (std::is_same_v<T, vpack::BufferUInt8>) {
+  if constexpr (std::is_same_v<T, basics::BufferUInt8>) {
     compressed.resetTo(compressed_len);
   } else {
     static_assert(std::is_same_v<T, std::string> ||
@@ -381,9 +381,9 @@ ErrorCode Lz4Compress(const uint8_t* uncompressed, size_t uncompressed_len,
 // template instantiations
 
 // uncompress methods
-template ErrorCode GZipUncompress<vpack::BufferUInt8>(
+template ErrorCode GZipUncompress<basics::BufferUInt8>(
   const uint8_t* compressed, size_t compressedLen,
-  vpack::BufferUInt8& uncompressed);
+  basics::BufferUInt8& uncompressed);
 
 template ErrorCode GZipUncompress<basics::StringBuffer>(
   const uint8_t* compressed, size_t compressedLen,
@@ -393,9 +393,9 @@ template ErrorCode GZipUncompress<std::string>(const uint8_t* compressed,
                                                size_t compressedLen,
                                                std::string& uncompressed);
 
-template ErrorCode ZLibInflate<vpack::BufferUInt8>(
+template ErrorCode ZLibInflate<basics::BufferUInt8>(
   const uint8_t* compressed, size_t compressedLen,
-  vpack::BufferUInt8& uncompressed);
+  basics::BufferUInt8& uncompressed);
 
 template ErrorCode ZLibInflate<basics::StringBuffer>(
   const uint8_t* compressed, size_t compressedLen,
@@ -405,26 +405,26 @@ template ErrorCode ZLibInflate<std::string>(const uint8_t* compressed,
                                             size_t compressedLen,
                                             std::string& uncompressed);
 
-template ErrorCode Lz4Uncompress<vpack::BufferUInt8>(
+template ErrorCode Lz4Uncompress<basics::BufferUInt8>(
   const uint8_t* compressed, size_t compressedLen,
-  vpack::BufferUInt8& uncompressed);
+  basics::BufferUInt8& uncompressed);
 
 template ErrorCode Lz4Uncompress<basics::StringBuffer>(
   const uint8_t* compressed, size_t compressedLen,
   basics::StringBuffer& uncompressed);
 
 // compression methods
-template ErrorCode GZipCompress<vpack::BufferUInt8>(
+template ErrorCode GZipCompress<basics::BufferUInt8>(
   const uint8_t* uncompressed, size_t uncompressedLen,
-  vpack::BufferUInt8& compressed);
+  basics::BufferUInt8& compressed);
 
 template ErrorCode GZipCompress<basics::StringBuffer>(
   const uint8_t* uncompressed, size_t uncompressedLen,
   basics::StringBuffer& compressed);
 
-template ErrorCode ZLibDeflate<vpack::BufferUInt8>(
+template ErrorCode ZLibDeflate<basics::BufferUInt8>(
   const uint8_t* uncompressed, size_t uncompressedLen,
-  vpack::BufferUInt8& compressed);
+  basics::BufferUInt8& compressed);
 
 template ErrorCode ZLibDeflate<basics::StringBuffer>(
   const uint8_t* uncompressed, size_t uncompressedLen,
@@ -434,9 +434,9 @@ template ErrorCode ZLibDeflate<std::string>(const uint8_t* uncompressed,
                                             size_t uncompressedLen,
                                             std::string& compressed);
 
-template ErrorCode Lz4Compress<vpack::BufferUInt8>(
+template ErrorCode Lz4Compress<basics::BufferUInt8>(
   const uint8_t* uncompressed, size_t uncompressedLen,
-  vpack::BufferUInt8& compressed);
+  basics::BufferUInt8& compressed);
 
 template ErrorCode Lz4Compress<basics::StringBuffer>(
   const uint8_t* uncompressed, size_t uncompressedLen,

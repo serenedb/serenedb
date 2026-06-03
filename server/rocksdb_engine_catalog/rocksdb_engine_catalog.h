@@ -28,8 +28,6 @@
 #include <rocksdb/options.h>
 #include <rocksdb/slice.h>
 #include <rocksdb/snapshot.h>
-#include <vpack/builder.h>
-#include <vpack/slice.h>
 
 #include <atomic>
 #include <chrono>
@@ -78,7 +76,6 @@ class RocksDBRecoveryHelper;
 class RocksDBReplicationManager;
 class RocksDBSettingsManager;
 class RocksDBSyncThread;
-class RocksDBVPackComparator;
 class TransactionTable;
 class TransactionState;
 
@@ -165,8 +162,6 @@ class RocksDBEngineCatalog {
 
   void flushOpenFilesIfRequired();
   HealthData healthCheck();
-
-  void getStatistics(vpack::Builder& builder) const;
 
   std::string versionFilename(ObjectId id) const;
   std::string databasePath() const { return _base_path; }

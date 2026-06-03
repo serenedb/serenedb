@@ -122,7 +122,7 @@ class H2CommTask final : public GeneralCommTask<T> {
   /// used to generate the full url for debugging
   std::string url(const HttpRequest* req) const;
 
-  vpack::BufferUInt8 _outbuffer;
+  basics::BufferUInt8 _outbuffer;
 
   boost::lockfree::queue<HttpResponse*,
                          boost::lockfree::capacity<kH2MaxConcurrentStreams>>

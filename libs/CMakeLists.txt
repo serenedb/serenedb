@@ -101,14 +101,6 @@ target_link_libraries(
 )
 
 ################################################################################
-## VPack
-################################################################################
-
-add_subdirectory(vpack EXCLUDE_FROM_ALL)
-
-target_link_libraries(vpack PUBLIC serene_base)
-
-################################################################################
 ## iresearch
 ################################################################################
 
@@ -164,7 +156,10 @@ add_library(
     rest/version.cpp
 )
 
-target_link_libraries(serene PUBLIC s2 boost_boost vpack date_interface)
+target_link_libraries(
+    serene
+    PUBLIC s2 boost_boost serene_base date_interface simdjson
+)
 
 # this is "."
 target_include_directories(serene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

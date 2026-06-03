@@ -42,7 +42,6 @@
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
-#include <iresearch/utils/text_format.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
 

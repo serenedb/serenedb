@@ -18,13 +18,11 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/iterator.h>
-#include <vpack/parser.h>
-
 #include <set>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "geo/geo_json.h"
+#include "geo_test_helpers.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -235,7 +233,7 @@ TEST(GeoFilterTest, boost) {
 }
 
 TEST(GeoFilterTest, query) {
-  auto docs = vpack::Parser::fromJson(R"([
+  auto docs = tests::ParseGeoDocs(R"([
     { "name": "A", "geometry": { "type": "Point", "coordinates": [ 37.615895, 55.7039   ] } },
     { "name": "B", "geometry": { "type": "Point", "coordinates": [ 37.615315, 55.703915 ] } },
     { "name": "C", "geometry": { "type": "Point", "coordinates": [ 37.61509, 55.703537  ] } },
@@ -286,9 +284,9 @@ TEST(GeoFilterTest, query) {
       auto segment1 = writer->GetBatch();
       {
         size_t i = 0;
-        for (auto doc_slice : vpack::ArrayIterator(docs->slice())) {
-          geo_field.shape_slice = doc_slice.get("geometry");
-          name_field.value = slice_to_string_view(doc_slice.get("name"));
+        for (const auto& doc_entry : docs) {
+          geo_field.value = doc_entry.geometry;
+          name_field.value = doc_entry.name;
 
           auto doc = (i++ % 2 ? segment0 : segment1).Insert();
           ASSERT_TRUE(doc.Insert(name_field));
@@ -306,8 +304,8 @@ TEST(GeoFilterTest, query) {
 
   ASSERT_NE(nullptr, reader);
   ASSERT_EQ(2U, reader->size());
-  ASSERT_EQ(docs->slice().length(), reader->docs_count());
-  ASSERT_EQ(docs->slice().length(), reader->live_docs_count());
+  ASSERT_EQ(docs.size(), reader->docs_count());
+  ASSERT_EQ(docs.size(), reader->live_docs_count());
 
   auto execute_query = [&reader](
                          const irs::Filter& q,
@@ -404,7 +402,7 @@ TEST(GeoFilterTest, query) {
   {
     const std::set<std::string> expected{"Q"};
 
-    auto json = vpack::Parser::fromJson(R"({
+    auto json = tests::FromJson(R"({
       "type": "Point",
       "coordinates": [ 37.610235, 55.709754 ]
     })");
@@ -412,7 +410,7 @@ TEST(GeoFilterTest, query) {
     GeoFilter q;
     q.mutable_options()->type = GeoFilterType::Intersects;
     ASSERT_TRUE(
-      json::ParseRegion(json->slice(), q.mutable_options()->shape).ok());
+      json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
     ASSERT_EQ(ShapeContainer::Type::S2Point, q.mutable_options()->shape.type());
     *q.mutable_field() = "geometry";
     q.mutable_options()->store_field_id = kGeo;
@@ -423,7 +421,7 @@ TEST(GeoFilterTest, query) {
   {
     const std::set<std::string> expected{"Q", "R"};
 
-    auto json = vpack::Parser::fromJson(R"({
+    auto json = tests::FromJson(R"({
       "type": "Polygon",
       "coordinates": [
           [
@@ -439,7 +437,7 @@ TEST(GeoFilterTest, query) {
     GeoFilter q;
     q.mutable_options()->type = GeoFilterType::Intersects;
     ASSERT_TRUE(
-      json::ParseRegion(json->slice(), q.mutable_options()->shape).ok());
+      json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field() = "geometry";
@@ -449,16 +447,16 @@ TEST(GeoFilterTest, query) {
   }
 
   {
-    const auto origin = docs->slice().at(7);
-    std::set<std::string> expected{origin.get("name").copyString()};
+    const auto& origin = docs[7];
+    std::set<std::string> expected{origin.name};
 
     GeoFilter q;
     *q.mutable_field() = "geometry";
     q.mutable_options()->store_field_id = kGeo;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-      origin.get("geometry"), q.mutable_options()->shape, cache,
-      coding::Options::Invalid, nullptr));
+      tests::FromJson(origin.geometry).value(), q.mutable_options()->shape,
+      cache, coding::Options::Invalid, nullptr));
     q.mutable_options()->type = GeoFilterType::Intersects;
     q.mutable_options()->options.set_index_contains_points_only(true);
 
@@ -466,16 +464,16 @@ TEST(GeoFilterTest, query) {
   }
 
   {
-    const auto origin = docs->slice().at(7);
-    std::set<std::string> expected{origin.get("name").copyString()};
+    const auto& origin = docs[7];
+    std::set<std::string> expected{origin.name};
 
     GeoFilter q;
     *q.mutable_field() = "geometry";
     q.mutable_options()->store_field_id = kGeo;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-      origin.get("geometry"), q.mutable_options()->shape, cache,
-      coding::Options::Invalid, nullptr));
+      tests::FromJson(origin.geometry).value(), q.mutable_options()->shape,
+      cache, coding::Options::Invalid, nullptr));
     q.mutable_options()->type = GeoFilterType::Contains;
     q.mutable_options()->options.set_index_contains_points_only(true);
 
@@ -483,16 +481,16 @@ TEST(GeoFilterTest, query) {
   }
 
   {
-    const auto origin = docs->slice().at(7);
-    std::set<std::string> expected{origin.get("name").copyString()};
+    const auto& origin = docs[7];
+    std::set<std::string> expected{origin.name};
 
     GeoFilter q;
     *q.mutable_field() = "geometry";
     q.mutable_options()->store_field_id = kGeo;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-      origin.get("geometry"), q.mutable_options()->shape, cache,
-      coding::Options::Invalid, nullptr));
+      tests::FromJson(origin.geometry).value(), q.mutable_options()->shape,
+      cache, coding::Options::Invalid, nullptr));
     q.mutable_options()->type = GeoFilterType::IsContained;
     q.mutable_options()->options.set_index_contains_points_only(true);
 
@@ -500,7 +498,7 @@ TEST(GeoFilterTest, query) {
   }
 
   {
-    auto shape_json = vpack::Parser::fromJson(R"({
+    auto shape_json = tests::FromJson(R"({
       "type": "Polygon",
         "coordinates": [
             [
@@ -517,27 +515,23 @@ TEST(GeoFilterTest, query) {
     ShapeContainer point;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
-      shape_json->slice(), shape, cache, coding::Options::Invalid, nullptr));
+      shape_json.value(), shape, cache, coding::Options::Invalid, nullptr));
     std::set<std::string> expected;
-    for (auto doc : vpack::ArrayIterator(docs->slice())) {
-      auto geo = doc.get("geometry");
-      ASSERT_TRUE(geo.isObject());
+    for (const auto& doc_entry : docs) {
       ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-        geo, point, cache, coding::Options::Invalid, nullptr));
+        tests::FromJson(doc_entry.geometry).value(), point, cache,
+        coding::Options::Invalid, nullptr));
       if (!shape.contains(point)) {
         continue;
       }
-
-      auto name = doc.get("name");
-      ASSERT_TRUE(name.isString());
-      expected.emplace(slice_to_string(name));
+      expected.emplace(doc_entry.name);
     }
 
     GeoFilter q;
     *q.mutable_field() = "geometry";
     q.mutable_options()->store_field_id = kGeo;
     ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
-      shape_json->slice(), q.mutable_options()->shape, cache,
+      shape_json.value(), q.mutable_options()->shape, cache,
       coding::Options::Invalid, nullptr));
     q.mutable_options()->type = GeoFilterType::Contains;
     q.mutable_options()->options.set_index_contains_points_only(true);
@@ -546,7 +540,7 @@ TEST(GeoFilterTest, query) {
   }
 
   {
-    auto shape_json = vpack::Parser::fromJson(R"({
+    auto shape_json = tests::FromJson(R"({
       "type": "Polygon",
         "coordinates": [
             [
@@ -563,27 +557,23 @@ TEST(GeoFilterTest, query) {
     ShapeContainer point;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
-      shape_json->slice(), shape, cache, coding::Options::Invalid, nullptr));
+      shape_json.value(), shape, cache, coding::Options::Invalid, nullptr));
     std::set<std::string> expected;
-    for (auto doc : vpack::ArrayIterator(docs->slice())) {
-      auto geo = doc.get("geometry");
-      ASSERT_TRUE(geo.isObject());
+    for (const auto& doc_entry : docs) {
       ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-        geo, point, cache, coding::Options::Invalid, nullptr));
+        tests::FromJson(doc_entry.geometry).value(), point, cache,
+        coding::Options::Invalid, nullptr));
       if (!shape.contains(point)) {
         continue;
       }
-
-      auto name = doc.get("name");
-      ASSERT_TRUE(name.isString());
-      expected.emplace(slice_to_string_view(name));
+      expected.emplace(doc_entry.name);
     }
 
     GeoFilter q;
     *q.mutable_field() = "geometry";
     q.mutable_options()->store_field_id = kGeo;
     ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
-      shape_json->slice(), q.mutable_options()->shape, cache,
+      shape_json.value(), q.mutable_options()->shape, cache,
       coding::Options::Invalid, nullptr));
     q.mutable_options()->type = GeoFilterType::Intersects;
 
@@ -591,7 +581,7 @@ TEST(GeoFilterTest, query) {
   }
 
   {
-    auto shape_json = vpack::Parser::fromJson(R"({
+    auto shape_json = tests::FromJson(R"({
       "type": "Polygon",
         "coordinates": [
             [
@@ -613,7 +603,7 @@ TEST(GeoFilterTest, query) {
     *q.mutable_field() = "geometry";
     q.mutable_options()->store_field_id = kGeo;
     ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
-      shape_json->slice(), q.mutable_options()->shape, cache,
+      shape_json.value(), q.mutable_options()->shape, cache,
       coding::Options::Invalid, nullptr));
     q.mutable_options()->type = GeoFilterType::IsContained;
 
@@ -622,7 +612,7 @@ TEST(GeoFilterTest, query) {
 }
 
 TEST(GeoFilterTest, checkScorer) {
-  auto docs = vpack::Parser::fromJson(R"([
+  auto docs = tests::ParseGeoDocs(R"([
     { "name": "A", "geometry": { "type": "Point", "coordinates": [ 37.615895, 55.7039   ] } },
     { "name": "B", "geometry": { "type": "Point", "coordinates": [ 37.615315, 55.703915 ] } },
     { "name": "C", "geometry": { "type": "Point", "coordinates": [ 37.61509, 55.703537  ] } },
@@ -673,9 +663,9 @@ TEST(GeoFilterTest, checkScorer) {
       auto segment1 = writer->GetBatch();
       {
         size_t i = 0;
-        for (auto doc_slice : vpack::ArrayIterator(docs->slice())) {
-          geo_field.shape_slice = doc_slice.get("geometry");
-          name_field.value = slice_to_string_view(doc_slice.get("name"));
+        for (const auto& doc_entry : docs) {
+          geo_field.value = doc_entry.geometry;
+          name_field.value = doc_entry.name;
 
           auto doc = (i++ % 2 ? segment0 : segment1).Insert();
           ASSERT_TRUE(doc.Insert(name_field));
@@ -693,8 +683,8 @@ TEST(GeoFilterTest, checkScorer) {
 
   ASSERT_NE(nullptr, reader);
   ASSERT_EQ(2, reader->size());
-  ASSERT_EQ(docs->slice().length(), reader->docs_count());
-  ASSERT_EQ(docs->slice().length(), reader->live_docs_count());
+  ASSERT_EQ(docs.size(), reader->docs_count());
+  ASSERT_EQ(docs.size(), reader->live_docs_count());
 
   irs::DocIterator* cur_it = nullptr;
   auto execute_query = [&](const irs::Filter& q, const irs::Scorer& ord) {
@@ -768,7 +758,7 @@ TEST(GeoFilterTest, checkScorer) {
   };
 
   {
-    auto json = vpack::Parser::fromJson(R"({
+    auto json = tests::FromJson(R"({
       "type": "Polygon",
       "coordinates": [
           [
@@ -784,7 +774,7 @@ TEST(GeoFilterTest, checkScorer) {
     GeoFilter q;
     q.mutable_options()->type = GeoFilterType::Intersects;
     ASSERT_TRUE(
-      json::ParseRegion(json->slice(), q.mutable_options()->shape).ok());
+      json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field() = "geometry";
@@ -829,7 +819,7 @@ TEST(GeoFilterTest, checkScorer) {
   }
 
   {
-    auto json = vpack::Parser::fromJson(R"({
+    auto json = tests::FromJson(R"({
       "type": "Polygon",
       "coordinates": [
           [
@@ -846,7 +836,7 @@ TEST(GeoFilterTest, checkScorer) {
     q.boost(1.5f);
     q.mutable_options()->type = GeoFilterType::Intersects;
     ASSERT_TRUE(
-      json::ParseRegion(json->slice(), q.mutable_options()->shape).ok());
+      json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field() = "geometry";

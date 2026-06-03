@@ -25,12 +25,6 @@
 
 #include "catalog/types.h"
 
-namespace vpack {
-
-class Builder;
-class Slice;
-
-}  // namespace vpack
 namespace sdb {
 namespace transaction {
 
@@ -44,12 +38,6 @@ struct Options {
   static void setLimits(uint64_t max_transaction_size,
                         uint64_t intermediate_commit_size,
                         uint64_t intermediate_commit_count);
-
-  /// read the options from a vpack slice
-  void fromVPack(vpack::Slice slice);
-
-  /// add the options to an opened vpack builder
-  void toVPack(vpack::Builder&) const;
 
 #ifdef SDB_FAULT_INJECTION
   /// patch intermediateCommitCount for testing

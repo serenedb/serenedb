@@ -22,8 +22,6 @@
 #pragma once
 
 #include <rocksdb/types.h>
-#include <vpack/builder.h>
-#include <vpack/slice.h>
 
 #include <atomic>
 
@@ -61,14 +59,6 @@ class RocksDBSettingsManager {
   void loadSettings();
 
   RocksDBEngineCatalog& _engine;
-
-  /// a reusable builder, used inside sync() to serialize objects.
-  /// implicitly protected by _syncing_mutex.
-  vpack::Builder _tmp_builder;
-
-  /// a reusable string object used for serialization.
-  /// implicitly protected by _syncing_mutex.
-  std::string _scratch;
 
   /// last sync sequence number
   std::atomic<rocksdb::SequenceNumber> _last_sync;

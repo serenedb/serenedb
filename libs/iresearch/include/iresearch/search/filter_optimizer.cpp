@@ -23,8 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/container/inlined_vector.h>
 
-#include <optional>
-
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/exclude_filter.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
@@ -32,54 +30,26 @@
 namespace irs {
 namespace {
 
-struct Frame {
-  Filter::ptr* slot;
-  Filter* node;
-  size_t child_ix;
-};
-
-Frame SlotFrame(Filter::ptr& slot) noexcept {
-  return {.slot = &slot, .node = slot.get(), .child_ix = 0};
-}
-
-Frame PinnedFrame(Filter& node) noexcept {
-  return {.slot = nullptr, .node = &node, .child_ix = 0};
-}
-
-std::optional<Frame> ChildFrameAt(Filter& node, size_t i) noexcept {
+template<typename Visitor>
+void EnumerateChildSlots(Filter& node, Visitor&& visit) {
   const auto tid = node.type();
   if (tid == Type<And>::id() || tid == Type<Or>::id()) {
-    const auto slots = sdb::basics::downCast<BooleanFilter>(node).ChildSlots();
-    if (i < slots.size()) {
-      return SlotFrame(slots[i]);
+    for (auto& slot : sdb::basics::downCast<BooleanFilter>(node).ChildSlots()) {
+      visit(slot);
     }
-    return std::nullopt;
-  }
-  if (tid == Type<Not>::id()) {
-    auto& slot = sdb::basics::downCast<Not>(node).ChildSlot();
-    if (i == 0 && slot) {
-      return SlotFrame(slot);
+  } else if (tid == Type<Not>::id()) {
+    if (auto& slot = sdb::basics::downCast<Not>(node).ChildSlot(); slot) {
+      visit(slot);
     }
-    return std::nullopt;
-  }
-  if (tid == Type<Exclude>::id()) {
-    auto& slot = sdb::basics::downCast<Exclude>(node).ChildSlot();
-    if (i == 0 && slot) {
-      return SlotFrame(slot);
+  } else if (tid == Type<Exclude>::id()) {
+    if (auto& slot = sdb::basics::downCast<Exclude>(node).ChildSlot(); slot) {
+      visit(slot);
     }
-    return std::nullopt;
-  }
-  if (tid == Type<MixedBooleanFilter>::id()) {
+  } else if (tid == Type<MixedBooleanFilter>::id()) {
     auto& mixed = sdb::basics::downCast<MixedBooleanFilter>(node);
-    if (i == 0) {
-      return PinnedFrame(mixed.GetRequired());
-    }
-    if (i == 1) {
-      return PinnedFrame(mixed.GetOptional());
-    }
-    return std::nullopt;
+    visit(mixed.RequiredSlot());
+    visit(mixed.OptionalSlot());
   }
-  return std::nullopt;
 }
 
 template<typename T>
@@ -211,13 +181,8 @@ void RunRules(Filter::ptr& slot, const OptimizeContext& ctx,
     if (node->type() == Type<Not>::id()) {
       return false;
     }
-    for (size_t i = 0;; ++i) {
-      const auto child = ChildFrameAt(*node, i);
-      if (!child) {
-        break;
-      }
-      stack.push_back(child->node);
-    }
+    EnumerateChildSlots(
+      *node, [&](Filter::ptr& child) { stack.push_back(child.get()); });
   }
   return true;
 }
@@ -232,19 +197,24 @@ void Optimize(Filter::ptr& root, const OptimizeContext& ctx,
     return;
   }
 
+  struct Frame {
+    Filter::ptr* slot;
+    bool children_visited;
+  };
+
   absl::InlinedVector<Frame, 16> stack;
-  stack.push_back(SlotFrame(root));
+  stack.push_back({&root, false});
   while (!stack.empty()) {
     auto& frame = stack.back();
-    if (auto child = ChildFrameAt(*frame.node, frame.child_ix)) {
-      ++frame.child_ix;
-      stack.push_back(*child);
+    if (frame.children_visited) {
+      RunRules(*frame.slot, ctx, rules);
+      stack.pop_back();
       continue;
     }
-    if (frame.slot != nullptr) {
-      RunRules(*frame.slot, ctx, rules);
-    }
-    stack.pop_back();
+    frame.children_visited = true;
+    EnumerateChildSlots(**frame.slot, [&](Filter::ptr& child) {
+      stack.push_back({&child, false});
+    });
   }
 
   SDB_ASSERT(!HasNotTarget(rules) || NoNotRemains(*root));

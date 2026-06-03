@@ -47,7 +47,6 @@ Filter& Append(irs::BooleanFilter& root, std::string_view name,
 }
 
 }  // namespace
-
 namespace tests {
 
 TEST(filter_optimizer_test, not_becomes_exclude) {
@@ -84,8 +83,7 @@ TEST(filter_optimizer_test, not_all_becomes_empty) {
 
 TEST(filter_optimizer_test, double_negation_unwraps) {
   irs::Filter::ptr root = std::make_unique<irs::Not>();
-  auto& inner_not =
-    sdb::basics::downCast<irs::Not>(*root).filter<irs::Not>();
+  auto& inner_not = sdb::basics::downCast<irs::Not>(*root).filter<irs::Not>();
   auto& term = inner_not.filter<irs::ByTerm>();
   term = MakeFilter<irs::ByTerm>("name", "A");
   const auto* term_ptr = &term;

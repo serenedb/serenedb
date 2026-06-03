@@ -26,14 +26,14 @@ namespace irs {
 
 Filter::Query::ptr MixedBooleanFilter::prepare(
   const PrepareContext& ctx) const {
-  if (_and->empty()) {
+  if (GetRequired().empty()) {
     return _or->prepare(ctx);
   }
-  if (_or->empty()) {
+  if (GetOptional().empty()) {
     return _and->prepare(ctx);
   }
   auto q = memory::make_tracked<BoostQuery>(ctx.memory);
-  q->Prepare(ctx, *_and, *_or);
+  q->Prepare(ctx, GetRequired(), GetOptional());
   return q;
 }
 

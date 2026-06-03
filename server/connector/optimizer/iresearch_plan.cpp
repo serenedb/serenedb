@@ -774,8 +774,8 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     if (any_claimed) {
       irs::Optimize(text_root);
       auto proxy = std::make_unique<irs::ProxyFilter>();
-      auto [real, cache] = proxy->set_filter(irs::IResourceManager::gNoop,
-                                             std::move(text_root));
+      auto [real, cache] =
+        proxy->set_filter(irs::IResourceManager::gNoop, std::move(text_root));
       ann->text_filter_root = &real;
       ann->stored_text_filter = std::move(proxy);
     }
@@ -963,8 +963,8 @@ bool TryClaimAnnRange(
     if (any_claimed) {
       irs::Optimize(text_root);
       auto proxy = std::make_unique<irs::ProxyFilter>();
-      auto [real, cache] = proxy->set_filter(irs::IResourceManager::gNoop,
-                                             std::move(text_root));
+      auto [real, cache] =
+        proxy->set_filter(irs::IResourceManager::gNoop, std::move(text_root));
       rss->text_filter_root = &real;
       rss->stored_text_filter = std::move(proxy);
     }

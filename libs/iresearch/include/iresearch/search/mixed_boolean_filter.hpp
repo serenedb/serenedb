@@ -30,15 +30,21 @@ class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
   MixedBooleanFilter()
     : _and{std::make_unique<And>()}, _or{std::make_unique<Or>()} {}
 
-  auto& GetRequired(this auto& self) noexcept { return *self._and; }
+  auto& GetRequired(this auto& self) noexcept {
+    return sdb::basics::downCast<And>(*self._and);
+  }
 
-  auto& GetOptional(this auto& self) noexcept { return *self._or; }
+  auto& GetOptional(this auto& self) noexcept {
+    return sdb::basics::downCast<Or>(*self._or);
+  }
 
-  auto& RequiredSlot() noexcept { return _and; }
+  Filter::ptr& RequiredSlot() noexcept { return _and; }
 
-  auto& OptionalSlot() noexcept { return _or; }
+  Filter::ptr& OptionalSlot() noexcept { return _or; }
 
-  bool empty() const noexcept { return _and->empty() && _or->empty(); }
+  bool empty() const noexcept {
+    return GetRequired().empty() && GetOptional().empty();
+  }
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
@@ -46,8 +52,8 @@ class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
   bool equals(const Filter& rhs) const noexcept final;
 
   And _root;
-  std::unique_ptr<And> _and;
-  std::unique_ptr<Or> _or;
+  Filter::ptr _and;
+  Filter::ptr _or;
 };
 
 }  // namespace irs

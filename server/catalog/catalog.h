@@ -42,6 +42,7 @@
 #include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/sequence.h"
+#include "catalog/subscription.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
@@ -95,6 +96,8 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::Tokenizer;
   } else if constexpr (std::is_same_v<T, Sequence>) {
     return ObjectType::Sequence;
+  } else if constexpr (std::is_same_v<T, Subscription>) {
+    return ObjectType::Subscription;
   } else {
     static_assert(false);
   }
@@ -192,6 +195,11 @@ struct Snapshot {
   virtual std::shared_ptr<IndexShard> GetIndexShard(
     ObjectId index_id) const = 0;
 
+  virtual std::shared_ptr<Subscription> GetSubscription(
+    ObjectId database_id, std::string_view name) const = 0;
+  virtual std::vector<std::shared_ptr<Subscription>> GetSubscriptions(
+    ObjectId database_id) const = 0;
+
   template<typename T>
   std::shared_ptr<T> GetObject(ObjectId id) const {
     auto obj = GetObject(id);
@@ -245,6 +253,8 @@ struct LogicalCatalog {
                                 std::shared_ptr<catalog::Schema> schema) = 0;
   virtual Result RegisterView(ObjectId schema_id,
                               std::shared_ptr<catalog::PgSqlView> view) = 0;
+  virtual Result RegisterSubscription(
+    ObjectId database_id, std::shared_ptr<catalog::Subscription> sub) = 0;
   virtual Result RegisterSequence(
     ObjectId database_id, ObjectId schema_id,
     std::shared_ptr<catalog::Sequence> sequence) = 0;
@@ -293,6 +303,8 @@ struct LogicalCatalog {
     std::string name, std::vector<CreateIndexColumn>&& columns,
     InvertedIndexOptions options,
     CreateIndexOperationOptions operation_options) = 0;
+  virtual Result CreateSubscription(ObjectId database_id,
+                                    std::shared_ptr<Subscription> sub) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,

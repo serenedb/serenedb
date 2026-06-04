@@ -31,6 +31,7 @@
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_storage_extension.h"
+#include "connector/duckdb_subscription.h"
 #include "connector/duckdb_tokenizer_function.h"
 #include "connector/duckdb_truncate_function.h"
 #include "connector/duckdb_vacuum_function.h"
@@ -222,6 +223,8 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterTokenizerPragma(db);
+
+  connector::RegisterSubscriptionPragma(db);
 
   connector::RegisterPgCasts(db);
 

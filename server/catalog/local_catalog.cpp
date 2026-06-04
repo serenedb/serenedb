@@ -82,6 +82,7 @@
 #include "catalog/schema.h"
 #include "catalog/secondary_index.h"
 #include "catalog/sequence.h"
+#include "catalog/subscription.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
@@ -92,7 +93,9 @@
 #include "general_server/scheduler.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
+#include "pg/errcodes.h"
 #include "pg/pg_catalog/fwd.h"
+#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -294,6 +297,13 @@ class SnapshotImpl : public Snapshot {
       return AddObjectDefinition(parent_id, std::move(object));
     } else if constexpr (std::is_same_v<T, IndexShard>) {
       return AddObjectDefinition(parent_id, std::move(object));
+    } else if constexpr (std::is_same_v<T, Subscription>) {
+      auto r = AddToResolution<ResolveType::Subscription>(
+        parent_id, object->GetId(), object->GetName(), replace);
+      if (!r.ok()) {
+        return r;
+      }
+      return AddObjectDefinition(parent_id, std::move(object));
     } else {
       static_assert(false);
     }
@@ -317,6 +327,9 @@ class SnapshotImpl : public Snapshot {
     } else if constexpr (std::is_same_v<T, Sequence>) {
       RemoveFromResolution<ResolveType::Relation>(parent_id, object->GetName(),
                                                   maybe_not_found);
+    } else if constexpr (std::is_same_v<T, Subscription>) {
+      RemoveFromResolution<ResolveType::Subscription>(
+        parent_id, object->GetName(), maybe_not_found);
     } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
       RemoveFromResolution<ResolveType::Function>(parent_id, object->GetName(),
                                                   maybe_not_found);
@@ -652,6 +665,8 @@ class SnapshotImpl : public Snapshot {
             id);
         }
       } break;
+      case ObjectType::Subscription:
+        break;
       case ObjectType::SecondaryIndex:
       case ObjectType::InvertedIndex: {
         const auto& index = basics::downCast<Index>(obj);
@@ -817,6 +832,27 @@ class SnapshotImpl : public Snapshot {
         return result;
       })
       .value_or(std::vector<std::shared_ptr<Index>>{});
+  }
+
+  std::shared_ptr<Subscription> GetSubscription(
+    ObjectId db_id, std::string_view name) const final {
+    auto id =
+      _resolution_table.ResolveObject<ResolveType::Subscription>(db_id, name);
+    if (!id) {
+      return nullptr;
+    }
+    return GetObject<Subscription>(*id);
+  }
+
+  std::vector<std::shared_ptr<Subscription>> GetSubscriptions(
+    ObjectId db_id) const final {
+    std::vector<std::shared_ptr<Subscription>> result;
+    for (auto id : _resolution_table.GetSubscriptions(db_id)) {
+      if (auto sub = GetObject<Subscription>(id)) {
+        result.push_back(sub);
+      }
+    }
+    return result;
   }
 
   void VisitRelations(
@@ -1357,6 +1393,8 @@ class SnapshotImpl : public Snapshot {
             schema_deps->sequences.erase(id);
           }
         } break;
+        case ObjectType::Subscription:
+          break;
         case ObjectType::TableShard:
         case ObjectType::SecondaryIndexShard:
         case ObjectType::InvertedIndexShard:
@@ -1431,6 +1469,8 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::PgSqlType:
       case ObjectType::Tokenizer:
       case ObjectType::Sequence:
+        break;
+      case ObjectType::Subscription:
         break;
       case ObjectType::TableShard:
       case ObjectType::SecondaryIndexShard:
@@ -1560,6 +1600,14 @@ Result LocalCatalog::RegisterView(ObjectId schema_id,
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, _snapshot_mutex, [&](auto& clone) {
     return clone->RegisterObject(std::move(view), schema_id, false);
+  });
+}
+
+Result LocalCatalog::RegisterSubscription(ObjectId database_id,
+                                          std::shared_ptr<Subscription> sub) {
+  absl::MutexLock lock{&_mutex};
+  return Apply(_snapshot, _snapshot_mutex, [&](auto& clone) {
+    return clone->RegisterObject(std::move(sub), database_id, false);
   });
 }
 
@@ -2236,6 +2284,33 @@ Result LocalCatalog::CreateType(ObjectId database_id, std::string_view schema,
         [&](bool) { return std::string_view{bytes}; });
     },
     [&](auto clone) { clone->UnregisterObject(type, *schema_id, true); });
+}
+
+Result LocalCatalog::CreateSubscription(ObjectId database_id,
+                                        std::shared_ptr<Subscription> sub) {
+  absl::MutexLock lock{&_mutex};
+
+  sub->SetParentId(database_id);
+
+  return Apply(
+    _snapshot, _snapshot_mutex,
+    [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
+      auto result = clone->RegisterObject(sub, database_id,
+                                          /*replace=*/false);
+      if (result.fail()) {
+        return result;
+      }
+      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*sub, stream);
+      return _engine->CreateDefinition(
+        database_id, ObjectType::Subscription, sub->GetId(),
+        [&](bool) { return std::string_view{bytes}; });
+    },
+    [&](auto& clone) {
+      return clone->UnregisterObject(sub, database_id, true);
+    });
 }
 
 template<typename T>

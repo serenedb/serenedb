@@ -1,0 +1,75 @@
+# Tests for CREATE SUBSCRIPTION syntax.
+# The catalog handler is not yet implemented, so every form of the statement is
+# parsed successfully but fails at execution time with a "does not exist" error
+# for the create_subscription pragma.  The point of these tests is to verify that
+# the PEG grammar accepts all supported syntactic forms without a parse error.
+
+# --- Bare form ---
+statement ok
+CREATE SUBSCRIPTION my_sub1;
+
+
+query
+SELECT subname FROM pg_subscription;
+----
+subname
+my_sub1
+
+
+# --- WITH CONNECTION only ---
+statement error
+CREATE SUBSCRIPTION my_sub1;
+----
+db error: ERROR: duplicate name
+
+
+# --- WITH CONNECTION only ---
+statement ok
+CREATE SUBSCRIPTION my_sub2 CONNECTION 'host=localhost dbname=mydb';
+
+
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+my_sub1
+my_sub2
+
+
+# --- WITH CONNECTION + single PUBLICATION ---
+statement ok
+CREATE SUBSCRIPTION my_sub3 CONNECTION 'host=localhost dbname=mydb' PUBLICATION my_pub;
+
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+my_sub1
+my_sub2
+my_sub3
+
+
+# --- WITH CONNECTION + multiple PUBLICATIONs ---
+statement ok
+CREATE SUBSCRIPTION my_sub4 CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1, pub2;
+
+
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+my_sub1
+my_sub2
+my_sub3
+my_sub4
+
+
+statement ok
+CREATE SUBSCRIPTION my_subscription CONNECTION 'host=publisher_host dbname=source_db user=repl_user password=secret' PUBLICATION my_publication;
+
+
+query
+SELECT subname, subconninfo, subslotname, subpublications FROM pg_subscription WHERE subname='my_subscription';
+----
+subname	subconninfo	subslotname	subpublications
+my_subscription	host=publisher_host dbname=source_db user=repl_user password=secret	my_subscription	{my_publication}

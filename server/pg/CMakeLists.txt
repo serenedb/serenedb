@@ -20,6 +20,7 @@ target_sources(
         pg_catalog/pg_tablespace.cpp
         pg_catalog/pg_ts_dict.cpp
         pg_catalog/pg_stat_progress.cpp
+        pg_catalog/pg_subscription.cpp
         pg_catalog/pg_type.cpp
         information_schema/sql_implementation_info.cpp
         information_schema/sql_parts.cpp

@@ -90,6 +90,10 @@ struct NumericSliceTypeImpl<duckdb::LogicalTypeId::TIMESTAMP_TZ> {
   using Type = int64_t;
 };
 template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::TIMESTAMP_TZ_NS> {
+  using Type = int64_t;
+};
+template<>
 struct NumericSliceTypeImpl<duckdb::LogicalTypeId::FLOAT> {
   using Type = float;
 };
@@ -200,10 +204,13 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const ColumnDescriptor& col,
       SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP>(column_id,
                                                           have_nulls);
       break;
-    // TODO(Dronplane): other timestamp derived types could be handled same way
     case duckdb::LogicalTypeId::TIMESTAMP_TZ:
       SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP_TZ>(column_id,
                                                              have_nulls);
+      break;
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ_NS:
+      SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP_TZ_NS>(column_id,
+                                                                have_nulls);
       break;
     case duckdb::LogicalTypeId::ARRAY: {
       SetupColumnWriter<duckdb::LogicalTypeId::ARRAY>(column_id, have_nulls);
@@ -337,7 +344,8 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
     case duckdb::LogicalTypeId::DOUBLE:
     case duckdb::LogicalTypeId::DATE:
     case duckdb::LogicalTypeId::TIMESTAMP:
-    case duckdb::LogicalTypeId::TIMESTAMP_TZ: {
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ_NS: {
       search::mangling::MangleNumeric(_name_buffer);
       _field.PrepareForNumericValue();
       auto numeric_writer = [&]() -> Writer {
@@ -358,6 +366,7 @@ bool SearchSinkInsertBaseImpl::SwitchExpressionImpl(
           case duckdb::LogicalTypeId::BIGINT:
           case duckdb::LogicalTypeId::TIMESTAMP:
           case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+          case duckdb::LogicalTypeId::TIMESTAMP_TZ_NS:
             return have_nulls ? MakeIndexWriter(
                                   make_nullable(&WriteNumericValue<int64_t>))
                               : MakeIndexWriter(&WriteNumericValue<int64_t>);
@@ -686,6 +695,10 @@ bool SearchSinkInsertBaseImpl::SetupListExpressionWriterForChild(
       SetupListExpressionWriter<duckdb::LogicalTypeId::TIMESTAMP_TZ>(
         field_id, have_nulls, array_size);
       break;
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ_NS:
+      SetupListExpressionWriter<duckdb::LogicalTypeId::TIMESTAMP_TZ_NS>(
+        field_id, have_nulls, array_size);
+      break;
     case duckdb::LogicalTypeId::FLOAT:
       SetupListExpressionWriter<duckdb::LogicalTypeId::FLOAT>(
         field_id, have_nulls, array_size);
@@ -785,7 +798,8 @@ void SearchSinkInsertBaseImpl::WriteListElementValue(
       duckdb::UnifiedVectorFormat::GetData<int32_t>(child_fmt)[idx]);
   } else if constexpr (Kind == duckdb::LogicalTypeId::BIGINT ||
                        Kind == duckdb::LogicalTypeId::TIMESTAMP ||
-                       Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ) {
+                       Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
+                       Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ_NS) {
     _field.SetNumericValue(
       duckdb::UnifiedVectorFormat::GetData<int64_t>(child_fmt)[idx]);
   } else if constexpr (Kind == duckdb::LogicalTypeId::FLOAT) {

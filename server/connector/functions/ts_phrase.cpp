@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/index/index_features.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/phrase_query.hpp>
 #include <iresearch/search/range_filter.hpp>
@@ -108,29 +109,12 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
                     ERR_HINT(kSyntaxHint));
   }
 
-  if ((column_info.tokenizer.features &
-       irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) !=
-      irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_phrase field should have Positions and Frequency features "
-              "enabled"),
-      ERR_HINT("Recreate the inverted index with both `Positions` and "
-               "`Frequency` features attached to the column."));
-  }
-
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(filter)
                              : AddFilter<irs::ByPhrase>(filter);
   phrase.boost(ctx.boost);
-  *phrase.mutable_field() = field_name;
   auto* opts = phrase.mutable_options();
   auto& analyzer = ctx.tokenizer;
   const irs::TermAttr* token = irs::get<irs::TermAttr>(analyzer);
-
   std::optional<PhraseGap> pending_gap;
 
   for (size_t i = 0; i < func.children.size(); ++i) {
@@ -145,16 +129,10 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
       auto text = duckdb::StringValue::Get(*const_val);
       analyzer.reset(std::string_view{text});
       while (analyzer.next()) {
-        if (pending_gap) {
-          // First token of a new text pattern: apply pending gap.
-          opts
-            ->push_back<irs::ByTermOptions>(pending_gap->min, pending_gap->max)
-            .term.assign(token->value);
-        } else {
-          // No pending gap: first term or adjacent token within same
-          // pattern.
-          opts->push_back<irs::ByTermOptions>().term.assign(token->value);
-        }
+        auto& slot = pending_gap ? opts->push_back<irs::ByTermOptions>(
+                                     pending_gap->min, pending_gap->max)
+                                 : opts->push_back<irs::ByTermOptions>();
+        slot.term.assign(token->value);
         pending_gap.reset();
       }
       continue;
@@ -186,6 +164,23 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
       ERR_HINT("All ts_phrase text arguments tokenised to nothing (e.g. "
                "all-stopword input). Provide at least one searchable term."));
   }
+  if (opts->size() > 1 &&
+      !irs::IsSubsetOf(
+        irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures,
+        column_info.tokenizer.features)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_phrase field should have Positions and Frequency features "
+              "enabled for multi-term phrases"),
+      ERR_HINT("Recreate the inverted index with both `Positions` and "
+               "`Frequency` features attached to the column, or query with a "
+               "single-term ts_phrase / ts_like."));
+  }
+
+  std::string field_name;
+  MakeFieldName(column_info.field_id, field_name);
+  search::mangling::MangleString(field_name);
+  *phrase.mutable_field() = std::move(field_name);
 }
 
 namespace {
@@ -226,25 +221,27 @@ void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_phrase field is not VARCHAR"));
   }
-  if ((column_info.tokenizer.features &
-       irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) !=
-      irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) {
+  auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(parent)
+                             : AddFilter<irs::ByPhrase>(parent);
+  phrase.boost(ctx.boost);
+  auto* opts = phrase.mutable_options();
+  EmitPhraseTokens(*opts, ctx, column_info, text, PhraseGap{});
+  if (opts->size() > 1 &&
+      !irs::IsSubsetOf(
+        irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures,
+        column_info.tokenizer.features)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_phrase field should have Positions and Frequency features "
-              "enabled"),
+              "enabled for multi-term phrases"),
       ERR_HINT("Recreate the inverted index with both `Positions` and "
-               "`Frequency` features attached to the column."));
+               "`Frequency` features attached to the column, or query with a "
+               "single-term ts_phrase / ts_like."));
   }
-  auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(parent)
-                             : AddFilter<irs::ByPhrase>(parent);
   std::string field_name;
   MakeFieldName(column_info.field_id, field_name);
   search::mangling::MangleString(field_name);
-  *phrase.mutable_field() = field_name;
-  phrase.boost(ctx.boost);
-  EmitPhraseTokens(*phrase.mutable_options(), ctx, column_info, text,
-                   PhraseGap{});
+  *phrase.mutable_field() = std::move(field_name);
 }
 
 PhraseGap ParsePhraseSeqGap(const duckdb::Expression& expr) {
@@ -420,24 +417,9 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("## field is not VARCHAR"), ERR_HINT(kSyntaxHint));
   }
-  if ((column_info.tokenizer.features &
-       irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) !=
-      irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("## field should have Positions and Frequency features "
-              "enabled"),
-      ERR_HINT("Recreate the inverted index with both `Positions` and "
-               "`Frequency` features attached to the column."));
-  }
-
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  search::mangling::MangleString(field_name);
 
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(parent)
                              : AddFilter<irs::ByPhrase>(parent);
-  *phrase.mutable_field() = field_name;
   phrase.boost(ctx.boost);
 
   auto* options = phrase.mutable_options();
@@ -629,6 +611,24 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
                    "ts_like, ts_levenshtein, ts_phrase, ts_any, ts_between."));
     }
   }
+
+  if (options->size() > 1 &&
+      !irs::IsSubsetOf(
+        irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures,
+        column_info.tokenizer.features)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("## field should have Positions and Frequency features enabled "
+              "for multi-term phrases"),
+      ERR_HINT("Recreate the inverted index with both `Positions` and "
+               "`Frequency` features attached to the column, or query with a "
+               "single phrase part."));
+  }
+
+  std::string field_name;
+  MakeFieldName(column_info.field_id, field_name);
+  search::mangling::MangleString(field_name);
+  *phrase.mutable_field() = std::move(field_name);
 }
 
 void FromTSQueryPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,

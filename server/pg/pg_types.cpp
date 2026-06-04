@@ -160,6 +160,7 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
     case INTERVAL:
       return in_array ? kIntervalArray : kInterval;
     case TIMESTAMP_TZ:
+    case TIMESTAMP_TZ_NS:
       return in_array ? kTimestampTzArray : kTimestampTz;
     case TIME_TZ:
       return in_array ? kTimeTzArray : kTimeTz;

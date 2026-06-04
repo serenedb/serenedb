@@ -1432,6 +1432,7 @@ Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name) {
     case duckdb::LogicalTypeId::DATE:
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ_NS:
       search::mangling::MangleNumeric(field_name);
       return {};
     default:
@@ -1453,6 +1454,7 @@ void ResetNumericStream(irs::NumericTokenizer& stream,
     case duckdb::LogicalTypeId::BIGINT:
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ_NS:
       stream.reset(value.GetValue<int64_t>());
       break;
     case duckdb::LogicalTypeId::FLOAT:

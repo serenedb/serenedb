@@ -261,11 +261,10 @@ TEST_F(IRSVariantShreddingTest, NullHandlingWithShredding) {
   SetShreddingSize(0);
 
   std::vector<duckdb::Value> expected;
-  WriteVariantColumn(
-    Db(), dir, kSegment, /*id=*/4,
-    "SELECT CASE WHEN i % 3 = 0 THEN NULL ELSE i::VARIANT END "
-    "FROM range(200) t(i)",
-    kRowGroupSize, expected);
+  WriteVariantColumn(Db(), dir, kSegment, /*id=*/4,
+                     "SELECT CASE WHEN i % 3 = 0 THEN NULL ELSE i::VARIANT END "
+                     "FROM range(200) t(i)",
+                     kRowGroupSize, expected);
   ASSERT_EQ(expected.size(), 200u);
   // Sanity: the source really has NULLs.
   ASSERT_TRUE(expected[0].IsNull());
@@ -288,11 +287,10 @@ TEST_F(IRSVariantShreddingTest, MixedTypesLeftover) {
   SetShreddingSize(0);
 
   std::vector<duckdb::Value> expected;
-  WriteVariantColumn(
-    Db(), dir, kSegment, /*id=*/5,
-    "SELECT CASE WHEN i % 7 = 0 THEN ('str_' || i)::VARIANT "
-    "ELSE i::VARIANT END FROM range(500) t(i)",
-    kRowGroupSize, expected);
+  WriteVariantColumn(Db(), dir, kSegment, /*id=*/5,
+                     "SELECT CASE WHEN i % 7 = 0 THEN ('str_' || i)::VARIANT "
+                     "ELSE i::VARIANT END FROM range(500) t(i)",
+                     kRowGroupSize, expected);
   ASSERT_EQ(expected.size(), 500u);
 
   Reader r{dir, std::string{kSegment}, Db()};
@@ -351,9 +349,13 @@ TEST_F(IRSVariantShreddingTest, MergeReshreds) {
   {
     Writer w{dir, "merged", Db()};
     irs::columnstore::MergeSource sources[2] = {
-      {.reader = nullptr, .cs_reader = &ra, .mask = nullptr,
+      {.reader = nullptr,
+       .cs_reader = &ra,
+       .mask = nullptr,
        .alive_count = 300},
-      {.reader = nullptr, .cs_reader = &rb, .mask = nullptr,
+      {.reader = nullptr,
+       .cs_reader = &rb,
+       .mask = nullptr,
        .alive_count = 300},
     };
     irs::columnstore::MergeInto(sources, w, /*column_options=*/nullptr);
@@ -380,8 +382,7 @@ TEST_F(IRSVariantShreddingTest, ExtractFastPath) {
   constexpr uint32_t kRowGroupSize = 256;
   SetShreddingSize(0);
 
-  const std::string obj =
-    "{'a': (i * 0.5)::DOUBLE, 'b': 'v' || i}::VARIANT";
+  const std::string obj = "{'a': (i * 0.5)::DOUBLE, 'b': 'v' || i}::VARIANT";
   std::vector<duckdb::Value> ignored;
   WriteVariantColumn(Db(), dir, kSegment, /*id=*/10,
                      "SELECT " + obj + " FROM range(500) t(i)", kRowGroupSize,
@@ -434,8 +435,7 @@ TEST_F(IRSVariantShreddingTest, ExtractNestedPath) {
   constexpr std::string_view kSegment = "ex_nested";
   SetShreddingSize(0);
 
-  const std::string obj =
-    "{'a': {'b': (i * 2)::DOUBLE}, 'c': 'x'}::VARIANT";
+  const std::string obj = "{'a': {'b': (i * 2)::DOUBLE}, 'c': 'x'}::VARIANT";
   std::vector<duckdb::Value> ignored;
   WriteVariantColumn(Db(), dir, kSegment, /*id=*/12,
                      "SELECT " + obj + " FROM range(400) t(i)", 256, ignored);
@@ -504,8 +504,8 @@ TEST_F(IRSVariantShreddingTest, ExtractFallbackNotFullyShredded) {
   // At least one row group should have leftovers (not fully shredded).
   bool any_not_fully = false;
   for (size_t rg = 0; rg < col->VariantRgCount(); ++rg) {
-    any_not_fully |= col->VariantRg(rg).shredded &&
-                     !col->VariantRg(rg).fully_shredded;
+    any_not_fully |=
+      col->VariantRg(rg).shredded && !col->VariantRg(rg).fully_shredded;
   }
   EXPECT_TRUE(any_not_fully);
 

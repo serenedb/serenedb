@@ -518,9 +518,21 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
       case TSQueryOp::Like: {
         auto text = get_text_arg();
         auto pattern = LikeEscapePattern(text, '\\');
-        options->push_back<irs::ByWildcardOptions>(gap.min, gap.max)
-          .term.assign(
-            irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
+        irs::bstring buf;
+        irs::ExecuteWildcard(
+          buf, irs::ViewCast<irs::byte_type>(std::string_view{pattern}),
+          [&](irs::bytes_view term) {
+            options->push_back<irs::ByTermOptions>(gap.min, gap.max).term =
+              term;
+          },
+          [&](irs::bytes_view term) {
+            options->push_back<irs::ByPrefixOptions>(gap.min, gap.max).term =
+              term;
+          },
+          [&](irs::bytes_view term) {
+            options->push_back<irs::ByWildcardOptions>(gap.min, gap.max) =
+              irs::ByWildcardOptions{term};
+          });
         break;
       }
       case TSQueryOp::Fuzzy: {

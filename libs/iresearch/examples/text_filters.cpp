@@ -246,7 +246,7 @@ int main() {
       std::cout << "\n=== ByWildcard \"f_x\" ===\n";
       irs::ByWildcard q;
       *q.mutable_field() = "body";
-      q.mutable_options()->term = irs::bstring{Bytes("f_x")};
+      *q.mutable_options() = irs::ByWildcardOptions{irs::bstring{Bytes("f_x")}};
       PrintHits("expect d0, d2, d5 (fox, fox, fix)",
                 RunFilter(reader, q, names));
     }

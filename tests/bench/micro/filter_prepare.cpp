@@ -225,27 +225,27 @@ void SetUpPrefix(irs::ByPrefix& f) {
 
 void SetUpWildcardTerm(irs::ByWildcard& f) {
   *f.mutable_field() = "kw";
-  f.mutable_options()->term = AsBytes("kw0001");
+  *f.mutable_options() = irs::ByWildcardOptions{AsBytes("kw0001")};
 }
 
 void SetUpWildcardTermEscaped(irs::ByWildcard& f) {
   *f.mutable_field() = "kw";
-  f.mutable_options()->term = AsBytes("term\\_0042");
+  *f.mutable_options() = irs::ByWildcardOptions{AsBytes("term\\_0042")};
 }
 
 void SetUpWildcardPrefix(irs::ByWildcard& f) {
   *f.mutable_field() = "kw";
-  f.mutable_options()->term = AsBytes("term%");
+  *f.mutable_options() = irs::ByWildcardOptions{AsBytes("term%")};
 }
 
 void SetUpWildcardPrefixEscaped(irs::ByWildcard& f) {
   *f.mutable_field() = "kw";
-  f.mutable_options()->term = AsBytes("term\\_0%");
+  *f.mutable_options() = irs::ByWildcardOptions{AsBytes("term\\_0%")};
 }
 
 void SetUpWildcardGeneric(irs::ByWildcard& f) {
   *f.mutable_field() = "kw";
-  f.mutable_options()->term = AsBytes("term_0%");
+  *f.mutable_options() = irs::ByWildcardOptions{AsBytes("term_0%")};
 }
 
 void SetUpRange(irs::ByRange& f) {

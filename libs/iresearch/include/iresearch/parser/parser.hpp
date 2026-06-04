@@ -114,7 +114,8 @@ struct ParserContext {
   irs::ByWildcard& AddWildcard(std::string_view value) {
     auto& f = current_root->GetOptional().add<irs::ByWildcard>();
     *f.mutable_field() = default_field;
-    f.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
+    *f.mutable_options() =
+      irs::ByWildcardOptions{irs::ViewCast<irs::byte_type>(value)};
     return f;
   }
 

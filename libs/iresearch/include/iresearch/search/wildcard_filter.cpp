@@ -22,120 +22,76 @@
 
 #include "wildcard_filter.hpp"
 
-#include "basics/shared.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/filter_visitor.hpp"
-#include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
 
 namespace irs {
-namespace {
 
-bytes_view Unescape(bytes_view in, bstring& out) {
-  out.reserve(in.size());
+ByWildcardFilterOptions::ByWildcardFilterOptions(bytes_view pattern)
+  : term{pattern},
+    acceptor{std::make_shared<const automaton>(FromWildcard(pattern))} {}
 
-  bool copy = true;
-  absl::c_copy_if(in, std::back_inserter(out), [&copy](byte_type c) {
-    if (c == WildcardMatch::kEscape) {
-      copy = !copy;
-    } else {
-      copy = true;
-    }
-    return copy;
-  });
-
-  return out;
-}
-
-template<typename Term, typename Prefix, typename WildCard>
-auto ExecuteWildcard(bstring& buf, bytes_view term, Term&& t, Prefix&& p,
-                     WildCard&& w) {
-  switch (ComputeWildcardType(term)) {
-    case WildcardType::TermEscaped:
-      term = Unescape(term, buf);
-      [[fallthrough]];
-    case WildcardType::Term:
-      return t(term);
-    case WildcardType::PrefixEscaped:
-      term = Unescape(term, buf);
-      [[fallthrough]];
-    case WildcardType::Prefix: {
-      SDB_ASSERT(!term.empty());
-      const auto idx = term.find_first_of(WildcardMatch::kAnyStr);
-      SDB_ASSERT(idx != bytes_view::npos);
-      term = bytes_view{term.data(), idx};  // remove trailing '%'
-      return p(term);
-    }
-    case WildcardType::Wildcard:
-      return w(term);
+field_visitor ByWildcard::visitor(std::shared_ptr<const automaton> acceptor) {
+  if (!acceptor || !Validate(*acceptor)) {
+    return [](const SubReader&, const TermReader&, FilterVisitor&) {};
   }
+
+  struct AutomatonContext : util::Noncopyable {
+    explicit AutomatonContext(std::shared_ptr<const automaton> a)
+      : acceptor{std::move(a)}, matcher{MakeAutomatonMatcher(*acceptor)} {}
+
+    std::shared_ptr<const automaton> acceptor;
+    automaton_table_matcher matcher;
+  };
+
+  auto ctx = std::make_shared<AutomatonContext>(std::move(acceptor));
+
+  return
+    [ctx = std::move(ctx)](const SubReader& segment, const TermReader& field,
+                           FilterVisitor& visitor) mutable {
+      return irs::Visit(segment, field, ctx->matcher, visitor);
+    };
 }
 
-}  // namespace
+Filter::Query::ptr ByWildcard::prepare(const PrepareContext& ctx) const {
+  SDB_ASSERT(options().acceptor);
+  return PrepareAutomatonFilter(ctx.Boost(Boost()), field(),
+                                *options().acceptor,
+                                options().scored_terms_limit);
+}
 
-field_visitor ByWildcard::visitor(bytes_view term) {
+Filter::ptr CreateByWildcard(std::string_view field, bytes_view term,
+                             size_t scored_terms_limit, score_t boost) {
   bstring buf;
   return ExecuteWildcard(
     buf, term,
-    [](bytes_view term) -> field_visitor {
-      // must copy term as it may point to temporary string
-      return [term = bstring(term)](const SubReader& segment,
-                                    const TermReader& field,
-                                    FilterVisitor& visitor) {
-        ByTerm::visit(segment, field, term, visitor);
-      };
+    [&](bytes_view term) -> Filter::ptr {
+      auto filter = std::make_unique<ByTerm>();
+      *filter->mutable_field() = field;
+      filter->mutable_options()->term = term;
+      filter->boost(boost);
+      return filter;
     },
-    [](bytes_view term) -> field_visitor {
-      // must copy term as it may point to temporary string
-      return [term = bstring(term)](const SubReader& segment,
-                                    const TermReader& field,
-                                    FilterVisitor& visitor) {
-        ByPrefix::visit(segment, field, term, visitor);
-      };
+    [&](bytes_view term) -> Filter::ptr {
+      auto filter = std::make_unique<ByPrefix>();
+      *filter->mutable_field() = field;
+      filter->mutable_options()->term = term;
+      filter->mutable_options()->scored_terms_limit = scored_terms_limit;
+      filter->boost(boost);
+      return filter;
     },
-    [](bytes_view term) -> field_visitor {
-      struct AutomatonContext : util::Noncopyable {
-        explicit AutomatonContext(bytes_view term)
-          : acceptor{FromWildcard(term)},
-            matcher{MakeAutomatonMatcher(acceptor)} {}
-
-        automaton acceptor;
-        automaton_table_matcher matcher;
-      };
-
-      auto ctx = std::make_shared<AutomatonContext>(term);
-
-      if (!Validate(ctx->acceptor)) {
-        return [](const SubReader&, const TermReader&, FilterVisitor&) {};
-      }
-
-      return [ctx = std::move(ctx)](const SubReader& segment,
-                                    const TermReader& field,
-                                    FilterVisitor& visitor) mutable {
-        return irs::Visit(segment, field, ctx->matcher, visitor);
-      };
-    });
-}
-
-Filter::Query::ptr ByWildcard::prepare(const PrepareContext& ctx,
-                                       std::string_view field, bytes_view term,
-                                       size_t scored_terms_limit) {
-  bstring buf;
-  return ExecuteWildcard(
-    buf, term,
-    [&](bytes_view term) -> Query::ptr {
-      return ByTerm::prepare(ctx, field, term);
-    },
-    [&, scored_terms_limit](bytes_view term) -> Query::ptr {
-      return ByPrefix::prepare(ctx, field, term, scored_terms_limit);
-    },
-    [&, scored_terms_limit](bytes_view term) -> Query::ptr {
-      return PrepareAutomatonFilter(ctx, field, FromWildcard(term),
-                                    scored_terms_limit);
+    [&](bytes_view term) -> Filter::ptr {
+      auto filter = std::make_unique<ByWildcard>();
+      *filter->mutable_field() = field;
+      auto& options = *filter->mutable_options();
+      options = ByWildcardOptions{term};
+      options.scored_terms_limit = scored_terms_limit;
+      filter->boost(boost);
+      return filter;
     });
 }
 

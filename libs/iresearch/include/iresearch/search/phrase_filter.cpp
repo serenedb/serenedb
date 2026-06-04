@@ -32,6 +32,7 @@
 #include "iresearch/search/states/phrase_state.hpp"
 #include "iresearch/search/states_cache.hpp"
 #include "iresearch/search/top_terms_collector.hpp"
+#include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {
 namespace {
@@ -84,7 +85,7 @@ struct GetVisitor {
   }
 
   field_visitor operator()(const ByWildcardOptions& part) const {
-    return ByWildcard::visitor(part.term);
+    return ByWildcard::visitor(part.acceptor);
   }
 
   field_visitor operator()(const ByEditDistanceOptions& part) const {
@@ -124,8 +125,10 @@ struct PrepareVisitor : util::Noncopyable {
     return ByPrefix::prepare(ctx, field, part.term, part.scored_terms_limit);
   }
 
-  auto operator()(const ByWildcardOptions& part) const {
-    return ByWildcard::prepare(ctx, field, part.term, part.scored_terms_limit);
+  Filter::Query::ptr operator()(const ByWildcardOptions& part) const {
+    SDB_ASSERT(part.acceptor);
+    return PrepareAutomatonFilter(ctx, field, *part.acceptor,
+                                  part.scored_terms_limit);
   }
 
   auto operator()(const ByEditDistanceOptions& part) const {

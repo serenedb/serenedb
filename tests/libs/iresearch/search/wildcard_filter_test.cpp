@@ -34,8 +34,19 @@ template<typename Filter = irs::ByWildcard>
 Filter MakeFilter(std::string_view field, std::string_view term) {
   Filter q;
   *q.mutable_field() = field;
-  q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+  if constexpr (std::is_same_v<Filter, irs::ByWildcard>) {
+    *q.mutable_options() =
+      irs::ByWildcardOptions{irs::ViewCast<irs::byte_type>(term)};
+  } else {
+    q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+  }
   return q;
+}
+
+// Resolves a wildcard pattern into its concrete filter (ByTerm / ByPrefix /
+// ByWildcard), mirroring how callers build wildcard filters in production.
+irs::Filter::ptr MakeWildcard(std::string_view field, std::string_view term) {
+  return irs::CreateByWildcard(field, irs::ViewCast<irs::byte_type>(term));
 }
 
 }  // namespace
@@ -111,8 +122,8 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
-    auto rhs = MakeFilter("foo", "bar")
-                 .prepare({
+    auto rhs = MakeWildcard("foo", "bar")
+                 ->prepare({
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
@@ -130,7 +141,7 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
       .index = irs::SubReader::empty(),
       .memory = counter,
     });
-    auto rhs = MakeFilter("foo", "").prepare({
+    auto rhs = MakeWildcard("foo", "")->prepare({
       .index = irs::SubReader::empty(),
       .memory = counter,
     });
@@ -149,8 +160,8 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
-    auto rhs = MakeFilter("foo", "foo\\%")
-                 .prepare({
+    auto rhs = MakeWildcard("foo", "foo\\%")
+                 ->prepare({
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
@@ -169,8 +180,8 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
-    auto rhs = MakeFilter("foo", "bar%")
-                 .prepare({
+    auto rhs = MakeWildcard("foo", "bar%")
+                 ->prepare({
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
@@ -189,8 +200,8 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
-    auto rhs = MakeFilter("foo", "bar%%")
-                 .prepare({
+    auto rhs = MakeWildcard("foo", "bar%%")
+                 ->prepare({
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
@@ -209,8 +220,8 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
-    auto rhs = MakeFilter("foo", "bar\\%")
-                 .prepare({
+    auto rhs = MakeWildcard("foo", "bar\\%")
+                 ->prepare({
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
@@ -228,8 +239,8 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
       .index = irs::SubReader::empty(),
       .memory = counter,
     });
-    auto rhs = MakeFilter("foo", "%")
-                 .prepare({
+    auto rhs = MakeWildcard("foo", "%")
+                 ->prepare({
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
@@ -247,8 +258,8 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
       .index = irs::SubReader::empty(),
       .memory = counter,
     });
-    auto rhs = MakeFilter("foo", "%%")
-                 .prepare({
+    auto rhs = MakeWildcard("foo", "%%")
+                 ->prepare({
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
@@ -267,8 +278,8 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
-    auto rhs = MakeFilter("foo", "\\%")
-                 .prepare({
+    auto rhs = MakeWildcard("foo", "\\%")
+                 ->prepare({
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
@@ -294,7 +305,7 @@ TEST_P(WildcardFilterTestCase, simple_sequential_order) {
   auto rdr = open_reader();
 
   // empty query
-  CheckQuery(irs::ByWildcard(), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeWildcard("", ""), Docs{}, Costs{0}, rdr);
 
   // empty prefix test collector call count for field/term/finish
   {
@@ -317,7 +328,7 @@ TEST_P(WildcardFilterTestCase, simple_sequential_order) {
       finish_docs_with_field += field->docs_with_field;
       finish_docs_with_term += term->docs_with_term;
     };
-    CheckQuery(MakeFilter("prefix", "%"), order, docs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "%"), order, docs, rdr);
     ASSERT_EQ(9, finish_count);
     ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
     ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
@@ -331,7 +342,7 @@ TEST_P(WildcardFilterTestCase, simple_sequential_order) {
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::FrequencySort>()};
 
-    CheckQuery(MakeFilter("prefix", "%"), order, docs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "%"), order, docs, rdr);
   }
 
   // prefix
@@ -342,7 +353,7 @@ TEST_P(WildcardFilterTestCase, simple_sequential_order) {
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::FrequencySort>()};
 
-    CheckQuery(MakeFilter("prefix", "a%"), order, docs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "a%"), order, docs, rdr);
   }
 }
 
@@ -357,19 +368,19 @@ TEST_P(WildcardFilterTestCase, simple_sequential) {
   auto rdr = open_reader();
 
   // empty query
-  CheckQuery(irs::ByWildcard(), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeWildcard("", ""), Docs{}, Costs{0}, rdr);
 
   // empty field
-  CheckQuery(MakeFilter("", "xyz%"), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeWildcard("", "xyz%"), Docs{}, Costs{0}, rdr);
 
   // invalid field
-  CheckQuery(MakeFilter("same1", "xyz%"), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeWildcard("same1", "xyz%"), Docs{}, Costs{0}, rdr);
 
   // invalid prefix
-  CheckQuery(MakeFilter("same", "xyz_invalid%"), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeWildcard("same", "xyz_invalid%"), Docs{}, Costs{0}, rdr);
 
   // empty pattern - no match
-  CheckQuery(MakeFilter("duplicated", ""), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeWildcard("duplicated", ""), Docs{}, Costs{0}, rdr);
 
   // match all
   {
@@ -380,34 +391,34 @@ TEST_P(WildcardFilterTestCase, simple_sequential) {
 
     Costs costs{result.size()};
 
-    CheckQuery(MakeFilter("same", "%"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "___"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "%_"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "_%"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "x_%"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "__z"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "%_z"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "x%_"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "x_%"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "x_z"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "x%z"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "_yz"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "%yz"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "xyz"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("same", "%"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("same", "___"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("same", "%_"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("same", "_%"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("same", "x_%"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("same", "__z"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("same", "%_z"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("same", "x%_"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("same", "x_%"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("same", "x_z"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("same", "x%z"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("same", "_yz"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("same", "%yz"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("same", "xyz"), result, costs, rdr);
   }
 
   // match nothing
-  CheckQuery(MakeFilter("prefix", "ab\\%"), Docs{}, Costs{0}, rdr);
-  CheckQuery(MakeFilter("same", "x\\_z"), Docs{}, Costs{0}, rdr);
-  CheckQuery(MakeFilter("same", "x\\%z"), Docs{}, Costs{0}, rdr);
-  CheckQuery(MakeFilter("same", "_"), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeWildcard("prefix", "ab\\%"), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeWildcard("same", "x\\_z"), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeWildcard("same", "x\\%z"), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeWildcard("same", "_"), Docs{}, Costs{0}, rdr);
 
   // escaped prefix
   {
     Docs result{10, 11};
     Costs costs{result.size()};
 
-    CheckQuery(MakeFilter("prefix", "ab\\\\%"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "ab\\\\%"), result, costs, rdr);
   }
 
   // escaped term
@@ -415,7 +426,7 @@ TEST_P(WildcardFilterTestCase, simple_sequential) {
     Docs result{10};
     Costs costs{result.size()};
 
-    CheckQuery(MakeFilter("prefix", "ab\\\\\\%"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "ab\\\\\\%"), result, costs, rdr);
   }
 
   // escaped term
@@ -423,7 +434,7 @@ TEST_P(WildcardFilterTestCase, simple_sequential) {
     Docs result{11};
     Costs costs{result.size()};
 
-    CheckQuery(MakeFilter("prefix", "ab\\\\\\\\%"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "ab\\\\\\\\%"), result, costs, rdr);
   }
 
   // valid prefix
@@ -435,7 +446,7 @@ TEST_P(WildcardFilterTestCase, simple_sequential) {
 
     Costs costs{result.size()};
 
-    CheckQuery(MakeFilter("same", "xyz%"), result, costs, rdr);
+    CheckQuery(*MakeWildcard("same", "xyz%"), result, costs, rdr);
   }
 
   // pattern
@@ -443,11 +454,11 @@ TEST_P(WildcardFilterTestCase, simple_sequential) {
     Docs docs{2, 3, 8, 14, 17, 19, 24};
     Costs costs{docs.size()};
 
-    CheckQuery(MakeFilter("duplicated", "v_z%"), docs, costs, rdr);
-    CheckQuery(MakeFilter("duplicated", "v%c"), docs, costs, rdr);
-    CheckQuery(MakeFilter("duplicated", "v%%%%%c"), docs, costs, rdr);
-    CheckQuery(MakeFilter("duplicated", "%c"), docs, costs, rdr);
-    CheckQuery(MakeFilter("duplicated", "%_c"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("duplicated", "v_z%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("duplicated", "v%c"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("duplicated", "v%%%%%c"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("duplicated", "%c"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("duplicated", "%_c"), docs, costs, rdr);
   }
 
   // pattern
@@ -455,11 +466,11 @@ TEST_P(WildcardFilterTestCase, simple_sequential) {
     Docs docs{1, 4, 9, 21, 26, 31, 32};
     Costs costs{docs.size()};
 
-    CheckQuery(MakeFilter("prefix", "%c%"), docs, costs, rdr);
-    CheckQuery(MakeFilter("prefix", "%c%%"), docs, costs, rdr);
-    CheckQuery(MakeFilter("prefix", "%%%%c%%"), docs, costs, rdr);
-    CheckQuery(MakeFilter("prefix", "%%c%"), docs, costs, rdr);
-    CheckQuery(MakeFilter("prefix", "%%c%%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "%c%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "%c%%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "%%%%c%%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "%%c%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "%%c%%"), docs, costs, rdr);
   }
 
   // single digit prefix
@@ -467,57 +478,57 @@ TEST_P(WildcardFilterTestCase, simple_sequential) {
     Docs docs{1, 5, 11, 21, 27, 31};
     Costs costs{docs.size()};
 
-    CheckQuery(MakeFilter("duplicated", "a%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("duplicated", "a%"), docs, costs, rdr);
   }
 
-  CheckQuery(MakeFilter("name", "!%"), Docs{28}, Costs{1}, rdr);
-  CheckQuery(MakeFilter("prefix", "b%"), Docs{9, 24}, Costs{2}, rdr);
+  CheckQuery(*MakeWildcard("name", "!%"), Docs{28}, Costs{1}, rdr);
+  CheckQuery(*MakeWildcard("prefix", "b%"), Docs{9, 24}, Costs{2}, rdr);
 
   // multiple digit prefix
   {
     Docs docs{2, 3, 8, 14, 17, 19, 24};
     Costs costs{docs.size()};
 
-    CheckQuery(MakeFilter("duplicated", "vcz%"), docs, costs, rdr);
-    CheckQuery(MakeFilter("duplicated", "vcz%%%%%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("duplicated", "vcz%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("duplicated", "vcz%%%%%"), docs, costs, rdr);
   }
 
   {
     Docs docs{1, 4, 21, 26, 31, 32};
     Costs costs{docs.size()};
-    CheckQuery(MakeFilter("prefix", "abc%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "abc%"), docs, costs, rdr);
   }
 
   {
     Docs docs{1, 4, 21, 26, 31, 32};
     Costs costs{docs.size()};
 
-    CheckQuery(MakeFilter("prefix", "abc%"), docs, costs, rdr);
-    CheckQuery(MakeFilter("prefix", "abc%%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "abc%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "abc%%"), docs, costs, rdr);
   }
 
   {
     Docs docs{1, 4, 16, 26};
     Costs costs{docs.size()};
 
-    CheckQuery(MakeFilter("prefix", "a%d%"), docs, costs, rdr);
-    CheckQuery(MakeFilter("prefix", "a%d%%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "a%d%"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("prefix", "a%d%%"), docs, costs, rdr);
   }
 
   {
     Docs docs{1, 26};
     Costs costs{docs.size()};
 
-    CheckQuery(MakeFilter("utf8", "\x25\xD0\xB9"), docs, costs, rdr);
-    CheckQuery(MakeFilter("utf8", "\x25\x25\xD0\xB9"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("utf8", "\x25\xD0\xB9"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("utf8", "\x25\x25\xD0\xB9"), docs, costs, rdr);
   }
 
   {
     Docs docs{26};
     Costs costs{docs.size()};
 
-    CheckQuery(MakeFilter("utf8", "\xD0\xB2\x25\xD0\xB9"), docs, costs, rdr);
-    CheckQuery(MakeFilter("utf8", "\xD0\xB2\x25\x25\xD0\xB9"), docs, costs,
+    CheckQuery(*MakeWildcard("utf8", "\xD0\xB2\x25\xD0\xB9"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("utf8", "\xD0\xB2\x25\x25\xD0\xB9"), docs, costs,
                rdr);
   }
 
@@ -525,12 +536,13 @@ TEST_P(WildcardFilterTestCase, simple_sequential) {
     Docs docs{1, 3};
     Costs costs{docs.size()};
 
-    CheckQuery(MakeFilter("utf8", "\xD0\xBF\x25"), docs, costs, rdr);
-    CheckQuery(MakeFilter("utf8", "\xD0\xBF\x25\x25"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("utf8", "\xD0\xBF\x25"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard("utf8", "\xD0\xBF\x25\x25"), docs, costs, rdr);
   }
 
   // whole word
-  CheckQuery(MakeFilter("prefix", "bateradsfsfasdf"), Docs{24}, Costs{1}, rdr);
+  CheckQuery(*MakeWildcard("prefix", "bateradsfsfasdf"), Docs{24}, Costs{1},
+             rdr);
 }
 
 TEST_P(WildcardFilterTestCase, visit) {
@@ -555,7 +567,8 @@ TEST_P(WildcardFilterTestCase, visit) {
   {
     auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
     tests::EmptyFilterVisitor visitor;
-    auto field_visitor = irs::ByWildcard::visitor(term);
+    auto field_visitor = irs::ByWildcard::visitor(
+      std::make_shared<const irs::automaton>(irs::FromWildcard(term)));
     ASSERT_TRUE(field_visitor);
     field_visitor(segment, *reader, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
@@ -571,7 +584,8 @@ TEST_P(WildcardFilterTestCase, visit) {
   {
     auto prefix = irs::ViewCast<irs::byte_type>(std::string_view("ab%"));
     tests::EmptyFilterVisitor visitor;
-    auto field_visitor = irs::ByWildcard::visitor(prefix);
+    auto field_visitor = irs::ByWildcard::visitor(
+      std::make_shared<const irs::automaton>(irs::FromWildcard(prefix)));
     ASSERT_TRUE(field_visitor);
     field_visitor(segment, *reader, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
@@ -591,7 +605,8 @@ TEST_P(WildcardFilterTestCase, visit) {
   {
     auto wildcard = irs::ViewCast<irs::byte_type>(std::string_view("a_c%"));
     tests::EmptyFilterVisitor visitor;
-    auto field_visitor = irs::ByWildcard::visitor(wildcard);
+    auto field_visitor = irs::ByWildcard::visitor(
+      std::make_shared<const irs::automaton>(irs::FromWildcard(wildcard)));
     ASSERT_TRUE(field_visitor);
     field_visitor(segment, *reader, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());

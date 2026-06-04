@@ -511,6 +511,7 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
           opts.range.max_type = BoundType::Inclusive;
 
           std::vector<Filter::ptr> children;
+          children.emplace_back(std::make_unique<All>());
           children.emplace_back(std::make_unique<Not>(std::move(excl)));
           And root{std::move(children)};
           return root.prepare(ctx);

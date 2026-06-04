@@ -57,7 +57,6 @@ class MutableFilter {
 
 class FilterMutator;
 
-// Represents user-side boolean filter as the container for other filters
 class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
  public:
   BooleanFilter() = default;
@@ -77,7 +76,6 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
     return *self._incl[i];
   }
 
-  // Excluded children: filters whose matches are removed from the includes.
   auto ExcludesBegin() const { return _excl.begin(); }
   auto ExcludesEnd() const { return _excl.end(); }
   bool ExcludesEmpty() const { return _excl.empty(); }
@@ -90,7 +88,6 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
  protected:
   bool equals(const Filter& rhs) const noexcept final;
 
-  // 0..size()-1 included filters; the exclude set is matched separately.
   std::vector<Filter::ptr> _incl;
   std::vector<Filter::ptr> _excl;
   ScoreMergeType _merge_type = ScoreMergeType::Sum;
@@ -100,9 +97,6 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
   MutableFilter GetMutable() noexcept { return {_incl, _excl}; }
 };
 
-// Represents conjunction. Built from a single flat list of filters: a child Not
-// contributes its (unwrapped) target to the excludes, everything else to the
-// includes. Once constructed it is mutated only by the Optimize pass.
 class And final : public BooleanFilter {
  public:
   And() = default;
@@ -126,7 +120,6 @@ class Or final : public BooleanFilter {
     : BooleanFilter{std::move(incl), {}, merge_type},
       _min_match_count{min_match_count} {}
 
-  // Return minimum number of subqueries which must be satisfied
   auto MinMatchCount() const { return _min_match_count; }
 
   Query::ptr prepare(const PrepareContext& ctx) const final;

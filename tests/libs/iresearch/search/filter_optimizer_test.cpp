@@ -238,14 +238,15 @@ TEST(filter_optimizer_test, flatten_or) {
 
 TEST(filter_optimizer_test, flatten_or_parent_min_match_gate) {
   irs::Filter::ptr root = std::make_unique<irs::Or>(
-    Filters(MakeOr(MakeTerm("name", "A"), MakeTerm("name", "B")),
-            MakeTerm("name", "C")),
+    Filters(MakeOr(MakeTerm("f1", "A"), MakeTerm("f2", "B")),
+            MakeTerm("f3", "C"), MakeTerm("f4", "D")),
     irs::ScoreMergeType::Sum, 2);
   auto& or_root = sdb::basics::downCast<irs::Or>(*root);
 
   irs::Optimize(root);
 
-  ASSERT_EQ(2, or_root.size());
+  ASSERT_EQ(irs::Type<irs::Or>::id(), root->type());
+  ASSERT_EQ(3, or_root.size());
 }
 
 TEST(filter_optimizer_test, flatten_or_inner_min_match_gate) {
@@ -274,11 +275,10 @@ TEST(filter_optimizer_test, flatten_or_zero_min_match_gate) {
                                        irs::ScoreMergeType::Sum, 0);
     }(),
     MakeTerm("name", "C"));
-  auto& or_root = sdb::basics::downCast<irs::Or>(*root);
 
   irs::Optimize(root);
 
-  ASSERT_EQ(2, or_root.size());
+  ASSERT_EQ(irs::Type<irs::All>::id(), root->type());
 }
 
 TEST(filter_optimizer_test, mixed_boolean_filter_subtrees) {
@@ -495,7 +495,7 @@ TEST(filter_optimizer_test, single_child_or_min_match_gate) {
 
   irs::Optimize(root);
 
-  ASSERT_EQ(irs::Type<irs::Or>::id(), root->type());
+  ASSERT_EQ(irs::Type<irs::Empty>::id(), root->type());
 }
 
 TEST(filter_optimizer_test, single_child_boost_gate) {

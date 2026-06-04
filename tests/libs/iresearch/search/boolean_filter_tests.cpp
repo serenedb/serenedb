@@ -729,9 +729,10 @@ TEST(boolean_query_boost, and_filter) {
 TEST(boolean_query_boost, or_filter) {
   // single unboosted query
   {
-    irs::Or root;
+    irs::Filter::ptr root = std::make_unique<irs::Or>();
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    irs::Optimize(root);
+    auto prep = root->prepare({.index = irs::SubReader::empty()});
 
     ASSERT_EQ(irs::kNoBoost, prep->Boost());
   }
@@ -740,10 +741,12 @@ TEST(boolean_query_boost, or_filter) {
   {
     const irs::score_t value = 5;
 
-    irs::Or root;
-    root.boost(value);
+    auto or_node = std::make_unique<irs::Or>();
+    or_node->boost(value);
+    irs::Filter::ptr root = std::move(or_node);
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    irs::Optimize(root);
+    auto prep = root->prepare({.index = irs::SubReader::empty()});
 
     ASSERT_EQ(irs::kNoBoost, prep->Boost());
   }
@@ -1266,9 +1269,10 @@ TEST(boolean_query_estimation, or_filter) {
 
   // empty case
   {
-    irs::Or root;
+    irs::Filter::ptr root = std::make_unique<irs::Or>();
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    irs::Optimize(root);
+    auto prep = root->prepare({.index = irs::SubReader::empty()});
 
     auto docs = prep->execute({.segment = irs::SubReader::empty()});
     ASSERT_EQ(0, irs::CostAttr::extract(*docs));
@@ -16064,12 +16068,16 @@ TEST(And_test, equal) {
 }
 
 TEST(And_test, optimize_double_negation) {
-  irs::And root = std::move(
-    *tests::MakeAnd(tests::MakeNot(tests::MakeNot(std::make_unique<irs::ByTerm>(
-      MakeFilter<irs::ByTerm>("test_field", "test_term"))))));
+  irs::Filter::ptr root =
+    tests::MakeAnd(tests::MakeNot(tests::MakeNot(std::make_unique<irs::ByTerm>(
+      MakeFilter<irs::ByTerm>("test_field", "test_term")))));
 
-  auto prepared = root.prepare({.index = irs::SubReader::empty()});
-  ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
+  irs::Optimize(root);
+
+  ASSERT_EQ(irs::Type<irs::And>::id(), root->type());
+  auto& and_root = sdb::basics::downCast<irs::And>(*root);
+  ASSERT_EQ(1, and_root.size());
+  ASSERT_EQ(1, and_root.ExcludesSize());
 }
 
 TEST(And_test, prepare_empty_filter) {
@@ -16082,20 +16090,22 @@ TEST(And_test, prepare_empty_filter) {
 TEST(And_test, optimize_single_node) {
   // simple hierarchy
   {
-    irs::And root = std::move(
-      *tests::MakeAnd(Append<irs::ByTerm>("test_field", "test_term")));
+    irs::Filter::ptr root =
+      tests::MakeAnd(Append<irs::ByTerm>("test_field", "test_term"));
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    irs::Optimize(root);
+    auto prepared = root->prepare({.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
   }
 
   // complex hierarchy
   {
-    irs::And root = std::move(*tests::MakeAnd(
+    irs::Filter::ptr root = tests::MakeAnd(
       tests::MakeAnd(tests::MakeAnd(std::make_unique<irs::ByTerm>(
-        MakeFilter<irs::ByTerm>("test_field", "test_term"))))));
+        MakeFilter<irs::ByTerm>("test_field", "test_term")))));
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    irs::Optimize(root);
+    auto prepared = root->prepare({.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
   }
 }
@@ -16103,54 +16113,61 @@ TEST(And_test, optimize_single_node) {
 TEST(And_test, optimize_all_filters) {
   // single `all` filter
   {
-    irs::And root = std::move(*tests::MakeAnd(
-      tests::Make<irs::All>([](irs::All& f) { f.boost(5.f); })));
+    irs::Filter::ptr root =
+      tests::MakeAnd(tests::Make<irs::All>([](irs::All& f) { f.boost(5.f); }));
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
-    ASSERT_EQ(
-      typeid(irs::All().prepare({.index = irs::SubReader::empty()}).get()),
-      typeid(prepared.get()));
-    ASSERT_EQ(5.f, prepared->Boost());
+    irs::Optimize(root);
+
+    ASSERT_EQ(irs::Type<irs::All>::id(), root->type());
+    ASSERT_EQ(5.f, sdb::basics::downCast<irs::All>(*root).Boost());
   }
 
   // multiple `all` filters
   {
-    irs::And root = std::move(*tests::MakeAnd(
-      tests::Make<irs::All>([](irs::All& f) { f.boost(5.f); }),
-      tests::Make<irs::All>([](irs::All& f) { f.boost(2.f); }),
-      tests::Make<irs::All>([](irs::All& f) { f.boost(3.f); })));
+    irs::Filter::ptr root =
+      tests::MakeAnd(tests::Make<irs::All>([](irs::All& f) { f.boost(5.f); }),
+                     tests::Make<irs::All>([](irs::All& f) { f.boost(2.f); }),
+                     tests::Make<irs::All>([](irs::All& f) { f.boost(3.f); }));
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
-    ASSERT_EQ(
-      typeid(irs::All().prepare({.index = irs::SubReader::empty()}).get()),
-      typeid(prepared.get()));
-    ASSERT_EQ(10.f, prepared->Boost());
+    irs::Optimize(root);
+
+    ASSERT_EQ(irs::Type<irs::All>::id(), root->type());
+    ASSERT_EQ(10.f, sdb::basics::downCast<irs::All>(*root).Boost());
   }
 
   // multiple `all` filters + term filter
   {
-    irs::And root = std::move(
-      *tests::MakeAnd(tests::Make<irs::All>([](irs::All& f) { f.boost(5.f); }),
-                      tests::Make<irs::All>([](irs::All& f) { f.boost(2.f); }),
-                      Append<irs::ByTerm>("test_field", "test_term")));
+    irs::Filter::ptr root =
+      tests::MakeAnd(tests::Make<irs::All>([](irs::All& f) { f.boost(5.f); }),
+                     tests::Make<irs::All>([](irs::All& f) { f.boost(2.f); }),
+                     Append<irs::ByTerm>("test_field", "test_term"));
 
     tests::sort::Boost sort{};
-    auto prepared =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
-    ASSERT_EQ(8.f, prepared->Boost());
+    irs::Optimize(root, {.scorer = &sort});
+
+    ASSERT_EQ(irs::Type<irs::And>::id(), root->type());
+    auto& and_root = sdb::basics::downCast<irs::And>(*root);
+    ASSERT_EQ(2, and_root.size());
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[0].type());
+    ASSERT_EQ(irs::Type<irs::All>::id(), and_root[1].type());
+    ASSERT_EQ(7.f, sdb::basics::downCast<irs::All>(and_root[1]).Boost());
   }
 
   // `all` filter + term filter
   {
+    irs::Filter::ptr root =
+      tests::MakeAnd(Append<irs::ByTerm>("test_field", "test_term"),
+                     tests::Make<irs::All>([](irs::All& f) { f.boost(5.f); }));
+
     tests::sort::Boost sort{};
-    irs::And root = std::move(*tests::MakeAnd(
-      Append<irs::ByTerm>("test_field", "test_term"),
-      tests::Make<irs::All>([](irs::All& f) { f.boost(5.f); })));
-    auto prepared =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
-    ASSERT_EQ(6.f, prepared->Boost());
+    irs::Optimize(root, {.scorer = &sort});
+
+    ASSERT_EQ(irs::Type<irs::And>::id(), root->type());
+    auto& and_root = sdb::basics::downCast<irs::And>(*root);
+    ASSERT_EQ(2, and_root.size());
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[0].type());
+    ASSERT_EQ(irs::Type<irs::All>::id(), and_root[1].type());
+    ASSERT_EQ(5.f, sdb::basics::downCast<irs::All>(and_root[1]).Boost());
   }
 }
 
@@ -16233,48 +16250,52 @@ TEST(Or_test, equal) {
 }
 
 TEST(Or_test, optimize_double_negation) {
-  irs::Or root = std::move(
-    *tests::MakeOr(tests::MakeNot(tests::MakeNot(std::make_unique<irs::ByTerm>(
-      MakeFilter<irs::ByTerm>("test_field", "test_term"))))));
+  irs::Filter::ptr root =
+    tests::MakeOr(tests::MakeNot(tests::MakeNot(std::make_unique<irs::ByTerm>(
+      MakeFilter<irs::ByTerm>("test_field", "test_term")))));
 
-  auto prepared = root.prepare({.index = irs::SubReader::empty()});
+  irs::Optimize(root);
+  auto prepared = root->prepare({.index = irs::SubReader::empty()});
   ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
 }
 
 TEST(Or_test, optimize_single_node) {
   // simple hierarchy
   {
-    irs::Or root =
-      std::move(*tests::MakeOr(Append<irs::ByTerm>("test_field", "test_term")));
+    irs::Filter::ptr root =
+      tests::MakeOr(Append<irs::ByTerm>("test_field", "test_term"));
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    irs::Optimize(root);
+    auto prepared = root->prepare({.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
   }
 
   // complex hierarchy
   {
-    irs::Or root = std::move(
-      *tests::MakeOr(tests::MakeOr(tests::MakeOr(std::make_unique<irs::ByTerm>(
-        MakeFilter<irs::ByTerm>("test_field", "test_term"))))));
+    irs::Filter::ptr root =
+      tests::MakeOr(tests::MakeOr(tests::MakeOr(std::make_unique<irs::ByTerm>(
+        MakeFilter<irs::ByTerm>("test_field", "test_term")))));
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    irs::Optimize(root);
+    auto prepared = root->prepare({.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
   }
 }
 
 TEST(Or_test, optimize_all_unscored) {
   detail::Boosted::gExecuteCount = 0;
-  irs::Or root = std::move(
-    *tests::MakeOr(tests::Make<detail::Boosted>(
-                     [](detail::Boosted& node) { node.docs = {1}; }),
-                   tests::Make<detail::Boosted>(
-                     [](detail::Boosted& node) { node.docs = {2}; }),
-                   tests::Make<detail::Boosted>(
-                     [](detail::Boosted& node) { node.docs = {3}; }),
-                   tests::Make<irs::All>(), tests::Make<irs::Empty>(),
-                   tests::Make<irs::All>(), tests::Make<irs::Empty>()));
+  irs::Filter::ptr root =
+    tests::MakeOr(tests::Make<detail::Boosted>(
+                    [](detail::Boosted& node) { node.docs = {1}; }),
+                  tests::Make<detail::Boosted>(
+                    [](detail::Boosted& node) { node.docs = {2}; }),
+                  tests::Make<detail::Boosted>(
+                    [](detail::Boosted& node) { node.docs = {3}; }),
+                  tests::Make<irs::All>(), tests::Make<irs::Empty>(),
+                  tests::Make<irs::All>(), tests::Make<irs::Empty>());
 
-  auto prep = root.prepare({.index = irs::SubReader::empty()});
+  irs::Optimize(root);
+  auto prep = root->prepare({.index = irs::SubReader::empty()});
 
   prep->execute({.segment = irs::SubReader::empty()});
   ASSERT_EQ(
@@ -16283,17 +16304,19 @@ TEST(Or_test, optimize_all_unscored) {
 
 TEST(Or_test, optimize_all_scored) {
   detail::Boosted::gExecuteCount = 0;
-  irs::Or root = std::move(
-    *tests::MakeOr(tests::Make<detail::Boosted>(
-                     [](detail::Boosted& node) { node.docs = {1}; }),
-                   tests::Make<detail::Boosted>(
-                     [](detail::Boosted& node) { node.docs = {2}; }),
-                   tests::Make<detail::Boosted>(
-                     [](detail::Boosted& node) { node.docs = {3}; }),
-                   tests::Make<irs::All>(), tests::Make<irs::Empty>(),
-                   tests::Make<irs::All>(), tests::Make<irs::Empty>()));
+  irs::Filter::ptr root =
+    tests::MakeOr(tests::Make<detail::Boosted>(
+                    [](detail::Boosted& node) { node.docs = {1}; }),
+                  tests::Make<detail::Boosted>(
+                    [](detail::Boosted& node) { node.docs = {2}; }),
+                  tests::Make<detail::Boosted>(
+                    [](detail::Boosted& node) { node.docs = {3}; }),
+                  tests::Make<irs::All>(), tests::Make<irs::Empty>(),
+                  tests::Make<irs::All>(), tests::Make<irs::Empty>());
   tests::sort::Boost sort{};
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+  irs::Optimize(root, {.scorer = &sort});
+  auto prep =
+    root->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
   prep->execute({.segment = irs::SubReader::empty()});
   ASSERT_EQ(3,
@@ -16303,15 +16326,20 @@ TEST(Or_test, optimize_all_scored) {
 
 TEST(Or_test, optimize_only_all_boosted) {
   tests::sort::Boost sort{};
-  irs::Or root = std::move(
-    *tests::MakeOr(tests::Make<irs::All>([](irs::All& f) { f.boost(3); }),
-                   tests::Make<irs::All>([](irs::All& f) { f.boost(5); })));
-  root.boost(2);
+  auto or_node =
+    tests::MakeOr(tests::Make<irs::All>([](irs::All& f) { f.boost(3); }),
+                  tests::Make<irs::All>([](irs::All& f) { f.boost(5); }));
+  or_node->boost(2);
+  irs::Filter::ptr root = std::move(or_node);
 
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+  irs::Optimize(root, {.scorer = &sort});
 
-  prep->execute({.segment = irs::SubReader::empty()});
-  ASSERT_EQ(16, prep->Boost());
+  ASSERT_EQ(irs::Type<irs::Or>::id(), root->type());
+  auto& or_root = sdb::basics::downCast<irs::Or>(*root);
+  ASSERT_EQ(2.f, or_root.Boost());
+  ASSERT_EQ(1, or_root.size());
+  ASSERT_EQ(irs::Type<irs::All>::id(), or_root[0].type());
+  ASSERT_EQ(8.f, sdb::basics::downCast<irs::All>(or_root[0]).Boost());
 }
 
 TEST(Or_test, boosted_not) {

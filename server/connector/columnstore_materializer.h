@@ -26,24 +26,40 @@
 #include <duckdb/common/vector/list_vector.hpp>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/exceptions.h"
+#include "catalog/table_options.h"
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/columnstore/format.hpp"
 #include "iresearch/columnstore/read_context.hpp"
 #include "iresearch/columnstore/scan.hpp"
 #include "iresearch/types.hpp"
 
+namespace duckdb {
+
+class ClientContext;
+
+}  // namespace duckdb
 namespace sdb::connector {
+
+struct ColumnstoreProjection {
+  duckdb::idx_t output_slot;
+  catalog::Column::Id column_id;
+  std::vector<std::string> extract_path;
+  duckdb::LogicalType extract_scan_type = duckdb::LogicalType::INVALID;
+
+  bool IsExtract() const noexcept { return !extract_path.empty(); }
+};
 
 class ColumnstoreMaterializer {
  public:
   ColumnstoreMaterializer(const irs::columnstore::Reader& reader,
-                          std::span<const irs::field_id> column_ids,
-                          std::span<const duckdb::idx_t> output_slots);
+                          std::span<const ColumnstoreProjection> projections,
+                          duckdb::ClientContext* context);
 
   ColumnstoreMaterializer(const ColumnstoreMaterializer&) = delete;
   ColumnstoreMaterializer& operator=(const ColumnstoreMaterializer&) = delete;
@@ -70,6 +86,13 @@ class ColumnstoreMaterializer {
     SDB_ASSERT(i < _bound.size());
     SDB_IF_FAILURE("SearchIncludeFetchFault") { SDB_THROW(ERROR_DEBUG); }
     const auto& b = _bound[i];
+    if (b.IsExtract()) {
+      SDB_ASSERT(_context);
+      irs::columnstore::MaterializeExtractNode(
+        *b.reader, *b.state, doc_ids, b.extract_path, b.extract_scan_type,
+        out_vec, output_start, *_context);
+      return;
+    }
     irs::columnstore::MaterializeNode(*b.reader, *b.state, doc_ids, out_vec,
                                       output_start);
   }
@@ -83,6 +106,13 @@ class ColumnstoreMaterializer {
     SDB_IF_FAILURE("SearchIncludeFetchFault") { SDB_THROW(ERROR_DEBUG); }
     for (const auto& b : _bound) {
       auto& out_vec = output.data[b.output_slot];
+      if (b.IsExtract()) {
+        SDB_ASSERT(_context);
+        irs::columnstore::MaterializeExtractNode(
+          *b.reader, *b.state, doc_ids, b.extract_path, b.extract_scan_type,
+          out_vec, output_start, *_context);
+        continue;
+      }
       const auto type_id = b.reader->Type().id();
       if (output_start == 0 && (type_id == duckdb::LogicalTypeId::LIST ||
                                 type_id == duckdb::LogicalTypeId::MAP)) {
@@ -101,6 +131,13 @@ class ColumnstoreMaterializer {
     SDB_IF_FAILURE("SearchIncludeFetchFault") { SDB_THROW(ERROR_DEBUG); }
     for (const auto& b : _bound) {
       auto& out_vec = output.data[b.output_slot];
+      if (b.IsExtract()) {
+        SDB_ASSERT(_context);
+        irs::columnstore::MaterializeExtractNode(
+          *b.reader, *b.state, irs::columnstore::IotaRange{start_doc, count},
+          b.extract_path, b.extract_scan_type, out_vec, 0, *_context);
+        continue;
+      }
       const auto type_id = b.reader->Type().id();
       if (type_id == duckdb::LogicalTypeId::LIST ||
           type_id == duckdb::LogicalTypeId::MAP) {
@@ -117,10 +154,15 @@ class ColumnstoreMaterializer {
     const irs::columnstore::ColumnReader* reader;
     duckdb::idx_t output_slot;
     std::unique_ptr<irs::columnstore::MaterializeState> state;
+    std::vector<std::string> extract_path;
+    duckdb::LogicalType extract_scan_type = duckdb::LogicalType::INVALID;
+
+    bool IsExtract() const noexcept { return !extract_path.empty(); }
   };
 
   irs::columnstore::ReadContext _ctx;
   std::vector<Binding> _bound;
+  duckdb::ClientContext* _context = nullptr;
 };
 
 }  // namespace sdb::connector

@@ -796,6 +796,23 @@ duckdb::TableFunction CreateSKRangesScanFunction() {
   return func;
 }
 
+static bool IResearchSupportsPushdownExtract(
+  const duckdb::FunctionData& bind_data_p,
+  const duckdb::LogicalIndex& col_idx) {
+  const auto& bind = bind_data_p.Cast<SereneDBScanBindData>();
+  if (!bind.IsInvertedIndexEntry() || !bind.inverted_index) {
+    return false;
+  }
+  const auto bind_col = col_idx.index;
+  if (bind_col >= bind.column_ids.size() ||
+      bind.column_types[bind_col].id() != duckdb::LogicalTypeId::VARIANT) {
+    return false;
+  }
+  const auto* info =
+    bind.inverted_index->FindColumnInfo(bind.column_ids[bind_col]);
+  return info != nullptr && info->store_values;
+}
+
 duckdb::TableFunction CreateIResearchScanFunction() {
   duckdb::TableFunction func{
     "iresearch_scan",         {}, SearchFullScanFunction, SereneDBScanBind,
@@ -803,6 +820,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   };
   SetCommonCallbacks(func);
   func.pushdown_complex_filter = &optimizer::IresearchPushdownComplexFilter;
+  func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
   return func;
 }
 
@@ -822,6 +840,7 @@ duckdb::TableFunction CreateIResearchANNScanFunction() {
   };
   SetCommonCallbacks(func);
   func.init_local = SearchAnnScanInitLocal;
+  func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
   return func;
 }
 
@@ -832,6 +851,7 @@ duckdb::TableFunction CreateIResearchANNRangeScanFunction() {
   };
   SetCommonCallbacks(func);
   func.init_local = SearchRangeScanInitLocal;
+  func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
   return func;
 }
 

@@ -64,12 +64,24 @@ inline size_t ConsecutiveRunLength(
 
 class ColumnReader final {
  public:
+  struct VariantRgReader {
+    uint64_t row_count = 0;
+    bool shredded = false;
+    bool fully_shredded = false;
+    std::unique_ptr<ColumnReader> unshredded;
+    std::unique_ptr<ColumnReader> shredded_node;
+  };
+
   ColumnReader(field_id id, duckdb::LogicalType type,
                std::vector<duckdb::DataPointer> data_pointers,
                std::vector<duckdb::DataPointer> validity_pointers,
                std::unique_ptr<ColumnReader> element_child,
                std::vector<std::unique_ptr<ColumnReader>> struct_children,
                uint64_t array_size);
+
+  ColumnReader(field_id id, duckdb::LogicalType type,
+               std::vector<duckdb::DataPointer> validity_pointers,
+               std::vector<VariantRgReader> variant_rgs);
 
   ColumnReader(const ColumnReader&) = delete;
   ColumnReader& operator=(const ColumnReader&) = delete;
@@ -217,6 +229,13 @@ class ColumnReader final {
     return *_struct_fields[i];
   }
 
+  size_t VariantRgCount() const noexcept { return _variant_rgs.size(); }
+  const VariantRgReader& VariantRg(size_t rg) const noexcept {
+    SDB_ASSERT(rg < _variant_rgs.size());
+    return _variant_rgs[rg];
+  }
+  RgWindow LocateVariantRg(uint64_t row, RgWindow hint = {}) const noexcept;
+
   class ListOffsetState {
    public:
     ListOffsetState(const ColumnReader& list_column, ReadContext& ctx) noexcept
@@ -316,6 +335,8 @@ class ColumnReader final {
   // Element-start prefix sums across LIST/MAP row groups, derived
   // eagerly from each segment's stats (max stored cumulative offset).
   std::vector<uint64_t> _rg_element_starts;
+  std::vector<VariantRgReader> _variant_rgs;
+  std::vector<uint64_t> _variant_rg_starts;
 };
 
 }  // namespace columnstore

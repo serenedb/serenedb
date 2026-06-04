@@ -22,6 +22,7 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/storage/data_pointer.hpp>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -55,12 +56,24 @@ namespace irs::columnstore {
 //     pointers           -> per-row UBIGINT lengths, codec-picked
 //     validity_pointers  -> row-level validity per row group
 //     child_columns      -> [element]; element rows = sum of lengths
-//   STRUCT (not implemented): pointers empty, child_columns one per field.
+//   STRUCT: pointers empty, child_columns one per field.
+struct PersistentColumnData;
+
+struct VariantRowGroupLayout {
+  uint64_t row_start = 0;
+  uint64_t row_count = 0;
+  bool shredded = false;
+  bool fully_shredded = false;
+  std::shared_ptr<PersistentColumnData> unshredded;
+  std::shared_ptr<PersistentColumnData> shredded_node;
+};
+
 struct PersistentColumnData {
   duckdb::LogicalType type;
   std::vector<duckdb::DataPointer> pointers;
   std::vector<duckdb::DataPointer> validity_pointers;
   std::vector<PersistentColumnData> child_columns;
+  std::vector<VariantRowGroupLayout> variant_layouts;
   // LIST/MAP only, transient writer state -- not serialised. Cumulative
   // child element count across all row groups written so far for this
   // node, used to bias per-RG offsets into the column-global space.
@@ -99,6 +112,23 @@ inline PersistentColumnData Clone(const PersistentColumnData& src) {
   out.child_columns.reserve(src.child_columns.size());
   for (const auto& c : src.child_columns) {
     out.child_columns.emplace_back(Clone(c));
+  }
+  out.variant_layouts.reserve(src.variant_layouts.size());
+  for (const auto& l : src.variant_layouts) {
+    VariantRowGroupLayout cl;
+    cl.row_start = l.row_start;
+    cl.row_count = l.row_count;
+    cl.shredded = l.shredded;
+    cl.fully_shredded = l.fully_shredded;
+    if (l.unshredded) {
+      cl.unshredded =
+        std::make_shared<PersistentColumnData>(Clone(*l.unshredded));
+    }
+    if (l.shredded_node) {
+      cl.shredded_node =
+        std::make_shared<PersistentColumnData>(Clone(*l.shredded_node));
+    }
+    out.variant_layouts.emplace_back(std::move(cl));
   }
   return out;
 }

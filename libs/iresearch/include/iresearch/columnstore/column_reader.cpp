@@ -138,6 +138,38 @@ ColumnReader::ColumnReader(
   }
 }
 
+ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
+                           std::vector<duckdb::DataPointer> validity_pointers,
+                           std::vector<VariantRgReader> variant_rgs)
+  : _id{id},
+    _type{std::move(type)},
+    _validity_pointers{std::move(validity_pointers)},
+    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
+    _variant_rgs{std::move(variant_rgs)} {
+  SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::VARIANT);
+  if (!_validity_pointers.empty()) {
+    _validity_offsets.reserve(_validity_pointers.size() + 1);
+    uint64_t vtotal = 0;
+    for (const auto& p : _validity_pointers) {
+      _validity_offsets.push_back(vtotal);
+      vtotal += p.tuple_count;
+    }
+    _validity_offsets.push_back(vtotal);
+  }
+  _variant_rg_starts.reserve(_variant_rgs.size() + 1);
+  uint64_t total = 0;
+  for (const auto& rg : _variant_rgs) {
+    SDB_ASSERT(rg.unshredded);
+    SDB_ASSERT(rg.unshredded->RowCount() == rg.row_count);
+    SDB_ASSERT(!rg.shredded || rg.shredded_node->RowCount() == rg.row_count);
+    _variant_rg_starts.push_back(total);
+    total += rg.row_count;
+  }
+  _variant_rg_starts.push_back(total);
+  _row_count = total;
+  _data_offsets.push_back(0);
+}
+
 namespace {
 
 RgWindow LocateInOffsets(uint64_t row_pos, std::span<const uint64_t> offsets,
@@ -181,6 +213,13 @@ RgWindow ColumnReader::LocateValidity(uint64_t row_pos,
                                       RgWindow hint) const noexcept {
   SDB_ASSERT(row_pos < _row_count);
   return LocateInOffsets(row_pos, _validity_offsets, hint);
+}
+
+RgWindow ColumnReader::LocateVariantRg(uint64_t row,
+                                       RgWindow hint) const noexcept {
+  SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::VARIANT);
+  SDB_ASSERT(row < _row_count);
+  return LocateInOffsets(row, _variant_rg_starts, hint);
 }
 
 void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,

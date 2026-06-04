@@ -84,6 +84,25 @@ void SerializeColumnData(duckdb::Serializer& obj,
                     SerializeColumnData(child, node.child_columns[j]);
                   });
                 });
+  obj.WriteList(
+    4, "variant_layouts", node.variant_layouts.size(),
+    [&](duckdb::Serializer::List& vlist, duckdb::idx_t j) {
+      const auto& l = node.variant_layouts[j];
+      vlist.WriteObject([&](duckdb::Serializer& vo) {
+        vo.WriteProperty<uint64_t>(0, "row_start", l.row_start);
+        vo.WriteProperty<uint64_t>(1, "row_count", l.row_count);
+        vo.WriteProperty<bool>(2, "shredded", l.shredded);
+        vo.WriteObject(3, "unshredded", [&](duckdb::Serializer& u) {
+          SerializeColumnData(u, *l.unshredded);
+        });
+        if (l.shredded) {
+          vo.WriteObject(4, "shredded_node", [&](duckdb::Serializer& s) {
+            SerializeColumnData(s, *l.shredded_node);
+          });
+          vo.WriteProperty<bool>(5, "fully_shredded", l.fully_shredded);
+        }
+      });
+    });
 }
 
 std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
@@ -110,7 +129,26 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
                                        std::move(node.child_columns.front()));
       break;
     }
-    case duckdb::LogicalTypeId::VARIANT:
+    case duckdb::LogicalTypeId::VARIANT: {
+      std::vector<ColumnReader::VariantRgReader> variant_rgs;
+      variant_rgs.reserve(node.variant_layouts.size());
+      for (auto& l : node.variant_layouts) {
+        ColumnReader::VariantRgReader rg;
+        rg.row_count = l.row_count;
+        rg.shredded = l.shredded;
+        rg.fully_shredded = l.fully_shredded;
+        rg.unshredded =
+          MakeColumnReader(field_limits::invalid(), std::move(*l.unshredded));
+        if (l.shredded) {
+          rg.shredded_node = MakeColumnReader(field_limits::invalid(),
+                                              std::move(*l.shredded_node));
+        }
+        variant_rgs.push_back(std::move(rg));
+      }
+      return std::make_unique<ColumnReader>(id, std::move(node.type),
+                                            std::move(node.validity_pointers),
+                                            std::move(variant_rgs));
+    }
     case duckdb::LogicalTypeId::STRUCT: {
       struct_children.reserve(node.child_columns.size());
       for (auto& cn : node.child_columns) {
@@ -166,6 +204,29 @@ PersistentColumnData DeserializeColumnData(duckdb::Deserializer& obj) {
                    node.child_columns.push_back(DeserializeColumnData(child));
                  });
                });
+  obj.ReadList(
+    4, "variant_layouts",
+    [&](duckdb::Deserializer::List& vlist, duckdb::idx_t /*j*/) {
+      vlist.ReadObject([&](duckdb::Deserializer& vo) {
+        VariantRowGroupLayout l;
+        l.row_start = vo.ReadProperty<uint64_t>(0, "row_start");
+        l.row_count = vo.ReadProperty<uint64_t>(1, "row_count");
+        l.shredded = vo.ReadProperty<bool>(2, "shredded");
+        vo.ReadObject(3, "unshredded", [&](duckdb::Deserializer& u) {
+          l.unshredded =
+            std::make_shared<PersistentColumnData>(DeserializeColumnData(u));
+        });
+        if (l.shredded) {
+          vo.ReadObject(4, "shredded_node", [&](duckdb::Deserializer& s) {
+            l.shredded_node =
+              std::make_shared<PersistentColumnData>(DeserializeColumnData(s));
+          });
+          l.fully_shredded =
+            vo.ReadPropertyWithDefault<bool>(5, "fully_shredded");
+        }
+        node.variant_layouts.push_back(std::move(l));
+      });
+    });
   return node;
 }
 

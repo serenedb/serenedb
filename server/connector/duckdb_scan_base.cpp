@@ -186,6 +186,11 @@ void InitCommonState(CommonScanGlobalState& state,
       : bind_data.As<TableScanBindData>().table->PKColumns().empty();
 
   state.external_projected_columns = state.projected_columns;
+
+  state.client_context = &context;
+  state.projected_column_indexes = input.column_indexes;
+  SDB_ASSERT(state.projected_column_indexes.size() ==
+             state.projected_columns.size());
 }
 
 void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
@@ -207,25 +212,44 @@ void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
       col_id == catalog::Column::kGeneratedPKId &&
       state.projected_types[proj].id() == duckdb::LogicalTypeId::BLOB;
     if ((info && info->store_values) || is_blob_synthetic_pk) {
-      state.cs_projections.push_back({proj, col_id});
+      ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id};
+      if (info && info->store_values &&
+          proj < state.projected_column_indexes.size()) {
+        const auto& ci = state.projected_column_indexes[proj];
+        if (ci.IsPushdownExtract() && ci.HasChildren()) {
+          std::vector<std::string> path;
+          const duckdb::ColumnIndex* node = &ci.GetChildIndex(0);
+          bool by_key_only = true;
+          while (true) {
+            if (node->HasPrimaryIndex()) {
+              by_key_only = false;
+              break;
+            }
+            path.push_back(node->GetFieldName());
+            if (!node->HasChildren()) {
+              break;
+            }
+            node = &node->GetChildIndex(0);
+          }
+          if (by_key_only && !path.empty()) {
+            cp.extract_path = std::move(path);
+            cp.extract_scan_type = ci.GetScanType();
+          }
+        }
+      }
+      state.cs_projections.push_back(std::move(cp));
       state.external_projected_columns[proj] =
         duckdb::DConstants::INVALID_INDEX;
       continue;
     }
     state.has_external_projections = true;
   }
-  state.cs_field_ids.reserve(state.cs_projections.size());
-  state.cs_output_slots.reserve(state.cs_projections.size());
-  for (const auto& cp : state.cs_projections) {
-    state.cs_field_ids.push_back(static_cast<irs::field_id>(cp.column_id));
-    state.cs_output_slots.push_back(cp.output_slot);
-  }
 }
 
 ColumnstoreMaterializer* GetOrOpenSegmentMaterializer(
   CommonScanGlobalState& gstate, const irs::IndexReader& reader,
   size_t seg_idx) {
-  if (gstate.cs_field_ids.empty() || seg_idx >= reader.size()) {
+  if (gstate.cs_projections.empty() || seg_idx >= reader.size()) {
     return nullptr;
   }
   if (gstate.cs_materializers.size() < reader.size()) {
@@ -238,7 +262,7 @@ ColumnstoreMaterializer* GetOrOpenSegmentMaterializer(
       return nullptr;
     }
     slot = std::make_unique<ColumnstoreMaterializer>(
-      *cs_reader, gstate.cs_field_ids, gstate.cs_output_slots);
+      *cs_reader, gstate.cs_projections, gstate.client_context);
   }
   return slot.get();
 }

@@ -264,12 +264,12 @@ void BooleanQuery::prepare(const PrepareContext& ctx, ScoreMergeType merge_type,
 
 DocIterator::ptr AndQuery::execute(const ExecutionContext& ctx, iterator begin,
                                    iterator end) const {
-  return MakeConjunction(ctx, merge_type(), begin, end);
+  return MakeConjunction(ctx, MergeType(), begin, end);
 }
 
 DocIterator::ptr OrQuery::execute(const ExecutionContext& ctx, iterator begin,
                                   iterator end) const {
-  return MakeDisjunction(ctx, merge_type(), begin, end);
+  return MakeDisjunction(ctx, MergeType(), begin, end);
 }
 
 DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
@@ -286,7 +286,7 @@ DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
     return DocIterator::empty();
   } else if (min_match_count == size) {
     // pure conjunction
-    return MakeConjunction(ctx, merge_type(), begin, end);
+    return MakeConjunction(ctx, MergeType(), begin, end);
   }
 
   // min_match_count <= size
@@ -298,7 +298,7 @@ DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
   }
 
   return ResolveMergeType(
-    ctx.scorer ? merge_type() : ScoreMergeType::Noop,
+    ctx.scorer ? MergeType() : ScoreMergeType::Noop,
     [&]<ScoreMergeType MergeType> {
       // FIXME(gnusi): use FAST version
       using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;

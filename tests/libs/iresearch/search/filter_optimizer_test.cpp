@@ -189,8 +189,8 @@ TEST(filter_optimizer_test, flatten_and_merge_type_gate) {
       std::vector<irs::Filter::ptr> children;
       children.emplace_back(MakeTerm("name", "A"));
       children.emplace_back(MakeTerm("name", "B"));
-      auto inner = std::make_unique<irs::And>(std::move(children));
-      inner->merge_type(irs::ScoreMergeType::Max);
+      auto inner = std::make_unique<irs::And>(std::move(children),
+                                              irs::ScoreMergeType::Max);
       return inner;
     }(),
     MakeTerm("name", "C"));
@@ -224,11 +224,11 @@ TEST(filter_optimizer_test, flatten_or) {
 }
 
 TEST(filter_optimizer_test, flatten_or_parent_min_match_gate) {
-  irs::Filter::ptr root =
-    MakeOr(MakeOr(MakeTerm("name", "A"), MakeTerm("name", "B")),
-           MakeTerm("name", "C"));
+  irs::Filter::ptr root = std::make_unique<irs::Or>(
+    Filters(MakeOr(MakeTerm("name", "A"), MakeTerm("name", "B")),
+            MakeTerm("name", "C")),
+    irs::ScoreMergeType::Sum, 2);
   auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  or_root.min_match_count(2);
 
   irs::Optimize(root);
 
@@ -241,9 +241,8 @@ TEST(filter_optimizer_test, flatten_or_inner_min_match_gate) {
       std::vector<irs::Filter::ptr> children;
       children.emplace_back(MakeTerm("name", "A"));
       children.emplace_back(MakeTerm("name", "B"));
-      auto inner = std::make_unique<irs::Or>(std::move(children));
-      inner->min_match_count(2);
-      return inner;
+      return std::make_unique<irs::Or>(std::move(children),
+                                       irs::ScoreMergeType::Sum, 2);
     }(),
     MakeTerm("name", "C"));
   auto& or_root = sdb::basics::downCast<irs::Or>(*root);
@@ -258,9 +257,8 @@ TEST(filter_optimizer_test, flatten_or_zero_min_match_gate) {
     [] {
       std::vector<irs::Filter::ptr> children;
       children.emplace_back(MakeTerm("name", "A"));
-      auto inner = std::make_unique<irs::Or>(std::move(children));
-      inner->min_match_count(0);
-      return inner;
+      return std::make_unique<irs::Or>(std::move(children),
+                                       irs::ScoreMergeType::Sum, 0);
     }(),
     MakeTerm("name", "C"));
   auto& or_root = sdb::basics::downCast<irs::Or>(*root);
@@ -437,19 +435,19 @@ TEST(filter_optimizer_test, or_all_fold_unscored_prunes_to_all) {
 }
 
 TEST(filter_optimizer_test, or_all_fold_scored_merges_and_adjusts_min_match) {
-  irs::Filter::ptr root =
-    MakeOr(MakeTerm("f1", "A"), MakeTerm("f2", "B"),
-           Make<irs::All>([](irs::All& all) { all.boost(2.F); }),
-           Make<irs::All>([](irs::All& all) { all.boost(3.F); }));
-  auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  or_root.min_match_count(3);
+  irs::Filter::ptr root = std::make_unique<irs::Or>(
+    Filters(MakeTerm("f1", "A"), MakeTerm("f2", "B"),
+            Make<irs::All>([](irs::All& all) { all.boost(2.F); }),
+            Make<irs::All>([](irs::All& all) { all.boost(3.F); })),
+    irs::ScoreMergeType::Sum, 3);
 
   const irs::BM25 scorer;
   irs::Optimize(root, {.scorer = &scorer});
 
   ASSERT_EQ(irs::Type<irs::Or>::id(), root->type());
+  auto& or_root = sdb::basics::downCast<irs::Or>(*root);
   ASSERT_EQ(3, or_root.size());
-  ASSERT_EQ(2, or_root.min_match_count());
+  ASSERT_EQ(2, or_root.MinMatchCount());
   ASSERT_EQ(irs::Type<irs::All>::id(), or_root[2].type());
   ASSERT_EQ(5.F, sdb::basics::downCast<irs::All>(or_root[2]).Boost());
 }
@@ -479,9 +477,8 @@ TEST(filter_optimizer_test, single_child_and_unwraps) {
 }
 
 TEST(filter_optimizer_test, single_child_or_min_match_gate) {
-  irs::Filter::ptr root = MakeOr(MakeTerm("name", "A"));
-  auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  or_root.min_match_count(2);
+  irs::Filter::ptr root = std::make_unique<irs::Or>(
+    Filters(MakeTerm("name", "A")), irs::ScoreMergeType::Sum, 2);
 
   irs::Optimize(root);
 
@@ -544,10 +541,11 @@ TEST(filter_optimizer_test, by_terms_field_gate) {
 }
 
 TEST(filter_optimizer_test, by_terms_or_duplicate_gate) {
-  irs::Filter::ptr root =
-    MakeOr(MakeTerm("name", "A"), MakeTerm("name", "A"), MakeTerm("name", "B"));
+  irs::Filter::ptr root = std::make_unique<irs::Or>(
+    Filters(MakeTerm("name", "A"), MakeTerm("name", "A"),
+            MakeTerm("name", "B")),
+    irs::ScoreMergeType::Sum, 2);
   auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  or_root.min_match_count(2);
 
   irs::Optimize(root);
 

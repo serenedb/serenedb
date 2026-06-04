@@ -191,8 +191,8 @@ void StringifyAnd(std::string* out, const And& filter, FT&& ft) {
 template<typename FT>
 void StringifyOr(std::string* out, const Or& filter, FT&& ft) {
   std::string header = "OR";
-  if (filter.min_match_count() != 1) {
-    absl::StrAppend(&header, "(", filter.min_match_count(), ")");
+  if (filter.MinMatchCount() != 1) {
+    absl::StrAppend(&header, "(", filter.MinMatchCount(), ")");
   }
   absl::StrAppend(out, header, "[",
                   absl::StrJoin(filter, " || ",

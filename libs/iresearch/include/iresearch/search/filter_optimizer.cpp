@@ -69,11 +69,11 @@ bool CanSplice(const T& parent, const Filter& child) noexcept {
   }
   const auto& inner = sdb::basics::downCast<T>(child);
   if (inner.empty() || inner.Boost() != kNoBoost ||
-      inner.merge_type() != parent.merge_type()) {
+      inner.MergeType() != parent.MergeType()) {
     return false;
   }
   if constexpr (std::is_same_v<T, Or>) {
-    return inner.min_match_count() == 1 && parent.min_match_count() == 1;
+    return inner.MinMatchCount() == 1 && parent.MinMatchCount() == 1;
   } else {
     return true;
   }
@@ -110,6 +110,7 @@ bool Flatten(T& node) {
 }
 
 struct NotRule {
+  static constexpr std::string_view kName = "not_to_exclude";
   static constexpr std::array kTargets{Type<Not>::id()};
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
@@ -134,6 +135,7 @@ struct NotRule {
 };
 
 struct FlattenAnd {
+  static constexpr std::string_view kName = "flatten_and";
   static constexpr std::array kTargets{Type<And>::id()};
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
@@ -142,6 +144,7 @@ struct FlattenAnd {
 };
 
 struct FlattenOr {
+  static constexpr std::string_view kName = "flatten_or";
   static constexpr std::array kTargets{Type<Or>::id()};
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
@@ -150,6 +153,7 @@ struct FlattenOr {
 };
 
 struct AndEmptyRule {
+  static constexpr std::string_view kName = "and_empty";
   static constexpr std::array kTargets{Type<And>::id()};
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
@@ -166,6 +170,7 @@ struct AndEmptyRule {
 };
 
 struct OrEmptyRule {
+  static constexpr std::string_view kName = "or_empty";
   static constexpr std::array kTargets{Type<Or>::id()};
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
@@ -208,6 +213,7 @@ void EraseAllDocs(T& node, const Filter& all) {
 }
 
 struct AndAllFoldRule {
+  static constexpr std::string_view kName = "and_all_fold";
   static constexpr std::array kTargets{Type<And>::id()};
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
@@ -234,11 +240,12 @@ struct AndAllFoldRule {
 };
 
 struct OrAllFoldRule {
+  static constexpr std::string_view kName = "or_all_fold";
   static constexpr std::array kTargets{Type<Or>::id()};
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     auto& node = sdb::basics::downCast<Or>(*slot);
-    const auto min_match = node.min_match_count();
+    const auto min_match = node.MinMatchCount();
     if (min_match == 0) {
       return false;
     }
@@ -255,15 +262,20 @@ struct OrAllFoldRule {
       return false;
     }
     EraseAllDocs(node, *all);
-    FilterMutator::Of(node).Children().emplace_back(
-      node.MakeAllDocsFilter(all_boost));
-    node.min_match_count(min_match > all_count - 1 ? min_match - (all_count - 1)
-                                                   : 1);
+    auto& children = FilterMutator::Of(node).Children();
+    children.emplace_back(node.MakeAllDocsFilter(all_boost));
+    const size_t new_min_match =
+      min_match > all_count - 1 ? min_match - (all_count - 1) : 1;
+    auto replacement = std::make_unique<Or>(std::move(children),
+                                            node.MergeType(), new_min_match);
+    replacement->boost(node.Boost());
+    slot = std::move(replacement);
     return true;
   }
 };
 
 struct SingleChildRule {
+  static constexpr std::string_view kName = "single_child";
   static constexpr std::array kTargets{Type<And>::id(), Type<Or>::id()};
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
@@ -272,7 +284,7 @@ struct SingleChildRule {
       return false;
     }
     if (slot->type() == Type<Or>::id() &&
-        sdb::basics::downCast<Or>(node).min_match_count() != 1) {
+        sdb::basics::downCast<Or>(node).MinMatchCount() != 1) {
       return false;
     }
     if (node.Boost() != kNoBoost && ctx.scorer != nullptr) {
@@ -285,6 +297,7 @@ struct SingleChildRule {
 };
 
 struct ByTermsRule {
+  static constexpr std::string_view kName = "by_terms";
   static constexpr std::array kTargets{Type<And>::id(), Type<Or>::id()};
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
@@ -294,7 +307,7 @@ struct ByTermsRule {
     }
     const bool is_and = slot->type() == Type<And>::id();
     const size_t min_match =
-      is_and ? 0 : sdb::basics::downCast<Or>(node).min_match_count();
+      is_and ? 0 : sdb::basics::downCast<Or>(node).MinMatchCount();
     if (!is_and && min_match == 0) {
       return false;
     }
@@ -310,7 +323,7 @@ struct ByTermsRule {
       return false;
     }
     ByTermsOptions options;
-    options.merge_type = node.merge_type();
+    options.merge_type = node.MergeType();
     bool has_duplicates = false;
     for (const auto& child : node) {
       auto& term_filter = sdb::basics::downCast<ByTerm>(*child);
@@ -335,15 +348,15 @@ struct ByTermsRule {
 };
 
 constexpr std::array<RuleDesc, 9> kDefaultRulesStorage{{
-  {"not_to_exclude", NotRule::kTargets, &NotRule::Apply},
-  {"and_empty", AndEmptyRule::kTargets, &AndEmptyRule::Apply},
-  {"or_empty", OrEmptyRule::kTargets, &OrEmptyRule::Apply},
-  {"and_all_fold", AndAllFoldRule::kTargets, &AndAllFoldRule::Apply},
-  {"or_all_fold", OrAllFoldRule::kTargets, &OrAllFoldRule::Apply},
-  {"flatten_and", FlattenAnd::kTargets, &FlattenAnd::Apply},
-  {"flatten_or", FlattenOr::kTargets, &FlattenOr::Apply},
-  {"by_terms", ByTermsRule::kTargets, &ByTermsRule::Apply},
-  {"single_child", SingleChildRule::kTargets, &SingleChildRule::Apply},
+  MakeRule<NotRule>(),
+  MakeRule<AndEmptyRule>(),
+  MakeRule<OrEmptyRule>(),
+  MakeRule<AndAllFoldRule>(),
+  MakeRule<OrAllFoldRule>(),
+  MakeRule<FlattenAnd>(),
+  MakeRule<FlattenOr>(),
+  MakeRule<ByTermsRule>(),
+  MakeRule<SingleChildRule>(),
 }};
 
 void RunRules(Filter::ptr& slot, const OptimizeContext& ctx,
@@ -368,6 +381,20 @@ void RunRules(Filter::ptr& slot, const OptimizeContext& ctx,
 }  // namespace
 
 constinit const std::span<const RuleDesc> kDefaultRules{kDefaultRulesStorage};
+
+namespace {
+
+std::vector<RuleDesc>& RuleRegistry() {
+  static std::vector<RuleDesc> gRules(kDefaultRulesStorage.begin(),
+                                      kDefaultRulesStorage.end());
+  return gRules;
+}
+
+}  // namespace
+
+void RegisterRule(const RuleDesc& rule) { RuleRegistry().push_back(rule); }
+
+std::span<const RuleDesc> ActiveRules() { return RuleRegistry(); }
 
 void Optimize(Filter::ptr& root, const OptimizeContext& ctx,
               std::span<const RuleDesc> rules) {

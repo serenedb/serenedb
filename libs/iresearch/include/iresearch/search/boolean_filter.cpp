@@ -68,7 +68,7 @@ Filter::Query::ptr And::prepare(const PrepareContext& ctx) const {
 
   const PrepareContext sub_ctx = ctx.Boost(Boost());
   auto q = memory::make_tracked<AndQuery>(sub_ctx.memory);
-  q->prepare(sub_ctx, merge_type(), incl, excl);
+  q->prepare(sub_ctx, MergeType(), incl, excl);
   return q;
 }
 
@@ -102,7 +102,7 @@ Filter::Query::ptr Or::prepare(const PrepareContext& ctx) const {
     q = memory::make_tracked<MinMatchQuery>(sub_ctx.memory, _min_match_count);
   }
 
-  q->prepare(sub_ctx, merge_type(), incl, {});
+  q->prepare(sub_ctx, MergeType(), incl, {});
   return q;
 }
 

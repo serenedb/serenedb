@@ -60,14 +60,15 @@ class FilterMutator;
 // Represents user-side boolean filter as the container for other filters
 class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
  public:
+  BooleanFilter() = default;
+  BooleanFilter(std::vector<Filter::ptr> incl, std::vector<Filter::ptr> excl,
+                ScoreMergeType merge_type)
+    : _incl{std::move(incl)}, _excl{std::move(excl)}, _merge_type{merge_type} {}
+
   auto begin() const { return _incl.begin(); }
   auto end() const { return _incl.end(); }
 
-  ScoreMergeType merge_type() const noexcept { return _merge_type; }
-
-  void merge_type(ScoreMergeType merge_type) noexcept {
-    _merge_type = merge_type;
-  }
+  auto MergeType() const noexcept { return _merge_type; }
 
   bool empty() const { return _incl.empty() && _excl.empty(); }
   size_t size() const { return _incl.size(); }
@@ -120,26 +121,20 @@ class Or final : public BooleanFilter {
   Or() = default;
 
   explicit Or(std::vector<Filter::ptr> incl,
-              ScoreMergeType merge_type = ScoreMergeType::Sum) {
-    _incl = std::move(incl);
-    _merge_type = merge_type;
-  }
+              ScoreMergeType merge_type = ScoreMergeType::Sum,
+              size_t min_match_count = 1)
+    : BooleanFilter{std::move(incl), {}, merge_type},
+      _min_match_count{min_match_count} {}
 
   // Return minimum number of subqueries which must be satisfied
-  size_t min_match_count() const { return _min_match_count; }
-
-  // Sets minimum number of subqueries which must be satisfied
-  Or& min_match_count(size_t count) {
-    _min_match_count = count;
-    return *this;
-  }
+  auto MinMatchCount() const { return _min_match_count; }
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<Or>::id(); }
 
  private:
-  uint32_t _min_match_count{1};
+  size_t _min_match_count = 1;
 };
 
 // Represents negation

@@ -51,19 +51,23 @@ std::unique_ptr<Filter> Make(Configure&& configure) {
 }
 
 template<typename... Children>
-std::unique_ptr<irs::And> MakeAnd(Children&&... children) {
+std::vector<irs::Filter::ptr> Filters(Children&&... children) {
   std::vector<irs::Filter::ptr> incl;
   incl.reserve(sizeof...(children));
   (incl.emplace_back(std::forward<Children>(children)), ...);
-  return std::make_unique<irs::And>(std::move(incl));
+  return incl;
+}
+
+template<typename... Children>
+std::unique_ptr<irs::And> MakeAnd(Children&&... children) {
+  return std::make_unique<irs::And>(
+    Filters(std::forward<Children>(children)...));
 }
 
 template<typename... Children>
 std::unique_ptr<irs::Or> MakeOr(Children&&... children) {
-  std::vector<irs::Filter::ptr> incl;
-  incl.reserve(sizeof...(children));
-  (incl.emplace_back(std::forward<Children>(children)), ...);
-  return std::make_unique<irs::Or>(std::move(incl));
+  return std::make_unique<irs::Or>(
+    Filters(std::forward<Children>(children)...));
 }
 
 inline std::unique_ptr<irs::Not> MakeNot(irs::Filter::ptr child) {

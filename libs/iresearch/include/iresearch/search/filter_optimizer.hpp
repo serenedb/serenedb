@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <concepts>
 #include <span>
 #include <string_view>
 
@@ -37,9 +38,27 @@ struct RuleDesc {
   bool (*apply)(Filter::ptr& slot, const OptimizeContext& ctx);
 };
 
+template<typename Rule>
+concept RuleLike = requires {
+  { Rule::kName } -> std::convertible_to<std::string_view>;
+  { std::span<const TypeInfo::type_id>{Rule::kTargets} };
+  {
+    &Rule::Apply
+  } -> std::convertible_to<bool (*)(Filter::ptr&, const OptimizeContext&)>;
+};
+
+template<RuleLike Rule>
+constexpr RuleDesc MakeRule() {
+  return RuleDesc{Rule::kName, Rule::kTargets, &Rule::Apply};
+}
+
 extern const std::span<const RuleDesc> kDefaultRules;
 
+void RegisterRule(const RuleDesc& rule);
+
+std::span<const RuleDesc> ActiveRules();
+
 void Optimize(Filter::ptr& root, const OptimizeContext& ctx = {},
-              std::span<const RuleDesc> rules = kDefaultRules);
+              std::span<const RuleDesc> rules = ActiveRules());
 
 }  // namespace irs

@@ -60,7 +60,7 @@ class BooleanQuery : public Filter::Query {
   virtual DocIterator::ptr execute(const ExecutionContext& ctx, iterator begin,
                                    iterator end) const = 0;
 
-  ScoreMergeType merge_type() const noexcept { return _merge_type; }
+  ScoreMergeType MergeType() const noexcept { return _merge_type; }
 
  private:
   // 0..excl_-1 - included queries

@@ -110,10 +110,8 @@ class BooleanFilterBuilder {
       }
       return and_node;
     }
-    auto or_node = std::make_unique<irs::Or>(std::move(children));
-    if (_min_match) {
-      or_node->min_match_count(*_min_match);
-    }
+    auto or_node = std::make_unique<irs::Or>(
+      std::move(children), irs::ScoreMergeType::Sum, _min_match.value_or(1));
     if (_boost) {
       or_node->boost(*_boost);
     }

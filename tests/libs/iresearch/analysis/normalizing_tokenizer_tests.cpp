@@ -21,9 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/common.h>
-#include <vpack/parser.h>
-
 #include "gtest/gtest.h"
 #include "iresearch/analysis/normalizing_tokenizer.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
@@ -40,7 +37,7 @@ TEST_F(NormalizingTokenizerTests, consts) {
 }
 
 TEST_F(NormalizingTokenizerTests, test_normalizing) {
-  typedef irs::analysis::NormalizingTokenizer::OptionsT OptionsT;
+  typedef irs::analysis::NormalizingTokenizer::Options OptionsT;
 
   // test default normalization
   {
@@ -143,11 +140,13 @@ TEST_F(NormalizingTokenizerTests, test_normalizing) {
 }
 
 TEST_F(NormalizingTokenizerTests, test_load) {
-  // load jSON object
+  // default normalization
   {
     std::string_view data("running");
-    auto stream = irs::analysis::analyzers::Get(
-      "norm", irs::Type<irs::text_format::Json>::get(), "{\"locale\":\"en\"}");
+    auto stream = irs::analysis::NormalizingTokenizer::Make(
+      irs::analysis::NormalizingTokenizer::Options{
+        .locale = icu::Locale::createFromName("en"),
+      });
 
     ASSERT_NE(nullptr, stream);
     ASSERT_TRUE(stream->reset(data));
@@ -167,9 +166,11 @@ TEST_F(NormalizingTokenizerTests, test_load) {
   // with UPPER case
   {
     std::string_view data("ruNNing");
-    auto stream = irs::analysis::analyzers::Get(
-      "norm", irs::Type<irs::text_format::Json>::get(),
-      "{\"locale\":\"en\", \"case\":\"upper\"}");
+    auto stream = irs::analysis::NormalizingTokenizer::Make(
+      irs::analysis::NormalizingTokenizer::Options{
+        .locale = icu::Locale::createFromName("en"),
+        .case_convert = irs::Case::Upper,
+      });
 
     ASSERT_NE(nullptr, stream);
     ASSERT_TRUE(stream->reset(data));
@@ -189,9 +190,11 @@ TEST_F(NormalizingTokenizerTests, test_load) {
   // with LOWER case
   {
     std::string_view data("ruNNing");
-    auto stream = irs::analysis::analyzers::Get(
-      "norm", irs::Type<irs::text_format::Json>::get(),
-      "{\"locale\":\"en\", \"case\":\"lower\"}");
+    auto stream = irs::analysis::NormalizingTokenizer::Make(
+      irs::analysis::NormalizingTokenizer::Options{
+        .locale = icu::Locale::createFromName("en"),
+        .case_convert = irs::Case::Lower,
+      });
 
     ASSERT_NE(nullptr, stream);
     ASSERT_TRUE(stream->reset(data));
@@ -211,9 +214,11 @@ TEST_F(NormalizingTokenizerTests, test_load) {
   // with NONE case
   {
     std::string_view data("ruNNing");
-    auto stream = irs::analysis::analyzers::Get(
-      "norm", irs::Type<irs::text_format::Json>::get(),
-      "{\"locale\":\"en\", \"case\":\"none\"}");
+    auto stream = irs::analysis::NormalizingTokenizer::Make(
+      irs::analysis::NormalizingTokenizer::Options{
+        .locale = icu::Locale::createFromName("en"),
+        .case_convert = irs::Case::None,
+      });
 
     ASSERT_NE(nullptr, stream);
     ASSERT_TRUE(stream->reset(data));
@@ -232,12 +237,15 @@ TEST_F(NormalizingTokenizerTests, test_load) {
 
   // remove accent
   {
-    constexpr std::u8string_view kData{u8"\u00F6\u00F5"};
+    constexpr std::u8string_view kData{u8"öõ"};
     const auto ref = irs::ViewCast<char>(kData);
 
-    auto stream = irs::analysis::analyzers::Get(
-      "norm", irs::Type<irs::text_format::Json>::get(),
-      "{\"locale\":\"de_DE.UTF8\", \"case\":\"lower\", \"accent\":false}");
+    auto stream = irs::analysis::NormalizingTokenizer::Make(
+      irs::analysis::NormalizingTokenizer::Options{
+        .locale = icu::Locale::createFromName("de_DE.UTF8"),
+        .case_convert = irs::Case::Lower,
+        .accent = false,
+      });
 
     ASSERT_NE(nullptr, stream);
     ASSERT_TRUE(stream->reset(ref));
@@ -250,192 +258,32 @@ TEST_F(NormalizingTokenizerTests, test_load) {
 
     ASSERT_EQ(0, offset->start);
     ASSERT_EQ(kData.size(), offset->end);
-    ASSERT_TRUE(u8"\u006F\u006F" == irs::ViewCast<char8_t>(term->value));
+    ASSERT_TRUE(u8"oo" == irs::ViewCast<char8_t>(term->value));
 
     ASSERT_FALSE(stream->next());
   }
 
-  // load jSON invalid
+  // invalid options -- bogus locale (ported from "load jSON invalid"
+  // cases that exercised empty/missing-locale JSON). The legacy JSON
+  // parse-time rejections (non-string locale, non-string case, non-bool
+  // accent) have no direct-API analogue, so they collapse to this
+  // single bogus-locale assertion.
   {
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "norm", irs::Type<irs::text_format::Json>::get(),
-                         std::string_view{}));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "norm", irs::Type<irs::text_format::Json>::get(), "1"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "norm", irs::Type<irs::text_format::Json>::get(), "[]"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "norm", irs::Type<irs::text_format::Json>::get(), "{}"));
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "norm", irs::Type<irs::text_format::Json>::get(),
-                         "{\"locale\":1}"));
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "norm", irs::Type<irs::text_format::Json>::get(),
-                         "{\"locale\":\"en\", \"case\":42}"));
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "norm", irs::Type<irs::text_format::Json>::get(),
-                         "{\"locale\":\"en\", \"accent\":42}"));
+    ASSERT_ANY_THROW(irs::analysis::NormalizingTokenizer::Make(
+      irs::analysis::NormalizingTokenizer::Options{}));
+    ASSERT_ANY_THROW(irs::analysis::NormalizingTokenizer::Make(
+      irs::analysis::NormalizingTokenizer::Options{
+        .locale = irs::MakeBogusLocale(),
+      }));
   }
-
-  // load text
-  {
-    std::string_view data("running");
-    auto stream = irs::analysis::analyzers::Get(
-      "norm", irs::Type<irs::text_format::Json>::get(), R"({"locale":"en"})");
-
-    ASSERT_NE(nullptr, stream);
-    ASSERT_TRUE(stream->reset(data));
-
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    auto* payload = irs::get<irs::PayAttr>(*stream);
-    ASSERT_EQ(nullptr, payload);
-    auto* term = irs::get<irs::TermAttr>(*stream);
-
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(7, offset->end);
-    ASSERT_EQ("running", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream->next());
-  }
-}
-
-TEST_F(NormalizingTokenizerTests, test_make_config_json) {
-  // with unknown parameter
-  {
-    std::string config =
-      "{\"locale\":\"ru_RU.UTF-8\",\"case\":\"lower\",\"invalid_parameter\":"
-      "true,\"accent\":true}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "norm", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(vpack::Parser::fromJson(
-                "{\"locale\":\"ru_RU\",\"case\":\"lower\",\"accent\":true}")
-                ->toString(),
-              actual);
-  }
-
-  // test vpack
-  {
-    std::string config =
-      "{\"locale\":\"ru_RU.UTF-8\",\"case\":\"lower\",\"invalid_parameter\":"
-      "true,\"accent\":true}";
-    auto in_vpack = vpack::Parser::fromJson(config.c_str(), config.size());
-    std::string in_str;
-    in_str.assign(in_vpack->slice().startAs<char>(),
-                  in_vpack->slice().byteSize());
-    std::string out_str;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      out_str, "norm", irs::Type<irs::text_format::VPack>::get(), in_str));
-    vpack::Slice out_slice(reinterpret_cast<const uint8_t*>(out_str.c_str()));
-    ASSERT_EQ(vpack::Parser::fromJson(
-                "{\"locale\":\"ru_RU\",\"case\":\"lower\",\"accent\":true}")
-                ->toString(),
-              out_slice.toString());
-  }
-
-  // test vpack with variant
-  {
-    std::string config =
-      "{\"locale\":\"ru_RU_TRADITIONAL.UTF-8\",\"case\":\"lower\",\"invalid_"
-      "parameter\":true,\"accent\":true}";
-    auto in_vpack = vpack::Parser::fromJson(config.c_str(), config.size());
-    std::string in_str;
-    in_str.assign(in_vpack->slice().startAs<char>(),
-                  in_vpack->slice().byteSize());
-    std::string out_str;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      out_str, "norm", irs::Type<irs::text_format::VPack>::get(), in_str));
-    vpack::Slice out_slice(reinterpret_cast<const uint8_t*>(out_str.c_str()));
-    ASSERT_EQ(vpack::Parser::fromJson("{\"locale\":\"ru_RU_TRADITIONAL.UTF-8\","
-                                      "\"case\":\"lower\",\"accent\":true}")
-                ->toString(),
-              out_slice.toString());
-  }
-
-  // test vpack with variant
-  {
-    std::string config =
-      "{\"locale\":\"ru_RU.UTF-8@EURO\",\"case\":\"lower\",\"invalid_"
-      "parameter\":true,\"accent\":true}";
-    auto in_vpack = vpack::Parser::fromJson(config.c_str(), config.size());
-    std::string in_str;
-    in_str.assign(in_vpack->slice().startAs<char>(),
-                  in_vpack->slice().byteSize());
-    std::string out_str;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      out_str, "norm", irs::Type<irs::text_format::VPack>::get(), in_str));
-    vpack::Slice out_slice(reinterpret_cast<const uint8_t*>(out_str.c_str()));
-    ASSERT_EQ(vpack::Parser::fromJson(
-                "{\"locale\":\"ru_RU\",\"case\":\"lower\",\"accent\":true}")
-                ->toString(),
-              out_slice.toString());
-  }
-
-  // no case convert in creation. Default value shown
-  {
-    std::string config = "{\"locale\":\"ru_RU.UTF-8\",\"accent\":true}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "norm", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(vpack::Parser::fromJson(
-                "{\"locale\":\"ru_RU\",\"case\":\"none\",\"accent\":true}")
-                ->toString(),
-              actual);
-  }
-
-  // no accent in creation. Default value shown
-  {
-    std::string config = "{\"locale\":\"ru_RU.UTF-8\",\"case\":\"lower\"}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "norm", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(vpack::Parser::fromJson(
-                "{\"locale\":\"ru_RU\",\"case\":\"lower\",\"accent\":true}")
-                ->toString(),
-              actual);
-  }
-
-  // non default values for accent and case
-  {
-    std::string config =
-      "{\"locale\":\"ru_RU.utf-8\",\"case\":\"upper\",\"accent\":true}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "norm", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(vpack::Parser::fromJson(
-                "{\"locale\":\"ru_RU\",\"case\":\"upper\",\"accent\":true}")
-                ->toString(),
-              actual);
-  }
-
-  // non default values for accent and case
-  {
-    std::string config =
-      "{\"locale\":\"de_DE@collation=phonebook\",\"case\":\"upper\",\"accent\":"
-      "true}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "norm", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(vpack::Parser::fromJson(
-                "{\"locale\":\"de_DE\",\"case\":\"upper\",\"accent\":true}")
-                ->toString(),
-              actual);
-  }
-}
-
-TEST_F(NormalizingTokenizerTests, test_make_config_text) {
-  std::string config = "RU";
-  std::string actual;
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    actual, "norm", irs::Type<irs::text_format::Text>::get(), config));
 }
 
 TEST_F(NormalizingTokenizerTests, test_invalid_locale) {
-  auto stream = irs::analysis::analyzers::Get(
-    "norm", irs::Type<irs::text_format::Json>::get(),
-    "{\"locale\":\"invalid12345.UTF-8\"}");
-  ASSERT_EQ(nullptr, stream);
+  // The legacy test fed `{"locale":"invalid12345.UTF-8"}` to the JSON
+  // parser. With the direct-Options API, a missing/invalid locale shows
+  // up as a bogus `icu::Locale`, which `Make` rejects.
+  ASSERT_ANY_THROW(irs::analysis::NormalizingTokenizer::Make(
+    irs::analysis::NormalizingTokenizer::Options{
+      .locale = irs::MakeBogusLocale(),
+    }));
 }

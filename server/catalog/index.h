@@ -27,6 +27,7 @@
 
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/object.h"
+#include "catalog/persistence/index.h"
 #include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
 
@@ -42,21 +43,8 @@ inline constexpr std::string_view kHNSWKind = "hnsw";
 class SecondaryIndex;
 class InvertedIndex;
 
-struct InvertedIndexOptions {
-  uint32_t row_group_size = 0;
-  uint32_t norm_row_group_size = 0;
-  uint32_t refresh_interval_ms = 0;
-  uint32_t compaction_interval_ms = 0;
-  uint32_t cleanup_interval_step = 0;
-  std::optional<ScorerOptions> topk_scorer;
-};
-
-struct ExpressionData {
-  std::string serialized_expr;
-  std::vector<Column::Id> dependent_columns;
-  duckdb::LogicalType return_type;
-  std::string pretty_printed;
-};
+using persistence::ExpressionData;
+using persistence::InvertedIndexOptions;
 
 struct CreateIndexColumn {
   const catalog::Column* catalog_column = nullptr;

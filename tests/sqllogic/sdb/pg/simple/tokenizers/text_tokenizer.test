@@ -151,6 +151,26 @@ CREATE TEXT SEARCH DICTIONARY t_err13(
 db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "preserveoriginal": "aaa"
 
 
+# --- Malformed stopwords list (regression: empty / lone-quote tokens) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t_stopwords_empty_tokens(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    stopwords = '"a",,"b"'
+)
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_stopwords_lone_quote(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    stopwords = '"a","'
+)
+----
+db error: ERROR: Invalid format of list of words(should be comma-separated and quoted)
+
+
 # --- Invalid integer value ---
 
 statement error

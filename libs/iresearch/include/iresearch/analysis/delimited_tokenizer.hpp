@@ -23,7 +23,9 @@
 
 #pragma once
 
-#include "analyzers.hpp"
+#include <string>
+
+#include "analyzer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "token_attributes.hpp"
 
@@ -35,8 +37,12 @@ class DelimitedTokenizer final : public TypedAnalyzer<DelimitedTokenizer>,
                                  private util::Noncopyable {
  public:
   static constexpr std::string_view type_name() noexcept { return "delimiter"; }
-  static void init();  // for trigering registration in a static build
-  static ptr make(std::string_view delimiter);
+
+  struct Options {
+    using Owner = DelimitedTokenizer;
+    std::string delimiter;
+  };
+  static ptr Make(Options opts);
 
   explicit DelimitedTokenizer(std::string_view delimiter);
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {

@@ -21,14 +21,12 @@
 #pragma once
 
 #include <iresearch/analysis/analyzer.hpp>
-#include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/scorer.hpp>
-#include <iresearch/search/scorers.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/text_format.hpp>
 #include <span>

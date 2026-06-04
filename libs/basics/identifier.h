@@ -59,10 +59,14 @@ class Identifier {
 
 static_assert(sizeof(Identifier) == sizeof(Identifier::BaseType));
 
-void VPackRead(auto ctx, Identifier& id) {
-  id = Identifier{ctx.vpack().getUInt()};
+template<typename Context>
+void SerdeWrite(Context ctx, Identifier id) {
+  ctx.io().WriteValue(static_cast<uint64_t>(id.id()));
 }
 
-void VPackWrite(auto ctx, Identifier id) { ctx.vpack().add(id.id()); }
+template<typename Context>
+void SerdeRead(Context ctx, Identifier& id) {
+  id = Identifier{ctx.io().ReadUnsignedInt64()};
+}
 
 }  // namespace sdb::basics

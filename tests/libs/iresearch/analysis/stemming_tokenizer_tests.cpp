@@ -21,9 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/common.h>
-#include <vpack/parser.h>
-
 #include "gtest/gtest.h"
 #include "iresearch/analysis/stemming_tokenizer.hpp"
 
@@ -41,7 +38,7 @@ TEST_F(StemmingTokenizerTests, test_stemming) {
   // test stemming (locale std::string_view{})
   // there is no Snowball stemmer for "C" locale
   {
-    irs::analysis::StemmingTokenizer::OptionsT opts;
+    irs::analysis::StemmingTokenizer::Options opts;
     opts.locale = icu::Locale{"C"};
 
     std::string_view data("running");
@@ -66,7 +63,7 @@ TEST_F(StemmingTokenizerTests, test_stemming) {
   {
     std::string_view data("running");
 
-    irs::analysis::StemmingTokenizer::OptionsT opts;
+    irs::analysis::StemmingTokenizer::Options opts;
     opts.locale = icu::Locale::createFromName("en");
 
     irs::analysis::StemmingTokenizer stream(opts);
@@ -90,7 +87,7 @@ TEST_F(StemmingTokenizerTests, test_stemming) {
   {
     std::string_view data("running");
 
-    irs::analysis::StemmingTokenizer::OptionsT opts;
+    irs::analysis::StemmingTokenizer::Options opts;
     opts.locale = icu::Locale::createFromName("zh");
 
     irs::analysis::StemmingTokenizer stream(opts);
@@ -111,123 +108,45 @@ TEST_F(StemmingTokenizerTests, test_stemming) {
 }
 
 TEST_F(StemmingTokenizerTests, test_load) {
-  // load jSON object
-  {
-    std::string_view data("running");
-    auto stream = irs::analysis::analyzers::Get(
-      "stem", irs::Type<irs::text_format::Json>::get(), "{\"locale\":\"en\"}");
+  std::string_view data("running");
+  auto stream = irs::analysis::StemmingTokenizer::Make(
+    irs::analysis::StemmingTokenizer::Options{
+      .locale = icu::Locale::createFromName("en"),
+    });
 
-    ASSERT_NE(nullptr, stream);
-    ASSERT_TRUE(stream->reset(data));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
 
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    auto* payload = irs::get<irs::PayAttr>(*stream);
-    ASSERT_EQ(nullptr, payload);
-    auto* term = irs::get<irs::TermAttr>(*stream);
+  auto* offset = irs::get<irs::OffsAttr>(*stream);
+  auto* payload = irs::get<irs::PayAttr>(*stream);
+  ASSERT_EQ(nullptr, payload);
+  auto* term = irs::get<irs::TermAttr>(*stream);
 
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(7, offset->end);
-    ASSERT_EQ("run", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream->next());
-  }
-
-  // load jSON invalid
-  {
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "stem", irs::Type<irs::text_format::Json>::get(),
-                         std::string_view{}));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "stem", irs::Type<irs::text_format::Json>::get(), "1"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "stem", irs::Type<irs::text_format::Json>::get(), "[]"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "stem", irs::Type<irs::text_format::Json>::get(), "{}"));
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "stem", irs::Type<irs::text_format::Json>::get(),
-                         "{\"locale\":1}"));
-  }
-
-  // load text
-  {
-    std::string_view data("running");
-    auto stream = irs::analysis::analyzers::Get(
-      "stem", irs::Type<irs::text_format::Json>::get(), R"({ "locale":"en" })");
-
-    ASSERT_NE(nullptr, stream);
-    ASSERT_TRUE(stream->reset(data));
-
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    auto* payload = irs::get<irs::PayAttr>(*stream);
-    ASSERT_EQ(nullptr, payload);
-    auto* term = irs::get<irs::TermAttr>(*stream);
-
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(7, offset->end);
-    ASSERT_EQ("run", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream->next());
-  }
+  ASSERT_TRUE(stream->next());
+  ASSERT_EQ(0, offset->start);
+  ASSERT_EQ(7, offset->end);
+  ASSERT_EQ("run", irs::ViewCast<char>(term->value));
+  ASSERT_FALSE(stream->next());
 }
 
-TEST_F(StemmingTokenizerTests, test_make_config_json) {
-  // with unknown parameter
-  {
-    std::string config =
-      "{\"locale\":\"ru_RU.UTF-8\",\"invalid_parameter\":true}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "stem", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(vpack::Parser::fromJson("{\"locale\":\"ru\"}")->toString(),
-              actual);
-  }
-
-  // test vpack
-  {
-    std::string config =
-      "{\"locale\":\"ru_RU.UTF-8\",\"invalid_parameter\":true}";
-    auto in_vpack = vpack::Parser::fromJson(config.c_str(), config.size());
-    std::string in_str;
-    in_str.assign(in_vpack->slice().startAs<char>(),
-                  in_vpack->slice().byteSize());
-    std::string out_str;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      out_str, "stem", irs::Type<irs::text_format::VPack>::get(), in_str));
-    vpack::Slice out_slice(reinterpret_cast<const uint8_t*>(out_str.c_str()));
-    ASSERT_EQ(vpack::Parser::fromJson("{\"locale\":\"ru\"}")->toString(),
-              out_slice.toString());
-  }
-
-  // test vpack with variant
-  {
-    std::string config =
-      "{\"locale\":\"ru_RU_TRADITIONAL.UTF-8\",\"invalid_parameter\":true}";
-    auto in_vpack = vpack::Parser::fromJson(config.c_str(), config.size());
-    std::string in_str;
-    in_str.assign(in_vpack->slice().startAs<char>(),
-                  in_vpack->slice().byteSize());
-    std::string out_str;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      out_str, "stem", irs::Type<irs::text_format::VPack>::get(), in_str));
-    vpack::Slice out_slice(reinterpret_cast<const uint8_t*>(out_str.c_str()));
-    ASSERT_EQ(vpack::Parser::fromJson("{\"locale\":\"ru\"}")->toString(),
-              out_slice.toString());
-  }
+TEST_F(StemmingTokenizerTests, test_load_invalid) {
+  // Ported from the legacy "load jSON invalid" cases (empty/non-object
+  // root, non-string locale). The strongly-typed Options API collapses
+  // these to a single bogus-locale assertion.
+  ASSERT_ANY_THROW(irs::analysis::StemmingTokenizer::Make(
+    irs::analysis::StemmingTokenizer::Options{}));
+  ASSERT_ANY_THROW(irs::analysis::StemmingTokenizer::Make(
+    irs::analysis::StemmingTokenizer::Options{
+      .locale = irs::MakeBogusLocale(),
+    }));
 }
 
 TEST_F(StemmingTokenizerTests, test_invalid_locale) {
-  auto stream = irs::analysis::analyzers::Get(
-    "stem", irs::Type<irs::text_format::Json>::get(),
-    "{\"locale\":\"invalid12345.UTF-8\"}");
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST_F(StemmingTokenizerTests, test_make_config_text) {
-  std::string config = "RU";
-  std::string actual;
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    actual, "stem", irs::Type<irs::text_format::Text>::get(), config));
+  // The legacy test fed `{"locale":"invalid12345.UTF-8"}` to the JSON
+  // parser. With the direct-Options API, a missing/invalid locale shows
+  // up as a bogus `icu::Locale`, which `Make` rejects.
+  ASSERT_ANY_THROW(irs::analysis::StemmingTokenizer::Make(
+    irs::analysis::StemmingTokenizer::Options{
+      .locale = irs::MakeBogusLocale(),
+    }));
 }

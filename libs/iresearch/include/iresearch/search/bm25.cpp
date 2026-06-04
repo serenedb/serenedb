@@ -24,11 +24,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/inlined_vector.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
-#include <vpack/vpack.h>
 
 #include <cstdint>
 #include <exception>
@@ -59,91 +54,6 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 }
 
 constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
-  return nullptr;
-}
-
-struct ObjectParams {
-  score_t k = BM25::K();
-  score_t b = BM25::B();
-  bool boost_as_score = BM25::BOOST_AS_SCORE();
-  bool approximate = true;
-};
-
-Scorer::ptr MakeFromObject(const vpack::Slice slice) {
-  ObjectParams params;
-  auto r = vpack::ReadObjectNothrow(slice, params,
-                                    {
-                                      .skip_unknown = true,
-                                      .strict = false,
-                                    });
-  if (!r.ok()) {
-    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
-              "' while constructing bm25 scorer from VPack arguments");
-    return {};
-  }
-
-  return std::make_unique<BM25>(params.k, params.b, params.boost_as_score,
-                                params.approximate);
-}
-
-struct ArrayParams {
-  score_t k = BM25::K();
-  score_t b = BM25::B();
-};
-
-Scorer::ptr MakeFromArray(const vpack::Slice slice) {
-  ArrayParams params;
-  auto r = vpack::ReadTupleNothrow(slice, params);
-  if (!r.ok()) {
-    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
-              "' while constructing bm25 scorer from VPack arguments");
-    return {};
-  }
-
-  return std::make_unique<BM25>(params.k, params.b);
-}
-
-Scorer::ptr MakeVPack(const vpack::Slice slice) {
-  switch (slice.type()) {
-    case vpack::ValueType::Object:
-      return MakeFromObject(slice);
-    case vpack::ValueType::Array:
-      return MakeFromArray(slice);
-    default:  // wrong type
-      SDB_ERROR(
-        IRESEARCH,
-        "Invalid VPack arguments passed while constructing bm25 scorer");
-      return nullptr;
-  }
-}
-
-Scorer::ptr MakeVPack(std::string_view args) {
-  if (IsNull(args)) {
-    // default args
-    return std::make_unique<irs::BM25>();
-  }
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-Scorer::ptr MakeJson(std::string_view args) {
-  if (IsNull(args)) {
-    // default args
-    return std::make_unique<irs::BM25>();
-  }
-  try {
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing VPack from JSON for bm25 scorer"));
-  } catch (...) {
-    SDB_ERROR(
-      IRESEARCH,
-      "Caught error while constructing VPack from JSON for bm25 scorer");
-  }
   return nullptr;
 }
 
@@ -514,11 +424,6 @@ bool BM25::equals(const Scorer& other) const noexcept {
   }
   const auto& p = sdb::basics::downCast<BM25>(other);
   return p._k == _k && p._b == _b;
-}
-
-void BM25::init() {
-  REGISTER_SCORER_JSON(BM25, MakeJson);
-  REGISTER_SCORER_VPACK(BM25, MakeVPack);
 }
 
 }  // namespace irs

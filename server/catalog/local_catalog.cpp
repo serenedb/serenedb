@@ -25,16 +25,13 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/synchronization/mutex.h>
-#include <vpack/builder.h>
-#include <vpack/iterator.h>
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <duckdb/common/exception/parser_exception.hpp>
 #include <duckdb/common/extension_type_info.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/function/scalar_macro_function.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
@@ -1213,10 +1210,10 @@ class SnapshotImpl : public Snapshot {
 
   void CommitDropPlan(RocksDBEngineCatalog::CatalogWriteContext& ctx,
                       const DropPlan& plan) const {
+    duckdb::MemoryStream stream;
     for (const auto& [tid, rw] : plan.table_rewrites) {
-      vpack::Builder b;
-      rw.table->WriteInternal(b);
-      ctx.PutDefinition(rw.schema_id, ObjectType::Table, tid, b.slice());
+      ctx.PutDefinition(rw.schema_id, ObjectType::Table, tid,
+                        catalog::SerializeObject(*rw.table, stream));
     }
     for (const auto& [schema_id, view_id] : plan.view_drops) {
       ctx.DropDefinition(schema_id, ObjectType::PgSqlView, view_id);
@@ -1620,12 +1617,12 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
         return r;
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+      duckdb::MemoryStream stream;
       {
-        vpack::Builder builder;
-        database->WriteInternal(builder);
-        auto r = _engine->CreateDefinition(
-          id::kInstance, ObjectType::Database, database_id,
-          [&](bool) { return builder.slice(); });
+        auto bytes = catalog::SerializeObject(*database, stream);
+        auto r =
+          _engine->CreateDefinition(id::kInstance, ObjectType::Database,
+                                    database_id, [&](bool) { return bytes; });
 
         if (!r.ok()) {
           return r;
@@ -1638,11 +1635,10 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
                      });
       r = clone->RegisterObject(schema, database_id, false);
       SDB_ASSERT(r.ok());
-      vpack::Builder builder;
-      schema->WriteInternal(builder);
-      return _engine->CreateDefinition(database_id, ObjectType::Schema,
-                                       schema->GetId(),
-                                       [&](bool) { return builder.slice(); });
+      auto bytes = catalog::SerializeObject(*schema, stream);
+      return _engine->CreateDefinition(
+        database_id, ObjectType::Schema, schema->GetId(),
+        [&](bool) { return std::string_view{bytes}; });
     },
     [&](auto clone) {
       clone->UnregisterObject(database, id::kInstance, true);
@@ -1659,11 +1655,11 @@ Result LocalCatalog::CreateSchema(ObjectId database_id,
         return r;
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
-      vpack::Builder builder;
-      schema->WriteInternal(builder);
-      return _engine->CreateDefinition(database_id, ObjectType::Schema,
-                                       schema->GetId(),
-                                       [&](bool) { return builder.slice(); });
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*schema, stream);
+      return _engine->CreateDefinition(
+        database_id, ObjectType::Schema, schema->GetId(),
+        [&](bool) { return std::string_view{bytes}; });
     },
     [&](auto clone) { clone->UnregisterObject(schema, database_id, true); });
 }
@@ -1678,11 +1674,11 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
       if (!r.ok()) {
         return r;
       }
-      vpack::Builder b;
-      role->WriteInternal(b);
-      return _engine->CreateDefinition(id::kInstance, ObjectType::Role,
-                                       role->GetId(),
-                                       [&](bool) { return b.slice(); });
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*role, stream);
+      return _engine->CreateDefinition(
+        id::kInstance, ObjectType::Role, role->GetId(),
+        [&](bool) { return std::string_view{bytes}; });
     },
     [&](auto& clone) { clone->UnregisterObject(role, id::kInstance, true); });
 
@@ -1742,23 +1738,22 @@ Result LocalCatalog::CreateIndexImpl(
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       auto shard_type = IndexShardType(index->GetType());
+      duckdb::MemoryStream stream;
       {  // Write index definition
-        vpack::Builder b;
-        index->WriteInternal(b);
+        auto bytes = catalog::SerializeObject(*index, stream);
         r = _engine->CreateDefinition(index->GetRelationId(), index->GetType(),
                                       index->GetId(),
-                                      [&](bool) { return b.slice(); });
+                                      [&](bool) { return bytes; });
         if (!r.ok()) {
           return r;
         }
       }
       {  // Write index shard definition
-        vpack::Builder b;
-        (*shard)->WriteInternal(b);
+        auto bytes = catalog::SerializeObject(**shard, stream);
 
         r = _engine->CreateDefinition(index->GetId(), shard_type,
                                       (*shard)->GetId(),
-                                      [&](bool) { return b.slice(); });
+                                      [&](bool) { return bytes; });
         if (!r.ok()) {
           return r;
         }
@@ -1939,17 +1934,17 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
 
-      vpack::Builder builder;
-      view->WriteInternal(builder);
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*view, stream);
       if (existed_id.isSet()) {
         return _engine->Write([&](auto& ctx) {
           ctx.PutDefinition(*schema_id, ObjectType::PgSqlView, view->GetId(),
-                            builder.slice());
+                            std::string_view{bytes});
         });
       }
-      return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlView,
-                                       view->GetId(),
-                                       [&](bool) { return builder.slice(); });
+      return _engine->CreateDefinition(
+        *schema_id, ObjectType::PgSqlView, view->GetId(),
+        [&](bool) { return std::string_view{bytes}; });
     },
     [&](auto clone) {
       if (!existed_id.isSet()) {
@@ -1985,11 +1980,11 @@ Result LocalCatalog::CreateSequence(ObjectId database_id,
         return r;
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*sequence, stream);
       return _engine->Write([&](auto& ctx) {
-        vpack::Builder b;
-        sequence->WriteInternal(b);
         ctx.PutDefinition(*schema_id, ObjectType::Sequence, sequence->GetId(),
-                          b.slice());
+                          std::string_view{bytes});
         ctx.PutSequence(sequence->GetId(), sequence->Options().Seed());
       });
     },
@@ -2038,17 +2033,17 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
         return r;
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
-      vpack::Builder builder;
-      function->WriteInternal(builder);
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*function, stream);
       if (existed_id.isSet()) {
         return _engine->Write([&](auto& ctx) {
           ctx.PutDefinition(*schema_id, ObjectType::PgSqlFunction,
-                            function->GetId(), builder.slice());
+                            function->GetId(), std::string_view{bytes});
         });
       }
-      return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlFunction,
-                                       function->GetId(),
-                                       [&](bool) { return builder.slice(); });
+      return _engine->CreateDefinition(
+        *schema_id, ObjectType::PgSqlFunction, function->GetId(),
+        [&](bool) { return std::string_view{bytes}; });
     },
     [&](auto clone) {
       if (!existed_id.isSet()) {
@@ -2112,8 +2107,11 @@ Result LocalCatalog::CreateTable(
     auto resolved = pick_unique_name(
       absl::StrCat(options.name, "_", col_it->GetName(), "_seq"));
     col_it->expr = make_nextval_default(absl::StrCat(schema, ".", resolved));
-    sequences.push_back(std::make_shared<Sequence>(
-      *schema_id, ObjectId{}, resolved, spec.options, table_id));
+    auto seq_opts = spec.options;
+    seq_opts.name = resolved;
+    seq_opts.owner_table_id = table_id.id();
+    sequences.push_back(
+      std::make_shared<Sequence>(*schema_id, ObjectId{}, std::move(seq_opts)));
   }
 
   // Tables without an explicit PK get an auto-PK owned sequence. Table
@@ -2123,9 +2121,11 @@ Result LocalCatalog::CreateTable(
   if (options.pk_columns.empty()) {
     auto resolved = pick_unique_name(absl::StrCat(options.name, "_pk_seq"));
     SequenceOptions opts;
+    opts.name = resolved;
     opts.cache = 65536;
-    auto pk_seq = std::make_shared<Sequence>(*schema_id, ObjectId{}, resolved,
-                                             opts, table_id);
+    opts.owner_table_id = table_id.id();
+    auto pk_seq =
+      std::make_shared<Sequence>(*schema_id, ObjectId{}, std::move(opts));
     generated_pk_seq_id = pk_seq->GetId();
     sequences.push_back(std::move(pk_seq));
   }
@@ -2162,24 +2162,18 @@ Result LocalCatalog::CreateTable(
         }
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+      // PutDefinition copies into the rocksdb batch, so one reused stream is
+      // enough: each view is consumed before the next serialize overwrites it.
+      duckdb::MemoryStream stream;
       return _engine->Write([&](auto& ctx) {
-        // PutDefinition copies the slice; one Builder is reused across all
-        // writes, cleared between each.
-        vpack::Builder b;
-        table->WriteInternal(b);
         ctx.PutDefinition(*schema_id, ObjectType::Table, table->GetId(),
-                          b.slice());
-
-        b.clear();
-        shard->WriteInternal(b);
+                          catalog::SerializeObject(*table, stream));
         ctx.PutDefinition(table->GetId(), ObjectType::TableShard,
-                          shard->GetId(), b.slice());
-
+                          shard->GetId(),
+                          catalog::SerializeObject(*shard, stream));
         for (const auto& seq : sequences) {
-          b.clear();
-          seq->WriteInternal(b);
           ctx.PutDefinition(*schema_id, ObjectType::Sequence, seq->GetId(),
-                            b.slice());
+                            catalog::SerializeObject(*seq, stream));
           ctx.PutSequence(seq->GetId(), seq->Options().Seed());
         }
       });
@@ -2205,11 +2199,11 @@ Result LocalCatalog::CreateTokenizer(ObjectId database_id,
       if (!r.ok()) {
         return r;
       }
-      vpack::Builder b;
-      dict->WriteInternal(b);
-      return _engine->CreateDefinition(*schema_id, ObjectType::Tokenizer,
-                                       dict->GetId(),
-                                       [&](bool) { return b.slice(); });
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*dict, stream);
+      return _engine->CreateDefinition(
+        *schema_id, ObjectType::Tokenizer, dict->GetId(),
+        [&](bool) { return std::string_view{bytes}; });
     },
     [&](auto& clone) {
       return clone->UnregisterObject(dict, *schema_id, true);
@@ -2235,11 +2229,11 @@ Result LocalCatalog::CreateType(ObjectId database_id, std::string_view schema,
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
 
-      vpack::Builder builder;
-      type->WriteInternal(builder);
-      return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlType,
-                                       type->GetId(),
-                                       [&](bool) { return builder.slice(); });
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*type, stream);
+      return _engine->CreateDefinition(
+        *schema_id, ObjectType::PgSqlType, type->GetId(),
+        [&](bool) { return std::string_view{bytes}; });
     },
     [&](auto clone) { clone->UnregisterObject(type, *schema_id, true); });
 }
@@ -2272,8 +2266,8 @@ Result LocalCatalog::RenameObjectImpl(ObjectId schema_id, std::string_view name,
         return r;
       }
 
-      vpack::Builder b;
-      new_object->WriteInternal(b);
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*new_object, stream);
 
       ObjectId parent_id;
       if constexpr (std::is_same_v<T, Index>) {
@@ -2282,9 +2276,9 @@ Result LocalCatalog::RenameObjectImpl(ObjectId schema_id, std::string_view name,
         parent_id = schema_id;
       }
 
-      return _engine->CreateDefinition(parent_id, new_object->GetType(),
-                                       new_object->GetId(),
-                                       [&](bool) { return b.slice(); });
+      return _engine->CreateDefinition(
+        parent_id, new_object->GetType(), new_object->GetId(),
+        [&](bool) { return std::string_view{bytes}; });
     },
     [&](const std::shared_ptr<SnapshotImpl>& clone) {
       auto current = clone->GetObject<T>(new_object->GetId());
@@ -2418,11 +2412,11 @@ Result LocalCatalog::ChangeRole(std::string_view name,
       if (!r.ok()) {
         return r;
       }
-      vpack::Builder b;
-      new_role_ptr->WriteInternal(b);
-      return _engine->CreateDefinition(id::kInstance, ObjectType::Role,
-                                       new_role_ptr->GetId(),
-                                       [&](bool) { return b.slice(); });
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*new_role_ptr, stream);
+      return _engine->CreateDefinition(
+        id::kInstance, ObjectType::Role, new_role_ptr->GetId(),
+        [&](bool) { return std::string_view{bytes}; });
     },
     [&](const std::shared_ptr<SnapshotImpl>& clone) {
       auto obj = clone->GetObject<Role>(new_role_ptr->GetId());
@@ -2477,11 +2471,11 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
                    return r;
                  }
 
-                 vpack::Builder builder;
-                 updated->WriteInternal(builder);
+                 duckdb::MemoryStream stream;
+                 auto bytes = catalog::SerializeObject(*updated, stream);
                  return _engine->CreateDefinition(
                    *schema_id, ObjectType::PgSqlView, updated->GetId(),
-                   [&](bool) { return builder.slice(); });
+                   [&](bool) { return std::string_view{bytes}; });
                });
 }
 
@@ -2529,11 +2523,11 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
                  }
 
                  return basics::SafeCall([&] {
-                   vpack::Builder b;
-                   updated->WriteInternal(b);
+                   duckdb::MemoryStream stream;
+                   auto bytes = catalog::SerializeObject(*updated, stream);
                    return _engine->CreateDefinition(
                      *schema_id, ObjectType::Table, updated->GetId(),
-                     [&](bool) { return b.slice(); });
+                     [&](bool) { return std::string_view{bytes}; });
                  });
                });
 }

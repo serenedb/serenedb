@@ -21,11 +21,15 @@
 
 #pragma once
 
-#include <vpack/slice.h>
-
 #include "catalog/object.h"
 #include "catalog/table_options.h"
 
+namespace duckdb {
+
+class Serializer;
+class Deserializer;
+
+}  // namespace duckdb
 namespace sdb::catalog {
 
 class Table final : public Object {
@@ -35,9 +39,9 @@ class Table final : public Object {
         std::vector<CheckConstraint> check_constraints,
         ObjectId generated_pk_seq_id);
 
-  static std::shared_ptr<Table> ReadInternal(vpack::Slice slice,
-                                             ReadContext ctx);
-  void WriteInternal(vpack::Builder&) const final;
+  static std::shared_ptr<Table> Deserialize(duckdb::Deserializer& src,
+                                            ReadContext ctx);
+  void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
 
   const auto& Columns() const noexcept { return _columns; }

@@ -29,7 +29,6 @@
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 #include "iresearch/search/top_terms_collector.hpp"
 #include "tests_shared.hpp"
 

@@ -47,7 +47,6 @@
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/io_utils.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

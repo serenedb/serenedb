@@ -23,6 +23,7 @@
 #include <atomic>
 #include <duckdb/main/database.hpp>
 #include <iostream>
+#include <iresearch/search/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <memory>
@@ -62,9 +63,7 @@ IndexBuilder::IndexBuilder(std::string_view path,
                            const IndexBuilderOptions& opts,
                            const BenchConfig& config)
   : _opts{opts},
-    _scorer{irs::scorers::Get(config.scorer,
-                              irs::Type<irs::text_format::Json>::get(),
-                              config.scorer_options)},
+    _scorer{irs::BM25::Make(irs::BM25::Options{})},
     _dir{path},
     _format{irs::formats::Get(config.format_name)},
     _writer{irs::IndexWriter::Make(

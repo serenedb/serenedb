@@ -20,13 +20,18 @@
 
 #pragma once
 
-#include "analyzers.hpp"
+#include <tuple>
+
+#include "basics/serializer.h"
 #include "basics/shared.hpp"
+#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "token_attributes.hpp"
 #include "tokenizer.hpp"
 
 namespace irs::analysis {
+
+struct TokenizerConfig;
 
 // Runs multiple sub-tokenizers independently on the same input and interleaves
 // their token streams by position. Tokens from different sub-tokenizers at the
@@ -43,12 +48,15 @@ namespace irs::analysis {
 class UnionTokenizer final : public TypedAnalyzer<UnionTokenizer>,
                              private util::Noncopyable {
  public:
-  using OptionsT = std::vector<Analyzer::ptr>;
+  struct Options {
+    using Owner = UnionTokenizer;
+    std::vector<std::unique_ptr<TokenizerConfig>> children;
+  };
+  static Analyzer::ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "union"; }
-  static void init();  // for triggering registration in a static build
 
-  explicit UnionTokenizer(OptionsT&& options);
+  explicit UnionTokenizer(std::vector<Analyzer::ptr> children);
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
     // Only return union-owned attributes. Do not delegate to sub-analyzers:
@@ -117,5 +125,16 @@ class UnionTokenizer final : public TypedAnalyzer<UnionTokenizer>,
   bstring _payload_buf;
   Attributes _attrs;
 };
+
+template<typename Context>
+void SerdeWrite(Context ctx, const UnionTokenizer::Options& o) {
+  sdb::basics::WriteTuple(ctx.io(), std::tie(o.children), ctx.arg());
+}
+
+template<typename Context>
+void SerdeRead(Context ctx, UnionTokenizer::Options& o) {
+  auto refs = std::tie(o.children);
+  sdb::basics::ReadTuple(ctx.io(), refs, ctx.arg());
+}
 
 }  // namespace irs::analysis

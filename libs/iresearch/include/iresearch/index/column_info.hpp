@@ -28,7 +28,6 @@
 #include <optional>
 #include <string_view>
 
-#include "iresearch/utils/compression.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

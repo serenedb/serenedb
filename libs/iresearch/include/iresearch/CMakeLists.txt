@@ -51,7 +51,6 @@ endif()
 
 set(IResearch_core_sources
     ./utils/snowball_stemmer.cpp
-    ./analysis/analyzers.cpp
     ./analysis/token_attributes.cpp
     ./analysis/tokenizers.cpp
     ./analysis/stemming_tokenizer.cpp
@@ -109,7 +108,6 @@ set(IResearch_core_sources
     ./search/all_filter.cpp
     ./search/all_iterator.cpp
     ./search/granular_range_filter.cpp
-    ./search/scorers.cpp
     ./search/scorer.cpp
     ./search/score_function.cpp
     ./search/cost.cpp
@@ -160,9 +158,6 @@ set(IResearch_core_sources
     ./utils/automaton_utils.cpp
     ./utils/encryption.cpp
     ./utils/ctr_encryption.cpp
-    ./utils/compression.cpp
-    ./utils/delta_compression.cpp
-    ./utils/lz4compression.cpp
     ./utils/directory_utils.cpp
     ./utils/mmap_utils.cpp
     ./utils/index_utils.cpp

@@ -22,7 +22,10 @@
 
 #pragma once
 
+#include <tuple>
+
 #include "basics/noncopyable.hpp"
+#include "basics/serializer.h"
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
@@ -30,23 +33,23 @@
 
 namespace irs::analysis {
 
+struct TokenizerConfig;
+
 class MinHashTokenizer final : public TypedAnalyzer<MinHashTokenizer>,
                                private util::Noncopyable {
  public:
   struct Options {
-    // Analyzer used for hashing set generation
-    analysis::Analyzer::ptr analyzer;
-    // Number of min hashes to maintain
+    using Owner = MinHashTokenizer;
+    std::unique_ptr<TokenizerConfig> analyzer;
     uint32_t num_hashes{1};
   };
+  static analysis::Analyzer::ptr Make(Options opts);
 
   // Return analyzer type name.
   static constexpr std::string_view type_name() noexcept { return "minhash"; }
 
-  // For triggering registration in a static build.
-  static void init();
-
-  explicit MinHashTokenizer(Options&& opts);
+  explicit MinHashTokenizer(analysis::Analyzer::ptr analyzer,
+                            uint32_t num_hashes);
 
   // Advance stream to the next token.
   bool next() final;
@@ -59,8 +62,8 @@ class MinHashTokenizer final : public TypedAnalyzer<MinHashTokenizer>,
     return irs::GetMutable(_attrs, id);
   }
 
-  // Return analyzer options.
-  const Options& options() const noexcept { return _opts; }
+  // Return number of MinHash hashes.
+  uint32_t num_hashes() const noexcept { return _num_hashes; }
 
   // Return accumulated MinHash signature.
   const MinHash& signature() const noexcept { return _minhash; }
@@ -71,7 +74,8 @@ class MinHashTokenizer final : public TypedAnalyzer<MinHashTokenizer>,
 
   void ComputeSignature();
 
-  Options _opts;
+  analysis::Analyzer::ptr _analyzer;
+  uint32_t _num_hashes{1};
   MinHash _minhash;
   attributes _attrs;
   IncAttr _next_inc;
@@ -81,5 +85,17 @@ class MinHashTokenizer final : public TypedAnalyzer<MinHashTokenizer>,
   iterator _end{};
   std::array<char, 11> _buf{};
 };
+
+template<typename Context>
+void SerdeWrite(Context ctx, const MinHashTokenizer::Options& o) {
+  sdb::basics::WriteTuple(ctx.io(), std::tie(o.analyzer, o.num_hashes),
+                          ctx.arg());
+}
+
+template<typename Context>
+void SerdeRead(Context ctx, MinHashTokenizer::Options& o) {
+  auto refs = std::tie(o.analyzer, o.num_hashes);
+  sdb::basics::ReadTuple(ctx.io(), refs, ctx.arg());
+}
 
 }  // namespace irs::analysis

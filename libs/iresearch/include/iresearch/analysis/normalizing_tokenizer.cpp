@@ -23,20 +23,13 @@
 
 #include "normalizing_tokenizer.hpp"
 
-#include <absl/strings/ascii.h>
 #include <unicode/normalizer2.h>  // for icu::Normalizer2
 #include <unicode/translit.h>     // for icu::Transliterator
-#include <vpack/builder.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/slice.h>
 
-#include <magic_enum/magic_enum.hpp>
 #include <string_view>
 
+#include "basics/exceptions.h"
 #include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/utils/hash_utils.hpp"
-#include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
 
@@ -46,248 +39,23 @@ struct NormalizingTokenizer::StateT {
   std::string term_buf;
   const icu::Normalizer2* normalizer{};  // reusable object owned by ICU
   std::unique_ptr<icu::Transliterator> transliterator;
-  const OptionsT options;
+  const Options options;
 
-  explicit StateT(const OptionsT& opts) : options{opts} {}
+  explicit StateT(Options opts) : options{std::move(opts)} {}
 };
-
-namespace {
-
-constexpr std::string_view kLocaleParamName = "locale";
-constexpr std::string_view kCaseConvertParamName = "case";
-constexpr std::string_view kAccentParamName = "accent";
-
-bool LocaleFromSlice(vpack::Slice slice, icu::Locale& locale) {
-  if (!slice.isString()) {
-    SDB_WARN(IRESEARCH, "Non-string value in '", kLocaleParamName,
-             "' while constructing normalizing_tokenizer from "
-             "VPack arguments");
-
-    return false;
-  }
-
-  const auto locale_name = slice.copyString();
-
-  locale = icu::Locale::createFromName(locale_name.c_str());
-
-  if (!locale.isBogus()) {
-    locale = icu::Locale{locale.getLanguage(), locale.getCountry(),
-                         locale.getVariant()};
-  }
-
-  if (locale.isBogus()) {
-    SDB_WARN(IRESEARCH,
-             "Failed to instantiate locale from the supplied string '",
-             locale_name,
-             "' while constructing normalizing_tokenizer from VPack "
-             "arguments");
-
-    return false;
-  }
-
-  return true;
-}
-
-bool ParseVPackOptions(const vpack::Slice slice,
-                       NormalizingTokenizer::OptionsT& options) {
-  if (!slice.isObject()) {
-    SDB_ERROR(IRESEARCH, "Slice for normalizing_tokenizer is not an object");
-    return false;
-  }
-
-  try {
-    const auto locale_slice = slice.get(kLocaleParamName);
-
-    if (!locale_slice.isNone()) {
-      if (!LocaleFromSlice(locale_slice, options.locale)) {
-        return false;
-      }
-
-      // optional string enum
-      if (auto case_convert_slice = slice.get(kCaseConvertParamName);
-          !case_convert_slice.isNone()) {
-        if (!case_convert_slice.isString()) {
-          SDB_WARN(IRESEARCH, "Non-string value in '", kCaseConvertParamName,
-                   "' while constructing normalizing_tokenizer "
-                   "from VPack arguments");
-
-          return false;
-        }
-
-        const auto case_value = magic_enum::enum_cast<irs::Case>(
-          case_convert_slice.stringView(), magic_enum::case_insensitive);
-
-        if (!case_value) {
-          SDB_WARN(IRESEARCH, "Invalid value in '", kCaseConvertParamName,
-                   "' while constructing normalizing_tokenizer "
-                   "from VPack arguments");
-
-          return false;
-        }
-
-        options.case_convert = *case_value;
-      }
-
-      // optional bool
-      if (auto accent_slice = slice.get(kAccentParamName);
-          !accent_slice.isNone()) {
-        if (!accent_slice.isBool()) {
-          SDB_WARN(IRESEARCH, "Non-boolean value in '", kAccentParamName,
-                   "' while constructing normalizing_tokenizer "
-                   "from VPack arguments");
-
-          return false;
-        }
-
-        options.accent = accent_slice.getBool();
-      }
-
-      return true;
-    }
-
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("Missing '", kLocaleParamName,
-                           "' while constructing normalizing_tokenizer from "
-                           "VPack arguments"));
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing normalizing_tokenizer from VPack"));
-  } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught error while constructing normalizing_tokenizer from "
-              "VPack arguments");
-  }
-  return false;
-}
-
-// args is a jSON encoded object with the following attributes:
-// "locale"(string): the locale to use for stemming <required>
-// "case"(string enum): modify token case using "locale"
-// "accent"(bool): leave accents
-Analyzer::ptr MakeVPack(const vpack::Slice slice) {
-  NormalizingTokenizer::OptionsT options;
-  if (ParseVPackOptions(slice, options)) {
-    return std::make_unique<NormalizingTokenizer>(std::move(options));
-  }
-  return nullptr;
-}
-
-Analyzer::ptr MakeVPack(std::string_view args) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-// builds analyzer config from internal options in json format
-// options reference to analyzer options storage
-// definition string for storing json document with config
-bool MakeVPackConfig(const NormalizingTokenizer::OptionsT& options,
-                     vpack::Builder* builder) {
-  vpack::ObjectBuilder object(builder);
-  {
-    // locale
-    const auto& locale_name = options.locale.getBaseName();
-    builder->add(kLocaleParamName, locale_name);
-
-    // case convert
-    const auto case_name_sv = magic_enum::enum_name(options.case_convert);
-    if (case_name_sv.empty()) {
-      SDB_ERROR(
-        IRESEARCH,
-        absl::StrCat("Invalid case_convert value in text analyzer options: ",
-                     static_cast<int>(options.case_convert)));
-      return false;
-    }
-    std::string case_name{case_name_sv};
-    absl::AsciiStrToLower(&case_name);
-    builder->add(kCaseConvertParamName, case_name);
-
-    // Accent
-    builder->add(kAccentParamName, options.accent);
-  }
-
-  return true;
-}
-
-bool NormalizeVPackConfig(const vpack::Slice slice, vpack::Builder* builder) {
-  NormalizingTokenizer::OptionsT options;
-  if (ParseVPackOptions(slice, options)) {
-    return MakeVPackConfig(options, builder);
-  }
-  return false;
-}
-
-bool NormalizeVPackConfig(std::string_view args, std::string& config) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  vpack::Builder builder;
-  if (NormalizeVPackConfig(slice, &builder)) {
-    config.assign(builder.slice().startAs<char>(), builder.slice().byteSize());
-    return true;
-  }
-  return false;
-}
-
-Analyzer::ptr MakeJson(std::string_view args) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR(IRESEARCH,
-                "Null arguments while constructing normalizing_tokenizer");
-      return nullptr;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing normalizing_tokenizer from JSON"));
-  } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught error while constructing normalizing_tokenizer from "
-              "JSON");
-  }
-  return nullptr;
-}
-
-bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR(IRESEARCH,
-                "Null arguments while normalizing normalizing_tokenizer");
-      return false;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    vpack::Builder builder;
-    if (NormalizeVPackConfig(vpack->slice(), &builder)) {
-      definition = builder.toString();
-      return !definition.empty();
-    }
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while normalizing normalizing_tokenizer from JSON"));
-  } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught error while normalizing normalizing_tokenizer from JSON");
-  }
-  return false;
-}
-
-}  // namespace
 
 void NormalizingTokenizer::StateDeleterT::operator()(StateT* p) const noexcept {
   delete p;
 }
 
-NormalizingTokenizer::NormalizingTokenizer(const OptionsT& options)
-  : _state{new StateT{options}}, _term_eof{true} {}
+NormalizingTokenizer::NormalizingTokenizer(Options options)
+  : _state{new StateT{std::move(options)}}, _term_eof{true} {}
 
-void NormalizingTokenizer::init() {
-  REGISTER_ANALYZER_JSON(NormalizingTokenizer, MakeJson, NormalizeJsonConfig);
-  REGISTER_ANALYZER_VPACK(NormalizingTokenizer, MakeVPack,
-                          NormalizeVPackConfig);
+Analyzer::ptr NormalizingTokenizer::Make(Options opts) {
+  if (opts.locale.isBogus()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "norm: invalid locale");
+  }
+  return std::make_unique<NormalizingTokenizer>(std::move(opts));
 }
 
 bool NormalizingTokenizer::next() {

@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include "analyzers.hpp"
+#include "analyzer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "token_attributes.hpp"
 
@@ -35,15 +35,15 @@ class MultiDelimitedTokenizer : public TypedAnalyzer<MultiDelimitedTokenizer>,
                                 private util::Noncopyable {
  public:
   struct Options {
+    using Owner = MultiDelimitedTokenizer;
     std::vector<bstring> delimiters;
   };
 
   static constexpr std::string_view type_name() noexcept {
     return "multi_delimiter";
   }
-  static void init();
 
-  static Analyzer::ptr Make(Options&&);
+  static Analyzer::ptr Make(Options opts);
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);

@@ -260,8 +260,8 @@ struct SequenceDependency : ObjectDependencyBase {
     for (auto col_id : column_defaults) {
       e.EmitCascadeColumnDefaultValueDrop(col_id);
     }
-    for (auto cid : constraints) {
-      e.EmitCascadeCheckConstraintDrop(cid);
+    for (auto id : constraints) {
+      e.EmitCascadeCheckConstraintDrop(id);
     }
     for (auto id : views) {
       e.EmitCascadeViewDrop(id);
@@ -291,11 +291,11 @@ struct PgSqlTypeDependency : ObjectDependencyBase {
     for (auto id : functions) {
       e.EmitCascadeFunctionDrop(id);
     }
-    for (auto cid : constraints) {
-      e.EmitCascadeCheckConstraintDrop(cid);
+    for (auto id : constraints) {
+      e.EmitCascadeCheckConstraintDrop(id);
     }
-    for (auto col_id : column_defaults) {
-      e.EmitCascadeColumnDefaultValueDrop(col_id);
+    for (auto id : column_defaults) {
+      e.EmitCascadeColumnDefaultValueDrop(id);
     }
   }
 };
@@ -319,11 +319,11 @@ struct PgSqlFunctionDependency : ObjectDependencyBase {
     for (auto id : indexes) {
       e.EmitCascadeIndexDrop(id);
     }
-    for (auto cid : constraints) {
-      e.EmitCascadeCheckConstraintDrop(cid);
+    for (auto id : constraints) {
+      e.EmitCascadeCheckConstraintDrop(id);
     }
-    for (auto col_id : column_defaults) {
-      e.EmitCascadeColumnDefaultValueDrop(col_id);
+    for (auto id : column_defaults) {
+      e.EmitCascadeColumnDefaultValueDrop(id);
     }
   }
 };

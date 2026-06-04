@@ -20,6 +20,7 @@
 
 #include "connector/view_fast_path.h"
 
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>

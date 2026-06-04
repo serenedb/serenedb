@@ -18,16 +18,14 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/common.h>
-#include <vpack/parser.h>
-
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/ngram_tokenizer.hpp"
 #include "iresearch/analysis/text_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/analysis/union_tokenizer.hpp"
 #include "tests_config.hpp"
@@ -89,6 +87,30 @@ void AssertUnionMembers(irs::analysis::UnionTokenizer& u,
   ASSERT_EQ(i, expected.size());
 }
 
+irs::analysis::Analyzer::ptr MakeText(std::string_view locale,
+                                      irs::Case case_convert, bool stemming,
+                                      std::vector<std::string> stopwords = {}) {
+  irs::analysis::TextTokenizer::Options opts;
+  opts.locale = icu::Locale::createFromName(std::string(locale).c_str());
+  opts.case_convert = case_convert;
+  opts.stemming = stemming;
+  for (auto& w : stopwords) {
+    opts.explicit_stopwords.insert(std::move(w));
+  }
+  opts.explicit_stopwords_set = true;
+  return irs::analysis::TextTokenizer::Make(std::move(opts));
+}
+
+irs::analysis::Analyzer::ptr MakeNgram(size_t min_gram, size_t max_gram,
+                                       bool preserve_original) {
+  return irs::analysis::NGramTokenizerBase::Make(
+    irs::analysis::NGramTokenizerBase::Options{
+      .min_gram = min_gram,
+      .max_gram = max_gram,
+      .preserve_original = preserve_original,
+    });
+}
+
 }  // namespace
 
 TEST(union_tokenizer_test, consts) {
@@ -96,7 +118,7 @@ TEST(union_tokenizer_test, consts) {
 }
 
 TEST(union_tokenizer_test, empty_union) {
-  irs::analysis::UnionTokenizer::OptionsT options;
+  std::vector<irs::analysis::Analyzer::ptr> options;
   irs::analysis::UnionTokenizer u(std::move(options));
 
   std::string data = "hello world";
@@ -104,15 +126,10 @@ TEST(union_tokenizer_test, empty_union) {
 }
 
 TEST(union_tokenizer_test, single_sub) {
-  // A union with a single text tokenizer should produce the same tokens
-  // as the text tokenizer alone.
-  auto text = irs::analysis::analyzers::Get(
-    "text", irs::Type<irs::text_format::Json>::get(),
-    R"({"locale":"en_US.UTF-8", "stopwords":[], "case":"lower",
-        "stemming":false})");
+  auto text = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
   ASSERT_NE(nullptr, text);
 
-  irs::analysis::UnionTokenizer::OptionsT options;
+  std::vector<irs::analysis::Analyzer::ptr> options;
   options.emplace_back(std::move(text));
   irs::analysis::UnionTokenizer u(std::move(options));
 
@@ -124,59 +141,38 @@ TEST(union_tokenizer_test, single_sub) {
 }
 
 TEST(union_tokenizer_test, text_plus_ngram) {
-  auto text = irs::analysis::analyzers::Get(
-    "text", irs::Type<irs::text_format::Json>::get(),
-    R"({"locale":"en_US.UTF-8", "stopwords":[], "case":"lower",
-        "stemming":false})");
+  auto text = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
   ASSERT_NE(nullptr, text);
 
-  auto ngram = irs::analysis::analyzers::Get(
-    "ngram", irs::Type<irs::text_format::Json>::get(),
-    R"({"min":3, "max":3, "preserveOriginal":false})");
+  auto ngram = MakeNgram(3, 3, /*preserve_original=*/false);
   ASSERT_NE(nullptr, ngram);
 
-  irs::analysis::UnionTokenizer::OptionsT options;
+  std::vector<irs::analysis::Analyzer::ptr> options;
   options.emplace_back(std::move(text));
   options.emplace_back(std::move(ngram));
   irs::analysis::UnionTokenizer u(std::move(options));
 
-  // text: "hello"(pos=1) "world"(pos=2)
-  // ngram(3,3): "hel"(1) "ell"(2) "llo"(3) "lo "(4) "o w"(5)
-  //             " wo"(6) "wor"(7) "orl"(8) "rld"(9)
-  // Interleaved by position, sub-index order (text=0, ngram=1):
   const UnionTokens expected{
-    {"hello", 1, 1},  // text pos=1
-    {"hel", 0, 1},    // ngram pos=1, same union position
-    {"world", 1, 2},  // text pos=2
-    {"ell", 0, 2},    // ngram pos=2, same union position
-    {"llo", 1, 3},    // ngram only from here on
-    {"lo ", 1, 4},   {"o w", 1, 5}, {" wo", 1, 6},
+    {"hello", 1, 1}, {"hel", 0, 1}, {"world", 1, 2}, {"ell", 0, 2},
+    {"llo", 1, 3},   {"lo ", 1, 4}, {"o w", 1, 5},   {" wo", 1, 6},
     {"wor", 1, 7},   {"orl", 1, 8}, {"rld", 1, 9},
   };
   AssertUnion(&u, "hello world", expected);
 }
 
 TEST(union_tokenizer_test, two_text_tokenizers_homogeneous) {
-  // For homogeneous sub-tokenizers, positions are truly comparable.
-  auto text_lower = irs::analysis::analyzers::Get(
-    "text", irs::Type<irs::text_format::Json>::get(),
-    R"({"locale":"en_US.UTF-8", "stopwords":[], "case":"lower",
-        "stemming":false})");
+  auto text_lower =
+    MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
   ASSERT_NE(nullptr, text_lower);
 
-  auto text_none = irs::analysis::analyzers::Get(
-    "text", irs::Type<irs::text_format::Json>::get(),
-    R"({"locale":"en_US.UTF-8", "stopwords":[], "case":"none",
-        "stemming":false})");
+  auto text_none = MakeText("en_US.UTF-8", irs::Case::None, /*stemming=*/false);
   ASSERT_NE(nullptr, text_none);
 
-  irs::analysis::UnionTokenizer::OptionsT options;
+  std::vector<irs::analysis::Analyzer::ptr> options;
   options.emplace_back(std::move(text_lower));
   options.emplace_back(std::move(text_none));
   irs::analysis::UnionTokenizer u(std::move(options));
 
-  // Sub 0 (lower): "hello"(1), "world"(2)
-  // Sub 1 (none):  "Hello"(1), "World"(2)
   const UnionTokens expected{
     {"hello", 1, 1},
     {"Hello", 0, 1},
@@ -188,19 +184,14 @@ TEST(union_tokenizer_test, two_text_tokenizers_homogeneous) {
 
 TEST(union_tokenizer_test, unequal_token_counts) {
   // Sub with fewer tokens exhausts first; remaining sub continues alone.
-  auto text = irs::analysis::analyzers::Get(
-    "text", irs::Type<irs::text_format::Json>::get(),
-    R"({"locale":"en_US.UTF-8", "stopwords":["quick","brown","fox"],
-        "case":"lower", "stemming":false})");
+  auto text = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false,
+                       {"quick", "brown", "fox"});
   ASSERT_NE(nullptr, text);
 
-  auto text2 = irs::analysis::analyzers::Get(
-    "text", irs::Type<irs::text_format::Json>::get(),
-    R"({"locale":"en_US.UTF-8", "stopwords":[],
-        "case":"lower", "stemming":false})");
+  auto text2 = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
   ASSERT_NE(nullptr, text2);
 
-  irs::analysis::UnionTokenizer::OptionsT options;
+  std::vector<irs::analysis::Analyzer::ptr> options;
   options.emplace_back(std::move(text));   // sub 0: stopwords filtered
   options.emplace_back(std::move(text2));  // sub 1: all words
   irs::analysis::UnionTokenizer u(std::move(options));
@@ -218,14 +209,10 @@ TEST(union_tokenizer_test, unequal_token_counts) {
 }
 
 TEST(union_tokenizer_test, no_offset_attr) {
-  // Union must NOT expose OffsAttr.
-  auto text = irs::analysis::analyzers::Get(
-    "text", irs::Type<irs::text_format::Json>::get(),
-    R"({"locale":"en_US.UTF-8", "stopwords":[], "case":"lower",
-        "stemming":false})");
+  auto text = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
   ASSERT_NE(nullptr, text);
 
-  irs::analysis::UnionTokenizer::OptionsT options;
+  std::vector<irs::analysis::Analyzer::ptr> options;
   options.emplace_back(std::move(text));
   irs::analysis::UnionTokenizer u(std::move(options));
 
@@ -234,14 +221,10 @@ TEST(union_tokenizer_test, no_offset_attr) {
 }
 
 TEST(union_tokenizer_test, get_mutable_non_core) {
-  // GetMutable returns nullptr for non-managed attributes.
-  auto text = irs::analysis::analyzers::Get(
-    "text", irs::Type<irs::text_format::Json>::get(),
-    R"({"locale":"en_US.UTF-8", "stopwords":[], "case":"lower",
-        "stemming":false})");
+  auto text = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
   ASSERT_NE(nullptr, text);
 
-  irs::analysis::UnionTokenizer::OptionsT options;
+  std::vector<irs::analysis::Analyzer::ptr> options;
   options.emplace_back(std::move(text));
   irs::analysis::UnionTokenizer u(std::move(options));
 
@@ -251,15 +234,10 @@ TEST(union_tokenizer_test, get_mutable_non_core) {
 }
 
 TEST(union_tokenizer_test, VisitMembers) {
-  auto text = irs::analysis::analyzers::Get(
-    "text", irs::Type<irs::text_format::Json>::get(),
-    R"({"locale":"en_US.UTF-8", "stopwords":[], "case":"lower",
-        "stemming":false})");
-  auto ngram = irs::analysis::analyzers::Get(
-    "ngram", irs::Type<irs::text_format::Json>::get(),
-    R"({"min":2, "max":3, "preserveOriginal":false})");
+  auto text = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
+  auto ngram = MakeNgram(2, 3, /*preserve_original=*/false);
 
-  irs::analysis::UnionTokenizer::OptionsT options;
+  std::vector<irs::analysis::Analyzer::ptr> options;
   options.emplace_back(std::move(text));
   options.emplace_back(std::move(ngram));
   irs::analysis::UnionTokenizer u(std::move(options));
@@ -270,16 +248,25 @@ TEST(union_tokenizer_test, VisitMembers) {
           irs::analysis::NGramTokenizerBase::InputType::UTF8>>::id()});
 }
 
-TEST(union_tokenizer_test, json_construction) {
-  std::string config =
-    R"({"union":[
-      {"type":"text", "properties":{"locale":"en_US.UTF-8","stopwords":[],
-       "case":"lower","stemming":false}},
-      {"type":"ngram", "properties":{"min":3,"max":3,
-       "preserveOriginal":false}}
-    ]})";
-  auto stream = irs::analysis::analyzers::Get(
-    "union", irs::Type<irs::text_format::Json>::get(), config);
+TEST(union_tokenizer_test, options_construction) {
+  irs::analysis::UnionTokenizer::Options opts;
+
+  irs::analysis::TextTokenizer::Options text_opts;
+  text_opts.locale = icu::Locale::createFromName("en_US.UTF-8");
+  text_opts.case_convert = irs::Case::Lower;
+  text_opts.stemming = false;
+  text_opts.explicit_stopwords_set = true;
+  opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(
+    irs::analysis::TokenizerConfig{std::move(text_opts)}));
+
+  opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(
+    irs::analysis::TokenizerConfig{irs::analysis::NGramTokenizerBase::Options{
+      .min_gram = 3,
+      .max_gram = 3,
+      .preserve_original = false,
+    }}));
+
+  auto stream = irs::analysis::UnionTokenizer::Make(std::move(opts));
   ASSERT_NE(nullptr, stream);
   ASSERT_EQ(irs::Type<irs::analysis::UnionTokenizer>::id(), stream->type());
 
@@ -291,130 +278,36 @@ TEST(union_tokenizer_test, json_construction) {
   AssertUnion(stream.get(), "hello world", expected);
 }
 
-TEST(union_tokenizer_test, vpack_construction) {
-  std::string json_config =
-    R"({"union":[
-      {"type":"text", "properties":{"locale":"en_US.UTF-8","stopwords":[],
-       "case":"lower","stemming":false}},
-      {"type":"ngram", "properties":{"min":3,"max":3,
-       "preserveOriginal":false}}
-    ]})";
-  auto vpack = vpack::Parser::fromJson(json_config);
-
-  auto stream = irs::analysis::analyzers::Get(
-    "union", irs::Type<irs::text_format::VPack>::get(),
-    {vpack->slice().startAs<char>(), vpack->slice().byteSize()});
-  ASSERT_NE(nullptr, stream);
-  ASSERT_EQ(irs::Type<irs::analysis::UnionTokenizer>::id(), stream->type());
+TEST(union_tokenizer_test, construct_empty_children) {
+  // `Make` rejects a union with no children: there is nothing meaningful to
+  // construct, so we fail loudly rather than return a degenerate analyzer
+  // whose `reset()` always fails.
+  irs::analysis::UnionTokenizer::Options opts;
+  ASSERT_ANY_THROW(irs::analysis::UnionTokenizer::Make(std::move(opts)));
 }
 
-TEST(union_tokenizer_test, normalize_json) {
-  // Unknown top-level parameters should be stripped
-  {
-    std::string config =
-      R"({"unknown_param":123, "union":[
-        {"type":"delimiter","properties":{"delimiter":"A"}}]})";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "union", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(
-      vpack::Parser::fromJson(
-        R"({"union":[{"type":"delimiter","properties":{"delimiter":"A"}}]})")
-        ->toString(),
-      actual);
-  }
-  // Unknown member parameters should be stripped
-  {
-    std::string config =
-      R"({"union":[{"unknown":1,"type":"delimiter",
-        "properties":{"delimiter":"A"}}]})";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "union", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(
-      vpack::Parser::fromJson(
-        R"({"union":[{"type":"delimiter","properties":{"delimiter":"A"}}]})")
-        ->toString(),
-      actual);
-  }
-  // Unknown analyzer type: normalization fails
-  {
-    std::string config =
-      R"({"union":[{"type":"UNKNOWN","properties":{"foo":"bar"}}]})";
-    std::string actual;
-    ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-      actual, "union", irs::Type<irs::text_format::Json>::get(), config));
-  }
+TEST(union_tokenizer_test, construct_null_child) {
+  // Defensive: a children vector containing a null pointer is rejected.
+  irs::analysis::UnionTokenizer::Options opts;
+  opts.children.push_back(nullptr);
+  ASSERT_ANY_THROW(irs::analysis::UnionTokenizer::Make(std::move(opts)));
 }
 
-// Invalid config tests
-
-TEST(union_tokenizer_test, construct_empty_array) {
-  std::string config = R"({"union":[]})";
-  auto stream = irs::analysis::analyzers::Get(
-    "union", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST(union_tokenizer_test, construct_missing_union_key) {
-  std::string config = R"({"pipeline":[{"type":"delimiter",
-    "properties":{"delimiter":"A"}}]})";
-  auto stream = irs::analysis::analyzers::Get(
-    "union", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST(union_tokenizer_test, construct_invalid_child_type) {
-  std::string config = R"({"union":[{"type":"NONEXISTENT","properties":{}}]})";
-  auto stream = irs::analysis::analyzers::Get(
-    "union", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST(union_tokenizer_test, construct_non_string_type) {
-  std::string config =
-    R"({"union":[{"type":1, "properties":{"delimiter":"A"}}]})";
-  auto stream = irs::analysis::analyzers::Get(
-    "union", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST(union_tokenizer_test, construct_no_properties) {
-  std::string config = R"({"union":[{"type":"delimiter"}]})";
-  auto stream = irs::analysis::analyzers::Get(
-    "union", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST(union_tokenizer_test, construct_member_not_object) {
-  std::string config = R"({"union":["not_an_object"]})";
-  auto stream = irs::analysis::analyzers::Get(
-    "union", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST(union_tokenizer_test, construct_union_not_array) {
-  std::string config = R"({"union":"not_an_array"})";
-  auto stream = irs::analysis::analyzers::Get(
-    "union", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST(union_tokenizer_test, construct_null_args) {
-  auto stream = irs::analysis::analyzers::Get(
-    "union", irs::Type<irs::text_format::Json>::get(), std::string_view{});
-  ASSERT_EQ(nullptr, stream);
-}
+// NOTE: The legacy `construct_missing_union_key`,
+// `construct_invalid_child_type`, `construct_non_string_type`,
+// `construct_no_properties`, `construct_member_not_object`,
+// `construct_union_not_array`, `construct_null_args`, and `vpack_construction`
+// tests all probed loader-side JSON/VPack parsing edge cases (wrong wrapper
+// key, wrong field types, missing `properties`, etc.). The direct
+// `Make(Options)` API doesn't accept a textual config -- there is no JSON
+// parser to reject. These checks belong to the JSON loader's own tests; nothing
+// analogous remains at the analyzer level.
 
 TEST(union_tokenizer_test, reset_twice) {
-  // Verify that reset() works correctly when called multiple times.
-  auto text = irs::analysis::analyzers::Get(
-    "text", irs::Type<irs::text_format::Json>::get(),
-    R"({"locale":"en_US.UTF-8", "stopwords":[], "case":"lower",
-        "stemming":false})");
+  auto text = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
   ASSERT_NE(nullptr, text);
 
-  irs::analysis::UnionTokenizer::OptionsT options;
+  std::vector<irs::analysis::Analyzer::ptr> options;
   options.emplace_back(std::move(text));
   irs::analysis::UnionTokenizer u(std::move(options));
 

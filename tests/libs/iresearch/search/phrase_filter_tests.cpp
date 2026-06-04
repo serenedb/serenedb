@@ -25,6 +25,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/phrase_filter.hpp"
@@ -4358,8 +4359,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     lt2.max_distance = 1;
     lt2.term = irs::ViewCast<irs::byte_type>(std::string_view("quik"));
 
-    auto scorer = irs::scorers::Get(
-      "bm25", irs::Type<irs::text_format::Json>::get(), "{ \"b\" : 0 }");
+    auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
     auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
 
@@ -4425,8 +4425,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
 
-    auto scorer = irs::scorers::Get(
-      "bm25", irs::Type<irs::text_format::Json>::get(), "{ \"b\" : 0 }");
+    auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
     auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
 
@@ -4491,8 +4490,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     pos1.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("the")),
                        0.75f);
 
-    auto scorer = irs::scorers::Get(
-      "bm25", irs::Type<irs::text_format::Json>::get(), "{ \"b\" : 0 }");
+    auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
     auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
 
@@ -4596,8 +4594,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("fox")));
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("that")));
 
-    auto scorer = irs::scorers::Get(
-      "bm25", irs::Type<irs::text_format::Json>::get(), "{ \"b\" : 0 }");
+    auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
     auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
 
@@ -4744,8 +4741,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
                      0.5f);
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("that")));
 
-    auto scorer = irs::scorers::Get(
-      "bm25", irs::Type<irs::text_format::Json>::get(), "{ \"b\" : 0 }");
+    auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
     auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
 
@@ -4928,8 +4924,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("go"));
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("like"));
 
-    auto scorer = irs::scorers::Get(
-      "bm25", irs::Type<irs::text_format::Json>::get(), "{ \"b\" : 0 }");
+    auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
     auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
 

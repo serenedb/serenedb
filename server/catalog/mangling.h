@@ -82,14 +82,6 @@ inline void MangleString(std::string& name) {
   name.push_back(kString);
 }
 
-inline void MangleField(std::string& name, const auto& analyzer) {
-  SDB_ASSERT(analyzer.function);
-  NormalizeExpansion(name);
-  // TODO(mbkkt) Adjust absl to allow char
-  name.push_back(analyzer.Analyzer().GetFieldMarker());
-  absl::StrAppend(&name, analyzer.Name());
-}
-
 [[maybe_unused]] inline bool IsNestedField(std::string_view name) noexcept {
   return !name.empty() && name.back() == kNested;
 }

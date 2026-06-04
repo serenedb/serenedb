@@ -31,11 +31,18 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
 #include "catalog/index.h"
+#include "catalog/persistence/inverted_index.h"
 #include "catalog/scorer_options.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
 #include "storage_engine/index_shard.h"
 
+namespace duckdb {
+
+class Serializer;
+class Deserializer;
+
+}  // namespace duckdb
 namespace sdb::catalog {
 
 // Numeric/temporal DuckDB types the inverted-index sink indexes via a
@@ -57,12 +64,7 @@ constexpr bool IsNumericSliceKind(duckdb::LogicalTypeId kind) noexcept {
   }
 }
 
-struct HNSWColumnConfig {
-  int d = 0;
-  int m = 32;
-  int ef_construction = 40;
-  irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
-};
+using persistence::HNSWColumnConfig;
 
 struct InvertedIndexEntryInfo {
   ObjectId text_dictionary = ObjectId::none();
@@ -113,9 +115,9 @@ class InvertedIndex final : public Index {
     BumpTickServerForEntryIds();
   }
 
-  static std::shared_ptr<InvertedIndex> ReadInternal(vpack::Slice slice,
-                                                     ReadContext ctx);
-  void WriteInternal(vpack::Builder& builder) const final;
+  static std::shared_ptr<InvertedIndex> Deserialize(duckdb::Deserializer& src,
+                                                    ReadContext ctx);
+  void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
     bool is_new, ObjectId id) const final;

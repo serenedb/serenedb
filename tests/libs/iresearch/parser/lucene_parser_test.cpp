@@ -110,7 +110,7 @@ class LuceneParserTest : public ::testing::Test {
  protected:
   irs::MixedBooleanFilter root;
   irs::analysis::SegmentationTokenizer::ptr tokenizer{
-    irs::analysis::SegmentationTokenizer::make(
+    irs::analysis::SegmentationTokenizer::Make(
       irs::analysis::SegmentationTokenizer::Options{})};
 
   sdb::ParserContext ctx{root, "content", *tokenizer};

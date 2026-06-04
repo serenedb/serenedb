@@ -21,7 +21,7 @@
 #include <duckdb/main/database.hpp>
 #include <iostream>
 #include <iresearch/analysis/analyzer.hpp>
-#include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/columnstore/format.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -30,11 +30,9 @@
 #include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/regexp_filter.hpp>
-#include <iresearch/search/scorers.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/compression.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/text_format.hpp>
 #include <memory>
@@ -67,8 +65,9 @@ duckdb::DatabaseInstance& Db() {
 struct TextField {
   std::string_view name;
   std::string_view text;
-  irs::analysis::Analyzer::ptr tokenizer{irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(), R"({})")};
+  irs::analysis::Analyzer::ptr tokenizer{
+    irs::analysis::SegmentationTokenizer::Make(
+      irs::analysis::SegmentationTokenizer::Options{})};
 
   std::string_view Name() const noexcept { return name; }
 
@@ -182,10 +181,7 @@ int main() {
   auto& engine = sdb::DuckDBEngine::Instance();
   engine.Initialize();
 
-  irs::analysis::analyzers::Init();
   irs::formats::Init();
-  irs::scorers::Init();
-  irs::compression::Init();
 
   // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
   // down the duckdb::DuckDB they were dispatching through.

@@ -22,9 +22,9 @@
 
 #include <cstdint>
 
+#include "basics/exceptions.h"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 
 namespace irs {
 
@@ -62,7 +62,18 @@ class DFI final : public irs::ScorerBase<DFI, DFIStats> {
     return DFIMeasure::Standardized;
   }
 
-  static void init();
+  struct Options {
+    using Owner = DFI;
+    DFIMeasure measure = MEASURE();
+    bool operator==(const Options&) const = default;
+  };
+
+  static std::unique_ptr<DFI> Make(const Options& opts) {
+    if (opts.measure > DFIMeasure::ChiSquared) {
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER, "dfi: invalid measure");
+    }
+    return std::make_unique<DFI>(opts.measure);
+  }
 
   explicit DFI(DFIMeasure measure = MEASURE()) noexcept : _measure{measure} {}
 

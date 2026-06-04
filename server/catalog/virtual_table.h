@@ -39,7 +39,7 @@ struct MaterializedData {
 class VirtualTableSnapshot : public Object {
  public:
   std::shared_ptr<Object> Clone() const final { return nullptr; }
-  void WriteInternal(vpack::Builder&) const override {}
+  void Serialize(duckdb::Serializer&) const override {}
   virtual duckdb::LogicalType RowType() const noexcept = 0;
 
   // Returns a reference to lazily materialized data.

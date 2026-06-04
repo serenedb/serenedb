@@ -668,8 +668,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
   bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
-  auto sequence = std::make_shared<catalog::Sequence>(
-    ObjectId{}, ObjectId{}, info.name, opts, ObjectId{});
+  opts.name = info.name;
+  auto sequence = std::make_shared<catalog::Sequence>(ObjectId{}, ObjectId{},
+                                                      std::move(opts));
 
   auto& catalog_impl = catalog::CatalogFeature::instance().Global();
   auto r =

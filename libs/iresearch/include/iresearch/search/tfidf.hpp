@@ -24,7 +24,6 @@
 
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 
 namespace irs {
 
@@ -40,7 +39,16 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
 
   static constexpr bool BOOST_AS_SCORE() noexcept { return false; }
 
-  static void init();
+  struct Options {
+    using Owner = TFIDF;
+    bool with_norms = WITH_NORMS();
+    bool boost_as_score = BOOST_AS_SCORE();
+    bool operator==(const Options&) const = default;
+  };
+
+  static std::unique_ptr<TFIDF> Make(const Options& opts) {
+    return std::make_unique<TFIDF>(opts.with_norms, opts.boost_as_score);
+  }
 
   explicit TFIDF(bool normalize = WITH_NORMS(),
                  bool boost_as_score = BOOST_AS_SCORE()) noexcept

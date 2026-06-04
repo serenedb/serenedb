@@ -30,12 +30,12 @@
 #include "catalog/object.h"
 #include "catalog/table_options.h"
 
-namespace vpack {
+namespace duckdb {
 
-class Builder;
-class Slice;
+class Serializer;
+class Deserializer;
 
-}  // namespace vpack
+}  // namespace duckdb
 namespace sdb {
 namespace transaction {
 
@@ -68,9 +68,9 @@ class TableShard : public catalog::Object {
     return {.num_rows = _num_rows.load(std::memory_order_relaxed)};
   }
 
-  void WriteInternal(vpack::Builder& b) const final {
-    vpack::WriteTuple(b, GetTableStats());
-  }
+  void Serialize(duckdb::Serializer& sink) const final;
+  static catalog::TableStats DeserializeStats(std::string_view bytes);
+
   // New table shard ctor
   explicit TableShard(ObjectId table_id, const catalog::TableStats& stats);
 
@@ -79,9 +79,7 @@ class TableShard : public catalog::Object {
                       const catalog::TableStats& stats);
 
  protected:
-  /// Inject figures that are specific to StorageEngine
-  virtual void figuresSpecific(bool details, vpack::Builder&) {}
-
+  ObjectId _table_id;
   // TODO(codeworse): this probably won't work in case of distributed setup
   std::atomic_uint64_t _num_rows{0};
   // TODO: remove table lock when we have a proper create index

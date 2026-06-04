@@ -29,7 +29,7 @@
 #include <system_error>
 #include <vector>
 
-#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/segmentation_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/directory_reader.hpp"
@@ -47,7 +47,6 @@
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
 #include "iresearch/store/mmap_directory.hpp"
-#include "iresearch/utils/compression.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace {
@@ -92,8 +91,8 @@ struct TextField {
 
   std::string_view name;
   std::string_view value;
-  irs::analysis::Analyzer::ptr tokenizer = irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(), "{}");
+  irs::analysis::Analyzer::ptr tokenizer =
+    irs::analysis::SegmentationTokenizer::Make({});
 };
 
 std::vector<std::string> MakeTermPool() {
@@ -397,10 +396,7 @@ DEFINE_FILTER_VARIANTS(Not, irs::Not, SetUpNot);
 #undef DEFINE_FILTER_VARIANTS
 
 int main(int argc, char** argv) {
-  irs::analysis::analyzers::Init();
   irs::formats::Init();
-  irs::scorers::Init();
-  irs::compression::Init();
 
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {

@@ -33,6 +33,7 @@
 #include <sstream>
 
 #include "basics/file_utils_ext.hpp"
+#include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/index/field_data.hpp"
 #include "iresearch/index/norm.hpp"
@@ -249,8 +250,7 @@ CsvDocGenerator::CsvDocGenerator(const std::filesystem::path& file,
                                  DocTemplate& doc)
   : _doc(doc),
     _ifs(file.native(), std::ifstream::in | std::ifstream::binary),
-    _stream(irs::analysis::analyzers::Get(
-      "delimiter", irs::Type<irs::text_format::Text>::get(), ",")) {
+    _stream(std::make_unique<irs::analysis::DelimitedTokenizer>(",")) {
   _doc.init();
   _doc.reset();
 }

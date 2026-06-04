@@ -28,7 +28,11 @@
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
-#include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/analysis/analyzer.hpp>
+#include <iresearch/analysis/geo_analyzer.hpp>
+#include <iresearch/analysis/ngram_tokenizer.hpp>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/formats/formats.hpp>
@@ -43,7 +47,6 @@
 #include <iresearch/search/prefix_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/regexp_filter.hpp>
-#include <iresearch/search/scorers.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
@@ -132,13 +135,10 @@ struct ColumnSpec {
 using AnalyzerProvider = std::function<catalog::ColumnTokenizer(uint64_t)>;
 
 catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
-  auto make_identity = [] {
-    return std::string(vpack::Slice::emptyObjectSlice().startAs<char>(),
-                       vpack::Slice::emptyObjectSlice().byteSize());
-  };
   static catalog::Tokenizer gStringTokenizer(
     ObjectId{0}, ObjectId{12345}, "test_string_verbartim", {},
-    DEFAULT_ROW_GROUP_SIZE, make_identity());
+    DEFAULT_ROW_GROUP_SIZE,
+    irs::analysis::TokenizerConfig{.config = irs::StringTokenizer::Options{}});
   auto tokenizer = gStringTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer),
@@ -147,15 +147,11 @@ catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
 
 template<irs::IndexFeatures Features>
 catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
-  auto make_segmentation = [] {
-    auto builder =
-      vpack::Parser::fromJson("{ \"tokenizer\": {\"type\":\"segmentation\"}}");
-    return std::string(builder->slice().startAs<char>(),
-                       builder->slice().byteSize());
-  };
   static catalog::Tokenizer gStringTokenizer(
     ObjectId{0}, ObjectId{12346}, "test_segmentation", {},
-    DEFAULT_ROW_GROUP_SIZE, make_segmentation());
+    DEFAULT_ROW_GROUP_SIZE,
+    irs::analysis::TokenizerConfig{
+      .config = irs::analysis::SegmentationTokenizer::Options{}});
   auto tokenizer = gStringTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer), .features = Features};
@@ -168,17 +164,15 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
 }
 
 [[maybe_unused]] catalog::ColumnTokenizer NgramAnalyzerProvider(uint64_t) {
-  auto make_ngram = [] {
-    auto builder = vpack::Parser::fromJson(
-      "{ \"tokenizer\": {\"type\":\"ngram\","
-      "\"properties\":{\"min\":2,\"max\":2,"
-      "\"preserveOriginal\":false,\"streamType\":\"utf8\"}}}");
-    return std::string(builder->slice().startAs<char>(),
-                       builder->slice().byteSize());
+  irs::analysis::NGramTokenizerBase::Options ngram_opts{
+    .min_gram = 2,
+    .max_gram = 2,
+    .preserve_original = false,
+    .stream_bytes_type = irs::analysis::NGramTokenizerBase::InputType::UTF8,
   };
   static catalog::Tokenizer gNgramTokenizer(
     ObjectId{0}, ObjectId{12347}, "test_ngram", {}, DEFAULT_ROW_GROUP_SIZE,
-    make_ngram());
+    irs::analysis::TokenizerConfig{.config = std::move(ngram_opts)});
   auto tokenizer = gNgramTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer),
@@ -186,17 +180,15 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
 }
 
 [[maybe_unused]] catalog::ColumnTokenizer WildcardAnalyzerProvider(uint64_t) {
-  auto make_wildcard = [] {
-    auto builder = vpack::Parser::fromJson(
-      "{ \"tokenizer\": {\"type\":\"wildcard\","
-      "\"properties\":{\"ngramSize\":3,"
-      "\"tokenizer\":{\"type\":\"keyword\"}}}}");
-    return std::string(builder->slice().startAs<char>(),
-                       builder->slice().byteSize());
+  irs::analysis::WildcardAnalyzer::Options wildcard_opts{
+    .base_analyzer = std::make_unique<irs::analysis::TokenizerConfig>(
+      irs::analysis::TokenizerConfig{.config =
+                                       irs::StringTokenizer::Options{}}),
+    .ngram_size = 3,
   };
   static catalog::Tokenizer gWildcardTokenizer(
     ObjectId{0}, ObjectId{12348}, "test_wildcard", {}, DEFAULT_ROW_GROUP_SIZE,
-    make_wildcard());
+    irs::analysis::TokenizerConfig{.config = std::move(wildcard_opts)});
   auto tokenizer = gWildcardTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {
@@ -207,15 +199,10 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
 }
 
 [[maybe_unused]] catalog::ColumnTokenizer GeoJsonAnalyzerProvider(uint64_t) {
-  auto make_geojson = [] {
-    auto builder = vpack::Parser::fromJson(
-      "{ \"tokenizer\": {\"type\":\"geojson\",\"properties\":{}}}");
-    return std::string(builder->slice().startAs<char>(),
-                       builder->slice().byteSize());
-  };
   static catalog::Tokenizer gGeoTokenizer(
     ObjectId{0}, ObjectId{12349}, "test_geojson", {}, DEFAULT_ROW_GROUP_SIZE,
-    make_geojson());
+    irs::analysis::TokenizerConfig{
+      .config = irs::analysis::GeoJsonAnalyzer::Options{}});
   auto tokenizer = gGeoTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
   return {
@@ -550,12 +537,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
  public:
   SearchFilterBuilderTest() : _db(nullptr), _conn(_db) {}
 
-  static void SetUpTestCase() {
-    irs::analysis::analyzers::Init();
-    irs::formats::Init();
-    irs::scorers::Init();
-    irs::compression::Init();
-  }
+  static void SetUpTestCase() { irs::formats::Init(); }
 
   void SetUp() final {
     sdb::connector::RegisterSearchFunctions(*_db.instance);

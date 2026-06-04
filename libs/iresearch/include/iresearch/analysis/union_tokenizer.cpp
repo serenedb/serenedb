@@ -20,233 +20,13 @@
 
 #include "union_tokenizer.hpp"
 
-#include <vpack/builder.h>
-#include <vpack/common.h>
-#include <vpack/iterator.h>
-#include <vpack/parser.h>
-#include <vpack/slice.h>
-
 #include <string_view>
 
-#include "iresearch/utils/vpack_utils.hpp"
+#include "basics/exceptions.h"
+#include "iresearch/analysis/tokenizer_config.hpp"
 
 namespace irs::analysis {
 namespace {
-
-constexpr std::string_view kUnionParamName = "union";
-constexpr std::string_view kTypeParamName = "type";
-constexpr std::string_view kPropertiesParamName = "properties";
-
-using OptionsNormalize = std::vector<std::pair<std::string, std::string>>;
-
-template<typename T>
-bool ParseVPackOptions(const vpack::Slice slice, T& options) {
-  if constexpr (std::is_same_v<T, UnionTokenizer::OptionsT>) {
-    SDB_ASSERT(options.empty());
-  }
-  if (!slice.isObject()) {
-    SDB_ERROR(IRESEARCH,
-              "Not a VPack object passed while constructing union_tokenizer");
-    return false;
-  }
-
-  if (auto union_slice = slice.get(kUnionParamName); !union_slice.isNone()) {
-    if (union_slice.isArray()) {
-      for (const auto member : vpack::ArrayIterator(union_slice)) {
-        if (member.isObject()) {
-          std::string_view type;
-          if (auto type_attr_slice = member.get(kTypeParamName);
-              !type_attr_slice.isNone()) {
-            if (type_attr_slice.isString()) {
-              type = type_attr_slice.stringView();
-            } else {
-              SDB_ERROR(IRESEARCH, "Failed to read '", kTypeParamName,
-                        "' attribute of '", kUnionParamName,
-                        "' member as string while constructing "
-                        "union_tokenizer from VPack arguments");
-              return false;
-            }
-          } else {
-            SDB_ERROR(IRESEARCH, "Failed to get '", kTypeParamName,
-                      "' attribute of '", kUnionParamName,
-                      "' member while constructing union_tokenizer "
-                      "from VPack arguments");
-            return false;
-          }
-          if (auto properties_attr_slice = member.get(kPropertiesParamName);
-              !properties_attr_slice.isNone()) {
-            if constexpr (std::is_same_v<T, UnionTokenizer::OptionsT>) {
-              auto analyzer =
-                analyzers::Get(type, irs::Type<text_format::VPack>::get(),
-                               {properties_attr_slice.startAs<char>(),
-                                properties_attr_slice.byteSize()});
-
-              // fallback to json format if vpack isn't available
-              if (!analyzer) {
-                analyzer =
-                  analyzers::Get(type, irs::Type<text_format::Json>::get(),
-                                 slice_to_string(properties_attr_slice));
-              }
-
-              if (analyzer) {
-                options.push_back(std::move(analyzer));
-              } else {
-                SDB_ERROR(IRESEARCH, "Failed to create union member of type '",
-                          type, "' with properties '",
-                          slice_to_string(properties_attr_slice),
-                          "' while constructing union_tokenizer "
-                          "from VPack arguments");
-                return false;
-              }
-            } else {
-              std::string normalized;
-              if (analyzers::Normalize(normalized, type,
-                                       irs::Type<text_format::VPack>::get(),
-                                       {properties_attr_slice.startAs<char>(),
-                                        properties_attr_slice.byteSize()})) {
-                options.emplace_back(std::piecewise_construct,
-                                     std::forward_as_tuple(type),
-                                     std::forward_as_tuple(normalized));
-
-                // fallback to json format if vpack isn't available
-              } else if (analyzers::Normalize(
-                           normalized, type,
-                           irs::Type<text_format::Json>::get(),
-                           slice_to_string(properties_attr_slice))) {
-                // in options we'll store vpack as string
-                auto vpack = vpack::Parser::fromJson(normalized.c_str(),
-                                                     normalized.size());
-                options.emplace_back(
-                  std::piecewise_construct, std::forward_as_tuple(type),
-                  std::forward_as_tuple(vpack->slice().startAs<char>(),
-                                        vpack->slice().byteSize()));
-              } else {
-                SDB_ERROR(
-                  IRESEARCH, "Failed to normalize union member of type '", type,
-                  "' with properties '", slice_to_string(properties_attr_slice),
-                  "' while constructing union_tokenizer "
-                  "from VPack arguments");
-                return false;
-              }
-            }
-          } else {
-            SDB_ERROR(IRESEARCH, "Failed to get '", kPropertiesParamName,
-                      "' attribute of '", kUnionParamName,
-                      "' member while constructing union_tokenizer "
-                      "from VPack arguments");
-            return false;
-          }
-        } else {
-          SDB_ERROR(IRESEARCH, "Failed to read '", kUnionParamName,
-                    "' member as object while constructing "
-                    "union_tokenizer from VPack arguments");
-          return false;
-        }
-      }
-    } else {
-      SDB_ERROR(IRESEARCH, "Failed to read '", kUnionParamName,
-                "' attribute as array while constructing "
-                "union_tokenizer from VPack arguments");
-      return false;
-    }
-  } else {
-    SDB_ERROR(IRESEARCH, "Not found parameter '", kUnionParamName,
-              "' while constructing union_tokenizer");
-    return false;
-  }
-  if (options.empty()) {
-    SDB_ERROR(IRESEARCH,
-              "Empty union found while constructing union_tokenizer");
-    return false;
-  }
-  return true;
-}
-
-bool NormalizeVPackConfig(const vpack::Slice slice, vpack::Builder* builder) {
-  OptionsNormalize options;
-  if (ParseVPackOptions(slice, options)) {
-    vpack::ObjectBuilder object(builder);
-    {
-      vpack::ArrayBuilder array(builder, kUnionParamName.data());
-      {
-        for (const auto& analyzer : options) {
-          vpack::ObjectBuilder analyzers_obj(builder);
-          {
-            builder->add(kTypeParamName, analyzer.first);
-            vpack::Slice sub_slice(
-              reinterpret_cast<const uint8_t*>(analyzer.second.c_str()));
-            builder->add(kPropertiesParamName, sub_slice);
-          }
-        }
-      }
-    }
-    return true;
-  }
-  return false;
-}
-
-bool NormalizeVPackConfig(std::string_view args, std::string& config) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  vpack::Builder builder;
-  if (NormalizeVPackConfig(slice, &builder)) {
-    config.assign(builder.slice().startAs<char>(), builder.slice().byteSize());
-    return true;
-  }
-  return false;
-}
-
-Analyzer::ptr MakeVPack(const vpack::Slice slice) {
-  UnionTokenizer::OptionsT options;
-  if (ParseVPackOptions(slice, options)) {
-    return std::make_unique<UnionTokenizer>(std::move(options));
-  }
-  return nullptr;
-}
-
-Analyzer::ptr MakeVPack(std::string_view args) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-Analyzer::ptr MakeJson(std::string_view args) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR(IRESEARCH, "Null arguments while constructing union_tokenizer");
-      return nullptr;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH, "Caught error '", ex.what(),
-              "' while constructing union_tokenizer from JSON");
-  } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught error while constructing union_tokenizer from JSON");
-  }
-  return nullptr;
-}
-
-bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR(IRESEARCH, "Null arguments while normalizing union_tokenizer");
-      return false;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    vpack::Builder builder;
-    if (NormalizeVPackConfig(vpack->slice(), &builder)) {
-      definition = builder.toString();
-      return !definition.empty();
-    }
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH, "Caught error '", ex.what(),
-              "' while normalizing union_tokenizer from JSON");
-  } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught error while normalizing union_tokenizer from JSON");
-  }
-  return false;
-}
 
 PayAttr* FindPayload(std::span<const Analyzer::ptr> subs) {
   for (auto it = subs.rbegin(); it != subs.rend(); ++it) {
@@ -260,7 +40,7 @@ PayAttr* FindPayload(std::span<const Analyzer::ptr> subs) {
 
 }  // namespace
 
-UnionTokenizer::UnionTokenizer(UnionTokenizer::OptionsT&& options)
+UnionTokenizer::UnionTokenizer(std::vector<Analyzer::ptr> options)
   : _attrs{{}, {}, FindPayload(options) ? &_payload : AttributePtr<PayAttr>{}} {
   _subs.reserve(options.size());
   for (auto& p : options) {
@@ -349,9 +129,20 @@ bool UnionTokenizer::reset(std::string_view data) {
   return any_has_token;
 }
 
-void UnionTokenizer::init() {
-  REGISTER_ANALYZER_JSON(UnionTokenizer, MakeJson, NormalizeJsonConfig);
-  REGISTER_ANALYZER_VPACK(UnionTokenizer, MakeVPack, NormalizeVPackConfig);
+Analyzer::ptr UnionTokenizer::Make(Options opts) {
+  if (opts.children.empty()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              "union: requires at least one child analyzer");
+  }
+  std::vector<Analyzer::ptr> live_children;
+  live_children.reserve(opts.children.size());
+  for (auto& child : opts.children) {
+    if (!child) {
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER, "union: null child analyzer config");
+    }
+    live_children.push_back(CreateAnalyzer(std::move(*child)));
+  }
+  return std::make_unique<UnionTokenizer>(std::move(live_children));
 }
 
 UnionTokenizer::SubAnalyzer::SubAnalyzer(Analyzer::ptr a)

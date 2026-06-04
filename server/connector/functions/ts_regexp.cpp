@@ -47,7 +47,7 @@ customize::enum_name<irs::RegexpSyntax>(irs::RegexpSyntax value) noexcept {
 }  // namespace magic_enum
 namespace sdb::connector {
 
-void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromRegexp(BooleanFilterBuilder& parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =

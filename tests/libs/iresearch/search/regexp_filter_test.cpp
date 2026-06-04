@@ -870,52 +870,46 @@ TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
   }
   auto rdr = open_reader();
   {
-    irs::Or d;
-    {
-      auto& s = d.add<irs::ByRegexp>();
-      *s.mutable_field() = "alt";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("cat"));
-    }
-    {
-      auto& s = d.add<irs::ByRegexp>();
-      *s.mutable_field() = "alt";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("dog"));
-    }
-    CheckQuery(d, Docs{1, 2, 4, 6, 8, 10, 11, 14, 15, 17, 18, 20}, rdr);
+    auto d =
+      tests::MakeOr(tests::Make<irs::ByRegexp>([](irs::ByRegexp& s) {
+                      *s.mutable_field() = "alt";
+                      s.mutable_options()->pattern =
+                        irs::ViewCast<irs::byte_type>(std::string_view("cat"));
+                    }),
+                    tests::Make<irs::ByRegexp>([](irs::ByRegexp& s) {
+                      *s.mutable_field() = "alt";
+                      s.mutable_options()->pattern =
+                        irs::ViewCast<irs::byte_type>(std::string_view("dog"));
+                    }));
+    CheckQuery(*d, Docs{1, 2, 4, 6, 8, 10, 11, 14, 15, 17, 18, 20}, rdr);
   }
   {
-    irs::And c;
-    {
-      auto& s = c.add<irs::ByRegexp>();
-      *s.mutable_field() = "term";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("foo.*"));
-    }
-    {
-      auto& s = c.add<irs::ByRegexp>();
-      *s.mutable_field() = "alt";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("cat"));
-    }
-    CheckQuery(c, Docs{1, 4, 8, 14, 20}, rdr);
+    auto c = tests::MakeAnd(
+      tests::Make<irs::ByRegexp>([](irs::ByRegexp& s) {
+        *s.mutable_field() = "term";
+        s.mutable_options()->pattern =
+          irs::ViewCast<irs::byte_type>(std::string_view("foo.*"));
+      }),
+      tests::Make<irs::ByRegexp>([](irs::ByRegexp& s) {
+        *s.mutable_field() = "alt";
+        s.mutable_options()->pattern =
+          irs::ViewCast<irs::byte_type>(std::string_view("cat"));
+      }));
+    CheckQuery(*c, Docs{1, 4, 8, 14, 20}, rdr);
   }
   {
-    irs::Or d;
-    {
-      auto& s = d.add<irs::ByRegexp>();
-      *s.mutable_field() = "term";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("foobar"));
-    }
-    {
-      auto& s = d.add<irs::ByTerm>();
-      *s.mutable_field() = "term";
-      s.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(std::string_view("bar"));
-    }
-    CheckQuery(d, Docs{1, 10}, rdr);
+    auto d = tests::MakeOr(
+      tests::Make<irs::ByRegexp>([](irs::ByRegexp& s) {
+        *s.mutable_field() = "term";
+        s.mutable_options()->pattern =
+          irs::ViewCast<irs::byte_type>(std::string_view("foobar"));
+      }),
+      tests::Make<irs::ByTerm>([](irs::ByTerm& s) {
+        *s.mutable_field() = "term";
+        s.mutable_options()->term =
+          irs::ViewCast<irs::byte_type>(std::string_view("bar"));
+      }));
+    CheckQuery(*d, Docs{1, 10}, rdr);
   }
 }
 

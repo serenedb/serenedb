@@ -138,14 +138,8 @@ base_term:
     | SUFFIX                        { $$ = &ctx.AddWildcard($1); }
     | WILDCARD                      { $$ = &ctx.AddWildcard($1); }
     | range_expr                    { $$ = $1; }
-    | LPAREN                        {
-                                      $<filter>$ = ctx.current_root;
-                                      ctx.current_root = &ctx.current_root->GetOptional().add<irs::MixedBooleanFilter>();
-                                    }
-        clause_list RPAREN          {
-                                      $$ = ctx.current_root;
-                                      ctx.current_root = sdb::basics::downCast<irs::MixedBooleanFilter>($<filter>2);
-                                    }
+    | LPAREN                        { ctx.PushGroup(); }
+        clause_list RPAREN          { $$ = ctx.PopGroupAsClause(); }
     ;
 
 range_expr:
@@ -177,6 +171,7 @@ sdb::Result sdb::ParseQuery(sdb::ParserContext& ctx, std::string_view input) {
     LexerSetInput(input);
     int result = yyparse(ctx);
     LexerCleanup();
+    ctx.Finalize();
     if (result != 0) {
         return {sdb::ERROR_BAD_PARAMETER, std::move(ctx.error_message)};
     }

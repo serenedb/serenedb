@@ -39,22 +39,25 @@ Filter MakeFilter(std::string_view field, std::string_view term) {
 }
 
 template<typename Filter>
-Filter& Append(irs::BooleanFilter& root, std::string_view name,
-               std::string_view term) {
-  auto& sub = root.add<Filter>();
+Filter& Configure(Filter& sub, std::string_view name, std::string_view term) {
   *sub.mutable_field() = name;
   sub.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   return sub;
+}
+
+template<typename Filter = irs::ByTerm>
+std::unique_ptr<Filter> MakeTerm(std::string_view name, std::string_view term) {
+  return tests::Make<Filter>([&](Filter& sub) { Configure(sub, name, term); });
 }
 
 }  // namespace
 namespace tests {
 
 TEST(filter_optimizer_test, not_is_preserved) {
-  irs::Filter::ptr root = std::make_unique<irs::Not>();
+  irs::Filter::ptr root = std::make_unique<irs::Not>(
+    std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>("name", "A")));
   auto& node = sdb::basics::downCast<irs::Not>(*root);
   node.boost(2.5F);
-  node.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("name", "A");
 
   irs::Optimize(root);
 
@@ -74,8 +77,8 @@ TEST(filter_optimizer_test, empty_not_becomes_empty) {
 }
 
 TEST(filter_optimizer_test, not_all_becomes_empty) {
-  irs::Filter::ptr root = std::make_unique<irs::Not>();
-  sdb::basics::downCast<irs::Not>(*root).filter<irs::All>();
+  irs::Filter::ptr root =
+    std::make_unique<irs::Not>(std::make_unique<irs::All>());
 
   irs::Optimize(root);
 
@@ -83,11 +86,11 @@ TEST(filter_optimizer_test, not_all_becomes_empty) {
 }
 
 TEST(filter_optimizer_test, double_negation_unwraps) {
-  irs::Filter::ptr root = std::make_unique<irs::Not>();
-  auto& inner_not = sdb::basics::downCast<irs::Not>(*root).filter<irs::Not>();
-  auto& term = inner_not.filter<irs::ByTerm>();
-  term = MakeFilter<irs::ByTerm>("name", "A");
-  const auto* term_ptr = &term;
+  auto term =
+    std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>("name", "A"));
+  const auto* term_ptr = term.get();
+  irs::Filter::ptr root =
+    std::make_unique<irs::Not>(std::make_unique<irs::Not>(std::move(term)));
 
   irs::Optimize(root);
 
@@ -96,10 +99,9 @@ TEST(filter_optimizer_test, double_negation_unwraps) {
 }
 
 TEST(filter_optimizer_test, triple_negation_keeps_one) {
-  irs::Filter::ptr root = std::make_unique<irs::Not>();
-  auto& mid = sdb::basics::downCast<irs::Not>(*root).filter<irs::Not>();
-  auto& inner = mid.filter<irs::Not>();
-  inner.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("name", "A");
+  irs::Filter::ptr root = std::make_unique<irs::Not>(
+    std::make_unique<irs::Not>(std::make_unique<irs::Not>(
+      std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>("name", "A")))));
 
   irs::Optimize(root);
 
@@ -109,12 +111,11 @@ TEST(filter_optimizer_test, triple_negation_keeps_one) {
 }
 
 TEST(filter_optimizer_test, deep_negation_chain) {
-  irs::Filter::ptr root = std::make_unique<irs::Not>();
-  auto* current = &sdb::basics::downCast<irs::Not>(*root);
-  for (size_t i = 1; i < 50; ++i) {
-    current = &current->filter<irs::Not>();
+  irs::Filter::ptr root =
+    std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>("name", "A"));
+  for (size_t i = 0; i < 50; ++i) {
+    root = std::make_unique<irs::Not>(std::move(root));
   }
-  current->filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("name", "A");
 
   irs::Optimize(root);
 
@@ -122,27 +123,23 @@ TEST(filter_optimizer_test, deep_negation_chain) {
 }
 
 TEST(filter_optimizer_test, not_inside_and) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
+  irs::Filter::ptr root =
+    MakeAnd(MakeTerm("name", "A"), MakeNot(MakeTerm("name", "B")));
   auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  Append<irs::ByTerm>(and_root, "name", "A");
-  and_root.add<irs::Not>().filter<irs::ByTerm>() =
-    MakeFilter<irs::ByTerm>("name", "B");
 
   irs::Optimize(root);
 
   ASSERT_EQ(irs::Type<irs::And>::id(), root->type());
-  ASSERT_EQ(2, and_root.size());
+  ASSERT_EQ(1, and_root.size());
   ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[0].type());
-  ASSERT_EQ(irs::Type<irs::Not>::id(), and_root[1].type());
+  ASSERT_EQ(1, and_root.ExcludesSize());
+  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root.Exclude(0).type());
 }
 
 TEST(filter_optimizer_test, flatten_and) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
+  irs::Filter::ptr root = MakeAnd(
+    MakeAnd(MakeTerm("f1", "A"), MakeTerm("f2", "B")), MakeTerm("f3", "C"));
   auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  auto& inner = and_root.add<irs::And>();
-  Append<irs::ByTerm>(inner, "f1", "A");
-  Append<irs::ByTerm>(inner, "f2", "B");
-  Append<irs::ByTerm>(and_root, "f3", "C");
 
   irs::Optimize(root);
 
@@ -154,13 +151,10 @@ TEST(filter_optimizer_test, flatten_and) {
 }
 
 TEST(filter_optimizer_test, flatten_and_deep) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
+  irs::Filter::ptr root =
+    MakeAnd(MakeAnd(MakeAnd(MakeTerm("f1", "A")), MakeTerm("f2", "B")),
+            MakeTerm("f3", "C"));
   auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  auto& mid = and_root.add<irs::And>();
-  auto& inner = mid.add<irs::And>();
-  Append<irs::ByTerm>(inner, "f1", "A");
-  Append<irs::ByTerm>(mid, "f2", "B");
-  Append<irs::ByTerm>(and_root, "f3", "C");
 
   irs::Optimize(root);
 
@@ -171,13 +165,17 @@ TEST(filter_optimizer_test, flatten_and_deep) {
 }
 
 TEST(filter_optimizer_test, flatten_and_boost_gate) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
+  irs::Filter::ptr root = MakeAnd(
+    [] {
+      std::vector<irs::Filter::ptr> children;
+      children.emplace_back(MakeTerm("name", "A"));
+      children.emplace_back(MakeTerm("name", "B"));
+      auto inner = std::make_unique<irs::And>(std::move(children));
+      inner->boost(2.F);
+      return inner;
+    }(),
+    MakeTerm("name", "C"));
   auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  auto& inner = and_root.add<irs::And>();
-  inner.boost(2.F);
-  Append<irs::ByTerm>(inner, "name", "A");
-  Append<irs::ByTerm>(inner, "name", "B");
-  Append<irs::ByTerm>(and_root, "name", "C");
 
   irs::Optimize(root);
 
@@ -186,13 +184,17 @@ TEST(filter_optimizer_test, flatten_and_boost_gate) {
 }
 
 TEST(filter_optimizer_test, flatten_and_merge_type_gate) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
+  irs::Filter::ptr root = MakeAnd(
+    [] {
+      std::vector<irs::Filter::ptr> children;
+      children.emplace_back(MakeTerm("name", "A"));
+      children.emplace_back(MakeTerm("name", "B"));
+      auto inner = std::make_unique<irs::And>(std::move(children));
+      inner->merge_type(irs::ScoreMergeType::Max);
+      return inner;
+    }(),
+    MakeTerm("name", "C"));
   auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  auto& inner = and_root.add<irs::And>();
-  inner.merge_type(irs::ScoreMergeType::Max);
-  Append<irs::ByTerm>(inner, "name", "A");
-  Append<irs::ByTerm>(inner, "name", "B");
-  Append<irs::ByTerm>(and_root, "name", "C");
 
   irs::Optimize(root);
 
@@ -201,10 +203,8 @@ TEST(filter_optimizer_test, flatten_and_merge_type_gate) {
 }
 
 TEST(filter_optimizer_test, flatten_and_empty_inner_gate) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
+  irs::Filter::ptr root = MakeAnd(MakeAnd(), MakeTerm("name", "C"));
   auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  and_root.add<irs::And>();
-  Append<irs::ByTerm>(and_root, "name", "C");
 
   irs::Optimize(root);
 
@@ -214,12 +214,9 @@ TEST(filter_optimizer_test, flatten_and_empty_inner_gate) {
 }
 
 TEST(filter_optimizer_test, flatten_or) {
-  irs::Filter::ptr root = std::make_unique<irs::Or>();
+  irs::Filter::ptr root = MakeOr(
+    MakeOr(MakeTerm("f1", "A"), MakeTerm("f2", "B")), MakeTerm("f3", "C"));
   auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  auto& inner = or_root.add<irs::Or>();
-  Append<irs::ByTerm>(inner, "f1", "A");
-  Append<irs::ByTerm>(inner, "f2", "B");
-  Append<irs::ByTerm>(or_root, "f3", "C");
 
   irs::Optimize(root);
 
@@ -227,13 +224,11 @@ TEST(filter_optimizer_test, flatten_or) {
 }
 
 TEST(filter_optimizer_test, flatten_or_parent_min_match_gate) {
-  irs::Filter::ptr root = std::make_unique<irs::Or>();
+  irs::Filter::ptr root =
+    MakeOr(MakeOr(MakeTerm("name", "A"), MakeTerm("name", "B")),
+           MakeTerm("name", "C"));
   auto& or_root = sdb::basics::downCast<irs::Or>(*root);
   or_root.min_match_count(2);
-  auto& inner = or_root.add<irs::Or>();
-  Append<irs::ByTerm>(inner, "name", "A");
-  Append<irs::ByTerm>(inner, "name", "B");
-  Append<irs::ByTerm>(or_root, "name", "C");
 
   irs::Optimize(root);
 
@@ -241,13 +236,17 @@ TEST(filter_optimizer_test, flatten_or_parent_min_match_gate) {
 }
 
 TEST(filter_optimizer_test, flatten_or_inner_min_match_gate) {
-  irs::Filter::ptr root = std::make_unique<irs::Or>();
+  irs::Filter::ptr root = MakeOr(
+    [] {
+      std::vector<irs::Filter::ptr> children;
+      children.emplace_back(MakeTerm("name", "A"));
+      children.emplace_back(MakeTerm("name", "B"));
+      auto inner = std::make_unique<irs::Or>(std::move(children));
+      inner->min_match_count(2);
+      return inner;
+    }(),
+    MakeTerm("name", "C"));
   auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  auto& inner = or_root.add<irs::Or>();
-  inner.min_match_count(2);
-  Append<irs::ByTerm>(inner, "name", "A");
-  Append<irs::ByTerm>(inner, "name", "B");
-  Append<irs::ByTerm>(or_root, "name", "C");
 
   irs::Optimize(root);
 
@@ -255,12 +254,16 @@ TEST(filter_optimizer_test, flatten_or_inner_min_match_gate) {
 }
 
 TEST(filter_optimizer_test, flatten_or_zero_min_match_gate) {
-  irs::Filter::ptr root = std::make_unique<irs::Or>();
+  irs::Filter::ptr root = MakeOr(
+    [] {
+      std::vector<irs::Filter::ptr> children;
+      children.emplace_back(MakeTerm("name", "A"));
+      auto inner = std::make_unique<irs::Or>(std::move(children));
+      inner->min_match_count(0);
+      return inner;
+    }(),
+    MakeTerm("name", "C"));
   auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  auto& inner = or_root.add<irs::Or>();
-  inner.min_match_count(0);
-  Append<irs::ByTerm>(inner, "name", "A");
-  Append<irs::ByTerm>(or_root, "name", "C");
 
   irs::Optimize(root);
 
@@ -268,28 +271,34 @@ TEST(filter_optimizer_test, flatten_or_zero_min_match_gate) {
 }
 
 TEST(filter_optimizer_test, mixed_boolean_filter_subtrees) {
-  irs::Filter::ptr root = std::make_unique<irs::MixedBooleanFilter>();
+  std::vector<irs::Filter::ptr> required;
+  required.emplace_back(std::make_unique<irs::Not>(
+    std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>("name", "A"))));
+  std::vector<irs::Filter::ptr> optional;
+  optional.emplace_back(std::make_unique<irs::Not>(
+    std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>("name", "B"))));
+  irs::Filter::ptr root = std::make_unique<irs::MixedBooleanFilter>(
+    std::move(required), std::move(optional));
   auto& mixed = sdb::basics::downCast<irs::MixedBooleanFilter>(*root);
-  mixed.GetRequired().add<irs::Not>().filter<irs::ByTerm>() =
-    MakeFilter<irs::ByTerm>("name", "A");
-  mixed.GetOptional().add<irs::Not>().filter<irs::ByTerm>() =
-    MakeFilter<irs::ByTerm>("name", "B");
 
   irs::Optimize(root);
 
   ASSERT_EQ(irs::Type<irs::MixedBooleanFilter>::id(), root->type());
-  ASSERT_EQ(irs::Type<irs::Not>::id(), mixed.RequiredSlot()->type());
+  ASSERT_EQ(irs::Type<irs::And>::id(), mixed.RequiredSlot()->type());
   ASSERT_EQ(irs::Type<irs::Not>::id(), mixed.OptionalSlot()->type());
   ASSERT_FALSE(mixed.empty());
 }
 
 TEST(filter_optimizer_test, mixed_boolean_filter_keeps_multi_clause_slots) {
-  irs::Filter::ptr root = std::make_unique<irs::MixedBooleanFilter>();
+  std::vector<irs::Filter::ptr> required;
+  required.emplace_back(MakeTerm("f1", "A"));
+  required.emplace_back(MakeTerm("f2", "B"));
+  std::vector<irs::Filter::ptr> optional;
+  optional.emplace_back(MakeTerm("f1", "C"));
+  optional.emplace_back(MakeTerm("f2", "D"));
+  irs::Filter::ptr root = std::make_unique<irs::MixedBooleanFilter>(
+    std::move(required), std::move(optional));
   auto& mixed = sdb::basics::downCast<irs::MixedBooleanFilter>(*root);
-  Append<irs::ByTerm>(mixed.GetRequired(), "f1", "A");
-  Append<irs::ByTerm>(mixed.GetRequired(), "f2", "B");
-  Append<irs::ByTerm>(mixed.GetOptional(), "f1", "C");
-  Append<irs::ByTerm>(mixed.GetOptional(), "f2", "D");
 
   irs::Optimize(root);
 
@@ -299,17 +308,10 @@ TEST(filter_optimizer_test, mixed_boolean_filter_keeps_multi_clause_slots) {
 
 TEST(filter_optimizer_test, idempotent) {
   const auto make = [] {
-    irs::Filter::ptr root = std::make_unique<irs::And>();
-    auto& and_root = sdb::basics::downCast<irs::And>(*root);
-    auto& inner = and_root.add<irs::And>();
-    Append<irs::ByTerm>(inner, "name", "A");
-    inner.add<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("name", "B");
-    auto& sub_or = and_root.add<irs::Or>();
-    auto& sub_sub_or = sub_or.add<irs::Or>();
-    Append<irs::ByTerm>(sub_sub_or, "name", "C");
-    sub_or.add<irs::Not>().filter<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("name", "D");
+    irs::Filter::ptr root =
+      MakeAnd(MakeAnd(MakeTerm("name", "A"), MakeNot(MakeTerm("name", "B"))),
+              MakeOr(MakeOr(MakeTerm("name", "C")),
+                     MakeNot(MakeNot(MakeTerm("name", "D")))));
     return root;
   };
 
@@ -333,13 +335,10 @@ TEST(filter_optimizer_test, leaf_root_pointer_identity) {
 }
 
 TEST(filter_optimizer_test, custom_rule_subset) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
+  irs::Filter::ptr root =
+    MakeAnd(MakeAnd(MakeTerm("name", "A"), MakeTerm("name", "B")),
+            MakeNot(MakeTerm("name", "C")));
   auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  auto& inner = and_root.add<irs::And>();
-  Append<irs::ByTerm>(inner, "name", "A");
-  Append<irs::ByTerm>(inner, "name", "B");
-  and_root.add<irs::Not>().filter<irs::ByTerm>() =
-    MakeFilter<irs::ByTerm>("name", "C");
 
   irs::Optimize(root, {}, irs::kDefaultRules.subspan(1));
 
@@ -350,10 +349,7 @@ TEST(filter_optimizer_test, custom_rule_subset) {
 }
 
 TEST(filter_optimizer_test, and_with_empty_child_collapses) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  Append<irs::ByTerm>(and_root, "name", "A");
-  and_root.add<irs::Empty>();
+  irs::Filter::ptr root = MakeAnd(MakeTerm("name", "A"), Make<irs::Empty>());
 
   irs::Optimize(root);
 
@@ -361,11 +357,9 @@ TEST(filter_optimizer_test, and_with_empty_child_collapses) {
 }
 
 TEST(filter_optimizer_test, or_empty_children_removed) {
-  irs::Filter::ptr root = std::make_unique<irs::Or>();
+  irs::Filter::ptr root =
+    MakeOr(MakeTerm("f1", "A"), Make<irs::Empty>(), MakeTerm("f2", "B"));
   auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  Append<irs::ByTerm>(or_root, "f1", "A");
-  or_root.add<irs::Empty>();
-  Append<irs::ByTerm>(or_root, "f2", "B");
 
   irs::Optimize(root);
 
@@ -374,10 +368,7 @@ TEST(filter_optimizer_test, or_empty_children_removed) {
 }
 
 TEST(filter_optimizer_test, or_all_empty_children_become_empty) {
-  irs::Filter::ptr root = std::make_unique<irs::Or>();
-  auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  or_root.add<irs::Empty>();
-  or_root.add<irs::Empty>();
+  irs::Filter::ptr root = MakeOr(Make<irs::Empty>(), Make<irs::Empty>());
 
   irs::Optimize(root);
 
@@ -385,11 +376,10 @@ TEST(filter_optimizer_test, or_all_empty_children_become_empty) {
 }
 
 TEST(filter_optimizer_test, and_all_fold_unscored_drops_alls) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  Append<irs::ByTerm>(and_root, "name", "A");
-  and_root.add<irs::All>().boost(2.F);
-  and_root.add<irs::All>().boost(3.F);
+  irs::Filter::ptr root =
+    MakeAnd(MakeTerm("name", "A"),
+            Make<irs::All>([](irs::All& all) { all.boost(2.F); }),
+            Make<irs::All>([](irs::All& all) { all.boost(3.F); }));
 
   irs::Optimize(root);
 
@@ -397,11 +387,11 @@ TEST(filter_optimizer_test, and_all_fold_unscored_drops_alls) {
 }
 
 TEST(filter_optimizer_test, and_all_fold_scored_merges) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
+  irs::Filter::ptr root =
+    MakeAnd(MakeTerm("name", "A"),
+            Make<irs::All>([](irs::All& all) { all.boost(2.F); }),
+            Make<irs::All>([](irs::All& all) { all.boost(3.F); }));
   auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  Append<irs::ByTerm>(and_root, "name", "A");
-  and_root.add<irs::All>().boost(2.F);
-  and_root.add<irs::All>().boost(3.F);
 
   const irs::BM25 scorer;
   irs::Optimize(root, {.scorer = &scorer});
@@ -414,10 +404,9 @@ TEST(filter_optimizer_test, and_all_fold_scored_merges) {
 }
 
 TEST(filter_optimizer_test, and_only_alls_becomes_all) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  and_root.add<irs::All>().boost(2.F);
-  and_root.add<irs::All>().boost(3.F);
+  irs::Filter::ptr root =
+    MakeAnd(Make<irs::All>([](irs::All& all) { all.boost(2.F); }),
+            Make<irs::All>([](irs::All& all) { all.boost(3.F); }));
 
   const irs::BM25 scorer;
   irs::Optimize(root, {.scorer = &scorer});
@@ -427,10 +416,10 @@ TEST(filter_optimizer_test, and_only_alls_becomes_all) {
 }
 
 TEST(filter_optimizer_test, and_single_all_scored_unchanged) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
+  irs::Filter::ptr root =
+    MakeAnd(MakeTerm("name", "A"),
+            Make<irs::All>([](irs::All& all) { all.boost(2.F); }));
   auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  Append<irs::ByTerm>(and_root, "name", "A");
-  and_root.add<irs::All>().boost(2.F);
 
   const irs::BM25 scorer;
   irs::Optimize(root, {.scorer = &scorer});
@@ -440,10 +429,7 @@ TEST(filter_optimizer_test, and_single_all_scored_unchanged) {
 }
 
 TEST(filter_optimizer_test, or_all_fold_unscored_prunes_to_all) {
-  irs::Filter::ptr root = std::make_unique<irs::Or>();
-  auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  Append<irs::ByTerm>(or_root, "name", "A");
-  or_root.add<irs::All>();
+  irs::Filter::ptr root = MakeOr(MakeTerm("name", "A"), Make<irs::All>());
 
   irs::Optimize(root);
 
@@ -451,13 +437,12 @@ TEST(filter_optimizer_test, or_all_fold_unscored_prunes_to_all) {
 }
 
 TEST(filter_optimizer_test, or_all_fold_scored_merges_and_adjusts_min_match) {
-  irs::Filter::ptr root = std::make_unique<irs::Or>();
+  irs::Filter::ptr root =
+    MakeOr(MakeTerm("f1", "A"), MakeTerm("f2", "B"),
+           Make<irs::All>([](irs::All& all) { all.boost(2.F); }),
+           Make<irs::All>([](irs::All& all) { all.boost(3.F); }));
   auto& or_root = sdb::basics::downCast<irs::Or>(*root);
   or_root.min_match_count(3);
-  Append<irs::ByTerm>(or_root, "f1", "A");
-  Append<irs::ByTerm>(or_root, "f2", "B");
-  or_root.add<irs::All>().boost(2.F);
-  or_root.add<irs::All>().boost(3.F);
 
   const irs::BM25 scorer;
   irs::Optimize(root, {.scorer = &scorer});
@@ -470,10 +455,10 @@ TEST(filter_optimizer_test, or_all_fold_scored_merges_and_adjusts_min_match) {
 }
 
 TEST(filter_optimizer_test, or_single_all_scored_unchanged) {
-  irs::Filter::ptr root = std::make_unique<irs::Or>();
+  irs::Filter::ptr root =
+    MakeOr(MakeTerm("name", "A"),
+           Make<irs::All>([](irs::All& all) { all.boost(2.F); }));
   auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  Append<irs::ByTerm>(or_root, "name", "A");
-  or_root.add<irs::All>().boost(2.F);
 
   const irs::BM25 scorer;
   irs::Optimize(root, {.scorer = &scorer});
@@ -483,21 +468,20 @@ TEST(filter_optimizer_test, or_single_all_scored_unchanged) {
 }
 
 TEST(filter_optimizer_test, single_child_and_unwraps) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  const auto* term = &Append<irs::ByTerm>(and_root, "name", "A");
+  auto term = MakeTerm("name", "A");
+  const auto* term_ptr = term.get();
+  irs::Filter::ptr root = MakeAnd(std::move(term));
 
   irs::Optimize(root);
 
   ASSERT_EQ(irs::Type<irs::ByTerm>::id(), root->type());
-  ASSERT_EQ(term, root.get());
+  ASSERT_EQ(term_ptr, root.get());
 }
 
 TEST(filter_optimizer_test, single_child_or_min_match_gate) {
-  irs::Filter::ptr root = std::make_unique<irs::Or>();
+  irs::Filter::ptr root = MakeOr(MakeTerm("name", "A"));
   auto& or_root = sdb::basics::downCast<irs::Or>(*root);
   or_root.min_match_count(2);
-  Append<irs::ByTerm>(or_root, "name", "A");
 
   irs::Optimize(root);
 
@@ -505,11 +489,9 @@ TEST(filter_optimizer_test, single_child_or_min_match_gate) {
 }
 
 TEST(filter_optimizer_test, single_child_boost_gate) {
-  const auto make = [] {
-    irs::Filter::ptr root = std::make_unique<irs::And>();
-    auto& and_root = sdb::basics::downCast<irs::And>(*root);
-    and_root.boost(2.F);
-    Append<irs::ByTerm>(and_root, "name", "A");
+  const auto make = []() -> irs::Filter::ptr {
+    auto root = MakeAnd(MakeTerm("name", "A"));
+    root->boost(2.F);
     return root;
   };
 
@@ -524,11 +506,9 @@ TEST(filter_optimizer_test, single_child_boost_gate) {
 }
 
 TEST(filter_optimizer_test, by_terms_and) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  and_root.boost(2.F);
-  Append<irs::ByTerm>(and_root, "name", "A");
-  Append<irs::ByTerm>(and_root, "name", "B");
+  auto and_root = MakeAnd(MakeTerm("name", "A"), MakeTerm("name", "B"));
+  and_root->boost(2.F);
+  irs::Filter::ptr root = std::move(and_root);
 
   const irs::BM25 scorer;
   irs::Optimize(root, {.scorer = &scorer});
@@ -542,10 +522,7 @@ TEST(filter_optimizer_test, by_terms_and) {
 }
 
 TEST(filter_optimizer_test, by_terms_or) {
-  irs::Filter::ptr root = std::make_unique<irs::Or>();
-  auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  Append<irs::ByTerm>(or_root, "name", "A");
-  Append<irs::ByTerm>(or_root, "name", "B");
+  irs::Filter::ptr root = MakeOr(MakeTerm("name", "A"), MakeTerm("name", "B"));
 
   irs::Optimize(root);
 
@@ -556,10 +533,9 @@ TEST(filter_optimizer_test, by_terms_or) {
 }
 
 TEST(filter_optimizer_test, by_terms_field_gate) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
+  irs::Filter::ptr root =
+    MakeAnd(MakeTerm("name", "A"), MakeTerm("other", "B"));
   auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  Append<irs::ByTerm>(and_root, "name", "A");
-  Append<irs::ByTerm>(and_root, "other", "B");
 
   irs::Optimize(root);
 
@@ -568,12 +544,10 @@ TEST(filter_optimizer_test, by_terms_field_gate) {
 }
 
 TEST(filter_optimizer_test, by_terms_or_duplicate_gate) {
-  irs::Filter::ptr root = std::make_unique<irs::Or>();
+  irs::Filter::ptr root =
+    MakeOr(MakeTerm("name", "A"), MakeTerm("name", "A"), MakeTerm("name", "B"));
   auto& or_root = sdb::basics::downCast<irs::Or>(*root);
   or_root.min_match_count(2);
-  Append<irs::ByTerm>(or_root, "name", "A");
-  Append<irs::ByTerm>(or_root, "name", "A");
-  Append<irs::ByTerm>(or_root, "name", "B");
 
   irs::Optimize(root);
 
@@ -600,9 +574,8 @@ TEST_P(FilterOptimizerTestCase, optimized_equals_naive) {
 
   {
     const auto make = [] {
-      irs::Filter::ptr root = std::make_unique<irs::Not>();
-      sdb::basics::downCast<irs::Not>(*root).filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+      irs::Filter::ptr root = std::make_unique<irs::Not>(
+        std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>("name", "A")));
       return root;
     };
     auto naive = make();
@@ -614,11 +587,8 @@ TEST_P(FilterOptimizerTestCase, optimized_equals_naive) {
 
   {
     const auto make = [] {
-      irs::Filter::ptr root = std::make_unique<irs::And>();
-      auto& and_root = sdb::basics::downCast<irs::And>(*root);
-      Append<irs::ByTerm>(and_root, "duplicated", "abcd");
-      and_root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+      irs::Filter::ptr root =
+        MakeAnd(MakeTerm("duplicated", "abcd"), MakeNot(MakeTerm("name", "A")));
       return root;
     };
     auto naive = make();
@@ -630,11 +600,8 @@ TEST_P(FilterOptimizerTestCase, optimized_equals_naive) {
 
   {
     const auto make = [] {
-      irs::Filter::ptr root = std::make_unique<irs::Or>();
-      auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-      Append<irs::ByTerm>(or_root, "duplicated", "abcd");
-      or_root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+      irs::Filter::ptr root =
+        MakeOr(MakeTerm("duplicated", "abcd"), MakeNot(MakeTerm("name", "A")));
       return root;
     };
     auto naive = make();
@@ -646,10 +613,9 @@ TEST_P(FilterOptimizerTestCase, optimized_equals_naive) {
 
   {
     const auto make = [] {
-      irs::Filter::ptr root = std::make_unique<irs::Not>();
-      sdb::basics::downCast<irs::Not>(*root)
-        .filter<irs::Not>()
-        .filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("name", "A");
+      irs::Filter::ptr root =
+        std::make_unique<irs::Not>(std::make_unique<irs::Not>(
+          std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>("name", "A"))));
       return root;
     };
     auto naive = make();
@@ -661,10 +627,8 @@ TEST_P(FilterOptimizerTestCase, optimized_equals_naive) {
 
   {
     const auto make = [] {
-      irs::Filter::ptr root = std::make_unique<irs::Or>();
-      auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-      Append<irs::ByTerm>(or_root, "name", "V");
-      or_root.add<irs::Not>().filter<irs::All>();
+      irs::Filter::ptr root =
+        MakeOr(MakeTerm("name", "V"), MakeNot(Make<irs::All>()));
       return root;
     };
     auto naive = make();
@@ -676,10 +640,8 @@ TEST_P(FilterOptimizerTestCase, optimized_equals_naive) {
 
   {
     const auto make = [] {
-      irs::Filter::ptr root = std::make_unique<irs::And>();
-      auto& and_root = sdb::basics::downCast<irs::And>(*root);
-      Append<irs::ByTerm>(and_root, "name", "V");
-      and_root.add<irs::Not>().filter<irs::All>();
+      irs::Filter::ptr root =
+        MakeAnd(MakeTerm("name", "V"), MakeNot(Make<irs::All>()));
       return root;
     };
     auto naive = make();
@@ -691,13 +653,9 @@ TEST_P(FilterOptimizerTestCase, optimized_equals_naive) {
 
   {
     const auto make = [] {
-      irs::Filter::ptr root = std::make_unique<irs::And>();
-      auto& and_root = sdb::basics::downCast<irs::And>(*root);
-      auto& inner = and_root.add<irs::And>();
-      Append<irs::ByTerm>(inner, "duplicated", "abcd");
-      Append<irs::ByTerm>(inner, "same", "xyz");
-      and_root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+      irs::Filter::ptr root = MakeAnd(
+        MakeAnd(MakeTerm("duplicated", "abcd"), MakeTerm("same", "xyz")),
+        MakeNot(MakeTerm("name", "A")));
       return root;
     };
     auto naive = make();

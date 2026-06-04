@@ -130,14 +130,15 @@ std::vector<std::vector<WsToken>> GroupWebsearch(
 
 void ParseWebsearchQuery(std::string_view text,
                          const SearchColumnInfo& column_info,
-                         const FilterContext& ctx, irs::BooleanFilter& parent) {
+                         const FilterContext& ctx,
+                         BooleanFilterBuilder& parent) {
   const auto groups = GroupWebsearch(LexWebsearch(text));
   if (groups.empty()) {
     AddFilter<irs::Empty>(parent);
     return;
   }
 
-  auto emit_atom = [&](const WsToken& tok, irs::BooleanFilter& into,
+  auto emit_atom = [&](const WsToken& tok, BooleanFilterBuilder& into,
                        const FilterContext& c) {
     auto ac = c;
     ac.negated = c.negated ^ tok.negated;
@@ -149,7 +150,7 @@ void ParseWebsearchQuery(std::string_view text,
   };
 
   auto emit_group = [&](const std::vector<WsToken>& group,
-                        irs::BooleanFilter& into, const FilterContext& c) {
+                        BooleanFilterBuilder& into, const FilterContext& c) {
     if (group.size() == 1) {
       emit_atom(group[0], into, c);
       return;
@@ -183,7 +184,7 @@ void ParseWebsearchQuery(std::string_view text,
 
 }  // namespace
 
-void FromPlainToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromPlainToTsquery(BooleanFilterBuilder& parent, const FilterContext& ctx,
                         const SearchColumnInfo& column_info,
                         const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
@@ -200,7 +201,7 @@ void FromPlainToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
 
 // websearch_to_tsquery(text): PG-style web-search syntax (quoted
 // phrases, OR keyword, leading `-` for NOT).
-void FromWebsearchToTsquery(irs::BooleanFilter& parent,
+void FromWebsearchToTsquery(BooleanFilterBuilder& parent,
                             const FilterContext& ctx,
                             const SearchColumnInfo& column_info,
                             const duckdb::BoundFunctionExpression& func) {
@@ -220,7 +221,7 @@ void FromWebsearchToTsquery(irs::BooleanFilter& parent,
 // tsquery_phrase(q1, q2 [, distance]): function form of `##`, PG
 // semantics (distance = lexemes apart, N=1 = adjacent). Same shape as
 // the `##` walker: flatten + emit.
-void FromTsqueryPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromTsqueryPhrase(BooleanFilterBuilder& parent, const FilterContext& ctx,
                        const SearchColumnInfo& column_info,
                        const duckdb::BoundFunctionExpression& func) {
   PhraseSeq seq;
@@ -228,7 +229,7 @@ void FromTsqueryPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
   EmitPhraseSeq(parent, ctx, column_info, seq);
 }
 
-void FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromToTsquery(BooleanFilterBuilder& parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info,
                    const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
@@ -246,7 +247,6 @@ void FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
   search::mangling::MangleString(field_name);
   auto& mixed = ctx.negated ? Negate<irs::MixedBooleanFilter>(parent)
                             : AddFilter<irs::MixedBooleanFilter>(parent);
-  mixed.boost(ctx.boost);
   sdb::ParserContext parser_ctx{mixed, field_name, ctx.tokenizer};
   parser_ctx.strict_field = true;
   if (auto r = sdb::ParseQuery(parser_ctx, text); !r.ok()) {
@@ -254,6 +254,7 @@ void FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
                     ERR_MSG("to_tsquery parse error: ", r.errorMessage()),
                     ERR_HINT(kSyntaxHint));
   }
+  mixed.boost(ctx.boost);
 }
 
 }  // namespace sdb::connector

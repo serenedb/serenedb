@@ -6100,18 +6100,20 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1, 3).term =
       irs::ViewCast<irs::byte_type>(std::string_view("second"));
 
-    irs::Or disjunction;
+    std::vector<irs::Filter::ptr> phrases;
     auto add_phrase = [&](size_t off) {
-      auto& ph = disjunction.add<irs::ByPhrase>();
-      *ph.mutable_field() = "phrase_anl";
-      ph.mutable_options()->push_back<irs::ByTermOptions>().term =
-        irs::ViewCast<irs::byte_type>(std::string_view("fox"));
-      ph.mutable_options()->push_back<irs::ByTermOptions>(off).term =
-        irs::ViewCast<irs::byte_type>(std::string_view("second"));
+      phrases.emplace_back(tests::Make<irs::ByPhrase>([&](irs::ByPhrase& ph) {
+        *ph.mutable_field() = "phrase_anl";
+        ph.mutable_options()->push_back<irs::ByTermOptions>().term =
+          irs::ViewCast<irs::byte_type>(std::string_view("fox"));
+        ph.mutable_options()->push_back<irs::ByTermOptions>(off).term =
+          irs::ViewCast<irs::byte_type>(std::string_view("second"));
+      }));
     };
     add_phrase(0);
     add_phrase(1);
     add_phrase(2);
+    irs::Or disjunction{std::move(phrases)};
 
     tests::sort::CustomSort sort;
     irs::DocIterator* it = nullptr;
@@ -6344,16 +6346,17 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(2, 4).term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
 
-    irs::Or disjunction;
+    std::vector<irs::Filter::ptr> phrases;
     auto add_phrase = [&](size_t off1, size_t off2) {
-      auto& ph = disjunction.add<irs::ByPhrase>();
-      *ph.mutable_field() = "phrase_anl";
-      ph.mutable_options()->push_back<irs::ByTermOptions>().term =
-        irs::ViewCast<irs::byte_type>(std::string_view("fox"));
-      ph.mutable_options()->push_back<irs::ByTermOptions>(off1).term =
-        irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-      ph.mutable_options()->push_back<irs::ByTermOptions>(off2).term =
-        irs::ViewCast<irs::byte_type>(std::string_view("brown"));
+      phrases.emplace_back(tests::Make<irs::ByPhrase>([&](irs::ByPhrase& ph) {
+        *ph.mutable_field() = "phrase_anl";
+        ph.mutable_options()->push_back<irs::ByTermOptions>().term =
+          irs::ViewCast<irs::byte_type>(std::string_view("fox"));
+        ph.mutable_options()->push_back<irs::ByTermOptions>(off1).term =
+          irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+        ph.mutable_options()->push_back<irs::ByTermOptions>(off2).term =
+          irs::ViewCast<irs::byte_type>(std::string_view("brown"));
+      }));
     };
     add_phrase(1, 1);
     add_phrase(1, 2);
@@ -6364,6 +6367,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     add_phrase(3, 1);
     add_phrase(3, 2);
     add_phrase(3, 3);
+    irs::Or disjunction{std::move(phrases)};
 
     tests::sort::CustomSort sort;
     irs::DocIterator* it = nullptr;
@@ -6473,21 +6477,23 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     q.mutable_options()->push_back<irs::ByPrefixOptions>(2, 3).term =
       irs::ViewCast<irs::byte_type>(std::string_view("bro"));
 
-    irs::Or disjunction;
+    std::vector<irs::Filter::ptr> phrases;
     auto add_phrase = [&](size_t off1, size_t off2) {
-      auto& ph = disjunction.add<irs::ByPhrase>();
-      *ph.mutable_field() = "phrase_anl";
-      ph.mutable_options()->push_back<irs::ByPrefixOptions>().term =
-        irs::ViewCast<irs::byte_type>(std::string_view("fo"));
-      ph.mutable_options()->push_back<irs::ByPrefixOptions>(off1).term =
-        irs::ViewCast<irs::byte_type>(std::string_view("qui"));
-      ph.mutable_options()->push_back<irs::ByPrefixOptions>(off2).term =
-        irs::ViewCast<irs::byte_type>(std::string_view("bro"));
+      phrases.emplace_back(tests::Make<irs::ByPhrase>([&](irs::ByPhrase& ph) {
+        *ph.mutable_field() = "phrase_anl";
+        ph.mutable_options()->push_back<irs::ByPrefixOptions>().term =
+          irs::ViewCast<irs::byte_type>(std::string_view("fo"));
+        ph.mutable_options()->push_back<irs::ByPrefixOptions>(off1).term =
+          irs::ViewCast<irs::byte_type>(std::string_view("qui"));
+        ph.mutable_options()->push_back<irs::ByPrefixOptions>(off2).term =
+          irs::ViewCast<irs::byte_type>(std::string_view("bro"));
+      }));
     };
     add_phrase(3, 1);
     add_phrase(3, 2);
     add_phrase(4, 1);
     add_phrase(4, 2);
+    irs::Or disjunction{std::move(phrases)};
 
     tests::sort::CustomSort sort;
     irs::DocIterator* it = nullptr;
@@ -6597,21 +6603,23 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1, 4).term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
 
-    irs::Or disjunction;
+    std::vector<irs::Filter::ptr> phrases;
     auto add_phrase = [&](size_t off1, size_t off2) {
-      auto& ph = disjunction.add<irs::ByPhrase>();
-      *ph.mutable_field() = "phrase_anl";
-      ph.mutable_options()->push_back<irs::ByTermOptions>().term =
-        irs::ViewCast<irs::byte_type>(std::string_view("zoo"));
-      ph.mutable_options()->push_back<irs::ByTermOptions>(off1).term =
-        irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-      ph.mutable_options()->push_back<irs::ByTermOptions>(off2).term =
-        irs::ViewCast<irs::byte_type>(std::string_view("brown"));
+      phrases.emplace_back(tests::Make<irs::ByPhrase>([&](irs::ByPhrase& ph) {
+        *ph.mutable_field() = "phrase_anl";
+        ph.mutable_options()->push_back<irs::ByTermOptions>().term =
+          irs::ViewCast<irs::byte_type>(std::string_view("zoo"));
+        ph.mutable_options()->push_back<irs::ByTermOptions>(off1).term =
+          irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+        ph.mutable_options()->push_back<irs::ByTermOptions>(off2).term =
+          irs::ViewCast<irs::byte_type>(std::string_view("brown"));
+      }));
     };
     add_phrase(0, 0);
     add_phrase(0, 1);
     add_phrase(0, 2);
     add_phrase(0, 3);
+    irs::Or disjunction{std::move(phrases)};
 
     tests::sort::CustomSort sort;
     irs::DocIterator* it = nullptr;
@@ -7233,8 +7241,7 @@ TEST_P(PhraseFilterTestCase, sequential_negation_regression) {
   const auto phrase_hits = collect(phrase);
   ASSERT_FALSE(phrase_hits.empty());
 
-  irs::Not not_phrase;
-  not_phrase.filter<irs::ByPhrase>() = phrase;
+  irs::Not not_phrase{std::make_unique<irs::ByPhrase>(phrase)};
   const auto not_hits = collect(not_phrase);
 
   // Complement must be non-empty and disjoint from the positive hits.

@@ -139,7 +139,7 @@ Result ParseGeoConstant(const duckdb::Value& value,
 // ---------------------------------------------------------------------------
 
 ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
-  irs::BooleanFilter& parent, const FilterContext& ctx,
+  BooleanFilterBuilder& parent, const FilterContext& ctx,
   const duckdb::BoundFunctionExpression& geo_call,
   const duckdb::Expression& dist_expr) {
   SDB_ASSERT(geo_call.children.size() == 2);
@@ -229,7 +229,7 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
 // default to inclusive.
 // ---------------------------------------------------------------------------
 
-Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
+Result FromGeoInRange(BooleanFilterBuilder& filter, const FilterContext& ctx,
                       const duckdb::BoundFunctionExpression& func) {
   const auto num_inputs = func.children.size();
   if (num_inputs < 4 || num_inputs > 6) {
@@ -340,7 +340,7 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
 // pick different GeoFilterType values.
 // ---------------------------------------------------------------------------
 
-Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
+Result FromGeoFilter(BooleanFilterBuilder& filter, const FilterContext& ctx,
                      const duckdb::BoundFunctionExpression& func) {
   if (func.children.size() != 2) {
     return {ERROR_BAD_PARAMETER, func.function.GetName(), " has ",
@@ -466,7 +466,7 @@ const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
 
 // ST_Distance_Centroid(field, centroid) OP distance  --  range one-sided.
 Result FromGeoDistanceComparison(
-  irs::BooleanFilter& filter, const FilterContext& ctx,
+  BooleanFilterBuilder& filter, const FilterContext& ctx,
   const duckdb::BoundFunctionExpression& geo_call,
   const duckdb::Expression& dist_expr, ComparisonOp op) {
   auto setup = PrepareGeoDistanceFilter(filter, ctx, geo_call, dist_expr);
@@ -499,7 +499,7 @@ Result FromGeoDistanceComparison(
 }
 
 // ST_Distance_Centroid(field, centroid) = distance  --  point range [d, d].
-Result FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
+Result FromGeoDistanceBinaryEq(BooleanFilterBuilder& filter,
                                const FilterContext& ctx,
                                const duckdb::BoundFunctionExpression& geo_call,
                                const duckdb::Expression& dist_expr) {
@@ -516,7 +516,7 @@ Result FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
 }
 
 std::optional<Result> TryDispatchGeoFunction(
-  irs::BooleanFilter& filter, const FilterContext& ctx,
+  BooleanFilterBuilder& filter, const FilterContext& ctx,
   const duckdb::BoundFunctionExpression& func) {
   const auto& name = func.function.GetName();
   if (name == kGeoInRange) {

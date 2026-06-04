@@ -284,37 +284,48 @@ void SetUpPhrase(irs::ByPhrase& f) {
 }
 
 void SetUpAnd(irs::And& a) {
-  auto& f1 = a.add<irs::ByTerm>();
-  *f1.mutable_field() = "kw";
-  f1.mutable_options()->term = AsBytes("term_0042");
+  std::vector<irs::Filter::ptr> children;
 
-  auto& f2 = a.add<irs::ByPrefix>();
-  *f2.mutable_field() = "kw";
-  f2.mutable_options()->term = AsBytes("term_0");
+  auto f1 = std::make_unique<irs::ByTerm>();
+  *f1->mutable_field() = "kw";
+  f1->mutable_options()->term = AsBytes("term_0042");
+  children.emplace_back(std::move(f1));
 
-  auto& f3 = a.add<irs::ByRange>();
-  *f3.mutable_field() = "kw";
-  auto& range = f3.mutable_options()->range;
+  auto f2 = std::make_unique<irs::ByPrefix>();
+  *f2->mutable_field() = "kw";
+  f2->mutable_options()->term = AsBytes("term_0");
+  children.emplace_back(std::move(f2));
+
+  auto f3 = std::make_unique<irs::ByRange>();
+  *f3->mutable_field() = "kw";
+  auto& range = f3->mutable_options()->range;
   range.min = AsBytes("term_0000");
   range.min_type = irs::BoundType::Inclusive;
   range.max = AsBytes("term_0100");
   range.max_type = irs::BoundType::Inclusive;
+  children.emplace_back(std::move(f3));
+
+  a = irs::And{std::move(children)};
 }
 
 void SetUpOr(irs::Or& o) {
   static constexpr std::array<std::string_view, 3> kTerms{
     "term_0042", "term_0100", "term_0250"};
+  std::vector<irs::Filter::ptr> children;
   for (auto t : kTerms) {
-    auto& f = o.add<irs::ByTerm>();
-    *f.mutable_field() = "kw";
-    f.mutable_options()->term = AsBytes(t);
+    auto f = std::make_unique<irs::ByTerm>();
+    *f->mutable_field() = "kw";
+    f->mutable_options()->term = AsBytes(t);
+    children.emplace_back(std::move(f));
   }
+  o = irs::Or{std::move(children)};
 }
 
 void SetUpNot(irs::Not& n) {
-  auto& inner = n.filter<irs::ByTerm>();
-  *inner.mutable_field() = "kw";
-  inner.mutable_options()->term = AsBytes("term_0042");
+  auto inner = std::make_unique<irs::ByTerm>();
+  *inner->mutable_field() = "kw";
+  inner->mutable_options()->term = AsBytes("term_0042");
+  n = irs::Not{std::move(inner)};
 }
 
 }  // namespace

@@ -183,8 +183,9 @@ static void EnsureDefaultMatchAllSearchScan(duckdb::ClientContext& context,
   SDB_ASSERT(bind_data.IsInvertedIndexEntry());
   SDB_ASSERT(bind_data.inverted_index);
 
-  auto root = std::make_shared<irs::And>();
-  root->add<irs::All>();
+  std::vector<irs::Filter::ptr> children;
+  children.emplace_back(std::make_unique<irs::All>());
+  auto root = std::make_shared<irs::And>(std::move(children));
   auto search = std::make_unique<SearchScan>();
   search->snapshot = GetSereneDBContext(context).EnsureSearchSnapshot(
     bind_data.inverted_index->GetId());

@@ -325,18 +325,18 @@ const duckdb::Expression& UnwrapBoostBoolCoercion(
   return *cast.child;
 }
 
-Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
+Result FromExpression(BooleanFilterBuilder& filter, const FilterContext& ctx,
                       const duckdb::Expression& expr);
-void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
+void FromTSQueryMatch(BooleanFilterBuilder& filter, const FilterContext& ctx,
                       const duckdb::Expression& lhs,
                       const duckdb::Expression& rhs);
 
 template<typename Filter>
-Result MakeGroup(irs::BooleanFilter& parent, const FilterContext& ctx,
+Result MakeGroup(BooleanFilterBuilder& parent, const FilterContext& ctx,
                  const duckdb::BoundConjunctionExpression& conj) {
   auto sub_ctx = ctx;
   sub_ctx.boost = irs::kNoBoost;
-  irs::BooleanFilter* group_root;
+  BooleanFilterBuilder* group_root;
   if (ctx.negated && absl::c_all_of(conj.children, [](const auto& child) {
         SDB_ASSERT(child);
         return IsComparisonExpr(*child);
@@ -345,13 +345,13 @@ Result MakeGroup(irs::BooleanFilter& parent, const FilterContext& ctx,
     // consume negation by inversion so we can reduce NOT filters.
     group_root =
       irs::Type<Filter>::id() == irs::Type<irs::And>::id()
-        ? static_cast<irs::BooleanFilter*>(&AddFilter<irs::Or>(parent))
-        : static_cast<irs::BooleanFilter*>(&AddFilter<irs::And>(parent));
+        ? static_cast<BooleanFilterBuilder*>(&AddFilter<irs::Or>(parent))
+        : static_cast<BooleanFilterBuilder*>(&AddFilter<irs::And>(parent));
   } else {
     group_root =
       ctx.negated
-        ? static_cast<irs::BooleanFilter*>(&Negate<Filter>(parent))
-        : static_cast<irs::BooleanFilter*>(&AddFilter<Filter>(parent));
+        ? static_cast<BooleanFilterBuilder*>(&Negate<Filter>(parent))
+        : static_cast<BooleanFilterBuilder*>(&AddFilter<Filter>(parent));
     sub_ctx.negated = false;
   }
   group_root->boost(ctx.boost);
@@ -364,7 +364,7 @@ Result MakeGroup(irs::BooleanFilter& parent, const FilterContext& ctx,
   return {};
 }
 
-Result FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
+Result FromIsNull(BooleanFilterBuilder& filter, const FilterContext& ctx,
                   const duckdb::BoundOperatorExpression& op_expr) {
   SDB_ASSERT(op_expr.children.size() == 1);
   const auto* column_info = FindColumnInfoForExpr(ctx, *op_expr.children[0]);
@@ -385,7 +385,7 @@ Result FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
 }
 
 template<bool GenericVersion>
-Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
+Result FromBinaryEq(BooleanFilterBuilder& filter, const FilterContext& ctx,
                     const duckdb::Expression& left_expr,
                     const duckdb::Expression& right_expr, bool not_equal) {
   // ST_Distance_Centroid(field, centroid) = / != distance  --  rewrite to
@@ -438,7 +438,7 @@ Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
 }
 
 template<bool GenericVersion>
-Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
+Result FromComparison(BooleanFilterBuilder& filter, const FilterContext& ctx,
                       const duckdb::Expression& field_expr,
                       const duckdb::Expression& value_expr, ComparisonOp op) {
   if (ctx.negated) {
@@ -545,7 +545,7 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
   return {};
 }
 
-Result FromBetween(irs::BooleanFilter& filter, const FilterContext& ctx,
+Result FromBetween(BooleanFilterBuilder& filter, const FilterContext& ctx,
                    const duckdb::BoundFunctionExpression& between) {
   // Decompose BETWEEN into conjunction of two range comparisons.
   // BETWEEN a AND b  =>  field >= a (or >) AND field <= b (or <)
@@ -608,7 +608,7 @@ Result FromBetween(irs::BooleanFilter& filter, const FilterContext& ctx,
 }
 
 template<bool GenericVersion>
-Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
+Result FromIn(BooleanFilterBuilder& filter, const FilterContext& ctx,
               const duckdb::BoundOperatorExpression& op_expr) {
   SDB_ASSERT(op_expr.children.size() >= 2);
 
@@ -768,7 +768,7 @@ constexpr containers::TrivialBiMap kSugarBuilders = [](auto selector) {
     .Case(kHasAnyTokens, BuildAnyToken);
 };
 
-Result FromPredicate(irs::BooleanFilter& filter, const FilterContext& ctx,
+Result FromPredicate(BooleanFilterBuilder& filter, const FilterContext& ctx,
                      PredicateInnerBuilder build_inner,
                      const duckdb::BoundFunctionExpression& func) {
   SDB_ASSERT(!func.children.empty());
@@ -862,7 +862,7 @@ constexpr containers::TrivialBiMap kBuiltinBuilder = [](auto selector) {
     .Case("~~", &BuildTSLike);
 };
 
-Result FromFunctionExpression(irs::BooleanFilter& filter,
+Result FromFunctionExpression(BooleanFilterBuilder& filter,
                               const FilterContext& ctx,
                               const duckdb::BoundFunctionExpression& func) {
   std::string_view name = func.function.GetName();
@@ -936,13 +936,13 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
   return {ERROR_NOT_IMPLEMENTED, "Unsupported function: ", name};
 }
 
-void FromTSQueryConjunction(irs::BooleanFilter& parent,
+void FromTSQueryConjunction(BooleanFilterBuilder& parent,
                             const FilterContext& ctx,
                             const SearchColumnInfo& column_info,
                             const duckdb::BoundFunctionExpression& func,
                             bool is_and) {
   SDB_ASSERT(func.children.size() == 2);
-  irs::BooleanFilter* group;
+  BooleanFilterBuilder* group;
   if (is_and) {
     group =
       ctx.negated ? &Negate<irs::And>(parent) : &AddFilter<irs::And>(parent);
@@ -962,7 +962,7 @@ void FromTSQueryConjunction(irs::BooleanFilter& parent,
 // TSQUERY `!!` -- prefix NOT. Flips ctx.negated and recurses; no new
 // filter node is added at this level (the inner expression's emitter
 // will wrap itself in irs::Not when ctx.negated is true).
-void FromTSQueryNot(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromTSQueryNot(BooleanFilterBuilder& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info,
                     const duckdb::BoundFunctionExpression& func) {
   SDB_ASSERT(func.children.size() == 1);
@@ -973,7 +973,7 @@ void FromTSQueryNot(irs::BooleanFilter& parent, const FilterContext& ctx,
 
 // TSQUERY `^` -- boost. Multiplies the inherited ctx.boost by the
 // factor and recurses into the inner expression.
-void FromTSQueryBoost(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromTSQueryBoost(BooleanFilterBuilder& parent, const FilterContext& ctx,
                       const SearchColumnInfo& column_info,
                       const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
@@ -999,7 +999,8 @@ void FromTSQueryBoost(irs::BooleanFilter& parent, const FilterContext& ctx,
 // and recurses on the inner. Returns false if `peeled` carries no
 // boost modifier; true if it claimed and dispatched the cast (any
 // dispatch failure throws via the inner BuildTSQuery / BuildFts*).
-bool TryDispatchBoostCast(irs::BooleanFilter& parent, const FilterContext& ctx,
+bool TryDispatchBoostCast(BooleanFilterBuilder& parent,
+                          const FilterContext& ctx,
                           const SearchColumnInfo& column_info,
                           const duckdb::Expression& peeled) {
   if (peeled.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
@@ -1030,7 +1031,7 @@ bool TryDispatchBoostCast(irs::BooleanFilter& parent, const FilterContext& ctx,
   return false;
 }
 
-bool TryDispatchSqlBoostCast(irs::BooleanFilter& filter,
+bool TryDispatchSqlBoostCast(BooleanFilterBuilder& filter,
                              const FilterContext& ctx,
                              const duckdb::Expression& peeled) {
   if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
@@ -1058,7 +1059,7 @@ bool TryDispatchSqlBoostCast(irs::BooleanFilter& filter,
 // `(...)::tokenize('<name>')` -- 'keyword' bypasses tokenisation;
 // any other name resolves via the catalog. Returns false if `peeled`
 // carries no tokenize modifier.
-bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
+bool TryDispatchTokenizeCast(BooleanFilterBuilder& parent,
                              const FilterContext& ctx,
                              const SearchColumnInfo& column_info,
                              const duckdb::Expression& peeled) {
@@ -1125,7 +1126,7 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
 }
 
 // `@@` is commutative -- either side may be the column.
-void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
+void FromTSQueryMatch(BooleanFilterBuilder& filter, const FilterContext& ctx,
                       const duckdb::Expression& lhs,
                       const duckdb::Expression& rhs) {
   // `@@` accepts either a bare column reference or a JSON-path expression
@@ -1161,7 +1162,7 @@ void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
   BuildTSQuery(filter, sub_ctx, *column_info, expr);
 }
 
-Result FromComparisonExpression(irs::BooleanFilter& filter,
+Result FromComparisonExpression(BooleanFilterBuilder& filter,
                                 const FilterContext& ctx,
                                 const duckdb::BoundFunctionExpression& cmp) {
   const auto& left = duckdb::BoundComparisonExpression::Left(cmp);
@@ -1185,7 +1186,7 @@ Result FromComparisonExpression(irs::BooleanFilter& filter,
   }
 }
 
-Result FromOperatorExpression(irs::BooleanFilter& filter,
+Result FromOperatorExpression(BooleanFilterBuilder& filter,
                               const FilterContext& ctx,
                               const duckdb::BoundOperatorExpression& op_expr) {
   const auto op_type = op_expr.GetExpressionType();
@@ -1216,7 +1217,7 @@ Result FromOperatorExpression(irs::BooleanFilter& filter,
   }
 }
 
-Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
+Result FromExpression(BooleanFilterBuilder& filter, const FilterContext& ctx,
                       const duckdb::Expression& expr) {
   // Peel the BOOSTED_TSQUERY -> BOOLEAN coercion that the WHERE-binder
   // inserts around `(predicate)::boost(K)` at the predicate root.
@@ -1600,53 +1601,53 @@ Result GetDoubleArg(const duckdb::Expression& expr, std::string_view label,
 }
 
 // All From* entry points throw THROW_SQL_ERROR on failure.
-void FromPhrase(irs::BooleanFilter&, const FilterContext&,
+void FromPhrase(BooleanFilterBuilder&, const FilterContext&,
                 const SearchColumnInfo&,
                 const duckdb::BoundFunctionExpression&);
-void FromNgram(irs::BooleanFilter&, const FilterContext&,
+void FromNgram(BooleanFilterBuilder&, const FilterContext&,
                const SearchColumnInfo&, const duckdb::BoundFunctionExpression&);
-void FromLevenshtein(irs::BooleanFilter&, const FilterContext&,
+void FromLevenshtein(BooleanFilterBuilder&, const FilterContext&,
                      const SearchColumnInfo&,
                      const duckdb::BoundFunctionExpression&);
-void FromTerm(irs::BooleanFilter&, const FilterContext&,
+void FromTerm(BooleanFilterBuilder&, const FilterContext&,
               const SearchColumnInfo&, const duckdb::BoundFunctionExpression&);
-void FromLike(irs::BooleanFilter&, const FilterContext&,
+void FromLike(BooleanFilterBuilder&, const FilterContext&,
               const SearchColumnInfo&, const duckdb::BoundFunctionExpression&);
-void FromPrefix(irs::BooleanFilter&, const FilterContext&,
+void FromPrefix(BooleanFilterBuilder&, const FilterContext&,
                 const SearchColumnInfo&,
                 const duckdb::BoundFunctionExpression&);
-void FromTokenize(irs::BooleanFilter&, const FilterContext&,
+void FromTokenize(BooleanFilterBuilder&, const FilterContext&,
                   const SearchColumnInfo&,
                   const duckdb::BoundFunctionExpression&);
-void FromHalfRange(irs::BooleanFilter&, const FilterContext&,
+void FromHalfRange(BooleanFilterBuilder&, const FilterContext&,
                    const SearchColumnInfo&,
                    const duckdb::BoundFunctionExpression&,
                    std::string_view label, bool is_lower, bool inclusive);
-void FromRegexp(irs::BooleanFilter&, const FilterContext&,
+void FromRegexp(BooleanFilterBuilder&, const FilterContext&,
                 const SearchColumnInfo&,
                 const duckdb::BoundFunctionExpression&);
-void FromBetween(irs::BooleanFilter&, const FilterContext&,
+void FromBetween(BooleanFilterBuilder&, const FilterContext&,
                  const SearchColumnInfo&,
                  const duckdb::BoundFunctionExpression&);
-void FromCompound(irs::BooleanFilter&, const FilterContext&,
+void FromCompound(BooleanFilterBuilder&, const FilterContext&,
                   const SearchColumnInfo&,
                   const duckdb::BoundFunctionExpression&);
-void FromAnyAllOf(irs::BooleanFilter&, const FilterContext&,
+void FromAnyAllOf(BooleanFilterBuilder&, const FilterContext&,
                   const SearchColumnInfo&,
                   const duckdb::BoundFunctionExpression&, bool is_any);
-void FromPlainToTsquery(irs::BooleanFilter&, const FilterContext&,
+void FromPlainToTsquery(BooleanFilterBuilder&, const FilterContext&,
                         const SearchColumnInfo&,
                         const duckdb::BoundFunctionExpression&);
-void FromTsqueryPhrase(irs::BooleanFilter&, const FilterContext&,
+void FromTsqueryPhrase(BooleanFilterBuilder&, const FilterContext&,
                        const SearchColumnInfo&,
                        const duckdb::BoundFunctionExpression&);
-void FromToTsquery(irs::BooleanFilter&, const FilterContext&,
+void FromToTsquery(BooleanFilterBuilder&, const FilterContext&,
                    const SearchColumnInfo&,
                    const duckdb::BoundFunctionExpression&);
-void FromWebsearchToTsquery(irs::BooleanFilter&, const FilterContext&,
+void FromWebsearchToTsquery(BooleanFilterBuilder&, const FilterContext&,
                             const SearchColumnInfo&,
                             const duckdb::BoundFunctionExpression&);
-void FromTSQueryPhraseSeq(irs::BooleanFilter&, const FilterContext&,
+void FromTSQueryPhraseSeq(BooleanFilterBuilder&, const FilterContext&,
                           const SearchColumnInfo&,
                           const duckdb::BoundFunctionExpression&);
 
@@ -1654,7 +1655,7 @@ TSQueryOp ClassifyTSQueryFunction(std::string_view name) {
   return magic_enum::enum_cast<TSQueryOp>(name).value_or(TSQueryOp::Unknown);
 }
 
-void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
+void BuildTSQuery(BooleanFilterBuilder& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::Expression& expr) {
   const duckdb::Expression& unwrapped = UnwrapTSQueryCast(expr);
@@ -1812,7 +1813,7 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
 }
 
 Result MakeSearchFilter(
-  irs::And& root,
+  BooleanFilterBuilder& root_builder,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, const SearchFilterOptions& options,
   const ExpressionGetter& expr_getter) {
@@ -1835,7 +1836,7 @@ Result MakeSearchFilter(
   for (const auto& expr : conjuncts) {
     SDB_ASSERT(expr);
 
-    auto r = FromExpression(root, ctx, *expr);
+    auto r = FromExpression(root_builder, ctx, *expr);
     if (!r.ok()) {
       return r;
     }

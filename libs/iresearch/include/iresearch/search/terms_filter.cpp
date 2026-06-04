@@ -165,15 +165,18 @@ Filter::Query::ptr ByTerms::prepare(const PrepareContext& ctx) const {
       .memory = ctx.memory,
     });
   }
-  Or disj;
-  // Don't contribute to the score
-  disj.add(MakeAllDocsFilter(0.F));
+  auto terms = std::make_unique<ByTerms>();
   // Reset min_match to 1
-  auto& terms = disj.add<ByTerms>();
-  terms.boost(Boost());
-  *terms.mutable_field() = field();
-  *terms.mutable_options() = options();
-  terms.mutable_options()->min_match = 1;
+  terms->boost(Boost());
+  *terms->mutable_field() = field();
+  *terms->mutable_options() = options();
+  terms->mutable_options()->min_match = 1;
+
+  std::vector<Filter::ptr> children;
+  // Don't contribute to the score
+  children.emplace_back(MakeAllDocsFilter(0.F));
+  children.emplace_back(std::move(terms));
+  Or disj{std::move(children)};
   return disj.prepare({
     .index = ctx.index,
     .memory = ctx.memory,

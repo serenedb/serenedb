@@ -145,14 +145,6 @@ irs::Filter::ptr ParseQuery(std::string_view query_str,
     std::cerr << "Query parse error: " << context.error_message << "\n";
     return {};
   }
-  auto& opt = root->GetOptional();
-  auto& req = root->GetRequired();
-  if (opt.size() == 1 && req.empty()) {
-    return opt.PopBack();
-  }
-  if (req.size() == 1 && opt.empty()) {
-    return req.PopBack();
-  }
   return root;
 }
 

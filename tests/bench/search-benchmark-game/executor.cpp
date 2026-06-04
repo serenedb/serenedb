@@ -95,14 +95,6 @@ irs::Filter::ptr Executor::ParseFilter(std::string_view str) {
   if (!r.ok()) {
     return {};
   }
-  auto& opt = root->GetOptional();
-  auto& req = root->GetRequired();
-  if (opt.size() == 1 && req.empty()) {
-    return opt.PopBack();
-  }
-  if (req.size() == 1 && opt.empty()) {
-    return req.PopBack();
-  }
   return root;
 }
 

@@ -538,23 +538,22 @@ auto MakeColumnNameLookup(const connector::SereneDBScanBindData& bind_data,
   };
 }
 
-// Try to push a single residual conjunct into `and_root` as an iresearch
-// filter. Snapshots `and_root.size()` so we can roll back on failure.
+// Try to push a single residual conjunct into `and_builder` as an iresearch
+// filter. Snapshots the builder size so we can roll back on failure.
 bool TryClaimIresearchConjunct(
-  irs::And& and_root, const duckdb::unique_ptr<duckdb::Expression>& conjunct,
+  connector::BooleanFilterBuilder& and_builder,
+  const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
   const connector::ExpressionGetter& expr_getter,
   const connector::SearchFilterOptions& options) {
-  const auto before = and_root.size();
+  const auto before = and_builder.size();
   std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&conjunct, 1};
-  auto r =
-    connector::MakeSearchFilter(and_root, single, getter, options, expr_getter);
-  if (r.ok() && and_root.size() > before) {
+  auto r = connector::MakeSearchFilter(and_builder, single, getter, options,
+                                       expr_getter);
+  if (r.ok() && and_builder.size() > before) {
     return true;
   }
-  while (and_root.size() > before) {
-    and_root.PopBack();
-  }
+  and_builder.Resize(before);
   return false;
 }
 
@@ -729,8 +728,8 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
 
   auto expr_getter = MakeExpressionGetter(sctx);
 
-  irs::Filter::ptr text_root = std::make_unique<irs::And>();
-  auto& and_root = sdb::basics::downCast<irs::And>(*text_root);
+  connector::BooleanFilterBuilder and_builder{
+    connector::BooleanFilterBuilder::Kind::And};
 
   std::vector<std::vector<bool>> claimed_per_filter;
   bool any_claimed = false;
@@ -738,7 +737,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   for (auto* f : residual_filters) {
     std::vector<bool> claimed(f->expressions.size(), false);
     for (size_t i = 0; i < f->expressions.size(); ++i) {
-      if (TryClaimIresearchConjunct(and_root, f->expressions[i], getter,
+      if (TryClaimIresearchConjunct(and_builder, f->expressions[i], getter,
                                     expr_getter, options)) {
         claimed[i] = true;
         any_claimed = true;
@@ -772,6 +771,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
       CombineFilterExpressions(std::move(rewritten_exprs));
     ann->filter_column_ids = std::move(filter_col_ids);
     if (any_claimed) {
+      irs::Filter::ptr text_root = and_builder.Build();
       irs::Optimize(text_root);
       auto proxy = std::make_unique<irs::ProxyFilter>();
       auto [real, cache] =
@@ -929,13 +929,13 @@ bool TryClaimAnnRange(
 
   auto expr_getter = MakeExpressionGetter(sctx);
 
-  irs::Filter::ptr text_root = std::make_unique<irs::And>();
-  auto& and_root = sdb::basics::downCast<irs::And>(*text_root);
+  connector::BooleanFilterBuilder and_builder{
+    connector::BooleanFilterBuilder::Kind::And};
 
   std::vector<bool> claimed(filters.size(), false);
   bool any_claimed = false;
   for (size_t i = 0; i < filters.size(); ++i) {
-    if (TryClaimIresearchConjunct(and_root, filters[i], getter, expr_getter,
+    if (TryClaimIresearchConjunct(and_builder, filters[i], getter, expr_getter,
                                   options)) {
       claimed[i] = true;
       any_claimed = true;
@@ -961,6 +961,7 @@ bool TryClaimAnnRange(
       CombineFilterExpressions(std::move(rewritten_exprs));
     rss->filter_column_ids = std::move(filter_col_ids);
     if (any_claimed) {
+      irs::Filter::ptr text_root = and_builder.Build();
       irs::Optimize(text_root);
       auto proxy = std::make_unique<irs::ProxyFilter>();
       auto [real, cache] =
@@ -991,11 +992,11 @@ bool TryClaimSearchFilter(
 
   auto expr_getter = MakeExpressionGetter(ctx);
 
-  irs::Filter::ptr root = std::make_unique<irs::And>();
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
+  connector::BooleanFilterBuilder and_builder{
+    connector::BooleanFilterBuilder::Kind::And};
   std::vector<size_t> claimed_indices;
   for (size_t i = 0; i < filters.size(); ++i) {
-    if (TryClaimIresearchConjunct(and_root, filters[i], getter, expr_getter,
+    if (TryClaimIresearchConjunct(and_builder, filters[i], getter, expr_getter,
                                   options)) {
       claimed_indices.push_back(i);
     }
@@ -1003,6 +1004,7 @@ bool TryClaimSearchFilter(
   if (claimed_indices.empty()) {
     return false;
   }
+  irs::Filter::ptr root = and_builder.Build();
 
   std::unique_ptr<irs::Scorer> scorer;
   if (bind_data.entry_kind != connector::ScanEntryKind::BaseTable) {

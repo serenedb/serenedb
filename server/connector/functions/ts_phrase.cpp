@@ -93,7 +93,7 @@ PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
 
 }  // namespace
 
-void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
+void FromPhrase(BooleanFilterBuilder& filter, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
@@ -218,7 +218,7 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
 
 }  // namespace
 
-void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
+void BuildFtsPhrase(BooleanFilterBuilder& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info,
                     std::string_view text) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
@@ -400,7 +400,7 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
 }
 
 // Emits the flattened phrase sequence as an irs::ByPhrase under `parent`.
-void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
+void EmitPhraseSeq(BooleanFilterBuilder& parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info, const PhraseSeq& seq) {
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_phrase('hello') ## 1 ## 'world'. Gap is optional "
@@ -631,7 +631,8 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 }
 
-void FromTSQueryPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromTSQueryPhraseSeq(BooleanFilterBuilder& parent,
+                          const FilterContext& ctx,
                           const SearchColumnInfo& column_info,
                           const duckdb::BoundFunctionExpression& func) {
   PhraseSeq seq;

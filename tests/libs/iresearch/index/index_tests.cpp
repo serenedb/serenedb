@@ -172,22 +172,20 @@ irs::Filter::ptr MakeByTermOrByTerm(std::string_view name0,
                                     std::string_view value0,
                                     std::string_view name1,
                                     std::string_view value1) {
-  auto filter = std::make_unique<irs::Or>();
-  filter->add<irs::ByTerm>() =
-    std::move(static_cast<irs::ByTerm&>(*MakeByTerm(name0, value0)));
-  filter->add<irs::ByTerm>() =
-    std::move(static_cast<irs::ByTerm&>(*MakeByTerm(name1, value1)));
-  return filter;
+  std::vector<irs::Filter::ptr> incl;
+  incl.emplace_back(MakeByTerm(name0, value0));
+  incl.emplace_back(MakeByTerm(name1, value1));
+  return std::make_unique<irs::Or>(std::move(incl));
 }
 
 irs::Filter::ptr MakeOr(
   const std::vector<std::pair<std::string_view, std::string_view>>& parts) {
-  auto filter = std::make_unique<irs::Or>();
+  std::vector<irs::Filter::ptr> incl;
+  incl.reserve(parts.size());
   for (const auto& [name, value] : parts) {
-    filter->add<irs::ByTerm>() =
-      std::move(static_cast<irs::ByTerm&>(*MakeByTerm(name, value)));
+    incl.emplace_back(MakeByTerm(name, value));
   }
-  return filter;
+  return std::make_unique<irs::Or>(std::move(incl));
 }
 
 class SubReaderMock final : public irs::SubReader {

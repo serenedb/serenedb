@@ -501,16 +501,18 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
           // dist > 0: full cap minus the singleton center. Used to AND in
           // a ByColumnExistence gate on store_field_id; that's gone, so
           // rows without a stored geo value pass the Not-singleton check.
-          And root;
-          auto& excl = root.add<Not>().filter<GeoDistanceFilter>();
-          *excl.mutable_field() = field;
-          auto& opts = *excl.mutable_options();
+          auto excl = std::make_unique<GeoDistanceFilter>();
+          *excl->mutable_field() = field;
+          auto& opts = *excl->mutable_options();
           opts = options;
           opts.range.min = 0;
           opts.range.min_type = BoundType::Inclusive;
           opts.range.max = 0;
           opts.range.max_type = BoundType::Inclusive;
 
+          std::vector<Filter::ptr> children;
+          children.emplace_back(std::make_unique<Not>(std::move(excl)));
+          And root{std::move(children)};
           return root.prepare(ctx);
         } else {
           bound = S2Cap::Empty();

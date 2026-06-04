@@ -34,7 +34,7 @@ Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
                        const SearchColumnInfo& column_info,
                        const duckdb::Value& value);
 
-void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
+void BuildFtsTerm(BooleanFilterBuilder& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::Value& value) {
   if (value.IsNull()) {
@@ -53,7 +53,7 @@ void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 }
 
-void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
+void BuildFtsTokens(BooleanFilterBuilder& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
@@ -100,7 +100,7 @@ void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
     opts.terms.emplace(std::move(t));
   }
 }
-void FromTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromTerm(BooleanFilterBuilder& parent, const FilterContext& ctx,
               const SearchColumnInfo& column_info,
               const duckdb::BoundFunctionExpression& func) {
   if (func.children.size() != 1) {

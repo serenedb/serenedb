@@ -282,17 +282,18 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
     options.scored_terms_limit = static_cast<size_t>(v.GetValue<int32_t>());
   }
 
-  irs::Filter::ptr root = std::make_unique<irs::And>();
+  BooleanFilterBuilder root_builder{BooleanFilterBuilder::Kind::And};
   duckdb::unique_ptr<duckdb::Expression> match_owner = std::move(match_expr);
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts{
     &match_owner, 1};
-  auto result = MakeSearchFilter(sdb::basics::downCast<irs::And>(*root),
-                                 conjuncts, column_getter, options);
+  auto result =
+    MakeSearchFilter(root_builder, conjuncts, column_getter, options);
   if (!result.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("failed to build filter from tsquery: ", result.errorMessage()));
   }
+  irs::Filter::ptr root = root_builder.Build();
   irs::Optimize(root);
   return root;
 }

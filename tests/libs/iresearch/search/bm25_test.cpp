@@ -786,21 +786,17 @@ TEST_P(Bm25TestCase, test_query) {
 
     auto reader =
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
-    irs::Or filter;
-    {
-      // doc 0, 2, 5
-      auto& sub = filter.add<irs::ByTerm>();
-      *sub.mutable_field() = "field";
-      sub.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(std::string_view("6"));
-    }
-    {
-      // doc 3, 7
-      auto& sub = filter.add<irs::ByTerm>();
-      *sub.mutable_field() = "field";
-      sub.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(std::string_view("8"));
-    }
+    irs::Or filter = std::move(
+      *tests::MakeOr(tests::Make<irs::ByTerm>([](irs::ByTerm& sub) {
+                       *sub.mutable_field() = "field";
+                       sub.mutable_options()->term =
+                         irs::ViewCast<irs::byte_type>(std::string_view("6"));
+                     }),
+                     tests::Make<irs::ByTerm>([](irs::ByTerm& sub) {
+                       *sub.mutable_field() = "field";
+                       sub.mutable_options()->term =
+                         irs::ViewCast<irs::byte_type>(std::string_view("8"));
+                     })));
 
     std::multimap<irs::score_t, uint32_t, std::greater<>> sorted;
     constexpr std::array kExpected{

@@ -24,8 +24,11 @@
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <memory>
 #include <optional>
 #include <span>
+#include <type_traits>
+#include <vector>
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/result.h"
@@ -34,6 +37,106 @@
 #include "connector/search_field_name.hpp"
 
 namespace sdb::connector {
+
+class BooleanFilterBuilder {
+ public:
+  enum class Kind { And, Or };
+
+  explicit BooleanFilterBuilder(Kind kind) noexcept : _kind{kind} {}
+
+  irs::TypeInfo::type_id type() const noexcept {
+    return _kind == Kind::And ? irs::Type<irs::And>::id()
+                              : irs::Type<irs::Or>::id();
+  }
+  void boost(irs::score_t boost) noexcept { _boost = boost; }
+  irs::score_t Boost() const noexcept { return _boost.value_or(irs::kNoBoost); }
+  void min_match_count(size_t count) { _min_match = count; }
+
+  template<typename Filter>
+  Filter& AddInclude() {
+    auto filter = std::make_unique<Filter>();
+    auto& ref = *filter;
+    _entries.push_back(Entry{.leaf = std::move(filter)});
+    return ref;
+  }
+
+  template<typename Filter>
+  Filter& AddExclude() {
+    auto filter = std::make_unique<Filter>();
+    auto& ref = *filter;
+    _entries.push_back(Entry{.leaf = std::move(filter), .exclude = true});
+    return ref;
+  }
+
+  irs::Filter& AddInclude(irs::Filter::ptr filter) {
+    auto& ref = *filter;
+    _entries.push_back(Entry{.leaf = std::move(filter)});
+    return ref;
+  }
+
+  template<typename Group>
+  BooleanFilterBuilder& AddIncludeGroup() {
+    auto& entry = _entries.emplace_back(Entry{
+      .group = std::make_unique<BooleanFilterBuilder>(GroupKind<Group>())});
+    return *entry.group;
+  }
+
+  template<typename Group>
+  BooleanFilterBuilder& AddExcludeGroup() {
+    auto& entry = _entries.emplace_back(
+      Entry{.group = std::make_unique<BooleanFilterBuilder>(GroupKind<Group>()),
+            .exclude = true});
+    return *entry.group;
+  }
+
+  size_t size() const noexcept { return _entries.size(); }
+  void Resize(size_t count) { _entries.resize(count); }
+
+  irs::Filter::ptr Build() {
+    std::vector<irs::Filter::ptr> children;
+    children.reserve(_entries.size());
+    for (auto& entry : _entries) {
+      irs::Filter::ptr child =
+        entry.group ? entry.group->Build() : std::move(entry.leaf);
+      if (entry.exclude) {
+        child = std::make_unique<irs::Not>(std::move(child));
+      }
+      children.emplace_back(std::move(child));
+    }
+    if (_kind == Kind::And) {
+      auto and_node = std::make_unique<irs::And>(std::move(children));
+      if (_boost) {
+        and_node->boost(*_boost);
+      }
+      return and_node;
+    }
+    auto or_node = std::make_unique<irs::Or>(std::move(children));
+    if (_min_match) {
+      or_node->min_match_count(*_min_match);
+    }
+    if (_boost) {
+      or_node->boost(*_boost);
+    }
+    return or_node;
+  }
+
+ private:
+  struct Entry {
+    irs::Filter::ptr leaf;
+    std::unique_ptr<BooleanFilterBuilder> group;
+    bool exclude = false;
+  };
+
+  template<typename Group>
+  static Kind GroupKind() noexcept {
+    return std::is_same_v<Group, irs::And> ? Kind::And : Kind::Or;
+  }
+
+  Kind _kind;
+  std::vector<Entry> _entries;
+  std::optional<size_t> _min_match;
+  std::optional<irs::score_t> _boost;
+};
 
 // `field_id` is the unified iresearch field id: both a plain indexed column's
 // id (`catalog::Column::Id`) and an indexed expression's id come from
@@ -88,7 +191,7 @@ struct SearchFilterOptions {
 };
 
 Result MakeSearchFilter(
-  irs::And& root,
+  BooleanFilterBuilder& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, const SearchFilterOptions& options,
   const ExpressionGetter& expr_getter = {});

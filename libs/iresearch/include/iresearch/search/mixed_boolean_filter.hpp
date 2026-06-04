@@ -27,19 +27,24 @@ namespace irs {
 class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
                                  public AllDocsProvider {
  public:
-  MixedBooleanFilter()
-    : _and{std::make_unique<And>()}, _or{std::make_unique<Or>()} {}
+  MixedBooleanFilter() : MixedBooleanFilter({}, {}) {}
+
+  MixedBooleanFilter(std::vector<Filter::ptr> required,
+                     std::vector<Filter::ptr> optional)
+    : _and{std::make_unique<And>(std::move(required))},
+      _or{std::make_unique<Or>(std::move(optional))} {}
+
+  MixedBooleanFilter(MixedBooleanFilter&&) = default;
+  MixedBooleanFilter& operator=(MixedBooleanFilter&&) = default;
 
   auto& GetRequired(this auto& self) noexcept {
     return sdb::basics::downCast<And>(*self._and);
   }
-
   auto& GetOptional(this auto& self) noexcept {
     return sdb::basics::downCast<Or>(*self._or);
   }
 
   Filter::ptr& RequiredSlot() noexcept { return _and; }
-
   Filter::ptr& OptionalSlot() noexcept { return _or; }
 
   bool empty() const noexcept {

@@ -40,40 +40,46 @@ irs::Filter::ptr MakeTerm() {
   return term;
 }
 
-void AppendTerm(irs::BooleanFilter& root, std::string_view value) {
-  auto& term = root.add<irs::ByTerm>();
-  *term.mutable_field() = "kw";
-  term.mutable_options()->term = AsBytes(value);
+irs::Filter::ptr MakeTermValue(std::string_view value) {
+  auto term = std::make_unique<irs::ByTerm>();
+  *term->mutable_field() = "kw";
+  term->mutable_options()->term = AsBytes(value);
+  return term;
 }
 
 irs::Filter::ptr MakeNotChain(size_t depth) {
-  auto root = std::make_unique<irs::Not>();
-  auto* current = root.get();
-  for (size_t i = 1; i < depth; ++i) {
-    current = &current->filter<irs::Not>();
+  auto term = std::make_unique<irs::ByTerm>();
+  *term->mutable_field() = "kw";
+  term->mutable_options()->term = AsBytes("term_0042");
+  irs::Filter::ptr root = std::move(term);
+  for (size_t i = 0; i < depth; ++i) {
+    root = std::make_unique<irs::Not>(std::move(root));
   }
-  auto& term = current->filter<irs::ByTerm>();
-  *term.mutable_field() = "kw";
-  term.mutable_options()->term = AsBytes("term_0042");
   return root;
 }
 
 irs::Filter::ptr MakeNestedAnd() {
-  auto root = std::make_unique<irs::And>();
-  auto& inner = root->add<irs::And>();
-  AppendTerm(inner, "term_0042");
-  AppendTerm(inner, "term_0100");
-  AppendTerm(*root, "term_0250");
-  return root;
+  std::vector<irs::Filter::ptr> inner_children;
+  inner_children.emplace_back(MakeTermValue("term_0042"));
+  inner_children.emplace_back(MakeTermValue("term_0100"));
+
+  std::vector<irs::Filter::ptr> root_children;
+  root_children.emplace_back(
+    std::make_unique<irs::And>(std::move(inner_children)));
+  root_children.emplace_back(MakeTermValue("term_0250"));
+  return std::make_unique<irs::And>(std::move(root_children));
 }
 
 irs::Filter::ptr MakeNestedOr() {
-  auto root = std::make_unique<irs::Or>();
-  auto& inner = root->add<irs::Or>();
-  AppendTerm(inner, "term_0042");
-  AppendTerm(inner, "term_0100");
-  AppendTerm(*root, "term_0250");
-  return root;
+  std::vector<irs::Filter::ptr> inner_children;
+  inner_children.emplace_back(MakeTermValue("term_0042"));
+  inner_children.emplace_back(MakeTermValue("term_0100"));
+
+  std::vector<irs::Filter::ptr> root_children;
+  root_children.emplace_back(
+    std::make_unique<irs::Or>(std::move(inner_children)));
+  root_children.emplace_back(MakeTermValue("term_0250"));
+  return std::make_unique<irs::Or>(std::move(root_children));
 }
 
 void BmBuildLeaf(benchmark::State& state) {

@@ -28,7 +28,7 @@
 
 namespace sdb::connector {
 
-void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromCompound(BooleanFilterBuilder& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
@@ -137,7 +137,7 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
                         ERR_HINT(kSyntaxHint));
       }
     }
-    auto& or_filter = and_filter.add<irs::Or>();
+    auto& or_filter = AddFilter<irs::Or>(and_filter);
     or_filter.min_match_count(static_cast<size_t>(min_should));
     for (const auto* clause : should) {
       BuildTSQuery(or_filter, inner_ctx, column_info, *clause);

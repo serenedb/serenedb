@@ -35,26 +35,9 @@ bool BooleanFilter::equals(const Filter& rhs) const noexcept {
     return false;
   }
   const auto& typed_rhs = sdb::basics::downCast<BooleanFilter>(rhs);
-  return absl::c_equal(*this, typed_rhs, [](const auto& lhs, const auto& rhs) {
-    return *lhs == *rhs;
-  });
-}
-
-void BooleanFilter::GroupFilters(std::vector<const Filter*>& incl,
-                                 std::vector<const Filter*>& excl) const {
-  incl.reserve(size());
-
-  const auto is_and = type() == irs::Type<And>::id();
-  for (const auto& filter : *this) {
-    if (is_and && irs::Type<Not>::id() == filter->type()) {
-      const auto& not_node = sdb::basics::downCast<Not>(*filter);
-      if (!not_node.empty()) {
-        excl.push_back(not_node.filter());
-      }
-      continue;
-    }
-    incl.push_back(filter.get());
-  }
+  const auto eq = [](const auto& lhs, const auto& rhs) { return *lhs == *rhs; };
+  return absl::c_equal(_incl, typed_rhs._incl, eq) &&
+         absl::c_equal(_excl, typed_rhs._excl, eq);
 }
 
 Filter::Query::ptr And::prepare(const PrepareContext& ctx) const {
@@ -64,7 +47,15 @@ Filter::Query::ptr And::prepare(const PrepareContext& ctx) const {
 
   std::vector<const Filter*> incl;
   std::vector<const Filter*> excl;
-  GroupFilters(incl, excl);
+  incl.reserve(size());
+  excl.reserve(ExcludesSize());
+
+  for (const auto& filter : _incl) {
+    incl.push_back(filter.get());
+  }
+  for (const auto& filter : _excl) {
+    excl.push_back(filter.get());
+  }
 
   AllDocsProvider::Ptr all_docs;
   if (incl.empty()) {
@@ -93,8 +84,10 @@ Filter::Query::ptr Or::prepare(const PrepareContext& ctx) const {
   }
 
   std::vector<const Filter*> incl;
-  std::vector<const Filter*> excl;
-  GroupFilters(incl, excl);
+  incl.reserve(size());
+  for (const auto& filter : _incl) {
+    incl.push_back(filter.get());
+  }
 
   if (_min_match_count > incl.size()) {
     return Query::empty();
@@ -109,7 +102,7 @@ Filter::Query::ptr Or::prepare(const PrepareContext& ctx) const {
     q = memory::make_tracked<MinMatchQuery>(sub_ctx.memory, _min_match_count);
   }
 
-  q->prepare(sub_ctx, merge_type(), incl, excl);
+  q->prepare(sub_ctx, merge_type(), incl, {});
   return q;
 }
 

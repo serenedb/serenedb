@@ -50,7 +50,7 @@ bool IsTokenizeListCall(const duckdb::Expression& expr) {
 }
 
 void FromTokenizeListInAnyAllOf(
-  irs::BooleanFilter& parent, const FilterContext& ctx,
+  BooleanFilterBuilder& parent, const FilterContext& ctx,
   const SearchColumnInfo& column_info,
   const duckdb::BoundFunctionExpression& outer,
   const duckdb::BoundFunctionExpression& tokenize_call, bool is_any) {
@@ -313,7 +313,7 @@ void ExtractAnyAllOfArgs(
   }
 }
 
-void FromAnyAllOf(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromAnyAllOf(BooleanFilterBuilder& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::BoundFunctionExpression& func, bool is_any) {
   // Special case: ts_any/ts_all wrapping a ts_tokenize(text_array[, name])
@@ -335,7 +335,7 @@ void FromAnyAllOf(irs::BooleanFilter& parent, const FilterContext& ctx,
   sub_ctx.boost = irs::kNoBoost;
   sub_ctx.negated = false;
 
-  irs::BooleanFilter* group;
+  BooleanFilterBuilder* group;
   if (is_any) {
     auto& or_group =
       ctx.negated ? Negate<irs::Or>(parent) : AddFilter<irs::Or>(parent);

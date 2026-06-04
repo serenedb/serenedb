@@ -174,7 +174,6 @@ TEST_P(BoostQueryTestCase, OptionalOnlyActsAsDisjunction) {
 // the parser path.
 TEST_P(BoostQueryTestCase, ManualRequiredOptionalConstruction) {
   auto reader = CreateIndex();
-  auto root = std::make_unique<irs::MixedBooleanFilter>();
 
   auto make_term = [](std::string_view value) {
     auto f = std::make_unique<irs::ByTerm>();
@@ -183,9 +182,13 @@ TEST_P(BoostQueryTestCase, ManualRequiredOptionalConstruction) {
     return f;
   };
 
-  root->GetRequired().add(make_term("open"));
-  root->GetOptional().add(make_term("source"));
-  root->GetOptional().add(make_term("software"));
+  std::vector<irs::Filter::ptr> required;
+  required.emplace_back(make_term("open"));
+  std::vector<irs::Filter::ptr> optional;
+  optional.emplace_back(make_term("source"));
+  optional.emplace_back(make_term("software"));
+  auto root = std::make_unique<irs::MixedBooleanFilter>(std::move(required),
+                                                        std::move(optional));
 
   auto hits = CollectAll(reader, *root);
   ASSERT_EQ(3u, hits.size());

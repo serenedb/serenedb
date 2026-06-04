@@ -254,24 +254,19 @@ auto MakeByNumericTerm(std::string_view name, int32_t value) {
 // name == value && range_field <= upper_bound
 auto MakeByTermAndRange(std::string_view name, std::string_view value,
                         std::string_view range_field, int32_t upper_bound) {
-  auto root = std::make_unique<irs::And>();
-  // name == value
-  {
-    auto& filter = root->add<irs::ByTerm>();
-    *filter.mutable_field() = name;
-    filter.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-  }
-  // range_field <= upper_bound
-  {
-    auto& filter = root->add<irs::ByGranularRange>();
-    *filter.mutable_field() = range_field;
+  return tests::MakeAnd(
+    tests::Make<irs::ByTerm>([&](irs::ByTerm& filter) {
+      *filter.mutable_field() = name;
+      filter.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
+    }),
+    tests::Make<irs::ByGranularRange>([&](irs::ByGranularRange& filter) {
+      *filter.mutable_field() = range_field;
 
-    irs::NumericTokenizer stream;
-    auto& range = filter.mutable_options()->range;
-    stream.reset(upper_bound);
-    irs::SetGranularTerm(range.max, stream);
-  }
-  return root;
+      irs::NumericTokenizer stream;
+      auto& range = filter.mutable_options()->range;
+      stream.reset(upper_bound);
+      irs::SetGranularTerm(range.max, stream);
+    }));
 }
 
 irs::ByNestedFilter MakeScoredNestedFilter(

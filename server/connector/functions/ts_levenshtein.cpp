@@ -108,7 +108,7 @@ void FillByEditDistanceOptions(const LevenshteinArgs& args,
 // from the previous phrase part. Subsequent tokens are strictly
 // adjacent ({1, 1}). Errors if the analyzer produces no tokens. Shared
 // between BuildFtsPhrase (called with PhraseGap{}) and EmitPhraseSeq's
-void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
+void FromLevenshtein(BooleanFilterBuilder& filter, const FilterContext& ctx,
                      const SearchColumnInfo& column_info,
                      const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =

@@ -30,10 +30,47 @@
 #include <filesystem>
 #include <memory>
 
+#include "basics/down_cast.h"
 #include "basics/resource_manager.hpp"
+#include "iresearch/search/boolean_filter.hpp"
 
 #define SOURCE_LOCATION (__FILE__ ":" IRS_TO_STRING(__LINE__))
 
+namespace tests {
+
+template<typename Filter>
+std::unique_ptr<Filter> Make() {
+  return std::make_unique<Filter>();
+}
+
+template<typename Filter, typename Configure>
+std::unique_ptr<Filter> Make(Configure&& configure) {
+  auto filter = std::make_unique<Filter>();
+  configure(*filter);
+  return filter;
+}
+
+template<typename... Children>
+std::unique_ptr<irs::And> MakeAnd(Children&&... children) {
+  std::vector<irs::Filter::ptr> incl;
+  incl.reserve(sizeof...(children));
+  (incl.emplace_back(std::forward<Children>(children)), ...);
+  return std::make_unique<irs::And>(std::move(incl));
+}
+
+template<typename... Children>
+std::unique_ptr<irs::Or> MakeOr(Children&&... children) {
+  std::vector<irs::Filter::ptr> incl;
+  incl.reserve(sizeof...(children));
+  (incl.emplace_back(std::forward<Children>(children)), ...);
+  return std::make_unique<irs::Or>(std::move(incl));
+}
+
+inline std::unique_ptr<irs::Not> MakeNot(irs::Filter::ptr child) {
+  return std::make_unique<irs::Not>(std::move(child));
+}
+
+}  // namespace tests
 namespace cmdline {
 
 class parser;

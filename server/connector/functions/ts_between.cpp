@@ -84,7 +84,7 @@ void FillByRangeOptionsVarchar(const RangeArgs& args,
   }
 }
 
-void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromHalfRange(BooleanFilterBuilder& parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info,
                    const duckdb::BoundFunctionExpression& func,
                    std::string_view label, bool is_lower, bool inclusive) {
@@ -233,7 +233,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 }
 
-void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromBetween(BooleanFilterBuilder& parent, const FilterContext& ctx,
                  const SearchColumnInfo& column_info,
                  const duckdb::BoundFunctionExpression& func) {
   auto args = ParseRangeArgs(func);

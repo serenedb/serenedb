@@ -329,19 +329,17 @@ TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {
 
   // Test with disjunction filter (OR)
   {
-    irs::Or filter;
-    {
-      auto& sub = filter.add<irs::ByTerm>();
-      *sub.mutable_field() = "prefix";
-      sub.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(std::string_view("abcd"));
-    }
-    {
-      auto& sub = filter.add<irs::ByTerm>();
-      *sub.mutable_field() = "prefix";
-      sub.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(std::string_view("abcde"));
-    }
+    irs::Or filter = std::move(*tests::MakeOr(
+      tests::Make<irs::ByTerm>([](irs::ByTerm& sub) {
+        *sub.mutable_field() = "prefix";
+        sub.mutable_options()->term =
+          irs::ViewCast<irs::byte_type>(std::string_view("abcd"));
+      }),
+      tests::Make<irs::ByTerm>([](irs::ByTerm& sub) {
+        *sub.mutable_field() = "prefix";
+        sub.mutable_options()->term =
+          irs::ViewCast<irs::byte_type>(std::string_view("abcde"));
+      })));
     constexpr size_t k = 5;
 
     std::vector<irs::ScoreDoc> results(irs::BlockSize(k));

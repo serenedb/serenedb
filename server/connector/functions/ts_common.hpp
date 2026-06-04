@@ -28,6 +28,7 @@
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
+#include <iresearch/search/mixed_boolean_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/scorer.hpp>
@@ -35,6 +36,8 @@
 #include <iresearch/types.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
+#include <optional>
+#include <type_traits>
 
 #include "basics/containers/node_hash_map.h"
 #include "basics/result.h"
@@ -91,25 +94,37 @@ struct FilterContext {
   }
 };
 
-template<typename Filter, typename Source>
-auto& AddFilter(Source& parent) {
-  if constexpr (std::is_same_v<Filter, irs::All>) {
-    static_assert(std::is_base_of_v<irs::BooleanFilter, Source>);
-    return parent.add(std::make_unique<irs::All>());
+namespace detail {
+
+template<typename Filter>
+auto& EmitInto(BooleanFilterBuilder& parent, bool exclude) {
+  if constexpr (std::is_same_v<Filter, irs::And> ||
+                std::is_same_v<Filter, irs::Or>) {
+    return exclude ? parent.AddExcludeGroup<Filter>()
+                   : parent.AddIncludeGroup<Filter>();
+  } else if constexpr (std::is_same_v<Filter, irs::MixedBooleanFilter>) {
+    return exclude ? parent.AddExclude<irs::MixedBooleanFilter>()
+                   : parent.AddInclude<irs::MixedBooleanFilter>();
   } else {
-    if constexpr (std::is_same_v<irs::Not, Source>) {
-      return parent.template filter<Filter>();
-    } else {
-      return parent.template add<Filter>();
-    }
+    return exclude ? parent.AddExclude<Filter>() : parent.AddInclude<Filter>();
   }
 }
 
-template<typename Filter, typename Source>
-Filter& Negate(Source& parent) {
-  return AddFilter<Filter>(AddFilter<irs::Not>(
-    parent.type() == irs::Type<irs::Or>::id() ? AddFilter<irs::And>(parent)
-                                              : parent));
+}  // namespace detail
+
+template<typename Filter>
+auto& AddFilter(BooleanFilterBuilder& parent) {
+  return detail::EmitInto<Filter>(parent, /*exclude=*/false);
+}
+
+template<typename Filter>
+auto& Negate(BooleanFilterBuilder& parent) {
+  // An Or cannot exclude directly: nest a sub-And and negate inside it.
+  if (parent.type() == irs::Type<irs::Or>::id()) {
+    return detail::EmitInto<Filter>(parent.AddIncludeGroup<irs::And>(),
+                                    /*exclude=*/true);
+  }
+  return detail::EmitInto<Filter>(parent, /*exclude=*/true);
 }
 
 const duckdb::Value* TryGetConstant(const duckdb::Expression& expr);
@@ -140,16 +155,16 @@ void ResetNumericStream(irs::NumericTokenizer& stream,
                         const duckdb::Value& value);
 
 // All throw THROW_SQL_ERROR on any failure.
-void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
+void BuildTSQuery(BooleanFilterBuilder& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::Expression& expr);
 
-void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
+void BuildFtsPhrase(BooleanFilterBuilder& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text);
-void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
+void BuildFtsTerm(BooleanFilterBuilder& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::Value& value);
-void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
+void BuildFtsTokens(BooleanFilterBuilder& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all);
 
@@ -208,7 +223,7 @@ struct PhraseSeq {
 PhraseGap ParsePhraseSeqGap(const duckdb::Expression& expr);
 void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq);
 void AttachPart(PhraseSeq& seq, const duckdb::Expression& next);
-void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
+void EmitPhraseSeq(BooleanFilterBuilder& parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info, const PhraseSeq& seq);
 
 enum class TSQueryOp {

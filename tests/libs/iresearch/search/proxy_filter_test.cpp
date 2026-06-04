@@ -287,15 +287,18 @@ TEST_P(ProxyFilterRealFilter, with_disjunction_filter) {
   InitIndex();
   auto rdr = open_reader();
   ProxyFilter proxy;
-  auto [root, cache] = proxy.set_filter<irs::Or>(irs::IResourceManager::gNoop);
-  auto& q = root.add<ByTerm>();
-  *q.mutable_field() = "name";
-  q.mutable_options()->term =
-    irs::ViewCast<irs::byte_type>(std::string_view("A"));
-  auto& q1 = root.add<ByTerm>();
-  *q1.mutable_field() = "name";
-  q1.mutable_options()->term =
-    irs::ViewCast<irs::byte_type>(std::string_view("B"));
+  auto [root, cache] = proxy.set_filter(
+    irs::IResourceManager::gNoop,
+    tests::MakeOr(tests::Make<ByTerm>([](ByTerm& q) {
+                    *q.mutable_field() = "name";
+                    q.mutable_options()->term =
+                      irs::ViewCast<irs::byte_type>(std::string_view("A"));
+                  }),
+                  tests::Make<ByTerm>([](ByTerm& q1) {
+                    *q1.mutable_field() = "name";
+                    q1.mutable_options()->term =
+                      irs::ViewCast<irs::byte_type>(std::string_view("B"));
+                  })));
   CheckQuery(proxy, Docs{1, 2, 33, 34}, rdr);
 }
 

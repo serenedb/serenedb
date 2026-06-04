@@ -29,6 +29,15 @@
 #include "iresearch/search/terms_filter.hpp"
 
 namespace irs {
+
+class FilterMutator {
+ public:
+  static MutableFilter Of(BooleanFilter& node) noexcept {
+    return node.GetMutable();
+  }
+  static Filter::ptr& Child(Not& node) noexcept { return node.ChildSlot(); }
+};
+
 namespace {
 
 template<typename Visitor>
@@ -36,11 +45,14 @@ void EnumerateChildSlots(Filter& node, Visitor&& visit) {
   const auto tid = node.type();
 
   if (tid == Type<And>::id() || tid == Type<Or>::id()) {
-    for (auto& slot : sdb::basics::downCast<BooleanFilter>(node).ChildSlots()) {
+    for (auto& slot :
+         FilterMutator::Of(sdb::basics::downCast<BooleanFilter>(node))
+           .ChildSlots()) {
       visit(slot);
     }
   } else if (tid == Type<Not>::id()) {
-    if (auto& slot = sdb::basics::downCast<Not>(node).ChildSlot(); slot) {
+    if (auto& slot = FilterMutator::Child(sdb::basics::downCast<Not>(node));
+        slot) {
       visit(slot);
     }
   } else if (tid == Type<MixedBooleanFilter>::id()) {
@@ -69,7 +81,7 @@ bool CanSplice(const T& parent, const Filter& child) noexcept {
 
 template<typename T>
 bool Flatten(T& node) {
-  auto& children = node.MutableChildren();
+  auto& children = FilterMutator::Of(node).Children();
 
   size_t spliced = 0;
   for (const auto& child : children) {
@@ -86,7 +98,7 @@ bool Flatten(T& node) {
   for (auto& child : children) {
     if (CanSplice(node, *child)) {
       for (auto& grandchild :
-           sdb::basics::downCast<T>(*child).MutableChildren()) {
+           FilterMutator::Of(sdb::basics::downCast<T>(*child)).Children()) {
         flat.push_back(std::move(grandchild));
       }
     } else {
@@ -102,13 +114,14 @@ struct NotRule {
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
     auto& node = sdb::basics::downCast<Not>(*slot);
-    auto& child = node.ChildSlot();
+    auto& child = FilterMutator::Child(node);
     if (!child) {
       slot = std::make_unique<Empty>();
       return true;
     }
     if (child->type() == Type<Not>::id()) {
-      auto inner = std::move(sdb::basics::downCast<Not>(*child).ChildSlot());
+      auto inner =
+        std::move(FilterMutator::Child(sdb::basics::downCast<Not>(*child)));
       slot = inner ? std::move(inner) : Filter::ptr{std::make_unique<Empty>()};
       return true;
     }
@@ -157,7 +170,7 @@ struct OrEmptyRule {
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
     auto& node = sdb::basics::downCast<Or>(*slot);
-    auto& children = node.MutableChildren();
+    auto& children = FilterMutator::Of(node).Children();
     const auto it = std::remove_if(
       children.begin(), children.end(),
       [](const auto& child) { return child->type() == Type<Empty>::id(); });
@@ -187,7 +200,7 @@ std::pair<size_t, score_t> CountAllDocs(const T& node, const Filter& all) {
 
 template<typename T>
 void EraseAllDocs(T& node, const Filter& all) {
-  auto& children = node.MutableChildren();
+  auto& children = FilterMutator::Of(node).Children();
   const auto it =
     std::remove_if(children.begin(), children.end(),
                    [&](const auto& child) { return all == *child; });
@@ -213,7 +226,8 @@ struct AndAllFoldRule {
     }
     EraseAllDocs(node, *all);
     if (ctx.scorer != nullptr) {
-      node.add(node.MakeAllDocsFilter(all_boost));
+      FilterMutator::Of(node).Children().emplace_back(
+        node.MakeAllDocsFilter(all_boost));
     }
     return true;
   }
@@ -241,7 +255,8 @@ struct OrAllFoldRule {
       return false;
     }
     EraseAllDocs(node, *all);
-    node.add(node.MakeAllDocsFilter(all_boost));
+    FilterMutator::Of(node).Children().emplace_back(
+      node.MakeAllDocsFilter(all_boost));
     node.min_match_count(min_match > all_count - 1 ? min_match - (all_count - 1)
                                                    : 1);
     return true;
@@ -253,7 +268,7 @@ struct SingleChildRule {
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     auto& node = sdb::basics::downCast<BooleanFilter>(*slot);
-    if (node.size() != 1) {
+    if (node.size() != 1 || !node.ExcludesEmpty()) {
       return false;
     }
     if (slot->type() == Type<Or>::id() &&
@@ -263,7 +278,7 @@ struct SingleChildRule {
     if (node.Boost() != kNoBoost && ctx.scorer != nullptr) {
       return false;
     }
-    auto child = std::move(node.MutableChildren().front());
+    auto child = std::move(FilterMutator::Of(node).Children().front());
     slot = std::move(child);
     return true;
   }

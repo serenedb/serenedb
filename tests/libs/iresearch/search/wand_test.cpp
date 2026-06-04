@@ -308,11 +308,14 @@ void WandTestCase::AssertConjunctionFilter(const irs::Scorer& scorer,
                                            bool wand_enabled) {
   static constexpr std::string_view kFieldName = "name";
 
-  irs::And conjunction;
-  irs::ByTerm& filter1 = conjunction.add<irs::ByTerm>();
-  *filter1.mutable_field() = kFieldName;
-  irs::ByTerm& filter2 = conjunction.add<irs::ByTerm>();
-  *filter2.mutable_field() = kFieldName;
+  auto filter1_holder = tests::Make<irs::ByTerm>(
+    [](irs::ByTerm& f) { *f.mutable_field() = kFieldName; });
+  auto filter2_holder = tests::Make<irs::ByTerm>(
+    [](irs::ByTerm& f) { *f.mutable_field() = kFieldName; });
+  irs::ByTerm& filter1 = *filter1_holder;
+  irs::ByTerm& filter2 = *filter2_holder;
+  auto conjunction =
+    tests::MakeAnd(std::move(filter1_holder), std::move(filter2_holder));
 
   auto reader = irs::DirectoryReader{
     dir(), codec(), irs::IndexReaderOptions{.scorer = &scorer}};
@@ -332,8 +335,9 @@ void WandTestCase::AssertConjunctionFilter(const irs::Scorer& scorer,
     ASSERT_TRUE(terms->next());
     filter2.mutable_options()->term = terms->value();
 
-    AssertResults(reader, conjunction, &scorer, wand_enabled, can_use_wand, 10);
-    AssertResults(reader, conjunction, &scorer, wand_enabled, can_use_wand,
+    AssertResults(reader, *conjunction, &scorer, wand_enabled, can_use_wand,
+                  10);
+    AssertResults(reader, *conjunction, &scorer, wand_enabled, can_use_wand,
                   100);
   }
 }
@@ -342,13 +346,18 @@ void WandTestCase::AssertDisjunctionFilter(const irs::Scorer& scorer,
                                            bool wand_enabled) {
   static constexpr std::string_view kFieldName = "name";
 
-  irs::Or disjunction;
-  irs::ByTerm& filter1 = disjunction.add<irs::ByTerm>();
-  *filter1.mutable_field() = kFieldName;
-  irs::ByTerm& filter2 = disjunction.add<irs::ByTerm>();
-  *filter2.mutable_field() = kFieldName;
-  irs::ByTerm& filter3 = disjunction.add<irs::ByTerm>();
-  *filter3.mutable_field() = kFieldName;
+  auto filter1_holder = tests::Make<irs::ByTerm>(
+    [](irs::ByTerm& f) { *f.mutable_field() = kFieldName; });
+  auto filter2_holder = tests::Make<irs::ByTerm>(
+    [](irs::ByTerm& f) { *f.mutable_field() = kFieldName; });
+  auto filter3_holder = tests::Make<irs::ByTerm>(
+    [](irs::ByTerm& f) { *f.mutable_field() = kFieldName; });
+  irs::ByTerm& filter1 = *filter1_holder;
+  irs::ByTerm& filter2 = *filter2_holder;
+  irs::ByTerm& filter3 = *filter3_holder;
+  auto disjunction =
+    tests::MakeOr(std::move(filter1_holder), std::move(filter2_holder),
+                  std::move(filter3_holder));
 
   auto reader = irs::DirectoryReader{
     dir(), codec(), irs::IndexReaderOptions{.scorer = &scorer}};
@@ -370,8 +379,9 @@ void WandTestCase::AssertDisjunctionFilter(const irs::Scorer& scorer,
     ASSERT_TRUE(terms->next());
     filter3.mutable_options()->term = terms->value();
 
-    AssertResults(reader, disjunction, &scorer, wand_enabled, can_use_wand, 10);
-    AssertResults(reader, disjunction, &scorer, wand_enabled, can_use_wand,
+    AssertResults(reader, *disjunction, &scorer, wand_enabled, can_use_wand,
+                  10);
+    AssertResults(reader, *disjunction, &scorer, wand_enabled, can_use_wand,
                   100);
   }
 }

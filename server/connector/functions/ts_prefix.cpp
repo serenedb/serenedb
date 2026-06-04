@@ -30,7 +30,7 @@
 
 namespace sdb::connector {
 
-void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromPrefix(BooleanFilterBuilder& parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 const duckdb::BoundFunctionExpression& func) {
   SDB_ASSERT(func.children.size() == 1);

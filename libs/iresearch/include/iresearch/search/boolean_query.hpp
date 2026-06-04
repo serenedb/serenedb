@@ -46,8 +46,8 @@ class BooleanQuery : public Filter::Query {
                queries_t queries, size_t exclude_start);
 
   void prepare(const PrepareContext& ctx, ScoreMergeType merge_type,
-               std::span<const Filter* const> incl,
-               std::span<const Filter* const> excl);
+               std::span<const Filter::ptr> incl,
+               std::span<const Filter::ptr> excl);
 
   iterator begin() const { return _queries.begin(); }
   iterator excl_begin() const { return begin() + _excl; }

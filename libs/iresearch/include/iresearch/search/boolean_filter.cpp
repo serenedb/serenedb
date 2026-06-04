@@ -45,56 +45,23 @@ Filter::Query::ptr And::prepare(const PrepareContext& ctx) const {
     return Query::empty();
   }
 
-  std::vector<const Filter*> incl;
-  std::vector<const Filter*> excl;
-  incl.reserve(size());
-  excl.reserve(ExcludesSize());
-
-  for (const auto& filter : _incl) {
-    incl.push_back(filter.get());
-  }
-  for (const auto& filter : _excl) {
-    excl.push_back(filter.get());
-  }
-
-  AllDocsProvider::Ptr all_docs;
-  if (incl.empty()) {
-    if (excl.empty()) {
-      return Query::empty();
-    }
-    all_docs = MakeAllDocsFilter(kNoBoost);
-    incl.push_back(all_docs.get());
-  }
+  SDB_ASSERT(!_incl.empty());
 
   const PrepareContext sub_ctx = ctx.Boost(Boost());
   auto q = memory::make_tracked<AndQuery>(sub_ctx.memory);
-  q->prepare(sub_ctx, MergeType(), incl, excl);
+  q->prepare(sub_ctx, MergeType(), _incl, _excl);
   return q;
 }
 
 Filter::Query::ptr Or::prepare(const PrepareContext& ctx) const {
   const PrepareContext sub_ctx = ctx.Boost(Boost());
 
-  if (0 == _min_match_count) {  // only explicit 0 min match counts!
-    return MakeAllDocsFilter(kNoBoost)->prepare(sub_ctx);
-  }
-
-  if (empty()) {
-    return Query::empty();
-  }
-
-  std::vector<const Filter*> incl;
-  incl.reserve(size());
-  for (const auto& filter : _incl) {
-    incl.push_back(filter.get());
-  }
-
-  if (_min_match_count > incl.size()) {
-    return Query::empty();
-  }
+  SDB_ASSERT(0 != _min_match_count);
+  SDB_ASSERT(!_incl.empty());
+  SDB_ASSERT(_min_match_count <= _incl.size());
 
   memory::managed_ptr<BooleanQuery> q;
-  if (_min_match_count == incl.size()) {
+  if (_min_match_count == _incl.size()) {
     q = memory::make_tracked<AndQuery>(sub_ctx.memory);
   } else if (1 == _min_match_count) {
     q = memory::make_tracked<OrQuery>(sub_ctx.memory);
@@ -102,7 +69,7 @@ Filter::Query::ptr Or::prepare(const PrepareContext& ctx) const {
     q = memory::make_tracked<MinMatchQuery>(sub_ctx.memory, _min_match_count);
   }
 
-  q->prepare(sub_ctx, MergeType(), incl, {});
+  q->prepare(sub_ctx, MergeType(), _incl, {});
   return q;
 }
 
@@ -113,12 +80,10 @@ Filter::Query::ptr Not::prepare(const PrepareContext& ctx) const {
 
   const PrepareContext sub_ctx = ctx.Boost(Boost());
 
-  auto all_docs = MakeAllDocsFilter(kNoBoost);
-  const std::array<const irs::Filter*, 1> incl{all_docs.get()};
-  const std::array<const irs::Filter*, 1> excl{_filter.get()};
+  Filter::ptr all_docs = MakeAllDocsFilter(kNoBoost);
 
   auto q = memory::make_tracked<AndQuery>(sub_ctx.memory);
-  q->prepare(sub_ctx, ScoreMergeType::Sum, incl, excl);
+  q->prepare(sub_ctx, ScoreMergeType::Sum, {&all_docs, 1}, {&_filter, 1});
   return q;
 }
 

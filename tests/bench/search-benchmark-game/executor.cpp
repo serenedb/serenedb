@@ -24,6 +24,7 @@
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/filter_optimizer.hpp>
 #include <iresearch/store/store_utils.hpp>
 
 #include "basics/duckdb_engine.h"
@@ -95,7 +96,9 @@ irs::Filter::ptr Executor::ParseFilter(std::string_view str) {
   if (!r.ok()) {
     return {};
   }
-  return root;
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+  return filter;
 }
 
 }  // namespace bench

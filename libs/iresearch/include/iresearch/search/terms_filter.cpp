@@ -23,9 +23,7 @@
 #include "terms_filter.hpp"
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/all_terms_collector.hpp"
-#include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/multiterm_query.hpp"
@@ -156,33 +154,8 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
 }
 
 Filter::Query::ptr ByTerms::prepare(const PrepareContext& ctx) const {
-  if (options().terms.empty() || options().min_match != 0) {
-    return Prepare(ctx.Boost(Boost()), field(), options());
-  }
-  if (!ctx.scorer) {
-    return MakeAllDocsFilter(kNoBoost)->prepare({
-      .index = ctx.index,
-      .memory = ctx.memory,
-    });
-  }
-  auto terms = std::make_unique<ByTerms>();
-  // Reset min_match to 1
-  terms->boost(Boost());
-  *terms->mutable_field() = field();
-  *terms->mutable_options() = options();
-  terms->mutable_options()->min_match = 1;
-
-  std::vector<Filter::ptr> children;
-  // Don't contribute to the score
-  children.emplace_back(MakeAllDocsFilter(0.F));
-  children.emplace_back(std::move(terms));
-  Or disj{std::move(children)};
-  return disj.prepare({
-    .index = ctx.index,
-    .memory = ctx.memory,
-    .scorer = ctx.scorer,
-    .ctx = ctx.ctx,
-  });
+  SDB_ASSERT(options().min_match != 0 || options().terms.empty());
+  return Prepare(ctx.Boost(Boost()), field(), options());
 }
 
 }  // namespace irs

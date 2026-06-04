@@ -169,6 +169,21 @@ struct AndEmptyRule {
   }
 };
 
+struct AndExcludeOnlyRule {
+  static constexpr std::string_view kName = "and_exclude_only";
+  static constexpr std::array kTargets{Type<And>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    auto& node = sdb::basics::downCast<And>(*slot);
+    if (node.size() != 0 || node.ExcludesEmpty()) {
+      return false;
+    }
+    FilterMutator::Of(node).Children().emplace_back(
+      node.MakeAllDocsFilter(kNoBoost));
+    return true;
+  }
+};
+
 struct OrEmptyRule {
   static constexpr std::string_view kName = "or_empty";
   static constexpr std::array kTargets{Type<Or>::id()};
@@ -224,6 +239,9 @@ struct AndAllFoldRule {
       return false;
     }
     if (all_count == node.size()) {
+      if (!node.ExcludesEmpty()) {
+        return false;
+      }
       slot = node.MakeAllDocsFilter(node.Boost() * all_boost);
       return true;
     }
@@ -347,16 +365,126 @@ struct ByTermsRule {
   }
 };
 
-constexpr std::array<RuleDesc, 9> kDefaultRulesStorage{{
+struct OrMinMatchZeroRule {
+  static constexpr std::string_view kName = "or_min_match_zero";
+  static constexpr std::array kTargets{Type<Or>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    auto& node = sdb::basics::downCast<Or>(*slot);
+    if (node.MinMatchCount() != 0) {
+      return false;
+    }
+    slot = node.MakeAllDocsFilter(node.Boost());
+    return true;
+  }
+};
+
+struct OrUnsatRule {
+  static constexpr std::string_view kName = "or_unsat";
+  static constexpr std::array kTargets{Type<Or>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    const auto& node = sdb::basics::downCast<Or>(*slot);
+    const auto min_match = node.MinMatchCount();
+    if (min_match == 0 || min_match <= node.size()) {
+      return false;
+    }
+    slot = std::make_unique<Empty>();
+    return true;
+  }
+};
+
+struct OrAllRequiredRule {
+  static constexpr std::string_view kName = "or_all_required";
+  static constexpr std::array kTargets{Type<Or>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    auto& node = sdb::basics::downCast<Or>(*slot);
+    if (node.size() < 2 || node.MinMatchCount() != node.size()) {
+      return false;
+    }
+    auto& children = FilterMutator::Of(node).Children();
+    auto replacement =
+      std::make_unique<And>(std::move(children), node.MergeType());
+    replacement->boost(node.Boost());
+    slot = std::move(replacement);
+    return true;
+  }
+};
+
+struct ByTermsMinMatchZeroRule {
+  static constexpr std::string_view kName = "by_terms_min_match_zero";
+  static constexpr std::array kTargets{Type<ByTerms>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
+    auto& node = sdb::basics::downCast<ByTerms>(*slot);
+    if (node.options().terms.empty() || node.options().min_match != 0) {
+      return false;
+    }
+    if (ctx.scorer == nullptr) {
+      slot = node.MakeAllDocsFilter(kNoBoost);
+      return true;
+    }
+    auto terms = std::make_unique<ByTerms>();
+    terms->boost(node.Boost());
+    *terms->mutable_field() = std::string{node.field()};
+    *terms->mutable_options() = node.options();
+    terms->mutable_options()->min_match = 1;
+
+    std::vector<Filter::ptr> children;
+    children.emplace_back(node.MakeAllDocsFilter(0.F));
+    children.emplace_back(std::move(terms));
+    slot = std::make_unique<Or>(std::move(children));
+    return true;
+  }
+};
+
+struct MixedDegenerateRule {
+  static constexpr std::string_view kName = "mixed_degenerate";
+  static constexpr std::array kTargets{Type<MixedBooleanFilter>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    auto& node = sdb::basics::downCast<MixedBooleanFilter>(*slot);
+    const auto no_clauses = [](const Filter::ptr& side) {
+      const auto tid = side->type();
+      if (tid == Type<Empty>::id()) {
+        return true;
+      }
+      if (tid == Type<And>::id() || tid == Type<Or>::id()) {
+        return sdb::basics::downCast<BooleanFilter>(*side).empty();
+      }
+      return false;
+    };
+    if (no_clauses(node.RequiredSlot())) {
+      auto side = std::move(node.OptionalSlot());
+      slot = std::move(side);
+      return true;
+    }
+    if (no_clauses(node.OptionalSlot())) {
+      auto side = std::move(node.RequiredSlot());
+      slot = std::move(side);
+      return true;
+    }
+    return false;
+  }
+};
+
+constexpr std::array<RuleDesc, 15> kDefaultRulesStorage{{
   MakeRule<NotRule>(),
   MakeRule<AndEmptyRule>(),
+  MakeRule<AndExcludeOnlyRule>(),
   MakeRule<OrEmptyRule>(),
+  MakeRule<OrMinMatchZeroRule>(),
+  MakeRule<OrUnsatRule>(),
   MakeRule<AndAllFoldRule>(),
   MakeRule<OrAllFoldRule>(),
   MakeRule<FlattenAnd>(),
   MakeRule<FlattenOr>(),
+  MakeRule<OrAllRequiredRule>(),
   MakeRule<ByTermsRule>(),
+  MakeRule<ByTermsMinMatchZeroRule>(),
   MakeRule<SingleChildRule>(),
+  MakeRule<MixedDegenerateRule>(),
 }};
 
 void RunRules(Filter::ptr& slot, const OptimizeContext& ctx,

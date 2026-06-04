@@ -15081,7 +15081,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
 
   // empty query
   {
-    CheckQuery(irs::Or(), Docs{}, rdr);
+    CheckQuery(std::make_unique<irs::Or>(), Docs{}, rdr);
   }
 
   {
@@ -15165,23 +15165,22 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
 
   // min match count == 0
   {
-    irs::Or root{tests::Filters(Append<irs::ByTerm>("name", "V")),  // 22
-                 irs::ScoreMergeType::Sum, 0};
-
-    CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                          12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                          23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-               rdr);
+    CheckQuery(
+      std::make_unique<irs::Or>(tests::Filters(Append<irs::ByTerm>("name",
+                                                                   "V")),  // 22
+                                irs::ScoreMergeType::Sum, 0),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
   }
 
   // min match count == 0
   {
-    irs::Or root{{}, irs::ScoreMergeType::Sum, 0};
-
-    CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                          12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                          23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-               rdr);
+    CheckQuery(
+      std::make_unique<irs::Or>(tests::Filters(), irs::ScoreMergeType::Sum, 0),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
   }
 
   // min match count is geater than a number of conditions
@@ -15192,9 +15191,9 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
                                Append<irs::ByTerm>("same", "xyz"),  // 1..32
                                Append<irs::ByTerm>("same", "invalid_term"));
     const size_t min_match = incl.size() + 1;
-    irs::Or root{std::move(incl), irs::ScoreMergeType::Sum, min_match};
-
-    CheckQuery(root, Docs{}, rdr);
+    CheckQuery(std::make_unique<irs::Or>(std::move(incl),
+                                         irs::ScoreMergeType::Sum, min_match),
+               Docs{}, rdr);
   }
 
   // name=A OR false
@@ -15475,9 +15474,9 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
                                            20, 19, 18, 17, 16, 15, 14, 13, 12,
                                            10, 9,  8,  7,  6,  4,  3,  2};
 
-    irs::And root =
-      std::move(*tests::MakeAnd(tests::MakeNot(std::make_unique<irs::ByTerm>(
-        MakeFilter<irs::ByTerm>(column_name, "abcd")))));
+    irs::Filter::ptr root =
+      tests::MakeAnd(tests::MakeNot(std::make_unique<irs::ByTerm>(
+        MakeFilter<irs::ByTerm>(column_name, "abcd"))));
 
     size_t collector_finish_count = 0;
     size_t scorer_score_count = 0;
@@ -15501,7 +15500,8 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
       *score = cur_doc;
     };
 
-    auto prepared_filter = root.prepare({.index = *rdr, .scorer = &sort});
+    irs::Optimize(root, {.scorer = &sort});
+    auto prepared_filter = root->prepare({.index = *rdr, .scorer = &sort});
     std::multimap<irs::score_t, irs::doc_id_t, std::greater<>> scored_result;
 
     ASSERT_EQ(1, rdr->size());

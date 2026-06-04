@@ -23,6 +23,7 @@
 #include "filter_test_case_base.hpp"
 #include "index/doc_generator.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/raw_boost.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/terms_filter.hpp"
@@ -261,7 +262,9 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
     std::iota(std::begin(result), std::end(result), irs::doc_limits::min());
     Costs costs{result.size()};
     const auto filter = MakeFilter("same", {{"invalid", 1.f}}, 0);
-    CheckQuery(filter, result, costs, rdr);
+    irs::Filter::ptr optimized = std::make_unique<irs::ByTerms>(filter);
+    irs::Optimize(optimized);
+    CheckQuery(*optimized, result, costs, rdr);
 
     // test visit
     tests::EmptyFilterVisitor visitor;
@@ -519,8 +522,10 @@ TEST_P(TermsFilterTestCase, min_match) {
 
     const auto filter =
       MakeFilter("Fields", {{"BusinessEntityID", 1.f}, {"StartDate", 1.f}}, 0);
+    irs::Filter::ptr optimized = std::make_unique<irs::ByTerms>(filter);
+    irs::Optimize(optimized, {.scorer = impl.get()});
 
-    CheckQuery(filter, std::span{&impl, 1}, result, rdr[0]);
+    CheckQuery(*optimized, std::span{&impl, 1}, result, rdr[0]);
     ASSERT_EQ(3, finish_count);
     ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
     ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats

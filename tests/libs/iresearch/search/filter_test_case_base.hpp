@@ -354,6 +354,11 @@ class FilterTestCaseBase : public IndexTestBase {
                          const irs::IndexReader& index,
                          std::string_view source_location = {});
 
+  // Optimize the filter, then validate matched documents
+  static void CheckQuery(irs::Filter::ptr filter, const Docs& expected,
+                         const irs::IndexReader& index,
+                         std::string_view source_location = {});
+
   // Validate documents and its scores
   static void CheckQuery(const irs::Filter& filter,
                          std::span<const irs::Scorer::ptr> order,

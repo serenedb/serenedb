@@ -26,6 +26,7 @@
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/doc_collector.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/tfidf.hpp"
@@ -64,12 +65,13 @@ class BoostQueryTestCase : public tests::IndexTestBase {
  protected:
   // Collect all (score, doc_id) results sorted by score descending.
   std::vector<irs::ScoreDoc> CollectAll(const irs::DirectoryReader& reader,
-                                        const irs::Filter& filter) {
+                                        irs::Filter::ptr filter) {
     constexpr size_t kK = 1024;
     irs::TFIDF scorer{/*normalize=*/false};
+    irs::Optimize(filter, {.scorer = &scorer});
     std::vector<irs::ScoreDoc> hits(irs::BlockSize(kK));
     size_t count =
-      irs::ExecuteTopKWithCount(reader, filter, scorer, kK, std::span{hits});
+      irs::ExecuteTopKWithCount(reader, *filter, scorer, kK, std::span{hits});
     hits.resize(std::min(count, kK));
     return hits;
   }
@@ -119,7 +121,7 @@ TEST_P(BoostQueryTestCase, RequiredExcludesNonMatchingDocs) {
   auto filter = ParseQuery("+open source software");
   ASSERT_NE(nullptr, filter);
 
-  auto hits = CollectAll(reader, *filter);
+  auto hits = CollectAll(reader, std::move(filter));
   ASSERT_EQ(3u, hits.size())
     << "Expected exactly 3 docs matching required 'open'";
 
@@ -137,7 +139,7 @@ TEST_P(BoostQueryTestCase, MoreOptionalMatchesYieldHigherScore) {
   auto filter = ParseQuery("+open source software");
   ASSERT_NE(nullptr, filter);
 
-  auto hits = CollectAll(reader, *filter);
+  auto hits = CollectAll(reader, std::move(filter));
   ASSERT_EQ(3u, hits.size());
 
   // hits[0] = doc C (2 optionals),
@@ -155,7 +157,7 @@ TEST_P(BoostQueryTestCase, RequiredOnlyReturnsAllMatchingDocs) {
   auto filter = ParseQuery("+open");
   ASSERT_NE(nullptr, filter);
 
-  auto hits = CollectAll(reader, *filter);
+  auto hits = CollectAll(reader, std::move(filter));
   ASSERT_EQ(3u, hits.size());
 }
 
@@ -165,7 +167,7 @@ TEST_P(BoostQueryTestCase, OptionalOnlyActsAsDisjunction) {
   auto filter = ParseQuery("source software");
   ASSERT_NE(nullptr, filter);
 
-  auto hits = CollectAll(reader, *filter);
+  auto hits = CollectAll(reader, std::move(filter));
   // Docs B, C, D all contain at least one of "source" / "software"
   ASSERT_EQ(3u, hits.size());
 }
@@ -190,7 +192,7 @@ TEST_P(BoostQueryTestCase, ManualRequiredOptionalConstruction) {
   auto root = std::make_unique<irs::MixedBooleanFilter>(std::move(required),
                                                         std::move(optional));
 
-  auto hits = CollectAll(reader, *root);
+  auto hits = CollectAll(reader, std::move(root));
   ASSERT_EQ(3u, hits.size());
 
   // Score ordering must be: C > B > A

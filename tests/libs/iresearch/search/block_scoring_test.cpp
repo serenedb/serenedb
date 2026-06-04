@@ -39,6 +39,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/doc_collector.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/scorers.hpp"
 #include "iresearch/search/tfidf.hpp"
@@ -316,7 +317,9 @@ class BlockScoringTestCase : public IndexTestBase {
     sdb::ParserContext ctx{*root, default_field, *_tokenizer};
     auto result = sdb::ParseQuery(ctx, query);
     EXPECT_TRUE(result.ok()) << "Failed to parse query: " << query;
-    return root;
+    irs::Filter::ptr filter = std::move(root);
+    irs::Optimize(filter);
+    return filter;
   }
 
   irs::analysis::Analyzer::ptr _tokenizer;

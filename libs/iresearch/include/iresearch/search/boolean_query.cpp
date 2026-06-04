@@ -242,16 +242,16 @@ void BooleanQuery::prepare(const PrepareContext& ctx, ScoreMergeType merge_type,
 }
 
 void BooleanQuery::prepare(const PrepareContext& ctx, ScoreMergeType merge_type,
-                           std::span<const Filter* const> incl,
-                           std::span<const Filter* const> excl) {
+                           std::span<const Filter::ptr> incl,
+                           std::span<const Filter::ptr> excl) {
   queries_t queries{{ctx.memory}};
   queries.reserve(incl.size() + excl.size());
   // prepare included
-  for (const auto* filter : incl) {
+  for (const auto& filter : incl) {
     queries.emplace_back(filter->prepare(ctx));
   }
   // prepare excluded
-  for (const auto* filter : excl) {
+  for (const auto& filter : excl) {
     // exclusion part does not affect scoring at all
     queries.emplace_back(filter->prepare({
       .index = ctx.index,

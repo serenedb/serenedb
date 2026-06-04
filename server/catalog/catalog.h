@@ -293,6 +293,8 @@ struct LogicalCatalog {
     std::string name, std::vector<CreateIndexColumn>&& columns,
     InvertedIndexOptions options,
     CreateIndexOperationOptions operation_options) = 0;
+  virtual Result CreateSubscription(ObjectId database_id,
+                                    std::string_view relation) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,

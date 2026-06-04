@@ -92,7 +92,9 @@
 #include "general_server/scheduler.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
+#include "pg/errcodes.h"
 #include "pg/pg_catalog/fwd.h"
+#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -2236,6 +2238,12 @@ Result LocalCatalog::CreateType(ObjectId database_id, std::string_view schema,
         [&](bool) { return std::string_view{bytes}; });
     },
     [&](auto clone) { clone->UnregisterObject(type, *schema_id, true); });
+}
+
+Result LocalCatalog::CreateSubscription(ObjectId database_id,
+                                        std::string_view relation) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG("Unsupported create_subscription in catalog"));
 }
 
 template<typename T>

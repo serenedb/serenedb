@@ -20,13 +20,25 @@
 
 #include <duckdb/main/database.hpp>
 
+#include "connector/duckdb_client_state.h"
+#include "pg/commands/create_subscription.h"
+
 namespace sdb::connector {
 namespace {
 
 void CreateSubscriptionPragma(duckdb::ClientContext& context,
                               const duckdb::FunctionParameters& params) {
-  throw duckdb::InvalidInputException(
-    "create_subscription is not implemented yet");
+  auto& args = params.values;
+  if (args.size() < 1) {
+    throw duckdb::InvalidInputException(
+      "create_subscription requires at least name");
+  }
+
+  auto subscription_name = args[0].GetValue<std::string>();
+
+  auto& conn_ctx = GetSereneDBContext(context);
+  auto name = pg::ParseObjectName(subscription_name, StaticStrings::kPublic);
+  pg::CreateSubscription(conn_ctx, name.relation);
 }
 
 }  // namespace
@@ -37,6 +49,9 @@ void RegisterSubscriptionPragma(duckdb::DatabaseInstance& db) {
   auto create_pragma = duckdb::PragmaFunction::PragmaCall(
     "create_subscription", CreateSubscriptionPragma,
     {duckdb::LogicalType::VARCHAR});
+
+  create_pragma.named_parameters["connection"] = duckdb::LogicalType::VARCHAR;
+  create_pragma.named_parameters["publications"] = duckdb::LogicalType::VARCHAR;
 
   loader.RegisterFunction(create_pragma);
 }

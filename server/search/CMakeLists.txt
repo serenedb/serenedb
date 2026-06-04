@@ -2,6 +2,7 @@ target_sources(
     sereneserver
     PRIVATE
         inverted_index_shard.cpp
+        search_shard_wal.cpp
         search_table_shard.cpp
         task.cpp
         wal_recovery.cpp

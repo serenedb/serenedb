@@ -22,10 +22,12 @@
 
 #include <absl/cleanup/cleanup.h>
 
+#include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/main/client_context.hpp>
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
+#include "search/search_table_shard.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/table_shard.h"
 
@@ -60,11 +62,24 @@ Result Transaction::Commit() {
              "We do not expect merges for now");
   // Marker-only txns have zero rocksdb ops and would skip the commit block;
   // force a no-op Delete to consume a seq number so markers reach the WAL
-  // and the inverted index has a tick to commit on.
+  // and the inverted index has a tick to commit on. (CTAS search tables and
+  // the inverted-index path still emit rocksdb markers; plain search-table
+  // INSERT/COPY no longer does -- it commits via the self-contained WAL
+  // below, so a pure plain search INSERT legitimately has num_ops == 0.)
   if (num_ops == 0 && _num_log_data_markers > 0 && _rocksdb_transaction) {
     _rocksdb_transaction->Delete(rocksdb::Slice{});
     ++num_ops;
   }
+
+  // Parallel search-table segments commit on the shard's self-contained WAL
+  // tick (not the rocksdb seq), so register their flush up-front -- before any
+  // commit point and regardless of whether rocksdb commits -- so a concurrent
+  // background RefreshCommit waits for them. They are committed in the WAL
+  // block at the end.
+  for (auto& trx : _parallel_search_transactions) {
+    trx->RegisterFlush();
+  }
+
   if (num_ops > 0) [[likely]] {
     for (auto& search_transaction : _search_transactions) {
       // tie iresearch transaction's active segment to current flush context in
@@ -76,12 +91,6 @@ Result Transaction::Commit() {
       // AFTER RocksDB commit but before transaction commit. But as we told
       // index writer to wait, we are safe.
       search_transaction.second->RegisterFlush();
-    }
-    // Parallel search-table INSERT contributes N per-shard transactions
-    // (see Transaction::AddParallelSearchTransaction); register each so the
-    // writer waits for it before committing on tick.
-    for (auto& trx : _parallel_search_transactions) {
-      trx->RegisterFlush();
     }
     absl::Cleanup rollback = [&] {
       for (auto& search_transaction : _search_transactions) {
@@ -114,13 +123,6 @@ Result Transaction::Commit() {
     SDB_ASSERT(absl::c_all_of(_search_transactions, [&](const auto& p) {
       return p.second->GetQueries() < num_ops;
     }));
-    // Parallel search-table transactions are used only for insert-only
-    // CTAS/COPY, so they carry no removes. With zero queries first_tick ==
-    // post_commit_seq, which is strictly > committed_tick (guaranteed by the
-    // monotonic rocksdb seq), satisfying the commit-on-tick ordering.
-    SDB_ASSERT(
-      absl::c_all_of(_parallel_search_transactions,
-                     [&](const auto& t) { return t->GetQueries() == 0; }));
 
     SDB_IF_FAILURE("crash_before_rocksdb_commit") { SDB_IMMEDIATE_ABORT(); }
     auto status = _rocksdb_transaction->Commit();
@@ -141,18 +143,85 @@ Result Transaction::Commit() {
     for (auto& search_transaction : _search_transactions) {
       search_transaction.second->Commit(post_commit_seq);
     }
-    // Commit every parallel search-table segment with the SAME tick; they
-    // are insert-only siblings on one shard, so a single RefreshCommit at
-    // post_commit_seq publishes them all (verified against iresearch's
-    // commit/flush tick handling).
+  }
+
+  // Plain search-table INSERT/COPY commit point (WAL_DESIGN.md §9). Runs even
+  // when num_ops == 0 (a pure plain search INSERT touches no rocksdb data):
+  // append ONE central record (the txn's atomic unit) and stamp every
+  // per-thread segment with the tick it returns. The chunk files were already
+  // fsynced at Combine; AppendCommit's fsync is the commit point.
+  if (!_parallel_search_transactions.empty()) {
+    SDB_ASSERT(_search_table_commit.has_value(),
+               "parallel search trxs handed off without a WAL commit");
+    // Insert-only: zero removes, so all segments share first_tick and one
+    // RefreshCommit publishes them (mirrors the rocksdb-seq path's invariant).
+    SDB_ASSERT(absl::c_all_of(_parallel_search_transactions, [](const auto& t) {
+      return t->GetQueries() == 0;
+    }));
+    uint64_t tick = 0;
+    try {
+      tick = CommitSearchTableWal();
+    } catch (const std::exception& e) {
+      for (auto& trx : _parallel_search_transactions) {
+        trx->Abort();
+      }
+      Destroy();
+      return {ERROR_INTERNAL, "Failed to commit search-table WAL: ", e.what()};
+    }
     for (auto& trx : _parallel_search_transactions) {
-      trx->Commit(post_commit_seq);
+      trx->Commit(tick);
     }
   }
+
   ApplyTableStatsDiffs();
   Destroy();
 
   return {};
+}
+
+uint64_t Transaction::CommitSearchTableWal() {
+  SDB_ASSERT(_search_table_commit.has_value());
+  auto& commit = *_search_table_commit;
+  auto& search_shard =
+    basics::downCast<search::SearchTableShard>(*commit.shard);
+  auto& wal = search_shard.Wal();
+
+  // Gather this txn's inline (small-INSERT) buffers for the shard, one per
+  // inline sink thread / statement. Bulk inserts produce no buffers (they
+  // streamed to chunk files during Sink) -- their data is in commit.seg_ids.
+  std::vector<duckdb::ColumnDataCollection*> buffers;
+  auto it = _local_table_changes.find(commit.table_id);
+  if (it != _local_table_changes.end()) {
+    for (auto& c : it->second.insert_collections) {
+      if (c && c->Count() > 0) {
+        buffers.push_back(c.get());
+      }
+    }
+  }
+  SDB_ASSERT(!commit.seg_ids.empty() || !buffers.empty(),
+             "search-table commit with neither chunk files nor inline rows");
+
+  // OLTP fast path: a single inline buffer and no chunk files -> INLINE record
+  // (the rows are serialised straight into the central record).
+  if (commit.seg_ids.empty() && buffers.size() == 1) {
+    return wal.AppendCommit(search::SearchShardWal::InlineCommit{
+      commit.column_ids, *buffers.front()});
+  }
+
+  // General path (bulk, multi-statement inline, or a mix): everything becomes
+  // chunk-file references so the whole txn commits as ONE atomic REFERENCE
+  // record. Inline buffers are flushed to their own chunk file here
+  // (single-threaded at commit; only the multi-statement / mixed case).
+  for (auto* buffer : buffers) {
+    auto writer = wal.NewChunkWriter();
+    for (auto& chunk : buffer->Chunks()) {
+      writer.Append(chunk);
+    }
+    writer.Finish();
+    commit.seg_ids.push_back(writer.SegId());
+  }
+  return wal.AppendCommit(
+    search::SearchShardWal::ReferenceCommit{commit.column_ids, commit.seg_ids});
 }
 
 Result Transaction::Rollback() {
@@ -248,6 +317,7 @@ void Transaction::Destroy() noexcept {
   _rocksdb_snapshot = nullptr;
   _search_transactions.clear();
   _parallel_search_transactions.clear();
+  _search_table_commit.reset();
   _table_rows_deltas.clear();
   _search_snapshots.clear();
   _search_table_readers.clear();

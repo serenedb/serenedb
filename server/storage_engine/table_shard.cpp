@@ -85,6 +85,16 @@ Result TableShard::DropArtifacts(catalog::StorageKind kind, ObjectId db_id,
                       "Failed to remove search table shard directory '" +
                         path.string() + "': " + ec.message()};
       }
+      // Also wipe the shard's self-contained WAL tree (WAL_DESIGN.md §4.0),
+      // which lives in a sibling `wal/` subtree, not inside the iresearch dir.
+      auto wal_path =
+        search::SearchTableShard::GetWalPath(db_id, schema_id, table_id);
+      std::filesystem::remove_all(wal_path, ec);
+      if (ec) {
+        return Result{ERROR_INTERNAL,
+                      "Failed to remove search table WAL directory '" +
+                        wal_path.string() + "': " + ec.message()};
+      }
       return {};
     }
   }

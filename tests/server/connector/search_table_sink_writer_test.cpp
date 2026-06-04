@@ -93,7 +93,7 @@ TEST_F(SearchTableSinkWriterTest, InsertThreeRowsOneColumn) {
   sink.Write("pk_c");
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
-  _writer->Commit();
+  _writer->RefreshCommit();
 
   auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
   ASSERT_EQ(reader.size(), 1u);
@@ -139,7 +139,7 @@ TEST_F(SearchTableSinkWriterTest, InsertThenDeleteOneRow) {
     sink.Finish();
     ASSERT_TRUE(trx.Commit());
   }
-  _writer->Commit();
+  _writer->RefreshCommit();
 
   // Delete pk_y via a second sink/batch (DeleteRow drains at Finish via
   // SearchRemoveFilter).
@@ -151,7 +151,7 @@ TEST_F(SearchTableSinkWriterTest, InsertThenDeleteOneRow) {
     sink.Finish();
     ASSERT_TRUE(trx.Commit());
   }
-  _writer->Commit();
+  _writer->RefreshCommit();
 
   auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
   EXPECT_EQ(reader.docs_count(), 3u);
@@ -179,7 +179,7 @@ TEST_F(SearchTableSinkWriterTest, TwoBatchesShareSink) {
   sink.Finish();
 
   ASSERT_TRUE(trx.Commit());
-  _writer->Commit();
+  _writer->RefreshCommit();
 
   auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
   EXPECT_EQ(reader.docs_count(), 4u);
@@ -198,7 +198,7 @@ TEST_F(SearchTableSinkWriterTest, AbortReleasesDocumentCleanly) {
   sink.Write("pk_b");
   sink.Abort();
   trx.Abort();
-  _writer->Commit();
+  _writer->RefreshCommit();
 
   // Aborted rows don't reach the reader.
   auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});

@@ -22,6 +22,7 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <duckdb/common/file_system.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/mmap_directory.hpp>
@@ -40,6 +41,20 @@ std::filesystem::path SearchTableShard::GetPath(ObjectId db_id,
   SDB_ASSERT(schema_id.isSet());
   SDB_ASSERT(table_id.isSet());
   auto path = GetSearchEngine().GetPersistedPath(db_id);
+  path /= absl::StrCat(schema_id);
+  path /= absl::StrCat(table_id);
+  return path;
+}
+
+std::filesystem::path SearchTableShard::GetWalPath(ObjectId db_id,
+                                                   ObjectId schema_id,
+                                                   ObjectId table_id) {
+  SDB_ASSERT(db_id.isSet());
+  SDB_ASSERT(schema_id.isSet());
+  SDB_ASSERT(table_id.isSet());
+  // Sibling of the iresearch dirs under the per-db root, namespaced by `wal/`.
+  auto path = GetSearchEngine().GetPersistedPath(db_id);
+  path /= "wal";
   path /= absl::StrCat(schema_id);
   path /= absl::StrCat(table_id);
   return path;
@@ -114,6 +129,15 @@ void SearchTableShard::OpenWriter() {
   writer_options.reader_options.db = writer_options.db;
 
   _writer = irs::IndexWriter::Make(*_dir, codec, open_mode, writer_options);
+
+  // Per-shard self-contained WAL (WAL_DESIGN.md). Construction is lazy -- no
+  // files are created until the first commit -- so wiring it here is a no-op
+  // behaviour change; the write path and recovery are wired in later phases.
+  // Borrows the engine's FileSystem, which outlives the shard.
+  _wal = std::make_unique<SearchShardWal>(
+    duckdb::FileSystem::GetFileSystem(
+      *query::DuckDBEngine::Instance().GetDB().instance),
+    GetWalPath(_db_id, _schema_id, GetTableId()));
 
   if (_is_new) {
     // Force a commit so the directory contains a valid empty index --

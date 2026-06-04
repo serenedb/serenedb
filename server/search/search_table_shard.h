@@ -26,6 +26,7 @@
 #include <memory>
 
 #include "catalog/identifiers/object_id.h"
+#include "search/search_shard_wal.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb::search {
@@ -63,6 +64,13 @@ class SearchTableShard final : public TableShard {
   // path can't detect after the shard is gone).
   static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
                                        ObjectId table_id);
+
+  // WAL directory for this shard (WAL_DESIGN.md §4.0): a sibling tree under the
+  // same per-db engine root, keyed like GetPath but under `wal/` so iresearch
+  // never opens it as a directory (its unreferenced-file GC would delete our
+  // files). Wiped alongside GetPath on drop.
+  static std::filesystem::path GetWalPath(ObjectId db_id, ObjectId schema_id,
+                                          ObjectId table_id);
 
   // Returns a fresh iresearch IndexWriter::Transaction tied to this shard's
   // writer. Used by SereneDBSearchInsert (M3) to stash one trx per shard
@@ -104,6 +112,12 @@ class SearchTableShard final : public TableShard {
     _writer->RefreshCommit();
   }
 
+  // The shard's self-contained WAL (WAL_DESIGN.md). Valid after construction.
+  SearchShardWal& Wal() noexcept {
+    SDB_ASSERT(_wal);
+    return *_wal;
+  }
+
  private:
   void OpenWriter();
 
@@ -112,6 +126,9 @@ class SearchTableShard final : public TableShard {
   bool _is_new;
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
+  // Per-shard self-contained WAL (WAL_DESIGN.md). Constructed in OpenWriter;
+  // borrows the DuckDB engine's FileSystem, which outlives the shard.
+  std::unique_ptr<SearchShardWal> _wal;
 };
 
 }  // namespace sdb::search

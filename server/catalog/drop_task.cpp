@@ -250,6 +250,10 @@ Result DatabaseDrop::Finalize() {
   if (!r.ok()) {
     return r;
   }
+  r = server.DropEntry(_id, catalog::ObjectType::Subscription);
+  if (!r.ok()) {
+    return r;
+  }
   r = server.DropDefinition(id::kInstance, catalog::ObjectType::Database, _id);
   if (!r.ok()) {
     return r;

@@ -62,6 +62,8 @@ constexpr std::string_view ToPgObjectTypeName(catalog::ObjectType t) noexcept {
       return "text search dictionary";
     case PgSqlType:
       return "type";
+    case Subscription:
+      return "subscription";
     default:
       // usually used for error messages, so we want to specify the type.
       SDB_ASSERT(false);

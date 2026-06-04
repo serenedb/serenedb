@@ -1,0 +1,86 @@
+# Tests for CREATE SUBSCRIPTION syntax.
+# The PEG grammar accepts CONNECTION and PUBLICATION as optional, so the
+# mandatory-clause checks (as in Postgres) live in the create_subscription
+# pragma handler and fire at execution time.
+
+# --- Name is required (rejected by the parser, not the pragma) ---
+statement error
+CREATE SUBSCRIPTION;
+----
+db error: ERROR: syntax error at or near ";"
+
+
+# --- Bare form: CONNECTION is required ---
+statement error
+CREATE SUBSCRIPTION my_sub1;
+----
+db error: ERROR: CREATE SUBSCRIPTION requires CONNECTION
+
+
+# --- CONNECTION without PUBLICATION is rejected ---
+statement error
+CREATE SUBSCRIPTION my_sub1 CONNECTION 'host=localhost dbname=mydb';
+----
+db error: ERROR: CREATE SUBSCRIPTION requires PUBLICATION
+
+
+# Failed statements must not leave anything behind.
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+
+
+# --- CONNECTION + single PUBLICATION ---
+statement ok
+CREATE SUBSCRIPTION my_sub1 CONNECTION 'host=localhost dbname=mydb' PUBLICATION my_pub;
+
+
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+my_sub1
+
+
+# --- CHECK DUPLICATE ---
+statement error
+CREATE SUBSCRIPTION my_sub1 CONNECTION 'host=localhost dbname=mydb' PUBLICATION my_pub;
+----
+db error: ERROR: duplicate name
+
+
+# --- CONNECTION + multiple PUBLICATIONs ---
+statement ok
+CREATE SUBSCRIPTION my_sub2 CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1, pub2;
+
+
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+my_sub1
+my_sub2
+
+
+statement ok
+CREATE SUBSCRIPTION my_subscription CONNECTION 'host=publisher_host dbname=source_db user=repl_user password=secret' PUBLICATION my_publication;
+
+
+query
+SELECT subname, subconninfo, subslotname, subpublications FROM pg_subscription WHERE subname='my_subscription';
+----
+subname	subconninfo	subslotname	subpublications
+my_subscription	host=publisher_host dbname=source_db user=repl_user password=secret	my_subscription	{my_publication}
+
+
+# --- Quoted name with a dot is a single identifier ---
+statement ok
+CREATE SUBSCRIPTION "dotted.name" CONNECTION 'host=localhost dbname=mydb' PUBLICATION my_pub;
+
+
+query
+SELECT subname FROM pg_subscription WHERE subname = 'dotted.name';
+----
+subname
+dotted.name

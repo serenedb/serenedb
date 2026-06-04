@@ -36,6 +36,7 @@
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_rbac_function.h"
 #include "connector/duckdb_storage_extension.h"
+#include "connector/duckdb_subscription.h"
 #include "connector/duckdb_tokenizer_function.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/array.h"
@@ -248,6 +249,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterTokenizerPragma(db);
 
   connector::RegisterPgMathFunctions(db);
+
+  connector::RegisterSubscriptionPragma(db);
 
   connector::RegisterKeyEncodingFunctions(db);
 

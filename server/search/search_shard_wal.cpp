@@ -21,6 +21,9 @@
 #include "search/search_shard_wal.h"
 
 #include <absl/strings/str_format.h>
+#include <zstd.h>
+
+#include <algorithm>
 #include <duckdb/common/checksum.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
@@ -30,8 +33,6 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
-
-#include <algorithm>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -49,11 +50,21 @@ namespace {
 constexpr uint8_t kKindInline = 0;
 constexpr uint8_t kKindReference = 1;
 
+// Per-chunk frame codec (chunk files only): [u8 codec][u32 raw_len]
+// [u32 comp_len][payload]. The chunk-file write is I/O-bound on the data
+// volume (WAL_DESIGN.md §3.1/§14.2); serialized search data compresses ~5-8x,
+// and zstd-1 decompresses at ~GB/s so recovery stays fast. kNone stores raw
+// (tiny/incompressible chunks) so a chunk never expands.
+constexpr uint8_t kChunkCodecNone = 0;
+constexpr uint8_t kChunkCodecZstd = 1;
+constexpr int kZstdLevel = 1;
+
 constexpr std::string_view kSegSuffix = ".swal";
 constexpr std::string_view kChunkSuffix = ".swchunk";
 
 constexpr duckdb::FileOpenFlags kAppendFlags =
-  duckdb::FileFlags::FILE_FLAGS_WRITE | duckdb::FileFlags::FILE_FLAGS_FILE_CREATE |
+  duckdb::FileFlags::FILE_FLAGS_WRITE |
+  duckdb::FileFlags::FILE_FLAGS_FILE_CREATE |
   duckdb::FileFlags::FILE_FLAGS_APPEND |
   duckdb::FileFlags::FILE_FLAGS_MULTI_CLIENT_ACCESS;
 
@@ -97,7 +108,8 @@ bool ParseName(std::string_view name, std::string_view suffix, uint64_t& out) {
 // Read one [u64 size][u64 checksum][payload] frame into `payload`. Returns
 // false at EOF or on a torn/corrupt tail (incomplete header, payload past EOF,
 // or checksum mismatch) -- the caller stops reading the segment there.
-bool ReadFrame(duckdb::BufferedFileReader& reader, std::vector<uint8_t>& payload) {
+bool ReadFrame(duckdb::BufferedFileReader& reader,
+               std::vector<uint8_t>& payload) {
   if (reader.FileSize() - reader.CurrentOffset() < 2 * sizeof(uint64_t)) {
     return false;
   }
@@ -138,7 +150,8 @@ uint64_t MaxChunkSegId(const std::filesystem::path& chunks_dir) {
   if (!std::filesystem::exists(chunks_dir, ec)) {
     return 0;
   }
-  for (const auto& entry : std::filesystem::directory_iterator(chunks_dir, ec)) {
+  for (const auto& entry :
+       std::filesystem::directory_iterator(chunks_dir, ec)) {
     if (ec || !entry.is_regular_file(ec)) {
       continue;
     }
@@ -197,24 +210,46 @@ SearchShardWal::ChunkWriter::~ChunkWriter() = default;
 
 void SearchShardWal::ChunkWriter::Append(duckdb::DataChunk& chunk) {
   SDB_ASSERT(_writer);
-  // Frame each chunk as [u32 len][serialized chunk] so the reader can iterate
-  // chunks and deserialise each from a bounded buffer without depending on
-  // DataChunk::Deserialize consuming byte-for-byte. (The chunk must be a
-  // materialised pipeline chunk, where per-vector size() == cardinality, which
-  // is what Sink delivers; a hand-built Initialize+SetCardinality chunk would
-  // not round-trip through DataChunk::Serialize.)
+  // Serialize the chunk into the reused stream, then block-compress it and
+  // write one framed record: [u8 codec][u32 raw_len][u32 comp_len][payload].
+  // The reader iterates frames and deserialises each from a bounded buffer
+  // without depending on DataChunk::Deserialize consuming byte-for-byte. (The
+  // chunk must be a materialised pipeline chunk, where per-vector size() ==
+  // cardinality, which is what Sink delivers; a hand-built
+  // Initialize+SetCardinality chunk would not round-trip through Serialize.)
   //
-  // Rewind() reuses the backing buffer across chunks (the serializer holds a
-  // reference to _stream, so it stays per-call -- a sibling-member serializer
-  // would dangle on ChunkWriter move).
+  // Rewind() reuses the stream's backing buffer across chunks (the serializer
+  // holds a reference to _stream, so it stays per-call -- a sibling-member
+  // serializer would dangle on ChunkWriter move).
   _stream->Rewind();
   duckdb::BinarySerializer serializer{*_stream};
   serializer.Begin();
   chunk.Serialize(serializer);
   serializer.End();
-  auto len = static_cast<uint32_t>(_stream->GetPosition());
-  _writer->Write<uint32_t>(len);
-  _writer->WriteData(_stream->GetData(), len);
+  const auto raw_len = static_cast<uint32_t>(_stream->GetPosition());
+
+  // Compress (zstd-1) into the reused output buffer. The chunk-file write is
+  // I/O-bound on this second copy of the data, and it compresses ~5-8x, so
+  // this is the dominant insert-phase win. Store raw if it doesn't shrink
+  // (incompressible/tiny chunk) so we never expand on disk.
+  const auto bound = ZSTD_compressBound(raw_len);
+  if (_comp.size() < bound) {
+    _comp.resize(bound);
+  }
+  const size_t comp = ZSTD_compress(_comp.data(), _comp.size(),
+                                    _stream->GetData(), raw_len, kZstdLevel);
+  uint8_t codec = kChunkCodecZstd;
+  const uint8_t* payload = _comp.data();
+  auto payload_len = static_cast<uint32_t>(comp);
+  if (ZSTD_isError(comp) || comp >= raw_len) {
+    codec = kChunkCodecNone;
+    payload = _stream->GetData();
+    payload_len = raw_len;
+  }
+  _writer->Write<uint8_t>(codec);
+  _writer->Write<uint32_t>(raw_len);
+  _writer->Write<uint32_t>(payload_len);
+  _writer->WriteData(payload, payload_len);
 }
 
 void SearchShardWal::ChunkWriter::Finish() {
@@ -293,7 +328,8 @@ uint64_t SearchShardWal::AppendCommit(const ReferenceCommit& rec) {
 SearchShardWal::ChunkWriter SearchShardWal::NewChunkWriter() {
   std::error_code ec;
   std::filesystem::create_directories(_chunks_dir, ec);
-  SDB_ASSERT(!ec, "create chunks dir '", _chunks_dir.string(), "': ", ec.message());
+  SDB_ASSERT(!ec, "create chunks dir '", _chunks_dir.string(),
+             "': ", ec.message());
   uint64_t seg_id = _seg_id.fetch_add(1, std::memory_order_relaxed) + 1;
   auto writer = std::make_unique<duckdb::BufferedFileWriter>(
     _fs, (_chunks_dir / ChunkName(seg_id)).string(), kAppendFlags);
@@ -321,26 +357,52 @@ uint64_t SearchShardWal::Recover(uint64_t committed_tick,
         if (header.tick <= committed_tick) {
           continue;  // consumed; seg_ids collected for the orphan sweep
         }
-        std::vector<uint8_t> chunk_buf;
+        std::vector<uint8_t> comp_buf;
+        std::vector<uint8_t> raw_buf;
+        constexpr uint64_t kChunkHdr = sizeof(uint8_t) + 2 * sizeof(uint32_t);
         for (uint64_t sid : seg_ids) {
           auto chunk_path = (_chunks_dir / ChunkName(sid)).string();
           duckdb::BufferedFileReader creader(_fs, chunk_path.c_str());
           // A committed reference guarantees its chunk files are complete
-          // (fsynced at Combine BEFORE the commit, WAL_DESIGN.md §9). Unlike the
-          // central segment's tolerated torn tail, a truncated frame here means
-          // corruption -- fail loudly rather than silently drop committed rows.
+          // (fsynced at Combine BEFORE the commit, WAL_DESIGN.md §9). Unlike
+          // the central segment's tolerated torn tail, a truncated/garbled
+          // frame here means corruption -- fail loudly rather than silently
+          // drop committed rows. Frame: [u8 codec][u32 raw_len][u32
+          // comp_len][payload].
           while (creader.CurrentOffset() < creader.FileSize()) {
             uint64_t remaining = creader.FileSize() - creader.CurrentOffset();
-            SDB_ENSURE(remaining >= sizeof(uint32_t), ERROR_INTERNAL,
-                       "corrupt search chunk file '", chunk_path, "': trailing ",
-                       remaining, " bytes < frame length prefix");
-            auto len = creader.Read<uint32_t>();
-            SDB_ENSURE(creader.FileSize() - creader.CurrentOffset() >= len,
-                       ERROR_INTERNAL, "corrupt search chunk file '", chunk_path,
-                       "': frame of ", len, " bytes exceeds remaining file");
-            chunk_buf.resize(len);
-            creader.ReadData(chunk_buf.data(), len);
-            duckdb::MemoryStream ms(chunk_buf.data(), len);
+            SDB_ENSURE(remaining >= kChunkHdr, ERROR_INTERNAL,
+                       "corrupt search chunk file '", chunk_path,
+                       "': trailing ", remaining, " bytes < frame header");
+            auto codec = creader.Read<uint8_t>();
+            auto raw_len = creader.Read<uint32_t>();
+            auto comp_len = creader.Read<uint32_t>();
+            SDB_ENSURE(creader.FileSize() - creader.CurrentOffset() >= comp_len,
+                       ERROR_INTERNAL, "corrupt search chunk file '",
+                       chunk_path, "': frame of ", comp_len,
+                       " bytes exceeds remaining file");
+            comp_buf.resize(comp_len);
+            creader.ReadData(comp_buf.data(), comp_len);
+
+            uint8_t* src = nullptr;
+            uint32_t src_len = 0;
+            if (codec == kChunkCodecZstd) {
+              raw_buf.resize(raw_len);
+              const size_t got = ZSTD_decompress(raw_buf.data(), raw_len,
+                                                 comp_buf.data(), comp_len);
+              SDB_ENSURE(!ZSTD_isError(got) && got == raw_len, ERROR_INTERNAL,
+                         "corrupt search chunk file '", chunk_path,
+                         "': zstd decompress failed (", raw_len, " expected)");
+              src = raw_buf.data();
+              src_len = raw_len;
+            } else {
+              SDB_ENSURE(codec == kChunkCodecNone && comp_len == raw_len,
+                         ERROR_INTERNAL, "corrupt search chunk file '",
+                         chunk_path, "': unknown codec ", codec);
+              src = comp_buf.data();
+              src_len = comp_len;
+            }
+            duckdb::MemoryStream ms(src, src_len);
             duckdb::BinaryDeserializer cdeser{ms};
             cdeser.Begin();
             duckdb::DataChunk chunk;
@@ -365,8 +427,9 @@ uint64_t SearchShardWal::Recover(uint64_t committed_tick,
   }
 
   // Orphan chunk-file sweep: a crashed bulk txn leaves chunk files not
-  // referenced by any committed record. Delete them (best-effort); MaxChunkSegId
-  // scans the *remaining* files so seg_id stays collision-free either way.
+  // referenced by any committed record. Delete them (best-effort);
+  // MaxChunkSegId scans the *remaining* files so seg_id stays collision-free
+  // either way.
   std::error_code ec;
   if (std::filesystem::exists(_chunks_dir, ec)) {
     for (const auto& entry :
@@ -394,7 +457,8 @@ uint64_t SearchShardWal::Recover(uint64_t committed_tick,
 void SearchShardWal::OnRefreshCommit(uint64_t committed_tick) {
   std::lock_guard<std::mutex> lock(_append_mu);
 
-  // Seal the active segment; the next commit opens a fresh one named by its tick.
+  // Seal the active segment; the next commit opens a fresh one named by its
+  // tick.
   if (_active) {
     _active->Sync();
     _active->Close();

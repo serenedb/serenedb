@@ -18,8 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "search/search_shard_wal.h"
-
 #include <absl/strings/str_format.h>
 #include <gtest/gtest.h>
 
@@ -36,6 +34,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "search/search_shard_wal.h"
 
 namespace sdb::search {
 namespace {
@@ -149,7 +149,8 @@ TEST_F(SearchShardWalTest, ReferenceRoundTrip) {
     cw2.Append(c2);
     cw2.Finish();
     std::vector<uint64_t> segs{cw1.SegId(), cw2.SegId()};
-    EXPECT_EQ(wal.AppendCommit(SearchShardWal::ReferenceCommit{cols, segs}), 1u);
+    EXPECT_EQ(wal.AppendCommit(SearchShardWal::ReferenceCommit{cols, segs}),
+              1u);
   }
   Collected got;
   SearchShardWal wal2(Fs(), _dir);
@@ -160,6 +161,37 @@ TEST_F(SearchShardWalTest, ReferenceRoundTrip) {
   EXPECT_EQ(got.chunks[0].second, (std::vector<int32_t>{1, 2}));
   EXPECT_EQ(got.chunks[1].second, (std::vector<int32_t>{3, 4, 5}));
   EXPECT_EQ(got.last_col_ids, cols);
+}
+
+TEST_F(SearchShardWalTest, ReferenceRoundTripCompressed) {
+  // Force the codec=Zstd path: a large, low-entropy chunk (2048 identical
+  // values) serialises to a flat ~8 KB blob that compresses to a few bytes.
+  // (Small chunks fall back to codec=None, which the other tests cover.)
+  std::vector<uint64_t> cols{9};
+  const std::vector<int32_t> vals(2048, 42);
+  {
+    SearchShardWal wal(Fs(), _dir);
+    auto cw = wal.NewChunkWriter();
+    auto cdc = MakeIntCdc(Alloc(), vals);
+    duckdb::DataChunk c;
+    c.Initialize(Alloc(), IntType());
+    cdc->FetchChunk(0, c);
+    cw.Append(c);
+    cw.Finish();
+    // Compression actually happened: the framed chunk file is far below the
+    // ~8 KB raw serialised size (so this exercises decompress, not the raw
+    // fallback).
+    EXPECT_LT(std::filesystem::file_size(ChunkPath(1)), 1024u);
+    std::vector<uint64_t> segs{cw.SegId()};
+    EXPECT_EQ(wal.AppendCommit(SearchShardWal::ReferenceCommit{cols, segs}),
+              1u);
+  }
+  Collected got;
+  SearchShardWal wal2(Fs(), _dir);
+  EXPECT_EQ(wal2.Recover(0, MakeCollector(got)), 1u);
+
+  ASSERT_EQ(got.chunks.size(), 1u);
+  EXPECT_EQ(got.chunks[0].second, vals);  // all 2048 values round-trip exactly
 }
 
 TEST_F(SearchShardWalTest, RecoverySkipsConsumed) {
@@ -193,7 +225,8 @@ TEST_F(SearchShardWalTest, CounterRecovery) {
     cw.Append(c);
     cw.Finish();
     std::vector<uint64_t> segs{cw.SegId()};
-    EXPECT_EQ(wal.AppendCommit(SearchShardWal::ReferenceCommit{cols, segs}), 1u);
+    EXPECT_EQ(wal.AppendCommit(SearchShardWal::ReferenceCommit{cols, segs}),
+              1u);
   }
   Collected got;
   SearchShardWal wal2(Fs(), _dir);
@@ -241,7 +274,8 @@ TEST_F(SearchShardWalTest, RefreshCommitGcDeletesConsumed) {
   std::vector<uint64_t> segs{cw.SegId()};
   EXPECT_EQ(wal.AppendCommit(SearchShardWal::ReferenceCommit{cols, segs}), 1u);
   auto an_inline = MakeIntCdc(Alloc(), {2});
-  EXPECT_EQ(wal.AppendCommit(SearchShardWal::InlineCommit{cols, *an_inline}), 2u);
+  EXPECT_EQ(wal.AppendCommit(SearchShardWal::InlineCommit{cols, *an_inline}),
+            2u);
 
   EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
   EXPECT_TRUE(std::filesystem::exists(ChunkPath(1)));
@@ -263,7 +297,8 @@ TEST_F(SearchShardWalTest, RefreshCommitKeepsLiveSegment) {
   auto a = MakeIntCdc(Alloc(), {10});
   wal.AppendCommit(SearchShardWal::InlineCommit{cols, *a});  // tick 1
 
-  // committed_tick = 0: nothing is durable in iresearch yet -> keep the segment.
+  // committed_tick = 0: nothing is durable in iresearch yet -> keep the
+  // segment.
   wal.OnRefreshCommit(0);
   EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
 }

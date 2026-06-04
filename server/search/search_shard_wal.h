@@ -27,15 +27,17 @@
 #include <memory>
 #include <mutex>
 #include <span>
+#include <vector>
 
 namespace duckdb {
+
 class FileSystem;
 class BufferedFileWriter;
 class DataChunk;
 class ColumnDataCollection;
 class MemoryStream;
-}  // namespace duckdb
 
+}  // namespace duckdb
 namespace sdb::search {
 
 // Self-contained, per-shard write-ahead log for a search-backed table. See
@@ -45,11 +47,13 @@ namespace sdb::search {
 //
 // Layout under `<wal_dir>` (= GetWalPath(db, schema, table)). Names are
 // PostgreSQL-style fixed-width 16-hex, so lexicographic order == numeric order:
-//   <016x first_tick>.swal        central commit segments (append-only); the name
-//                                 is the tick of the segment's FIRST record (the
-//                                 PG-LSN analog), so first ticks are unique and
-//                                 monotonic across segments.
-//   chunks/<016x seg_id>.swchunk  per-bulk-thread chunk files (referenced by a record)
+//   <016x first_tick>.swal        central commit segments (append-only); the
+//   name
+//                                 is the tick of the segment's FIRST record
+//                                 (the PG-LSN analog), so first ticks are
+//                                 unique and monotonic across segments.
+//   chunks/<016x seg_id>.swchunk  per-bulk-thread chunk files (referenced by a
+//   record)
 //
 // A commit appends ONE central record carrying a monotonic `tick`:
 //   * INLINE    -- small inserts: the rows are serialised into the record.
@@ -90,10 +94,15 @@ class SearchShardWal {
     uint64_t _seg_id;
     std::unique_ptr<duckdb::BufferedFileWriter> _writer;
     // Reused across Append() calls: Rewind() resets the position but keeps the
-    // backing buffer, so only the first chunk pays the grow-and-copy; same-width
-    // chunks then serialise in place -- no per-chunk allocation (WAL_DESIGN.md
-    // §13).
+    // backing buffer, so only the first chunk pays the grow-and-copy;
+    // same-width chunks then serialise in place -- no per-chunk allocation
+    // (WAL_DESIGN.md §13).
     std::unique_ptr<duckdb::MemoryStream> _stream;
+    // Reused zstd output buffer (grows to the high-water compressed size). The
+    // serialized chunk is block-compressed into here before WriteData -- the
+    // chunk-file write is I/O-bound on this ~6 GB second copy, and the data
+    // compresses ~5-8x, so this is the dominant insert-phase lever.
+    std::vector<uint8_t> _comp;
   };
 
   // Opaque column-id list carried in a record (catalog::Column::Id::id()).
@@ -114,8 +123,8 @@ class SearchShardWal {
   // Per replayed chunk during Recover(): the record's tick + column ids and one
   // DataChunk to re-feed into iresearch. INLINE records yield their CDC's
   // chunks; REFERENCE records yield each referenced chunk file's chunks.
-  using ReplayCallback = std::function<void(
-    uint64_t tick, ColumnIds column_ids, duckdb::DataChunk& chunk)>;
+  using ReplayCallback = std::function<void(uint64_t tick, ColumnIds column_ids,
+                                            duckdb::DataChunk& chunk)>;
 
   // `fs` must outlive this object (e.g. a process-wide LocalFileSystem, or
   // duckdb::FileSystem::CreateLocal() owned by the caller). `wal_dir` is the
@@ -155,11 +164,12 @@ class SearchShardWal {
   std::filesystem::path _wal_dir;
   std::filesystem::path _chunks_dir;
 
-  std::mutex _append_mu;        // guards _tick + the active-segment append
-  uint64_t _tick = 0;           // last assigned tick; ++ under _append_mu
+  std::mutex _append_mu;             // guards _tick + the active-segment append
+  uint64_t _tick = 0;                // last assigned tick; ++ under _append_mu
   std::atomic<uint64_t> _seg_id{0};  // last allocated chunk seg_id (uniqueness)
   // Active central segment writer; null until the first commit after open/roll.
-  // Its file is named by the tick of its first record (no separate seq counter).
+  // Its file is named by the tick of its first record (no separate seq
+  // counter).
   std::unique_ptr<duckdb::BufferedFileWriter> _active;
 
   // Open `_active` named <016x first_tick>.swal if not already open.

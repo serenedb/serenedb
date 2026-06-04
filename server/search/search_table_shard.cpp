@@ -20,9 +20,12 @@
 
 #include "search/search_table_shard.h"
 
+#include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/common/file_system.hpp>
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/index_meta.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/mmap_directory.hpp>
@@ -128,16 +131,43 @@ void SearchTableShard::OpenWriter() {
   writer_options.db = query::DuckDBEngine::Instance().GetDB().instance.get();
   writer_options.reader_options.db = writer_options.db;
 
+  // Persist this shard's last-committed iresearch tick in the commit meta
+  // payload so it survives restart (mirrors InvertedIndexShard). iresearch
+  // invokes this at each RefreshCommit with the max committed tick -- for us
+  // the WAL tick passed to trx.Commit(tick). The WAL GC (Commit) and the
+  // recovery skip read it back from the snapshot's index_meta payload (§8).
+  writer_options.meta_payload_provider = [this](uint64_t tick,
+                                                irs::bstring& out) {
+    _last_committed_tick = std::max(_last_committed_tick, tick);
+    uint64_t tick_be = absl::big_endian::FromHost(_last_committed_tick);
+    out.append(reinterpret_cast<const irs::byte_type*>(&tick_be),
+               sizeof(tick_be));
+    return true;
+  };
+
   _writer = irs::IndexWriter::Make(*_dir, codec, open_mode, writer_options);
 
+  if (path_exists) {
+    // Restore the durable commit tick from the last commit's meta payload.
+    auto reader = _writer->GetSnapshot();
+    auto payload = irs::GetPayload(reader.Meta().index_meta);
+    if (payload.size() >= sizeof(uint64_t)) {
+      _last_committed_tick = absl::big_endian::Load64(payload.data());
+    }
+  }
+
   // Per-shard self-contained WAL (WAL_DESIGN.md). Construction is lazy -- no
-  // files are created until the first commit -- so wiring it here is a no-op
-  // behaviour change; the write path and recovery are wired in later phases.
-  // Borrows the engine's FileSystem, which outlives the shard.
+  // files are created until the first commit. Borrows the engine's FileSystem,
+  // which outlives the shard.
   _wal = std::make_unique<SearchShardWal>(
     duckdb::FileSystem::GetFileSystem(
       *query::DuckDBEngine::Instance().GetDB().instance),
     GetWalPath(_db_id, _schema_id, GetTableId()));
+  // Continue the WAL tick line past the durable iresearch tick so the next
+  // commit's tick is strictly greater (iresearch monotonicity). Replay of
+  // records not yet published into iresearch is wired in the recovery pass
+  // (later phase); here we only seed the counters.
+  _wal->SeedCounters(_last_committed_tick);
 
   if (_is_new) {
     // Force a commit so the directory contains a valid empty index --

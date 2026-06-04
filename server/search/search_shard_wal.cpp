@@ -144,6 +144,29 @@ std::vector<std::pair<uint64_t, std::filesystem::path>> EnumerateSegments(
   return out;
 }
 
+// Total bytes of all chunk files. Counted toward the central-segment seal
+// threshold so a bulk insert (tiny central record, large chunks) rolls promptly
+// (WAL_DESIGN.md §10.2). Cheap for the inline path: chunks/ usually doesn't
+// exist (no NewChunkWriter), so this is a single existence check.
+uint64_t TotalChunkBytes(const std::filesystem::path& chunks_dir) {
+  uint64_t total = 0;
+  std::error_code ec;
+  if (!std::filesystem::exists(chunks_dir, ec)) {
+    return 0;
+  }
+  for (const auto& entry :
+       std::filesystem::directory_iterator(chunks_dir, ec)) {
+    if (ec || !entry.is_regular_file(ec)) {
+      continue;
+    }
+    uint64_t sz = 0;
+    if (ParseName(entry.path().filename().string(), kChunkSuffix, sz)) {
+      total += entry.file_size(ec);
+    }
+  }
+  return total;
+}
+
 uint64_t MaxChunkSegId(const std::filesystem::path& chunks_dir) {
   uint64_t mx = 0;
   std::error_code ec;
@@ -262,8 +285,12 @@ void SearchShardWal::ChunkWriter::Finish() {
 //
 
 SearchShardWal::SearchShardWal(duckdb::FileSystem& fs,
-                               std::filesystem::path wal_dir)
-  : _fs(fs), _wal_dir(std::move(wal_dir)), _chunks_dir(_wal_dir / "chunks") {}
+                               std::filesystem::path wal_dir,
+                               uint64_t seal_threshold)
+  : _fs(fs),
+    _wal_dir(std::move(wal_dir)),
+    _chunks_dir(_wal_dir / "chunks"),
+    _seal_threshold(seal_threshold) {}
 
 SearchShardWal::~SearchShardWal() = default;
 
@@ -276,6 +303,7 @@ void SearchShardWal::EnsureActiveSegmentLocked(uint64_t first_tick) {
   SDB_ASSERT(!ec, "create wal dir '", _wal_dir.string(), "': ", ec.message());
   _active = std::make_unique<duckdb::BufferedFileWriter>(
     _fs, (_wal_dir / SegmentName(first_tick)).string(), kAppendFlags);
+  _active_first_tick = first_tick;
 }
 
 void SearchShardWal::WriteFrameLocked(const uint8_t* payload, uint64_t size) {
@@ -284,7 +312,19 @@ void SearchShardWal::WriteFrameLocked(const uint8_t* payload, uint64_t size) {
   _active->Write<uint64_t>(size);
   _active->Write<uint64_t>(checksum);
   _active->WriteData(payload, size);
-  _active->Sync();
+  _active->Sync();  // commit point
+
+  // Size-based rotation (WAL_DESIGN.md §10.2): seal once the active segment plus
+  // the outstanding chunk files exceed the threshold. Counting chunk bytes rolls
+  // a bulk insert promptly (tiny central record, GB of chunks) so GC can reclaim
+  // its chunks; small INLINE inserts accumulate to the threshold before one
+  // roll. The next AppendCommit opens a fresh segment named by its tick.
+  if (_active->GetTotalWritten() + TotalChunkBytes(_chunks_dir) >
+      _seal_threshold) {
+    _active->Close();
+    _active.reset();
+    _active_first_tick = 0;
+  }
 }
 
 uint64_t SearchShardWal::AppendCommit(const InlineCommit& rec) {
@@ -454,20 +494,44 @@ uint64_t SearchShardWal::Recover(uint64_t committed_tick,
   return max_tick;
 }
 
-void SearchShardWal::OnRefreshCommit(uint64_t committed_tick) {
+void SearchShardWal::SeedCounters(uint64_t committed_tick) {
   std::lock_guard<std::mutex> lock(_append_mu);
+  uint64_t max_tick = 0;
+  for (const auto& [first_tick, path] : EnumerateSegments(_wal_dir)) {
+    duckdb::BufferedFileReader reader(_fs, path.string().c_str());
+    std::vector<uint8_t> payload;
+    while (ReadFrame(reader, payload)) {
+      // The record's tick is the first u64 of the payload (§5.1) -- read it
+      // without deserialising the rest of the record.
+      duckdb::MemoryStream ps(payload.data(), payload.size());
+      max_tick = std::max(max_tick, ps.Read<uint64_t>());
+    }
+  }
+  _tick = std::max(committed_tick, max_tick);
+  _seg_id.store(MaxChunkSegId(_chunks_dir), std::memory_order_relaxed);
+}
 
-  // Seal the active segment; the next commit opens a fresh one named by its
-  // tick.
-  if (_active) {
-    _active->Sync();
-    _active->Close();
-    _active.reset();
+void SearchShardWal::OnRefreshCommit(uint64_t committed_tick) {
+  // Snapshot which segment is active (the only file AppendCommit mutates). The
+  // active segment is sealed by size in AppendCommit, NOT here -- so we never
+  // seal or touch it during GC, and the sweep below runs lock-free over the
+  // immutable sealed segments + dead chunk files.
+  uint64_t active_first_tick;
+  {
+    std::lock_guard<std::mutex> lock(_append_mu);
+    active_first_tick = _active_first_tick;
   }
 
-  // Delete fully-consumed segments (max tick <= committed_tick) and the chunk
-  // files they reference.
+  // Delete fully-consumed SEALED segments (max tick <= committed_tick) and the
+  // chunk files they reference. Skip the active segment: a concurrent
+  // AppendCommit may roll it (so active_first_tick goes stale), but the worst
+  // case is leaving the just-rolled segment for the next GC, and any freshly
+  // opened active holds only ticks > committed_tick (newer than this commit),
+  // so it is never eligible anyway.
   for (const auto& [first_tick, path] : EnumerateSegments(_wal_dir)) {
+    if (active_first_tick != 0 && first_tick == active_first_tick) {
+      continue;  // the live, still-appended segment
+    }
     uint64_t seg_max_tick = 0;
     std::vector<uint64_t> seg_ids;
     {

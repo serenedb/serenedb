@@ -265,7 +265,10 @@ TEST_F(SearchShardWalTest, TornTailIgnored) {
 
 TEST_F(SearchShardWalTest, RefreshCommitGcDeletesConsumed) {
   std::vector<uint64_t> cols{1};
-  SearchShardWal wal(Fs(), _dir);
+  // seal_threshold = 1 byte: every commit rolls the active segment, so the
+  // records below land in SEALED segments that GC can reclaim (the active
+  // segment is never GC'd).
+  SearchShardWal wal(Fs(), _dir, /*seal_threshold=*/1);
   auto cw = wal.NewChunkWriter();  // seg_id 1
   duckdb::DataChunk c;
   FillIntChunk(c, Alloc(), {1});
@@ -293,14 +296,32 @@ TEST_F(SearchShardWalTest, RefreshCommitGcDeletesConsumed) {
 
 TEST_F(SearchShardWalTest, RefreshCommitKeepsLiveSegment) {
   std::vector<uint64_t> cols{1};
-  SearchShardWal wal(Fs(), _dir);
+  // seal_threshold = 1 byte forces the record into a SEALED segment, so this
+  // exercises "sealed but not-yet-consumed -> kept" (not the active-skip path).
+  SearchShardWal wal(Fs(), _dir, /*seal_threshold=*/1);
   auto a = MakeIntCdc(Alloc(), {10});
   wal.AppendCommit(SearchShardWal::InlineCommit{cols, *a});  // tick 1
 
-  // committed_tick = 0: nothing is durable in iresearch yet -> keep the
-  // segment.
+  // committed_tick = 0: nothing is durable in iresearch yet -> keep the segment
+  // even though it is sealed (its max tick 1 > committed_tick 0).
   wal.OnRefreshCommit(0);
   EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
+}
+
+TEST_F(SearchShardWalTest, InlineInsertsAccumulateInOneSegment) {
+  // Default (large) threshold: small INLINE inserts must NOT roll the central
+  // WAL per commit -- they accumulate in the single active segment until the
+  // size cap. (Avoids a tiny .swal per statement for OLTP workloads.)
+  std::vector<uint64_t> cols{1};
+  SearchShardWal wal(Fs(), _dir);  // default 16 MB threshold
+  for (int i = 0; i < 5; ++i) {
+    auto c = MakeIntCdc(Alloc(), {i});
+    wal.AppendCommit(SearchShardWal::InlineCommit{cols, *c});
+  }
+  // All five commits (ticks 1..5) live in the one segment named by tick 1.
+  EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
+  EXPECT_FALSE(std::filesystem::exists(SegPath(2)));
+  EXPECT_FALSE(std::filesystem::exists(SegPath(3)));
 }
 
 TEST_F(SearchShardWalTest, OrphanChunkSweptOnRecover) {
@@ -322,6 +343,32 @@ TEST_F(SearchShardWalTest, OrphanChunkSweptOnRecover) {
   EXPECT_FALSE(std::filesystem::exists(ChunkPath(1)));
   // seg_id counter resets (orphan gone) -> next chunk reuses id 1.
   EXPECT_EQ(wal2.NewChunkWriter().SegId(), 1u);
+}
+
+TEST_F(SearchShardWalTest, SeedCountersContinuesTickLine) {
+  std::vector<uint64_t> cols{1};
+  {
+    SearchShardWal wal(Fs(), _dir);
+    auto a = MakeIntCdc(Alloc(), {10});
+    auto b = MakeIntCdc(Alloc(), {20});
+    EXPECT_EQ(wal.AppendCommit(SearchShardWal::InlineCommit{cols, *a}), 1u);
+    EXPECT_EQ(wal.AppendCommit(SearchShardWal::InlineCommit{cols, *b}), 2u);
+  }
+  // Reopen: SeedCounters (no replay) continues past the max WAL tick (2).
+  {
+    SearchShardWal wal(Fs(), _dir);
+    wal.SeedCounters(0);  // committed_tick 0; max on-disk tick is 2
+    auto c = MakeIntCdc(Alloc(), {30});
+    EXPECT_EQ(wal.AppendCommit(SearchShardWal::InlineCommit{cols, *c}), 3u);
+  }
+  // A committed_tick higher than the on-disk max wins (the durable iresearch
+  // tick can exceed the WAL once consumed records are GC'd).
+  {
+    SearchShardWal wal(Fs(), _dir);
+    wal.SeedCounters(100);  // committed_tick 100 > max on-disk tick (3)
+    auto d = MakeIntCdc(Alloc(), {40});
+    EXPECT_EQ(wal.AppendCommit(SearchShardWal::InlineCommit{cols, *d}), 101u);
+  }
 }
 
 }  // namespace

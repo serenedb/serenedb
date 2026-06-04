@@ -110,6 +110,10 @@ class SearchTableShard final : public TableShard {
   void Commit() {
     SDB_ASSERT(_writer);
     _writer->RefreshCommit();
+    // RefreshCommit invoked the meta_payload_provider, advancing
+    // _last_committed_tick to the now-durable iresearch tick. Reclaim WAL
+    // segments + chunk files whose data is published (WAL_DESIGN.md §10).
+    _wal->OnRefreshCommit(_last_committed_tick);
   }
 
   // The shard's self-contained WAL (WAL_DESIGN.md). Valid after construction.
@@ -129,6 +133,12 @@ class SearchTableShard final : public TableShard {
   // Per-shard self-contained WAL (WAL_DESIGN.md). Constructed in OpenWriter;
   // borrows the DuckDB engine's FileSystem, which outlives the shard.
   std::unique_ptr<SearchShardWal> _wal;
+  // The iresearch commit tick made durable so far, stored in / restored from
+  // the iresearch commit meta payload (meta_payload_provider in OpenWriter,
+  // mirroring InvertedIndexShard). Advanced at each RefreshCommit; the WAL
+  // GC + recovery skip use it. uint64_t (not atomic): updated only under
+  // iresearch's commit lock / single-threaded shard open.
+  uint64_t _last_committed_tick = 0;
 };
 
 }  // namespace sdb::search

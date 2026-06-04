@@ -126,10 +126,20 @@ class SearchShardWal {
   using ReplayCallback = std::function<void(uint64_t tick, ColumnIds column_ids,
                                             duckdb::DataChunk& chunk)>;
 
+  // Default central-segment seal threshold: roll the active segment once
+  // `active_segment_bytes + total_chunk_bytes` exceeds this (PostgreSQL's WAL
+  // segment size). Chunk bytes are counted too so a bulk insert (tiny central
+  // record, GB of chunks) rolls promptly and its chunk files get reclaimed by
+  // GC, while small INLINE inserts accumulate to the threshold before one roll
+  // (WAL_DESIGN.md §10.2).
+  static constexpr uint64_t kDefaultSealThreshold = 16 * 1024 * 1024;
+
   // `fs` must outlive this object (e.g. a process-wide LocalFileSystem, or
   // duckdb::FileSystem::CreateLocal() owned by the caller). `wal_dir` is the
-  // shard's GetWalPath; it (and chunks/) is created on demand.
-  SearchShardWal(duckdb::FileSystem& fs, std::filesystem::path wal_dir);
+  // shard's GetWalPath; it (and chunks/) is created on demand. `seal_threshold`
+  // is the size cap above; tests pass a small value to force rolls.
+  SearchShardWal(duckdb::FileSystem& fs, std::filesystem::path wal_dir,
+                 uint64_t seal_threshold = kDefaultSealThreshold);
   ~SearchShardWal();
 
   SearchShardWal(const SearchShardWal&) = delete;
@@ -143,6 +153,15 @@ class SearchShardWal {
   // AppendCommit. Returns the highest tick seen (0 if none).
   uint64_t Recover(uint64_t committed_tick, const ReplayCallback& cb);
 
+  // Seed the tick / seg-id counters from durable state WITHOUT replaying
+  // (WAL_DESIGN.md §8). For shard open before the schema is available: the
+  // replay (Recover) runs later in the post-catalog recovery pass, but the
+  // tick line must already continue past `committed_tick` so the next commit's
+  // tick is strictly greater (iresearch monotonicity). Scans the central
+  // segments for the max record tick and chunks/ for the max seg_id. Idempotent
+  // with a later Recover (which re-seeds).
+  void SeedCounters(uint64_t committed_tick);
+
   // Bulk sink thread: allocate a unique seg_id and open its chunk file.
   ChunkWriter NewChunkWriter();
 
@@ -153,10 +172,12 @@ class SearchShardWal {
   uint64_t AppendCommit(const InlineCommit& rec);
   uint64_t AppendCommit(const ReferenceCommit& rec);
 
-  // After a background RefreshCommit advanced the durable iresearch tick to
-  // `committed_tick`: seal the active central segment, start a new one, and
-  // delete fully-consumed segments + their referenced chunk files
-  // (WAL_DESIGN.md §10).
+  // After a RefreshCommit advanced the durable iresearch tick to
+  // `committed_tick`: delete fully-consumed SEALED central segments (max tick <=
+  // `committed_tick`) and the chunk files they reference (WAL_DESIGN.md §10).
+  // The active segment is never touched (it is the only mutated file and is
+  // sealed by size in AppendCommit, not here); so the file I/O runs lock-free,
+  // guarded only by a brief snapshot of the active segment's identity.
   void OnRefreshCommit(uint64_t committed_tick);
 
  private:
@@ -164,6 +185,7 @@ class SearchShardWal {
   std::filesystem::path _wal_dir;
   std::filesystem::path _chunks_dir;
 
+  const uint64_t _seal_threshold;    // roll active when active+chunks exceed it
   std::mutex _append_mu;             // guards _tick + the active-segment append
   uint64_t _tick = 0;                // last assigned tick; ++ under _append_mu
   std::atomic<uint64_t> _seg_id{0};  // last allocated chunk seg_id (uniqueness)
@@ -171,6 +193,10 @@ class SearchShardWal {
   // Its file is named by the tick of its first record (no separate seq
   // counter).
   std::unique_ptr<duckdb::BufferedFileWriter> _active;
+  // The active segment's filename tick (== its first record's tick); 0 when no
+  // active segment is open. GC reads this (under _append_mu) to skip the one
+  // mutated file, then sweeps the rest lock-free.
+  uint64_t _active_first_tick = 0;
 
   // Open `_active` named <016x first_tick>.swal if not already open.
   void EnsureActiveSegmentLocked(uint64_t first_tick);

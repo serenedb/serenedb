@@ -22,11 +22,13 @@
 
 namespace sdb::connector {
 namespace {
+
 void CreateSubscriptionPragma(duckdb::ClientContext& context,
                               const duckdb::FunctionParameters& params) {
   throw duckdb::InvalidInputException(
     "create_subscription is not implemented yet");
 }
+
 }  // namespace
 
 void RegisterSubscriptionPragma(duckdb::DatabaseInstance& db) {

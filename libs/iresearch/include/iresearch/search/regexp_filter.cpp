@@ -101,10 +101,10 @@ Filter::ptr CreateByRegexp(std::string_view field, bytes_view pattern,
       filter->boost(boost);
       return filter;
     },
-    [&](bytes_view term) -> Filter::ptr {
+    [&](bytes_view prefix) -> Filter::ptr {
       auto filter = std::make_unique<ByPrefix>();
       *filter->mutable_field() = field;
-      filter->mutable_options()->term = term;
+      filter->mutable_options()->term = prefix;
       filter->mutable_options()->scored_terms_limit = scored_terms_limit;
       filter->boost(boost);
       return filter;

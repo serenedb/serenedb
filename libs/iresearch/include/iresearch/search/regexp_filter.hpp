@@ -54,10 +54,7 @@ struct ByRegexpOptions : ByRegexpFilterOptions {
 
   size_t scored_terms_limit{1024};
 
-  bool operator==(const ByRegexpOptions& rhs) const noexcept {
-    return filter_options::operator==(rhs) &&
-           scored_terms_limit == rhs.scored_terms_limit;
-  }
+  bool operator==(const ByRegexpOptions& rhs) const noexcept = default;
 };
 
 Filter::ptr CreateByRegexp(std::string_view field, bytes_view pattern,

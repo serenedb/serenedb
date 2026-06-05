@@ -28,21 +28,28 @@
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
+#include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace {
 
 template<typename Filter = irs::ByRegexp>
-Filter MakeFilter(std::string_view field, std::string_view value) {
+Filter MakeFilter(std::string_view field, std::string_view value,
+                  irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl) {
   Filter q;
   *q.mutable_field() = field;
   if constexpr (std::is_same_v<Filter, irs::ByRegexp>) {
-    q.mutable_options()->pattern = irs::ViewCast<irs::byte_type>(value);
+    *q.mutable_options() =
+      irs::ByRegexpOptions{irs::ViewCast<irs::byte_type>(value), syntax};
   } else {
     q.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
   }
   return q;
+}
+
+irs::Filter::ptr MakeRegexp(std::string_view field, std::string_view value) {
+  return irs::CreateByRegexp(field, irs::ViewCast<irs::byte_type>(value));
 }
 
 }  // namespace
@@ -104,8 +111,8 @@ TEST(by_regexp_test, type_of_prepared_query) {
       MakeFilter<irs::ByTerm>("foo", "bar")
         .prepare({.index = irs::SubReader::empty(), .memory = counter});
     auto rhs =
-      MakeFilter("foo", "bar")
-        .prepare({.index = irs::SubReader::empty(), .memory = counter});
+      MakeRegexp("foo", "bar")
+        ->prepare({.index = irs::SubReader::empty(), .memory = counter});
     auto& lhs_ref = *lhs;
     auto& rhs_ref = *rhs;
     ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
@@ -116,8 +123,8 @@ TEST(by_regexp_test, type_of_prepared_query) {
       MakeFilter<irs::ByPrefix>("foo", "bar")
         .prepare({.index = irs::SubReader::empty(), .memory = counter});
     auto rhs =
-      MakeFilter("foo", "bar.*")
-        .prepare({.index = irs::SubReader::empty(), .memory = counter});
+      MakeRegexp("foo", "bar.*")
+        ->prepare({.index = irs::SubReader::empty(), .memory = counter});
     auto& lhs_ref = *lhs;
     auto& rhs_ref = *rhs;
     ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
@@ -126,7 +133,7 @@ TEST(by_regexp_test, type_of_prepared_query) {
   {
     auto lhs = MakeFilter<irs::ByTerm>("foo", "").prepare(
       {.index = irs::SubReader::empty(), .memory = counter});
-    auto rhs = MakeFilter("foo", "").prepare(
+    auto rhs = MakeRegexp("foo", "")->prepare(
       {.index = irs::SubReader::empty(), .memory = counter});
     auto& lhs_ref = *lhs;
     auto& rhs_ref = *rhs;
@@ -533,8 +540,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
   {
     irs::ByRegexp q;
     *q.mutable_field() = "prefix";
-    q.mutable_options()->pattern =
-      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"));
+    *q.mutable_options() = irs::ByRegexpOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"))};
     q.mutable_options()->scored_terms_limit = 1;
     auto prepared =
       q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
@@ -544,8 +551,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
   {
     irs::ByRegexp q;
     *q.mutable_field() = "prefix";
-    q.mutable_options()->pattern =
-      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"));
+    *q.mutable_options() = irs::ByRegexpOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"))};
     q.mutable_options()->scored_terms_limit = 0;
     auto prepared =
       q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
@@ -555,8 +562,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
   {
     irs::ByRegexp q;
     *q.mutable_field() = "prefix";
-    q.mutable_options()->pattern =
-      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"));
+    *q.mutable_options() = irs::ByRegexpOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"))};
     q.mutable_options()->scored_terms_limit = 1000000;
     auto prepared =
       q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
@@ -874,14 +881,14 @@ TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
     {
       auto& s = d.add<irs::ByRegexp>();
       *s.mutable_field() = "alt";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("cat"));
+      *s.mutable_options() = irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view{"cat"})};
     }
     {
       auto& s = d.add<irs::ByRegexp>();
       *s.mutable_field() = "alt";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("dog"));
+      *s.mutable_options() = irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view{"dog"})};
     }
     CheckQuery(d, Docs{1, 2, 4, 6, 8, 10, 11, 14, 15, 17, 18, 20}, rdr);
   }
@@ -890,14 +897,14 @@ TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
     {
       auto& s = c.add<irs::ByRegexp>();
       *s.mutable_field() = "term";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("foo.*"));
+      *s.mutable_options() = irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view{"foo.*"})};
     }
     {
       auto& s = c.add<irs::ByRegexp>();
       *s.mutable_field() = "alt";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("cat"));
+      *s.mutable_options() = irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view{"cat"})};
     }
     CheckQuery(c, Docs{1, 4, 8, 14, 20}, rdr);
   }
@@ -906,8 +913,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
     {
       auto& s = d.add<irs::ByRegexp>();
       *s.mutable_field() = "term";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("foobar"));
+      *s.mutable_options() = irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view{"foobar"})};
     }
     {
       auto& s = d.add<irs::ByTerm>();
@@ -1050,7 +1057,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_literal) {
   {
     auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexp::visitor(term);
+    auto fv = irs::ByRegexp::visitor(
+      std::make_shared<const irs::automaton>(irs::FromRegexp(term)));
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
@@ -1070,7 +1078,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_prefix) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("ab.*"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexp::visitor(p);
+    auto fv = irs::ByRegexp::visitor(
+      std::make_shared<const irs::automaton>(irs::FromRegexp(p)));
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
     ASSERT_EQ(6, v.visit_calls_counter());
@@ -1089,7 +1098,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_wildcard_like) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("a.c.*"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexp::visitor(p);
+    auto fv = irs::ByRegexp::visitor(
+      std::make_shared<const irs::automaton>(irs::FromRegexp(p)));
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
@@ -1109,7 +1119,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_invalid_pattern) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("(abc"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexp::visitor(p);
+    auto fv = irs::ByRegexp::visitor(
+      std::make_shared<const irs::automaton>(irs::FromRegexp(p)));
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
     ASSERT_EQ(0, v.prepare_calls_counter());
@@ -1117,7 +1128,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_invalid_pattern) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("[abc"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexp::visitor(p);
+    auto fv = irs::ByRegexp::visitor(
+      std::make_shared<const irs::automaton>(irs::FromRegexp(p)));
     fv(segment, *reader, v);
     ASSERT_EQ(0, v.prepare_calls_counter());
   }
@@ -1484,8 +1496,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_posix_rejects_perl_class) {
     add_segment(gen);
   }
   auto rdr = open_reader();
-  auto q = MakeFilter("class", "\\w+");
-  q.mutable_options()->syntax = irs::RegexpSyntax::PosixEre;
+  auto q = MakeFilter("class", "\\w+", irs::RegexpSyntax::PosixEre);
   CheckQuery(q, Docs{}, Costs{0}, rdr);
 }
 
@@ -1519,8 +1530,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_posix_accepts_posix_class) {
     return out;
   };
 
-  auto q_posix = MakeFilter("class", "[[:alpha:]]+[[:digit:]]+");
-  q_posix.mutable_options()->syntax = irs::RegexpSyntax::PosixEre;
+  auto q_posix = MakeFilter("class", "[[:alpha:]]+[[:digit:]]+",
+                            irs::RegexpSyntax::PosixEre);
   auto q_perl_equiv = MakeFilter("class", "[a-zA-Z]+[0-9]+");
   auto q_perl_same = MakeFilter("class", "[[:alpha:]]+[[:digit:]]+");
 
@@ -1548,8 +1559,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_fast_paths_are_agnostic) {
 
   auto run = [&](std::string_view field, std::string_view pattern,
                  irs::RegexpSyntax syntax) {
-    auto q = MakeFilter(field, pattern);
-    q.mutable_options()->syntax = syntax;
+    auto q = MakeFilter(field, pattern, syntax);
     Docs out;
     auto prepared =
       q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
@@ -1579,40 +1589,27 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_fast_paths_are_agnostic) {
 }
 
 TEST_P(RegexpFilterTestCase, by_regexp_prepare_with_syntax) {
-  // Exercise the static ByRegexp::prepare overload with an explicit
-  // syntax argument, covering the path used by phrase_filter and any
-  // other direct callers.
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
     add_segment(gen);
   }
   auto rdr = open_reader();
-  auto pattern = irs::ViewCast<irs::byte_type>(std::string_view("(?:foo)bar"));
-  // Perl: non-capturing group parses, prepared query is non-null.
   {
-    auto prepared = irs::ByRegexp::prepare(
-      {.index = rdr, .memory = irs::IResourceManager::gNoop}, "term", pattern,
-      /*scored_terms_limit=*/1024, irs::RegexpSyntax::Perl);
+    auto q = MakeFilter("term", "(?:foo)bar", irs::RegexpSyntax::Perl);
+    auto prepared =
+      q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
     ASSERT_NE(nullptr, prepared);
   }
-  // POSIX: (?:...) is a Perl extension - prepare still returns a valid
-  // non-null pointer (empty query), but matches nothing.  The empty-
-  // match case is anchored end-to-end by
-  // by_regexp_syntax_posix_rejects_perl_class above.
   {
-    auto prepared = irs::ByRegexp::prepare(
-      {.index = rdr, .memory = irs::IResourceManager::gNoop}, "term", pattern,
-      /*scored_terms_limit=*/1024, irs::RegexpSyntax::PosixEre);
+    auto q = MakeFilter("term", "(?:foo)bar", irs::RegexpSyntax::PosixEre);
+    auto prepared =
+      q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
     ASSERT_NE(nullptr, prepared);
   }
 }
 
 TEST_P(RegexpFilterTestCase, by_regexp_visit_with_syntax) {
-  // Exercise the static ByRegexp::visitor overload with an explicit
-  // syntax argument.  A Perl-only pattern in POSIX mode must produce
-  // a visitor that never calls Prepare on the underlying
-  // FilterVisitor (the parse failed).
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1624,18 +1621,17 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_with_syntax) {
   ASSERT_NE(nullptr, reader);
 
   auto p = irs::ViewCast<irs::byte_type>(std::string_view("\\d+"));
-  // Perl: \d parses; the visitor is non-null and callable.  We do not
-  // assert a specific visit count because the "prefix" field may or
-  // may not contain digit-only terms in the fixture.
   {
-    auto fv = irs::ByRegexp::visitor(p, irs::RegexpSyntax::Perl);
+    auto fv = irs::ByRegexp::visitor(std::make_shared<const irs::automaton>(
+      irs::FromRegexp(p, irs::kDefaultMaxDfaStates, irs::RegexpSyntax::Perl)));
     ASSERT_TRUE(fv);
     tests::EmptyFilterVisitor v;
     fv(segment, *reader, v);
   }
-  // POSIX: \d is a parse error -> visitor is a no-op.
   {
-    auto fv = irs::ByRegexp::visitor(p, irs::RegexpSyntax::PosixEre);
+    auto fv = irs::ByRegexp::visitor(
+      std::make_shared<const irs::automaton>(irs::FromRegexp(
+        p, irs::kDefaultMaxDfaStates, irs::RegexpSyntax::PosixEre)));
     ASSERT_TRUE(fv);
     tests::EmptyFilterVisitor v;
     fv(segment, *reader, v);

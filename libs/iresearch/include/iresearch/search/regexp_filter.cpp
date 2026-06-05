@@ -22,124 +22,105 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/filter_visitor.hpp"
-#include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 
 namespace irs {
+namespace {
 
-field_visitor ByRegexp::visitor(bytes_view pattern, RegexpSyntax syntax) {
-  const auto type = ComputeRegexpType(pattern);
-
-  switch (type) {
-    case RegexpType::LiteralEscaped: {
-      bstring unescaped;
-      UnescapeRegexp(pattern, unescaped);
-      return [term = std::move(unescaped)](const SubReader& segment,
-                                           const TermReader& field,
-                                           FilterVisitor& visitor) {
-        ByTerm::visit(segment, field, term, visitor);
-      };
-    }
-
-    case RegexpType::Literal: {
-      return [term = bstring(pattern)](const SubReader& segment,
-                                       const TermReader& field,
-                                       FilterVisitor& visitor) {
-        ByTerm::visit(segment, field, term, visitor);
-      };
-    }
-
-    case RegexpType::PrefixEscaped: {
-      auto raw_prefix = ExtractRegexpPrefix(pattern);
-      bstring unescaped;
-      UnescapeRegexp(raw_prefix, unescaped);
-      return [prefix = std::move(unescaped)](const SubReader& segment,
-                                             const TermReader& field,
-                                             FilterVisitor& visitor) {
-        ByPrefix::visit(segment, field, prefix, visitor);
-      };
-    }
-
-    case RegexpType::Prefix: {
-      auto prefix = ExtractRegexpPrefix(pattern);
-      return [prefix = bstring(prefix)](const SubReader& segment,
-                                        const TermReader& field,
-                                        FilterVisitor& visitor) {
-        ByPrefix::visit(segment, field, prefix, visitor);
-      };
-    }
-
-    case RegexpType::Complex: {
-      auto acceptor = FromRegexp(pattern, kDefaultMaxDfaStates, syntax);
-
-      if (!Validate(acceptor)) {
-        // Invalid pattern or too complex - return visitor that matches nothing
-        return [](const SubReader&, const TermReader&, FilterVisitor&) {};
-      }
-
-      struct AutomatonContext : util::Noncopyable {
-        explicit AutomatonContext(automaton&& a)
-          : acceptor{std::move(a)}, matcher{MakeAutomatonMatcher(acceptor)} {}
-
-        automaton acceptor;
-        automaton_table_matcher matcher;
-      };
-
-      auto ctx = std::make_shared<AutomatonContext>(std::move(acceptor));
-
-      return [ctx = std::move(ctx)](const SubReader& segment,
-                                    const TermReader& field,
-                                    FilterVisitor& visitor) mutable {
-        return irs::Visit(segment, field, ctx->matcher, visitor);
-      };
-    }
+template<typename Term, typename Prefix, typename Complex>
+auto ExecuteRegexp(bstring& buf, bytes_view pattern, Term&& t, Prefix&& p,
+                   Complex&& c) {
+  switch (ComputeRegexpType(pattern)) {
+    case RegexpType::LiteralEscaped:
+      return t(UnescapeRegexp(pattern, buf));
+    case RegexpType::Literal:
+      return t(pattern);
+    case RegexpType::PrefixEscaped:
+      return p(UnescapeRegexp(ExtractRegexpPrefix(pattern), buf));
+    case RegexpType::Prefix:
+      return p(ExtractRegexpPrefix(pattern));
+    case RegexpType::Complex:
+      return c(pattern);
     default:
       SDB_UNREACHABLE();
   }
 }
 
-Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx,
-                                     std::string_view field, bytes_view pattern,
-                                     size_t scored_terms_limit,
-                                     RegexpSyntax syntax) {
-  const auto type = ComputeRegexpType(pattern);
+}  // namespace
 
-  switch (type) {
-    case RegexpType::LiteralEscaped: {
-      bstring buf;
-      UnescapeRegexp(pattern, buf);
-      return ByTerm::prepare(ctx, field, buf);
-    }
-
-    case RegexpType::Literal:
-      return ByTerm::prepare(ctx, field, pattern);
-
-    case RegexpType::PrefixEscaped: {
-      auto raw_prefix = ExtractRegexpPrefix(pattern);
-      bstring unescaped;
-      UnescapeRegexp(raw_prefix, unescaped);
-      return ByPrefix::prepare(ctx, field, unescaped, scored_terms_limit);
-    }
-
-    case RegexpType::Prefix: {
-      auto prefix = ExtractRegexpPrefix(pattern);
-      return ByPrefix::prepare(ctx, field, prefix, scored_terms_limit);
-    }
-
-    case RegexpType::Complex: {
-      auto acceptor = FromRegexp(pattern, kDefaultMaxDfaStates, syntax);
-      if (!Validate(acceptor)) {
-        return Query::empty();
-      }
-      return PrepareAutomatonFilter(ctx, field, acceptor, scored_terms_limit);
-    }
-
-    default:
-      SDB_UNREACHABLE();
+ByRegexpFilterOptions::ByRegexpFilterOptions(bytes_view pattern,
+                                             RegexpSyntax syntax)
+  : pattern{pattern}, syntax{syntax} {
+  if (!pattern.empty()) {
+    acceptor = std::make_shared<const automaton>(
+      FromRegexp(pattern, kDefaultMaxDfaStates, syntax));
   }
+}
+
+field_visitor ByRegexp::visitor(std::shared_ptr<const automaton> acceptor) {
+  if (!acceptor || !Validate(*acceptor)) {
+    return [](const SubReader&, const TermReader&, FilterVisitor&) {};
+  }
+
+  struct AutomatonContext : util::Noncopyable {
+    explicit AutomatonContext(std::shared_ptr<const automaton> a)
+      : acceptor{std::move(a)}, matcher{MakeAutomatonMatcher(*acceptor)} {}
+
+    std::shared_ptr<const automaton> acceptor;
+    automaton_table_matcher matcher;
+  };
+
+  auto ctx = AutomatonContext{std::move(acceptor)};
+
+  return
+    [ctx = std::move(ctx)](const SubReader& segment, const TermReader& field,
+                           FilterVisitor& visitor) mutable {
+      return irs::Visit(segment, field, ctx.matcher, visitor);
+    };
+}
+
+Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx) const {
+  if (!options().acceptor) {
+    return Query::empty();
+  }
+  return PrepareAutomatonFilter(ctx.Boost(Boost()), field(),
+                                *options().acceptor,
+                                options().scored_terms_limit);
+}
+
+Filter::ptr CreateByRegexp(std::string_view field, bytes_view pattern,
+                           RegexpSyntax syntax, size_t scored_terms_limit,
+                           score_t boost) {
+  bstring buf;
+  return ExecuteRegexp(
+    buf, pattern,
+    [&](bytes_view term) -> Filter::ptr {
+      auto filter = std::make_unique<ByTerm>();
+      *filter->mutable_field() = field;
+      filter->mutable_options()->term = term;
+      filter->boost(boost);
+      return filter;
+    },
+    [&](bytes_view term) -> Filter::ptr {
+      auto filter = std::make_unique<ByPrefix>();
+      *filter->mutable_field() = field;
+      filter->mutable_options()->term = term;
+      filter->mutable_options()->scored_terms_limit = scored_terms_limit;
+      filter->boost(boost);
+      return filter;
+    },
+    [&](bytes_view pattern) -> Filter::ptr {
+      auto filter = std::make_unique<ByRegexp>();
+      *filter->mutable_field() = field;
+      auto& options = *filter->mutable_options();
+      options = ByRegexpOptions{pattern, syntax};
+      options.scored_terms_limit = scored_terms_limit;
+      filter->boost(boost);
+      return filter;
+    });
 }
 
 }  // namespace irs

@@ -3744,8 +3744,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpSyntaxCaseInsensitive) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  AddRegexpFilter(expected, 1, std::string_view{"abc"},
-                  irs::RegexpSyntax::PosixEre);
+  expected.add(irs::CreateByRegexp(
+    MakeFieldName<std::string_view>(1),
+    irs::ViewCast<irs::byte_type>(std::string_view{"abc"})));
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_regexp('abc', 'POSIX')",
                columns, true);
@@ -3772,11 +3773,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpUnderNot) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
-  auto& re = not_filter.filter<irs::ByRegexp>();
-  *re.mutable_field() = MakeFieldName<std::string_view>(1);
-  re.mutable_options()->pattern.assign(
-    irs::ViewCast<irs::byte_type>(std::string_view{"foo.*"}));
+  expected.add(std::make_unique<irs::Not>(irs::CreateByRegexp(
+    MakeFieldName<std::string_view>(1),
+    irs::ViewCast<irs::byte_type>(std::string_view{"foo.*"}))));
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ !!ts_regexp('foo.*')",
                columns, true);
 }

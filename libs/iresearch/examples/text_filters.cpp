@@ -235,7 +235,7 @@ int main() {
       std::cout << "\n=== ByRegexp /f[ao]x/ ===\n";
       irs::ByRegexp q;
       *q.mutable_field() = "body";
-      q.mutable_options()->pattern = irs::bstring{Bytes("f[ao]x")};
+      *q.mutable_options() = irs::ByRegexpOptions{Bytes("f[ao]x")};
       PrintHits("expect d0, d2 (matches 'fox')", RunFilter(reader, q, names));
     }
 

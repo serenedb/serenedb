@@ -7222,8 +7222,9 @@ TEST_P(PhraseFilterTestCase, regexp_part_syntax) {
     *q.mutable_field() = "phrase_anl";
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    q.mutable_options()->push_back<irs::ByRegexpOptions>().pattern =
-      irs::ViewCast<irs::byte_type>(std::string_view("[br]+own"));
+    q.mutable_options()->push_back<irs::ByRegexpOptions>() =
+      irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("[br]+own"))};
     ASSERT_EQ(expected, execute(q));
   }
 
@@ -7233,9 +7234,10 @@ TEST_P(PhraseFilterTestCase, regexp_part_syntax) {
     *q.mutable_field() = "phrase_anl";
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    auto& r = q.mutable_options()->push_back<irs::ByRegexpOptions>();
-    r.pattern = irs::ViewCast<irs::byte_type>(std::string_view("\\w+"));
-    r.syntax = irs::RegexpSyntax::PosixEre;
+    q.mutable_options()->push_back<irs::ByRegexpOptions>() =
+      irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("\\w+")),
+        irs::RegexpSyntax::PosixEre};
 
     ASSERT_TRUE(execute(q).empty());
   }
@@ -7246,8 +7248,9 @@ TEST_P(PhraseFilterTestCase, regexp_part_syntax) {
     *q.mutable_field() = "phrase_anl";
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    q.mutable_options()->push_back<irs::ByRegexpOptions>().pattern =
-      irs::ViewCast<irs::byte_type>(std::string_view("\\w+"));
+    q.mutable_options()->push_back<irs::ByRegexpOptions>() =
+      irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("\\w+"))};
 
     ASSERT_FALSE(execute(q).empty());
   }

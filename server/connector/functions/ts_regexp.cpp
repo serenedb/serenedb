@@ -91,15 +91,19 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
   std::string field_name;
   MakeFieldName(column_info.field_id, field_name);
   search::mangling::MangleString(field_name);
-  auto& filter = ctx.negated ? Negate<irs::ByRegexp>(parent)
-                             : AddFilter<irs::ByRegexp>(parent);
-  filter.boost(ctx.boost);
-  *filter.mutable_field() = std::move(field_name);
-  auto* opts = filter.mutable_options();
-  opts->scored_terms_limit = ctx.scored_terms_limit;
-  opts->pattern.assign(
-    irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
-  opts->syntax = syntax;
+  auto regexp = irs::CreateByRegexp(
+    field_name, irs::ViewCast<irs::byte_type>(std::string_view{pattern}),
+    syntax, ctx.scored_terms_limit, ctx.boost);
+  if (!ctx.negated) {
+    parent.add(std::move(regexp));
+    return;
+  }
+  auto negated = std::make_unique<irs::Not>(std::move(regexp));
+  if (parent.type() == irs::Type<irs::Or>::id()) {
+    AddFilter<irs::And>(parent).add(std::move(negated));
+  } else {
+    parent.add(std::move(negated));
+  }
 }
 
 }  // namespace sdb::connector

@@ -100,13 +100,12 @@ struct ArraySlice {
 
 ArraySlice GetArraySlice(const duckdb::RecursiveUnifiedVectorFormat& vdata,
                          duckdb::idx_t row) {
+  const auto source_row = vdata.unified.sel->get_index(row);
   if (vdata.logical_type.id() == duckdb::LogicalTypeId::ARRAY) {
     auto size = duckdb::ArrayType::GetSize(vdata.logical_type);
-    return {size, row * size};
+    return {size, source_row * size};
   }
-  auto list_data =
-    vdata.unified
-      .GetData<duckdb::list_entry_t>()[vdata.unified.sel->get_index(row)];
+  auto list_data = vdata.unified.GetData<duckdb::list_entry_t>()[source_row];
   return {list_data.length, list_data.offset};
 }
 

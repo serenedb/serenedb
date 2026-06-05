@@ -1246,8 +1246,7 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
           return ProcessState::DonePacket;
         }
         // Fall through to fetch first chunk
-        break;
-      }
+      } break;
       case duckdb::PendingExecutionResult::RESULT_NOT_READY:
       case duckdb::PendingExecutionResult::NO_TASKS_AVAILABLE:
         // More work needed -- continue polling

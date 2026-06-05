@@ -71,7 +71,7 @@ struct FieldState {
 
 struct FieldEntry {
   duckdb::idx_t output_idx = 0;
-  std::string name;
+  irs::field_id id{irs::field_limits::invalid()};
   FieldState state;
 };
 

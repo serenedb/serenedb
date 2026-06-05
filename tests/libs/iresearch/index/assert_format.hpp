@@ -93,7 +93,7 @@ struct Field : public irs::FieldMeta {
     uint32_t offs{};
   };
 
-  Field(const std::string_view& name, irs::IndexFeatures index_features);
+  Field(irs::field_id id, irs::IndexFeatures index_features);
   Field(Field&& rhs) = default;
   Field& operator=(Field&& rhs) = default;
 
@@ -124,9 +124,7 @@ class ColumnValues {
   void insert(irs::doc_id_t key, irs::bytes_view value);
 
   irs::field_id id() const noexcept { return _id; }
-  std::string_view name() const noexcept {
-    return _name.has_value() ? _name.value() : std::string_view{};
-  }
+  std::string_view name() const noexcept { return _name; }
 
   auto begin() const { return _values.begin(); }
   auto end() const { return _values.end(); }
@@ -137,13 +135,13 @@ class ColumnValues {
 
  private:
   irs::field_id _id;
-  std::optional<std::string> _name;
+  std::string _name;
   std::map<irs::doc_id_t, irs::bstring> _values;
 };
 
 class IndexSegment : irs::util::Noncopyable {
  public:
-  using field_map_t = std::map<std::string_view, Field>;
+  using field_map_t = std::map<irs::field_id, Field>;
   using columns_t = std::deque<ColumnValues>;  // pointers remain valid
   using named_columns_t = std::map<std::string, ColumnValues*>;
 
@@ -212,7 +210,7 @@ void IndexSegment::insert(IndexedFieldIterator indexed_begin,
   // reset field per-document state
   _doc_fields.clear();
   for (auto it = indexed_begin; it != indexed_end; ++it) {
-    auto field = _fields.find(it->Name());
+    auto field = _fields.find(it->Id());
 
     if (field != _fields.end()) {
       field->second.stats = {};

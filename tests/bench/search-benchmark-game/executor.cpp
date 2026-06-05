@@ -29,6 +29,7 @@
 #include <iresearch/store/store_utils.hpp>
 
 #include "basics/duckdb_engine.h"
+#include "index_builder.h"
 
 namespace bench {
 
@@ -89,7 +90,7 @@ size_t Executor::ExecuteCount(std::string_view query) {
 
 irs::Filter::ptr Executor::ParseFilter(std::string_view str) {
   auto root = std::make_unique<irs::MixedBooleanFilter>();
-  sdb::ParserContext context{*root, "text", *_tokenizer};
+  sdb::ParserContext context{*root, kTextFieldId, *_tokenizer};
   auto r = sdb::ParseQuery(context, str);
   if (!r.ok()) {
     return {};

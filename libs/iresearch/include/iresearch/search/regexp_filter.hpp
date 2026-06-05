@@ -47,7 +47,7 @@ struct ByRegexpOptions : ByRegexpFilterOptions {
 
 class ByRegexp final : public FilterWithField<ByRegexpOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
+  static Query::ptr prepare(const PrepareContext& ctx, irs::field_id id,
                             bytes_view pattern, size_t scored_terms_limit,
                             RegexpSyntax syntax = RegexpSyntax::Perl);
 
@@ -55,7 +55,7 @@ class ByRegexp final : public FilterWithField<ByRegexpOptions> {
                                RegexpSyntax syntax = RegexpSyntax::Perl);
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
-    return prepare(ctx.Boost(Boost()), field(), options().pattern,
+    return prepare(ctx.Boost(Boost()), field_id(), options().pattern,
                    options().scored_terms_limit, options().syntax);
   }
 };

@@ -45,7 +45,7 @@ struct FieldStats {
 };
 
 struct FieldProperties {
-  field_id norm{field_limits::invalid()};  // TODO: make uint32_t
+  field_id norm{field_limits::invalid()};
   IndexFeatures index_features{IndexFeatures::None};
 };
 
@@ -53,8 +53,8 @@ struct FieldMeta : FieldProperties {
  public:
   static const FieldMeta kEmpty;
 
-  FieldMeta(std::string_view field, IndexFeatures index_features)
-    : FieldProperties{.index_features = index_features}, name{field} {}
+  FieldMeta(field_id id, IndexFeatures index_features)
+    : FieldProperties{.index_features = index_features}, id{id} {}
 
   FieldMeta() = default;
   FieldMeta(FieldMeta&& rhs) noexcept = default;
@@ -63,10 +63,10 @@ struct FieldMeta : FieldProperties {
   FieldMeta& operator=(const FieldMeta&) = default;
 
   bool operator==(const FieldMeta& rhs) const noexcept {
-    return index_features == rhs.index_features && name == rhs.name;
+    return index_features == rhs.index_features && id == rhs.id;
   }
 
-  std::string name;
+  field_id id{field_limits::invalid()};
 };
 
 static_assert(std::is_move_constructible_v<FieldMeta>);

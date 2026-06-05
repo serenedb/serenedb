@@ -102,7 +102,7 @@ field_visitor ByRegexp::visitor(bytes_view pattern, RegexpSyntax syntax) {
 }
 
 Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx,
-                                     std::string_view field, bytes_view pattern,
+                                     irs::field_id id, bytes_view pattern,
                                      size_t scored_terms_limit,
                                      RegexpSyntax syntax) {
   const auto type = ComputeRegexpType(pattern);
@@ -111,22 +111,22 @@ Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx,
     case RegexpType::LiteralEscaped: {
       bstring buf;
       UnescapeRegexp(pattern, buf);
-      return ByTerm::prepare(ctx, field, buf);
+      return ByTerm::prepare(ctx, id, buf);
     }
 
     case RegexpType::Literal:
-      return ByTerm::prepare(ctx, field, pattern);
+      return ByTerm::prepare(ctx, id, pattern);
 
     case RegexpType::PrefixEscaped: {
       auto raw_prefix = ExtractRegexpPrefix(pattern);
       bstring unescaped;
       UnescapeRegexp(raw_prefix, unescaped);
-      return ByPrefix::prepare(ctx, field, unescaped, scored_terms_limit);
+      return ByPrefix::prepare(ctx, id, unescaped, scored_terms_limit);
     }
 
     case RegexpType::Prefix: {
       auto prefix = ExtractRegexpPrefix(pattern);
-      return ByPrefix::prepare(ctx, field, prefix, scored_terms_limit);
+      return ByPrefix::prepare(ctx, id, prefix, scored_terms_limit);
     }
 
     case RegexpType::Complex: {
@@ -134,7 +134,7 @@ Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx,
       if (!Validate(acceptor)) {
         return Query::empty();
       }
-      return PrepareAutomatonFilter(ctx, field, acceptor, scored_terms_limit);
+      return PrepareAutomatonFilter(ctx, id, acceptor, scored_terms_limit);
     }
 
     default:

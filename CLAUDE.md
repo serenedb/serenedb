@@ -3,6 +3,8 @@
 Read `CONTRIBUTING.md` -- it covers build, tests, branches, commits, PRs, and
 C++ style. This file only flags traps that aren't in there.
 
+Don't write comments until explictly asked.
+
 ## Before writing tests
 
 - Sqllogic: read a sibling `.test` first. Control directives, retry patterns,

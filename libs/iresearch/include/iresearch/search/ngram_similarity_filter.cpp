@@ -33,11 +33,10 @@
 namespace irs {
 
 Filter::Query::ptr ByNGramSimilarity::Prepare(
-  const PrepareContext& ctx, std::string_view field_name,
+  const PrepareContext& ctx, irs::field_id id,
   const std::vector<irs::bstring>& ngrams, float_t threshold,
   bool allow_phrase) {
-  if (ngrams.empty() || field_name.empty()) {
-    // empty field or terms or invalid threshold
+  if (ngrams.empty() || !irs::field_limits::valid(id)) {
     return Query::empty();
   }
   const auto terms_count = ngrams.size();
@@ -52,7 +51,7 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
     for (const auto& term : ngrams) {
       options.terms.emplace(term, irs::kNoBoost);
     }
-    return ByTerms::Prepare(ctx, field_name, options);
+    return ByTerms::Prepare(ctx, id, options);
   }
 
   if (allow_phrase && min_match_count == terms_count) {
@@ -60,7 +59,7 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
     for (const auto& ngram : ngrams) {
       options.push_back(ByTermOptions{ngram});
     }
-    return ByPhrase::Prepare(ctx, field_name, options);
+    return ByPhrase::Prepare(ctx, id, options);
   }
 
   NGramStates query_states{ctx.memory, ctx.index.size()};
@@ -75,7 +74,7 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
 
   for (const auto& segment : ctx.index) {
     // get term dictionary for field
-    const TermReader* field = segment.field(field_name);
+    const TermReader* field = segment.field(id);
 
     if (!field) {
       continue;

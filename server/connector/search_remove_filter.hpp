@@ -28,13 +28,13 @@
 
 namespace sdb::connector {
 
-// something that never match user created fields id.
-constexpr inline std::string_view kPkFieldName{"\x00", 1};
-
 class SearchRemoveFilterBase : public irs::Filter,
                                public irs::Filter::Query,
                                public irs::DocIterator {
  public:
+  explicit SearchRemoveFilterBase(irs::field_id pk_field_id) noexcept
+    : _pk_field_id{pk_field_id} {}
+
   bool Empty() const noexcept { return _pks.empty(); }
 
   void Add(std::string_view pk) {
@@ -70,6 +70,7 @@ class SearchRemoveFilterBase : public irs::Filter,
     return _doc = irs::doc_limits::eof();
   }
 
+  const irs::field_id _pk_field_id;
   mutable const irs::SubReader* _segment{};
   mutable const irs::DocumentMask* _pending_mask{};
   mutable const irs::DocumentMask* _segment_mask{};
@@ -84,7 +85,10 @@ class SearchRemoveFilterBase : public irs::Filter,
 
 class SearchRemoveFilter final : public SearchRemoveFilterBase {
  public:
-  explicit SearchRemoveFilter(size_t batch_size) { _pks.reserve(batch_size); }
+  SearchRemoveFilter(size_t batch_size, irs::field_id pk_field_id)
+    : SearchRemoveFilterBase{pk_field_id} {
+    _pks.reserve(batch_size);
+  }
 
   void reset() {
     _pos = 0;

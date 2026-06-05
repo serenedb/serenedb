@@ -30,15 +30,14 @@ using namespace irs;
 TEST(field_meta_test, ctor) {
   {
     const FieldMeta fm;
-    ASSERT_EQ("", fm.name);
+    ASSERT_FALSE(field_limits::valid(fm.id));
     ASSERT_EQ(irs::IndexFeatures::None, fm.index_features);
     ASSERT_FALSE(field_limits::valid(fm.norm));
   }
 
   {
-    const std::string name("name");
-    const FieldMeta fm(name, irs::IndexFeatures::Offs);
-    ASSERT_EQ(name, fm.name);
+    const FieldMeta fm(42, irs::IndexFeatures::Offs);
+    ASSERT_EQ(42u, fm.id);
     ASSERT_FALSE(field_limits::valid(fm.norm));
     ASSERT_EQ(irs::IndexFeatures::Offs, fm.index_features);
   }
@@ -46,14 +45,15 @@ TEST(field_meta_test, ctor) {
 
 TEST(field_meta_test, compare) {
   FieldMeta lhs;
-  lhs.name = "name";
+  lhs.id = 7;
   lhs.norm = 42;
   FieldMeta rhs = lhs;
-  rhs.norm = 0;
+  rhs.norm = irs::field_limits::invalid();
+  // Identity is `(id, index_features)`; `norm` is metadata only.
   ASSERT_EQ(lhs, rhs);
 
-  rhs.name = "test";
+  rhs.id = 8;
   ASSERT_NE(lhs, rhs);
-  lhs.name = "test";
+  lhs.id = 8;
   ASSERT_EQ(lhs, rhs);
 }

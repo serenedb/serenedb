@@ -92,7 +92,7 @@ struct ByEditDistanceOptions : ByEditDistanceAllOptions {
 ////////////////////////////////////////////////////////////////////////////////
 class ByEditDistance final : public FilterWithField<ByEditDistanceOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
+  static Query::ptr prepare(const PrepareContext& ctx, irs::field_id id,
                             bytes_view term, size_t terms_limit,
                             uint8_t max_distance, options_type::pdp_f provider,
                             bool with_transpositions, bytes_view prefix);
@@ -102,7 +102,7 @@ class ByEditDistance final : public FilterWithField<ByEditDistanceOptions> {
   Query::ptr prepare(const PrepareContext& ctx) const final {
     auto sub_ctx = ctx;
     sub_ctx.boost *= Boost();
-    return prepare(sub_ctx, field(), options().term, options().max_terms,
+    return prepare(sub_ctx, field_id(), options().term, options().max_terms,
                    options().max_distance, options().provider,
                    options().with_transpositions, options().prefix);
   }

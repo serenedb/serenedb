@@ -26,7 +26,6 @@
 #include <iresearch/utils/string.hpp>
 
 #include "basics/down_cast.h"
-#include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
@@ -53,16 +52,14 @@ void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
       ERR_HINT("ts_like requires a VARCHAR column with identity or wildcard "
                "analyzer."));
   }
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  search::mangling::MangleString(field_name);
 
   if (column_info.tokenizer.analyzer->type() ==
       irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
     auto& wf = ctx.negated ? Negate<irs::ByWildcardNgram>(parent)
                            : AddFilter<irs::ByWildcardNgram>(parent);
     wf.boost(ctx.boost);
-    *wf.mutable_field() = std::move(field_name);
+    *wf.mutable_field_id() =
+      PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
     auto* opts = wf.mutable_options();
     *opts = {
       pattern,
@@ -71,14 +68,16 @@ void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
       (column_info.tokenizer.features & irs::IndexFeatures::Pos) ==
         irs::IndexFeatures::Pos,
     };
-    SDB_ASSERT(column_info.tokenizer.tokenizer_column);
-    opts->store_field_id = *column_info.tokenizer.tokenizer_column;
+    SDB_ASSERT(
+      irs::field_limits::valid(column_info.tokenizer.tokenizer_column));
+    opts->store_field_id = column_info.tokenizer.tokenizer_column;
     return;
   }
   auto& filter = ctx.negated ? Negate<irs::ByWildcard>(parent)
                              : AddFilter<irs::ByWildcard>(parent);
   filter.boost(ctx.boost);
-  *filter.mutable_field() = std::move(field_name);
+  *filter.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto& wild_opts = *filter.mutable_options();
   wild_opts.scored_terms_limit = ctx.scored_terms_limit;
   wild_opts.term.assign(

@@ -48,6 +48,14 @@ namespace tests {
 irs::IndexWriterOptions CsDefaultWriterOptions();
 irs::IndexReaderOptions CsDefaultReaderOptions();
 
+// `db` is mandatory at IndexWriter::Make. Fixtures that build their own
+// IndexWriterOptions (e.g. to set a custom scorer) often leave `db` unset;
+// fill it from the shared CsDb() so they keep working. Also fills
+// `norm_column_options` from the shared monotonic allocator when the caller
+// didn't set one -- with a cs writer present, a Norm-featured field requires
+// a norm_column_options callback (FieldsData::emplace asserts it).
+irs::IndexWriterOptions EnsureWriterDb(irs::IndexWriterOptions opts);
+
 class DirectoryMock : public irs::Directory {
  public:
   DirectoryMock(irs::Directory& impl)
@@ -194,13 +202,13 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   irs::IndexWriter::ptr open_writer(
     irs::Directory& dir, irs::OpenMode mode = irs::kOmCreate,
     const irs::IndexWriterOptions& options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(dir, _codec, mode, options);
+    return irs::IndexWriter::Make(dir, _codec, mode, EnsureWriterDb(options));
   }
 
   irs::IndexWriter::ptr open_writer(
     irs::OpenMode mode = irs::kOmCreate,
     const irs::IndexWriterOptions& options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(*_dir, _codec, mode, options);
+    return irs::IndexWriter::Make(*_dir, _codec, mode, EnsureWriterDb(options));
   }
 
   irs::DirectoryReader open_reader(

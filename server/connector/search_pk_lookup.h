@@ -23,9 +23,9 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
-#include <iresearch/columnstore/column_reader.hpp>
-#include <iresearch/columnstore/format.hpp>
-#include <iresearch/columnstore/read_context.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/index_meta.hpp>
@@ -39,8 +39,7 @@
 
 namespace sdb::connector {
 
-inline std::pair<const irs::columnstore::Reader*,
-                 const irs::columnstore::ColumnReader*>
+inline std::pair<const irs::ColReader*, const irs::ColumnReader*>
 SegmentPkColumn(const irs::IndexReader& reader, size_t seg_idx) noexcept {
   if (seg_idx >= reader.size()) {
     return {nullptr, nullptr};
@@ -62,16 +61,15 @@ class SegmentPkSequentialFetcher {
   explicit SegmentPkSequentialFetcher(duckdb::DatabaseInstance& db) noexcept
     : _ctx{db} {}
 
-  SegmentPkSequentialFetcher(const irs::columnstore::Reader& cs_reader,
-                             const irs::columnstore::ColumnReader& pk_col)
+  SegmentPkSequentialFetcher(const irs::ColReader& cs_reader,
+                             const irs::ColumnReader& pk_col)
     : _ctx{cs_reader}, _pk_col{&pk_col} {}
 
   SegmentPkSequentialFetcher(const SegmentPkSequentialFetcher&) = delete;
   SegmentPkSequentialFetcher& operator=(const SegmentPkSequentialFetcher&) =
     delete;
 
-  void Reset(const irs::columnstore::Reader& cs_reader,
-             const irs::columnstore::ColumnReader& pk_col) {
+  void Reset(const irs::ColReader& cs_reader, const irs::ColumnReader& pk_col) {
     _ctx.Reset(cs_reader);
     _pk_col = &pk_col;
   }
@@ -80,8 +78,8 @@ class SegmentPkSequentialFetcher {
              duckdb::idx_t out_start);
 
  private:
-  irs::columnstore::ReadContext _ctx;
-  const irs::columnstore::ColumnReader* _pk_col = nullptr;
+  irs::ReadContext _ctx;
+  const irs::ColumnReader* _pk_col = nullptr;
 };
 
 template<typename Hits, typename Proj, typename OnSegment, typename OnDoc>

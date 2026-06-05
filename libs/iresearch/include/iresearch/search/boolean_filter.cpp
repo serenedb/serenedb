@@ -80,7 +80,7 @@ Filter::Query::ptr BooleanFilter::PrepareImpl(const PrepareContext& ctx,
         auto& first_term_filter =
           sdb::basics::downCast<ByTerm>(*_filters.front());
         auto& term_filter = sdb::basics::downCast<ByTerm>(*filter);
-        return first_term_filter.field() == term_filter.field();
+        return first_term_filter.field_id() == term_filter.field_id();
       })) {
     auto& first_term_filter = sdb::basics::downCast<ByTerm>(*_filters.front());
     ByTermsOptions options;
@@ -100,7 +100,7 @@ Filter::Query::ptr BooleanFilter::PrepareImpl(const PrepareContext& ctx,
       options.min_match = min_match == std::numeric_limits<uint32_t>::max()
                             ? options.terms.size()
                             : min_match;
-      return ByTerms::Prepare(ctx.Boost(Boost()), first_term_filter.field(),
+      return ByTerms::Prepare(ctx.Boost(Boost()), first_term_filter.field_id(),
                               options);
     }
   }

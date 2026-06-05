@@ -1,0 +1,157 @@
+# --- HUGEINT / DECIMAL: must surface a proper error, never silent zero-match
+#
+# HUGEINT (128-bit) and DECIMAL (parameterized) are not on the inverted
+# index's supported-type list -- the iresearch NumericTokenizer only encodes
+# int32/int64/float/double. The user-visible contract is "we don't support
+# these yet"; the regression risk is the runtime silently dropping the column
+# (SwitchColumnImpl default: returns false without an error) or asserting in
+# debug (ResetNumericStream's default: SDB_ASSERT(false)).
+#
+# Every CREATE INDEX path that involves a HUGEINT / DECIMAL value-type column
+# (direct column OR cast in an indexed expression) must return a catalogable
+# error message, not succeed-then-misbehave.
+
+# --- Direct columns: HUGEINT/DECIMAL value types are rejected at CREATE INDEX
+
+statement ok
+CREATE TABLE unsup_hugeint (id INTEGER PRIMARY KEY, big HUGEINT);
+
+statement error
+CREATE INDEX unsup_hugeint_idx ON unsup_hugeint USING inverted(id, big);
+----
+db error: ERROR: Failed to create index: Column 'big' has unsupported type HUGEINT and can not be indexed
+
+
+statement ok
+CREATE TABLE unsup_decimal (id INTEGER PRIMARY KEY, amount DECIMAL(20, 4));
+
+
+statement error
+CREATE INDEX unsup_decimal_idx ON unsup_decimal USING inverted(id, amount);
+----
+db error: ERROR: Failed to create index: Column 'amount' has unsupported type DECIMAL(20,4) and can not be indexed
+
+
+# 64-bit unsigned ints and 128-bit unsigneds do not fit the NumericTokenizer
+# overload set (int32/int64/float/double) -- rejected at CREATE INDEX.
+# UTINYINT/USMALLINT/UINTEGER do fit and are accepted (see end of file).
+
+statement ok
+CREATE TABLE unsup_ubigint (id INTEGER PRIMARY KEY, n UBIGINT);
+
+
+statement error
+CREATE INDEX unsup_ubigint_idx ON unsup_ubigint USING inverted(id, n);
+----
+db error: ERROR: Failed to create index: Column 'n' has unsupported type UBIGINT and can not be indexed
+
+
+statement ok
+CREATE TABLE unsup_uhugeint (id INTEGER PRIMARY KEY, n UHUGEINT);
+
+
+statement error
+CREATE INDEX unsup_uhugeint_idx ON unsup_uhugeint USING inverted(id, n);
+----
+db error: ERROR: Failed to create index: Column 'n' has unsupported type UHUGEINT and can not be indexed
+
+
+# INTERVAL is a composite (months/days/micros): rejected.
+
+statement ok
+CREATE TABLE unsup_interval (id INTEGER PRIMARY KEY, iv INTERVAL);
+
+
+statement error
+CREATE INDEX unsup_interval_idx ON unsup_interval USING inverted(id, iv);
+----
+db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+
+
+# UTINYINT/USMALLINT/UINTEGER + TIME + TIMETZ now fit the NumericTokenizer
+# overload set -- CREATE INDEX accepts them.
+
+statement ok
+CREATE TABLE sup_unsigned (
+  id INTEGER PRIMARY KEY,
+  a UTINYINT,
+  b USMALLINT,
+  c UINTEGER
+);
+
+
+statement ok
+CREATE INDEX sup_unsigned_idx ON sup_unsigned USING inverted(id, a, b, c);
+
+
+statement ok
+CREATE TABLE sup_time (
+  id INTEGER PRIMARY KEY,
+  t TIME,
+  tz TIMETZ
+);
+
+
+statement ok
+CREATE INDEX sup_time_idx ON sup_time USING inverted(id, t, tz);
+
+
+
+# --- Indexed expressions returning HUGEINT / DECIMAL are rejected too
+
+statement ok
+CREATE TABLE unsup_jsondoc (id INTEGER PRIMARY KEY, content JSON);
+
+statement error
+CREATE INDEX unsup_jsondoc_huge ON unsup_jsondoc USING inverted(id, ((content->'v')::HUGEINT));
+----
+db error: ERROR: Failed to create index: Column 'CAST(("content" -> 'v') AS hugeint)' has unsupported type HUGEINT and can not be indexed
+
+
+statement error
+CREATE INDEX unsup_jsondoc_dec ON unsup_jsondoc USING inverted(id, ((content->'v')::DECIMAL(20,4)));
+----
+db error: ERROR: Failed to create index: Column 'CAST(("content" -> 'v') AS DECIMAL(20, 4))' has unsupported type DECIMAL(20,4) and can not be indexed
+
+
+
+# --- Filter-side: BIGINT-indexed column, HUGEINT/DECIMAL bound in the predicate
+#
+# Indexed column accepted; bound supplied as HUGEINT or DECIMAL must either
+# (a) auto-cast to the column's type and tokenize cleanly, or (b) error out.
+# Silent zero-match is the regression we're guarding against.
+
+statement ok
+CREATE TABLE filter_bigint (id INTEGER PRIMARY KEY, n BIGINT);
+
+statement ok
+CREATE INDEX filter_bigint_idx ON filter_bigint USING inverted(id, n);
+
+statement ok
+INSERT INTO filter_bigint VALUES (1, 100), (2, 200), (3, 300);
+
+statement ok
+VACUUM (REFRESH_TABLE) filter_bigint;
+
+# Sanity: same predicate with native BIGINT bound finds the row.
+query
+SELECT id FROM filter_bigint_idx WHERE n = 200;
+----
+id
+2
+
+# HUGEINT bound that fits in BIGINT range -- expected: DuckDB casts the bound
+# to BIGINT at bind time so the filter sees BIGINT (passes). If that doesn't
+# happen, the filter must error rather than silently return zero rows.
+query
+SELECT id FROM filter_bigint_idx WHERE n = 200::HUGEINT;
+----
+id
+2
+
+# DECIMAL bound that fits in BIGINT range -- same expectation as HUGEINT.
+query
+SELECT id FROM filter_bigint_idx WHERE n = 200::DECIMAL(20,4);
+----
+id
+2

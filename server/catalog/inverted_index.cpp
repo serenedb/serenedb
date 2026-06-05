@@ -31,7 +31,6 @@
 #include "absl/algorithm/container.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
-#include "basics/containers/node_hash_set.h"
 #include "basics/down_cast.h"
 #include "basics/serializer.h"
 #include "catalog/catalog.h"
@@ -70,11 +69,6 @@ using persistence::ColumnSerializedMap;
 using persistence::ExpressionSerialized;
 using persistence::InvertedIndexData;
 
-using ExpressionSerializedSet =
-  containers::NodeHashSet<ExpressionSerialized,
-                          ExpressionSerialized::HasherBySerialized,
-                          ExpressionSerialized::HasherBySerialized>;
-
 InvertedIndexData PackEntries(std::string_view name,
                               std::span<const Column::Id> column_ids,
                               const InvertedIndex::Entries& entries,
@@ -95,18 +89,25 @@ InvertedIndexData PackEntries(std::string_view name,
         .field_id = field_id,
         .norm_row_group_size = entry.norm_row_group_size,
         .features = entry.features,
+        .null_field_id = entry.null_field_id,
+        .bool_field_id = entry.bool_field_id,
+        .numeric_field_id = entry.numeric_field_id,
       });
     } else {
       data.columns.emplace(static_cast<Column::Id>(field_id),
                            ColumnSerialized{
                              .text_dictionary = entry.text_dictionary,
                              .store_values = entry.store_values,
+                             .indexed_term_dict = entry.indexed_term_dict,
                              .compression = entry.compression,
                              .features = entry.features,
                              .hnsw_config = entry.hnsw_config,
                              .synthetic_column = entry.synthetic_column,
                              .row_group_size = entry.row_group_size,
                              .norm_row_group_size = entry.norm_row_group_size,
+                             .null_field_id = entry.null_field_id,
+                             .bool_field_id = entry.bool_field_id,
+                             .numeric_field_id = entry.numeric_field_id,
                            });
     }
   }
@@ -125,9 +126,13 @@ std::shared_ptr<InvertedIndex> UnpackEntries(InvertedIndexData data,
                       .synthetic_column = col.synthetic_column,
                       .norm_row_group_size = col.norm_row_group_size,
                       .store_values = col.store_values,
+                      .indexed_term_dict = col.indexed_term_dict,
                       .compression = col.compression,
                       .hnsw_config = std::move(col.hnsw_config),
                       .row_group_size = col.row_group_size,
+                      .null_field_id = col.null_field_id,
+                      .bool_field_id = col.bool_field_id,
+                      .numeric_field_id = col.numeric_field_id,
                     });
   }
   for (auto& expr : data.expressions) {
@@ -145,6 +150,9 @@ std::shared_ptr<InvertedIndex> UnpackEntries(InvertedIndexData data,
             .return_type = std::move(expr.return_type),
             .pretty_printed = std::move(expr.pretty_printed),
           },
+        .null_field_id = expr.null_field_id,
+        .bool_field_id = expr.bool_field_id,
+        .numeric_field_id = expr.numeric_field_id,
       });
   }
   return std::make_shared<InvertedIndex>(
@@ -187,8 +195,17 @@ void InvertedIndex::BumpTickServerForEntryIds() {
     if (entry.IsExpression()) {
       UpdateTickServer(field_id);
     }
-    if (entry.synthetic_column) {
-      UpdateTickServer(*entry.synthetic_column);
+    if (irs::field_limits::valid(entry.synthetic_column)) {
+      UpdateTickServer(entry.synthetic_column);
+    }
+    if (irs::field_limits::valid(entry.null_field_id)) {
+      UpdateTickServer(entry.null_field_id);
+    }
+    if (irs::field_limits::valid(entry.bool_field_id)) {
+      UpdateTickServer(entry.bool_field_id);
+    }
+    if (irs::field_limits::valid(entry.numeric_field_id)) {
+      UpdateTickServer(entry.numeric_field_id);
     }
   }
 }
@@ -203,6 +220,150 @@ const InvertedIndexEntryInfo* InvertedIndex::FindColumnInfo(
   catalog::Column::Id column_id) const noexcept {
   const auto* entry = FindEntry(static_cast<irs::field_id>(column_id));
   return entry != nullptr && entry->IsColumn() ? entry : nullptr;
+}
+
+void InvertedIndex::AppendKindSuffix(std::string& out,
+                                     const duckdb::LogicalType& type) {
+  const auto k = term_dict::Classify(type.id());
+  switch (k) {
+    case term_dict::Kind::String:
+      out += "(string)";
+      break;
+    case term_dict::Kind::Bool:
+      out += "(bool)";
+      break;
+    case term_dict::Kind::Null:
+      out += "(null)";
+      break;
+    default:
+      if (term_dict::IsNumeric(k)) {
+        out += "(numeric)";
+      }
+      break;
+  }
+}
+
+namespace term_dict {
+
+Result Validate(std::string_view label, const duckdb::LogicalType& type,
+                std::string_view opclass) {
+  const auto kind = type.id();
+  const auto unsupported = [&] {
+    return Result{
+      ERROR_BAD_PARAMETER,       "Column '",      label,
+      "' has unsupported type ", type.ToString(), " and can not be indexed"};
+  };
+
+  if (kind == duckdb::LogicalTypeId::LIST ||
+      kind == duckdb::LogicalTypeId::ARRAY) {
+    const auto child = (kind == duckdb::LogicalTypeId::LIST
+                          ? duckdb::ListType::GetChildType(type)
+                          : duckdb::ArrayType::GetChildType(type))
+                         .id();
+    if (child == duckdb::LogicalTypeId::GEOMETRY ||
+        !IsSupported(Classify(child))) {
+      return unsupported();
+    }
+    return {};
+  }
+
+  if (!IsSupported(Classify(kind))) {
+    return unsupported();
+  }
+  if (kind == duckdb::LogicalTypeId::GEOMETRY && opclass.empty()) {
+    return unsupported();
+  }
+  return {};
+}
+
+}  // namespace term_dict
+namespace included {
+
+Result Validate(std::string_view label, const duckdb::LogicalType& type) {
+  using enum duckdb::LogicalTypeId;
+  switch (type.id()) {
+    case SQLNULL:
+    case BOOLEAN:
+    case TINYINT:
+    case SMALLINT:
+    case INTEGER:
+    case BIGINT:
+    case UTINYINT:
+    case USMALLINT:
+    case UINTEGER:
+    case UBIGINT:
+    case HUGEINT:
+    case UHUGEINT:
+    case FLOAT:
+    case DOUBLE:
+    case DECIMAL:
+    case BIGNUM:
+    case DATE:
+    case TIME:
+    case TIME_NS:
+    case TIME_TZ:
+    case TIMESTAMP_SEC:
+    case TIMESTAMP_MS:
+    case TIMESTAMP:
+    case TIMESTAMP_NS:
+    case TIMESTAMP_TZ:
+    case TIMESTAMP_TZ_NS:
+    case INTERVAL:
+    case VARCHAR:
+    case CHAR:
+    case BLOB:
+    case GEOMETRY:
+    case UUID:
+    case BIT:
+    case ENUM:
+    case LIST:
+    case ARRAY:
+    case STRUCT:
+    case MAP:
+    case VARIANT:
+      return {};
+    default:
+      return {ERROR_BAD_PARAMETER,
+              "Column '",
+              label,
+              "' has type ",
+              type.ToString(),
+              " which is not supported in INCLUDE"};
+  }
+}
+
+}  // namespace included
+namespace hnsw {
+
+uint32_t Dimension(const duckdb::LogicalType& type) noexcept {
+  if (type.id() != duckdb::LogicalTypeId::ARRAY) {
+    return 0;
+  }
+  if (duckdb::ArrayType::GetChildType(type).id() !=
+      duckdb::LogicalTypeId::FLOAT) {
+    return 0;
+  }
+  return static_cast<uint32_t>(duckdb::ArrayType::GetSize(type));
+}
+
+Result Validate(std::string_view label, const duckdb::LogicalType& type) {
+  if (Dimension(type) == 0) {
+    return {ERROR_BAD_PARAMETER, "Column '", label,
+            "' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not ",
+            type.ToString()};
+  }
+  return {};
+}
+
+}  // namespace hnsw
+
+InvertedIndex::FieldLookup InvertedIndex::LookupField(
+  irs::field_id id) const noexcept {
+  auto it = _field_lookup.find(id);
+  if (it == _field_lookup.end()) {
+    return {};
+  }
+  return it->second;
 }
 
 std::vector<Column::Id> InvertedIndex::GetReferencedColumnIds() const {
@@ -223,82 +384,66 @@ std::vector<Column::Id> InvertedIndex::GetReferencedColumnIds() const {
 void InvertedIndex::BuildSyntheticFeaturesIndex() {
   _synthetic_to_features.clear();
   for (const auto& [field_id, entry] : _entries) {
-    if (entry.synthetic_column) {
-      _synthetic_to_features.emplace(*entry.synthetic_column, entry.features);
+    if (irs::field_limits::valid(entry.synthetic_column)) {
+      auto [it, ok] =
+        _synthetic_to_features.emplace(entry.synthetic_column, entry.features);
+      SDB_ENSURE(ok, ERROR_INTERNAL,
+                 "synthetic_column collision in inverted index: id ",
+                 entry.synthetic_column);
     }
   }
+}
+
+void InvertedIndex::BuildFieldLookupIndex() {
+  _field_lookup.clear();
+  const auto insert = [&](irs::field_id id, const InvertedIndexEntryInfo* entry,
+                          irs::field_id entry_field_id) {
+    if (irs::field_limits::valid(id)) {
+      auto [it, ok] = _field_lookup.emplace(
+        id, FieldLookup{.entry = entry, .entry_field_id = entry_field_id});
+      SDB_ENSURE(ok, ERROR_INTERNAL,
+                 "field_id collision in inverted index lookup: id ", id);
+    }
+  };
+  for (const auto& [entry_fid, entry] : _entries) {
+    insert(entry_fid, &entry, entry_fid);
+    insert(entry.null_field_id, &entry, entry_fid);
+    insert(entry.bool_field_id, &entry, entry_fid);
+    insert(entry.numeric_field_id, &entry, entry_fid);
+    insert(entry.synthetic_column, &entry, entry_fid);
+  }
+  insert(term_dict::kPKFieldId, nullptr, term_dict::kPKFieldId);
 }
 
 const search::Features* InvertedIndex::FindSyntheticFeatures(
   irs::field_id synthetic_id) const noexcept {
   auto it = _synthetic_to_features.find(synthetic_id);
-  const search::Features* result =
-    it == _synthetic_to_features.end() ? nullptr : &it->second;
-#ifdef SDB_DEV
-  const search::Features* fallback = nullptr;
-  for (const auto& [_, entry] : _entries) {
-    if (entry.synthetic_column == synthetic_id) {
-      fallback = &entry.features;
-      break;
-    }
-  }
-  SDB_ASSERT(static_cast<bool>(result) == static_cast<bool>(fallback));
-  SDB_ASSERT(!result ||
-             result->GetIndexFeatures() == fallback->GetIndexFeatures());
-#endif
-  return result;
+  return it == _synthetic_to_features.end() ? nullptr : &it->second;
 }
 
-ColumnTokenizer InvertedIndex::GetColumnTokenizer(
-  const std::shared_ptr<const Snapshot>& snapshot,
-  catalog::Column::Id column_id) const {
-  const auto* info = FindColumnInfo(column_id);
-  if (!info) {
-    SDB_THROW(ERROR_INTERNAL, "Column id ", column_id,
-              " not found in the index definition");
-  }
-  auto tokenizer =
-    BuildColumnTokenizer(snapshot, info->text_dictionary, info->features);
-  SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
-  if (!info->features.HasFeatures(irs::IndexFeatures::Norm)) {
-    tokenizer->tokenizer_column = info->synthetic_column;
-  }
-  return *std::move(tokenizer);
-}
-
-ColumnTokenizer InvertedIndex::GetExprTokenizer(
-  const std::shared_ptr<const Snapshot>& snapshot,
-  std::string_view serialized_expr) const {
-  auto it = _expr_to_field.find(serialized_expr);
-  if (it == _expr_to_field.end()) {
-    SDB_THROW(ERROR_INTERNAL,
-              "Indexed expression not found in the index definition");
-  }
-  return GetExprTokenizerByFieldId(snapshot, it->second);
-}
-
-ColumnTokenizer InvertedIndex::GetExprTokenizerByFieldId(
+ColumnTokenizer InvertedIndex::GetTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot,
   irs::field_id field_id) const {
   const auto* entry = FindEntry(field_id);
-  if (entry == nullptr || !entry->IsExpression()) {
-    SDB_THROW(ERROR_INTERNAL, "Indexed expression with field_id ", field_id,
+  if (entry == nullptr) {
+    SDB_THROW(ERROR_INTERNAL, "Field id ", field_id,
               " not found in the index definition");
   }
   auto tokenizer =
     BuildColumnTokenizer(snapshot, entry->text_dictionary, entry->features);
   SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
-  if (!entry->features.HasFeatures(irs::IndexFeatures::Norm)) {
+  if (!entry->features.HasFeatures(irs::IndexFeatures::Norm) &&
+      irs::field_limits::valid(entry->synthetic_column)) {
     tokenizer->tokenizer_column = entry->synthetic_column;
   }
   return *std::move(tokenizer);
 }
 
-std::optional<irs::field_id> InvertedIndex::FindFieldIdBySerialized(
+irs::field_id InvertedIndex::FindFieldIdBySerialized(
   std::string_view serialized_expr) const noexcept {
   auto it = _expr_to_field.find(serialized_expr);
   if (it == _expr_to_field.end()) {
-    return std::nullopt;
+    return irs::field_limits::invalid();
   }
   return it->second;
 }

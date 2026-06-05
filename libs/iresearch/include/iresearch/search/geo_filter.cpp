@@ -36,9 +36,9 @@
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
 #include "geo/wkb.h"
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/read_context.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/all_filter.hpp"
@@ -92,11 +92,10 @@ class GeoIterator : public DocIterator {
   // plus a one-row Vector<BLOB> that FetchRow lands the value into. The
   // existing parser API still expects bytes_view, so Accept() reads the
   // resulting string_t and forwards its bytes unchanged.
-  GeoIterator(DocIterator::ptr&& approx,
-              const columnstore::ColumnReader& stored_field,
-              const columnstore::Reader& cs_reader, Parser& parser,
-              Acceptor& acceptor, FieldProperties field,
-              const byte_type* query_stats, score_t boost)
+  GeoIterator(DocIterator::ptr&& approx, const ColumnReader& stored_field,
+              const ColReader& cs_reader, Parser& parser, Acceptor& acceptor,
+              FieldProperties field, const byte_type* query_stats,
+              score_t boost)
     : _stats{query_stats},
       _boost{boost},
       _field{field},
@@ -199,7 +198,7 @@ class GeoIterator : public DocIterator {
 
   ShapeContainer _shape;
   DocIterator::ptr _approx;
-  columnstore::ColumnReader::BlobPointReader _cursor;
+  ColumnReader::BlobPointReader _cursor;
   Attributes _attrs;
   Acceptor& _acceptor;
   [[no_unique_address]] Parser _parser;
@@ -207,8 +206,8 @@ class GeoIterator : public DocIterator {
 
 template<typename Parser, typename Acceptor>
 DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
-                              const columnstore::ColumnReader& stored_field,
-                              const columnstore::Reader& cs_reader,
+                              const ColumnReader& stored_field,
+                              const ColReader& cs_reader,
                               const SubReader& reader, const TermReader& field,
                               const byte_type* query_stats, score_t boost,
                               Parser& parser, Acceptor& acceptor) {
@@ -231,7 +230,7 @@ struct GeoState {
   // Columnstore reader for the BLOB column carrying the analyzer's per-doc
   // StoreAttr bytes. Resolved per-segment in PrepareStates via
   // SubReader::Column.
-  const columnstore::ColumnReader* stored_field{};
+  const ColumnReader* stored_field{};
 
   // Reader using for iterate over the terms
   const TermReader* reader{};
@@ -541,7 +540,7 @@ Filter::Query::ptr MakeQuery(IResourceManager& manager, GeoStates&& states,
 
 std::pair<GeoStates, bstring> PrepareStates(
   const PrepareContext& ctx, std::span<const std::string> geo_terms,
-  std::string_view field, field_id store_field_id) {
+  irs::field_id id, field_id store_field_id) {
   SDB_ASSERT(!geo_terms.empty());
 
   std::vector<std::string_view> sorted_terms(geo_terms.begin(),
@@ -559,9 +558,9 @@ std::pair<GeoStates, bstring> PrepareStates(
   FieldCollector field_stats;
   ManagedVector<SeekCookie::ptr> term_states{{ctx.memory}};
 
-  SDB_ASSERT(store_field_id != 0);
+  SDB_ASSERT(irs::field_limits::valid(store_field_id));
   for (const auto& segment : ctx.index) {
-    const auto* reader = segment.field(field);
+    const auto* reader = segment.field(id);
     if (!reader) {
       continue;
     }
@@ -615,7 +614,7 @@ std::pair<S2Cap, bool> GetBound(BoundType type, S2Point origin,
 }
 
 Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
-                                       std::string_view field,
+                                       irs::field_id id,
                                        const GeoDistanceFilterOptions& options,
                                        bool greater) {
   const auto& range = options.range;
@@ -653,7 +652,7 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
           // rows without a stored geo value pass the Not-singleton check.
           And root;
           auto& excl = root.add<Not>().filter<GeoDistanceFilter>();
-          *excl.mutable_field() = field;
+          *excl.mutable_field_id() = id;
           auto& opts = *excl.mutable_options();
           opts = options;
           opts.range.min = 0;
@@ -700,7 +699,7 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
   }
 
   auto [states, stats] =
-    PrepareStates(ctx, geo_terms, field, options.store_field_id);
+    PrepareStates(ctx, geo_terms, id, options.store_field_id);
 
   if (incl) {
     return MakeQuery(ctx.memory, std::move(states), std::move(stats), ctx.boost,
@@ -711,8 +710,7 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
   }
 }
 
-Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
-                                   std::string_view field,
+Filter::Query::ptr PrepareInterval(const PrepareContext& ctx, irs::field_id id,
                                    const GeoDistanceFilterOptions& options) {
   const auto& range = options.range;
   SDB_ASSERT(BoundType::Unbounded != range.min_type);
@@ -721,7 +719,7 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
   if (range.max < 0.) {
     return Filter::Query::empty();
   } else if (range.min < 0.) {
-    return PrepareOpenInterval(ctx, field, options, false);
+    return PrepareOpenInterval(ctx, id, options, false);
   }
 
   const bool min_incl = range.min_type == BoundType::Inclusive;
@@ -749,7 +747,7 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
     }
 
     auto [states, stats] =
-      PrepareStates(ctx, geo_terms, field, options.store_field_id);
+      PrepareStates(ctx, geo_terms, id, options.store_field_id);
 
     return MakeQuery(ctx.memory, std::move(states), std::move(stats), ctx.boost,
                      options,
@@ -784,7 +782,7 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
   }
 
   auto [states, stats] =
-    PrepareStates(ctx, geo_terms, field, options.store_field_id);
+    PrepareStates(ctx, geo_terms, id, options.store_field_id);
 
   switch (size_t(min_incl) + 2 * size_t(max_incl)) {
     case 0:
@@ -842,7 +840,7 @@ Filter::Query::ptr GeoFilter::prepare(const PrepareContext& ctx) const {
   }
 
   auto [states, stats] =
-    PrepareStates(ctx, geo_terms, field(), options.store_field_id);
+    PrepareStates(ctx, geo_terms, field_id(), options.store_field_id);
 
   const auto boost = ctx.boost * this->Boost();
 
@@ -882,9 +880,9 @@ Filter::Query::ptr GeoDistanceFilter::prepare(const PrepareContext& ctx) const {
     return MatchAll(sub_ctx);
   }
   if (lower_bound && upper_bound) {
-    return PrepareInterval(sub_ctx, field(), options);
+    return PrepareInterval(sub_ctx, field_id(), options);
   } else {
-    return PrepareOpenInterval(sub_ctx, field(), options, lower_bound);
+    return PrepareOpenInterval(sub_ctx, field_id(), options, lower_bound);
   }
 }
 

@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/types/value.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <optional>
 #include <string>
 #include <vector>
@@ -112,8 +113,9 @@ ResultOr<std::shared_ptr<SecondaryIndex>> CreateSecondaryIndex(
   bool unique);
 
 ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
-  ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
-  ObjectId id, ObjectId relation_id, std::string name,
+  duckdb::ClientContext& context, ObjectId database_id,
+  std::string_view schema_name, ObjectId schema_id, ObjectId id,
+  ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns,
   const std::shared_ptr<const Snapshot>& snapshot,
   InvertedIndexOptions options);

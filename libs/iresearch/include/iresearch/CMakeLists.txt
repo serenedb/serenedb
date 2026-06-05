@@ -75,21 +75,24 @@ set(IResearch_core_sources
     ./analysis/pattern_tokenizer.cpp
     ./analysis/wildcard_analyzer.cpp
     ./error/error.cpp
-    ./columnstore/format.cpp
-    ./columnstore/column_writer.cpp
-    ./columnstore/column_reader.cpp
-    ./columnstore/norm_writer.cpp
-    ./columnstore/norm_reader.cpp
-    ./columnstore/merge.cpp
-    ./columnstore/hnsw.cpp
-    ./columnstore/internal/write_context.cpp
-    ./columnstore/read_context.cpp
+    ./formats/column/col_reader.cpp
+    ./formats/column/col_writer.cpp
+    ./formats/column/column_writer.cpp
+    ./formats/column/column_reader.cpp
+    ./formats/column/norm_writer.cpp
+    ./formats/column/norm_column_reader.cpp
+    ./formats/column/merge.cpp
+    ./formats/column/internal/write_context.cpp
+    ./formats/column/read_context.cpp
     ./formats/formats.cpp
     ./formats/format_utils.cpp
     ./formats/posting/skip_list.cpp
     ./formats/format_block_128.cpp
     ./formats/index/burst_trie.cpp
-    ./formats/column/hnsw_index.cpp
+    ./formats/index/idx_reader.cpp
+    ./formats/index/idx_writer.cpp
+    ./formats/hnsw/hnsw_reader.cpp
+    ./formats/hnsw/hnsw_writer.cpp
     ./index/directory_reader.cpp
     ./index/directory_reader_impl.cpp
     ./index/field_data.cpp

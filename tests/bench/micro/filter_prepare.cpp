@@ -48,6 +48,7 @@
 #include "iresearch/search/wildcard_filter.hpp"
 #include "iresearch/store/mmap_directory.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace {
 
@@ -55,8 +56,11 @@ constexpr size_t kDocsPerSegment = 256;
 constexpr size_t kTermPoolSize = 512;
 constexpr irs::score_t kBoostValue = 2.5f;
 
+constexpr irs::field_id kKwFieldId = 1;
+constexpr irs::field_id kBodyFieldId = 2;
+
 struct KeywordField {
-  std::string_view Name() const noexcept { return name; }
+  irs::field_id Id() const noexcept { return id; }
 
   irs::Tokenizer& GetTokens() const {
     stream.reset(value);
@@ -69,13 +73,13 @@ struct KeywordField {
 
   bool Write(irs::DataOutput&) const { return true; }
 
-  std::string_view name;
+  irs::field_id id{irs::field_limits::invalid()};
   std::string_view value;
   mutable irs::StringTokenizer stream;
 };
 
 struct TextField {
-  std::string_view Name() const noexcept { return name; }
+  irs::field_id Id() const noexcept { return id; }
 
   irs::Tokenizer& GetTokens() const {
     tokenizer->reset(value);
@@ -89,7 +93,7 @@ struct TextField {
 
   bool Write(irs::DataOutput&) const { return true; }
 
-  std::string_view name;
+  irs::field_id id{irs::field_limits::invalid()};
   std::string_view value;
   irs::analysis::Analyzer::ptr tokenizer =
     irs::analysis::SegmentationTokenizer::Make({});
@@ -187,8 +191,8 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
 
   auto writer = irs::IndexWriter::Make(*_dir, _codec, irs::kOmCreate);
 
-  KeywordField kw_field{.name = "kw"};
-  TextField body_field{.name = "body"};
+  KeywordField kw_field{.id = kKwFieldId};
+  TextField body_field{.id = kBodyFieldId};
 
   for (size_t s = 0; s < num_segments; ++s) {
     {
@@ -214,42 +218,42 @@ void ApplyArgs(benchmark::internal::Benchmark* b) {
 }
 
 void SetUpTerm(irs::ByTerm& f) {
-  *f.mutable_field() = "kw";
+  *f.mutable_field_id() = kKwFieldId;
   f.mutable_options()->term = AsBytes("term_0042");
 }
 
 void SetUpPrefix(irs::ByPrefix& f) {
-  *f.mutable_field() = "kw";
+  *f.mutable_field_id() = kKwFieldId;
   f.mutable_options()->term = AsBytes("term_0");
 }
 
 void SetUpWildcardTerm(irs::ByWildcard& f) {
-  *f.mutable_field() = "kw";
+  *f.mutable_field_id() = kKwFieldId;
   f.mutable_options()->term = AsBytes("kw0001");
 }
 
 void SetUpWildcardTermEscaped(irs::ByWildcard& f) {
-  *f.mutable_field() = "kw";
+  *f.mutable_field_id() = kKwFieldId;
   f.mutable_options()->term = AsBytes("term\\_0042");
 }
 
 void SetUpWildcardPrefix(irs::ByWildcard& f) {
-  *f.mutable_field() = "kw";
+  *f.mutable_field_id() = kKwFieldId;
   f.mutable_options()->term = AsBytes("term%");
 }
 
 void SetUpWildcardPrefixEscaped(irs::ByWildcard& f) {
-  *f.mutable_field() = "kw";
+  *f.mutable_field_id() = kKwFieldId;
   f.mutable_options()->term = AsBytes("term\\_0%");
 }
 
 void SetUpWildcardGeneric(irs::ByWildcard& f) {
-  *f.mutable_field() = "kw";
+  *f.mutable_field_id() = kKwFieldId;
   f.mutable_options()->term = AsBytes("term_0%");
 }
 
 void SetUpRange(irs::ByRange& f) {
-  *f.mutable_field() = "kw";
+  *f.mutable_field_id() = kKwFieldId;
   auto& range = f.mutable_options()->range;
   range.min = AsBytes("term_0000");
   range.min_type = irs::BoundType::Inclusive;
@@ -258,7 +262,7 @@ void SetUpRange(irs::ByRange& f) {
 }
 
 void SetUpTerms(irs::ByTerms& f) {
-  *f.mutable_field() = "kw";
+  *f.mutable_field_id() = kKwFieldId;
   auto& opts = *f.mutable_options();
   for (size_t i = 0; i < 8; ++i) {
     const std::string term = absl::StrFormat("term_%04d", i * 37);
@@ -267,7 +271,7 @@ void SetUpTerms(irs::ByTerms& f) {
 }
 
 void SetUpEdit(irs::ByEditDistance& f) {
-  *f.mutable_field() = "kw";
+  *f.mutable_field_id() = kKwFieldId;
   auto& opts = *f.mutable_options();
   opts.term = AsBytes("term_0042");
   opts.max_distance = 1;
@@ -276,7 +280,7 @@ void SetUpEdit(irs::ByEditDistance& f) {
 }
 
 void SetUpPhrase(irs::ByPhrase& f) {
-  *f.mutable_field() = "body";
+  *f.mutable_field_id() = kBodyFieldId;
   auto* opts = f.mutable_options();
   opts->push_back<irs::ByTermOptions>().term = AsBytes("quick");
   opts->push_back<irs::ByTermOptions>().term = AsBytes("brown");
@@ -284,15 +288,15 @@ void SetUpPhrase(irs::ByPhrase& f) {
 
 void SetUpAnd(irs::And& a) {
   auto& f1 = a.add<irs::ByTerm>();
-  *f1.mutable_field() = "kw";
+  *f1.mutable_field_id() = kKwFieldId;
   f1.mutable_options()->term = AsBytes("term_0042");
 
   auto& f2 = a.add<irs::ByPrefix>();
-  *f2.mutable_field() = "kw";
+  *f2.mutable_field_id() = kKwFieldId;
   f2.mutable_options()->term = AsBytes("term_0");
 
   auto& f3 = a.add<irs::ByRange>();
-  *f3.mutable_field() = "kw";
+  *f3.mutable_field_id() = kKwFieldId;
   auto& range = f3.mutable_options()->range;
   range.min = AsBytes("term_0000");
   range.min_type = irs::BoundType::Inclusive;
@@ -305,14 +309,14 @@ void SetUpOr(irs::Or& o) {
     "term_0042", "term_0100", "term_0250"};
   for (auto t : kTerms) {
     auto& f = o.add<irs::ByTerm>();
-    *f.mutable_field() = "kw";
+    *f.mutable_field_id() = kKwFieldId;
     f.mutable_options()->term = AsBytes(t);
   }
 }
 
 void SetUpNot(irs::Not& n) {
   auto& inner = n.filter<irs::ByTerm>();
-  *inner.mutable_field() = "kw";
+  *inner.mutable_field_id() = kKwFieldId;
   inner.mutable_options()->term = AsBytes("term_0042");
 }
 

@@ -37,7 +37,6 @@ namespace irs {
 // 1. each file contains this file version
 // 2. single per segment file controls over versions
 
-// Format of terms, written in ".tm" file
 enum class TermsFormat : int32_t {
   Min = 0,
   Max = Min,

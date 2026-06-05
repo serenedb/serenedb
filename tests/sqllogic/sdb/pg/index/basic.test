@@ -214,10 +214,11 @@ indexrelid	indrelid
 statement ok
 CREATE TABLE tstest (a INTEGER, b TIMESTAMP, c VARCHAR, d HUGEINT, e DECIMAL(10,2));
 
-statement error
+statement ok
 CREATE INDEX index_ts on tstest USING inverted(b);
-----
-db error: ERROR: Failed to create index: Column 'b' has unsupported type TIMESTAMP and can not be indexed
+
+statement ok
+DROP INDEX index_ts;
 
 
 statement error

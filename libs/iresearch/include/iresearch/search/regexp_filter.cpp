@@ -55,39 +55,36 @@ ByRegexpFilterOptions::ByRegexpFilterOptions(bytes_view pattern,
                                              RegexpSyntax syntax)
   : pattern{pattern}, syntax{syntax} {
   if (!pattern.empty()) {
-    acceptor = std::make_shared<const automaton>(
-      FromRegexp(pattern, kDefaultMaxDfaStates, syntax));
+    acceptor = FromRegexp(pattern, kDefaultMaxDfaStates, syntax);
   }
 }
 
-field_visitor ByRegexp::visitor(std::shared_ptr<const automaton> acceptor) {
-  if (!acceptor || !Validate(*acceptor)) {
+field_visitor ByRegexp::visitor(const automaton& acceptor) {
+  if (!Validate(acceptor)) {
     return [](const SubReader&, const TermReader&, FilterVisitor&) {};
   }
 
   struct AutomatonContext : util::Noncopyable {
-    explicit AutomatonContext(std::shared_ptr<const automaton> a)
-      : acceptor{std::move(a)}, matcher{MakeAutomatonMatcher(*acceptor)} {}
+    explicit AutomatonContext(const automaton& a)
+      : matcher{MakeAutomatonMatcher(a)} {}
 
-    std::shared_ptr<const automaton> acceptor;
     automaton_table_matcher matcher;
   };
 
-  auto ctx = AutomatonContext{std::move(acceptor)};
+  auto ctx = AutomatonContext{acceptor};
 
-  return
-    [ctx = std::move(ctx)](const SubReader& segment, const TermReader& field,
-                           FilterVisitor& visitor) mutable {
-      return irs::Visit(segment, field, ctx.matcher, visitor);
-    };
+  return [context = std::move(ctx)](const SubReader& segment,
+                                    const TermReader& field,
+                                    FilterVisitor& visitor) mutable {
+    return irs::Visit(segment, field, context.matcher, visitor);
+  };
 }
 
 Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx) const {
-  if (!options().acceptor) {
+  if (options().pattern.empty()) {
     return Query::empty();
   }
-  return PrepareAutomatonFilter(ctx.Boost(Boost()), field(),
-                                *options().acceptor,
+  return PrepareAutomatonFilter(ctx.Boost(Boost()), field(), options().acceptor,
                                 options().scored_terms_limit);
 }
 

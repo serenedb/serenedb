@@ -382,7 +382,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_empty_filter) {
     add_segment(gen);
   }
   auto rdr = open_reader();
-  CheckQuery(irs::ByRegexp(), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeRegexp("term", ""), Docs{}, Costs{0}, rdr);
 }
 
 TEST_P(RegexpFilterTestCase, by_regexp_no_match) {
@@ -1056,9 +1056,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_literal) {
   ASSERT_NE(nullptr, reader);
   {
     auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
+    auto automaton = irs::FromRegexp(term);
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexp::visitor(
-      std::make_shared<const irs::automaton>(irs::FromRegexp(term)));
+    auto fv = irs::ByRegexp::visitor(automaton);
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
@@ -1078,8 +1078,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_prefix) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("ab.*"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexp::visitor(
-      std::make_shared<const irs::automaton>(irs::FromRegexp(p)));
+    auto automaton = irs::FromRegexp(p);
+    auto fv = irs::ByRegexp::visitor(automaton);
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
     ASSERT_EQ(6, v.visit_calls_counter());
@@ -1098,8 +1098,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_wildcard_like) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("a.c.*"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexp::visitor(
-      std::make_shared<const irs::automaton>(irs::FromRegexp(p)));
+    auto automaton = irs::FromRegexp(p);
+    auto fv = irs::ByRegexp::visitor(automaton);
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
@@ -1119,8 +1119,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_invalid_pattern) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("(abc"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexp::visitor(
-      std::make_shared<const irs::automaton>(irs::FromRegexp(p)));
+    auto automaton = irs::FromRegexp(p);
+    auto fv = irs::ByRegexp::visitor(automaton);
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
     ASSERT_EQ(0, v.prepare_calls_counter());
@@ -1128,8 +1128,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_invalid_pattern) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("[abc"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexp::visitor(
-      std::make_shared<const irs::automaton>(irs::FromRegexp(p)));
+    auto automaton = irs::FromRegexp(p);
+    auto fv = irs::ByRegexp::visitor(automaton);
     fv(segment, *reader, v);
     ASSERT_EQ(0, v.prepare_calls_counter());
   }
@@ -1622,16 +1622,17 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_with_syntax) {
 
   auto p = irs::ViewCast<irs::byte_type>(std::string_view("\\d+"));
   {
-    auto fv = irs::ByRegexp::visitor(std::make_shared<const irs::automaton>(
-      irs::FromRegexp(p, irs::kDefaultMaxDfaStates, irs::RegexpSyntax::Perl)));
+    auto automaton =
+      irs::FromRegexp(p, irs::kDefaultMaxDfaStates, irs::RegexpSyntax::Perl);
+    auto fv = irs::ByRegexp::visitor(automaton);
     ASSERT_TRUE(fv);
     tests::EmptyFilterVisitor v;
     fv(segment, *reader, v);
   }
   {
-    auto fv = irs::ByRegexp::visitor(
-      std::make_shared<const irs::automaton>(irs::FromRegexp(
-        p, irs::kDefaultMaxDfaStates, irs::RegexpSyntax::PosixEre)));
+    auto automaton = irs::FromRegexp(p, irs::kDefaultMaxDfaStates,
+                                     irs::RegexpSyntax::PosixEre);
+    auto fv = irs::ByRegexp::visitor(automaton);
     ASSERT_TRUE(fv);
     tests::EmptyFilterVisitor v;
     fv(segment, *reader, v);

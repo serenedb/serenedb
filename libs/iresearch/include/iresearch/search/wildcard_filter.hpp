@@ -75,7 +75,7 @@ auto ExecuteWildcard(bstring& buf, bytes_view term, Term&& t, Prefix&& p,
 
 struct ByWildcardFilterOptions {
   bstring term;
-  std::shared_ptr<const automaton> acceptor;
+  automaton acceptor;
 
   ByWildcardFilterOptions() = default;
   // Stores the pattern and compiles its automaton, keeping the two in sync.
@@ -112,7 +112,7 @@ Filter::ptr CreateByWildcard(std::string_view field, bytes_view term,
 // automaton is compiled at construction and stored in the options.
 class ByWildcard final : public FilterWithField<ByWildcardOptions> {
  public:
-  static field_visitor visitor(std::shared_ptr<const automaton> acceptor);
+  static field_visitor visitor(const automaton& acceptor);
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
 };

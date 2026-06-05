@@ -36,7 +36,7 @@ struct FilterVisitor;
 struct ByRegexpFilterOptions {
   bstring pattern;
   RegexpSyntax syntax{RegexpSyntax::Perl};
-  std::shared_ptr<const automaton> acceptor;
+  automaton acceptor;
 
   ByRegexpFilterOptions() = default;
   explicit ByRegexpFilterOptions(bytes_view pattern,
@@ -67,7 +67,7 @@ Filter::ptr CreateByRegexp(std::string_view field, bytes_view pattern,
 
 class ByRegexp final : public FilterWithField<ByRegexpOptions> {
  public:
-  static field_visitor visitor(std::shared_ptr<const automaton> acceptor);
+  static field_visitor visitor(const automaton& acceptor);
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
 };

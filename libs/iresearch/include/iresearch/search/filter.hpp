@@ -23,6 +23,7 @@
 #pragma once
 
 #include <absl/container/node_hash_map.h>
+#include <absl/functional/any_invocable.h>
 
 #include <functional>
 
@@ -105,6 +106,8 @@ class Filter {
   // kludge for optimization in And::prepare
   virtual score_t BoostImpl() const noexcept { return kNoBoost; }
 
+  static Filter::ptr empty();
+
  protected:
   virtual bool equals(const Filter& rhs) const noexcept {
     return type() == rhs.type();
@@ -181,6 +184,6 @@ class Empty final : public FilterWithType<Empty> {
 
 struct FilterVisitor;
 using field_visitor =
-  std::function<void(const SubReader&, const TermReader&, FilterVisitor&)>;
+  absl::AnyInvocable<void(const SubReader&, const TermReader&, FilterVisitor&)>;
 
 }  // namespace irs

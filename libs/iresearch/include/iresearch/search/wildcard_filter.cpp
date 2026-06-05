@@ -32,35 +32,34 @@
 namespace irs {
 
 ByWildcardFilterOptions::ByWildcardFilterOptions(bytes_view pattern)
-  : term{pattern},
-    acceptor{std::make_shared<const automaton>(FromWildcard(pattern))} {}
+  : term{pattern}, acceptor{FromWildcard(pattern)} {}
 
-field_visitor ByWildcard::visitor(std::shared_ptr<const automaton> acceptor) {
-  if (!acceptor || !Validate(*acceptor)) {
+field_visitor ByWildcard::visitor(const automaton& acceptor) {
+  if (!Validate(acceptor)) {
     return [](const SubReader&, const TermReader&, FilterVisitor&) {};
   }
 
   struct AutomatonContext : util::Noncopyable {
-    explicit AutomatonContext(std::shared_ptr<const automaton> a)
-      : acceptor{std::move(a)}, matcher{MakeAutomatonMatcher(*acceptor)} {}
+    explicit AutomatonContext(const automaton& a)
+      : matcher{MakeAutomatonMatcher(a)} {}
 
-    std::shared_ptr<const automaton> acceptor;
     automaton_table_matcher matcher;
   };
 
-  auto ctx = std::make_shared<AutomatonContext>(std::move(acceptor));
+  auto ctx = AutomatonContext{acceptor};
 
-  return
-    [ctx = std::move(ctx)](const SubReader& segment, const TermReader& field,
-                           FilterVisitor& visitor) mutable {
-      return irs::Visit(segment, field, ctx->matcher, visitor);
-    };
+  return [context = std::move(ctx)](const SubReader& segment,
+                                    const TermReader& field,
+                                    FilterVisitor& visitor) mutable {
+    return irs::Visit(segment, field, context.matcher, visitor);
+  };
 }
 
 Filter::Query::ptr ByWildcard::prepare(const PrepareContext& ctx) const {
-  SDB_ASSERT(options().acceptor);
-  return PrepareAutomatonFilter(ctx.Boost(Boost()), field(),
-                                *options().acceptor,
+  if (options().term.empty()) {
+    return Query::empty();
+  }
+  return PrepareAutomatonFilter(ctx.Boost(Boost()), field(), options().acceptor,
                                 options().scored_terms_limit);
 }
 

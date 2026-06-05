@@ -126,8 +126,7 @@ struct PrepareVisitor : util::Noncopyable {
   }
 
   Filter::Query::ptr operator()(const ByWildcardOptions& part) const {
-    SDB_ASSERT(part.acceptor);
-    return PrepareAutomatonFilter(ctx, field, *part.acceptor,
+    return PrepareAutomatonFilter(ctx, field, part.acceptor,
                                   part.scored_terms_limit);
   }
 
@@ -144,8 +143,7 @@ struct PrepareVisitor : util::Noncopyable {
   }
 
   Filter::Query::ptr operator()(const ByRegexpOptions& part) const {
-    SDB_ASSERT(part.acceptor);
-    return PrepareAutomatonFilter(ctx, field, *part.acceptor,
+    return PrepareAutomatonFilter(ctx, field, part.acceptor,
                                   part.scored_terms_limit);
   }
 
@@ -387,7 +385,7 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
     ptv.Reset();  // reset boost volaitility mark
 
     size_t found_parts = 0;
-    for (const auto& visitor : phrase_part_visitors) {
+    for (auto& visitor : phrase_part_visitors) {
       const auto was_terms_count = phrase_terms.size();
       ptv.Reset(phrase_part_stats.GetCollector(found_parts));
       visitor(segment, *reader, ptv);

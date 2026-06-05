@@ -125,7 +125,7 @@ struct PrepareVisitor : util::Noncopyable {
     return ByPrefix::prepare(ctx, field, part.term, part.scored_terms_limit);
   }
 
-  Filter::Query::ptr operator()(const ByWildcardOptions& part) const {
+  auto operator()(const ByWildcardOptions& part) const {
     return PrepareAutomatonFilter(ctx, field, part.acceptor,
                                   part.scored_terms_limit);
   }
@@ -142,7 +142,7 @@ struct PrepareVisitor : util::Noncopyable {
     return ByRange::prepare(ctx, field, part.range, part.scored_terms_limit);
   }
 
-  Filter::Query::ptr operator()(const ByRegexpOptions& part) const {
+  auto operator()(const ByRegexpOptions& part) const {
     return PrepareAutomatonFilter(ctx, field, part.acceptor,
                                   part.scored_terms_limit);
   }

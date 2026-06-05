@@ -519,6 +519,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         auto text = get_text_arg();
         auto pattern = LikeEscapePattern(text, '\\');
         irs::bstring buf;
+        // TODO(codeworse): Will be dropped with filter optimizer
         irs::ExecuteWildcard(
           buf, irs::ViewCast<irs::byte_type>(std::string_view{pattern}),
           [&](irs::bytes_view term) {

@@ -55,13 +55,15 @@ TableShard::TableShard(ObjectId table_id, const catalog::TableStats& stats)
     _num_rows{stats.num_rows} {}
 
 // Persists (StorageKind, stats) so the catalog reconstructs the right subclass
-// on load (search vs rocksdb). DeserializeStorageKind reads the leading kind for
-// that dispatch; DeserializeStats reads the stats.
+// on load (search vs rocksdb). DeserializeStorageKind reads the leading kind
+// for that dispatch; DeserializeStats reads the stats.
 void TableShard::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, std::forward_as_tuple(GetStorage(), GetTableStats()));
+  basics::WriteTuple(sink,
+                     std::forward_as_tuple(GetStorage(), GetTableStats()));
 }
 
 namespace {
+
 std::tuple<catalog::StorageKind, catalog::TableStats> DeserializeShard(
   std::string_view bytes) {
   duckdb::MemoryStream stream{
@@ -73,13 +75,15 @@ std::tuple<catalog::StorageKind, catalog::TableStats> DeserializeShard(
   basics::ReadTuple(deserializer, out);
   return out;
 }
+
 }  // namespace
 
 catalog::TableStats TableShard::DeserializeStats(std::string_view bytes) {
   return std::get<1>(DeserializeShard(bytes));
 }
 
-catalog::StorageKind TableShard::DeserializeStorageKind(std::string_view bytes) {
+catalog::StorageKind TableShard::DeserializeStorageKind(
+  std::string_view bytes) {
   return std::get<0>(DeserializeShard(bytes));
 }
 

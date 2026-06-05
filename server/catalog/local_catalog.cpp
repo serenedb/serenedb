@@ -2193,7 +2193,7 @@ Result LocalCatalog::CreateTable(
                                            *schema_id, table->GetId(),
                                            shard->GetId(), /*size=*/0);
         if (!r.ok()) {
-          SDB_ERROR("xxxxx", Logger::THREADS,
+          SDB_ERROR(SEARCH,
                     "Failed to drop artifacts on CREATE TABLE rollback for "
                     "table_id ",
                     table->GetId().id(), ": ", r.errorMessage());

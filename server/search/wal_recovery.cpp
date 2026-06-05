@@ -59,7 +59,6 @@
 #include "connector/key_utils.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_sink_writer.h"
-#include "query/duckdb_engine.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
@@ -746,8 +745,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     return;
   }
   auto begin = std::chrono::steady_clock::now();
-  auto& server = SerenedServer::Instance();
-  auto& catalog_feature = server.getFeature<catalog::CatalogFeature>();
+  auto& catalog_feature = catalog::CatalogFeature::instance();
   auto snapshot = catalog_feature.Global().GetCatalogSnapshot();
   SDB_ASSERT(snapshot);
   auto& engine = GetSearchEngine();
@@ -852,8 +850,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   if (recovered_shards > 0) {
     const auto duration =
       absl::FromChrono(std::chrono::steady_clock::now() - begin);
-    SDB_INFO("xxxxx", Logger::SEARCH,
-             "Search-table WAL recovery: completed in ",
+    SDB_INFO(SEARCH, "Search-table WAL recovery: completed in ",
              absl::FormatDuration(duration), ", shards=", recovered_shards);
   }
 }

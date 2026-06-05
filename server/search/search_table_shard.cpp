@@ -31,8 +31,8 @@
 #include <iresearch/store/mmap_directory.hpp>
 #include <system_error>
 
+#include "basics/duckdb_engine.h"
 #include "basics/exceptions.h"
-#include "query/duckdb_engine.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
@@ -129,15 +129,13 @@ void SearchTableShard::OpenWriter() {
                 : irs::OpenMode::kOmCreate;
 
   irs::ResourceManagementOptions resource_manager;
-  resource_manager.cached_columns =
-    &GetSearchEngine().getCachedColumnsManager();
   _dir = std::make_unique<irs::MMapDirectory>(path, irs::DirectoryAttributes{},
                                               resource_manager);
 
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = 256 * (size_t{1} << 20);  // 256MB
   writer_options.lock_repository = false;  // RocksDB has its own lock
-  writer_options.db = query::DuckDBEngine::Instance().GetDB().instance.get();
+  writer_options.db = &sdb::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
 
   // Persist this shard's last-committed iresearch tick in the commit meta

@@ -118,9 +118,7 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   ~SearchInsertGlobalState() override {
     if (ctas_mode && !ctas_finalized && !ctas_table_name.empty()) {
       try {
-        auto& catalog = SerenedServer::Instance()
-                          .getFeature<catalog::CatalogFeature>()
-                          .Global();
+        auto& catalog = catalog::CatalogFeature::instance().Global();
         std::ignore = catalog.DropTable(ctas_database_name, ctas_schema_name,
                                         ctas_table_name, true);
       } catch (...) {
@@ -203,8 +201,7 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
   SDB_ASSERT(options.storage == catalog::StorageKind::kSearch,
              "SereneDBSearchInsert CTAS mode used for non-search storage");
 
-  auto& catalog_impl =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto& catalog_impl = catalog::CatalogFeature::instance().Global();
   const bool if_not_exists =
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
@@ -248,8 +245,7 @@ void RemoveCtasTombstoneIfNeeded(SearchInsertGlobalState& state) {
     return;
   }
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto& catalog = catalog::CatalogFeature::instance().Global();
   auto r = catalog.RemoveTombstone(
     state.ctas_database_id, state.ctas_schema_name, state.ctas_table_name);
   if (!r.ok()) {
@@ -297,8 +293,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
       return nullptr;  // IF NOT EXISTS hit an existing relation.
     }
     conn_ctx.DropCatalogSnapshot();
-    auto& catalog_impl =
-      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    auto& catalog_impl = catalog::CatalogFeature::instance().Global();
     snapshot = catalog_impl.GetCatalogSnapshot();
   } else {
     table = _table;

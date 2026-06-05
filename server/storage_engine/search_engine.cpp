@@ -36,8 +36,8 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
           "Threads in the iresearch compaction pool (0 = auto-derive from "
           "cores, clamped to [1, 4 * cores]).");
 
-#include <iresearch/analysis/classification_tokenizer.hpp>
 #include <duckdb/common/file_system.hpp>
+#include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/fast_text_model.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
@@ -45,6 +45,7 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 
 #include "app/app_server.h"
 #include "basics/down_cast.h"
+#include "basics/duckdb_engine.h"
 #include "basics/exceptions.h"
 #include "basics/lifecycle.h"
 #include "basics/log.h"
@@ -53,7 +54,6 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 #include "catalog/index.h"
 #include "catalog/search_common.h"
 #include "catalog/view.h"
-#include "query/duckdb_engine.h"
 #include "rest_server/database_path_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
@@ -206,7 +206,7 @@ SearchDbWal& SearchEngine::GetDbWal(ObjectId database_id) {
     // Borrow the process-wide FileSystem (owned by the DuckDB instance, which
     // outlives the engine). The WAL lives at GetPersistedPath(db)/wal/.
     auto& fs = duckdb::FileSystem::GetFileSystem(
-      *query::DuckDBEngine::Instance().GetDB().instance);
+      sdb::DuckDBEngine::Instance().instance());
     auto wal_dir = GetPersistedPath(database_id) / "wal";
     it = _db_wals
            .emplace(database_id,

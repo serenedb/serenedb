@@ -500,12 +500,11 @@ TEST_F(SearchDbWalTest, GeneratedPkBaseRoundTrip) {
     SearchDbWal wal(Fs(), _dir);
     auto cdc = MakeIntCdc(Alloc(), {7, 8, 9});
     std::vector<uint64_t> pk_bases{1000};  // one chunk -> one base
-    SearchDbWal::ShardSection sec{/*schema=*/1,
-                                  /*table=*/5,
-                                  SearchDbWal::ColumnIds{cols},
-                                  /*inline=*/cdc.get(),
-                                  /*seg_ids=*/{},
-                                  std::span<const uint64_t>{pk_bases}};
+    SearchDbWal::ShardSection sec{
+      /*schema=*/1,
+      /*table=*/5,          SearchDbWal::ColumnIds{cols},
+      /*inline=*/cdc.get(),
+      /*seg_ids=*/{},       std::span<const uint64_t>{pk_bases}};
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}), 1u);
   }
   {

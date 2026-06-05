@@ -24,10 +24,9 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
-#include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/columnstore/format.hpp>
 #include <iresearch/index/directory_reader.hpp>
-#include <iresearch/search/scorers.hpp>
 #include <iresearch/store/memory_directory.hpp>
 
 #include "catalog/identifiers/object_id.h"
@@ -48,12 +47,7 @@ duckdb::DatabaseInstance& TestDb() {
 
 class SearchTableSinkWriterTest : public ::testing::Test {
  public:
-  static void SetUpTestCase() {
-    irs::analysis::analyzers::Init();
-    irs::formats::Init();
-    irs::scorers::Init();
-    irs::compression::Init();
-  }
+  static void SetUpTestCase() { irs::formats::Init(); }
 
   void SetUp() final {
     irs::IndexWriterOptions options;

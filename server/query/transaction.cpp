@@ -164,7 +164,16 @@ Result Transaction::Commit() {
     }));
     uint64_t tick = 0;
     try {
+      // Crash boundaries (WAL_DESIGN.md §9): AppendCommit's single fsync inside
+      // CommitSearchTableWal IS the commit point. A crash before it loses the
+      // whole txn (no central record -> orphan chunks skipped on recovery); a
+      // crash after it keeps the txn (recovery replays the record and rebuilds
+      // iresearch, even though it was never refresh-published here).
+      SDB_IF_FAILURE("crash_before_search_wal_commit") {
+        SDB_IMMEDIATE_ABORT();
+      }
       tick = CommitSearchTableWal();
+      SDB_IF_FAILURE("crash_after_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
     } catch (const std::exception& e) {
       for (auto& [table_id, w] : _search_table_writes) {
         for (auto& trx : w.transactions) {

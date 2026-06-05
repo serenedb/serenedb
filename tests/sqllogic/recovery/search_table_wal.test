@@ -1,0 +1,101 @@
+control substitution on
+
+###############################################################################
+# Search-table WAL crash recovery (WAL_DESIGN.md §9)
+#
+# The commit point for a search-table write is the single fsync inside
+# SearchDbWal::AppendCommit. This test brackets that fsync with two fault
+# points and asserts the durability/atomicity invariant across a real process
+# crash + restart:
+#
+#   crash_after_search_wal_commit  -> the record is durable; recovery replays it
+#                                     and rebuilds iresearch. The write was never
+#                                     refresh-published, so it lives ONLY in the
+#                                     WAL -- this is the durability proof.
+#   crash_before_search_wal_commit -> no record is written; the whole txn is lost
+#                                     and any streamed chunks are skipped as
+#                                     orphans -- the atomicity proof.
+###############################################################################
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE s_wal(a INTEGER, b TEXT) WITH (storage = 'search');
+
+statement ok
+RESET sdb_faults;
+
+# --- Fixture: a published baseline, durable in the iresearch index on disk. ---
+statement ok
+INSERT INTO s_wal VALUES (1, 'one'), (2, 'two'), (3, 'three');
+
+statement ok
+VACUUM (REFRESH_TABLE) s_wal;
+
+query
+SELECT a, b FROM s_wal ORDER BY a;
+----
+a	b
+1	one
+2	two
+3	three
+
+
+###############################################################################
+# 1. Crash AFTER the WAL commit -> the write survives via recovery replay.
+#    (4,5) is fsynced into the WAL but never refresh-published, so it exists
+#    ONLY in the WAL; recovery must rebuild it into iresearch.
+###############################################################################
+
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+statement error connection closed
+INSERT INTO s_wal VALUES (4, 'four'), (5, 'five');
+
+# --- restart: reconnect once the runner brings the crashed instance back up ---
+connection after_commit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT a, b FROM s_wal ORDER BY a;
+----
+a	b
+1	one
+2	two
+3	three
+4	four
+5	five
+
+# Persist the recovered rows into the iresearch index (and GC the WAL) so the
+# next scenario's crash cannot reach them via a lingering WAL record.
+connection after_commit
+statement ok
+VACUUM (REFRESH_TABLE) s_wal;
+
+
+###############################################################################
+# 2. Crash BEFORE the WAL commit -> the write is lost (no record written).
+#    (6,7) never reaches the WAL; recovery finds nothing new. The baseline plus
+#    the now-durable recovered (4,5) are untouched.
+###############################################################################
+
+connection after_commit
+statement ok
+SET sdb_faults = 'crash_before_search_wal_commit';
+
+connection after_commit
+statement error connection closed
+INSERT INTO s_wal VALUES (6, 'six'), (7, 'seven');
+
+# --- restart ---
+connection before_commit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT a, b FROM s_wal ORDER BY a;
+----
+a	b
+1	one
+2	two
+3	three
+4	four
+5	five
+
+connection before_commit
+statement ok
+DROP TABLE s_wal;

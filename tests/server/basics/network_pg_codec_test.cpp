@@ -18,9 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <gtest/gtest.h>
-
 #include <absl/base/internal/endian.h>
+#include <gtest/gtest.h>
 
 #include <cstdint>
 #include <string>
@@ -48,8 +47,7 @@ std::string TypedFrame(char type, std::string_view payload) {
 std::string StartupFrame(uint32_t code, std::string_view rest) {
   std::string frame;
   char length[4];
-  absl::big_endian::Store32(length,
-                            static_cast<uint32_t>(4 + 4 + rest.size()));
+  absl::big_endian::Store32(length, static_cast<uint32_t>(4 + 4 + rest.size()));
   frame.append(length, 4);
   char code_bytes[4];
   absl::big_endian::Store32(code_bytes, code);
@@ -61,7 +59,8 @@ std::string StartupFrame(uint32_t code, std::string_view rest) {
 }  // namespace
 
 TEST(NetworkPgCodec, TypedFrameFragmentation) {
-  const std::string frame = TypedFrame(PQ_MSG_QUERY, std::string_view{"SELECT 1\0", 9});
+  const std::string frame =
+    TypedFrame(PQ_MSG_QUERY, std::string_view{"SELECT 1\0", 9});
   for (size_t n = 0; n < frame.size(); ++n) {
     const auto partial = PgFrameCodec::Parse(frame.substr(0, n), true, kMax);
     EXPECT_EQ(partial.status, FrameStatus::NeedMore) << "n=" << n;
@@ -75,15 +74,16 @@ TEST(NetworkPgCodec, TypedFrameFragmentation) {
 
 TEST(NetworkPgCodec, TypedFramePipelined) {
   const std::string one = TypedFrame(PQ_MSG_SYNC, "");
-  const std::string two = one + TypedFrame(PQ_MSG_QUERY, std::string_view{"x\0", 2});
+  const std::string two =
+    one + TypedFrame(PQ_MSG_QUERY, std::string_view{"x\0", 2});
   const auto first = PgFrameCodec::Parse(two, true, kMax);
   ASSERT_EQ(first.status, FrameStatus::Ok);
   EXPECT_EQ(first.frame.type, PQ_MSG_SYNC);
   EXPECT_EQ(first.consumed, one.size());
   EXPECT_TRUE(first.frame.payload.empty());
 
-  const auto second =
-    PgFrameCodec::Parse(std::string_view{two}.substr(first.consumed), true, kMax);
+  const auto second = PgFrameCodec::Parse(
+    std::string_view{two}.substr(first.consumed), true, kMax);
   ASSERT_EQ(second.status, FrameStatus::Ok);
   EXPECT_EQ(second.frame.type, PQ_MSG_QUERY);
 }
@@ -91,7 +91,8 @@ TEST(NetworkPgCodec, TypedFramePipelined) {
 TEST(NetworkPgCodec, StartupAndSslAndCancelCodes) {
   const std::string startup = StartupFrame(
     PG_PROTOCOL_LATEST, std::string_view{"user\0postgres\0\0", 15});
-  const auto parsed = PgFrameCodec::Parse(startup, false, MAX_STARTUP_PACKET_LENGTH);
+  const auto parsed =
+    PgFrameCodec::Parse(startup, false, MAX_STARTUP_PACKET_LENGTH);
   ASSERT_EQ(parsed.status, FrameStatus::Ok);
   EXPECT_EQ(parsed.frame.type, '\0');
   EXPECT_EQ(PgFrameCodec::StartupCode(parsed.frame.payload),
@@ -105,8 +106,9 @@ TEST(NetworkPgCodec, StartupAndSslAndCancelCodes) {
   EXPECT_EQ(PgFrameCodec::StartupCode(ssl_parsed.frame.payload),
             static_cast<uint32_t>(NEGOTIATE_SSL_CODE));
 
-  const std::string cancel = StartupFrame(CANCEL_REQUEST_CODE,
-                                          std::string_view{"\x00\x00\x00\x01\x00\x00\x00\x02", 8});
+  const std::string cancel =
+    StartupFrame(CANCEL_REQUEST_CODE,
+                 std::string_view{"\x00\x00\x00\x01\x00\x00\x00\x02", 8});
   const auto cancel_parsed =
     PgFrameCodec::Parse(cancel, false, MAX_STARTUP_PACKET_LENGTH);
   ASSERT_EQ(cancel_parsed.status, FrameStatus::Ok);
@@ -115,7 +117,8 @@ TEST(NetworkPgCodec, StartupAndSslAndCancelCodes) {
 }
 
 TEST(NetworkPgCodec, TooLargeAndMalformed) {
-  const std::string frame = TypedFrame(PQ_MSG_QUERY, std::string_view{"abcdef", 6});
+  const std::string frame =
+    TypedFrame(PQ_MSG_QUERY, std::string_view{"abcdef", 6});
   const auto too_large = PgFrameCodec::Parse(frame, true, 5);
   EXPECT_EQ(too_large.status, FrameStatus::TooLarge);
 

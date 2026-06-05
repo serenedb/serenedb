@@ -21,11 +21,11 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/enums/statement_type.hpp>
 #include <string>
 
-#include <duckdb/common/enums/statement_type.hpp>
-
 namespace duckdb {
+
 class PreparedStatement;
 }
 

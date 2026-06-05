@@ -23,7 +23,6 @@
 #include <openssl/ssl.h>
 
 namespace sdb::network {
-
 namespace {
 
 // ALPN selection callback. The server's supported protocols in preference
@@ -50,12 +49,11 @@ asio_ns::ssl::context BuildServerTlsContext(const std::string& cert_file,
                                             const std::string& key_file,
                                             const std::string& ca_file) {
   asio_ns::ssl::context ctx{asio_ns::ssl::context::tls_server};
-  ctx.set_options(asio_ns::ssl::context::default_workarounds |
-                  asio_ns::ssl::context::single_dh_use |
-                  asio_ns::ssl::context::no_sslv2 |
-                  asio_ns::ssl::context::no_sslv3 |
-                  asio_ns::ssl::context::no_tlsv1 |
-                  asio_ns::ssl::context::no_tlsv1_1);
+  ctx.set_options(
+    asio_ns::ssl::context::default_workarounds |
+    asio_ns::ssl::context::single_dh_use | asio_ns::ssl::context::no_sslv2 |
+    asio_ns::ssl::context::no_sslv3 | asio_ns::ssl::context::no_tlsv1 |
+    asio_ns::ssl::context::no_tlsv1_1);
   ctx.use_certificate_chain_file(cert_file);
   ctx.use_private_key_file(key_file, asio_ns::ssl::context::pem);
   if (!ca_file.empty()) {

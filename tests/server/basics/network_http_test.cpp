@@ -22,10 +22,9 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
-
-#include <memory>
 #include <utility>
 #include <yaclib/async/make.hpp>
 
@@ -41,7 +40,8 @@ using namespace sdb;
 
 namespace {
 
-using HttpAcceptor = network::Acceptor<network::HttpSession<network::SocketKind::Tcp>>;
+using HttpAcceptor =
+  network::Acceptor<network::HttpSession<network::SocketKind::Tcp>>;
 
 class EchoHandler final : public network::HttpHandler {
  public:
@@ -92,8 +92,8 @@ TEST(NetworkHttp, Tier0Endpoints) {
   const auto server = Loopback(acceptor->LocalEndpoint().port());
   acceptor->Start();
 
-  const std::string root = Roundtrip(
-    server, "GET / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
+  const std::string root =
+    Roundtrip(server, "GET / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
   EXPECT_NE(root.find("HTTP/1.1 200"), std::string::npos);
   EXPECT_NE(root.find("serenedb"), std::string::npos);
   EXPECT_NE(root.find("You Know, for Search"), std::string::npos);
@@ -187,10 +187,10 @@ TEST(NetworkHttp, BodyEcho) {
   const auto server = Loopback(acceptor->LocalEndpoint().port());
   acceptor->Start();
 
-  const std::string content_length = Roundtrip(
-    server,
-    "POST /echo HTTP/1.1\r\nHost: t\r\nContent-Length: 11\r\n"
-    "Connection: close\r\n\r\nhello world");
+  const std::string content_length =
+    Roundtrip(server,
+              "POST /echo HTTP/1.1\r\nHost: t\r\nContent-Length: 11\r\n"
+              "Connection: close\r\n\r\nhello world");
   EXPECT_NE(content_length.find("\r\n\r\nhello world"), std::string::npos);
 
   const std::string chunked = Roundtrip(

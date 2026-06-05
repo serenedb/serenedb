@@ -71,7 +71,9 @@ class Buffer {
 
   std::span<uint8_t> Reserve(size_t min_capacity);
   void CommitWrite(size_t size);
-  bool Readable() const noexcept { return _head != _tail || _head->Size() != 0; }
+  bool Readable() const noexcept {
+    return _head != _tail || _head->Size() != 0;
+  }
   std::string_view Front() const noexcept;
   void Consume(size_t size);
 

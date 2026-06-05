@@ -20,12 +20,11 @@
 
 #pragma once
 
-#include <yaclib/exe/executor.hpp>
-#include <yaclib/exe/job.hpp>
-
 #include <duckdb/common/helper.hpp>
 #include <duckdb/parallel/task.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <yaclib/exe/executor.hpp>
+#include <yaclib/exe/job.hpp>
 
 namespace sdb::network::pg {
 

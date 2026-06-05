@@ -21,7 +21,6 @@
 #include "network/http/router.h"
 
 #include <absl/strings/str_cat.h>
-
 #include <ada.h>
 
 #include <string>
@@ -57,8 +56,8 @@ yaclib::Future<HttpResponse> HttpRouter::Route(HttpRequest& request) {
     if (route.method != request.method) {
       continue;
     }
-    auto matched = route.pattern.exec(
-      ada::url_pattern_input{std::string_view{url}});
+    auto matched =
+      route.pattern.exec(ada::url_pattern_input{std::string_view{url}});
     if (!matched.has_value() || !matched.value().has_value()) {
       continue;
     }

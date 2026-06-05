@@ -18,14 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/base/internal/endian.h>
 #include <gtest/gtest.h>
 
-#include <absl/base/internal/endian.h>
-
+#include <duckdb/common/types.hpp>
 #include <string>
 #include <vector>
-
-#include <duckdb/common/types.hpp>
 
 #include "basics/message_buffer.h"
 #include "network/pg/wire_frames.h"

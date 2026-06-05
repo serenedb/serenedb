@@ -21,15 +21,14 @@
 #pragma once
 
 #include <coroutine>
+#include <duckdb/common/enums/pending_execution_result.hpp>
+#include <duckdb/main/pending_query_result.hpp>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/coro.hpp>
 #include <yaclib/coro/future.hpp>
 #include <yaclib/coro/on.hpp>
 #include <yaclib/exe/executor.hpp>
 #include <yaclib/exe/submit.hpp>
-
-#include <duckdb/common/enums/pending_execution_result.hpp>
-#include <duckdb/main/pending_query_result.hpp>
 
 namespace sdb::network::pg {
 

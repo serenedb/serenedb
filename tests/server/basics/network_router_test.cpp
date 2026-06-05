@@ -71,7 +71,8 @@ TEST(NetworkRouter, LiteralWildcardAndGroups) {
   router.Add(HttpMethod::Post, "/:index/_doc/:id",
              std::make_unique<RecordingHandler>("doc", log));
 
-  const HttpResponse health = RunRoute(router, HttpMethod::Get, "/_cluster/health");
+  const HttpResponse health =
+    RunRoute(router, HttpMethod::Get, "/_cluster/health");
   EXPECT_EQ(health.status, 200);
   EXPECT_EQ(health.body, "health");
 
@@ -80,8 +81,7 @@ TEST(NetworkRouter, LiteralWildcardAndGroups) {
   EXPECT_EQ(search.status, 200);
   EXPECT_EQ(search.body, "search;index=my-index");
 
-  const HttpResponse doc =
-    RunRoute(router, HttpMethod::Post, "/books/_doc/42");
+  const HttpResponse doc = RunRoute(router, HttpMethod::Post, "/books/_doc/42");
   EXPECT_EQ(doc.status, 200);
   EXPECT_NE(doc.body.find("index=books"), std::string::npos);
   EXPECT_NE(doc.body.find("id=42"), std::string::npos);

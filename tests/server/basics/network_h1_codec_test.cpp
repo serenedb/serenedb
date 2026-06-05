@@ -50,7 +50,8 @@ struct HeadResult {
   HttpRequest request;
 };
 
-HeadResult DriveHead(H1Codec& codec, std::string_view input, size_t chunk_size) {
+HeadResult DriveHead(H1Codec& codec, std::string_view input,
+                     size_t chunk_size) {
   std::string buffer;
   size_t offset = 0;
   HeadResult result;
@@ -107,8 +108,8 @@ TEST(NetworkH1Codec, HeadFragmentationInvariant) {
 TEST(NetworkH1Codec, ContentLengthFraming) {
   H1Codec codec;
   const HeadResult result = DriveHead(
-    codec,
-    "POST /ingest HTTP/1.1\r\nHost: h\r\nContent-Length: 11\r\n\r\n", 4096);
+    codec, "POST /ingest HTTP/1.1\r\nHost: h\r\nContent-Length: 11\r\n\r\n",
+    4096);
   ASSERT_TRUE(result.ok);
   EXPECT_EQ(result.request.method, HttpMethod::Post);
   EXPECT_EQ(result.content_length, 11u);
@@ -142,21 +143,22 @@ TEST(NetworkH1Codec, DecodeChunkedBody) {
 
 TEST(NetworkH1Codec, RejectsTransferEncodingWithContentLength) {
   H1Codec codec;
-  const HeadResult result = DriveHead(
-    codec,
-    "POST /x HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n"
-    "Content-Length: 5\r\n\r\n",
-    4096);
+  const HeadResult result =
+    DriveHead(codec,
+              "POST /x HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n"
+              "Content-Length: 5\r\n\r\n",
+              4096);
   EXPECT_FALSE(result.ok);
   EXPECT_EQ(result.error, 400);
 }
 
 TEST(NetworkH1Codec, RejectsConflictingContentLength) {
   H1Codec codec;
-  const HeadResult result = DriveHead(
-    codec,
-    "POST /x HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\n",
-    4096);
+  const HeadResult result =
+    DriveHead(codec,
+              "POST /x HTTP/1.1\r\nHost: h\r\nContent-Length: "
+              "5\r\nContent-Length: 6\r\n\r\n",
+              4096);
   EXPECT_FALSE(result.ok);
   EXPECT_EQ(result.error, 400);
 }
@@ -175,11 +177,11 @@ TEST(NetworkH1Codec, RejectsOversizedHead) {
 
 TEST(NetworkH1Codec, ExpectContinueWithBody) {
   H1Codec codec;
-  const HeadResult result = DriveHead(
-    codec,
-    "POST /x HTTP/1.1\r\nHost: h\r\nContent-Length: 4\r\n"
-    "Expect: 100-continue\r\n\r\n",
-    4096);
+  const HeadResult result =
+    DriveHead(codec,
+              "POST /x HTTP/1.1\r\nHost: h\r\nContent-Length: 4\r\n"
+              "Expect: 100-continue\r\n\r\n",
+              4096);
   ASSERT_TRUE(result.ok);
   EXPECT_TRUE(result.cont);
   EXPECT_EQ(result.content_length, 4u);

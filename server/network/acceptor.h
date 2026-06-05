@@ -60,12 +60,11 @@ class Acceptor final : public AcceptorBase,
   }
 
   void Stop() noexcept override {
-    asio_ns::post(_acceptor.get_executor(),
-                  [self = this->shared_from_this()] {
-                    self->_running = false;
-                    asio_ns::error_code ec;
-                    self->_acceptor.close(ec);
-                  });
+    asio_ns::post(_acceptor.get_executor(), [self = this->shared_from_this()] {
+      self->_running = false;
+      asio_ns::error_code ec;
+      self->_acceptor.close(ec);
+    });
   }
 
   asio_ns::ip::tcp::endpoint LocalEndpoint() const {

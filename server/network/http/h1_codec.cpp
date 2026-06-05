@@ -26,7 +26,6 @@
 #include <utility>
 
 namespace sdb::network {
-
 namespace {
 
 HttpMethod MapMethod(uint8_t method) {

@@ -23,9 +23,8 @@
 #include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
 
-#include <duckdb/common/types/vector.hpp>
-
 #include <cstdint>
+#include <duckdb/common/types/vector.hpp>
 #include <utility>
 #include <vector>
 
@@ -36,7 +35,6 @@
 #include "query/utils.h"
 
 namespace sdb::network::pg {
-
 namespace {
 
 constexpr std::string_view kNul{"\0", 1};
@@ -93,9 +91,11 @@ void WriteNoticeField(message::Buffer& out, char tag, std::string_view value) {
 
 }  // namespace
 
-void WriteDataChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
-                    std::span<const sdb::pg::SerializationFunction> serializers,
-                    sdb::pg::SerializationContext& context) {
+void WriteDataChunkRange(
+  message::Buffer& out, const duckdb::DataChunk& chunk,
+  std::span<const sdb::pg::SerializationFunction> serializers,
+  sdb::pg::SerializationContext& context, duckdb::idx_t begin,
+  duckdb::idx_t end) {
   const auto rows = chunk.size();
   const auto columns = static_cast<uint16_t>(chunk.ColumnCount());
   std::vector<duckdb::RecursiveUnifiedVectorFormat> decoded(columns);
@@ -103,7 +103,7 @@ void WriteDataChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
     duckdb::Vector::RecursiveToUnifiedFormat(chunk.data[column], rows,
                                              decoded[column]);
   }
-  for (duckdb::idx_t row = 0; row < rows; ++row) {
+  for (duckdb::idx_t row = begin; row < end; ++row) {
     const auto start = out.GetUncommittedSize();
     auto* prefix = out.GetContiguousData(7);
     for (uint16_t column = 0; column < columns; ++column) {
@@ -115,6 +115,12 @@ void WriteDataChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
     absl::big_endian::Store16(prefix + 5, columns);
     out.Commit(false);
   }
+}
+
+void WriteDataChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
+                    std::span<const sdb::pg::SerializationFunction> serializers,
+                    sdb::pg::SerializationContext& context) {
+  WriteDataChunkRange(out, chunk, serializers, context, 0, chunk.size());
 }
 
 void WriteParameterStatus(message::Buffer& out, std::string_view name,
@@ -253,11 +259,24 @@ void WriteParameterDescription(message::Buffer& out,
   const auto count = static_cast<uint16_t>(oids.size());
   auto* prefix = out.GetContiguousData(7);
   prefix[0] = PQ_MSG_PARAMETER_DESCRIPTION;
-  absl::big_endian::Store32(prefix + 1, static_cast<int32_t>(4 + 2 + 4 * count));
+  absl::big_endian::Store32(prefix + 1,
+                            static_cast<int32_t>(4 + 2 + 4 * count));
   absl::big_endian::Store16(prefix + 5, count);
   for (const auto oid : oids) {
     absl::big_endian::Store32(out.GetContiguousData(4), oid);
   }
+  out.Commit(false);
+}
+
+void WriteAuthRequest(message::Buffer& out, int32_t code,
+                      std::string_view payload) {
+  auto* prefix = out.GetContiguousData(9);
+  prefix[0] = PQ_MSG_AUTHENTICATION_REQUEST;
+  // length excludes the type byte: 4 (length) + 4 (code) + payload.
+  absl::big_endian::Store32(prefix + 1,
+                            static_cast<int32_t>(8 + payload.size()));
+  absl::big_endian::Store32(prefix + 5, code);
+  out.WriteUncommitted(payload);
   out.Commit(false);
 }
 
@@ -275,6 +294,24 @@ void WriteReadyForQuery(message::Buffer& out, char txn_status) {
   data[0] = PQ_MSG_READY_FOR_QUERY;
   absl::big_endian::Store32(data + 1, 5);
   data[5] = static_cast<uint8_t>(txn_status);
+  out.Commit(false);
+}
+
+void WriteNegotiateProtocolVersion(
+  message::Buffer& out, int32_t newest_minor,
+  std::span<const std::string_view> unrecognized_options) {
+  const auto start = out.GetUncommittedSize();
+  auto* prefix = out.GetContiguousData(9);
+  absl::big_endian::Store32(prefix + 5, newest_minor);
+  absl::big_endian::Store32(out.GetContiguousData(4),
+                            static_cast<int32_t>(unrecognized_options.size()));
+  for (const auto option : unrecognized_options) {
+    out.WriteUncommitted(option);
+    out.WriteUncommitted(kNul);
+  }
+  prefix[0] = PQ_MSG_NEGOTIATE_PROTOCOL_VERSION;
+  absl::big_endian::Store32(
+    prefix + 1, static_cast<int32_t>(out.GetUncommittedSize() - start - 1));
   out.Commit(false);
 }
 

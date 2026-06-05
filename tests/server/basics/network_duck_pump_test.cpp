@@ -20,15 +20,14 @@
 
 #include <gtest/gtest.h>
 
-#include <yaclib/async/future.hpp>
-#include <yaclib/coro/future.hpp>
-#include <yaclib/util/helper.hpp>
-
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/materialized_query_result.hpp>
 #include <duckdb/main/pending_query_result.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <yaclib/async/future.hpp>
+#include <yaclib/coro/future.hpp>
+#include <yaclib/util/helper.hpp>
 
 #include "basics/duckdb_engine.h"
 #include "network/pg/duck_executor.h"

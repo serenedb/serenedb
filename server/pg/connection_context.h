@@ -30,6 +30,7 @@
 #include "utils/exec_context.h"
 
 namespace sdb::pg {
+
 class CopyInBridge;
 }
 

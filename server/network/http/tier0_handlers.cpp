@@ -27,7 +27,6 @@
 #include "network/http/handler.h"
 
 namespace sdb::network {
-
 namespace {
 
 class RootHandler final : public HttpHandler {

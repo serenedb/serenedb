@@ -52,11 +52,17 @@ class NetworkServerFeature final {
   std::string _tls_cert;
   std::string _tls_key;
   std::string _tls_ca;
+  std::string _auth_password;
+  std::string _auth_user;
+  bool _auth_cleartext;
+  bool _allow_cleartext_without_tls;
   std::uint32_t _io_threads;
   network::HttpRouter _router;
   network::HttpServerContext _http_context{_router};
   network::pg::PgServerContext _pg_context;
   std::optional<asio_ns::ssl::context> _ssl;
+  // Temporary config-based auth source (RBAC will replace it via the seam).
+  std::unique_ptr<network::pg::CredentialProvider> _credentials;
   std::unique_ptr<network::IoThreadPool> _pool;
   std::vector<std::shared_ptr<network::AcceptorBase>> _acceptors;
 };

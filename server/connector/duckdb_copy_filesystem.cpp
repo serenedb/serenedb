@@ -156,8 +156,8 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
     }
 
     auto read = _bridge ? _bridge->Read(out, nr_bytes)
-                        : static_cast<int64_t>(
-                            _iterator->Next(out, static_cast<uint64_t>(nr_bytes)));
+                        : static_cast<int64_t>(_iterator->Next(
+                            out, static_cast<uint64_t>(nr_bytes)));
     total += read;
     if (_buffer && read > 0) {
       _buffer->append(out, static_cast<size_t>(read));
@@ -240,9 +240,9 @@ duckdb::unique_ptr<duckdb::FileHandle> SereneDBCopyFileSystem::OpenFile(
         ERR_MSG("COPY ", path,
                 " requires a PG wire connection (transport not attached)"));
     }
-    return duckdb::make_uniq<CopyInFileHandle>(
-      *this, plumbing.state, plumbing.queue, plumbing.bridge,
-      *plumbing.send_buffer);
+    return duckdb::make_uniq<CopyInFileHandle>(*this, plumbing.state,
+                                               plumbing.queue, plumbing.bridge,
+                                               *plumbing.send_buffer);
   }
   if (path == kDevStdout) {
     auto plumbing = GetPlumbing(opener.get(), path);

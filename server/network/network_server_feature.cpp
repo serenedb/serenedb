@@ -22,7 +22,6 @@
 
 #include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
-
 #include <ada.h>
 
 #include <algorithm>
@@ -31,6 +30,7 @@
 #include "basics/log.h"
 #include "basics/number_of_cores.h"
 #include "network/http/tier0_handlers.h"
+#include "network/pg/auth.h"
 #include "network/tls_context.h"
 
 ABSL_DECLARE_FLAG(uint64_t, server_io_threads);
@@ -55,9 +55,42 @@ ABSL_FLAG(std::string, network_tls_ca, "",
           "Optional PEM CA bundle to verify client certificates (empty "
           "disables client-cert verification).");
 
-namespace sdb {
+ABSL_FLAG(std::string, network_auth_password, "",
+          "Temporary single-user password for the new pg-wire server (empty = "
+          "trust). Placeholder until RBAC; SCRAM-SHA-256 by default.");
 
+ABSL_FLAG(std::string, network_auth_user, "postgres",
+          "User the --network_auth_password applies to.");
+
+ABSL_FLAG(bool, network_auth_cleartext, false,
+          "Use cleartext password auth instead of SCRAM-SHA-256 (still "
+          "requires TLS unless --network_allow_cleartext_without_tls).");
+
+ABSL_FLAG(bool, network_allow_cleartext_without_tls, false,
+          "Permit cleartext password auth on plaintext (non-TLS) connections.");
+
+namespace sdb {
 namespace {
+
+// Throwaway credential source: one user from the config flags. The colleague's
+// RBAC will provide a real CredentialProvider via the same seam.
+class ConfigCredentialProvider final : public network::pg::CredentialProvider {
+ public:
+  ConfigCredentialProvider(std::string user, network::pg::Credential credential)
+    : _user{std::move(user)}, _credential{std::move(credential)} {}
+
+  std::optional<network::pg::Credential> LookupCredential(
+    std::string_view username) const override {
+    if (username == _user) {
+      return _credential;
+    }
+    return std::nullopt;
+  }
+
+ private:
+  std::string _user;
+  network::pg::Credential _credential;
+};
 
 asio_ns::ip::tcp::endpoint ParseEndpoint(const std::string& url) {
   const auto parsed = ada::parse(url);
@@ -71,7 +104,8 @@ asio_ns::ip::tcp::endpoint ParseEndpoint(const std::string& url) {
   asio_ns::error_code ec;
   const auto address = asio_ns::ip::make_address(std::string{host}, ec);
   if (ec) {
-    SDB_FATAL(GENERAL, "invalid bind host '", host, "' in endpoint '", url, "'");
+    SDB_FATAL(GENERAL, "invalid bind host '", host, "' in endpoint '", url,
+              "'");
   }
   const std::string_view port_str = parsed->get_port();
   std::uint16_t port = 0;
@@ -92,6 +126,11 @@ NetworkServerFeature::NetworkServerFeature()
     _tls_cert{absl::GetFlag(FLAGS_network_tls_cert)},
     _tls_key{absl::GetFlag(FLAGS_network_tls_key)},
     _tls_ca{absl::GetFlag(FLAGS_network_tls_ca)},
+    _auth_password{absl::GetFlag(FLAGS_network_auth_password)},
+    _auth_user{absl::GetFlag(FLAGS_network_auth_user)},
+    _auth_cleartext{absl::GetFlag(FLAGS_network_auth_cleartext)},
+    _allow_cleartext_without_tls{
+      absl::GetFlag(FLAGS_network_allow_cleartext_without_tls)},
     _io_threads{
       static_cast<std::uint32_t>(absl::GetFlag(FLAGS_server_io_threads))} {
   if (_io_threads == 0) {
@@ -109,10 +148,26 @@ void NetworkServerFeature::start() {
 
   const bool tls = !_tls_cert.empty();
   if (tls) {
-    _ssl.emplace(
-      network::BuildServerTlsContext(_tls_cert, _tls_key, _tls_ca));
+    _ssl.emplace(network::BuildServerTlsContext(_tls_cert, _tls_key, _tls_ca));
     _http_context.ssl = &*_ssl;
     _pg_context.ssl = &*_ssl;
+  }
+
+  if (!_auth_password.empty()) {
+    network::pg::Credential credential;
+    credential.cleartext = _auth_password;
+    if (!_auth_cleartext) {
+      credential.scram = network::pg::BuildScramVerifier(_auth_password);
+      if (!credential.scram) {
+        SDB_FATAL(GENERAL, "could not build SCRAM verifier for auth");
+      }
+    }
+    _credentials = std::make_unique<ConfigCredentialProvider>(
+      _auth_user, std::move(credential));
+    _pg_context.credentials = _credentials.get();
+    _pg_context.allow_cleartext_without_tls = _allow_cleartext_without_tls;
+    SDB_INFO(GENERAL, "network pg-wire auth enabled for user '", _auth_user,
+             "' (", _auth_cleartext ? "cleartext" : "scram-sha-256", ")");
   }
 
   _pool = std::make_unique<network::IoThreadPool>(_io_threads);
@@ -147,7 +202,7 @@ void NetworkServerFeature::start() {
     } else {
       acceptor = std::make_shared<network::Acceptor<
         network::pg::PgWireSession<network::SocketKind::Tcp>>>(*_pool, bind,
-                                                              _pg_context);
+                                                               _pg_context);
     }
     acceptor->Start();
     _acceptors.push_back(std::move(acceptor));

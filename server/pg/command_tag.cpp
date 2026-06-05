@@ -37,7 +37,6 @@
 #include <duckdb/parser/statement/transaction_statement.hpp>
 
 namespace sdb::pg {
-
 namespace {
 
 std::string_view CatalogObjectTag(duckdb::CatalogType type) {

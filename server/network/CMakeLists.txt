@@ -9,6 +9,7 @@ target_sources(
         http/tier0_handlers.cpp
         pg/pg_frame_codec.cpp
         pg/wire_frames.cpp
+        pg/auth.cpp
         network_server_feature.cpp
 )
 

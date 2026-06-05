@@ -21,13 +21,12 @@
 #pragma once
 
 #include <cstdint>
-#include <span>
-#include <string>
-#include <string_view>
-
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <span>
+#include <string>
+#include <string_view>
 
 #include "basics/message_buffer.h"
 #include "pg/serialize.h"
@@ -41,6 +40,16 @@ void WriteParameterStatus(message::Buffer& out, std::string_view name,
 void WriteDataChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
                     std::span<const sdb::pg::SerializationFunction> serializers,
                     sdb::pg::SerializationContext& context);
+
+// Like WriteDataChunk but serializes only rows [begin, end) of the chunk, used
+// by Execute max_rows paging when a fetched chunk holds more rows than the
+// client's limit. Fetch() returns flat chunks, so an arbitrary row sub-range
+// indexes correctly.
+void WriteDataChunkRange(
+  message::Buffer& out, const duckdb::DataChunk& chunk,
+  std::span<const sdb::pg::SerializationFunction> serializers,
+  sdb::pg::SerializationContext& context, duckdb::idx_t begin,
+  duckdb::idx_t end);
 
 void WriteRowDescription(message::Buffer& out,
                          std::span<const duckdb::LogicalType> types,
@@ -60,7 +69,8 @@ void WriteParameterDescription(message::Buffer& out,
 void WriteErrorResponse(message::Buffer& out, std::string_view message,
                         std::string_view sqlstate);
 
-void WriteErrorResponse(message::Buffer& out, const sdb::pg::SqlErrorData& error);
+void WriteErrorResponse(message::Buffer& out,
+                        const sdb::pg::SqlErrorData& error);
 
 void WriteNoticeResponse(message::Buffer& out,
                          const sdb::pg::SqlErrorData& notice);
@@ -72,8 +82,20 @@ sdb::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error);
 
 void WriteReadyForQuery(message::Buffer& out, char txn_status);
 
+// NegotiateProtocolVersion ('v'): tells a client that requested a newer minor
+// version (or sent unrecognized _pq_ protocol options) the newest minor we
+// support and which of its options we ignored, instead of dropping it.
+void WriteNegotiateProtocolVersion(
+  message::Buffer& out, int32_t newest_minor,
+  std::span<const std::string_view> unrecognized_options);
+
 // CopyInResponse for a text-format COPY FROM STDIN (overall format 0, 0 column
 // formats). Sent by the session before it starts reading CopyData.
 void WriteCopyInResponse(message::Buffer& out);
+
+// An AuthenticationRequest ('R' + Int32 code + payload), e.g. code 3
+// (CleartextPassword), 10 (SASL), 11 (SASLContinue), 12 (SASLFinal).
+void WriteAuthRequest(message::Buffer& out, int32_t code,
+                      std::string_view payload);
 
 }  // namespace sdb::network::pg

@@ -20,14 +20,13 @@
 
 #include <gtest/gtest.h>
 
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <thread>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/coro.hpp>
 #include <yaclib/coro/future.hpp>
 #include <yaclib/coro/on.hpp>
 #include <yaclib/util/helper.hpp>
-
-#include <duckdb/parallel/task_scheduler.hpp>
 
 #include "basics/duckdb_engine.h"
 #include "network/io_context.h"

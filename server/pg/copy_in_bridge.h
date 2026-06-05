@@ -25,7 +25,6 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
-
 #include <yaclib/algo/one_shot_event.hpp>
 #include <yaclib/exe/executor.hpp>
 
@@ -84,7 +83,9 @@ class CopyInBridge {
     _data_ready.Set();
   }
   // co_await until the worker has fully drained the published view.
-  auto Drained(yaclib::IExecutor& io) noexcept { return _want_more.AwaitOn(io); }
+  auto Drained(yaclib::IExecutor& io) noexcept {
+    return _want_more.AwaitOn(io);
+  }
   void ResetDrained() noexcept { _want_more.Reset(); }
   // CopyDone: signal clean end of input.
   void Finish() noexcept {

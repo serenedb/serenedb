@@ -20,13 +20,13 @@
 
 #pragma once
 
+#include <openssl/ssl.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string_view>
 #include <utility>
-
-#include <openssl/ssl.h>
 
 #include "basics/asio_ns.h"
 #include "basics/message_sequence_view.h"
@@ -70,7 +70,8 @@ class Socket final {
  public:
   using Stream = typename StreamTraits<Kind>::Stream;
 
-  // True for the ssl::stream-backed kinds (Ssl always-TLS, MaybeTls upgradeable).
+  // True for the ssl::stream-backed kinds (Ssl always-TLS, MaybeTls
+  // upgradeable).
   static constexpr bool kSslBacked =
     Kind == SocketKind::Ssl || Kind == SocketKind::MaybeTls;
 
@@ -88,7 +89,8 @@ class Socket final {
   auto& Lowest() noexcept {
     if constexpr (kSslBacked) {
       // next_layer() is the concrete tcp::socket (basic_stream_socket) -- the
-      // same object as lowest_layer() but the type async_accept/set_option want.
+      // same object as lowest_layer() but the type async_accept/set_option
+      // want.
       return _stream.next_layer();
     } else {
       return _stream;
@@ -116,8 +118,7 @@ class Socket final {
           return;
         }
       }
-      _stream.async_read_some(buffer,
-                              std::forward<decltype(handler)>(handler));
+      _stream.async_read_some(buffer, std::forward<decltype(handler)>(handler));
     });
   }
 

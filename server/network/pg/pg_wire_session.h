@@ -20,25 +20,15 @@
 
 #pragma once
 
+#include <absl/base/internal/endian.h>
+#include <absl/strings/str_cat.h>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <memory>
-#include <optional>
-#include <span>
-#include <string>
-#include <string_view>
-#include <utility>
-#include <vector>
-#include <yaclib/async/future.hpp>
-#include <yaclib/coro/await.hpp>
-#include <yaclib/coro/coro.hpp>
-#include <yaclib/coro/future.hpp>
-#include <yaclib/coro/on.hpp>
-#include <yaclib/util/helper.hpp>
-
 #include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -53,8 +43,24 @@
 #include <duckdb/parser/statement/copy_statement.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <duckdb/transaction/transaction_context.hpp>
+#include <memory>
+#include <optional>
+#include <source_location>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+#include <yaclib/async/future.hpp>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/coro.hpp>
+#include <yaclib/coro/future.hpp>
+#include <yaclib/coro/on.hpp>
+#include <yaclib/util/helper.hpp>
 
 #include "basics/asio_ns.h"
+#include "basics/containers/flat_hash_map.h"
+#include "basics/containers/node_hash_map.h"
 #include "basics/duckdb_engine.h"
 #include "basics/message_buffer.h"
 #include "basics/static_strings.h"
@@ -62,6 +68,7 @@
 #include "connector/duckdb_client_state.h"
 #include "network/connection.h"
 #include "network/io_executor.h"
+#include "network/pg/auth.h"
 #include "network/pg/duck_executor.h"
 #include "network/pg/pg_frame_codec.h"
 #include "network/pg/query_pump.h"
@@ -78,22 +85,17 @@
 #include "pg/serialize.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/node_hash_map.h"
-
-#include <absl/base/internal/endian.h>
-#include <absl/strings/str_cat.h>
-
-#include <source_location>
-
-#include <duckdb/common/case_insensitive_map.hpp>
 
 namespace sdb::network::pg {
 
 // `ssl` is non-null when TLS is configured; then the pg endpoint runs as
 // SocketKind::MaybeTls and answers SSLRequest with 'S' + an in-band upgrade.
+// `credentials` is the role-decoupled auth seam (null => trust everyone, as
+// today); a future RBAC layer supplies a real provider.
 struct PgServerContext {
   asio_ns::ssl::context* ssl = nullptr;
+  const CredentialProvider* credentials = nullptr;
+  bool allow_cleartext_without_tls = false;
 };
 
 // A bound portal: a prepared statement plus its pending/streaming execution and
@@ -103,6 +105,15 @@ struct Portal {
   duckdb::unique_ptr<duckdb::PendingQueryResult> pending;
   duckdb::unique_ptr<duckdb::QueryResult> result;
   sdb::pg::DuckDBBindInfo bind_info;
+  // Cursor paging for Execute max_rows: the result is executed once (started),
+  // then fetched in batches. carry holds the unsent tail of the last fetched
+  // chunk when the row limit fell mid-chunk; exhausted means the stream is
+  // fully drained (and, being a StreamQueryResult, already closed -- must not
+  // be fetched again).
+  bool started = false;
+  bool exhausted = false;
+  duckdb::unique_ptr<duckdb::DataChunk> carry;
+  duckdb::idx_t carry_offset = 0;
 };
 
 inline duckdb::LogicalType ResolveExpectedType(const auto& value_map,
@@ -152,7 +163,8 @@ inline bool IsCopyFromStdin(const duckdb::SQLStatement& statement) {
     return false;
   }
   const auto& copy = statement.Cast<duckdb::CopyStatement>();
-  return copy.info && copy.info->is_from && copy.info->file_path == "/dev/stdin";
+  return copy.info && copy.info->is_from &&
+         copy.info->file_path == "/dev/stdin";
 }
 
 inline sdb::pg::VarFormat FormatFor(std::span<const sdb::pg::VarFormat> formats,
@@ -163,18 +175,41 @@ inline sdb::pg::VarFormat FormatFor(std::span<const sdb::pg::VarFormat> formats,
   return formats.size() == 1 ? formats.front() : formats[column];
 }
 
+// The GUCs reported to the client via ParameterStatus: once at startup
+// (SendStartupBurst) and again whenever a command changes one
+// (ReportChangedParameters), matching postgres's GUC_REPORT set.
+inline constexpr auto kReportParams = std::to_array<std::string_view>({
+  "client_encoding",
+  "DateStyle",
+  "integer_datetimes",
+  "IntervalStyle",
+  "is_superuser",
+  "search_path",
+  "server_encoding",
+  "server_version",
+  "session_authorization",
+  "standard_conforming_strings",
+  "TimeZone",
+});
+
 template<SocketKind Kind>
 class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
  public:
   using Deps = PgServerContext;
 
-  PgWireSession(PgServerContext&, asio_ns::io_context& io)
+  PgWireSession(PgServerContext& ctx, asio_ns::io_context& io)
     requires(Kind == SocketKind::Tcp)
-    : _socket{io}, _io{io} {}
+    : _socket{io},
+      _io{io},
+      _credentials{ctx.credentials},
+      _allow_cleartext{ctx.allow_cleartext_without_tls} {}
 
   PgWireSession(PgServerContext& ctx, asio_ns::io_context& io)
     requires(Kind == SocketKind::MaybeTls)
-    : _socket{io, *ctx.ssl}, _io{io} {}
+    : _socket{io, *ctx.ssl},
+      _io{io},
+      _credentials{ctx.credentials},
+      _allow_cleartext{ctx.allow_cleartext_without_tls} {}
 
   void Start() { Run().Detach(); }
 
@@ -201,6 +236,11 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   std::optional<size_t> PeekTotalLength(bool typed) const;
   char TxnStatusByte() const;
   void DrainNotices();
+  void ReportChangedParameters();
+
+  yaclib::Future<bool> Authenticate();
+  yaclib::Future<bool> AuthenticateCleartext(const std::string& expected);
+  yaclib::Future<bool> AuthenticateScram(const ScramVerifier& verifier);
 
   yaclib::Future<> RunSimpleQuery(std::string_view query);
   yaclib::Future<> RunCopyFromStdin(
@@ -229,9 +269,17 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
                        duckdb::StatementReturnType return_type,
                        bool with_row_description,
                        std::span<const sdb::pg::VarFormat> formats);
+  // Emit up to max_rows (>0) DataRows from the portal's retained result,
+  // resuming from a carried chunk. Returns true when the row limit was hit and
+  // more rows remain (caller sends PortalSuspended); false when the portal
+  // drained (CommandComplete already written, with this Execute's row count).
+  bool SerializePage(Portal& portal, duckdb::StatementReturnType return_type,
+                     uint64_t max_rows);
 
   Socket<Kind> _socket;
   asio_ns::io_context& _io;
+  const CredentialProvider* _credentials = nullptr;
+  bool _allow_cleartext = false;
   message::Buffer _recv{kReadBlock, kBufferMaxGrowth};
   message::Buffer _send{kReadBlock, kBufferMaxGrowth};
   std::string _scratch;
@@ -240,6 +288,7 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   // the feeder reads past it) and zeroes this.
   size_t _dispatch_consume = 0;
   containers::FlatHashMap<std::string, std::string> _params;
+  containers::FlatHashMap<std::string, std::string> _reported_params;
   duckdb::unique_ptr<duckdb::Connection> _conn;
   std::shared_ptr<ConnectionContext> _connection_ctx;
   yaclib::IExecutorPtr _duck;
@@ -372,10 +421,10 @@ bool PgWireSession<Kind>::SetupConnection() {
     catalog::CatalogFeature::instance().Global().GetCatalogSnapshot();
   auto database = snapshot->GetDatabase(DatabaseName());
   if (!database) {
-    WriteErrorResponse(_send,
-                       absl::StrCat("database \"", DatabaseName(),
-                                    "\" is not accessible"),
-                       "3D000");
+    WriteErrorResponse(
+      _send,
+      absl::StrCat("database \"", DatabaseName(), "\" is not accessible"),
+      "3D000");
     return false;
   }
   const auto database_id = database->GetId();
@@ -420,14 +469,9 @@ void PgWireSession<Kind>::SendStartupBurst() {
     PQ_MSG_AUTHENTICATION_REQUEST, 0, 0, 0, 8, 0, 0, 0, 0};
   _send.WriteUncommitted({kAuthOk.data(), kAuthOk.size()});
 
-  static constexpr auto kParameterStatusVariables =
-    std::to_array<std::string_view>({
-      "client_encoding", "DateStyle", "integer_datetimes", "IntervalStyle",
-      "is_superuser", "search_path", "server_encoding", "server_version",
-      "session_authorization", "standard_conforming_strings", "TimeZone",
-    });
-  for (const auto name : kParameterStatusVariables) {
+  for (const auto name : kReportParams) {
     if (const auto value = _connection_ctx->Get(name)) {
+      _reported_params.insert_or_assign(std::string{name}, *value);
       WriteParameterStatus(_send, name, *value);
     }
   }
@@ -441,8 +485,8 @@ void PgWireSession<Kind>::SendStartupBurst() {
 
 template<SocketKind Kind>
 duckdb::unique_ptr<duckdb::PendingQueryResult>
-PgWireSession<Kind>::PendingQueryEnsured(duckdb::PreparedStatement& prepared,
-                                         duckdb::vector<duckdb::Value>& values) {
+PgWireSession<Kind>::PendingQueryEnsured(
+  duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values) {
   const auto& props = prepared.GetStatementProperties();
   const auto db_name = DatabaseName();
   _connection_ctx->EnsureCatalogSnapshot();
@@ -462,6 +506,26 @@ template<SocketKind Kind>
 void PgWireSession<Kind>::DrainNotices() {
   for (const auto& notice : _connection_ctx->StealNotices()) {
     WriteNoticeResponse(_send, notice);
+  }
+}
+
+// A command may change a reportable GUC (e.g. SET TimeZone, SET search_path,
+// or a transaction rollback reverting one). Postgres echoes such changes with
+// ParameterStatus before the next ReadyForQuery; emit one for each value that
+// differs from what the client was last told.
+template<SocketKind Kind>
+void PgWireSession<Kind>::ReportChangedParameters() {
+  for (const auto name : kReportParams) {
+    const auto value = _connection_ctx->Get(name);
+    if (!value) {
+      continue;
+    }
+    const auto it = _reported_params.find(name);
+    if (it != _reported_params.end() && it->second == *value) {
+      continue;
+    }
+    _reported_params.insert_or_assign(std::string{name}, *value);
+    WriteParameterStatus(_send, name, *value);
   }
 }
 
@@ -513,6 +577,271 @@ void PgWireSession<Kind>::SerializeResult(
   }
   WriteCommandComplete(_send,
                        sdb::pg::FormatCommandTag(prepared, return_type, rows));
+}
+
+template<SocketKind Kind>
+bool PgWireSession<Kind>::SerializePage(Portal& portal,
+                                        duckdb::StatementReturnType return_type,
+                                        uint64_t max_rows) {
+  auto& result = *portal.result;
+  sdb::pg::SerializationContext context;
+  context.buffer = &_send;
+  sdb::pg::FillContext(*_connection_ctx, context);
+  std::vector<sdb::pg::SerializationFunction> serializers;
+  serializers.reserve(result.types.size());
+  for (size_t column = 0; column < result.types.size(); ++column) {
+    serializers.push_back(sdb::pg::GetSerialization(
+      result.types[column], FormatFor(portal.bind_info.output_formats, column),
+      context));
+  }
+
+  uint64_t sent = 0;
+  while (sent < max_rows) {
+    if (!portal.carry || portal.carry_offset >= portal.carry->size()) {
+      portal.carry = result.Fetch();
+      portal.carry_offset = 0;
+      if (!portal.carry || portal.carry->size() == 0) {
+        portal.carry.reset();
+        portal.exhausted = true;
+        break;
+      }
+    }
+    const auto take = std::min<uint64_t>(
+      portal.carry->size() - portal.carry_offset, max_rows - sent);
+    WriteDataChunkRange(_send, *portal.carry, serializers, context,
+                        portal.carry_offset, portal.carry_offset + take);
+    portal.carry_offset += take;
+    sent += take;
+  }
+
+  if (portal.exhausted) {
+    // Postgres reports this Execute's row count (not the portal-wide total).
+    WriteCommandComplete(_send, sdb::pg::FormatCommandTag(
+                                  *portal.stmt->prepared, return_type, sent));
+    return false;
+  }
+  return true;
+}
+
+template<SocketKind Kind>
+yaclib::Future<bool> PgWireSession<Kind>::Authenticate() {
+  if (!_credentials) {
+    co_return true;  // no provider configured -> trust (current behavior)
+  }
+  const auto credential = _credentials->LookupCredential(UserName());
+  if (!credential) {
+    co_return true;  // no credential for this user -> trust
+  }
+  if (credential->scram) {
+    co_return co_await AuthenticateScram(*credential->scram);
+  }
+  if (credential->cleartext) {
+    co_return co_await AuthenticateCleartext(*credential->cleartext);
+  }
+  WriteErrorResponse(
+    _send, sdb::pg::SqlErrorData{
+             .errcode = ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION,
+             .errmsg = "no usable authentication credential for user"});
+  co_return false;
+}
+
+template<SocketKind Kind>
+yaclib::Future<bool> PgWireSession<Kind>::AuthenticateCleartext(
+  const std::string& expected) {
+  if (!_socket.IsTls() && !_allow_cleartext) {
+    WriteErrorResponse(
+      _send, sdb::pg::SqlErrorData{
+               .errcode = ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION,
+               .errmsg = "cleartext password authentication requires TLS"});
+    co_return false;
+  }
+  WriteAuthRequest(_send, 3, {});  // AuthenticationCleartextPassword
+  co_await Flush();
+  auto frame = co_await NextFrame(true, kBufferMaxGrowth);
+  if (frame.status != FrameStatus::Ok ||
+      frame.type != PQ_MSG_PASSWORD_MESSAGE) {
+    if (frame.recv_consume) {
+      _recv.Consume(frame.recv_consume);
+    }
+    co_return false;
+  }
+  auto payload = frame.payload;
+  while (!payload.empty() && payload.back() == '\0') {
+    payload.remove_suffix(1);
+  }
+  const std::string given = SaslPrep(payload);
+  if (frame.recv_consume) {
+    _recv.Consume(frame.recv_consume);
+  }
+  const std::string want = SaslPrep(expected);
+  const bool ok = ConstantTimeEqual(
+    {reinterpret_cast<const uint8_t*>(given.data()), given.size()},
+    {reinterpret_cast<const uint8_t*>(want.data()), want.size()});
+  if (!ok) {
+    WriteErrorResponse(_send, sdb::pg::SqlErrorData{
+                                .errcode = ERRCODE_INVALID_PASSWORD,
+                                .errmsg = absl::StrCat(
+                                  "password authentication failed for user \"",
+                                  UserName(), "\"")});
+    co_return false;
+  }
+  co_return true;
+}
+
+template<SocketKind Kind>
+yaclib::Future<bool> PgWireSession<Kind>::AuthenticateScram(
+  const ScramVerifier& verifier) {
+  const auto fail = [&](int errcode, std::string message) {
+    WriteErrorResponse(
+      _send,
+      sdb::pg::SqlErrorData{.errcode = errcode, .errmsg = std::move(message)});
+  };
+
+  std::string mechanisms = "SCRAM-SHA-256";
+  mechanisms.push_back('\0');
+  mechanisms.push_back('\0');
+  WriteAuthRequest(_send, 10, mechanisms);  // AuthenticationSASL
+  co_await Flush();
+
+  // --- client-first (SASLInitialResponse) ---
+  auto first = co_await NextFrame(true, kBufferMaxGrowth);
+  if (first.status != FrameStatus::Ok ||
+      first.type != PQ_MSG_PASSWORD_MESSAGE) {
+    if (first.recv_consume) {
+      _recv.Consume(first.recv_consume);
+    }
+    co_return false;
+  }
+  std::string_view head = first.payload;
+  const auto mech_end = head.find('\0');
+  if (mech_end == std::string_view::npos ||
+      head.substr(0, mech_end) != "SCRAM-SHA-256" ||
+      head.size() < mech_end + 1 + sizeof(int32_t)) {
+    if (first.recv_consume) {
+      _recv.Consume(first.recv_consume);
+    }
+    fail(ERRCODE_PROTOCOL_VIOLATION, "malformed SASL initial response");
+    co_return false;
+  }
+  head.remove_prefix(mech_end + 1);
+  const auto initial_len =
+    static_cast<int32_t>(absl::big_endian::Load32(head.data()));
+  head.remove_prefix(sizeof(int32_t));
+  if (initial_len < 0 || static_cast<size_t>(initial_len) > head.size()) {
+    if (first.recv_consume) {
+      _recv.Consume(first.recv_consume);
+    }
+    fail(ERRCODE_PROTOCOL_VIOLATION, "malformed SASL initial response");
+    co_return false;
+  }
+  const std::string client_first{head.substr(0, initial_len)};
+  if (first.recv_consume) {
+    _recv.Consume(first.recv_consume);
+  }
+
+  // parse gs2 header + client-first-bare ("n,," + "n=,r=<cnonce>")
+  const auto comma1 = client_first.find(',');
+  const auto comma2 = comma1 == std::string::npos
+                        ? std::string::npos
+                        : client_first.find(',', comma1 + 1);
+  if (comma2 == std::string::npos) {
+    fail(ERRCODE_PROTOCOL_VIOLATION, "malformed SCRAM message");
+    co_return false;
+  }
+  const std::string_view cbind_flag{client_first.data(), comma1};
+  if (cbind_flag != "n" && cbind_flag != "y") {
+    // 'p' would require SCRAM-SHA-256-PLUS, which we don't advertise yet.
+    fail(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION,
+         "channel binding not supported");
+    co_return false;
+  }
+  if (comma2 != comma1 + 1) {
+    fail(ERRCODE_FEATURE_NOT_SUPPORTED, "authorization identity not supported");
+    co_return false;
+  }
+  const std::string gs2_header = client_first.substr(0, comma2 + 1);
+  const std::string client_first_bare = client_first.substr(comma2 + 1);
+  const auto r_pos = client_first_bare.find("r=");
+  if (r_pos == std::string::npos) {
+    fail(ERRCODE_PROTOCOL_VIOLATION, "malformed SCRAM message");
+    co_return false;
+  }
+  std::string_view client_nonce{client_first_bare};
+  client_nonce.remove_prefix(r_pos + 2);
+  if (const auto end = client_nonce.find(','); end != std::string_view::npos) {
+    client_nonce = client_nonce.substr(0, end);
+  }
+
+  // --- server-first (SASLContinue) ---
+  uint8_t raw_nonce[18];
+  if (!RandomBytes(raw_nonce)) {
+    fail(ERRCODE_INTERNAL_ERROR, "could not generate nonce");
+    co_return false;
+  }
+  const std::string combined_nonce =
+    absl::StrCat(client_nonce, Base64Encode(raw_nonce));
+  const std::string server_first =
+    absl::StrCat("r=", combined_nonce, ",s=", Base64Encode(verifier.salt),
+                 ",i=", verifier.iterations);
+  WriteAuthRequest(_send, 11, server_first);
+  co_await Flush();
+
+  // --- client-final (SASLResponse) ---
+  auto final_frame = co_await NextFrame(true, kBufferMaxGrowth);
+  if (final_frame.status != FrameStatus::Ok ||
+      final_frame.type != PQ_MSG_PASSWORD_MESSAGE) {
+    if (final_frame.recv_consume) {
+      _recv.Consume(final_frame.recv_consume);
+    }
+    co_return false;
+  }
+  const std::string client_final{final_frame.payload};
+  if (final_frame.recv_consume) {
+    _recv.Consume(final_frame.recv_consume);
+  }
+  const auto proof_pos = client_final.rfind(",p=");
+  if (proof_pos == std::string::npos || !client_final.starts_with("c=")) {
+    fail(ERRCODE_PROTOCOL_VIOLATION, "malformed SCRAM message");
+    co_return false;
+  }
+  const std::string without_proof = client_final.substr(0, proof_pos);
+  const std::string_view proof_b64{client_final.data() + proof_pos + 3,
+                                   client_final.size() - proof_pos - 3};
+  const auto r_idx = without_proof.find(",r=");
+  if (r_idx == std::string::npos) {
+    fail(ERRCODE_PROTOCOL_VIOLATION, "malformed SCRAM message");
+    co_return false;
+  }
+  const std::string_view c_value{without_proof.data() + 2, r_idx - 2};
+  const std::string_view r_value{without_proof.data() + r_idx + 3,
+                                 without_proof.size() - r_idx - 3};
+  if (r_value != combined_nonce) {
+    fail(ERRCODE_PROTOCOL_VIOLATION, "SCRAM nonce mismatch");
+    co_return false;
+  }
+  const auto cbind = Base64Decode(c_value);
+  if (!cbind || std::string_view{reinterpret_cast<const char*>(cbind->data()),
+                                 cbind->size()} != gs2_header) {
+    fail(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION,
+         "SCRAM channel binding check failed");
+    co_return false;
+  }
+  const auto proof = Base64Decode(proof_b64);
+  if (!proof || proof->size() != static_cast<size_t>(kScramKeyLen)) {
+    fail(ERRCODE_PROTOCOL_VIOLATION, "malformed SCRAM proof");
+    co_return false;
+  }
+  const std::string auth_message =
+    absl::StrCat(client_first_bare, ",", server_first, ",", without_proof);
+  if (!VerifyClientProof(verifier, auth_message, *proof)) {
+    fail(ERRCODE_INVALID_PASSWORD,
+         absl::StrCat("password authentication failed for user \"", UserName(),
+                      "\""));
+    co_return false;
+  }
+  const auto signature = ScramServerSignature(verifier, auth_message);
+  WriteAuthRequest(_send, 12, absl::StrCat("v=", Base64Encode(signature)));
+  co_return true;
 }
 
 template<SocketKind Kind>
@@ -575,10 +904,9 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
   WriteCopyInResponse(_send);
   co_await Flush();
 
-  auto& client_state =
-    *_conn->context->registered_state
-       ->template Get<connector::SereneDBClientState>(
-         connector::kSereneDBClientStateKey);
+  auto& client_state = *_conn->context->registered_state
+                          ->template Get<connector::SereneDBClientState>(
+                            connector::kSereneDBClientStateKey);
   client_state.copy_stdin_open_count = 0;
   client_state.copy_stdin_done = false;
   client_state.copy_stdin_buffer.reset();
@@ -634,10 +962,11 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyInFeeder(
   for (;;) {
     auto frame = co_await NextFrame(true, kBufferMaxGrowth);
     if (frame.status != FrameStatus::Ok) {
-      bridge.Fail(std::make_exception_ptr(sdb::SqlException{
-        sdb::pg::SqlErrorData{.errcode = ERRCODE_CONNECTION_EXCEPTION,
-                              .errmsg = "unexpected EOF during COPY from stdin"},
-        std::source_location::current()}));
+      bridge.Fail(std::make_exception_ptr(
+        sdb::SqlException{sdb::pg::SqlErrorData{
+                            .errcode = ERRCODE_CONNECTION_EXCEPTION,
+                            .errmsg = "unexpected EOF during COPY from stdin"},
+                          std::source_location::current()}));
       co_return {};
     }
     const char type = frame.type;
@@ -729,9 +1058,9 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   if (!statement_name.empty()) {
     auto [it, emplaced] = _statements.try_emplace(std::string{statement_name});
     if (!emplaced) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_PSTATEMENT),
-                      ERR_MSG("prepared statement \"", statement_name,
-                              "\" already exists"));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_PSTATEMENT),
+        ERR_MSG("prepared statement \"", statement_name, "\" already exists"));
     }
     statement = &it->second;
   }
@@ -851,9 +1180,9 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
   if (!statement_name.empty()) {
     const auto it = _statements.find(statement_name);
     if (it == _statements.end()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SQL_STATEMENT_NAME),
-                      ERR_MSG("prepared statement \"", statement_name,
-                              "\" does not exist"));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_SQL_STATEMENT_NAME),
+        ERR_MSG("prepared statement \"", statement_name, "\" does not exist"));
     }
     statement = &it->second;
   }
@@ -958,9 +1287,9 @@ void PgWireSession<Kind>::HandleDescribe(std::string_view payload) {
     } else {
       const auto it = _statements.find(name);
       if (it == _statements.end()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SQL_STATEMENT_NAME),
-                        ERR_MSG("prepared statement \"", name,
-                                "\" does not exist"));
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_SQL_STATEMENT_NAME),
+          ERR_MSG("prepared statement \"", name, "\" does not exist"));
       }
       DescribeStatement(it->second);
     }
@@ -984,11 +1313,18 @@ void PgWireSession<Kind>::HandleDescribe(std::string_view payload) {
 template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
   const auto name_end = payload.find('\0');
-  if (name_end == std::string_view::npos) {
+  if (name_end == std::string_view::npos ||
+      payload.size() < name_end + 1 + sizeof(int32_t)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),
                     ERR_MSG("malformed Execute message"));
   }
   const std::string_view portal_name = payload.substr(0, name_end);
+  const auto requested_rows = static_cast<int32_t>(
+    absl::big_endian::Load32(payload.data() + name_end + 1));
+  // Postgres treats max_rows <= 0 as "fetch all" -> the unpaged fast path.
+  const uint64_t max_rows =
+    requested_rows > 0 ? static_cast<uint64_t>(requested_rows) : 0;
+
   Portal* portal = &_anon_portal;
   if (!portal_name.empty()) {
     const auto it = _portals.find(portal_name);
@@ -1005,18 +1341,47 @@ yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
 
   const auto return_type =
     portal->stmt->prepared->GetStatementProperties().return_type;
-  const auto status = co_await DrivePending(*_duck, *portal->pending);
-  if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
-      portal->pending->HasError()) {
-    ThrowDuck(portal->pending->GetErrorObject());
+
+  // Drive + Execute exactly once per portal; a re-Execute (cursor paging)
+  // resumes the retained result. PendingQueryResult::Execute() closes the
+  // pending, so calling it twice would throw.
+  if (!portal->started) {
+    const auto status = co_await DrivePending(*_duck, *portal->pending);
+    if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
+        portal->pending->HasError()) {
+      ThrowDuck(portal->pending->GetErrorObject());
+    }
+    portal->result = portal->pending->Execute();
+    if (portal->result->HasError()) {
+      ThrowDuck(portal->result->GetErrorObject());
+    }
+    portal->started = true;
   }
-  portal->result = portal->pending->Execute();
-  if (portal->result->HasError()) {
-    ThrowDuck(portal->result->GetErrorObject());
+
+  // Re-Execute of a portal already drained by a previous Execute: its stream
+  // is closed, so don't fetch -- just complete with 0 rows (postgres's
+  // atEnd -> CommandComplete path).
+  if (portal->exhausted) {
+    WriteCommandComplete(_send, sdb::pg::FormatCommandTag(
+                                  *portal->stmt->prepared, return_type, 0));
+    co_return {};
   }
-  SerializeResult(*portal->stmt->prepared, *portal->result, return_type,
-                  /*with_row_description=*/false,
-                  portal->bind_info.output_formats);
+
+  // max_rows paginates only row-returning portals; DDL/DML are materialized,
+  // run to completion, never suspend. Both keep the existing full-drain path,
+  // which stays byte-for-byte unchanged (zero added per-row overhead).
+  if (max_rows == 0 ||
+      return_type != duckdb::StatementReturnType::QUERY_RESULT) {
+    SerializeResult(*portal->stmt->prepared, *portal->result, return_type,
+                    /*with_row_description=*/false,
+                    portal->bind_info.output_formats);
+    portal->exhausted = true;
+    co_return {};
+  }
+
+  if (SerializePage(*portal, return_type, max_rows)) {
+    WriteEmptyFrame(_send, PQ_MSG_PORTAL_SUSPENDED);
+  }
   co_return {};
 }
 
@@ -1118,13 +1483,76 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
         co_await Flush();
         continue;
       }
-      if (code == static_cast<uint32_t>(PG_PROTOCOL_LATEST)) {
-        ParseStartupParams(frame.payload);
-        if (frame.recv_consume) {
-          _recv.Consume(frame.recv_consume);
-        }
-        break;
+      if (code == static_cast<uint32_t>(CANCEL_REQUEST_CODE)) {
+        // Query cancellation arrives on a throwaway connection and expects no
+        // reply. Honoring it (signaling the target backend) needs the
+        // cancel-key registry, a later step; for now accept and drop it.
+        _socket.Close();
+        co_return {};
       }
+      const auto requested_major = PG_PROTOCOL_MAJOR(code);
+      const auto requested_minor = PG_PROTOCOL_MINOR(code);
+      constexpr auto kLatestMajor =
+        static_cast<uint32_t>(PG_PROTOCOL_MAJOR(PG_PROTOCOL_LATEST));
+      constexpr auto kLatestMinor =
+        static_cast<uint32_t>(PG_PROTOCOL_MINOR(PG_PROTOCOL_LATEST));
+      if (requested_major != kLatestMajor) {
+        WriteErrorResponse(
+          _send,
+          absl::StrCat("unsupported frontend protocol ", requested_major, ".",
+                       requested_minor, ": server supports ", kLatestMajor, ".",
+                       kLatestMinor),
+          "0A000");
+        co_await Flush();
+        _socket.Close();
+        co_return {};
+      }
+      ParseStartupParams(frame.payload);
+      if (frame.recv_consume) {
+        _recv.Consume(frame.recv_consume);
+      }
+      // A client asking for a newer minor version or sending unrecognized _pq_
+      // protocol options is negotiated down to what we support rather than
+      // dropped; the _pq_ options must not reach the GUC layer.
+      {
+        std::vector<std::string_view> unrecognized;
+        for (const auto& entry : _params) {
+          if (entry.first.starts_with("_pq_.")) {
+            unrecognized.push_back(entry.first);
+          }
+        }
+        if (requested_minor > kLatestMinor || !unrecognized.empty()) {
+          WriteNegotiateProtocolVersion(
+            _send, static_cast<int32_t>(kLatestMinor), unrecognized);
+        }
+      }
+      erase_if(_params, [](const auto& entry) {
+        return entry.first.starts_with("_pq_.");
+      });
+      break;
+    }
+
+    // SereneDB has no WAL/walsender, so refuse replication connections with a
+    // clear error instead of mishandling the replication sub-protocol.
+    if (const auto it = _params.find("replication"); it != _params.end()) {
+      const auto& mode = it->second;
+      if (mode == "true" || mode == "on" || mode == "yes" || mode == "1" ||
+          mode == "database") {
+        WriteErrorResponse(
+          _send, "replication connections are not supported by SereneDB",
+          "0A000");
+        co_await Flush();
+        _socket.Close();
+        co_return {};
+      }
+    }
+
+    // Authenticate before establishing the connection / sending
+    // AuthenticationOk (which SendStartupBurst does). TLS is already settled
+    // (the SSLRequest upgrade ran earlier in the loop), so IsTls() is final
+    // here.
+    if (!co_await Authenticate()) {
+      co_await Flush();
       _socket.Close();
       co_return {};
     }
@@ -1205,16 +1633,18 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
         WriteErrorResponse(_send, exception.error());
         ignore_till_sync = IsExtended(type);
       } catch (const duckdb::Exception& exception) {
-        WriteErrorResponse(_send, DuckErrorToSqlData(duckdb::ErrorData{exception}));
+        WriteErrorResponse(_send,
+                           DuckErrorToSqlData(duckdb::ErrorData{exception}));
         ignore_till_sync = IsExtended(type);
       } catch (const std::exception& exception) {
-        WriteErrorResponse(_send, sdb::pg::SqlErrorData{
-                                    .errcode = ERRCODE_INTERNAL_ERROR,
-                                    .errmsg = exception.what()});
+        WriteErrorResponse(
+          _send, sdb::pg::SqlErrorData{.errcode = ERRCODE_INTERNAL_ERROR,
+                                       .errmsg = exception.what()});
         ignore_till_sync = IsExtended(type);
       }
       co_await yaclib::On(*_ioexec);
       DrainNotices();
+      ReportChangedParameters();
       if (_dispatch_consume) {
         _recv.Consume(_dispatch_consume);
         _dispatch_consume = 0;

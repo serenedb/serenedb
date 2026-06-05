@@ -77,7 +77,8 @@ class [[nodiscard]] AsioAwaitable final {
 };
 
 template<typename Value, typename Initiate>
-AsioAwaitable<Value, std::decay_t<Initiate>> Async(Initiate&& initiate) noexcept {
+AsioAwaitable<Value, std::decay_t<Initiate>> Async(
+  Initiate&& initiate) noexcept {
   return AsioAwaitable<Value, std::decay_t<Initiate>>{
     std::forward<Initiate>(initiate)};
 }

@@ -52,6 +52,8 @@
 
 namespace bench_regexp {
 
+inline constexpr irs::field_id kFieldId = 1;
+
 // Indexing helpers
 //
 // Trimmed copy of tests/libs/iresearch/index/doc_generator.{hpp,cpp}.
@@ -65,9 +67,9 @@ struct IField {
   using ptr = std::shared_ptr<IField>;
   virtual ~IField() = default;
 
+  virtual irs::field_id Id() const = 0;
   virtual irs::IndexFeatures GetIndexFeatures() const = 0;
   virtual irs::Tokenizer& GetTokens() const = 0;
-  virtual std::string_view Name() const = 0;
   virtual bool Write(irs::DataOutput& out) const = 0;
 };
 
@@ -75,16 +77,16 @@ class FieldBase : public IField {
  public:
   FieldBase() = default;
 
+  irs::field_id Id() const noexcept final { return _id; }
   irs::IndexFeatures GetIndexFeatures() const noexcept final {
     return _index_features;
   }
-  std::string_view Name() const noexcept final { return _name; }
 
-  void SetName(std::string name) { _name = std::move(name); }
+  void SetId(irs::field_id id) noexcept { _id = id; }
   void SetIndexFeatures(irs::IndexFeatures f) noexcept { _index_features = f; }
 
  private:
-  std::string _name;
+  irs::field_id _id{irs::field_limits::invalid()};
   irs::IndexFeatures _index_features{irs::IndexFeatures::None};
 };
 
@@ -94,14 +96,14 @@ class FieldBase : public IField {
 // variant is dropped here.
 class TextField final : public FieldBase {
  public:
-  TextField(std::string name, irs::IndexFeatures extra_features)
+  TextField(irs::field_id id, irs::IndexFeatures extra_features)
     : _stream(irs::analysis::TextTokenizer::Make([] {
         irs::analysis::TextTokenizer::Options opts;
         opts.locale = icu::Locale::createFromName("C");
         opts.explicit_stopwords_set = true;
         return opts;
       }())) {
-    SetName(std::move(name));
+    SetId(id);
     SetIndexFeatures(irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
                      irs::IndexFeatures::Offs | extra_features);
   }
@@ -177,8 +179,8 @@ struct Document {
 class EuroparlBodyTemplate {
  public:
   EuroparlBodyTemplate() {
-    auto body_anl = std::make_shared<TextField>(std::string{"body_anl"},
-                                                irs::IndexFeatures::None);
+    auto body_anl =
+      std::make_shared<TextField>(kFieldId, irs::IndexFeatures::None);
     _body_anl = body_anl.get();
     _doc.indexed.PushBack(std::move(body_anl));
   }
@@ -292,7 +294,7 @@ namespace {
 constexpr std::string_view kEuroparlFallbackPath =
   "resources/tests/iresearch/europarl.subset.big.txt";
 
-constexpr std::string_view kFieldName = "body_anl";
+using bench_regexp::kFieldId;
 
 constexpr std::string_view kFormatName = "1_5simd";
 
@@ -399,7 +401,7 @@ class RegexpVsWildcardBench : public benchmark::Fixture {
 
 irs::ByWildcard MakeWildcard(std::string_view pattern) {
   irs::ByWildcard q;
-  *q.mutable_field() = kFieldName;
+  *q.mutable_field_id() = kFieldId;
   *q.mutable_options() =
     irs::ByWildcardOptions{irs::ViewCast<irs::byte_type>(pattern)};
   return q;
@@ -407,7 +409,7 @@ irs::ByWildcard MakeWildcard(std::string_view pattern) {
 
 irs::ByRegexp MakeRegexp(std::string_view pattern) {
   irs::ByRegexp q;
-  *q.mutable_field() = kFieldName;
+  *q.mutable_field_id() = kFieldId;
   *q.mutable_options() =
     irs::ByRegexpOptions{irs::ViewCast<irs::byte_type>(pattern)};
   return q;

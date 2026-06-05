@@ -101,7 +101,7 @@ struct ByWildcardOptions : ByWildcardFilterOptions {
 // Resolves a wildcard pattern into a concrete filter at construction time:
 // a ByTerm (exact term), a ByPrefix (prefix scan), or a ByWildcard (genuine
 // wildcard, with its automaton compiled eagerly).
-Filter::ptr CreateByWildcard(std::string_view field, bytes_view term,
+Filter::ptr CreateByWildcard(irs::field_id id, bytes_view term,
                              size_t scored_terms_limit = 1024,
                              score_t boost = kNoBoost);
 

@@ -20,6 +20,7 @@
 
 #include <gtest/gtest.h>
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/parser/parser.hpp"
@@ -34,12 +35,14 @@
 
 namespace {
 
+constexpr irs::field_id kContentFieldId = 1;
+
 // A field that tokenises its value by spaces (for multi-term documents).
 class SpaceField : public tests::FieldBase {
  public:
-  explicit SpaceField(std::string_view field_name)
+  explicit SpaceField(irs::field_id field_id)
     : _tokenizer{std::make_unique<irs::analysis::DelimitedTokenizer>(" ")} {
-    name = field_name;
+    id = field_id;
     index_features = irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
   }
 
@@ -78,7 +81,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
   static irs::Filter::ptr ParseQuery(std::string_view query) {
     irs::analysis::DelimitedTokenizer tokenizer(" ");
     auto root = std::make_unique<irs::MixedBooleanFilter>();
-    sdb::ParserContext ctx{*root, "content", tokenizer};
+    sdb::ParserContext ctx{*root, kContentFieldId, tokenizer};
     EXPECT_TRUE(sdb::ParseQuery(ctx, query).ok());
     return root;
   }
@@ -92,7 +95,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
     auto writer = open_writer(irs::kOmCreate);
 
     auto insert = [&](std::string_view content) {
-      SpaceField f{"content"};
+      SpaceField f{kContentFieldId};
       f.value(content);
       auto batch = writer->GetBatch();
       auto d = batch.Insert();
@@ -106,7 +109,8 @@ class BoostQueryTestCase : public tests::IndexTestBase {
 
     writer->RefreshCommit();
 
-    auto reader = irs::DirectoryReader(dir(), codec());
+    auto reader =
+      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     EXPECT_EQ(1, reader.size());
     return reader;
   }
@@ -178,7 +182,7 @@ TEST_P(BoostQueryTestCase, ManualRequiredOptionalConstruction) {
 
   auto make_term = [](std::string_view value) {
     auto f = std::make_unique<irs::ByTerm>();
-    *f->mutable_field() = "content";
+    *f->mutable_field_id() = kContentFieldId;
     f->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
     return f;
   };

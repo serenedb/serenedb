@@ -59,25 +59,26 @@ Filter::Query::ptr ByWildcard::prepare(const PrepareContext& ctx) const {
   if (options().term.empty()) {
     return Query::empty();
   }
-  return PrepareAutomatonFilter(ctx.Boost(Boost()), field(), options().acceptor,
+  return PrepareAutomatonFilter(ctx.Boost(Boost()), field_id(),
+                                options().acceptor,
                                 options().scored_terms_limit);
 }
 
-Filter::ptr CreateByWildcard(std::string_view field, bytes_view term,
+Filter::ptr CreateByWildcard(irs::field_id id, bytes_view term,
                              size_t scored_terms_limit, score_t boost) {
   bstring buf;
   return ExecuteWildcard(
     buf, term,
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<ByTerm>();
-      *filter->mutable_field() = field;
+      *filter->mutable_field_id() = id;
       filter->mutable_options()->term = term;
       filter->boost(boost);
       return filter;
     },
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<ByPrefix>();
-      *filter->mutable_field() = field;
+      *filter->mutable_field_id() = id;
       filter->mutable_options()->term = term;
       filter->mutable_options()->scored_terms_limit = scored_terms_limit;
       filter->boost(boost);
@@ -85,7 +86,7 @@ Filter::ptr CreateByWildcard(std::string_view field, bytes_view term,
     },
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<ByWildcard>();
-      *filter->mutable_field() = field;
+      *filter->mutable_field_id() = id;
       auto& options = *filter->mutable_options();
       options = ByWildcardOptions{term};
       options.scored_terms_limit = scored_terms_limit;

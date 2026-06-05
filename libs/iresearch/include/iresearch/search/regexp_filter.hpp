@@ -57,7 +57,7 @@ struct ByRegexpOptions : ByRegexpFilterOptions {
   bool operator==(const ByRegexpOptions& rhs) const noexcept = default;
 };
 
-Filter::ptr CreateByRegexp(std::string_view field, bytes_view pattern,
+Filter::ptr CreateByRegexp(irs::field_id id, bytes_view pattern,
                            RegexpSyntax syntax = RegexpSyntax::Perl,
                            size_t scored_terms_limit = 1024,
                            score_t boost = kNoBoost);

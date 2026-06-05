@@ -348,13 +348,11 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
             append_pk(it->GetId());
           }
         }
-        break;
-      }
+      } break;
       case duckdb::ConstraintType::NOT_NULL: {
         auto& nn = constraint->Cast<duckdb::NotNullConstraint>();
         append_not_null(nn.index.index);
-        break;
-      }
+      } break;
       case duckdb::ConstraintType::CHECK: {
         auto& check = constraint->Cast<duckdb::CheckConstraint>();
         std::string name;
@@ -488,8 +486,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       options.topk_scorer = catalog::ParseScorerExpression(context, value);
     }
     create_result = catalog_impl.CreateInvertedIndex(
-      database_id, name, sdb_table->GetName(), info.index_name,
-      std::move(idx_columns), std::move(options), /*operation_options=*/{});
+      context, database_id, name, sdb_table->GetName(), info.index_name,
+      std::move(idx_columns), std::move(options),
+      /*operation_options=*/{});
   } else {
     bool unique = (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(

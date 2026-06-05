@@ -26,6 +26,11 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <memory>
 
+namespace duckdb {
+
+class DatabaseInstance;
+
+}  // namespace duckdb
 namespace sdb::connector::highlight {
 
 class MemoryIndex {
@@ -37,6 +42,8 @@ class MemoryIndex {
                                                    WriteDocs&& write_docs) {
     irs::IndexWriterOptions opts;
     opts.lock_repository = false;
+    opts.db = _db;
+    opts.reader_options.db = _db;
     auto writer =
       irs::IndexWriter::Make(_dir, _codec, irs::OpenMode::kOmCreate, opts);
     {
@@ -58,6 +65,7 @@ class MemoryIndex {
  private:
   irs::Format::ptr _codec;
   irs::MemoryDirectory _dir;
+  duckdb::DatabaseInstance* _db;
 };
 
 }  // namespace sdb::connector::highlight

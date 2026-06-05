@@ -23,42 +23,36 @@
 
 #pragma once
 
+#include <absl/container/flat_hash_map.h>
+
 #include <deque>
 #include <vector>
 
 #include "basics/memory.hpp"
 #include "basics/noncopyable.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/index/postings.hpp"
 #include "iresearch/utils/block_pool.hpp"
-#include "iresearch/utils/hash_set_utils.hpp"
 
 namespace irs {
 
-struct FieldWriter;
-class Tokenizer;
-class Format;
-struct Directory;
-struct FlushState;
-
-namespace columnstore {
-
-class Writer;
-class NormColumnWriter;
-
-}  // namespace columnstore
+class ColWriter;
 
 using int_block_pool = BlockPool<size_t, 8192, ManagedTypedAllocator<size_t>>;
 
 class FieldData : util::Noncopyable {
  public:
-  FieldData(std::string_view name, byte_block_pool::inserter& byte_writer,
+  FieldData(field_id id, byte_block_pool::inserter& byte_writer,
             int_block_pool::inserter& int_writer, IndexFeatures index_features,
-            columnstore::Writer* columnstore = nullptr,
+            ColWriter* columnstore = nullptr,
             NormColumnOptions norm_options = {});
 
   doc_id_t doc() const noexcept { return _last_doc; }
@@ -107,9 +101,9 @@ class FieldData : util::Noncopyable {
     return kTermProcessingTables[1] == _proc_table;
   }
 
-  columnstore::Writer* _columnstore = nullptr;
+  ColWriter* _columnstore = nullptr;
   uint32_t _norm_row_group_size = 0;
-  mutable columnstore::NormColumnWriter* _norm_writer = nullptr;
+  mutable NormColumnWriter* _norm_writer = nullptr;
   mutable FieldMeta _meta;
   Postings _terms;
   byte_block_pool::inserter* _byte_writer;
@@ -127,23 +121,8 @@ class FieldData : util::Noncopyable {
 
 class FieldsData : util::Noncopyable {
  private:
-  struct FieldEq : ValueRefEq<FieldData*> {
-    using is_transparent = void;
-    using Self::operator();
-
-    bool operator()(const Ref& lhs,
-                    const hashed_string_view& rhs) const noexcept {
-      return lhs.ref->meta().name == rhs;
-    }
-
-    bool operator()(const hashed_string_view& lhs,
-                    const Ref& rhs) const noexcept {
-      return this->operator()(rhs, lhs);
-    }
-  };
-
   using Fields = std::deque<FieldData, ManagedTypedAllocator<FieldData>>;
-  using FieldsMap = flat_hash_set<FieldEq>;
+  using FieldsMap = absl::flat_hash_map<field_id, FieldData*>;
 
  public:
   using postings_ref_t = std::vector<const Posting*>;
@@ -151,20 +130,19 @@ class FieldsData : util::Noncopyable {
   FieldsData(IResourceManager& rm, IndexFeatures scorers_features);
 
   void SetColumnstore(
-    columnstore::Writer* w,
+    ColWriter* w,
     const NormColumnOptionsProvider* norm_column_options) noexcept {
     _columnstore = w;
     _norm_column_options = norm_column_options;
   }
 
-  FieldData* emplace(const hashed_string_view& name,
-                     IndexFeatures index_features);
+  FieldData* emplace(field_id id, IndexFeatures index_features);
 
   size_t memory_active() const noexcept;
   size_t memory_reserved() const noexcept;
 
   size_t size() const { return _fields.size(); }
-  void flush(FieldWriter& fw, FlushState& state);
+  void flush(burst_trie::FieldWriter& fw, FlushState& state);
   void reset() noexcept;
 
  private:
@@ -177,7 +155,7 @@ class FieldsData : util::Noncopyable {
   int_block_pool _int_pool;  // FIXME why don't to use std::vector<size_t>?
   int_block_pool::inserter _int_writer;
   IndexFeatures _scorers_features;
-  columnstore::Writer* _columnstore = nullptr;
+  ColWriter* _columnstore = nullptr;
   const NormColumnOptionsProvider* _norm_column_options = nullptr;
 };
 

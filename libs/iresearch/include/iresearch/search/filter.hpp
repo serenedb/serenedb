@@ -156,24 +156,26 @@ class FilterWithOptions : public FilterWithType<typename Options::FilterType> {
   [[no_unique_address]] options_type _options;
 };
 
-// Convenient base class for single field filters
 template<typename Options>
 class FilterWithField : public FilterWithOptions<Options> {
  public:
   using options_type = typename FilterWithOptions<Options>::options_type;
   using FilterType = typename options_type::FilterType;
 
-  std::string_view field() const noexcept { return _field; }
-  std::string* mutable_field() noexcept { return &_field; }
+  irs::field_id field_id() const noexcept { return _field_id; }
+  irs::field_id* mutable_field_id() noexcept { return &_field_id; }
 
  protected:
   bool equals(const Filter& rhs) const noexcept final {
-    return FilterWithOptions<options_type>::equals(rhs) &&
-           _field == sdb::basics::downCast<FilterType>(rhs)._field;
+    if (!FilterWithOptions<options_type>::equals(rhs)) {
+      return false;
+    }
+    const auto& r = sdb::basics::downCast<FilterType>(rhs);
+    return _field_id == r._field_id;
   }
 
  private:
-  std::string _field;
+  irs::field_id _field_id{irs::field_limits::invalid()};
 };
 
 // Filter which returns no documents

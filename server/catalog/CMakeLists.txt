@@ -20,7 +20,6 @@ target_sources(
         role.cpp
         secondary_index.cpp
         inverted_index.cpp
-        mangling.cpp
         scorer_options.cpp
         tokenizer.cpp
 )

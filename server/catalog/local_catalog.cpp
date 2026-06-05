@@ -1850,9 +1850,10 @@ Result LocalCatalog::CreateSecondaryIndex(
 }
 
 Result LocalCatalog::CreateInvertedIndex(
-  ObjectId database_id, std::string_view schema, std::string_view relation,
-  std::string name, std::vector<CreateIndexColumn>&& columns,
-  InvertedIndexOptions options, CreateIndexOperationOptions operation_options) {
+  duckdb::ClientContext& context, ObjectId database_id, std::string_view schema,
+  std::string_view relation, std::string name,
+  std::vector<CreateIndexColumn>&& columns, InvertedIndexOptions options,
+  CreateIndexOperationOptions operation_options) {
   if (columns.empty()) {
     return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
   }
@@ -1886,8 +1887,9 @@ Result LocalCatalog::CreateInvertedIndex(
     c.catalog_column = &*it;
   }
   auto index = catalog::CreateInvertedIndex(
-    database_id, schema, *schema_id, ObjectId{0}, resolved->relation_id,
-    std::move(name), std::move(columns), _snapshot, std::move(options));
+    context, database_id, schema, *schema_id, ObjectId{0},
+    resolved->relation_id, std::move(name), std::move(columns), _snapshot,
+    std::move(options));
   if (!index) {
     return std::move(index).error();
   }

@@ -33,7 +33,7 @@ class BySamePosition;
 struct BySamePositionOptions {
   using FilterType = BySamePosition;
 
-  using search_term = std::pair<std::string, bstring>;
+  using search_term = std::pair<irs::field_id, bstring>;
   using search_terms = std::vector<search_term>;
 
   search_terms terms;

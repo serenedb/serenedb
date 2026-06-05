@@ -84,11 +84,12 @@ Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx) const {
   if (options().pattern.empty()) {
     return Query::empty();
   }
-  return PrepareAutomatonFilter(ctx.Boost(Boost()), field(), options().acceptor,
+  return PrepareAutomatonFilter(ctx.Boost(Boost()), field_id(),
+                                options().acceptor,
                                 options().scored_terms_limit);
 }
 
-Filter::ptr CreateByRegexp(std::string_view field, bytes_view pattern,
+Filter::ptr CreateByRegexp(irs::field_id id, bytes_view pattern,
                            RegexpSyntax syntax, size_t scored_terms_limit,
                            score_t boost) {
   bstring buf;
@@ -96,14 +97,14 @@ Filter::ptr CreateByRegexp(std::string_view field, bytes_view pattern,
     buf, pattern,
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<ByTerm>();
-      *filter->mutable_field() = field;
+      *filter->mutable_field_id() = id;
       filter->mutable_options()->term = term;
       filter->boost(boost);
       return filter;
     },
     [&](bytes_view prefix) -> Filter::ptr {
       auto filter = std::make_unique<ByPrefix>();
-      *filter->mutable_field() = field;
+      *filter->mutable_field_id() = id;
       filter->mutable_options()->term = prefix;
       filter->mutable_options()->scored_terms_limit = scored_terms_limit;
       filter->boost(boost);
@@ -111,7 +112,7 @@ Filter::ptr CreateByRegexp(std::string_view field, bytes_view pattern,
     },
     [&](bytes_view pattern) -> Filter::ptr {
       auto filter = std::make_unique<ByRegexp>();
-      *filter->mutable_field() = field;
+      *filter->mutable_field_id() = id;
       auto& options = *filter->mutable_options();
       options = ByRegexpOptions{pattern, syntax};
       options.scored_terms_limit = scored_terms_limit;

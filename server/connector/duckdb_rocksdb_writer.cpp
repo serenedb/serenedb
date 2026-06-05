@@ -58,40 +58,35 @@ void AppendPKValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
     case duckdb::LogicalTypeId::BOOLEAN: {
       auto val = duckdb::UnifiedVectorFormat::GetData<bool>(fmt)[idx];
       key.push_back(val ? '\x01' : '\x00');
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::TINYINT: {
       auto val = duckdb::UnifiedVectorFormat::GetData<int8_t>(fmt)[idx];
       auto base = key.size();
       basics::StrAppend(key, sizeof(int8_t));
       key[base] = static_cast<char>(val);
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::SMALLINT: {
       auto val = duckdb::UnifiedVectorFormat::GetData<int16_t>(fmt)[idx];
       auto base = key.size();
       basics::StrAppend(key, sizeof(int16_t));
       absl::big_endian::Store16(key.data() + base, val);
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::INTEGER: {
       auto val = duckdb::UnifiedVectorFormat::GetData<int32_t>(fmt)[idx];
       auto base = key.size();
       basics::StrAppend(key, sizeof(int32_t));
       absl::big_endian::Store32(key.data() + base, val);
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::BIGINT: {
       auto val = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt)[idx];
       auto base = key.size();
       basics::StrAppend(key, sizeof(int64_t));
       absl::big_endian::Store64(key.data() + base, val);
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ: {
       auto val =
@@ -101,8 +96,7 @@ void AppendPKValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
       basics::StrAppend(key, sizeof(int64_t));
       absl::big_endian::Store64(key.data() + base, val);
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::DATE: {
       auto val =
         duckdb::UnifiedVectorFormat::GetData<duckdb::date_t>(fmt)[idx].days;
@@ -110,8 +104,7 @@ void AppendPKValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
       basics::StrAppend(key, sizeof(int32_t));
       absl::big_endian::Store32(key.data() + base, val);
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::VARCHAR:
     case duckdb::LogicalTypeId::BLOB: {
       // String PK: escape null bytes (\0 -> \0\1) and terminate with \0\0
@@ -129,8 +122,7 @@ void AppendPKValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
         }
       }
       key.append(kStringEnd);
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::FLOAT: {
       auto val = duckdb::UnifiedVectorFormat::GetData<float>(fmt)[idx];
       auto base = key.size();
@@ -146,8 +138,7 @@ void AppendPKValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
         static constexpr char kPosNaN[] = "\xFF\xC0\x00\x00";
         std::memcpy(key.data() + base, kPosNaN, sizeof(float));
       }
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::DOUBLE: {
       auto val = duckdb::UnifiedVectorFormat::GetData<double>(fmt)[idx];
       auto base = key.size();
@@ -342,7 +333,7 @@ void DuckDBColumnSerializer::SstWriter::WriteNull(std::string_view key) {
 template<typename Writer>
 void DuckDBColumnSerializer::WriteRowSlices(
   Writer& writer, std::string_view key,
-  std::span<DuckDBSinkIndexWriter*> index_writers) {
+  std::span<DuckDBSinkColumnWriter*> index_writers) {
   // Writer decides what "Write" means for the current column (regular Put,
   // IndexOnly WAL marker, or Option-C silent skip on the SST path).
   writer.Write(_row_slices, key);
@@ -355,7 +346,7 @@ template<typename Writer>
 void DuckDBColumnSerializer::WriteConstantColumn(
   Writer& writer, const duckdb::Vector& vec, const duckdb::LogicalType& type,
   duckdb::idx_t num_rows, std::vector<std::string>& row_keys,
-  std::span<DuckDBSinkIndexWriter*> index_writers) {
+  std::span<DuckDBSinkColumnWriter*> index_writers) {
   if (duckdb::ConstantVector::IsNull(vec)) {
     const rocksdb::Slice null_slice;
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
@@ -407,7 +398,7 @@ void DuckDBColumnSerializer::WriteUnifiedColumn(
   Writer& writer, const duckdb::RecursiveUnifiedVectorFormat& rdata,
   const duckdb::LogicalType& type, duckdb::idx_t num_rows,
   std::vector<std::string>& row_keys,
-  std::span<DuckDBSinkIndexWriter*> index_writers) {
+  std::span<DuckDBSinkColumnWriter*> index_writers) {
   auto write_null = [&](duckdb::idx_t row) {
     writer.WriteNull(row_keys[row]);
     const rocksdb::Slice null_slice;
@@ -530,7 +521,7 @@ template<typename Writer>
 void DuckDBColumnSerializer::WriteColumn(
   Writer& writer, const duckdb::Vector& vec, duckdb::idx_t num_rows,
   std::vector<std::string>& row_keys,
-  std::span<DuckDBSinkIndexWriter*> index_writers, ColumnDescriptor col) {
+  std::span<DuckDBSinkColumnWriter*> index_writers, ColumnDescriptor col) {
   // Tell the writer which column we're streaming so its Write/WriteNull
   // can branch (regular Put vs IndexOnly WAL marker vs SST silent skip).
   writer.SwitchColumn(col);
@@ -614,8 +605,7 @@ void DuckDBColumnSerializer::WriteColumn(
         WriteGeometryRaw(raw[row]);
         WriteRowSlices(writer, row_keys[row], index_writers);
       }
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ:
       WriteFlatColumn<Writer, duckdb::timestamp_t>(writer, vec, num_rows,
@@ -661,21 +651,21 @@ void DuckDBColumnSerializer::WriteColumn(
 template void
 DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::TxnWriter>(
   TxnWriter&, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
-  std::span<DuckDBSinkIndexWriter*>, ColumnDescriptor);
+  std::span<DuckDBSinkColumnWriter*>, ColumnDescriptor);
 template void
 DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::SstWriter>(
   SstWriter&, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
-  std::span<DuckDBSinkIndexWriter*>, ColumnDescriptor);
+  std::span<DuckDBSinkColumnWriter*>, ColumnDescriptor);
 template void
 DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::NoopWriter>(
   NoopWriter&, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
-  std::span<DuckDBSinkIndexWriter*>, ColumnDescriptor);
+  std::span<DuckDBSinkColumnWriter*>, ColumnDescriptor);
 
 template<typename Writer, typename T>
 void DuckDBColumnSerializer::WriteFlatColumn(
   Writer& writer, const duckdb::Vector& vec, duckdb::idx_t num_rows,
   std::vector<std::string>& row_keys,
-  std::span<DuckDBSinkIndexWriter*> index_writers) {
+  std::span<DuckDBSinkColumnWriter*> index_writers) {
   auto* raw = duckdb::FlatVector::GetData<T>(vec);
   auto& validity = duckdb::FlatVector::Validity(vec);
   bool may_have_nulls = !validity.CannotHaveNull();
@@ -702,7 +692,7 @@ template<typename Writer>
 void DuckDBColumnSerializer::WriteComplexColumn(
   Writer& writer, const duckdb::Vector& vec, const duckdb::LogicalType& type,
   duckdb::idx_t num_rows, std::vector<std::string>& row_keys,
-  std::span<DuckDBSinkIndexWriter*> index_writers) {
+  std::span<DuckDBSinkColumnWriter*> index_writers) {
   duckdb::RecursiveUnifiedVectorFormat rdata;
   duckdb::Vector::RecursiveToUnifiedFormat(vec, num_rows, rdata);
 

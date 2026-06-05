@@ -109,8 +109,7 @@ void VisitImpl(const SubReader& segment, const TermReader& reader,
 
 }  // namespace
 
-Filter::Query::ptr ByRange::prepare(const PrepareContext& ctx,
-                                    std::string_view field,
+Filter::Query::ptr ByRange::prepare(const PrepareContext& ctx, irs::field_id id,
                                     const options_type::range_type& rng,
                                     size_t scored_terms_limit) {
   // TODO: optimize unordered case
@@ -123,7 +122,7 @@ Filter::Query::ptr ByRange::prepare(const PrepareContext& ctx,
       rng.max_type != BoundType::Unbounded && rng.min == rng.max) {
     if (rng.min_type == rng.max_type && rng.min_type == BoundType::Inclusive) {
       // degenerated case
-      return ByTerm::prepare(ctx, field, rng.min);
+      return ByTerm::prepare(ctx, id, rng.min);
     }
 
     // can't satisfy conditon
@@ -137,7 +136,7 @@ Filter::Query::ptr ByRange::prepare(const PrepareContext& ctx,
   MultiTermVisitor mtv{collector, states};
 
   for (const auto& segment : ctx.index) {
-    if (const auto* reader = segment.field(field); reader) {
+    if (const auto* reader = segment.field(id); reader) {
       VisitImpl(segment, *reader, rng, mtv);
     }
   }

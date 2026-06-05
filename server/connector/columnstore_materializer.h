@@ -31,17 +31,17 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/exceptions.h"
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/read_context.hpp"
-#include "iresearch/columnstore/scan.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/column/scan.hpp"
 #include "iresearch/types.hpp"
 
 namespace sdb::connector {
 
 class ColumnstoreMaterializer {
  public:
-  ColumnstoreMaterializer(const irs::columnstore::Reader& reader,
+  ColumnstoreMaterializer(const irs::ColReader& reader,
                           std::span<const irs::field_id> column_ids,
                           std::span<const duckdb::idx_t> output_slots);
 
@@ -55,7 +55,7 @@ class ColumnstoreMaterializer {
     SDB_ASSERT(i < _bound.size());
     return _bound[i].output_slot;
   }
-  const irs::columnstore::ColumnReader& BindingReader(size_t i) const noexcept {
+  const irs::ColumnReader& BindingReader(size_t i) const noexcept {
     SDB_ASSERT(i < _bound.size());
     return *_bound[i].reader;
   }
@@ -70,8 +70,7 @@ class ColumnstoreMaterializer {
     SDB_ASSERT(i < _bound.size());
     SDB_IF_FAILURE("SearchIncludeFetchFault") { SDB_THROW(ERROR_DEBUG); }
     const auto& b = _bound[i];
-    irs::columnstore::MaterializeNode(*b.reader, *b.state, doc_ids, out_vec,
-                                      output_start);
+    irs::MaterializeNode(*b.reader, *b.state, doc_ids, out_vec, output_start);
   }
 
   void SelectByDocIds(std::span<const irs::doc_id_t> doc_ids,
@@ -88,8 +87,7 @@ class ColumnstoreMaterializer {
                                 type_id == duckdb::LogicalTypeId::MAP)) {
         duckdb::ListVector::SetListSize(out_vec, 0);
       }
-      irs::columnstore::MaterializeNode(*b.reader, *b.state, doc_ids, out_vec,
-                                        output_start);
+      irs::MaterializeNode(*b.reader, *b.state, doc_ids, out_vec, output_start);
     }
   }
 
@@ -106,20 +104,20 @@ class ColumnstoreMaterializer {
           type_id == duckdb::LogicalTypeId::MAP) {
         duckdb::ListVector::SetListSize(out_vec, 0);
       }
-      irs::columnstore::MaterializeNode(
-        *b.reader, *b.state, irs::columnstore::IotaRange{start_doc, count},
-        out_vec, 0, /*may_use_entire=*/true);
+      irs::MaterializeNode(*b.reader, *b.state,
+                           irs::IotaRange{start_doc, count}, out_vec, 0,
+                           /*may_use_entire=*/true);
     }
   }
 
  private:
   struct Binding {
-    const irs::columnstore::ColumnReader* reader;
+    const irs::ColumnReader* reader;
     duckdb::idx_t output_slot;
-    std::unique_ptr<irs::columnstore::MaterializeState> state;
+    std::unique_ptr<irs::MaterializeState> state;
   };
 
-  irs::columnstore::ReadContext _ctx;
+  irs::ReadContext _ctx;
   std::vector<Binding> _bound;
 };
 

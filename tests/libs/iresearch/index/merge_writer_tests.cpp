@@ -24,9 +24,10 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "basics/duckdb_engine.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
-#include "iresearch/columnstore/norm_reader.hpp"
+#include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/comparer.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -41,11 +42,28 @@
 
 namespace {
 
-inline constexpr irs::field_id kSeqId = 1;
+// Stable per-name field ids, sourced from `tests::FieldIdFor` so the
+// shared JSON factories and these tests agree on which id a name maps to.
+inline constexpr irs::field_id kSeqId = tests::FieldIdFor("seq");
+inline constexpr irs::field_id kNameId = tests::FieldIdFor("name");
+inline constexpr irs::field_id kSameId = tests::FieldIdFor("same");
+inline constexpr irs::field_id kDuplicatedId = tests::FieldIdFor("duplicated");
+inline constexpr irs::field_id kDocBytesId = tests::FieldIdFor("doc_bytes");
+inline constexpr irs::field_id kDocDoubleId = tests::FieldIdFor("doc_double");
+inline constexpr irs::field_id kDocFloatId = tests::FieldIdFor("doc_float");
+inline constexpr irs::field_id kDocIntId = tests::FieldIdFor("doc_int");
+inline constexpr irs::field_id kDocLongId = tests::FieldIdFor("doc_long");
+inline constexpr irs::field_id kDocStringId = tests::FieldIdFor("doc_string");
+inline constexpr irs::field_id kDocTextId = tests::FieldIdFor("doc_text");
+inline constexpr irs::field_id kFooId = tests::FieldIdFor("foo");
+inline constexpr irs::field_id kAnotherColumnId =
+  tests::FieldIdFor("another_column");
+
+using tests::FieldIdFor;
 
 irs::Filter::ptr MakeByTerm(std::string_view name, std::string_view value) {
   auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field() = name;
+  *filter->mutable_field_id() = FieldIdFor(name);
   filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
   return filter;
 }
@@ -82,7 +100,7 @@ void ValidateTerms(
     ASSERT_NE(expected_terms.end(), itr);
 
     for (auto docs_itr = segment.mask(term_itr->postings(index_features));
-         docs_itr->next();) {  // FIXME
+         docs_itr->next();) {
       ASSERT_EQ(1, itr->second.erase(docs_itr->value()));
 
       if (frequency) {
@@ -144,9 +162,11 @@ void MergeWriterTestCase::EnsureDocBlocksNotMixed(bool primary_sort) {
                              irs::doc_id_t seed, irs::doc_id_t count) {
     for (; seed < count; ++seed) {
       auto doc = ctx.Insert();
-      const tests::StringField foo{"foo", "bar"};
+      tests::StringField foo{"foo", "bar"};
+      foo.id = kFooId;
       doc.Insert(foo);
-      const tests::StringField seq{"seq", std::to_string(seed)};
+      tests::StringField seq{"seq", std::to_string(seed)};
+      seq.id = kSeqId;
       irs::tests::StoreFieldAt(*doc.Columnstore(), kSeqId, doc.DocId(), seq);
     }
   };
@@ -258,18 +278,22 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
       docs.emplace_back(gen.next());
     }
 
-    auto writer = irs::IndexWriter::Make(data_dir, codec_ptr, irs::kOmCreate);
+    auto writer = irs::IndexWriter::Make(data_dir, codec_ptr, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
 
     for (auto* doc : docs) {
       ASSERT_NE(nullptr, doc);
       ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
       writer->RefreshCommit();  // create segmentN
-      AssertSnapshotEquality(writer->GetSnapshot(),
-                             irs::DirectoryReader(data_dir, codec_ptr));
+      AssertSnapshotEquality(
+        writer->GetSnapshot(),
+        irs::DirectoryReader(data_dir, codec_ptr,
+                             irs::tests::DefaultReaderOptions()));
     }
   }
 
-  auto reader = irs::DirectoryReader(data_dir, codec_ptr);
+  auto reader = irs::DirectoryReader(data_dir, codec_ptr,
+                                     irs::tests::DefaultReaderOptions());
 
   ASSERT_EQ(33, reader.size());
 
@@ -278,20 +302,24 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
   {
     irs::MemoryDirectory dir;
     irs::SegmentMeta index_segment;
-    const irs::SegmentWriterOptions options{.scorers_features = {}};
+    const irs::SegmentWriterOptions options{
+      .scorers_features = {},
+      .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
     writer.Reset(reader.begin(), reader.end());
 
     index_segment.codec = codec_ptr;
     ASSERT_TRUE(writer.Flush(index_segment));
 
-    auto segment = irs::SegmentReaderImpl::Open(dir, index_segment,
-                                                irs::IndexReaderOptions{});
+    auto segment = irs::SegmentReaderImpl::Open(
+      dir, index_segment,
+      irs::IndexReaderOptions{.db =
+                                &::sdb::DuckDBEngine::Instance().instance()});
     ASSERT_EQ(33, segment->docs_count());
-    ASSERT_EQ(33, segment->field("name")->docs_count());
-    ASSERT_EQ(33, segment->field("seq")->docs_count());
-    ASSERT_EQ(33, segment->field("same")->docs_count());
-    ASSERT_EQ(13, segment->field("duplicated")->docs_count());
+    ASSERT_EQ(33, segment->field(kNameId)->docs_count());
+    ASSERT_EQ(33, segment->field(kSeqId)->docs_count());
+    ASSERT_EQ(33, segment->field(kSameId)->docs_count());
+    ASSERT_EQ(13, segment->field(kDuplicatedId)->docs_count());
   }
 }
 
@@ -306,18 +334,24 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
                                 &tests::GenericJsonFieldFactory);
     auto* doc1 = gen.next();
     auto* doc2 = gen.next();
-    auto writer = irs::IndexWriter::Make(data_dir, codec_ptr, irs::kOmCreate);
+    auto writer = irs::IndexWriter::Make(data_dir, codec_ptr, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
     ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
     writer->RefreshCommit();  // create segment0
-    AssertSnapshotEquality(writer->GetSnapshot(),
-                           irs::DirectoryReader(data_dir, codec_ptr));
+    AssertSnapshotEquality(
+      writer->GetSnapshot(),
+      irs::DirectoryReader(data_dir, codec_ptr,
+                           irs::tests::DefaultReaderOptions()));
     ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
     writer->RefreshCommit();  // create segment1
-    AssertSnapshotEquality(writer->GetSnapshot(),
-                           irs::DirectoryReader(data_dir, codec_ptr));
+    AssertSnapshotEquality(
+      writer->GetSnapshot(),
+      irs::DirectoryReader(data_dir, codec_ptr,
+                           irs::tests::DefaultReaderOptions()));
   }
 
-  auto reader = irs::DirectoryReader(data_dir, codec_ptr);
+  auto reader = irs::DirectoryReader(data_dir, codec_ptr,
+                                     irs::tests::DefaultReaderOptions());
 
   ASSERT_EQ(2, reader.size());
   ASSERT_EQ(1, reader[0].docs_count());
@@ -328,7 +362,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     irs::MemoryDirectory dir;
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress;
-    const irs::SegmentWriterOptions options{.scorers_features = {}};
+    const irs::SegmentWriterOptions options{
+      .scorers_features = {},
+      .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
 
     index_segment.codec = codec_ptr;
@@ -340,8 +376,10 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     ASSERT_EQ(2, index_segment.live_docs_count);
     ASSERT_EQ(0, index_segment.version);
 
-    auto segment = irs::SegmentReaderImpl::Open(dir, index_segment,
-                                                irs::IndexReaderOptions{});
+    auto segment = irs::SegmentReaderImpl::Open(
+      dir, index_segment,
+      irs::IndexReaderOptions{.db =
+                                &::sdb::DuckDBEngine::Instance().instance()});
     ASSERT_EQ(2, segment->docs_count());
   }
 
@@ -350,7 +388,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     irs::MemoryDirectory dir;
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress = []() -> bool { return false; };
-    const irs::SegmentWriterOptions options{.scorers_features = {}};
+    const irs::SegmentWriterOptions options{
+      .scorers_features = {},
+      .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
 
     index_segment.codec = codec_ptr;
@@ -364,8 +404,10 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     ASSERT_EQ(0, index_segment.live_docs_count);
     ASSERT_EQ(0, index_segment.byte_size);
 
-    ASSERT_ANY_THROW(irs::SegmentReaderImpl::Open(dir, index_segment,
-                                                  irs::IndexReaderOptions{}));
+    ASSERT_ANY_THROW(irs::SegmentReaderImpl::Open(
+      dir, index_segment,
+      irs::IndexReaderOptions{.db =
+                                &::sdb::DuckDBEngine::Instance().instance()}));
   }
 
   size_t progress_call_count = 0;
@@ -379,7 +421,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
       ++progress_call_count;
       return true;
     };
-    const irs::SegmentWriterOptions options{.scorers_features = {}};
+    const irs::SegmentWriterOptions options{
+      .scorers_features = {},
+      .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
 
     index_segment.codec = codec_ptr;
@@ -391,8 +435,10 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     ASSERT_EQ(2, index_segment.live_docs_count);
     ASSERT_EQ(0, index_segment.version);
 
-    auto segment = irs::SegmentReaderImpl::Open(dir, index_segment,
-                                                irs::IndexReaderOptions{});
+    auto segment = irs::SegmentReaderImpl::Open(
+      dir, index_segment,
+      irs::IndexReaderOptions{.db =
+                                &::sdb::DuckDBEngine::Instance().instance()});
     ASSERT_EQ(2, segment->docs_count());
   }
 
@@ -408,7 +454,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     irs::MergeWriter::FlushProgress progress = [&call_count]() -> bool {
       return --call_count;
     };
-    const irs::SegmentWriterOptions options{.scorers_features = {}};
+    const irs::SegmentWriterOptions options{
+      .scorers_features = {},
+      .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
 
     index_segment.codec = codec_ptr;
@@ -424,8 +472,10 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     ASSERT_EQ(0, index_segment.live_docs_count);
     ASSERT_EQ(0, index_segment.byte_size);
 
-    ASSERT_ANY_THROW(irs::SegmentReaderImpl::Open(dir, index_segment,
-                                                  irs::IndexReaderOptions{}));
+    ASSERT_ANY_THROW(irs::SegmentReaderImpl::Open(
+      dir, index_segment,
+      irs::IndexReaderOptions{.db =
+                                &::sdb::DuckDBEngine::Instance().instance()}));
   }
 }
 
@@ -435,15 +485,28 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
   tests::Document doc1;  // string
   tests::Document doc2;  // text
 
-  doc1.insert(std::make_shared<tests::StringField>(field, data));
-  doc2.indexed.push_back(
-    std::make_shared<tests::TextField<std::string_view>>(field, data, true));
+  {
+    auto f = std::make_shared<tests::StringField>(field, data);
+    f->id = kDocStringId;
+    doc1.insert(std::move(f));
+  }
+  {
+    auto f =
+      std::make_shared<tests::TextField<std::string_view>>(field, data, true);
+    f->id = kDocStringId;
+    doc2.indexed.push_back(std::move(f));
+  }
 
-  // FIXME
-  // ASSERT_TRUE(irs::IsSubsetOf(doc1.indexed.get(field)->GetIndexFeatures(),
-  //                             doc2.indexed.get(field)->GetIndexFeatures()));
-  // ASSERT_FALSE(irs::IsSubsetOf(doc2.indexed.get(field)->GetIndexFeatures(),
-  //                              doc1.indexed.get(field)->GetIndexFeatures()));
+  ASSERT_TRUE(irs::IsSubsetOf(
+    doc1.indexed.get_by_id<tests::StringField>(kDocStringId)
+      ->GetIndexFeatures(),
+    doc2.indexed.get_by_id<tests::TextField<std::string_view>>(kDocStringId)
+      ->GetIndexFeatures()));
+  ASSERT_FALSE(irs::IsSubsetOf(
+    doc2.indexed.get_by_id<tests::TextField<std::string_view>>(kDocStringId)
+      ->GetIndexFeatures(),
+    doc1.indexed.get_by_id<tests::StringField>(kDocStringId)
+      ->GetIndexFeatures()));
 
   auto codec_ptr = Codec();
   ASSERT_NE(nullptr, codec_ptr);
@@ -451,18 +514,22 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
 
   // populate directory
   {
-    auto writer = irs::IndexWriter::Make(dir, codec_ptr, irs::kOmCreate);
+    auto writer = irs::IndexWriter::Make(dir, codec_ptr, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
     ASSERT_TRUE(Insert(*writer, doc1.indexed.begin(), doc1.indexed.end()));
     writer->RefreshCommit();
-    AssertSnapshotEquality(writer->GetSnapshot(),
-                           irs::DirectoryReader(dir, codec_ptr));
+    AssertSnapshotEquality(
+      writer->GetSnapshot(),
+      irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
     ASSERT_TRUE(Insert(*writer, doc2.indexed.begin(), doc2.indexed.end()));
     writer->RefreshCommit();
-    AssertSnapshotEquality(writer->GetSnapshot(),
-                           irs::DirectoryReader(dir, codec_ptr));
+    AssertSnapshotEquality(
+      writer->GetSnapshot(),
+      irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
   }
 
-  auto reader = irs::DirectoryReader(dir, codec_ptr);
+  auto reader =
+    irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions());
 
   ASSERT_EQ(2, reader.size());
   ASSERT_EQ(1, reader[0].docs_count());
@@ -475,7 +542,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
       &reader[0]   // assume 0 is segment with string field
     };
 
-    const irs::SegmentWriterOptions options{.scorers_features = {}};
+    const irs::SegmentWriterOptions options{
+      .scorers_features = {},
+      .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
     writer.Reset(segments.begin(), segments.end());
 
@@ -484,20 +553,23 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
     ASSERT_TRUE(writer.Flush(index_segment));
   }
 
-  // test merge existing with feature superset (fail)
+  // test merge existing with feature superset: succeeds with the
+  // intersection of source features (Freq only; Offs+Pos drop on merge).
   {
     std::array<const irs::SubReader*, 2> segments{
-      &reader[0],  // assume 0 is segment with text field
-      &reader[1]   // assume 1 is segment with string field
+      &reader[0],  // segment with string field (Freq)
+      &reader[1]   // segment with text field (Offs|Pos|Freq)
     };
 
-    const irs::SegmentWriterOptions options{.scorers_features = {}};
+    const irs::SegmentWriterOptions options{
+      .scorers_features = {},
+      .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
     writer.Reset(segments.begin(), segments.end());
 
     irs::SegmentMeta index_segment;
     index_segment.codec = codec_ptr;
-    ASSERT_FALSE(writer.Flush(index_segment));
+    ASSERT_TRUE(writer.Flush(index_segment));
   }
 }
 
@@ -556,6 +628,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   {
     auto& field = doc1.indexed.back<tests::BinaryField>();
     field.Name("doc_bytes");
+    field.id = kDocBytesId;
     field.value(bytes1);
     field.index_features |= irs::IndexFeatures::Norm;
   }
@@ -563,6 +636,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   {
     auto& field = doc1.indexed.back<tests::BinaryField>();
     field.Name("doc_bytes");
+    field.id = kDocBytesId;
     field.value(bytes1);
     field.index_features |= irs::IndexFeatures::Norm;
   }
@@ -570,6 +644,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   {
     auto& field = doc1.indexed.back<tests::BinaryField>();
     field.Name("doc_bytes");
+    field.id = kDocBytesId;
     field.value(bytes1);
     field.index_features |= irs::IndexFeatures::Norm;
   }
@@ -577,6 +652,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   {
     auto& field = doc1.indexed.back<tests::BinaryField>();
     field.Name("doc_bytes");
+    field.id = kDocBytesId;
     field.value(bytes1);
     field.index_features |= irs::IndexFeatures::Norm;
   }
@@ -587,12 +663,14 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   {
     auto& field = doc2.indexed.back<tests::BinaryField>();
     field.Name("doc_bytes");
+    field.id = kDocBytesId;
     field.value(bytes2);
   }
   doc2.insert(std::make_shared<tests::BinaryField>());
   {
     auto& field = doc2.indexed.back<tests::BinaryField>();
     field.Name("doc_bytes");
+    field.id = kDocBytesId;
     field.value(bytes2);
   }
 
@@ -601,6 +679,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   {
     auto& field = doc3.indexed.back<tests::BinaryField>();
     field.Name("doc_bytes");
+    field.id = kDocBytesId;
     field.value(bytes3);
     field.index_features |= irs::IndexFeatures::Norm;
   }
@@ -608,6 +687,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   {
     auto& field = doc3.indexed.back<tests::BinaryField>();
     field.Name("doc_bytes");
+    field.id = kDocBytesId;
     field.value(bytes3);
     field.index_features |= irs::IndexFeatures::Norm;
   }
@@ -615,6 +695,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   {
     auto& field = doc3.indexed.back<tests::BinaryField>();
     field.Name("doc_bytes");
+    field.id = kDocBytesId;
     field.value(bytes3);
     field.index_features |= irs::IndexFeatures::Norm;
   }
@@ -623,84 +704,114 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   {
     auto& field = doc1.indexed.back<tests::DoubleField>();
     field.Name("doc_double");
+    field.id = kDocDoubleId;
     field.value(2.718281828 * 1);
   }
   doc2.insert(std::make_shared<tests::DoubleField>());
   {
     auto& field = doc2.indexed.back<tests::DoubleField>();
     field.Name("doc_double");
+    field.id = kDocDoubleId;
     field.value(2.718281828 * 2);
   }
   doc3.insert(std::make_shared<tests::DoubleField>());
   {
     auto& field = doc3.indexed.back<tests::DoubleField>();
     field.Name("doc_double");
+    field.id = kDocDoubleId;
     field.value(2.718281828 * 3);
   }
   doc1.insert(std::make_shared<tests::FloatField>());
   {
     auto& field = doc1.indexed.back<tests::FloatField>();
     field.Name("doc_float");
+    field.id = kDocFloatId;
     field.value(3.1415926535f * 1);
   }
   doc2.insert(std::make_shared<tests::FloatField>());
   {
     auto& field = doc2.indexed.back<tests::FloatField>();
     field.Name("doc_float");
+    field.id = kDocFloatId;
     field.value(3.1415926535f * 2);
   }
   doc3.insert(std::make_shared<tests::FloatField>());
   {
     auto& field = doc3.indexed.back<tests::FloatField>();
     field.Name("doc_float");
+    field.id = kDocFloatId;
     field.value(3.1415926535f * 3);
   }
   doc1.insert(std::make_shared<tests::IntField>());
   {
     auto& field = doc1.indexed.back<tests::IntField>();
     field.Name("doc_int");
+    field.id = kDocIntId;
     field.value(42 * 1);
   }
   doc2.insert(std::make_shared<tests::IntField>());
   {
     auto& field = doc2.indexed.back<tests::IntField>();
     field.Name("doc_int");
+    field.id = kDocIntId;
     field.value(42 * 2);
   }
   doc3.insert(std::make_shared<tests::IntField>());
   {
     auto& field = doc3.indexed.back<tests::IntField>();
     field.Name("doc_int");
+    field.id = kDocIntId;
     field.value(42 * 3);
   }
   doc1.insert(std::make_shared<tests::LongField>());
   {
     auto& field = doc1.indexed.back<tests::LongField>();
     field.Name("doc_long");
+    field.id = kDocLongId;
     field.value(12345 * 1);
   }
   doc2.insert(std::make_shared<tests::LongField>());
   {
     auto& field = doc2.indexed.back<tests::LongField>();
     field.Name("doc_long");
+    field.id = kDocLongId;
     field.value(12345 * 2);
   }
   doc3.insert(std::make_shared<tests::LongField>());
   {
     auto& field = doc3.indexed.back<tests::LongField>();
     field.Name("doc_long");
+    field.id = kDocLongId;
     field.value(12345 * 3);
   }
-  doc1.insert(std::make_shared<tests::StringField>("doc_string", string1));
-  doc2.insert(std::make_shared<tests::StringField>("doc_string", string2));
-  doc3.insert(std::make_shared<tests::StringField>("doc_string", string3));
-  doc4.insert(std::make_shared<tests::StringField>("doc_string", string4));
-  doc1.indexed.push_back(std::make_shared<tests::TextField<std::string_view>>(
-    "doc_text", text1, true));
-  doc2.indexed.push_back(std::make_shared<tests::TextField<std::string_view>>(
-    "doc_text", text2, true));
-  doc3.indexed.push_back(std::make_shared<tests::TextField<std::string_view>>(
-    "doc_text", text3, true));
+  {
+    auto f1 = std::make_shared<tests::StringField>("doc_string", string1);
+    f1->id = kDocStringId;
+    doc1.insert(std::move(f1));
+    auto f2 = std::make_shared<tests::StringField>("doc_string", string2);
+    f2->id = kDocStringId;
+    doc2.insert(std::move(f2));
+    auto f3 = std::make_shared<tests::StringField>("doc_string", string3);
+    f3->id = kDocStringId;
+    doc3.insert(std::move(f3));
+    auto f4 = std::make_shared<tests::StringField>("doc_string", string4);
+    f4->id = kDocStringId;
+    doc4.insert(std::move(f4));
+  }
+  {
+    auto t1 = std::make_shared<tests::TextField<std::string_view>>("doc_text",
+                                                                   text1, true);
+    t1->id = kDocTextId;
+    doc1.indexed.push_back(std::move(t1));
+    auto t2 = std::make_shared<tests::TextField<std::string_view>>("doc_text",
+                                                                   text2, true);
+    t2->id = kDocTextId;
+    doc2.indexed.push_back(std::move(t2));
+    auto t3 = std::make_shared<tests::TextField<std::string_view>>("doc_text",
+                                                                   text3, true);
+    t3->id = kDocTextId;
+    doc3.indexed.push_back(std::move(t3));
+  }
 
   auto opts = irs::tests::DefaultWriterOptions();
 
@@ -728,8 +839,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
   }
 
-  auto docs_count = [](const irs::SubReader& segment,
-                       const std::string_view& field) {
+  auto docs_count = [](const irs::SubReader& segment, irs::field_id field) {
     auto* reader = segment.field(field);
     return reader ? reader->docs_count() : 0;
   };
@@ -747,17 +857,12 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     ASSERT_EQ(2, segment.docs_count());
 
     {
-      auto fields = segment.fields();
-      size_t size = 0;
-      while (fields->next()) {
-        ++size;
-      }
-      ASSERT_EQ(7, size);
+      ASSERT_EQ(7, segment.field_ids().size());
     }
 
     // validate bytes field
     {
-      auto terms = segment.field("doc_bytes");
+      auto terms = segment.field(kDocBytesId);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features =
@@ -773,7 +878,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
                        std::string_view("bytes2_data"))]
         .emplace(2);
 
-      ASSERT_EQ(2, docs_count(segment, "doc_bytes"));
+      ASSERT_EQ(2, docs_count(segment, kDocBytesId));
 
       ASSERT_EQ(features, field.index_features);
       ValidateTerms(segment, *terms, 2, bytes1, bytes2, 2, features,
@@ -805,7 +910,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate double field
     {
-      auto terms = segment.field("doc_double");
+      auto terms = segment.field(kDocDoubleId);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::DoubleField().GetIndexFeatures();
@@ -835,7 +940,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
           ;
       }
 
-      ASSERT_EQ(2, docs_count(segment, "doc_double"));
+      ASSERT_EQ(2, docs_count(segment, kDocDoubleId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ASSERT_TRUE(max.next() && max.next() && max.next() &&
@@ -848,7 +953,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate float field
     {
-      auto terms = segment.field("doc_float");
+      auto terms = segment.field(kDocFloatId);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::FloatField().GetIndexFeatures();
@@ -878,7 +983,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
           ;
       }
 
-      ASSERT_EQ(2, docs_count(segment, "doc_float"));
+      ASSERT_EQ(2, docs_count(segment, kDocFloatId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ASSERT_TRUE(max.next() && max.next());  // skip to last value
@@ -890,7 +995,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate int field
     {
-      auto terms = segment.field("doc_int");
+      auto terms = segment.field(kDocIntId);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::IntField().GetIndexFeatures();
@@ -920,7 +1025,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
           ;
       }
 
-      ASSERT_EQ(2, docs_count(segment, "doc_int"));
+      ASSERT_EQ(2, docs_count(segment, kDocIntId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ASSERT_TRUE(max.next() && max.next());  // skip to last value
@@ -932,7 +1037,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate long field
     {
-      auto terms = segment.field("doc_long");
+      auto terms = segment.field(kDocLongId);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::LongField().GetIndexFeatures();
@@ -962,7 +1067,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
           ;
       }
 
-      ASSERT_EQ(2, docs_count(segment, "doc_long"));
+      ASSERT_EQ(2, docs_count(segment, kDocLongId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ASSERT_TRUE(max.next() && max.next() && max.next() &&
@@ -975,7 +1080,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate string field
     {
-      auto terms = segment.field("doc_string");
+      auto terms = segment.field(kDocStringId);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = kStringFieldFeatures;
@@ -992,7 +1097,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
                        std::string_view("string2_data"))]
         .emplace(2);
 
-      ASSERT_EQ(2, docs_count(segment, "doc_string"));
+      ASSERT_EQ(2, docs_count(segment, kDocStringId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 2,
@@ -1003,7 +1108,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate text field
     {
-      auto terms = segment.field("doc_text");
+      auto terms = segment.field(kDocTextId);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = kTextFieldFeatures;
@@ -1020,7 +1125,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
                        std::string_view("text2_data"))]
         .emplace(2);
 
-      ASSERT_EQ(2, docs_count(segment, "doc_text"));
+      ASSERT_EQ(2, docs_count(segment, kDocTextId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 2,
@@ -1036,17 +1141,12 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     ASSERT_EQ(2, segment.docs_count());
 
     {
-      auto fields = segment.fields();
-      size_t size = 0;
-      while (fields->next()) {
-        ++size;
-      }
-      ASSERT_EQ(7, size);
+      ASSERT_EQ(7, segment.field_ids().size());
     }
 
     // validate bytes field
     {
-      auto terms = segment.field("doc_bytes");
+      auto terms = segment.field(kDocBytesId);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features =
@@ -1058,7 +1158,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
                        std::string_view("bytes3_data"))]
         .emplace(1);
 
-      ASSERT_EQ(1, docs_count(segment, "doc_bytes"));
+      ASSERT_EQ(1, docs_count(segment, kDocBytesId));
       ASSERT_TRUE(irs::field_limits::valid(field.norm));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
@@ -1081,7 +1181,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate double field
     {
-      auto terms = segment.field("doc_double");
+      auto terms = segment.field(kDocDoubleId);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::DoubleField().GetIndexFeatures();
@@ -1102,7 +1202,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
           ;
       }
 
-      ASSERT_EQ(1, docs_count(segment, "doc_double"));
+      ASSERT_EQ(1, docs_count(segment, kDocDoubleId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ASSERT_TRUE(max.next() && max.next() && max.next() &&
@@ -1115,7 +1215,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate float field
     {
-      auto terms = segment.field("doc_float");
+      auto terms = segment.field(kDocFloatId);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::FloatField().GetIndexFeatures();
@@ -1136,7 +1236,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
           ;
       }
 
-      ASSERT_EQ(1, docs_count(segment, "doc_float"));
+      ASSERT_EQ(1, docs_count(segment, kDocFloatId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ASSERT_TRUE(max.next() && max.next());  // skip to last value
@@ -1148,7 +1248,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate int field
     {
-      auto terms = segment.field("doc_int");
+      auto terms = segment.field(kDocIntId);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::IntField().GetIndexFeatures();
@@ -1169,7 +1269,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
           ;
       }
 
-      ASSERT_EQ(1, docs_count(segment, "doc_int"));
+      ASSERT_EQ(1, docs_count(segment, kDocIntId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ASSERT_TRUE(max.next() && max.next());  // skip to last value
@@ -1181,7 +1281,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate long field
     {
-      auto terms = segment.field("doc_long");
+      auto terms = segment.field(kDocLongId);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::LongField().GetIndexFeatures();
@@ -1202,7 +1302,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
           ;
       }
 
-      ASSERT_EQ(1, docs_count(segment, "doc_long"));
+      ASSERT_EQ(1, docs_count(segment, kDocLongId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ASSERT_TRUE(max.next() && max.next() && max.next() &&
@@ -1215,7 +1315,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate string field
     {
-      auto terms = segment.field("doc_string");
+      auto terms = segment.field(kDocStringId);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = kStringFieldFeatures;
@@ -1231,7 +1331,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       expected_terms[irs::ViewCast<irs::byte_type>(
         std::string_view("string4_data"))];
 
-      ASSERT_EQ(2, docs_count(segment, "doc_string"));
+      ASSERT_EQ(2, docs_count(segment, kDocStringId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 2,
@@ -1242,7 +1342,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate text field
     {
-      auto terms = segment.field("doc_text");
+      auto terms = segment.field(kDocTextId);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = kTextFieldFeatures;
@@ -1256,7 +1356,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
                        std::string_view("text3_data"))]
         .emplace(1);
 
-      ASSERT_EQ(1, docs_count(segment, "doc_text"));
+      ASSERT_EQ(1, docs_count(segment, kDocTextId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 1,
@@ -1285,17 +1385,12 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   ASSERT_EQ(3, segment->docs_count());  // doc4 removed during merge
 
   {
-    auto fields = segment->fields();
-    size_t size = 0;
-    while (fields->next()) {
-      ++size;
-    }
-    ASSERT_EQ(7, size);
+    ASSERT_EQ(7, segment->field_ids().size());
   }
 
   // validate bytes field
   {
-    auto terms = segment->field("doc_bytes");
+    auto terms = segment->field(kDocBytesId);
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features =
@@ -1314,7 +1409,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
                      std::string_view("bytes3_data"))]
       .emplace(3);
 
-    ASSERT_EQ(3, docs_count(*segment, "doc_bytes"));
+    ASSERT_EQ(3, docs_count(*segment, kDocBytesId));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
     ValidateTerms(*segment, *terms, 3, bytes1, bytes3, 3, features,
@@ -1348,7 +1443,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
   // validate double field
   {
-    auto terms = segment->field("doc_double");
+    auto terms = segment->field(kDocDoubleId);
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::DoubleField().GetIndexFeatures();
@@ -1387,7 +1482,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
         ;
     }
 
-    ASSERT_EQ(3, docs_count(*segment, "doc_double"));
+    ASSERT_EQ(3, docs_count(*segment, kDocDoubleId));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
     ASSERT_TRUE(max.next() && max.next() && max.next() &&
@@ -1400,7 +1495,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
   // validate float field
   {
-    auto terms = segment->field("doc_float");
+    auto terms = segment->field(kDocFloatId);
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::FloatField().GetIndexFeatures();
@@ -1439,7 +1534,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
         ;
     }
 
-    ASSERT_EQ(3, docs_count(*segment, "doc_float"));
+    ASSERT_EQ(3, docs_count(*segment, kDocFloatId));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
     ASSERT_TRUE(max.next() && max.next());  // skip to last value
@@ -1451,7 +1546,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
   // validate int field
   {
-    auto terms = segment->field("doc_int");
+    auto terms = segment->field(kDocIntId);
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::IntField().GetIndexFeatures();
@@ -1490,7 +1585,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
         ;
     }
 
-    ASSERT_EQ(3, docs_count(*segment, "doc_int"));
+    ASSERT_EQ(3, docs_count(*segment, kDocIntId));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
     ASSERT_TRUE(max.next() && max.next());  // skip to last value
@@ -1502,7 +1597,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
   // validate long field
   {
-    auto terms = segment->field("doc_long");
+    auto terms = segment->field(kDocLongId);
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::LongField().GetIndexFeatures();
@@ -1541,7 +1636,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
         ;
     }
 
-    ASSERT_EQ(3, docs_count(*segment, "doc_long"));
+    ASSERT_EQ(3, docs_count(*segment, kDocLongId));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
     ASSERT_TRUE(max.next() && max.next() && max.next() &&
@@ -1554,7 +1649,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
   // validate string field
   {
-    auto terms = segment->field("doc_string");
+    auto terms = segment->field(kDocStringId);
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = kStringFieldFeatures;
@@ -1574,7 +1669,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
                      std::string_view("string3_data"))]
       .emplace(3);
 
-    ASSERT_EQ(3, docs_count(*segment, "doc_string"));
+    ASSERT_EQ(3, docs_count(*segment, kDocStringId));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
     ValidateTerms(*segment, *terms, 3,
@@ -1585,7 +1680,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
   // validate text field
   {
-    auto terms = segment->field("doc_text");
+    auto terms = segment->field(kDocTextId);
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = kTextFieldFeatures;
@@ -1605,7 +1700,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
                      std::string_view("text3_data"))]
       .emplace(3);
 
-    ASSERT_EQ(3, docs_count(*segment, "doc_text"));
+    ASSERT_EQ(3, docs_count(*segment, kDocTextId));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
     ValidateTerms(*segment, *terms, 3,
@@ -1619,18 +1714,16 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 // `doc_text`) over 4 docs total; the merge must keep all 4 docs and
 // re-expose each column under a stable id. Per-doc payloads are
 // distinct across the entire merged segment so we can cross-check
-// rows by exact value, not just non-empty payload bytes. Mirrors the
-// legacy multi-column scenario: pre-merge per-segment iteration of
-// every column, post-merge iteration of the merged column once via
-// VisitBlobColumn (the "cached" walk) and again via per-doc
-// BlobPointReader (the "uncached"/random-access walk).
+// rows by exact value, not just non-empty payload bytes. The merged
+// column is iterated twice: once via VisitBlobColumn (streaming) and
+// once via per-doc BlobPointReader (random-access).
 TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
   auto codec_ptr = Codec();
   ASSERT_NE(nullptr, codec_ptr);
-  constexpr irs::field_id kStringId = 1;   // doc_string
-  constexpr irs::field_id kIntId = 2;      // doc_int
-  constexpr irs::field_id kTextId = 3;     // doc_text -- per-doc unique
-  constexpr irs::field_id kUnusedId = 99;  // never registered
+  constexpr irs::field_id kStringId = kDocStringId;  // doc_string
+  constexpr irs::field_id kIntId = kDocIntId;        // doc_int
+  constexpr irs::field_id kTextId = kDocTextId;      // doc_text
+  constexpr irs::field_id kUnusedId = 99;            // never registered
   irs::MemoryDirectory dir;
 
   constexpr std::string_view kStrings[4] = {"string1_data", "string2_data",
@@ -1657,13 +1750,16 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
       auto seg = writer->GetBatch();
       for (size_t i = 0; i < 2; ++i) {
         auto doc = seg.Insert();
-        const tests::StringField s{"doc_string", std::string{kStrings[i]}};
+        tests::StringField s{"doc_string", std::string{kStrings[i]}};
+        s.id = kStringId;
         doc.Insert(s);
         irs::tests::StoreFieldAt(*doc.Columnstore(), kStringId, doc.DocId(), s);
-        const tests::IntField n{"doc_int", kInts[i]};
+        tests::IntField n{"doc_int", kInts[i]};
+        n.id = kIntId;
         doc.Insert(n);
         irs::tests::StoreFieldAt(*doc.Columnstore(), kIntId, doc.DocId(), n);
-        const tests::StringField t{"doc_text", kTexts[i]};
+        tests::StringField t{"doc_text", kTexts[i]};
+        t.id = kTextId;
         doc.Insert(t);
         irs::tests::StoreFieldAt(*doc.Columnstore(), kTextId, doc.DocId(), t);
       }
@@ -1673,13 +1769,16 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
       auto seg = writer->GetBatch();
       for (size_t i = 2; i < 4; ++i) {
         auto doc = seg.Insert();
-        const tests::StringField s{"doc_string", std::string{kStrings[i]}};
+        tests::StringField s{"doc_string", std::string{kStrings[i]}};
+        s.id = kStringId;
         doc.Insert(s);
         irs::tests::StoreFieldAt(*doc.Columnstore(), kStringId, doc.DocId(), s);
-        const tests::IntField n{"doc_int", kInts[i]};
+        tests::IntField n{"doc_int", kInts[i]};
+        n.id = kIntId;
         doc.Insert(n);
         irs::tests::StoreFieldAt(*doc.Columnstore(), kIntId, doc.DocId(), n);
-        const tests::StringField t{"doc_text", kTexts[i]};
+        tests::StringField t{"doc_text", kTexts[i]};
+        t.id = kTextId;
         doc.Insert(t);
         irs::tests::StoreFieldAt(*doc.Columnstore(), kTextId, doc.DocId(), t);
       }
@@ -1715,8 +1814,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
       // No accidental extra column at an unrelated id.
       ASSERT_EQ(nullptr, segment.Column(kUnusedId));
 
-      // Walk every doc in this segment with all three columns at once
-      // -- mirrors the legacy "iterate over column" sub-scenarios.
+      // Walk every doc in this segment with all three columns at once.
       irs::tests::BlobPointReader str_reader{segment, *str_col};
       irs::tests::BlobPointReader int_reader{segment, *int_col};
       irs::tests::BlobPointReader text_reader{segment, *text_col};
@@ -1793,9 +1891,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
   ASSERT_EQ(nullptr, merged.Column(/*another-unused=*/77));
 
   // Pass 1 -- iterate over the merged column using VisitBlobColumn
-  // (the "cached" / streaming walk in legacy terms). Collect rows into
-  // an unordered_map keyed by exact payload so we can confirm every
-  // doc shows up exactly once and the ordering is well-defined.
+  // (streaming walk). Collect rows into an unordered_map keyed by
+  // exact payload so we can confirm every doc shows up exactly once
+  // and the ordering is well-defined.
   {
     std::unordered_map<std::string, irs::doc_id_t> seen_strings;
     const bool ok = irs::tests::VisitBlobColumn(
@@ -1929,18 +2027,17 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
 // exclusive `another_column`. Removing doc4 before compaction must
 // either drop `another_column` from the merged segment or keep the
 // slot with all-null rows -- in any case every surviving live doc must
-// continue to read its doc_string + doc_int payload intact. Mirrors
-// the legacy "remove kills a column / surviving columns intact"
-// scenario, with two follow-up sub-scenarios: a per-segment pre-merge
-// walk of every (kStringId, kIntId) row, and a separate
-// fresh-directory case where the removed doc does NOT drop any column
-// (so 2 live docs survive and all 3 columns stay present).
+// continue to read its doc_string + doc_int payload intact. Two
+// sub-scenarios are exercised: a per-segment pre-merge walk of every
+// (kStringId, kIntId) row, and a separate fresh-directory case where
+// the removed doc does NOT drop any column (so 2 live docs survive
+// and all 3 columns stay present).
 TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
   auto codec_ptr = Codec();
   ASSERT_NE(nullptr, codec_ptr);
-  constexpr irs::field_id kStringId = 1;
-  constexpr irs::field_id kIntId = 2;
-  constexpr irs::field_id kAnotherId = 3;
+  constexpr irs::field_id kStringId = kDocStringId;
+  constexpr irs::field_id kIntId = kDocIntId;
+  constexpr irs::field_id kAnotherId = kAnotherColumnId;
   constexpr irs::field_id kUnusedId = 99;
   irs::MemoryDirectory dir;
 
@@ -1953,15 +2050,17 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
   {
     auto writer = irs::IndexWriter::Make(dir, codec_ptr, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
-    // Segment 0: doc1 + doc3 -- both have string + int (legacy layout).
+    // Segment 0: doc1 + doc3 -- both have string + int columns.
     {
       auto seg = writer->GetBatch();
       for (const size_t i : {0u, 2u}) {
         auto doc = seg.Insert();
-        const tests::StringField s{"doc_string", std::string{kStrings[i]}};
+        tests::StringField s{"doc_string", std::string{kStrings[i]}};
+        s.id = kStringId;
         doc.Insert(s);
         irs::tests::StoreFieldAt(*doc.Columnstore(), kStringId, doc.DocId(), s);
-        const tests::IntField n{"doc_int", kInts[i]};
+        tests::IntField n{"doc_int", kInts[i]};
+        n.id = kIntId;
         doc.Insert(n);
         irs::tests::StoreFieldAt(*doc.Columnstore(), kIntId, doc.DocId(), n);
       }
@@ -1972,19 +2071,23 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
       auto seg = writer->GetBatch();
       {
         auto doc = seg.Insert();
-        const tests::StringField s{"doc_string", std::string{kStrings[1]}};
+        tests::StringField s{"doc_string", std::string{kStrings[1]}};
+        s.id = kStringId;
         doc.Insert(s);
         irs::tests::StoreFieldAt(*doc.Columnstore(), kStringId, doc.DocId(), s);
-        const tests::IntField n{"doc_int", kInts[1]};
+        tests::IntField n{"doc_int", kInts[1]};
+        n.id = kIntId;
         doc.Insert(n);
         irs::tests::StoreFieldAt(*doc.Columnstore(), kIntId, doc.DocId(), n);
       }
       {
         auto doc = seg.Insert();
-        const tests::StringField s{"doc_string", std::string{kStrings[3]}};
+        tests::StringField s{"doc_string", std::string{kStrings[3]}};
+        s.id = kStringId;
         doc.Insert(s);
         irs::tests::StoreFieldAt(*doc.Columnstore(), kStringId, doc.DocId(), s);
-        const tests::StringField a{"another_column", "another_value"};
+        tests::StringField a{"another_column", "another_value"};
+        a.id = kAnotherId;
         doc.Insert(a);
         irs::tests::StoreFieldAt(*doc.Columnstore(), kAnotherId, doc.DocId(),
                                  a);
@@ -2139,9 +2242,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
     EXPECT_FALSE(seen.contains(std::string{kStrings[3]}));
   }
 
-  // Also verify the same expectation via VisitBlobColumn -- the
-  // legacy "iterate over column (cached)" path. The visitor must see
-  // exactly three rows.
+  // Also verify the same expectation via VisitBlobColumn (streaming
+  // walk). The visitor must see exactly three rows.
   {
     std::unordered_map<std::string, irs::doc_id_t> visited_strings;
     const bool ok = irs::tests::VisitBlobColumn(
@@ -2174,7 +2276,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
   }
 
   // `another_column` may survive as a column slot inherited from segment 1
-  // (the new cs's merge does not GC columns whose only source doc was
+  // (the cs merge does not GC columns whose only source doc was
   // removed) -- but every surviving doc must read null for it, and a
   // VisitBlobColumn walk must never invoke the visitor.
   if (const auto* another = merged.Column(kAnotherId); another != nullptr) {
@@ -2216,14 +2318,17 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
         auto seg = writer->GetBatch();
         for (size_t i = 0; i < 2; ++i) {
           auto d = seg.Insert();
-          const tests::StringField s{"doc_string", std::string{kStrings[i]}};
+          tests::StringField s{"doc_string", std::string{kStrings[i]}};
+          s.id = kStringId;
           d.Insert(s);
           irs::tests::StoreFieldAt(*d.Columnstore(), kStringId, d.DocId(), s);
-          const tests::IntField n{"doc_int", kInts[i]};
+          tests::IntField n{"doc_int", kInts[i]};
+          n.id = kIntId;
           d.Insert(n);
           irs::tests::StoreFieldAt(*d.Columnstore(), kIntId, d.DocId(), n);
-          const tests::StringField a{"another_column",
-                                     "shared_value_" + std::to_string(i)};
+          tests::StringField a{"another_column",
+                               "shared_value_" + std::to_string(i)};
+          a.id = kAnotherId;
           d.Insert(a);
           irs::tests::StoreFieldAt(*d.Columnstore(), kAnotherId, d.DocId(), a);
         }
@@ -2234,14 +2339,17 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
         auto seg = writer->GetBatch();
         for (size_t i = 2; i < 4; ++i) {
           auto d = seg.Insert();
-          const tests::StringField s{"doc_string", std::string{kStrings[i]}};
+          tests::StringField s{"doc_string", std::string{kStrings[i]}};
+          s.id = kStringId;
           d.Insert(s);
           irs::tests::StoreFieldAt(*d.Columnstore(), kStringId, d.DocId(), s);
-          const tests::IntField n{"doc_int", i == 3 ? 4 * 42 : kInts[i]};
+          tests::IntField n{"doc_int", i == 3 ? 4 * 42 : kInts[i]};
+          n.id = kIntId;
           d.Insert(n);
           irs::tests::StoreFieldAt(*d.Columnstore(), kIntId, d.DocId(), n);
-          const tests::StringField a{"another_column",
-                                     "shared_value_" + std::to_string(i)};
+          tests::StringField a{"another_column",
+                               "shared_value_" + std::to_string(i)};
+          a.id = kAnotherId;
           d.Insert(a);
           irs::tests::StoreFieldAt(*d.Columnstore(), kAnotherId, d.DocId(), a);
         }
@@ -2326,7 +2434,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
 }
 
 TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
-  GTEST_SKIP() << "sorted-index merge path not supported on new cs";
+  GTEST_SKIP() << "sorted-index merge path not supported";
 }
 
 INSTANTIATE_TEST_SUITE_P(

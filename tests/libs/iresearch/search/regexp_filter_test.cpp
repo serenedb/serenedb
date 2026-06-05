@@ -34,11 +34,52 @@
 
 namespace {
 
+// Stable per-name field ids for the regexp tests. Values come from the
+// canonical `tests::FieldIdFor` mapping so the shared factories and these
+// tests agree on which id a name maps to.
+[[maybe_unused]] inline constexpr irs::field_id kAltId =
+  tests::FieldIdFor("alt");
+[[maybe_unused]] inline constexpr irs::field_id kClassId =
+  tests::FieldIdFor("class");
+[[maybe_unused]] inline constexpr irs::field_id kDuplicatedId =
+  tests::FieldIdFor("duplicated");
+[[maybe_unused]] inline constexpr irs::field_id kFieldId =
+  tests::FieldIdFor("field");
+[[maybe_unused]] inline constexpr irs::field_id kField1Id =
+  tests::FieldIdFor("field1");
+[[maybe_unused]] inline constexpr irs::field_id kFooId =
+  tests::FieldIdFor("foo");
+[[maybe_unused]] inline constexpr irs::field_id kLongId =
+  tests::FieldIdFor("long");
+[[maybe_unused]] inline constexpr irs::field_id kMetaId =
+  tests::FieldIdFor("meta");
+[[maybe_unused]] inline constexpr irs::field_id kNameId =
+  tests::FieldIdFor("name");
+[[maybe_unused]] inline constexpr irs::field_id kNonexistentId =
+  tests::FieldIdFor("nonexistent");
+[[maybe_unused]] inline constexpr irs::field_id kOptId =
+  tests::FieldIdFor("opt");
+[[maybe_unused]] inline constexpr irs::field_id kPlusId =
+  tests::FieldIdFor("plus");
+[[maybe_unused]] inline constexpr irs::field_id kPrefixId =
+  tests::FieldIdFor("prefix");
+[[maybe_unused]] inline constexpr irs::field_id kRedosId =
+  tests::FieldIdFor("redos");
+[[maybe_unused]] inline constexpr irs::field_id kSameId =
+  tests::FieldIdFor("same");
+[[maybe_unused]] inline constexpr irs::field_id kSame1Id =
+  tests::FieldIdFor("same1");
+[[maybe_unused]] inline constexpr irs::field_id kTermId =
+  tests::FieldIdFor("term");
+[[maybe_unused]] inline constexpr irs::field_id kUtf8Id =
+  tests::FieldIdFor("utf8");
+[[maybe_unused]] inline constexpr irs::field_id kWsId = tests::FieldIdFor("ws");
+
 template<typename Filter = irs::ByRegexp>
 Filter MakeFilter(std::string_view field, std::string_view value,
                   irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl) {
   Filter q;
-  *q.mutable_field() = field;
+  *q.mutable_field_id() = tests::FieldIdFor(field);
   if constexpr (std::is_same_v<Filter, irs::ByRegexp>) {
     *q.mutable_options() =
       irs::ByRegexpOptions{irs::ViewCast<irs::byte_type>(value), syntax};
@@ -49,7 +90,8 @@ Filter MakeFilter(std::string_view field, std::string_view value,
 }
 
 irs::Filter::ptr MakeRegexp(std::string_view field, std::string_view value) {
-  return irs::CreateByRegexp(field, irs::ViewCast<irs::byte_type>(value));
+  return irs::CreateByRegexp(tests::FieldIdFor(field),
+                             irs::ViewCast<irs::byte_type>(value));
 }
 
 }  // namespace
@@ -66,7 +108,7 @@ TEST(by_regexp_test, ctor) {
   irs::ByRegexp q;
   ASSERT_EQ(irs::Type<irs::ByRegexp>::id(), q.type());
   ASSERT_EQ(irs::ByRegexpOptions{}, q.options());
-  ASSERT_TRUE(q.field().empty());
+  ASSERT_FALSE(irs::field_limits::valid(q.field_id()));
   ASSERT_EQ(irs::kNoBoost, q.Boost());
 }
 
@@ -539,7 +581,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
   // scored_terms_limit = 1 -> only 1 term gets scored
   {
     irs::ByRegexp q;
-    *q.mutable_field() = "prefix";
+    *q.mutable_field_id() = kPrefixId;
     *q.mutable_options() = irs::ByRegexpOptions{
       irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"))};
     q.mutable_options()->scored_terms_limit = 1;
@@ -550,7 +592,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
   // scored_terms_limit = 0
   {
     irs::ByRegexp q;
-    *q.mutable_field() = "prefix";
+    *q.mutable_field_id() = kPrefixId;
     *q.mutable_options() = irs::ByRegexpOptions{
       irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"))};
     q.mutable_options()->scored_terms_limit = 0;
@@ -561,7 +603,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
   // scored_terms_limit very large
   {
     irs::ByRegexp q;
-    *q.mutable_field() = "prefix";
+    *q.mutable_field_id() = kPrefixId;
     *q.mutable_options() = irs::ByRegexpOptions{
       irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"))};
     q.mutable_options()->scored_terms_limit = 1000000;
@@ -880,13 +922,13 @@ TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
     irs::Or d;
     {
       auto& s = d.add<irs::ByRegexp>();
-      *s.mutable_field() = "alt";
+      *s.mutable_field_id() = kAltId;
       *s.mutable_options() = irs::ByRegexpOptions{
         irs::ViewCast<irs::byte_type>(std::string_view{"cat"})};
     }
     {
       auto& s = d.add<irs::ByRegexp>();
-      *s.mutable_field() = "alt";
+      *s.mutable_field_id() = kAltId;
       *s.mutable_options() = irs::ByRegexpOptions{
         irs::ViewCast<irs::byte_type>(std::string_view{"dog"})};
     }
@@ -896,13 +938,13 @@ TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
     irs::And c;
     {
       auto& s = c.add<irs::ByRegexp>();
-      *s.mutable_field() = "term";
+      *s.mutable_field_id() = kTermId;
       *s.mutable_options() = irs::ByRegexpOptions{
         irs::ViewCast<irs::byte_type>(std::string_view{"foo.*"})};
     }
     {
       auto& s = c.add<irs::ByRegexp>();
-      *s.mutable_field() = "alt";
+      *s.mutable_field_id() = kAltId;
       *s.mutable_options() = irs::ByRegexpOptions{
         irs::ViewCast<irs::byte_type>(std::string_view{"cat"})};
     }
@@ -912,13 +954,13 @@ TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
     irs::Or d;
     {
       auto& s = d.add<irs::ByRegexp>();
-      *s.mutable_field() = "term";
+      *s.mutable_field_id() = kTermId;
       *s.mutable_options() = irs::ByRegexpOptions{
         irs::ViewCast<irs::byte_type>(std::string_view{"foobar"})};
     }
     {
       auto& s = d.add<irs::ByTerm>();
-      *s.mutable_field() = "term";
+      *s.mutable_field_id() = kTermId;
       s.mutable_options()->term =
         irs::ViewCast<irs::byte_type>(std::string_view("bar"));
     }
@@ -1052,7 +1094,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_literal) {
   }
   auto index = open_reader();
   auto& segment = index[0];
-  const auto* reader = segment.field("prefix");
+  const auto* reader = segment.field(kPrefixId);
   ASSERT_NE(nullptr, reader);
   {
     auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
@@ -1074,7 +1116,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_prefix) {
   }
   auto index = open_reader();
   auto& segment = index[0];
-  const auto* reader = segment.field("prefix");
+  const auto* reader = segment.field(kPrefixId);
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("ab.*"));
     tests::EmptyFilterVisitor v;
@@ -1094,7 +1136,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_wildcard_like) {
   }
   auto index = open_reader();
   auto& segment = index[0];
-  const auto* reader = segment.field("prefix");
+  const auto* reader = segment.field(kPrefixId);
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("a.c.*"));
     tests::EmptyFilterVisitor v;
@@ -1115,7 +1157,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_invalid_pattern) {
   }
   auto index = open_reader();
   auto& segment = index[0];
-  const auto* reader = segment.field("prefix");
+  const auto* reader = segment.field(kPrefixId);
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("(abc"));
     tests::EmptyFilterVisitor v;
@@ -1617,7 +1659,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_with_syntax) {
   }
   auto index = open_reader();
   auto& segment = index[0];
-  const auto* reader = segment.field("prefix");
+  const auto* reader = segment.field(kPrefixId);
   ASSERT_NE(nullptr, reader);
 
   auto p = irs::ViewCast<irs::byte_type>(std::string_view("\\d+"));

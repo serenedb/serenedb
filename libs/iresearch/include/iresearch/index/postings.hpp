@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <duckdb/common/types/string_type.hpp>
+
 #include "basics/noncopyable.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/utils/block_pool.hpp"
@@ -56,9 +58,14 @@ using byte_block_pool =
 
 struct Posting {
   explicit Posting(const byte_type* data, size_t size) noexcept
-    : term{data, size} {}
+    : term{reinterpret_cast<const char*>(data), static_cast<uint32_t>(size)} {}
 
-  bytes_view term;
+  bytes_view TermBytes() const noexcept {
+    return bytes_view{reinterpret_cast<const byte_type*>(term.GetData()),
+                      term.GetSize()};
+  }
+
+  duckdb::string_t term;
   uint64_t doc_code{0};
   // ...........................................................................
   // store pointers to data in the following way:
@@ -108,7 +115,7 @@ class Postings : util::Noncopyable {
     bool operator()(const Ref& lhs,
                     const hashed_bytes_view& rhs) const noexcept {
       SDB_ASSERT(lhs.ref < _data->size());
-      return (*_data)[lhs.ref].term == rhs;
+      return (*_data)[lhs.ref].TermBytes() == rhs;
     }
 
     bool operator()(const hashed_bytes_view& lhs,

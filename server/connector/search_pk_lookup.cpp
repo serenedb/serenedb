@@ -44,9 +44,9 @@ void SegmentPkSequentialFetcher::Fetch(
              static_cast<uint64_t>(irs::doc_limits::min());
     }
   };
-  irs::columnstore::ColumnReader::RangeScan range{*_pk_col, _ctx};
-  irs::columnstore::ColumnReader::ScanRowsBatched(range, RowView{sorted_docs},
-                                                  out, out_start);
+  irs::ColumnReader::RangeScan range{*_pk_col, _ctx};
+  irs::ColumnReader::ScanRowsBatched(range, RowView{sorted_docs}, out,
+                                     out_start);
 }
 
 }  // namespace sdb::connector

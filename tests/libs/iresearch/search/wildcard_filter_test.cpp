@@ -161,14 +161,16 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
 
   // term query
   {
-    auto lhs = MakeFilter<irs::ByTerm>(kFooId, "").prepare({
-      .index = irs::SubReader::empty(),
-      .memory = counter,
-    });
-    auto rhs = MakeWildcard(kFooId, "")->prepare({
-      .index = irs::SubReader::empty(),
-      .memory = counter,
-    });
+    auto lhs = MakeFilter<irs::ByTerm>(kFooId, "")
+                 .prepare({
+                   .index = irs::SubReader::empty(),
+                   .memory = counter,
+                 });
+    auto rhs = MakeWildcard(kFooId, "")
+                 ->prepare({
+                   .index = irs::SubReader::empty(),
+                   .memory = counter,
+                 });
     auto& lhs_ref = *lhs;
     auto& rhs_ref = *rhs;
     ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
@@ -259,10 +261,11 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
 
   // all query
   {
-    auto lhs = MakeFilter<irs::ByPrefix>(kFooId, "").prepare({
-      .index = irs::SubReader::empty(),
-      .memory = counter,
-    });
+    auto lhs = MakeFilter<irs::ByPrefix>(kFooId, "")
+                 .prepare({
+                   .index = irs::SubReader::empty(),
+                   .memory = counter,
+                 });
     auto rhs = MakeWildcard(kFooId, "%")
                  ->prepare({
                    .index = irs::SubReader::empty(),
@@ -278,10 +281,11 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
 
   // all query
   {
-    auto lhs = MakeFilter<irs::ByPrefix>(kFooId, "").prepare({
-      .index = irs::SubReader::empty(),
-      .memory = counter,
-    });
+    auto lhs = MakeFilter<irs::ByPrefix>(kFooId, "")
+                 .prepare({
+                   .index = irs::SubReader::empty(),
+                   .memory = counter,
+                 });
     auto rhs = MakeWildcard(kFooId, "%%")
                  ->prepare({
                    .index = irs::SubReader::empty(),
@@ -551,7 +555,8 @@ TEST_P(WildcardFilterTestCase, simple_sequential) {
     Docs docs{26};
     Costs costs{docs.size()};
 
-    CheckQuery(*MakeWildcard(kUtf8Id, "\xD0\xB2\x25\xD0\xB9"), docs, costs, rdr);
+    CheckQuery(*MakeWildcard(kUtf8Id, "\xD0\xB2\x25\xD0\xB9"), docs, costs,
+               rdr);
     CheckQuery(*MakeWildcard(kUtf8Id, "\xD0\xB2\x25\x25\xD0\xB9"), docs, costs,
                rdr);
   }

@@ -1,9 +1,0 @@
-target_sources(
-    sereneserver
-    PRIVATE
-        connection_statistics.cpp
-        descriptions.cpp
-        request_statistics.cpp
-        server_statistics.cpp
-        statistics_feature.cpp
-)

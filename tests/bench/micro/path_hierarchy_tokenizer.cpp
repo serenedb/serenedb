@@ -27,11 +27,8 @@ namespace {
 using Options = irs::analysis::PathHierarchyTokenizer::Options;
 
 void InitOnce() {
-  static bool gInitialized = []() {
-    irs::analysis::PathHierarchyTokenizer::init();
-    return true;
-  }();
-  (void)gInitialized;
+  // No-op: the legacy registry init no longer exists. The bench-style
+  // helpers below construct analyzers directly via Make(Options).
 }
 
 std::string GeneratePath(size_t segments, std::string_view delimiter) {
@@ -64,7 +61,7 @@ static void BmForwardSingleCharZeroCopy(benchmark::State& state) {
   options.reverse = false;
 
   auto tokenizer =
-    irs::analysis::PathHierarchyTokenizer::make(Options{options});
+    irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
   for (auto _ : state) {
     tokenizer->reset(input);
@@ -92,7 +89,7 @@ static void BmForwardMultiCharZeroCopy(benchmark::State& state) {
   options.reverse = false;
 
   auto tokenizer =
-    irs::analysis::PathHierarchyTokenizer::make(Options{options});
+    irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
   for (auto _ : state) {
     tokenizer->reset(input);
@@ -121,7 +118,7 @@ static void BmForwardBuffered(benchmark::State& state) {
   options.buffer_size = 4096;
 
   auto tokenizer =
-    irs::analysis::PathHierarchyTokenizer::make(Options{options});
+    irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
   for (auto _ : state) {
     tokenizer->reset(input);
@@ -149,7 +146,7 @@ static void BmReverseSingleCharZeroCopy(benchmark::State& state) {
   options.reverse = true;
 
   auto tokenizer =
-    irs::analysis::PathHierarchyTokenizer::make(Options{options});
+    irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
   for (auto _ : state) {
     tokenizer->reset(input);
@@ -176,7 +173,7 @@ static void BmReverseMultiCharZeroCopy(benchmark::State& state) {
   options.reverse = true;
 
   auto tokenizer =
-    irs::analysis::PathHierarchyTokenizer::make(Options{options});
+    irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
   for (auto _ : state) {
     tokenizer->reset(input);
@@ -204,7 +201,7 @@ static void BmReverseBuffered(benchmark::State& state) {
   options.buffer_size = 4096;
 
   auto tokenizer =
-    irs::analysis::PathHierarchyTokenizer::make(Options{options});
+    irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
   for (auto _ : state) {
     tokenizer->reset(input);
@@ -236,7 +233,7 @@ static void BmForwardWithSkip(benchmark::State& state) {
   options.skip = skip;
 
   auto tokenizer =
-    irs::analysis::PathHierarchyTokenizer::make(Options{options});
+    irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
   for (auto _ : state) {
     tokenizer->reset(input);
@@ -264,7 +261,7 @@ static void BmReverseWithSkip(benchmark::State& state) {
   options.skip = skip;
 
   auto tokenizer =
-    irs::analysis::PathHierarchyTokenizer::make(Options{options});
+    irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
   for (auto _ : state) {
     tokenizer->reset(input);
@@ -289,7 +286,7 @@ static void BmForwardNoDelimiters(benchmark::State& state) {
   options.reverse = false;
 
   auto tokenizer =
-    irs::analysis::PathHierarchyTokenizer::make(Options{options});
+    irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
   for (auto _ : state) {
     tokenizer->reset(input);
@@ -313,7 +310,7 @@ static void BmReverseNoDelimiters(benchmark::State& state) {
   options.reverse = true;
 
   auto tokenizer =
-    irs::analysis::PathHierarchyTokenizer::make(Options{options});
+    irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
   for (auto _ : state) {
     tokenizer->reset(input);

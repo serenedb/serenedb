@@ -1,6 +1,3 @@
-add_subdirectory(fuerte)
-add_subdirectory(vpack)
-
 # set test resource directory
 set(IRS_TEST_RESOURCE_DIR ${CMAKE_SOURCE_DIR}/resources/tests/iresearch)
 

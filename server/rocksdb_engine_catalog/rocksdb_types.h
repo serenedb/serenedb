@@ -29,60 +29,6 @@
 
 namespace sdb {
 
-////////////////////////////////////////////////////////////////////////////////
-/// Used to for various metadata in the write-ahead-log
-/// @note for deprecated values please leave the value in the enum as a comment
-////////////////////////////////////////////////////////////////////////////////
-// TODO(mbkkt) these values are random shit, fix it
-enum class RocksDBLogType : char {
-  Invalid = 0,
-
-  DatabaseCreate = '1',
-  DatabaseDrop = '2',
-  // TODO(mbkkt) implement database change?
-
-  FunctionCreate = '+',
-  FunctionDrop = '-',
-  // TODO(mbkkt) implement function change?
-
-  TableCreate = '3',
-  TableDrop = '4',
-  // TODO(mbkkt) why change and rename are different?
-  TableRename = '5',
-  TableChange = '6',
-
-  IndexCreate = '7',
-  IndexDrop = '8',
-  // TODO(mbkkt, dronplane) implement index change?
-
-  ViewCreate = '9',
-  ViewDrop = ':',
-  ViewChange = ';',
-
-  RoleCreate = 'r',
-  RoleDrop = 't',
-  RoleChange = 'u',
-
-  SchemaCreate = 's',
-  SchemaDrop = 'c',
-  SchemaChange = 'i',
-
-  BeginTransaction = '<',
-  CommitTransaction = '?',
-
-  // Optimization for single operation, we put 1 log entry instead of 2
-  // (begin + commit transaction)
-  // TODO(mbkkt) it's probably incorrect for update/replace
-  // TODO(mbkkt) it can be removed when commit will be optional
-  SingleOperation = 'D',
-
-  TableTruncate = 'G',
-
-  // TODO(mbkkt) below used for build index, maybe we can avoid it?
-  TrackedDocumentInsert = 'I',
-  TrackedDocumentRemove = 'J',
-};
-
 /// settings keys
 // TODO(mbkkt) these values are random shit, fix it
 enum class RocksDBSettingsType : char {

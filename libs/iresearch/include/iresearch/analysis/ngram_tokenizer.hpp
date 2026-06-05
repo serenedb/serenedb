@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
@@ -43,34 +43,19 @@ class NGramTokenizerBase : public TypedAnalyzer<NGramTokenizerBase>,
   };
 
   struct Options {
-    Options() noexcept = default;
-    Options(size_t min, size_t max, bool original,
-            InputType stream_type = InputType::Binary) noexcept
-      : min_gram{min},
-        max_gram{max},
-        preserve_original{original},
-        stream_bytes_type{stream_type} {}
-    Options(size_t min, size_t max, bool original, InputType stream_type,
-            bytes_view start, bytes_view end)
-      : min_gram{min},
-        max_gram{max},
-        preserve_original{original},
-        stream_bytes_type{stream_type},
-        start_marker{start},
-        end_marker{end} {}
-
+    using Owner = NGramTokenizerBase;
     size_t min_gram{0};
     size_t max_gram{0};
     bool preserve_original{true};  // emit input data as a token
     InputType stream_bytes_type{InputType::Binary};
-    irs::bstring start_marker;  // marker of ngrams at the beginning of stream
-    irs::bstring end_marker;    // marker of ngrams at the end of strem
+    bstring start_marker;  // marker of ngrams at the beginning of stream
+    bstring end_marker;    // marker of ngrams at the end of strem
   };
 
   static constexpr std::string_view type_name() noexcept { return "ngram"; }
-  static void init();  // for trigering registration in a static build
+  static ptr Make(Options opts);
 
-  explicit NGramTokenizerBase(const Options& options);
+  explicit NGramTokenizerBase(Options&& options);
 
   bool reset(std::string_view value) noexcept final;
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -119,9 +104,9 @@ class NGramTokenizerBase : public TypedAnalyzer<NGramTokenizerBase>,
 template<NGramTokenizerBase::InputType StreamType>
 class NGramTokenizer : public NGramTokenizerBase {
  public:
-  static ptr make(const NGramTokenizerBase::Options& options);
+  static ptr make(NGramTokenizerBase::Options&& options);
 
-  explicit NGramTokenizer(const NGramTokenizerBase::Options& options);
+  explicit NGramTokenizer(NGramTokenizerBase::Options&& options);
 
   bool next() noexcept final;
 

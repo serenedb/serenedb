@@ -69,8 +69,7 @@ rm -f "${NATIVE_DB}" "${NATIVE_DB}.wal"
 
 echo "starting ${SERENED_BIN} on port ${PORT} with data dir ${SERENED_DATA_DIR}"
 "${SERENED_BIN}" "${SERENED_DATA_DIR}" \
-	--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
-	--log.foreground-tty true \
+	--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
 	>"${LOG}" 2>&1 &
 SERENED_PID=$!
 trap "kill -9 ${SERENED_PID} >/dev/null 2>&1 || true" EXIT
@@ -175,7 +174,7 @@ NDB_SQL_PATH=$(printf '%s' "${NATIVE_DB}" | sed "s/'/''/g")
 # bare references like `hits_native` still resolve. Native CREATE TABLE is
 # explicitly qualified (matches the iceberg.test_slow convention).
 run_setup "attach_native_db" "${BUILD_THREADS}" "
-ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
+ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);
 SET search_path TO public, native_db.main;
 "
 

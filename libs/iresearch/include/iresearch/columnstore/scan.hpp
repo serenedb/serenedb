@@ -68,6 +68,7 @@ inline std::unique_ptr<MaterializeState> MakeMaterializeState(
       SDB_ASSERT(child);
       state->children.push_back(MakeMaterializeState(*child, ctx));
     } break;
+    case duckdb::LogicalTypeId::VARIANT:
     case duckdb::LogicalTypeId::STRUCT: {
       state->children.reserve(reader.StructFieldCount());
       for (size_t fi = 0; fi < reader.StructFieldCount(); ++fi) {
@@ -160,6 +161,7 @@ void MaterializeNode(const ColumnReader& reader, MaterializeState& state,
       }
       return;
     }
+    case duckdb::LogicalTypeId::VARIANT:
     case duckdb::LogicalTypeId::STRUCT: {
       auto& entries = duckdb::StructVector::GetEntries(out_vec);
       SDB_ASSERT(entries.size() == reader.StructFieldCount());

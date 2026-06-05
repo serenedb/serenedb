@@ -33,12 +33,11 @@ jobs:
               '### CI Triggers',
               '_Check **Trigger Jobs** to start. Optionally enable extra checks below._',
               '',
-              '#### Extra (optional)',
+              '#### Extra (optional, additive -- ASAN+TSAN functional run by default)',
               '- [ ] All architectures (amd64 + arm64)',
-              '- [ ] ASAN',
-              '- [ ] TSAN',
-              '- [ ] MSAN',
-              '- [x] SearchBench',
+              '- [ ] Ignore diff, run everything',
+              '- [ ] Extra ASAN (full suite set under ASAN, not just ours + drivers)',
+              '- [ ] Extra TSAN (full suite set under TSAN, not just ours + drivers)',
               '',
               '---',
               '- [ ] **Trigger Jobs**',
@@ -102,10 +101,9 @@ jobs:
             const isChecked = (label) => body.includes(`- [x] ${label}`);
 
             const allArch = isChecked('All architectures');
-            const enableAsan = isChecked('ASAN');
-            const enableTsan = isChecked('TSAN');
-            const enableMsan = isChecked('MSAN');
-            const enableSearchbench = isChecked('SearchBench');
+            const everything = isChecked('Ignore diff, run everything');
+            const extraAsan = isChecked('Extra ASAN');
+            const extraTsan = isChecked('Extra TSAN');
 
             const { owner, repo } = context.repo;
             const statusContext = 'serenedb | build & test';
@@ -117,24 +115,9 @@ jobs:
               context: statusContext,
             });
 
-            // Cancel in-progress runs on the dispatch branch
-            const { data: runs } = await github.rest.actions.listWorkflowRuns({
-              owner, repo, workflow_id: 'build-manual.yml', branch: dispatchRef,
-              status: 'in_progress', per_page: 10,
-            });
-            for (const run of runs.workflow_runs) {
-              core.info(`Cancelling run #${run.id} (${run.status})`);
-              await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id }).catch(() => {});
-            }
-            // Also cancel queued/waiting runs
-            const { data: queued } = await github.rest.actions.listWorkflowRuns({
-              owner, repo, workflow_id: 'build-manual.yml', branch: dispatchRef,
-              status: 'queued', per_page: 10,
-            });
-            for (const run of queued.workflow_runs) {
-              core.info(`Cancelling queued run #${run.id}`);
-              await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id }).catch(() => {});
-            }
+            // A superseding run is cancelled by build-manual's per-PR concurrency
+            // group (keyed on PR_NUMBER). Cancelling by branch here would also kill
+            // other fork PRs, which all dispatch on the shared base ref.
 
             // Snapshot latest run ID before dispatch
             const { data: before } = await github.rest.actions.listWorkflowRuns({
@@ -148,12 +131,11 @@ jobs:
               ref: dispatchRef,
               inputs: {
                 LOCATION: allArch ? 'all' : 'linux-amd64',
-                ENABLE_ASAN: enableAsan.toString(),
-                ENABLE_TSAN: enableTsan.toString(),
-                ENABLE_MSAN: enableMsan.toString(),
-                ENABLE_SEARCHBENCH: enableSearchbench.toString(),
-                VALIDATE_PG_TESTS: 'true',
+                EVERYTHING: everything.toString(),
+                EXTRA_ASAN: extraAsan.toString(),
+                EXTRA_TSAN: extraTsan.toString(),
                 PR_SHA: sha,
+                PR_NUMBER: String(context.payload.issue.number),
                 BUILD_CONFIG: JSON.stringify({
                   TRIGGERED_BY: context.actor,
                   PR_SHA: sha,
@@ -187,10 +169,9 @@ jobs:
             });
 
             const opts = [
-              enableAsan && 'asan',
-              enableTsan && 'tsan',
-              enableMsan && 'msan',
-              enableSearchbench && 'searchbench',
+              everything && 'everything',
+              extraAsan && 'extra-asan',
+              extraTsan && 'extra-tsan',
               allArch && 'all arch',
             ].filter(Boolean);
             const optsStr = opts.length > 0 ? opts.join(', ') : 'default';

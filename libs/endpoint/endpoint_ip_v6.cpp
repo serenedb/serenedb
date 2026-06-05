@@ -21,14 +21,10 @@
 
 #include "endpoint_ip_v6.h"
 
-#include "endpoint/endpoint.h"
-
 using namespace sdb;
 
-EndpointIpV6::EndpointIpV6(EndpointType type, TransportType transport,
-                           EncryptionType encryption, int listen_backlog,
-                           bool reuse_address, const std::string& host,
-                           const uint16_t port)
-  : EndpointIp(DomainType::IPv6, type, transport, encryption, listen_backlog,
+EndpointIpV6::EndpointIpV6(TransportType transport, EncryptionType encryption,
+                           int listen_backlog, bool reuse_address,
+                           const std::string& host, const uint16_t port)
+  : EndpointIp(DomainType::IPv6, transport, encryption, listen_backlog,
                reuse_address, host, port) {}
-bool EndpointIpV6::isBroadcastBind() const { return host() == "::"; }

@@ -6,7 +6,7 @@
 #
 #   * Local debug: developer starts serened by hand
 #       ninja serened
-#       ./build/bin/serened /tmp/datadir --server.endpoint pgsql+tcp://0.0.0.0:5432 --server.authentication 0
+#       ./build/bin/serened /tmp/datadir --server_endpoints pgsql+tcp://0.0.0.0:5432
 #       tests/drivers/run.sh --lang python
 #
 #   * Docker (CI):
@@ -27,7 +27,7 @@ declare -A defaults=(
 	[port]='5432'
 	[database]='postgres'
 	[user]='postgres'
-	[lang]='python,java,js,go,rust,php,csharp,c,ruby,r,sqlsmith'
+	[lang]='python,java,js,go,rust,php,csharp,c,ruby,psql'
 	[driver]=''
 	[protocols]='simple,extended-noparam,extended-text,extended-binary'
 	[types]='.*'
@@ -49,8 +49,9 @@ usage() {
 		  --user NAME          PG user (default ${defaults[user]})
 
 		Selection:
-		  --lang LIST          comma list: python,java,js,go,rust,php,csharp,c,ruby,r
-		                       (default: all)
+		  --lang LIST          comma list: python,java,js,go,rust,php,csharp,c,ruby,r,sqlsmith,psql
+		                       (default: all except r; r is slow, so pass --lang r
+		                        explicitly -- in CI it rides the sqlsmith tier)
 		  --driver LIST        comma list of <lang>_<driver> filters,
 		                       e.g. python_psycopg3,go_pgx
 		  --protocols LIST     simple,extended-noparam,extended-text,extended-binary
@@ -186,6 +187,7 @@ declare -A lang_runner=(
 	[ruby]="${SCRIPT_DIR}/ruby/run.sh"
 	[r]="${SCRIPT_DIR}/r/run.sh"
 	[sqlsmith]="${SCRIPT_DIR}/sqlsmith/run.sh"
+	[psql]="${SCRIPT_DIR}/psql/run.sh"
 )
 
 IFS=',' read -ra langs <<<"${args[lang]}"
@@ -302,6 +304,7 @@ declare -A lang_junit_glob=(
 	[r]="$SDB_DRV_JUNIT/tests-drivers-r-junit.xml"
 	[ruby]="$SDB_DRV_JUNIT/tests-drivers-ruby-junit.xml"
 	[rust]="$SDB_DRV_JUNIT/tests-drivers-rust-junit.xml"
+	[psql]="$SDB_DRV_JUNIT/tests-drivers-psql-junit.xml"
 )
 
 # Count tests/failures/errors across one or more junit files. Detection

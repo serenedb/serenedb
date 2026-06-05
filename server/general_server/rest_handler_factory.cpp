@@ -22,7 +22,7 @@
 #include "rest_handler_factory.h"
 
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "rest/general_request.h"
 #include "rest/general_response.h"
 
@@ -33,7 +33,7 @@ using namespace sdb::rest;
 RestHandlerFactory::RestHandlerFactory() : _sealed(false) {}
 
 std::shared_ptr<RestHandler> RestHandlerFactory::createHandler(
-  SerenedServer& server, std::unique_ptr<GeneralRequest> req,
+  app::AppServer& server, std::unique_ptr<GeneralRequest> req,
   std::unique_ptr<GeneralResponse> res) const {
   SDB_ASSERT(_sealed);
 

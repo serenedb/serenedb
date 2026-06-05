@@ -22,17 +22,17 @@
 #include "table_shard.h"
 
 #include <absl/strings/str_cat.h>
-#include <vpack/builder.h>
-#include <vpack/collection.h>
-#include <vpack/iterator.h>
-#include <vpack/slice.h>
 
 #include <atomic>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <filesystem>
 #include <system_error>
+#include <tuple>
 #include <yaclib/async/make.hpp>
 
 #include "basics/errors.h"
+#include "basics/serializer.h"
 #include "catalog/object.h"
 #include "catalog/table.h"
 #include "connector/key_utils.hpp"
@@ -47,15 +47,41 @@ namespace sdb {
 
 TableShard::TableShard(ObjectId id, ObjectId table_id,
                        const catalog::TableStats& stats)
-  : catalog::Object{ObjectId{0}, id, "", catalog::ObjectType::TableShard},
-    _table_id{table_id},
+  : catalog::Object{table_id, id, "", catalog::ObjectType::TableShard},
     _num_rows{stats.num_rows} {}
 
 TableShard::TableShard(ObjectId table_id, const catalog::TableStats& stats)
-  : catalog::Object{ObjectId{0}, ObjectId{0}, "",
-                    catalog::ObjectType::TableShard},
-    _table_id{table_id},
+  : catalog::Object{table_id, ObjectId{0}, "", catalog::ObjectType::TableShard},
     _num_rows{stats.num_rows} {}
+
+// Persists (StorageKind, stats) so the catalog reconstructs the right subclass
+// on load (search vs rocksdb). DeserializeStorageKind reads the leading kind for
+// that dispatch; DeserializeStats reads the stats.
+void TableShard::Serialize(duckdb::Serializer& sink) const {
+  basics::WriteTuple(sink, std::forward_as_tuple(GetStorage(), GetTableStats()));
+}
+
+namespace {
+std::tuple<catalog::StorageKind, catalog::TableStats> DeserializeShard(
+  std::string_view bytes) {
+  duckdb::MemoryStream stream{
+    const_cast<duckdb::data_t*>(
+      reinterpret_cast<const duckdb::data_t*>(bytes.data())),
+    bytes.size()};
+  duckdb::BinaryDeserializer deserializer{stream};
+  std::tuple<catalog::StorageKind, catalog::TableStats> out;
+  basics::ReadTuple(deserializer, out);
+  return out;
+}
+}  // namespace
+
+catalog::TableStats TableShard::DeserializeStats(std::string_view bytes) {
+  return std::get<1>(DeserializeShard(bytes));
+}
+
+catalog::StorageKind TableShard::DeserializeStorageKind(std::string_view bytes) {
+  return std::get<0>(DeserializeShard(bytes));
+}
 
 Result TableShard::DropArtifacts(catalog::StorageKind kind, ObjectId db_id,
                                  ObjectId schema_id, ObjectId table_id,

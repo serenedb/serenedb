@@ -144,9 +144,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
     search_trx.reset();
     if (created && !finalized) {
       try {
-        auto& catalog = SerenedServer::Instance()
-                          .getFeature<catalog::CatalogFeature>()
-                          .Global();
+        auto& catalog = catalog::CatalogFeature::instance().Global();
         std::ignore =
           catalog.DropIndex(database_name, schema_name, index_name, true);
       } catch (...) {
@@ -221,8 +219,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     state->progress = sdb_state->progress.get();
   }
 
-  auto& catalog_feature =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+  auto& catalog_feature = catalog::CatalogFeature::instance();
   auto& catalog_impl = catalog_feature.Global();
 
   // Determine index type
@@ -276,9 +273,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       opclass_options = _info->column_opclass_options[i];
     }
 
-    // Pre-bind: macros inline at bind, so the bound tree wouldn't see them.
-    RejectUserDefinedFunctions(*expr, context);
-
     if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
       auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
       auto col_name = col_ref.GetColumnName();
@@ -302,7 +296,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
     auto normalized = NormalizeBoundExpression(*bound_expr, relation_id,
                                                col_index_to_id, context);
-    RejectUserDefinedFunctions(*normalized, context);
     std::string serialized = SerializeBoundExpression(*normalized);
     auto dependent_columns = CollectDependentColumns(*normalized);
     if (dependent_columns.empty()) {
@@ -760,8 +753,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     gstate.progress->SetPhase(pg::create_index_progress::Phase::Finalizing);
   }
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto& catalog = catalog::CatalogFeature::instance().Global();
   auto r = catalog.RemoveTombstone(_database_id, gstate.schema_name,
                                    gstate.index_name);
   if (!r.ok()) {

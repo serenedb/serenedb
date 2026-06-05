@@ -28,11 +28,11 @@
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/local_catalog.h"
+#include "catalog/sequence.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
-#include "rest_server/serened.h"
 
 namespace sdb::pg {
 namespace {
@@ -140,6 +140,13 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
       auto row = MakeBaseRow(schema_id, *index);
       row.relkind = PgClass::Relkind::Index;
       row.relnatts = static_cast<int16_t>(index->GetColumnIds().size());
+      values.push_back(std::move(row));
+    }
+
+    for (const auto& sequence :
+         catalog.GetSequences(database_id, schema->GetName())) {
+      auto row = MakeBaseRow(schema_id, *sequence);
+      row.relkind = PgClass::Relkind::Sequence;
       values.push_back(std::move(row));
     }
 

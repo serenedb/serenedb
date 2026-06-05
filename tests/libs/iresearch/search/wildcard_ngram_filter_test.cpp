@@ -106,9 +106,7 @@ TEST(WildcardNgramFilterOptionsTest, equality_empty) {
 }
 
 TEST(WildcardNgramFilterOptionsTest, equality_with_matcher) {
-  irs::analysis::WildcardAnalyzer::Options ana_opts;
-  ana_opts.ngram_size = 3;
-  irs::analysis::WildcardAnalyzer analyzer{std::move(ana_opts)};
+  irs::analysis::WildcardAnalyzer analyzer{nullptr, 3};
 
   // A middle "%" causes needs_matcher=true, so BuildLikeMatcher is called.
   irs::ByWildcardNgramOptions a{"foo%bar", analyzer, true};
@@ -120,9 +118,7 @@ TEST(WildcardNgramFilterOptionsTest, equality_with_matcher) {
 }
 
 TEST(WildcardNgramFilterOptionsTest, equality_different_has_pos) {
-  irs::analysis::WildcardAnalyzer::Options ana_opts;
-  ana_opts.ngram_size = 3;
-  irs::analysis::WildcardAnalyzer analyzer{std::move(ana_opts)};
+  irs::analysis::WildcardAnalyzer analyzer{nullptr, 3};
 
   irs::ByWildcardNgramOptions a{"foo_bar", analyzer, true};
   irs::ByWildcardNgramOptions b{"foo_bar", analyzer, false};
@@ -132,9 +128,7 @@ TEST(WildcardNgramFilterOptionsTest, equality_different_has_pos) {
 TEST(WildcardNgramFilterOptionsTest, one_null_matcher) {
   // One options has a matcher (because of '_'), the other doesn't
   // (pure prefix) -- they must not be equal.
-  irs::analysis::WildcardAnalyzer::Options ana_opts;
-  ana_opts.ngram_size = 3;
-  irs::analysis::WildcardAnalyzer analyzer{std::move(ana_opts)};
+  irs::analysis::WildcardAnalyzer analyzer{nullptr, 3};
 
   irs::ByWildcardNgramOptions with_matcher{"a_c", analyzer, true};
   irs::ByWildcardNgramOptions no_matcher{"abc%", analyzer, true};
@@ -157,9 +151,7 @@ TEST(WildcardNgramFilterTest, ctor) {
 }
 
 TEST(WildcardNgramFilterTest, equal) {
-  irs::analysis::WildcardAnalyzer::Options ana_opts;
-  ana_opts.ngram_size = 3;
-  irs::analysis::WildcardAnalyzer analyzer{std::move(ana_opts)};
+  irs::analysis::WildcardAnalyzer analyzer{nullptr, 3};
 
   auto q = MakeFilter("field", "foo_bar", analyzer);
   auto q_same = MakeFilter("field", "foo_bar", analyzer);
@@ -188,9 +180,7 @@ TEST(WildcardNgramFilterTest, query) {
   };
   static constexpr irs::doc_id_t kBase = irs::doc_limits::min();
 
-  irs::analysis::WildcardAnalyzer::Options ana_opts;
-  ana_opts.ngram_size = 3;
-  irs::analysis::WildcardAnalyzer analyzer{std::move(ana_opts)};
+  irs::analysis::WildcardAnalyzer analyzer{nullptr, 3};
 
   irs::MemoryDirectory dir;
 

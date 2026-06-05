@@ -27,9 +27,7 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/dfi.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -39,8 +37,7 @@ using namespace tests;
 TEST(dfi_test, consts) { static_assert("dfi" == irs::Type<irs::DFI>::name()); }
 
 TEST(dfi_test, load_default) {
-  auto scorer = irs::scorers::Get(
-    "dfi", irs::Type<irs::text_format::Json>::get(), std::string_view{});
+  auto scorer = irs::DFI::Make(irs::DFI::Options{});
   ASSERT_NE(nullptr, scorer);
   auto& dfi = dynamic_cast<irs::DFI&>(*scorer);
   ASSERT_EQ(irs::DFIMeasure::Standardized, dfi.measure());
@@ -50,22 +47,22 @@ TEST(dfi_test, load_default) {
 
 TEST(dfi_test, load_measures) {
   {
-    auto s = irs::scorers::Get("dfi", irs::Type<irs::text_format::Json>::get(),
-                               "{ \"measure\": \"standardized\" }");
+    auto s = irs::DFI::Make(
+      irs::DFI::Options{.measure = irs::DFIMeasure::Standardized});
     ASSERT_NE(nullptr, s);
     ASSERT_EQ(irs::DFIMeasure::Standardized,
               dynamic_cast<irs::DFI&>(*s).measure());
   }
   {
-    auto s = irs::scorers::Get("dfi", irs::Type<irs::text_format::Json>::get(),
-                               "{ \"measure\": \"saturated\" }");
+    auto s =
+      irs::DFI::Make(irs::DFI::Options{.measure = irs::DFIMeasure::Saturated});
     ASSERT_NE(nullptr, s);
     ASSERT_EQ(irs::DFIMeasure::Saturated,
               dynamic_cast<irs::DFI&>(*s).measure());
   }
   {
-    auto s = irs::scorers::Get("dfi", irs::Type<irs::text_format::Json>::get(),
-                               "{ \"measure\": \"chi_squared\" }");
+    auto s =
+      irs::DFI::Make(irs::DFI::Options{.measure = irs::DFIMeasure::ChiSquared});
     ASSERT_NE(nullptr, s);
     ASSERT_EQ(irs::DFIMeasure::ChiSquared,
               dynamic_cast<irs::DFI&>(*s).measure());
@@ -73,9 +70,19 @@ TEST(dfi_test, load_measures) {
 }
 
 TEST(dfi_test, load_invalid) {
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("dfi", irs::Type<irs::text_format::Json>::get(),
-                              "{ \"measure\": \"bogus\" }"));
+  EXPECT_ANY_THROW(irs::DFI::Make(
+    irs::DFI::Options{.measure = static_cast<irs::DFIMeasure>(99)}));
+  EXPECT_ANY_THROW(irs::DFI::Make(
+    irs::DFI::Options{.measure = static_cast<irs::DFIMeasure>(3)}));
+  // Each named value is accepted.
+  EXPECT_NE(nullptr, irs::DFI::Make(irs::DFI::Options{
+                       .measure = irs::DFIMeasure::Standardized}));
+  EXPECT_NE(
+    nullptr,
+    irs::DFI::Make(irs::DFI::Options{.measure = irs::DFIMeasure::Saturated}));
+  EXPECT_NE(
+    nullptr,
+    irs::DFI::Make(irs::DFI::Options{.measure = irs::DFIMeasure::ChiSquared}));
 }
 
 TEST(dfi_test, equals) {

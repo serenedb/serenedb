@@ -7,39 +7,45 @@ on:
         description: "Runner label"
         type: string
         required: false
-        default: "linux"
-      KIND:
-        description: "What to test"
+        default: "linux-amd64"
+      CONFIG:
+        description: "Build config: dev, perf (optimized, no tests/FI), asan/tsan/msan/ubsan (sanitizer), coverage"
         type: choice
-        required: true
+        required: false
+        default: "dev"
         options:
-          - both
-          - unit
-          - functional
-          - functional_fast
-          - none
-      DEV:
-        description: "Enable assertions (SDB_DEV)"
+          - perf
+          - dev
+          - asan
+          - tsan
+          - msan
+          - ubsan
+          - coverage
+      IRESEARCH:
+        description: "also build + run iresearch-tests + iresearch-load"
         type: boolean
         required: false
-        default: true
-      INSTRUMENTATION:
-        description: "Sanitizer or coverage"
-        type: choice
+        default: false
+      EXTENSION:
+        description: "also build + run unittest (duckdb + extensions) tests"
+        type: boolean
         required: false
-        default: "none"
-        options:
-          - none
-          - coverage
-          - asan
-          - msan
-          - tsan
-          - ubsan
-      EXTRA_CMAKE_FLAGS:
-        description: "Additional cmake flags (rare overrides)"
-        type: string
+        default: false
+      SQLITE:
+        description: "also run the sqlite sqllogic subtree"
+        type: boolean
         required: false
-        default: ""
+        default: false
+      SQLSMITH:
+        description: "also run sqlsmith fuzzing (+ the r driver)"
+        type: boolean
+        required: false
+        default: false
+      RUN_EXTRA:
+        description: "sanitizer configs only: run the full in-scope set (gtest + iresearch + extension + sqlite + sqlsmith), not just ours + drivers"
+        type: boolean
+        required: false
+        default: false
       PR_SHA:
         description: "Commit SHA to checkout (empty = workflow ref)"
         type: string
@@ -55,38 +61,48 @@ on:
         type: string
         required: false
         default: ""
+      EXTRA_CMAKE_FLAGS:
+        description: "Additional cmake flags (rare overrides)"
+        type: string
+        required: false
+        default: ""
   workflow_call:
     inputs:
       LOCATION:
         description: "Runner label"
         type: string
         required: false
-        default: "linux"
-      KIND:
-        description: "What to test"
+        default: "linux-amd64"
+      CONFIG:
+        description: "Build config: dev, perf (optimized, no tests/FI), asan/tsan/msan/ubsan (sanitizer), coverage"
         type: string
-        required: true
-        # none: build only (compile check)
-        # unit: gtest suites (vpack, iresearch, serenedb-tests)
-        # functional: sqllogic + recovery (all tests including slow)
-        # functional_fast: sqllogic + recovery (skip .test_slow)
-        # both: unit + functional (for coverage)
-      DEV:
-        description: "Enable assertions (SDB_DEV)"
+        required: false
+        default: "dev"
+      IRESEARCH:
+        description: "also build + run iresearch-tests + iresearch-load"
         type: boolean
         required: false
-        default: true
-      INSTRUMENTATION:
-        description: "Sanitizer or coverage"
-        type: string
+        default: false
+      EXTENSION:
+        description: "also build + run unittest (duckdb + extensions) tests"
+        type: boolean
         required: false
-        default: "none"
-        # none, asan, msan, tsan, ubsan, coverage
-      EXTRA_CMAKE_FLAGS:
-        description: "Additional cmake flags (rare overrides)"
-        type: string
+        default: false
+      SQLITE:
+        description: "also run the sqlite sqllogic subtree"
+        type: boolean
         required: false
-        default: ""
+        default: false
+      SQLSMITH:
+        description: "also run sqlsmith fuzzing (+ the r driver)"
+        type: boolean
+        required: false
+        default: false
+      RUN_EXTRA:
+        description: "sanitizer configs only: run the full in-scope set, not just ours + drivers"
+        type: boolean
+        required: false
+        default: false
       PR_SHA:
         description: "Commit SHA to checkout (fork PR support; empty = workflow ref)"
         type: string
@@ -100,14 +116,21 @@ on:
         type: string
         required: false
         default: ""
+      EXTRA_CMAKE_FLAGS:
+        description: "Additional cmake flags (rare overrides)"
+        type: string
+        required: false
+        default: ""
+
 env:
   WORKSPACE: ${{ github.workspace }}
   BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
   CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
+  SDB_TIMING_CACHE: /mnt/data/sdb-ci/timing
 
 jobs:
   test:
-    name: "test (${{ inputs.KIND }}, ${{ inputs.INSTRUMENTATION }})"
+    name: "${{ inputs.CONFIG }} (${{ inputs.LOCATION }})"
     runs-on:
       - ${{ inputs.LOCATION }}
     permissions:
@@ -116,86 +139,43 @@ jobs:
     steps:
       - name: Derive build flags
         run: |
-          # KIND -> build targets and test scripts
-          case "${{ inputs.KIND }}" in
-            none)
-              echo "SDB_GTEST=Off" >> $GITHUB_ENV
-              echo "SDB_FAULT_INJECTION=Off" >> $GITHUB_ENV
-              echo "SKIP_SLOW_TESTS=false" >> $GITHUB_ENV
-              echo "RUN_UNIT_TESTS=false" >> $GITHUB_ENV
-              echo "RUN_INTEGRATION_TESTS=false" >> $GITHUB_ENV
-              ;;
-            unit)
-              echo "SDB_GTEST=On" >> $GITHUB_ENV
-              echo "SDB_FAULT_INJECTION=Off" >> $GITHUB_ENV
-              echo "SKIP_SLOW_TESTS=false" >> $GITHUB_ENV
-              echo "RUN_UNIT_TESTS=true" >> $GITHUB_ENV
-              echo "RUN_INTEGRATION_TESTS=false" >> $GITHUB_ENV
-              ;;
-            functional)
-              echo "SDB_GTEST=Off" >> $GITHUB_ENV
-              echo "SDB_FAULT_INJECTION=On" >> $GITHUB_ENV
-              echo "SKIP_SLOW_TESTS=false" >> $GITHUB_ENV
-              echo "RUN_UNIT_TESTS=false" >> $GITHUB_ENV
-              echo "RUN_INTEGRATION_TESTS=true" >> $GITHUB_ENV
-              ;;
-            functional_fast)
-              echo "SDB_GTEST=Off" >> $GITHUB_ENV
-              echo "SDB_FAULT_INJECTION=On" >> $GITHUB_ENV
-              echo "SKIP_SLOW_TESTS=true" >> $GITHUB_ENV
-              echo "RUN_UNIT_TESTS=false" >> $GITHUB_ENV
-              echo "RUN_INTEGRATION_TESTS=true" >> $GITHUB_ENV
-              ;;
-            both)
-              echo "SDB_GTEST=On" >> $GITHUB_ENV
-              echo "SDB_FAULT_INJECTION=On" >> $GITHUB_ENV
-              echo "SKIP_SLOW_TESTS=false" >> $GITHUB_ENV
-              echo "RUN_UNIT_TESTS=true" >> $GITHUB_ENV
-              echo "RUN_INTEGRATION_TESTS=true" >> $GITHUB_ENV
-              ;;
+          # perf is the only optimized build: no asserts, no unit-test binaries,
+          # and no fault injection (so no recovery). Every other config builds like
+          # dev (asserts + tests + FI); for sanitizers RUN_EXTRA only gates what RUNS.
+          if [[ "${{ inputs.CONFIG }}" == "perf" ]]; then
+            echo "SDB_DEV=Off"             >> $GITHUB_ENV
+            echo "SDB_GTEST=Off"           >> $GITHUB_ENV
+            echo "SDB_FAULT_INJECTION=Off" >> $GITHUB_ENV
+          else
+            echo "SDB_DEV=On"              >> $GITHUB_ENV
+            echo "SDB_GTEST=On"            >> $GITHUB_ENV
+            echo "SDB_FAULT_INJECTION=On"  >> $GITHUB_ENV
+          fi
+
+          case "${{ inputs.CONFIG }}" in
+            dev|perf) echo "SANITIZERS="                  >> $GITHUB_ENV; echo "USE_COVERAGE="            >> $GITHUB_ENV ;;
+            asan)     echo "SANITIZERS=Address"           >> $GITHUB_ENV; echo "USE_COVERAGE="            >> $GITHUB_ENV ;;
+            tsan)     echo "SANITIZERS=Thread"            >> $GITHUB_ENV; echo "USE_COVERAGE="            >> $GITHUB_ENV ;;
+            msan)     echo "SANITIZERS=MemoryWithOrigins" >> $GITHUB_ENV; echo "USE_COVERAGE="            >> $GITHUB_ENV ;;
+            ubsan)    echo "SANITIZERS=Undefined"         >> $GITHUB_ENV; echo "USE_COVERAGE="            >> $GITHUB_ENV ;;
+            coverage) echo "SANITIZERS="                  >> $GITHUB_ENV; echo "USE_COVERAGE=SourceBased" >> $GITHUB_ENV ;;
+            *) echo "Unknown CONFIG '${{ inputs.CONFIG }}'" >&2; exit 1 ;;
           esac
 
-          # DEV -> assertions
-          echo "SDB_DEV=${{ inputs.DEV && 'On' || 'Off' }}" >> $GITHUB_ENV
+          echo "RUN_IRESEARCH=${{ inputs.IRESEARCH }}" >> $GITHUB_ENV
+          echo "RUN_EXTENSION=${{ inputs.EXTENSION }}" >> $GITHUB_ENV
+          echo "RUN_SQLITE=${{ inputs.SQLITE }}"       >> $GITHUB_ENV
+          echo "RUN_SQLSMITH=${{ inputs.SQLSMITH }}"   >> $GITHUB_ENV
+          echo "RUN_EXTRA=${{ inputs.RUN_EXTRA }}"     >> $GITHUB_ENV
 
-          # INSTRUMENTATION -> sanitizer/coverage
-          case "${{ inputs.INSTRUMENTATION }}" in
-            none)
-              echo "SANITIZERS=" >> $GITHUB_ENV
-              echo "USE_COVERAGE=" >> $GITHUB_ENV
-              ;;
-            asan)
-              echo "SANITIZERS=Address" >> $GITHUB_ENV
-              echo "USE_COVERAGE=" >> $GITHUB_ENV
-              ;;
-            msan)
-              echo "SANITIZERS=MemoryWithOrigins" >> $GITHUB_ENV
-              echo "USE_COVERAGE=" >> $GITHUB_ENV
-              ;;
-            tsan)
-              echo "SANITIZERS=Thread" >> $GITHUB_ENV
-              echo "USE_COVERAGE=" >> $GITHUB_ENV
-              ;;
-            ubsan)
-              echo "SANITIZERS=Undefined" >> $GITHUB_ENV
-              echo "USE_COVERAGE=" >> $GITHUB_ENV
-              ;;
-            coverage)
-              echo "SANITIZERS=" >> $GITHUB_ENV
-              echo "USE_COVERAGE=SourceBased" >> $GITHUB_ENV
-              ;;
-          esac
-
-          # Common defaults
           echo "BUILDMODE=RelWithDebInfo" >> $GITHUB_ENV
-          echo "USE_DEBUG_INFO=COLUMNS" >> $GITHUB_ENV
-          echo "USE_IPO=Off" >> $GITHUB_ENV
-          echo "SDB_ALLOC=JE" >> $GITHUB_ENV
+          echo "USE_DEBUG_INFO=COLUMNS"   >> $GITHUB_ENV
+          echo "USE_IPO=Off"              >> $GITHUB_ENV
+          echo "SDB_ALLOC=JE"             >> $GITHUB_ENV
           echo "ENSURE_VTUNE_SYMBOLS=Off" >> $GITHUB_ENV
-          echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
-          echo "STRIP_TARBALL=false" >> $GITHUB_ENV
-          echo "DEBUG_SYMBOLS=false" >> $GITHUB_ENV
-
+          echo "DEB_TAR_PACKAGES=false"   >> $GITHUB_ENV
+          echo "STRIP_TARBALL=false"      >> $GITHUB_ENV
+          echo "DEBUG_SYMBOLS=false"      >> $GITHUB_ENV
           git config --global --add safe.directory '*'
 
       - name: Checkout
@@ -216,16 +196,23 @@ jobs:
           SDB_FUZZ_PARALLEL: ${{ inputs.FUZZ_PARALLEL }}
         run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash
 
-      # One-time setup required on each CI machine:
-      #   sudo install -d -m 2777 /mnt/data/.ccache /mnt/data/.gtest-parallel-cache /mnt/data/.cargo-target-sqllogic /mnt/data/cores /mnt/data/searchbench
-      #   sudo snap install aws-cli --classic  # required by searchbench-fetch-corpus.bash
+      # One-time per CI machine:
+      #   sudo install -d -m 2777 /mnt/data/sdb-ci /mnt/data/.ccache /mnt/data/.cargo-target-sqllogic /mnt/data/cores /mnt/data/searchbench
+      #   sudo snap install aws-cli --classic
       #   echo 'kernel.core_pattern=/mnt/data/cores/%e.%p.%t' | sudo tee /etc/sysctl.d/99-serenedb-ci.conf
       #   echo 'kernel.randomize_va_space=0' | sudo tee -a /etc/sysctl.d/99-serenedb-ci.conf
+      #   echo 'kernel.yama.ptrace_scope=0' | sudo tee -a /etc/sysctl.d/99-serenedb-ci.conf
       #   sudo sysctl --system
       - name: Prepare caches
         run: |
-          mkdir -p /mnt/data/.gtest-parallel-cache/${{ inputs.INSTRUMENTATION }}
-          echo "GTEST_PARALLEL_CACHE_DIR=/mnt/data/.gtest-parallel-cache/${{ inputs.INSTRUMENTATION }}" >> $GITHUB_ENV
+          SDB_TIMING_KEY="$(./scripts/ci/cache-key.sh)"
+          echo "SDB_TIMING_KEY=$SDB_TIMING_KEY" >> $GITHUB_ENV
+          install -d -m 2777 /mnt/data/sdb-ci/timing
+          install -d -m 2777 "/mnt/data/sdb-ci/gtest-parallel/$SDB_TIMING_KEY"
+          echo "GTEST_PARALLEL_CACHE_DIR=/mnt/data/sdb-ci/gtest-parallel/$SDB_TIMING_KEY" >> $GITHUB_ENV
+          # out/ maps into /serenedb/out inside the containers; pre-create so producers can write there.
+          mkdir -p "${WORKSPACE}"/out/{logs,test-results,coverage/profiles} \
+                   "${WORKSPACE}"/out/sanitizers/{leak,undefined,address,memory,thread}
 
       - name: Build
         id: build
@@ -233,16 +220,17 @@ jobs:
           DOCKER_USER="$(id -u):$(id -g)"
           EXTRA_FLAGS="${{ inputs.EXTRA_CMAKE_FLAGS }}"
 
-          TARGETS=(iresearch-examples)
-          [[ "$SDB_GTEST" == "On" ]] && TARGETS+=(vpack-tests serenedb-tests_basics serenedb-tests_connector iresearch-tests fuerte-tests)
-          [[ "$SDB_GTEST" != "On" || "$SDB_FAULT_INJECTION" == "On" ]] && TARGETS+=(serenedb tzdata)
-
-          # The integration test suite includes the vendored-DuckDB-extension
-          # tests (see scripts/ci/steps/048-...), which drive DuckDB's `unittest`
-          # binary. Build it only on jobs that will run it.
-          if [[ "$RUN_INTEGRATION_TESTS" == "true" ]]; then
-            TARGETS+=(unittest)
-            EXTRA_FLAGS="${EXTRA_FLAGS} -DSDB_BUILD_DUCKDB_UNITTESTS=ON"
+          # perf builds the server only (no asserts/FI/tests). Every other config
+          # also builds the unit-test binaries; iresearch/unittest are added only
+          # when their suite is in scope so a core-only diff doesn't build them.
+          TARGETS=(iresearch-examples serened tzdata)
+          if [[ "${{ inputs.CONFIG }}" != "perf" ]]; then
+            TARGETS+=(serenedb-tests_basics serenedb-tests_connector)
+            [[ "$RUN_IRESEARCH" == "true" ]] && TARGETS+=(iresearch-tests iresearch-load-tests)
+            if [[ "$RUN_EXTENSION" == "true" ]]; then
+              TARGETS+=(unittest)
+              EXTRA_FLAGS="${EXTRA_FLAGS} -DSDB_BUILD_DUCKDB_UNITTESTS=ON"
+            fi
           fi
 
           docker run --rm \
@@ -266,17 +254,15 @@ jobs:
             -v /mnt/data/.ccache:/.ccache \
             "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash "${TARGETS[@]}"
 
-          mkdir -p cores
-
-      - name: Run gtest suites
-        id: gtest
-        if: steps.build.outcome == 'success' && env.RUN_UNIT_TESTS == 'true'
-        run: BUILD_DIR=build ./scripts/ci/steps/04a-ci-run-gtest-suites.bash
-
-      - name: Run integration tests
-        id: integration
-        if: steps.build.outcome == 'success' && env.RUN_INTEGRATION_TESTS == 'true'
-        run: BUILD_DIR=build ./scripts/ci/steps/04b-ci-run-integration-tests.bash
+      - name: Run suites
+        if: steps.build.outcome == 'success'
+        env:
+          SDB_FUZZ_QUERIES: ${{ inputs.FUZZ_QUERIES }}
+          SDB_FUZZ_PARALLEL: ${{ inputs.FUZZ_PARALLEL }}
+          # iresearch-load corpus comes from S3; a failed/missing fetch fails the job.
+          SEARCHBENCH_S3_KEY_ID: ${{ secrets.SEARCHBENCH_S3_KEY_ID }}
+          SEARCHBENCH_S3_SECRET: ${{ secrets.SEARCHBENCH_S3_SECRET }}
+        run: BUILD_DIR=build CONFIG="${{ inputs.CONFIG }}" ./scripts/ci/steps/run-suites.sh
 
       - name: Generate coverage report
         if: steps.build.outcome == 'success' && env.USE_COVERAGE != ''
@@ -286,23 +272,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-artifacts-${{ inputs.KIND }}-${{ inputs.INSTRUMENTATION }}-${{ inputs.LOCATION }}-${{ github.run_number }}
-          path: |
-            cmake_*.log
-            make_*.log
-            ccache_*.log
-            vpack-tests.log
-            iresearch-tests.log
-            serenedb-tests.log
-            sqllogic-tests.log
-            recovery-tests.log
-            extension-tests.log
-            vpack-tests.xml
-            iresearch-tests.xml
-            serenedb-tests*.xml
-            tests/sqllogic/*.xml
-            sanitizers/
-            coverage/
-            logs/
+          name: test-artifacts-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}-${{ github.run_number }}
+          path: out/
           if-no-files-found: ignore
           retention-days: 30

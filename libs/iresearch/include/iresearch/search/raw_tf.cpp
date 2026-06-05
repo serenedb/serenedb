@@ -26,7 +26,6 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_impl.hpp"
 
 namespace irs {
 namespace {
@@ -38,14 +37,6 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 
 constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
   return nullptr;
-}
-
-Scorer::ptr MakeJson(std::string_view /*args*/) {
-  return std::make_unique<RawTF>();
-}
-
-Scorer::ptr MakeVPack(std::string_view /*args*/) {
-  return std::make_unique<RawTF>();
 }
 
 template<ScoreMergeType MergeType, bool HasBoost>
@@ -138,11 +129,6 @@ ScoreFunction RawTF::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Make<RawTfScore<HasBoost>>(ctx.boost, freq,
                                                      filter_boost);
   });
-}
-
-void RawTF::init() {
-  REGISTER_SCORER_JSON(RawTF, MakeJson);
-  REGISTER_SCORER_VPACK(RawTF, MakeVPack);
 }
 
 }  // namespace irs

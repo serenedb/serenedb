@@ -22,7 +22,7 @@ services:
     volumes:
       - "$SQLLOGIC_DIR:/sqllogic"
       - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
-      - "$WORKSPACE/logs:/logs"
+      - "$WORKSPACE/out/logs:/logs"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
     depends_on:
       - postgres

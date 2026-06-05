@@ -23,7 +23,7 @@
 
 #include "basics/common.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "endpoint/connection_info.h"
 #include "endpoint/endpoint_ip.h"
 #include "general_server/general_server.h"
@@ -95,16 +95,14 @@ void AcceptorTcp<T>::open() {
     }();
 
     if (ec) {
-      SDB_ERROR("xxxxx", Logger::COMMUNICATION,
-                "unable to to resolve endpoint ' ", _endpoint->specification(),
-                "': ", ec.message());
+      SDB_ERROR(HTTP, "unable to to resolve endpoint ' ",
+                _endpoint->specification(), "': ", ec.message());
       throw std::runtime_error(ec.message());
     }
 
     if (results.empty()) {
       SDB_ERROR(
-        "xxxxx", Logger::COMMUNICATION,
-        "unable to to resolve endpoint: endpoint is default constructed");
+        HTTP, "unable to to resolve endpoint: endpoint is default constructed");
     } else {
       asio_endpoint = results.begin()->endpoint();
     }
@@ -116,22 +114,21 @@ void AcceptorTcp<T>::open() {
 
   _acceptor.bind(asio_endpoint, ec);
   if (ec) {
-    SDB_ERROR("xxxxx", Logger::COMMUNICATION, "unable to bind to endpoint '",
-              _endpoint->specification(), "': ", ec.message());
+    SDB_ERROR(HTTP, "unable to bind to endpoint '", _endpoint->specification(),
+              "': ", ec.message());
     throw std::runtime_error(ec.message());
   }
 
   SDB_ASSERT(_endpoint->listenBacklog() > 8);
   _acceptor.listen(_endpoint->listenBacklog(), ec);
   if (ec) {
-    SDB_ERROR("xxxxx", Logger::COMMUNICATION, "unable to listen to endpoint '",
+    SDB_ERROR(HTTP, "unable to listen to endpoint '",
               _endpoint->specification(), ": ", ec.message());
     throw std::runtime_error(ec.message());
   }
   _open = true;
 
-  SDB_DEBUG("xxxxx", sdb::Logger::COMMUNICATION,
-            "successfully opened acceptor TCP");
+  SDB_DEBUG(HTTP, "successfully opened acceptor TCP");
 
   asyncAccept();
 }
@@ -169,8 +166,8 @@ void AcceptorTcp<SocketType::Tcp>::asyncAccept() {
     // set the endpoint
     ConnectionInfo info = CreateConnectionInfo(*asio_socket, *_endpoint);
 
-    SDB_DEBUG("xxxxx", sdb::Logger::COMMUNICATION, "accepted connection from ",
-              info.client_address, ":", info.client_port);
+    SDB_DEBUG(HTTP, "accepted connection from ", info.client_address, ":",
+              info.client_port);
 
     if (_endpoint->transport() == Endpoint::TransportType::HTTP) {
       auto comm_task = std::make_shared<HttpCommTask<SocketType::Tcp>>(
@@ -205,8 +202,7 @@ void AcceptorTcp<SocketType::Ssl>::PerformHandshake(
              as = std::move(proto)](const asio_ns::error_code& ec) mutable {
     as->timer.cancel();
     if (ec) {
-      SDB_DEBUG("xxxxx", sdb::Logger::COMMUNICATION,
-                "error during TLS handshake: '", ec.message(), "'");
+      SDB_DEBUG(HTTP, "error during TLS handshake: '", ec.message(), "'");
       as.reset();  // ungraceful shutdown
       return;
     }

@@ -23,224 +23,21 @@
 
 #include "segmentation_tokenizer.hpp"
 
-#include <vpack/builder.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/slice.h>
+#include <absl/strings/ascii.h>
 
 #include <boost/text/case_mapping.hpp>
 #include <boost/text/word_break.hpp>
 #include <string_view>
 
-#include "basics/containers/trivial_map.h"
+#include "basics/misc.hpp"
+#include "basics/string_utils.h"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/utf8_character_utils.hpp"
-#include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
 namespace {
 
-constexpr std::string_view kConvertName = "case";
-constexpr std::string_view kAcceptName = "break";
-
 using Options = SegmentationTokenizer::Options;
-
-constexpr sdb::containers::TrivialBiMap kConvertMap = [](auto selector) {
-  return selector()
-    .Case("none", Options::Convert::None)
-    .Case("lower", Options::Convert::Lower)
-    .Case("upper", Options::Convert::Upper);
-};
-
-constexpr sdb::containers::TrivialBiMap kAcceptMap = [](auto selector) {
-  return selector()
-    .Case("all", Options::Accept::Any)
-    .Case("graphic", Options::Accept::Graphic)
-    .Case("alpha", Options::Accept::AlphaNumeric);
-};
-
-bool ParseVPackOptions(const vpack::Slice slice, Options& options) {
-  if (!slice.isObject()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Slice for segmentation analyzer is not an object");
-    return false;
-  }
-  if (auto convert_slice = slice.get(kConvertName); !convert_slice.isNone()) {
-    if (!convert_slice.isString()) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid type '", kConvertName,
-               "' (string expected) for segmentation analyzer from "
-               "VPack arguments");
-      return false;
-    }
-    auto convert = convert_slice.stringView();
-    auto it = kConvertMap.TryFindByFirst(convert);
-    if (!it) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
-               kConvertName,
-               "' for segmentation analyzer from VPack arguments");
-      return false;
-    }
-    options.convert = *it;
-  }
-  if (auto accept_slice = slice.get(kAcceptName); !accept_slice.isNone()) {
-    if (!accept_slice.isString()) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid type '", kAcceptName,
-               "' (string expected) for segmentation analyzer from "
-               "VPack arguments");
-      return false;
-    }
-    auto accept = accept_slice.stringView();
-    auto it = kAcceptMap.TryFindByFirst(accept);
-    if (!it) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
-               kAcceptName, "' for segmentation analyzer from VPack arguments");
-      return false;
-    }
-    options.accept = *it;
-  }
-  return true;
-}
-
-bool MakeVPackConfig(const Options& options, vpack::Builder* builder) {
-  vpack::ObjectBuilder object(builder);
-  {
-    auto it = kConvertMap.TryFindBySecond(options.convert);
-    if (it) {
-      builder->add(kConvertName, *it);
-    } else {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
-               kConvertName,
-               "' for normalizing segmentation analyzer from Value is: ",
-               options.convert);
-      return false;
-    }
-  }
-  {
-    auto it = kAcceptMap.TryFindBySecond(options.accept);
-    if (it) {
-      builder->add(kAcceptName, *it);
-    } else {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
-               kAcceptName,
-               "' for normalizing segmentation analyzer from Value is: ",
-               options.accept);
-      return false;
-    }
-  }
-  return true;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// @brief args is a VPack slice object with the following attributes:
-///        "case"(string enum): modify token case
-///        "break"(string enum): word breaking method
-////////////////////////////////////////////////////////////////////////////////
-Analyzer::ptr MakeVPack(const vpack::Slice slice) {
-  try {
-    Options options;
-    if (!ParseVPackOptions(slice, options)) {
-      return nullptr;
-    }
-    return SegmentationTokenizer::make(std::move(options));
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat(
-        "Caught error '", ex.what(),
-        "' while constructing segmentation analyzer from VPack arguments"));
-  } catch (...) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      "Caught error while constructing segmentation analyzer from VPack "
-      "arguments");
-  }
-  return nullptr;
-}
-
-Analyzer::ptr MakeVPack(std::string_view args) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-bool NormalizeVPackConfig(const vpack::Slice slice,
-                          vpack::Builder* vpack_builder) {
-  Options options;
-  try {
-    if (ParseVPackOptions(slice, options)) {
-      return MakeVPackConfig(options, vpack_builder);
-    }
-    return false;
-
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat(
-        "Caught error '", ex.what(),
-        "' while normalizing segmentation analyzer from VPack arguments"));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while normalizing segmentation analyzer from VPack "
-              "arguments");
-  }
-  return false;
-}
-
-bool NormalizeVPackConfig(std::string_view args, std::string& config) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  vpack::Builder builder;
-  if (NormalizeVPackConfig(slice, &builder)) {
-    config.assign(builder.slice().startAs<char>(), builder.slice().byteSize());
-    return true;
-  }
-  return false;
-}
-
-Analyzer::ptr MakeJson(std::string_view args) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while constructing segmentation analyzer");
-      return nullptr;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing segmentation analyzer from JSON"));
-  } catch (...) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      "Caught error while constructing segmentation analyzer from JSON");
-  }
-  return nullptr;
-}
-
-bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while normalizing segmentation analyzer");
-      return false;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    vpack::Builder builder;
-    if (NormalizeVPackConfig(vpack->slice(), &builder)) {
-      definition = builder.toString();
-      return !definition.empty();
-    }
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while normalizing segmentation analyzer from JSON"));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while normalizing segmentation analyzer from JSON");
-  }
-  return false;
-}
 
 using namespace boost::text;
 
@@ -340,13 +137,7 @@ class UnicodeAnalyzerImpl final : public SegmentationTokenizer {
 
 }  // namespace
 
-void SegmentationTokenizer::init() {
-  REGISTER_ANALYZER_VPACK(SegmentationTokenizer, MakeVPack,
-                          NormalizeVPackConfig);
-  REGISTER_ANALYZER_JSON(SegmentationTokenizer, MakeJson, NormalizeJsonConfig);
-}
-
-Analyzer::ptr SegmentationTokenizer::make(Options&& options) {
+Analyzer::ptr SegmentationTokenizer::Make(Options options) {
   auto make_analyzer = [&]<typename... Args>(Args&&... args) {
     return Analyzer::ptr{new UnicodeAnalyzerImpl{std::move(args)...}};
   };
@@ -358,7 +149,7 @@ Analyzer::ptr SegmentationTokenizer::make(Options&& options) {
           [](DataState& state, std::string&) {
             return ViewCast<byte_type>(state.Bytes());
           },
-          options.use_ascii_optimization);
+          /*use_ascii_optimization=*/true);
       case Options::Convert::Lower:
         return make_analyzer(
           std::move(args)...,
@@ -375,7 +166,7 @@ Analyzer::ptr SegmentationTokenizer::make(Options&& options) {
             }
             return buf;
           },
-          options.use_ascii_optimization);
+          /*use_ascii_optimization=*/true);
       case Options::Convert::Upper:
         return make_analyzer(
           std::move(args)...,
@@ -392,7 +183,7 @@ Analyzer::ptr SegmentationTokenizer::make(Options&& options) {
             }
             return buf;
           },
-          options.use_ascii_optimization);
+          /*use_ascii_optimization=*/true);
     }
   };
 

@@ -23,9 +23,7 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include "app/app_server.h"
-#include "app/logger_feature.h"
-#include "basics/logger/logger.h"
-#include "rest_server/log_buffer_feature.h"
+#include "basics/log.h"
 #include "storage_engine/search_engine.h"
 namespace sdb::pg {
 namespace {
@@ -42,19 +40,13 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 template<>
 catalog::MaterializedData
 SystemTableSnapshot<SdbSearchTasksStatus>::GetTableData() {
-  if (!SerenedServer::Instance()
-         .getFeature<search::SearchEngine>()
-         .isEnabled()) {
-    return {CreateColumns<SdbSearchTasksStatus>(0), 0};
-  }
   constexpr auto kThreadGroups =
     magic_enum::enum_entries<search::ThreadGroup>();
   std::vector<SdbSearchTasksStatus> values;
   values.reserve(kThreadGroups.size());
   for (const auto& [thread_group, thread_group_name] : kThreadGroups) {
     auto [active, pending, threads] =
-      SerenedServer::Instance().getFeature<search::SearchEngine>().stats(
-        thread_group);
+      search::SearchEngine::instance().stats(thread_group);
 
     values.push_back({
       .task_type = thread_group_name,

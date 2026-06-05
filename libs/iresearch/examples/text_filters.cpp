@@ -18,11 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
 #include <iostream>
 #include <iresearch/analysis/analyzer.hpp>
-#include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/columnstore/format.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -31,14 +30,13 @@
 #include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/regexp_filter.hpp>
-#include <iresearch/search/scorers.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/compression.hpp>
 #include <iresearch/utils/string.hpp>
-#include <iresearch/utils/text_format.hpp>
 #include <memory>
+
+#include "basics/duckdb_engine.h"
 
 // This example shows direct construction of the advanced text filters:
 //   - ByPhrase            (positional, "quick brown fox")
@@ -55,14 +53,10 @@
 namespace {
 
 // Per-segment columnstore needs a duckdb::DatabaseInstance for codec lookup
-// and the buffer manager.
+// and the buffer manager. main() brackets Initialize / Shutdown on the
+// process-wide sdb::DuckDBEngine; this helper just hands out a reference.
 duckdb::DatabaseInstance& Db() {
-  static std::unique_ptr<duckdb::DuckDB> kDb = [] {
-    duckdb::DBConfig cfg;
-    cfg.options.access_mode = duckdb::AccessMode::AUTOMATIC;
-    return std::make_unique<duckdb::DuckDB>(":memory:", &cfg);
-  }();
-  return *kDb->instance;
+  return sdb::DuckDBEngine::Instance().instance();
 }
 
 // Tokenizes a text value into the inverted index. Lowercase whitespace
@@ -70,8 +64,9 @@ duckdb::DatabaseInstance& Db() {
 struct TextField {
   std::string_view name;
   std::string_view text;
-  irs::analysis::Analyzer::ptr tokenizer{irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(), R"({})")};
+  irs::analysis::Analyzer::ptr tokenizer{
+    irs::analysis::SegmentationTokenizer::Make(
+      irs::analysis::SegmentationTokenizer::Options{})};
 
   std::string_view Name() const noexcept { return name; }
 
@@ -181,87 +176,96 @@ irs::bytes_view Bytes(std::string_view s) noexcept {
 }  // namespace
 
 int main() {
-  irs::analysis::analyzers::Init();
+  // Bracket the process-wide duckdb::DuckDB lifetime; Db() reads it back.
+  auto& engine = sdb::DuckDBEngine::Instance();
+  engine.Initialize();
+
   irs::formats::Init();
-  irs::scorers::Init();
-  irs::compression::Init();
 
-  std::vector<std::string> names;
-  irs::MemoryDirectory dir;
-  auto reader = BuildIndex(dir, names);
-  std::cout << "Indexed " << reader.docs_count() << " docs across "
-            << reader.size() << " segment(s).\n\n";
-
-  // 1) Phrase: "quick brown fox" -- positional, requires the three terms
-  //    to appear in order with no gap.
+  // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
+  // down the duckdb::DuckDB they were dispatching through.
   {
-    std::cout << "=== ByPhrase \"quick brown fox\" ===\n";
-    irs::ByPhrase q;
-    *q.mutable_field() = "body";
-    q.mutable_options()->push_back<irs::ByTermOptions>().term = Bytes("quick");
-    q.mutable_options()->push_back<irs::ByTermOptions>().term = Bytes("brown");
-    q.mutable_options()->push_back<irs::ByTermOptions>().term = Bytes("fox");
-    PrintHits("expect d0 only", RunFilter(reader, q, names));
+    std::vector<std::string> names;
+    irs::MemoryDirectory dir;
+    auto reader = BuildIndex(dir, names);
+    std::cout << "Indexed " << reader.docs_count() << " docs across "
+              << reader.size() << " segment(s).\n\n";
+
+    // 1) Phrase: "quick brown fox" -- positional, requires the three terms
+    //    to appear in order with no gap.
+    {
+      std::cout << "=== ByPhrase \"quick brown fox\" ===\n";
+      irs::ByPhrase q;
+      *q.mutable_field() = "body";
+      q.mutable_options()->push_back<irs::ByTermOptions>().term =
+        Bytes("quick");
+      q.mutable_options()->push_back<irs::ByTermOptions>().term =
+        Bytes("brown");
+      q.mutable_options()->push_back<irs::ByTermOptions>().term = Bytes("fox");
+      PrintHits("expect d0 only", RunFilter(reader, q, names));
+    }
+
+    // 2) NGramSimilarity: any doc that contains >= threshold * |ngrams| of
+    //    the supplied tokens. With threshold=0.5 and two ngrams, a doc with
+    //    just one of them still matches; with 1.0 both must appear. (Using
+    //    word-level ngrams here for clarity; the same filter works against
+    //    char-ngram-tokenized fields for fuzzy substring matching.)
+    {
+      std::cout << "\n=== ByNGramSimilarity {brown, fox} threshold=1.0 ===\n";
+      irs::ByNGramSimilarity q;
+      *q.mutable_field() = "body";
+      q.mutable_options()->ngrams.emplace_back(Bytes("brown"));
+      q.mutable_options()->ngrams.emplace_back(Bytes("fox"));
+      q.mutable_options()->threshold = 1.0F;
+      PrintHits("expect d0, d2", RunFilter(reader, q, names));
+    }
+    {
+      std::cout << "\n=== ByNGramSimilarity {brown, fox} threshold=0.5 ===\n";
+      irs::ByNGramSimilarity q;
+      *q.mutable_field() = "body";
+      q.mutable_options()->ngrams.emplace_back(Bytes("brown"));
+      q.mutable_options()->ngrams.emplace_back(Bytes("fox"));
+      q.mutable_options()->threshold = 0.5F;
+      PrintHits("expect d0, d1, d2 (>= 1 of 2)", RunFilter(reader, q, names));
+    }
+
+    // 3) Regex: `f[ao]x` matches token "fox" and "fax" (no "fix"). Pattern
+    //    syntax is Perl/RE2 by default; switch via options().syntax.
+    {
+      std::cout << "\n=== ByRegexp /f[ao]x/ ===\n";
+      irs::ByRegexp q;
+      *q.mutable_field() = "body";
+      q.mutable_options()->pattern = irs::bstring{Bytes("f[ao]x")};
+      PrintHits("expect d0, d2 (matches 'fox')", RunFilter(reader, q, names));
+    }
+
+    // 4) Wildcard / LIKE: '_' = exactly one char, '%' = any sequence. So
+    //    'f_x' matches three-letter tokens like "fox" and "fix" but not
+    //    longer tokens like "foxy".
+    {
+      std::cout << "\n=== ByWildcard \"f_x\" ===\n";
+      irs::ByWildcard q;
+      *q.mutable_field() = "body";
+      q.mutable_options()->term = irs::bstring{Bytes("f_x")};
+      PrintHits("expect d0, d2, d5 (fox, fox, fix)",
+                RunFilter(reader, q, names));
+    }
+
+    // 5) Levenshtein (fuzzy term): edits up to max_distance. "fox" with
+    //    max_distance=1 matches "fox" exactly and any token within one
+    //    edit: "foxy" (one insertion), "fix" (one substitution).
+    {
+      std::cout << "\n=== ByEditDistance \"fox\" max_distance=1 ===\n";
+      irs::ByEditDistance q;
+      *q.mutable_field() = "body";
+      q.mutable_options()->term = irs::bstring{Bytes("fox")};
+      q.mutable_options()->max_distance = 1;
+      q.mutable_options()->with_transpositions = true;
+      PrintHits("expect d0, d2, d4, d5 (fox, fox, foxy, fix)",
+                RunFilter(reader, q, names));
+    }
   }
 
-  // 2) NGramSimilarity: any doc that contains >= threshold * |ngrams| of
-  //    the supplied tokens. With threshold=0.5 and two ngrams, a doc with
-  //    just one of them still matches; with 1.0 both must appear. (Using
-  //    word-level ngrams here for clarity; the same filter works against
-  //    char-ngram-tokenized fields for fuzzy substring matching.)
-  {
-    std::cout << "\n=== ByNGramSimilarity {brown, fox} threshold=1.0 ===\n";
-    irs::ByNGramSimilarity q;
-    *q.mutable_field() = "body";
-    q.mutable_options()->ngrams.emplace_back(Bytes("brown"));
-    q.mutable_options()->ngrams.emplace_back(Bytes("fox"));
-    q.mutable_options()->threshold = 1.0F;
-    PrintHits("expect d0, d2", RunFilter(reader, q, names));
-  }
-  {
-    std::cout << "\n=== ByNGramSimilarity {brown, fox} threshold=0.5 ===\n";
-    irs::ByNGramSimilarity q;
-    *q.mutable_field() = "body";
-    q.mutable_options()->ngrams.emplace_back(Bytes("brown"));
-    q.mutable_options()->ngrams.emplace_back(Bytes("fox"));
-    q.mutable_options()->threshold = 0.5F;
-    PrintHits("expect d0, d1, d2 (>= 1 of 2)", RunFilter(reader, q, names));
-  }
-
-  // 3) Regex: `f[ao]x` matches token "fox" and "fax" (no "fix"). Pattern
-  //    syntax is Perl/RE2 by default; switch via options().syntax.
-  {
-    std::cout << "\n=== ByRegexp /f[ao]x/ ===\n";
-    irs::ByRegexp q;
-    *q.mutable_field() = "body";
-    q.mutable_options()->pattern = irs::bstring{Bytes("f[ao]x")};
-    PrintHits("expect d0, d2 (matches 'fox')", RunFilter(reader, q, names));
-  }
-
-  // 4) Wildcard / LIKE: '_' = exactly one char, '%' = any sequence. So
-  //    'f_x' matches three-letter tokens like "fox" and "fix" but not
-  //    longer tokens like "foxy".
-  {
-    std::cout << "\n=== ByWildcard \"f_x\" ===\n";
-    irs::ByWildcard q;
-    *q.mutable_field() = "body";
-    q.mutable_options()->term = irs::bstring{Bytes("f_x")};
-    PrintHits("expect d0, d2, d5 (fox, fox, fix)", RunFilter(reader, q, names));
-  }
-
-  // 5) Levenshtein (fuzzy term): edits up to max_distance. "fox" with
-  //    max_distance=1 matches "fox" exactly and any token within one
-  //    edit: "foxy" (one insertion), "fix" (one substitution).
-  {
-    std::cout << "\n=== ByEditDistance \"fox\" max_distance=1 ===\n";
-    irs::ByEditDistance q;
-    *q.mutable_field() = "body";
-    q.mutable_options()->term = irs::bstring{Bytes("fox")};
-    q.mutable_options()->max_distance = 1;
-    q.mutable_options()->with_transpositions = true;
-    PrintHits("expect d0, d2, d4, d5 (fox, fox, foxy, fix)",
-              RunFilter(reader, q, names));
-  }
-
+  engine.Shutdown();
   return 0;
 }

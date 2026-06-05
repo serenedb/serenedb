@@ -46,7 +46,7 @@ TypeInfo Attributes::get(std::string_view name,
   try {
     return AttributeRegister::instance().get(name, load_library);
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught exception while getting an attribute instance");
   }
 
@@ -66,23 +66,23 @@ AttributeRegistrar::AttributeRegistrar(const TypeInfo& type,
     auto* registered_source = AttributeRegister::instance().tag(type.name());
 
     if (source && registered_source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering "
                "attribute, ignoring: type '",
                type.name(), "' from ", source_ref, ", previously from ",
                *registered_source);
     } else if (source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering "
                "attribute, ignoring: type '",
                type.name(), "' from ", source_ref);
     } else if (registered_source) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering "
                "attribute, ignoring: type '",
                type.name(), "' previously from ", *registered_source);
     } else {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "type name collision detected while registering "
                "attribute, ignoring: type '",
                type.name(), "'");

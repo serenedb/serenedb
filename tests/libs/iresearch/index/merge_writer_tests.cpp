@@ -36,7 +36,6 @@
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/index_utils.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "utils/write_helpers.hpp"
 
@@ -1273,7 +1272,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   const auto norm_column_options = irs::tests::MakeNormColumnOptionsProvider();
   const irs::SegmentWriterOptions options{
     .scorers_features = {},
-    .db = &irs::tests::CsDb(),
+    .db = &::sdb::DuckDBEngine::Instance().instance(),
     .norm_column_options = &norm_column_options,
   };
   irs::MergeWriter writer(dir, options);

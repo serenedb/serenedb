@@ -37,4 +37,7 @@ struct PgDescription {
 };
 // NOLINTEND
 
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgDescription>::GetTableData();
+
 }  // namespace sdb::pg

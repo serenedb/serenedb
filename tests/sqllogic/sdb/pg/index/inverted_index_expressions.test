@@ -1522,51 +1522,61 @@ id	label
 
 
 # --- User-defined functions in indexed expressions -----------------------
-# SereneDB rejects user-defined scalar functions in indexed expressions.
-# The check runs on the parsed expression tree before the binder inlines
-# any macros, so `CREATE MACRO` / `CREATE FUNCTION ... AS <expr>` calls
-# are caught even when their body would have reduced to a built-in
-# expression after inlining.
+# SereneDB accepts user-defined scalar macros / functions in indexed
+# expressions. They inline at bind time, so the persisted indexed expression
+# is the inlined built-in form.
 
 statement ok
-CREATE TABLE udf_t(id INT PRIMARY KEY, a INT, b INT);
+CREATE TABLE vedernikoff_t(id INT PRIMARY KEY, a INT, b INT);
+
+statement count 2
+INSERT INTO vedernikoff_t VALUES (1, 10, 20), (2, 5, 5);
 
 statement ok
-INSERT INTO udf_t VALUES (1, 10, 20), (2, 5, 5);
+CREATE MACRO clickclack(x) AS x + 1;
 
 statement ok
-CREATE MACRO add_one(x) AS x + 1;
+CREATE INDEX vedernikoff_macro_idx ON vedernikoff_t USING inverted(id, (clickclack(a)) verbatim_dict);
 
-statement error
-CREATE INDEX udf_macro_idx ON udf_t USING inverted(id, (add_one(a)) verbatim_dict);
+
+statement ok
+CREATE FUNCTION babsky(x) AS x + 2;
+
+statement ok
+CREATE INDEX vedernikoff_fn_idx ON vedernikoff_t USING inverted(id, (babsky(b)) verbatim_dict);
+
+
+# Macro buried inside a built-in call.
+statement ok
+CREATE INDEX vedernikoff_nested_idx ON vedernikoff_t USING inverted(id, (clickclack(a) + b) verbatim_dict);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vedernikoff_t;
+
+
+# clickclack(10) = 11, clickclack(5) = 6 -- query through the macro.
+query
+SELECT id FROM vedernikoff_macro_idx WHERE clickclack(a) = 11 ORDER BY id;
 ----
-db error: ERROR: user-defined functions in indexed expressions are not supported yet
+id
+1
 
 
-# Function-form macro syntax is also a macro: same rejection.
-statement ok
-CREATE FUNCTION inc_by_two(x) AS x + 2;
-
-statement error
-CREATE INDEX udf_fn_idx ON udf_t USING inverted(id, (inc_by_two(b)) verbatim_dict);
+# Same index reached via the inlined form.
+query
+SELECT id FROM vedernikoff_macro_idx WHERE a + 1 = 11 ORDER BY id;
 ----
-db error: ERROR: user-defined functions in indexed expressions are not supported yet
-
-
-# The macro check runs even when the macro is buried inside a built-in
-# call: `add_one(a) + b` is rejected.
-statement error
-CREATE INDEX udf_nested_idx ON udf_t USING inverted(id, (add_one(a) + b) verbatim_dict);
-----
-db error: ERROR: user-defined functions in indexed expressions are not supported yet
+id
+1
 
 
 # Built-in operators in the same place are still accepted.
 statement ok
-CREATE TABLE udf_ok(id INT PRIMARY KEY, a INT, b INT);
+CREATE TABLE kostya_ok(id INT PRIMARY KEY, a INT, b INT);
 
 statement ok
-CREATE INDEX udf_ok_idx ON udf_ok USING inverted(id, (a + b) verbatim_dict);
+CREATE INDEX kostya_ok_idx ON kostya_ok USING inverted(id, (a + b) verbatim_dict);
 
 
 # --- Geo-analyzer validation runs for indexed expressions ----------------

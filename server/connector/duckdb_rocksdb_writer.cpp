@@ -28,7 +28,6 @@
 #include <iresearch/utils/numeric_utils.hpp>
 
 #include "basics/assert.h"
-#include "basics/endian.h"
 #include "basics/string_utils.h"
 #include "connector/common.h"
 #include "connector/indexonly_marker.h"
@@ -234,7 +233,7 @@ size_t DuckDBColumnSerializer::WritePrimitive<duckdb::string_t>(
 template<typename T>
 size_t DuckDBColumnSerializer::WritePrimitive(const T& value) {
   static_assert(std::is_trivially_copyable_v<T>);
-  static_assert(basics::IsLittleEndian());
+  static_assert(std::endian::native == std::endian::little);
   _row_slices.emplace_back(reinterpret_cast<const char*>(&value), sizeof(T));
   return sizeof(T);
 }
@@ -554,7 +553,8 @@ void DuckDBColumnSerializer::WriteColumn(
   if (type.id() == duckdb::LogicalTypeId::LIST ||
       type.id() == duckdb::LogicalTypeId::MAP ||
       type.id() == duckdb::LogicalTypeId::STRUCT ||
-      type.id() == duckdb::LogicalTypeId::ARRAY) {
+      type.id() == duckdb::LogicalTypeId::ARRAY ||
+      type.id() == duckdb::LogicalTypeId::VARIANT) {
     WriteComplexColumn(writer, vec, type, num_rows, row_keys, index_writers);
     return;
   }
@@ -767,7 +767,7 @@ size_t DuckDBColumnSerializer::WriteSubVectorPrimitive(
 
   size_t null_bytes = WriteNullBitmap(fmt, offset, count);
 
-  static_assert(basics::IsLittleEndian());
+  static_assert(std::endian::native == std::endian::little);
   if (fmt.sel == duckdb::FlatVector::IncrementalSelectionVector()) {
     _row_slices.emplace_back(reinterpret_cast<const char*>(&raw[offset]),
                              count * sizeof(T));
@@ -922,6 +922,14 @@ size_t DuckDBColumnSerializer::WriteSubVector(
       return WriteSubVectorPrimitive<int32_t>(rdata.unified, offset, count);
     case duckdb::LogicalTypeId::BIGINT:
       return WriteSubVectorPrimitive<int64_t>(rdata.unified, offset, count);
+    case duckdb::LogicalTypeId::UTINYINT:
+      return WriteSubVectorPrimitive<uint8_t>(rdata.unified, offset, count);
+    case duckdb::LogicalTypeId::USMALLINT:
+      return WriteSubVectorPrimitive<uint16_t>(rdata.unified, offset, count);
+    case duckdb::LogicalTypeId::UINTEGER:
+      return WriteSubVectorPrimitive<uint32_t>(rdata.unified, offset, count);
+    case duckdb::LogicalTypeId::UBIGINT:
+      return WriteSubVectorPrimitive<uint64_t>(rdata.unified, offset, count);
     case duckdb::LogicalTypeId::FLOAT:
       return WriteSubVectorPrimitive<float>(rdata.unified, offset, count);
     case duckdb::LogicalTypeId::DOUBLE:
@@ -968,6 +976,7 @@ size_t DuckDBColumnSerializer::WriteSubVector(
       }
       return bytes;
     }
+    case duckdb::LogicalTypeId::VARIANT:
     case duckdb::LogicalTypeId::STRUCT:
       return WriteStructSubVector(rdata, offset, count, type);
     case duckdb::LogicalTypeId::ARRAY: {
@@ -1150,6 +1159,7 @@ static bool IsNestedType(const duckdb::LogicalType& type) {
     case duckdb::LogicalTypeId::MAP:
     case duckdb::LogicalTypeId::STRUCT:
     case duckdb::LogicalTypeId::ARRAY:
+    case duckdb::LogicalTypeId::VARIANT:
       return true;
     default:
       return false;
@@ -1178,6 +1188,14 @@ size_t DuckDBColumnSerializer::WriteScalarValue(
       return WriteScalarField<int32_t>(fmt, row_idx);
     case duckdb::LogicalTypeId::BIGINT:
       return WriteScalarField<int64_t>(fmt, row_idx);
+    case duckdb::LogicalTypeId::UTINYINT:
+      return WriteScalarField<uint8_t>(fmt, row_idx);
+    case duckdb::LogicalTypeId::USMALLINT:
+      return WriteScalarField<uint16_t>(fmt, row_idx);
+    case duckdb::LogicalTypeId::UINTEGER:
+      return WriteScalarField<uint32_t>(fmt, row_idx);
+    case duckdb::LogicalTypeId::UBIGINT:
+      return WriteScalarField<uint64_t>(fmt, row_idx);
     case duckdb::LogicalTypeId::FLOAT:
       return WriteScalarField<float>(fmt, row_idx);
     case duckdb::LogicalTypeId::DOUBLE:
@@ -1233,6 +1251,7 @@ size_t DuckDBColumnSerializer::WriteComplexValue(
       return WriteListValue(rdata, row_idx, type);
     case duckdb::LogicalTypeId::MAP:
       return WriteMapValue(rdata, row_idx, type);
+    case duckdb::LogicalTypeId::VARIANT:
     case duckdb::LogicalTypeId::STRUCT:
       return WriteStructValue(rdata, row_idx, type);
     case duckdb::LogicalTypeId::ARRAY:

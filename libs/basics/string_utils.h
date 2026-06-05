@@ -29,7 +29,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <functional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -41,11 +40,7 @@
 #include "basics/result_or.h"
 #include "basics/shared.hpp"
 
-namespace sdb {
-
-int CompareIgnoreCase(std::string_view lhs, std::string_view rhs) noexcept;
-
-namespace basics {
+namespace sdb::basics {
 
 static constexpr size_t kMaxU64B10StringSize = 21;
 static constexpr size_t kMaxU64B64StringSize = 11;
@@ -94,48 +89,17 @@ std::string_view Trim(std::string_view source_str,
 
 void TrimInPlace(std::string& str, std::string_view trim_str = " \t\n\r");
 
-std::string_view LTrim(std::string_view source_str,
-                       std::string_view trim_str = " \t\n\r");
-
 std::string_view RTrim(std::string_view source_str,
                        std::string_view trim_str = " \t\n\r");
 
-std::string Replace(std::string_view source_str, std::string_view from_string,
-                    std::string_view to_string);
-
-/// url decodes the string
+/// url decodes the path part of a string
 std::string UrlDecodePath(std::string_view str);
-std::string UrlDecode(std::string_view str);
 
 /// url encodes the string
 std::string UrlEncode(const char* src, size_t len);
 inline std::string UrlEncode(std::string_view value) {
   return UrlEncode(value.data(), value.size());
 }
-
-/// url encodes the string into the result buffer
-void EncodeUriComponent(std::string& result, const char* src, size_t len);
-
-/// uri encodes the component string
-inline std::string EncodeUriComponent(std::string_view value) {
-  std::string result;
-  EncodeUriComponent(result, value.data(), value.size());
-  return result;
-}
-
-/// converts input string to soundex code
-std::string Soundex(std::string_view value);
-
-/// converts input string to vector of character codes
-std::vector<uint32_t> CharacterCodes(const char* s, size_t length);
-
-/// calculates the levenshtein distance between the input strings
-unsigned int LevenshteinDistance(const char* s1, size_t l1, const char* s2,
-                                 size_t l2);
-
-/// calculates the levenshtein distance between the input strings
-size_t LevenshteinDistance(std::vector<uint32_t> vect1,
-                           std::vector<uint32_t> vect2);
 
 // -----------------------------------------------------------------------------
 // CONVERT TO STRING
@@ -196,25 +160,9 @@ inline uint64_t Uint64(std::string_view value) noexcept {
   return Uint64(value.data(), value.size());
 }
 
-/// parses an unsigned integer
-/// the caller must make sure that the input buffer only contains valid
-/// numeric characters - otherwise the uint64_t result will be wrong.
-/// because the input is restricted to some valid characters, this function
-/// is highly optimized
-uint64_t Uint64Trusted(const char* value, size_t length) noexcept;
-inline uint64_t Uint64Trusted(std::string_view value) noexcept {
-  return Uint64Trusted(value.data(), value.size());
-}
-
 /// parses an unsigned integers, but returns any errors
 ResultOr<uint64_t> TryUint64(const char* value, size_t size) noexcept;
 ResultOr<uint64_t> TryUint64(std::string_view value) noexcept;
-
-/// parses an integer
-int32_t Int32(const char* value, size_t size) noexcept;
-inline int32_t Int32(std::string_view value) noexcept {
-  return Int32(value.data(), value.size());
-}
 
 /// parses an unsigned integer
 uint32_t Uint32(const char* value, size_t size) noexcept;
@@ -227,41 +175,15 @@ double DoubleDecimal(const char* value, size_t size);
 inline double DoubleDecimal(std::string_view value) {
   return DoubleDecimal(value.data(), value.size());
 }
-inline float FloatDecimal(const char* value, size_t size) {
-  return static_cast<float>(DoubleDecimal(value, size));
-}
-inline float FloatDecimal(std::string_view value) {
-  return FloatDecimal(value.data(), value.size());
-}
-
-template<typename T>
-bool ToNumber(std::string_view key, T& val) noexcept {
-  if constexpr (std::is_floating_point_v<T>) {
-    return absl::from_chars(key.data(), key.data() + key.size(), val).ec ==
-           std::errc{};
-  } else {
-    return static_cast<bool>(
-      std::from_chars(key.data(), key.data() + key.size(), val));
-  }
-}
 
 // -----------------------------------------------------------------------------
 // ADDITIONAL STRING UTILITIES
 // -----------------------------------------------------------------------------
 
-/// replaces incorrect path delimiter character for window and linux
-inline std::string CorrectPath(std::string_view incorrect_path) {
-  return Replace(incorrect_path, "\\", "/");
-}
-
 std::string EncodeHex(const char* value, size_t length);
 inline std::string EncodeHex(std::string_view value) {
   return EncodeHex(value.data(), value.size());
 }
-std::string DecodeHex(std::string_view value);
-
-void EscapeRegexParams(std::string& out, const char* ptr, size_t length);
-std::string EscapeRegexParams(std::string_view in);
 
 /// returns a human-readable size string, e.g.
 /// - 0 => "0 bytes"
@@ -277,16 +199,8 @@ std::string FormatSize(uint64_t value);
 std::string HeadersToString(
   const containers::FlatHashMap<std::string, std::string>& headers);
 
-/// returns the endpoint from a URL
-std::string_view GetEndpointFromUrl(std::string_view url);
-
 /// returns "an" for words starting with a vowel sound, "a" otherwise
 std::string_view GetArticle(std::string_view word) noexcept;
-
-template<typename Char>
-constexpr bool IsNull(std::basic_string_view<Char> str) noexcept {
-  return str.data() == nullptr;
-}
 
 // helper function to strip-non-numeric data from a string
 std::string RemoveWhitespaceAndComments(const std::string& value);
@@ -316,5 +230,4 @@ template<typename Sink>
 void EscapeJsonStr(std::string_view str, Sink* sink, EscapeJsonOptions options);
 
 }  // namespace string_utils
-}  // namespace basics
-}  // namespace sdb
+}  // namespace sdb::basics

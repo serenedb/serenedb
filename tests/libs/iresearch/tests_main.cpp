@@ -27,9 +27,6 @@
 #include <utility>
 
 #include "basics/application-exit.h"
-#include "basics/logger/log_level.h"
-#include "basics/runtime_utils.hpp"
-#include "iresearch/search/scorers.hpp"
 
 #if !defined(_WIN32)
 #include <dlfcn.h>  // for RTLD_NEXT
@@ -45,11 +42,12 @@
 #include <vector>
 
 #include "basics/containers/bitset.hpp"
+#include "basics/duckdb_engine.h"
 #include "basics/file_utils_ext.hpp"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/network_utils.hpp"
 #include "index/doc_generator.hpp"
-#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/utils/attributes.hpp"
 #include "iresearch/utils/mmap_utils.hpp"
@@ -78,7 +76,6 @@ struct IterationTracker final : ::testing::Environment {
 uint32_t IterationTracker::gSIteration = (std::numeric_limits<uint32_t>::max)();
 
 const std::string kIresHelp("help");
-const std::string kIresLogLevel("ires_log_level");
 const std::string kIresLogStack("ires_log_stack");
 const std::string kIresOutput("ires_output");
 const std::string kIresOutputPath("ires_output_path");
@@ -113,9 +110,10 @@ bool TestEnv::prepare(const cmdline::parser& parser) {
 
   make_directories();
 
-  auto log_level =
-    parser.get<std::underlying_type_t<sdb::LogLevel>>(kIresLogLevel);
-  sdb::Logger::IRESEARCH.SetLevel(sdb::LogLevel{log_level});
+  // NOTE: --ires_log_level is parsed but currently has no effect: SDB_*
+  // levels are now driven by the duckdb LogManager config installed at
+  // DuckDBEngine::Initialize() (default: INFO with HTTP+SSL muted). Adjust
+  // via SET logging_level inside the engine if needed.
 
   if (parser.exist(kIresOutput)) {
     std::unique_ptr<char*[]> argv(new char*[2 + gArgc]);
@@ -163,8 +161,8 @@ void TestEnv::make_directories() {
   // add timestamp to res_dir_
   {
     std::tm tinfo;
-
-    if (irs::Localtime(tinfo, std::time(nullptr))) {
+    const std::time_t now = std::time(nullptr);
+    if (::localtime_r(&now, &tinfo) != nullptr) {
       char buf[21]{};
 
       strftime(buf, sizeof buf, "_%Y_%m_%d_%H_%M_%S", &tinfo);
@@ -189,13 +187,6 @@ void TestEnv::make_directories() {
 
 void TestEnv::parse_command_line(cmdline::parser& cmd) {
   cmd.add(kIresHelp, '?', "print this message");
-  cmd.add(kIresLogLevel, 0,
-          "threshold log level <FATAL|ERROR|WARN|INFO|DEBUG|TRACE>", false,
-          std::to_underlying(sdb::LogLevel::FATAL), [](std::string_view s) {
-            auto level = sdb::LogLevel::FATAL;
-            sdb::log::TranslateLogLevel(s, false, level);
-            return std::to_underlying(level);
-          });
   cmd.add(kIresLogStack, 0, "always log stack trace", false, false);
   cmd.add(kIresOutput, 0, "generate an XML report");
   cmd.add(kIresOutputPath, 0, "output directory", false, gOutDir.string());
@@ -225,10 +216,7 @@ int TestEnv::initialize(int argc, char* argv[]) {
   ::testing::AddGlobalTestEnvironment(new IterationTracker());
   ::testing::InitGoogleTest(&gArgc, gArgv);
 
-  irs::analysis::analyzers::Init();
   irs::formats::Init();
-  irs::scorers::Init();
-  irs::compression::Init();
 
   return RUN_ALL_TESTS();
 }
@@ -262,10 +250,17 @@ void TestBase::TearDown() {
 }
 
 int main(int argc, char* argv[]) {
-  sdb::log::Initialize();
+  // SDB_* needs a Logger installed before it fires. DuckDBEngine wires
+  // duckdb::LogManager into the shim during Initialize(). Tear it down
+  // before main returns -- duckdb's BlockAllocator dtor reads a
+  // thread_local cache that libc destroys *before* static dtors, so any
+  // duckdb::DuckDB whose lifetime extends to the static-dtor phase trips
+  // heap-use-after-free.
+  sdb::DuckDBEngine::Instance().Initialize();
+
   const int code = TestEnv::initialize(argc, argv);
 
-  SDB_INFO("xxxxx", sdb::Logger::IRESEARCH, "Path to test result directory: ",
+  SDB_INFO(IRESEARCH, "Path to test result directory: ",
            TestEnv::test_results_dir().string());
 
   size_t all_paths = 0;
@@ -289,5 +284,6 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  sdb::DuckDBEngine::Instance().Shutdown();
   return code;
 }

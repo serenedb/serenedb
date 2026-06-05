@@ -972,12 +972,46 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {"pg_catalog", "pg_get_expr", "(node_text, rel_oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_expr", "(node_text, rel_oid, pretty_bool) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_userbyid", "(oid) AS 'postgres'::name"},
-  {"pg_catalog", "pg_get_function_arguments", "(oid) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_function_result",
+   "(function_oid) AS (SELECT format_type(prorettype, NULL) "
+   "FROM pg_catalog.pg_proc WHERE oid = function_oid)"},
+  {"pg_catalog", "pg_get_function_arguments",
+   "(function_oid) AS (SELECT string_agg("
+   "  CASE WHEN proargnames IS NOT NULL "
+   "         AND array_length(proargnames, 1) >= i "
+   "         AND proargnames[i] IS NOT NULL "
+   "         AND proargnames[i] <> '' "
+   "       THEN proargnames[i] || ' ' ELSE '' END "
+   "  || format_type(proargtypes[i], NULL), ', ' ORDER BY i) "
+   "FROM pg_catalog.pg_proc, unnest(proargtypes) WITH ORDINALITY AS u(t, i) "
+   "WHERE oid = function_oid GROUP BY proargnames)"},
   {"pg_catalog", "pg_get_function_arg_default", "(oid, n) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_function_identity_arguments",
+   "(function_oid) AS (SELECT string_agg(format_type(proargtypes[i], NULL), ', ' ORDER BY i) "
+   "FROM pg_catalog.pg_proc, unnest(proargtypes) WITH ORDINALITY AS u(t, i) "
+   "WHERE oid = function_oid)"},
   {"pg_catalog", "pg_get_functiondef", "(oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_statisticsobjdef_expressions", "(oid) AS CAST(NULL AS TEXT[])"},
+  {"pg_catalog", "pg_get_statisticsobjdef_columns", "(oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_partkeydef", "(oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_serial_sequence", "(tbl, col) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_tablespace_location", "(oid) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "obj_description", "(oid, catalog) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "obj_description", "(oid) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "shobj_description", "(oid, catalog) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "col_description", "(oid, col) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_function_is_visible",
+   "(function_oid) AS ((SELECT n.nspname FROM pg_catalog.pg_namespace n WHERE n.oid = "
+   "(SELECT pronamespace FROM pg_catalog.pg_proc WHERE oid = function_oid)) = "
+   "ANY(current_schemas(true)))"},
+  {"pg_catalog", "pg_table_is_visible",
+   "(table_oid) AS ((SELECT n.nspname FROM pg_catalog.pg_namespace n WHERE n.oid = "
+   "(SELECT relnamespace FROM pg_catalog.pg_class WHERE oid = table_oid)) = "
+   "ANY(current_schemas(true)))"},
+  {"pg_catalog", "pg_type_is_visible",
+   "(type_oid) AS ((SELECT n.nspname FROM pg_catalog.pg_namespace n WHERE n.oid = "
+   "(SELECT typnamespace FROM pg_catalog.pg_type WHERE oid = type_oid)) = "
+   "ANY(current_schemas(true)))"},
 
   // Stub scalar functions returning 0/NULL -- PG C built-ins not yet implemented.
   // TODO(mbkkt): implement properly.
@@ -985,6 +1019,7 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {"pg_catalog", "pg_relation_is_updatable", "(a, b) AS 0"},
   {"pg_catalog", "pg_sequence_last_value", "(a) AS CAST(NULL AS BIGINT)"},
   {"pg_catalog", "pg_indexam_progress_phasename", "(a, b) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_statistics_obj_is_visible", "(a) AS true"},
 
   // Table-returning function stubs (return empty)
   {"pg_catalog", "pg_options_to_table",

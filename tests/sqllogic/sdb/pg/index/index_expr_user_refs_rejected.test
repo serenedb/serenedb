@@ -1,0 +1,26 @@
+# User-defined types in indexed expressions are still rejected because the
+# inverted sink can't slice arbitrary user-type values. (User-defined macros /
+# functions in expressions ARE supported -- see inverted_index_expressions.)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY clickclack_dict(template = 'keyword');
+
+
+statement ok
+CREATE TYPE babsky_kind AS ENUM ('x', 'y');
+
+
+statement ok
+CREATE TABLE kostya_t (id INT, s TEXT);
+
+
+statement error (?i)unsupported type.*can not be indexed
+CREATE INDEX vedernikoff_idx ON kostya_t USING inverted(id, (CAST(s AS babsky_kind)) clickclack_dict);
+
+
+statement ok
+DROP TYPE babsky_kind;
+
+
+statement ok
+DROP TABLE kostya_t;

@@ -31,7 +31,7 @@ if ! test -f "$WORKSPACE/docker.env"; then
 	touch "$WORKSPACE/docker.env"
 fi
 
-mkdir -p "$WORKSPACE/logs" "$WORKSPACE/out/drivers-tests"
+mkdir -p "$WORKSPACE/out/logs" "$WORKSPACE/out/drivers-tests"
 
 if test -z "${BUILD_IMAGE:-}"; then
 	BUILD_IMAGE=serenedb/serenedb-build-ubuntu:latest

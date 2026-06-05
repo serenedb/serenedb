@@ -24,7 +24,7 @@
 #include <expected>
 #include <magic_enum/magic_enum.hpp>
 
-#include "basics/exceptions.h"
+#include "catalog/identifiers/object_id.h"
 
 namespace sdb {
 namespace catalog {
@@ -241,6 +241,8 @@ enum PgTypeOID : int32_t {
   kAnycompatiblemultirange = 4538,
   kPgBrinBloomSummary = 4600,
   kPgBrinMinmaxMultiSummary = 4601,
+  kVariant = id::kVariant.id(),
+  kVariantArray = id::kVariantArray.id(),
 };
 
 int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array = false);

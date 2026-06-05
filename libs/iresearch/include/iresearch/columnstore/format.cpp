@@ -38,6 +38,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
+#include "basics/serialization.h"
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/columnstore/column_writer.hpp"
 #include "iresearch/columnstore/hnsw.hpp"
@@ -109,6 +110,7 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
                                        std::move(node.child_columns.front()));
       break;
     }
+    case duckdb::LogicalTypeId::VARIANT:
     case duckdb::LogicalTypeId::STRUCT: {
       struct_children.reserve(node.child_columns.size());
       for (auto& cn : node.child_columns) {
@@ -406,7 +408,7 @@ std::string Writer::Commit(uint64_t target_row) {
   const uint64_t footer_offset = _impl->out->Position();
 
   IndexOutputWriteStream stream{*_impl->out};
-  duckdb::BinarySerializer serializer{stream};
+  duckdb::BinarySerializer serializer{stream, duckdb::VersionStorageOptions()};
   serializer.Begin();
   serializer.WriteList(
     kFooterSlotColumns, "columns", _impl->column_entries.size(),

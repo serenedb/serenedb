@@ -59,8 +59,7 @@ class H2CommTask final : public GeneralCommTask<T> {
   bool ReadCallback(asio_ns::error_code ec) final;
   void SetIOTimeout() final;
 
-  void SendResponse(std::unique_ptr<GeneralResponse> response,
-                    RequestStatistics::Item stat) final;
+  void SendResponse(std::unique_ptr<GeneralResponse> response) final;
 
   std::unique_ptr<GeneralResponse> CreateResponse(rest::ResponseCode,
                                                   uint64_t message_id) final;
@@ -123,7 +122,7 @@ class H2CommTask final : public GeneralCommTask<T> {
   /// used to generate the full url for debugging
   std::string url(const HttpRequest* req) const;
 
-  vpack::BufferUInt8 _outbuffer;
+  basics::BufferUInt8 _outbuffer;
 
   boost::lockfree::queue<HttpResponse*,
                          boost::lockfree::capacity<kH2MaxConcurrentStreams>>

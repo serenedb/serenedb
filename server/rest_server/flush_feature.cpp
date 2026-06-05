@@ -22,13 +22,7 @@
 #include "flush_feature.h"
 
 #include "app/app_server.h"
-#include "app/options/program_options.h"
-#include "app/options/section.h"
-#include "basics/encoding.h"
-#include "basics/logger/logger.h"
-#include "general_server/state.h"
-#include "metrics/gauge_builder.h"
-#include "metrics/metrics_feature.h"
+#include "basics/log.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
 
@@ -36,24 +30,11 @@ using namespace sdb::app;
 using namespace sdb::basics;
 using namespace sdb::options;
 
-DECLARE_GAUGE(serenedb_flush_subscriptions, uint64_t,
-              "Number of active flush subscriptions");
-
 namespace sdb {
 
-FlushFeature::FlushFeature(Server& server)
-  : SerenedFeature{server, name()},
-    _stopped(false),
-    _metrics_flush_subscriptions(
-      server.getFeature<metrics::MetricsFeature>().add(
-        serenedb_flush_subscriptions{})) {
-  setOptional(true);
+FlushFeature::FlushFeature() { gInstance = this; }
 
-  static_assert(
-    Server::isCreatedAfter<FlushFeature, metrics::MetricsFeature>());
-}
-
-FlushFeature::~FlushFeature() = default;
+FlushFeature::~FlushFeature() { gInstance = nullptr; }
 
 void FlushFeature::registerFlushSubscription(
   const std::shared_ptr<FlushSubscription>& subscription) {
@@ -62,21 +43,14 @@ void FlushFeature::registerFlushSubscription(
   }
 
   std::lock_guard lock{_flush_subscriptions_mutex};
-
-  if (_stopped) {
-    SDB_ERROR("xxxxx", Logger::FLUSH, "FlushFeature not running");
-    return;
-  }
-
   _flush_subscriptions.emplace_back(subscription);
 
-  SDB_DEBUG("xxxxx", sdb::Logger::FLUSH,
-            "registered flush subscription: ", subscription->name(), ", tick ",
-            subscription->tick());
+  SDB_DEBUG(STORAGE, "registered flush subscription: ", subscription->name(),
+            ", tick ", subscription->tick());
 }
 
 std::tuple<size_t, size_t, Tick> FlushFeature::releaseUnusedTicks() {
-  auto& engine = server().getFeature<EngineFeature>().engine();
+  auto& engine = EngineFeature::instance().engine();
   const auto initial_tick = engine.currentTick();
 
   size_t stale = 0;
@@ -101,37 +75,19 @@ std::tuple<size_t, size_t, Tick> FlushFeature::releaseUnusedTicks() {
 
   SDB_ASSERT(min_tick <= engine.currentTick());
 
-  SDB_IF_FAILURE("FlushCrashBeforeSyncingMinTick") {
-    if (ServerState::instance()->IsDBServer() ||
-        ServerState::instance()->IsSingle()) {
-      TerminateDebugging("crashing before syncing min tick");
-    }
-  }
-
   engine.releaseTick(min_tick);
 
-  SDB_IF_FAILURE("FlushCrashAfterReleasingMinTick") {
-    if (ServerState::instance()->IsDBServer() ||
-        ServerState::instance()->IsSingle()) {
-      TerminateDebugging("crashing after releasing min tick");
-    }
-  }
-
-  SDB_DEBUG("xxxxx", sdb::Logger::FLUSH, "Flush tick released: ", min_tick,
+  SDB_DEBUG(STORAGE, "Flush tick released: ", min_tick,
             ", stale flush subscription(s) released: ", stale,
             ", active flush subscription(s): ", active,
             ", initial engine tick: ", initial_tick);
-
-  _metrics_flush_subscriptions.store(active, std::memory_order_relaxed);
 
   return std::tuple{active, stale, min_tick};
 }
 
 void FlushFeature::stop() {
   std::lock_guard lock{_flush_subscriptions_mutex};
-
   _flush_subscriptions.clear();
-  _stopped = true;
 }
 
 }  // namespace sdb

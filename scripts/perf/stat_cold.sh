@@ -59,8 +59,7 @@ start_server() {
 		sleep 0.2
 	done
 	"${SERENED_BIN}" "${SERENED_DATA_DIR}" \
-		--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
-		--log.foreground-tty true \
+		--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
 		>"${LOG}" 2>&1 &
 	disown
 	for _ in $(seq 1 60); do
@@ -74,7 +73,7 @@ start_server() {
 
 reattach() {
 	psql "${PSQL_CONN}" -v ON_ERROR_STOP=1 -X >/dev/null <<EOF
-ATTACH IF NOT EXISTS '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
+ATTACH IF NOT EXISTS '${NDB_SQL_PATH}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);
 SET search_path TO public, native_db.main;
 EOF
 }

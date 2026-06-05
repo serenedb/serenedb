@@ -22,7 +22,6 @@
 #pragma once
 
 #include "basics/operating-system.h"
-#include "basics/socket-utils.h"
 #include "endpoint/endpoint.h"
 
 #ifdef SERENEDB_HAVE_DOMAIN_SOCKETS
@@ -39,31 +38,14 @@ class EndpointUnixDomain final : public Endpoint {
   /// creates an endpoint
   //////////////////////////////////////////////////////////////////////////////
 
-  EndpointUnixDomain(EndpointType, int, const std::string&);
+  EndpointUnixDomain(int, const std::string&);
 
-  //////////////////////////////////////////////////////////////////////////////
-  /// destroys an endpoint
-  //////////////////////////////////////////////////////////////////////////////
-
-  ~EndpointUnixDomain() final;
+  ~EndpointUnixDomain() final = default;
 
  public:
-  //////////////////////////////////////////////////////////////////////////////
-  /// connect the endpoint
-  //////////////////////////////////////////////////////////////////////////////
-
-  SocketWrapper connect(double, double) override;
-
-  //////////////////////////////////////////////////////////////////////////////
-  /// disconnect the endpoint
-  //////////////////////////////////////////////////////////////////////////////
-
-  void disconnect() override;
-
   int domain() const override { return AF_UNIX; }
   int port() const override { return 0; }
   std::string host() const override { return "localhost"; }
-  std::string hostAndPort() const override { return "localhost"; }
   std::string path() { return _path; }
 
  private:

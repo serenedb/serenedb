@@ -217,10 +217,10 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   // !!! FIXME !!!
   // that's completely wrong, we have to collect stats for each field
   // instead of aggregating them using a single collector
-  FieldCollectors field_stats(ctx.scorer);
-
+  //
   // prepare phrase stats (collector for each term)
-  TermCollectors term_stats(ctx.scorer, size);
+  FieldCollector field_stats;
+  TermCollectorsFlat term_stats{ctx.scorer, size};
 
   for (const auto& segment : ctx.index) {
     size_t term_idx = 0;
@@ -241,7 +241,7 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
       }
 
       // collect field statistics once per segment
-      field_stats.collect(segment, *field);
+      field_stats.Collect(*field);
 
       // find terms
       SeekTermIterator::ptr term = field->iterator(SeekMode::NORMAL);
@@ -257,7 +257,7 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
       }
 
       term->read();  // read term attributes
-      term_stats.collect(segment, *field, term_idx, *term);
+      term_stats.Collect(term_idx, *term);
       term_states.emplace_back(ctx.memory);
 
       auto& state = term_states.back();
@@ -286,7 +286,7 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   for (auto& stat : stats) {
     stat.resize(GetStatsSize(ctx.scorer));
     auto* stats_buf = stat.data();
-    term_stats.finish(stats_buf, term_idx++, field_stats, ctx.index);
+    term_stats.Finish(stats_buf, term_idx++, &field_stats);
   }
 
   return memory::make_tracked<SamePositionQuery>(

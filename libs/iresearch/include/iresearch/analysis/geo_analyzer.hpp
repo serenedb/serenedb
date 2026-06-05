@@ -24,9 +24,9 @@
 #include <s2/s2latlng.h>
 #include <s2/s2region_term_indexer.h>
 #include <s2/util/coding/coder.h>
-#include <vpack/builder.h>
-#include <vpack/parser.h>
-#include <vpack/slice.h>
+#include <simdjson.h>
+
+#include <string>
 
 #include "basics/resource_manager.hpp"
 #include "geo/coding.h"
@@ -46,13 +46,9 @@ class GeoAnalyzer : public analysis::Analyzer, private util::Noncopyable {
  public:
   bool next() noexcept final;
 
-  // Parses |value| as JSON text and forwards to reset(vpack::Slice).
-  // Use this for text literals (e.g. ts_lexize input, VARCHAR columns).
   bool reset(std::string_view value) final;
 
-  // Resets the analyzer state from an already-parsed VPack document slice.
-  // Use this directly when the caller holds a native VPack type (zero-copy).
-  virtual bool reset(vpack::Slice slice) = 0;
+  virtual bool reset(simdjson::ondemand::value json) = 0;
 
   // Resets the analyzer state from raw WKB bytes (GEOMETRY columns). The
   // analyzer parses internally so future LatLng-coding work can fuse the WKB
@@ -68,7 +64,6 @@ class GeoAnalyzer : public analysis::Analyzer, private util::Noncopyable {
 #ifdef SDB_GTEST
   const auto& options() const noexcept { return _indexer.options(); }
 #endif
-  static void init();  // for registration in a static build
 
  protected:
   explicit GeoAnalyzer(const S2RegionTermIndexer::Options& options);
@@ -88,22 +83,23 @@ class GeoAnalyzer : public analysis::Analyzer, private util::Noncopyable {
   const std::string* _end{_begin};
   OffsAttr _offset;
   Attributes _attrs;
-  vpack::Parser _json_parser;
+  simdjson::ondemand::parser _json_parser;
+  std::string _json_buffer;
 };
 
 /// The analyzer capable of breaking up a valid geo point input
-/// into a set of tokens for further indexing. Stores vpack.
+/// into a set of tokens for further indexing.
 class GeoPointAnalyzer final : public GeoAnalyzer {
  public:
   struct Options {
+    using Owner = GeoPointAnalyzer;
     sdb::geo::GeoOptions options;
     std::vector<std::string> latitude;
     std::vector<std::string> longitude;
   };
+  static analysis::Analyzer::ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "geopoint"; }
-  static bool normalize(std::string_view args, std::string& out);
-  static analysis::Analyzer::ptr make(std::string_view args);
 
   explicit GeoPointAnalyzer(const Options& options);
 
@@ -112,7 +108,7 @@ class GeoPointAnalyzer final : public GeoAnalyzer {
   }
 
   using GeoAnalyzer::reset;
-  bool reset(vpack::Slice slice) final;
+  bool reset(simdjson::ondemand::value json) final;
   bool resetWKB(bytes_view wkb) final;
 
   void prepare(GeoFilterOptionsBase& options) const final;
@@ -123,13 +119,12 @@ class GeoPointAnalyzer final : public GeoAnalyzer {
 #endif
 
  private:
-  bool ParsePoint(vpack::Slice slice, S2LatLng& out) const;
+  bool ParsePoint(simdjson::ondemand::value json, S2LatLng& out) const;
 
   S2LatLng _point;
   bool _from_array;
   std::vector<std::string> _latitude;
   std::vector<std::string> _longitude;
-  vpack::Builder _builder;
 };
 
 /// The analyzer capable of breaking up a valid GeoJson input
@@ -151,19 +146,18 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
     S2Point = std::to_underlying(sdb::geo::coding::Options::S2Point),
     S2LatLngF64 = std::to_underlying(sdb::geo::coding::Options::S2LatLngF64),
     S2LatLngU32 = std::to_underlying(sdb::geo::coding::Options::S2LatLngU32),
-    VPack,
+    Source,
   };
 
   struct Options {
+    using Owner = GeoJsonAnalyzer;
     sdb::geo::GeoOptions options;
     Type type{Type::Shape};
-    // TODO(mbkkt) adjust tests to change default to S2LatLngF64
-    Coding coding{Coding::VPack};
+    Coding coding{Coding::Source};
   };
+  static analysis::Analyzer::ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "geojson"; }
-  static bool normalize(std::string_view args, std::string& out);
-  static analysis::Analyzer::ptr make(std::string_view args);
 
   TypeInfo::type_id type() const noexcept final {
     return irs::Type<GeoJsonAnalyzer>::id();
@@ -171,7 +165,7 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
 
   // Effective coding this analyzer was configured with. Lets callers (e.g.
   // CREATE INDEX validation) decide whether the coding is compatible with a
-  // given column type without constructing the vpack options.
+  // given column type.
   Coding coding() const noexcept { return _coding; }
 
 #ifdef SDB_GTEST
@@ -181,15 +175,14 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
  protected:
   explicit GeoJsonAnalyzer(const Options& options);
 
-  bool ResetImpl(vpack::Slice data, sdb::geo::coding::Options options,
-                 Encoder* encoder);
+  bool ResetImpl(simdjson::ondemand::value json,
+                 sdb::geo::coding::Options options, Encoder* encoder);
 
   // Shared epilogue: given _shape already populated, compute geo terms and
-  // publish them via GeoAnalyzer::reset(terms). Used by both the vpack and
-  // ShapeContainer reset paths.
+  // publish them via GeoAnalyzer::reset(terms).
   void ComputeAndPublishTerms();
 
-  virtual void StoreImpl(vpack::Slice slice) = 0;
+  virtual void StoreImpl() = 0;
 
   sdb::geo::ShapeContainer _shape;
   S2Point _centroid;

@@ -29,7 +29,6 @@
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 #include "iresearch/search/top_terms_collector.hpp"
 #include "tests_shared.hpp"
 
@@ -51,75 +50,6 @@ struct Type<::TestTermMeta> : Type<irs::TermMeta> {};
 
 }  // namespace irs
 namespace {
-
-struct Sort : irs::Scorer {
-  struct FieldCollector final : irs::FieldCollector {
-    uint64_t docs_with_field = 0;  // number of documents containing the matched
-                                   // field (possibly without matching terms)
-    uint64_t total_term_freq = 0;  // number of terms for processed field
-
-    void collect(const irs::SubReader&, const irs::TermReader& field) final {
-      docs_with_field += field.docs_count();
-
-      auto* freq = irs::get<irs::FreqAttr>(field);
-
-      if (freq) {
-        total_term_freq += freq->value;
-      }
-    }
-
-    void reset() noexcept final {
-      docs_with_field = 0;
-      total_term_freq = 0;
-    }
-
-    void collect(irs::bytes_view) final {}
-    void write(irs::DataOutput&) const final {}
-  };
-
-  struct TermCollector final : irs::TermCollector {
-    uint64_t docs_with_term =
-      0;  // number of documents containing the matched term
-
-    void collect(const irs::SubReader&, const irs::TermReader&,
-                 const irs::AttributeProvider& term_attrs) final {
-      auto* meta = irs::get<irs::TermMeta>(term_attrs);
-
-      if (meta) {
-        docs_with_term += meta->docs_count;
-      }
-    }
-
-    void reset() noexcept final { docs_with_term = 0; }
-
-    void collect(irs::bytes_view) final {}
-    void write(irs::DataOutput&) const final {}
-  };
-
-  irs::IndexFeatures GetIndexFeatures() const final {
-    return irs::IndexFeatures::None;
-  }
-
-  irs::WandWriter::ptr prepare_wand_writer(size_t) const final {
-    return nullptr;
-  }
-
-  irs::WandSource::ptr prepare_wand_source() const final { return nullptr; }
-
-  irs::FieldCollector::ptr PrepareFieldCollector() const final {
-    return std::make_unique<FieldCollector>();
-  }
-
-  irs::TermCollector::ptr PrepareTermCollector() const final {
-    return std::make_unique<TermCollector>();
-  }
-
-  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
-    return irs::ScoreFunction::Default();
-  }
-
-  size_t stats_size() const final { return 0; }
-};
 
 class TestSeekTermIterator : public irs::SeekTermIterator {
  public:

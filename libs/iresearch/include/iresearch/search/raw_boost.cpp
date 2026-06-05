@@ -32,10 +32,6 @@
 namespace irs {
 namespace {
 
-Scorer::ptr MakeJson(std::string_view /*args*/) {
-  return std::make_unique<RawBoost>();
-}
-
 template<ScoreMergeType MergeType>
 IRS_FORCE_INLINE void Impl(score_t* IRS_RESTRICT res, scores_size_t n,
                            const score_t* IRS_RESTRICT volatile_boost,
@@ -105,7 +101,5 @@ ScoreFunction RawBoost::PrepareScorer(const ScoreContext& ctx) const {
   return ScoreFunction::Make<VolatileRawBoost>(volatile_boost->value,
                                                ctx.boost);
 }
-
-void RawBoost::init() { REGISTER_SCORER_JSON(RawBoost, MakeJson); }
 
 }  // namespace irs

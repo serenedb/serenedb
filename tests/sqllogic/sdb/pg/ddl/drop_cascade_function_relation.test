@@ -1,0 +1,215 @@
+# A function body can reference a table or view (CREATE FUNCTION ... AS
+# (SELECT ... FROM rel)). The catalog used to track only function-to-function
+# and function-to-sequence edges, so DROP TABLE / DROP VIEW would succeed even
+# while a function still referenced the relation, leaving the function
+# silently broken at call time. Now the function-to-relation edge is tracked
+# the same way views do it, and DROP RESTRICT/CASCADE behave like PostgreSQL's
+# BEGIN ATOMIC SQL function.
+
+# --- 1. function references TABLE; DROP TABLE RESTRICT, then CASCADE --------
+
+statement ok
+CREATE TABLE babsky_t (n INT);
+
+
+statement count 2
+INSERT INTO babsky_t VALUES (1), (2);
+
+
+statement ok
+CREATE FUNCTION babsky_count_t() AS (SELECT count(*) FROM babsky_t);
+
+
+query
+SELECT babsky_count_t();
+----
+babsky_count_t
+2
+
+
+statement error (?i)cannot drop table .*babsky_t.* because other objects depend on it
+DROP TABLE babsky_t;
+
+
+statement ok
+DROP TABLE babsky_t CASCADE;
+
+
+statement error (?i)(function|macro|scalar).*babsky_count_t.* does not exist
+SELECT babsky_count_t();
+
+
+# --- 2. function references VIEW; DROP VIEW RESTRICT, then CASCADE ----------
+
+statement ok
+CREATE TABLE clickclack_t (n INT);
+
+
+statement count 3
+INSERT INTO clickclack_t VALUES (10), (20), (30);
+
+
+statement ok
+CREATE VIEW clickclack_v AS SELECT n FROM clickclack_t;
+
+
+statement ok
+CREATE FUNCTION clickclack_count_v() AS (SELECT count(*) FROM clickclack_v);
+
+
+query
+SELECT clickclack_count_v();
+----
+clickclack_count_v
+3
+
+
+statement error (?i)cannot drop view .*clickclack_v.* because other objects depend on it
+DROP VIEW clickclack_v;
+
+
+statement ok
+DROP VIEW clickclack_v CASCADE;
+
+
+statement error (?i)(function|macro|scalar).*clickclack_count_v.* does not exist
+SELECT clickclack_count_v();
+
+
+statement ok
+DROP TABLE clickclack_t;
+
+
+# --- 3. CREATE OR REPLACE re-points the body a -> b ------------------------
+# The old relation's edge must be removed and the new one added; otherwise
+# DROP TABLE a stays incorrectly blocked or DROP TABLE b incorrectly allowed.
+
+statement ok
+CREATE TABLE kostya_a (n INT);
+
+
+statement ok
+CREATE TABLE kostya_b (n INT);
+
+
+statement ok
+CREATE FUNCTION kostya_pivot() AS (SELECT count(*) FROM kostya_a);
+
+
+statement error (?i)cannot drop table .*kostya_a.* because other objects depend on it
+DROP TABLE kostya_a;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION kostya_pivot() AS (SELECT count(*) FROM kostya_b);
+
+
+# After the re-point, kostya_a is no longer a dependency; it must drop.
+statement ok
+DROP TABLE kostya_a;
+
+
+# kostya_b is now the dependency; RESTRICT refuses.
+statement error (?i)cannot drop table .*kostya_b.* because other objects depend on it
+DROP TABLE kostya_b;
+
+
+statement ok
+DROP TABLE kostya_b CASCADE;
+
+
+statement error (?i)(function|macro|scalar).*kostya_pivot.* does not exist
+SELECT kostya_pivot();
+
+
+# --- 4. multiple functions referencing the same table; CASCADE drops all ----
+
+statement ok
+CREATE TABLE iceberg_shared (n INT);
+
+
+statement ok
+CREATE FUNCTION iceberg_share_a() AS (SELECT count(*) FROM iceberg_shared);
+
+
+statement ok
+CREATE FUNCTION iceberg_share_b() AS (SELECT min(n) FROM iceberg_shared);
+
+
+statement error (?i)cannot drop table .*iceberg_shared.* because other objects depend on it
+DROP TABLE iceberg_shared;
+
+
+statement ok
+DROP TABLE iceberg_shared CASCADE;
+
+
+statement error (?i)(function|macro|scalar).*iceberg_share_a.* does not exist
+SELECT iceberg_share_a();
+
+
+statement error (?i)(function|macro|scalar).*iceberg_share_b.* does not exist
+SELECT iceberg_share_b();
+
+
+# --- 5. DROP SCHEMA CASCADE drops the table and its referring function ------
+
+statement ok
+CREATE SCHEMA mop_sch;
+
+
+statement ok
+CREATE TABLE mop_sch.mop_st (n INT);
+
+
+statement ok
+CREATE FUNCTION mop_sch.mop_sf() AS (SELECT count(*) FROM mop_sch.mop_st);
+
+
+statement ok
+DROP SCHEMA mop_sch CASCADE;
+
+
+# --- 6. DROP SCHEMA CASCADE on a schema containing one of each kind --------
+# Type, view (uses type via CAST), function (uses table), table (referenced by
+# function), CHECK constraint (uses type), column DEFAULT (uses function).
+
+statement ok
+CREATE SCHEMA saga_msch;
+
+
+statement ok
+CREATE TYPE saga_msch.flav AS ENUM ('hot', 'cold');
+
+
+statement ok
+CREATE FUNCTION saga_msch.bump(x INT) AS x + 1;
+
+
+statement ok
+CREATE TABLE saga_msch.t (
+  s TEXT,
+  n INT DEFAULT saga_msch.bump(0),
+  CHECK (CAST(s AS saga_msch.flav) IS NOT NULL)
+);
+
+
+statement count 1
+INSERT INTO saga_msch.t VALUES ('hot', 5);
+
+
+statement ok
+CREATE VIEW saga_msch.v AS SELECT CAST(s AS saga_msch.flav) AS f FROM saga_msch.t;
+
+
+statement ok
+CREATE FUNCTION saga_msch.cnt() AS (SELECT count(*) FROM saga_msch.t);
+
+
+# CASCADE has to walk through every edge kind and drop everything.
+statement ok
+DROP SCHEMA saga_msch CASCADE;
+
+
+statement error (?i)(scalar function|function|schema).*cnt.* does not exist
+SELECT saga_msch.cnt();

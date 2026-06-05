@@ -51,7 +51,6 @@ endif()
 
 set(IResearch_core_sources
     ./utils/snowball_stemmer.cpp
-    ./analysis/analyzers.cpp
     ./analysis/token_attributes.cpp
     ./analysis/tokenizers.cpp
     ./analysis/stemming_tokenizer.cpp
@@ -109,7 +108,6 @@ set(IResearch_core_sources
     ./search/all_filter.cpp
     ./search/all_iterator.cpp
     ./search/granular_range_filter.cpp
-    ./search/scorers.cpp
     ./search/scorer.cpp
     ./search/score_function.cpp
     ./search/cost.cpp
@@ -140,7 +138,6 @@ set(IResearch_core_sources
     ./search/proxy_filter.cpp
     ./search/tfidf.cpp
     ./search/bm25.cpp
-    ./search/lm_similarity.cpp
     ./search/lm_jelinek_mercer.cpp
     ./search/lm_dirichlet.cpp
     ./search/indri_dirichlet.cpp
@@ -160,9 +157,6 @@ set(IResearch_core_sources
     ./utils/automaton_utils.cpp
     ./utils/encryption.cpp
     ./utils/ctr_encryption.cpp
-    ./utils/compression.cpp
-    ./utils/delta_compression.cpp
-    ./utils/lz4compression.cpp
     ./utils/directory_utils.cpp
     ./utils/mmap_utils.cpp
     ./utils/index_utils.cpp
@@ -253,7 +247,8 @@ target_link_libraries(
     PUBLIC absl::flat_hash_map
     PUBLIC absl::flat_hash_set
     PUBLIC absl::crc32c
-    PUBLIC vpack
+    PUBLIC serene_base
+    PUBLIC simdjson
     PUBLIC iresearch-ofst
     PUBLIC ${FASTTEXT_LIBRARY_STATIC}
     PUBLIC ${SIMD_LIBRARY_STATIC}

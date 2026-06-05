@@ -25,12 +25,6 @@
 
 #include "catalog/types.h"
 
-namespace vpack {
-
-class Builder;
-class Slice;
-
-}  // namespace vpack
 namespace sdb {
 namespace transaction {
 
@@ -44,12 +38,6 @@ struct Options {
   static void setLimits(uint64_t max_transaction_size,
                         uint64_t intermediate_commit_size,
                         uint64_t intermediate_commit_count);
-
-  /// read the options from a vpack slice
-  void fromVPack(vpack::Slice slice);
-
-  /// add the options to an opened vpack builder
-  void toVPack(vpack::Builder&) const;
 
 #ifdef SDB_FAULT_INJECTION
   /// patch intermediateCommitCount for testing
@@ -72,21 +60,10 @@ struct Options {
   uint64_t intermediate_commit_size = gDefaultIntermediateCommitSize;
   uint64_t intermediate_commit_count = gDefaultIntermediateCommitCount;
 
-  /// originating server of this transaction. will be populated
-  /// only in the cluster, and with a coordinator id/coordinator reboot id
-  /// then. coordinators fill this in when they start a transaction, and
-  /// the info is send with the transaction begin requests to DB servers,
-  /// which will also store the coordinator's id. this is so they can
-  /// abort the transaction should the coordinator die or be rebooted.
-  /// the server id and reboot id are intentionally empty in single server
-  /// case.
-  sdb::PeerState origin;
-
   bool allow_implicit_collections_for_read = true;
   bool allow_implicit_collections_for_write = false;  // replication only!
   bool wait_for_sync = false;
   bool fill_block_cache = true;
-  bool is_follower_transaction = false;
   /// The following flag indicates if a transaction is allowed to perform
   /// dirty reads (aka read-from-followers). This is stored in the
   /// `TransactionState`. The decision is taken when the transaction is

@@ -368,7 +368,7 @@ inline bool Validate(const automaton& a,
     return true;
   }
   SDB_ERROR(
-    "xxxxx", sdb::Logger::IRESEARCH,
+    IRESEARCH,
     absl::StrCat(
       "Expected deterministic, epsilon-free acceptor, got the following "
       "properties ",

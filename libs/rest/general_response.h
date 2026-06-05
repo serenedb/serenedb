@@ -21,25 +21,18 @@
 
 #pragma once
 
-#include <vpack/options.h>
-
 #include <string_view>
 
 #include "basics/common.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/errors.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "endpoint/endpoint.h"
 #include "general_request.h"
 #include "rest/common_defines.h"
 
-namespace vpack {
-
-class Slice;
-
-}  // namespace vpack
 namespace sdb {
 
 using rest::ContentType;
@@ -88,13 +81,6 @@ class GeneralResponse {
     rest::ResponseCompressionType rct) noexcept = 0;
   virtual rest::ResponseCompressionType compressionAllowed() const noexcept = 0;
 
-  void setContentTypeRequested(ContentType type) noexcept {
-    _content_type_requested = type;
-  }
-  ContentType contentTypeRequested() const noexcept {
-    return _content_type_requested;
-  }
-
   virtual sdb::Endpoint::TransportType transportType() = 0;
 
  protected:
@@ -138,19 +124,6 @@ class GeneralResponse {
 
   virtual void reset(ResponseCode) = 0;
 
-  // Payload needs to be of type: vpack::Slice
-  // or vpack::BufferUInt8&&
-  template<typename Payload>
-  void setPayload(Payload&& payload,
-                  const vpack::Options& options = vpack::Options::gDefaults) {
-    SDB_ASSERT(isResponseEmpty());
-    addPayload(std::forward<Payload>(payload), &options);
-  }
-
-  virtual void addPayload(vpack::Slice slice,
-                          const vpack::Options* = nullptr) = 0;
-  virtual void addPayload(vpack::BufferUInt8&&,
-                          const vpack::Options* = nullptr) = 0;
   virtual void addRawPayload(std::string_view payload) = 0;
   virtual ErrorCode reservePayload(size_t size) { return ERROR_OK; }
 
@@ -176,7 +149,6 @@ class GeneralResponse {
   uint64_t _message_id;         // message ID
   ResponseCode _response_code;  // http response code
   ContentType _content_type;
-  ContentType _content_type_requested;
   bool _generate_body;
 };
 

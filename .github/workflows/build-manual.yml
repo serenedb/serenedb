@@ -6,41 +6,34 @@ on:
   workflow_dispatch:
     inputs:
       LOCATION:
-        description: 'Runner label (all = linux-amd64 + linux-arm64 in parallel)'
+        description: 'Runner label (linux = any of our machines; all = amd64 + arm64 explicitly)'
         type: choice
         required: true
-        default: 'linux'
+        default: 'linux-amd64'
         options:
           - linux
           - linux-amd64
           - linux-arm64
           - all
-      ENABLE_ASAN:
-        description: 'Run tests with Address Sanitizer'
+      EVERYTHING:
+        description: 'Scope: run everything regardless of diff'
         type: boolean
         default: false
-      ENABLE_TSAN:
-        description: 'Run tests with Thread Sanitizer'
+      EXTRA_ASAN:
+        description: 'Run the full in-scope suite set under ASAN (not just ours + drivers)'
         type: boolean
         default: false
-      ENABLE_MSAN:
-        description: 'Run tests with Memory Sanitizer'
+      EXTRA_TSAN:
+        description: 'Run the full in-scope suite set under TSAN (not just ours + drivers)'
         type: boolean
         default: false
-      FULL_SANITIZER_TESTS:
-        description: 'Include slow tests for sanitizers run'
-        type: boolean
-        default: false
-      VALIDATE_PG_TESTS:
-        description: 'Validate tests with Postgres'
-        type: boolean
-        default: true
-      ENABLE_SEARCHBENCH:
-        description: 'Run SearchBench validation'
-        type: boolean
-        default: true
       PR_SHA:
-        description: 'Exact commit SHA to build (fork PR support; empty = workflow ref)'
+        description: 'Exact commit SHA to build (fork PR support; empty = ref)'
+        type: string
+        required: false
+        default: ''
+      PR_NUMBER:
+        description: 'Internal: PR number; scopes concurrency so fork PRs (which dispatch on the base ref) do not cancel each other'
         type: string
         required: false
         default: ''
@@ -52,47 +45,71 @@ on:
 
 permissions:
   statuses: write
-  contents: write
+  contents: read
 
 concurrency:
-  group: build-manual-${{ github.ref }}
+  group: build-manual-${{ inputs.PR_NUMBER && format('pr-{0}', inputs.PR_NUMBER) || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  test-unit:
-    name: unit ${{ matrix.instrumentation }} (${{ matrix.location }})
+  classify:
+    name: classify changes
+    if: ${{ !inputs.EVERYTHING }}
+    runs-on: ubuntu-latest
+    outputs:
+      iresearch: ${{ steps.classify.outputs.iresearch }}
+      extension: ${{ steps.classify.outputs.extension }}
+      duckdb: ${{ steps.classify.outputs.duckdb }}
+      pg: ${{ steps.classify.outputs.pg }}
+      pg_tests: ${{ steps.classify.outputs.pg_tests }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.PR_SHA || github.sha }}
+          fetch-depth: 0
+      - id: classify
+        run: ./scripts/ci/classify-changes.sh origin/main
+
+  perf:
+    name: perf (${{ matrix.location }})
+    needs: classify
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
         location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
-        instrumentation: ${{ fromJSON(format('["{0}"{1}{2}{3}]', 'none', inputs.ENABLE_ASAN && ',"asan"' || '', inputs.ENABLE_TSAN && ',"tsan"' || '', inputs.ENABLE_MSAN && ',"msan"' || '')) }}
     uses: ./.github/workflows/build-reusable.yml
     with:
       LOCATION: ${{ matrix.location }}
-      KIND: unit
-      DEV: true
-      INSTRUMENTATION: ${{ matrix.instrumentation }}
+      CONFIG: perf
+      SQLITE: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
+      SQLSMITH: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
       PR_SHA: ${{ inputs.PR_SHA }}
     secrets: inherit
 
-  test-functional:
-    name: functional ${{ matrix.instrumentation }} (${{ matrix.location }})
+  dev:
+    name: dev (${{ matrix.location }})
+    needs: classify
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
         location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
-        instrumentation: ${{ fromJSON(format('["{0}"{1}{2}{3}]', 'none', inputs.ENABLE_ASAN && ',"asan"' || '', inputs.ENABLE_TSAN && ',"tsan"' || '', inputs.ENABLE_MSAN && ',"msan"' || '')) }}
     uses: ./.github/workflows/build-reusable.yml
     with:
       LOCATION: ${{ matrix.location }}
-      KIND: ${{ matrix.instrumentation == 'none' && 'functional' || (inputs.FULL_SANITIZER_TESTS && 'functional' || 'functional_fast') }}
-      DEV: true
-      INSTRUMENTATION: ${{ matrix.instrumentation }}
+      CONFIG: dev
+      IRESEARCH: ${{ inputs.EVERYTHING || needs.classify.outputs.iresearch == 'true' }}
+      EXTENSION: ${{ inputs.EVERYTHING || needs.classify.outputs.extension == 'true' }}
+      SQLITE: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
+      SQLSMITH: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
       PR_SHA: ${{ inputs.PR_SHA }}
     secrets: inherit
 
-  compile-check:
-    name: compile check (${{ matrix.location }})
+  asan:
+    name: asan (${{ matrix.location }})
+    needs: classify
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -100,39 +117,51 @@ jobs:
     uses: ./.github/workflows/build-reusable.yml
     with:
       LOCATION: ${{ matrix.location }}
-      KIND: none
-      DEV: false
-      INSTRUMENTATION: none
+      CONFIG: asan
+      RUN_EXTRA: ${{ inputs.EVERYTHING || inputs.EXTRA_ASAN }}
+      IRESEARCH: ${{ inputs.EVERYTHING || needs.classify.outputs.iresearch == 'true' }}
+      EXTENSION: ${{ inputs.EVERYTHING || needs.classify.outputs.extension == 'true' }}
+      SQLITE: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
+      SQLSMITH: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
+      PR_SHA: ${{ inputs.PR_SHA }}
+    secrets: inherit
+
+  tsan:
+    name: tsan (${{ matrix.location }})
+    needs: classify
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      LOCATION: ${{ matrix.location }}
+      CONFIG: tsan
+      RUN_EXTRA: ${{ inputs.EVERYTHING || inputs.EXTRA_TSAN }}
+      IRESEARCH: ${{ inputs.EVERYTHING || needs.classify.outputs.iresearch == 'true' }}
+      EXTENSION: ${{ inputs.EVERYTHING || needs.classify.outputs.extension == 'true' }}
+      SQLITE: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
+      SQLSMITH: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
       PR_SHA: ${{ inputs.PR_SHA }}
     secrets: inherit
 
   validate-pg:
     name: validate pg
-    if: inputs.VALIDATE_PG_TESTS
+    needs: classify
+    if: ${{ !cancelled() && (inputs.EVERYTHING || needs.classify.outputs.pg == 'true') }}
     uses: ./.github/workflows/validate-pg-tests.yml
     with:
-      LOCATION: linux
-      PR_SHA: ${{ inputs.PR_SHA }}
-      BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
-    secrets: inherit
-
-  searchbench:
-    name: searchbench
-    if: inputs.ENABLE_SEARCHBENCH
-    uses: ./.github/workflows/searchbench-reusable.yml
-    with:
       LOCATION: linux-amd64
-      DATASET: wiki_small
-      GTEST_FILTER: SearchBenchTest*
-      DEV: true
-      INSTRUMENTATION: none
       PR_SHA: ${{ inputs.PR_SHA }}
+      # empty = run all pg tests downstream
+      PG_TESTS: ${{ inputs.EVERYTHING && '' || needs.classify.outputs.pg_tests }}
     secrets: inherit
 
   report:
     name: Report Status
-    needs: [test-unit, test-functional, compile-check, validate-pg, searchbench]
-    if: always() && !cancelled()
+    needs: [classify, dev, asan, tsan, perf, validate-pg]
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for notify script)
@@ -140,10 +169,8 @@ jobs:
         with:
           fetch-depth: 1
           submodules: false
-          clean: false
           sparse-checkout: scripts
           sparse-checkout-cone-mode: true
-
       - name: Send notification
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
@@ -152,16 +179,18 @@ jobs:
           TG_THREAD_ID_BUILD: "53"
           TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
           BRANCH: ${{ contains(inputs.BUILD_CONFIG, 'PR_BRANCH') && fromJSON(inputs.BUILD_CONFIG).PR_BRANCH || github.ref_name }}
-          JOB_STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
+          JOB_STATUS: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
           ACTOR: ${{ contains(inputs.BUILD_CONFIG, 'TRIGGERED_BY') && fromJSON(inputs.BUILD_CONFIG).TRIGGERED_BY || github.actor }}
           RUN_NAME: "serenedb | build & test [${{ inputs.LOCATION }}]"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/send_notification.bash
-
       - name: Update PR commit status
         if: contains(inputs.BUILD_CONFIG, 'PR_SHA')
         uses: actions/github-script@v8
+        env:
+          BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
+          JOB_STATUS: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
         with:
           script: |
             const config = JSON.parse(process.env.BUILD_CONFIG);
@@ -171,11 +200,8 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               sha: config.PR_SHA,
-              state: state,
+              state,
               description: state === 'success' ? 'All checks passed' : 'Some checks failed',
               context: config.PR_STATUS_CONTEXT || 'serenedb | build & test',
               target_url: runUrl,
             });
-        env:
-          BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
-          JOB_STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}

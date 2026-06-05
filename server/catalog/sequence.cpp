@@ -25,15 +25,15 @@
 #include <rocksdb/options.h>
 #include <rocksdb/slice.h>
 #include <rocksdb/status.h>
-#include <vpack/builder.h>
-#include <vpack/slice.h>
-#include <vpack/vpack_helper.h>
 
 #include <cstring>
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
 #include <string>
 
 #include "basics/assert.h"
 #include "basics/exceptions.h"
+#include "basics/serializer.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
@@ -58,11 +58,9 @@ rocksdb::ColumnFamilyHandle* CounterCF() {
 
 }  // namespace
 
-Sequence::Sequence(ObjectId schema_id, ObjectId id, std::string_view name,
-                   SequenceOptions opts, ObjectId owner_table_id)
-  : Object{schema_id, id, std::string{name}, ObjectType::Sequence},
-    _options{opts},
-    _owner_table_id{owner_table_id},
+Sequence::Sequence(ObjectId schema_id, ObjectId id, SequenceOptions opts)
+  : Object{schema_id, id, opts.name, ObjectType::Sequence},
+    _options{std::move(opts)},
     _db{GetServerEngine().db()->GetBaseDB()},
     _cf{CounterCF()} {
   auto seed = _options.Seed();
@@ -71,26 +69,15 @@ Sequence::Sequence(ObjectId schema_id, ObjectId id, std::string_view name,
   _cache_end.store(seed, std::memory_order_release);
 }
 
-std::shared_ptr<Sequence> Sequence::ReadInternal(vpack::Slice slice,
-                                                 ReadContext ctx) {
-  auto name =
-    basics::VPackHelper::getString(slice, StaticStrings::kDataSourceName, {});
+void Sequence::Serialize(duckdb::Serializer& sink) const {
+  basics::WriteTuple(sink, _options);
+}
 
+std::shared_ptr<Sequence> Sequence::Deserialize(duckdb::Deserializer& src,
+                                                ReadContext ctx) {
   SequenceOptions opts;
-  opts.start_value =
-    basics::VPackHelper::getNumber<uint64_t>(slice, "start", 1);
-  opts.increment =
-    basics::VPackHelper::getNumber<uint64_t>(slice, "increment", 1);
-  opts.min_value = basics::VPackHelper::getNumber<uint64_t>(slice, "min", 1);
-  opts.max_value = basics::VPackHelper::getNumber<uint64_t>(
-    slice, "max", std::numeric_limits<int64_t>::max());
-  opts.cycle = basics::VPackHelper::getBool(slice, "cycle", false);
-  opts.cache = basics::VPackHelper::getNumber<uint64_t>(slice, "cache", 1);
-  ObjectId owner_table_id{
-    basics::VPackHelper::getNumber<uint64_t>(slice, "owner_table_id", 0)};
-
-  auto seq = std::make_shared<Sequence>(ctx.schema_id, ctx.id, name, opts,
-                                        owner_table_id);
+  basics::ReadTuple(src, opts);
+  auto seq = std::make_shared<Sequence>(ctx.schema_id, ctx.id, std::move(opts));
   auto persisted = seq->LoadFromDb();
   seq->_cnt.store(persisted, std::memory_order_release);
   seq->_cache_begin.store(persisted + 1, std::memory_order_release);
@@ -98,26 +85,8 @@ std::shared_ptr<Sequence> Sequence::ReadInternal(vpack::Slice slice,
   return seq;
 }
 
-void Sequence::WriteInternal(vpack::Builder& builder) const {
-  builder.openObject();
-  builder.add(StaticStrings::kDataSourceName, GetName());
-  builder.add("start", _options.start_value);
-  builder.add("increment", _options.increment);
-  builder.add("min", _options.min_value);
-  builder.add("max", _options.max_value);
-  builder.add("cycle", _options.cycle);
-  if (_options.cache > 1) {
-    builder.add("cache", _options.cache);
-  }
-  if (_owner_table_id.isSet()) {
-    builder.add("owner_table_id", _owner_table_id.id());
-  }
-  builder.close();
-}
-
 std::shared_ptr<Object> Sequence::Clone() const {
-  return std::make_shared<Sequence>(GetParentId(), GetId(), GetName(), _options,
-                                    _owner_table_id);
+  return std::make_shared<Sequence>(GetParentId(), GetId(), _options);
 }
 
 uint64_t Sequence::LoadFromDb() const {

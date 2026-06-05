@@ -24,223 +24,47 @@
 
 #include <unicode/coll.h>
 #include <unicode/locid.h>
-#include <vpack/builder.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/slice.h>
 
 #include <string_view>
 
-#include "basics/logger/log_level.h"
-#include "basics/logger/logger.h"
+#include "basics/exceptions.h"
 #include "collation_tokenizer_encoder.hpp"
-#include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
 namespace {
-
-constexpr std::string_view kLocaleParamName = "locale";
-
-bool LocaleFromSlice(vpack::Slice slice, icu::Locale& locale) {
-  if (!slice.isString()) {
-    SDB_WARN(
-      "xxxxx", sdb::Logger::IRESEARCH, "Non-string value in '",
-      kLocaleParamName,
-      "' while constructing collation_token_stream from VPack arguments");
-
-    return false;
-  }
-
-  const auto locale_name = slice.copyString();
-
-  locale = icu::Locale::createCanonical(locale_name.c_str());
-
-  if (locale.isBogus()) {
-    SDB_WARN(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      "Failed to instantiate locale from the supplied string '", locale_name,
-      "' while constructing collation_token_stream from VPack arguments");
-
-    return false;
-  }
-
-  // validate creation of icu::Collator
-  auto err = UErrorCode::U_ZERO_ERROR;
-  std::unique_ptr<icu::Collator> collator{
-    icu::Collator::createInstance(locale, err)};
-
-  if (!collator) {
-    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-             "Can't instantiate icu::Collator from locale: ", locale_name);
-    return false;
-  }
-
-  // print warn message
-  if (err != UErrorCode::U_ZERO_ERROR) {
-    const auto message = absl::StrCat(
-      "Failure while instantiation of icu::Collator from locale: ", locale_name,
-      ", ", u_errorName(err));
-    if (U_FAILURE(err)) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, message);
-    } else {
-      SDB_TRACE("xxxxx", sdb::Logger::IRESEARCH, message);
-    }
-  }
-
-  return U_SUCCESS(err);
-}
-
-bool ParseVPackOptions(const vpack::Slice slice,
-                       CollationTokenizer::OptionsT& options) {
-  if (!slice.isObject()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Slice for collation_token_stream is not an object");
-    return false;
-  }
-
-  try {
-    const auto locale_slice = slice.get(kLocaleParamName);
-
-    if (locale_slice.isNone()) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        absl::StrCat(
-          "Missing '", kLocaleParamName,
-          "' while constructing collation_token_stream from VPack arguments"));
-
-      return false;
-    }
-
-    return LocaleFromSlice(locale_slice, options.locale);
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing collation_token_stream from VPack"));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while constructing collation_token_stream from "
-              "VPack arguments");
-  }
-  return false;
-}
-
-// args is a jSON encoded object with the following attributes:
-// "locale"(string): the locale to use for stemming <required>
-Analyzer::ptr MakeVPack(const vpack::Slice slice) {
-  CollationTokenizer::OptionsT options;
-  if (ParseVPackOptions(slice, options)) {
-    return std::make_unique<CollationTokenizer>(std::move(options));
-  }
-  return nullptr;
-}
-
-Analyzer::ptr MakeVPack(std::string_view args) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-// builds analyzer config from internal options in json format
-// options reference to analyzer options storage
-// definition string for storing json document with config
-bool MakeVPackConfig(const CollationTokenizer::OptionsT& options,
-                     vpack::Builder* builder) {
-  vpack::ObjectBuilder object{builder};
-
-  const auto* const locale_name = options.locale.getName();
-  builder->add(kLocaleParamName, locale_name);
-  return true;
-}
-
-bool NormalizeVPackConfig(const vpack::Slice slice, vpack::Builder* builder) {
-  CollationTokenizer::OptionsT options;
-  if (ParseVPackOptions(slice, options)) {
-    return MakeVPackConfig(options, builder);
-  }
-  return false;
-}
-
-bool NormalizeVPackConfig(std::string_view args, std::string& config) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  vpack::Builder builder;
-  if (NormalizeVPackConfig(slice, &builder)) {
-    config.assign(builder.slice().startAs<char>(), builder.slice().byteSize());
-    return true;
-  }
-  return false;
-}
-
-Analyzer::ptr MakeJson(std::string_view args) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while constructing collation_token_stream");
-      return nullptr;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing collation_token_stream from JSON"));
-  } catch (...) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      "Caught error while constructing collation_token_stream from JSON");
-  }
-  return nullptr;
-}
-
-bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while normalizing collation_token_stream");
-      return false;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    vpack::Builder builder;
-    if (NormalizeVPackConfig(vpack->slice(), &builder)) {
-      definition = builder.toString();
-      return !definition.empty();
-    }
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while normalizing collation_token_stream from JSON"));
-  } catch (...) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      "Caught error while normalizing collation_token_stream from JSON");
-  }
-  return false;
-}
 
 constexpr size_t kMaxTokenSize = 1 << 15;
 
 }  // namespace
 
 struct CollationTokenizer::StateT {
-  const OptionsT options;
+  const Options options;
   std::unique_ptr<icu::Collator> collator;
   byte_type term_buf[kMaxTokenSize];
 
-  explicit StateT(const OptionsT& opts) : options(opts) {}
+  explicit StateT(Options opts) : options(std::move(opts)) {}
 };
-
-void CollationTokenizer::init() {
-  REGISTER_ANALYZER_JSON(CollationTokenizer, MakeJson, NormalizeJsonConfig);
-  REGISTER_ANALYZER_VPACK(CollationTokenizer, MakeVPack, NormalizeVPackConfig);
-}
 
 void CollationTokenizer::StateDeleterT::operator()(StateT* p) const noexcept {
   delete p;
 }
 
-CollationTokenizer::CollationTokenizer(const OptionsT& options)
-  : _state{new StateT(options)}, _term_eof{true} {}
+CollationTokenizer::CollationTokenizer(Options options)
+  : _state{new StateT(std::move(options))}, _term_eof{true} {}
+
+Analyzer::ptr CollationTokenizer::Make(Options opts) {
+  if (opts.locale.isBogus()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "collation: invalid locale");
+  }
+  auto err = UErrorCode::U_ZERO_ERROR;
+  std::unique_ptr<icu::Collator> collator{
+    icu::Collator::createInstance(opts.locale, err)};
+  if (!collator || !U_SUCCESS(err)) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              "collation: failed to create collator for the locale");
+  }
+  return std::make_unique<CollationTokenizer>(std::move(opts));
+}
 
 bool CollationTokenizer::reset(std::string_view data) {
   if (!_state->collator) {
@@ -278,7 +102,7 @@ bool CollationTokenizer::reset(std::string_view data) {
   SDB_ASSERT(0 == buf[term_size]);
   if (term_size > static_cast<int32_t>(kMaxTokenSize)) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       absl::StrCat("Collated token is ", term_size,
                    " bytes length which exceeds maximum allowed length of ",
                    static_cast<int32_t>(sizeof raw_term_buf), " bytes"));
@@ -294,10 +118,9 @@ bool CollationTokenizer::reset(std::string_view data) {
                     kRecalcMap.size());
       const auto [offset, size] = kRecalcMap[raw_term_buf[i]];
       if ((term_buf_idx + size) > sizeof _state->term_buf) {
-        SDB_ERROR(
-          "xxxxx", sdb::Logger::IRESEARCH,
-          absl::StrCat("Collated token is more than ", sizeof _state->term_buf,
-                       " bytes length after encoding."));
+        SDB_ERROR(IRESEARCH, absl::StrCat("Collated token is more than ",
+                                          sizeof _state->term_buf,
+                                          " bytes length after encoding."));
         return false;
       }
       SDB_ASSERT(size <= 2);

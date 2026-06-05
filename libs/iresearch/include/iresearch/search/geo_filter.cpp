@@ -31,10 +31,11 @@
 
 #include "basics/down_cast.h"
 #include "basics/errors.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/memory.hpp"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
+#include "geo/wkb.h"
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/columnstore/format.hpp"
 #include "iresearch/columnstore/read_context.hpp"
@@ -49,7 +50,6 @@
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/types.hpp"
-#include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs {
 namespace {
@@ -185,8 +185,7 @@ class GeoIterator : public DocIterator {
     // OR analyzer wrote zero bytes -- either way nothing to match.
     const auto bytes = _cursor.FetchDoc(doc);
     if (bytes.empty()) {
-      SDB_DEBUG("xxxxx", sdb::Logger::IRESEARCH,
-                "Missing stored geo value, doc='", doc, "'");
+      SDB_DEBUG(IRESEARCH, "Missing stored geo value, doc='", doc, "'");
       return false;
     }
     return _parser(bytes, _shape) && _acceptor(_shape);
@@ -300,15 +299,154 @@ class GeoQuery : public Filter::Query {
   score_t _boost;
 };
 
-struct VPackParser {
+struct SourceJsonParser {
+  SourceJsonParser() = default;
+  // The parser/buffer hold only per-call scratch state, so copies and moves
+  // start fresh. GeoIterator copy-constructs its Parser member per segment.
+  SourceJsonParser(const SourceJsonParser&) noexcept {}
+  SourceJsonParser(SourceJsonParser&&) noexcept {}
+  SourceJsonParser& operator=(const SourceJsonParser&) = delete;
+  SourceJsonParser& operator=(SourceJsonParser&&) = delete;
+
   bool operator()(bytes_view value, ShapeContainer& shape) const {
     SDB_ASSERT(!value.empty());
-    return ParseShape<Parsing::FromIndex>(view_to_slice(value), shape, _cache,
+    const std::string_view json_str{reinterpret_cast<const char*>(value.data()),
+                                    value.size()};
+    _buffer.assign(json_str);
+    _buffer.append(simdjson::SIMDJSON_PADDING, '\0');
+    simdjson::padded_string_view padded_view{_buffer.data(), json_str.size(),
+                                             _buffer.size()};
+    simdjson::ondemand::document doc;
+    if (_parser.iterate(padded_view).get(doc) != simdjson::SUCCESS) {
+      return false;
+    }
+    simdjson::ondemand::value json;
+    if (doc.get_value().get(json) != simdjson::SUCCESS) {
+      return false;
+    }
+    return ParseShape<Parsing::FromIndex>(json, shape, _cache,
                                           coding::Options::Invalid, nullptr);
   }
 
  private:
+  mutable simdjson::ondemand::parser _parser;
+  mutable std::string _buffer;
   mutable std::vector<S2LatLng> _cache;
+};
+
+struct SourceWkbParser {
+  bool operator()(bytes_view value, ShapeContainer& shape) const {
+    SDB_ASSERT(!value.empty());
+    const std::string_view bytes{reinterpret_cast<const char*>(value.data()),
+                                 value.size()};
+    shape = {};
+    return sdb::geo::ParseShapeWKB(bytes, shape).ok();
+  }
+};
+
+// Re-parses a geopoint source column (JSON text) with the same semantics as
+// GeoPointAnalyzer::ParsePoint: a [lat, lng] array when both paths are empty,
+// otherwise an object whose latitude/longitude live at the configured paths.
+struct SourcePointParser {
+  std::vector<std::string> latitude;
+  std::vector<std::string> longitude;
+
+  SourcePointParser() = default;
+  SourcePointParser(std::vector<std::string> lat, std::vector<std::string> lng)
+    : latitude{std::move(lat)}, longitude{std::move(lng)} {}
+  SourcePointParser(const SourcePointParser& other)
+    : latitude{other.latitude}, longitude{other.longitude} {}
+  SourcePointParser(SourcePointParser&& other) noexcept
+    : latitude{std::move(other.latitude)},
+      longitude{std::move(other.longitude)} {}
+  SourcePointParser& operator=(const SourcePointParser&) = delete;
+  SourcePointParser& operator=(SourcePointParser&&) = delete;
+
+  bool operator()(bytes_view value, ShapeContainer& shape) const {
+    SDB_ASSERT(!value.empty());
+    const std::string_view json_str{reinterpret_cast<const char*>(value.data()),
+                                    value.size()};
+    _buffer.assign(json_str);
+    _buffer.append(simdjson::SIMDJSON_PADDING, '\0');
+    simdjson::padded_string_view padded_view{_buffer.data(), json_str.size(),
+                                             _buffer.size()};
+    simdjson::ondemand::document doc;
+    if (_parser.iterate(padded_view).get(doc) != simdjson::SUCCESS) {
+      return false;
+    }
+    simdjson::ondemand::value json;
+    if (doc.get_value().get(json) != simdjson::SUCCESS) {
+      return false;
+    }
+    double lat, lng;
+    if (latitude.empty()) {
+      simdjson::ondemand::array array;
+      if (json.get_array().get(array) != simdjson::SUCCESS) {
+        return false;
+      }
+      double values[2];
+      size_t i = 0;
+      for (auto element : array) {
+        if (i == 2) [[unlikely]] {
+          return false;
+        }
+        if (element.get_double().get(values[i]) != simdjson::SUCCESS)
+          [[unlikely]] {
+          return false;
+        }
+        ++i;
+      }
+      if (i != 2) [[unlikely]] {
+        return false;
+      }
+      lat = values[0];
+      lng = values[1];
+    } else {
+      simdjson::ondemand::object object;
+      if (json.get_object().get(object) != simdjson::SUCCESS) {
+        return false;
+      }
+      auto find = [&object](std::span<const std::string> path,
+                            double& out) -> bool {
+        if (path.size() == 1) {
+          return object.find_field_unordered(path.front())
+                   .get_double()
+                   .get(out) == simdjson::SUCCESS;
+        }
+        simdjson::ondemand::value current;
+        if (object.find_field_unordered(path.front()).get(current) !=
+            simdjson::SUCCESS) {
+          return false;
+        }
+        for (size_t i = 1; i + 1 < path.size(); ++i) {
+          simdjson::ondemand::object inner;
+          if (current.get_object().get(inner) != simdjson::SUCCESS) {
+            return false;
+          }
+          if (inner.find_field_unordered(path[i]).get(current) !=
+              simdjson::SUCCESS) {
+            return false;
+          }
+        }
+        simdjson::ondemand::object inner;
+        if (current.get_object().get(inner) != simdjson::SUCCESS) {
+          return false;
+        }
+        return inner.find_field_unordered(path.back()).get_double().get(out) ==
+               simdjson::SUCCESS;
+      };
+      if (!find(latitude, lat) || !find(longitude, lng)) {
+        return false;
+      }
+    }
+    shape.reset(S2LatLng::FromDegrees(lat, lng).Normalized().ToPoint(),
+                coding::Options::Invalid);
+    return true;
+  }
+
+ private:
+  mutable simdjson::ondemand::parser _parser;
+  mutable std::string _buffer;
 };
 
 struct S2ShapeParser {
@@ -372,9 +510,20 @@ Filter::Query::ptr MakeQuery(IResourceManager& manager, GeoStates&& states,
                              bstring&& stats, score_t boost,
                              const Options& options, Acceptor&& acceptor) {
   switch (options.stored) {
-    case StoredType::VPack:
-      return memory::make_tracked<GeoQuery<VPackParser, Acceptor>>(
-        manager, std::move(states), std::move(stats), VPackParser{},
+    case StoredType::Source:
+      if (options.source_is_wkb) {
+        return memory::make_tracked<GeoQuery<SourceWkbParser, Acceptor>>(
+          manager, std::move(states), std::move(stats), SourceWkbParser{},
+          std::forward<Acceptor>(acceptor), boost);
+      }
+      if (options.source_is_point) {
+        return memory::make_tracked<GeoQuery<SourcePointParser, Acceptor>>(
+          manager, std::move(states), std::move(stats),
+          SourcePointParser{options.point_latitude, options.point_longitude},
+          std::forward<Acceptor>(acceptor), boost);
+      }
+      return memory::make_tracked<GeoQuery<SourceJsonParser, Acceptor>>(
+        manager, std::move(states), std::move(stats), SourceJsonParser{},
         std::forward<Acceptor>(acceptor), boost);
     case StoredType::S2Region:
       return memory::make_tracked<GeoQuery<S2ShapeParser, Acceptor>>(
@@ -407,7 +556,7 @@ std::pair<GeoStates, bstring> PrepareStates(
     std::forward_as_tuple(GetStatsSize(ctx.scorer), 0)};
 
   const auto size = sorted_terms.size();
-  FieldCollectors field_stats{ctx.scorer};
+  FieldCollector field_stats;
   ManagedVector<SeekCookie::ptr> term_states{{ctx.memory}};
 
   SDB_ASSERT(store_field_id != 0);
@@ -425,7 +574,7 @@ std::pair<GeoStates, bstring> PrepareStates(
       continue;
     }
 
-    field_stats.collect(segment, *reader);
+    field_stats.Collect(*reader);
     term_states.reserve(size);
 
     for (const auto term : sorted_terms) {
@@ -447,7 +596,10 @@ std::pair<GeoStates, bstring> PrepareStates(
     term_states.clear();
   }
 
-  field_stats.finish(const_cast<byte_type*>(res.second.data()));
+  if (ctx.scorer) {
+    const auto* fs = &field_stats;
+    ctx.scorer->collect(const_cast<byte_type*>(res.second.data()), fs, nullptr);
+  }
 
   return res;
 }

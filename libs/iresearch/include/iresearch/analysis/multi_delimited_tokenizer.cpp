@@ -22,18 +22,13 @@
 
 #include <fst/union.h>
 #include <fstext/determinize-star.h>
-#include <vpack/builder.h>
-#include <vpack/common.h>
-#include <vpack/iterator.h>
-#include <vpack/parser.h>
-#include <vpack/slice.h>
 
 #include <string_view>
 
 #include "absl/container/flat_hash_map.h"
+#include "basics/exceptions.h"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/fstext/fst_draw.hpp"
-#include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
 namespace {
@@ -93,7 +88,7 @@ class MultiDelimitedTokenizerSingleChars final
       MultiDelimitedTokenizerSingleChars<N>> {
  public:
   explicit MultiDelimitedTokenizerSingleChars(
-    const MultiDelimitedTokenizer::Options&) {
+    const std::vector<bstring>& /*delimiters*/) {
     // according to benchmarks "table" version is
     // ~1.5x faster except cases for 0 and 1.
     // So this should not be used.
@@ -109,10 +104,10 @@ class MultiDelimitedTokenizerSingleChars<1> final
       MultiDelimitedTokenizerSingleChars<1>> {
  public:
   explicit MultiDelimitedTokenizerSingleChars(
-    const MultiDelimitedTokenizer::Options& opts) {
-    SDB_ASSERT(opts.delimiters.size() == 1);
-    SDB_ASSERT(opts.delimiters[0].size() == 1);
-    delim = opts.delimiters[0][0];
+    const std::vector<bstring>& delimiters) {
+    SDB_ASSERT(delimiters.size() == 1);
+    SDB_ASSERT(delimiters[0].size() == 1);
+    delim = delimiters[0][0];
   }
 
   auto FindNextDelim() {
@@ -131,8 +126,9 @@ class MultiDelimitedTokenizerSingleChars<0> final
       MultiDelimitedTokenizerSingleChars<0>> {
  public:
   explicit MultiDelimitedTokenizerSingleChars(
-    const MultiDelimitedTokenizer::Options& opts) {
-    SDB_ASSERT(opts.delimiters.empty());
+    const std::vector<bstring>& delimiters) {
+    SDB_ASSERT(delimiters.empty());
+    (void)delimiters;
   }
 
   auto FindNextDelim() { return this->_data.end(); }
@@ -142,8 +138,9 @@ class MultiDelimitedTokenizerGenericSingleChars final
   : public MultiDelimitedTokenizerSingleCharsBase<
       MultiDelimitedTokenizerGenericSingleChars> {
  public:
-  explicit MultiDelimitedTokenizerGenericSingleChars(const Options& opts) {
-    for (const auto& delim : opts.delimiters) {
+  explicit MultiDelimitedTokenizerGenericSingleChars(
+    const std::vector<bstring>& delimiters) {
+    for (const auto& delim : delimiters) {
       SDB_ASSERT(delim.size() == 1);
       bytes[delim[0]] = true;
     }
@@ -304,9 +301,9 @@ automaton MakeStringTrie(const std::vector<bstring>& strings) {
 class MultiDelimitedTokenizerGeneric final
   : public MultiDelimitedTokenizerBase<MultiDelimitedTokenizerGeneric> {
  public:
-  explicit MultiDelimitedTokenizerGeneric(const Options& opts)
-    : autom(MakeStringTrie(opts.delimiters)),
-      matcher(MakeAutomatonMatcher(autom)) {
+  explicit MultiDelimitedTokenizerGeneric(
+    const std::vector<bstring>& delimiters)
+    : autom(MakeStringTrie(delimiters)), matcher(MakeAutomatonMatcher(autom)) {
     // fst::drawFst(automaton_, std::cout);
 
 #ifdef SDB_DEV
@@ -350,8 +347,8 @@ class MultiDelimitedTokenizerGeneric final
 class MultiDelimitedTokenizerSingle final
   : public MultiDelimitedTokenizerBase<MultiDelimitedTokenizerSingle> {
  public:
-  explicit MultiDelimitedTokenizerSingle(Options& opts)
-    : delim(std::move(opts.delimiters[0])) {}
+  explicit MultiDelimitedTokenizerSingle(std::vector<bstring>& delimiters)
+    : delim(std::move(delimiters[0])) {}
 
   auto FindNextDelim() {
     auto next = data.end();
@@ -368,9 +365,8 @@ class MultiDelimitedTokenizerSingle final
 class MultiDelimitedTokenizerSingle final
   : public MultiDelimitedTokenizerBase<MultiDelimitedTokenizerSingle> {
  public:
-  explicit MultiDelimitedTokenizerSingle(Options& opts)
-    : delim(std::move(opts.delimiters[0])),
-      searcher(delim.begin(), delim.end()) {}
+  explicit MultiDelimitedTokenizerSingle(std::vector<bstring>& delimiters)
+    : delim(std::move(delimiters[0])), searcher(delim.begin(), delim.end()) {}
 
   auto FindNextDelim() {
     auto next = std::search(_data.begin(), _data.end(), searcher);
@@ -384,135 +380,48 @@ class MultiDelimitedTokenizerSingle final
 #endif
 
 template<size_t N>
-Analyzer::ptr MakeSingleChar(MultiDelimitedTokenizer::Options&& opts) {
+Analyzer::ptr MakeSingleChar(std::vector<bstring>&& delimiters) {
   if constexpr (N >= 2) {
     return std::make_unique<MultiDelimitedTokenizerGenericSingleChars>(
-      std::move(opts));
-  } else if (opts.delimiters.size() == N) {
-    return std::make_unique<MultiDelimitedTokenizerSingleChars<N>>(
-      std::move(opts));
+      delimiters);
+  } else if (delimiters.size() == N) {
+    return std::make_unique<MultiDelimitedTokenizerSingleChars<N>>(delimiters);
   } else {
-    return MakeSingleChar<N + 1>(std::move(opts));
+    return MakeSingleChar<N + 1>(std::move(delimiters));
   }
 }
 
-Analyzer::ptr MakeImpl(MultiDelimitedTokenizer::Options&& opts) {
+Analyzer::ptr MakeImpl(std::vector<bstring>&& delimiters) {
   const bool single_character_case = absl::c_all_of(
-    opts.delimiters, [](const auto& delim) { return delim.size() == 1; });
+    delimiters, [](const auto& delim) { return delim.size() == 1; });
   if (single_character_case) {
-    return MakeSingleChar<0>(std::move(opts));
+    return MakeSingleChar<0>(std::move(delimiters));
   }
-  if (opts.delimiters.size() == 1) {
-    return std::make_unique<MultiDelimitedTokenizerSingle>(opts);
+  if (delimiters.size() == 1) {
+    return std::make_unique<MultiDelimitedTokenizerSingle>(delimiters);
   }
-  return std::make_unique<MultiDelimitedTokenizerGeneric>(std::move(opts));
-}
-
-constexpr std::string_view kDelimiterParamName{"delimiters"};
-
-bool ParseVPackOptions(vpack::Slice slice,
-                       MultiDelimitedTokenizer::Options& options) {
-  if (!slice.isObject()) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      "Slice for multi_delimited_token_stream is not an object or string");
-    return false;
-  }
-  auto delim_array_slice = slice.get(kDelimiterParamName);
-  if (!delim_array_slice.isArray()) {
-    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid type or missing '",
-             kDelimiterParamName,
-             "' (array expected) for multi_delimited_token_stream from "
-             "VPack arguments");
-    return false;
-  }
-
-  for (auto delim : vpack::ArrayIterator(delim_array_slice)) {
-    if (!delim.isString()) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid type in '",
-               kDelimiterParamName,
-               "' (string expected) for multi_delimited_token_stream from "
-               "VPack arguments");
-      return false;
-    }
-    auto view = ViewCast<byte_type>(delim.stringView());
-
-    if (view.empty()) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Delimiter list contains an empty string.");
-      return false;
-    }
-
-    for (const auto& known : options.delimiters) {
-      if (view.starts_with(known) || known.starts_with(view)) {
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                  absl::StrCat("Some delimiters are a prefix of others. See `",
-                               ViewCast<char>(bytes_view{known}), "` and `",
-                               delim.stringView(), "`"));
-        return false;
-      }
-    }
-
-    options.delimiters.emplace_back(view);
-  }
-  return true;
-}
-
-bool MakeVPackConfig(const MultiDelimitedTokenizer::Options& options,
-                     vpack::Builder* vpack_builder) {
-  vpack::ObjectBuilder object(vpack_builder);
-  {
-    vpack::ArrayBuilder array(vpack_builder, kDelimiterParamName);
-    for (bytes_view delim : options.delimiters) {
-      vpack_builder->add(ViewCast<char>(delim));
-    }
-  }
-
-  return true;
-}
-
-Analyzer::ptr MakeVPack(vpack::Slice slice) {
-  MultiDelimitedTokenizer::Options options;
-  if (ParseVPackOptions(slice, options)) {
-    return MultiDelimitedTokenizer::Make(std::move(options));
-  }
-  return nullptr;
-}
-
-Analyzer::ptr MakeVPack(std::string_view args) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-bool NormalizeVPackConfig(vpack::Slice slice, vpack::Builder* vpack_builder) {
-  MultiDelimitedTokenizer::Options options;
-  if (ParseVPackOptions(slice, options)) {
-    return MakeVPackConfig(options, vpack_builder);
-  }
-  return false;
-}
-
-bool NormalizeVPackConfig(std::string_view args, std::string& definition) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  vpack::Builder builder;
-  bool res = NormalizeVPackConfig(slice, &builder);
-  if (res) {
-    definition.assign(builder.slice().startAs<char>(),
-                      builder.slice().byteSize());
-  }
-  return res;
+  return std::make_unique<MultiDelimitedTokenizerGeneric>(delimiters);
 }
 
 }  // namespace
 
-void MultiDelimitedTokenizer::init() {
-  REGISTER_ANALYZER_VPACK(MultiDelimitedTokenizer, MakeVPack,
-                          NormalizeVPackConfig);
-}
-
 Analyzer::ptr MultiDelimitedTokenizer::Make(
-  MultiDelimitedTokenizer::Options&& opts) {
-  return MakeImpl(std::move(opts));
+  MultiDelimitedTokenizer::Options opts) {
+  for (size_t i = 0; i < opts.delimiters.size(); ++i) {
+    const bytes_view view{opts.delimiters[i]};
+    if (view.empty()) {
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER, "multi_delimited: empty delimiter");
+    }
+    for (size_t j = 0; j < i; ++j) {
+      const bytes_view known{opts.delimiters[j]};
+      if (view.starts_with(known) || known.starts_with(view)) {
+        SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+                  "multi_delimited: delimiters must not be prefixes of one "
+                  "another");
+      }
+    }
+  }
+  return MakeImpl(std::move(opts.delimiters));
 }
 
 }  // namespace irs::analysis

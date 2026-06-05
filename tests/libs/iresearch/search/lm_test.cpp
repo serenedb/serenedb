@@ -18,11 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-// Tests for both language-model similarities. They share stats collectors
-// (LMFieldCollector / LMTermCollector) and the LMStats layout, so they're
-// co-located here.
-
 #include <algorithm>
+#include <limits>
 #include <map>
 
 #include "formats/column/test_cs_helpers.hpp"
@@ -32,9 +29,7 @@
 #include "iresearch/search/lm_dirichlet.hpp"
 #include "iresearch/search/lm_jelinek_mercer.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -50,8 +45,7 @@ TEST(lm_test, jm_consts) {
 }
 
 TEST(lm_test, jm_load_default) {
-  auto scorer = irs::scorers::Get(
-    "lm_jm", irs::Type<irs::text_format::Json>::get(), std::string_view{});
+  auto scorer = irs::LMJelinekMercer::Make(irs::LMJelinekMercer::Options{});
   ASSERT_NE(nullptr, scorer);
   ASSERT_EQ(irs::Type<irs::LMJelinekMercer>::id(), scorer->type());
   auto& lm = dynamic_cast<irs::LMJelinekMercer&>(*scorer);
@@ -61,32 +55,33 @@ TEST(lm_test, jm_load_default) {
 }
 
 TEST(lm_test, jm_load_object) {
-  auto scorer = irs::scorers::Get(
-    "lm_jm", irs::Type<irs::text_format::Json>::get(), "{ \"lambda\": 0.7 }");
+  auto scorer =
+    irs::LMJelinekMercer::Make(irs::LMJelinekMercer::Options{.lambda = 0.7f});
   ASSERT_NE(nullptr, scorer);
   auto& lm = dynamic_cast<irs::LMJelinekMercer&>(*scorer);
   ASSERT_FLOAT_EQ(0.7f, lm.lambda());
 }
 
 TEST(lm_test, jm_load_array) {
-  auto scorer = irs::scorers::Get(
-    "lm_jm", irs::Type<irs::text_format::Json>::get(), "[ 0.3 ]");
+  auto scorer =
+    irs::LMJelinekMercer::Make(irs::LMJelinekMercer::Options{.lambda = 0.3f});
   ASSERT_NE(nullptr, scorer);
   auto& lm = dynamic_cast<irs::LMJelinekMercer&>(*scorer);
   ASSERT_FLOAT_EQ(0.3f, lm.lambda());
 }
 
 TEST(lm_test, jm_load_invalid) {
-  // lambda must be in (0, 1].
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("lm_jm", irs::Type<irs::text_format::Json>::get(),
-                              "{ \"lambda\": 0 }"));
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("lm_jm", irs::Type<irs::text_format::Json>::get(),
-                              "{ \"lambda\": -0.1 }"));
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("lm_jm", irs::Type<irs::text_format::Json>::get(),
-                              "{ \"lambda\": 1.5 }"));
+  // λ must lie in the open interval (0, 1] -- both `1-lambda` and `lambda`
+  // must be positive for the smoothing formula to be defined.
+  EXPECT_ANY_THROW(
+    irs::LMJelinekMercer::Make(irs::LMJelinekMercer::Options{.lambda = 0.f}));
+  EXPECT_ANY_THROW(
+    irs::LMJelinekMercer::Make(irs::LMJelinekMercer::Options{.lambda = -0.1f}));
+  EXPECT_ANY_THROW(
+    irs::LMJelinekMercer::Make(irs::LMJelinekMercer::Options{.lambda = 1.5f}));
+  // Boundary: λ = 1 is allowed (degenerate but mathematically defined).
+  EXPECT_NE(nullptr, irs::LMJelinekMercer::Make(
+                       irs::LMJelinekMercer::Options{.lambda = 1.f}));
 }
 
 TEST(lm_test, jm_equals) {
@@ -106,9 +101,7 @@ TEST(lm_test, dirichlet_consts) {
 }
 
 TEST(lm_test, dirichlet_load_default) {
-  auto scorer =
-    irs::scorers::Get("lm_dirichlet", irs::Type<irs::text_format::Json>::get(),
-                      std::string_view{});
+  auto scorer = irs::LMDirichlet::Make(irs::LMDirichlet::Options{});
   ASSERT_NE(nullptr, scorer);
   ASSERT_EQ(irs::Type<irs::LMDirichlet>::id(), scorer->type());
   auto& lm = dynamic_cast<irs::LMDirichlet&>(*scorer);
@@ -118,18 +111,26 @@ TEST(lm_test, dirichlet_load_default) {
 }
 
 TEST(lm_test, dirichlet_load_object) {
-  auto scorer =
-    irs::scorers::Get("lm_dirichlet", irs::Type<irs::text_format::Json>::get(),
-                      "{ \"mu\": 500.0 }");
+  auto scorer = irs::LMDirichlet::Make(irs::LMDirichlet::Options{.mu = 500.f});
   ASSERT_NE(nullptr, scorer);
   auto& lm = dynamic_cast<irs::LMDirichlet&>(*scorer);
   ASSERT_FLOAT_EQ(500.f, lm.mu());
 }
 
 TEST(lm_test, dirichlet_load_invalid) {
-  ASSERT_EQ(nullptr, irs::scorers::Get("lm_dirichlet",
-                                       irs::Type<irs::text_format::Json>::get(),
-                                       "{ \"mu\": -1.0 }"));
+  // μ must be non-negative -- it scales the collection prior and divides by
+  // (dl + μ); a negative μ makes the score uninterpretable.
+  EXPECT_ANY_THROW(
+    irs::LMDirichlet::Make(irs::LMDirichlet::Options{.mu = -1.f}));
+  EXPECT_ANY_THROW(
+    irs::LMDirichlet::Make(irs::LMDirichlet::Options{.mu = -0.001f}));
+  EXPECT_ANY_THROW(irs::LMDirichlet::Make(
+    irs::LMDirichlet::Options{.mu = std::numeric_limits<float>::quiet_NaN()}));
+  EXPECT_ANY_THROW(irs::LMDirichlet::Make(
+    irs::LMDirichlet::Options{.mu = std::numeric_limits<float>::infinity()}));
+  // Boundary: μ = 0 is allowed (degenerate -- falls back to MLE).
+  EXPECT_NE(nullptr,
+            irs::LMDirichlet::Make(irs::LMDirichlet::Options{.mu = 0.f}));
 }
 
 TEST(lm_test, dirichlet_equals) {

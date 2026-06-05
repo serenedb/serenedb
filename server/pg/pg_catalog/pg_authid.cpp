@@ -24,7 +24,6 @@
 #include "catalog/catalog.h"
 #include "catalog/role.h"
 #include "pg/pg_catalog/fwd.h"
-#include "rest_server/serened.h"
 
 namespace sdb::pg {
 namespace {
@@ -50,7 +49,7 @@ catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
       .rolcreaterole = true,
       .rolcreatedb = true,
       .rolcanlogin = role->isActive(),
-      .rolreplication = false,
+      .rolreplication = true,
       .rolbypassrls = true,
       .rolconnlimit = -1,
     };

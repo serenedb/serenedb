@@ -23,11 +23,6 @@
 
 #include <rocksdb/slice.h>
 #include <rocksdb/status.h>
-#include <vpack/builder.h>
-#include <vpack/slice.h>
-
-#include <memory>
-#include <utility>
 
 #include "basics/buffer.h"
 #include "basics/common.h"
@@ -55,8 +50,5 @@ inline std::string_view SliceToStr(rocksdb::Slice slice) noexcept {
 
 sdb::Result ConvertStatus(const rocksdb::Status&,
                           StatusHint hint = StatusHint::kNone);
-
-std::pair<vpack::Slice, std::unique_ptr<vpack::BufferUInt8>> StripObjectIds(
-  vpack::Slice input_slice, bool check_before_copy = true);
 
 }  // namespace sdb::rocksutils

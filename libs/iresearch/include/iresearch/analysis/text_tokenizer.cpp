@@ -25,38 +25,26 @@
 
 #include "text_tokenizer.hpp"
 
-#include <absl/container/node_hash_map.h>
-#include <absl/strings/ascii.h>
 #include <libstemmer.h>
 #include <unicode/brkiter.h>      // for icu::BreakIterator
 #include <unicode/normalizer2.h>  // for icu::Normalizer2
 #include <unicode/translit.h>     // for icu::Transliterator
 #include <unicode/uclean.h>       // for u_cleanup
-#include <vpack/builder.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/slice.h>
-#include <vpack/vpack.h>
 
 #include <cctype>  // for std::isspace(...)
 #include <filesystem>
 #include <fstream>
-#include <magic_enum/magic_enum.hpp>
-#include <mutex>
 #include <string_view>
 
 #include "absl/strings/str_cat.h"
-#include "basics/containers/node_hash_map.h"
+#include "basics/exceptions.h"
 #include "basics/file_utils_ext.hpp"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/misc.hpp"
-#include "basics/runtime_utils.hpp"
 #include "basics/thread_utils.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/snowball_stemmer.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
-#include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
 namespace {
@@ -90,8 +78,8 @@ struct TextTokenizer::StateT : IcuObjects {
 
   icu::UnicodeString data;
   icu::UnicodeString token;
-  const OptionsT& options;
-  const stopwords_t& stopwords;
+  Options options;
+  stopwords_t stopwords;
   bstring term_buf;
   std::string tmp_buf;  // used by processTerm(...)
   NGramState ngram;
@@ -99,8 +87,8 @@ struct TextTokenizer::StateT : IcuObjects {
   uint32_t start{};
   uint32_t end{};
 
-  StateT(const OptionsT& opts, const stopwords_t& stopw)
-    : options(opts), stopwords(stopw) {}
+  StateT(Options opts, stopwords_t stopw)
+    : options(std::move(opts)), stopwords(std::move(stopw)) {}
 
   bool IsSearchNGram() const {
     // if min or max or preserveOriginal are set then search ngram
@@ -115,26 +103,6 @@ struct TextTokenizer::StateT : IcuObjects {
 
 namespace {
 
-struct CachedOptions : public TextTokenizer::OptionsT {
-  TextTokenizer::stopwords_t stopwords;
-
-  CachedOptions(TextTokenizer::OptionsT&& options,
-                TextTokenizer::stopwords_t&& stopwords)
-    : TextTokenizer::OptionsT{std::move(options)},
-      stopwords{std::move(stopwords)} {}
-};
-
-struct StrHash {
-  using is_transparent = void;
-
-  size_t operator()(std::string_view v) const { return absl::HashOf(v); }
-  size_t operator()(hashed_string_view v) const { return v.Hash(); }
-};
-
-sdb::containers::NodeHashMap<std::string, CachedOptions, StrHash>
-  gCachedStateByKey;
-constinit absl::Mutex gMutex{absl::kConstInit};
-
 // Retrieves a set of ignored words from FS at the specified custom path
 bool GetStopwords(TextTokenizer::stopwords_t& buf, std::string_view language,
                   std::string_view path = {}) {
@@ -142,7 +110,7 @@ bool GetStopwords(TextTokenizer::stopwords_t& buf, std::string_view language,
 
   const auto* custom_stopword_path =
     !IsNull(path) ? path.data()
-                  : irs::Getenv(TextTokenizer::gStopwordPathEnvVariable);
+                  : std::getenv(TextTokenizer::gStopwordPathEnvVariable);
 
   if (custom_stopword_path) {
     stopword_path.assign(custom_stopword_path);
@@ -163,12 +131,12 @@ bool GetStopwords(TextTokenizer::stopwords_t& buf, std::string_view language,
     if (!file_utils::ExistsDirectory(result, stopword_path.c_str()) ||
         !result) {
       if (custom_stopword_path) {
-        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+        SDB_ERROR(IRESEARCH,
                   absl::StrCat("Failed to load stopwords from path: ",
                                stopword_path.string()));
         return false;
       }
-      SDB_TRACE("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_TRACE(IRESEARCH,
                 absl::StrCat("Failed to load stopwords from default path: ",
                              stopword_path.string(),
                              ". Analyzer will continue without stopwords"));
@@ -181,9 +149,8 @@ bool GetStopwords(TextTokenizer::stopwords_t& buf, std::string_view language,
       const auto path = stopword_path / name;
 
       if (!file_utils::ExistsFile(result, path.c_str())) {
-        SDB_ERROR(
-          "xxxxx", sdb::Logger::IRESEARCH,
-          absl::StrCat("Failed to identify stopword path: ", path.string()));
+        SDB_ERROR(IRESEARCH, absl::StrCat("Failed to identify stopword path: ",
+                                          path.string()));
 
         return false;
       }
@@ -196,7 +163,7 @@ bool GetStopwords(TextTokenizer::stopwords_t& buf, std::string_view language,
 
       if (!in) {
         SDB_ERROR(
-          "xxxxx", sdb::Logger::IRESEARCH,
+          IRESEARCH,
           absl::StrCat("Failed to load stopwords from path: ", path.string()));
 
         return false;
@@ -227,7 +194,7 @@ bool GetStopwords(TextTokenizer::stopwords_t& buf, std::string_view language,
 
     return true;
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("Caught error while loading stopwords from path: ",
                            stopword_path.string()));
   }
@@ -244,7 +211,7 @@ bool GetStopwords(TextTokenizer::stopwords_t& buf, std::string_view language,
 ///  none (empty explicit_Stopwords  and flg explicit_stopwords_set not set) -
 ///  load from default location
 ////////////////////////////////////////////////////////////////////////////////
-bool BuildStopwords(const TextTokenizer::OptionsT& options,
+bool BuildStopwords(const TextTokenizer::Options& options,
                     TextTokenizer::stopwords_t& buf) {
   if (!options.explicit_stopwords.empty()) {
     // explicit stopwords always go
@@ -266,65 +233,6 @@ bool BuildStopwords(const TextTokenizer::OptionsT& options,
   }
 
   return true;
-}
-
-// create an analyzer based on the supplied cache_key and options
-Analyzer::ptr Construct(hashed_string_view cache_key,
-                        TextTokenizer::OptionsT&& options,
-                        TextTokenizer::stopwords_t&& stopwords) {
-  CachedOptions* options_ptr = nullptr;
-  {
-    std::lock_guard lock{gMutex};
-    auto r = gCachedStateByKey.try_emplace(cache_key, std::move(options),
-                                           std::move(stopwords));
-    options_ptr = &r.first->second;
-  }
-
-  return std::make_unique<TextTokenizer>(*options_ptr, options_ptr->stopwords);
-}
-
-// create an analyzer based on the supplied cache_key
-Analyzer::ptr Construct(icu::Locale&& locale) {
-  if (locale.isBogus()) {
-    return nullptr;
-  }
-
-  {
-    hashed_string_view key{locale.getName()};
-    std::lock_guard lock{gMutex};
-
-    auto itr = gCachedStateByKey.find(key);
-
-    if (itr != gCachedStateByKey.end()) {
-      return std::make_unique<TextTokenizer>(itr->second,
-                                             itr->second.stopwords);
-    }
-  }
-
-  try {
-    TextTokenizer::OptionsT options;
-    TextTokenizer::stopwords_t stopwords;
-    options.locale = locale;
-
-    if (!BuildStopwords(options, stopwords)) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-               "Failed to retrieve 'stopwords' while constructing "
-               "text_token_stream with cache key: ",
-               options.locale.getName());
-
-      return nullptr;
-    }
-
-    return Construct(hashed_string_view{options.locale.getName()},
-                     std::move(options), std::move(stopwords));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat(
-                "Caught error while constructing text_token_stream cache key: ",
-                locale.getName()));
-  }
-
-  return nullptr;
 }
 
 bool ProcessTerm(TextTokenizer::StateT& state, icu::UnicodeString&& data) {
@@ -392,19 +300,8 @@ bool ProcessTerm(TextTokenizer::StateT& state, icu::UnicodeString&& data) {
   return true;
 }
 
-constexpr std::string_view kLocaleParamName = "locale";
-constexpr std::string_view kCaseConvertParamName = "case";
-constexpr std::string_view kStopwordsParamName = "stopwords";
-constexpr std::string_view kStopwordsPathParamName = "stopwordsPath";
-constexpr std::string_view kAccentParamName = "accent";
-constexpr std::string_view kStemmingParamName = "stemming";
-constexpr std::string_view kEdgeNGramParamName = "edgeNGram";
-constexpr std::string_view kMinParamName = "min";
-constexpr std::string_view kMaxParamName = "max";
-constexpr std::string_view kPreserveOriginalParamName = "preserveOriginal";
-
-bool InitFromOptions(const TextTokenizer::OptionsT& options,
-                     IcuObjects* objects, bool print_errors) {
+bool InitFromOptions(const TextTokenizer::Options& options, IcuObjects* objects,
+                     bool print_errors) {
   auto err =
     UErrorCode::U_ZERO_ERROR;  // a value that passes the U_SUCCESS() test
 
@@ -415,7 +312,7 @@ bool InitFromOptions(const TextTokenizer::OptionsT& options,
     objects->normalizer = nullptr;
 
     if (print_errors) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "Warning while instantiation icu::Normalizer2 for "
                "text_token_stream from locale: ",
                options.locale.getName(), ", ", u_errorName(err));
@@ -440,7 +337,7 @@ bool InitFromOptions(const TextTokenizer::OptionsT& options,
       objects->transliterator.reset();
 
       if (print_errors) {
-        SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+        SDB_WARN(IRESEARCH,
                  "Warning while instantiation icu::Transliterator for "
                  "text_token_stream from locale: ",
                  options.locale.getName(), ", ", u_errorName(err));
@@ -458,7 +355,7 @@ bool InitFromOptions(const TextTokenizer::OptionsT& options,
     objects->break_iterator.reset();
 
     if (print_errors) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "Warning while instantiation icu::BreakIterator for "
                "text_token_stream from locale: ",
                options.locale.getName(), ", ", u_errorName(err));
@@ -474,426 +371,13 @@ bool InitFromOptions(const TextTokenizer::OptionsT& options,
                                         nullptr);  // defaults to utf-8
 
     if (!objects->stemmer && print_errors) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+      SDB_WARN(IRESEARCH,
                "Failed to create stemmer for text_token_stream from locale: ",
                options.locale.getName());
     }
   }
 
   return true;
-}
-
-bool LocaleFromString(const std::string& locale_name, icu::Locale& locale) {
-  locale = icu::Locale::createFromName(locale_name.c_str());
-
-  if (!locale.isBogus()) {
-    locale = icu::Locale{locale.getLanguage(), locale.getCountry(),
-                         locale.getVariant()};
-  }
-
-  if (locale.isBogus()) {
-    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-             "Failed to instantiate locale from the supplied string '",
-             locale_name,
-             "' while constructing text_token_stream from VPack arguments");
-
-    return false;
-  }
-
-  return true;
-}
-
-bool LocaleFromSlice(vpack::Slice slice, icu::Locale& locale) {
-  if (!slice.isString()) {
-    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Non-string value in '",
-             kLocaleParamName,
-             "' while constructing text_token_stream from VPack arguments");
-
-    return false;
-  }
-
-  return LocaleFromString(slice.copyString(), locale);
-}
-
-bool ParseVPackOptions(const vpack::Slice slice,
-                       TextTokenizer::OptionsT& options) {
-  vpack::Slice locale_slice;
-  if (!slice.isObject() ||
-      !(locale_slice = slice.get(kLocaleParamName)).isString()) {
-    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Missing '", kLocaleParamName,
-             "' while constructing text_token_stream from VPack");
-
-    return false;
-  }
-
-  try {
-    if (!LocaleFromSlice(locale_slice, options.locale)) {
-      return false;
-    }
-
-    if (auto case_convert_slice = slice.get(kCaseConvertParamName);
-        !case_convert_slice.isNone()) {
-      if (!case_convert_slice.isString()) {
-        SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Non-string value in '",
-                 kCaseConvertParamName,
-                 "' while constructing text_token_stream from VPack arguments");
-
-        return false;
-      }
-
-      const auto case_value = magic_enum::enum_cast<irs::Case>(
-        case_convert_slice.stringView(), magic_enum::case_insensitive);
-
-      if (!case_value) {
-        SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
-                 kCaseConvertParamName,
-                 "' while constructing text_token_stream from VPack arguments");
-
-        return false;
-      }
-
-      options.case_convert = *case_value;
-    }
-
-    if (auto stop_words_slice = slice.get(kStopwordsParamName);
-        !stop_words_slice.isNone()) {
-      if (!stop_words_slice.isArray()) {
-        SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
-                 kStopwordsParamName,
-                 "' while constructing text_token_stream from VPack arguments");
-
-        return false;
-      }
-      // mark - we have explicit list (even if it is empty)
-      options.explicit_stopwords_set = true;
-      for (const auto itr : vpack::ArrayIterator(stop_words_slice)) {
-        if (!itr.isString()) {
-          SDB_WARN(
-            "xxxxx", sdb::Logger::IRESEARCH, "Non-string value in '",
-            kStopwordsParamName,
-            "' while constructing text_token_stream from VPack arguments");
-
-          return false;
-        }
-        options.explicit_stopwords.emplace(itr.stringView());
-      }
-    }
-
-    if (auto ignored_words_path_slice = slice.get(kStopwordsPathParamName);
-        !ignored_words_path_slice.isNone()) {
-      if (!ignored_words_path_slice.isString()) {
-        SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Non-string value in '",
-                 kStopwordsPathParamName,
-                 "' while constructing text_token_stream from VPack arguments");
-
-        return false;
-      }
-      options.stopwords_path = ignored_words_path_slice.stringView();
-    }
-
-    if (auto accent_slice = slice.get(kAccentParamName);
-        !accent_slice.isNone()) {
-      if (!accent_slice.isBool()) {
-        SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Non-boolean value in '",
-                 kAccentParamName,
-                 "' while constructing text_token_stream from VPack arguments");
-
-        return false;
-      }
-      options.accent = accent_slice.getBool();
-    }
-
-    if (auto stemming_slice = slice.get(kStemmingParamName);
-        !stemming_slice.isNone()) {
-      if (!stemming_slice.isBool()) {
-        SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Non-boolean value in '",
-                 kStemmingParamName,
-                 "' while constructing text_token_stream from VPack arguments");
-
-        return false;
-      }
-
-      options.stemming = stemming_slice.getBool();
-    }
-
-    if (auto ngram_slice = slice.get(kEdgeNGramParamName);
-        !ngram_slice.isNone()) {
-      if (!ngram_slice.isObject()) {
-        SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Non-object value in '",
-                 kEdgeNGramParamName,
-                 "' while constructing text_token_stream from VPack arguments");
-
-        return false;
-      }
-
-      if (auto v = ngram_slice.get(kMinParamName);
-          v.isNumber<decltype(options.min_gram)>()) {
-        options.min_gram = v.getNumber<decltype(options.min_gram)>();
-        options.min_gram_set = true;
-      }
-
-      if (auto v = ngram_slice.get(kMaxParamName);
-          v.isNumber<decltype(options.min_gram)>()) {
-        options.max_gram = v.getNumber<decltype(options.min_gram)>();
-        options.max_gram_set = true;
-      }
-
-      if (auto v = ngram_slice.get(kPreserveOriginalParamName); v.isBool()) {
-        options.preserve_original = v.getBool();
-        options.preserve_original_set = true;
-      }
-
-      if (options.min_gram_set && options.max_gram_set) {
-        return options.min_gram <= options.max_gram;
-      }
-    }
-
-    IcuObjects obj;
-    InitFromOptions(options, &obj, true);
-
-    return true;
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing text_token_stream from VPack"));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while constructing text_token_stream from VPack "
-              "arguments");
-  }
-
-  return false;
-}
-
-// builds analyzer config from internal options in json format
-// options reference to analyzer options storage
-// definition string for storing json document with config
-bool MakeVPackConfig(const TextTokenizer::OptionsT& options,
-                     vpack::Builder* builder) {
-  vpack::ObjectBuilder object(builder);
-  {
-    // locale
-    const auto* const locale_name = options.locale.getBaseName();
-    builder->add(kLocaleParamName, locale_name);
-
-    // case convert
-    const auto case_name_sv = magic_enum::enum_name(options.case_convert);
-    if (case_name_sv.empty()) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        absl::StrCat("Invalid case_convert value in text analyzer options: ",
-                     static_cast<int>(options.case_convert)));
-      return false;
-    }
-    std::string case_name{case_name_sv};
-    absl::AsciiStrToLower(&case_name);
-    builder->add(kCaseConvertParamName, case_name);
-
-    // stopwords
-    if (!options.explicit_stopwords.empty() || options.explicit_stopwords_set) {
-      // explicit_stopwords_set  marks that even empty stopwords list is valid
-      std::vector<std::string_view> sorted_words;
-      if (!options.explicit_stopwords.empty()) {
-        // for simplifying comparison between properties we need deterministic
-        // order of stopwords
-        sorted_words.reserve(options.explicit_stopwords.size());
-        for (const auto& stopword : options.explicit_stopwords) {
-          sorted_words.emplace_back(stopword);
-        }
-        absl::c_sort(sorted_words);
-      }
-      {
-        vpack::ArrayBuilder array(builder, kStopwordsParamName.data());
-
-        for (const auto& stopword : sorted_words) {
-          builder->add(stopword);
-        }
-      }
-    }
-
-    // Accent
-    builder->add(kAccentParamName, options.accent);
-
-    // Stem
-    builder->add(kStemmingParamName, options.stemming);
-
-    // stopwords path
-    if (options.stopwords_path.empty() || options.stopwords_path[0] != 0) {
-      // if stopwordsPath is set  - output it (empty string is also valid value
-      // =  use of CWD)
-      builder->add(kStopwordsPathParamName, options.stopwords_path);
-    }
-  }
-
-  // ensure disambiguating casts below are safe. Casts required for clang
-  // compiler on Mac
-  static_assert(sizeof(uint64_t) >= sizeof(size_t),
-                "sizeof(uint64_t) >= sizeof(size_t)");
-
-  if (options.min_gram_set || options.max_gram_set ||
-      options.preserve_original_set) {
-    vpack::ObjectBuilder sub_object(builder, kEdgeNGramParamName.data());
-
-    // min_gram
-    if (options.min_gram_set) {
-      builder->add(kMinParamName, static_cast<uint64_t>(options.min_gram));
-    }
-
-    // max_gram
-    if (options.max_gram_set) {
-      builder->add(kMaxParamName, static_cast<uint64_t>(options.max_gram));
-    }
-
-    // preserve_original
-    if (options.preserve_original_set) {
-      builder->add(kPreserveOriginalParamName, options.preserve_original);
-    }
-  }
-
-  return true;
-}
-
-// args is a jSON encoded object with the following attributes:
-// "locale"(string): locale of the analyzer <required>
-// "case"(string enum): modify token case using "locale"
-// "accent"(bool): leave accents
-// "stemming"(bool): use stemming
-// "stopwords([string...]): set of words to ignore
-// "stopwordsPath"(string): custom path, where to load stopwords
-// "min" (number): minimum ngram size
-// "max" (number): maximum ngram size
-// "preserveOriginal" (boolean): preserve or not the original term
-// if none of stopwords and stopwordsPath specified, stopwords are loaded from
-// default location
-Analyzer::ptr MakeVPack(const vpack::Slice slice) {
-  try {
-    const hashed_string_view slice_ref{
-      std::string_view{slice.startAs<char>(), slice.byteSize()}};
-    {
-      std::lock_guard lock{gMutex};
-      auto itr = gCachedStateByKey.find(slice_ref);
-
-      if (itr != gCachedStateByKey.end()) {
-        return std::make_unique<TextTokenizer>(itr->second,
-                                               itr->second.stopwords);
-      }
-    }
-
-    TextTokenizer::OptionsT options;
-    if (ParseVPackOptions(slice, options)) {
-      TextTokenizer::stopwords_t stopwords;
-      if (!BuildStopwords(options, stopwords)) {
-        SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-                 "Failed to retrieve 'stopwords' from path while constructing "
-                 "text_token_stream from VPack arguments");
-
-        return nullptr;
-      }
-      return Construct(slice_ref, std::move(options), std::move(stopwords));
-    }
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while constructing text_token_stream from VPack "
-              "arguments");
-  }
-  return nullptr;
-}
-
-Analyzer::ptr MakeVPack(std::string_view args) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-bool NormalizeVPackConfig(const vpack::Slice slice,
-                          vpack::Builder* vpack_builder) {
-  TextTokenizer::OptionsT options;
-  if (ParseVPackOptions(slice, options)) {
-    return MakeVPackConfig(options, vpack_builder);
-  }
-  return false;
-}
-
-bool NormalizeVPackConfig(std::string_view args, std::string& definition) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  vpack::Builder builder;
-  bool res = NormalizeVPackConfig(slice, &builder);
-  if (res) {
-    definition.assign(builder.slice().startAs<char>(),
-                      builder.slice().byteSize());
-  }
-  return res;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// @brief args is a locale name
-////////////////////////////////////////////////////////////////////////////////
-Analyzer::ptr MakeText(std::string_view args) {
-  icu::Locale locale;
-
-  if (LocaleFromString(static_cast<std::string>(args), locale)) {
-    return Construct(std::move(locale));
-  }
-  return nullptr;
-}
-
-bool NormalizeTextConfig(std::string_view args, std::string& definition) {
-  icu::Locale locale;
-
-  if (LocaleFromString(static_cast<std::string>(args), locale)) {
-    definition = locale.getBaseName();
-    return true;
-  }
-
-  return false;
-}
-
-Analyzer::ptr MakeJson(std::string_view args) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while constructing normalizing_tokenizer");
-      return nullptr;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing normalizing_tokenizer from JSON"));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while constructing normalizing_tokenizer from "
-              "JSON");
-  }
-  return nullptr;
-}
-
-bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while normalizing normalizing_tokenizer");
-      return false;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    vpack::Builder builder;
-    if (NormalizeVPackConfig(vpack->slice(), &builder)) {
-      definition = builder.toString();
-      return !definition.empty();
-    }
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while normalizing normalizing_tokenizer from JSON"));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while normalizing normalizing_tokenizer from "
-              "JSON");
-  }
-  return false;
 }
 
 }  // namespace
@@ -905,23 +389,28 @@ void TextTokenizer::StateDeleterT::operator()(StateT* p) const noexcept {
 const char* TextTokenizer::gStopwordPathEnvVariable =
   "IRESEARCH_TEXT_STOPWORD_PATH";
 
-TextTokenizer::TextTokenizer(const OptionsT& options,
-                             const stopwords_t& stopwords)
-  : _state{new StateT{options, stopwords}} {}
+TextTokenizer::TextTokenizer(Options options, stopwords_t stopwords)
+  : _state{new StateT{std::move(options), std::move(stopwords)}} {}
 
-void TextTokenizer::init() {
-  REGISTER_ANALYZER_VPACK(TextTokenizer, MakeVPack, NormalizeVPackConfig);
-  REGISTER_ANALYZER_JSON(TextTokenizer, MakeJson, NormalizeJsonConfig);
-  REGISTER_ANALYZER_TEXT(TextTokenizer, MakeText, NormalizeTextConfig);
-}
-
-void TextTokenizer::clear_cache() {
-  std::lock_guard lock{gMutex};
-  gCachedStateByKey.clear();
-}
-
-Analyzer::ptr TextTokenizer::make(std::string_view locale) {
-  return MakeText(locale);
+Analyzer::ptr TextTokenizer::Make(Options opts) {
+  if (opts.locale.isBogus()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "text: invalid locale");
+  }
+  if (opts.min_gram_set && opts.max_gram_set && opts.min_gram > opts.max_gram) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              "text: min_gram must not exceed max_gram");
+  }
+  TextTokenizer::stopwords_t stopwords;
+  if (!BuildStopwords(opts, stopwords)) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              "text: failed to load stopwords from the configured path");
+  }
+  IcuObjects obj;
+  if (!InitFromOptions(opts, &obj, true)) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              "text: failed to initialize the analyzer for the locale");
+  }
+  return std::make_unique<TextTokenizer>(std::move(opts), std::move(stopwords));
 }
 
 bool TextTokenizer::reset(std::string_view data) {

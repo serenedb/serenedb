@@ -18,20 +18,21 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/base/internal/endian.h>
+
 #include <duckdb.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
-#include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/columnstore/column_reader.hpp>
 #include <iresearch/columnstore/format.hpp>
 #include <iresearch/index/directory_reader.hpp>
-#include <iresearch/search/scorers.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/bytes_utils.hpp>
 
-#include "basics/endian.h"
+#include "basics/duckdb_engine.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
 #include "connector/duckdb_search_sink_writer.h"
@@ -44,25 +45,21 @@ namespace {
 using namespace sdb;
 using namespace connector;
 
+// Process-wide DuckDB instance, owned by sdb::DuckDBEngine. tests_main
+// brings it up before RUN_ALL_TESTS and tears it down before main returns,
+// so the lifetime envelope strictly covers every test body.
 duckdb::DatabaseInstance& TestDb() {
-  static std::unique_ptr<duckdb::DuckDB> kDb = []() {
-    duckdb::DBConfig cfg;
-    cfg.options.access_mode = duckdb::AccessMode::AUTOMATIC;
-    return std::make_unique<duckdb::DuckDB>(":memory:", &cfg);
-  }();
-  return *kDb->instance;
+  return ::sdb::DuckDBEngine::Instance().instance();
 }
 
 class DuckDBSearchSinkWriterTest : public ::testing::Test {
  public:
   static catalog::ColumnTokenizer AnalyzerProvider(catalog::Column::Id) {
-    auto make_identity = [] {
-      return std::string(vpack::Slice::emptyObjectSlice().startAs<char>(),
-                         vpack::Slice::emptyObjectSlice().byteSize());
-    };
     static catalog::Tokenizer gStringTokenizer(
       ObjectId{0}, ObjectId{12345}, "test_string_verbartim", {},
-      DEFAULT_ROW_GROUP_SIZE, make_identity());
+      DEFAULT_ROW_GROUP_SIZE,
+      irs::analysis::TokenizerConfig{.config =
+                                       irs::StringTokenizer::Options{}});
     auto tokenizer = gStringTokenizer.GetTokenizer();
     EXPECT_TRUE(tokenizer);
     return {.analyzer = *std::move(tokenizer),
@@ -71,10 +68,7 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
 
   static void SetUpTestCase() {
     // Running these multiple times does no harm but is redundant.
-    irs::analysis::analyzers::Init();
     irs::formats::Init();
-    irs::scorers::Init();
-    irs::compression::Init();
   }
 
   void SetUp() final {

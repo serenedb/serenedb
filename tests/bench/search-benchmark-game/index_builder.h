@@ -24,17 +24,11 @@
 
 #include <array>
 #include <iosfwd>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
 
 #include "executor.h"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace bench {
-
-duckdb::DatabaseInstance& CsDb();
 
 struct IBatchHandler {
   virtual ~IBatchHandler() = default;
@@ -82,8 +76,9 @@ inline constexpr auto kTextIndexFeatures =
 struct TextField {
   std::string_view name;
   std::string_view text;
-  irs::analysis::Analyzer::ptr tokenizer{irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(), R"({})")};
+  irs::analysis::Analyzer::ptr tokenizer{
+    irs::analysis::SegmentationTokenizer::Make(
+      irs::analysis::SegmentationTokenizer::Options{})};
 
   std::string_view Name() const noexcept { return name; }
 

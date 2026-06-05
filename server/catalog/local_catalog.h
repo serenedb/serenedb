@@ -22,9 +22,9 @@
 
 #include <absl/base/thread_annotations.h>
 #include <absl/synchronization/mutex.h>
-#include <vpack/slice.h>
 
 #include <memory>
+#include <shared_mutex>
 #include <vector>
 
 #include "catalog/catalog.h"
@@ -124,7 +124,8 @@ class LocalCatalog final : public LogicalCatalog,
                      ChangeCallback<Table> callback) final;
   Result ChangeRole(std::string_view name, ChangeCallback<Role> callback) final;
 
-  Result DropDatabase(std::string_view name) final;
+  Result DropDatabase(std::string_view name,
+                      duckdb::shared_ptr<void> keep_alive) final;
   Result DropRole(std::string_view role) final;
   Result DropSchema(std::string_view database, std::string_view name,
                     bool cascade) final;
@@ -147,6 +148,8 @@ class LocalCatalog final : public LogicalCatalog,
   Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                          std::string_view name) final;
 
+  Result FinalizeLoad() final;
+
   std::shared_ptr<const Snapshot> GetCatalogSnapshot() const noexcept final;
 
  private:
@@ -162,6 +165,7 @@ class LocalCatalog final : public LogicalCatalog,
                           std::string_view new_name, std::shared_ptr<T> object);
 
   mutable absl::Mutex _mutex;
+  mutable std::shared_mutex _snapshot_mutex;
   std::shared_ptr<const SnapshotImpl> _snapshot;
   RocksDBEngineCatalog* _engine;
 };

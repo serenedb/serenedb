@@ -24,7 +24,6 @@
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "query/transaction.h"
-#include "rest_server/serened.h"
 
 namespace sdb {
 

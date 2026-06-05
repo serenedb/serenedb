@@ -33,12 +33,12 @@
 #include "catalog/object.h"
 #include "catalog/table_options.h"
 
-namespace vpack {
+namespace duckdb {
 
-class Builder;
-class Slice;
+class Serializer;
+class Deserializer;
 
-}  // namespace vpack
+}  // namespace duckdb
 namespace sdb {
 namespace transaction {
 
@@ -59,7 +59,7 @@ class TableShard : public catalog::Object {
   virtual ~TableShard() = default;
   std::shared_ptr<Object> Clone() const final { return nullptr; }
 
-  auto GetTableId() const noexcept { return _table_id; }
+  ObjectId GetTableId() const noexcept { return GetParentId(); }
 
   catalog::StorageKind GetStorage() const noexcept { return _storage; }
 
@@ -73,9 +73,12 @@ class TableShard : public catalog::Object {
     return {.num_rows = _num_rows.load(std::memory_order_relaxed)};
   }
 
-  void WriteInternal(vpack::Builder& b) const final {
-    vpack::WriteTuple(b, std::forward_as_tuple(GetStorage(), GetTableStats()));
-  }
+  // Serialize persists (StorageKind, stats) so recovery can construct the right
+  // subclass; DeserializeStats reads the stats back and DeserializeStorageKind
+  // the leading kind (used by the catalog's shard-construction dispatch).
+  void Serialize(duckdb::Serializer& sink) const final;
+  static catalog::TableStats DeserializeStats(std::string_view bytes);
+  static catalog::StorageKind DeserializeStorageKind(std::string_view bytes);
 
   // Remove a shard's on-disk artifacts. Static and kind-dispatched: callable
   // *without* a live shard instance (the drop task runs after the shard's
@@ -90,8 +93,8 @@ class TableShard : public catalog::Object {
   //
   // For kRocksDB: rocksdb range delete on the table's key range; ignores
   // db_id/schema_id.
-  // For kSearch: removes the iresearch directory derived from
-  // (db_id, schema_id, table_id, shard_id).
+  // For kSearch: removes the iresearch directory + per-shard chunk subtree
+  // derived from (db_id, schema_id, table_id).
   static Result DropArtifacts(catalog::StorageKind kind, ObjectId db_id,
                               ObjectId schema_id, ObjectId table_id,
                               ObjectId shard_id, uint64_t size);
@@ -104,9 +107,6 @@ class TableShard : public catalog::Object {
                       const catalog::TableStats& stats);
 
  protected:
-  /// Inject figures that are specific to StorageEngine
-  virtual void figuresSpecific(bool details, vpack::Builder&) {}
-
   ObjectId _table_id;
   // TODO(codeworse): this probably won't work in case of distributed setup
   std::atomic_uint64_t _num_rows{0};

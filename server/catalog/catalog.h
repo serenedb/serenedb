@@ -118,6 +118,8 @@ struct Snapshot {
     ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<Index>> GetIndexes(
     ObjectId database, std::string_view schema) const = 0;
+  virtual std::vector<std::shared_ptr<Sequence>> GetSequences(
+    ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<Tokenizer>> GetTokenizers(
     ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<PgSqlType>> GetTypes(
@@ -317,7 +319,8 @@ struct LogicalCatalog {
   virtual Result ChangeRole(std::string_view name,
                             ChangeCallback<catalog::Role> callback) = 0;
 
-  virtual Result DropDatabase(std::string_view name) = 0;
+  virtual Result DropDatabase(std::string_view name,
+                              duckdb::shared_ptr<void> keep_alive) = 0;
   virtual Result DropRole(std::string_view name) = 0;
   virtual Result DropSchema(std::string_view database, std::string_view name,
                             bool cascade) = 0;
@@ -342,24 +345,21 @@ struct LogicalCatalog {
   virtual Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                                  std::string_view name) = 0;
 
+  virtual Result FinalizeLoad() = 0;
+
   virtual std::shared_ptr<const Snapshot> GetCatalogSnapshot() const = 0;
 };
 
-class CatalogFeature final : public SerenedFeature {
+class CatalogFeature final {
  public:
-  static constexpr std::string_view name() noexcept { return "Catalog"; }
+  inline static CatalogFeature* gInstance = nullptr;
+  static CatalogFeature& instance() noexcept { return *gInstance; }
 
-  explicit CatalogFeature(Server& server);
+  CatalogFeature();
+  ~CatalogFeature();
 
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
-  void start() final;
-  void unprepare() final;
-  void prepare() final;
-
-  void Cleanup() {
-    _local.reset();
-    _global.reset();
-  }
+  void start();
+  void stop() {}
 
   Result Open();
 
@@ -381,7 +381,6 @@ class CatalogFeature final : public SerenedFeature {
  private:
   std::shared_ptr<LogicalCatalog> _global;
   std::shared_ptr<LogicalCatalog> _local;
-  bool _skip_background_errors = false;
 };
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id);

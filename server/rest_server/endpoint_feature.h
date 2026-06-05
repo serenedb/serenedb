@@ -21,33 +21,14 @@
 
 #pragma once
 
-#include "app/http_endpoint_provider.h"
 #include "endpoint/endpoint_list.h"
-#include "rest_server/serened.h"
 
 namespace sdb {
 
-class EndpointFeature final : public HttpEndpointProvider {
- public:
-  static constexpr std::string_view name() noexcept { return "Endpoint"; }
-
-  explicit EndpointFeature(SerenedServer& server);
-
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
-  void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
-
-  std::vector<std::string> httpEndpoints() final;
-  EndpointList& endpointList() { return _endpoint_list; }
-  const EndpointList& endpointList() const { return _endpoint_list; }
-
- private:
-  void buildEndpointLists();
-
-  std::vector<std::string> _endpoints;
-  bool _reuse_address = true;
-  uint64_t _backlog_size = 64;
-
-  EndpointList _endpoint_list;
-};
+// Process-wide endpoint list parsed from --server_endpoints. Lazily
+// initialized on first call (must be invoked after absl::ParseCommandLine).
+// No start/stop ceremony -- there is no IO or thread setup to do here, just
+// CLI parsing. Replaced the old EndpointFeature class.
+EndpointList& Endpoints();
 
 }  // namespace sdb

@@ -33,7 +33,7 @@
 
 #include "basics/containers/trivial_map.h"
 #include "basics/debugging.h"
-#include "basics/logger/logger.h"
+#include "basics/serializer.h"
 #include "basics/static_strings.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
@@ -41,7 +41,6 @@
 #include "pg/sql_exception_macro.h"
 #include "query/config.h"
 #include "rest/version.h"
-#include "vpack/serializer.h"
 
 namespace sdb {
 
@@ -49,7 +48,7 @@ using duckdb::LogicalTypeId;
 
 namespace {
 
-template<vpack::detail::FixedString Name>
+template<basics::detail::FixedString Name>
 void Readonly(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {
   throw duckdb::InvalidInputException{"parameter \"%s\" cannot be changed",
                                       std::string_view{Name}.data()};
@@ -59,7 +58,7 @@ void Readonly(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {
 // the change. Emit a NOTICE so clients that care can see the SET is a no-op
 // on the server side; the value still flows into DuckDB session state so
 // SHOW round-trips what the client set.
-template<vpack::detail::FixedString Name>
+template<basics::detail::FixedString Name>
 void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
                  duckdb::Value& value) {
   constexpr std::string_view kName{Name};
@@ -175,26 +174,10 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
 #endif
-    {
-      log::kLogLevelVariable,
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets the server log level. "
-        "Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. "
-        "Valid levels: fatal, error, warning, info, debug, trace. "
-        "Valid topics: all, authentication, authorization, communication, "
-        "config, crash, engines, flush, fuerte, general, httpclient, "
-        "iresearch, memory, replication, requests, rocksdb, search, ssl, "
-        "startup, statistics, syscall, threads.",
-        [] { return duckdb::Value{log::LogLevelString()}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          log::SetLogLevel(value.ToString());
-          value = duckdb::Value(log::LogLevelString());
-        },
-        [](duckdb::ClientContext&, duckdb::SetScope) { log::ResetLogLevels(); },
-        duckdb::SetScope::GLOBAL,
-      },
-    },
+    // Logging knobs (level, type filters, storage, on/off) live in duckdb's
+    // built-in settings: logging_level / enable_logging / enabled_log_types
+    // / disabled_log_types / logging_storage / logging_mode. The previous
+    // sdb_log_level extension option was dropped in favour of those.
     {
       "sdb_write_conflict_policy",
       {

@@ -2,7 +2,7 @@
 
 set -o pipefail
 
-if cd "${WORKSPACE}" && BUILD_DIR="${BUILD_DIR}" TEST_KIND="recovery" ./tests/sqllogic/run_in_docker.sh 2>&1 | tee -a ./recovery-tests.log; then
+if cd "${WORKSPACE}" && BUILD_DIR="${BUILD_DIR}" TEST_KIND="recovery" ./tests/sqllogic/run_in_docker.sh 2>&1 | tee -a ./out/logs/recovery-tests.log; then
 	test_result="PASSED"
 	exit_code=0
 else

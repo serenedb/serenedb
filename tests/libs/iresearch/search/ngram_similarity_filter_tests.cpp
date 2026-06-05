@@ -34,7 +34,6 @@
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/tfidf.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "iresearch/utils/ngram_match_utils.hpp"
 #include "tests_shared.hpp"
 
@@ -1148,33 +1147,25 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
     MakeFilter("field", {"at", "tl", "la", "as", "ll", "never_match"}, 0.5f);
 
   Docs expected{1, 2, 5, 8, 11, 12, 13};
-  size_t collect_field_count = 0;
-  size_t collect_term_count = 0;
   size_t finish_count = 0;
+  uint64_t finish_docs_with_field = 0;
+  uint64_t finish_docs_with_term = 0;
   std::vector<size_t> frequency;
   std::vector<irs::score_t> filter_boost;
 
   irs::Scorer::ptr order{std::make_unique<CustomNGramScorer>()};
   auto& scorer = static_cast<CustomNGramScorer&>(*order);
 
-  scorer.collector_collect_field = [&collect_field_count](
-                                     const irs::SubReader&,
-                                     const irs::TermReader&) -> void {
-    ++collect_field_count;
-  };
-  scorer.collector_collect_term =
-    [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                          const irs::AttributeProvider&) -> void {
-    ++collect_term_count;
-  };
-  scorer.collectors_collect =
-    [&finish_count](irs::byte_type*, const irs::FieldCollector*,
-                    const irs::TermCollector*) -> void { ++finish_count; };
-  scorer.prepare_field_collector = [&scorer]() -> irs::FieldCollector::ptr {
-    return std::make_unique<CustomNGramScorer::FieldCollector>(scorer);
-  };
-  scorer.prepare_term_collector = [&scorer]() -> irs::TermCollector::ptr {
-    return std::make_unique<CustomNGramScorer::TermCollector>(scorer);
+  scorer.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector* field,
+                                  const irs::TermCollector* term) -> void {
+    ++finish_count;
+    if (field) {
+      finish_docs_with_field += field->docs_with_field;
+    }
+    if (term) {
+      finish_docs_with_term += term->docs_with_term;
+    }
   };
   scorer.prepare_scorer =
     [&frequency,
@@ -1194,9 +1185,9 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
     SCOPED_TRACE(testing::Message("i=") << i);
     ASSERT_DOUBLE_EQ(expected_filter_boost[i], filter_boost[i]);
   }
-  ASSERT_EQ(1, collect_field_count);
-  ASSERT_EQ(5, collect_term_count);
-  ASSERT_EQ(collect_field_count + collect_term_count, finish_count);
+  ASSERT_EQ(6, finish_count);
+  ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+  ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
 }
 
 TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
@@ -1212,33 +1203,25 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
     MakeFilter("field", {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
 
   Docs expected{1, 2, 5, 8, 11, 12, 13};
-  size_t collect_field_count = 0;
-  size_t collect_term_count = 0;
   size_t finish_count = 0;
+  uint64_t finish_docs_with_field = 0;
+  uint64_t finish_docs_with_term = 0;
   std::vector<size_t> frequency;
   std::vector<irs::score_t> filter_boost;
 
   irs::Scorer::ptr order{std::make_unique<CustomNGramScorer>()};
   auto& scorer = static_cast<CustomNGramScorer&>(*order);
 
-  scorer.collector_collect_field = [&collect_field_count](
-                                     const irs::SubReader&,
-                                     const irs::TermReader&) -> void {
-    ++collect_field_count;
-  };
-  scorer.collector_collect_term =
-    [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                          const irs::AttributeProvider&) -> void {
-    ++collect_term_count;
-  };
-  scorer.collectors_collect =
-    [&finish_count](irs::byte_type*, const irs::FieldCollector*,
-                    const irs::TermCollector*) -> void { ++finish_count; };
-  scorer.prepare_field_collector = [&scorer]() -> irs::FieldCollector::ptr {
-    return std::make_unique<CustomNGramScorer::FieldCollector>(scorer);
-  };
-  scorer.prepare_term_collector = [&scorer]() -> irs::TermCollector::ptr {
-    return std::make_unique<CustomNGramScorer::TermCollector>(scorer);
+  scorer.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector* field,
+                                  const irs::TermCollector* term) -> void {
+    ++finish_count;
+    if (field) {
+      finish_docs_with_field += field->docs_with_field;
+    }
+    if (term) {
+      finish_docs_with_term += term->docs_with_term;
+    }
   };
   scorer.prepare_scorer =
     [&frequency,
@@ -1258,9 +1241,9 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
     SCOPED_TRACE(testing::Message("i=") << i);
     ASSERT_DOUBLE_EQ(expected_filter_boost[i], filter_boost[i]);
   }
-  ASSERT_EQ(1, collect_field_count);
-  ASSERT_EQ(5, collect_term_count);
-  ASSERT_EQ(collect_field_count + collect_term_count, finish_count);
+  ASSERT_EQ(6, finish_count);
+  ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+  ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
 }
 
 TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_norm_test) {

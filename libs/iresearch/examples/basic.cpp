@@ -22,11 +22,10 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
-#include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
 #include <iostream>
 #include <iresearch/analysis/analyzer.hpp>
-#include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/columnstore/column_reader.hpp>
 #include <iresearch/columnstore/column_writer.hpp>
 #include <iresearch/columnstore/format.hpp>
@@ -35,18 +34,18 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
+#include <iresearch/search/bm25.hpp>
 #include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/mixed_boolean_filter.hpp>
 #include <iresearch/search/scorer.hpp>
-#include <iresearch/search/scorers.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/compression.hpp>
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
-#include <iresearch/utils/text_format.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
+
+#include "basics/duckdb_engine.h"
 
 // This example demonstrates the core iresearch workflow:
 //   1. Create a directory and index writer
@@ -54,15 +53,10 @@
 //   3. Parse Lucene-syntax queries and execute them (count + top-K with BM25)
 
 // Per-segment columnstore needs a duckdb::DatabaseInstance for codec lookup
-// and the buffer manager. C++11 thread-safe local statics keep this lazy
-// and process-wide; a real app would wire its own DatabaseInstance.
+// and the buffer manager. main() brackets Initialize / Shutdown on the
+// process-wide sdb::DuckDBEngine; this helper just hands out a reference.
 duckdb::DatabaseInstance& Db() {
-  static std::unique_ptr<duckdb::DuckDB> kDb = []() {
-    duckdb::DBConfig cfg;
-    cfg.options.access_mode = duckdb::AccessMode::AUTOMATIC;
-    return std::make_unique<duckdb::DuckDB>(":memory:", &cfg);
-  }();
-  return *kDb->instance;
+  return sdb::DuckDBEngine::Instance().instance();
 }
 
 // Stored-value column ids. Field-name -> field_id mapping is the caller's
@@ -77,8 +71,9 @@ inline constexpr irs::field_id kBodyColumnId = 2;
 struct TextField {
   std::string_view name;
   std::string_view text;
-  irs::analysis::Analyzer::ptr tokenizer{irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(), R"({})")};
+  irs::analysis::Analyzer::ptr tokenizer{
+    irs::analysis::SegmentationTokenizer::Make(
+      irs::analysis::SegmentationTokenizer::Options{})};
 
   std::string_view Name() const noexcept { return name; }
 
@@ -399,17 +394,17 @@ void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
 }
 
 int main() {
+  // Bracket the process-wide duckdb::DuckDB lifetime; Db() reads it back.
+  auto& engine = sdb::DuckDBEngine::Instance();
+  engine.Initialize();
+
   // Initialize subsystems (required once per process).
-  irs::analysis::analyzers::Init();
   irs::formats::Init();
-  irs::scorers::Init();
-  irs::compression::Init();
 
   auto format = irs::formats::Get("1_5simd");
-  auto scorer =
-    irs::scorers::Get("bm25", irs::Type<irs::text_format::Json>::get(), "{}");
-  auto tokenizer = irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(), "{}");
+  auto scorer = irs::BM25::Make(irs::BM25::Options{});
+  auto tokenizer = irs::analysis::SegmentationTokenizer::Make(
+    irs::analysis::SegmentationTokenizer::Options{});
 
   irs::MemoryDirectory dir;
   // cs needs a DatabaseInstance plumbed through both the writer (for
@@ -448,5 +443,6 @@ int main() {
   RemoveDocuments(*writer, *tokenizer);
   CompactIndex(*writer, dir);
 
+  engine.Shutdown();
   return 0;
 }

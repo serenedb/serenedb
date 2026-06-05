@@ -1,0 +1,9 @@
+# Default flags for `act` (local GitHub Actions runner). Used by scripts/ci/act-local.sh.
+# Self-hosted runner labels are mapped to a capable image (docker CLI present);
+# the workflows then `docker run` against the host daemon (socket is shared by
+# act-local.sh), mirroring the real self-hosted runners.
+-P ubuntu-latest=catthehacker/ubuntu:act-latest
+-P linux=catthehacker/ubuntu:act-latest
+-P linux-amd64=catthehacker/ubuntu:act-latest
+-P linux-arm64=catthehacker/ubuntu:act-latest
+--container-architecture=linux/amd64

@@ -38,6 +38,7 @@
 #include "general_server/general_server_feature.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/ssl_server_feature.h"
+#include "network/network_server_feature.h"
 #include "pg/pg_feature.h"
 #include "query/server_engine.h"
 #include "rest_server/database_path_feature.h"
@@ -78,6 +79,7 @@ int RunServer(int argc, char** argv) {
     catalog::CatalogFeature catalog;
     search::SearchEngine search;
     GeneralServerFeature general;
+    NetworkServerFeature network;
     pg::PostgresFeature pg;
 
     // --------------------------------------------------------------
@@ -125,6 +127,7 @@ int RunServer(int argc, char** argv) {
     start_one(catalog, [&] { catalog.stop(); });
     start_one(search, [&] { search.stop(); });
     start_one(general, [&] { general.stop(); });
+    start_one(network, [&] { network.stop(); });
     pg.start();
 
     // Boot completed; emit a recognisable banner so operators tailing

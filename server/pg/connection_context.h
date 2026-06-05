@@ -29,6 +29,10 @@
 #include "query/transaction.h"
 #include "utils/exec_context.h"
 
+namespace sdb::pg {
+class CopyInBridge;
+}
+
 namespace sdb {
 
 class ConnectionContext final : public ExecContext, public query::Transaction {
@@ -51,6 +55,11 @@ class ConnectionContext final : public ExecContext, public query::Transaction {
 
   auto* GetCopyQueue() const { return _copy_queue; }
 
+  // COPY FROM STDIN bridge for the new coroutine server (the old server uses
+  // _copy_queue instead). Set per COPY statement, cleared after.
+  auto* GetCopyInBridge() const { return _copy_in_bridge; }
+  void SetCopyInBridge(pg::CopyInBridge* bridge) { _copy_in_bridge = bridge; }
+
   void AddNotice(pg::SqlErrorData notice) {
     std::lock_guard lock{_mutex};
     _notices.push_back(std::move(notice));
@@ -65,6 +74,7 @@ class ConnectionContext final : public ExecContext, public query::Transaction {
   std::shared_ptr<catalog::Database> _database;
   message::Buffer* const _send_buffer;
   pg::CopyMessagesQueue* const _copy_queue;
+  pg::CopyInBridge* _copy_in_bridge = nullptr;
   absl::Mutex _mutex;
   std::vector<pg::SqlErrorData> _notices;
 };

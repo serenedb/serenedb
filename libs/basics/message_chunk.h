@@ -54,6 +54,11 @@ class Chunk {
     SDB_ASSERT(_end <= _capacity);
   }
 
+  void Reset() noexcept {
+    _begin = 0;
+    _end = 0;
+  }
+
   size_t FreeSpace() const { return _capacity - _end; }
 
   size_t Size() const { return _end - _begin; }

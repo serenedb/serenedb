@@ -211,3 +211,11 @@
 [submodule "third_party/database-connector"]
 	path = third_party/database-connector
 	url = https://github.com/serenedb/database-connector.git
+[submodule "third_party/ada"]
+	path = third_party/ada
+	url = https://github.com/ada-url/ada.git
+	shallow = true
+[submodule "third_party/simdutf"]
+	path = third_party/simdutf
+	url = https://github.com/serenedb/simdutf.git
+	shallow = true

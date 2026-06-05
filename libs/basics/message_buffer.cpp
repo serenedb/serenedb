@@ -68,6 +68,67 @@ void Buffer::Commit(bool need_flush) {
   }
 }
 
+std::span<uint8_t> Buffer::Reserve(size_t min_capacity) {
+  auto* data = AllocateContiguousData(min_capacity);
+  return {data, _tail->FreeSpace()};
+}
+
+void Buffer::CommitWrite(size_t size) { _tail->AdjustEnd(size); }
+
+std::string_view Buffer::Front() const noexcept {
+  const auto data = _head->Data(_head->GetEnd());
+  return {reinterpret_cast<const char*>(data.data()), data.size()};
+}
+
+size_t Buffer::ReadableSize() const noexcept {
+  size_t size = 0;
+  for (const Chunk* chunk = _head; chunk != nullptr; chunk = chunk->Next()) {
+    size += chunk->Size();
+  }
+  return size;
+}
+
+SequenceView Buffer::ReadableView(size_t length) const noexcept {
+  const Chunk* chunk = _head;
+  size_t pos = chunk->GetBegin();
+  const BufferOffset begin{chunk, pos};
+  while (length != 0) {
+    const size_t available = chunk->GetEnd() - pos;
+    if (length <= available) {
+      return SequenceView{begin, BufferOffset{chunk, pos + length}};
+    }
+    length -= available;
+    chunk = chunk->Next();
+    SDB_ASSERT(chunk != nullptr);
+    pos = chunk->GetBegin();
+  }
+  return SequenceView{begin, begin};
+}
+
+void Buffer::Consume(size_t size) {
+  while (size != 0) {
+    const size_t available = _head->Size();
+    if (size < available) {
+      _head->SetBegin(_head->GetBegin() + size);
+      return;
+    }
+    size -= available;
+    if (_head == _tail) {
+      SDB_ASSERT(size == 0);
+      _head->Reset();
+      return;
+    }
+    delete std::exchange(_head, _head->Next());
+  }
+}
+
+void Buffer::Clear() noexcept {
+  FreeTill(_tail);
+  _head->Reset();
+  _uncommitted_size = 0;
+  _volatile_size = 0;
+}
+
 void Buffer::WriteUncommitted(std::string_view data) {
   if (data.empty()) {
     return;

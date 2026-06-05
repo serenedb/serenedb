@@ -21,7 +21,10 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
+#include <span>
+#include <string_view>
 
 #include "basics/message_chunk.h"
 #include "basics/message_sequence_view.h"
@@ -65,6 +68,21 @@ class Buffer {
   }
 
   void Commit(bool need_flush);
+
+  std::span<uint8_t> Reserve(size_t min_capacity);
+  void CommitWrite(size_t size);
+  bool Readable() const noexcept { return _head != _tail || _head->Size() != 0; }
+  std::string_view Front() const noexcept;
+  void Consume(size_t size);
+
+  size_t ReadableSize() const noexcept;
+  SequenceView ReadableView(size_t length) const noexcept;
+
+  SequenceView Written() const noexcept {
+    return SequenceView{BufferOffset{_head, _head->GetBegin()},
+                        BufferOffset{_tail, _tail->GetEnd()}};
+  }
+  void Clear() noexcept;
 
   ~Buffer() {
     SDB_ASSERT(!_tail->Next());

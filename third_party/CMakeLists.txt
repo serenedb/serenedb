@@ -622,6 +622,31 @@ sdb_update_module(${GIT_EXECUTABLE} "simdjson" ${CMAKE_CURRENT_SOURCE_DIR} "READ
 add_subdirectory(simdjson)
 
 ###############################################################################
+## simdutf (SIMD UTF-8 validation + base64)
+################################################################################
+
+set(SIMDUTF_TESTS OFF CACHE BOOL "" FORCE)
+set(SIMDUTF_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(SIMDUTF_TOOLS OFF CACHE BOOL "" FORCE)
+set(SIMDUTF_ICONV OFF CACHE BOOL "" FORCE)
+set(SIMDUTF_FUZZERS OFF CACHE BOOL "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "simdutf" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(simdutf)
+
+###############################################################################
+## ada (WHATWG URL parsing) -- comes after simdutf (ADA_USE_SIMDUTF can use it)
+################################################################################
+
+set(ADA_TESTING OFF CACHE BOOL "" FORCE)
+set(ADA_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(ADA_TOOLS OFF CACHE BOOL "" FORCE)
+#[[ ADA_USE_SIMDUTF stays OFF for now: enabling it couples ada's CMake to the
+    simdutf target and only accelerates IDNA (a missed optimization, not a bug). ]]
+set(ADA_USE_SIMDUTF OFF CACHE BOOL "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "ada" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(ada)
+
+###############################################################################
 ## croaring
 ################################################################################
 

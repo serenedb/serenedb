@@ -20,6 +20,14 @@ add_executable(
     json_serde_types_test.cpp
     duckdb_roundtrip_test.cpp
     catalog_persistence_test.cpp
+    network_http_test.cpp
+    network_router_test.cpp
+    network_h1_codec_test.cpp
+    network_header_test.cpp
+    network_pg_codec_test.cpp
+    network_duck_executor_test.cpp
+    network_duck_pump_test.cpp
+    network_pg_frames_test.cpp
 )
 
 target_link_libraries(

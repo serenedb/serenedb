@@ -57,6 +57,7 @@
 #include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "general_server/general_server_feature.h"
+#include "pg/command_tag.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/hba.h"
@@ -1291,194 +1292,6 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
   return ProcessState::More;
 }
 
-namespace {
-
-std::string_view CatalogObjectTag(duckdb::CatalogType t) {
-  using duckdb::CatalogType;
-  switch (t) {
-    case CatalogType::TABLE_ENTRY:
-      return "TABLE";
-    case CatalogType::VIEW_ENTRY:
-      return "VIEW";
-    case CatalogType::INDEX_ENTRY:
-      return "INDEX";
-    case CatalogType::SCHEMA_ENTRY:
-      return "SCHEMA";
-    case CatalogType::SEQUENCE_ENTRY:
-      return "SEQUENCE";
-    case CatalogType::TYPE_ENTRY:
-      return "TYPE";
-    case CatalogType::MACRO_ENTRY:
-    case CatalogType::TABLE_MACRO_ENTRY:
-      return "FUNCTION";
-    case CatalogType::DATABASE_ENTRY:
-      return "DATABASE";
-    default:
-      return {};
-  }
-}
-
-struct CommandTag {
-  std::string tag;
-  // The "effective" statement type -- same as `prepared.data->statement_type`
-  // except for EXECUTE, where it's the underlying prepared's type. Drives the
-  // `INSERT 0 N` / `UPDATE N` / etc. row-count formatting.
-  duckdb::StatementType effective_type;
-};
-
-CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared);
-
-// `EXECUTE name` reports the underlying statement's tag in PG (e.g. a
-// SELECT-backed prepared statement yields "SELECT N"). Look the referenced
-// statement up in DuckDB's client-local prepared-statement catalog.
-CommandTag ExecuteTagForPrepared(const duckdb::PreparedStatement& prepared) {
-  auto* unbound = prepared.data->unbound_statement.get();
-  if (!unbound) {
-    return {"EXECUTE", duckdb::StatementType::EXECUTE_STATEMENT};
-  }
-  auto& exec_stmt = unbound->Cast<duckdb::ExecuteStatement>();
-  auto& client_data = duckdb::ClientData::Get(*prepared.context);
-  auto it = client_data.prepared_statements.find(exec_stmt.name);
-  if (it == client_data.prepared_statements.end() || !it->second) {
-    return {"EXECUTE", duckdb::StatementType::EXECUTE_STATEMENT};
-  }
-  using duckdb::StatementType;
-  const auto inner = it->second->statement_type;
-  switch (inner) {
-    case StatementType::SELECT_STATEMENT:
-      return {"SELECT", inner};
-    case StatementType::INSERT_STATEMENT:
-      return {"INSERT", inner};
-    case StatementType::UPDATE_STATEMENT:
-      return {"UPDATE", inner};
-    case StatementType::DELETE_STATEMENT:
-      return {"DELETE", inner};
-    default:
-      return {duckdb::StatementTypeToString(inner), inner};
-  }
-}
-
-// PG-compatible CommandComplete tag. Not all DuckDB statement types exist
-// in PG (e.g. PRAGMA); those fall back to DuckDB's string representation,
-// which is better than nothing.
-CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared) {
-  const auto stmt_type = prepared.data->statement_type;
-  const auto* unbound = prepared.data->unbound_statement.get();
-  auto make = [&](std::string s) -> CommandTag {
-    return {std::move(s), stmt_type};
-  };
-  using duckdb::StatementType;
-  switch (stmt_type) {
-    case StatementType::SELECT_STATEMENT:
-      return make("SELECT");
-    case StatementType::INSERT_STATEMENT:
-      return make("INSERT");
-    case StatementType::UPDATE_STATEMENT:
-      return make("UPDATE");
-    case StatementType::DELETE_STATEMENT:
-      if (unbound->Cast<duckdb::DeleteStatement>().node->is_truncate) {
-        return make("TRUNCATE TABLE");
-      }
-      return make("DELETE");
-    case StatementType::COPY_STATEMENT:
-      return make("COPY");
-    case StatementType::MERGE_INTO_STATEMENT:
-      return make("MERGE");
-    case StatementType::PREPARE_STATEMENT:
-      return make("PREPARE");
-    case StatementType::EXECUTE_STATEMENT:
-      return ExecuteTagForPrepared(prepared);
-    case StatementType::EXPLAIN_STATEMENT:
-      return make("EXPLAIN");
-    case StatementType::VACUUM_STATEMENT:
-      return make("VACUUM");
-    case StatementType::ANALYZE_STATEMENT:
-      return make("ANALYZE");
-    case StatementType::ATTACH_STATEMENT:
-      return make("ATTACH");
-    case StatementType::DETACH_STATEMENT:
-      return make("DETACH");
-    case StatementType::SET_STATEMENT:
-    case StatementType::VARIABLE_SET_STATEMENT:
-      return make("SET");
-    case StatementType::LOAD_STATEMENT:
-      return make("LOAD");
-    case StatementType::CALL_STATEMENT:
-      return make("CALL");
-    case StatementType::CREATE_STATEMENT:
-    case StatementType::CREATE_FUNC_STATEMENT: {
-      if (unbound) {
-        const auto& create_stmt = unbound->Cast<duckdb::CreateStatement>();
-        if (create_stmt.info) {
-          auto obj = CatalogObjectTag(create_stmt.info->type);
-          if (!obj.empty()) {
-            return make(absl::StrCat("CREATE ", obj));
-          }
-        }
-      }
-      return make("CREATE");
-    }
-    case StatementType::DROP_STATEMENT: {
-      if (unbound) {
-        const auto& drop_stmt = unbound->Cast<duckdb::DropStatement>();
-        if (drop_stmt.info) {
-          if (drop_stmt.info->type == duckdb::CatalogType::PREPARED_STATEMENT) {
-            return make(drop_stmt.info->name.empty() ? "DEALLOCATE ALL"
-                                                     : "DEALLOCATE");
-          }
-          auto obj = CatalogObjectTag(drop_stmt.info->type);
-          if (!obj.empty()) {
-            return make(absl::StrCat("DROP ", obj));
-          }
-        }
-      }
-      return make("DROP");
-    }
-    case StatementType::ALTER_STATEMENT: {
-      if (unbound) {
-        const auto& alter_stmt = unbound->Cast<duckdb::AlterStatement>();
-        if (alter_stmt.info) {
-          switch (alter_stmt.info->type) {
-            case duckdb::AlterType::ALTER_TABLE:
-              return make("ALTER TABLE");
-            case duckdb::AlterType::ALTER_VIEW:
-              return make("ALTER VIEW");
-            case duckdb::AlterType::ALTER_SEQUENCE:
-              return make("ALTER SEQUENCE");
-            case duckdb::AlterType::ALTER_DATABASE:
-              return make("ALTER DATABASE");
-            default:
-              break;
-          }
-        }
-      }
-      return make("ALTER");
-    }
-    case StatementType::TRANSACTION_STATEMENT: {
-      if (unbound) {
-        const auto& tx = unbound->Cast<duckdb::TransactionStatement>();
-        if (tx.info) {
-          switch (tx.info->type) {
-            case duckdb::TransactionType::BEGIN_TRANSACTION:
-              return make("BEGIN");
-            case duckdb::TransactionType::COMMIT:
-              return make("COMMIT");
-            case duckdb::TransactionType::ROLLBACK:
-              return make("ROLLBACK");
-            default:
-              break;
-          }
-        }
-      }
-      return make("TRANSACTION");
-    }
-    default:
-      return make(duckdb::StatementTypeToString(stmt_type));
-  }
-}
-
-}  // namespace
-
 void PgSQLCommTaskBase::DeallocateNamedStatement(std::string_view name) {
   if (name.empty()) {
     // DEALLOCATE ALL: clear every named statement and any portal built on
@@ -1519,8 +1332,7 @@ void PgSQLCommTaskBase::DeallocateNamedStatement(std::string_view name) {
 void PgSQLCommTaskBase::SendCommandComplete(duckdb::StatementType stmt_type,
                                             uint64_t rows) {
   auto& prepared = *_current_portal->stmt->prepared;
-  auto tag = BuildCommandTag(prepared);
-  auto return_type = prepared.GetStatementProperties().return_type;
+  const auto return_type = prepared.GetStatementProperties().return_type;
 
   // DEALLOCATE target is tracked separately from DuckDB's catalog: our
   // extended-protocol named statements live in `_statements`. Clean them up
@@ -1537,29 +1349,8 @@ void PgSQLCommTaskBase::SendCommandComplete(duckdb::StatementType stmt_type,
 
   const auto uncommitted_size = _send.GetUncommittedSize();
   auto* prefix_data = _send.GetContiguousData(5);
-  _send.WriteUncommitted({tag.tag.data(), tag.tag.size()});
-
-  if (return_type == duckdb::StatementReturnType::CHANGED_ROWS) {
-    if (tag.effective_type == duckdb::StatementType::INSERT_STATEMENT) {
-      _send.WriteUncommitted({" 0 ", 3});
-    } else {
-      _send.WriteUncommitted({" ", 1});
-    }
-    _send.WriteContiguousData(basics::kIntStrMaxLen, [&](auto* data) {
-      char* buf = reinterpret_cast<char*>(data);
-      char* ptr = absl::numbers_internal::FastIntToBuffer(rows, buf);
-      return static_cast<size_t>(ptr - buf);
-    });
-  } else if (return_type == duckdb::StatementReturnType::QUERY_RESULT) {
-    _send.WriteUncommitted({" ", 1});
-    _send.WriteContiguousData(basics::kIntStrMaxLen, [&](auto* data) {
-      char* buf = reinterpret_cast<char*>(data);
-      char* ptr = absl::numbers_internal::FastIntToBuffer(rows, buf);
-      return static_cast<size_t>(ptr - buf);
-    });
-  }
-  // NOTHING: no count appended
-
+  const auto tag = pg::FormatCommandTag(prepared, return_type, rows);
+  _send.WriteUncommitted(tag);
   _send.WriteUncommitted({"\0", 1});
   prefix_data[0] = PQ_MSG_COMMAND_COMPLETE;
   absl::big_endian::Store32(prefix_data + 1,

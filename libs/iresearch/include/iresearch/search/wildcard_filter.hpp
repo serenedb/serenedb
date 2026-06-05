@@ -95,10 +95,7 @@ struct ByWildcardOptions : ByWildcardFilterOptions {
   // The maximum number of most frequent terms to consider for scoring
   size_t scored_terms_limit{1024};
 
-  bool operator==(const ByWildcardOptions& rhs) const noexcept {
-    return filter_options::operator==(rhs) &&
-           scored_terms_limit == rhs.scored_terms_limit;
-  }
+  bool operator==(const ByWildcardOptions& rhs) const noexcept = default;
 };
 
 // Resolves a wildcard pattern into a concrete filter at construction time:

@@ -25,7 +25,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <limits>
 #include <duckdb/common/checksum.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
@@ -35,6 +34,7 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -159,8 +159,7 @@ uint64_t MaxChunkSegId(const std::filesystem::path& chunk_dir) {
   if (!std::filesystem::exists(chunk_dir, ec)) {
     return 0;
   }
-  for (const auto& entry :
-       std::filesystem::directory_iterator(chunk_dir, ec)) {
+  for (const auto& entry : std::filesystem::directory_iterator(chunk_dir, ec)) {
     if (ec || !entry.is_regular_file(ec)) {
       continue;
     }
@@ -233,10 +232,11 @@ SectionHeader ReadSectionHeader(Cursor& c) {
   return h;
 }
 
-// Read + decompress + deserialize a chunk file, replaying each chunk via `emit`.
-// A committed REFERENCE guarantees its chunk files are complete (fsynced at
-// Combine BEFORE the commit, WAL_DESIGN.md §9), so a torn/garbled frame here is
-// corruption -- fail loudly rather than silently drop committed rows.
+// Read + decompress + deserialize a chunk file, replaying each chunk via
+// `emit`. A committed REFERENCE guarantees its chunk files are complete
+// (fsynced at Combine BEFORE the commit, WAL_DESIGN.md §9), so a torn/garbled
+// frame here is corruption -- fail loudly rather than silently drop committed
+// rows.
 void ReplayChunkFile(
   duckdb::FileSystem& fs, const std::string& chunk_path,
   const std::function<void(duckdb::DataChunk&, uint64_t pk_base)>& emit) {
@@ -305,13 +305,13 @@ SearchDbWal::ChunkWriter& SearchDbWal::ChunkWriter::operator=(
 SearchDbWal::ChunkWriter::~ChunkWriter() = default;
 
 void SearchDbWal::ChunkWriter::Append(duckdb::DataChunk& chunk,
-                                     uint64_t pk_base) {
+                                      uint64_t pk_base) {
   SDB_ASSERT(_writer);
   // Serialize into the reused stream, block-compress (zstd-1) into the reused
   // output buffer, and write one framed record: [u8 codec][u32 raw_len][u32
   // comp_len][u64 pk_base][payload]. `pk_base` is the chunk's generated-PK base
-  // (0 for explicit-PK), for replay PK reconstruction (§5.6). Raw fallback if it
-  // doesn't shrink (never expand on disk).
+  // (0 for explicit-PK), for replay PK reconstruction (§5.6). Raw fallback if
+  // it doesn't shrink (never expand on disk).
   _stream->Rewind();
   duckdb::BinarySerializer serializer{*_stream};
   serializer.Begin();
@@ -398,9 +398,9 @@ void SearchDbWal::WriteFrameLocked(const uint8_t* payload, uint64_t size) {
   _active->WriteData(payload, size);
   _active->Sync();  // commit point
 
-  // Size-based rotation (WAL_DESIGN.md §10.2): seal once the active segment plus
-  // the outstanding chunk files exceed the threshold. The next AppendCommit opens
-  // a fresh segment named by its tick.
+  // Size-based rotation (WAL_DESIGN.md §10.2): seal once the active segment
+  // plus the outstanding chunk files exceed the threshold. The next
+  // AppendCommit opens a fresh segment named by its tick.
   if (_active->GetTotalWritten() + OutstandingChunkBytes(_chunks_root) >
       _seal_threshold) {
     _active->Close();
@@ -542,45 +542,58 @@ void SearchDbWal::RunGc() {
     active_first_tick = _active_first_tick;
   }
 
-  auto segments = EnumerateSegments(_wal_dir);
-  // A sealed segment is deletable iff its whole tick range <= min_tick. Its last
-  // tick is < the NEXT segment's first_tick, so `next.first_tick <= min+1`
-  // suffices (WAL_DESIGN.md §10.3). The last segment is never deleted (no
-  // successor to bound it, and it may be active).
-  for (size_t i = 0; i + 1 < segments.size(); ++i) {
-    auto [first_tick, path] = segments[i];
-    uint64_t next_first_tick = segments[i + 1].first;
+  // A SEALED segment is reclaimable once every record in it is durable in every
+  // shard it touched -- i.e. its max record tick <= the subscription min
+  // (WAL_DESIGN.md §10.3). Records within a segment are tick-ascending
+  // (appended under _append_mu) and EnumerateSegments returns segments
+  // tick-ascending too, so: the first record with tick > min means this segment
+  // -- and every later one -- still holds un-published data, so we stop
+  // entirely; a segment whose every record is <= min is fully durable
+  // everywhere -> delete it + its chunk files. (We read the segment for the
+  // chunk paths anyway, so the max_tick test is free -- and unlike a filename
+  // shortcut it correctly bounds the NEWEST sealed segment, the case a single
+  // bulk load hits.) The ACTIVE segment (still being appended) is never
+  // touched.
+  for (const auto& [first_tick, path] : EnumerateSegments(_wal_dir)) {
     if (active_first_tick != 0 && first_tick == active_first_tick) {
       continue;  // the live, still-appended segment
     }
-    if (next_first_tick > min_tick + 1) {
-      break;  // this (and every later) segment still holds un-published ticks
-    }
-    // Delete the chunk files this segment's REFERENCE sections point at, then
-    // the segment. Read it once, here, to collect (schema, table, seg_id)s.
-    duckdb::BufferedFileReader reader(_fs, path.string().c_str());
-    std::vector<uint8_t> payload;
-    while (ReadFrame(reader, payload)) {
-      Cursor c(payload);
-      c.Read<uint64_t>();  // tick
-      auto shard_count = c.Read<uint32_t>();
-      for (uint32_t s = 0; s < shard_count; ++s) {
-        auto h = ReadSectionHeader(c);
-        if (h.kind == kKindInline) {
-          auto pk_count = c.Read<uint32_t>();
-          c.ReadBlob(pk_count * sizeof(uint64_t));
-          auto inline_len = c.Read<uint64_t>();
-          c.ReadBlob(inline_len);
-        } else {
-          auto seg_count = c.Read<uint32_t>();
-          for (uint32_t k = 0; k < seg_count; ++k) {
-            uint64_t sid = c.Read<uint64_t>();
-            std::error_code ec;
-            std::filesystem::remove(
-              ChunkDir(h.schema_id, h.table_id) / ChunkName(sid), ec);
+    bool consumed = true;
+    std::vector<std::filesystem::path> chunk_paths;
+    {
+      duckdb::BufferedFileReader reader(_fs, path.string().c_str());
+      std::vector<uint8_t> payload;
+      while (ReadFrame(reader, payload)) {
+        Cursor c(payload);
+        if (c.Read<uint64_t>() > min_tick) {  // tick (records are ascending)
+          consumed = false;
+          break;
+        }
+        auto shard_count = c.Read<uint32_t>();
+        for (uint32_t s = 0; s < shard_count; ++s) {
+          auto h = ReadSectionHeader(c);
+          if (h.kind == kKindInline) {
+            auto pk_count = c.Read<uint32_t>();
+            c.ReadBlob(pk_count * sizeof(uint64_t));
+            auto inline_len = c.Read<uint64_t>();
+            c.ReadBlob(inline_len);
+          } else {
+            auto seg_count = c.Read<uint32_t>();
+            for (uint32_t k = 0; k < seg_count; ++k) {
+              uint64_t sid = c.Read<uint64_t>();
+              chunk_paths.push_back(ChunkDir(h.schema_id, h.table_id) /
+                                    ChunkName(sid));
+            }
           }
         }
       }
+    }
+    if (!consumed) {
+      break;  // this + every later (higher-tick) segment still un-published
+    }
+    for (const auto& cp : chunk_paths) {
+      std::error_code ec;
+      std::filesystem::remove(cp, ec);
     }
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -605,8 +618,8 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
       for (uint32_t s = 0; s < shard_count; ++s) {
         auto h = ReadSectionHeader(c);
         ColumnIds column_ids{h.column_ids};
-        const bool live = exists_of(h.schema_id, h.table_id) &&
-                          tick > committed_of(h.table_id);
+        const bool live =
+          exists_of(h.schema_id, h.table_id) && tick > committed_of(h.table_id);
         if (h.kind == kKindInline) {
           auto pk_count = c.Read<uint32_t>();
           const uint8_t* pk_blob = c.ReadBlob(pk_count * sizeof(uint64_t));
@@ -640,19 +653,19 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
             if (!live) {
               continue;
             }
-            ReplayChunkFile(_fs, chunk_path,
-                            [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
-                              cb(tick, h.schema_id, h.table_id, pk_base,
-                                 column_ids, chunk);
-                            });
+            ReplayChunkFile(
+              _fs, chunk_path, [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
+                cb(tick, h.schema_id, h.table_id, pk_base, column_ids, chunk);
+              });
           }
         }
       }
     }
   }
 
-  // Orphan chunk-file sweep: a crashed bulk txn (or a dropped shard) leaves chunk
-  // files not referenced by any surviving record. Delete them (best-effort).
+  // Orphan chunk-file sweep: a crashed bulk txn (or a dropped shard) leaves
+  // chunk files not referenced by any surviving record. Delete them
+  // (best-effort).
   std::error_code ec;
   if (std::filesystem::exists(_chunks_root, ec)) {
     for (const auto& entry :
@@ -672,11 +685,11 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
     }
   }
 
-  // Seed the engine tick from the max record tick. `_active` stays null: the next
-  // commit opens a fresh segment named by its tick, so we never append after a
-  // torn tail in an old segment. Per-table seg-id counters are seeded lazily in
-  // NewChunkWriter. Callers also RegisterShard each shard (bumps the tick past
-  // any committed tick that exceeds the on-disk WAL max).
+  // Seed the engine tick from the max record tick. `_active` stays null: the
+  // next commit opens a fresh segment named by its tick, so we never append
+  // after a torn tail in an old segment. Per-table seg-id counters are seeded
+  // lazily in NewChunkWriter. Callers also RegisterShard each shard (bumps the
+  // tick past any committed tick that exceeds the on-disk WAL max).
   if (_tick.load(std::memory_order_relaxed) < max_tick) {
     _tick.store(max_tick, std::memory_order_relaxed);
   }

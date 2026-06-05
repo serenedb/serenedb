@@ -20,15 +20,19 @@
 
 #include "connector/search_table_sink_writer.h"
 
+#include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/vector.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/columnstore/column_writer.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <utility>
+#include <vector>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/exceptions.h"
 #include "catalog/search_analyzer_impl.h"
+#include "connector/key_utils.hpp"
 #include "connector/search_remove_filter.hpp"
 
 namespace sdb::connector {
@@ -203,6 +207,37 @@ void SearchTableSinkWriter::Abort() {
   // document handle so its destructor doesn't try to finalise a batch.
   _document.reset();
   _pending_batch_size = 0;
+}
+
+void WriteChunkToSearchSink(
+  SearchTableSinkWriter& sink, duckdb::DataChunk& chunk,
+  std::span<const catalog::Column::Id> column_ids,
+  std::span<const duckdb::LogicalType> column_types,
+  std::span<const duckdb_primary_key::PKColumn> pk_columns,
+  std::string_view table_key, bool uses_generated_pk, uint64_t pk_base,
+  std::string& pk_scratch) {
+  const auto num_rows = chunk.size();
+  SDB_ASSERT(column_ids.size() == column_types.size());
+  // Init's batch_size must be the exact row count -- iresearch pre-allocates
+  // that many DocContext slots per Insert(false, batch_size).
+  sink.Init(num_rows);
+  for (size_t col = 0; col < column_ids.size(); ++col) {
+    sink.SwitchColumn(column_ids[col], column_types[col], chunk.data[col],
+                      num_rows);
+  }
+  // Per-row PK: explicit-PK reads the key from the columns; generated-PK uses
+  // pk_base + row (the base reserved at write time / recorded in the WAL).
+  std::vector<duckdb::UnifiedVectorFormat> pk_formats;
+  duckdb_primary_key::PreparePKFormats(chunk, pk_columns, pk_formats);
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    const uint64_t generated_pk = uses_generated_pk ? pk_base + row : 0;
+    pk_scratch.clear();
+    duckdb_primary_key::MakeColumnKey(
+      pk_formats, pk_columns, row, generated_pk, table_key,
+      [](std::string_view) {}, pk_scratch);
+    sink.Write(key_utils::ExtractRowKey(pk_scratch));
+  }
+  sink.Finish();
 }
 
 }  // namespace sdb::connector

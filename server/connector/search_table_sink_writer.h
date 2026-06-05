@@ -24,6 +24,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -31,6 +32,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
+#include "connector/duckdb_primary_key.h"
 #include "connector/search_sink_writer.hpp"
 
 namespace duckdb {
@@ -136,5 +138,20 @@ class SearchTableSinkWriter {
     _columnstore_writers;
   std::vector<std::string> _pending_deletes;
 };
+
+// Write one materialised DataChunk into `sink` with PK injection -- the shared
+// core of the search-table INSERT operator's Sink AND WAL recovery replay, so a
+// recovered key is byte-identical to the written one (WAL_DESIGN.md §5.6). Runs
+// one Init/SwitchColumn(per col)/Write(per row)/Finish cycle. `pk_base` is the
+// chunk's generated-PK base (reserved from the sequence on the write path, read
+// from the WAL on recovery); ignored when !uses_generated_pk (explicit PK is
+// read from the columns). `pk_scratch` is reused per row to avoid allocation.
+void WriteChunkToSearchSink(
+  SearchTableSinkWriter& sink, duckdb::DataChunk& chunk,
+  std::span<const catalog::Column::Id> column_ids,
+  std::span<const duckdb::LogicalType> column_types,
+  std::span<const duckdb_primary_key::PKColumn> pk_columns,
+  std::string_view table_key, bool uses_generated_pk, uint64_t pk_base,
+  std::string& pk_scratch);
 
 }  // namespace sdb::connector

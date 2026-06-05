@@ -91,7 +91,8 @@ SearchDbWal::ReplayCallback MakeCollector(Collected& out) {
     for (duckdb::idx_t i = 0; i < chunk.size(); ++i) {
       vals.push_back(chunk.GetValue(0, i).GetValue<int32_t>());
     }
-    out.chunks.emplace_back(tick, schema_id, table_id, std::move(vals), pk_base);
+    out.chunks.emplace_back(tick, schema_id, table_id, std::move(vals),
+                            pk_base);
     out.last_col_ids.assign(cols.begin(), cols.end());
   };
 }
@@ -109,9 +110,9 @@ class SearchDbWalTest : public ::testing::Test {
   void SetUp() override {
     _fs = duckdb::FileSystem::CreateLocal();
     const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
-    _dir = std::filesystem::path(::testing::TempDir()) /
-           absl::StrFormat("sdbwal_%s_%s", info->test_suite_name(),
-                           info->name());
+    _dir =
+      std::filesystem::path(::testing::TempDir()) /
+      absl::StrFormat("sdbwal_%s_%s", info->test_suite_name(), info->name());
     std::filesystem::remove_all(_dir);
   }
   void TearDown() override { std::filesystem::remove_all(_dir); }
@@ -132,8 +133,8 @@ class SearchDbWalTest : public ::testing::Test {
   static SearchDbWal::ShardSection InlineSection(
     uint64_t schema_id, uint64_t table_id, const std::vector<uint64_t>& cols,
     const duckdb::ColumnDataCollection& cdc) {
-    return SearchDbWal::ShardSection{schema_id, table_id,
-                                     SearchDbWal::ColumnIds{cols}, &cdc, {}};
+    return SearchDbWal::ShardSection{
+      schema_id, table_id, SearchDbWal::ColumnIds{cols}, &cdc, {}};
   }
   static SearchDbWal::ShardSection ReferenceSection(
     uint64_t schema_id, uint64_t table_id, const std::vector<uint64_t>& cols,
@@ -160,9 +161,9 @@ TEST_F(SearchDbWalTest, InlineRoundTrip) {
   EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got)), 1u);
 
   ASSERT_EQ(got.chunks.size(), 1u);
-  EXPECT_EQ(std::get<0>(got.chunks[0]), 1u);   // tick
-  EXPECT_EQ(std::get<1>(got.chunks[0]), 3u);   // schema_id
-  EXPECT_EQ(std::get<2>(got.chunks[0]), 5u);   // table_id
+  EXPECT_EQ(std::get<0>(got.chunks[0]), 1u);  // tick
+  EXPECT_EQ(std::get<1>(got.chunks[0]), 3u);  // schema_id
+  EXPECT_EQ(std::get<2>(got.chunks[0]), 5u);  // table_id
   EXPECT_EQ(std::get<3>(got.chunks[0]), (std::vector<int32_t>{10, 20, 30}));
   EXPECT_EQ(got.last_col_ids, cols);
 }
@@ -372,8 +373,7 @@ TEST_F(SearchDbWalTest, MinTickGcDeletesConsumedSealedSegments) {
   for (int i = 1; i <= 3; ++i) {
     auto c = MakeIntCdc(Alloc(), {i});
     auto sec = InlineSection(1, 7, cols, *c);
-    EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}),
-              static_cast<uint64_t>(i));
+    EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}), static_cast<uint64_t>(i));
   }
   EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
   EXPECT_TRUE(std::filesystem::exists(SegPath(2)));
@@ -402,11 +402,13 @@ TEST_F(SearchDbWalTest, MinTickGcReferenceChunksReclaimed) {
   EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}), 1u);  // sealed seg 1
   auto inl = MakeIntCdc(Alloc(), {2});
   auto sec2 = InlineSection(1, 7, cols, *inl);
-  EXPECT_EQ(wal.AppendCommit(std::span{&sec2, 1}), 2u);  // sealed seg 2 (successor)
+  EXPECT_EQ(wal.AppendCommit(std::span{&sec2, 1}),
+            2u);  // sealed seg 2 (successor)
 
   EXPECT_TRUE(std::filesystem::exists(ChunkPath(1, 7, 1)));
   wal.RegisterShard(7, 0);
-  wal.OnShardCommit(7, 1);  // min=1 -> seg 1 (next.first=2 <= 2) deleted + chunk
+  wal.OnShardCommit(7,
+                    1);  // min=1 -> seg 1 (next.first=2 <= 2) deleted + chunk
   EXPECT_FALSE(std::filesystem::exists(SegPath(1)));
   EXPECT_FALSE(std::filesystem::exists(ChunkPath(1, 7, 1)));
 }
@@ -414,7 +416,8 @@ TEST_F(SearchDbWalTest, MinTickGcReferenceChunksReclaimed) {
 TEST_F(SearchDbWalTest, IdleShardPinsLogUntilDeregister) {
   // Two shards: 7 advances, 8 stays at committed 0 (idle, never VACUUM'd).
   // min = 0 -> nothing reclaimed, even segments shard 8 never wrote. Deregister
-  // 8 -> min becomes shard 7's tick -> reclamation proceeds (WAL_DESIGN.md §10.3).
+  // 8 -> min becomes shard 7's tick -> reclamation proceeds (WAL_DESIGN.md
+  // §10.3).
   std::vector<uint64_t> cols{1};
   SearchDbWal wal(Fs(), _dir, /*seal_threshold=*/1);
   for (int i = 1; i <= 3; ++i) {
@@ -427,10 +430,53 @@ TEST_F(SearchDbWalTest, IdleShardPinsLogUntilDeregister) {
   wal.OnShardCommit(7, 3);  // min still 0 (shard 8 at 0) -> no GC
   EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
 
-  wal.DeregisterShard(8);  // min now 3 -> GC reclaims 1,2 (3 is last)
+  wal.DeregisterShard(
+    8);  // min now 3 -> all 3 segments (ticks 1,2,3 <= 3) gone
   EXPECT_FALSE(std::filesystem::exists(SegPath(1)));
   EXPECT_FALSE(std::filesystem::exists(SegPath(2)));
-  EXPECT_TRUE(std::filesystem::exists(SegPath(3)));
+  EXPECT_FALSE(std::filesystem::exists(SegPath(3)));
+}
+
+TEST_F(SearchDbWalTest, MinTickGcReclaimsLoneSealedSegment) {
+  // A single bulk commit -> ONE sealed segment with NO successor (the case a
+  // bulk CTAS hits). It must still be reclaimed once consumed -- regression
+  // guard: an earlier filename-only rule never deleted the last segment, so a
+  // load-then-query workload leaked the full chunk set on disk.
+  std::vector<uint64_t> cols{1};
+  SearchDbWal wal(Fs(), _dir, /*seal_threshold=*/1);
+  auto cw = wal.NewChunkWriter(1, 7);
+  duckdb::DataChunk c;
+  FillIntChunk(c, Alloc(), {1});
+  cw.Append(c, 0);
+  cw.Finish();
+  std::vector<uint64_t> segs{cw.SegId()};
+  auto sec = ReferenceSection(1, 7, cols, segs);
+  EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}),
+            1u);  // sealed seg 1, no successor
+  EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
+  EXPECT_TRUE(std::filesystem::exists(ChunkPath(1, 7, 1)));
+
+  wal.RegisterShard(7, 0);
+  wal.OnShardCommit(
+    7, 1);  // min=1: seg 1 (tick 1 <= 1) reclaimed despite being last
+  EXPECT_FALSE(std::filesystem::exists(SegPath(1)));
+  EXPECT_FALSE(std::filesystem::exists(ChunkPath(1, 7, 1)));
+}
+
+TEST_F(SearchDbWalTest, TickRestoredFromShardWhenWalEmpty) {
+  // After GC empties the WAL, a fresh SearchDbWal scans no segments (tick 0);
+  // RegisterShard with the shard's durable iresearch committed_tick must
+  // restore the tick line so the next commit is strictly greater (iresearch
+  // monotonicity).
+  SearchDbWal wal(Fs(), _dir);  // empty dir -> no segments
+  EXPECT_EQ(wal.CurrentTick(), 0u);
+  wal.RegisterShard(/*table=*/7, /*committed=*/42);
+  EXPECT_EQ(wal.CurrentTick(), 42u);
+  std::vector<uint64_t> cols{1};
+  auto cdc = MakeIntCdc(Alloc(), {1});
+  auto sec = InlineSection(1, 7, cols, *cdc);
+  EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}),
+            43u);  // strictly > committed 42
 }
 
 TEST_F(SearchDbWalTest, InlineInsertsAccumulateInOneSegment) {
@@ -454,15 +500,19 @@ TEST_F(SearchDbWalTest, GeneratedPkBaseRoundTrip) {
     SearchDbWal wal(Fs(), _dir);
     auto cdc = MakeIntCdc(Alloc(), {7, 8, 9});
     std::vector<uint64_t> pk_bases{1000};  // one chunk -> one base
-    SearchDbWal::ShardSection sec{
-      /*schema=*/1,      /*table=*/5, SearchDbWal::ColumnIds{cols},
-      /*inline=*/cdc.get(), /*seg_ids=*/{}, std::span<const uint64_t>{pk_bases}};
+    SearchDbWal::ShardSection sec{/*schema=*/1,
+                                  /*table=*/5,
+                                  SearchDbWal::ColumnIds{cols},
+                                  /*inline=*/cdc.get(),
+                                  /*seg_ids=*/{},
+                                  std::span<const uint64_t>{pk_bases}};
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}), 1u);
   }
   {
     Collected got;
     SearchDbWal wal2(Fs(), _dir);
-    EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got)), 1u);
+    EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got)),
+              1u);
     ASSERT_EQ(got.chunks.size(), 1u);
     EXPECT_EQ(std::get<3>(got.chunks[0]), (std::vector<int32_t>{7, 8, 9}));
     EXPECT_EQ(std::get<4>(got.chunks[0]), 1000u);  // pk_base round-trips
@@ -485,7 +535,8 @@ TEST_F(SearchDbWalTest, GeneratedPkBaseRoundTrip) {
   {
     Collected got;
     SearchDbWal wal2(Fs(), _dir);
-    EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got)), 1u);
+    EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got)),
+              1u);
     ASSERT_EQ(got.chunks.size(), 1u);
     EXPECT_EQ(std::get<3>(got.chunks[0]), (std::vector<int32_t>{3, 4}));
     EXPECT_EQ(std::get<4>(got.chunks[0]), 2000u);

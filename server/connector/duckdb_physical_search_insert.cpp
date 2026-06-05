@@ -27,6 +27,7 @@
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -401,35 +402,21 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   // be the exact row count -- iresearch pre-allocates that many DocContext
   // slots per Insert(false, batch_size), and the segment's docs_count
   // reflects the allocation, not the NextDocument calls.
-  auto& sink = *lstate->sink;
-  sink.Init(num_rows);
-  for (duckdb::idx_t col_idx = 0; col_idx < gstate.column_ids.size();
-       ++col_idx) {
-    sink.SwitchColumn(gstate.column_ids[col_idx], gstate.chunk_types[col_idx],
-                      chunk.data[col_idx], num_rows);
-  }
-
-  // Per-row PK. Explicit-PK reads the key from chunk columns
-  // (pk_columns/pk_formats); generated-PK reserves a contiguous range from
-  // the sequence -- this thread's range is disjoint from every other
-  // thread's because ReserveWriteUnsafe is atomic.
-  std::vector<duckdb::UnifiedVectorFormat> pk_formats;
-  duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
+  // Reserve this chunk's generated-PK base (disjoint per thread:
+  // ReserveWriteUnsafe is atomic); explicit-PK tables ignore it (the key comes
+  // from the columns). The chunk -> sink + per-row PK write is the shared core
+  // reused verbatim by WAL recovery, so a recovered key is byte-identical to
+  // the written one (WriteChunkToSearchSink, WAL_DESIGN.md §5.6).
   const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;
   const uint64_t pk_base =
     uses_generated_pk ? gstate.generated_pk_seq->ReserveWriteUnsafe(num_rows)
                       : 0;
-  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    const uint64_t generated_pk = uses_generated_pk ? pk_base + row : 0;
-    lstate->pk_buffer.clear();
-    duckdb_primary_key::MakeColumnKey(
-      pk_formats, gstate.pk_columns, row, generated_pk, gstate.table_key,
-      [](std::string_view) {}, lstate->pk_buffer);
-    // The PK field indexes only the row-key portion (bytes after the
-    // table_id + column_id prefix); pass it directly.
-    sink.Write(key_utils::ExtractRowKey(lstate->pk_buffer));
-  }
-  sink.Finish();
+  WriteChunkToSearchSink(
+    *lstate->sink, chunk, gstate.column_ids,
+    std::span<const duckdb::LogicalType>{gstate.chunk_types.data(),
+                                         gstate.chunk_types.size()},
+    gstate.pk_columns, gstate.table_key, uses_generated_pk, pk_base,
+    lstate->pk_buffer);
   // Stream the chunk to this transaction's WAL (WAL_DESIGN.md §7). Bulk:
   // serialise straight into this thread's chunk file (opened lazily here so a
   // no-rows thread leaves no file), bounded heap. Inline: retain in this

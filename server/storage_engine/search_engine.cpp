@@ -283,6 +283,9 @@ void SearchEngine::start() {
       .start(_compaction_threads, IR_NATIVE_STRING("search:compact"));
 
     InitInvertedIndexes(_skip_wal_recovery);
+    // Replay each database's search-table WAL into iresearch (WAL_DESIGN.md
+    // §11).
+    RunSearchTableRecovery(_skip_wal_recovery);
 
     SDB_INFO("xxxxx", Logger::SEARCH, "Search maintenance: [", _commit_threads,
              "..", _commit_threads, "] commit thread(s), [",

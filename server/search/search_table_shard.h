@@ -136,6 +136,21 @@ class SearchTableShard final : public TableShard {
 
   ObjectId GetSchemaId() const noexcept { return _schema_id; }
 
+  // The shard's last durable iresearch commit tick (the recovery skip / WAL GC
+  // watermark). Recovery (WAL_DESIGN.md §11) replays only records with
+  // tick > this. Restored from the iresearch commit-meta payload at OpenWriter.
+  uint64_t CommittedTick() const noexcept { return _last_committed_tick; }
+
+  // After WAL recovery replayed + RefreshCommit'd this shard, set num_rows from
+  // iresearch's live doc count (WAL_DESIGN.md §12 -- no baseline/delta
+  // tracking).
+  void SyncNumRowsFromIndex() {
+    SDB_ASSERT(_writer);
+    auto reader = _writer->GetSnapshot();
+    auto live = static_cast<int64_t>(reader.live_docs_count());
+    UpdateNumRows(live - GetTableStats().num_rows);
+  }
+
  private:
   void OpenWriter();
 

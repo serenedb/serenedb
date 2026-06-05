@@ -30,11 +30,16 @@
 
 #include <algorithm>
 #include <chrono>
+#include <duckdb/common/types/data_chunk.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
+#include <memory>
+#include <string>
+#include <vector>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
+#include "basics/containers/node_hash_map.h"
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/logger/logger.h"
@@ -45,18 +50,22 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_index_utils.h"
+#include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_search_sink_writer.h"
 #include "connector/indexonly_marker.h"
 #include "connector/key_utils.hpp"
 #include "connector/search_sink_writer.hpp"
+#include "connector/search_table_sink_writer.h"
 #include "query/duckdb_engine.h"
 #include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
+#include "search/search_table_shard.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb::search {
 namespace {
@@ -734,6 +743,123 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
   SDB_INFO("xxxxx", Logger::SEARCH, "WAL recovery: completed in ",
            absl::FormatDuration(duration),
            ", indexes=", recovery_shards.size());
+}
+
+void RunSearchTableRecovery(bool skip_wal_recovery) {
+  if (skip_wal_recovery) {
+    return;
+  }
+  auto begin = std::chrono::steady_clock::now();
+  auto& server = SerenedServer::Instance();
+  auto& catalog_feature = server.getFeature<catalog::CatalogFeature>();
+  auto snapshot = catalog_feature.Global().GetCatalogSnapshot();
+  SDB_ASSERT(snapshot);
+  auto& engine = GetSearchEngine();
+
+  // Per-shard replay metadata, built once from the catalog table (mirrors the
+  // operator's GetGlobalSinkState so the recovered key matches the written
+  // one).
+  struct ShardInfo {
+    std::shared_ptr<TableShard> shard;  // keeps the shard alive
+    SearchTableShard* search = nullptr;
+    uint64_t schema_id = 0;
+    std::vector<catalog::Column::Id> column_ids;
+    std::vector<duckdb::LogicalType> column_types;
+    std::vector<connector::duckdb_primary_key::PKColumn> pk_columns;
+    std::string table_key;
+    bool uses_generated_pk = false;
+  };
+  // Per-shard replay context: one open iresearch trx + sink, accumulated across
+  // all of the shard's records. In a node map so the sink's trx reference is
+  // stable across inserts.
+  struct ReplayCtx {
+    irs::IndexWriter::Transaction trx;
+    std::unique_ptr<connector::SearchTableSinkWriter> sink;
+    uint64_t max_tick = 0;
+    std::string pk_scratch;
+  };
+
+  size_t recovered_shards = 0;
+  for (const auto& database : snapshot->GetDatabases()) {
+    const ObjectId db_id = database->GetId();
+    containers::NodeHashMap<uint64_t, ShardInfo> shards;  // table_id -> info
+    for (const auto& schema : snapshot->GetSchemas(db_id)) {
+      for (const auto& table : snapshot->GetTables(db_id, schema->GetName())) {
+        auto ts = snapshot->GetTableShard(table->GetId());
+        if (!ts || ts->GetStorage() != catalog::StorageKind::kSearch) {
+          continue;
+        }
+        ShardInfo info;
+        info.search = &basics::downCast<SearchTableShard>(*ts);
+        info.shard = std::move(ts);
+        info.schema_id = schema->GetId().id();
+        for (const auto& col : table->Columns()) {
+          if (col.GetId() == catalog::Column::kGeneratedPKId) {
+            continue;
+          }
+          info.column_ids.push_back(col.GetId());
+          info.column_types.push_back(col.type);
+        }
+        info.pk_columns = connector::duckdb_primary_key::BuildPKColumns(*table);
+        info.table_key = connector::key_utils::PrepareTableKey(table->GetId());
+        info.uses_generated_pk = table->PKColumns().empty();
+        shards.emplace(table->GetId().id(), std::move(info));
+      }
+    }
+    if (shards.empty()) {
+      continue;
+    }
+
+    auto& wal = engine.GetDbWal(db_id);
+    containers::NodeHashMap<uint64_t, ReplayCtx>
+      ctxs;  // table_id -> ctx (stable)
+
+    auto exists_of = [&](uint64_t schema_id, uint64_t table_id) {
+      auto it = shards.find(table_id);
+      return it != shards.end() && it->second.schema_id == schema_id;
+    };
+    auto committed_of = [&](uint64_t table_id) -> uint64_t {
+      auto it = shards.find(table_id);
+      return it != shards.end() ? it->second.search->CommittedTick()
+                                : std::numeric_limits<uint64_t>::max();
+    };
+    auto replay = [&](uint64_t tick, uint64_t /*schema_id*/, uint64_t table_id,
+                      uint64_t pk_base, SearchDbWal::ColumnIds /*column_ids*/,
+                      duckdb::DataChunk& chunk) {
+      auto& info = shards.at(table_id);
+      auto [cit, inserted] = ctxs.try_emplace(table_id);
+      auto& ctx = cit->second;
+      if (inserted) {
+        ctx.trx = info.search->GetTransaction();
+        ctx.sink = std::make_unique<connector::SearchTableSinkWriter>(ctx.trx);
+      }
+      connector::WriteChunkToSearchSink(
+        *ctx.sink, chunk, info.column_ids, info.column_types, info.pk_columns,
+        info.table_key, info.uses_generated_pk, pk_base, ctx.pk_scratch);
+      ctx.max_tick = std::max(ctx.max_tick, tick);
+    };
+
+    wal.Recover(exists_of, committed_of, replay);
+
+    // Finalize each replayed shard. Outside Recover() (its _append_mu is
+    // released), so Commit()->OnShardCommit's locking + GC are safe.
+    for (auto& [table_id, ctx] : ctxs) {
+      ctx.sink.reset();              // release the Document before committing
+      ctx.trx.Commit(ctx.max_tick);  // stage the replayed docs at the max tick
+      auto& info = shards.at(table_id);
+      info.search->Commit();  // RefreshCommit + OnShardCommit (publish + GC)
+      info.search->SyncNumRowsFromIndex();
+      ++recovered_shards;
+    }
+  }
+
+  if (recovered_shards > 0) {
+    const auto duration =
+      absl::FromChrono(std::chrono::steady_clock::now() - begin);
+    SDB_INFO("xxxxx", Logger::SEARCH,
+             "Search-table WAL recovery: completed in ",
+             absl::FormatDuration(duration), ", shards=", recovered_shards);
+  }
 }
 
 }  // namespace sdb::search

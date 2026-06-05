@@ -35,6 +35,7 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/identifier.h"
+#include "basics/serialization.h"
 #include "catalog/identifiers/identifier.h"
 
 namespace sdb::catalog {
@@ -197,7 +198,7 @@ struct ReadContext {
 inline std::string_view SerializeObject(const Object& obj,
                                         duckdb::MemoryStream& stream) {
   stream.Rewind();
-  duckdb::BinarySerializer serializer{stream};
+  duckdb::BinarySerializer serializer{stream, duckdb::VersionStorageOptions()};
   obj.Serialize(serializer);
   return {reinterpret_cast<const char*>(stream.GetData()),
           stream.GetPosition()};

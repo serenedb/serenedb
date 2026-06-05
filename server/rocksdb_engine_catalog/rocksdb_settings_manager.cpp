@@ -24,10 +24,10 @@
 #include <rocksdb/utilities/transaction_db.h>
 #include <rocksdb/utilities/write_batch_with_index.h>
 #include <rocksdb/write_batch.h>
-#include <vpack/iterator.h>
-#include <vpack/parser.h>
-#include <vpack/slice.h>
-#include <vpack/vpack_helper.h>
+
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 
 #include "app/app_server.h"
 #include "basics/debugging.h"
@@ -36,6 +36,8 @@
 #include "basics/exceptions.h"
 #include "basics/log.h"
 #include "basics/random/random_generator.h"
+#include "basics/serialization.h"
+#include "basics/serializer.h"
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
@@ -50,20 +52,25 @@
 namespace sdb {
 namespace {
 
-void BuildSettings(auto& engine, vpack::Builder& b, uint64_t seq_number) {
-  b.clear();
-  b.openObject();
-  b.add("tick", std::to_string(GetCurrentTickServer()));
-  b.add("releasedTick", std::to_string(engine.releasedTick()));
-  b.add("lastSync", std::to_string(seq_number));
-  b.close();
-}
+struct ServerTickSettings {
+  uint64_t tick;
+  uint64_t released_tick;
+  uint64_t last_sync;
+};
 
-Result WriteSettings(vpack::Slice slice, rocksdb::WriteBatch& batch) {
-  SDB_DEBUG(STORAGE, "writing settings: ", slice.toJson());
+Result WriteSettings(const ServerTickSettings& settings,
+                     rocksdb::WriteBatch& batch) {
+  SDB_DEBUG(STORAGE, "writing settings: tick=", settings.tick,
+            ", releasedTick=", settings.released_tick,
+            ", lastSync=", settings.last_sync);
 
   RocksDBKeyWithBuffer<SettingsKey> key{RocksDBSettingsType::ServerTick};
-  rocksdb::Slice value(slice.startAs<char>(), slice.byteSize());
+
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer serializer{stream, duckdb::VersionStorageOptions()};
+  basics::WriteTuple(serializer, settings);
+  rocksdb::Slice value(reinterpret_cast<const char*>(stream.GetData()),
+                       stream.GetPosition());
 
   rocksdb::Status s =
     batch.Put(RocksDBColumnFamilyManager::get(
@@ -119,24 +126,8 @@ ResultOr<bool> RocksDBSettingsManager::sync(bool force) {
 
     rocksdb::WriteOptions wo;
     rocksdb::WriteBatch batch;
-    _tmp_builder.clear();  // recycle our builder
 
     bool did_work = false;
-
-    // reserve a bit of scratch space to work with.
-    // note: the scratch buffer is recycled, so we can start
-    // small here. it will grow as needed.
-    constexpr size_t kScratchBufferSize = 128 * 1024;
-    _scratch.reserve(kScratchBufferSize);
-
-    if (_scratch.capacity() >= 32 * 1024 * 1024) {
-      // much data in _scratch, let's shrink it to save memory
-      SDB_ASSERT(kScratchBufferSize < 32 * 1024 * 1024);
-      _scratch.resize(kScratchBufferSize);
-      _scratch.shrink_to_fit();
-    }
-    _scratch.clear();
-    SDB_ASSERT(_scratch.empty());
 
     const auto last_sync = _last_sync.load();
 
@@ -170,14 +161,13 @@ ResultOr<bool> RocksDBSettingsManager::sync(bool force) {
 
     // prepare new settings to be written out to disk
     batch.Clear();
-    _tmp_builder.clear();
     auto new_last_sync = std::max(_last_sync.load(), min_seq_nr);
-    BuildSettings(_engine, _tmp_builder, new_last_sync);
-
-    SDB_ASSERT(_tmp_builder.slice().isObject());
+    ServerTickSettings settings{.tick = GetCurrentTickServer(),
+                                .released_tick = _engine.releasedTick(),
+                                .last_sync = new_last_sync};
 
     SDB_ASSERT(batch.Count() == 0);
-    auto r = WriteSettings(_tmp_builder.slice(), batch);
+    auto r = WriteSettings(settings, batch);
     if (r.fail()) {
       SDB_WARN(STORAGE, "could not write metadata settings ", r.errorMessage());
       return std::unexpected{std::move(r)};
@@ -216,32 +206,26 @@ void RocksDBSettingsManager::loadSettings() {
              key.GetBuffer(), &result);
   if (status.ok()) {
     // key may not be there, so don't fail when not found
-    vpack::Slice slice =
-      vpack::Slice(reinterpret_cast<const uint8_t*>(result.data()));
-    SDB_ASSERT(slice.isObject());
-    SDB_TRACE(STORAGE, "read initial settings: ", slice.toJson());
-
     if (!result.empty()) {
       try {
-        if (slice.hasKey("tick")) {
-          uint64_t last_tick =
-            basics::VPackHelper::stringUInt64(slice.get("tick"));
-          SDB_TRACE(STORAGE, "using last tick: ", last_tick);
-          UpdateTickServer(last_tick);
-        }
+        duckdb::MemoryStream stream{
+          const_cast<duckdb::data_t*>(
+            reinterpret_cast<const duckdb::data_t*>(result.data())),
+          result.size()};
+        duckdb::BinaryDeserializer deserializer{stream};
+        ServerTickSettings settings;
+        basics::ReadTuple(deserializer, settings);
 
-        if (slice.hasKey("releasedTick")) {
-          _initial_released_tick =
-            basics::VPackHelper::stringUInt64(slice.get("releasedTick"));
-          SDB_TRACE(STORAGE, "using released tick: ", _initial_released_tick);
-          _engine.releaseTick(_initial_released_tick);
-        }
+        SDB_TRACE(STORAGE, "read initial settings: tick=", settings.tick,
+                  ", releasedTick=", settings.released_tick,
+                  ", lastSync=", settings.last_sync);
 
-        if (slice.hasKey("lastSync")) {
-          _last_sync = basics::VPackHelper::stringUInt64(slice.get("lastSync"));
-          SDB_TRACE(STORAGE,
-                    "last background settings sync: ", _last_sync.load());
-        }
+        UpdateTickServer(settings.tick);
+
+        _initial_released_tick = settings.released_tick;
+        _engine.releaseTick(_initial_released_tick);
+
+        _last_sync = settings.last_sync;
       } catch (...) {
         SDB_WARN(STORAGE, "unable to read initial settings: invalid data");
       }

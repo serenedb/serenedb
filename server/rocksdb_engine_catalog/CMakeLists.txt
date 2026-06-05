@@ -1,7 +1,6 @@
 target_sources(
     sereneserver
     PRIVATE
-        rocksdb_comparator.cpp
         rocksdb_background_thread.cpp
         rocksdb_settings_manager.cpp
         rocksdb_common.cpp

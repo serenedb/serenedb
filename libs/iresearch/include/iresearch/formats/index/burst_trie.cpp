@@ -1949,7 +1949,7 @@ ptrdiff_t TermIteratorImpl<FST>::SeekCached(size_t& prefix, StateidT& state,
 
   // inspect suffix and determine our current position
   // with respect to target term (before, after, equal)
-  ptrdiff_t cmp = vpack::char_traits<byte_type>::compare(
+  ptrdiff_t cmp = irs::char_traits<byte_type>::compare(
     pterm, ptarget, std::min(target.size(), term.size()) - prefix);
 
   if (!cmp) {

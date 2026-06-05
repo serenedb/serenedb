@@ -20,7 +20,7 @@
 
 #include "geo_filter_builder.hpp"
 
-#include <vpack/parser.h>
+#include <simdjson.h>
 
 #include <duckdb/common/types/geometry_crs.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -70,22 +70,35 @@ const duckdb::Expression& PeelSameTypeIdCast(const duckdb::Expression& expr) {
 
 // Populate the iresearch geo filter base options from the column's geo
 // analyzer. Calls into GeoAnalyzer::prepare which fills in the indexer
-// terms-prefix, S2 indexer options, and the analyzer's stored-form coding.
-Result SetupGeoFilter(const irs::analysis::Analyzer& a,
+// terms-prefix, S2 indexer options, and the analyzer's stored-form coding,
+// then resolves the stored field id the filter reads per doc:
+//   - StoredType::Source: the force-included source column itself (its own
+//     field id); source_is_wkb selects WKB vs GeoJSON re-parsing.
+//   - S2 codings: the analyzer's synthetic StoreAttr blob column.
+Result SetupGeoFilter(const SearchColumnInfo& column_info,
                       irs::GeoFilterOptionsBase& options) {
+  const auto& a = *column_info.tokenizer.analyzer;
   const auto type_id = a.type();
   if (type_id != irs::Type<irs::analysis::GeoJsonAnalyzer>::id() &&
       type_id != irs::Type<irs::analysis::GeoPointAnalyzer>::id()) {
     return {ERROR_BAD_PARAMETER, "Analyzer for field is not a geo analyzer"};
   }
   basics::downCast<irs::analysis::GeoAnalyzer>(a).prepare(options);
+  if (options.stored == irs::StoredType::Source) {
+    options.store_field_id = column_info.field_id;
+    options.source_is_wkb =
+      column_info.logical_type.id() == duckdb::LogicalTypeId::GEOMETRY;
+  } else {
+    SDB_ASSERT(column_info.tokenizer.tokenizer_column);
+    options.store_field_id = *column_info.tokenizer.tokenizer_column;
+  }
   return {};
 }
 
 // Parse a constant geo argument (centroid / target) into a ShapeContainer.
-// JSON / VARCHAR-typed string literal: GeoJSON text via the
-//   JSON->vpack->ParseShape pipeline (LogicalTypeId::VARCHAR catches both
-//   the JSON alias and bare string literals the user types inline).
+// JSON / VARCHAR-typed string literal: GeoJSON text via simdjson ondemand ->
+//   ParseShape (LogicalTypeId::VARCHAR catches both the JSON alias and bare
+//   string literals the user types inline).
 // GEOMETRY: raw WKB bytes via ParseShapeWKB (parser also re-validates CRS84
 //   when the bytes carry an EWKB SRID).
 Result ParseGeoConstant(const duckdb::Value& value,
@@ -97,19 +110,25 @@ Result ParseGeoConstant(const duckdb::Value& value,
       // GeoJSON text directly. (Value::GetValue<string>() goes through
       // ToString() which is fine for VARCHAR but not for GEOMETRY -- see
       // below -- so we use the same accessor here for consistency.)
-      const auto& json_str = duckdb::StringValue::Get(value);
-      vpack::Builder vpack;
-      try {
-        vpack::Parser parser{vpack};
-        parser.parse(json_str);
-      } catch (...) {
+      const std::string_view json_str = duckdb::StringValue::Get(value);
+      std::string buffer{json_str};
+      buffer.append(simdjson::SIMDJSON_PADDING, '\0');
+      simdjson::padded_string_view padded_view{buffer.data(), json_str.size(),
+                                               buffer.size()};
+      simdjson::ondemand::parser parser;
+      simdjson::ondemand::document doc;
+      if (parser.iterate(padded_view).get(doc) != simdjson::SUCCESS) {
+        return {ERROR_BAD_PARAMETER, "Geo argument is not valid JSON"};
+      }
+      simdjson::ondemand::value json;
+      if (doc.get_value().get(json) != simdjson::SUCCESS) {
         return {ERROR_BAD_PARAMETER, "Geo argument is not valid JSON"};
       }
       // ParseShape (geo_json.cpp) uses the cache as scratch for LatLng
       // pre-quantization; ParseShapeWKB no longer needs one.
       std::vector<S2LatLng> cache;
-      if (!sdb::geo::ParseShape<sdb::geo::Parsing::GeoJson>(
-            vpack.slice(), shape, cache, coding, nullptr)) {
+      if (!sdb::geo::ParseShape<sdb::geo::Parsing::GeoJson>(json, shape, cache,
+                                                            coding, nullptr)) {
         return {ERROR_BAD_PARAMETER, "Geo argument is not valid GeoJSON"};
       }
       return {};
@@ -200,12 +219,9 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
   *geo_filter.mutable_field() = std::move(field_name);
 
   auto* options = geo_filter.mutable_options();
-  if (auto r = SetupGeoFilter(*column_info->tokenizer.analyzer, *options);
-      r.fail()) {
+  if (auto r = SetupGeoFilter(*column_info, *options); r.fail()) {
     return std::unexpected<Result>(std::move(r));
   }
-  SDB_ASSERT(column_info->tokenizer.tokenizer_column);
-  options->store_field_id = *column_info->tokenizer.tokenizer_column;
 
   sdb::geo::ShapeContainer centroid_shape;
   if (auto r = ParseGeoConstant(*centroid_val, options->coding, centroid_shape);
@@ -304,12 +320,9 @@ Result FromGeoInRange(BooleanFilterBuilder& filter, const FilterContext& ctx,
   *geo_filter.mutable_field() = std::move(field_name);
 
   auto* options = geo_filter.mutable_options();
-  if (auto r = SetupGeoFilter(*column_info->tokenizer.analyzer, *options);
-      r.fail()) {
+  if (auto r = SetupGeoFilter(*column_info, *options); r.fail()) {
     return r;
   }
-  SDB_ASSERT(column_info->tokenizer.tokenizer_column);
-  options->store_field_id = *column_info->tokenizer.tokenizer_column;
 
   sdb::geo::ShapeContainer centroid_shape;
   if (auto r = ParseGeoConstant(*centroid_val, options->coding, centroid_shape);
@@ -390,12 +403,9 @@ Result FromGeoFilter(BooleanFilterBuilder& filter, const FilterContext& ctx,
   *geo_filter.mutable_field() = std::move(field_name);
 
   auto* options = geo_filter.mutable_options();
-  if (auto r = SetupGeoFilter(*column_info->tokenizer.analyzer, *options);
-      r.fail()) {
+  if (auto r = SetupGeoFilter(*column_info, *options); r.fail()) {
     return r;
   }
-  SDB_ASSERT(column_info->tokenizer.tokenizer_column);
-  options->store_field_id = *column_info->tokenizer.tokenizer_column;
 
   sdb::geo::ShapeContainer shape;
   if (auto r = ParseGeoConstant(*shape_val, options->coding, shape); r.fail()) {

@@ -14,14 +14,6 @@ The original work is licensed under the Apache 2.0 license.
 
 Modifications and new code added are licensed under corresponding [license](LICENSE).
 
-#### VPack
-
-[VPack](libs/vpack) is based on [velocypack](https://github.com/arangodb/velocypack), specifically incorporating code from [commit](https://github.com/arangodb/velocypack/commit/618d9232510061bc11cd84aa77c0d98085866e95).
-
-The original work is licensed under the Apache 2.0 license.
-
-Modifications and new code added are licensed under corresponding [license](LICENSE).
-
 #### GNU C Library (glibc)
 
 Release binaries are statically linked against [glibc](https://www.gnu.org/software/libc/), which is licensed under the [LGPL-2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html). License files from glibc are included in the distribution under `glibc/`.

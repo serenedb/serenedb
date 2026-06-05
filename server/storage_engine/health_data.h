@@ -25,12 +25,6 @@
 
 #include "basics/result.h"
 
-namespace vpack {
-
-class Builder;
-class Slice;
-
-}  // namespace vpack
 namespace sdb {
 
 struct HealthDataBase {
@@ -44,9 +38,6 @@ struct HealthDataBase {
 
 struct HealthData : HealthDataBase {
   Result res;
-
-  static HealthData fromVPack(vpack::Slice slice);
-  void toVPack(vpack::Builder& builder, bool with_details) const;
 };
 
 }  // namespace sdb

@@ -20,7 +20,6 @@
 
 #include <absl/base/internal/endian.h>
 #include <s2/s2latlng.h>
-#include <vpack/parser.h>
 
 #include <duckdb.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>

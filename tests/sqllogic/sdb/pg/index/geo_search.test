@@ -1186,10 +1186,90 @@ QUERY PLAN
 └───────────────────────────┘
 
 
+# --- GEOMETRY column + source coding ---
+#
+# Same WKB data and shapes as the GEOMETRY (s2point) section above, but the
+# geojson dictionary uses `coding = 'source'`. Source coding force-includes
+# the geo column into the columnstore and re-parses the WKB at query time via
+# the SourceWkbParser path -- no s2point aux blob is written. The query
+# results must match the s2point section for the same shapes.
+
+statement ok
+CREATE TABLE geo_data_g_src (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'))
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geojson_source(
+    template = 'geojson',
+    coding = 'source'
+)
+
+
+statement ok
+CREATE INDEX geo_data_g_src_idx ON geo_data_g_src USING inverted(id, geo geojson_source)
+
+
+statement ok
+INSERT INTO geo_data_g_src VALUES (1, 'POINT(37.615895 55.703900)'::GEOMETRY('OGC:CRS84'))
+
+statement ok
+INSERT INTO geo_data_g_src VALUES (2, 'POINT(37.616297 55.704831)'::GEOMETRY('OGC:CRS84'))
+
+statement ok
+INSERT INTO geo_data_g_src VALUES (3, 'POINT(37.617053 55.704610)'::GEOMETRY('OGC:CRS84'))
+
+statement ok
+INSERT INTO geo_data_g_src VALUES (4, 'POINT(37.559509 55.715895)'::GEOMETRY('OGC:CRS84'))
+
+statement ok
+INSERT INTO geo_data_g_src VALUES (5, 'POINT(37.701645 55.832144)'::GEOMETRY('OGC:CRS84'))
+
+statement ok
+INSERT INTO geo_data_g_src VALUES (6, 'POLYGON((37.614323 55.705898, 37.615825 55.705898, 37.615825 55.706520, 37.614323 55.706520, 37.614323 55.705898))'::GEOMETRY('OGC:CRS84'))
+
+statement ok
+INSERT INTO geo_data_g_src VALUES (7, 'POINT(37.614800 55.704500)'::GEOMETRY('OGC:CRS84'))
+
+statement ok
+VACUUM (REFRESH_TABLE) geo_data_g_src
+
+
+# --- source-coded GEOMETRY field + GeoJSON shape (SourceWkbParser path) ---
+# large_poly intersects ids 1, 2, 3 and polygon 6.
+
+query
+SELECT id FROM geo_data_g_src_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+ORDER BY id
+----
+id
+1
+2
+3
+6
+7
+
+
+# --- source-coded GEOMETRY field + geo distance ---
+# `<->` distance < 500m from [37.616, 55.704] picks the cluster (1,2,3,6,7).
+
+query
+SELECT id FROM geo_data_g_src_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY id
+----
+id
+1
+2
+3
+6
+7
+
+
 # --- geopoint analyzer: path mode ---
 # `geopoint` with `latitude`/`longitude` set to slash-paths extracts the
 # point coordinates from a configured location inside each JSON document.
-# vpack::Slice::get(path) walks objects only -- numeric-string keys
+# path lookup walks objects only -- numeric-string keys
 # don't index arrays -- so paths must traverse object keys at every
 # step (e.g. `loc/lat` for `{"loc": {"lat": ...}}`). Documents that
 # don't have the configured paths or whose values aren't numbers are

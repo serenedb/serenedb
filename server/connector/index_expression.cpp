@@ -50,10 +50,10 @@
 #include <utility>
 #include <vector>
 
+#include "basics/serialization.h"
 #include "connector/common.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "utils/velox_vpack.h"
 
 namespace sdb::connector {
 namespace {

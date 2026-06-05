@@ -18,8 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/iterator.h>
-#include <vpack/parser.h>
+#include <simdjson.h>
 
 #include <duckdb/main/database.hpp>
 #include <iostream>
@@ -32,9 +31,9 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/geo_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/text_format.hpp>
-#include <iresearch/utils/vpack_utils.hpp>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "basics/duckdb_engine.h"
 #include "geo/shape_container.h"
@@ -64,12 +63,12 @@ duckdb::DatabaseInstance& Db() {
 // re-check each candidate (S2 cells are an approximation).
 inline constexpr irs::field_id kGeoColumnId = 1;
 
-// A geo field that tokenizes a GeoJSON shape (vpack::Slice) into S2 terms.
-// The analyzer is constructed once per field instance; reset() is called
-// per document with the shape to index.
+// A geo field that tokenizes a GeoJSON shape (text) into S2 terms. The
+// analyzer is constructed once per field instance; reset() is called per
+// document with the shape text to index.
 struct GeoField {
   std::string_view name;
-  vpack::Slice shape_slice;
+  std::string_view shape_text;
   irs::analysis::Analyzer::ptr analyzer{irs::analysis::GeoJsonAnalyzer::Make(
     irs::analysis::GeoJsonAnalyzer::Options{})};
 
@@ -80,21 +79,42 @@ struct GeoField {
   }
 
   irs::Tokenizer& GetTokens() const {
-    static_cast<irs::analysis::GeoAnalyzer&>(*analyzer).reset(shape_slice);
+    static_cast<irs::analysis::GeoAnalyzer&>(*analyzer).reset(shape_text);
     return *analyzer;
   }
 };
 
-// Append one BLOB row (the raw vpack bytes of the shape) to the cs column.
+// Append one BLOB row (the GeoJSON source text of the shape) to the cs column.
+// Source coding force-includes this column and the filter re-parses it.
 void AppendStoredShape(irs::columnstore::ColumnWriter& cw, irs::doc_id_t doc,
-                       vpack::Slice shape) {
+                       std::string_view shape) {
   duckdb::Vector v{duckdb::LogicalType::BLOB, /*capacity=*/1};
   auto* slots = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v);
-  slots[0] = duckdb::StringVector::AddStringOrBlob(
-    v, reinterpret_cast<const char*>(shape.start()), shape.byteSize());
+  slots[0] =
+    duckdb::StringVector::AddStringOrBlob(v, shape.data(), shape.size());
   duckdb::FlatVector::ValidityMutable(v).SetAllValid(1);
   const uint64_t row = static_cast<uint64_t>(doc) - irs::doc_limits::min();
   cw.Append(row, v, /*count=*/1);
+}
+
+// A single corpus entry: row name plus the GeoJSON geometry text.
+struct GeoEntry {
+  std::string name;
+  std::string geometry;
+};
+
+std::vector<GeoEntry> ParseCorpus(std::string_view json) {
+  std::string buffer{json};
+  buffer.append(simdjson::SIMDJSON_PADDING, '\0');
+  simdjson::dom::parser parser;
+  std::vector<GeoEntry> entries;
+  for (auto element : parser.parse(buffer.data(), json.size())) {
+    GeoEntry entry;
+    entry.name = std::string{std::string_view{element["name"]}};
+    entry.geometry = simdjson::to_string(element["geometry"]);
+    entries.emplace_back(std::move(entry));
+  }
+  return entries;
 }
 
 // 28 named points around central Moscow (lat/lon). The first 16 cluster
@@ -150,7 +170,7 @@ irs::IndexWriterOptions MakeWriterOptions() {
 
 // Build a tiny index from the corpus above. Returns the writer's snapshot.
 irs::DirectoryReader BuildIndex(irs::Directory& dir,
-                                std::shared_ptr<vpack::Builder> docs,
+                                const std::vector<GeoEntry>& docs,
                                 std::vector<std::string>& names_out) {
   auto format = irs::formats::Get("1_5simd");
   auto writer =
@@ -162,10 +182,10 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
   {
     auto trx = writer->GetBatch();
     irs::columnstore::ColumnWriter* geo_cw = nullptr;
-    for (auto doc_slice : vpack::ArrayIterator(docs->slice())) {
-      names_out.emplace_back(irs::slice_to_string_view(doc_slice.get("name")));
+    for (const auto& entry : docs) {
+      names_out.emplace_back(entry.name);
 
-      geo.shape_slice = doc_slice.get("geometry");
+      geo.shape_text = entry.geometry;
       auto doc = trx.Insert();
       doc.Insert(geo);
 
@@ -173,7 +193,7 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
         geo_cw = &doc.Columnstore()->OpenColumn(kGeoColumnId,
                                                 duckdb::LogicalType::BLOB);
       }
-      AppendStoredShape(*geo_cw, doc.DocId(), geo.shape_slice);
+      AppendStoredShape(*geo_cw, doc.DocId(), geo.shape_text);
     }
   }
   writer->RefreshCommit();
@@ -226,7 +246,7 @@ int main() {
   // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
   // down the duckdb::DuckDB they were dispatching through.
   {
-    auto docs = vpack::Parser::fromJson(kCorpus);
+    auto docs = ParseCorpus(kCorpus);
     std::vector<std::string> names;
 
     irs::MemoryDirectory dir;

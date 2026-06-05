@@ -63,7 +63,6 @@ inline const char* RequestToString(RequestType request_type) {
 enum class ContentType {
   Custom,  // use Content-Type from _headers
   Json,    // application/json
-  VPack,   // application/x-vpack
   Text,    // text/plain
   Html,    // text/html
   Dump,    // application/x-serene-dump

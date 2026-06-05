@@ -23,9 +23,9 @@
 #include "minhash_tokenizer.hpp"
 
 #include <absl/strings/escaping.h>
-#include <vpack/common.h>
 
 #include "basics/exceptions.h"
+#include "basics/wyhash.h"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 
@@ -112,7 +112,7 @@ void MinHashTokenizer::ComputeSignature() {
     do {
       const std::string_view value = ViewCast<char>(_term->value);
       const auto hash_value =
-        VPACK_HASH(value.data(), value.size(), 0xdeadbeef);
+        sdb::basics::WyHash(value.data(), value.size(), 0xdeadbeef);
 
       _minhash.Insert(hash_value);
       end = offs->end;

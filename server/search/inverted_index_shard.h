@@ -204,7 +204,6 @@ class InvertedIndexShard final
     return _writer && _writer->HasActiveSegments();
   }
 
-  void StatsToVPack(vpack::Builder& builder) const;
   Stats GetStats() const;
 
   auto& GetMutex() { return _mutex; }

@@ -18,7 +18,6 @@ add_executable(
     serializer_binary_test.cpp
     json_serde_test.cpp
     json_serde_types_test.cpp
-    vpack_helper_test.cpp
     duckdb_roundtrip_test.cpp
     catalog_persistence_test.cpp
 )

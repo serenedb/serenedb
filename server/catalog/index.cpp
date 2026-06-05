@@ -506,15 +506,15 @@ Result ValidateGeoTokenizerColumn(std::string_view column_name,
       const auto& geojson =
         sdb::basics::downCast<irs::analysis::GeoJsonAnalyzer>(analyzer);
       using Coding = irs::analysis::GeoJsonAnalyzer::Coding;
-      if (geojson.coding() != Coding::S2Point) {
-        // VPack is rejected at CREATE TEXT SEARCH DICTIONARY time and can't
-        // reach here via SQL; the remaining non-S2Point options are LatLng
-        // codings, which need a shape -> LatLng-bytes encoder that
-        // ShapeContainer doesn't implement yet.
+      const auto coding = geojson.coding();
+      // Source coding re-parses the force-included WKB source column; S2Point
+      // is supported by resetWKB. The remaining LatLng codings need a shape ->
+      // LatLng-bytes encoder that ShapeContainer doesn't implement yet.
+      if (coding != Coding::Source && coding != Coding::S2Point) {
         return {ERROR_BAD_PARAMETER, "Column '", column_name,
                 "' is GEOMETRY but the geo analyzer uses a LatLng coding; ",
-                "not yet supported for GEOMETRY columns -- use S2Point "
-                "coding"};
+                "not yet supported for GEOMETRY columns -- use S2Point or "
+                "source coding"};
       }
     }
   }
@@ -668,12 +668,28 @@ ResultOr<Tokenizer::TokenizerWrapper> InstantiateAnalyzer(
   return std::move(*tokenizer);
 }
 
+// A geo analyzer that re-parses the force-included source column instead of
+// writing a derived StoreAttr blob: GeoPoint (always) and GeoJson with the
+// default Source coding. S2/LatLng codings keep the StoreAttr-blob behavior.
+bool IsGeoSourceAnalyzer(const irs::analysis::Analyzer& analyzer) {
+  const auto type_id = analyzer.type();
+  if (type_id == irs::Type<irs::analysis::GeoPointAnalyzer>::id()) {
+    return true;
+  }
+  if (type_id == irs::Type<irs::analysis::GeoJsonAnalyzer>::id()) {
+    return sdb::basics::downCast<irs::analysis::GeoJsonAnalyzer>(analyzer)
+             .coding() == irs::analysis::GeoJsonAnalyzer::Coding::Source;
+  }
+  return false;
+}
+
 void FillEntryFromTokenizer(const Tokenizer& dict,
                             const irs::analysis::Analyzer& analyzer,
                             InvertedIndexEntryInfo& entry) {
   entry.text_dictionary = dict.GetId();
   entry.features = dict.GetFeatures();
-  const bool wants_store = irs::get<irs::StoreAttr>(analyzer) != nullptr;
+  const bool wants_store = irs::get<irs::StoreAttr>(analyzer) != nullptr &&
+                           !IsGeoSourceAnalyzer(analyzer);
   const bool wants_norm = entry.features.HasFeatures(irs::IndexFeatures::Norm);
   SDB_ASSERT(!(wants_store && wants_norm),
              "tokenizer-store and norm should be mutually exclusive");
@@ -724,6 +740,18 @@ Result ApplyOpclassToEntry(const CreateIndexColumn& c,
     return r;
   }
   FillEntryFromTokenizer(*dict, **analyzer, entry);
+  // Source-coding geo analyzers force-include the indexed source column (its
+  // own field id) into the columnstore so the filter can re-parse it at query
+  // time, mirroring the HNSW/included force-include. Accept the same
+  // compression / row_group_size knobs.
+  if (IsGeoSourceAnalyzer(**analyzer)) {
+    if (auto r = ApplyIncludedOpclass(owner_label, value_type,
+                                      c.opclass_options, entry);
+        r.fail()) {
+      return r;
+    }
+    entry.store_values = true;
+  }
   return {};
 }
 

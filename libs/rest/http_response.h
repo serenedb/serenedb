@@ -67,8 +67,6 @@ class HttpResponse : public GeneralResponse {
 
   void reset(ResponseCode code) final;
 
-  void addPayload(vpack::Slice slice, const vpack::Options* = nullptr) final;
-  void addPayload(vpack::BufferUInt8&&, const vpack::Options* = nullptr) final;
   void addRawPayload(std::string_view payload) final;
 
   void setAllowCompression(rest::ResponseCompressionType rct) noexcept final;
@@ -102,9 +100,6 @@ class HttpResponse : public GeneralResponse {
   // the body must already be set. lz4 compression is then run on the existing
   // body
   ErrorCode Lz4Compress(bool only_if_smaller) override;
-
-  void addPayloadInternal(const uint8_t* data, size_t length,
-                          const vpack::Options* options);
 
   std::vector<std::string> _cookies;
   basics::StringBufferPtr _body;

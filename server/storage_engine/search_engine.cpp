@@ -25,6 +25,7 @@
 #include <absl/strings/escaping.h>
 #include <absl/time/time.h>
 
+#include <duckdb/common/file_system.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/fast_text_model.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
@@ -46,6 +47,7 @@
 #include "general_server/state.h"
 #include "metrics/gauge_builder.h"
 #include "metrics/metrics_feature.h"
+#include "query/duckdb_engine.h"
 #include "rest_server/database_path_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
@@ -294,6 +296,9 @@ void SearchEngine::start() {
 void SearchEngine::stop() {
   SDB_ASSERT(isEnabled());
   _thread_pools->Stop();
+  // Close the per-database WALs (flush + release file handles) before shutdown.
+  std::lock_guard<std::mutex> lock(_db_wals_mu);
+  _db_wals.clear();
 }
 
 void SearchEngine::unprepare() { SDB_ASSERT(isEnabled()); }
@@ -347,6 +352,23 @@ std::filesystem::path SearchEngine::GetPersistedPath(
   path /= StaticStrings::kEngineDirRoot;
   path /= absl::StrCat(database_id);
   return path;
+}
+
+SearchDbWal& SearchEngine::GetDbWal(ObjectId database_id) {
+  std::lock_guard<std::mutex> lock(_db_wals_mu);
+  auto it = _db_wals.find(database_id);
+  if (it == _db_wals.end()) {
+    // Borrow the process-wide FileSystem (owned by the DuckDB instance, which
+    // outlives the engine). The WAL lives at GetPersistedPath(db)/wal/.
+    auto& fs = duckdb::FileSystem::GetFileSystem(
+      *query::DuckDBEngine::Instance().GetDB().instance);
+    auto wal_dir = GetPersistedPath(database_id) / "wal";
+    it = _db_wals
+           .emplace(database_id,
+                    std::make_unique<SearchDbWal>(fs, std::move(wal_dir)))
+           .first;
+  }
+  return *it->second;
 }
 
 void SearchEngine::beginShutdown() {

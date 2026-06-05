@@ -24,9 +24,9 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/common/file_system.hpp>
+#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <system_error>
@@ -49,17 +49,26 @@ std::filesystem::path SearchTableShard::GetPath(ObjectId db_id,
   return path;
 }
 
-std::filesystem::path SearchTableShard::GetWalPath(ObjectId db_id,
-                                                   ObjectId schema_id,
-                                                   ObjectId table_id) {
+std::filesystem::path SearchTableShard::GetWalPath(ObjectId db_id) {
   SDB_ASSERT(db_id.isSet());
-  SDB_ASSERT(schema_id.isSet());
-  SDB_ASSERT(table_id.isSet());
-  // Sibling of the iresearch dirs under the per-db root, namespaced by `wal/`.
+  // One `wal/` tree per database under the per-db engine root (WAL_DESIGN.md
+  // §4.0): the central commit log + a per-shard chunks/ subtree.
   auto path = GetSearchEngine().GetPersistedPath(db_id);
   path /= "wal";
-  path /= absl::StrCat(schema_id);
-  path /= absl::StrCat(table_id);
+  return path;
+}
+
+std::filesystem::path SearchTableShard::GetChunkDir(ObjectId db_id,
+                                                    ObjectId schema_id,
+                                                    ObjectId table_id) {
+  SDB_ASSERT(schema_id.isSet());
+  SDB_ASSERT(table_id.isSet());
+  // Must match SearchDbWal's internal chunk path (keyed by the uint64_t ids):
+  // chunks/<schema_id>/<table_id>/. Use the numeric id form on both sides.
+  auto path = GetWalPath(db_id);
+  path /= "chunks";
+  path /= std::to_string(schema_id.id());
+  path /= std::to_string(table_id.id());
   return path;
 }
 
@@ -156,18 +165,14 @@ void SearchTableShard::OpenWriter() {
     }
   }
 
-  // Per-shard self-contained WAL (WAL_DESIGN.md). Construction is lazy -- no
-  // files are created until the first commit. Borrows the engine's FileSystem,
-  // which outlives the shard.
-  _wal = std::make_unique<SearchShardWal>(
-    duckdb::FileSystem::GetFileSystem(
-      *query::DuckDBEngine::Instance().GetDB().instance),
-    GetWalPath(_db_id, _schema_id, GetTableId()));
-  // Continue the WAL tick line past the durable iresearch tick so the next
-  // commit's tick is strictly greater (iresearch monotonicity). Replay of
-  // records not yet published into iresearch is wired in the recovery pass
-  // (later phase); here we only seed the counters.
-  _wal->SeedCounters(_last_committed_tick);
+  // The database's shared search WAL (WAL_DESIGN.md), owned by the search
+  // engine (one per db, lazily created). Register this shard in the WAL's
+  // flush-subscription with its durable iresearch tick; that also continues the
+  // engine-global tick line past it so the next commit's tick is strictly
+  // greater (iresearch monotonicity). Replay of records not yet published into
+  // iresearch is wired in the recovery pass (later phase).
+  _wal = &GetSearchEngine().GetDbWal(_db_id);
+  _wal->RegisterShard(GetTableId().id(), _last_committed_tick);
 
   if (_is_new) {
     // Force a commit so the directory contains a valid empty index --

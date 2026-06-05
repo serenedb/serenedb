@@ -44,7 +44,7 @@ target_link_libraries(
         fuerte
         duckdb_static
         Folly::folly
-        zstd::zstd # search-table WAL chunk-file compression (search_shard_wal.cpp)
+        zstd::zstd # search-table WAL chunk-file compression (search_db_wal.cpp)
 )
 
 target_include_directories(sereneserver PUBLIC ${CMAKE_SOURCE_DIR}/server)

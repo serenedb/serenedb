@@ -62,6 +62,15 @@ struct LocalTableChangesEntry {
   // carried here.
   std::vector<std::unique_ptr<duckdb::ColumnDataCollection>> insert_collections;
 
+  // Parallel to insert_collections (same index): the per-chunk generated-PK
+  // `pk_base` values for the inline path, in chunk-append order. Recorded so
+  // recovery can reproduce the synthetic PKs (WAL_DESIGN.md §5.6). unique_ptr
+  // so a thread's list pointer (held in its LocalSinkState) stays stable across
+  // vector growth, mirroring insert_collections. For an explicit-PK table the
+  // entries are 0 (replay re-derives the key from the columns and ignores
+  // them).
+  std::vector<std::unique_ptr<std::vector<uint64_t>>> insert_pk_bases;
+
   // Affected-row identifiers for in-flight UPDATE/DELETE (M6). Empty until
   // then -- carried here now to match DuckLake's struct shape and avoid a
   // layout migration later.

@@ -28,17 +28,20 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "basics/async_utils.hpp"
+#include "basics/containers/flat_hash_map.h"
 #include "basics/resource_manager.hpp"
 #include "catalog/function.h"
 #include "catalog/identifiers/index_id.h"
 #include "catalog/types.h"
 #include "metrics/fwd.h"
 #include "rest_server/serened.h"
+#include "search/search_db_wal.h"
 #include "storage_engine/engine_feature.h"
 
 namespace sdb {
@@ -90,8 +93,18 @@ class SearchEngine final : public SerenedFeature {
 
   std::filesystem::path GetPersistedPath(ObjectId database_id) const;
 
+  // The database's self-contained search WAL (WAL_DESIGN.md), lazily created on
+  // first use. ONE per database, shared by all of its search shards, so a
+  // transaction touching several search tables commits atomically (§9). Lives
+  // at GetPersistedPath(db)/wal/. Borrows the engine's process-wide FileSystem.
+  SearchDbWal& GetDbWal(ObjectId database_id);
+
  private:
   DatabasePathFeature& _dir_feature;
+
+  // Per-database central WALs (see GetDbWal). Guarded by _db_wals_mu.
+  std::mutex _db_wals_mu;
+  containers::FlatHashMap<ObjectId, std::unique_ptr<SearchDbWal>> _db_wals;
 
   std::shared_ptr<SearchThreadPools> _thread_pools;
 

@@ -26,7 +26,7 @@
 #include <memory>
 
 #include "catalog/identifiers/object_id.h"
-#include "search/search_shard_wal.h"
+#include "search/search_db_wal.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb::search {
@@ -65,12 +65,17 @@ class SearchTableShard final : public TableShard {
   static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
                                        ObjectId table_id);
 
-  // WAL directory for this shard (WAL_DESIGN.md §4.0): a sibling tree under the
-  // same per-db engine root, keyed like GetPath but under `wal/` so iresearch
-  // never opens it as a directory (its unreferenced-file GC would delete our
-  // files). Wiped alongside GetPath on drop.
-  static std::filesystem::path GetWalPath(ObjectId db_id, ObjectId schema_id,
-                                          ObjectId table_id);
+  // The DATABASE's search WAL directory (WAL_DESIGN.md §4.0): one `wal/` tree
+  // under the per-db engine root, shared by all the db's search shards (the
+  // central commit log lives here; chunks under chunks/<schema>/<table>/).
+  // iresearch never opens it as a Directory.
+  static std::filesystem::path GetWalPath(ObjectId db_id);
+
+  // This shard's bulk chunk subtree:
+  // GetWalPath(db)/chunks/<schema_id>/<table_id>/. Wiped on drop (the shared
+  // central log is NOT); see DropArtifacts.
+  static std::filesystem::path GetChunkDir(ObjectId db_id, ObjectId schema_id,
+                                           ObjectId table_id);
 
   // Returns a fresh iresearch IndexWriter::Transaction tied to this shard's
   // writer. Used by SereneDBSearchInsert (M3) to stash one trx per shard
@@ -108,19 +113,28 @@ class SearchTableShard final : public TableShard {
   // optional; until then it's the only way to make in-flight inserts
   // visible to subsequent scans.
   void Commit() {
-    SDB_ASSERT(_writer);
+    SDB_ASSERT(_writer && _wal);
     _writer->RefreshCommit();
     // RefreshCommit invoked the meta_payload_provider, advancing
-    // _last_committed_tick to the now-durable iresearch tick. Reclaim WAL
-    // segments + chunk files whose data is published (WAL_DESIGN.md §10).
-    _wal->OnRefreshCommit(_last_committed_tick);
+    // _last_committed_tick to the now-durable iresearch tick. Publish it to the
+    // db WAL's flush-subscription + run a GC sweep (WAL_DESIGN.md §10.3).
+    _wal->OnShardCommit(GetTableId().id(), _last_committed_tick);
   }
 
-  // The shard's self-contained WAL (WAL_DESIGN.md). Valid after construction.
-  SearchShardWal& Wal() noexcept {
+  // The database's shared search WAL (WAL_DESIGN.md). Valid after OpenWriter.
+  SearchDbWal& Wal() noexcept {
     SDB_ASSERT(_wal);
     return *_wal;
   }
+
+  // Open a bulk chunk-file writer for this shard (delegates to the db WAL with
+  // this shard's schema/table). Used by the parallel INSERT sink.
+  SearchDbWal::ChunkWriter NewChunkWriter() {
+    SDB_ASSERT(_wal);
+    return _wal->NewChunkWriter(_schema_id.id(), GetTableId().id());
+  }
+
+  ObjectId GetSchemaId() const noexcept { return _schema_id; }
 
  private:
   void OpenWriter();
@@ -130,9 +144,9 @@ class SearchTableShard final : public TableShard {
   bool _is_new;
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
-  // Per-shard self-contained WAL (WAL_DESIGN.md). Constructed in OpenWriter;
-  // borrows the DuckDB engine's FileSystem, which outlives the shard.
-  std::unique_ptr<SearchShardWal> _wal;
+  // The database's shared search WAL (WAL_DESIGN.md), owned by the search
+  // engine and borrowed here (set in OpenWriter). Outlives the shard.
+  SearchDbWal* _wal = nullptr;
   // The iresearch commit tick made durable so far, stored in / restored from
   // the iresearch commit meta payload (meta_payload_provider in OpenWriter,
   // mirroring InvertedIndexShard). Advanced at each RefreshCommit; the WAL

@@ -29,6 +29,7 @@
 #include <yaclib/async/future.hpp>
 
 #include "basics/containers/flat_hash_map.h"
+#include "basics/containers/node_hash_map.h"
 #include "basics/down_cast.h"
 #include "basics/result.h"
 #include "catalog/catalog.h"
@@ -44,24 +45,26 @@ class TableShard;
 }  // namespace sdb
 namespace sdb::query {
 
-// Per-(sdb txn) search-table commit descriptor (WAL_DESIGN.md §7/§9).
-// Populated by SereneDBSearchInsert::Finalize for a plain INSERT/COPY into a
-// search-backed table; consumed in Commit(), which appends ONE central WAL
-// record (the txn's atomic unit) and stamps the handed-off iresearch
-// transactions with the tick that record returns. Single-search-shard-per-txn
-// contract (§2): a second statement on the same shard extends `seg_ids`.
-struct SearchTableCommit {
+// Per-(sdb txn, search shard) writes (WAL_DESIGN.md §3.2/§9). One entry per
+// search table the transaction wrote; Commit() turns each into a per-shard
+// section of ONE central WAL record (multi-shard atomicity, §9). Keyed by
+// table_id in Transaction::_search_table_writes.
+struct SearchShardWrites {
   // Keeps the shard alive past the catalog snapshot; downcast to
-  // search::SearchTableShard at commit to reach its self-contained WAL.
+  // search::SearchTableShard at commit to reach the database's shared WAL.
   std::shared_ptr<TableShard> shard;
-  // The inline (small-INSERT) buffers live in _local_table_changes[table_id];
-  // commit gathers them by this id.
-  ObjectId table_id;
+  // For the WAL section's chunk path + recovery dispatch (= shard's schema id).
+  uint64_t schema_id = 0;
   // Catalog column ids (catalog::Column::Id::id()) in input-chunk order.
   std::vector<uint64_t> column_ids;
   // Bulk chunk-file ids (one per sink thread that wrote rows), collected at
-  // Combine. Empty => the txn's data is in the inline buffers instead.
+  // Combine/Finalize. Empty => this shard's data is in its inline buffers
+  // (_local_table_changes[table_id]).
   std::vector<uint64_t> seg_ids;
+  // Per-thread iresearch transactions for this shard (one per parallel sink
+  // thread; one for the single-threaded inline case). Handed off at Combine,
+  // committed on the shared WAL tick at Transaction::Commit.
+  std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
 };
 
 class Transaction : public Config {
@@ -84,7 +87,7 @@ class Transaction : public Config {
     // reasons) So if we get here explicit Commit/Rollback should be already
     // called. Otherwise we might have some unexpected data
     SDB_ASSERT(_search_transactions.empty());
-    SDB_ASSERT(_parallel_search_transactions.empty());
+    SDB_ASSERT(_search_table_writes.empty());
     // RocksDB transactions aborts itself in destructor but just for consistency
     // we should do Commit/Rollback explicitly
     SDB_ASSERT(!_rocksdb_transaction);
@@ -168,9 +171,11 @@ class Transaction : public Config {
   //
   // The operator serialises calls with its own sink-state mutex; this is the
   // only concurrent mutator of the container during the parallel Sink phase.
+  // `table_id` routes the trx to its shard's entry (one record covers all
+  // shards).
   void AddParallelSearchTransaction(
-    std::unique_ptr<irs::IndexWriter::Transaction> trx) {
-    _parallel_search_transactions.push_back(std::move(trx));
+    ObjectId table_id, std::unique_ptr<irs::IndexWriter::Transaction> trx) {
+    _search_table_writes[table_id].transactions.push_back(std::move(trx));
   }
 
   // Register (or extend) this txn's plain search-table WAL commit
@@ -180,17 +185,14 @@ class Transaction : public Config {
   // accumulate in _local_table_changes). Single-shard contract -- `table_id`
   // must match across calls.
   void RegisterSearchTableCommit(std::shared_ptr<TableShard> shard,
-                                 ObjectId table_id,
+                                 ObjectId table_id, uint64_t schema_id,
                                  std::vector<uint64_t> column_ids,
                                  std::vector<uint64_t> seg_ids) {
-    if (!_search_table_commit) {
-      _search_table_commit = SearchTableCommit{
-        std::move(shard), table_id, std::move(column_ids), std::move(seg_ids)};
-      return;
-    }
-    SDB_ASSERT(_search_table_commit->table_id == table_id,
-               "single search shard per transaction (WAL_DESIGN.md §2)");
-    auto& acc = _search_table_commit->seg_ids;
+    auto& w = _search_table_writes[table_id];
+    w.shard = std::move(shard);
+    w.schema_id = schema_id;
+    w.column_ids = std::move(column_ids);
+    auto& acc = w.seg_ids;
     acc.insert(acc.end(), seg_ids.begin(), seg_ids.end());
   }
 
@@ -287,15 +289,13 @@ class Transaction : public Config {
   containers::FlatHashMap<ObjectId,
                           std::unique_ptr<irs::IndexWriter::Transaction>>
     _search_transactions;
-  // Per-thread iresearch transactions from a parallel search-table INSERT.
-  // See AddParallelSearchTransaction. Flush-registered/committed/aborted
-  // alongside _search_transactions in Commit/Rollback; cleared in Destroy.
-  std::vector<std::unique_ptr<irs::IndexWriter::Transaction>>
-    _parallel_search_transactions;
-  // Plain search-table INSERT/COPY commit descriptor (WAL_DESIGN.md §7/§9).
-  // Set by RegisterSearchTableCommit; consumed by CommitSearchTableWal in
-  // Commit(); cleared in Destroy. nullopt unless this txn wrote a search table.
-  std::optional<SearchTableCommit> _search_table_commit;
+  // Per-(search shard) writes for this txn (see SearchShardWrites). Filled by
+  // the search-table INSERT operator -- iresearch trxs at Combine
+  // (AddParallelSearchTransaction), shard/schema/column_ids/seg_ids at Finalize
+  // (RegisterSearchTableCommit); consumed by Commit() into ONE central WAL
+  // record across all shards (WAL_DESIGN.md §9). Keyed by table_id; cleared in
+  // Destroy.
+  containers::NodeHashMap<ObjectId, SearchShardWrites> _search_table_writes;
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   // Per-(sdb txn, SearchTableShard) DirectoryReader cache. shared_ptr so

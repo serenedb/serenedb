@@ -150,12 +150,18 @@ struct SearchInsertLocalState : duckdb::LocalSinkState {
   // Bulk path: this thread's chunk file, opened lazily on the first Sink chunk
   // (so a sink thread that gets no rows leaves no empty file) and fsynced at
   // Combine. Null on the inline path.
-  std::optional<search::SearchShardWal::ChunkWriter> chunk_writer;
+  std::optional<search::SearchDbWal::ChunkWriter> chunk_writer;
   // Inline path: this thread's in-flight buffer. Owned by query::Transaction
   // (LocalTableChangesEntry::insert_collections); referenced here. Read at
   // commit for the INLINE WAL record (and future RYOW overlay). Null on the
   // bulk path.
   duckdb::ColumnDataCollection* collection = nullptr;
+  // Inline path: per-chunk generated-PK bases for `collection`, parallel to its
+  // chunks. Points into LocalTableChangesEntry::insert_pk_bases (stable).
+  // Drained into the INLINE WAL record at commit for replay PK reconstruction
+  // (§5.6). Null on the bulk path (there pk_base rides each chunk frame
+  // instead).
+  std::vector<uint64_t>* pk_bases = nullptr;
   duckdb::idx_t insert_count = 0;
   // Reused per-row PK scratch buffer.
   std::string pk_buffer;
@@ -370,6 +376,9 @@ SereneDBSearchInsert::GetLocalSinkState(
     auto& entry = gstate->sdb_txn->GetLocalTableChanges()[gstate->table_id];
     entry.insert_collections.push_back(std::move(collection));
     lstate->collection = entry.insert_collections.back().get();
+    // Parallel per-chunk generated-PK base list for this collection (§5.6).
+    entry.insert_pk_bases.push_back(std::make_unique<std::vector<uint64_t>>());
+    lstate->pk_bases = entry.insert_pk_bases.back().get();
   }
   // Bulk: no collection; the chunk-file writer opens lazily on the first Sink
   // chunk so a sink thread that receives no rows leaves no empty chunk file.
@@ -428,11 +437,12 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   // the chunk file / collection is this thread's alone.
   if (lstate->bulk) {
     if (!lstate->chunk_writer) {
-      lstate->chunk_writer.emplace(gstate.search_shard->Wal().NewChunkWriter());
+      lstate->chunk_writer.emplace(gstate.search_shard->NewChunkWriter());
     }
-    lstate->chunk_writer->Append(chunk);
+    lstate->chunk_writer->Append(chunk, pk_base);
   } else {
     lstate->collection->Append(chunk);
+    lstate->pk_bases->push_back(pk_base);
   }
   lstate->insert_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;
@@ -483,7 +493,8 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
   if (lstate->bulk) {
     gstate.seg_ids.push_back(seg_id);
   }
-  gstate.sdb_txn->AddParallelSearchTransaction(std::move(lstate->search_trx));
+  gstate.sdb_txn->AddParallelSearchTransaction(gstate.table_id,
+                                               std::move(lstate->search_trx));
   return duckdb::SinkCombineResultType::FINISHED;
 }
 
@@ -516,9 +527,10 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
   for (auto id : gstate.column_ids) {
     column_ids.push_back(id.id());
   }
-  gstate.sdb_txn->RegisterSearchTableCommit(gstate.table_shard, gstate.table_id,
-                                            std::move(column_ids),
-                                            std::move(gstate.seg_ids));
+  gstate.sdb_txn->RegisterSearchTableCommit(
+    gstate.table_shard, gstate.table_id,
+    gstate.search_shard->GetSchemaId().id(), std::move(column_ids),
+    std::move(gstate.seg_ids));
 
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.UpdateNumRows(gstate.table_id, gstate.insert_count);

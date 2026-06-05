@@ -41,6 +41,7 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/search_table_shard.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb {
 
@@ -85,16 +86,21 @@ Result TableShard::DropArtifacts(catalog::StorageKind kind, ObjectId db_id,
                       "Failed to remove search table shard directory '" +
                         path.string() + "': " + ec.message()};
       }
-      // Also wipe the shard's self-contained WAL tree (WAL_DESIGN.md §4.0),
-      // which lives in a sibling `wal/` subtree, not inside the iresearch dir.
-      auto wal_path =
-        search::SearchTableShard::GetWalPath(db_id, schema_id, table_id);
-      std::filesystem::remove_all(wal_path, ec);
+      // Wipe THIS shard's bulk chunk subtree (WAL_DESIGN.md §4.0). The central
+      // commit log is per-DATABASE (shared), so it is NOT removed here -- the
+      // dropped shard's central sections become orphans (skipped on recovery
+      // via the catalog, GC'd with their segment).
+      auto chunk_dir =
+        search::SearchTableShard::GetChunkDir(db_id, schema_id, table_id);
+      std::filesystem::remove_all(chunk_dir, ec);
       if (ec) {
         return Result{ERROR_INTERNAL,
-                      "Failed to remove search table WAL directory '" +
-                        wal_path.string() + "': " + ec.message()};
+                      "Failed to remove search table chunk directory '" +
+                        chunk_dir.string() + "': " + ec.message()};
       }
+      // Deregister from the db WAL's flush-subscription so the dropped shard's
+      // frozen committed tick can't pin GC (WAL_DESIGN.md §10.3).
+      search::GetSearchEngine().GetDbWal(db_id).DeregisterShard(table_id.id());
       return {};
     }
   }

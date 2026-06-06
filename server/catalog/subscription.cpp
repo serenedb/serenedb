@@ -38,7 +38,7 @@ void Subscription::Serialize(duckdb::Serializer& sink) const {
 }
 
 std::shared_ptr<Object> Subscription::Clone() const {
-    THROW_SQL_ERROR(ERR_MSG("Clone not implemented for Subscription"));
+  THROW_SQL_ERROR(ERR_MSG("Clone not implemented for Subscription"));
 }
 
 }  // namespace sdb::catalog

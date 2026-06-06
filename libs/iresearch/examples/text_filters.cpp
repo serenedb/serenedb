@@ -237,7 +237,7 @@ int main() {
       std::cout << "\n=== ByRegexp /f[ao]x/ ===\n";
       irs::ByRegexp q;
       *q.mutable_field_id() = kBodyFieldId;
-      q.mutable_options()->pattern = irs::bstring{Bytes("f[ao]x")};
+      *q.mutable_options() = irs::ByRegexpOptions{Bytes("f[ao]x")};
       PrintHits("expect d0, d2 (matches 'fox')", RunFilter(reader, q, names));
     }
 
@@ -248,7 +248,7 @@ int main() {
       std::cout << "\n=== ByWildcard \"f_x\" ===\n";
       irs::ByWildcard q;
       *q.mutable_field_id() = kBodyFieldId;
-      q.mutable_options()->term = irs::bstring{Bytes("f_x")};
+      *q.mutable_options() = irs::ByWildcardOptions{irs::bstring{Bytes("f_x")}};
       PrintHits("expect d0, d2, d5 (fox, fox, fix)",
                 RunFilter(reader, q, names));
     }

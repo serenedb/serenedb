@@ -6578,10 +6578,10 @@ TEST_P(IndexTestCase, compact_single_segment) {
 }
 
 TEST_P(IndexTestCase, segment_compact_long_running) {
-  // The new cs writes `<segment>.cs` for every committed segment. Use the
-  // third segment's expected `.cs` file as the BlockingDirectory trigger;
+  // The new cs writes `<segment>.col` for every committed segment. Use the
+  // third segment's expected `.col` file as the BlockingDirectory trigger;
   // the test gates compaction on its create().
-  const auto blocker = std::string{"_3.cs"};
+  const auto blocker = std::string{"_3.col"};
 
   tests::JsonDocGenerator gen(
     resource("simple_sequential.json"),

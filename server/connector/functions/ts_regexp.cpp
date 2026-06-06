@@ -87,16 +87,20 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     throw duckdb::InvalidInputException("ts_regexp field is not VARCHAR");
   }
-  auto& filter = ctx.negated ? Negate<irs::ByRegexp>(parent)
-                             : AddFilter<irs::ByRegexp>(parent);
-  filter.boost(ctx.boost);
-  *filter.mutable_field_id() =
-    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
-  auto* opts = filter.mutable_options();
-  opts->scored_terms_limit = ctx.scored_terms_limit;
-  opts->pattern.assign(
-    irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
-  opts->syntax = syntax;
+  auto regexp = irs::CreateByRegexp(
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
+    irs::ViewCast<irs::byte_type>(std::string_view{pattern}), syntax,
+    ctx.scored_terms_limit, ctx.boost);
+  if (!ctx.negated) {
+    parent.add(std::move(regexp));
+    return;
+  }
+  auto negated = std::make_unique<irs::Not>(std::move(regexp));
+  if (parent.type() == irs::Type<irs::Or>::id()) {
+    AddFilter<irs::And>(parent).add(std::move(negated));
+  } else {
+    parent.add(std::move(negated));
+  }
 }
 
 }  // namespace sdb::connector

@@ -32,6 +32,7 @@
 #include "iresearch/search/states/phrase_state.hpp"
 #include "iresearch/search/states_cache.hpp"
 #include "iresearch/search/top_terms_collector.hpp"
+#include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {
 namespace {
@@ -84,7 +85,7 @@ struct GetVisitor {
   }
 
   field_visitor operator()(const ByWildcardOptions& part) const {
-    return ByWildcard::visitor(part.term);
+    return ByWildcard::visitor(part.acceptor);
   }
 
   field_visitor operator()(const ByEditDistanceOptions& part) const {
@@ -111,7 +112,7 @@ struct GetVisitor {
   }
 
   field_visitor operator()(const ByRegexpOptions& part) const {
-    return ByRegexp::visitor(part.pattern, part.syntax);
+    return ByRegexp::visitor(part.acceptor);
   }
 };
 
@@ -125,7 +126,8 @@ struct PrepareVisitor : util::Noncopyable {
   }
 
   auto operator()(const ByWildcardOptions& part) const {
-    return ByWildcard::prepare(ctx, id, part.term, part.scored_terms_limit);
+    return PrepareAutomatonFilter(ctx, id, part.acceptor,
+                                  part.scored_terms_limit);
   }
 
   auto operator()(const ByEditDistanceOptions& part) const {
@@ -141,8 +143,8 @@ struct PrepareVisitor : util::Noncopyable {
   }
 
   auto operator()(const ByRegexpOptions& part) const {
-    return ByRegexp::prepare(ctx, id, part.pattern, part.scored_terms_limit,
-                             part.syntax);
+    return PrepareAutomatonFilter(ctx, id, part.acceptor,
+                                  part.scored_terms_limit);
   }
 
   PrepareVisitor(const PrepareContext& ctx, irs::field_id id) noexcept
@@ -383,7 +385,7 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
     ptv.Reset();  // reset boost volaitility mark
 
     size_t found_parts = 0;
-    for (const auto& visitor : phrase_part_visitors) {
+    for (auto& visitor : phrase_part_visitors) {
       const auto was_terms_count = phrase_terms.size();
       ptv.Reset(phrase_part_stats.GetCollector(found_parts));
       visitor(segment, *reader, ptv);

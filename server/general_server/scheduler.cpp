@@ -88,21 +88,17 @@ void Scheduler::start() {
 }
 
 void Scheduler::shutdown() {
-  std::vector<std::weak_ptr<DelayedWorkItem>> pending;
   {
     absl::MutexLock guard{&_cron_queue_mutex};
     _cron_stopping = true;
     _croncv.notify_one();
-    pending.reserve(_cron_queue.size());
-    while (!_cron_queue.empty()) {
-      pending.push_back(_cron_queue.top().second);
-      _cron_queue.pop();
-    }
   }
   _cron_thread.join();
 
-  for (auto& weak : pending) {
-    if (auto item = weak.lock()) {
+  while (!_cron_queue.empty()) {
+    auto top = _cron_queue.top();
+    _cron_queue.pop();
+    if (auto item = top.second.lock()) {
       item->cancel();
     }
   }
@@ -203,24 +199,19 @@ Scheduler::WorkHandle Scheduler::queueDelayed(
   try {
     SDB_IF_FAILURE("Scheduler::queueDelayedFail2") { SDB_THROW(ERROR_DEBUG); }
     auto point = clock::now() + delay;
-    {
-      absl::MutexLock guard{&_cron_queue_mutex};
-      if (!_cron_stopping) {
-        _cron_queue.emplace(point, item);
-        if (delay < std::chrono::milliseconds(50)) {
-          // wakeup thread
-          _croncv.notify_one();
-        }
-        return item;
-      }
+    absl::MutexLock guard{&_cron_queue_mutex};
+    _cron_queue.emplace(point, item);
+    if (delay < std::chrono::milliseconds(50)) {
+      // wakeup thread
+      _croncv.notify_one();
     }
-    item->cancel();
-    return nullptr;
   } catch (...) {
     // if emplacing throws, we can cancel the item directly
     item->cancel();
     return nullptr;
   }
+
+  return item;
 } catch (...) {
   return nullptr;
 }

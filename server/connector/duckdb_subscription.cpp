@@ -37,8 +37,9 @@ void CreateSubscriptionPragma(duckdb::ClientContext& context,
   auto subscription_name = args[0].GetValue<std::string>();
 
   auto& conn_ctx = GetSereneDBContext(context);
-  auto name = pg::ParseObjectName(subscription_name, StaticStrings::kPublic);
-  pg::CreateSubscription(conn_ctx, name.relation);
+  auto obj_name =
+    pg::ParseObjectName(subscription_name, StaticStrings::kPublic);
+  pg::CreateSubscription(conn_ctx, obj_name.schema, obj_name.relation);
 }
 
 }  // namespace

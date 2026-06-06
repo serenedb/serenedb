@@ -35,6 +35,7 @@
 #include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/sequence.h"
+#include "catalog/subscription.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
@@ -105,7 +106,7 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateType(ObjectId database_id, std::string_view schema,
                     std::shared_ptr<PgSqlType> type) final;
   Result CreateSubscription(ObjectId database_id,
-                            std::string_view schema) final;
+                            std::shared_ptr<Subscription> sub) final;
 
   Result RenameView(ObjectId database_id, std::string_view schema,
                     std::string_view name, std::string_view new_name) final;

@@ -42,6 +42,7 @@
 #include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/sequence.h"
+#include "catalog/subscription.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
@@ -192,6 +193,11 @@ struct Snapshot {
   virtual std::shared_ptr<IndexShard> GetIndexShard(
     ObjectId index_id) const = 0;
 
+  virtual std::shared_ptr<Subscription> GetSubscription(
+    ObjectId database_id, std::string_view name) const = 0;
+  virtual std::vector<std::shared_ptr<Subscription>> GetSubscriptions(
+    ObjectId database_id) const = 0;
+
   template<typename T>
   std::shared_ptr<T> GetObject(ObjectId id) const {
     auto obj = GetObject(id);
@@ -294,7 +300,7 @@ struct LogicalCatalog {
     InvertedIndexOptions options,
     CreateIndexOperationOptions operation_options) = 0;
   virtual Result CreateSubscription(ObjectId database_id,
-                                    std::string_view relation) = 0;
+                                    std::shared_ptr<Subscription> sub) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,

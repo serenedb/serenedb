@@ -8,25 +8,25 @@
 statement error
 CREATE SUBSCRIPTION my_sub;
 ----
-db error: ERROR: Unsupported create_subscription in catalog
+db error: ERROR: Seserialize not implemented for Subscription
 
 
 # --- WITH CONNECTION only ---
 statement error
 CREATE SUBSCRIPTION my_sub CONNECTION 'host=localhost dbname=mydb';
 ----
-db error: ERROR: Unsupported create_subscription in catalog
+db error: ERROR: Seserialize not implemented for Subscription
 
 
 # --- WITH CONNECTION + single PUBLICATION ---
 statement error
 CREATE SUBSCRIPTION my_sub CONNECTION 'host=localhost dbname=mydb' PUBLICATION my_pub;
 ----
-db error: ERROR: Unsupported create_subscription in catalog
+db error: ERROR: Seserialize not implemented for Subscription
 
 
 # --- WITH CONNECTION + multiple PUBLICATIONs ---
 statement error
 CREATE SUBSCRIPTION my_sub CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1, pub2;
 ----
-db error: ERROR: Unsupported create_subscription in catalog
+db error: ERROR: Seserialize not implemented for Subscription

@@ -42,6 +42,7 @@ enum class ResolveType {
   Relation,
   Tokenizer,
   Type,
+  Subscription,
 };
 
 class ResolutionTable {
@@ -54,6 +55,7 @@ class ResolutionTable {
     _functions = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
     _tokenizers = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
     _types = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
+    _subscriptions = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
   }
   template<ResolveType Type>
   std::optional<ObjectId> ResolveObject(ObjectId parent_id,
@@ -88,6 +90,8 @@ class ResolutionTable {
         return resolve(_tokenizers, parent_id, object_name);
       } else if constexpr (Type == ResolveType::Type) {
         return resolve(_types, parent_id, object_name);
+      } else if constexpr (Type == ResolveType::Subscription) {
+        return resolve(_subscriptions, parent_id, object_name);
       } else {
         SDB_UNREACHABLE();
       }
@@ -110,6 +114,12 @@ class ResolutionTable {
       auto [_, inserted] = CloneData(_schemas).try_emplace(
         object_id, std::make_shared<MapByName<ObjectId>>());
       SDB_ASSERT(inserted);
+
+      auto [_, inserted_sub] =
+        CloneData(_subscriptions)
+          .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
+      SDB_ASSERT(inserted_sub);
+
       return {};
     } else if constexpr (Type == ResolveType::Role) {
       auto& roles = CloneData(_roles);
@@ -181,6 +191,10 @@ class ResolutionTable {
         return insert(_types, parent_id, object_name, object_id)
                  ? Result{}
                  : Result{ERROR_SERVER_DUPLICATE_NAME};
+      } else if constexpr (Type == ResolveType::Subscription) {
+        return insert(_subscriptions, parent_id, object_name, object_id)
+                 ? Result{}
+                 : Result{ERROR_SERVER_DUPLICATE_NAME};
       } else {
         SDB_UNREACHABLE();
       }
@@ -204,6 +218,7 @@ class ResolutionTable {
         CloneData(_functions).erase(id);
         CloneData(_tokenizers).erase(id);
         CloneData(_types).erase(id);
+        CloneData(_subscriptions).erase(id);
       }
       return {id};
     } else if constexpr (Type == ResolveType::Role) {
@@ -246,6 +261,8 @@ class ResolutionTable {
         return remove(_tokenizers, parent_id, object_name);
       } else if constexpr (Type == ResolveType::Type) {
         return remove(_types, parent_id, object_name);
+      } else if constexpr (Type == ResolveType::Subscription) {
+        return remove(_subscriptions, parent_id, object_name);
       } else {
         SDB_UNREACHABLE();
       }
@@ -286,6 +303,12 @@ class ResolutionTable {
     return *it->second | std::views::values;
   }
 
+  auto GetSubscriptions(ObjectId db_id) const {
+    auto it = _subscriptions->find(db_id);
+    SDB_ASSERT(it != _subscriptions->end());
+    return *it->second | std::views::values;
+  }
+
  private:
   template<typename T>
   using MapByName = containers::FlatHashMap<std::string_view, T>;
@@ -317,6 +340,8 @@ class ResolutionTable {
   MapByIdPtr<MapByNamePtr<ObjectId>> _tokenizers;
   // schema_id -> (type_name -> object_id)
   MapByIdPtr<MapByNamePtr<ObjectId>> _types;
+  // database_id -> (subscription_name -> object_id)
+  MapByIdPtr<MapByNamePtr<ObjectId>> _subscriptions;
 };
 
 }  // namespace sdb::catalog

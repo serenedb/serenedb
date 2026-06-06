@@ -18,29 +18,27 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "create_subscription.h"
+#include "catalog/subscription.h"
 
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 
-namespace sdb::pg {
+namespace sdb::catalog {
 
-void CreateSubscription(ConnectionContext& conn_ctx, std::string_view schema,
-                        std::string_view name) {
-  auto db_id = conn_ctx.GetDatabaseId();
+Subscription::Subscription(ObjectId schema_id, ObjectId id,
+                           std::string_view name, Config config)
+  : Object{schema_id, id, name, ObjectType::Subscription} {}
 
-  // @todo global?
-  auto& catalog = catalog::CatalogFeature::instance().Global();
-
-  // @todo next id ?
-  auto subscription = std::make_shared<catalog::Subscription>(
-    db_id, catalog::NextId(), name, catalog::Subscription::Config{});
-
-  auto r = catalog.CreateSubscription(db_id, subscription);
-
-  if (!r.ok()) {
-    THROW_SQL_ERROR(ERR_MSG(r.errorMessage()));
-  }
+std::shared_ptr<Subscription> Subscription::Deserialize(
+  duckdb::Deserializer& src, ReadContext ctx) {
+  THROW_SQL_ERROR(ERR_MSG("Deserialize not implemented for Subscription"));
+}
+void Subscription::Serialize(duckdb::Serializer& sink) const {
+  THROW_SQL_ERROR(ERR_MSG("Seserialize not implemented for Subscription"));
 }
 
-}  // namespace sdb::pg
+std::shared_ptr<Object> Subscription::Clone() const {
+    THROW_SQL_ERROR(ERR_MSG("Clone not implemented for Subscription"));
+}
+
+}  // namespace sdb::catalog

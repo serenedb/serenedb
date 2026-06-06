@@ -23,6 +23,7 @@ target_sources(
         mangling.cpp
         scorer_options.cpp
         tokenizer.cpp
+        subscription.cpp
 )
 
 add_subdirectory(identifiers)

@@ -38,7 +38,6 @@
 #include "basics/simdjson_sink.h"
 #include "executor.h"
 #include "formats/column/test_cs_helpers.hpp"
-#include "index/doc_generator.hpp"
 #include "index_builder.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/bm25.hpp"
@@ -783,7 +782,7 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
     for (auto& segment : reader) {
       for (auto term_str : terms) {
         auto filter = irs::ByTerm::prepare(
-          {.index = reader, .scorer = &scorer}, tests::FieldIdFor("text"),
+          {.index = reader, .scorer = &scorer}, bench::kTextFieldId,
           irs::ViewCast<irs::byte_type>(irs::bytes_view{
             reinterpret_cast<const irs::byte_type*>(term_str.data()),
             term_str.size()}));

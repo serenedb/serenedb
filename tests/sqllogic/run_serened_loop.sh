@@ -13,13 +13,12 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 : "${WORKSPACE:=$(realpath "$SCRIPT_DIR/../../")}"
 : "${PORT:=7777}"
 
-CLEANUP_DATADIR=0
 if [[ -n "$1" ]]; then
 	DATADIR="$1"
 	mkdir -p "$DATADIR"
 else
 	DATADIR=$(mktemp -d)
-	CLEANUP_DATADIR=1
+	trap 'rm -rf "$DATADIR"' EXIT INT TERM
 fi
 
 SERENED="$WORKSPACE/$BUILD_DIR/bin/serened"
@@ -33,25 +32,8 @@ if [[ ! -x "$SERENED" ]]; then
 	exit 1
 fi
 
-STOP=0
-CHILD=
-on_term() {
-	STOP=1
-	[[ -n "$CHILD" ]] && kill -TERM "$CHILD" 2>/dev/null
-}
-on_exit() {
-	[[ -n "$CHILD" ]] && kill -TERM "$CHILD" 2>/dev/null
-	[[ "$CLEANUP_DATADIR" -eq 1 ]] && rm -rf "$DATADIR"
-}
-trap on_term INT TERM
-trap on_exit EXIT
-
-while [[ "$STOP" -eq 0 ]]; do
+while true; do
 	"$SERENED" "$DATADIR" \
-		--server_endpoints "pgsql+tcp://0.0.0.0:$PORT" &
-	CHILD=$!
-	[[ "$STOP" -eq 1 ]] && kill -TERM "$CHILD" 2>/dev/null
-	wait "$CHILD"
-	code=$?
-	[[ "$STOP" -eq 0 ]] && echo "serened exited with code $code, restarting..."
+		--server_endpoints "pgsql+tcp://0.0.0.0:$PORT"
+	echo "serened exited with code $?, restarting..."
 done

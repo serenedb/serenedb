@@ -185,12 +185,10 @@ start_fresh_serened() {
 stop_serened() {
 	local pid=$1
 	[[ -z "$pid" ]] && return
-	kill -TERM "$pid" 2>/dev/null
-	local i
-	for ((i = 0; i < 15; i++)); do
-		kill -0 "$pid" 2>/dev/null || break
-		sleep 0.2
-	done
+	# Kill children FIRST (serened) -- once the parent bash dies, its children
+	# are reparented to init and pkill -P can no longer find them, leaving
+	# orphaned serened processes holding the port. Since each test uses a
+	# unique port + datadir, we don't need to wait for graceful shutdown.
 	pkill -KILL -P "$pid" 2>/dev/null
 	kill -KILL "$pid" 2>/dev/null
 	wait "$pid" 2>/dev/null
